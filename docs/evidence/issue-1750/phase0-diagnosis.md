@@ -141,7 +141,7 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 | 相位 / 接缝 | 现行（据代码，非票面愿望） |
 |------|------|
 | 0148 月初快照 | 点即入 `accept_settlement_period`；`settling`/`awaiting_decision` 下失败 **不清**快照 |
-| **(a1) settling + ready=0**（盖玺后、批红前 extractor 终失败） | 玩家「重新推演」真入口 = `POST /api/decree/issue/stream`。`resolve_turn` 见非 ready ctx → **fallthrough 重跑 sim/extract**；`pre_settle` 因 settling 守门不二跑。**不**经 `clear_for_resimulation`（该函数主要服务 ready 毒包降级 / version=0 逃生，见 SETTLEMENT_FLOW）。票面写「走 D6 clear_for_resimulation」与现行 ready=0 自然重入 **有可核缺口**——阶段 0 测试记录 `clear_calls==0`，不改生产凑绿。 |
+| **(a1) settling + ready=0**（盖玺后、批红前 extractor 终失败） | 玩家「重新推演」真入口 = `POST /api/decree/issue/stream`。`resolve_turn` 见非 ready ctx → **fallthrough 重跑 sim/extract**；`pre_settle` 因 settling 守门不二跑。**不**经 `clear_for_resimulation`（该函数主要服务 ready 毒包降级 / version=0 逃生，见 SETTLEMENT_FLOW）。票面 D6 clear 义务 **明确未结**——阶段 0 只诊断缺口、测试不断 clear 调用次数，不改生产凑绿、不把「现行 0 次」固化成反向规范。 |
 | **(a2) HITL/phase2 批红后**（awaiting_decision，叙事已持久、extracted 空） | 续跑入口 = `POST /api/decree/resolve_decisions/stream`。`resolve_decisions_phase2` **复用 ctx 叙事/亲裁，只重抽 extractor**，不重新生成 simulator。与 (a1) 不得混成「一律重跑 simulator」。 |
 | **(b) settling + ready=1** | `resolve_settling_recovery` 直入 apply；**不**重跑 sim/extract（既有 `tests/test_settlement_recovery_projection_1620.py`，本片不重复 D3 案）。 |
 | clear_for_resimulation 本体 | 降级 extracted、保留 phase1 字段；settling 相位不清前半段；HITL 叉降级后走 phase2 非 ready 重抽（error_pack.py:270 文档串）。 |
@@ -152,18 +152,19 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 
 文件：`tests/test_settlement_extractor_transport_1750.py`
 入口：沿 #1468 `tracer_client` 真 HTTP（复用 fixture，无平行 transport_tracer_client）；transport 替身在模块 `agent.run`。
-标记：自愈、终失败上游 status/预算、自愈期 0148 为 `xfail(strict, 待 #1465)`；**不改生产**使灯绿。
+标记：自愈、终失败上游 status/预算 为 `xfail(strict, 待 #1465)`（两条）；**不改生产**使灯绿。
+0148 自愈期/跨刷新真跑取证：**不**在阶段 0 写真实并发永久测试；由本票**阶段 1 在 #1465 落地后**承接。阶段 0 仅保留已取得的终失败 `api_state` 月初快照证据（并入终失败绿基线）。
 
 | 项 | 期望 | 现行预期色 | 证明力口径 |
 |------|------|------------|------------|
-| 自愈 | 一腿预算内可重试 → transport calls≥2、metrics 民心指纹落账、月+1 | 红（无 #1465 预算） | calls=agent.run；落账断 GET metrics |
-| 终失败绿基线 | 持续失败 → 保月 + recovery + exception_type + 不泄栈 | **绿** | transport 与 pack_attempt 分列；不锁中文措辞 |
-| 终失败上游/预算 | transport_attempts≥3 耗尽预算；玩家面 status_code + code=llm_run_error | **红**（pending） | 既有 `_llm_error_detail` 键；不新造 pack schema |
-| 恢复 (a1) | settling ready=0 → issue/stream 重跑 sim/extract、pre_settle=0、包保留 | **绿**（行为）；clear 缺口可核 | clear_calls 现行 0，见 §2.5 |
+| 自愈 | 同腿（internal）预算内失败一次后恢复 → calls≥2、该腿民心指纹落账、月+1 | 红（无 #1465 预算） | 失败腿=效果腿；calls=agent.run；落账断 GET metrics |
+| 终失败绿基线 | 持续失败 → 保月 + recovery + exception_type + 结构化不泄栈 | **绿** | transport 与 pack_attempt 分列；不锁中文/Traceback 子串 |
+| 终失败上游/预算 | transport_attempts≥3；玩家面 status_code==注入上游码 + code=llm_run_error | **红**（pending） | 既有 `_llm_error_detail` 键；status 须等于可核 typed 注入，不能仅非空；不新造 pack schema |
+| 恢复 (a1) | settling ready=0 → issue/stream 重跑 sim/extract、pre_settle=0、包保留 | **绿**（行为） | clear 义务未结，见 §2.5；测试不断 clear 次数 |
 | 恢复 (a2) | 批红后失败 → 只重抽、不重跑 simulator、月+1、包保留 | **绿** | 与 (a1) 分案 |
 | 恢复 (b) D3 | ready 重放不重跑 LLM | 既有 1620 绿 | 本片不重复 |
 | 0148 终失败后 | api_state 月初快照 | **绿**（并入终失败案） | settlement_display + metrics |
-| 0148 自愈窗 | 再 attempt 持有中仍月初快照 | 红（随自愈） | 双 Event：fail gate + retry gate；禁 sleep |
+| 0148 自愈期/跨刷新 | 自愈窗与跨刷新仍月初快照 | **阶段 1 真跑承接**（blocked_by #1465） | 阶段 0 已删多线程窗口永久测试及 gate/hit 专属助手；不换形重建 |
 
 ---
 
@@ -172,8 +173,8 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 | 类 | 扫描范围 | 命中 | 留存理由 |
 |----|----------|------|----------|
 | QA pack | `qa/w11-8010-screenshots:qa-evidence/w11-{8013-box,8013-nov,8013-pending,8012-settle,8010-dec,429}/**` | 四行身份 + 十一月分清 | 票面逐包取证义务 |
-| 生产接缝 | `ming_sim/{simulation,llm_model,error_pack,decree,session,exceptions}.py` · `web_app.state_payload` · `web/src/main.tsx` 恢复钮 | 扇出 5+1、max_retries=1、pack 无 status | 阶段 1 真源边界 |
+| 生产接缝 | `ming_sim/{simulation,llm_model,error_pack,decree,session,exceptions}.py` · `web_app.state_payload` · `web/src/main.tsx` 恢复钮 | 扇出 5+1、max_retries=1、pack 无 status | 阶段 1 真源边界；阶段 0 零生产改动 |
 | 既有 tracer | `tests/test_month_loop_tracer_1468.py` · `test_settlement_recovery_projection_1620.py` · `test_parallel_extractors.py` · `test_enter_settlement_period_1235.py` | 复用入口/恢复/快照 | 不平行造第二套 tracer |
 | 法源 | ADR 0008/0148/0149/0093/0005 · #1465 owner 令 | blocked_by 与验收映射 | 阶段 0 不越权改生产 |
 
-**阶段 1 仍 blocked_by #1465**：统一重试/超时/分类/pack 字段落地后，本票红灯转绿；不先于 #1465 实施任何重试或限扇出。
+**阶段 1 仍 blocked_by #1465**：统一重试/超时/分类/pack 字段落地后，本票自愈与终失败上游/预算红灯转绿，并真跑承接 0148 自愈期/跨刷新取证；不先于 #1465 实施任何重试或限扇出。

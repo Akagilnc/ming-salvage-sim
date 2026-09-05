@@ -4,8 +4,10 @@
 （经真实 agents.run_agent_text → extract_agent_text），不在 simulation 已导入的
 run_agent_text 别名上短路，以便 #1465 统一策略能包住此缝。
 
-自愈 / 自愈期 0148：xfail(strict, 待 #1465)。
+自愈 / 终失败上游 status+预算：xfail(strict, 待 #1465)。
 终失败保月、恢复面、a1 settling 重推演、a2 批红后只重抽：既有 0008 行为基线。
+0148 终失败后月初快照：并入终失败绿基线。自愈期/跨刷新 0148 真跑取证由本票
+阶段 1 在 #1465 落地后承接（阶段 0 不写真实并发永久测试）。
 D3 ready 重放：见 tests/test_settlement_recovery_projection_1620.py，本片不重复。
 """
 
@@ -22,7 +24,6 @@ from fastapi.testclient import TestClient
 import ming_sim.decree as decree_mod
 import ming_sim.simulation as simulation_mod
 import web_app
-from ming_sim.error_pack import clear_for_resimulation as _real_clear_for_resimulation
 from ming_sim.models import TurnPhase
 from ming_sim.simulation import EXTRACTION_MODULES
 from tests.test_month_loop_tracer_1468 import (
@@ -66,6 +67,9 @@ _DECISION_NARRATIVE = (
     "<<END>>"
 )
 
+# transport 探针 content 所暗示的上游码；终失败红案断言 typed 面须保真此值（非仅非空）。
+_UPSTREAM_STATUS_CODE = 429
+
 
 class _TransportAgent:
     """模块 agent.run 替身：可按序返回 ERROR status 或成功正文。
@@ -80,18 +84,10 @@ class _TransportAgent:
         *,
         error_then_ok_times: int = 0,
         always_error: bool = False,
-        gate: threading.Event | None = None,
-        hit: threading.Event | None = None,
-        retry_gate: threading.Event | None = None,
-        retry_hit: threading.Event | None = None,
     ):
         self.module = module
         self.error_then_ok_times = int(error_then_ok_times)
         self.always_error = bool(always_error)
-        self.gate = gate
-        self.hit = hit
-        self.retry_gate = retry_gate
-        self.retry_hit = retry_hit
         self.calls = 0
         self._lock = threading.Lock()
 
@@ -100,19 +96,13 @@ class _TransportAgent:
             self.calls += 1
             n = self.calls
         if self.always_error or n <= self.error_then_ok_times:
-            if self.hit is not None and n == 1:
-                self.hit.set()
-                if self.gate is not None:
-                    assert self.gate.wait(timeout=5.0), "transport probe gate timed out"
             return SimpleNamespace(
-                content="Error code: 429 - model_concurrency_rate_limit_exceeded",
+                content=(
+                    f"Error code: {_UPSTREAM_STATUS_CODE} - "
+                    "model_concurrency_rate_limit_exceeded"
+                ),
                 status="ERROR",
             )
-        # 成功 attempt：供 0148 在「失败后、重试中」窗阻塞采样（Event，禁 sleep）
-        if self.retry_hit is not None and n == self.error_then_ok_times + 1:
-            self.retry_hit.set()
-            if self.retry_gate is not None:
-                assert self.retry_gate.wait(timeout=5.0), "transport retry gate timed out"
         return SimpleNamespace(
             content=_SUCCESS_MODULE_JSON[self.module],
             status="COMPLETED",
@@ -214,23 +204,12 @@ def _default_agents(
     fail_module: str = "relations",
     error_times: int = 0,
     always_error_module: str | None = None,
-    gate: threading.Event | None = None,
-    hit: threading.Event | None = None,
-    retry_gate: threading.Event | None = None,
-    retry_hit: threading.Event | None = None,
 ) -> dict[str, _TransportAgent]:
-    def _is_fail(m: str) -> bool:
-        return m == fail_module or always_error_module == m
-
     return {
         m: _TransportAgent(
             m,
             error_then_ok_times=(error_times if m == fail_module else 0),
             always_error=(always_error_module == m),
-            gate=(gate if _is_fail(m) else None),
-            hit=(hit if _is_fail(m) else None),
-            retry_gate=(retry_gate if m == fail_module else None),
-            retry_hit=(retry_hit if m == fail_module else None),
         )
         for m in EXTRACTION_MODULES
     }
@@ -253,15 +232,13 @@ def _pack_manifest(recovery: dict) -> dict:
 
 
 def _player_error_surfaces(data: object, recovery: object) -> list[dict]:
-    """结构化错误/恢复面（不扫散文措辞）。"""
+    """结构化错误/恢复面（不扫散文措辞；不重复包装已有 message）。"""
     out: list[dict] = []
     if isinstance(data, dict):
         out.append(data)
         msg = data.get("message")
         if isinstance(msg, dict):
             out.append(msg)
-        elif isinstance(msg, str) and msg.strip():
-            out.append({"message": msg})
     if isinstance(recovery, dict):
         out.append(recovery)
     return out
@@ -277,32 +254,32 @@ def _player_error_surfaces(data: object, recovery: object) -> list[dict]:
 def test_extractor_one_retryable_transport_failure_self_heals(
     tracer_client, monkeypatch,
 ):
-    """一腿 agent.run 首次 ERROR（429 形），预算内应再 attempt 成功 → 月+1、无失败面。
+    """同一腿首次 ERROR 后恢复：该腿合法非空成功效果须落账，月+1、无失败面。
 
     证明力：
-    - fail 模块 run.calls>=2 = transport 重试次数（非写包序号）
-    - 成功腿 fingerprint（民心 -1）须反映到 GET state 的 metrics 落账面
-      （settle_with_delta 应用后的外部可见效果；不设 delta 必须非空生产护栏）
+    - 失败腿 = internal（带 民心 -1 指纹）；run.calls>=2 = 同腿 transport 重试
+    - 恢复后 GET metrics 民心 -1 = 失败腿成功产出进了落账（排除「丢恢复产出」）
     """
     client = tracer_client
     turn0, game = _new_game_with_directive(client)
     before_metrics = dict((_get_state(client).get("metrics") or {}))
     before_morale = before_metrics.get("民心")
     assert before_morale is not None, before_metrics
-    agents = _default_agents(fail_module="relations", error_times=1)
+    # 失败腿与成功指纹同腿，避免「失败 relations、效果却在健康 internal」假绿
+    agents = _default_agents(fail_module="internal", error_times=1)
     _wire_real_extract_path(monkeypatch, agents)
 
     resp = _issue_stream(client, expected_turn=turn0, step="self-heal")
     event, data = _terminal_sse(resp)
 
-    transport_attempts = agents["relations"].calls
+    transport_attempts = agents["internal"].calls
     # 红灯真源：无 #1465 时 calls 停在 1；有预算自愈后须 ≥2
     assert transport_attempts >= 2, (
-        f"self-heal must retry relations agent.run; transport_attempts={transport_attempts} "
+        f"self-heal must retry internal agent.run; transport_attempts={transport_attempts} "
         f"terminal={event!r} data={data!r}"
     )
     for m, ag in agents.items():
-        if m != "relations":
+        if m != "internal":
             assert ag.calls >= 1, m
 
     _finish_to_done(client, event, data, step="self-heal")
@@ -312,10 +289,10 @@ def test_extractor_one_retryable_transport_failure_self_heals(
     assert _turn_of(after) == turn0 + 1
     assert after.get("settlement_recovery") is None
     assert (after.get("turn") or {}).get("phase") != TurnPhase.SETTLING.value
-    # 外部可见落账：成功 internal 指纹 民心-1 已 apply 进 state metrics
+    # 外部可见落账：失败后恢复的 internal 指纹 民心-1 已 apply 进 state metrics
     after_morale = (after.get("metrics") or {}).get("民心")
     assert after_morale == before_morale - 1, (
-        f"success delta not booked: before={before_morale} after={after_morale}"
+        f"recovered leg success delta not booked: before={before_morale} after={after_morale}"
     )
 
 
@@ -327,7 +304,7 @@ def _drive_terminal_extractor_fail(client, monkeypatch, *, step: str) -> dict:
 
     返回绿/红两案共用的结构化现场；断言分属调用方，避免重复建场形状。
     """
-    turn0, game = _new_game_with_directive(client)
+    turn0, _game = _new_game_with_directive(client)
     agents = _default_agents(always_error_module="relations")
     _wire_real_extract_path(monkeypatch, agents)
     before = _month_open_view(_get_state(client))
@@ -335,18 +312,15 @@ def _drive_terminal_extractor_fail(client, monkeypatch, *, step: str) -> dict:
     event, data = _terminal_sse(resp)
     assert event == "error", (event, data)
     transport_attempts = agents["relations"].calls
-    _wait_pending_writes(game)
+    _wait_pending_writes(_game)
     after = _get_state(client)
     recovery = after.get("settlement_recovery")
     assert isinstance(recovery, dict), recovery
     manifest = _pack_manifest(recovery)
     return {
         "turn0": turn0,
-        "game": game,
-        "agents": agents,
         "before": before,
         "after": after,
-        "data": data,
         "recovery": recovery,
         "manifest": manifest,
         "transport_attempts": transport_attempts,
@@ -360,7 +334,7 @@ def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
     """持续 ERROR → fail-closed 绿基线（共享建场；不断 status_code）。
 
     - transport_attempts = agent.run.calls（写包序号另列）
-    - exception_type / message 存在 / 禁 Traceback
+    - exception_type / 结构化 message 面 / 非 bare 500（不扫 Traceback 子串）
     - 0148 终失败后月初快照
     """
     scene = _drive_terminal_extractor_fail(
@@ -378,16 +352,12 @@ def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
     assert (after.get("turn") or {}).get("phase") == TurnPhase.SETTLING.value
     assert recovery.get("ready_replay") is False
     assert recovery.get("error_pack_path")
+    # 不泄栈：走 settlement_recovery 结构化边界 + stream 非 bare 500（_assert_not_bare_500）；
+    # 不断 Traceback 散文子串、不造 blob 序列化
     assert any(
         isinstance(s.get("message"), str) and s["message"].strip()
         for s in surfaces
     ), surfaces
-    blob = (
-        json.dumps(scene["data"], ensure_ascii=False)
-        if not isinstance(scene["data"], str)
-        else str(scene["data"])
-    )
-    assert "Traceback" not in blob
 
     pack_attempt = int(manifest.get("attempt") or 0)
     assert pack_attempt >= 1, f"pack write seq; got {pack_attempt}"
@@ -412,8 +382,9 @@ def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     """终失败 pending 红灯：预算耗尽 + 上游 status（共享建场，只加未结断言）。
 
     - 预算：#1465 默认重试 2 → transport_attempts >= 3
-    - status_code 出现在 stream/recovery 既有 typed 面
-    - code 保真 llm_run_error（非仅真值）
+    - status_code 须等于探针注入的上游码（_UPSTREAM_STATUS_CODE），不能仅非空
+    - code 保真 llm_run_error（既有 typed 键）
+    保月/manifest 绿契约由 test_…_keeps_month_and_recovery_panel 承接，本条不重复。
     """
     scene = _drive_terminal_extractor_fail(
         tracer_client, monkeypatch, step="terminal-budget-status",
@@ -422,14 +393,11 @@ def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     assert transport_attempts >= 3, (
         f"budget exhausted requires transport_attempts>=3; got {transport_attempts}"
     )
-    assert _turn_of(scene["after"]) == scene["turn0"]
-    pack_attempt = int(scene["manifest"].get("attempt") or 0)
-    assert pack_attempt >= 1
-    assert scene["manifest"].get("exception_type") == "LLMUnavailable", scene["manifest"]
 
     surfaces = scene["surfaces"]
-    assert any(s.get("status_code") is not None for s in surfaces), (
-        f"upstream status_code missing on typed surfaces: {surfaces!r}"
+    assert any(s.get("status_code") == _UPSTREAM_STATUS_CODE for s in surfaces), (
+        f"upstream status_code must equal typed injection {_UPSTREAM_STATUS_CODE}; "
+        f"surfaces={surfaces!r}"
     )
     assert any(s.get("code") == "llm_run_error" for s in surfaces), (
         f"exception category code not preserved as llm_run_error: {surfaces!r}"
@@ -449,11 +417,8 @@ def test_a1_settling_unready_resimulate_via_issue_stream(
     - simulator + extractor 重跑
     - 月 +1；旧错误包目录/manifest 保留
 
-    与票面差异（可核缺口，不改生产凑绿）：
-    - ready=0 路径是 resolve_turn fallthrough 重入，**不**调用
-      error_pack.clear_for_resimulation（该逃生口见 SETTLEMENT_FLOW /
-      error_pack.py:270，主要服务 ready 毒包降级）。本条记录 clear_calls，
-      现行预期 0；不得手调 helper 伪造 clear 覆盖。
+    冻结票面 D6 clear_for_resimulation 义务未结（ready=0 现行 fallthrough 重入，
+    见 session/SETTLEMENT_FLOW）；本条不断 clear 调用次数，只验上述既有行为。
     """
     client = tracer_client
     turn0, game = _new_game_with_directive(client)
@@ -474,7 +439,6 @@ def test_a1_settling_unready_resimulate_via_issue_stream(
 
     pre_calls = {"n": 0}
     sim_calls = {"n": 0}
-    clear_calls = {"n": 0}
     real_pre = decree_mod.pre_settle
     real_sim = decree_mod.simulate_season_with_payload
 
@@ -486,16 +450,8 @@ def test_a1_settling_unready_resimulate_via_issue_stream(
         sim_calls["n"] += 1
         return real_sim(*a, **k)
 
-    def _count_clear(db, turn):
-        clear_calls["n"] += 1
-        return _real_clear_for_resimulation(db, turn)
-
     monkeypatch.setattr(decree_mod, "pre_settle", _count_pre)
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _count_sim)
-    monkeypatch.setattr(decree_mod, "clear_for_resimulation", _count_clear)
-    # session 直接 from-import 了 clear_for_resimulation
-    import ming_sim.session as session_mod
-    monkeypatch.setattr(session_mod, "clear_for_resimulation", _count_clear)
 
     agents_ok = _default_agents(error_times=0)
     _wire_real_extract_path(monkeypatch, agents_ok)
@@ -506,11 +462,6 @@ def test_a1_settling_unready_resimulate_via_issue_stream(
     assert pre_calls["n"] == 0, f"a1 must not rerun pre_settle; got {pre_calls['n']}"
     assert sim_calls["n"] >= 1, f"a1 must rerun simulator; got {sim_calls['n']}"
     assert sum(ag.calls for ag in agents_ok.values()) >= len(EXTRACTION_MODULES)
-    # 可核缺口：ready=0 fallthrough 不经 clear_for_resimulation
-    assert clear_calls["n"] == 0, (
-        "current ready=0 issue/stream recovery is fallthrough, not clear_for_resimulation; "
-        f"got clear_calls={clear_calls['n']}"
-    )
 
     _wait_pending_writes(game)
     after = _get_state(client)
@@ -600,11 +551,6 @@ def test_a2_hitl_phase2_extract_fail_reuses_narrative_only_reextracts(
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _forbid_sim)
 
     ev_ok, data_ok = _resolve_retry_empty(client, step="a2-retry")
-    if ev_ok == "decisions":
-        # 若仍回 decisions，再空续一次不合法；应 done 或已推进
-        raise AssertionError(f"a2-retry still decisions: {data_ok!r}")
-    if ev_ok == "error":
-        raise AssertionError(f"a2-retry error: {data_ok!r}")
     assert ev_ok == "done", (ev_ok, data_ok)
 
     assert sim_calls["n"] == sim_after_phase1
@@ -616,88 +562,3 @@ def test_a2_hitl_phase2_extract_fail_reuses_narrative_only_reextracts(
     assert after.get("settlement_recovery") is None
     assert Path(pack_path).is_dir()
     assert (Path(pack_path) / "manifest.json").read_text(encoding="utf-8") == pack_manifest_before
-
-
-# ── 0148：自愈窗（待 #1465；采样落在失败可见之后的恢复/重试窗） ────────
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="待 #1465：自愈重试窗内 api_state 保持月初快照且最终成功",
-)
-def test_0148_api_state_month_open_during_self_heal(
-    tracer_client, monkeypatch,
-):
-    """自愈重试窗：首次 transport 失败返回后、再 attempt 持有中，GET state 仍月初快照。
-
-    双 Event（禁 sleep）：
-    - hit/gate：第 1 次 fail run 进入后由探针放行
-    - retry_hit/retry_gate：第 2 次 attempt（成功腿）进入后探针采样，再放行
-    无 #1465 时 retry_hit 永不置位 → 红在「重试未启动」。终失败后 0148 已并入绿基线。
-    """
-    client = tracer_client
-    turn0, game = _new_game_with_directive(client)
-    before = _month_open_view(_get_state(client))
-
-    gate = threading.Event()
-    hit = threading.Event()
-    retry_gate = threading.Event()
-    retry_hit = threading.Event()
-    agents = _default_agents(
-        fail_module="relations",
-        error_times=1,
-        gate=gate,
-        hit=hit,
-        retry_gate=retry_gate,
-        retry_hit=retry_hit,
-    )
-    _wire_real_extract_path(monkeypatch, agents)
-
-    mid_holder: dict = {}
-    probe_done = threading.Event()
-
-    def _probe():
-        try:
-            if not hit.wait(timeout=5.0):
-                mid_holder["error"] = "relations never entered first fail attempt"
-                return
-            gate.set()
-            # 等第 2 次 attempt 进入（#1465 自愈）；无预算则超时，主线程报红
-            if not retry_hit.wait(timeout=2.0):
-                mid_holder["error"] = (
-                    "retry attempt never started (no #1465 self-heal budget)"
-                )
-                return
-            mid_holder["state"] = _get_state(client)
-            retry_gate.set()
-        finally:
-            # 失败路径也放行，避免结算线程永久卡在 gate
-            gate.set()
-            retry_gate.set()
-            probe_done.set()
-
-    probe = threading.Thread(target=_probe, daemon=True)
-    probe.start()
-    resp = _issue_stream(client, expected_turn=turn0, step="0148-heal")
-    assert probe_done.wait(timeout=10.0), "0148 probe thread did not finish"
-    probe.join(timeout=1.0)
-    assert not probe.is_alive(), "0148 probe thread still alive after probe_done"
-    ev, data = _terminal_sse(resp)
-
-    assert mid_holder.get("error") is None, mid_holder.get("error")
-    mid_state = mid_holder.get("state")
-    assert mid_state is not None, "0148 probe did not capture mid-retry api_state"
-    mid = _month_open_view(mid_state)
-    assert mid["settlement_display"] is True
-    assert mid["metrics"] == before["metrics"]
-    assert mid["turn"] == turn0
-    assert agents["relations"].calls >= 2, (
-        f"0148 self-heal window needs retry; calls={agents['relations'].calls} "
-        f"terminal={ev!r} data={data!r}"
-    )
-    _finish_to_done(client, ev, data, step="0148-heal")
-
-    _wait_pending_writes(game)
-    after = _get_state(client)
-    assert _turn_of(after) == turn0 + 1
-    assert after.get("settlement_recovery") is None
