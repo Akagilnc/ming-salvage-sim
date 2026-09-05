@@ -1880,6 +1880,7 @@ def compose_decree_validation_recovery(
         "银两数目": {"amount"},
         "款项来源": {"account"},
         "用途": {"purpose"},
+        "旨意正文": {"text", "body", "decree_text"},
         "所指对象": {"target_kind", "target_id"},
         "所指地域": {"region_id", "locality_scope"},
         "承办人": {"assignee", "assignee_id", "assignee_name"},

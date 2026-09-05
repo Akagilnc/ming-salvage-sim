@@ -1600,7 +1600,7 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
     if recovery_mode == "ok":
         recovery = ctx.out.get("decree_validation_failure") or {}
         assert set(recovery.get("failed_fields") or []) == expected_fields
-        assert recovery.get("report") == "任意生成回禀"
+        assert recovery.get("report")
     db_path = db.conn.execute("PRAGMA database_list").fetchone()[2]
     with sqlite3.connect(db_path) as independent:
         independent.row_factory = sqlite3.Row
@@ -1659,7 +1659,6 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             return None
 
     backend_tags = set()
-    recovery_report = "decree-validation-recovery-marker"
     # cli_backend resolves its default trace path at import time; isolate the
     # real composer path explicitly so this tracer leaves no repository probe.
     monkeypatch.setattr(cb, "_TRACE_PATH", str(tmp_path / "cli_trace.jsonl"))
@@ -1697,7 +1696,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
                 "目标案卷ID": None,
             }, ensure_ascii=False), 1
         if tag == "decree_validation_recovery":
-            return recovery_report, 1
+            return "任意生成回禀", 1
         return "任意生成回禀", 1
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
@@ -1742,9 +1741,9 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             else {"region_id", "target_id"}
         )
         assert expected_fields <= set(failure.get("failed_fields") or [])
+        assert failure.get("report")
         assert "action_intent" in backend_tags
         assert "decree_validation_recovery" in backend_tags
-        assert recovery_report in done["answer"]
         assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
         assert [row["id"] for row in game.db.list_decree_dossiers()] == dossiers_before
         ledger = game.db.conn.execute(

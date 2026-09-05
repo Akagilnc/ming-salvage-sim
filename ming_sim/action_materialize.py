@@ -2085,7 +2085,7 @@ def require_materializable_xiexang_payload(
     body = str(text or "").strip()
     if not body:
         raise DecreeMaterializationValidationError(
-            "协饷旨意缺少正文（不猜散文）", failed_fields=("purpose",),
+            "协饷旨意缺少正文（不猜散文）", failed_fields=("text",),
         )
     army_id = canonicalize_xiexang_army_target(db, explicit["target_id"])
     cadence_value = str(cadence or "").strip() or "一次性"
