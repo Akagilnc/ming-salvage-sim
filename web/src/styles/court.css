@@ -277,6 +277,42 @@
   opacity: 0.6;
   cursor: default;
 }
+/* #1732 B：上传失败底栏告警条（fixed，避开卡片 overflow） */
+.inline-alert-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 12%;
+  transform: translateX(-50%);
+  z-index: 80;
+  width: min(70vw, 360px);
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #fff3d0, #f0d58a);
+  border: 1px solid rgba(176, 112, 32, 0.55);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  color: #4a3014;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.inline-alert-bar-body {
+  flex: 1;
+  font-size: 0.86rem;
+  font-weight: 500;
+  line-height: 1.45;
+}
+.inline-alert-bar-ok {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 5px 10px;
+  border-radius: 4px;
+  background: #6a4014;
+  color: #fff5d8;
+  border: 1px solid #6a4014;
+  cursor: pointer;
+  white-space: nowrap;
+}
 
 .minister-card-portrait-placeholder {
   width: 100%;

@@ -11,7 +11,7 @@ import { useChatActions } from "./useChatActions";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
 import { FullscreenModal } from "./components/hud";
-import { GameHud } from "./components/gameHud";
+import { GameHud, resolveUnreadMemorialCount } from "./components/gameHud";
 import { NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
 import { AudienceArchiveModal } from "./components/audienceArchiveModal";
@@ -38,7 +38,7 @@ import {
   shouldAutoOpenClosedIssuesAfterSettlement,
   shouldAutoOpenSecretOrdersAfterSettlement,
 } from "./settlementPresentation";
-import type { AppView, ChatIdentity, ClosedIssue, GameState, MenuStatus, Minister, ModalName, SecretOrder } from "./types";
+import type { AppView, ChatIdentity, ClosedIssue, GameState, Memorial, MenuStatus, Minister, ModalName, SecretOrder } from "./types";
 import "./styles.css";
 
 export function App() {
@@ -397,6 +397,33 @@ export function App() {
     setActiveModal(modal);
   }, [closeAllDrawers]);
 
+  // #1726：点开奏疏面板即已读（绑具体奏报 key，不绑案卷）；失败不挡阅读。
+  const memorialMarkGenRef = React.useRef(0);
+  React.useEffect(() => {
+    const gen = ++memorialMarkGenRef.current;
+    if (activeModal !== "state" || !state) return;
+    if (isSettlementDisplay(state.turn)) return;
+    if (!isFaceReachable("memorials", false)) return;
+    const keys = (state.memorials || []).filter((m) => m.unread).map((m) => m.key);
+    if (!keys.length) return;
+    void api<{ memorials: Memorial[]; unread_memorial_count: number }>(
+      "/api/memorials/read",
+      { method: "POST", body: JSON.stringify({ keys }) },
+    ).then((result) => {
+      if (gen !== memorialMarkGenRef.current) return;
+      setState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          memorials: result.memorials,
+          unread_memorial_count: result.unread_memorial_count,
+        };
+      });
+    }).catch(() => {
+      /* 已读落盘失败不挡阅读 */
+    });
+  }, [activeModal, state]);
+
   if (appView === "menu") {
     return (
       <MenuPage
@@ -518,10 +545,11 @@ export function App() {
   const edictOpen = activeModal === "edict" && isFaceReachable("edict", settlementDisplay);
   const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementDisplay);
   const gazetteOpen = activeModal === "report" && isFaceReachable("gazette", settlementDisplay);
-  // memorials 面键真源（#1285）；ModalName 仍用既有 "state" 槽承载奏疏列表。
-  // 内容闸走 situation 谓词：核账期面可达但零半程议题泄漏（模态不自判 settlementDisplay）。
+  // memorials 面键真源（#1285/#1726）；ModalName 仍用既有 "state" 槽承载奏疏收件箱。
+  // 内容接 memorials 投影，与局势 issues 脱钩；核账期只读仍可达。
   const memorialsOpen = activeModal === "state" && isFaceReachable("memorials", settlementDisplay);
-  const showMemorialIssues = isFaceReachable("situation", settlementDisplay);
+  // #1740：未读计数唯一规则，主数据流算一次；HUD badge 与奏疏 modal 共用。
+  const unreadMemorialCount = resolveUnreadMemorialCount(state);
   const historyOpen = activeModal === "history" && isFaceReachable("history", settlementDisplay);
   // C：起居注入口单闸 = isFaceReachable(audience_archive)；不再经 gameHud.gatedModal 死枝。
   const audienceArchiveOpen = activeModal === "audience_archive" && isFaceReachable("audience_archive", settlementDisplay);
@@ -542,6 +570,7 @@ export function App() {
         activeDrawerKey={activeDrawerKey}
         navHandlers={navHandlers}
         secretOrderActiveCount={secretOrders.filter((o) => o.status === "active").length}
+        unreadMemorialCount={unreadMemorialCount}
         onOpenModal={openModal}
         onClosedFaceAttempt={(reason) => setError(reason)}
         edictOpen={edictOpen}
@@ -625,11 +654,11 @@ export function App() {
       {memorialsOpen ? (
         <FullscreenModal
           title="奏疏"
-          subtitle={`${showMemorialIssues ? state.issues.length : 0} 件待览 · ${state.turn.year} 年 ${state.turn.period} 月`}
+          subtitle={`${unreadMemorialCount} 件待览 · ${state.turn.year} 年 ${state.turn.period} 月`}
           bgClass="modal-bg-state"
           onClose={() => setActiveModal("none")}
         >
-          <StateModal state={state} showIssues={showMemorialIssues} />
+          <StateModal state={state} />
         </FullscreenModal>
       ) : null}
 

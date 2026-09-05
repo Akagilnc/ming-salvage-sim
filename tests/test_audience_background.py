@@ -31,9 +31,10 @@ class RunOutput:
 
 
 class ToolExec:
-    def __init__(self, tool_name: str, result: str) -> None:
+    def __init__(self, tool_name: str, result: str, arguments=None) -> None:
         self.tool_name = tool_name
         self.result = result
+        self.arguments = arguments or {}
 
 
 class _FakeAgent:
@@ -265,19 +266,22 @@ def test_undo_chat_response_preserves_retryable_failed_secret_order(game):
     assert "密令" in failures[0]["message"]
 
 
-@pytest.mark.parametrize(("emperor_text", "expected_mode"), [
-    ("中旨直发，命户部拟旨。", "midzhi"),
-    ("ordinary", "ordinary"),
-    ("拟一道清核辽饷的旨。", "ordinary"),
+@pytest.mark.parametrize(("emperor_text", "typed_mode", "expected_mode"), [
+    ("中旨直发，命户部拟旨。", "ordinary", "ordinary"),
+    ("拟一道清核辽饷的旨。", "midzhi", "midzhi"),
+    ("拟一道清核辽饷的旨。", None, "ordinary"),
 ])
-def test_background_audience_reply_preserves_emperor_mode_after_observer_departure(
-    game, emperor_text, expected_mode,
+def test_background_audience_reply_preserves_typed_mode_after_observer_departure(
+    game, emperor_text, typed_mode, expected_mode,
 ):
     db, state, content = game
     minister_name = "毕自严"
-    # 大臣草稿刻意不复述皇帝的颁布方式；mode 必须来自皇帝原话。
+    # 玩家与大臣散文均不参与 mode 推断；只运输 tool 的 typed 判断。
     draft_text = "着户部清核辽饷。"
-    agent = _FakeAgent([ToolExec("propose_directive", f"__pending_directive__{draft_text}")])
+    arguments = {"mode": typed_mode} if typed_mode is not None else {}
+    agent = _FakeAgent([ToolExec(
+        "propose_directive", f"__pending_directive__{draft_text}", arguments,
+    )])
     web_game = _web_game(db, state, content, agent)
 
     stream = web_game.chat_stream(minister_name, emperor_text)
@@ -609,7 +613,12 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
         ToolExec(
             "propose_appointment",
             "__pending_appointment__" + json.dumps(
-                {"name": appointee, "office": "户部尚书", "action": "任命"},
+                {
+                    "name": appointee,
+                    "office": "户部尚书",
+                    "action": "任命",
+                    "mode": "midzhi",
+                },
                 ensure_ascii=False,
             ),
         )
@@ -630,6 +639,7 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
     payload = json.loads(pending["payload_json"])
     assert payload["name"] == appointee
     assert payload["office"] == "户部尚书"
+    assert payload["mode"] == "midzhi"
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (appointee,)
     ).fetchone() is None

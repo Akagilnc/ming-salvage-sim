@@ -55,15 +55,15 @@ export function EdictModal({
   const hasSettleWork =
     hasDrafts || hasPendingConversationalDraft || hasNonEdictPendingActions || hasPendingSecretOrders;
   const failedOnly = !hasSettleWork && hasFailedSecretOrders;
-  const confirmFailedOnlyAdvance = () => {
-    if (window.confirm()) {
-      onAdvanceWithoutEdict();
-    }
-  };
+  // #1732 B：failed-only 页脚就地条，补退朝语义；取消零请求。
+  const [confirmAdvance, setConfirmAdvance] = React.useState(false);
+  React.useEffect(() => {
+    if (!failedOnly) setConfirmAdvance(false);
+  }, [failedOnly]);
   const onFooterClick = hasSettleWork
     ? onIssueDecree
     : failedOnly
-      ? confirmFailedOnlyAdvance
+      ? () => setConfirmAdvance(true)
       : undefined;
 
   // 御案只列尚未成案的候选；结束回合是唯一提交边界，不再生成月末复审工作台。
@@ -125,13 +125,30 @@ export function EdictModal({
 
       <div className="desk-footer">
         {/* #1560：真空禁用；draft/pending 走 issue；failed-only 确认后 advance。 */}
-        <button
-          className={hasSettleWork || failedOnly ? "seal-btn-issue" : "seal-btn-compose"}
-          onClick={onFooterClick}
-          disabled={!!busy || (!hasSettleWork && !failedOnly)}
-        >
-          {hasSettleWork ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
-        </button>
+        {failedOnly && confirmAdvance ? (
+          <div className="edict-footer-confirm" role="group" aria-label="退朝确认">
+            <div className="edict-footer-confirm-title">退朝确认</div>
+            <div className="edict-footer-confirm-body">
+              本月无可颁诏草案，仍有失败密令未处理。确认不经盖玺颁诏、直接退朝结束本月？
+            </div>
+            <div className="edict-footer-confirm-actions">
+              <button type="button" className="seal-btn-compose" disabled={!!busy} onClick={() => setConfirmAdvance(false)}>
+                取消
+              </button>
+              <button type="button" className="seal-btn-issue" disabled={!!busy} onClick={onAdvanceWithoutEdict}>
+                退朝结束本月
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            className={hasSettleWork || failedOnly ? "seal-btn-issue" : "seal-btn-compose"}
+            onClick={onFooterClick}
+            disabled={!!busy || (!hasSettleWork && !failedOnly)}
+          >
+            {hasSettleWork ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
+          </button>
+        )}
       </div>
     </div>
   );

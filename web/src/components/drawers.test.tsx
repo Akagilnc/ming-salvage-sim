@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArmyDrawer, MinisterCardList, RegionDrawer } from "./drawers";
+import { PortraitUploadButton } from "./hud";
 import type { Army, Minister, Region } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -933,5 +934,42 @@ describe("#1683 MinisterCardList place ⊥ office DOM", () => {
     expect(transit!.textContent).toBe("山东");
     expect(host.querySelectorAll(".minister-place")).toHaveLength(1);
     expect(host.querySelector(".minister-office")?.textContent).toBe("辽东巡抚");
+  });
+});
+
+describe("#1732 T2 上传失败告警条挂载点", () => {
+  it("告警条不在 .minister-card 子树内（portal 出 transform 卡）", async () => {
+    const onUpload = vi.fn(async () => {
+      throw new Error("网络中断");
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    // 模拟朝堂卡：transform 祖先会劫持 position:fixed 的 containing block
+    await act(async () => {
+      root.render(
+        <div className="minister-card" style={{ transform: "scale(0.5)" }}>
+          <PortraitUploadButton ministerName="周延儒" onUpload={onUpload} />
+        </div>,
+      );
+    });
+    mountedRoots.push({ root, host });
+
+    const input = host.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    const file = new File(["x"], "x.png", { type: "image/png" });
+    await act(async () => {
+      Object.defineProperty(input, "files", { value: [file], configurable: true });
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onUpload).toHaveBeenCalled();
+    const alert = document.body.querySelector(".inline-alert-bar");
+    expect(alert).not.toBeNull();
+    // 结构化：挂载点不在大臣卡子树（不锁文案）
+    expect(alert!.closest(".minister-card")).toBeNull();
+    expect(host.querySelector(".minister-card .inline-alert-bar")).toBeNull();
   });
 });

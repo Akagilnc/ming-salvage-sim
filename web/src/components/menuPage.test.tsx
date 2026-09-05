@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MenuPage } from "./menuPage";
+import { MenuPage, SaveListModal } from "./menuPage";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -973,6 +973,99 @@ describe("ApiSettingsModal reasoning strength", () => {
     });
 
     expect(strength?.disabled).toBe(true);
+    cleanup();
+  });
+});
+
+describe("#1732 MenuPage · 就地消解", () => {
+  it("有主进度时「开始新游戏」展开就地卡；取消零请求；确认后 POST new_game", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const enterGame = vi.fn(async () => {});
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+    const cleanup = render(
+      <MenuPage
+        status={{ ...readyStatus, has_main_db: true } as any}
+        onRefresh={async () => readyStatus as any}
+        onEnterGame={enterGame}
+        error=""
+        setError={() => {}}
+      />
+    );
+    const start = Array.from(document.querySelectorAll("button")).find((b) =>
+      b.textContent?.trim() === "开始新游戏"
+    );
+    await act(async () => {
+      start!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const card = document.querySelector('[aria-label="覆盖主进度确认"]');
+    expect(card).not.toBeNull();
+    expect(card?.textContent).toContain("将覆盖当前主进度");
+    const cancel = Array.from(card!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    await act(async () => {
+      cancel!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(calls.some((c) => String(c.url).includes("/api/menu/new_game"))).toBe(false);
+
+    await act(async () => {
+      start!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const yes = Array.from(document.querySelector('[aria-label="覆盖主进度确认"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").trim() === "继续"
+    );
+    await act(async () => {
+      yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+    expect(calls.some((c) => String(c.url) === "/api/menu/new_game" && c.init?.method === "POST")).toBe(true);
+    expect(enterGame).toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("删除存档：行下展开；取消零请求；确认后调用 onDelete", async () => {
+    const onDelete = vi.fn(async () => {});
+    const cleanup = render(
+      <SaveListModal
+        campaigns={[{
+          campaign_id: "c1",
+          kind: "manual",
+          current: false,
+          saves: [{ name: "辽饷吃紧", label: "辽饷吃紧", mtime: 1, size: 10 }],
+        }] as any}
+        onClose={() => {}}
+        onLoad={async () => {}}
+        onDelete={onDelete}
+      />
+    );
+    const del = document.querySelector(".menu-save-del") as HTMLButtonElement;
+    await act(async () => {
+      del.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const panel = document.querySelector('[aria-label="确认删除存档 辽饷吃紧"]');
+    expect(panel).not.toBeNull();
+    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    await act(async () => {
+      cancel!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onDelete).not.toHaveBeenCalled();
+
+    await act(async () => {
+      del.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const yes = Array.from(document.querySelector('[aria-label="确认删除存档 辽饷吃紧"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("删除")
+    );
+    await act(async () => {
+      yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(onDelete).toHaveBeenCalledWith("辽饷吃紧");
     cleanup();
   });
 });

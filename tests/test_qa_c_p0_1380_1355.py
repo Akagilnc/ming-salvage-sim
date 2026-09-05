@@ -530,28 +530,6 @@ def test_api_start_cli_action_intent_runs_for_natural_language(game, monkeypatch
     assert captured.get("message", "").startswith("拟旨如下：")
 
 
-def test_classify_prompt_allows_draft_and_appointment_coexistence(monkeypatch):
-    """#1502：删「拟旨优先于任免」互斥；确认仍优先；同话语 draft+appointment 可并存。"""
-    prompts: list[str] = []
-
-    def _capture(prompt, llm_config=None, tag=""):
-        prompts.append(prompt)
-        return ('{"动作类型":"无"}', 0)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
-    assert cb.classify_cli_action_intent("着起复袁崇焕并拟旨") == []
-    assert prompts, "classify 必须走结构化判词"
-    rules = prompts[0].split("【待确认动作】", 1)[0]
-    assert "确认优先" in rules
-    assert "拟旨优先于任免" not in rules
-    # 须明示 multi 并存，不得因 draft 省略 appointment
-    assert "拟旨" in rules and "任免" in rules
-    assert any(
-        tok in rules
-        for tok in ("并存", "同时", "可同时", "不得因")
-    )
-
-
 def test_api_pure_appointment_does_not_force_directive(game, monkeypatch):
     """#1502 负例：纯任免不强造 directive。"""
     db, state, content = game

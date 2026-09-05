@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Loader2, LogOut, Power, RotateCcw, Save, Settings, Trash2, Upload, X } from "lucide-react";
+import { Check, Loader2, LogOut, Power, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import { ApiRequestError, api } from "../api";
 import { cliRunnerOptions } from "../cliRunners";
 import { resolveReasoningSupported } from "../reasoningSupport";
@@ -16,7 +16,8 @@ export function GameMenuModal({
   onAfterLoad: () => void;
   onExitToMenu: () => void;
 }) {
-  const [tab, setTab] = React.useState<"save" | "load" | "llm" | "reset" | "exit_menu" | "shutdown">("save");
+  // #1732：局内「重开新局」页签与手打解锁删除；新局走主菜单「开始新游戏」（旧局归档）。
+  const [tab, setTab] = React.useState<"save" | "load" | "llm" | "exit_menu" | "shutdown">("save");
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -45,9 +46,6 @@ export function GameMenuModal({
             <button className={tab === "llm" ? "active" : ""} onClick={() => setTab("llm")}>
               <Settings size={14} /> LLM 配置
             </button>
-            <button className={tab === "reset" ? "active" : ""} onClick={() => setTab("reset")}>
-              <RotateCcw size={14} /> 重开新局
-            </button>
             <button className={tab === "exit_menu" ? "active" : ""} onClick={() => setTab("exit_menu")}>
               <LogOut size={14} /> 回到主菜单
             </button>
@@ -59,7 +57,6 @@ export function GameMenuModal({
             {tab === "save" ? <SaveTab /> : null}
             {tab === "load" ? <LoadTab onAfterLoad={onAfterLoad} /> : null}
             {tab === "llm" ? <LLMConfigTab /> : null}
-            {tab === "reset" ? <ResetTab onAfterReset={onAfterLoad} /> : null}
             {tab === "exit_menu" ? <ExitToMenuTab onExit={onExitToMenu} /> : null}
             {tab === "shutdown" ? <ShutdownTab /> : null}
           </div>
@@ -141,6 +138,8 @@ export function LoadTab({ onAfterLoad }: { onAfterLoad: () => void }) {
   const [saves, setSaves] = React.useState<SaveEntry[]>([]);
   const [busy, setBusy] = React.useState("");
   const [err, setErr] = React.useState("");
+  // #1732 B：加载确认就地展开，取消零请求。
+  const [pendingLoad, setPendingLoad] = React.useState("");
   const refresh = React.useCallback(async () => {
     try {
       const data = await api<{ saves: SaveEntry[] }>("/api/saves");
@@ -153,11 +152,10 @@ export function LoadTab({ onAfterLoad }: { onAfterLoad: () => void }) {
     refresh();
   }, [refresh]);
 
-  const onLoad = async (n: string) => {
-    // #1702 B：恢复与同文件其它破坏性操作同形的确认门控（取消零请求）。
-    if (!window.confirm(`确定加载 ${n}.db？当前未保存进度会丢失。`)) return;
+  const executeLoad = async (n: string) => {
     setBusy(n);
     setErr("");
+    setPendingLoad("");
     try {
       await api(`/api/saves/${encodeURIComponent(n)}/load`, { method: "POST" });
       onAfterLoad();
@@ -170,55 +168,17 @@ export function LoadTab({ onAfterLoad }: { onAfterLoad: () => void }) {
   return (
     <section className="menu-section">
       <h3>加载存档</h3>
-      <p className="menu-hint">选一份覆盖回主 DB。加载后页面会自动重新载入。</p>
+      <p className="menu-hint">选一份覆盖回主 DB。加载后页面会自动重新载入。当前未保存进度会丢失。</p>
       {err ? <div className="menu-error">{err}</div> : null}
-      <SavesList saves={saves} onRefresh={refresh} action={onLoad} busy={busy} />
-    </section>
-  );
-}
-
-export function ResetTab({ onAfterReset }: { onAfterReset: () => void }) {
-  const [busy, setBusy] = React.useState(false);
-  const [err, setErr] = React.useState("");
-  const [confirmText, setConfirmText] = React.useState("");
-
-  const canReset = confirmText.trim() === "重开";
-
-  const onReset = async () => {
-    if (!canReset) return;
-    if (!window.confirm("确定重开新局？当前局所有数据将被永久清空（存档目录不动）。")) return;
-    setBusy(true);
-    setErr("");
-    try {
-      await api("/api/game/reset", { method: "POST" });
-      onAfterReset();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="menu-section">
-      <h3>重开新局</h3>
-      <p className="menu-hint">
-        清空主 DB（聊天记录、回合奏报、局势、ledger 全清），重置到开局。
-        <b>不可撤销</b>。要保留当前局，先到「保存存档」存一份。
-      </p>
-      <p className="menu-hint">输入「重开」二字以解锁按钮：</p>
-      <div className="menu-row">
-        <input
-          className="menu-input"
-          placeholder="输入：重开"
-          value={confirmText}
-          onChange={(e) => setConfirmText(e.target.value)}
-          disabled={busy}
-        />
-        <button className="menu-btn danger" onClick={onReset} disabled={!canReset || busy}>
-          {busy ? <Loader2 size={14} className="spin" /> : <RotateCcw size={14} />} 重开新局
-        </button>
-      </div>
-      {err ? <div className="menu-error">{err}</div> : null}
+      <SavesList
+        saves={saves}
+        onRefresh={refresh}
+        action={(n) => setPendingLoad(n)}
+        busy={busy}
+        pendingLoad={pendingLoad}
+        onConfirmLoad={executeLoad}
+        onCancelLoad={() => setPendingLoad("")}
+      />
     </section>
   );
 }
@@ -226,8 +186,8 @@ export function ResetTab({ onAfterReset }: { onAfterReset: () => void }) {
 export function ExitToMenuTab({ onExit }: { onExit: () => void | Promise<void> }) {
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
+  // #1732 B：面板即确认，一点直通，不叠原生框。
   const onClick = async () => {
-    if (!window.confirm("回到主菜单？当前对局会关闭（DB 仍保留，可从「继续上局」回到此处）。")) return;
     setBusy(true);
     setErr("");
     try {
@@ -243,6 +203,7 @@ export function ExitToMenuTab({ onExit }: { onExit: () => void | Promise<void> }
       <p className="menu-hint">
         关闭当前游戏会话，回到主菜单。数据库与存档不变；可从主菜单「继续上局」或「加载存档」回到游戏。
       </p>
+      <div className="inline-confirm-note">回到主菜单？当前对局会关闭（DB 仍保留，可从「继续上局」回到此处）。</div>
       <div className="menu-row">
         <button className="menu-btn primary" onClick={onClick} disabled={busy}>
           {busy ? <Loader2 size={14} className="spin" /> : <LogOut size={14} />} 回到主菜单
@@ -256,8 +217,8 @@ export function ExitToMenuTab({ onExit }: { onExit: () => void | Promise<void> }
 export function ShutdownTab() {
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
+  // #1732 B：面板即确认，一点直通。
   const onClick = async () => {
-    if (!window.confirm("退出整个游戏？前后端进程都会关闭，未保存的进度会丢失。")) return;
     setBusy(true);
     setErr("");
     try {
@@ -277,6 +238,7 @@ export function ShutdownTab() {
       <p className="menu-hint">
         终止服务进程并尝试关闭浏览器页面。<b>未保存的进度会丢失</b>。要保留当前局，先到「保存存档」。
       </p>
+      <div className="inline-confirm-note danger">退出整个游戏？前后端进程都会关闭，未保存的进度会丢失。</div>
       <div className="menu-row">
         <button className="menu-btn danger" onClick={onClick} disabled={busy}>
           {busy ? <Loader2 size={14} className="spin" /> : <Power size={14} />} 退出游戏
@@ -292,44 +254,74 @@ export function SavesList({
   onRefresh,
   action,
   busy,
+  pendingLoad,
+  onConfirmLoad,
+  onCancelLoad,
 }: {
   saves: SaveEntry[];
   onRefresh: () => void;
   action?: (name: string) => void;
   busy?: string;
+  pendingLoad?: string;
+  onConfirmLoad?: (name: string) => void;
+  onCancelLoad?: () => void;
 }) {
   const [delErr, setDelErr] = React.useState("");
+  // #1732 B：删除行下贴身展开。
+  const [pendingDelete, setPendingDelete] = React.useState("");
   const onDelete = async (n: string) => {
-    if (!window.confirm(`删除 ${n}.db？`)) return;
     try {
       await api(`/api/saves/${encodeURIComponent(n)}`, { method: "DELETE" });
+      setPendingDelete("");
       onRefresh();
     } catch (e) {
       setDelErr(e instanceof Error ? e.message : String(e));
     }
   };
-  if (!saves.length) return <div className="menu-empty">尚无存档。</div>;
+  if (!saves?.length) return <div className="menu-empty">尚无存档。</div>;
   return (
     <ul className="saves-list">
       {delErr ? <div className="menu-error">{delErr}</div> : null}
       {saves.map((s) => (
-        <li key={s.name} className="saves-row">
-          <div className="saves-name">
-            <b>{s.name}</b>
-            <small>
-              {new Date(s.mtime * 1000).toLocaleString()} · {(s.size / 1024).toFixed(1)} KB
-            </small>
-          </div>
-          <div className="saves-actions">
-            {action ? (
-              <button className="menu-btn primary" disabled={busy === s.name} onClick={() => action(s.name)}>
-                {busy === s.name ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} 加载
+        <li key={s.name} className="saves-row-wrap">
+          <div className="saves-row">
+            <div className="saves-name">
+              <b>{s.name}</b>
+              <small>
+                {new Date(s.mtime * 1000).toLocaleString()} · {(s.size / 1024).toFixed(1)} KB
+              </small>
+            </div>
+            <div className="saves-actions">
+              {action ? (
+                <button className="menu-btn primary" disabled={busy === s.name} onClick={() => action(s.name)}>
+                  {busy === s.name ? <Loader2 size={14} className="spin" /> : <Upload size={14} />} 加载
+                </button>
+              ) : null}
+              <button className="menu-btn danger" onClick={() => setPendingDelete(s.name)}>
+                <Trash2 size={14} /> 删
               </button>
-            ) : null}
-            <button className="menu-btn danger" onClick={() => onDelete(s.name)}>
-              <Trash2 size={14} /> 删
-            </button>
+            </div>
           </div>
+          {pendingLoad === s.name ? (
+            <div className="inline-row-confirm" role="group" aria-label={`确认加载 ${s.name}`}>
+              <span>确定加载 {s.name}.db？当前未保存进度会丢失。</span>
+              <div className="inline-row-confirm-actions">
+                <button type="button" className="menu-btn" onClick={onCancelLoad}>取消</button>
+                <button type="button" className="menu-btn primary" disabled={busy === s.name} onClick={() => onConfirmLoad?.(s.name)}>
+                  {busy === s.name ? <Loader2 size={14} className="spin" /> : null} 加载
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {pendingDelete === s.name ? (
+            <div className="inline-row-confirm danger" role="group" aria-label={`确认删除 ${s.name}`}>
+              <span>删除 {s.name}.db？</span>
+              <div className="inline-row-confirm-actions">
+                <button type="button" className="menu-btn" onClick={() => setPendingDelete("")}>取消</button>
+                <button type="button" className="menu-btn danger" onClick={() => onDelete(s.name)}>删除</button>
+              </div>
+            </div>
+          ) : null}
         </li>
       ))}
     </ul>
