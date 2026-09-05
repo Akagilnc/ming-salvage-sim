@@ -20,6 +20,7 @@ issue 盘面事实，不新建 issue。event_id 绑定走 bind_decisions_to_cand
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from dataclasses import dataclass
@@ -1107,6 +1108,79 @@ def _missing_field_heal_feedback(
     return "\n".join(lines)
 
 
+def _find_healed_option_for_failure(
+    healed: Dict[str, Any],
+    failure: RescriptOptionMissingFailure,
+) -> Optional[dict]:
+    """从补交产出中定位对应 option：先同坐标，再同 item 按 label，再全局 label。"""
+    healed_items = healed.get("items")
+    if not isinstance(healed_items, list):
+        return None
+    want_label = ""
+    if isinstance(failure.raw_option, dict):
+        want_label = str(failure.raw_option.get("label") or "")
+
+    def _from_opts(opts: object, *, prefer_index: bool) -> Optional[dict]:
+        if not isinstance(opts, list):
+            return None
+        # 同坐标：接受完整重交（label 可变）；错位时再按首抽 label 找回
+        if prefer_index and failure.option_index < len(opts):
+            cand = opts[failure.option_index]
+            if isinstance(cand, dict):
+                return cand
+        if want_label:
+            for cand in opts:
+                if isinstance(cand, dict) and str(cand.get("label") or "") == want_label:
+                    return cand
+        return None
+
+    if failure.item_index < len(healed_items) and isinstance(
+        healed_items[failure.item_index], dict
+    ):
+        hit = _from_opts(
+            healed_items[failure.item_index].get("options"), prefer_index=True,
+        )
+        if hit is not None:
+            return hit
+    if want_label:
+        for item in healed_items:
+            if not isinstance(item, dict):
+                continue
+            hit = _from_opts(item.get("options"), prefer_index=False)
+            if hit is not None:
+                return hit
+    return None
+
+
+def _merge_healed_missing_options(
+    baseline: Dict[str, Any],
+    healed: Dict[str, Any],
+    failures: Sequence[RescriptOptionMissingFailure],
+) -> Dict[str, Any]:
+    """#1746：只采纳缺字段 option 的补交结果；未缺字段的兄弟 option 冻结为首抽原文。
+
+    接受 LLM 对缺字段 option 的完整重交；禁止补交轮改写正常 sibling。
+    """
+    result = copy.deepcopy(baseline)
+    base_items = result.get("items")
+    if not isinstance(base_items, list):
+        return copy.deepcopy(healed) if isinstance(healed, dict) else {"items": []}
+    for failure in failures:
+        if failure.item_index >= len(base_items):
+            continue
+        base_item = base_items[failure.item_index]
+        if not isinstance(base_item, dict):
+            continue
+        base_opts = base_item.get("options")
+        if not isinstance(base_opts, list) or failure.option_index >= len(base_opts):
+            continue
+        replacement = _find_healed_option_for_failure(healed, failure)
+        if replacement is None:
+            continue
+        base_opts[failure.option_index] = copy.deepcopy(replacement)
+    return result
+
+
 def _drop_options_by_failures(
     data: Dict[str, Any],
     failures: Sequence[RescriptOptionMissingFailure],
@@ -1233,6 +1307,8 @@ def generate_rescript_draft(
     heal_attempt = 0
     pending_missing: Optional[List[RescriptOptionMissingFailure]] = None
     original_raw: Optional[str] = None
+    # 首抽结构化底稿：补交只补缺字段 option，兄弟 option 冻结于此
+    working_data: Optional[Dict[str, Any]] = None
     heal_trace: List[Dict[str, object]] = []
     # 有界循环骨架与组合重抽共用；补交/重抽分支分叉，不另造第三套 heal 机器。
     while True:
@@ -1262,13 +1338,39 @@ def generate_rescript_draft(
         if original_raw is None:
             original_raw = raw
         if tag == "rescript-draft-heal":
-            heal_trace.append({
+            entry = {
                 "attempt": heal_attempt,
                 "raw_summary": raw[:800],
                 "failures": _failure_log_rows(pending_missing or ()),
-            })
+            }
+            heal_trace.append(entry)
+            # 票面：tlog 记 option 身份 + 缺字段 + 各次补交产出摘要
+            tlog(
+                f"[rescript] option 缺字段补交产出 {heal_attempt}/{heal_retries} "
+                f"raw_summary={json.dumps(entry['raw_summary'], ensure_ascii=False)} "
+                f"failures={json.dumps(entry['failures'], ensure_ascii=False)}"
+            )
         try:
-            drafts = _parse_and_validate(raw, isolate_option_missing=True)
+            if tag == "rescript-draft-heal" and working_data is not None and pending_missing:
+                # 只把缺字段 option 的补交结果合并进首抽底稿；兄弟项不改写
+                healed_data = _parse_rescript_json_strict(raw)
+                if not isinstance(healed_data, dict):
+                    raise ValueError('票拟补交产出顶层非法：须为 {"items":[...]}')
+                merged = _merge_healed_missing_options(
+                    working_data, healed_data, pending_missing,
+                )
+                working_data = merged
+                drafts = validate_rescript_draft_items(
+                    merged,
+                    board_ids,
+                    isolate_option_missing=True,
+                )
+                drafts = _ground(drafts)
+            else:
+                data = _parse_rescript_json_strict(raw)
+                if isinstance(data, dict) and working_data is None:
+                    working_data = copy.deepcopy(data)
+                drafts = _parse_and_validate(raw, isolate_option_missing=True)
         except StructuredDecreeCombinationError as exc:
             # typed 组合：有界重抽；耗尽才 F2.5（StructuredDecree 是 ValueError 子类，
             # 必须先于下方宽捕，否则会跳过纠错）。与缺字段补交分流。
@@ -1294,7 +1396,7 @@ def generate_rescript_draft(
             tlog(
                 f"[rescript] option 缺字段补交耗尽，剔除："
                 f"{json.dumps(rows, ensure_ascii=False)} "
-                f"heal_trace={len(heal_trace)}"
+                f"heal_trace={json.dumps(heal_trace, ensure_ascii=False)}"
             )
             _write_degraded_note(
                 turn,
@@ -1311,14 +1413,18 @@ def generate_rescript_draft(
                     ],
                 },
             )
-            try:
-                data = _parse_rescript_json_strict(raw)
-            except (LLMContractError, ValueError) as parse_exc:
-                _degrade(parse_exc)
-                return None
-            if not isinstance(data, dict):
-                _degrade(exc)
-                return None
+            # 剔除底稿用 working_data（已累积中间补交成功项），非最后一次可能回退的 raw
+            data = working_data if isinstance(working_data, dict) else None
+            if data is None:
+                try:
+                    parsed = _parse_rescript_json_strict(raw)
+                except (LLMContractError, ValueError) as parse_exc:
+                    _degrade(parse_exc)
+                    return None
+                if not isinstance(parsed, dict):
+                    _degrade(exc)
+                    return None
+                data = parsed
             dropped = _drop_options_by_failures(data, pending_missing)
             try:
                 # F2.2 局部修订：剔后剩 1 仍呈；0 option 条目已在 drop 时去掉

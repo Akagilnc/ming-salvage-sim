@@ -285,6 +285,56 @@ def test_multi_urgent_multi_bad_options_isolated(monkeypatch, tmp_path):
     assert all(o.get("grant_action") != "协饷" for o in g2)
 
 
+def test_heal_freezes_sibling_options_from_first_draw(monkeypatch, tmp_path):
+    """补交只采纳缺字段 option；兄弟 option 冻结首抽原文（LLM 改写无效）。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _army_pay(label="pay")
+    bad.pop("purpose", None)
+    sibling = _hold(label="stable", hint="keep")
+    first = _items_json([{
+        "title": "u", "context": "c",
+        "options": [bad, sibling],
+    }])
+    # 补交轮故意改写兄弟 label/hint
+    healed_bad = dict(bad, purpose="补饷")
+    changed_sibling = _hold(label="CHANGED", hint="CHANGED")
+    healed = _items_json([{
+        "title": "u", "context": "c",
+        "options": [healed_bad, changed_sibling],
+    }])
+    n = {"i": 0}
+
+    def _llm(*_a, **_k):
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=21)
+    assert drafts is not None
+    opts = drafts[0]["options"]
+    assert len(opts) == 2
+    grant = next(o for o in opts if o.get("grant_action") == "协饷")
+    assert grant["purpose"] == "补饷" and grant["label"] == "pay"
+    sib = next(o for o in opts if o.get("action_type") == "assignment")
+    assert sib["label"] == "stable"
+    assert sib["hint"] == "keep"
+
+
+def test_heal_tlog_includes_raw_summary_each_attempt(monkeypatch, tmp_path):
+    """后台响亮：每次补交 tlog 含 raw_summary + option 身份/缺字段。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    items = _one_urgent_missing_purpose(good_n=1)
+    raw = _items_json(items)
+    logs: list[str] = []
+    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
+    monkeypatch.setattr(rescript_mod, "run_agent_text", lambda *_a, **_k: raw)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=22)
+    assert drafts is not None  # 耗尽剔除后仍有 sibling
+    produce_logs = [line for line in logs if "补交产出" in line and "raw_summary" in line]
+    assert len(produce_logs) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    assert any("purpose" in line and "缺字段" in line for line in logs)
+
+
 def test_heal_does_not_mark_approved(monkeypatch, tmp_path):
     """补齐进入头版 ≠ 已准旨：生成结果仍是候选 option，无已准/choice 痕迹。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
