@@ -911,3 +911,84 @@ def test_issue_stream_emits_frozen_settlement_stages_in_order(tracer_client):
     assert terminal in ("done", "decisions"), (
         f"#1725 unexpected terminal {terminal!r}; sse={resp.text!r}"
     )
+
+
+# Independent frozen ending-stage name (ticket #1740). Must not import
+# decree.SETTLEMENT_ENDING_STAGE_LABEL as the expected value — tautology.
+_FROZEN_SETTLEMENT_ENDING_STAGE_LABEL = "国史编纂结局总评"
+
+
+def test_settlement_ending_stage_label_authority_pins_frozen_name():
+    """#1740：结局第七段权威常量钉名（六名表形状不动）。"""
+    from ming_sim.decree import SETTLEMENT_ENDING_STAGE_LABEL, SETTLEMENT_STAGE_LABELS
+
+    assert SETTLEMENT_ENDING_STAGE_LABEL == _FROZEN_SETTLEMENT_ENDING_STAGE_LABEL
+    assert SETTLEMENT_STAGE_LABELS == _FROZEN_SETTLEMENT_STAGE_LABELS
+    assert _FROZEN_SETTLEMENT_ENDING_STAGE_LABEL not in SETTLEMENT_STAGE_LABELS
+
+
+def test_issue_stream_ending_round_emits_seventh_stage(tracer_client, monkeypatch):
+    """#1740：结局回合真入口；第七段 stage 名受权威约束，接在冻结六阶之后。
+
+    同一 tracer 回路（LLM stub、stage 链不 stub）；以 TIMEOUT_TURN 触发 ended，
+    不另建平行夹具。
+    """
+    from ming_sim.decree import TIMEOUT_TURN
+
+    # 结局总评 LLM 外层接缝——stage emit 在调用前，stub 只挡真网。
+    monkeypatch.setattr(
+        decree_mod, "create_ending_summary_agent", lambda *a, **k: object(),
+    )
+    monkeypatch.setattr(
+        decree_mod, "run_agent_text",
+        lambda *a, **k: "国史总评 stub · #1740",
+    )
+
+    client = tracer_client
+    new = client.post("/api/menu/new_game")
+    _assert_not_bare_500(new, step="#1740 new_game")
+    assert new.status_code == 200, new.text
+
+    game = web_app.web_game
+    assert game is not None
+    game.state.turn = TIMEOUT_TURN
+    game.db.save_state(game.state)
+
+    directive = client.post(
+        "/api/directives",
+        json={"text": "着户部清核辽饷（#1740 ending stage）。", "notes": ""},
+    )
+    _assert_not_bare_500(directive, step="#1740 拟旨")
+    assert directive.status_code == 200, directive.text
+    dirs = (directive.json() or {}).get("directives") or []
+    assert dirs, "#1740: directive list empty after POST"
+
+    resp = client.post(
+        "/api/decree/issue/stream",
+        json={"expected_turn": int(game.state.turn)},
+    )
+    _assert_not_bare_500(resp, step="#1740 issue/stream")
+    assert resp.status_code == 200, f"#1740 issue/stream → {resp.status_code}: {resp.text}"
+    events = _parse_sse(resp.text)
+    assert events, f"#1740: empty SSE body={resp.text!r}"
+    stages = []
+    for ev in events:
+        if ev.get("event") != "stage":
+            continue
+        raw = ev.get("data") or "{}"
+        payload = json.loads(raw) if isinstance(raw, str) else raw
+        stages.append(payload.get("content") if isinstance(payload, dict) else payload)
+
+    expected = list(_FROZEN_SETTLEMENT_STAGE_LABELS) + [
+        _FROZEN_SETTLEMENT_ENDING_STAGE_LABEL,
+    ]
+    assert stages == expected, (
+        f"#1740 ending stage sequence mismatch: {stages!r}; sse={resp.text!r}"
+    )
+    assert bool(getattr(game.state, "ended", False)), (
+        f"#1740 expected ended after timeout settle; status={getattr(game.state, 'ending_status', None)!r}"
+    )
+    terminal = events[-1].get("event")
+    assert terminal in ("done", "decisions"), (
+        f"#1740 unexpected terminal {terminal!r}; sse={resp.text!r}"
+    )
