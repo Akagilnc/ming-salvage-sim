@@ -193,22 +193,35 @@ def test_new_game_write_path_and_continue_restore(tracer_client, monkeypatch):
     with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
         g0.db.conn.execute("SELECT 1")
 
-    # 真实 continue 恢复当前主库（typed campaign）
+    # 真实 exit → continue：退休 g1（含 agno close）后再续当前主库
+    agno_closed: list[int] = []
+    real_agno_close = g1.session.agno_db.close
+
+    def _track_agno_close() -> None:
+        agno_closed.append(1)
+        real_agno_close()
+
+    g1.session.agno_db.close = _track_agno_close  # type: ignore[method-assign]
+    n_ex = len(spawns)
+    assert client.post("/api/menu/exit_to_menu").status_code == 200
+    assert web_app.web_game is None
+    _wait_spawns(spawns, n_ex)
+    assert agno_closed == [1], "exit drain must close agno_db"
+    with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
+        g1.db.conn.execute("SELECT 1")
+
     cont = client.post("/api/menu/continue")
     _assert_not_bare_500(cont, step="continue")
     assert cont.status_code == 200
-    assert "event: done" in cont.text or "event:error" not in cont.text.replace(" ", "")
-    # 消费 SSE done
     events = _parse_sse(cont.text)
     terminal = events[-1] if events else {}
     assert terminal.get("event") == "done", cont.text
     done = json.loads(terminal["data"])
     assert isinstance(done.get("state"), dict)
     g2 = web_app.web_game
-    assert g2 is not None
+    assert g2 is not None and g2 is not g1
     assert _campaign(g2) == c1
     assert os.path.abspath(g2.db_path) == os.path.abspath(p1)
-    # continue 后写仍落同一 campaign
     _directive(client, "着再拨饷银（续）。")
     _wait_pending_writes(g2)
     assert _counts(p1)["campaign_id"] == c1

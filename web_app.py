@@ -4764,6 +4764,7 @@ async def api_menu_continue() -> StreamingResponse:
         try:
             # 首条阶段在抢锁前入队（#1195 ≤5s 首见）；重活构造在锁内，与 new_game 互斥。
             on_stage("准备载入上次进度...")
+            old_runtime = None
             with _menu_lifecycle_lock:
                 if token != _menu_generation:
                     ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
@@ -4778,7 +4779,11 @@ async def api_menu_continue() -> StreamingResponse:
                         logger.exception("discard superseded continue session failed")
                     ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
                     return
+                old_runtime = web_game
                 web_game = game
+            # #1749：发布后退休被替换的 runtime（若有），禁泄漏旧连接。
+            if old_runtime is not None and old_runtime is not game:
+                _spawn_drain_close(old_runtime, archive_db=False)
             ev_queue.put(("__done__", {"state": game.state_payload()}))
         except LLMUnavailable as exc:
             ev_queue.put(("__error__", _llm_error_detail(exc)))
@@ -4809,26 +4814,66 @@ async def api_menu_continue() -> StreamingResponse:
 async def api_menu_load_save(name: str) -> Dict[str, Any]:
     """从存档启动：先启动空 WebGame（fresh=False）→ 调 load_save 热替换主 DB。
 
-    #1749：世代 bump、候选构造/热替换与发布同持 _menu_lifecycle_lock；
-    旧 runtime 在发布后经 _spawn_drain_close 排空关闭（不归档——存档加载非新局）。
+    #1749：bump 后先排空旧 runtime / 等待 exit detach（同路径不得双开），再构造候选；
+    候选失败必须 close 候选；成功才发布。存档加载不归档主库。
     """
     global web_game, _menu_generation
     with _menu_lifecycle_lock:
         _menu_generation += 1
         old_game = web_game
         web_game = None
+        with _menu_exit_detach_lock:
+            exit_completion = _menu_exit_detach_completion
+
+    loop = asyncio.get_running_loop()
+    # 旧局仍在或 exit detach 未完成：必须关尽后再碰主库路径。
+    if old_game is not None:
+        drain_done = threading.Event()
+        drain_ok = {"v": False}
+
+        def _drain_old() -> None:
+            try:
+                _drain_and_close_session(old_game, archive_db=False)
+                drain_ok["v"] = True
+            except Exception:
+                logger.exception("load_save drain old runtime failed")
+                drain_ok["v"] = False
+            finally:
+                drain_done.set()
+
+        threading.Thread(target=_drain_old, daemon=True).start()
+        await loop.run_in_executor(None, drain_done.wait)
+        if not drain_ok["v"]:
+            raise HTTPException(status_code=409, detail="无法关闭当前局，请稍后重试。")
+    elif exit_completion is not None:
+        await loop.run_in_executor(None, exit_completion.done.wait)
+        if not exit_completion.close_ok:
+            raise HTTPException(
+                status_code=409,
+                detail="上一局尚未关闭完成，请稍后重试。",
+            )
+
+    with _menu_lifecycle_lock:
+        candidate = None
         try:
             candidate = WebGame(fresh=False)
             candidate.load_save(name)
+            web_game = candidate
+            candidate = None
         except LLMUnavailable as exc:
-            web_game = old_game
+            if candidate is not None:
+                try:
+                    _drain_and_close_session(candidate, archive_db=False)
+                except Exception:
+                    logger.exception("load_save close failed candidate after LLMUnavailable")
             raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
         except Exception:
-            web_game = old_game
+            if candidate is not None:
+                try:
+                    _drain_and_close_session(candidate, archive_db=False)
+                except Exception:
+                    logger.exception("load_save close failed candidate")
             raise
-        web_game = candidate
-    if old_game is not None and old_game is not web_game:
-        _spawn_drain_close(old_game, archive_db=False)
     _spawn_startup_catch_up_nonfatal(web_game)
     return {"state": web_game.state_payload()}
 
