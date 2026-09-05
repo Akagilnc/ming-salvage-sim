@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 
 import pytest
 
@@ -876,10 +877,16 @@ def test_validate_all_unmapped_zero_rows_before_insert(env):
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
     assert db.list_dossiers_for_directive(did) == []
+    # 调用方提交边界：flush 不自提交；commit 后独立连接验落库。
     collector.flush_to_db(db)
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE section='executor_routing'",
-    ).fetchone()[0] == 1
+    db.conn.commit()
+    other = sqlite3.connect(db.path)
+    try:
+        assert other.execute(
+            "SELECT COUNT(*) FROM rejection_reports WHERE section='executor_routing'",
+        ).fetchone()[0] == 1
+    finally:
+        other.close()
 
 
 def test_path2_confirm_directive_unmapped_rejects_zero_rows(env):

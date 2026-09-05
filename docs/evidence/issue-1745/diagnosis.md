@@ -17,11 +17,11 @@
 
 | 材料 | 指针 |
 | --- | --- |
-| 派单方 runner 举证包（冻结附件） | `/Users/akagilnc/.ak-roles/books/Ming_LLM/runs/01a07260-880a-7850-b545-ed6bfa384c2f@fixer/attachments/01-1745-runner-evidence-A.md` |
-| 原件目录（本机） | `~/WorkSpace/Ming_LLM/data/error_packs/turn2_attempt2/` |
-| 原件副本 | `/private/tmp/claude-501/-Users-akagilnc-WorkSpace-Ming-LLM/a59eafbe-ffb1-4d1c-9cf5-c001af65c0ac/scratchpad/qa-8010-local/turn2_attempt2/` |
-| `save_backup.db` | 上列目录内；失败时刻存档备份（2,187,264 B） |
-| `resolve_context.json` | 上列目录内；含 `simulator_payload` / `narrative` / `extracted` / `decree_text` |
+| 派单方 runner 举证包（冻结附件） | runId `01a07260-880a-7850-b545-ed6bfa384c2f@fixer` · 角色 修内司 · 附件 `01-1745-runner-evidence-A.md` |
+| 原件目录 | 仓内相对 `data/error_packs/turn2_attempt2/`（原件包名 `turn2_attempt2`） |
+| 原件工作副本 | 同包名临时工作副本（与上列原件同内容；不保留机器临时目录拓扑） |
+| `save_backup.db` | 上列原件目录内；失败时刻存档备份（2,187,264 B） |
+| `resolve_context.json` | 上列原件目录内；含 `simulator_payload` / `narrative` / `extracted` / `decree_text` |
 
 只读 SQL（`save_backup.db`，game_state turn=2 / 1627-11）核得：
 
@@ -50,7 +50,7 @@
 - `timestamp=2026-09-05T07:21:14.468605+00:00`
 - `ready_payload_digest=ec384e8cdac5594e32b7553ce8b51e06b61e939108598a4104547604482e49e6`
 - `exception_type=ValueError` · `exception_message=无在途拨帑却收到对账提案`
-- `db_path=/Users/akagilnc/WorkSpace/Ming_LLM/data/ming_sim_1788591381068174000.db`（原路径已被游戏归档/覆盖；**可恢复件**见 §1.0 `save_backup.db`）
+- `db_path` 原件名 `ming_sim_1788591381068174000.db`（原运行时路径已被游戏归档/覆盖；**可恢复件**见 §1.0 `save_backup.db`）
 - `version=0.53.0.0`
 
 ### 1.2 delta（结算输出 / 提案原件）
@@ -70,7 +70,7 @@
 
 ### 1.3 traceback（旧抛点）
 
-```
+```text
 decree.settle_with_delta
  → _settle_after_extract_body
  → db.record_monthly_grant_reconciliations
