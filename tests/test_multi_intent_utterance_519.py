@@ -452,66 +452,12 @@ def test_mixed_intent_with_committed_draft_stages_independently(game, monkeypatc
     assert _payload(office[0]).get("name") == "洪承畴"
 
 
-def test_mixed_intent_inferred_pending_target_still_updates(game, monkeypatch):
-    """P2：恰一条 pending 时，跨 kind 多旨隐式改草仍更新那条；sibling 独立落条。"""
-    db, state, content = game
-    minister = _active_ch(db, content)
-    sess = _bind_apply(db, state, content)
-
-    old_text = "旧草：着户部清查三边粮饷。"
-    pending_id = db.stage_directive_candidate(
-        state.turn, minister.name,
-        payload={
-            "dossier_action_type": "policy",
-            "target_kind": "issue",
-            "target_id": "three-borders-grain",
-            "text": old_text,
-            "actor": minister.name,
-            "mode": "ordinary",
-        },
-    )
-
-    revised_text = "修订：着户部及兵部联合清查三边粮饷军械，限两月完报。"
-    _silence_serial(monkeypatch)
-    _bind_draft_extract(
-        monkeypatch,
-        draft_text=revised_text,
-        target_id="three-borders-grain",
-    )
-
-    before_ids = {int(r["id"]) for r in _pending_rows(db, state.turn)}
-    sess.apply_cli_conversation_actions(
-        minister,
-        "那道粮饷旨再改一下，并任命洪承畴为陕西巡抚。",
-        f"臣已将粮饷旨改作：{revised_text}；并请任洪承畴巡抚陕西，请陛下定夺准驳。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=_draft_plus_appointment_candidates(),
-    )
-
-    rows = _pending_rows(db, state.turn, minister_name=minister.name)
-    # 旧 pending 同一性：仍是同一行，正文已更新
-    updated = next(r for r in rows if int(r["id"]) == pending_id)
-    assert revised_text in str(_payload(updated).get("text") or "")
-    assert old_text not in str(_payload(updated).get("text") or "")
-
-    # 不得另插一条 draft；sibling 任免独立
-    new_rows = [r for r in rows if int(r["id"]) not in before_ids]
-    new_drafts = [r for r in new_rows if r["kind"] == "directive"]
-    new_office = [r for r in new_rows if r["kind"] == "office"]
-    assert not new_drafts, f"推断 pending 应原地更新，不得再插 draft：{new_drafts}"
-    assert len(new_office) == 1
-    assert _payload(new_office[0]).get("name") == "洪承畴"
-
-
-# ── #1565：批 baseline id 最终归并为 B（写回 B / 未写 id 键）──────────
-
-
 @pytest.mark.parametrize("op", ["rewrite_B", "no_write_id"], ids=["rewrite_B", "no_write_id"])
-def test_batch_baseline_id_final_b_rewrite_and_no_write(game, monkeypatch, op):
-    """#1565 d.1.3：先项成功 N≠B，后项无论写回 B 或未写 id 键，最终 pending_action_id==B。
+def test_mixed_intent_inferred_pending_target_still_updates(game, monkeypatch, op):
+    """P2 / #1565 d.1.3：恰一条 pending 时，后项无论写回 B 或未写 id 键，最终 id==B。
 
-    rewrite_B：apply_cli 入口，appointment→draft 改草写回 B。
-    no_write_id：MaterializeCtx 批入口，baseline id=B + F0；prohibit→appointment 早退未写。
+    rewrite_B：apply_cli；appointment→draft 改草写回 B；保留推断 pending 原地更新断言。
+    no_write_id：MaterializeCtx；baseline B+F0；prohibit→appointment 早退；fails==F0。
     """
     from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
     from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
@@ -542,7 +488,7 @@ def test_batch_baseline_id_final_b_rewrite_and_no_write(game, monkeypatch, op):
             draft_text=revised_text,
             target_id="three-borders-grain",
         )
-        # 顺序固定：appointment 在前、draft 在后（先 N 后写回 B）
+        # appointment 在前、draft 在后 → 先 N 后写回 B（不用 draft-先序 helper）
         candidates = candidates_from_classifier_payload([
             {
                 "kind": "appointment",
@@ -567,14 +513,14 @@ def test_batch_baseline_id_final_b_rewrite_and_no_write(game, monkeypatch, op):
         new_rows = [r for r in rows if int(r["id"]) not in before_ids]
         new_drafts = [r for r in new_rows if r["kind"] == "directive"]
         new_office = [r for r in new_rows if r["kind"] == "office"]
-        assert not new_drafts
+        assert not new_drafts, f"推断 pending 应原地更新，不得再插 draft：{new_drafts}"
         assert len(new_office) == 1
         N = int(new_office[0]["id"])
         assert N != B
+        assert _payload(new_office[0]).get("name") == "洪承畴"
         return
 
-    # no_write_id：MaterializeCtx；baseline id=B + 非空 F0；prohibit 写 N，appointment 早退
-    # 最短暴露场景（与 651 _bound_case+_exposed_todo 同形）
+    # no_write_id：最短暴露场景（651 _bound_case+_exposed_todo 同形）
     army = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
     did = db.create_decree_dossier(
         state, action_type="special_decree", decree_text="整饬边军",
@@ -641,7 +587,6 @@ def test_batch_baseline_id_final_b_rewrite_and_no_write(game, monkeypatch, op):
         "SELECT id FROM pending_actions WHERE id=?", (B,),
     ).fetchone()
     assert row_B is not None
-    # N：prohibit 新行
     new_rows = [
         r for r in _pending_rows(db, state.turn)
         if int(r["id"]) not in before_ids
