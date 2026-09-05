@@ -856,8 +856,11 @@ def test_validate_all_unmapped_zero_rows_before_insert(env):
         "transaction_category": "修仙",  # 未映射
         "assignee_id": "",  # 显式未点将，走 duty 表
     }
+    from ming_sim.applier import RejectionCollector
+
     did = _insert_directive(db, state, text="清丈天下田亩", payload=payload)
     before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    collector = RejectionCollector()
     ids = db.create_decree_dossiers(
         state,
         action_type="policy",
@@ -867,11 +870,16 @@ def test_validate_all_unmapped_zero_rows_before_insert(env):
         directive_id=did,
         payload=payload,
         commit=True,
+        rejection_collector=collector,
     )
     assert ids == []
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
     assert db.list_dossiers_for_directive(did) == []
+    collector.flush_to_db(db)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='executor_routing'",
+    ).fetchone()[0] == 1
 
 
 def test_path2_confirm_directive_unmapped_rejects_zero_rows(env):
