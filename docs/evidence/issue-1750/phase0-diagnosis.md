@@ -163,7 +163,7 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 | 恢复 (a2) | 批红后失败 → 只重抽、不重跑 simulator、月+1、包保留 | **绿** | 与 (a1) 分案 |
 | 恢复 (b) D3 | ready 重放不重跑 LLM | 既有 1620 绿 | 本片不重复 |
 | 0148 终失败后 | api_state 月初快照 | **绿**（并入终失败案） | settlement_display + metrics |
-| 0148 自愈窗 | 再 attempt 持有中仍月初快照 | 红（随自愈） | 双 Event：fail gate + retry gate；禁 sleep |}
+| 0148 自愈窗 | 再 attempt 持有中仍月初快照 | 红（随自愈） | 双 Event：fail gate + retry gate；禁 sleep |
 
 ---
 
