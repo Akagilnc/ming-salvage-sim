@@ -1,0 +1,32 @@
+S2 evidence index for #1753 r4 fixer
+HEAD=2dec6440a096c788b697abbd6b928b0a61c85ae7
+BRANCH=fix/1753-w
+DATE_UTC=2026-09-05T16:28:05Z
+RUN=01a0725c-8100-7e8f-85af-c8ab14d89762@fixer
+PRIOR_RUN=01a0724c-9b70-782d-bf64-1a7aefff2243@fixer
+
+1) S2.1 same-request assert — already fixed at 2dec6440a (not re-touched this round)
+   tests/test_promulgation_verdict_heal_1753.py
+
+2) S2.2 session resume openable evidence
+   file: s2-session-resume-evidence.txt
+   raw messages: s2-raw-messages/all-invokes.json + invoke-0..3.json
+   prior command citation: session message 77c3049f (inline python, NOT s2_session_resume_run.py)
+   prior result citation: session message e8718470
+   prior citations dump: s2-prior-session-citations.json
+   this-run: re-executed at HEAD 2dec6440a; production tree identical to e91ce7304
+   claim_scope: fixed Model Agno history assembly only; NOT live LLM backend
+   observation: history_msgs on heal invokes 2→4→6; HTTP 200 turn 1→2
+
+3) S2.3 mutation red/green
+   file: s2-mutation-red-green.txt
+   M1 immediate re-raise no-heal: RED EXIT=1 / RESTORE GREEN EXIT=0
+   M2 history off with SAME oracle [2,4,6]: RED hist=[0,0,0] / GREEN hist=[2,4,6]
+   M3 HTTP wrong-feed: OLD assert FALSE_GREEN EXIT=0; NEW assert RED EXIT=1; restore GREEN EXIT=0
+   rejected prior: M1 RETRIES=0, M1b range(1) — cited but not relied on
+   aux helper: s2-counterexample-mismatch.txt
+
+4) Probe cleanup: temp snapshot dirs removed via python shutil; no permanent history test family; production untouched
+
+Focused verify:
+  .venv/bin/python -m pytest tests/test_promulgation_verdict_heal_1753.py tests/test_promulgation_judge_561.py tests/test_no_edict_full_settlement_1274.py -q

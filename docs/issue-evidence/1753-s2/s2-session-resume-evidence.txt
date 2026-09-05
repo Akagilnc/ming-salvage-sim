@@ -1,0 +1,91 @@
+=== S2.2 SESSION RESUME EVIDENCE (r4 redo @ current HEAD) ===
+HEAD=2dec6440a096c788b697abbd6b928b0a61c85ae7
+BRANCH=fix/1753-w
+DATE_UTC=2026-09-05T16:22:49Z
+PYTHON=Python 3.13.14
+PWD=/Users/akagilnc/WorkSpace/Ming_LLM-1753
+FIXED_MODEL=yes (_FixedPromulgationModel / local Fixed subclass of agno.models.base.Model)
+LIVE_LLM_BACKEND=no (OPENAI_API_KEY stub; MING_SIM_LLM_BACKEND unset; no network model)
+CLAIM_SCOPE=proves Agno history assembly under fixed Model at HTTP seal entry; does NOT claim live model-backend resume
+ENTRY=POST /api/decree/issue via FastAPI TestClient + tracer_client outer stubs
+SOURCE_CORRESPONDENCE:
+  production_tree_HEAD=e082ca935469e192b376b71b78bb428ba5a12953
+  production_tree_e91ce7304=e082ca935469e192b376b71b78bb428ba5a12953
+  production_identical_to_prior_run_HEAD=yes
+  test_file_HEAD=d1f402146cfced627fe2c588d7a935aa3c3aa92b
+  test_file_e91ce7304=9cd101f10b582db3ca75d58a0f1eb7bc0e467694
+  test_file_changed_since_e91=yes (same-request assert only; production untouched)
+PRIOR_RUN_SESSION_POINTERS:
+  run=01a0724c-9b70-782d-bf64-1a7aefff2243@fixer
+  command_message_id=77c3049f (assistant toolCall bash; full inline python, NOT artifacts/s2_session_resume_run.py)
+  result_message_id=e8718470 (toolResult; HTTP 200; history_msgs 0→2→4→6)
+  note=prior artifact falsely labeled COMMAND as artifacts/s2_session_resume_run.py; that file never existed; real command was inline heredoc in message 77c3049f
+THIS_RUN_COMMAND=inline .venv/bin/python heredoc below (same shape as 77c3049f; dumps RAW messages to /Users/akagilnc/.ak-roles/books/Ming_LLM/runs/01a0725c-8100-7e8f-85af-c8ab14d89762@fixer/artifacts/s2-raw-messages)
+PRIOR_CITATIONS_FILE=s2-prior-session-citations.json (full command text of 77c3049f + result e8718470)
+RAW_MESSAGES_DIR=s2-raw-messages/ (openable full content, not role/len/marker booleans only)
+
+TEMP_DB_DIR=/Users/akagilnc/WorkSpace/Ming_LLM-1753/s2_resume_8qviszi_
+[01:22:51.305] [载入] 1/4 静态盘面 seed 0.0s
+[01:22:51.319] [载入] 2/4 官职同步 + agno 0.0s
+[01:22:51.323] [载入] 3/4 状态载入 0.0s
+[01:22:51.323] [载入] 关系 seed 导入：22/22 笔奠基边事件，1 份初始摘要
+[01:22:51.326] [载入] 4/4 开局修正 0.0s
+[01:22:51.331] [接档] begin_turn 读档+历史 tick+人物同步+奏报 0.0s
+[01:22:51.331] [接档] begin_turn 大臣 registry 重建 0.0s
+[01:22:51.361] 结算 1/4 固定月度财政 tick
+[01:22:51.370] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[01:22:51.370] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+[01:22:51.374] [AUTO-TRIGGER] 本回合程序硬立项 1 条：['朝鲜密使来朝']
+[01:22:51.377] [promulgation-judge] 开始非流式推演（等待完整响应）
+[01:22:51.418] [promulgation-judge] 完成，114 字，用时 0.0s
+[01:22:51.418] [promulgation-judge] 开始非流式推演（等待完整响应）
+[01:22:51.421] [promulgation-judge] 完成，114 字，用时 0.0s
+[01:22:51.421] [promulgation-judge] 开始非流式推演（等待完整响应）
+[01:22:51.423] [promulgation-judge] 完成，114 字，用时 0.0s
+[01:22:51.423] [promulgation-judge] 开始非流式推演（等待完整响应）
+[01:22:51.427] [promulgation-judge] 完成，152 字，用时 0.0s
+[01:22:51.430] [memory/chapters] inject=0 upto_turn=1
+[01:22:51.430] [secret_order] 注入推演 在办=0 待核议=0
+[01:22:51.430] 结算 2/4 推演 agent（月末邸报）
+[01:22:51.451] 结算 3/4 结算 agent（抽 JSON）
+[01:22:51.479] 结算 3/4 抽取（模块 module）
+[01:22:51.483] 结算 4/4 落库 + inertia/ongoing
+[01:22:51.509] [接档] begin_turn 读档+历史 tick+人物同步+奏报 0.0s
+[01:22:51.509] [接档] begin_turn 大臣 registry 重建 0.0s
+HTTP_STATUS=200
+TURN_BEFORE=1 TURN_AFTER=2
+CAPTURE_INVOKES=4 BUDGET=3
+OBSERVATION: each heal invoke grows history; new user request carries correction.
+invoke[0] n=2 history_msgs=0 new_user_len=2259 has_reason_marker=False has_raw_marker=False
+  roles=[('system', False, 1643), ('user', False, 2259)]
+  RAW_FILE=/Users/akagilnc/.ak-roles/books/Ming_LLM/runs/01a0725c-8100-7e8f-85af-c8ab14d89762@fixer/artifacts/s2-raw-messages/invoke-0.json
+invoke[1] n=4 history_msgs=2 new_user_len=2694 has_reason_marker=True has_raw_marker=True
+  roles=[('system', False, 1643), ('user', True, 2259), ('assistant', True, 114), ('user', False, 2694)]
+  RAW_FILE=/Users/akagilnc/.ak-roles/books/Ming_LLM/runs/01a0725c-8100-7e8f-85af-c8ab14d89762@fixer/artifacts/s2-raw-messages/invoke-1.json
+invoke[2] n=6 history_msgs=4 new_user_len=2694 has_reason_marker=True has_raw_marker=True
+  roles=[('system', False, 1643), ('user', True, 2259), ('assistant', True, 114), ('user', True, 2694), ('assistant', True, 114), ('user', False, 2694)]
+  RAW_FILE=/Users/akagilnc/.ak-roles/books/Ming_LLM/runs/01a0725c-8100-7e8f-85af-c8ab14d89762@fixer/artifacts/s2-raw-messages/invoke-2.json
+invoke[3] n=8 history_msgs=6 new_user_len=2694 has_reason_marker=True has_raw_marker=True
+  roles=[('system', False, 1643), ('user', True, 2259), ('assistant', True, 114), ('user', True, 2694), ('assistant', True, 114), ('user', True, 2694), ('assistant', True, 114), ('user', False, 2694)]
+  RAW_FILE=/Users/akagilnc/.ak-roles/books/Ming_LLM/runs/01a0725c-8100-7e8f-85af-c8ab14d89762@fixer/artifacts/s2-raw-messages/invoke-3.json
+SESSION_RESUME_OK: history present on every heal invoke; correction in same new user request
+RAW_RECORD_POINTER: /Users/akagilnc/.ak-roles/books/Ming_LLM/runs/01a0725c-8100-7e8f-85af-c8ab14d89762@fixer/artifacts/s2-raw-messages/all-invokes.json + invoke-{0..3}.json (full role/from_history/content)
+RAW_INDEX: /Users/akagilnc/.ak-roles/books/Ming_LLM/runs/01a0725c-8100-7e8f-85af-c8ab14d89762@fixer/artifacts/s2-raw-messages/index.json
+AGNO_SESSION_ID_PATTERN=promulgation-judge-turn-1
+TEMP_DB_DIR_WILL_DELETE=/Users/akagilnc/WorkSpace/Ming_LLM-1753/s2_resume_8qviszi_
+TEMP_DB_CLEANED=yes path_was=/Users/akagilnc/WorkSpace/Ming_LLM-1753/s2_resume_8qviszi_

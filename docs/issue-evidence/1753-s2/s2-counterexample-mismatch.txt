@@ -1,0 +1,11 @@
+=== AUX helper counterexample (not primary; HTTP M3 is primary) ===
+NOTE: r4 allows helper hand-crafted messages as auxiliary only
+=== Case A: mismatched historical raw/reason, no correction raw in current request ===
+OLD_ASSERT: FALSE_GREEN
+NEW_ASSERT: caught correctly: heal round 1 new request missing prior raw output
+=== Case B: three expected heals, only one heal invoke (min truncation) ===
+OLD_ASSERT: FALSE_GREEN
+NEW_ASSERT: caught correctly: expected first + 3 heal invokes, got 2
+=== Case C: properly paired same-request (2 heals) ===
+NEW_ASSERT: PASS
+DONE
