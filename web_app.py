@@ -684,41 +684,52 @@ class WebGame:
         if fresh:
             _delete_sqlite_db_files_or_raise(db_path)
         _stage("载入上次进度...")
-        self.session = GameSession(db_path, llm_config)
-        # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
-        # #1353：per-session 单写者票据队列 = 唯一写点；write_gate 并入队列执行器。
-        self._write_queue: SessionWriteQueue = get_session_write_queue(self.session)
-        self._write_gate = self._write_queue.write_gate
-        self.session._write_gate = self._write_gate  # type: ignore[attr-defined]
-        self.session._write_queue = self._write_queue  # type: ignore[attr-defined]
-        # #1235 r4：点即入入口 in-flight 计数——accept 后 gate-free 窗锁闲≠孤儿；
-        # 非创建者 exit 仅当无其他入口仍在办时才可清（见 _begin/_end_settlement_entry）。
-        self._settlement_entry_lock = threading.Lock()
-        self._settlement_entry_inflight = 0
-        _stage("重整朝堂名册...")
-        self.session.begin_turn()
-        # #1234：唯一服务进程启动缝——孤儿月初快照清除（相位常态∧快照在→清+一行日志；
-        # settling/awaiting 不清，交既有恢复）。与故障注入 oracle 同调具名函数。
-        from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
-        clear_orphan_month_open_snapshot(self.db, self.state)
-        # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
-        _stage("恢复召对记录...")
-        self.chat_history: Dict[str, List[Dict[str, str]]] = {
-            name: [] for name in self.session.content.characters
-        }
-        for name, msgs in self.db.load_all_chat_history().items():
-            self.chat_history.setdefault(name, []).extend(msgs)
-        _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
-        _fav_raw = self.db.kv_get("favorites")
-        self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
-        if not _fav_raw:
-            self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
-        # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
-        # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
-        if hasattr(self.db, "conn"):
-            self.db.reconcile_interrupted_chat_turns()
-        # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
-        self._spawn_startup_extraction_catch_up()
+        # #1749：GameSession 建立后任一后续步骤失败须 close，禁泄漏 db/agno 连接。
+        self.session = None  # type: ignore[assignment]
+        try:
+            self.session = GameSession(db_path, llm_config)
+            # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
+            # #1353：per-session 单写者票据队列 = 唯一写点；write_gate 并入队列执行器。
+            self._write_queue: SessionWriteQueue = get_session_write_queue(self.session)
+            self._write_gate = self._write_queue.write_gate
+            self.session._write_gate = self._write_gate  # type: ignore[attr-defined]
+            self.session._write_queue = self._write_queue  # type: ignore[attr-defined]
+            # #1235 r4：点即入入口 in-flight 计数——accept 后 gate-free 窗锁闲≠孤儿；
+            # 非创建者 exit 仅当无其他入口仍在办时才可清（见 _begin/_end_settlement_entry）。
+            self._settlement_entry_lock = threading.Lock()
+            self._settlement_entry_inflight = 0
+            _stage("重整朝堂名册...")
+            self.session.begin_turn()
+            # #1234：唯一服务进程启动缝——孤儿月初快照清除（相位常态∧快照在→清+一行日志；
+            # settling/awaiting 不清，交既有恢复）。与故障注入 oracle 同调具名函数。
+            from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
+            clear_orphan_month_open_snapshot(self.db, self.state)
+            # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
+            _stage("恢复召对记录...")
+            self.chat_history: Dict[str, List[Dict[str, str]]] = {
+                name: [] for name in self.session.content.characters
+            }
+            for name, msgs in self.db.load_all_chat_history().items():
+                self.chat_history.setdefault(name, []).extend(msgs)
+            _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
+            _fav_raw = self.db.kv_get("favorites")
+            self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
+            if not _fav_raw:
+                self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
+            # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
+            # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
+            if hasattr(self.db, "conn"):
+                self.db.reconcile_interrupted_chat_turns()
+            # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
+            self._spawn_startup_extraction_catch_up()
+        except Exception:
+            session = getattr(self, "session", None)
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    logger.exception("WebGame init failed; session.close failed path=%s", db_path)
+            raise
 
     # ── 存档管理 ─────────────────────────────────────────────────────────
     def saves_dir(self) -> str:
@@ -4287,12 +4298,47 @@ def _same_db_path(left: str, right: str) -> bool:
         return left == right
 
 
+# #1749：菜单在途操作钉住的主库路径（load_save 排空窗 / close 未确认）。
+# 归档前必须与 live web_game、当前主路径一并检查——禁并发 new_game 搬走未关连接的库。
+_menu_pinned_db_paths: set[str] = set()
+_menu_pin_lock = threading.Lock()
+
+
+def _normalize_db_path(path: str) -> str:
+    if not path:
+        return ""
+    try:
+        return os.path.abspath(path)
+    except Exception:
+        return path
+
+
+def _pin_db_path(path: str) -> None:
+    norm = _normalize_db_path(path)
+    if not norm:
+        return
+    with _menu_pin_lock:
+        _menu_pinned_db_paths.add(norm)
+
+
+def _unpin_db_path(path: str) -> None:
+    norm = _normalize_db_path(path)
+    if not norm:
+        return
+    with _menu_pin_lock:
+        _menu_pinned_db_paths.discard(norm)
+
+
 def _db_path_is_live(db_path: str) -> bool:
-    """#1749：归档前拒搬仍是当前主库或活局所持路径的文件。"""
+    """#1749：归档前拒搬仍是当前主库、活局或菜单钉住路径的文件。"""
     if not db_path:
         return False
     if _same_db_path(db_path, _get_main_db_path()):
         return True
+    norm = _normalize_db_path(db_path)
+    with _menu_pin_lock:
+        if norm and norm in _menu_pinned_db_paths:
+            return True
     game = web_game
     if game is None:
         return False
@@ -4814,68 +4860,78 @@ async def api_menu_continue() -> StreamingResponse:
 async def api_menu_load_save(name: str) -> Dict[str, Any]:
     """从存档启动：先启动空 WebGame（fresh=False）→ 调 load_save 热替换主 DB。
 
-    #1749：bump 后先排空旧 runtime / 等待 exit detach（同路径不得双开），再构造候选；
-    候选失败必须 close 候选；成功才发布。存档加载不归档主库。
+    #1749：bump 后钉住主库路径并排空旧 runtime / 等 exit detach（复用 _spawn_drain_close）；
+    钉住期间并发 new_game 不得归档该路径。close 未确认 → 409 且恢复 old 指针（禁 None 后被搬走）。
+    候选失败必须 close 候选；成功才发布并解钉。
     """
     global web_game, _menu_generation
+    pinned_path = ""
+    close_unconfirmed = False
+    published = False
     with _menu_lifecycle_lock:
         _menu_generation += 1
+        token = _menu_generation
         old_game = web_game
         web_game = None
         with _menu_exit_detach_lock:
             exit_completion = _menu_exit_detach_completion
+        pinned_path = _get_main_db_path()
+        _pin_db_path(pinned_path)
 
     loop = asyncio.get_running_loop()
-    # 旧局仍在或 exit detach 未完成：必须关尽后再碰主库路径。
-    if old_game is not None:
-        drain_done = threading.Event()
-        drain_ok = {"v": False}
+    try:
+        # 旧局仍在或 exit detach 未完成：必须关尽后再碰主库路径。
+        if old_game is not None:
+            completion = _spawn_drain_close(old_game, archive_db=False)
+            await loop.run_in_executor(None, completion.done.wait)
+            if not completion.close_ok:
+                close_unconfirmed = True
+                with _menu_lifecycle_lock:
+                    if web_game is None:
+                        web_game = old_game
+                raise HTTPException(status_code=409, detail="无法关闭当前局，请稍后重试。")
+        elif exit_completion is not None:
+            await loop.run_in_executor(None, exit_completion.done.wait)
+            if not exit_completion.close_ok:
+                close_unconfirmed = True
+                raise HTTPException(
+                    status_code=409,
+                    detail="上一局尚未关闭完成，请稍后重试。",
+                )
 
-        def _drain_old() -> None:
-            try:
-                _drain_and_close_session(old_game, archive_db=False)
-                drain_ok["v"] = True
-            except Exception:
-                logger.exception("load_save drain old runtime failed")
-                drain_ok["v"] = False
-            finally:
-                drain_done.set()
-
-        threading.Thread(target=_drain_old, daemon=True).start()
-        await loop.run_in_executor(None, drain_done.wait)
-        if not drain_ok["v"]:
-            raise HTTPException(status_code=409, detail="无法关闭当前局，请稍后重试。")
-    elif exit_completion is not None:
-        await loop.run_in_executor(None, exit_completion.done.wait)
-        if not exit_completion.close_ok:
-            raise HTTPException(
-                status_code=409,
-                detail="上一局尚未关闭完成，请稍后重试。",
-            )
-
-    with _menu_lifecycle_lock:
-        candidate = None
-        try:
-            candidate = WebGame(fresh=False)
-            candidate.load_save(name)
-            web_game = candidate
+        with _menu_lifecycle_lock:
+            if token != _menu_generation:
+                raise HTTPException(status_code=409, detail="加载已取消（菜单状态已变更）。")
             candidate = None
-        except LLMUnavailable as exc:
-            if candidate is not None:
-                try:
-                    _drain_and_close_session(candidate, archive_db=False)
-                except Exception:
-                    logger.exception("load_save close failed candidate after LLMUnavailable")
-            raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
-        except Exception:
-            if candidate is not None:
-                try:
-                    _drain_and_close_session(candidate, archive_db=False)
-                except Exception:
-                    logger.exception("load_save close failed candidate")
-            raise
-    _spawn_startup_catch_up_nonfatal(web_game)
-    return {"state": web_game.state_payload()}
+            try:
+                candidate = WebGame(fresh=False)
+                candidate.load_save(name)
+                web_game = candidate
+                candidate = None
+                published = True
+            except LLMUnavailable as exc:
+                if candidate is not None:
+                    try:
+                        _drain_and_close_session(candidate, archive_db=False)
+                    except Exception:
+                        logger.exception(
+                            "load_save close failed candidate after LLMUnavailable"
+                        )
+                raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+            except Exception:
+                if candidate is not None:
+                    try:
+                        _drain_and_close_session(candidate, archive_db=False)
+                    except Exception:
+                        logger.exception("load_save close failed candidate")
+                raise
+        _spawn_startup_catch_up_nonfatal(web_game)
+        return {"state": web_game.state_payload()}
+    finally:
+        # close 未确认：保持钉住，禁 new_game 搬走仍可能有句柄的文件。
+        # 已发布或已确认关闭后的失败：解钉（活局由 web_game.db_path 保护）。
+        if pinned_path and (published or not close_unconfirmed):
+            _unpin_db_path(pinned_path)
 
 
 @app.delete("/api/menu/saves/{name}")

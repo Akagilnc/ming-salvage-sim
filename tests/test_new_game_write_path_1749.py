@@ -301,3 +301,136 @@ def test_exit_new_game_keeps_late_writes_on_old_archive(tracer_client, monkeypat
     assert found
     assert _counts(g1.db_path)["campaign_id"] == _campaign(g1)
     assert _counts(g1.db_path)["directives"] >= 1
+
+
+def test_webgame_begin_turn_failure_closes_session(tmp_path, monkeypatch):
+    """#1749：GameSession 已建、begin_turn 失败 → session.close，禁泄漏 db/agno。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    import ming_sim.beat_orchestration as bo
+    from tests.conftest import deterministic_test_beat_generator
+
+    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
+    dbp = str(tmp_path / "ud" / "partial.db")
+    os.makedirs(os.path.dirname(dbp), exist_ok=True)
+    monkeypatch.setenv("MING_SIM_DB", dbp)
+    # 强制 active 指向该路径
+    web_app._write_active_db_path(dbp)
+
+    real_begin = GameSession.begin_turn
+    held: list = []
+
+    def boom_begin(self, *a, **k):
+        held.append(self)
+        raise RuntimeError("begin_turn boom")
+
+    monkeypatch.setattr(GameSession, "begin_turn", boom_begin)
+    with pytest.raises(RuntimeError, match="begin_turn boom"):
+        web_app.WebGame(fresh=True)
+    assert len(held) == 1
+    sess = held[0]
+    with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
+        sess.db.conn.execute("SELECT 1")
+
+
+def test_load_save_close_fail_keeps_pin_blocks_archive(tmp_path, monkeypatch):
+    """#1749：load_save 关旧局失败 → 409、恢复指针、钉住路径；new_game 不得搬走。"""
+    import asyncio
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    monkeypatch.setattr(web_app.steam_events, "with_events", lambda p, e: p)
+    import ming_sim.beat_orchestration as bo
+    from tests.conftest import deterministic_test_beat_generator
+
+    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
+
+    # 真开一局
+    web_app.web_game = None
+    g = web_app.WebGame(fresh=True)
+    web_app.web_game = g
+    old_path = g.db_path
+    assert os.path.isfile(old_path)
+
+    # drain 时 close 失败
+    def boom_close():
+        raise RuntimeError("close boom")
+
+    g.session.close = boom_close  # type: ignore[method-assign]
+
+    # 造一个假存档名路径（load_save 会在 close 失败时 409，到不了读档）
+    saves = tmp_path / "ud" / "saves"
+    saves.mkdir(parents=True, exist_ok=True)
+    (saves / "snap.db").write_bytes(b"SQLite format 3\x00")  # 不会真正 load
+
+    with pytest.raises(web_app.HTTPException) as ei:
+        asyncio.run(web_app.api_menu_load_save("snap"))
+    assert ei.value.status_code == 409
+    # 指针恢复，路径仍在
+    assert web_app.web_game is g
+    assert os.path.isfile(old_path)
+    # 钉住 → 归档跳过
+    web_app._archive_drained_db_file(old_path)
+    assert os.path.isfile(old_path)
+    assert _drained(tmp_path / "ud") == []
+    # new_game 经 drain archive 也不得搬走未确认关闭的路径
+    # 恢复可 close，避免泄漏
+    g.session.close = lambda: None  # type: ignore
+    # 解钉以便后续（测试清理）
+    web_app._unpin_db_path(old_path)
+
+
+def test_load_save_pins_path_while_draining(tmp_path, monkeypatch):
+    """#1749：load_save 排空窗内路径被钉；并发归档调用不得搬走。"""
+    import asyncio
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    import ming_sim.beat_orchestration as bo
+    from tests.conftest import deterministic_test_beat_generator
+
+    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
+
+    web_app.web_game = None
+    g = web_app.WebGame(fresh=True)
+    web_app.web_game = g
+    old_path = g.db_path
+
+    hold = threading.Event()
+    released = threading.Event()
+    real_drain = web_app._drain_and_close_session
+
+    def slow_drain(game, archive_db: bool = False):
+        hold.set()
+        assert released.wait(timeout=5.0)
+        return real_drain(game, archive_db=archive_db)
+
+    monkeypatch.setattr(web_app, "_drain_and_close_session", slow_drain)
+
+    saves = tmp_path / "ud" / "saves"
+    saves.mkdir(parents=True, exist_ok=True)
+    # minimal valid will fail load later - we abort after observing pin
+    result: dict = {}
+
+    def run_load():
+        try:
+            asyncio.run(web_app.api_menu_load_save("nope"))
+        except Exception as exc:
+            result["exc"] = exc
+
+    t = threading.Thread(target=run_load, daemon=True)
+    t.start()
+    assert hold.wait(timeout=5.0), "drain did not start"
+    # 排空中：路径应被钉，归档不得搬
+    assert web_app._db_path_is_live(old_path)
+    web_app._archive_drained_db_file(old_path)
+    assert os.path.isfile(old_path), "pinned path must not be archived during drain"
+    released.set()
+    t.join(timeout=10.0)
+    assert not t.is_alive()
