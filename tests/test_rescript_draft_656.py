@@ -477,8 +477,11 @@ def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
     }, 1) is None
 
 
-def test_generate_rejects_military_order_with_region_target(monkeypatch):
+def test_generate_military_order_region_target_heals_then_drops(monkeypatch, tmp_path):
+    """#1746 heal-covers-illegal-values-too：军令 target_kind=region 非法 → 补交耗尽只剔该 option。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     item = _legal_item()
+    sibling = dict(item["options"][1])
     item["options"][0].update({
         "action_type": "military_order",
         "target_kind": "region",
@@ -491,14 +494,17 @@ def test_generate_rejects_military_order_with_region_target(monkeypatch):
         rescript_mod, "run_agent_text",
         lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
     )
-    assert generate_rescript_draft(object(), {
+    drafts = generate_rescript_draft(object(), {
         "active_issues": [],
         "region_targets": [
             {"id": "liaodong", "name": "辽东 / 宁锦", "kind": "边镇"},
             {"id": "shaanxi", "name": "陕西", "kind": "腹地"},
         ],
         "army_targets": [{"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"}],
-    }, 1) is None
+    }, 1)
+    assert drafts is not None
+    opts = drafts[0]["options"]
+    assert len(opts) == 1 and opts[0]["label"] == sibling["label"]
 
 
 def test_generate_rejects_military_order_empty_assignee(monkeypatch, tmp_path):
