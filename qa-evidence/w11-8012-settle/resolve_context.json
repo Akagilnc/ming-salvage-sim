@@ -1,0 +1,13 @@
+{
+  "decree_text": "奉天承运皇帝，诏曰：\n\n着户部即于国库内动支银十万两，解赴太仓收贮，以备支用。该部速行办理，毋得迟误。钦此。",
+  "narrative": "",
+  "simulator_payload": {
+    "transit_arrivals": []
+  },
+  "secret_orders": {},
+  "relevant_memories": [],
+  "extracted": null,
+  "resolve_contract_version": 0,
+  "source": "player_decree",
+  "attendant_message": ""
+}

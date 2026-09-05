@@ -1,0 +1,12 @@
+{
+  "db_path": "/workspace/Ming_LLM/data/ming_sim_1788597803068938977.db",
+  "turn": 1,
+  "year": 1627,
+  "period": 10,
+  "version": "0.53.0.0",
+  "attempt": 2,
+  "exception_type": "LLMUnavailable",
+  "exception_message": "通传未达，请稍后再召。",
+  "timestamp": "2026-09-05T08:51:38.419157+00:00",
+  "ready_payload_digest": null
+}
