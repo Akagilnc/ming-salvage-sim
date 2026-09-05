@@ -58,14 +58,37 @@ def test_promulgation_contract_error_heals_within_bound_then_settles(
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts", real_llm_promulgation,
     )
-    create_calls: list[object] = []
+    create_kwargs: list[dict] = []
+    create_agents: list[object] = []
 
     def spy_create(*a, **k):
+        # 记录会话生命周期接缝；返回轻量替身供 run 边界观察。
+        create_kwargs.append({
+            "args_len": len(a),
+            "agno_db": a[1] if len(a) > 1 else k.get("agno_db"),
+            "session_id": k.get("session_id"),
+            "kwargs": dict(k),
+        })
         agent = object()
-        create_calls.append(agent)
+        create_agents.append(agent)
         return agent
 
     monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", spy_create)
+
+    # 真工厂配置核验（不跑模型）：db/session/history 三件必须齐。
+    import tempfile
+    from agno.db.sqlite import SqliteDb
+    from ming_sim.agents import create_promulgation_judge_agent as real_create
+    from ming_sim.models import LLMConfig
+
+    cfg = LLMConfig(api_key="test", base_url="http://example.invalid", model="m")
+    with tempfile.TemporaryDirectory() as td:
+        probe_db = SqliteDb(db_file=f"{td}/probe.db")
+        probe = real_create(cfg, probe_db, session_id="promulgation-judge-turn-probe")
+        assert getattr(probe, "db", None) is probe_db
+        assert getattr(probe, "cache_session", None) is True
+        assert getattr(probe, "add_history_to_context", None) is True
+        assert getattr(probe, "session_id", None) == "promulgation-judge-turn-probe"
 
     run_calls: list[dict] = []
 
@@ -101,27 +124,40 @@ def test_promulgation_contract_error_heals_within_bound_then_settles(
 
     monkeypatch.setattr(decree_mod, "run_agent_text", fake_run)
 
-    result = decree_mod.resolve_directives(
-        state, db, None, None, [object()], "清核河工并整饬漕运",
-        content=content,
-    )
+    # agno_db 非 None 才能走会话绑定；轻量 sqlite 占位。
+    import tempfile as _tf
+    from agno.db.sqlite import SqliteDb as _SqliteDb
+    with _tf.TemporaryDirectory() as _td:
+        agno_db = _SqliteDb(db_file=f"{_td}/agno.db")
+        result = decree_mod.resolve_directives(
+            state, db, agno_db, None, [object()], "清核河工并整饬漕运",
+            content=content,
+        )
 
     assert result.awaiting is False
     assert int(state.turn) == before_turn + 1
     # first attempt + exactly heal_budget heals until success on last
     assert len(run_calls) == heal_budget + 1
-    assert len(create_calls) == 1  # same-session: one agent
-    assert {c["agent_id"] for c in run_calls} == {id(create_calls[0])}
-    # 补交上下文必须附原始产出与校验失败原因
+    assert len(create_agents) == 1  # same-session: one agent
+    assert {c["agent_id"] for c in run_calls} == {id(create_agents[0])}
+    # 工厂收到 turn 作用域 session_id 与 agno_db（会话生命周期真源）
+    assert create_kwargs and create_kwargs[0]["agno_db"] is not None
+    assert create_kwargs[0]["session_id"] == f"promulgation-judge-turn-{before_turn}"
+    first_prompt = run_calls[0]["prompt"]
+    assert str(first_id) in first_prompt and str(second_id) in first_prompt
+    # 补交输入必须含：原始产出、失败原因、待判 id 全集、以及首抽快照（全案卷身份）
     for heal_call in run_calls[1:]:
         prompt = heal_call["prompt"]
         assert prompt, "heal must carry correction feedback"
         assert "校验失败原因" in prompt or "契约" in prompt
+        assert "原始产出" in prompt
+        # 首抽快照进入补交输入（draft 回喂形 / 会话续接可核）
+        assert str(first_id) in prompt and str(second_id) in prompt
+        assert "待判案卷 dossier_id 全集" in prompt
         if mode == "illegal_id":
-            assert "not-int" in prompt or "原始产出" in prompt
+            assert "not-int" in prompt
             assert "正整数" in prompt or "dossier_id" in prompt
         else:
-            assert str(first_id) in prompt or "原始产出" in prompt
             assert "覆盖" in prompt or "静默" in prompt or "proposed" in prompt
     # 判决按既有路径落账（pending 在 settle 尾会清；案卷不得仍全是 proposed）
     remaining_proposed = {
