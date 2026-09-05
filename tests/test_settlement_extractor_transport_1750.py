@@ -24,6 +24,8 @@ from fastapi.testclient import TestClient
 import ming_sim.decree as decree_mod
 import ming_sim.simulation as simulation_mod
 import web_app
+from ming_sim.exceptions import LLMUnavailable
+from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.models import TurnPhase
 from ming_sim.simulation import EXTRACTION_MODULES
 from tests.test_month_loop_tracer_1468 import (
@@ -67,15 +69,18 @@ _DECISION_NARRATIVE = (
     "<<END>>"
 )
 
-# transport 探针 content 所暗示的上游码；终失败红案断言 typed 面须保真此值（非仅非空）。
+# 探针经 agent.run 抛既有 LLMUnavailable(status_code=…) 注入上游码（exceptions.py）；
+# 终失败红案断言玩家/恢复面须保真此 typed 值（非 content 散文、非仅非空）。
 _UPSTREAM_STATUS_CODE = 429
 
 
 class _TransportAgent:
-    """模块 agent.run 替身：可按序返回 ERROR status 或成功正文。
+    """模块 agent.run 替身：可按序抛 typed LLMUnavailable 或返回成功正文。
 
-    走真实 run_agent_text → extract_agent_text；#1465 若在 agent.run/transport
-    外包重试，本对象的 calls 即 transport/attempt 次数（≠ error pack 写包序号）。
+    失败走既有异常契约（code=llm_run_error + status_code），不把上游码塞进 content
+    冒充 typed。仍经真实 run_agent_text（agent.run 上抛即传播）；#1465 若在
+    agent.run/transport 外包重试，本对象的 calls 即 transport/attempt 次数
+    （≠ error pack 写包序号）。
     """
 
     def __init__(
@@ -96,12 +101,11 @@ class _TransportAgent:
             self.calls += 1
             n = self.calls
         if self.always_error or n <= self.error_then_ok_times:
-            return SimpleNamespace(
-                content=(
-                    f"Error code: {_UPSTREAM_STATUS_CODE} - "
-                    "model_concurrency_rate_limit_exceeded"
-                ),
-                status="ERROR",
+            raise LLMUnavailable(
+                CLI_RUNNER_PLAYER_MESSAGE,
+                code="llm_run_error",
+                provider_message="model_concurrency_rate_limit_exceeded",
+                status_code=_UPSTREAM_STATUS_CODE,
             )
         return SimpleNamespace(
             content=_SUCCESS_MODULE_JSON[self.module],
@@ -254,7 +258,7 @@ def _player_error_surfaces(data: object, recovery: object) -> list[dict]:
 def test_extractor_one_retryable_transport_failure_self_heals(
     tracer_client, monkeypatch,
 ):
-    """同一腿首次 ERROR 后恢复：该腿合法非空成功效果须落账，月+1、无失败面。
+    """同一腿首次 typed transport 失败后恢复：该腿合法非空成功效果须落账，月+1、无失败面。
 
     证明力：
     - 失败腿 = internal（带 民心 -1 指纹）；run.calls>=2 = 同腿 transport 重试
@@ -300,7 +304,7 @@ def test_extractor_one_retryable_transport_failure_self_heals(
 
 
 def _drive_terminal_extractor_fail(client, monkeypatch, *, step: str) -> dict:
-    """持续 ERROR 共享建场：new_game → 注入 → issue/stream → error 终态。
+    """持续 typed transport 失败共享建场：new_game → 注入 → issue/stream → error 终态。
 
     返回绿/红两案共用的结构化现场；断言分属调用方，避免重复建场形状。
     """
@@ -331,7 +335,7 @@ def _drive_terminal_extractor_fail(client, monkeypatch, *, step: str) -> dict:
 def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
     tracer_client, monkeypatch,
 ):
-    """持续 ERROR → fail-closed 绿基线（共享建场；不断 status_code）。
+    """持续 typed transport 失败 → fail-closed 绿基线（共享建场；不断 status_code）。
 
     - transport_attempts = agent.run.calls（写包序号另列）
     - exception_type / 结构化 message 面 / 非 bare 500（不扫 Traceback 子串）
@@ -382,8 +386,8 @@ def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     """终失败 pending 红灯：预算耗尽 + 上游 status（共享建场，只加未结断言）。
 
     - 预算：#1465 默认重试 2 → transport_attempts >= 3
-    - status_code 须等于探针注入的上游码（_UPSTREAM_STATUS_CODE），不能仅非空
-    - code 保真 llm_run_error（既有 typed 键）
+    - status_code 须等于 agent.run 所抛 LLMUnavailable.status_code（_UPSTREAM_STATUS_CODE）
+    - code 保真 llm_run_error（既有 typed 键；非从错误散文提取）
     保月/manifest 绿契约由 test_…_keeps_month_and_recovery_panel 承接，本条不重复。
     """
     scene = _drive_terminal_extractor_fail(
@@ -396,7 +400,7 @@ def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
 
     surfaces = scene["surfaces"]
     assert any(s.get("status_code") == _UPSTREAM_STATUS_CODE for s in surfaces), (
-        f"upstream status_code must equal typed injection {_UPSTREAM_STATUS_CODE}; "
+        f"upstream status_code must equal LLMUnavailable.status_code={_UPSTREAM_STATUS_CODE}; "
         f"surfaces={surfaces!r}"
     )
     assert any(s.get("code") == "llm_run_error" for s in surfaces), (
