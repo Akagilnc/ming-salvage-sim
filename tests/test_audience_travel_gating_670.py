@@ -1431,9 +1431,9 @@ def test_web_chat_offsite_scene_failure_releases_close_barrier(game, stream):
     assert close_entered.is_set(), "close barrier did not drain after scene failure"
 
 
-@pytest.mark.parametrize("op", ["load", "reset"], ids=["load", "reset"])
-def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
-    """#1566：load/reset 在 open ticket 时立即 409，不等 LLM、不关旧库。"""
+def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch):
+    """#1566：load 在 open ticket 时立即 409，不等 LLM、不关旧库。
+    #1732：局内销毁式 reset 已删，热替换并发门只测 load。"""
     import web_app
 
     db, state, content = game
@@ -1455,7 +1455,6 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     runtime.session._beat_generator = _slow
     replacements: list[str] = []
     runtime.load_save = lambda _name: replacements.append("load")
-    runtime.reset_game = lambda: replacements.append("reset")
     runtime.state_payload = lambda: {"ok": True}
     runtime.favorites = set()
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
@@ -1473,7 +1472,7 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
     assert started.wait(2.0), "offsite scene generator did not start"
     db.conn.execute("SELECT 1").fetchone()
 
-    path = "/api/saves/存档/load" if op == "load" else "/api/game/reset"
+    path = "/api/saves/存档/load"
 
     busy = TestClient(web_app.app).post(path)
     assert busy.status_code == 409
@@ -1486,7 +1485,7 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch, op):
 
     retried = TestClient(web_app.app).post(path)
     assert retried.status_code == 200
-    assert replacements == [op]
+    assert replacements == ["load"]
     state_response = TestClient(web_app.app).get("/api/game/state")
     assert state_response.status_code == 200
     assert state_response.json() == {"ok": True}
