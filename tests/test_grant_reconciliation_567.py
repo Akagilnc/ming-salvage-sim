@@ -333,27 +333,40 @@ def test_recon_proposals_non_list_still_fail_loud(game):
 )
 def test_recon_bad_item_rejected_target_gets_midpoint(game, bad, category):
     """#1745：坏提案逐项拒收；在途目标仍落机械中位（坏提案不进 supplied）。"""
+    import json
+
     from ming_sim.applier import Provenance, RejectionCollector
     from ming_sim.db import grant_arrival_bounds
 
     db, state, _content = game
     gid = _in_transit_grant(db, state)
+    generated = bad(gid)
     collector = RejectionCollector()
     reports = db.record_monthly_grant_reconciliations(
-        state.turn, bad(gid),
+        state.turn, generated,
         rejection_collector=collector, source=Provenance.player_decree,
     )
     collector.flush_to_db(db)
     assert len(reports) == 1 and reports[0]["dossier_id"] == gid
     lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
     assert reports[0]["arrived_amount"] == (lo + hi) // 2
+    # 每个坏项恰一条拒收（本参数化每案 generated 恰 1 项）
+    assert len(generated) == 1
     rej = list(db.conn.execute(
-        "SELECT section, category, source FROM rejection_reports"
+        "SELECT section, category, source, reason, item_json "
+        "FROM rejection_reports ORDER BY id"
     ).fetchall())
-    assert len(rej) >= 1
-    assert all(r["section"] == "dossier_reconciliations" for r in rej)
-    assert any(r["category"] == category for r in rej)
-    assert all(r["source"] == Provenance.player_decree.value for r in rej)
+    assert len(rej) == 1
+    assert rej[0]["section"] == "dossier_reconciliations"
+    assert rej[0]["category"] == category
+    assert rej[0]["source"] == Provenance.player_decree.value
+    assert str(rej[0]["reason"] or "").strip()  # 非空；不钉措辞
+    item = json.loads(rej[0]["item_json"])
+    raw = generated[0]
+    if isinstance(raw, dict):
+        assert item.get("dossier_id", raw.get("dossier_id")) == raw.get("dossier_id")
+    else:
+        assert item == {"raw_value": raw}
 
 
 def test_recon_duplicate_keeps_first_rejects_second(game):
@@ -374,12 +387,73 @@ def test_recon_duplicate_keeps_first_rejects_second(game):
     collector.flush_to_db(db)
     assert len(reports) == 1
     assert reports[0]["arrived_amount"] == 16
-    rej = db.conn.execute(
-        "SELECT category, reason FROM rejection_reports"
-    ).fetchall()
+    rej = list(db.conn.execute(
+        "SELECT category, reason, source FROM rejection_reports"
+    ).fetchall())
     assert len(rej) == 1
     assert rej[0]["category"] == "invalid_enum"
-    assert "重复" in rej[0]["reason"]
+    assert str(rej[0]["reason"] or "").strip()
+    assert rej[0]["source"] == Provenance.system_simulation.value
+
+
+def test_1745_two_bad_one_good_exact_rejection_cardinality(game):
+    """#1745：两坏一好——好项落账，坏项各恰一条 missing_ref，不多不少。"""
+    import json
+
+    from ming_sim.applier import Provenance
+
+    db, state, _content = game
+    good = _in_transit_grant(db, state)
+    bad_a = {"dossier_id": 88881, "arrived_amount": 1}
+    bad_b = {"dossier_id": 88882, "arrived_amount": 2}
+    # 直调无 collector → 自有 flush，拒收仍 durable（失败诚实）
+    reports = db.record_monthly_grant_reconciliations(
+        state.turn,
+        [bad_a, {"dossier_id": good, "arrived_amount": 16}, bad_b],
+        source=Provenance.player_decree,
+    )
+    assert len(reports) == 1
+    assert reports[0]["dossier_id"] == good
+    assert reports[0]["arrived_amount"] == 16
+    rej = list(db.conn.execute(
+        "SELECT category, source, reason, item_json FROM rejection_reports "
+        "WHERE section='dossier_reconciliations' ORDER BY id"
+    ).fetchall())
+    assert len(rej) == 2
+    assert {r["category"] for r in rej} == {"missing_ref"}
+    assert all(r["source"] == Provenance.player_decree.value for r in rej)
+    assert all(str(r["reason"] or "").strip() for r in rej)
+    got_ids = {json.loads(r["item_json"])["dossier_id"] for r in rej}
+    assert got_ids == {88881, 88882}
+
+
+def test_1745_empty_targets_two_bad_no_recon_rows(game):
+    """#1745：无目标 + 两坏项 → 恰两条 missing_ref，零 recon 行。"""
+    import json
+
+    from ming_sim.applier import Provenance
+
+    db, state, _content = game
+    assert db.list_monthly_grant_reconciliation_targets() == []
+    reports = db.record_monthly_grant_reconciliations(
+        state.turn,
+        [
+            {"dossier_id": 7001, "arrived_amount": 3},
+            {"dossier_id": 7002, "loss_amount": 4},
+        ],
+        source=Provenance.player_decree,
+    )
+    assert reports == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
+    ).fetchone()["n"] == 0
+    rej = list(db.conn.execute(
+        "SELECT category, item_json FROM rejection_reports "
+        "WHERE section='dossier_reconciliations' ORDER BY id"
+    ).fetchall())
+    assert len(rej) == 2
+    assert all(r["category"] == "missing_ref" for r in rej)
+    assert {json.loads(r["item_json"])["dossier_id"] for r in rej} == {7001, 7002}
 
 
 def test_1745_empty_targets_bad_recon_settle_advances(game):
@@ -405,10 +479,7 @@ def test_1745_empty_targets_bad_recon_settle_advances(game):
     try:
         settle_with_delta(
             state, db,
-            {
-                "dossier_reconciliations": [bad_item],
-                # 同 atomic 好项：空 list 段亦可——证明整月不因坏 recon abort
-            },
+            {"dossier_reconciliations": [bad_item]},
             before_turn=turn_before,
             content=content,
             narrative="十一月邸报",
@@ -429,7 +500,7 @@ def test_1745_empty_targets_bad_recon_settle_advances(game):
     assert len(rows) == 1
     assert rows[0]["category"] == "missing_ref"
     assert rows[0]["source"] == Provenance.player_decree.value
-    assert "非在途" in rows[0]["reason"] or "无在途" in rows[0]["reason"] or "99999" in rows[0]["reason"]
+    assert str(rows[0]["reason"] or "").strip()
     item = json.loads(rows[0]["item_json"])
     assert item["dossier_id"] == 99999
     assert item["arrived_amount"] == 10
@@ -437,6 +508,8 @@ def test_1745_empty_targets_bad_recon_settle_advances(game):
 
 def test_1745_mixed_good_and_bad_recon_same_atomic(game):
     """#1745 B1：好项落库 + 坏项拒收同 atomic；月份推进。"""
+    import json
+
     from ming_sim.applier import Provenance
     from ming_sim.exceptions import SettlementAbort
     from ming_sim.models import TurnPhase
@@ -467,15 +540,20 @@ def test_1745_mixed_good_and_bad_recon_same_atomic(game):
     row = db.list_dossier_reconciliations(good)[-1]
     assert row["arrived_amount"] == 16
     rej = list(db.conn.execute(
-        "SELECT category FROM rejection_reports "
+        "SELECT category, item_json, reason FROM rejection_reports "
         "WHERE section='dossier_reconciliations'"
     ).fetchall())
-    assert len(rej) == 1 and rej[0]["category"] == "missing_ref"
+    assert len(rej) == 1
+    assert rej[0]["category"] == "missing_ref"
+    assert str(rej[0]["reason"] or "").strip()
+    assert json.loads(rej[0]["item_json"])["dossier_id"] == 88888
 
 
 def test_1745_closed_grant_recon_is_missing_ref_not_new_row(game):
     """#1745 B2 合流 A1：已结清目标的提案 → missing_ref，不得新写对账行。"""
-    from ming_sim.applier import Provenance, RejectionCollector
+    import json
+
+    from ming_sim.applier import Provenance
 
     db, state, _content = game
     gid = _in_transit_grant(db, state)
@@ -486,16 +564,18 @@ def test_1745_closed_grant_recon_is_missing_ref_not_new_row(game):
     )
     db.conn.commit()
     assert db.list_monthly_grant_reconciliation_targets() == []
-    collector = RejectionCollector()
+    # 无 collector：自有 flush，拒收 durable
     reports = db.record_monthly_grant_reconciliations(
         state.turn,
         [{"dossier_id": gid, "arrived_amount": 16}],
-        rejection_collector=collector, source=Provenance.player_decree,
+        source=Provenance.player_decree,
     )
-    collector.flush_to_db(db)
     assert reports == []
     assert db.list_dossier_reconciliations(gid) == []
-    rej = db.conn.execute(
-        "SELECT category FROM rejection_reports"
-    ).fetchone()
-    assert rej["category"] == "missing_ref"
+    rej = list(db.conn.execute(
+        "SELECT category, item_json, reason FROM rejection_reports"
+    ).fetchall())
+    assert len(rej) == 1
+    assert rej[0]["category"] == "missing_ref"
+    assert str(rej[0]["reason"] or "").strip()
+    assert json.loads(rej[0]["item_json"])["dossier_id"] == gid

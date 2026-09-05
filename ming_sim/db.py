@@ -13131,7 +13131,7 @@ class GameDB:
         #1745 / ADR 0015-D7：可拆项坏引用（无目标/已结清/已撤回/形坏）逐项拒收，
         好项与未提案目标的中位落账仍在同一 atomic；整段非 list 仍 fail-loud。
         """
-        from ming_sim.applier import Provenance, RejectedItem
+        from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
         targets = {
             int(item["dossier_id"]): item
@@ -13144,6 +13144,11 @@ class GameDB:
         if not isinstance(generated, list):
             raise ValueError("对账提案须为列表")
 
+        # 拒收必须有归属：settle 传入共享 collector；直调时自有并 flush（禁无痕继续）。
+        owns_collector = rejection_collector is None
+        if owns_collector:
+            rejection_collector = RejectionCollector()
+
         prov = (
             source if isinstance(source, Provenance)
             else Provenance(source) if source is not None
@@ -13151,8 +13156,6 @@ class GameDB:
         )
 
         def _reject(raw_item: object, reason: str, category: str) -> None:
-            if rejection_collector is None:
-                return
             # ADR 0015 F1：RejectedItem.item 恒 dict；非 dict 包装 raw_value。
             if isinstance(raw_item, dict):
                 payload = dict(raw_item)
@@ -13209,8 +13212,13 @@ class GameDB:
             note = str(item.get("note") or "").strip()
             supplied[dossier_id] = (proposed, note)
 
+        def _flush_owned() -> None:
+            if owns_collector:
+                rejection_collector.flush_to_db(self)
+
         # 无在途目标：坏提案已逐项拒收，不落假对账行（#1745 A1）。
         if not targets:
+            _flush_owned()
             return []
 
         reports: List[Dict[str, object]] = []
@@ -13253,6 +13261,7 @@ class GameDB:
             )
             history = self.list_dossier_reconciliations(int(dossier_id))
             reports.append(history[-1])
+        _flush_owned()
         return reports
 
     # ── #625 / ADR 0077 supervision fact bottom ─────────────────────────
