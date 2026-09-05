@@ -4344,33 +4344,61 @@ def _wait_exit_detach_for_open() -> bool:
     return True
 
 
+# continue 构造窗外持有的候选主路径——归档前视为 live（#1749 中途取消须构造在锁外）。
+_menu_opening_db_path: str = ""
+_menu_opening_lock = threading.Lock()
+
+
 def _db_path_is_live(db_path: str) -> bool:
-    """#1749：归档前拒搬仍被活 web_game 持有的路径。
+    """#1749：归档前拒搬仍被活 web_game 或 continue 在建候选持有的路径。
 
     不单凭 active 主路径指针判 live：排空关闭后的旧路径仍可能等于当时 main 配置，
     归档（exit→new_game / drain archive_db）必须在 close 确认后仍可搬文件。
-    菜单互斥由 _menu_lifecycle_lock 串行，不再另造 pin 登记表。
     """
     if not db_path:
         return False
+    with _menu_opening_lock:
+        opening = _menu_opening_db_path
+    if opening and _same_db_path(db_path, opening):
+        return True
     game = web_game
     if game is None:
         return False
     return _same_db_path(db_path, getattr(game, "db_path", "") or "")
 
 
-def _runtime_db_writable(game: Any) -> bool:
-    """#1749：部分 close 后是否仍可经 GameDB 写。只认 conn 可执行，不猜。"""
-    try:
-        session = getattr(game, "session", None)
-        db = getattr(session, "db", None) if session is not None else None
-        conn = getattr(db, "conn", None) if db is not None else None
-        if conn is None:
-            return False
-        conn.execute("SELECT 1")
-        return True
-    except Exception:
+def _runtime_restorable(game: Any) -> bool:
+    """#1749：失败 close 后可否恢复为活局——db 与 agno 都必须仍可用，且未进入 close 半态。
+
+    探测异常必 logger.exception（ADR 0005）；不得宽 catch 静默 False。
+    """
+    session = getattr(game, "session", None)
+    if session is None:
         return False
+    if int(getattr(session, "_close_epoch", 0) or 0) > 0:
+        return False
+    db = getattr(session, "db", None)
+    conn = getattr(db, "conn", None) if db is not None else None
+    if conn is None:
+        return False
+    try:
+        conn.execute("SELECT 1")
+    except Exception:
+        logger.exception("runtime restorable probe: db.conn failed")
+        return False
+    agno = getattr(session, "agno_db", None)
+    if agno is None:
+        return False
+    engine = getattr(agno, "db_engine", None)
+    if engine is None:
+        return False
+    try:
+        with engine.connect() as c:
+            c.exec_driver_sql("SELECT 1")
+    except Exception:
+        logger.exception("runtime restorable probe: agno engine failed")
+        return False
+    return True
 
 
 def _archive_drained_db_file(old_db_path: str) -> None:
@@ -4445,7 +4473,7 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
         # 调用方（detach 完成通道 / archive_db）据此不得搬库。
         # #1749：仅当主库仍可写时 unseal——已关 db 的 runtime 不得冒充可写恢复。
         logger.exception("drain/close session failed; skip archive")
-        if _runtime_db_writable(game):
+        if _runtime_restorable(game):
             try:
                 q.unseal()
             except Exception:
@@ -4477,7 +4505,14 @@ def _spawn_drain_close(
         finally:
             completion.done.set()
 
-    threading.Thread(target=_run, daemon=True).start()
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        # Thread.start 失败也必须完成信号，禁后续 open 永等未 done 的 completion。
+        logger.exception("spawn drain/close thread failed")
+        completion.close_ok = False
+        completion.done.set()
+        raise
     return completion
 
 
@@ -4812,8 +4847,8 @@ async def api_menu_continue() -> StreamingResponse:
     #1195：与颁诏 settle 同构 SSE——stage 逐段推文案，done 带 state，
     error 带 message。首条 stage 在重活前即发（目标 ≤5s 首见）。
 
-    #1749：世代 bump、WebGame 构造、对号与发布必须在同一 _menu_lifecycle_lock
-    临界区内完成——禁止构造窗内 new_game 归档仍被候选持有的主库路径。
+    #1749/#1195：构造在生命周期锁外——exit 可在构造中途 bump 世代取消（基线契约）；
+    候选路径登记为 opening live，禁 new_game 在构造窗归档该路径。
     """
     global _menu_generation
     if not _has_main_db():
@@ -4828,39 +4863,51 @@ async def api_menu_continue() -> StreamingResponse:
         ev_queue.put(("stage", label))
 
     def worker() -> None:
-        global web_game
+        global web_game, _menu_opening_db_path
+        opening_path = ""
         try:
-            # 首条阶段在抢锁前入队（#1195 ≤5s 首见）；重活构造在锁内，与 new_game 互斥。
+            # 首条阶段在重活前入队（#1195 ≤5s 首见）。
             on_stage("准备载入上次进度...")
-            # #1749：peek+wait，失败保留 completion——禁 take 清空后并发 new_game 漏等。
             if not _wait_exit_detach_for_open():
                 ev_queue.put((
                     "__error__",
                     {"message": "上一局尚未关闭完成，请稍后重试。"},
                 ))
                 return
-            old_runtime = None
             with _menu_lifecycle_lock:
-                # 构造前对号：锁外等 exit 期间 new_game/exit/load_save 可能已 bump。
                 if token != _menu_generation:
                     ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
                     return
-                # #1228：构造不再做连通 smoke；持锁期间其它菜单动作不得切入。
-                # 持锁构造：世代写点均在本锁内，构造后不必再对号。
-                game = WebGame(fresh=False, on_stage=on_stage)
+                opening_path = _get_main_db_path()
+                with _menu_opening_lock:
+                    _menu_opening_db_path = opening_path
+            # 构造在锁外：exit/new_game 可 bump；发布前再对号（#1195 中途取消）。
+            game = WebGame(fresh=False, on_stage=on_stage)
+            old_runtime = None
+            with _menu_lifecycle_lock:
+                if token != _menu_generation:
+                    try:
+                        _drain_and_close_session(game)
+                    except Exception:
+                        logger.exception("discard superseded continue session failed")
+                    ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
+                    return
                 old_runtime = web_game
                 web_game = game
-            # #1749：发布后退休被替换的 runtime（若有），禁泄漏旧连接。
             if old_runtime is not None and old_runtime is not game:
                 _spawn_drain_close(old_runtime, archive_db=False)
             ev_queue.put(("__done__", {"state": game.state_payload()}))
         except LLMUnavailable as exc:
             ev_queue.put(("__error__", _llm_error_detail(exc)))
         except DependencyMismatch as exc:
-            # #1721：依赖不合规不得压成 message-only，须带 typed facts 抵达玩家。
             ev_queue.put(("__error__", _dependency_mismatch_detail(exc)))
         except Exception as exc:  # noqa: BLE001 — SSE 终态收束，不让线程死掉
             ev_queue.put(("__error__", {"message": str(exc)}))
+        finally:
+            if opening_path:
+                with _menu_opening_lock:
+                    if _menu_opening_db_path == opening_path:
+                        _menu_opening_db_path = ""
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
@@ -4913,7 +4960,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
                 except Exception:
                     # 仅当主库仍可写才恢复指针+（drain 内已按可写 unseal）；
                     # 部分 close 已关 db 则保持 web_game=None，禁冒充可写 runtime。
-                    if _runtime_db_writable(old_game):
+                    if _runtime_restorable(old_game):
                         web_game = old_game
                     logger.exception("load_save close failed for previous runtime")
                     raise HTTPException(
@@ -4970,23 +5017,25 @@ async def api_menu_exit() -> Dict[str, Any]:
     session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。
 
     #1732 T1：本端点不搬主库文件——「继续上局」须照常可用；归档由后续 new_game 承接。
-    #1749：与 new_game 同持 _menu_lifecycle_lock，避免 exit 清 web_game 与 new_game
-    构造窗交错。
+    #1749：锁获取在 executor——continue 构造持锁时不堵事件循环；bump 仍可取消在建 continue。
     """
     global web_game, _menu_generation, _menu_exit_detach_completion
-    with _menu_lifecycle_lock:
-        _menu_generation += 1
-        if web_game is not None:
-            old_game = web_game
-            web_game = None  # 界面立刻退
-            completion = _MenuExitDetachCompletion()
-            with _menu_exit_detach_lock:
-                _menu_exit_detach_completion = completion
+    loop = asyncio.get_running_loop()
 
-            # detach：等 write_gate 排空后再关连接（#396）；不归档（#1732 T1）
-            # #1749：与 new_game 共用 _spawn_drain_close；completion 即全局 exit 完成信号。
-            _spawn_drain_close(old_game, archive_db=False, completion=completion)
-    return {"ok": True}
+    def _exit_under_lock() -> Dict[str, Any]:
+        global web_game, _menu_generation, _menu_exit_detach_completion
+        with _menu_lifecycle_lock:
+            _menu_generation += 1
+            if web_game is not None:
+                old_game = web_game
+                web_game = None  # 界面立刻退
+                completion = _MenuExitDetachCompletion()
+                with _menu_exit_detach_lock:
+                    _menu_exit_detach_completion = completion
+                _spawn_drain_close(old_game, archive_db=False, completion=completion)
+        return {"ok": True}
+
+    return await loop.run_in_executor(None, _exit_under_lock)
 
 
 @app.post("/api/menu/shutdown")
