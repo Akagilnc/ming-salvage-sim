@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import threading
-import time
 
 import ming_sim.simulation as simulation
 from ming_sim.simulation import EXTRACTION_MODULES, extract_scores_by_modules_with_agno
@@ -37,7 +36,7 @@ def _dummy_agents():
 
 def test_parallel_extract_matches_serial(read_game, monkeypatch):
     """并行与串行产出的 merged delta 字节级一致——并行只改取数时机，不改解析/合并。"""
-    db, state, content = read_game
+    db, state, _content = read_game
     monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
     serial = extract_scores_by_modules_with_agno(
         _dummy_agents(), db, state, "邸报", parallel=False)
@@ -48,7 +47,7 @@ def test_parallel_extract_matches_serial(read_game, monkeypatch):
 
 
 def test_shared_new_issues_from_issues_and_personnel_secret_are_merged(read_game, monkeypatch):
-    db, state, content = read_game
+    db, state, _content = read_game
     canned = {
         **_CANNED,
         "issues": '{"new_issues": [{"origin_kind": "decree", "title": "公开月拨", "kind": "initiative", "ongoing_effects": {"economy": [{"account": "国库", "delta": -10, "reason": "公开每月拨款"}]}, "commitment_kind": "until_stop"}]}',
@@ -149,51 +148,64 @@ def test_merge_keeps_distinct_non_recurring_commitments_under_same_origin_ref():
 
 
 def test_parallel_extract_runs_concurrently(read_game, monkeypatch):
-    """parallel=True 时 4 个 LLM 调用真并发：峰值并发 ≥2，wall-clock 明显短于串行总和。"""
-    db, state, content = read_game
+    """parallel=True 时模块 LLM 调用真并发：峰值并发 ≥2（会合证，不赌 sleep 观察窗）。"""
+    db, state, _content = read_game
     active = 0
     max_active = 0
     lock = threading.Lock()
-    delay = 0.25
+    # Rendezvous: first arrivals wait until a peer is also in-flight — proves overlap
+    # without wall-clock sleep. Serial path would hang here (CI job final line owns hang).
+    overlap = threading.Condition(lock)
 
-    def _slow(agent, prompt, tag):
+    def _rendezvous(agent, prompt, tag):
         nonlocal active, max_active
-        with lock:
+        with overlap:
             active += 1
             max_active = max(max_active, active)
-        time.sleep(delay)
-        with lock:
+            if max_active >= 2:
+                overlap.notify_all()
+            else:
+                # Wait until a peer has also entered (overlap proven).
+                while max_active < 2:
+                    overlap.wait()
             active -= 1
         return _fake_run(agent, prompt, tag)
 
-    monkeypatch.setattr(simulation, "run_agent_text", _slow)
-    t0 = time.monotonic()
+    monkeypatch.setattr(simulation, "run_agent_text", _rendezvous)
     extract_scores_by_modules_with_agno(_dummy_agents(), db, state, "邸报", parallel=True)
-    elapsed = time.monotonic() - t0
     assert max_active >= 2, f"未真正并发，峰值并发={max_active}"
-    assert elapsed < delay * len(EXTRACTION_MODULES), (
-        f"wall-clock {elapsed:.2f}s 未短于串行总和 {delay*len(EXTRACTION_MODULES):.2f}s")
 
 
 def test_serial_extract_stays_serial(read_game, monkeypatch):
-    """parallel=False（形态1/api 默认）峰值并发==1，串行不受影响。"""
-    db, state, content = read_game
+    """parallel=False（形态1/api 默认）在调用线程串行跑模块，峰值并发==1。
+
+    忠实证明：run 窗口内计数 + 调用线程同一性。旧夹具把 ++/max/-- 放同一锁块且
+    run 在计数外，生产忽略 parallel 走 ThreadPool 后串行案仍绿。
+    """
+    db, state, _content = read_game
     active = 0
     max_active = 0
     lock = threading.Lock()
+    caller = threading.get_ident()
+    off_caller: list[int] = []
 
     def _track(agent, prompt, tag):
         nonlocal active, max_active
+        tid = threading.get_ident()
+        if tid != caller:
+            off_caller.append(tid)
         with lock:
             active += 1
             max_active = max(max_active, active)
-        time.sleep(0.05)
-        with lock:
-            active -= 1
-        return _fake_run(agent, prompt, tag)
+        try:
+            return _fake_run(agent, prompt, tag)
+        finally:
+            with lock:
+                active -= 1
 
     monkeypatch.setattr(simulation, "run_agent_text", _track)
     extract_scores_by_modules_with_agno(_dummy_agents(), db, state, "邸报", parallel=False)
+    assert off_caller == [], f"串行路径离开调用线程（疑 ThreadPool）：{off_caller}"
     assert max_active == 1, f"串行路径出现并发，峰值={max_active}"
 
 
@@ -277,7 +289,7 @@ def test_parallel_extract_propagates_extractor_error(read_game, monkeypatch):
             raise RuntimeError("extractor issues 模拟失败")
         return _fake_run(agent, prompt, tag)
 
-    db, state, content = read_game
+    db, state, _content = read_game
     monkeypatch.setattr(simulation, "run_agent_text", _one_fails)
     with pytest.raises(RuntimeError, match="extractor issues 模拟失败"):
         extract_scores_by_modules_with_agno(_dummy_agents(), db, state, "邸报", parallel=True)
