@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Dict, NamedTuple, Tuple
+
 
 class ExitGame(Exception):
     pass
@@ -33,13 +35,20 @@ class LLMUnavailable(Exception):
         self.status_code = status_code
 
 
+class PromulgationHealEvidence(NamedTuple):
+    """#1753 颁布判决有界补交耗尽证据：生产/消费两侧同一契约。"""
+
+    bad_outputs: Tuple[object, ...]
+    compliant_verdicts: Tuple[Dict[str, object], ...]
+
+
 class LLMContractError(Exception):
     def __init__(
         self,
         message: str,
         *,
         raw_value: object = None,
-        heal_evidence: object = None,
+        heal_evidence: PromulgationHealEvidence | None = None,
     ) -> None:
         super().__init__(message)
         self.raw_value = raw_value

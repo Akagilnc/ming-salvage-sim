@@ -54,6 +54,10 @@ def canned_full_settlement(
     canned_extract = dict(extract_result or {})
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    # #1753：heal 环外创建判官；canned 须同步替掉工厂，避免 None llm_config 真建 agent。
+    monkeypatch.setattr(
+        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object(),
+    )
 
     # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁
     def _promulgate(dossiers, *_a, **_k):
