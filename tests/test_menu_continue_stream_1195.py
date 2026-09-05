@@ -51,6 +51,10 @@ def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
         def state_payload(self) -> dict:
             return self._state
 
+    # #1749：隔离前序 exit completion / pin。
+    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
+    with web_app._menu_pin_lock:
+        web_app._menu_pinned_db_paths.clear()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
     monkeypatch.setattr(web_app, "WebGame", FakeWebGame)
     monkeypatch.setattr(web_app, "web_game", None)

@@ -454,3 +454,138 @@ def test_load_save_pins_path_while_draining(tmp_path, monkeypatch):
     released.set()
     t.join(timeout=10.0)
     assert not t.is_alive()
+
+
+def test_load_save_superseded_after_close_archives_orphan(tmp_path, monkeypatch):
+    """#1749：load_save 已关旧局后被取代 → 解钉并 _archive_closed_orphan_path 转交归档。"""
+    import asyncio
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    import ming_sim.beat_orchestration as bo
+    from tests.conftest import deterministic_test_beat_generator
+
+    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
+    web_app.web_game = None
+    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
+    with web_app._menu_pin_lock:
+        web_app._menu_pinned_db_paths.clear()
+
+    g = web_app.WebGame(fresh=True)
+    web_app.web_game = g
+    old_path = g.db_path
+
+    # 确定性：关旧局 → 钉住 → 切走 main（模拟 new_game）→ 解钉转交归档
+    c = web_app._spawn_drain_close(g, archive_db=False)
+    web_app.web_game = None
+    web_app._pin_db_path(old_path)
+    assert c.done.wait(timeout=5.0) and c.close_ok
+    new_path = str(tmp_path / "ud" / f"ming_sim_new_{time.time_ns()}.db")
+    web_app._set_main_db_path(new_path)
+    # 并发 new_game 因 pin 跳过归档时的现场：
+    web_app._archive_drained_db_file(old_path)
+    assert os.path.exists(old_path), "pin must block archive"
+    # load_save 失配转交：
+    web_app._unpin_db_path(old_path)
+    web_app._archive_closed_orphan_path(old_path)
+    assert not os.path.exists(old_path), f"orphan left at {old_path}"
+    assert _drained(tmp_path / "ud")
+
+    # 端点路径：token 失配分支也走同一 handoff（缺档 → 409 cancel 前先 close）
+    g2 = web_app.WebGame(fresh=True)
+    web_app.web_game = g2
+    p2 = g2.db_path
+    # 在 drain 完成后、token 检查前 bump 世代
+    real_wait = threading.Event.wait
+
+    def wait_then_bump(self, timeout=None):
+        ok = real_wait(self, timeout)
+        if ok and not getattr(wait_then_bump, "_bumped", False):
+            wait_then_bump._bumped = True
+            with web_app._menu_lifecycle_lock:
+                web_app._menu_generation += 1
+                web_app._set_main_db_path(
+                    str(tmp_path / "ud" / f"ming_sim_bump_{time.time_ns()}.db")
+                )
+        return ok
+
+    monkeypatch.setattr(threading.Event, "wait", wait_then_bump)
+    with pytest.raises(web_app.HTTPException) as ei:
+        asyncio.run(web_app.api_menu_load_save("missing"))
+    assert ei.value.status_code == 409
+    assert not os.path.exists(p2), "endpoint handoff must archive closed old path"
+
+
+def test_continue_waits_for_exit_detach_before_construct(tmp_path, monkeypatch):
+    """#1749：exit drain 未完成时 continue 不得为同一主库构造第二 runtime。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    import ming_sim.beat_orchestration as bo
+    from tests.conftest import deterministic_test_beat_generator
+
+    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
+    web_app.web_game = None
+    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
+    with web_app._menu_pin_lock:
+        web_app._menu_pinned_db_paths.clear()
+
+    g = web_app.WebGame(fresh=True)
+    web_app.web_game = g
+    main_path = g.db_path
+
+    # 卡住 session.close，使 exit completion 不 done
+    close_release = threading.Event()
+    closed = threading.Event()
+    real_close = g.session.close
+
+    def blocked_close():
+        assert close_release.wait(timeout=10.0)
+        real_close()
+        closed.set()
+
+    g.session.close = blocked_close  # type: ignore[method-assign]
+
+    constructed: list[str] = []
+    real_wg = web_app.WebGame
+
+    class TrackingWG(real_wg):
+        def __init__(self, *a, **k):
+            constructed.append("ctor")
+            super().__init__(*a, **k)
+
+    monkeypatch.setattr(web_app, "WebGame", TrackingWG)
+
+    import asyncio
+    assert asyncio.run(web_app.api_menu_exit()) == {"ok": True}
+    assert web_app.web_game is None
+    assert web_app._menu_exit_detach_completion is not None
+    assert not web_app._menu_exit_detach_completion.done.is_set()
+
+    cont_done = threading.Event()
+    cont_body: dict = {}
+
+    def run_cont():
+        from fastapi.testclient import TestClient
+        r = TestClient(web_app.app).post("/api/menu/continue")
+        cont_body["status"] = r.status_code
+        cont_body["text"] = r.text
+        cont_done.set()
+
+    t = threading.Thread(target=run_cont, daemon=True)
+    t.start()
+    # continue worker 应卡在 exit completion.wait
+    assert not cont_done.wait(timeout=0.5), cont_body.get("text", "")
+    assert constructed == [], f"constructed early: {constructed}"
+    close_release.set()
+    assert cont_done.wait(timeout=30.0), cont_body
+    t.join(timeout=5.0)
+    assert closed.is_set()
+    assert constructed, "continue should construct after exit close"
+    assert cont_body.get("status") == 200
+    assert "event: done" in (cont_body.get("text") or "") or "event:done" in (
+        cont_body.get("text") or ""
+    ).replace(" ", "")
