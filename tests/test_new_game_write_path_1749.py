@@ -453,26 +453,92 @@ def test_webgame_begin_turn_failure_closes_session(tmp_path, monkeypatch):
         sess.db.conn.execute("SELECT 1")
 
 
-def test_load_save_close_fail_restores_pointer(tracer_client, monkeypatch):
-    """真实 load_save 入口：关旧局失败 → 409、恢复指针；归档不得搬活路径。"""
+def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
+    """真实 load_save 入口：关旧局失败 → 409、恢复指针且 /api/directives 仍可写；不搬活库。"""
     client = tracer_client
+    _install_canned_minister_factory(monkeypatch)
     seed = client.post("/api/menu/new_game")
     assert seed.status_code == 200
     g0 = web_app.web_game
     assert g0 is not None
     old_path = g0.db_path
+    c0 = _campaign(g0)
     g0.save_to("snap1749")
 
+    real_close = g0.session.close
     g0.session.close = lambda: (_ for _ in ()).throw(RuntimeError("close boom"))  # type: ignore
-    r = client.post("/api/menu/load_save/snap1749")
-    assert r.status_code == 409, r.text
-    assert web_app.web_game is g0
-    assert os.path.isfile(old_path)
-    web_app._archive_drained_db_file(old_path)
-    assert os.path.isfile(old_path)
-    assert _drained(Path(web_app.user_data_path())) == []
-    # 恢复可写：去掉坏 close 后仍是同一 runtime
-    g0.session.close = lambda: None  # type: ignore
+    try:
+        r = client.post("/api/menu/load_save/snap1749")
+        assert r.status_code == 409, r.text
+        assert web_app.web_game is g0
+        assert not g0._write_queue.is_sealed(), "drain failure must unseal restored runtime"
+        assert os.path.isfile(old_path)
+        web_app._archive_drained_db_file(old_path)
+        assert os.path.isfile(old_path)
+        assert _drained(Path(web_app.user_data_path())) == []
+        # 外部行为：409 后经真实 directives 入口旧局仍可写
+        _directive(client, "着户部清核辽饷（load-save-close-fail）。")
+        _wait_pending_writes(g0)
+        snap = _db_snapshot(old_path)
+        assert snap["campaign_id"] == c0
+        assert "着户部清核辽饷（load-save-close-fail）。" in snap["directive_texts"]
+    finally:
+        g0.session.close = real_close  # type: ignore[method-assign]
+
+
+def test_exit_new_game_does_not_archive_before_completion(tracer_client, monkeypatch):
+    """exit→new_game：completion.done 前不得归档旧库（peek 共享，非 take 漏等）。"""
+    client = tracer_client
+    seed = client.post("/api/menu/new_game")
+    assert seed.status_code == 200
+    g0 = web_app.web_game
+    assert g0 is not None
+    p0 = g0.db_path
+
+    close_release = threading.Event()
+    real_close = g0.session.close
+
+    def blocked_close():
+        close_release.wait()
+        real_close()
+
+    g0.session.close = blocked_close  # type: ignore[method-assign]
+
+    archive_calls: list[str] = []
+    real_arch = web_app._archive_drained_db_file
+
+    def _arch(path: str) -> None:
+        archive_calls.append(path)
+        real_arch(path)
+
+    monkeypatch.setattr(web_app, "_archive_drained_db_file", _arch)
+
+    assert client.post("/api/menu/exit_to_menu").status_code == 200
+    completion = web_app._menu_exit_detach_completion
+    assert completion is not None and not completion.done.is_set()
+
+    ng_done = threading.Event()
+    ng_body: dict = {}
+
+    def run_ng():
+        r = TestClient(web_app.app).post("/api/menu/new_game")
+        ng_body["status"] = r.status_code
+        ng_done.set()
+
+    t = threading.Thread(target=run_ng, daemon=True)
+    t.start()
+    wait_until(ng_done.is_set)
+    assert ng_body.get("status") == 200
+    # new_game 已返回，但 exit close 未完成 → 旧库仍在、归档未发生
+    assert not completion.done.is_set()
+    assert os.path.exists(p0)
+    assert archive_calls == [], f"archived before exit completion: {archive_calls}"
+    close_release.set()
+    wait_until(completion.done.is_set)
+    wait_until(lambda: not os.path.exists(p0) or bool(archive_calls))
+    t.join()
+    assert archive_calls, "archive must run after exit close ok"
+    assert not os.path.exists(p0)
 
 
 def test_continue_waits_exit_detach_before_construct(tracer_client, monkeypatch):
@@ -506,8 +572,9 @@ def test_continue_waits_exit_detach_before_construct(tracer_client, monkeypatch)
 
     assert client.post("/api/menu/exit_to_menu").status_code == 200
     assert web_app.web_game is None
-    assert web_app._menu_exit_detach_completion is not None
-    assert not web_app._menu_exit_detach_completion.done.is_set()
+    completion = web_app._menu_exit_detach_completion
+    assert completion is not None
+    assert not completion.done.is_set()
 
     cont_body: dict = {}
     cont_done = threading.Event()
@@ -520,18 +587,10 @@ def test_continue_waits_exit_detach_before_construct(tracer_client, monkeypatch)
 
     t = threading.Thread(target=run_cont, daemon=True)
     t.start()
-    # 可观察终态：completion 未 done 且尚未构造——非「N 秒内没发生」
-    wait_until(
-        lambda: web_app._menu_exit_detach_completion is None
-        or (
-            web_app._menu_exit_detach_completion is not None
-            and not web_app._menu_exit_detach_completion.done.is_set()
-            and not cont_done.is_set()
-        )
-    )
-    # continue 已 take completion → 全局位空，且仍未完成、未构造
-    wait_until(lambda: web_app._menu_exit_detach_completion is None and not cont_done.is_set())
+    # peek 模型：completion 仍在全局，continue 卡在 done.wait，尚未构造
+    wait_until(lambda: not cont_done.is_set() and not completion.done.is_set())
     assert constructed == [], f"constructed early: {constructed}"
+    assert web_app._menu_exit_detach_completion is completion
     close_release.set()
     cont_done.wait()
     t.join()

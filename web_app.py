@@ -4205,6 +4205,7 @@ def _active_db_path_file() -> str:
 
 
 def _read_active_db_path() -> str:
+    """读 active_db.txt。文件不存在 → 空串；读失败响亮上抛（ADR 0005），禁静默退 env/default。"""
     active_file = _active_db_path_file()
     if not os.path.exists(active_file):
         return ""
@@ -4212,7 +4213,8 @@ def _read_active_db_path() -> str:
         with open(active_file, "r", encoding="utf-8") as f:
             return f.read().strip()
     except Exception:
-        return ""
+        logger.exception("read active_db path failed path=%s", active_file)
+        raise
 
 
 def _atomic_write_text(path: str, text: str) -> None:
@@ -4227,7 +4229,7 @@ def _atomic_write_text(path: str, text: str) -> None:
             try:
                 os.remove(tmp_file)
             except Exception:
-                pass
+                logger.exception("cleanup atomic write tmp failed path=%s", tmp_file)
 
 
 def _write_active_db_path(db_path: str) -> None:
@@ -4235,6 +4237,7 @@ def _write_active_db_path(db_path: str) -> None:
 
 
 def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
+    """快照主库路径配置。active 文件存在则必读成功——读失败上抛，禁空值冒充快照（ADR 0005）。"""
     active_file = _active_db_path_file()
     active_exists = os.path.exists(active_file)
     active_value = ""
@@ -4243,7 +4246,8 @@ def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
             with open(active_file, "r", encoding="utf-8") as f:
                 active_value = f.read()
         except Exception:
-            active_value = ""
+            logger.exception("snapshot active_db read failed path=%s", active_file)
+            raise
     return (
         "MING_SIM_DB" in os.environ,
         os.environ.get("MING_SIM_DB", ""),
@@ -4253,6 +4257,7 @@ def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
 
 
 def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
+    """按快照恢复主库路径。删/写失败上抛——禁静默改写成 env/default 另一身份（ADR 0005）。"""
     env_exists, env_value, active_exists, active_value = snapshot
     if env_exists:
         os.environ["MING_SIM_DB"] = env_value
@@ -4265,11 +4270,8 @@ def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
         try:
             os.remove(active_file)
         except Exception:
-            fallback_path = env_value if env_exists and env_value else user_data_path("ming_sim.db")
-            try:
-                _atomic_write_text(active_file, fallback_path)
-            except Exception:
-                pass
+            logger.exception("restore: remove stale active_db failed path=%s", active_file)
+            raise
 
 
 def _set_main_db_path(db_path: str) -> None:
@@ -4277,26 +4279,34 @@ def _set_main_db_path(db_path: str) -> None:
     _write_active_db_path(db_path)
 
 
+def _normalize_db_path(path: str) -> str:
+    """#1749 / #14：路径身份唯一真源。
+
+    相对路径按 user_data_dir 解析（与 WebGame.__init__ 同），再 abspath。
+    abspath 失败直接上抛——禁静默退回另一套身份语义（ADR 0005）。
+    """
+    if not path:
+        return ""
+    if not os.path.isabs(path):
+        path = str(user_data_dir() / path)
+    return os.path.abspath(path)
+
+
 def _get_main_db_path() -> str:
     """解析当前主库路径：active_db.txt > env > 默认 ming_sim.db。
 
     #396：new_game 不删旧库文件（旧后台 worker 仍写，删了会触发 SQLite readonly database），
     而是把主库路径切到新文件，旧连接排空关闭后旧库归档为存档。active_db.txt 持久化该切换，
-    使重启后仍能加载新库。"""
+    使重启后仍能加载新库。
+    返回值经 _normalize_db_path——与 WebGame 打开、归档比较同一身份。
+    """
     active_path = _read_active_db_path()
     if active_path:
-        return active_path
+        return _normalize_db_path(active_path)
     db_path = os.environ.get("MING_SIM_DB", "")
     if db_path:
-        return db_path
-    return user_data_path("ming_sim.db")
-
-
-def _normalize_db_path(path: str) -> str:
-    """#1749 / #14：路径身份唯一真源。abspath 失败直接上抛——禁静默退回另一套身份语义（ADR 0005）。"""
-    if not path:
-        return ""
-    return os.path.abspath(path)
+        return _normalize_db_path(db_path)
+    return _normalize_db_path(user_data_path("ming_sim.db"))
 
 
 def _same_db_path(left: str, right: str) -> bool:
@@ -4305,13 +4315,34 @@ def _same_db_path(left: str, right: str) -> bool:
     return _normalize_db_path(left) == _normalize_db_path(right)
 
 
-def _take_exit_detach_completion() -> Optional["_MenuExitDetachCompletion"]:
-    """取出并清空全局 exit completion——由本拍菜单动作独家消费（#1749）。"""
+def _peek_exit_detach_completion() -> Optional["_MenuExitDetachCompletion"]:
+    """只读全局 exit completion，不清空——多消费者可同时 wait 同一 done（#1749）。"""
+    with _menu_exit_detach_lock:
+        return _menu_exit_detach_completion
+
+
+def _clear_exit_detach_completion(expected: "_MenuExitDetachCompletion") -> None:
+    """成功消费后清除；仅当仍是同一对象时清空，避免误清后来的 exit。"""
     global _menu_exit_detach_completion
     with _menu_exit_detach_lock:
-        completion = _menu_exit_detach_completion
-        _menu_exit_detach_completion = None
-        return completion
+        if _menu_exit_detach_completion is expected:
+            _menu_exit_detach_completion = None
+
+
+def _wait_exit_detach_for_open() -> bool:
+    """continue/load_save 开库前：等 pending exit detach。
+
+    无 pending → True。close_ok → 清除并 True。close 失败 → 保留 completion 供后续
+    消费者看见，返回 False（调用方 409/SSE error，不得开脏路径）。
+    """
+    completion = _peek_exit_detach_completion()
+    if completion is None:
+        return True
+    completion.done.wait()
+    if not completion.close_ok:
+        return False
+    _clear_exit_detach_completion(completion)
+    return True
 
 
 def _db_path_is_live(db_path: str) -> bool:
@@ -4399,7 +4430,12 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
     except Exception:
         # #1740 / ADR 0005：排空关库失败不得无痕 return——保留原异常上抛；
         # 调用方（detach 完成通道 / archive_db）据此不得搬库。
+        # #1749：seal 后失败若调用方恢复 runtime 指针，必须 unseal，否则新写 claim 永拒。
         logger.exception("drain/close session failed; skip archive")
+        try:
+            q.unseal()
+        except Exception:
+            logger.exception("unseal after drain/close failure failed")
         raise
     if archive_db:
         old_path = getattr(game, "db_path", "") or ""
@@ -4732,14 +4768,19 @@ async def api_menu_new_game() -> Dict[str, Any]:
         else:
             # #1732 T1：退菜单后 / 无活 session 时仍归档旧主库。先等 exit detach 关连接，
             # 再走同一归档实现——不与仍写旧库的 detach 双移。
-            # #1740：在本端点当拍持有对应 exit 的 completion，不在归档线程里重读全局最新位。
-            # #1749：取出 completion 独家消费，禁遗留 close_ok=False 毒化后续 continue。
-            exit_completion = _take_exit_detach_completion()
+            # #1749：peek 不清空——与 continue 等消费者共享同一 done；先 take 再等会让
+            # 并发 new_game 看见 None 而在 close 完成前归档。
+            exit_completion = _peek_exit_detach_completion()
+            # 归档路径与 WebGame 同一 normalize（相对路径 → user_data_dir）。
+            prev_db_path = _normalize_db_path(prev_db_path) if prev_db_path else ""
 
             def _archive_prev_after_exit_detach() -> None:
                 if exit_completion is not None:
                     exit_completion.done.wait()
-                    if not exit_completion.close_ok:
+                    ok = exit_completion.close_ok
+                    # 新路径已发布：无论 close 成败都清 slot（失败则不搬库）。
+                    _clear_exit_detach_completion(exit_completion)
+                    if not ok:
                         # 本次 exit 排空/关库未确认——不得搬对应旧库（#1740）
                         return
                 if not prev_db_path or _same_db_path(prev_db_path, new_db_path):
@@ -4782,26 +4823,17 @@ async def api_menu_continue() -> StreamingResponse:
         ev_queue.put(("stage", label))
 
     def worker() -> None:
-        # #1749：失败 close 回执放回 _menu_exit_detach_completion 须声明 global，
-        # 否则赋值变 local → UnboundLocalError，且回执已被 take 清空。
-        global web_game, _menu_exit_detach_completion
+        global web_game
         try:
             # 首条阶段在抢锁前入队（#1195 ≤5s 首见）；重活构造在锁内，与 new_game 互斥。
             on_stage("准备载入上次进度...")
-            # #1749：构造前等 exit detach 关尽——禁与仍写同一主库的 exit drain 双开。
-            exit_completion = _take_exit_detach_completion()
-            if exit_completion is not None:
-                exit_completion.done.wait()
-                if not exit_completion.close_ok:
-                    # 失败 completion 放回，直至 new_game 取走；禁一次失败后误开脏路径。
-                    with _menu_exit_detach_lock:
-                        if _menu_exit_detach_completion is None:
-                            _menu_exit_detach_completion = exit_completion
-                    ev_queue.put((
-                        "__error__",
-                        {"message": "上一局尚未关闭完成，请稍后重试。"},
-                    ))
-                    return
+            # #1749：peek+wait，失败保留 completion——禁 take 清空后并发 new_game 漏等。
+            if not _wait_exit_detach_for_open():
+                ev_queue.put((
+                    "__error__",
+                    {"message": "上一局尚未关闭完成，请稍后重试。"},
+                ))
+                return
             old_runtime = None
             with _menu_lifecycle_lock:
                 # 构造前对号：锁外等 exit 期间 new_game/exit/load_save 可能已 bump。
@@ -4860,20 +4892,21 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
             _menu_generation += 1
             old_game = web_game
             web_game = None
-            exit_completion = _take_exit_detach_completion()
 
-            if exit_completion is not None:
-                exit_completion.done.wait()
-                if not exit_completion.close_ok:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="上一局尚未关闭完成，请稍后重试。",
-                    )
+            # peek+wait：失败保留 completion，禁 take 后不放回导致后续 new_game 绕过。
+            if not _wait_exit_detach_for_open():
+                if old_game is not None:
+                    web_game = old_game
+                raise HTTPException(
+                    status_code=409,
+                    detail="上一局尚未关闭完成，请稍后重试。",
+                )
 
             if old_game is not None:
                 try:
                     _drain_and_close_session(old_game, archive_db=False)
                 except Exception:
+                    # drain 失败已 unseal；恢复指针后旧局须仍可写。
                     web_game = old_game
                     logger.exception("load_save close failed for previous runtime")
                     raise HTTPException(
