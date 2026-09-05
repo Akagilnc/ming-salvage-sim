@@ -54,11 +54,6 @@ RESCRIPT_OPTION_FIELD_HEAL_RETRIES = 3
 _OPTION_REPLACE_FIELD = "option"
 
 
-def _transport_json_dumps(obj: object, **kwargs: object) -> str:
-    """JSON 运输边界：标准转义，不改源值。"""
-    return json.dumps(obj, **kwargs)  # type: ignore[arg-type]
-
-
 def _field_failure(
     field: str,
     *,
@@ -1478,7 +1473,7 @@ def _write_degraded_note(
         if extra:
             note.update(extra)
         (root / f"turn{int(turn)}.json").write_text(
-            _transport_json_dumps(note, indent=2), encoding="utf-8"
+            json.dumps(note, indent=2), encoding="utf-8"
         )
     except Exception as exc:  # noqa: BLE001 — 附记是诊断旁路，任何异常不得拖垮结算
         tlog(f"[rescript] 降级附记写盘失败：{exc}")
@@ -1532,7 +1527,7 @@ def _missing_field_heal_feedback(
         ],
         "failures": payload_failures,
     }
-    return _transport_json_dumps(body)
+    return json.dumps(body)
 
 
 def _explicit_heal_id(blob: Mapping[str, Any]) -> str:
@@ -1840,8 +1835,8 @@ def generate_rescript_draft(
             heal_trace.append(entry)
             tlog(
                 f"[rescript] option 契约失败补交产出 {heal_attempt}/{heal_retries} "
-                f"raw_summary={_transport_json_dumps(entry['raw_summary'])} "
-                f"failures={_transport_json_dumps(entry['failures'])}"
+                f"raw_summary={json.dumps(entry['raw_summary'])} "
+                f"failures={json.dumps(entry['failures'])}"
             )
         try:
             if tag == "rescript-draft-heal" and working_data is not None and pending_missing:
@@ -1867,14 +1862,14 @@ def generate_rescript_draft(
                 heal_attempt += 1
                 tlog(
                     f"[rescript] option 契约失败补交 {heal_attempt}/{heal_retries}："
-                    f"{_transport_json_dumps(rows)}"
+                    f"{json.dumps(rows)}"
                 )
                 continue
             # 耗尽：只剔失败 option，其余照出；不告知皇帝；后台响亮留痕
             tlog(
                 f"[rescript] option 契约失败补交耗尽，剔除："
-                f"{_transport_json_dumps(rows)} "
-                f"heal_trace={_transport_json_dumps(heal_trace)}"
+                f"{json.dumps(rows)} "
+                f"heal_trace={json.dumps(heal_trace)}"
             )
             drop_rows = [
                 {**row, "heal_attempts": heal_retries}
