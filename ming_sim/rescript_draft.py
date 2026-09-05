@@ -55,21 +55,8 @@ _OPTION_REPLACE_FIELD = "option"
 
 
 def _transport_json_dumps(obj: object, **kwargs: object) -> str:
-    """实际发送/落盘边界的 JSON 运输。
-
-    优先 ensure_ascii=False（中文可读）；若结果含孤立 surrogate 等无法 UTF-8
-    编码的码点，改用标准 ensure_ascii 转义——loads 后 current 与源值一致。
-    不改源 option/capability；不手写递归转义。
-    """
-    kwargs = dict(kwargs)
-    ensure = bool(kwargs.pop("ensure_ascii", False))
-    text = json.dumps(obj, ensure_ascii=ensure, **kwargs)  # type: ignore[arg-type]
-    if not ensure:
-        try:
-            text.encode("utf-8")
-        except UnicodeEncodeError:
-            text = json.dumps(obj, ensure_ascii=True, **kwargs)  # type: ignore[arg-type]
-    return text
+    """JSON 运输边界：标准转义，不改源值。"""
+    return json.dumps(obj, **kwargs)  # type: ignore[arg-type]
 
 
 def _field_failure(
@@ -137,22 +124,11 @@ class RescriptOptionMissingFieldsError(ValueError):
         field_failures: Optional[Sequence[Mapping[str, object]]] = None,
     ) -> None:
         self.raw_option = raw_option
-        normalized: List[Dict[str, object]] = []
-        seen: set[str] = set()
-        for raw_fact in field_failures or ():
-            if not isinstance(raw_fact, Mapping):
-                continue
-            field = str(raw_fact.get("field") or "").strip()
-            if not field or field in seen:
-                continue
-            seen.add(field)
-            normalized.append(_field_failure(
-                field,
-                current=raw_fact.get("current"),
-                expected=raw_fact.get("expected"),
-            ))
-        self.field_failures: Tuple[Dict[str, object], ...] = tuple(normalized)
-        self.missing_fields = tuple(str(f["field"]) for f in normalized)
+        # 权威接缝已给出事实；此处只承载，不过滤/去重/补空
+        self.field_failures: Tuple[Dict[str, object], ...] = tuple(
+            dict(f) for f in (field_failures or ())
+        )
+        self.missing_fields = tuple(str(f["field"]) for f in self.field_failures)
         super().__init__(message)
 
 
@@ -854,10 +830,12 @@ def normalize_rescript_layer_a_option(
         try:
             validate_structured_decree_combination(out)
         except StructuredDecreeCombinationError as exc:
-            _carry_authority_field_failures(
-                facts,
-                field_failures=getattr(exc, "field_failures", ()),
-            )
+            for raw_fact in exc.field_failures:
+                _note_failed(
+                    facts, str(raw_fact["field"]),
+                    current=raw_fact.get("current"),
+                    expected=raw_fact.get("expected"),
+                )
 
     # 其余 capability 闭集字段透传（有则规范化，无则由 derive 填默认）
     for key in capability_str_keys:  # type: ignore[union-attr]
@@ -1014,10 +992,12 @@ def normalize_rescript_layer_a_option(
                             cadence=cadence_cur,
                         )
                     except IncompleteXiexangPayloadError as exc:
-                        _carry_authority_field_failures(
-                            facts,
-                            field_failures=getattr(exc, "field_failures", ()),
-                        )
+                        for raw_fact in exc.field_failures:
+                            _note_failed(
+                                facts, str(raw_fact["field"]),
+                                current=raw_fact.get("current"),
+                                expected=raw_fact.get("expected"),
+                            )
                     else:
                         out["amount"] = explicit["amount"]
                         out["account"] = explicit["account"]
@@ -1321,28 +1301,6 @@ def _note_option_utf8_failures(
                 )
 
 
-def _carry_authority_field_failures(
-    facts: Dict[str, Dict[str, object]],
-    *,
-    field_failures: object = None,
-) -> bool:
-    """运输权威接缝 field_failures；不合成空期望。"""
-    carried = False
-    for raw_fact in field_failures or ():  # type: ignore[union-attr]
-        if not isinstance(raw_fact, Mapping):
-            continue
-        field = str(raw_fact.get("field") or "").strip()
-        if not field:
-            continue
-        carried = True
-        _note_failed(
-            facts, field,
-            current=raw_fact.get("current"),
-            expected=raw_fact.get("expected"),
-        )
-    return carried
-
-
 def validate_rescript_draft_items(
     data: object,
     board_issue_ids: set[int],
@@ -1472,35 +1430,24 @@ def validate_rescript_draft_items(
     return drafts
 
 
-def _assert_kind_targets_grounded(
-    drafts: List[Dict[str, object]],
-    *,
-    kind: str,
-    target_ids: set[str],
-) -> None:
-    """指定 target_kind 对同批目录接地（army 改票入口与 option 级共用判定）。"""
-    for draft in drafts:
-        for option in draft["options"]:  # type: ignore[union-attr]
-            if option["target_kind"] != kind:
-                continue
-            tid = option["target_id"]
-            if tid not in target_ids:
-                raise ValueError(
-                    f"票拟 option.target_id 不在同批 {kind}_targets：{tid!r}"
-                )
-
-
 def _assert_army_targets_grounded(
     drafts: List[Dict[str, object]], army_target_ids: set[str]
 ) -> None:
     """仅 army target_id 对同批 army_targets 接地。
 
+    成员判定唯一实现 = _ungrounded_target_failure；本入口只做改票适配。
     military_order 的 target_kind/assignee_name 形状由层 A action-conditional
     单源在 normalize 强制；此处不平行复述。session 改票入口仍调用本契约。
     """
-    _assert_kind_targets_grounded(
-        drafts, kind="army", target_ids=army_target_ids,
-    )
+    for draft in drafts:
+        for option in draft["options"]:  # type: ignore[union-attr]
+            ground_exc = _ungrounded_target_failure(
+                option,
+                region_target_ids=None,
+                army_target_ids=army_target_ids,
+            )
+            if ground_exc is not None:
+                raise ValueError(str(ground_exc))
 
 
 def _board_issue_ids(active_issues: object) -> set[int]:
@@ -1596,25 +1543,28 @@ def _explicit_heal_id(blob: Mapping[str, Any]) -> str:
     return ""
 
 
-def _healed_options_by_id(healed: Dict[str, Any]) -> Dict[str, dict]:
+def _healed_options_by_id(
+    healed: Dict[str, Any],
+) -> Dict[str, Tuple[dict, bool]]:
     """一次解析补交响应 → heal_id 索引。
 
-    契约三形态：部分字段 heals / 完整 option heals / 带显式身份的 items。
-    同 id 多命中记为冲突（值 None），查找时拒绝。
+    契约三形态（显式语义，不猜形）：
+    - 部分字段 heals（无 option 键）→ replace=False，合并；
+    - 完整 option heals（有 option 键）→ replace=True，整份替换；
+    - 带显式 heal_id 的 items → replace=True，整份替换。
+    同 id 多命中记为冲突（值 None），查找时拒绝。身份键只清一次。
     """
-    index: Dict[str, Optional[dict]] = {}
+    index: Dict[str, Optional[Tuple[dict, bool]]] = {}
+    _ID_KEYS = frozenset({"heal_id", "item_index", "option_index"})
 
-    def _push(heal_id: str, option: object) -> None:
+    def _push(heal_id: str, option: object, *, replace: bool) -> None:
         if not heal_id or not isinstance(option, dict):
             return
-        cleaned = {
-            k: v for k, v in option.items()
-            if k not in {"heal_id", "item_index", "option_index"}
-        }
+        cleaned = {k: v for k, v in option.items() if k not in _ID_KEYS}
         if heal_id in index:
             index[heal_id] = None  # duplicate → refuse
             return
-        index[heal_id] = cleaned
+        index[heal_id] = (cleaned, replace)
 
     heals = healed.get("heals")
     if isinstance(heals, list):
@@ -1622,14 +1572,18 @@ def _healed_options_by_id(healed: Dict[str, Any]) -> Dict[str, dict]:
             if not isinstance(entry, dict):
                 continue
             heal_id = _explicit_heal_id(entry)
-            if isinstance(entry.get("option"), dict):
-                _push(heal_id, entry["option"])
-            else:
-                body = {
-                    k: v for k, v in entry.items()
-                    if k not in {"heal_id", "item_index", "option_index", "option"}
-                }
-                _push(heal_id, body)
+            if "option" in entry:
+                # 显式 option 包装 = 完整替换语义；不因缺 required 键降成合并
+                opt = entry.get("option")
+                if isinstance(opt, dict):
+                    _push(heal_id, opt, replace=True)
+                continue
+            body = {
+                k: v for k, v in entry.items()
+                if k not in _ID_KEYS and k != "option"
+            }
+            if body:
+                _push(heal_id, body, replace=False)
 
     items = healed.get("items")
     if isinstance(items, list):
@@ -1642,15 +1596,15 @@ def _healed_options_by_id(healed: Dict[str, Any]) -> Dict[str, dict]:
             for cand in opts:
                 if not isinstance(cand, dict):
                     continue
-                _push(_explicit_heal_id(cand), cand)
+                _push(_explicit_heal_id(cand), cand, replace=True)
 
     return {k: v for k, v in index.items() if v is not None}
 
 
 def _find_healed_option_for_failure(
-    by_id: Mapping[str, dict],
+    by_id: Mapping[str, Tuple[dict, bool]],
     failure: RescriptOptionMissingFailure,
-) -> Optional[dict]:
+) -> Optional[Tuple[dict, bool]]:
     """按补交请求显式 heal_id 回指定位；缺失或冲突均拒绝。"""
     want = (failure.heal_id or _option_heal_id(
         failure.item_index, failure.option_index,
@@ -1664,24 +1618,19 @@ def _apply_option_heal(
     baseline_opt: object,
     replacement: dict,
     failure: RescriptOptionMissingFailure,
+    *,
+    replace: bool,
 ) -> Optional[dict]:
     """把补交结果写入底稿 option。
 
-    - 底稿非 object：接受完整 option 体。
-    - 响应已是完整 option（含 required 键）→ 整份替换，再走同一完整校验。
-    - 部分字段 → 合并提供的键；未知多余键若在失败集且未再给出则删除。
-    - 正常兄弟由合并器按失败项定位，不在此改写。
+    - 显式完整 option（option 包装 / items 形态）→ 整份替换，交权威完整校验；
+    - 部分字段 → 合并提供的键；未知多余键若在失败集且未再给出则删除；
+    - 底稿非 object：接受替换体；
+    - 不按 required 键猜完整形态；不把显式完整体自动补成原稿。
     """
-    body = {
-        k: copy.deepcopy(v) for k, v in replacement.items()
-        if k not in {"heal_id", "item_index", "option_index"}
-    }
-    if not isinstance(baseline_opt, dict):
+    body = {k: copy.deepcopy(v) for k, v in replacement.items()}
+    if not isinstance(baseline_opt, dict) or replace:
         return body or None
-
-    # 完整 option 体重交：不按原失败种类截断
-    if body and all(str(k) in body for k in _LAYER_A_REQUIRED_KEYS):
-        return body
 
     if not body and not failure.missing_fields:
         return None
@@ -1710,28 +1659,23 @@ def _merge_healed_missing_options(
 ) -> Dict[str, Any]:
     """#1746：回填失败 option；兄弟 option 不改写。
 
-    完整 option 体重交整份替换；部分字段合并。底稿 items 须已是合法结构。
+    显式完整 option 整份替换；部分字段合并。底稿与坐标依已成立不变式直接消费。
+    缺响应/身份冲突 → 跳过该项，继续下一次补交（外部输入契约）。
     """
     result = copy.deepcopy(baseline)
-    base_items = result.get("items")
-    if not isinstance(base_items, list):
-        # 不变式：首抽/前轮已校验；不改采 healed 或空 items 掩盖破坏
-        return result
+    base_items = result["items"]
     by_id = _healed_options_by_id(healed)
     for failure in failures:
-        if failure.item_index >= len(base_items):
-            continue
         base_item = base_items[failure.item_index]
-        if not isinstance(base_item, dict):
-            continue
-        base_opts = base_item.get("options")
-        if not isinstance(base_opts, list) or failure.option_index >= len(base_opts):
-            continue
+        base_opts = base_item["options"]
         base_opt = base_opts[failure.option_index]
-        replacement = _find_healed_option_for_failure(by_id, failure)
-        if replacement is None:
-            continue
-        patched = _apply_option_heal(base_opt, replacement, failure)
+        found = _find_healed_option_for_failure(by_id, failure)
+        if found is None:
+            continue  # 缺响应或身份冲突：外部输入，下次补交
+        replacement, replace = found
+        patched = _apply_option_heal(
+            base_opt, replacement, failure, replace=replace,
+        )
         if patched is None:
             continue
         base_opts[failure.option_index] = patched
@@ -1744,27 +1688,19 @@ def _drop_options_by_failures(
 ) -> Dict[str, Any]:
     """耗尽后只剔失败 option；急务条目 options 空则整条去掉（F2.3 不足照实）。
 
-    底稿 items 须已是合法结构；不把非法底稿改成空 items。
+    底稿 items 依已成立不变式直接消费；程序破坏自然上抛。
     """
     drop_map: Dict[int, set[int]] = {}
     for failure in failures:
         drop_map.setdefault(int(failure.item_index), set()).add(int(failure.option_index))
-    raw_items = data.get("items")
-    if not isinstance(raw_items, list):
-        return data
+    raw_items = data["items"]
     kept_items: List[object] = []
     for item_index, item in enumerate(raw_items):
-        if not isinstance(item, dict):
-            kept_items.append(item)
-            continue
         drop_idxs = drop_map.get(item_index) or set()
         if not drop_idxs:
             kept_items.append(item)
             continue
-        raw_opts = item.get("options")
-        if not isinstance(raw_opts, list):
-            kept_items.append(item)
-            continue
+        raw_opts = item["options"]
         kept_opts = [
             opt for option_index, opt in enumerate(raw_opts)
             if option_index not in drop_idxs
@@ -1952,11 +1888,8 @@ def generate_rescript_draft(
                     "heal_trace": heal_trace,
                 },
             )
-            # 底稿在首抽/前轮已确立；不在耗尽分支再解析 raw 兜底
-            if not isinstance(working_data, dict):
-                _degrade(exc)
-                return None
-            dropped = _drop_options_by_failures(working_data, pending_missing)
+            # 底稿在首抽/前轮已确立；非法则程序破坏自然上抛
+            dropped = _drop_options_by_failures(working_data, pending_missing)  # type: ignore[arg-type]
             try:
                 # F2.2 局部修订：剔后剩 1 仍呈；0 option 条目已在 drop 时去掉
                 drafts = _validate(

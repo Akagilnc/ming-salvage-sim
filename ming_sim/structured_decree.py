@@ -42,16 +42,16 @@ class StructuredDecreeCombinationError(ValueError):
     ) -> None:
         super().__init__(message)
         self.partial_result = partial_result
-        self.failed_fields = frozenset(failed_fields or ())
-        # 权威接缝一次给出完整事实；此处只接收，不二次猜测/过滤合成
+        # 权威事实 field_failures 优先；failed_fields 只由其派生，不双持独立输入
         self.field_failures: tuple[Dict[str, object], ...] = tuple(
             dict(f) for f in (field_failures or ())
-            if isinstance(f, Mapping) and str(f.get("field") or "").strip()
         )
-        if self.field_failures and not self.failed_fields:
+        if self.field_failures:
             self.failed_fields = frozenset(
                 str(f["field"]) for f in self.field_failures
             )
+        else:
+            self.failed_fields = frozenset(failed_fields or ())
         self.draft_failures = dict(draft_failures or {})
 
 
@@ -195,12 +195,8 @@ def validate_structured_decree_combination(
         *,
         field_failures: tuple[Dict[str, object], ...],
     ) -> None:
-        fields = frozenset(
-            str(f["field"]) for f in field_failures if str(f.get("field") or "").strip()
-        )
         raise StructuredDecreeCombinationError(
             message,
-            failed_fields=fields,
             field_failures=field_failures,
         )
 
@@ -255,18 +251,11 @@ def validate_structured_decree_combination(
         )
 
     if pending:
-        # 去重保序
-        seen: set[str] = set()
-        uniq: list[Dict[str, object]] = []
-        for fact in pending:
-            field = str(fact.get("field") or "").strip()
-            if not field or field in seen:
-                continue
-            seen.add(field)
-            uniq.append(fact)
+        # 跨来源直接合并；权威各点已具名，不再过滤/去重
         _combo_fail(
-            "structured decree 组合校验失败：" + "/".join(sorted(seen)),
-            field_failures=tuple(uniq),
+            "structured decree 组合校验失败："
+            + "/".join(sorted(str(f["field"]) for f in pending)),
+            field_failures=tuple(pending),
         )
 
     region_id = _as_str(payload.get("region_id") or "").strip()
@@ -338,7 +327,6 @@ def validate_structured_decree_combination(
         except TargetLocalityMatrixError as exc:
             raise StructuredDecreeCombinationError(
                 str(exc),
-                failed_fields=exc.failed_fields,
                 field_failures=tuple(dict(f) for f in exc.field_failures),
             ) from exc
         # 程序/数据异常（空省集等）不冒用字段标签；原样上抛

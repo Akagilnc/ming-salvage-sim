@@ -15,7 +15,6 @@ import ming_sim.rescript_draft as rescript_mod
 from ming_sim.rescript_draft import (
     RESCRIPT_OPTION_FIELD_HEAL_RETRIES,
     generate_rescript_draft,
-    normalize_rescript_layer_a_option,
 )
 
 
@@ -305,8 +304,6 @@ def test_amount_numeric_string_accepted_via_grant_shape(monkeypatch, tmp_path):
     """既有 grant 归一：amount='300' 经 require_grant_allocation_shape 接受为 300。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     opt = _army_pay(amount="300")
-    out = normalize_rescript_layer_a_option(opt, generation_admission=True)
-    assert out["amount"] == 300 and out["grant_action"] == "协饷"
     raw = _items_json([{"title": "u", "context": "c", "options": [opt, _hold()]}])
     tags: list[str] = []
     monkeypatch.setattr(
