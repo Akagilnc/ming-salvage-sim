@@ -234,12 +234,6 @@ def _parse_sse(text: str) -> list[dict]:
     return events
 
 
-async def _await_event(ev: threading.Event) -> None:
-    """从 async 上下文等一个 threading.Event（可取消；不占 executor）。"""
-    while not ev.is_set():
-        await asyncio.sleep(0)
-
-
 async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:
     """成功事件或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。"""
     while not ev.is_set() and not task.done():
