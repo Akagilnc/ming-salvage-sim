@@ -28,6 +28,7 @@ from ming_sim.agents import (
     create_faction_brew_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
+    create_settlement_attendant_agent,
     parse_agent_json,
     run_agent_text,
 )
@@ -257,6 +258,49 @@ def run_arrival_attendant_message(
     text = str(text or "")
     if not text.strip():
         raise LLMContractError("王承恩抵京报到返回空文")
+    return text  # 原文，含首尾空白（P6：零删改）
+
+
+def run_settlement_attendant_message(
+    llm_config: LLMConfig,
+    *,
+    year: int,
+    period: int,
+    rejections: Sequence[Mapping[str, object]],
+    agent=None,
+) -> str:
+    """#1745：王承恩结算拒收递话 one-shot。有玩家来源拒收而空文 → LLMContractError。
+
+    只吃结构化 section/category/reason；原文返回（P6 零删改）。
+    """
+    if not rejections:
+        return ""
+    facts = {
+        "year": int(year),
+        "period": int(period),
+        "rejections": [
+            {
+                "section": str(row.get("section") or ""),
+                "category": str(row.get("category") or ""),
+                "reason": str(row.get("reason") or ""),
+            }
+            for row in rejections
+        ],
+    }
+    if not facts["rejections"]:
+        return ""
+    runner = agent if agent is not None else create_settlement_attendant_agent(llm_config)
+    try:
+        text = run_agent_text(
+            runner,
+            json.dumps(facts, ensure_ascii=False),
+            tag="settlement-attendant",
+        )
+    except (APITimeoutError, APIConnectionError, APIStatusError) as error:
+        raise llm_unavailable_from_error(error, "王承恩结算拒收递话") from error
+    text = str(text or "")
+    if not text.strip():
+        raise LLMContractError("王承恩结算拒收递话返回空文")
     return text  # 原文，含首尾空白（P6：零删改）
 
 
@@ -1713,6 +1757,9 @@ def _replay_settle(
         ),
         dossier_rescript_actions=dossier_rescript_actions,
         attendant_message=attendant_message,
+        settlement_attendant_runner=lambda **kw: run_settlement_attendant_message(
+            llm_config, **kw,
+        ),
     )
     return report
 
@@ -2018,6 +2065,9 @@ def _settle_after_narrative(
         dossier_verdicts=dossier_verdicts,
         dossier_rescript_actions=dossier_rescript_actions,
         attendant_message=attendant_message,
+        settlement_attendant_runner=lambda **kw: run_settlement_attendant_message(
+            llm_config, **kw,
+        ),
     )
 
 
@@ -2454,16 +2504,17 @@ def settle_with_delta(
     dossier_verdicts: Optional[List[Dict[str, object]]] = None,
     dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
     attendant_message: str = "",
+    settlement_attendant_runner=None,
 ) -> str:
     """确定性结算「后括号」：apply→turn_logs→inertia→留痕→章节记忆→clear→结局判定→next_period。
 
     收一份**已规范化**的 extracted（英文 canonical key，见 simulation._canonicalize_extraction）。
-    不依赖 llm_config —— 章节记忆 / 结局总评 / 落库 enrichment 全经注入闭包：
+    不依赖 llm_config —— 章节记忆 / 结局总评 / 落库 enrichment / 拒收递话 全经注入闭包：
     章节记忆=chapter_recorder、结局总评=ending_summarizer、落库（含 issue/office 的
-    通道感知 enrichment）=delta_applier。真实流程传捕获 llm_config 的闭包；探针 driver 对
-    chapter_recorder/ending_summarizer 传 None（不产 LLM 叙事），对 delta_applier 传一个
-    **channel=api 确定性配置**的闭包（不走 legacy env enrichment,#54）——无论哪种,结算核
-    本体都不见 llm_config（ADR 0004）。返回 full_report 文本。
+    通道感知 enrichment）=delta_applier、玩家来源拒收呈现=settlement_attendant_runner。
+    真实流程传捕获 llm_config 的闭包；探针 driver 对 chapter_recorder/ending_summarizer
+    传 None，对 settlement_attendant_runner 由调用方注入（缺则玩家拒收诚实失败，P7），对
+    delta_applier 传 channel=api 确定性闭包——结算核本体都不见 llm_config（ADR 0004）。
 
     delta_applier(db, state, extracted, content, registry) -> applied dict；None 时回退到
     `apply_score_extraction(llm_config=None)`——**不注入运行时通道**。注意裸 None 分支不等于
@@ -2585,6 +2636,7 @@ def settle_with_delta(
                     _start_relation_brew if relation_brew_runner is not None else None
                 ),
                 attendant_message=attendant_message,
+                settlement_attendant_runner=settlement_attendant_runner,
             )
     except BaseException as exc:
         # 酿制腿异常路排空（判词：异常时也排空）：等 brew() 收尾并丢弃结果——结算
@@ -2701,8 +2753,8 @@ def _collect_inline_rejections(
                     _scan(f"{section}.{subkey}", subvalue)
 
 
-def _has_durable_player_visible_rejection(db: GameDB, turn: int) -> bool:
-    """True when any non-resimulation-invalidated player-source rejection exists for turn."""
+def _ensure_rejection_reports_table(db: GameDB) -> str:
+    """Ensure rejection_reports exists; return SQL fragment for non-invalidated rows."""
     db.conn.execute(
         """
         CREATE TABLE IF NOT EXISTS rejection_reports (
@@ -2720,16 +2772,38 @@ def _has_durable_player_visible_rejection(db: GameDB, turn: int) -> bool:
         """
     )
     cols = {str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
-    invalidated_expr = "resimulation_invalidated = 0" if "resimulation_invalidated" in cols else "1=1"
-    row = db.conn.execute(
+    return "resimulation_invalidated = 0" if "resimulation_invalidated" in cols else "1=1"
+
+
+def list_durable_player_visible_rejections(
+    db: GameDB, turn: int,
+) -> List[Dict[str, object]]:
+    """0008-D5 来源门：本 turn 未作废的 player_decree/hitl_decision 拒收结构化事实。
+
+    只投影 section/category/reason 供 LLM 呈现接缝；不含 item 明细（不泄技术载荷）。
+    """
+    invalidated_expr = _ensure_rejection_reports_table(db)
+    rows = db.conn.execute(
         f"""
-        SELECT 1 FROM rejection_reports
+        SELECT section, category, reason FROM rejection_reports
         WHERE turn=? AND source IN (?, ?) AND {invalidated_expr}
-        LIMIT 1
+        ORDER BY id
         """,
         (int(turn), Provenance.player_decree.value, Provenance.hitl_decision.value),
-    ).fetchone()
-    return row is not None
+    ).fetchall()
+    return [
+        {
+            "section": str(r["section"] or ""),
+            "category": str(r["category"] or ""),
+            "reason": str(r["reason"] or ""),
+        }
+        for r in rows
+    ]
+
+
+def _has_durable_player_visible_rejection(db: GameDB, turn: int) -> bool:
+    """True when any non-resimulation-invalidated player-source rejection exists for turn."""
+    return bool(list_durable_player_visible_rejections(db, turn))
 
 
 def _settle_after_extract_body(
@@ -2753,6 +2827,7 @@ def _settle_after_extract_body(
     source: Provenance = Provenance.unknown,
     start_relation_brew: Optional[Callable[[], None]] = None,
     attendant_message: str = "",
+    settlement_attendant_runner: Optional[Callable[..., str]] = None,
 ) -> str:
     """settle_with_delta 的后半段写序列正文（被其 atomic 包裹调用）。
 
@@ -2775,8 +2850,10 @@ def _settle_after_extract_body(
         state, extracted.get("faction_denunciations"), commit=False,
     )
     # #567：在途拨帑月度机械对账（被护侧真源）；与 #566 进展分轨，不扩 0058。
+    # #1745：无目标/坏引用提案逐项拒收进 collector，好项同 atomic 落库（0015-D7）。
     db.record_monthly_grant_reconciliations(
         before_turn, extracted.get("dossier_reconciliations"),
+        rejection_collector=collector, source=source,
     )
     # 对账落账后：loss>0 ∧ 本 turn 稽核在场 → 空子暴露。
     db.record_monthly_loophole_exposures_from_reconciliations(
@@ -2889,12 +2966,29 @@ def _settle_after_extract_body(
     # #623：断供/挪用/撤人机器扫描 → 当回合只写挽留 todo（改弦走 revoke 拦截缝）。
     scan_and_write_breach_pleas(db, state, commit=False)
 
-    # ADR 0008 决定 5：主 apply + inertia 拒收全部收齐后，玩家来源(player_decree/hitl_decision)的
-    # 落库拒收 → 邸报附一句 in-world 提示，并**持久化进 turn_report**（web/history/重读都见，非仅即时
-    # 返回串；涵盖 inertia-only 拒收，codex R1 P2 + CodeRabbit Major）。system_simulation 来源静默。
-    # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
-    if _has_durable_player_visible_rejection(db, before_turn):
-        narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
+    # ADR 0008 决定 5 来源门 + 0150-D5-b / P7：玩家来源拒收 → 结构化事实包送
+    # settlement attendant LLM 接缝，原文写入 attendant_message 槽；代码不写戏内句、
+    # 不改 narrative。system_simulation 来源不进此门。空文/失败 fail-loud（整 settle 回滚）。
+    # 既有抵京 companion 稿占槽时：同槽第二段换行并列（代码只做布局拼接）。
+    player_rejections = list_durable_player_visible_rejections(db, before_turn)
+    if player_rejections:
+        if settlement_attendant_runner is None:
+            raise LLMContractError(
+                "玩家来源拒收须经 settlement attendant 呈现接缝"
+            )
+        rejection_speech = settlement_attendant_runner(
+            year=int(state.year),
+            period=int(state.period),
+            rejections=player_rejections,
+        )
+        if not str(rejection_speech or "").strip():
+            raise LLMContractError("王承恩结算拒收递话返回空文")
+        # P6/0142：判空用临时副本；拼接只加布局分隔，不 rstrip/裁剪任一份 LLM 原文。
+        existing = str(attendant_message or "")
+        if existing.strip():
+            attendant_message = existing + "\n" + str(rejection_speech)
+        else:
+            attendant_message = str(rejection_speech)
     # 机械人口真相只留在 extraction/applied 内账；公开回响由下方既有邸报来源承担，
     # 不再把精确人数强制广播为所有角色的公共知识。
     # #976: release held pure-public audience chat (non-withheld) before

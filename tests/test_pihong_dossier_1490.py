@@ -1099,6 +1099,12 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
     # 章节/关系酿制：禁 sk-test 打真网；record 空操作
     _set("record_chapter_memory", lambda *a, **k: None)
     _set("_make_relation_brew_runner", lambda *a, **k: None)
+    # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+    if hasattr(monkeypatch_or_module, "setattr"):
+        install_settlement_attendant_agent_stub(monkeypatch_or_module, dm)
+    else:
+        install_settlement_attendant_agent_stub(None, dm)
     # subprocess worker 内无 monkeypatch 对象时同步写 dm
 
 
@@ -1164,6 +1170,9 @@ def _657_subprocess_resolve(
         dm.create_rescript_draft_agent = lambda *a, **k: None
         dm.record_chapter_memory = lambda *a, **k: None
         dm._make_relation_brew_runner = lambda *a, **k: None
+        # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
+        from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+        install_settlement_attendant_agent_stub(None, dm)
 
         if crash == "phase2":
             def _kill_at_phase2(*a, **k):

@@ -142,8 +142,10 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monk
             "delegator_id": lead,
         }],
     }
+    from tests.section_rejection_helpers import run_settle as settle_after_prepare
+
     driver.run_prepare(db, state, content)
-    driver.run_settle(db, state, content, with_monthly_reports(db, delta))
+    settle_after_prepare(db, state, content, with_monthly_reports(db, delta))
 
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert any(
