@@ -1510,19 +1510,22 @@ def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
     assert pending.get("dossier_action_type", "special_decree") == "special_decree"
 
 
-@pytest.mark.parametrize("recovery_fails", [False, True])
+@pytest.mark.parametrize("recovery_mode", ["ok", "raise", "whitespace"])
 def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
-    game, monkeypatch, tmp_path, recovery_fails,
+    game, monkeypatch, tmp_path, recovery_mode,
 ):
-    """残缺/非法协饷不落旨，并把 LLM 恢复说明交给玩家呈现层。"""
+    """残缺/非法协饷不落旨；恢复入口 typed 失败（raise/纯空白）仍保留拒收账本。"""
     import ming_sim.cli_backend as cb
+    from ming_sim.exceptions import LLMUnavailable
 
     recovery_calls = []
 
     def recovery_backend(_prompt, _config=None, *, tag=""):
         recovery_calls.append(tag)
-        if recovery_fails:
+        if recovery_mode == "raise":
             raise RuntimeError("recovery backend unavailable")
+        if recovery_mode == "whitespace":
+            return "   \n\t  ", 1
         return "任意生成回禀", 1
 
     monkeypatch.setattr(cb, "_run_backend_for_config", recovery_backend)
@@ -1551,9 +1554,7 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
         message="拟旨如下：准拨军饷。",
         reply="准拨，数目另议。",
     )
-    if recovery_fails:
-        from ming_sim.exceptions import LLMUnavailable
-
+    if recovery_mode in {"raise", "whitespace"}:
         with pytest.raises(LLMUnavailable):
             run_materialize_pipeline(ctx)
     else:
@@ -1561,9 +1562,10 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
     expected_fields = {"amount", "account", "purpose", "target_kind", "target_id"}
     assert recovery_calls
     assert all(tag == "decree_validation_recovery" for tag in recovery_calls)
-    if not recovery_fails:
+    if recovery_mode == "ok":
         recovery = ctx.out.get("decree_validation_failure") or {}
         assert set(recovery.get("failed_fields") or []) == expected_fields
+        assert recovery.get("report") == "任意生成回禀"
     db_path = db.conn.execute("PRAGMA database_list").fetchone()[2]
     with sqlite3.connect(db_path) as independent:
         independent.row_factory = sqlite3.Row
@@ -2078,8 +2080,39 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             pass
 
 
-def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(game, monkeypatch, tmp_path):
-    """T1+T2：混合批任一 typed 失败 → 已暂存兄弟撤回，投影与零写入一致。"""
+def _pending_rows(db, turn):
+    return [
+        {
+            "id": int(row["id"]),
+            "kind": row["kind"],
+            "action": row["action"],
+            "payload_json": row["payload_json"],
+            "status": row["status"],
+        }
+        for row in db.list_pending_actions(int(turn))
+    ]
+
+
+def _bad_sibling_candidate(*, kind: str) -> dict:
+    """Typed-failing sibling shared by create/update/delete/tail batch cases."""
+    if kind == "grant_allocation":
+        return {
+            "kind": "grant_allocation", "grant_action": "协饷",
+            "amount": 10, "account": "国库", "purpose": "补饷",
+            "target_kind": "army", "target_id": "not_an_army", "cadence": "一次性",
+        }
+    return {
+        "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+        "amount": 10, "account": "国库", "purpose": "补饷",
+        "target_kind": "army", "target_id": "not_an_army", "cadence": "一次性",
+    }
+
+
+@pytest.mark.parametrize("loop_kind", ["grant_allocation", "draft"])
+def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(
+    game, monkeypatch, tmp_path, loop_kind,
+):
+    """T1+T2：混合批 typed 失败 → 新建/改写/删除全恢复，尾部不重写，拒收仍落账。"""
     import ming_sim.cli_backend as cb
 
     monkeypatch.setattr(
@@ -2091,29 +2124,56 @@ def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(game, monkeypa
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
-    pending_before = {
-        int(row["id"]) for row in db.list_pending_actions(state.turn)
-    }
+    # Baseline: existing grant (to be rewritten) + existing dismiss (to be hedged).
+    existing_grant = _stage_xiexang(
+        db, state.turn, amount=5, target_id="guanning",
+        message="拨关宁军饷五万两。",
+        reply="臣请户部发帑5万两协济，请陛下定夺准驳。",
+    ).out["pending_action_id"]
+    existing_office = db.stage_pending_action(
+        state.turn, kind="office", action="罢免", minister_name=actor,
+        payload={"name": actor, "office": "", "appointer": actor, "mode": "ordinary",
+                 "summon_after": "否"},
+    )
+    baseline_rows = _pending_rows(db, state.turn)
+    baseline_by_id = {row["id"]: row for row in baseline_rows}
+    assert existing_grant in baseline_by_id
+    assert existing_office in baseline_by_id
     dossier_before = {int(d["id"]) for d in db.list_decree_dossiers()}
-    candidates = candidates_from_classifier_payload([
-        {
-            "kind": "grant_allocation", "grant_action": "协饷",
-            "amount": 15, "account": "国库", "purpose": "补饷",
-            "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
-        },
-        {
-            "kind": "grant_allocation", "grant_action": "协饷",
-            "amount": 10, "account": "国库", "purpose": "补饷",
-            "target_kind": "army", "target_id": "not_an_army", "cadence": "一次性",
-        },
-    ], soft=False)
+    bad = _bad_sibling_candidate(kind=loop_kind)
+    rewrite = {
+        "kind": "grant_allocation", "grant_action": "协饷",
+        "amount": 15, "account": "国库", "purpose": "补饷",
+        "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
+        "target_candidate": str(existing_grant),
+    }
+    appoint = {
+        "kind": "appointment", "appoint_action": "任命",
+        "name": actor, "office": "兵部尚书",
+    }
+    # Both loops share the same write-set shapes: rewrite + hedge-delete + failing sibling.
+    candidates = candidates_from_classifier_payload(
+        [rewrite, appoint, bad], soft=False,
+    )
     ctx = _ctx(
         db, actor, candidates, state.turn,
-        message="拟旨如下：拨关宁与登莱军饷。",
-        reply="臣请户部发帑协济关宁与登莱，请陛下定夺。",
+        message="拟旨如下：改拨关宁军饷并任命，另拨登莱。",
+        reply="臣遵旨拟办。",
     )
     run_materialize_pipeline(ctx)
-    assert set(int(row["id"]) for row in db.list_pending_actions(state.turn)) == pending_before
+    after_rows = _pending_rows(db, state.turn)
+    assert after_rows == baseline_rows
+    restored_grant = json.loads(
+        next(row["payload_json"] for row in after_rows if row["id"] == existing_grant)
+    )
+    assert int(restored_grant.get("amount") or 0) == 5
+    assert any(
+        row["id"] == existing_office and row["kind"] == "office" and row["action"] == "罢免"
+        for row in after_rows
+    )
+    assert not any(
+        row["kind"] == "office" and row["action"] == "任命" for row in after_rows
+    )
     assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
     assert not ctx.out.get("pending_action_id")
     recovery = ctx.out.get("decree_validation_failure") or {}
@@ -2126,6 +2186,16 @@ def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(game, monkeypa
     ).fetchall()
     assert ledger
     assert all(row["source"] == "player_decree" for row in ledger)
+
+    # Replay same failed batch: still zero net write (no double-stage / no tail restage).
+    ctx2 = _ctx(
+        db, actor, candidates, state.turn,
+        message="拟旨如下：改拨关宁军饷并任命，另拨登莱。",
+        reply="臣遵旨拟办。",
+    )
+    run_materialize_pipeline(ctx2)
+    assert _pending_rows(db, state.turn) == baseline_rows
+    assert not ctx2.out.get("pending_action_id")
 
 
 @pytest.mark.parametrize("bad_amount", [None, True, 1.5])
@@ -2260,30 +2330,3 @@ def test_batch_draft_combo_failure_cached_and_attributed(game, monkeypatch, tmp_
     assert items[0].get("region_id") == "shaanxi"
 
 
-def test_inworld_fact_report_whitespace_only_is_unavailable(monkeypatch):
-    """T5：共享回禀 helper 纯空白走 LLMUnavailable；原文不改写契约仍在。"""
-    import pytest
-    import ming_sim.cli_backend as cb
-    from ming_sim.exceptions import LLMUnavailable
-
-    monkeypatch.setattr(
-        cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("   \n\t  ", 1),
-    )
-    with pytest.raises(LLMUnavailable):
-        cb._compose_inworld_fact_report(
-            "prompt", llm_config=None, tag="decree_validation_recovery",
-        )
-
-    kept = []
-
-    def backend(_p, _c=None, *, tag=""):
-        text = "  臣请陛下改说。  "
-        kept.append(text)
-        return text, 1
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    out = cb._compose_inworld_fact_report(
-        "prompt", llm_config=None, tag="decree_validation_recovery",
-    )
-    assert out == kept[0]
