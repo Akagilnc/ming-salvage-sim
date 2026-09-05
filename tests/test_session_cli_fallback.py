@@ -1238,6 +1238,100 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
     assert content.characters[appointee].faction == "阉党"
 
 
+def _propose_appointment_tool(character, db, state):
+    """取出 propose_appointment 真工具（吏部才挂；测试临时切换 office_type）。"""
+    from ming_sim.models import CourtContext
+    from ming_sim.tools import build_minister_tools
+
+    original = character.office_type
+    character.office_type = "吏部"
+    try:
+        tools = {
+            fn.__name__: fn
+            for fn in build_minister_tools(character, CourtContext(state=state, db=db))
+        }
+        return tools["propose_appointment"]
+    finally:
+        character.office_type = original
+
+
+@pytest.mark.parametrize(
+    ("tool_mode", "expected"),
+    [("midzhi", "midzhi"), (None, "ordinary"), ("ordinary", "ordinary")],
+)
+def test_propose_appointment_tool_mode_contract(game, tool_mode, expected):
+    """#1731 类B：propose_appointment 省略 mode=沉默→ordinary；显式 midzhi 保留。"""
+    db, state, content = game
+    minister = "毕自严"
+    appointee = f"工具候选模式{expected}{tool_mode}"
+    character = content.characters[minister]
+    propose = _propose_appointment_tool(character, db, state)
+    kwargs = {"name": appointee, "office": "户部尚书", "faction": "中立", "reason": "试"}
+    if tool_mode is not None:
+        kwargs["mode"] = tool_mode
+    marker = propose(**kwargs)
+    assert marker.startswith("__pending_appointment__")
+    body = json.loads(marker.removeprefix("__pending_appointment__"))
+    if tool_mode is None:
+        assert "mode" not in body
+    else:
+        assert body["mode"] == expected
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    pending_id = sess._stage_appointment_candidate(
+        json.dumps(body, ensure_ascii=False), character,
+    )
+    assert pending_id
+    staged = json.loads(
+        next(p for p in db.list_pending_actions(state.turn) if p["id"] == pending_id)[
+            "payload_json"
+        ]
+    )
+    assert staged["mode"] == expected
+
+
+def test_propose_appointment_omitted_mode_preserves_existing_midzhi(game):
+    """#1731 类B：既有 midzhi 任免候选 + 省略 mode 的继续调用 → 保留 midzhi。"""
+    db, state, content = game
+    minister = "毕自严"
+    appointee = "既有中旨候选"
+    character = content.characters[minister]
+    first_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=minister, target_id=None,
+        payload={
+            "name": appointee, "office": "户部尚书",
+            "appointer": minister, "mode": "midzhi",
+        },
+    )
+    assert first_id
+
+    propose = _propose_appointment_tool(character, db, state)
+    marker = propose(name=appointee, office="户部尚书", reason="续拟")
+    body = json.loads(marker.removeprefix("__pending_appointment__"))
+    assert "mode" not in body
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    second_id = sess._stage_appointment_candidate(
+        json.dumps(body, ensure_ascii=False), character,
+    )
+    assert second_id
+    staged = json.loads(
+        next(p for p in db.list_pending_actions(state.turn) if p["id"] == second_id)[
+            "payload_json"
+        ]
+    )
+    assert staged["mode"] == "midzhi"
+
+
 def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monkeypatch):
     """确认旧 pending 的同一句，不能再消费 tool sentinel 重建一道新密令。"""
     db, state, content = game

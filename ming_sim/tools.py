@@ -491,24 +491,28 @@ def build_minister_tools(character: Character, context: CourtContext,
 
     def propose_appointment(
         name: str, office: str, faction: str = "中立", reason: str = "",
-        replaces: str = "", mode: str = "ordinary",
+        replaces: str = "", mode: Optional[str] = None,
     ) -> str:
-        """吏部铨选拟任；mode 仅确为中旨时填 midzhi，否则 ordinary。"""
+        """吏部铨选拟任。
+
+        mode 是 LLM 对皇帝本意的新 typed 判定：确为中旨时填 midzhi，
+        确为普通旨时填 ordinary；没有新判断时不填（#1731 None=沉默）。
+        """
         nm = (name or "").strip()
         off = (office or "").strip()
         if not nm or not off:
             return "铨选失败：姓名或拟授官职为空。"
         import json as _json
-        payload = _json.dumps(
-            {
-                "name": nm, "office": off,
-                "faction": (faction or "中立").strip(),
-                "reason": (reason or "").strip(),
-                "replaces": (replaces or "").strip(),
-                "mode": "midzhi" if mode == "midzhi" else "ordinary",
-            },
-            ensure_ascii=False,
-        )
+        body = {
+            "name": nm, "office": off,
+            "faction": (faction or "中立").strip(),
+            "reason": (reason or "").strip(),
+            "replaces": (replaces or "").strip(),
+        }
+        raw_mode = str(mode or "").strip()
+        if raw_mode:
+            body["mode"] = "midzhi" if raw_mode == "midzhi" else "ordinary"
+        payload = _json.dumps(body, ensure_ascii=False)
         return f"__pending_appointment__{payload}"
 
     def register_unlisted_person(

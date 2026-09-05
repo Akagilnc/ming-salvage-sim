@@ -173,6 +173,54 @@ def test_explicit_prefix_stages_same_pending_directive_as_natural_language(game,
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)).fetchone()[0] == 0
 
 
+@pytest.mark.parametrize(
+    ("typed_mode", "expected"),
+    [("midzhi", "midzhi"), ("ordinary", "ordinary"), (None, "ordinary")],
+)
+def test_explicit_prefix_uses_typed_classifier_mode_not_player_prose(
+    game, monkeypatch, typed_mode, expected,
+):
+    """#1731 类A：前缀入口 mode 只吃分类器 typed；玩家散文「中旨直发」不入槽。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    draft_text = "着户部清核辽饷，限期完报。"
+    monkeypatch.setattr(
+        cb, "resolve_minister_actions",
+        lambda *_a, **_k: {"decree_text": draft_text, "secret_order": None},
+    )
+    # materialize 对显式前缀早退；禁串行抽取旁路。
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no serial extractor")),
+    )
+    intent = {"kind": "draft"}
+    if typed_mode is not None:
+        intent["mode"] = typed_mode
+    sess = _fake_session(db, state)
+    out = GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="拟旨如下：中旨直发，着户部清核辽饷。",
+        answer=draft_text,
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=intent,
+    )
+    assert out.get("pending_action_id")
+    pending = next(
+        p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"
+    )
+    payload = json.loads(pending["payload_json"])
+    assert payload["mode"] == expected
+    assert payload["text"] == draft_text
+
+    if expected == "midzhi":
+        db.commit_pending_actions(state, kind_filter="directive")
+        db.ensure_dossiers_for_draft_directives(state)
+        dossiers = db.list_decree_dossiers()
+        assert len(dossiers) == 1
+        assert dossiers[0]["mode"] == "midzhi"
+
+
 # ── ② pending 原地更新 last-write-wins ───────────────────────────────────
 
 def test_pending_directive_last_write_wins(game, monkeypatch):
