@@ -1,6 +1,6 @@
 """#1746：票拟 option 缺结构化字段 → 同一会话补交（≤3）→ 耗尽单 option 剔除。
 
-真实入口：resolve_decisions_phase2 / _settle_after_narrative（web 亲裁续跑同源 phase2）。
+真实入口：resolve_decisions_phase2（web/亲裁续跑读 persisted resolve_context 的 phase2）。
 decision keys：missing-field-heal-by-resume-not-drop / per-option-drop-after-heal-exhausted。
 """
 from __future__ import annotations
@@ -552,21 +552,37 @@ def test_heal_matches_by_explicit_heal_id_not_prose(monkeypatch, tmp_path):
     assert len(u2_grants) == 1 and u2_grants[0]["target_id"] == "xuanfu"
 
 
-def test_heal_without_heal_id_refuses_merge_then_drops(monkeypatch, tmp_path):
-    """补交未回指结构身份 → 不按位次/措辞猜配，耗尽剔坏项。"""
+@pytest.mark.parametrize(
+    "heal_payload",
+    [
+        # 完全无 heal_id
+        lambda bad, sibling: _items_json([{
+            "title": "u", "context": "c",
+            "options": [dict(bad, purpose="补饷"), sibling],
+        }]),
+        # 合法格式但指向另一 option 槽（不串项）
+        lambda bad, sibling: _heals_json([("0:1", {"purpose": "补饷"})]),
+        # 重复 heal_id
+        lambda bad, sibling: json.dumps({
+            "heals": [
+                {"heal_id": "0:0", "purpose": "补饷"},
+                {"heal_id": "0:0", "purpose": "补饷", "amount": 1},
+            ],
+        }, ensure_ascii=False),
+    ],
+    ids=["no_id", "wrong_slot", "duplicate_id"],
+)
+def test_heal_bad_identity_refuses_merge_then_drops(heal_payload, monkeypatch, tmp_path):
+    """无/错/重复 heal_id → 拒合并，不串兄弟项，耗尽剔坏项。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    bad = _army_pay(label="pay")
+    bad = _army_pay(label="pay", amount=300)
     bad.pop("purpose", None)
     sibling = _hold(label="stable", hint="keep")
     first = _items_json([{
         "title": "u", "context": "c",
         "options": [bad, sibling],
     }])
-    # 故意不带 heal_id
-    healed = _items_json([{
-        "title": "u", "context": "c",
-        "options": [dict(bad, purpose="补饷"), sibling],
-    }])
+    healed = heal_payload(bad, sibling)
     n = {"i": 0}
 
     def _llm(*_a, **_k):
@@ -579,6 +595,8 @@ def test_heal_without_heal_id_refuses_merge_then_drops(monkeypatch, tmp_path):
     opts = drafts[0]["options"]
     assert len(opts) == 1
     assert opts[0]["label"] == sibling["label"]
+    assert opts[0]["hint"] == sibling["hint"]
+    assert all(o.get("grant_action") != "协饷" for o in opts)
 
 
 def test_heal_does_not_mark_approved(monkeypatch, tmp_path):
@@ -623,7 +641,7 @@ def test_emperor_channel_gains_no_heal_fields(monkeypatch, tmp_path):
 
 
 def test_combo_correction_still_distinct_from_field_heal(monkeypatch, tmp_path):
-    """组合错误整批重抽 ≠ 缺字段补交。"""
+    """组合错误整批重抽 ≠ 缺字段补交：tag 分流 + 结果契约。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     bad_combo = {
         "title": "辽东欠饷",
@@ -638,8 +656,8 @@ def test_combo_correction_still_distinct_from_field_heal(monkeypatch, tmp_path):
     calls: list[dict] = []
 
     def _llm(_agent, prompt, tag="", prior_messages=None):
-        del prior_messages
-        calls.append({"tag": tag, "prompt": prompt})
+        del prompt
+        calls.append({"tag": tag, "prior_len": len(prior_messages or [])})
         if len(calls) == 1:
             return _items_json([bad_combo])
         return _items_json([good_combo])
@@ -649,7 +667,8 @@ def test_combo_correction_still_distinct_from_field_heal(monkeypatch, tmp_path):
     assert drafts is not None
     assert len(calls) == 2
     assert all(c["tag"] == "rescript-draft" for c in calls)
-    assert calls[1]["prompt"] != calls[0]["prompt"]
+    assert "rescript-draft-heal" not in {c["tag"] for c in calls}
+    assert calls[1]["prior_len"] >= 2  # 组合重抽续接首抽轮次
     assert drafts[0]["options"][0]["locality_scope"] == "none"
 
 
@@ -723,15 +742,70 @@ def test_required_wrong_type_not_missing_heal():
 
 
 # ---------------------------------------------------------------------------
-# 真实入口：phase2 / 结算落库 + 玩家通道结构
+# agents.run_agent_text 适配器边界（无真实 LLM）
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("succeed_on", [1, 2, 3, None])
-def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path):
-    """resolve_decisions_phase2 / settle 同源入口：k 成功或耗尽；会话 prior；pending 落库。"""
+def test_run_agent_text_prior_messages_sent_as_message_list():
+    """真实 agents.run_agent_text：dict prior → Message 列表，顺序 user/assistant + 本轮 user。"""
+    from agno.models.message import Message
+    from ming_sim.agents import run_agent_text
+
+    captured: list[object] = []
+
+    class _Agent:
+        def run(self, input):
+            captured.append(input)
+
+            class _Out:
+                content = '{"ok":true}'
+                messages = None
+
+            return _Out()
+
+    prior = [
+        {"role": "user", "content": "first-user"},
+        {"role": "assistant", "content": "first-assistant"},
+    ]
+    text = run_agent_text(_Agent(), "heal-user", tag="rescript-draft-heal", prior_messages=prior)
+    assert text == '{"ok":true}'
+    assert len(captured) == 1
+    payload = captured[0]
+    assert isinstance(payload, list) and len(payload) == 3
+    assert all(isinstance(m, Message) for m in payload)
+    assert [m.role for m in payload] == ["user", "assistant", "user"]
+    assert [m.content for m in payload] == [
+        "first-user", "first-assistant", "heal-user",
+    ]
+
+
+def test_run_agent_text_without_prior_passes_plain_prompt():
+    """无 prior 时仍走单 str prompt（不强制 List[Message]）。"""
+    from ming_sim.agents import run_agent_text
+
+    captured: list[object] = []
+
+    class _Agent:
+        def run(self, input):
+            captured.append(input)
+
+            class _Out:
+                content = "x"
+                messages = None
+
+            return _Out()
+
+    assert run_agent_text(_Agent(), "solo", tag="t") == "x"
+    assert captured == ["solo"]
+
+
+# ---------------------------------------------------------------------------
+# 真实入口：resolve_decisions_phase2（亲裁续跑读 persisted context）
+# ---------------------------------------------------------------------------
+
+def _phase2_hitl_setup(game, monkeypatch, tmp_path):
+    """最短亲裁续跑前置：ready=0 resolve_context + 已裁 decision + 分拣人。"""
     import ming_sim.decree as decree_mod
     import ming_sim.simulation as simulation
-    from ming_sim.decree import _settle_after_narrative
     from tests.test_rescript_draft_656 import (
         _CANNED,
         _add_character,
@@ -745,6 +819,52 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
     _stub_settle_agents(monkeypatch)
     _retire_existing_actors(db)
     _add_character(db, "测试首辅", "内阁首辅", "阉党")
+
+    sim_payload = {
+        "active_issues": [],
+        "regions": {"cols": ["id", "name", "kind"],
+                    "rows": [["shaanxi", "陕西", "布政司"]]},
+        "armies": {
+            "cols": ["id", "name", "station", "owner_power"],
+            "rows": [
+                ["guanning", "关宁", "宁远", "ming"],
+                ["xuanfu", "宣府", "宣府", "ming"],
+            ],
+        },
+        "transit_semantics": [],
+    }
+    # phase1 暂停态：extracted=None（ready=0），亲裁后续跑走 resolve_decisions_phase2
+    db.save_resolve_context(
+        turn, "诏", "邸报全文",
+        sim_payload,
+        secret_orders={},
+        relevant_memories=[],
+        extracted=None,
+    )
+    db.save_pending_decisions(turn, [{
+        "title": "辽东战和",
+        "context": "边事",
+        "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],
+    }])
+    # 皇帝已裁：写 choice_json（submit_hitl 之后 phase2 所见）
+    db.conn.execute(
+        "UPDATE pending_decisions SET choice_json=?, status='decided' "
+        "WHERE turn=? AND kind='decision'",
+        (json.dumps({"label": "战", "note": ""}, ensure_ascii=False), turn),
+    )
+    db.conn.commit()
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None and ctx.get("extracted") is None
+
+    return db, state, content, turn, decree_mod, simulation, _CANNED
+
+
+@pytest.mark.parametrize("succeed_on", [1, 2, 3, None])
+def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path):
+    """resolve_decisions_phase2 亲裁续跑：k 成功/耗尽；prior 会话；pending 落库。"""
+    db, state, content, turn, decree_mod, simulation, _CANNED = _phase2_hitl_setup(
+        game, monkeypatch, tmp_path,
+    )
 
     bad = _army_pay(label="边饷拟", amount=150)
     bad.pop("purpose", None)
@@ -760,7 +880,7 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
 
     def _fake_run(agent, prompt, tag="", prior_messages=None):
         del agent
-        if tag.startswith("extractor/"):
+        if tag.startswith("extractor/") or tag.startswith("sanitizer/"):
             return _CANNED
         if tag in ("rescript-draft", "rescript-draft-heal"):
             heal_n["i"] += 1
@@ -785,22 +905,10 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
         decree_mod, "create_rescript_draft_agent", lambda *a, **k: object(),
     )
 
-    _settle_after_narrative(
-        state, db, None, None,
-        decree_text="诏", narrative="邸报",
-        simulator_payload={
-            "active_issues": [],
-            "regions": {"cols": ["id", "name", "kind"],
-                        "rows": [["shaanxi", "陕西", "布政司"]]},
-            "armies": {
-                "cols": ["id", "name", "station", "owner_power"],
-                "rows": [["guanning", "关宁", "宁远", "ming"]],
-            },
-            "transit_semantics": [],
-        },
-        relevant_memories=[], secret_orders={},
-        before_turn=turn, _emit=lambda *a: None, content=content,
+    report = decree_mod.resolve_decisions_phase2(
+        state, db, None, None, content=content,
     )
+    assert isinstance(report, str)
 
     rows = db.list_rescript_drafts()
     assert len(rows) == 1
@@ -810,6 +918,8 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
     assert not (banned & set(rows[0]))
     for o in opts:
         assert not (banned & set(o))
+    # 亲裁 decision 行已清；票拟跨月留存
+    assert db.list_pending_decisions(turn) == []
     if succeed_on is None:
         assert len(opts) == 1
         assert opts[0]["label"] == sibling["label"]
@@ -826,24 +936,11 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
         assert all(p >= 2 for p in priors[1:])
 
 
-def test_settle_multi_urgent_isolation_persists(game, monkeypatch, tmp_path):
-    """结算入口：多急务多坏项隔离落库。"""
-    import ming_sim.decree as decree_mod
-    import ming_sim.simulation as simulation
-    from ming_sim.decree import _settle_after_narrative
-    from tests.test_rescript_draft_656 import (
-        _CANNED,
-        _add_character,
-        _retire_existing_actors,
-        _stub_settle_agents,
+def test_phase2_multi_urgent_isolation_persists(game, monkeypatch, tmp_path):
+    """resolve_decisions_phase2：多急务多坏项隔离落库。"""
+    db, state, content, turn, decree_mod, simulation, _CANNED = _phase2_hitl_setup(
+        game, monkeypatch, tmp_path,
     )
-
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    db, state, content = game
-    turn = state.turn
-    _stub_settle_agents(monkeypatch)
-    _retire_existing_actors(db)
-    _add_character(db, "测试首辅", "内阁首辅", "阉党")
 
     bad1 = _army_pay(label="关宁补饷")
     bad1.pop("purpose", None)
@@ -862,7 +959,7 @@ def test_settle_multi_urgent_isolation_persists(game, monkeypatch, tmp_path):
 
     def _fake_run(agent, prompt, tag="", prior_messages=None):
         del agent, prompt, prior_messages
-        if tag.startswith("extractor/"):
+        if tag.startswith("extractor/") or tag.startswith("sanitizer/"):
             return _CANNED
         if tag in ("rescript-draft", "rescript-draft-heal"):
             n["i"] += 1
@@ -874,25 +971,10 @@ def test_settle_multi_urgent_isolation_persists(game, monkeypatch, tmp_path):
     monkeypatch.setattr(
         decree_mod, "create_rescript_draft_agent", lambda *a, **k: object(),
     )
-    _settle_after_narrative(
-        state, db, None, None,
-        decree_text="诏", narrative="邸报",
-        simulator_payload={
-            "active_issues": [],
-            "regions": {"cols": ["id", "name", "kind"],
-                        "rows": [["shaanxi", "陕西", "布政司"]]},
-            "armies": {
-                "cols": ["id", "name", "station", "owner_power"],
-                "rows": [
-                    ["guanning", "关宁", "宁远", "ming"],
-                    ["xuanfu", "宣府", "宣府", "ming"],
-                ],
-            },
-            "transit_semantics": [],
-        },
-        relevant_memories=[], secret_orders={},
-        before_turn=turn, _emit=lambda *a: None, content=content,
+    report = decree_mod.resolve_decisions_phase2(
+        state, db, None, None, content=content,
     )
+    assert isinstance(report, str)
     rows = {r["title"]: r for r in db.list_rescript_drafts()}
     assert set(rows) == {u1["title"], u2["title"]}
     assert rows[u1["title"]]["status"] == "pending"
@@ -901,3 +983,4 @@ def test_settle_multi_urgent_isolation_persists(game, monkeypatch, tmp_path):
     g2 = rows[u2["title"]]["options"]
     assert len(g2) == 2
     assert all(o.get("grant_action") != "协饷" for o in g2)
+    assert db.list_pending_decisions(turn) == []
