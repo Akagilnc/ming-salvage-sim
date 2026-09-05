@@ -265,22 +265,36 @@ def stub_promulgation_verdicts(
 
 
 def promulgation_verdict_correction_feedback(
-    exc: BaseException, *, raw_output: object,
+    exc: BaseException,
+    *,
+    raw_output: object,
+    required_dossier_ids: Optional[Sequence[int]] = None,
 ) -> str:
     """有界补交回喂：同会话续接，附原始产出与校验失败原因（#1753）。
 
     形状对齐 draft/rescript 的 combination_correction_feedback 骨架——只回填结构化
     verdict 契约（0052 两格 / 0066），不另造第三套 heal，不代填判向。
+    required_dossier_ids：待判全集显式写入，漏盖时补交侧知道缺哪一道
+    （不依赖 history 是否已生效）。
     """
     try:
         raw_text = json.dumps(raw_output, ensure_ascii=False, sort_keys=True)
     except (TypeError, ValueError):
         raw_text = repr(raw_output)
+    ids = [
+        int(item) for item in (required_dossier_ids or ())
+        if isinstance(item, int) or (isinstance(item, str) and str(item).isdigit())
+    ]
+    ids_line = (
+        f"待判案卷 dossier_id 全集（须逐案恰好一项）：{sorted(set(ids))}\n"
+        if ids else ""
+    )
     return (
         "【颁布判决契约校验失败，请按结构化 verdict 契约整批补交】\n"
         f"校验失败原因：{exc}\n"
         f"原始产出：{raw_text}\n"
-        "须返回 {\"verdicts\":[...]}，逐案恰好一项；"
+        + ids_line
+        + "须返回 {\"verdicts\":[...]}，逐案恰好一项；"
         "dossier_id 必须为输入快照中的有效 SQLite 正整数；"
         "decision 只能为 promulgated 或 rejected；"
         "须逐案覆盖全部待判案卷，不能静默跳过；"
@@ -510,21 +524,25 @@ def llm_promulgation_verdicts(
     """Run exactly one LLM call for one reviewed promulgation batch.
 
     agent / correction_feedback / agent_out：#1753 有界补交复用同一会话。
-    correction 非空时只送补交指令（历史上下文已含首抽快照）；agent_out 非空 list
-    时写入本调用实际使用的 agent，供调用方下次传入。agent 仍惰性创建——测试替身
-    整函数时不必真造判官。
+    首抽送输入快照；补交 = 同 agent 会话续接 + correction（原始产出/失败原因/
+    待判 id）+ 再次附带首抽快照（draft 同款回喂形，确保缺盖时补交输入仍含
+    全案卷身份，不单靠 history）。agent_out 回传本调用 agent 供下次复用。
     """
     context = prepared_context or build_promulgation_judge_context(db, state, dossiers)
+    context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
     judge = agent if agent is not None else create_promulgation_judge_agent(
         llm_config, agno_db,
+        session_id=f"promulgation-judge-turn-{int(getattr(state, 'turn', 0) or 0)}",
     )
     if agent_out is not None and not agent_out:
         agent_out.append(judge)
     correction = str(correction_feedback or "").strip()
     if correction:
-        prompt = correction
+        # 同会话续接：history 应已有首轮；仍附首抽快照（draft 骨架），
+        # 使补交输入可独立核验含全案卷身份。
+        prompt = f"{correction}\n{context_json}"
     else:
-        prompt = json.dumps(context, ensure_ascii=False, sort_keys=True)
+        prompt = context_json
     raw = run_agent_text(judge, prompt, tag="promulgation-judge")
     parsed = parse_agent_json(raw, "颁布判官")
     verdicts = parsed.get("verdicts") if isinstance(parsed, dict) else None
@@ -1340,7 +1358,11 @@ def resolve_directives(
                                     },
                                 ) from heal_exc
                             correction = promulgation_verdict_correction_feedback(
-                                heal_exc, raw_output=attempt_batch,
+                                heal_exc,
+                                raw_output=attempt_batch,
+                                required_dossier_ids=sorted(
+                                    reviewed_dossier_ids or ()
+                                ),
                             )
                     else:
                         # range 空时（不应发生）；保底 fail-closed。

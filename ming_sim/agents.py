@@ -296,19 +296,36 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
     return data
 
 
-def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """Interim promulgation judge: one isolated call for the whole reviewed batch.
+def create_promulgation_judge_agent(
+    llm_config: LLMConfig,
+    agno_db: SqliteDb,
+    *,
+    session_id: Optional[str] = None,
+) -> Agent:
+    """Interim promulgation judge for one reviewed batch.
 
-    add_history_to_context=True：#1753 有界补交须同一会话续接（heal-by-resume）。
+    #1753 heal-by-resume：必须绑 db + session_id + cache_session，且
+    add_history_to_context=True——否则 Agno 不会把前一次 run 放入补交上下文，
+    「同一 LLM 会话续接」不成立（大臣 registry 同款接缝）。
+    session_id 由调用方按 turn 作用域传入；缺省回落固定 id。
     """
-    del agno_db
     cfg = _llm_for_role(llm_config, "simulator")
-    return Agent(
-        name="颁布判官",
-        id="promulgation-judge",
-        model=create_chat_model(cfg, temperature=0.2),
-        add_history_to_context=True,
-        instructions=[
+    agent_kwargs: Dict[str, Any] = {
+        "name": "颁布判官",
+        "id": "promulgation-judge",
+        "model": create_chat_model(cfg, temperature=0.2),
+        "add_history_to_context": True,
+        "cache_session": True,
+        # 首次 + 最多 3 次补交 = 4；与 PROMULGATION_VERDICT_HEAL_RETRIES 对齐量级。
+        "num_history_runs": 4,
+        "markdown": False,
+    }
+    if agno_db is not None:
+        agent_kwargs["db"] = agno_db
+        agent_kwargs["session_id"] = (
+            str(session_id).strip() if session_id else "promulgation-judge"
+        )
+    agent_kwargs["instructions"] = [
             "你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。"
             "派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。",
             "颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、"
@@ -345,9 +362,8 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "命门类可打回并置 midzhi_unpromulgatable=true，普通中旨无前科时从严但不得机械地"
             "一概打回；有 promulgation_history 批红强颁前科时与无前科差分，优先打回。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
-        ],
-        markdown=False,
-    )
+        ]
+    return Agent(**agent_kwargs)
 
 
 def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
