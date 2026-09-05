@@ -104,12 +104,18 @@ def canned_full_settlement(
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_rescript_draft_agent", lambda *a, **k: object())
-    # #1745：玩家来源拒收呈现接缝 — canned 桩只保证路由与 has_attendant 槽，不断正文
-    def _canned_settlement_attendant(*_a, rejections=(), **_k):
-        return "\u200b" if rejections else ""
+    # #1745：替身下移到真实 runner 的 agent 边界（不整换 run_settlement_attendant_message）。
+    class _AttendantOut:
+        content = "递话"
+
+    class _AttendantAgent:
+        def run(self, prompt):
+            return _AttendantOut()
 
     monkeypatch.setattr(
-        decree_mod, "run_settlement_attendant_message", _canned_settlement_attendant,
+        decree_mod,
+        "create_settlement_attendant_agent",
+        lambda *_a, **_k: _AttendantAgent(),
     )
     monkeypatch.setattr(
         memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}',

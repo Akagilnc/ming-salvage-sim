@@ -18,12 +18,16 @@ from tests.conftest import active_ming_character
 
 
 def _rejection_rows(db, turn):
-    try:
-        return rejection_rows(
-            db, turn, columns="section, reason, category, source, attempt"
-        )
-    except Exception:
+    # 合法无表（回滚后尚未建表）→ 空；其它查询失败响亮（0005 / #1745）。
+    cols = {
+        str(row[1])
+        for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()
+    }
+    if not cols:
         return []
+    return rejection_rows(
+        db, turn, columns="section, reason, category, source, attempt"
+    )
 
 
 def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
@@ -93,12 +97,21 @@ def test_attempt_derived_from_error_pack_dirs(game, monkeypatch, tmp_path):
     assert rows[0][4] == 2  # attempt
 
 
-def _stub_settlement_attendant(monkeypatch, decree_mod):
-    """#1745：resolve 路玩家拒收须经 attendant 接缝；测试桩只保路由/槽位。"""
+def _stub_settlement_attendant(monkeypatch, decree_mod, *, text="递话", capture=None):
+    """#1745：替身下移到真实 runner 的 agent 边界；不锁措辞，只保结构化输入与槽位。"""
+    class _Out:
+        content = text
+
+    class _Agent:
+        def run(self, prompt):
+            if capture is not None:
+                capture.append(prompt)
+            return _Out()
+
     monkeypatch.setattr(
         decree_mod,
-        "run_settlement_attendant_message",
-        lambda *_a, rejections=(), **_k: ("\u200b" if rejections else ""),
+        "create_settlement_attendant_agent",
+        lambda *_a, **_k: _Agent(),
     )
 
 
@@ -665,9 +678,18 @@ def test_player_decree_rejection_durable_source_gate(game, monkeypatch, tmp_path
     turn = state.turn
     captured = []
 
-    def _stub_attendant(*_a, rejections=(), **_k):
-        captured.append(list(rejections))
-        return "\u200b" if rejections else ""
+    prompts = []
+
+    class _Out:
+        content = "递话"
+
+    class _Agent:
+        def run(self, prompt):
+            import json as _json
+            payload = _json.loads(prompt)
+            captured.append(list(payload.get("rejections") or []))
+            prompts.append(prompt)
+            return _Out()
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
@@ -679,7 +701,9 @@ def test_player_decree_rejection_durable_source_gate(game, monkeypatch, tmp_path
         decree_mod, "extract_scores_by_modules_with_agno",
         lambda *a, **k: ({"character_status_changes": [
             {"origin_ref": "盘面自发", "name": "查无此人壬", "status": "dead", "reason": "测试"}]}, "out", "in"))
-    monkeypatch.setattr(decree_mod, "run_settlement_attendant_message", _stub_attendant)
+    monkeypatch.setattr(
+        decree_mod, "create_settlement_attendant_agent", lambda *_a, **_k: _Agent(),
+    )
 
     decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
                                   content=content, registry=None)

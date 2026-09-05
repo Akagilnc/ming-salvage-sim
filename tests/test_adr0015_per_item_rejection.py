@@ -150,7 +150,7 @@ def test_player_visible_rejection_aggregates_durable_rows_across_attempts_and_re
 
     def _runner(*, year, period, rejections):
         captured.append({"year": year, "period": period, "rejections": list(rejections)})
-        return "\u200b"
+        return "递话" if rejections else ""
 
     report = settle_with_delta(
         state,

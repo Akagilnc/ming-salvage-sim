@@ -169,14 +169,16 @@ def run_prepare(db, state, content, *, registry=None, source: Provenance = Prove
 
 
 def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", registry=None,
-               source: Provenance = Provenance.player_decree) -> str:
+               source: Provenance = Provenance.player_decree,
+               settlement_attendant_runner=None) -> str:
     """后半段：消费同 turn 已 prepare 的 settling+ready=0 context，升 ready=1 后 settle。
 
     不再调用 pre_settle；未 prepare 响亮 ValueError 且零写。settling + ready=1 崩溃重入
     只读既有 context，不二次 prepare/tick。
 
     source 默认 player_decree：探针每回合即皇帝下旨之结算，拒收 source 门按 0008-D5；
-    呈现由 LLM 接缝据实编织（0150-D5-b），代码不写戏内固定句。纯世界推演可传
+    呈现由外部 LLM/注入 runner 据实编织（0150-D5-b / P7），代码不写戏内固定句、
+    不造零宽占位。缺 runner 且有玩家来源拒收 → settle 诚实失败。纯世界推演可传
     source=system_simulation。
 
     narrative 落 turn_logs/turn_reports 作下月前文 + 玩家邸报；canonical delta 先落
@@ -241,13 +243,6 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
             source=source,  # 持久化来源，崩溃恢复重放据此还原（#144）
         )
 
-    def _probe_settlement_attendant(*, year, period, rejections):
-        # 探针无真 LLM：只保证 0008-D5 来源门路由与 attendant 槽存在性；
-        # 正文不入断言（0150-D5-b / P6/P7）。非空以满足 has_attendant typed 槽。
-        if not rejections:
-            return ""
-        return "\u200b"
-
     report = settle_with_delta(
         state,
         db,
@@ -265,7 +260,8 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
             dossier_ids_at_input=dossier_ids_at_input,
             secret_dossier_ids_at_input=secret_dossier_ids_at_input,
         ),
-        settlement_attendant_runner=_probe_settlement_attendant,
+        # 无默认零宽桩（P7/#1745）：由调用方注入真实文本 runner；缺则玩家拒收诚实失败。
+        settlement_attendant_runner=settlement_attendant_runner,
     )
     # settle 成功推进后才记审计：driver 不注入 chapter_recorder（无 llm_config，章节记忆由对话方另产），
     # 留一条痕迹便于事后查「哪回合没记起居注」（忘补=静默缺口，#19）。须在 settle 成功之后——

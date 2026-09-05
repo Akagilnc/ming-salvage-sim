@@ -10171,6 +10171,7 @@ class GameDB:
             accepted.append(item)
 
         new_ids: List[int] = []
+        collector = None
         with atomic(self):
             if rejected:
                 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
@@ -10207,6 +10208,11 @@ class GameDB:
                 "WHERE id = ? AND close_commit_cursor < ?",
                 (int(CLOSE_STEP_ENDORSEMENT_BOUND), nid, int(CLOSE_STEP_ENDORSEMENT_BOUND)),
             )
+        # 本方法即外层 owner：atomic 提交后镜像（0008-D5；#1745 补缺镜像）。
+        if collector is not None:
+            from ming_sim.applier import mirror_rejections_after_commit
+            from ming_sim.error_pack import rejections_jsonl_path
+            mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return new_ids
 
     def settle_story_extraction(
@@ -10260,6 +10266,7 @@ class GameDB:
             accepted.append(fact)
 
         new_ids: List[int] = []
+        collector = None
         with atomic(self):
             if rejected:
                 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
@@ -10297,6 +10304,11 @@ class GameDB:
                 "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
                 (cid,),
             )
+        # 本方法即外层 owner：atomic 提交后镜像（0008-D5；#1745 补缺镜像）。
+        if collector is not None:
+            from ming_sim.applier import mirror_rejections_after_commit
+            from ming_sim.error_pack import rejections_jsonl_path
+            mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return new_ids
 
     def list_unextracted_replies(
@@ -13128,9 +13140,10 @@ class GameDB:
         无提案时用护行口径中位（无护行亦可机械落账，供 S10 结案合并）。
         不写 0058 进展、不二次扣库、不改原 economy_move。
 
-        #1745 / ADR 0015-D7：可拆坏项与坏 section 容器按段/项拒收，好项与未提案
-        目标的中位落账仍在同一 atomic。拒收归属外层 RejectionCollector（flush/
-        commit/mirror/rollback 由 settle 编排所有者负责；本方法不自建 collector）。
+        #1745 / ADR 0015-D6/D7：域级坏项逐项拒收；形状（非 list/非 dict 项）归
+        sanitize_delta_shape 独家，本方法不平行净化。好项与未提案目标的中位落账
+        仍在同一 atomic。拒收归属外层 RejectionCollector（flush/commit/mirror/
+        rollback 由 settle 编排所有者负责；本方法不自建 collector）。
         """
         from ming_sim.applier import Provenance, RejectedItem
 
@@ -13154,6 +13167,8 @@ class GameDB:
                     "dossier_reconciliations 拒收须由外层 RejectionCollector 归属"
                 )
             # ADR 0015 F1：RejectedItem.item 恒 dict；非 dict 包装 raw_value。
+            # 域级拒收的 item 已是 dict；形状级（非 list/非 dict 项）归 sanitize_delta_shape
+            # 独家（0015-D6/F1，#1745 删双 producer）。
             if isinstance(raw_item, dict):
                 payload = dict(raw_item)
             else:
@@ -13166,21 +13181,14 @@ class GameDB:
                 int(turn),
             )
 
-        # 0015-D7：section 值非 list → 只拒该 section，不整月 abort；与
-        # sanitize_delta_shape 对 list 段的 invalid_shape 同形（复用 collector，不平行净化）。
+        # 形状净化归 sanitize_delta_shape 独家（0015-D6；#1745 删本段平行形状拒收）。
+        # 非 list / 非 dict 项此处跳过域逻辑；settle 后半段 sanitize→collector 一次拒收。
         if not isinstance(generated, list):
-            _reject(
-                generated,
-                f"delta 字段 dossier_reconciliations 必须是 array(list)，"
-                f"实得 {type(generated).__name__}",
-                "invalid_shape",
-            )
             generated = []
 
         supplied: Dict[int, Tuple[object, str]] = {}
         for item in generated:
             if not isinstance(item, dict):
-                _reject(item, "对账提案格式无效", "invalid_shape")
                 continue
             try:
                 dossier_id = strict_int(item.get("dossier_id", 0))
@@ -14759,8 +14767,15 @@ class GameDB:
             from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
             route = rejected_entry["route"]  # type: ignore[index]
             rid = str(rejected_entry.get("region_id") or "")
-            coll = rejection_collector if rejection_collector is not None else RejectionCollector()
-            coll.record(
+            owns_collector = rejection_collector is None
+            if owns_collector:
+                # commit=False 无外层 owner 时不得自建后丢弃（0008-D5 / #1745）。
+                if not commit:
+                    raise ValueError(
+                        "executor_routing 拒收须由外层 RejectionCollector 归属"
+                    )
+                rejection_collector = RejectionCollector()
+            rejection_collector.record(
                 "executor_routing",
                 RejectedItem(
                     item={
@@ -14776,9 +14791,14 @@ class GameDB:
                 ),
                 int(state.turn),
             )
-            if rejection_collector is None and commit:
-                coll.flush_to_db(self)
+            if owns_collector:
+                rejection_collector.flush_to_db(self)
                 self._commit_dossier_write(True)
+                from ming_sim.applier import mirror_rejections_after_commit
+                from ming_sim.error_pack import rejections_jsonl_path
+                mirror_rejections_after_commit(
+                    self, rejection_collector, rejections_jsonl_path,
+                )
             return []
 
         # 校验名单引用（写库前）；失败上抛由三路成案点各自终态处理
@@ -15089,7 +15109,12 @@ class GameDB:
         owns_rejection_collector = rejection_collector is None
         if route["rejection"] is not None:
             from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-            if rejection_collector is None:
+            if owns_rejection_collector:
+                # commit=False 无外层 owner 时不得自建后丢弃（0008-D5 / #1745）。
+                if not commit:
+                    raise ValueError(
+                        "executor_routing 拒收须由外层 RejectionCollector 归属"
+                    )
                 rejection_collector = RejectionCollector()
             rejection_collector.record(
                 "executor_routing",
@@ -15112,15 +15137,16 @@ class GameDB:
             # knowledge/allocation rows may be materialized.  An external
             # collector is flushed by its transaction owner; the canonical
             # kernel must not outlive that owner's rollback boundary.
-            if commit and owns_rejection_collector:
+            if owns_rejection_collector:
                 rejection_collector.flush_to_db(self)
-            self._commit_dossier_write(commit)
-            if commit and owns_rejection_collector:
+                self._commit_dossier_write(True)
                 from ming_sim.applier import mirror_rejections_after_commit
                 from ming_sim.error_pack import rejections_jsonl_path
                 mirror_rejections_after_commit(
                     self, rejection_collector, rejections_jsonl_path,
                 )
+            else:
+                self._commit_dossier_write(commit)
             return 0
         durable_extension = dict(extension or {})
         signal = route.get("signal")
@@ -18667,7 +18693,9 @@ class GameDB:
                 if affected:
                     item["affected_people"] = sorted(affected)
                 applied.append(item)
-        if owns_transaction and owns_rejection_collector:
+        # 自有 collector 时无论是否嵌套外层事务都登记镜像：
+        # depth=0 立即写；嵌套则挂 outer commit 回调（0008-D5 / #1745 18532）。
+        if owns_rejection_collector:
             from ming_sim.applier import mirror_rejections_after_commit
             from ming_sim.error_pack import rejections_jsonl_path
             mirror_rejections_after_commit(
