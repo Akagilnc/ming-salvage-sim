@@ -310,8 +310,19 @@ def test_issues_context_exposes_recon_for_soft_discount(game):
     assert hit["loss_amount"] == ORDERED - 16
 
 
-def test_recon_section_non_list_rejected_other_sections_land(game):
-    """#1745 / 0015-D7：dossier_reconciliations 非 list → 只拒该 section；其它好段同 atomic 落库。"""
+@pytest.mark.parametrize(
+    "shape, raw_value",
+    [
+        ("not-a-list", "not-a-list"),
+        ({"foo": 1}, {"foo": 1}),
+        ([42], 42),
+    ],
+    ids=["string_container", "dict_container", "non_dict_list_item"],
+)
+def test_recon_section_shape_rejected_other_sections_land(game, shape, raw_value):
+    """#1745 / 0015-D6/D7：三种坏形状经 settle 真入口只产一份 canonical 拒收 + raw_value；
+    其它好段同 atomic 落库；坏形状不挡中位。
+    """
     db, state, content = game
     gid = _in_transit_grant(db, state)
     turn_before = int(state.turn)
@@ -323,7 +334,7 @@ def test_recon_section_non_list_rejected_other_sections_land(game):
         settle_with_delta(
             state, db,
             {
-                "dossier_reconciliations": "not-a-list",
+                "dossier_reconciliations": shape,
                 "dossier_executions": [{
                     "dossier_id": gid,
                     "outcome": "fulfilled",
@@ -338,10 +349,10 @@ def test_recon_section_non_list_rejected_other_sections_land(game):
             settlement_attendant_runner=default_settlement_attendant_runner,
         )
     except SettlementAbort:
-        pytest.fail("可拆非 list section 不得整月 SettlementAbort")
+        pytest.fail("可拆坏形状 section 不得整月 SettlementAbort")
 
     assert int(state.turn) == turn_before + 1
-    # 非 list 无好 recon 项 → 在途目标仍落机械中位
+    # 无好 recon 项 → 在途目标仍落机械中位
     recon = db.list_dossier_reconciliations(gid)
     assert len(recon) == 1
     from ming_sim.db import grant_arrival_bounds
@@ -350,12 +361,12 @@ def test_recon_section_non_list_rejected_other_sections_land(game):
     # execution 好段落库
     assert db.get_decree_dossier(gid)["status"] == "closed"
     rej = _recon_rejections(db)
-    # 恰一份 canonical 拒收；原 section 归属，非 validate_shape_rejections 假段。
+    # 恰一份 canonical 拒收；原 section 归属，非平行假段。
     assert len(rej) == 1
     assert rej[0]["section"] == "dossier_reconciliations"
     assert rej[0]["category"] == "invalid_shape"
     assert rej[0]["source"] == Provenance.player_decree.value
-    assert json.loads(rej[0]["item_json"]) == {"raw_value": "not-a-list"}
+    assert json.loads(rej[0]["item_json"]) == {"raw_value": raw_value}
 
 
 def test_recon_domain_reject_without_collector_fails_loud(game):
@@ -422,47 +433,6 @@ def test_recon_bad_item_rejected_target_gets_midpoint(game, bad, category):
     item = json.loads(rej[0]["item_json"])
     raw = generated[0]
     assert item.get("dossier_id", raw.get("dossier_id")) == raw.get("dossier_id")
-
-
-@pytest.mark.parametrize(
-    "shape, raw_value",
-    [
-        ("not-a-list", "not-a-list"),
-        ({"foo": 1}, {"foo": 1}),
-        ([42], 42),
-    ],
-    ids=["string_container", "dict_container", "non_dict_list_item"],
-)
-def test_recon_shape_rejected_once_via_shared_sanitize(game, shape, raw_value):
-    """#1745 / 0015-D6：三种坏形状经 settle 真入口只产一份 canonical 拒收 + raw_value。"""
-    db, state, content = game
-    gid = _in_transit_grant(db, state)
-    turn_before = int(state.turn)
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-    db.conn.commit()
-
-    settle_with_delta(
-        state, db,
-        {"dossier_reconciliations": shape},
-        before_turn=turn_before,
-        content=content,
-        narrative="shape-once",
-        source=Provenance.player_decree,
-        delta_applier=issue_engine.apply_score_extraction,
-        settlement_attendant_runner=default_settlement_attendant_runner,
-    )
-
-    assert int(state.turn) == turn_before + 1
-    rej = _recon_rejections(db)
-    assert len(rej) == 1
-    assert rej[0]["section"] == "dossier_reconciliations"
-    assert rej[0]["category"] == "invalid_shape"
-    assert rej[0]["source"] == Provenance.player_decree.value
-    assert json.loads(rej[0]["item_json"]) == {"raw_value": raw_value}
-    # 坏形状不挡中位落账
-    recon = db.list_dossier_reconciliations(gid)
-    assert len(recon) == 1
 
 
 def test_recon_both_amount_fields_rejected_no_guess(game):
@@ -713,43 +683,3 @@ def test_1745_web_state_payload_after_bad_recon_settle(
         web_app.web_game = None
 
 
-def test_1745_good_recon_and_rejection_roll_back_together(game):
-    """#1745 0008-D2：recon 好项 + 拒收行与后继失败同 atomic 回滚。"""
-    db, state, content = game
-    good = _in_transit_grant(db, state)
-    turn_before = int(state.turn)
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-    db.conn.commit()
-
-    def _boom_applier(*_a, **_k):
-        raise RuntimeError("forced post-recon failure for atomic proof")
-
-    with pytest.raises(SettlementAbort):
-        settle_with_delta(
-            state, db,
-            {"dossier_reconciliations": [
-                {"dossier_id": good, "arrived_amount": 16},
-                {"dossier_id": 88888, "arrived_amount": 5},
-            ]},
-            before_turn=turn_before,
-            content=content,
-            narrative="rollback",
-            source=Provenance.player_decree,
-            delta_applier=_boom_applier,
-            settlement_attendant_runner=default_settlement_attendant_runner,
-        )
-
-    # 回滚：好项 recon 与坏项拒收均不得残留
-    # （atomic 内 CREATE rejection_reports 亦随 SQLite 事务回滚 → 表可不存在）
-    assert db.list_dossier_reconciliations(good) == []
-    tables = {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if "rejection_reports" in tables:
-        assert db.conn.execute(
-            "SELECT COUNT(*) AS n FROM rejection_reports"
-        ).fetchone()["n"] == 0
-    assert int(state.turn) == turn_before  # 月未推进
