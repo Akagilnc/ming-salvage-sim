@@ -575,13 +575,12 @@ def llm_promulgation_verdicts(
     dossiers: Sequence[Dict[str, object]], state: GameState, *, db: GameDB,
     agno_db: SqliteDb, llm_config: LLMConfig,
     prepared_context: Optional[Dict[str, object]] = None,
-    agent: object = None,
     judge_session: Optional[_PromulgationJudgeSession] = None,
     correction_feedback: str = "",
 ) -> List[Dict[str, object]]:
     """Run exactly one LLM call for one reviewed promulgation batch.
 
-    agent / judge_session / correction_feedback：#1753 有界补交复用同一会话。
+    judge_session / correction_feedback：#1753 有界补交复用同一会话。
     首抽送输入快照；补交 = 同 agent 会话续接 + correction（原始产出/失败原因/
     待判 id）+ 再次附带首抽快照（draft 同款回喂形，确保缺盖时补交输入仍含
     全案卷身份，不单靠 history）。
@@ -589,9 +588,7 @@ def llm_promulgation_verdicts(
     """
     context = prepared_context or build_promulgation_judge_context(db, state, dossiers)
     context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
-    if agent is not None:
-        judge = agent
-    elif judge_session is not None:
+    if judge_session is not None:
         judge = judge_session.get_or_create()
     else:
         judge = create_promulgation_judge_agent(

@@ -312,16 +312,9 @@ def test_advance_and_rescript_settlement_entries(tracer_client, monkeypatch):
 
     _arm_real_promulgation_heal(monkeypatch, [reject_all_proposed])
     issue = client.post("/api/decree/issue", json={"expected_turn": before})
-    # awaiting_decision 可能 200 + body
-    body = issue.json() if issue.status_code == 200 else {}
-    if issue.status_code != 200 or not body.get("awaiting_decision"):
-        # 若未暂停则至少证明 resolve 入口可调用（无 decisions 时 400/409 亦可）
-        resolve = client.post(
-            "/api/decree/resolve_decisions/stream",
-            json={"choices": []},
-        )
-        assert resolve.status_code in {200, 400, 409, 422}
-        return
+    assert issue.status_code == 200, issue.text
+    body = issue.json()
+    assert body.get("awaiting_decision") is True, body
     decisions = body.get("decisions") or []
     assert decisions, body
     # choice 须显式 decision_key（#1589）；options 可能未带，从 decision 行补
