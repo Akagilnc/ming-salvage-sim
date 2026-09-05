@@ -14764,17 +14764,13 @@ class GameDB:
             None,
         )
         if rejected_entry is not None:
-            from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-            route = rejected_entry["route"]  # type: ignore[index]
+            from ming_sim.applier import Provenance, RejectedItem
+            # 0150-D2 / #1745：无 owns_rejection_collector 自建；拒收归属外层 collector。
+            if rejection_collector is None:
+                raise ValueError(
+                    "executor_routing 拒收须由外层 RejectionCollector 归属"
+                )
             rid = str(rejected_entry.get("region_id") or "")
-            owns_collector = rejection_collector is None
-            if owns_collector:
-                # commit=False 无外层 owner 时不得自建后丢弃（0008-D5 / #1745）。
-                if not commit:
-                    raise ValueError(
-                        "executor_routing 拒收须由外层 RejectionCollector 归属"
-                    )
-                rejection_collector = RejectionCollector()
             rejection_collector.record(
                 "executor_routing",
                 RejectedItem(
@@ -14791,14 +14787,6 @@ class GameDB:
                 ),
                 int(state.turn),
             )
-            if owns_collector:
-                rejection_collector.flush_to_db(self)
-                self._commit_dossier_write(True)
-                from ming_sim.applier import mirror_rejections_after_commit
-                from ming_sim.error_pack import rejections_jsonl_path
-                mirror_rejections_after_commit(
-                    self, rejection_collector, rejections_jsonl_path,
-                )
             return []
 
         # 校验名单引用（写库前）；失败上抛由三路成案点各自终态处理
@@ -15106,16 +15094,14 @@ class GameDB:
         self._validate_participant_roster_references(roster)
         self._validate_dossier_delegations(roster)
 
-        owns_rejection_collector = rejection_collector is None
         if route["rejection"] is not None:
-            from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-            if owns_rejection_collector:
-                # commit=False 无外层 owner 时不得自建后丢弃（0008-D5 / #1745）。
-                if not commit:
-                    raise ValueError(
-                        "executor_routing 拒收须由外层 RejectionCollector 归属"
-                    )
-                rejection_collector = RejectionCollector()
+            from ming_sim.applier import Provenance, RejectedItem
+            # 0150-D2 / #1745：无 owns_rejection_collector 自建；拒收归属外层 collector。
+            # Admission rejection：不落案卷；flush/commit/mirror 由外层 owner 负责。
+            if rejection_collector is None:
+                raise ValueError(
+                    "executor_routing 拒收须由外层 RejectionCollector 归属"
+                )
             rejection_collector.record(
                 "executor_routing",
                 RejectedItem(
@@ -15133,20 +15119,7 @@ class GameDB:
                 ),
                 int(state.turn),
             )
-            # Admission rejection owns this item: no dossier or downstream
-            # knowledge/allocation rows may be materialized.  An external
-            # collector is flushed by its transaction owner; the canonical
-            # kernel must not outlive that owner's rollback boundary.
-            if owns_rejection_collector:
-                rejection_collector.flush_to_db(self)
-                self._commit_dossier_write(True)
-                from ming_sim.applier import mirror_rejections_after_commit
-                from ming_sim.error_pack import rejections_jsonl_path
-                mirror_rejections_after_commit(
-                    self, rejection_collector, rejections_jsonl_path,
-                )
-            else:
-                self._commit_dossier_write(commit)
+            self._commit_dossier_write(commit)
             return 0
         durable_extension = dict(extension or {})
         signal = route.get("signal")
@@ -15209,12 +15182,7 @@ class GameDB:
                 source_id=f"decree_dossier:{dossier_id}", commit=False,
             )
         self._commit_dossier_write(commit)
-        if commit and owns_rejection_collector and rejection_collector is not None:
-            from ming_sim.applier import mirror_rejections_after_commit
-            from ming_sim.error_pack import rejections_jsonl_path
-            mirror_rejections_after_commit(
-                self, rejection_collector, rejections_jsonl_path,
-            )
+        # 拒收镜像归外层 RejectionCollector owner（0150-D2；本核不自建不自镜像）。
         return dossier_id
 
     @staticmethod
@@ -18552,10 +18520,7 @@ class GameDB:
             raise ValueError("kind_filter and kind_filter_exclude are mutually exclusive")
         if directive_status not in ("draft", "pending"):
             raise ValueError("directive_status must be 'draft' or 'pending'")
-        from ming_sim.applier import RejectionCollector
-        owns_rejection_collector = rejection_collector is None
-        if rejection_collector is None:
-            rejection_collector = RejectionCollector()
+        # 0150-D2 / #1745：无 owns_rejection_collector 自建；外层传入则沿用，缺则嵌套拒收响亮。
         applied: List[Dict[str, object]] = []
         rows = self.list_pending_actions(
             int(state.turn), status="pending", minister_name=minister_name)
@@ -18654,7 +18619,8 @@ class GameDB:
                         "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
-                rejection_collector.flush_to_db(self)
+                if rejection_collector is not None:
+                    rejection_collector.flush_to_db(self)
             if ok:
                 item: Dict[str, object] = {
                     "id": pa["id"],
@@ -18693,14 +18659,7 @@ class GameDB:
                 if affected:
                     item["affected_people"] = sorted(affected)
                 applied.append(item)
-        # 自有 collector 时无论是否嵌套外层事务都登记镜像：
-        # depth=0 立即写；嵌套则挂 outer commit 回调（0008-D5 / #1745 18532）。
-        if owns_rejection_collector:
-            from ming_sim.applier import mirror_rejections_after_commit
-            from ming_sim.error_pack import rejections_jsonl_path
-            mirror_rejections_after_commit(
-                self, rejection_collector, rejections_jsonl_path,
-            )
+        # 镜像归外层 collector owner（0150-D2；本方法不自建不自镜像）。
         return applied
 
     def retry_failed_pending_action(
@@ -18837,7 +18796,8 @@ class GameDB:
                     result = None
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
-                rejection_collector.flush_to_db(self)
+                if rejection_collector is not None:
+                    rejection_collector.flush_to_db(self)
         except Exception as exc:
             tlog(f"[pending_actions] 落库异常 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
             raise

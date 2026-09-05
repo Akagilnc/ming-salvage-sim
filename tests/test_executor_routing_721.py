@@ -536,3 +536,45 @@ def test_national_fanout_reuses_central_bi_ziyan(env):
     )
     assert single["leads"] == []
     assert (single.get("signal") or {}).get("code") == "idle_start"
+
+
+def test_create_dossier_unmapped_without_collector_fails_loud_no_self_build(env):
+    """#1745 / 0150-D2：commit=True 亦不得自建 collector；无外层 owner → 响亮失败。"""
+    db, state, _ = env
+    before_reports = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
+    ).fetchone()
+    before_n = 0
+    if before_reports is not None:
+        before_n = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
+    with pytest.raises(ValueError, match="RejectionCollector"):
+        _create(db, state, category="修仙", commit=True)
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
+    # 不得留下自建 flush 的拒收行
+    table = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
+    ).fetchone()
+    if table is not None:
+        assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == before_n
+
+
+def test_create_dossier_unmapped_with_outer_collector_records_once(env, tmp_path):
+    """#1745：外层 collector 归属 → 一次 record，外层 flush/mirror。"""
+    from ming_sim.applier import RejectionCollector
+
+    db, state, _ = env
+    mirror = tmp_path / "outer-own.jsonl"
+    collector = RejectionCollector()
+    assert _create(
+        db, state, category="修仙", commit=True, rejection_collector=collector,
+    ) == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
+    # 尚未 flush：外层负责
+    collector.flush_to_db(db)
+    db.conn.commit()
+    collector.mirror_to_jsonl(str(mirror))
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='executor_routing'",
+    ).fetchone()[0] == 1
+    assert mirror.exists()
+    assert "duty_route_unmapped" in mirror.read_text(encoding="utf-8")
