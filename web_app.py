@@ -2149,6 +2149,8 @@ class WebGame:
                         # #502 R1：非流式路径同 surface 结构化含糊态（与 stream 同真源，禁双路径漂移）。
                         directive_confirmation_ambiguous=getattr(
                             result, "directive_confirmation_ambiguous", None),
+                        decree_validation_failure=getattr(
+                            result, "decree_validation_failure", None),
                     )
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 answer_text = str(getattr(result, "answer", "") or "")
@@ -2320,6 +2322,8 @@ class WebGame:
                         accepted_turn=accepted_turn,
                         directive_confirmation_ambiguous=getattr(
                             result, "directive_confirmation_ambiguous", None),
+                        decree_validation_failure=getattr(
+                            result, "decree_validation_failure", None),
                     )
                     # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
@@ -2866,6 +2870,7 @@ class WebGame:
                 preclassified_intent=preclassified_intent,
                 confirm_target_ids=preexisting_pending_action_ids,
                 explicit_secret_order=explicit_secret_order,
+                prior_pending_action_failures=tool_stage_failures,
             )
         finally:
             self.session._active_chat_turn_id = prev_turn
