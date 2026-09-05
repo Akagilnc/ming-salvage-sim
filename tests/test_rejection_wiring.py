@@ -93,6 +93,15 @@ def test_attempt_derived_from_error_pack_dirs(game, monkeypatch, tmp_path):
     assert rows[0][4] == 2  # attempt
 
 
+def _stub_settlement_attendant(monkeypatch, decree_mod):
+    """#1745：resolve 路玩家拒收须经 attendant 接缝；测试桩只保路由/槽位。"""
+    monkeypatch.setattr(
+        decree_mod,
+        "run_settlement_attendant_message",
+        lambda *_a, rejections=(), **_k: ("\u200b" if rejections else ""),
+    )
+
+
 def test_engine_extractor_path_stamps_player_decree(game, monkeypatch, tmp_path):
     """#146(A 方案)：皇帝下旨触发的结算(resolve_directives)→ extractor 产出整批标 player_decree
     ——皇帝下旨这回合的拒收要给皇帝可见提示(整批按触发源；无旨自动推进/世界自演变才 system)。
@@ -113,6 +122,7 @@ def test_engine_extractor_path_stamps_player_decree(game, monkeypatch, tmp_path)
         decree_mod, "extract_scores_by_modules_with_agno",
         lambda *a, **k: ({"character_status_changes": [
             {"origin_ref": "盘面自发", "name": "查无此人丁", "status": "dead", "reason": "测试"}]}, "out", "in"))
+    _stub_settlement_attendant(monkeypatch, decree_mod)
 
     decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
                                   content=content, registry=None)
@@ -636,6 +646,7 @@ def test_resimulation_inherits_player_source_from_ctx(game, monkeypatch, tmp_pat
         decree_mod, "extract_scores_by_modules_with_agno",
         lambda *a, **k: ({"character_status_changes": [
             {"origin_ref": "盘面自发", "name": "查无此人辛", "status": "dead", "reason": "测试"}]}, "out", "in"))
+    _stub_settlement_attendant(monkeypatch, decree_mod)
 
     decree_mod.resolve_decisions_phase2(state, db, None, None, content=content, registry=None)
 
@@ -645,14 +656,19 @@ def test_resimulation_inherits_player_source_from_ctx(game, monkeypatch, tmp_pat
 
 
 def test_player_decree_rejection_durable_source_gate(game, monkeypatch, tmp_path):
-    """#146 A / #1745：皇帝下旨结算 delta 被拒 → 拒收行 source=player_decree（0008-D5 门）；
-    代码不向 turn_report 写戏内固定补句（0150-D5-b）。"""
+    """#146 A / #1745：皇帝下旨结算 delta 被拒 → source=player_decree + attendant 槽路由。"""
     import ming_sim.decree as decree_mod
     from ming_sim.applier import Provenance
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
+    captured = []
+
+    def _stub_attendant(*_a, rejections=(), **_k):
+        captured.append(list(rejections))
+        return "\u200b" if rejections else ""
+
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
                         lambda *a, **k: ("本月邸报。", k.get("simulator_payload") or {}))
@@ -663,6 +679,7 @@ def test_player_decree_rejection_durable_source_gate(game, monkeypatch, tmp_path
         decree_mod, "extract_scores_by_modules_with_agno",
         lambda *a, **k: ({"character_status_changes": [
             {"origin_ref": "盘面自发", "name": "查无此人壬", "status": "dead", "reason": "测试"}]}, "out", "in"))
+    monkeypatch.setattr(decree_mod, "run_settlement_attendant_message", _stub_attendant)
 
     decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
                                   content=content, registry=None)
@@ -670,11 +687,11 @@ def test_player_decree_rejection_durable_source_gate(game, monkeypatch, tmp_path
     rows = _rejection_rows(db, turn)
     assert len(rows) == 1
     assert rows[0][3] == Provenance.player_decree.value
-    report = db.conn.execute(
-        "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
-    assert report is not None
-    assert "窒碍未行" not in report[0]
-    assert "有司奏" not in report[0]
+    assert captured and captured[0]
+    assert all("section" in r and "category" in r for r in captured[0])
+    archives = db.list_monthly_archives()
+    hit = next(a for a in archives if int(a["turn"]) == turn)
+    assert hit["has_attendant"] is True
 
 
 def test_system_rejection_stays_silent_and_keeps_system_provenance(game, monkeypatch, tmp_path):
@@ -712,12 +729,10 @@ def test_system_rejection_stays_silent_and_keeps_system_provenance(game, monkeyp
     assert len(rows) == 1
     assert rows[0][3] == "system_simulation"
 
-    # 代码不写戏内固定句（系统来源亦然）
-    report = db.conn.execute(
-        "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
-    assert report is not None
-    assert "窒碍未行" not in report[0]
-    assert "有司奏" not in report[0]
+    # 系统来源不触发玩家 attendant 接缝
+    archives = db.list_monthly_archives()
+    hit = next(a for a in archives if int(a["turn"]) == turn)
+    assert hit["has_attendant"] is False
 
 
 def test_provenance_from_stored_recovers_all_forms():
@@ -792,11 +807,9 @@ def test_settling_recovery_fallthrough_preserves_system_source(content, tmp_path
         assert len(rows) == 1
         assert rows[0][3] == "system_simulation"
 
-        report = db.conn.execute(
-            "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
-        assert report is not None
-        assert "窒碍未行" not in report[0]
-        assert "有司奏" not in report[0]
+        archives = db.list_monthly_archives()
+        hit = next(a for a in archives if int(a["turn"]) == turn)
+        assert hit["has_attendant"] is False
     finally:
         try:
             sess.close()

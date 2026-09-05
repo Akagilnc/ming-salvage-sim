@@ -44,6 +44,13 @@ def _recon_rejections(db):
     ).fetchall())
 
 
+def _probe_settlement_attendant(*, year, period, rejections):
+    """测试桩：只保证路由与 has_attendant 槽；不断正文。"""
+    if not rejections:
+        return ""
+    return "\u200b"
+
+
 def _actor(db):
     return str(db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
@@ -99,6 +106,7 @@ def _settle(db, state, content, *, reconciliations=None, progress=None, narrativ
         extracted["dossier_progress_reports"] = progress
     settle_with_delta(
         state, db, extracted, before_turn=state.turn, content=content, narrative=narrative,
+        settlement_attendant_runner=_probe_settlement_attendant,
     )
 
 
@@ -332,6 +340,7 @@ def test_recon_section_non_list_rejected_other_sections_land(game):
             narrative="section-shape",
             source=Provenance.player_decree,
             delta_applier=issue_engine.apply_score_extraction,
+            settlement_attendant_runner=_probe_settlement_attendant,
         )
     except SettlementAbort:
         pytest.fail("可拆非 list section 不得整月 SettlementAbort")
@@ -481,6 +490,7 @@ def test_1745_settle_bad_and_good_recon_same_atomic(game):
             content=content,
             narrative="mixed-main",
             source=Provenance.player_decree,
+            settlement_attendant_runner=_probe_settlement_attendant,
         )
     except SettlementAbort:
         pytest.fail("混合好/坏对账不得整月 abort")
@@ -565,6 +575,7 @@ def test_1745_recon_then_execution_same_settle(game):
             narrative="order",
             source=Provenance.player_decree,
             delta_applier=issue_engine.apply_score_extraction,
+            settlement_attendant_runner=_probe_settlement_attendant,
         )
     except SettlementAbort:
         pytest.fail("同批 recon+execution 不得 abort")
@@ -638,6 +649,7 @@ def test_1745_web_state_payload_after_bad_recon_settle(
                 content=content,
                 narrative="web-proj",
                 source=Provenance.player_decree,
+                settlement_attendant_runner=_probe_settlement_attendant,
             )
         except SettlementAbort:
             pytest.fail("坏 recon 不得 SettlementAbort")

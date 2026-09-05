@@ -632,46 +632,43 @@ def test_canonicalize_extraction_public_api():
 # ── ADR 0008 决定 5：拒收玩家可见性（player_decree/hitl → 邸报 in-world 提示）──
 
 def test_run_settle_player_sourced_rejection_durable_structured(game):
-    """driver 默认 player_decree：拒收落库四字段 + 来源门；代码不写戏内固定补句（0150-D5-b）。"""
+    """driver 默认 player_decree：拒收四字段 + 来源门 + attendant 槽路由（0150-D5-b）。"""
     from ming_sim.applier import Provenance
 
     db, state, content = game
     before = state.turn
-    narrative_in = "本月邸报。"
     report = prepare_then_settle(
         db, state, content,
         {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人甲", "动作": "任命", "office": "首辅", "reason": "测试拒收"}]},
-        narrative=narrative_in,
+        narrative="本月邸报。",
     )
     rows = list(db.conn.execute(
         "SELECT section, category, source FROM rejection_reports WHERE turn=?", (before,),
     ).fetchall())
     assert rows and all(r["source"] == Provenance.player_decree.value for r in rows)
-    # 代码不向 narrative/turn_report 注入固定戏内句
-    assert "有司奏" not in report
-    assert "窒碍未行" not in report
-    persisted = db.conn.execute("SELECT report FROM turn_reports WHERE turn=?", (before,)).fetchone()[0]
-    assert "有司奏" not in persisted
-    assert "窒碍未行" not in persisted
+    archives = db.list_monthly_archives()
+    hit = next(a for a in archives if int(a["turn"]) == before)
+    assert hit["has_attendant"] is True
+    assert isinstance(report, str)
 
 
-def test_run_settle_no_rejection_no_code_template(game):
-    """无拒收 → 代码不注入固定戏内句。"""
+def test_run_settle_no_rejection_no_attendant_slot(game):
+    """无拒收 → 不因本接缝凭空占 attendant 槽。"""
     db, state, content = game
     before = state.turn
     report = prepare_then_settle(
         db, state, content,
         {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}},
     )
-    assert "有司奏" not in report
-    assert "窒碍未行" not in report
-    persisted = db.conn.execute("SELECT report FROM turn_reports WHERE turn=?", (before,)).fetchone()[0]
-    assert "有司奏" not in persisted
-    assert "窒碍未行" not in persisted
+    assert isinstance(report, str)
+    archives = db.list_monthly_archives()
+    hit = next(a for a in archives if int(a["turn"]) == before)
+    # 无玩家来源拒收时本接缝不写 attendant（抵京 companion 另路）
+    assert hit["has_attendant"] is False
 
 
 def test_run_settle_system_source_rejection_provenance(game):
-    """system_simulation 来源拒收：结构化 source 门正确；代码不写戏内句。"""
+    """system_simulation 来源拒收：source 门正确；不触发玩家 attendant 接缝。"""
     from ming_sim.applier import Provenance
     db, state, content = game
     before = state.turn
@@ -684,8 +681,10 @@ def test_run_settle_system_source_rejection_provenance(game):
         "SELECT source FROM rejection_reports WHERE turn=?", (before,),
     ).fetchall())
     assert rows and all(r["source"] == Provenance.system_simulation.value for r in rows)
-    assert "有司奏" not in report
-    assert "窒碍未行" not in report
+    archives = db.list_monthly_archives()
+    hit = next(a for a in archives if int(a["turn"]) == before)
+    assert hit["has_attendant"] is False
+    assert isinstance(report, str)
 
 
 # ── #668 F3：driver pre_settle 须同步 content 在途镜像 ────────────────────────
