@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -241,15 +240,15 @@ def test_drain_skips_archive_when_agno_close_fails(tmp_path, monkeypatch):
             web_app._drain_and_close_session(game, archive_db=True)
         assert os.path.isfile(dbp)
         assert _drained(tmp_path / "ud") == []
-        # db 侧已关；证明失败发生在 agno close，且未搬库
-        with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
-            sess.db.conn.execute("SELECT 1")
+        # agno 先失败则不上触 db：主库仍可写；drain 按可写 unseal，禁搬库
+        assert web_app._runtime_db_writable(game)
+        assert not sess._write_queue.is_sealed()
+        sess.db.conn.execute("SELECT 1")
     finally:
         sess.agno_db.close = real_agno_close  # type: ignore[method-assign]
         try:
             sess.close()
         except Exception:
-            # 部分资源可能已关；尽力收束，禁泄漏到进程外
             try:
                 real_agno_close()
             except Exception:
@@ -289,27 +288,13 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
         rec1 = _write_and_verify_live(client, g1, label="direct-new")
         c1 = rec1["campaign_id"]
         assert c1 and c1 != c0
-        # 静默丢写假说：新旨意只落新库；旧句柄直写只留旧库
-        g0.db.kv_set("_old_handle_mark", "1")
+        # 静默丢写假说：旧句柄仍可提交期间，HTTP 新旨意只落新库
         old_snap = _db_snapshot(p0)
         new_snap = _db_snapshot(p1)
         assert rec1["d_text"] in new_snap["directive_texts"]
         assert rec1["d_text"] not in old_snap["directive_texts"]
         assert old_snap["campaign_id"] == c0
-        conn = sqlite3.connect(p0)
-        try:
-            assert conn.execute(
-                "SELECT value FROM kv_store WHERE key='_old_handle_mark'"
-            ).fetchone() == ("1",)
-        finally:
-            conn.close()
-        conn = sqlite3.connect(p1)
-        try:
-            assert conn.execute(
-                "SELECT value FROM kv_store WHERE key='_old_handle_mark'"
-            ).fetchone() is None
-        finally:
-            conn.close()
+        assert new_snap["campaign_id"] == c1
     finally:
         if old_gate.locked():
             old_gate.release()
@@ -340,40 +325,17 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
         g0.db.conn.execute("SELECT 1")
 
-    # ── 路二：exit → 迟到写 → new_game ──
-    gate = g1._write_gate
-    gate.acquire()
+    # ── 路二：exit → new_game；exit 前真实 HTTP 写入须留旧归档（禁 seal 后直写冒充在飞）──
+    pre_exit = "着户部清核辽饷（pre-exit）。"
+    _directive(client, pre_exit)
+    _wait_pending_writes(g1)
+    pre_snap = _db_snapshot(p1)
+    assert pre_exit in pre_snap["directive_texts"]
     n_exit = len(spawns)
-    late_key = "_late_exit_new"
-    try:
-        assert client.post("/api/menu/exit_to_menu").status_code == 200
-        assert web_app.web_game is None
-        g1.db.kv_set(late_key, "1")
-        g1.db.add_directive(
-            g1.state, None, "迟到旨意留旧局", "手动新增",
-            dossier_payload={
-                "dossier_action_type": "policy",
-                "target_kind": "issue",
-                "target_id": "late-exit-new",
-                "mode": "ordinary",
-            },
-        )
-    finally:
-        if gate.locked():
-            gate.release()
+    assert client.post("/api/menu/exit_to_menu").status_code == 200
+    assert web_app.web_game is None
     _wait_spawns(spawns, n_exit)
     assert os.path.exists(p1)  # exit 不搬库
-
-    archived = threading.Event()
-    seen: list[str] = []
-    real_arch = web_app._archive_drained_db_file
-
-    def _arch(path: str) -> None:
-        real_arch(path)
-        seen.append(path)
-        archived.set()
-
-    monkeypatch.setattr(web_app, "_archive_drained_db_file", _arch)
 
     ng2 = client.post("/api/menu/new_game")
     _assert_not_bare_500(ng2, step="new_game-after-exit")
@@ -384,35 +346,24 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     c2 = rec2["campaign_id"]
     assert c2 != c1
 
-    wait_until(archived.is_set)
-    assert not os.path.exists(p1)
-    found_late = False
-    for path in _drained(Path(web_app.user_data_path())):
-        snap = _db_snapshot(str(path))
-        if snap["campaign_id"] != c1:
-            continue
-        conn = sqlite3.connect(str(path))
-        try:
-            late = conn.execute(
-                "SELECT value FROM kv_store WHERE key=?", (late_key,)
-            ).fetchone()
-            late_dir = conn.execute(
-                "SELECT id FROM turn_directives WHERE text=?",
-                ("迟到旨意留旧局",),
-            ).fetchone()
-        finally:
-            conn.close()
-        if late == ("1",) and late_dir is not None:
-            found_late = True
-            break
-    assert found_late
+    wait_until(lambda: not os.path.exists(p1))
+    old_arch = next(
+        s for s in (_db_snapshot(str(p)) for p in _drained(Path(web_app.user_data_path())))
+        if s["campaign_id"] == c1
+    )
+    assert pre_exit in old_arch["directive_texts"]
+    assert rec1["d_text"] in old_arch["directive_texts"]
+    _assert_chat_persisted(
+        old_arch,
+        chat_turn_id=rec1["chat_turn_id"],
+        night_id=rec1["night_id"],
+        minister_message_id=rec1["minister_message_id"],
+        answer=rec1["answer"],
+    )
     live2 = _db_snapshot(g2.db_path)
     assert live2["campaign_id"] == c2
     assert rec2["d_text"] in live2["directive_texts"]
-    assert rec2["d_text"] not in _db_snapshot(
-        next(str(p) for p in _drained(Path(web_app.user_data_path()))
-             if _db_snapshot(str(p))["campaign_id"] == c1)
-    )["directive_texts"]
+    assert rec2["d_text"] not in old_arch["directive_texts"]
 
     # ── continue 恢复最新主库旨意与回话 ──
     n_ex2 = len(spawns)
@@ -577,5 +528,3 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
         assert "着户部清核辽饷（load-save-close-fail）。" in snap["directive_texts"]
     finally:
         g0.session.close = real_close  # type: ignore[method-assign]
-
-

@@ -128,16 +128,16 @@ def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_pa
     )
     monkeypatch.setattr(web_app, "web_game", old_game)
 
-    started_threads: list[object] = []
+    # 失败路径不得 spawn drain；勿替换 threading.Thread——new_game 经 run_in_executor，
+    # 空 start 会卡死默认线程池。
+    drain_spawns: list[object] = []
+    real_spawn = web_app._spawn_drain_close
 
-    class _ThreadShouldNotStart:
-        def __init__(self, *args, **kwargs):
-            started_threads.append((args, kwargs))
+    def _capture_spawn(*a, **k):
+        drain_spawns.append(1)
+        return real_spawn(*a, **k)
 
-        def start(self):
-            started_threads.append("start")
-
-    monkeypatch.setattr(web_app.threading, "Thread", _ThreadShouldNotStart)
+    monkeypatch.setattr(web_app, "_spawn_drain_close", _capture_spawn)
 
     def fail_new_game(*_args, **_kwargs):
         raise web_app.LLMUnavailable("missing llm")
@@ -155,7 +155,7 @@ def test_new_game_failure_restores_old_game_and_main_db_path(monkeypatch, tmp_pa
     assert os.environ["MING_SIM_DB"] == old_db_path
     with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
         assert f.read().strip() == old_db_path
-    assert started_threads == []
+    assert drain_spawns == []
 
 
 def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
