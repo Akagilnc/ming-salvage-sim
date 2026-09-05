@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 
 import pytest
 
@@ -64,10 +65,15 @@ def test_normalize_locality_scope_rejects_unknown():
 
 
 def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
-    """#1624：禁止按 target_kind 覆盖 locality 掩盖错误目标；显式矛盾 fail-loud。"""
-    from ming_sim.rescript_actions import map_rescript_option_or_choice
+    """#1624：禁止按 target_kind 覆盖 locality 掩盖错误目标；显式矛盾 fail-loud。
 
-    with pytest.raises(ValueError, match="locality_scope=single"):
+    契约落在 StructuredDecreeCombinationError.field_failures/failed_fields
+    （权威结构化失败事实）；不得盯异常措辞。
+    """
+    from ming_sim.rescript_actions import map_rescript_option_or_choice
+    from ming_sim.structured_decree import StructuredDecreeCombinationError
+
+    with pytest.raises(StructuredDecreeCombinationError) as ei_issue_single:
         map_rescript_option_or_choice({
             "action_type": "authorization",
             "label": "赈抚",
@@ -77,8 +83,15 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
             "holder_id": "毕自严",
             "privilege": "便宜行事",
         })
+    assert "locality_scope" in ei_issue_single.value.failed_fields
+    assert "target_kind" in ei_issue_single.value.failed_fields
+    ff_issue = {
+        str(f["field"]): f for f in ei_issue_single.value.field_failures
+    }
+    assert ff_issue["locality_scope"]["current"] == "single"
+    assert ff_issue["target_kind"]["current"] == "issue"
 
-    with pytest.raises(ValueError, match="region 目标"):
+    with pytest.raises(StructuredDecreeCombinationError) as ei_region_none:
         map_rescript_option_or_choice({
             "action_type": "authorization",
             "label": "陕赈",
@@ -88,6 +101,12 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
             "holder_id": "毕自严",
             "privilege": "便宜行事",
         })
+    assert ei_region_none.value.failed_fields == frozenset({"locality_scope"})
+    ff_region = {
+        str(f["field"]): f for f in ei_region_none.value.field_failures
+    }
+    assert ff_region["locality_scope"]["current"] == "none"
+    assert ff_region["locality_scope"]["expected"] == ["single"]
 
     # 合法组合：issue+none / region+single 原样通过
     qa_shape = map_rescript_option_or_choice({
@@ -856,8 +875,11 @@ def test_validate_all_unmapped_zero_rows_before_insert(env):
         "transaction_category": "修仙",  # 未映射
         "assignee_id": "",  # 显式未点将，走 duty 表
     }
+    from ming_sim.applier import RejectionCollector
+
     did = _insert_directive(db, state, text="清丈天下田亩", payload=payload)
     before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
+    collector = RejectionCollector()
     ids = db.create_decree_dossiers(
         state,
         action_type="policy",
@@ -867,11 +889,22 @@ def test_validate_all_unmapped_zero_rows_before_insert(env):
         directive_id=did,
         payload=payload,
         commit=True,
+        rejection_collector=collector,
     )
     assert ids == []
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
     assert db.list_dossiers_for_directive(did) == []
+    # 调用方提交边界：flush 不自提交；commit 后独立连接验落库。
+    collector.flush_to_db(db)
+    db.conn.commit()
+    other = sqlite3.connect(db.path)
+    try:
+        assert other.execute(
+            "SELECT COUNT(*) FROM rejection_reports WHERE section='executor_routing'",
+        ).fetchone()[0] == 1
+    finally:
+        other.close()
 
 
 def test_path2_confirm_directive_unmapped_rejects_zero_rows(env):

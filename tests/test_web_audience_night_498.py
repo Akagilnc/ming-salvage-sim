@@ -132,6 +132,9 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno",
                         lambda *a, **k: (delta or {}, "out", "in"))
+    # #1745：结算拒收递话同属外层 LLM 缝（与 1468 _stub_outer_llm_seams 同源）。
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     # 章节记忆的唯一 LLM 输出边界（memories.run_agent_text 仅被 record_chapter_memory 调用）；
     # record_chapter_memory 与其确定性装配仍真跑。

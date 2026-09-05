@@ -20,12 +20,12 @@ from pathlib import Path
 import pytest
 
 import driver
-from driver import run_prepare, run_settle
+from driver import run_prepare
 from ming_sim.applier import Provenance
 from ming_sim.distance import DistanceMatrix
 from ming_sim.models import TurnPhase
 from tests.conftest import active_ming_character
-from tests.section_rejection_helpers import prepare_then_settle
+from tests.section_rejection_helpers import prepare_then_settle, run_settle
 
 _ROOT = Path(__file__).resolve().parents[1]
 _MATRIX = DistanceMatrix.from_file(_ROOT / "content/distance_matrix.json")
@@ -631,45 +631,74 @@ def test_canonicalize_extraction_public_api():
 
 # ── ADR 0008 决定 5：拒收玩家可见性（player_decree/hitl → 邸报 in-world 提示）──
 
-def test_run_settle_player_sourced_rejection_surfaces_diegetic_hint(game):
-    """driver 默认 player_decree 来源：落库拒收 → 邸报给一句 in-world 提示（不暴露明细，明细进 DB/jsonl），
-    且提示**持久化进 turn_report**（web/history/重读都见，非仅即时返回串，codex R1 high）。"""
+def test_run_settle_player_sourced_rejection_durable_structured(game, monkeypatch):
+    """driver 默认 player_decree：拒收四字段 + 来源门 + attendant 槽路由（0150-D5-b）。
+
+    runner 走真实 run_settlement_attendant_message；替身在 agent 边界。
+    """
+    import types
+    import ming_sim.decree as decree_mod
+    from ming_sim.applier import Provenance
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+
+    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
+
+    def _via_real_runner(**kw):
+        return decree_mod.run_settlement_attendant_message(
+            types.SimpleNamespace(), **kw,
+        )
+
     db, state, content = game
     before = state.turn
     report = prepare_then_settle(
         db, state, content,
         {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人甲", "动作": "任命", "office": "首辅", "reason": "测试拒收"}]},
+        narrative="本月邸报。",
+        settlement_attendant_runner=_via_real_runner,
     )
-    assert "有司奏" in report, "player_decree 来源的拒收须在邸报给玩家一句提示（决定 5）"
-    assert "查无此人甲" not in report, "提示只一句 in-world，不暴露拒收明细（明细进 DB/jsonl）"
-    # 持久化：turn_reports（web/history 读它）也须含提示，非仅 run_settle 即时返回
-    persisted = db.conn.execute("SELECT report FROM turn_reports WHERE turn=?", (before,)).fetchone()[0]
-    assert "有司奏" in persisted, "提示须持久化进 turn_report（codex R1：仅返回串则 web/history 看不到）"
+    rows = list(db.conn.execute(
+        "SELECT section, category, source FROM rejection_reports WHERE turn=?", (before,),
+    ).fetchall())
+    assert rows and all(r["source"] == Provenance.player_decree.value for r in rows)
+    archives = db.list_monthly_archives()
+    hit = next(a for a in archives if int(a["turn"]) == before)
+    assert hit["has_attendant"] is True
+    assert isinstance(report, str)
 
 
-def test_run_settle_no_rejection_no_hint(game):
-    """无拒收 → 无提示（避免噪声）；且不误持久化进 turn_report（Sourcery R1）。"""
+def test_run_settle_no_rejection_no_attendant_slot(game):
+    """无拒收 → 不因本接缝凭空占 attendant 槽。"""
     db, state, content = game
     before = state.turn
     report = prepare_then_settle(
         db, state, content,
         {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}},
     )
-    assert "有司奏" not in report
-    persisted = db.conn.execute("SELECT report FROM turn_reports WHERE turn=?", (before,)).fetchone()[0]
-    assert "有司奏" not in persisted, "无拒收不应把提示误持久化进 turn_report"
+    assert isinstance(report, str)
+    archives = db.list_monthly_archives()
+    hit = next(a for a in archives if int(a["turn"]) == before)
+    # 无玩家来源拒收时本接缝不写 attendant（抵京 companion 另路）
+    assert hit["has_attendant"] is False
 
 
-def test_run_settle_system_source_rejection_stays_silent(game):
-    """system_simulation 来源的拒收对玩家安静——仅 player_decree/hitl_decision 给提示（决定 5）。"""
+def test_run_settle_system_source_rejection_provenance(game):
+    """system_simulation 来源拒收：source 门正确；不触发玩家 attendant 接缝。"""
     from ming_sim.applier import Provenance
     db, state, content = game
+    before = state.turn
     report = prepare_then_settle(
         db, state, content,
         {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人乙", "动作": "任命", "office": "首辅", "reason": "测试"}]},
         source=Provenance.system_simulation,
     )
-    assert "有司奏" not in report, "系统推演来源的拒收对玩家安静"
+    rows = list(db.conn.execute(
+        "SELECT source FROM rejection_reports WHERE turn=?", (before,),
+    ).fetchall())
+    assert rows and all(r["source"] == Provenance.system_simulation.value for r in rows)
+    archives = db.list_monthly_archives()
+    hit = next(a for a in archives if int(a["turn"]) == before)
+    assert hit["has_attendant"] is False
+    assert isinstance(report, str)
 
 
 # ── #668 F3：driver pre_settle 须同步 content 在途镜像 ────────────────────────

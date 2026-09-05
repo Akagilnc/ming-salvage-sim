@@ -169,10 +169,10 @@ export function HistoryDetailView({
         </section>
       ) : null}
 
-      {/* #671：史册月档独立递话；trim 仅判空，DOM 写原文（P6 零删改） */}
+      {/* #671/#1745：史册月档复用递话槽（抵京/拒收等）；泛标「递话」，不误标抵京专属。trim 仅判空，DOM 写原文（P6 零删改） */}
       {String(detail?.attendant_message || "").trim() ? (
         <section className="document-section" data-testid="history-attendant">
-          <h3 className="extraction-section-title">抵京递话</h3>
+          <h3 className="extraction-section-title">递话</h3>
           <pre className="memorial-text">{detail!.attendant_message}</pre>
         </section>
       ) : null}

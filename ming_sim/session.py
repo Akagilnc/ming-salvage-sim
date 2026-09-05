@@ -2156,18 +2156,38 @@ class GameSession:
                             mark_actions_night_approved(
                                 self.db, sorted(defer_ids), night_id=int(open_n["id"]))
                         if immediate_ids:
+                            from ming_sim.applier import (
+                                RejectionCollector, mirror_rejections_after_commit,
+                            )
+                            from ming_sim.error_pack import rejections_jsonl_path
+                            _rc = RejectionCollector()
                             applied = self.db.commit_pending_actions(
                                 self.state, minister_name=minister_name,
                                 action_ids=immediate_ids,
                                 content=getattr(self, "content", None),
-                                registry=getattr(self, "registry", None))
+                                registry=getattr(self, "registry", None),
+                                rejection_collector=_rc,
+                            )
+                            mirror_rejections_after_commit(
+                                self.db, _rc, rejections_jsonl_path,
+                            )
                     else:
+                        from ming_sim.applier import (
+                            RejectionCollector, mirror_rejections_after_commit,
+                        )
+                        from ming_sim.error_pack import rejections_jsonl_path
+                        _rc = RejectionCollector()
                         applied = self.db.commit_pending_actions(
                             self.state, minister_name=minister_name,
                             directive_status="pending" if directive_confirm_targets else "draft",
                             action_ids=confirm_action_ids,
                             content=getattr(self, "content", None),
-                            registry=getattr(self, "registry", None))
+                            registry=getattr(self, "registry", None),
+                            rejection_collector=_rc,
+                        )
+                        mirror_rejections_after_commit(
+                            self.db, _rc, rejections_jsonl_path,
+                        )
                     # #1376：应允即落地的新建密令须把真实 order id 回填确认响应
                     # （内容在 stage 时已定文，落行不经 LLM；此处只取 commit 回执）。
                     if not out.get("secret_order_id"):
