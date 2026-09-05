@@ -1294,26 +1294,44 @@ def test_propose_appointment_tool_mode_contract(game, tool_mode, expected):
     assert staged["mode"] == expected
 
 
-def test_propose_appointment_omitted_mode_preserves_existing_midzhi(game):
-    """#1731 类B：既有 midzhi 任免候选 + 省略 mode 续拟 → 同一 pending id、仅一行、mode 仍 midzhi。"""
+@pytest.mark.parametrize(
+    ("appointee", "seed_modes", "continue_mode", "expected_id_relation", "expected_modes"),
+    [
+        # 沉默续拟：同一 id，保留 midzhi
+        ("续拟沉默", ("midzhi",), None, "same", ("midzhi",)),
+        # 显式 ordinary：同一 id，原地降级
+        ("续拟降级", ("midzhi",), "ordinary", "same", ("ordinary",)),
+        # 多命中：不 INSERT，原行不动（人名须 ≤20，session 截断）
+        ("续拟双命中", ("ordinary", "midzhi"), "ordinary", "zero", ("ordinary", "midzhi")),
+    ],
+)
+def test_propose_appointment_continue_draft_same_direction(
+    game, appointee, seed_modes, continue_mode, expected_id_relation, expected_modes,
+):
+    """#1731 工具续拟：同向命中合并/多命中禁插（单一入口，覆盖沉默·降级·多命中）。"""
     db, state, content = game
     minister = "毕自严"
-    appointee = "既有中旨候选"
+    office = "户部尚书"
     character = content.characters[minister]
-    first_id = db.stage_pending_action(
-        state.turn, kind="office", action="任命",
-        minister_name=minister, target_id=None,
-        payload={
-            "name": appointee, "office": "户部尚书",
-            "appointer": minister, "mode": "midzhi",
-        },
-    )
-    assert first_id
-
-    propose = _propose_appointment_tool(character, db, state)
-    marker = propose(name=appointee, office="户部尚书", reason="续拟")
-    body = json.loads(marker.removeprefix("__pending_appointment__"))
-    assert "mode" not in body
+    seed_ids = []
+    for mode in seed_modes:
+        seed_ids.append(db.stage_pending_action(
+            state.turn, kind="office", action="任命",
+            minister_name=minister, target_id=None,
+            payload={
+                "name": appointee, "office": office,
+                "appointer": minister, "mode": mode,
+            },
+        ))
+    body = {"name": appointee, "office": office, "reason": "续拟"}
+    if continue_mode is not None:
+        body["mode"] = continue_mode
+    elif expected_id_relation == "same":
+        # 沉默：走真工具省略 mode
+        propose = _propose_appointment_tool(character, db, state)
+        marker = propose(name=appointee, office=office, reason="续拟")
+        body = json.loads(marker.removeprefix("__pending_appointment__"))
+        assert "mode" not in body
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -1323,152 +1341,20 @@ def test_propose_appointment_omitted_mode_preserves_existing_midzhi(game):
     continued_id = sess._stage_appointment_candidate(
         json.dumps(body, ensure_ascii=False), character,
     )
-    assert continued_id == first_id
-    same_intent_rows = [
-        {"id": int(p["id"]), "mode": json.loads(p["payload_json"]).get("mode")}
-        for p in db.list_pending_actions(state.turn)
-        if p["kind"] == "office"
-        and json.loads(p["payload_json"]).get("name") == appointee
-        and json.loads(p["payload_json"]).get("office") == "户部尚书"
-    ]
-    assert same_intent_rows == [{"id": first_id, "mode": "midzhi"}]
-
-
-def test_propose_appointment_explicit_ordinary_demotes_existing_midzhi(game):
-    """#1731 类B：既有 midzhi + 显式 ordinary 续拟 → 同一 id 原地降为 ordinary。"""
-    db, state, content = game
-    minister = "毕自严"
-    appointee = "降级普通候选"
-    character = content.characters[minister]
-    first_id = db.stage_pending_action(
-        state.turn, kind="office", action="任命",
-        minister_name=minister, target_id=None,
-        payload={
-            "name": appointee, "office": "户部尚书",
-            "appointer": minister, "mode": "midzhi",
-        },
-    )
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    continued_id = sess._stage_appointment_candidate(
-        json.dumps({
-            "name": appointee, "office": "户部尚书",
-            "mode": "ordinary", "reason": "改普通",
-        }, ensure_ascii=False),
-        character,
-    )
-    assert continued_id == first_id
-    same_intent_rows = [
-        {"id": int(p["id"]), "mode": json.loads(p["payload_json"]).get("mode")}
-        for p in db.list_pending_actions(state.turn)
-        if p["kind"] == "office"
-        and json.loads(p["payload_json"]).get("name") == appointee
-    ]
-    assert same_intent_rows == [{"id": first_id, "mode": "ordinary"}]
-
-
-def test_propose_appointment_multi_hit_does_not_insert(game):
-    """#1731 类B：同名同职同向多命中不得被写成无命中而 INSERT。"""
-    db, state, content = game
-    minister = "毕自严"
-    appointee = "双命中人"
-    character = content.characters[minister]
-    for mode in ("ordinary", "midzhi"):
-        db.stage_pending_action(
-            state.turn, kind="office", action="任命",
-            minister_name=minister, target_id=None,
-            payload={
-                "name": appointee, "office": "吏部尚书",
-                "appointer": minister, "mode": mode,
-            },
-        )
-    before_ids = [
-        int(p["id"]) for p in db.list_pending_actions(state.turn)
-        if p["kind"] == "office"
-        and json.loads(p["payload_json"]).get("name") == appointee
-    ]
-    assert len(before_ids) == 2
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    new_id = sess._stage_appointment_candidate(
-        json.dumps({
-            "name": appointee, "office": "吏部尚书", "mode": "ordinary",
-        }, ensure_ascii=False),
-        character,
-    )
-    assert new_id == 0
-    after_ids = [
-        int(p["id"]) for p in db.list_pending_actions(state.turn)
-        if p["kind"] == "office"
-        and json.loads(p["payload_json"]).get("name") == appointee
-    ]
-    assert after_ids == before_ids
-
-
-def test_materialize_dismissal_omitted_mode_preserves_existing_midzhi(game):
-    """#1731 类B：物化罢免同向命中 + 沉默 mode → 同一 id、mode 仍 midzhi，不双落。"""
-    from ming_sim.action_materialize import MaterializeCtx, _stage_office_pending_core
-
-    db, state, content = game
-    minister = "毕自严"
-    target = "罢免续拟人"
-    character = content.characters[minister]
-    first_id = db.stage_pending_action(
-        state.turn, kind="office", action="罢免",
-        minister_name=minister, target_id=None,
-        payload={
-            "name": target, "office": "兵部尚书",
-            "appointer": minister, "mode": "midzhi",
-        },
-    )
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    out: dict = {}
-    ctx = MaterializeCtx(
-        session=sess,
-        character=character,
-        player_message="罢免续拟",
-        reply="",
-        message_text="罢免续拟",
-        explicit_prefixed=False,
-        has_directive=False,
-        pend_for_minister=[],
-        out=out,
-        intent={
-            "kind": "appointment",
-            "appoint_action": "罢免",
-            "name": target,
-            "office": "兵部尚书",
-        },
-        intent_kind="appointment",
-        llm_config=None,
-    )
-    returned = _stage_office_pending_core(
-        ctx,
-        {"appoint_action": "罢免", "name": target, "office": "兵部尚书"},
-        annotate_existing=True,
-    )
-    assert returned == first_id
     rows = [
-        {
-            "id": int(p["id"]),
-            "mode": json.loads(p["payload_json"]).get("mode"),
-            "action": p["action"],
-        }
+        {"id": int(p["id"]), "mode": json.loads(p["payload_json"]).get("mode")}
         for p in db.list_pending_actions(state.turn)
         if p["kind"] == "office"
-        and json.loads(p["payload_json"]).get("name") == target
+        and json.loads(p["payload_json"]).get("name") == appointee
+        and json.loads(p["payload_json"]).get("office") == office
     ]
-    assert rows == [{"id": first_id, "mode": "midzhi", "action": "罢免"}]
+    if expected_id_relation == "same":
+        assert continued_id == seed_ids[0]
+        assert rows == [{"id": seed_ids[0], "mode": expected_modes[0]}]
+    else:
+        assert continued_id == 0
+        assert [r["id"] for r in rows] == seed_ids
+        assert [r["mode"] for r in rows] == list(expected_modes)
 
 
 def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monkeypatch):

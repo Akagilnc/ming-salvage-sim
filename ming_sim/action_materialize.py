@@ -741,11 +741,36 @@ def _persist_appointment_summon(
         )
 
 
+def _same_direction_office_hits(
+    db: Any,
+    turn: int,
+    *,
+    name: str,
+    office: str,
+    action: str,
+    content: Any = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """同名同职同向 pending 命中列表（调用方解释 0/1/多）。"""
+    return [
+        r for r in _match_office_row_by_name_office(
+            _list_pending_office_rows(
+                db, int(turn), pend_for_minister=pend_for_minister,
+            ),
+            name=name,
+            office=office,
+            content=content,
+            db=db,
+        )
+        if str(r.get("action") or "") == action
+    ]
+
+
 def _apply_existing_appointment_hit(
     session: Any,
     row: Dict[str, Any],
     *,
-    mode_mark: Optional[str] = None,
+    extracted_mode: object = None,
     tenure_mark: Optional[str] = None,
     minister_name: str = "",
     turn: int = 0,
@@ -754,16 +779,22 @@ def _apply_existing_appointment_hit(
     origin_chat_turn_id: int = 0,
     annotate: bool = False,
 ) -> int:
-    """Existing-hit merge: path marks + optional summon under one atomic.
+    """既有命中唯一合并点：原地更新（mode 可升可降、字段可补）→ 同一 id。
 
-    mode/任别、路径故事账、summon_after 升格与 inactive origin 同成同败——
-    不得先 annotate 真提交再进 summon 自己的 atomic。
+    mode 唯一规则 resolve_directive_mode(extracted→existing→ordinary)；
+    调用方只传原始 extracted_mode，禁止各出口自行预过滤/只升不降。
+    tenure 等字段标记原样补写。summon_after 与 annotate 同原子。
     """
     from ming_sim.applier import atomic
+    from ming_sim.cli_backend import resolve_directive_mode
 
     with atomic(session.db):
         resolved = int(row["id"])
         if annotate:
+            mode_mark = resolve_directive_mode(
+                extracted=extracted_mode,
+                existing=_office_payload(row).get("mode"),
+            )
             pending_id = _annotate_office_pending_path(
                 session.db,
                 row,
@@ -839,41 +870,30 @@ def _stage_office_pending_core(
         return None
 
     def consume_same_direction_hit(office_for_match: str) -> Tuple[bool, Optional[int]]:
-        """#1731/#519：同名同职同向唯一命中 → 原地更新（含 mode resolve）；多命中不新建。
+        """同名同职同向命中消费：唯一 → 合并点原地更新；多命中禁插；零命中放行。
 
-        返回 (consumed, pending_id|None)。consumed=True 表示命中已消费（含多命中禁插）；
-        False 表示无命中，调用方继续 hedge/新建。
+        返回 (consumed, pending_id|None)。mode/tenure 责任只在合并点。
         """
         if not appt_name or not office_for_match:
             return False, None
-        existing_hits = [
-            r for r in _match_office_row_by_name_office(
-                _list_pending_office_rows(
-                    session.db, int(session.state.turn),
-                    pend_for_minister=ctx.pend_for_minister,
-                ),
-                name=appt_name,
-                office=office_for_match,
-                content=content_ref,
-                db=session.db,
-            )
-            if str(r.get("action") or "") == action
-        ]
+        existing_hits = _same_direction_office_hits(
+            session.db,
+            int(session.state.turn),
+            name=appt_name,
+            office=office_for_match,
+            action=action,
+            content=content_ref,
+            pend_for_minister=ctx.pend_for_minister,
+        )
         if len(existing_hits) > 1:
             # 多命中≠无命中：不得再 INSERT 第三条
             return True, None
         if len(existing_hits) != 1:
             return False, None
-        hit = existing_hits[0]
-        # extracted→existing→ordinary；路径 midzhi 标记与 appt.mode 同源，并入 extracted 位
-        resolved_mode = resolve_directive_mode(
-            extracted=appt.get("mode") or mode_mark,
-            existing=_office_payload(hit).get("mode"),
-        )
         resolved = _apply_existing_appointment_hit(
             session,
-            hit,
-            mode_mark=resolved_mode,
+            existing_hits[0],
+            extracted_mode=appt.get("mode") or mode_mark,
             tenure_mark=tenure_mark if annotate_existing else None,
             minister_name=minister_name,
             turn=int(session.state.turn),
@@ -3128,11 +3148,17 @@ def _office_path_ambiguous_payload(
 
 
 def _path_marks_from_appt(appt: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    """从结构化意图取路径标记：特旨→mode=midzhi；署理→任别=署理。互不写对方字段。"""
+    """从结构化意图取路径/续拟标记：typed mode 与署理任别。互不写对方字段。
+
+    mode 含 ordinary（显式降级）与 midzhi；过滤 ordinary 会导致路径早退口
+    丢掉降级语义（#1731 r4）。最终写入仍由合并点 resolve。
+    """
     mode_mark: Optional[str] = None
     raw_mode = str(appt.get("mode") or "").strip()
-    if raw_mode == "midzhi":
+    if raw_mode in {"midzhi", "中旨直发"}:
         mode_mark = "midzhi"
+    elif raw_mode in {"ordinary", "普通"}:
+        mode_mark = "ordinary"
 
     tenure_mark: Optional[str] = None
     for key in ("appointment_tenure", "任别"):
@@ -3326,10 +3352,11 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 _office_payload(row).get("name") or ""
             ).strip()
             row_is_appoint = str(row.get("action") or "") == "任命"
+            # 合并点吃原始 mode（含 ordinary）；禁止传过滤后的 midzhi-only 标记
             resolved = _apply_existing_appointment_hit(
                 session,
                 row,
-                mode_mark=mode_mark,
+                extracted_mode=appt.get("mode") or mode_mark,
                 tenure_mark=tenure_mark,
                 minister_name=minister_name,
                 turn=int(session.state.turn),
