@@ -1125,43 +1125,66 @@ def _find_healed_option_for_failure(
     healed: Dict[str, Any],
     failure: RescriptOptionMissingFailure,
 ) -> Optional[dict]:
-    """从补交产出中定位对应 option：先同坐标，再同 item 按 label，再全局 label。"""
+    """从补交产出中定位对应 option（身份优先，防重排错位吞兄弟）。
+
+    次序：① 同 item 内 label 精确匹配；② 全局 label；③ 无 label 时同坐标且
+    action_type 与首抽一致。禁止「仅同坐标、label 不符」——重排后 index 0 常是
+    兄弟项，会把缺字段 option 顶丢。
+    """
     healed_items = healed.get("items")
     if not isinstance(healed_items, list):
         return None
     want_label = ""
+    want_action = ""
     if isinstance(failure.raw_option, dict):
-        want_label = str(failure.raw_option.get("label") or "")
+        want_label = str(failure.raw_option.get("label") or "").strip()
+        want_action = str(failure.raw_option.get("action_type") or "").strip()
 
-    def _from_opts(opts: object, *, prefer_index: bool) -> Optional[dict]:
-        if not isinstance(opts, list):
+    def _label_hit(opts: object) -> Optional[dict]:
+        if not want_label or not isinstance(opts, list):
             return None
-        # 同坐标：接受完整重交（label 可变）；错位时再按首抽 label 找回
-        if prefer_index and failure.option_index < len(opts):
-            cand = opts[failure.option_index]
-            if isinstance(cand, dict):
-                return cand
-        if want_label:
-            for cand in opts:
-                if isinstance(cand, dict) and str(cand.get("label") or "") == want_label:
-                    return cand
-        return None
+        hits = [
+            cand for cand in opts
+            if isinstance(cand, dict)
+            and str(cand.get("label") or "").strip() == want_label
+        ]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1 and want_action:
+            typed = [
+                h for h in hits
+                if str(h.get("action_type") or "").strip() == want_action
+            ]
+            if len(typed) == 1:
+                return typed[0]
+        return hits[0] if len(hits) == 1 else None
 
+    # ① 同急务 item 内按 label
     if failure.item_index < len(healed_items) and isinstance(
         healed_items[failure.item_index], dict
     ):
-        hit = _from_opts(
-            healed_items[failure.item_index].get("options"), prefer_index=True,
-        )
+        hit = _label_hit(healed_items[failure.item_index].get("options"))
         if hit is not None:
             return hit
+    # ② 全局 label（补交可能重排 items）
     if want_label:
         for item in healed_items:
             if not isinstance(item, dict):
                 continue
-            hit = _from_opts(item.get("options"), prefer_index=False)
+            hit = _label_hit(item.get("options"))
             if hit is not None:
                 return hit
+        return None
+    # ③ 无 label：同坐标 + action_type 一致才采纳（避免重排误吞）
+    if failure.item_index < len(healed_items) and isinstance(
+        healed_items[failure.item_index], dict
+    ):
+        opts = healed_items[failure.item_index].get("options")
+        if isinstance(opts, list) and failure.option_index < len(opts):
+            cand = opts[failure.option_index]
+            if isinstance(cand, dict):
+                if not want_action or str(cand.get("action_type") or "").strip() == want_action:
+                    return cand
     return None
 
 
