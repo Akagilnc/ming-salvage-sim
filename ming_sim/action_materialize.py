@@ -2436,16 +2436,23 @@ def stage_assignment_candidate(
     target_candidate id updates the named pending assignment (cross-round
     reinforce / ADR 0038 before-image).
     owner 单一来源 = 当前召对大臣（minister_name）；不接受分类器改派。
-    #1565/0142：题名=title|target_id；正文 text/body=大臣回话；无散文回落。
+    #1565/0142：题名=显式 title|结构化 target_id 锚；正文唯一真源=payload.text；
+    禁散文截题、禁空正文借题名伪造成功、禁缺锚静默丢单。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    order_body = str(text or "").strip()
+    body = str(text or "").strip()
+    if not body:
+        raise DecreeMaterializationValidationError(
+            "交办旨意缺少正文", failed_fields=("text",),
+        )
+    # 题名只认结构化锚；不得从正文/皇帝散文截取
     matter_title = str(title or "").strip() or str(target_id or "").strip()
     if not matter_title:
-        return 0
-    if not order_body:
-        order_body = matter_title
+        raise DecreeMaterializationValidationError(
+            "交办旨意缺少结构化题名（title 或 target_id）",
+            failed_fields=("title",),
+        )
     matter_id = str(target_id or "").strip() or matter_title
     owner = str(minister_name or "").strip()
     if not owner:
@@ -2482,10 +2489,8 @@ def stage_assignment_candidate(
 
     mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
-        # text = 旨意正文（大臣领命/拟稿），供 decree_text 与 initiative stage_text
-        "text": order_body,
-        # body = 正文显式字段身份（与 cli_backend 议而不决投影同契约）
-        "body": order_body,
+        # text = 旨意正文唯一真源（供 decree_text 与 initiative stage_text）
+        "text": body,
         "actor": minister_name,
         "dossier_action_type": "assignment",
         "target_kind": "issue",
@@ -2519,13 +2524,13 @@ def stage_assignment_candidate(
     try:
         stages_norm = capture_commitment_stages(
             stages_raw,
-            narrative_text=order_body,
+            narrative_text=body,
             origin_turn=int(turn),
         )
     except ValueError:
         stages_norm = capture_commitment_stages(
             None,
-            narrative_text=order_body,
+            narrative_text=body,
             origin_turn=int(turn),
         )
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
@@ -2545,11 +2550,12 @@ def stage_assignment_candidate(
 
 
 def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
-    """对话上下文链：ADR 0028 recent_context + 本轮皇帝/大臣句。
+    """案卷 text：ADR 0028 最近相关对话上下文链 + 本轮皇帝/大臣句。
 
-    供 strategy_selection 等需展开对话上下文的路径；#1565 后 assignment/referral
-    旨意正文改走大臣回话（payload body/text），不再以此链当 initiative 题名/正文。
+    不得仅取 ctx.reply or ctx.player_message；recent_context 与分类器同源。
     当轮句按整行锚接入，禁止 substring 判断把短句吞进前轮长文。
+    recent_context 空时仍须同时保留皇帝任务描述与大臣领命回话（首轮交办）。
+    本链是正文真源供料，不是题名解析来源。
     """
     recent = str(ctx.recent_context or "").strip()
     reply = str(ctx.reply or "").strip()
@@ -2569,8 +2575,8 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
 
     #1503：显式拟旨前缀若带真实 assignment 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
     意图粒度由分类/候选归一表达；本 handler 按候选契约单轨记账，不从 title 有无猜独立性。
-    #1565/0142：题名=分类 title|target_id；正文=大臣回话（body/text）；
-    对话上下文链不再写入旨意正文，禁 player_message 散文截断当 title。
+    #1565/0142：题名=分类 title|target_id 结构化锚；正文=_assignment_dossier_text 上下文链；
+    禁 player_message 散文截断当 title；缺锚走既有 DecreeMaterializationValidationError 恢复接缝。
     """
     if (
         ctx.intent_kind != "assignment"
@@ -2582,15 +2588,14 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
     intent = ctx.intent or {}
     title = str(intent.get("title") or "").strip()
     target_id = str(intent.get("target_id") or "").strip()
-    # 标题：结构化字段 only（title → target_id）；stage 内再守一次
-    order_body = str(ctx.reply or "").strip()
-    if not title and not target_id and not order_body:
+    body = _assignment_dossier_text(ctx)
+    if not title and not target_id and not body:
         return
     pending_id = stage_assignment_candidate(
         ctx.session.db,
         ctx.session.state.turn,
         ctx.character.name,
-        text=order_body,
+        text=body,
         title=title,
         target_id=target_id,
         extracted_mode=intent.get("mode"),
@@ -3399,16 +3404,22 @@ def stage_referral_candidate(
     下议只承 deadline_months(1–36) 与非空机关/职司 responsible_bodies；
     落 end_turn=turn+N 与 payload.responsible_bodies。禁个人 owner/assignee。
     initiative 按 ADR 0055 判后创建。
-    #1565/0142：题名=title|target_id；正文 text/body=大臣回话；无散文回落。
+    #1565/0142：题名=显式 title|结构化 target_id 锚；正文唯一真源=payload.text；
+    禁散文截题、禁空正文借题名伪造成功、禁缺锚静默丢单。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
-    order_body = str(text or "").strip()
+    body = str(text or "").strip()
+    if not body:
+        raise DecreeMaterializationValidationError(
+            "下议旨意缺少正文", failed_fields=("text",),
+        )
     matter_title = str(title or "").strip() or str(target_id or "").strip()
     if not matter_title:
-        return 0
-    if not order_body:
-        order_body = matter_title
+        raise DecreeMaterializationValidationError(
+            "下议旨意缺少结构化题名（title 或 target_id）",
+            failed_fields=("title",),
+        )
     matter_id = str(target_id or "").strip() or matter_title
 
     try:
@@ -3461,8 +3472,7 @@ def stage_referral_candidate(
 
     mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
-        "text": order_body,
-        "body": order_body,
+        "text": body,
         "actor": minister_name,
         "dossier_action_type": "referral",
         "target_kind": "issue",
@@ -3482,7 +3492,8 @@ def stage_referral_candidate(
 def _materialize_referral(ctx: MaterializeCtx) -> None:
     """暂存下议案卷；initiative 按 ADR 0055 判决后落。
 
-    #1565/0142：题名=title|target_id；正文=大臣回话；禁 player_message 散文截断。
+    #1565/0142：题名=title|target_id 结构化锚；正文=reply 或 player_message 任务供料；
+    禁 player_message 散文截断当 title；缺锚走既有 validation 恢复接缝。
     """
     if (
         ctx.intent_kind != "referral"
@@ -3495,14 +3506,14 @@ def _materialize_referral(ctx: MaterializeCtx) -> None:
     intent = ctx.intent or {}
     title = str(intent.get("title") or "").strip()
     target_id = str(intent.get("target_id") or "").strip()
-    order_body = str(ctx.reply or "").strip()
-    if not title and not target_id and not order_body:
+    body = str(ctx.reply or ctx.player_message or "").strip()
+    if not title and not target_id and not body:
         return
     pending_id = stage_referral_candidate(
         ctx.session.db,
         ctx.session.state.turn,
         ctx.character.name,
-        text=order_body,
+        text=body,
         title=title,
         target_id=target_id,
         deadline_months=intent.get("deadline_months"),

@@ -14914,6 +14914,10 @@ class GameDB:
         action = str(action_type or "").strip()
         text = str(decree_text or "").strip()
         normalized_payload = dict(payload or {})
+        # #1565：公开成案/旧入口只有 decree_text 时，正文无损承接到唯一正文槽 payload.text；
+        # 不回填为题名，不建平行 body 真源。
+        if not str(normalized_payload.get("text") or "").strip() and text:
+            normalized_payload["text"] = text
         canonical_assignee = str(normalized_payload.get("assignee_id") or "").strip()
         if not canonical_assignee:
             canonical_assignee = str(normalized_payload.get("assignee") or "").strip()
@@ -17298,6 +17302,22 @@ class GameDB:
             registry=None,
         )
 
+    @staticmethod
+    def _initiative_title_and_body(
+        payload: Dict[str, object], row, *, default_title: str,
+    ) -> tuple[str, str]:
+        """#1565/0142：initiative 题名/正文单一规则（assignment/referral 共用）。
+
+        题名只认结构化 title|target_id，不从 decree_text/正文/皇帝散文截取。
+        正文唯一真源 payload.text；旧案卷无 text 时 decree_text 仅作正文承接，
+        不得回填题名，不得以题名/target_id 冒充正文。
+        """
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            title = str(payload.get("target_id") or default_title).strip() or default_title
+        body = str(payload.get("text") or row.get("decree_text") or "").strip()
+        return title, body
+
     def _apply_referral_verdict_effect(
         self, state, row, payload, dossier_id,
     ) -> bool:
@@ -17342,14 +17362,9 @@ class GameDB:
             )
             return False
 
-        # #1565/0142：题名/正文只认案卷结构化载荷 title|body|target_id，
-        # 不回落 decree_text/text 对话归档（那是案卷档案面，不是 initiative 题名）。
-        title = str(payload.get("title") or "").strip()
-        if not title:
-            title = str(payload.get("target_id") or "下议事项").strip()
-        stage_text = str(
-            payload.get("body") or payload.get("text") or title
-        ).strip() or title
+        title, stage_text = self._initiative_title_and_body(
+            payload, row, default_title="下议事项",
+        )
 
         try:
             end_turn = int(payload.get("end_turn") or 0)
@@ -17411,14 +17426,9 @@ class GameDB:
         if not owner:
             raise ValueError("交办案卷缺少主办")
 
-        # #1565/0142：题名/正文只认案卷结构化载荷 title|body|target_id，
-        # 不回落 decree_text（对话归档不得进 HUD initiative 题名）。
-        title = str(payload.get("title") or "").strip()
-        if not title:
-            title = str(payload.get("target_id") or "交办差事").strip()
-        stage_text = str(
-            payload.get("body") or payload.get("text") or title
-        ).strip() or title
+        title, stage_text = self._initiative_title_and_body(
+            payload, row, default_title="交办差事",
+        )
 
         origin_ref = f"dossier:{int(dossier_id)}"
         commitment_kind = _normalize_commitment_kind(payload.get("commitment_kind"))

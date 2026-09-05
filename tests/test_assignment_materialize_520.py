@@ -360,8 +360,11 @@ def test_classify_prompt_stop_condition_example_is_single_layer_json(monkeypatch
     assert marker in prompt
 
 
-def test_assignment_empty_recent_context_keeps_structured_title_and_reply_body(game):
-    """#1565/0142：题名=分类 title；body 与 text 均=大臣领命回话。"""
+def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game):
+    """#520 r4 / #1565：recent_context 空时案卷正文须同时保留皇帝任务描述与大臣领命回话。
+
+    题名=分类 title；正文唯一真源=payload.text（上下文链），不写平行 body。
+    """
     db, state, content = game
     actor = _active_ming(db, content)
     player = "朕要你解决九边欠饷，并保证——不会再欠。"
@@ -376,7 +379,7 @@ def test_assignment_empty_recent_context_keeps_structured_title_and_reply_body(g
     candidates = candidates_from_classifier_payload(payload, soft=False)
     ctx = _ctx(
         db, actor.name, candidates, state.turn,
-        message=player, reply=reply, recent_context="",
+        message=player, reply=reply, recent_context="",  # 首轮无历史
     )
     run_materialize_pipeline(ctx)
     pending_id = ctx.out["pending_action_id"]
@@ -385,15 +388,21 @@ def test_assignment_empty_recent_context_keeps_structured_title_and_reply_body(g
         "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["payload_json"])
     assert pending.get("title") == "解决九边欠饷"
-    assert pending.get("body") == reply
-    assert pending.get("text") == reply
+    body = str(pending.get("text") or "")
+    assert player in body, f"须保留皇帝本轮原话，got={body!r}"
+    assert reply in body, f"须保留大臣领命回话，got={body!r}"
+    assert "body" not in pending or pending.get("body") in (None, "")
 
 
-def test_assignment_title_and_body_use_structured_fields_not_emperor_prose(game):
-    """#1565/0142：题名=title|target_id，正文 body 与 text 均=大臣回话。
+def test_assignment_title_structured_anchor_body_context_chain(game, monkeypatch):
+    """#1565/0142：题名=title|target_id 结构化锚，不从皇帝散文截取；正文=上下文链。
 
-    缺分类 title 与 target_id 时不得 stage；有 target_id 时 title 取该锚。
+    缺 title+target_id 时走既有 validation 恢复接缝（可见可重试），不静默丢单。
     """
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下明示交办题名后重拟。", 1),
+    )
     db, state, content = game
     actor = _active_ming(db, content)
     recent = (
@@ -416,6 +425,9 @@ def test_assignment_title_and_body_use_structured_fields_not_emperor_prose(game)
     )
     run_materialize_pipeline(ctx_bare)
     assert not ctx_bare.out.get("pending_action_id")
+    failure = ctx_bare.out.get("decree_validation_failure") or {}
+    assert "title" in set(failure.get("failed_fields") or [])
+    assert failure.get("report")
 
     anchored = candidates_from_classifier_payload({
         "kind": "assignment", "title": "", "target_id": "清核太仓",
@@ -431,8 +443,11 @@ def test_assignment_title_and_body_use_structured_fields_not_emperor_prose(game)
         (ctx.out["pending_action_id"],),
     ).fetchone()["payload_json"])
     assert pending.get("title") == "清核太仓"
-    assert pending.get("body") == reply
-    assert pending.get("text") == reply
+    body = str(pending.get("text") or "")
+    # 正文=上下文链，含当轮皇帝任务与大臣回话；不得仅 reply
+    assert player in body or f"皇帝：{player}" in body
+    assert reply in body or f"大臣：{reply}" in body
+    assert "核钱粮" in body  # 前轮上下文仍在
 
 
 # ── AC：军令状 → 案卷 → 判后 initiative ──────────────────────────────
@@ -516,23 +531,51 @@ def test_assignment_rejected_verdict_creates_no_initiative(game):
 
 
 def test_ordinary_assignment_without_commitment_lands(game):
-    """无验收承诺的普通交办可落；stop_condition 空、无 until_stop marker。"""
+    """无验收承诺的普通交办可落；stop_condition 空、无 until_stop marker。
+
+    #1565 验收2：pending → directive → dossier → issue 来源链 typed 回指。
+    """
     db, state, content = game
     actor = _active_ming(db, content)
     before = len(_active_initiatives(db))
+    pending_id = None
     ctx = _stage_assignment(
         db, state.turn, title="核钱粮", target_id="he-qianliang",
         assignee=actor.name, commitment_kind="无",
         message="这核钱粮的事你办。",
     )
-    pending = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (ctx.out["pending_action_id"],),
-    ).fetchone()["payload_json"])
+    pending_id = int(ctx.out["pending_action_id"])
+    pending_row = db.conn.execute(
+        "SELECT id, status, payload_json, committed_directive_id FROM pending_actions WHERE id=?",
+        (pending_id,),
+    ).fetchone()
+    pending = json.loads(pending_row["payload_json"])
     assert pending.get("commitment_kind") in (None, "", "无")
     assert not pending.get("stop_condition")
+    assert pending.get("title") == "核钱粮"
+    assert str(pending.get("text") or "").strip()
 
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    # pending → directive：commit 后 committed_directive_id 回指
+    pending_after = db.conn.execute(
+        "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
+        (pending_id,),
+    ).fetchone()
+    assert pending_after["status"] == "committed"
+    directive_id = int(pending_after["committed_directive_id"] or 0)
+    assert directive_id > 0
+    directive = db.conn.execute(
+        "SELECT id, status, source FROM turn_directives WHERE id=?", (directive_id,),
+    ).fetchone()
+    assert directive is not None
+    assert int(directive["id"]) == directive_id
+    # directive → dossier
+    assert int(dossier["pending_action_id"] or 0) == pending_id
+    assert int(dossier.get("directive_id") or 0) == directive_id
+    d_payload = json.loads(dossier["payload_json"] or "{}")
+    assert d_payload.get("title") == "核钱粮"
+    assert d_payload.get("text") == pending.get("text")
+
     db.apply_dossier_verdicts(
         state,
         [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -543,12 +586,76 @@ def test_ordinary_assignment_without_commitment_lands(game):
     row = next(r for r in issues if "核钱粮" in str(r["title"]))
     assert row["commitment_kind"] in ("", None)
     assert not str(row["stop_condition"] or "").strip()
+    # dossier → issue typed 回指
     assert row["origin_ref"] == f"dossier:{dossier['id']}"
-    # #1565：initiative 题名/正文取案卷结构化 title/body
+    assert row["origin_kind"] == "decree"
     assert row["title"] == "核钱粮"
-    d_payload = json.loads(dossier["payload_json"] or "{}")
-    assert d_payload.get("body") == d_payload.get("text")
-    assert row["stage_text"] == d_payload.get("body")
+    assert row["stage_text"] == d_payload.get("text")
+
+
+def test_pure_inquiry_stages_zero_mechanical_matters(game):
+    """#1565 验收1：纯问事（kind=none）零新增机械候选/案卷/initiative。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    before_pending = len(db.list_pending_actions(state.turn))
+    before_dossiers = len(db.list_decree_dossiers())
+    before_issues = len(_active_initiatives(db))
+    candidates = candidates_from_classifier_payload({"kind": "none"}, soft=False)
+    ctx = _ctx(
+        db, actor.name, candidates, state.turn,
+        message="户部亏空日甚，卿以为如何？",
+        reply="臣以为当先清核太仓出纳，再议缓急。",
+    )
+    run_materialize_pipeline(ctx)
+    assert not ctx.out.get("pending_action_id")
+    assert not ctx.out.get("decree_validation_failure")
+    assert len(db.list_pending_actions(state.turn)) == before_pending
+    assert len(db.list_decree_dossiers()) == before_dossiers
+    assert len(_active_initiatives(db)) == before_issues
+
+
+def test_old_assignment_dossier_decree_text_carries_to_stage_text_not_title(game):
+    """#1565：旧/公开成案只有 decree_text 时正文承接到 stage_text；不得回填为题名。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    before = len(_active_initiatives(db))
+    decree_body = "属地差务@shaanxi：清核仓廪、整饬驿递。"
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text=decree_body,
+        target_kind="issue",
+        target_id="errand-shaanxi",
+        executor_kind="character",
+        executor_id=actor.name,
+        payload={
+            "dossier_action_type": "assignment",
+            "target_kind": "issue",
+            "target_id": "errand-shaanxi",
+            "assignee_id": actor.name,
+            # 无 title / text：模拟旧入口
+        },
+        status="proposed",
+    )
+    row_d = db.get_decree_dossier(dossier_id)
+    payload = json.loads(row_d["payload_json"] or "{}")
+    # 成案接缝：decree_text → 唯一正文槽 text
+    assert payload.get("text") == decree_body
+    assert not str(payload.get("title") or "").strip()
+
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier_id, "decision": "promulgated"}],
+        content=content,
+    )
+    issues = _active_initiatives(db)
+    assert len(issues) == before + 1
+    row = next(r for r in issues if r["origin_ref"] == f"dossier:{dossier_id}")
+    # 题名取结构化 target_id，不吃 decree_text
+    assert row["title"] == "errand-shaanxi"
+    assert decree_body not in str(row["title"])
+    # 正文无损承接
+    assert row["stage_text"] == decree_body
 
 
 def test_stop_condition_only_without_marker_still_rejected(game):
@@ -658,9 +765,11 @@ def test_beat6_three_matters_fan_out_three_independent_candidates(game, monkeypa
     titles = {p.get("title") for _, p in staged}
     assert titles == {"核钱粮", "整宗藩", "护内帑"}
     assert len({pid for pid, _ in staged}) == 3
+    # 案卷 text 须含最近相关上下文，不得仅本轮一句
     for _, payload in staged:
-        assert payload.get("body") == reply
-        assert payload.get("text") == reply
+        body = str(payload.get("text") or "")
+        assert "核钱粮" in body
+        assert recent.splitlines()[0] in body or "核钱粮、整宗藩、护内帑" in body
 
 
 def test_beat8_reinforce_updates_existing_and_adds_fourth(game, monkeypatch):
@@ -773,9 +882,8 @@ def test_beat8_reinforce_updates_existing_and_adds_fourth(game, monkeypatch):
     assert len(fourth) == 1
     assert staged[fourth[0]].get("target_id") == "jiubian-arrears"
     assert staged[fourth[0]].get("title") == "补九边欠饷"
-    # #1565：正文 body 与 text 均=强化轮回话
-    assert staged[first_ids[0]].get("body") == reinforce_reply
-    assert staged[first_ids[0]].get("text") == reinforce_reply
+    # 强化后正文仍走最近相关上下文链（含前轮事项）
+    assert "核钱粮" in str(staged[first_ids[0]].get("text") or "")
 
     dossiers = [
         _close_night_dossier(db, state, content, pid) for pid in staged
@@ -837,8 +945,8 @@ def test_beat10_accept_three_lands_three_independent_initiatives(game, monkeypat
     titles = {str(payload.get("title") or "") for _, payload in staged}
     assert titles == {"核钱粮", "整宗藩", "护内帑"}
     for _, payload in staged:
-        assert payload.get("body") == reply
-        assert payload.get("text") == reply
+        body = str(payload.get("text") or "")
+        assert "核钱粮" in body
 
     # 应允三道
     sess.apply_cli_conversation_actions(
