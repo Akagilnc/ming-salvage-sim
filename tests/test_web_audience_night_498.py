@@ -795,6 +795,15 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
                     "SELECT status FROM chat_turns WHERE night_id=?",
                     (night["id"],),
                 ).fetchone()["status"] == "generating"
+                # 预置 draft（与 AC10 成功案同缝）：工人终态后须能真实续跑到 done，
+                # 不得靠「任意 error」冒充非伪造 in-flight。
+                game.db.upsert_pending_directive(
+                    game.state.turn, minister, payload={
+                        "text": "着户部核边饷", "actor": minister,
+                        "dossier_action_type": "policy",
+                        "target_kind": "issue", "target_id": "border-pay",
+                    })
+                game.db.commit_pending_actions(game.state, kind_filter="directive")
 
                 issue_task = asyncio.create_task(
                     issue_client.post("/api/decree/issue/stream", json={})
@@ -816,14 +825,11 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
     night, issue_events, chat_events = asyncio.run(scenario())
     assert night is not None
     assert chat_events[-1]["event"] == "end"
-    # 非伪造 in-flight：等待期间 issue 未完成（scenario 内）；工人终态后 issue 必收尾
-    # （done 或业务 error 均可——本案无草案时 error 亦证已走出屏障，非 elapsed 熔断）。
-    assert issue_events and issue_events[-1]["event"] in ("done", "error"), issue_events
-    chat_status = game.db.conn.execute(
-        "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],),
-    ).fetchone()["status"]
-    assert chat_status != "generating"
-    assert int(game.state.turn) >= turn_before
+    # 非伪造 in-flight：等待期间 issue 未完成（scenario 内）；工人终态后续跑成功。
+    assert issue_events[-1]["event"] == "done", issue_events
+    assert an.get_night(game.db, night["id"])["status"] == "closed"
+    assert int(game.state.turn) == turn_before + 1
+    assert int(game.db.load_state().turn) == turn_before + 1
 
 
 # ── ③ 同步退朝端点 offload 不冻结 event loop（真实 ASGI + 并发在飞 + ticker）──────
