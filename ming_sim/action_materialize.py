@@ -567,7 +567,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             )
         else:
             draft_res["mode"] = resolve_directive_mode(
-                ctx.player_message, draft_res.get("mode"), existing_mode,
+                extracted=draft_res.get("mode"), existing=existing_mode,
             )
 
         if (
@@ -741,11 +741,36 @@ def _persist_appointment_summon(
         )
 
 
+def _same_direction_office_hits(
+    db: Any,
+    turn: int,
+    *,
+    name: str,
+    office: str,
+    action: str,
+    content: Any = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """同名同职同向 pending 命中列表（调用方解释 0/1/多）。"""
+    return [
+        r for r in _match_office_row_by_name_office(
+            _list_pending_office_rows(
+                db, int(turn), pend_for_minister=pend_for_minister,
+            ),
+            name=name,
+            office=office,
+            content=content,
+            db=db,
+        )
+        if str(r.get("action") or "") == action
+    ]
+
+
 def _apply_existing_appointment_hit(
     session: Any,
     row: Dict[str, Any],
     *,
-    mode_mark: Optional[str] = None,
+    extracted_mode: object = None,
     tenure_mark: Optional[str] = None,
     minister_name: str = "",
     turn: int = 0,
@@ -754,16 +779,22 @@ def _apply_existing_appointment_hit(
     origin_chat_turn_id: int = 0,
     annotate: bool = False,
 ) -> int:
-    """Existing-hit merge: path marks + optional summon under one atomic.
+    """既有命中唯一合并点：原地更新（mode 可升可降、字段可补）→ 同一 id。
 
-    mode/任别、路径故事账、summon_after 升格与 inactive origin 同成同败——
-    不得先 annotate 真提交再进 summon 自己的 atomic。
+    mode 唯一规则 resolve_directive_mode(extracted→existing→ordinary)；
+    调用方只传原始 extracted_mode，禁止各出口自行预过滤/只升不降。
+    tenure 等字段标记原样补写。summon_after 与 annotate 同原子。
     """
     from ming_sim.applier import atomic
+    from ming_sim.cli_backend import resolve_directive_mode
 
     with atomic(session.db):
         resolved = int(row["id"])
         if annotate:
+            mode_mark = resolve_directive_mode(
+                extracted=extracted_mode,
+                existing=_office_payload(row).get("mode"),
+            )
             pending_id = _annotate_office_pending_path(
                 session.db,
                 row,
@@ -838,37 +869,46 @@ def _stage_office_pending_core(
     if action == "任命" and require_office_for_appoint and not appt_office:
         return None
 
-    # #519 同人同职 no-op 去重：仅对同向「任命」pending 并入，不双落。
-    if action == "任命" and appt_name:
-        existing_hits = [
-            r for r in _match_office_row_by_name_office(
-                _list_pending_office_rows(
-                    session.db, int(session.state.turn),
-                    pend_for_minister=ctx.pend_for_minister,
-                ),
-                name=appt_name,
-                office=appt_office,
-                content=content_ref,
-                db=session.db,
-            )
-            if str(r.get("action") or "") == "任命"
-        ]
-        if len(existing_hits) == 1:
-            resolved = _apply_existing_appointment_hit(
-                session,
-                existing_hits[0],
-                mode_mark=mode_mark,
-                tenure_mark=tenure_mark,
-                minister_name=minister_name,
-                turn=int(session.state.turn),
-                person_name=appt_name,
-                summon_after=want_summon,
-                origin_chat_turn_id=int(ctx.chat_turn_id or 0),
-                annotate=annotate_existing,
-            )
-            if write_primary_pending_id:
-                ctx.out["pending_action_id"] = resolved
-            return resolved
+    def consume_same_direction_hit(office_for_match: str) -> Tuple[bool, Optional[int]]:
+        """同名同职同向命中消费：唯一 → 合并点原地更新；多命中禁插；零命中放行。
+
+        返回 (consumed, pending_id|None)。mode/tenure 责任只在合并点。
+        """
+        if not appt_name or not office_for_match:
+            return False, None
+        existing_hits = _same_direction_office_hits(
+            session.db,
+            int(session.state.turn),
+            name=appt_name,
+            office=office_for_match,
+            action=action,
+            content=content_ref,
+            pend_for_minister=ctx.pend_for_minister,
+        )
+        if len(existing_hits) > 1:
+            # 多命中≠无命中：不得再 INSERT 第三条
+            return True, None
+        if len(existing_hits) != 1:
+            return False, None
+        resolved = _apply_existing_appointment_hit(
+            session,
+            existing_hits[0],
+            extracted_mode=appt.get("mode") or mode_mark,
+            tenure_mark=tenure_mark if annotate_existing else None,
+            minister_name=minister_name,
+            turn=int(session.state.turn),
+            person_name=appt_name,
+            summon_after=want_summon,
+            origin_chat_turn_id=int(ctx.chat_turn_id or 0),
+            annotate=True,
+        )
+        return True, resolved
+
+    consumed, hit_id = consume_same_direction_hit(appt_office)
+    if consumed:
+        if hit_id and write_primary_pending_id:
+            ctx.out["pending_action_id"] = hit_id
+        return hit_id
 
     if action == "任命":
         hedged = _cancel_staged_opposing_office(
@@ -890,6 +930,12 @@ def _stage_office_pending_core(
                 "SELECT office FROM characters WHERE name=?", (canonical_name,),
             ).fetchone()
             appt_office = str(current_row["office"] or "").strip()
+            # 职名后补后再消费同向命中（字段后补≠无命中）
+            consumed, hit_id = consume_same_direction_hit(appt_office)
+            if consumed:
+                if hit_id and write_primary_pending_id:
+                    ctx.out["pending_action_id"] = hit_id
+                return hit_id
     elif action == "罢免":
         cancelled = _cancel_staged_opposing_office(
             session.db, "任命", appt_name, int(session.state.turn),
@@ -900,11 +946,12 @@ def _stage_office_pending_core(
         ):
             return None
 
+    # #1731：同向唯一命中已在上方消费；此处仅真正无命中才新建。
     payload = {
         "name": appt_name,
         "office": appt_office,
         "appointer": minister_name,
-        "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
+        "mode": resolve_directive_mode(extracted=appt.get("mode") or mode_mark),
         "summon_after": "是" if want_summon else "否",
     }
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
@@ -985,7 +1032,6 @@ def stage_pacification_candidate(
     *,
     text: str,
     target_id: str,
-    emperor_text: object = None,
     extracted_mode: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
@@ -1029,7 +1075,7 @@ def stage_pacification_candidate(
         existing_mode = payload.get("mode")
         break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged = {
         "text": body,
         "actor": minister_name,
@@ -1100,7 +1146,6 @@ def stage_punishment_candidate(
     text: str,
     target_id: str,
     punish_action: str,
-    emperor_text: object = None,
     extracted_mode: object = None,
     amount: object = 0,
     transaction_category: object = "",
@@ -1186,7 +1231,7 @@ def stage_punishment_candidate(
         existing_mode = payload.get("mode")
         break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged = {
         "text": body,
         "actor": minister_name,
@@ -1255,7 +1300,6 @@ def _materialize_punishment(ctx: MaterializeCtx) -> None:
         text=ctx.reply,
         target_id=target_id,
         punish_action=punish_action,
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         amount=intent.get("amount"),
         transaction_category=intent.get("transaction_category"),
@@ -1289,7 +1333,6 @@ def _materialize_pacification(ctx: MaterializeCtx) -> None:
         minister_name,
         text=ctx.reply,
         target_id=target_id.strip(),
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         pend_for_minister=ctx.pend_for_minister,
     )
@@ -1521,7 +1564,6 @@ def stage_grant_allocation_candidate(
     grant_action: str,
     target_kind: str,
     target_id: str,
-    emperor_text: object = None,
     extracted_mode: object = None,
     amount: object = 0,
     account: str = "",
@@ -1608,7 +1650,7 @@ def stage_grant_allocation_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged = {
         "text": body,
         "actor": minister_name,
@@ -1680,7 +1722,6 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         grant_action=grant_action,
         target_kind=target_kind,
         target_id=target_id,
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         amount=intent.get("amount"),
         account=resolve_grant_account(
@@ -1901,7 +1942,7 @@ def stage_assignment_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -2039,7 +2080,6 @@ def stage_military_order_candidate(
     deadline_months: object = 0,
     due_turn: object = 0,
     office: object = "",
-    emperor_text: object = None,
     extracted_mode: object = None,
     target_candidate: object = None,
     transaction_category: object = "",
@@ -2091,7 +2131,7 @@ def stage_military_order_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -2169,7 +2209,6 @@ def _materialize_military_order(ctx: MaterializeCtx) -> None:
         deadline_months=intent.get("deadline_months"),
         due_turn=intent.get("due_turn"),
         office=intent.get("office"),
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         target_candidate=intent.get("target_candidate"),
         transaction_category=intent.get("transaction_category"),
@@ -2284,7 +2323,6 @@ def stage_authorization_candidate(
     target_id: object = "",
     target_kind: object = "",
     scope: object = "",
-    emperor_text: object = None,
     extracted_mode: object = None,
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
@@ -2340,7 +2378,7 @@ def stage_authorization_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -2388,7 +2426,6 @@ def _materialize_authorization(ctx: MaterializeCtx) -> None:
         target_id=intent.get("target_id"),
         target_kind=intent.get("target_kind"),
         scope=intent.get("scope"),
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         target_candidate=intent.get("target_candidate"),
         pend_for_minister=ctx.pend_for_minister,
@@ -2406,7 +2443,6 @@ def stage_revoke_authority_candidate(
     authority_id: object = 0,
     holder_id: object = "",
     privilege: object = "",
-    emperor_text: object = None,
     extracted_mode: object = None,
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
@@ -2461,7 +2497,7 @@ def stage_revoke_authority_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -2506,7 +2542,6 @@ def _materialize_revoke_authority(ctx: MaterializeCtx) -> None:
         authority_id=intent.get("authority_id"),
         holder_id=holder,
         privilege=intent.get("privilege"),
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         target_candidate=intent.get("target_candidate"),
         pend_for_minister=ctx.pend_for_minister,
@@ -2636,7 +2671,6 @@ def stage_revoke_decree_candidate(
     text: str,
     target_id: object = "",
     target_kind: object = "",
-    emperor_text: object = None,
     extracted_mode: object = None,
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
@@ -2687,7 +2721,7 @@ def stage_revoke_decree_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -2730,7 +2764,6 @@ def _materialize_revoke_decree(ctx: MaterializeCtx) -> None:
         text=body,
         target_id=intent.get("target_id"),
         target_kind=intent.get("target_kind"),
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         target_candidate=intent.get("target_candidate"),
         pend_for_minister=ctx.pend_for_minister,
@@ -2887,7 +2920,7 @@ def stage_referral_candidate(
             existing_mode = payload.get("mode")
             break
 
-    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
         "text": body,
         "actor": minister_name,
@@ -3115,11 +3148,17 @@ def _office_path_ambiguous_payload(
 
 
 def _path_marks_from_appt(appt: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    """从结构化意图取路径标记：特旨→mode=midzhi；署理→任别=署理。互不写对方字段。"""
+    """从结构化意图取路径/续拟标记：typed mode 与署理任别。互不写对方字段。
+
+    mode 含 ordinary（显式降级）与 midzhi；过滤 ordinary 会导致路径早退口
+    丢掉降级语义（#1731 r4）。最终写入仍由合并点 resolve。
+    """
     mode_mark: Optional[str] = None
     raw_mode = str(appt.get("mode") or "").strip()
-    if raw_mode == "midzhi":
+    if raw_mode in {"midzhi", "中旨直发"}:
         mode_mark = "midzhi"
+    elif raw_mode in {"ordinary", "普通"}:
+        mode_mark = "ordinary"
 
     tenure_mark: Optional[str] = None
     for key in ("appointment_tenure", "任别"):
@@ -3144,21 +3183,25 @@ def _annotate_office_pending_path(
     minister_name: str = "",
     turn: int = 0,
 ) -> int:
-    """原地改写 office pending：特旨只写 mode；署理只写 任别。返回 pending id。"""
+    """原地改写 office pending：typed mode 可升可降；署理只写 任别。返回 pending id。
+
+    mode 唯一规则同 resolve_directive_mode：调用方传入已 resolve 的
+    midzhi|ordinary；此处负责落到 payload（含既有 midzhi 被显式 ordinary 降级）。
+    """
     if not mode_mark and not tenure_mark:
         return 0
     pending_id = int(row["id"])
     payload = dict(_office_payload(row))
     changed = False
-    if mode_mark == "midzhi" and payload.get("mode") != "midzhi":
-        payload["mode"] = "midzhi"
+    if mode_mark in {"midzhi", "ordinary"} and payload.get("mode") != mode_mark:
+        payload["mode"] = mode_mark
         changed = True
     if tenure_mark == "署理" and payload.get("任别") != "署理":
         payload["任别"] = "署理"
         payload.pop("appointment_tenure", None)
         changed = True
     if not changed and (
-        (mode_mark == "midzhi" and payload.get("mode") == "midzhi")
+        (mode_mark in {"midzhi", "ordinary"} and payload.get("mode") == mode_mark)
         or (tenure_mark == "署理" and payload.get("任别") == "署理")
     ):
         # 语义已在：仍回 id（no-op 去重存活），可补留痕
@@ -3309,10 +3352,11 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 _office_payload(row).get("name") or ""
             ).strip()
             row_is_appoint = str(row.get("action") or "") == "任命"
+            # 合并点吃原始 mode（含 ordinary）；禁止传过滤后的 midzhi-only 标记
             resolved = _apply_existing_appointment_hit(
                 session,
                 row,
-                mode_mark=mode_mark,
+                extracted_mode=appt.get("mode") or mode_mark,
                 tenure_mark=tenure_mark,
                 minister_name=minister_name,
                 turn=int(session.state.turn),

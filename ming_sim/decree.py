@@ -657,7 +657,7 @@ def _rescript_decisions(
             "options": [
                 *([] if verdict.get("midzhi_unpromulgatable") is True else [{
                     "label": "强颁",
-                    "hint": "以中旨强行颁出",
+                    "hint": "改走中旨强行颁出，并承担中旨代价",
                     "dossier_id": dossier_id,
                     "dossier_decision": "force_promulgated",
                 }]),
