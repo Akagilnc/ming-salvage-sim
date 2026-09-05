@@ -4029,21 +4029,13 @@ def _extract_secret_order(
     # extract_failed 标记供下游分流：
     # - session 显式前缀路（#504/#354）：一律暂存；异常时靠此标记+content 保留旨意+补充。
     # - materialize 意图路（#1504）：成功抽取但契约为零 → 无此标记，走 pending_action_failures。
-    # 真因经 contract_error 入 pending payload；raw 经 extract_raw 可开卷
-    # （CLI 咽喉 _trace 亦记 response，但 API 路不经该 trace，故结果内自带）。
+    # 真因经 contract_error 入 pending payload；原始响应经 extract_raw 无损入 payload
+    # （CLI 咽喉 _trace 另有展示截断，不复用到结果字段；API 路无完整 trace 指针）。
     if extract_failed:
         result["extract_failed"] = True
-        raw_text = str(raw or "")
-        if raw_text.strip():
-            # 与 _trace 字段 cap 同规：大响应截断，保留首尾可对读。
-            cap = _TRACE_FIELD_CAP
-            if len(raw_text) > cap:
-                raw_text = (
-                    raw_text[: cap // 2]
-                    + f"\n...[截断 {len(raw_text) - cap} 字]...\n"
-                    + raw_text[-cap // 2:]
-                )
-            result["extract_raw"] = raw_text
+        # 无损承接：不截断、不 strip；空串不发键。
+        if raw:
+            result["extract_raw"] = raw if isinstance(raw, str) else str(raw)
     return result
 
 def resolve_minister_actions(

@@ -501,3 +501,158 @@ def test_mixed_intent_inferred_pending_target_still_updates(game, monkeypatch):
     assert not new_drafts, f"推断 pending 应原地更新，不得再插 draft：{new_drafts}"
     assert len(new_office) == 1
     assert _payload(new_office[0]).get("name") == "洪承畴"
+
+
+# ── #1565：批 baseline id 最终归并为 B（写回 B / 未写 id 键）──────────
+
+
+@pytest.mark.parametrize("op", ["rewrite_B", "no_write_id"], ids=["rewrite_B", "no_write_id"])
+def test_batch_baseline_id_final_b_rewrite_and_no_write(game, monkeypatch, op):
+    """#1565 d.1.3：先项成功 N≠B，后项无论写回 B 或未写 id 键，最终 pending_action_id==B。
+
+    rewrite_B：apply_cli 入口，appointment→draft 改草写回 B。
+    no_write_id：MaterializeCtx 批入口，baseline id=B + F0；prohibit→appointment 早退未写。
+    """
+    from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+    from ming_sim.covert_levy import PROHIBITION_ACTION, write_exposure_todos
+
+    db, state, content = game
+    minister = _active_ch(db, content)
+    old_text = "旧草：着户部清查三边粮饷。"
+    B = db.stage_directive_candidate(
+        state.turn, minister.name,
+        payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue",
+            "target_id": "three-borders-grain",
+            "text": old_text,
+            "actor": minister.name,
+            "mode": "ordinary",
+        },
+    )
+    assert B > 0
+    before_ids = {int(r["id"]) for r in _pending_rows(db, state.turn)}
+
+    if op == "rewrite_B":
+        sess = _bind_apply(db, state, content)
+        revised_text = "修订：着户部及兵部联合清查三边粮饷军械，限两月完报。"
+        _silence_serial(monkeypatch)
+        _bind_draft_extract(
+            monkeypatch,
+            draft_text=revised_text,
+            target_id="three-borders-grain",
+        )
+        # 顺序固定：appointment 在前、draft 在后（先 N 后写回 B）
+        candidates = candidates_from_classifier_payload([
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": "洪承畴",
+                "office": "陕西巡抚",
+            },
+            {"kind": "draft"},
+        ], soft=False)
+        out = sess.apply_cli_conversation_actions(
+            minister,
+            "那道粮饷旨再改一下，并任命洪承畴为陕西巡抚。",
+            f"臣已将粮饷旨改作：{revised_text}；并请任洪承畴巡抚陕西，请陛下定夺准驳。",
+            has_directive=False, secret_order_id=None,
+            preclassified_intent=candidates,
+        )
+        assert out["pending_action_id"] == B
+        rows = _pending_rows(db, state.turn, minister_name=minister.name)
+        updated = next(r for r in rows if int(r["id"]) == B)
+        assert revised_text in str(_payload(updated).get("text") or "")
+        assert old_text not in str(_payload(updated).get("text") or "")
+        new_rows = [r for r in rows if int(r["id"]) not in before_ids]
+        new_drafts = [r for r in new_rows if r["kind"] == "directive"]
+        new_office = [r for r in new_rows if r["kind"] == "office"]
+        assert not new_drafts
+        assert len(new_office) == 1
+        N = int(new_office[0]["id"])
+        assert N != B
+        return
+
+    # no_write_id：MaterializeCtx；baseline id=B + 非空 F0；prohibit 写 N，appointment 早退
+    # 最短暴露场景（与 651 _bound_case+_exposed_todo 同形）
+    army = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()
+    did = db.create_decree_dossier(
+        state, action_type="special_decree", decree_text="整饬边军",
+        target_kind="army", target_id=army["id"],
+        executor_kind="character", executor_id=minister.name,
+    )
+    db.conn.execute("UPDATE decree_dossiers SET status='executing' WHERE id=?", (did,))
+    db.conn.execute(
+        "INSERT INTO issues(kind,title,origin_ref,origin_turn,commitment_kind) "
+        "VALUES ('差务','边军事',?,?, 'promise')",
+        (f"dossier:{did}", state.turn),
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET promulgation_decision='promulgated' WHERE id=?", (did,)
+    )
+    db.record_dossier_progress(did, state.turn, "有成", "军饷已有着落", commit=False)
+    db.record_dossier_execution(
+        did, "transformed", "暗中摊派", state.turn, close=True, commit=False,
+    )
+    monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
+        "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
+        "execution_outcome": "transformed", "actual_effect_count": 1,
+        "beyond_intent": True,
+    })
+    db.conn.execute(
+        "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,"
+        "relation_type,note) VALUES (?,?, '稽核','查账')", (did, did),
+    )
+    assert write_exposure_todos(db, state) == 1
+
+    F0 = [{"kind": "baseline_fail", "message": "prefix-once", "retryable": True}]
+    candidates = candidates_from_classifier_payload([
+        {"kind": "prohibit_covert_levy"},
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "洪承畴",
+            "office": "陕西巡抚",
+        },
+    ], soft=False)
+    ctx = MaterializeCtx(
+        session=SimpleNamespace(db=db, state=state, content=content),
+        character=SimpleNamespace(
+            name=minister.name,
+            office_type=getattr(minister, "office_type", "文官"),
+        ),
+        player_message="禁绝摊派，并任命洪承畴为陕西巡抚。",
+        reply="臣领旨。",
+        message_text="禁绝摊派，并任命洪承畴为陕西巡抚。",
+        explicit_prefixed=False,
+        has_directive=False,
+        pend_for_minister=_pending_rows(db, state.turn, minister_name=minister.name),
+        out={"pending_action_id": B, "pending_action_failures": list(F0)},
+        intent=None,
+        intent_kind="none",
+        llm_config=None,
+        intent_candidates=candidates,
+    )
+    run_materialize_pipeline(ctx)
+
+    assert ctx.out["pending_action_id"] == B
+    assert "pending_action_id" in ctx.out
+    row_B = db.conn.execute(
+        "SELECT id FROM pending_actions WHERE id=?", (B,),
+    ).fetchone()
+    assert row_B is not None
+    # N：prohibit 新行
+    new_rows = [
+        r for r in _pending_rows(db, state.turn)
+        if int(r["id"]) not in before_ids
+    ]
+    prohibit_rows = [
+        r for r in new_rows
+        if r["kind"] == "directive"
+        and _payload(r).get("dossier_action_type") == PROHIBITION_ACTION
+    ]
+    assert len(prohibit_rows) == 1
+    N = int(prohibit_rows[0]["id"])
+    assert N > 0 and N != B
+    fails = list(ctx.out.get("pending_action_failures") or [])
+    assert fails == F0

@@ -2349,9 +2349,8 @@ class GameSession:
                 payload["contract_error"] = contract_error
             if so.get("extract_failed"):
                 payload["extract_failed"] = True
-            raw_excerpt = str(so.get("extract_raw") or "").strip()
-            if raw_excerpt:
-                payload["extract_raw"] = raw_excerpt
+            if "extract_raw" in so:
+                payload["extract_raw"] = so["extract_raw"]
             return self.db.stage_pending_action(
                 self.state.turn, kind="secret_order", action="新建",
                 minister_name=minister_name, target_id=None,
