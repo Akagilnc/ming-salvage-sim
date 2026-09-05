@@ -13,22 +13,45 @@ import ming_sim.memories as memories
 from ming_sim.session import GameSession
 
 
-def make_light_session(db, state, content):
-    """Minimal GameSession shell for advance_without_decree tracers."""
+def make_light_session(
+    db, state, content, monkeypatch=None, *,
+    decree: str = "",
+    agno_db=None,
+    llm_config=None,
+):
+    """Minimal GameSession shell for resolve_turn / advance_without_decree tracers."""
+    import ming_sim.session as session_mod
+
+    if monkeypatch is not None:
+        monkeypatch.setattr(session_mod, "MinisterRegistry", lambda *a, **k: object())
+        monkeypatch.setattr(
+            session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None,
+        )
+        if decree:
+            monkeypatch.setattr(
+                session_mod, "write_decree_with_agno", lambda *a, **k: decree,
+            )
+        monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
+        monkeypatch.setattr(GameSession, "_write_gate_if_free", lambda self: None)
+        monkeypatch.setattr(GameSession, "_draft_fingerprint", lambda self, _dirs: ())
+
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = state
     session.content = content
     session.registry = None
-    session.llm_config = None
-    session.agno_db = None
+    session.llm_config = llm_config
+    session.agno_db = agno_db
     session.deaths_this_turn = []
     session.debuts_this_turn = []
-    session.last_decree = ""
+    session.last_decree = decree
+    session.last_report = ""
     session._decree_draft_fingerprint = ()
     session._scene_registry = None
     session._beat_generator = None
-    session.auto_save = lambda *a, **k: None
+    session._write_gate = None
+    if monkeypatch is None:
+        session.auto_save = lambda *a, **k: None
     return session
 
 
