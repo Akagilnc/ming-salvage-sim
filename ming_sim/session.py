@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import logging
 import re
 import sqlite3
 import time
@@ -53,6 +54,8 @@ from ming_sim.knowledge import render_character_knowledge
 from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
+
+logger = logging.getLogger(__name__)
 from ming_sim.paths import user_data_path
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
 from ming_sim.skills import bind_content as _bind_skills
@@ -3851,5 +3854,22 @@ class GameSession:
             return None
 
     def close(self) -> None:
+        """关主库连接，并释放 agno SqliteDb 连接池（#1749）。
+
+        主库与 agno 共路径；只关 GameDB 就归档/搬移文件时，agno 仍持 WAL 句柄，
+        进程 fd 会钉在 drained_*.db 上，活局写路径可落到 readonly。
+        """
         self._scene_registry.abandon_all()
-        self.db.close()
+        try:
+            self.db.close()
+        finally:
+            agno = getattr(self, "agno_db", None)
+            if agno is None:
+                return
+            close_fn = getattr(agno, "close", None)
+            if not callable(close_fn):
+                return
+            try:
+                close_fn()
+            except Exception:
+                logger.exception("GameSession.agno_db.close failed")
