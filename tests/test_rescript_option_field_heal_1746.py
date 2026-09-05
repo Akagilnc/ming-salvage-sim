@@ -110,45 +110,6 @@ def _prior_contents(prior_messages) -> list:
     ]
 
 
-_MISSING = object()  # draft_extra 哨兵：键不在场或空
-
-
-def _heal_request_facts(prompt: str) -> list[dict]:
-    """从补交请求提取结构身份 / 最新失败字段 / 底稿 option（契约键，不钉 prose 教条）。"""
-    import re
-
-    facts: list[dict] = []
-    lines = str(prompt or "").splitlines()
-    i = 0
-    while i < len(lines):
-        m = re.match(
-            r"- heal_id=(\S+) item_index=(\d+) option_index=(\d+) 缺字段: (\S+)",
-            lines[i],
-        )
-        if not m:
-            i += 1
-            continue
-        entry: dict = {
-            "heal_id": m.group(1),
-            "item_index": int(m.group(2)),
-            "option_index": int(m.group(3)),
-            "missing_fields": [f for f in m.group(4).split(",") if f],
-        }
-        j = i + 1
-        while j < len(lines) and lines[j].startswith("  "):
-            nxt = lines[j].strip()
-            if nxt.startswith("失败原因:"):
-                entry["field_reasons"] = json.loads(nxt.split(":", 1)[1].strip())
-            elif "原始 option:" in nxt:
-                entry["draft_option"] = json.loads(
-                    nxt.split("原始 option:", 1)[1].strip()
-                )
-            j += 1
-        i = j
-        facts.append(entry)
-    return facts
-
-
 def _assert_call_history(calls: list[dict]) -> None:
     """每轮 prior = 此前全部 user/assistant 完整顺序（含原始 user 与各轮响应）。"""
     hist_roles: list[str] = []
@@ -160,6 +121,34 @@ def _assert_call_history(calls: list[dict]) -> None:
         assert isinstance(call.get("response"), str) and call["response"]
         hist_roles = hist_roles + ["user", "assistant"]
         hist_contents = hist_contents + [call["prompt"], call["response"]]
+
+
+def _capture_heal_requests(monkeypatch) -> list:
+    """在 _missing_field_heal_feedback 真实调用边界捕获 typed 失败集合与底稿。"""
+    captured: list = []
+    orig = rescript_mod._missing_field_heal_feedback
+
+    def _wrap(failures, *, attempt, max_attempts):
+        rows = []
+        for f in failures:
+            raw = f.raw_option if isinstance(f.raw_option, dict) else {}
+            rows.append({
+                "heal_id": f.heal_id or f"{f.item_index}:{f.option_index}",
+                "item_index": f.item_index,
+                "option_index": f.option_index,
+                "missing_fields": list(f.missing_fields),
+                "field_reasons": dict(f.field_reasons or ()),
+                "draft_option": dict(raw),
+            })
+        captured.append({
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "failures": rows,
+        })
+        return orig(failures, attempt=attempt, max_attempts=max_attempts)
+
+    monkeypatch.setattr(rescript_mod, "_missing_field_heal_feedback", _wrap)
+    return captured
 
 
 # ---------------------------------------------------------------------------
@@ -742,6 +731,7 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
             return raw
         return _CANNED
 
+    heal_reqs = _capture_heal_requests(monkeypatch)
     monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
     monkeypatch.setattr(rescript_mod, "run_agent_text", _fake_run)
     monkeypatch.setattr(
@@ -767,7 +757,7 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
     opts = rows[0]["options"]
     assert db.list_pending_decisions(turn) == []
     assert calls[0]["tag"] == "rescript-draft"
-    # 原始 user 入场：首抽 prior 空，prompt 即 payload（非空 JSON 对象）
+    # 原始 user 入场：首抽 prior 空；payload 为结构化 JSON 对象
     assert calls[0]["roles"] == [] and calls[0]["contents"] == []
     first_user = json.loads(calls[0]["prompt"])
     assert isinstance(first_user, dict)
@@ -775,27 +765,25 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
 
     heal_calls = [c for c in calls if c["tag"] == "rescript-draft-heal"]
     assert len(heal_calls) == expected_heal_calls
+    assert len(heal_reqs) == expected_heal_calls
 
-    def _expect_heal_identity(hc, *, missing, draft_amount, draft_extra=None):
-        facts = _heal_request_facts(hc["prompt"])
-        assert len(facts) == 1
-        fact = facts[0]
+    def _expect_heal_req(req, *, missing, draft_amount, draft_absent=(), draft_present=None):
+        assert len(req["failures"]) == 1
+        fact = req["failures"][0]
         assert fact["heal_id"] == "0:0"
         assert fact["item_index"] == 0 and fact["option_index"] == 0
         assert fact["missing_fields"] == list(missing)
         draft = fact["draft_option"]
-        assert draft.get("heal_id") == "0:0"
         assert draft.get("amount") == draft_amount
-        if draft_extra:
-            for k, v in draft_extra.items():
-                if v is _MISSING:
-                    assert k not in draft or draft.get(k) in (None, "")
-                else:
-                    assert draft.get(k) == v
+        for k in draft_absent:
+            assert k not in draft or draft.get(k) in (None, "")
+        if draft_present:
+            for k, v in draft_present.items():
+                assert draft.get(k) == v
         return fact
 
     # combo：calls[0]=首抽 combo 错, calls[1]=组合重抽, calls[2]=heal；
-    # 请求与合并均以最新底稿（combo_fixed）为准，prior 含完整两轮。
+    # prior 含完整两轮；typed 请求底稿为缺 purpose 的最新 option。
     if scenario == "combo_then_heal":
         assert [c["tag"] for c in calls] == [
             "rescript-draft", "rescript-draft", "rescript-draft-heal",
@@ -804,47 +792,41 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
         assert calls[1]["response"] == combo_fixed_raw
         assert heal_calls[0]["contents"][1] == first_raw
         assert heal_calls[0]["contents"][3] == combo_fixed_raw
-        _expect_heal_identity(
-            heal_calls[0],
+        _expect_heal_req(
+            heal_reqs[0],
             missing=["purpose"],
             draft_amount=bad_amount,
-            draft_extra={
-                "locality_scope": "none",
-                "purpose": _MISSING,
-                "label": "边饷拟",
-            },
+            draft_absent=("purpose",),
+            draft_present={"locality_scope": "none", "label": "边饷拟"},
         )
     elif scenario == "partial_progress":
-        # 第 1 次索 purpose+account；第 2 次只索尚缺 account，底稿保留已补 purpose 与 amount
-        assert len(heal_calls) == 2
-        _expect_heal_identity(
-            heal_calls[0],
+        # 第 1 次索 purpose+account；第 2 次只索尚缺 account，底稿保留已补 purpose
+        assert len(heal_reqs) == 2
+        _expect_heal_req(
+            heal_reqs[0],
             missing=["account", "purpose"],
             draft_amount=bad_amount,
-            draft_extra={"purpose": _MISSING, "account": _MISSING},
+            draft_absent=("purpose", "account"),
         )
-        _expect_heal_identity(
-            heal_calls[1],
+        _expect_heal_req(
+            heal_reqs[1],
             missing=["account"],
             draft_amount=bad_amount,
-            draft_extra={"purpose": "补饷"},
+            draft_present={"purpose": "补饷"},
         )
-        # 完整顺序：原始 user + 首抽 assistant + heal1 user/asst
         assert heal_calls[1]["contents"][1] == first_raw
         assert heal_calls[1]["contents"][2] == heal_calls[0]["prompt"]
         assert heal_calls[1]["contents"][3] == heal_calls[0]["response"]
     else:
-        for hc in heal_calls:
-            _expect_heal_identity(
-                hc,
+        want_amount = bad_amount if scenario == "reorder_identity" else 150
+        want_label = "同名拟" if scenario == "reorder_identity" else "边饷拟"
+        for req, hc in zip(heal_reqs, heal_calls):
+            _expect_heal_req(
+                req,
                 missing=["purpose"],
-                draft_amount=bad_amount if scenario == "reorder_identity" else 150,
-                draft_extra={
-                    "purpose": _MISSING,
-                    "label": (
-                        "同名拟" if scenario == "reorder_identity" else "边饷拟"
-                    ),
-                },
+                draft_amount=want_amount,
+                draft_absent=("purpose",),
+                draft_present={"label": want_label},
             )
             assert hc["contents"][1] == first_raw
 
@@ -931,6 +913,7 @@ def test_phase2_multi_urgent_isolation_and_zero_item(game, monkeypatch, tmp_path
             return raw
         return _CANNED
 
+    heal_reqs = _capture_heal_requests(monkeypatch)
     monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
     monkeypatch.setattr(rescript_mod, "run_agent_text", _fake_run)
     monkeypatch.setattr(
@@ -956,11 +939,10 @@ def test_phase2_multi_urgent_isolation_and_zero_item(game, monkeypatch, tmp_path
             assert got.get(k) == v
     assert calls[0]["tag"] == "rescript-draft" and calls[0]["roles"] == []
     _assert_call_history(calls)
-    heal_calls = [c for c in calls if c["tag"] == "rescript-draft-heal"]
-    assert heal_calls
-    # 多急务：heal 请求以结构身份回指坏项，且只索尚缺字段
-    facts = _heal_request_facts(heal_calls[0]["prompt"])
+    assert any(c["tag"] == "rescript-draft-heal" for c in calls)
+    # 多急务：typed 失败以结构身份回指坏项，且只索尚缺字段
+    assert heal_reqs
+    facts = heal_reqs[0]["failures"]
     assert {f["heal_id"] for f in facts} >= {"0:0", "1:0", "1:1"}
     for fact in facts:
         assert fact["missing_fields"] == ["purpose"]
-        assert fact["draft_option"].get("heal_id") == fact["heal_id"]
