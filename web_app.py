@@ -4632,41 +4632,31 @@ def _path_request_archive(path: str) -> None:
 def _c7_try_fulfill_archive(path: str) -> bool:
     """C7 唯一执行接缝：opening==0 ∧ holders 空 ∧ pending → 搬库。
 
-    资格与 pending 认领在 path 锁内；搬库在锁外。任一归档异常回写 pending、留真因，
-    不在 GC 后把异常当成功清空职责。
+    资格判定与搬库均在 path 锁内一次完成（r5①C / r7 C7）；失败保持 pending、留真因，
+    不在 GC 后把异常当成功清空职责。禁止 claimed→锁外 move→再取锁回写。
     """
     norm = _normalize_db_path(path) if path else ""
     if not norm:
         return False
-    claimed = False
     with _menu_path_lock:
         lease = _menu_path_leases.get(norm)
         if lease is None or not _c7_ready_locked(lease):
             return False
-        lease.archive_pending = False
-        claimed = True
-        # 搬库完成前不 GC——失败还得回写同一 lease 职责。
-    if not claimed:
-        return False
-    moved_ok = False
-    try:
-        if not os.path.exists(norm):
-            moved_ok = True
-        else:
-            moved_ok = bool(_archive_move_db_files(norm))
-    except Exception:
-        logger.exception("C7 archive execute failed path=%s", norm)
         moved_ok = False
-    if not moved_ok:
-        with _menu_path_lock:
-            lease = _menu_path_leases.setdefault(norm, _MenuPathLease())
-            lease.archive_pending = True
-        return False
-    with _menu_path_lock:
-        lease = _menu_path_leases.get(norm)
-        if lease is not None:
-            _path_lease_gc_locked(norm, lease)
-    return True
+        try:
+            if not os.path.exists(norm):
+                moved_ok = True
+            else:
+                moved_ok = bool(_archive_move_db_files(norm))
+        except Exception:
+            logger.exception("C7 archive execute failed path=%s", norm)
+            moved_ok = False
+        if not moved_ok:
+            # pending 保持 True；holders/opening 未变，不 GC。
+            return False
+        lease.archive_pending = False
+        _path_lease_gc_locked(norm, lease)
+        return True
 
 
 def _snap_holders(path: str) -> list[_HolderEntry]:
@@ -5302,20 +5292,12 @@ async def api_menu_new_game() -> Dict[str, Any]:
             if retire is not None and retire is not new_game:
                 _point_retire_close(retire)
 
-            # 响应：发布后可能被并发 exit 关闭 session，义务已落，payload 失败不撤销 AR/退休。
-            try:
-                return steam_events.with_events(
-                    {"state": new_game.state_payload()},
-                    [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-                )
-            except Exception:
-                logger.exception(
-                    "new_game state_payload failed after publish path=%s", new_db_path,
-                )
-                return steam_events.with_events(
-                    {"ok": True},
-                    [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-                )
+            # 响应：AR/退休义务已在发布后落定；payload 未知代码错必须响亮失败（ADR 0005），
+            # 不得宽捕获后返回 ok=True 洗白成功。finally 仍 release_opening。
+            return steam_events.with_events(
+                {"state": new_game.state_payload()},
+                [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
+            )
         finally:
             # N5：release_opening（含 C7-release；new 侧通常无 pending）
             _release_opening(opening_path)
