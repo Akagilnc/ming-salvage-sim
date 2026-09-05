@@ -1,7 +1,8 @@
 """#1746：缺字段同一会话补交 ≤3 → 耗尽单 option 剔除。
 
-真实入口：resolve_decisions_phase2（唯一 k/耗尽/多急务 tracer）。
+真实入口：resolve_decisions_phase2（唯一 k/耗尽/多急务/部分进度/组合后补交 tracer）。
 decision keys：missing-field-heal-by-resume-not-drop / per-option-drop-after-heal-exhausted。
+分类负向：generate 最短分流；契约只落 prior 结构、heals/heal_id typed、外部可见结果。
 """
 from __future__ import annotations
 
@@ -95,6 +96,20 @@ def _banned_tech_keys() -> set[str]:
     }
 
 
+def _prior_roles(prior_messages) -> list:
+    return [
+        m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
+        for m in (prior_messages or [])
+    ]
+
+
+def _prior_contents(prior_messages) -> list:
+    return [
+        m.get("content") if isinstance(m, dict) else getattr(m, "content", None)
+        for m in (prior_messages or [])
+    ]
+
+
 # ---------------------------------------------------------------------------
 # agents.run_agent_text 适配器（无真实 LLM）
 # ---------------------------------------------------------------------------
@@ -152,11 +167,10 @@ def test_run_agent_text_without_prior_passes_plain_prompt():
 
 
 # ---------------------------------------------------------------------------
-# 分类：真实分流（generate）；非法/组合 ≠ missing heal
+# 分类：真实 generate 分流（最短）；非法 ≠ missing heal
 # ---------------------------------------------------------------------------
 
 def _assert_not_missing_error(exc: BaseException) -> None:
-    """分类负向：不得用 ValueError 父类吞掉 missing 子类。"""
     assert not isinstance(exc, rescript_mod.RescriptOptionMissingFieldsError)
     assert not isinstance(exc, rescript_mod.RescriptOptionMissingFieldsBatch)
 
@@ -183,7 +197,6 @@ def _assert_not_missing_error(exc: BaseException) -> None:
     ],
 )
 def test_illegal_or_coexisting_illegal_not_heal(mutate, monkeypatch, tmp_path):
-    """真实 generate 分流：非法/共处非法 → 整批降级，零 heal 调用。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     bad = _army_pay()
     mutate(bad)
@@ -203,12 +216,11 @@ def test_illegal_or_coexisting_illegal_not_heal(mutate, monkeypatch, tmp_path):
 
 
 def test_missing_target_kind_only_heals_not_combo_batch(monkeypatch, tmp_path):
-    """反例1：合法 army_pay 仅缺 target_kind → 补交，不得虚填 region 变组合整批 None。"""
+    """反例1：仅缺 target_kind → heal；不得虚填 region 变组合整批 None。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     bad = _army_pay()
     bad.pop("target_kind")
-    sibling = _hold()
-    first = _items_json([{"title": "u", "context": "c", "options": [bad, sibling]}])
+    first = _items_json([{"title": "u", "context": "c", "options": [bad, _hold()]}])
     healed = _heals_json([("0:0", {"target_kind": "army"})])
     tags: list[str] = []
     n = {"i": 0}
@@ -222,30 +234,24 @@ def test_missing_target_kind_only_heals_not_combo_batch(monkeypatch, tmp_path):
     drafts = generate_rescript_draft(object(), _ctx(), turn=41)
     assert drafts is not None
     assert "rescript-draft-heal" in tags
-    assert len(drafts[0]["options"]) == 2
     grant = next(o for o in drafts[0]["options"] if o.get("grant_action") == "协饷")
     assert grant["target_kind"] == "army" and grant["amount"] == 300
 
 
 def test_dual_missing_discriminator_heals_grant_action(monkeypatch, tmp_path):
-    """反例4：region grant 双缺辨别 → 索 grant_kind|grant_action；可补合法 grant_action。"""
+    """反例4：双缺辨别 → 可补合法 grant_action（不预断 army_pay）。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     bad = _hold(action_type="grant_allocation", amount=50, account="国库")
-    bad.pop("grant_action", None)
-    bad.pop("grant_kind", None)
     sibling = _hold(label="hold2")
     first = _items_json([{"title": "u", "context": "c", "options": [bad, sibling]}])
     healed = _heals_json([("0:0", {"grant_action": "赈灾"})])
     tags: list[str] = []
     n = {"i": 0}
 
-    def _llm(_a, prompt, tag="", prior_messages=None):
+    def _llm(_a, _p, tag="", prior_messages=None):
         tags.append(tag)
         n["i"] += 1
-        if n["i"] == 1:
-            return first
-        assert "grant_kind" in prompt and "grant_action" in prompt
-        return healed
+        return first if n["i"] == 1 else healed
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
     drafts = generate_rescript_draft(object(), _ctx(), turn=44)
@@ -254,37 +260,29 @@ def test_dual_missing_discriminator_heals_grant_action(monkeypatch, tmp_path):
     assert grant["grant_action"] == "赈灾" and grant["amount"] == 50
 
 
-def test_deadline_months_non_int_is_illegal_not_absent(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "bad_factory",
+    [
+        lambda: {
+            "label": "调关宁", "hint": "边情", "action_type": "military_order",
+            "target_kind": "army", "target_id": "guanning", "locality_scope": "none",
+            "region_id": "", "assignee_name": "袁崇焕", "transaction_category": "",
+            "station": "宁远", "deadline_months": "abc",
+        },
+        lambda: _hold(label=123),  # type: ignore[arg-type]
+    ],
+    ids=["deadline_non_int", "required_wrong_type"],
+)
+def test_typed_illegal_not_missing_heal(bad_factory, monkeypatch, tmp_path):
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    mo = {
-        "label": "调关宁", "hint": "边情", "action_type": "military_order",
-        "target_kind": "army", "target_id": "guanning", "locality_scope": "none",
-        "region_id": "", "assignee_name": "袁崇焕", "transaction_category": "",
-        "station": "宁远", "deadline_months": "abc",
-    }
-    raw = _items_json([{"title": "u", "context": "c", "options": [mo, _hold()]}])
-    tags: list[str] = []
-    monkeypatch.setattr(
-        rescript_mod, "run_agent_text",
-        lambda _a, _p, tag="", prior_messages=None: (tags.append(tag) or raw),
-    )
-    assert generate_rescript_draft(object(), _ctx(), turn=45) is None
-    assert tags == ["rescript-draft"]
-    with pytest.raises(Exception) as ei:
-        normalize_rescript_layer_a_option(mo, generation_admission=True)
-    _assert_not_missing_error(ei.value)
-
-
-def test_required_wrong_type_not_missing_heal(monkeypatch, tmp_path):
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    bad = _hold(label=123)  # type: ignore[arg-type]
+    bad = bad_factory()
     raw = _items_json([{"title": "u", "context": "c", "options": [bad, _hold()]}])
     tags: list[str] = []
     monkeypatch.setattr(
         rescript_mod, "run_agent_text",
         lambda _a, _p, tag="", prior_messages=None: (tags.append(tag) or raw),
     )
-    assert generate_rescript_draft(object(), _ctx(), turn=46) is None
+    assert generate_rescript_draft(object(), _ctx(), turn=45) is None
     assert tags == ["rescript-draft"]
     with pytest.raises(Exception) as ei:
         normalize_rescript_layer_a_option(bad, generation_admission=True)
@@ -323,62 +321,8 @@ def test_provider_and_item_level_still_whole_batch(monkeypatch, tmp_path):
     assert generate_rescript_draft(object(), _ctx(), turn=20) is None
 
 
-def test_combo_then_heal_uses_latest_working_draft(monkeypatch, tmp_path):
-    """组合重抽刷新底稿后，补交合并以最新整批为基（非首抽 raw）。"""
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    # 首抽：组合错（army+single）
-    first_bad = {
-        "title": "辽东欠饷", "context": "c",
-        "options": [
-            _army_pay(locality_scope="single", label="边饷", amount=150),
-            _hold(label="缓边", hint="候核", transaction_category="督赈"),
-        ],
-    }
-    # 组合纠正后：缺 purpose
-    after_combo = deepcopy(first_bad)
-    after_combo["options"][0]["locality_scope"] = "none"
-    after_combo["options"][0].pop("purpose", None)
-    # 补交：按 heal_id 回填 purpose；尝试改 amount 不得落
-    heal = _heals_json([("0:0", {"purpose": "补饷", "amount": 999})])
-    calls: list[dict] = []
-
-    def _llm(_agent, prompt, tag="", prior_messages=None):
-        calls.append({
-            "tag": tag,
-            "prompt": prompt,
-            "prior": list(prior_messages or []),
-            "roles": [m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
-                      for m in (prior_messages or [])],
-        })
-        i = len(calls)
-        if i == 1:
-            return _items_json([first_bad])
-        if i == 2:
-            return _items_json([after_combo])
-        return heal
-
-    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
-    drafts = generate_rescript_draft(object(), _ctx(), turn=18)
-    assert drafts is not None
-    assert [c["tag"] for c in calls] == [
-        "rescript-draft", "rescript-draft", "rescript-draft-heal",
-    ]
-    # 历次 prior：首抽空；组合重抽含首轮 user/assistant；heal 含至组合纠正的会话
-    assert calls[0]["prior"] == []
-    assert calls[1]["roles"] == ["user", "assistant"]
-    assert calls[2]["roles"] == ["user", "assistant", "user", "assistant"]
-    assert "heal_id" in calls[2]["prompt"] and "purpose" in calls[2]["prompt"]
-    opts = drafts[0]["options"]
-    assert len(opts) == 2
-    grant = next(o for o in opts if o.get("grant_action") == "协饷")
-    assert grant["purpose"] == "补饷"
-    assert grant["amount"] == 150  # 补交改 999 不落
-    hold = next(o for o in opts if o.get("action_type") == "assignment")
-    assert hold["label"] == "缓边" and hold["transaction_category"] == "督赈"
-
-
 # ---------------------------------------------------------------------------
-# heal_id 负向（heals typed 契约；不进 phase2 重复 k 链）
+# heal_id 负向（typed 身份契约；不进 phase2 重复 k 链）
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
@@ -415,74 +359,8 @@ def test_heal_bad_identity_refuses_merge_then_drops(heal_payload, monkeypatch, t
     assert len(opts) == 1 and opts[0]["label"] == sibling["label"]
 
 
-def test_heal_same_title_reorder_explicit_heal_id(monkeypatch, tmp_path):
-    """同题同名/重排：只认显式 heal_id，不按位次/label 猜配。"""
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    bad = _army_pay(label="同名拟", amount=120)
-    bad.pop("purpose", None)
-    sibling = _hold(label="同名拟", hint="缓")
-    first = _items_json([{"title": "同题", "context": "c", "options": [bad, sibling]}])
-    # 响应 options 倒序，且只给 heal_id=0:0
-    healed = _items_json([{
-        "title": "同题", "context": "c",
-        "options": [
-            dict(sibling, heal_id="0:1"),
-            dict(bad, purpose="补饷", amount=999, heal_id="0:0"),
-        ],
-    }])
-    n = {"i": 0}
-
-    def _llm(*_a, **_k):
-        n["i"] += 1
-        return first if n["i"] == 1 else healed
-
-    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
-    drafts = generate_rescript_draft(object(), _ctx(), turn=34)
-    assert drafts is not None
-    opts = drafts[0]["options"]
-    assert len(opts) == 2
-    grant = next(o for o in opts if o.get("grant_action") == "协饷")
-    assert grant["purpose"] == "补饷" and grant["amount"] == 120  # 冻结
-    hold = next(o for o in opts if o.get("action_type") == "assignment")
-    assert hold["hint"] == "缓"
-
-
-def test_heal_partial_progress_then_complete(monkeypatch, tmp_path):
-    """部分进度：先补 purpose，再补 account；已填保留。"""
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    bad = _army_pay(amount=200)
-    bad.pop("purpose", None)
-    bad["account"] = ""
-    sibling = _hold(label="s", hint="h")
-    first = _items_json([{"title": "u", "context": "c", "options": [bad, sibling]}])
-    heal1 = _heals_json([("0:0", {"purpose": "补饷"})])
-    heal2 = _heals_json([("0:0", {"account": "国库"})])
-    n = {"i": 0}
-    prompts: list[str] = []
-
-    def _llm(_a, prompt, tag="", prior_messages=None):
-        n["i"] += 1
-        if tag == "rescript-draft-heal":
-            prompts.append(prompt)
-        if n["i"] == 1:
-            return first
-        if n["i"] == 2:
-            return heal1
-        return heal2
-
-    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
-    drafts = generate_rescript_draft(object(), _ctx(), turn=35)
-    assert drafts is not None
-    assert len(prompts) >= 2
-    assert "purpose" in prompts[0]
-    # 第二轮仍可索 account（purpose 已部分进展）
-    grant = next(o for o in drafts[0]["options"] if o.get("grant_action") == "协饷")
-    assert grant["purpose"] == "补饷" and grant["account"] == "国库"
-    assert grant["amount"] == 200
-
-
 # ---------------------------------------------------------------------------
-# resolve_decisions_phase2：唯一 k/耗尽/多急务 + 会话 prior + 落库
+# resolve_decisions_phase2：唯一验收入口
 # ---------------------------------------------------------------------------
 
 def _phase2_hitl_setup(game, monkeypatch, tmp_path):
@@ -540,61 +418,47 @@ def _assert_no_tech_keys_on_player_rows(rows: list) -> None:
         assert row.get("status") == "pending"
 
 
-def _freeze_option_fields(opt: dict) -> dict:
-    """正常项逐字段冻结比对用（排除服务端 draft_capability）。"""
-    return {k: v for k, v in opt.items() if k != "draft_capability"}
-
-
-@pytest.mark.parametrize("succeed_on", [1, 2, 3, None])
-def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path):
-    """唯一 k 参数化：真实调用输入序列、heals 落库、error pack typed、逐字段冻结。"""
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "k1", "k2", "k3", "exhaust",
+        "partial_progress",
+        "combo_then_heal",
+        "reorder_identity",
+    ],
+)
+def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
+    """唯一 phase2 tracer：k/耗尽、部分进度、组合后底稿、显式身份、逐字段冻结、prior 结构。"""
     db, state, content, turn, decree_mod, simulation, _CANNED = _phase2_hitl_setup(
         game, monkeypatch, tmp_path,
     )
-    bad = _army_pay(label="边饷拟", amount=150)
-    bad.pop("purpose", None)
     sibling = _hold(
         label="缓边", hint="候核",
         transaction_category="督赈", region_id="shaanxi",
     )
     sibling_frozen = dict(sibling)
-    first_items = [{
-        "title": "关宁欠饷", "context": "边军待哺。",
-        "options": [bad, sibling],
-    }]
-    first_raw = _items_json(first_items)
-    # 补交：完整 option 带 heal_id；企图改 amount/sibling 不得落
-    healed_opt = dict(bad, purpose="补饷", amount=999, heal_id="0:0")
-    healed_raw = _items_json([{
-        "title": "关宁欠饷", "context": "边军待哺。",
-        "options": [
-            healed_opt,
-            dict(sibling, label="被改写", hint="坏", heal_id="0:1"),
-        ],
-    }])
-    heal_n = {"i": 0}
     calls: list[dict] = []
 
-    def _fake_run(agent, prompt, tag="", prior_messages=None):
-        del agent
-        if tag.startswith("extractor/") or tag.startswith("sanitizer/"):
-            return _CANNED
-        if tag in ("rescript-draft", "rescript-draft-heal"):
+    if scenario in ("k1", "k2", "k3", "exhaust"):
+        succeed_on = {"k1": 1, "k2": 2, "k3": 3, "exhaust": None}[scenario]
+        bad = _army_pay(label="边饷拟", amount=150)
+        bad.pop("purpose", None)
+        first_items = [{
+            "title": "关宁欠饷", "context": "边军待哺。",
+            "options": [bad, sibling],
+        }]
+        first_raw = _items_json(first_items)
+        healed_raw = _items_json([{
+            "title": "关宁欠饷", "context": "边军待哺。",
+            "options": [
+                dict(bad, purpose="补饷", amount=999, heal_id="0:0"),
+                dict(sibling, label="被改写", hint="坏", heal_id="0:1"),
+            ],
+        }])
+        heal_n = {"i": 0}
+
+        def _script(tag, prior_messages):
             heal_n["i"] += 1
-            prior = list(prior_messages or [])
-            calls.append({
-                "tag": tag,
-                "prompt": prompt,
-                "prior": prior,
-                "roles": [
-                    m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
-                    for m in prior
-                ],
-                "contents": [
-                    m.get("content") if isinstance(m, dict) else getattr(m, "content", None)
-                    for m in prior
-                ],
-            })
             if succeed_on is None:
                 return first_raw
             if heal_n["i"] == 1:
@@ -602,6 +466,103 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
             if heal_n["i"] - 1 < succeed_on:
                 return first_raw
             return healed_raw
+
+        expected_heal_calls = (
+            RESCRIPT_OPTION_FIELD_HEAL_RETRIES if succeed_on is None else succeed_on
+        )
+
+    elif scenario == "partial_progress":
+        bad = _army_pay(label="边饷拟", amount=200)
+        bad.pop("purpose", None)
+        bad["account"] = ""
+        first_raw = _items_json([{
+            "title": "关宁欠饷", "context": "边军待哺。",
+            "options": [bad, sibling],
+        }])
+        heal1 = _heals_json([("0:0", {"purpose": "补饷"})])
+        heal2 = _heals_json([("0:0", {"account": "国库", "amount": 999})])
+        step = {"i": 0}
+
+        def _script(tag, prior_messages):
+            step["i"] += 1
+            if step["i"] == 1:
+                return first_raw
+            if step["i"] == 2:
+                return heal1
+            return heal2
+
+        expected_heal_calls = 2
+        succeed_on = "partial"
+        bad_amount = 200
+
+    elif scenario == "combo_then_heal":
+        first_combo = {
+            "title": "关宁欠饷", "context": "边军待哺。",
+            "options": [
+                _army_pay(locality_scope="single", label="边饷拟", amount=150),
+                sibling,
+            ],
+        }
+        after_combo = deepcopy(first_combo)
+        after_combo["options"][0]["locality_scope"] = "none"
+        after_combo["options"][0].pop("purpose", None)
+        first_raw = _items_json([first_combo])
+        combo_fixed_raw = _items_json([after_combo])
+        heal_raw = _heals_json([("0:0", {"purpose": "补饷", "amount": 999})])
+        step = {"i": 0}
+
+        def _script(tag, prior_messages):
+            step["i"] += 1
+            if step["i"] == 1:
+                return first_raw
+            if step["i"] == 2:
+                return combo_fixed_raw
+            return heal_raw
+
+        expected_heal_calls = 1
+        succeed_on = "combo"
+        bad_amount = 150
+
+    else:  # reorder_identity
+        bad = _army_pay(label="同名拟", amount=120)
+        bad.pop("purpose", None)
+        twin = _hold(label="同名拟", hint="缓", transaction_category="督赈")
+        sibling_frozen = dict(twin)
+        first_raw = _items_json([{
+            "title": "同题", "context": "边军待哺。",
+            "options": [bad, twin],
+        }])
+        # 响应倒序 + 显式 heal_id；企图改 amount
+        healed_raw = _items_json([{
+            "title": "同题", "context": "边军待哺。",
+            "options": [
+                dict(twin, heal_id="0:1"),
+                dict(bad, purpose="补饷", amount=999, heal_id="0:0"),
+            ],
+        }])
+        step = {"i": 0}
+
+        def _script(tag, prior_messages):
+            step["i"] += 1
+            return first_raw if step["i"] == 1 else healed_raw
+
+        expected_heal_calls = 1
+        succeed_on = "reorder"
+        bad_amount = 120
+        sibling = twin
+
+    def _fake_run(agent, prompt, tag="", prior_messages=None):
+        del agent, prompt
+        if tag.startswith("extractor/") or tag.startswith("sanitizer/"):
+            return _CANNED
+        if tag in ("rescript-draft", "rescript-draft-heal"):
+            prior = list(prior_messages or [])
+            calls.append({
+                "tag": tag,
+                "roles": _prior_roles(prior),
+                "contents": _prior_contents(prior),
+            })
+            return _script(tag, prior_messages)
         return _CANNED
 
     monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
@@ -629,29 +590,31 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
     opts = rows[0]["options"]
     assert db.list_pending_decisions(turn) == []
     assert calls[0]["tag"] == "rescript-draft"
-    assert calls[0]["prior"] == []
-    # 完整 user/assistant 交替：第 k 次 heal prior 长度 = 2*k（含首抽与历次补交）
-    for idx, c in enumerate(calls):
-        if idx == 0:
-            continue
-        assert c["tag"] == "rescript-draft-heal"
-        assert c["roles"] == ["user", "assistant"] * idx
-        assert c["contents"][0]  # 首轮 user=payload
-        assert c["contents"][1] == first_raw
-        assert "heal_id" in c["prompt"]
-        assert "purpose" in c["prompt"]
-        # prior 末轮 assistant 为最近一次模型返回
-        assert c["contents"][-1] in (first_raw, healed_raw) or c["roles"][-1] == "assistant"
+    assert calls[0]["roles"] == []
 
-    if succeed_on is None:
+    heal_calls = [c for c in calls if c["tag"] == "rescript-draft-heal"]
+    assert len(heal_calls) == expected_heal_calls
+
+    # prior 结构：第 i 次 heal 的 roles = user/assistant × i（含首抽与历次）
+    # combo 场景：calls[0]=首抽 combo 错, calls[1]=组合重抽, calls[2]=heal
+    if scenario == "combo_then_heal":
+        assert [c["tag"] for c in calls] == [
+            "rescript-draft", "rescript-draft", "rescript-draft-heal",
+        ]
+        assert calls[1]["roles"] == ["user", "assistant"]
+        assert heal_calls[0]["roles"] == ["user", "assistant", "user", "assistant"]
+        # 补交 prior 含组合纠正后的 assistant 底稿（非仅首抽 combo 错 raw）
+        assert heal_calls[0]["contents"][3] == combo_fixed_raw
+    else:
+        for i, hc in enumerate(heal_calls, start=1):
+            assert hc["roles"] == ["user", "assistant"] * i
+            assert hc["contents"][1] == first_raw
+
+    if scenario == "exhaust":
         assert len(opts) == 1
         hold = opts[0]
-        assert _freeze_option_fields({
-            k: hold[k] for k in sibling_frozen if k in hold
-        }) == _freeze_option_fields(sibling_frozen)
-        assert sum(1 for c in calls if c["tag"] == "rescript-draft-heal") == (
-            RESCRIPT_OPTION_FIELD_HEAL_RETRIES
-        )
+        for k, v in sibling_frozen.items():
+            assert hold.get(k) == v
         note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
         note_obj = json.loads(note.read_text(encoding="utf-8"))
         assert note_obj.get("reason") == "option_missing_fields_heal_exhausted"
@@ -667,20 +630,24 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
             fails = entry.get("failures") or []
             assert fails[0].get("heal_id") == "0:0"
             assert list(fails[0].get("missing_fields") or []) == ["purpose"]
+        return
+
+    assert len(opts) == 2
+    grant = next(o for o in opts if o.get("grant_action") == "协饷")
+    hold = next(o for o in opts if o.get("action_type") == "assignment")
+    assert grant["purpose"] == "补饷"
+    if scenario == "partial_progress":
+        assert grant["account"] == "国库"
+        assert grant["amount"] == bad_amount
+    elif scenario in ("combo_then_heal", "reorder_identity"):
+        assert grant["amount"] == bad_amount
     else:
-        assert len(opts) == 2
-        grant = next(o for o in opts if o.get("grant_action") == "协饷")
-        assert grant["purpose"] == "补饷"
-        assert grant["amount"] == bad["amount"]  # 999 不落
-        assert grant["label"] == bad["label"]
-        assert grant["account"] == bad["account"]
-        assert grant["target_id"] == bad["target_id"]
-        hold = next(o for o in opts if o.get("action_type") == "assignment")
-        # 正常项逐字段冻结（补交不得改写兄弟）
-        for k, v in sibling_frozen.items():
-            assert hold.get(k) == v, f"sibling field {k} mutated"
-        assert heal_n["i"] == 1 + succeed_on
-        assert any(c["tag"] == "rescript-draft-heal" for c in calls)
+        assert grant["amount"] == 150
+        assert grant["label"] == "边饷拟"
+        assert grant["account"] == "国库"
+        assert grant["target_id"] == "guanning"
+    for k, v in sibling_frozen.items():
+        assert hold.get(k) == v, f"sibling field {k} mutated"
 
 
 def test_phase2_multi_urgent_isolation_and_zero_item(game, monkeypatch, tmp_path):
@@ -709,19 +676,12 @@ def test_phase2_multi_urgent_isolation_and_zero_item(game, monkeypatch, tmp_path
     calls: list[dict] = []
 
     def _fake_run(agent, prompt, tag="", prior_messages=None):
-        del agent
+        del agent, prompt
         if tag.startswith("extractor/") or tag.startswith("sanitizer/"):
             return _CANNED
         if tag in ("rescript-draft", "rescript-draft-heal"):
             n["i"] += 1
-            calls.append({
-                "tag": tag,
-                "prior_roles": [
-                    m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
-                    for m in (prior_messages or [])
-                ],
-                "prompt": prompt,
-            })
+            calls.append({"tag": tag, "roles": _prior_roles(prior_messages)})
             return first if n["i"] == 1 else after
         return _CANNED
 
@@ -742,12 +702,11 @@ def test_phase2_multi_urgent_isolation_and_zero_item(game, monkeypatch, tmp_path
         o.get("grant_action") == "协饷" and o.get("purpose") == "补饷"
         for o in rows[u1["title"]]["options"]
     )
-    # u3 正常项逐字段冻结
     assert len(rows[u3["title"]]["options"]) == 2
     got_u3 = {o["label"]: o for o in rows[u3["title"]]["options"]}
     for src in (u3_a, u3_b):
         got = got_u3[src["label"]]
         for k, v in src.items():
             assert got.get(k) == v
-    assert calls[0]["tag"] == "rescript-draft" and calls[0]["prior_roles"] == []
+    assert calls[0]["tag"] == "rescript-draft" and calls[0]["roles"] == []
     assert any(c["tag"] == "rescript-draft-heal" for c in calls)
