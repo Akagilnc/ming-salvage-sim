@@ -1547,7 +1547,7 @@ def _healed_options_by_id(
     - 部分字段 heals（无 option 键）→ replace=False，合并；
     - 完整 option heals（有 option 键）→ replace=True，整份替换；
     - 带显式 heal_id 的 items → replace=True，整份替换。
-    同 id 多命中记为冲突（值 None），查找时拒绝。身份键只清一次。
+    同 id 多命中记为冲突（值 None），查找时拒绝。
     """
     index: Dict[str, Optional[Tuple[dict, bool]]] = {}
     _ID_KEYS = frozenset({"heal_id", "item_index", "option_index"})
@@ -1556,6 +1556,9 @@ def _healed_options_by_id(
         if not heal_id or not isinstance(option, dict):
             return
         cleaned = {k: v for k, v in option.items() if k not in _ID_KEYS}
+        # 部分体清洗后为空不形成响应；完整体空壳仍入索引由 apply 拒绝
+        if not cleaned and not replace:
+            return
         if heal_id in index:
             index[heal_id] = None  # duplicate → refuse
             return
@@ -1573,12 +1576,8 @@ def _healed_options_by_id(
                 if isinstance(opt, dict):
                     _push(heal_id, opt, replace=True)
                 continue
-            body = {
-                k: v for k, v in entry.items()
-                if k not in _ID_KEYS and k != "option"
-            }
-            if body:
-                _push(heal_id, body, replace=False)
+            # 身份键清洗唯一在 _push；部分体直接移交 entry
+            _push(heal_id, entry, replace=False)
 
     items = healed.get("items")
     if isinstance(items, list):
@@ -1623,6 +1622,7 @@ def _apply_option_heal(
     - 底稿非 object：接受替换体；
     - 不按 required 键猜完整形态；不把显式完整体自动补成原稿。
     """
+    # 一次 deepcopy 隔离 ownership；合并路径不再对同一值二次复制
     body = {k: copy.deepcopy(v) for k, v in replacement.items()}
     if not isinstance(baseline_opt, dict) or replace:
         return body or None
@@ -1634,7 +1634,7 @@ def _apply_option_heal(
     for key, val in body.items():
         if val is None:
             continue
-        out[key] = copy.deepcopy(val)
+        out[key] = val
         changed = True
     for field in failure.missing_fields:
         key = str(field)
