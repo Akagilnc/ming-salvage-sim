@@ -169,25 +169,6 @@ def _close_night_dossier(db, state, content, pending_id):
     )
 
 
-def _complete_audience_chat_turn(db, state, minister_name, night_id, *, message, reply):
-    """真实召对一轮落库：generating → user/minister 消息 → active（非在飞）。
-
-    extract_status=done：本测不覆盖故事抽取 drain，收夜前清待补（同 audience_night_498）。
-    """
-    ct = int(db.create_chat_turn(
-        state, minister_name, f"sess-1565-{minister_name}", 0,
-        night_id=int(night_id), status="generating",
-    ))
-    uid = db.append_chat_message(minister_name, state.turn, "user", message)
-    mid = db.append_chat_message(minister_name, state.turn, "minister", reply)
-    db.update_chat_turn_messages(ct, user_message_id=uid, minister_message_id=mid)
-    db.conn.execute(
-        "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?", (ct,),
-    )
-    db.conn.commit()
-    return ct
-
-
 class _EmptyEndorsementAgent:
     """收夜 endorsement 批空结果（本片不测背书，禁活 LLM；同 strategy_selection_568）。"""
 
@@ -195,23 +176,22 @@ class _EmptyEndorsementAgent:
         return json.dumps({"endorsements": []}, ensure_ascii=False)
 
 
-def _mark_night_extracts_done(db, night_id):
-    """本测不覆盖故事抽取 drain：收夜前清待补（同 audience_night_498）。"""
-    db.conn.execute(
-        "UPDATE chat_turns SET extract_status = 'done' "
-        "WHERE night_id = ? AND extract_status != 'done'",
-        (int(night_id),),
-    )
-    db.conn.commit()
+class _CannedStoryExtractor:
+    """#501 叙事抽取离线边界：空 facts，经生产 trail 标 extract done（同 web_audience_night_498）。"""
+
+    def run(self, _material):
+        return SimpleNamespace(content='{"facts":[]}')
 
 
 def _close_night_approved_directives(db, state, content, night_id, pending_ids):
-    """收夜真源：应允白名单 → audience_night.close_night。"""
+    """收夜真源：应允白名单 → audience_night.close_night。
+
+    extract 清待补由 WebGame.chat 生产 trail（canned extractor）完成，本 helper 不 SQL 改 extract_status。
+    """
     import ming_sim.audience_night as an
     ids = [int(p) for p in pending_ids]
     n = db.mark_pending_night_approved(ids, night_id=int(night_id))
     assert n == len(ids), f"应允未全中 night={night_id} ids={ids} marked={n}"
-    _mark_night_extracts_done(db, night_id)
     result = an.close_night(
         db, state, night_id=int(night_id), content=content,
         endorsement_extractor_agent=_EmptyEndorsementAgent(),
@@ -450,19 +430,15 @@ def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game
     assert reply in body, f"须保留大臣领命回话，got={body!r}"
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch):
-    """#1565 B：缺锚恢复全链 typed 证据。
+    """#1565 B：缺锚恢复全链 typed 证据（WebGame.chat 真实入口，不旁路 materialize）。
 
-    实际入口 materialize → 缺锚 validation 失败（无 pending）→ 补正 title/target_id
-    重拟 → pending → close_night 成案 → 盖玺 initiative。
-    正文无损由 empty-recent / beat6 既有入口覆盖，本测不锁正文散文。
+    chat 缺锚 → validation 失败零 pending → 同会话补正 target_id 重拟 →
+    close_night 成案 → 盖玺 initiative。正文不锁散文。
     """
     import ming_sim.audience_night as an
 
-    monkeypatch.setattr(
-        cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下明示交办题名后重拟。", 1),
-    )
     db, state, content = game
     actor = _active_ming(db, content)
     player = (
@@ -471,39 +447,40 @@ def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch)
     )
     reply = "臣遵旨分办。请陛下定夺准驳。"
     before_initiatives = len(_active_initiatives(db))
+    phase = {"n": 0}
 
-    # ① 缺锚失败：零 pending，validation 留因可恢复
-    bare = candidates_from_classifier_payload({
-        "kind": "assignment", "title": "", "target_id": "",
-        "commitment_kind": "无",
-    }, soft=False)
-    ctx_bare = _ctx(
-        db, actor.name, bare, state.turn,
-        message=player, reply=reply,
+    def fake_classify(*_a, **_k):
+        phase["n"] += 1
+        if phase["n"] == 1:
+            return candidates_from_classifier_payload({
+                "kind": "assignment", "title": "", "target_id": "",
+                "commitment_kind": "无",
+            }, soft=False)
+        return candidates_from_classifier_payload({
+            "kind": "assignment", "title": "", "target_id": "清核太仓",
+            "commitment_kind": "无",
+        }, soft=False)
+
+    # validation recovery 报告走 compose；禁活 backend
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下明示交办题名后重拟。", 1),
     )
-    run_materialize_pipeline(ctx_bare)
-    assert not ctx_bare.out.get("pending_action_id")
-    failure = ctx_bare.out.get("decree_validation_failure") or {}
+    _silence_serial(monkeypatch)
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    wg = _wire_web_game(db, state, content, _SyncAgent(reply), monkeypatch)
+
+    # ① 缺锚：WebGame.chat → 零 pending，validation 留因
+    out1 = wg.chat(actor.name, player)
+    assert not out1.get("pending_action_id")
+    failure = out1.get("decree_validation_failure") or {}
     assert "title" in set(failure.get("failed_fields") or [])
     assert failure.get("report")
     assert not _assignment_pendings(db, state.turn, minister_name=actor.name)
 
-    # ② 补正/重拟：结构化 target_id 锚 → 合法 pending
-    night = an.open_night(db, state)
-    nid = int(night["id"])
-    chat_turn_id = _complete_audience_chat_turn(
-        db, state, actor.name, nid, message=player, reply=reply,
-    )
-    anchored = candidates_from_classifier_payload({
-        "kind": "assignment", "title": "", "target_id": "清核太仓",
-        "commitment_kind": "无",
-    }, soft=False)
-    ctx = _ctx(
-        db, actor.name, anchored, state.turn,
-        message=player, reply=reply, chat_turn_id=chat_turn_id,
-    )
-    run_materialize_pipeline(ctx)
-    pending_id = int(ctx.out.get("pending_action_id") or 0)
+    # ② 补正/重拟：同会话再 chat，结构化 target_id 锚 → 合法 pending
+    out2 = wg.chat(actor.name, player)
+    pending_id = int(out2.get("pending_action_id") or 0)
     assert pending_id > 0
     pending = json.loads(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?",
@@ -511,10 +488,13 @@ def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch)
     ).fetchone()["payload_json"])
     assert pending.get("title") == "清核太仓"
     assert str(pending.get("text") or "").strip()
-    assert int(pending.get("source_chat_turn_id") or 0) == chat_turn_id
+    chat_turn_id = int(pending.get("source_chat_turn_id") or 0)
+    assert chat_turn_id > 0
 
-    # ③ 收夜成案 → 盖玺 → initiative（合法成案 typed 回指）
-    _close_night_approved_directives(db, state, content, nid, [pending_id])
+    # ③ 收夜成案 → 盖玺 → initiative
+    night = an.get_open_night(db)
+    assert night is not None
+    _close_night_approved_directives(db, state, content, int(night["id"]), [pending_id])
     dossier = next(
         d for d in db.list_decree_dossiers()
         if int(d["pending_action_id"] or 0) == pending_id
@@ -770,7 +750,6 @@ def test_pure_inquiry_stages_zero_mechanical_matters(game, monkeypatch):
     night = an.get_open_night(db)
     assert night is not None
     nid = int(night["id"])
-    _mark_night_extracts_done(db, nid)
     closed = an.close_night(
         db, state, night_id=nid, content=content,
         endorsement_extractor_agent=_EmptyEndorsementAgent(),
@@ -1307,8 +1286,26 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
     wg.favorites = set()
     wg.suggestions_for = lambda _c: []
     wg._spawn_pending_write_thread = lambda *a, **k: None
-    wg._spawn_extraction_trail = lambda *a, **k: None
     wg._trail_mindreading_after_reply = lambda *a, **k: None
+
+    # 生产 trail 同步跑：canned 空 facts → extract_status=done（禁 SQL 旁路清待补）
+    from ming_sim.audience_extraction import trail_extraction_after_reply
+
+    def _spawn_extraction_trail(minister_name, answer_text, chat_turn_id):
+        if not chat_turn_id:
+            return None
+        trail_extraction_after_reply(
+            db=db,
+            minister_name=minister_name,
+            minister_reply=str(answer_text or ""),
+            chat_turn_id=int(chat_turn_id),
+            llm_config=sess.llm_config,
+            write_gate=wg._write_gate,
+            extractor_agent=_CannedStoryExtractor(),
+        )
+        return None
+
+    wg._spawn_extraction_trail = _spawn_extraction_trail
     return wg
 
 
