@@ -4332,6 +4332,37 @@ def _unpin_db_path(path: str) -> None:
         _menu_pinned_db_paths.discard(norm)
 
 
+def _db_path_is_pinned(path: str) -> bool:
+    norm = _normalize_db_path(path)
+    if not norm:
+        return False
+    with _menu_pin_lock:
+        return norm in _menu_pinned_db_paths
+
+
+def _archive_closed_orphan_path(path: str) -> None:
+    """#1749：本拍已确认 close 的路径，若不再是 main 且无 live holder，补归档。
+
+    load_save 被 new_game 取代时，new_game 可能因 pin 跳过归档；解钉后由本拍转交归档。
+    """
+    if not path or not os.path.exists(path):
+        return
+    if _same_db_path(path, _get_main_db_path()):
+        return
+    if _db_path_is_live(path):
+        return
+    _archive_drained_db_file(path)
+
+
+def _take_exit_detach_completion() -> Optional["_MenuExitDetachCompletion"]:
+    """取出并清空全局 exit completion——由本拍菜单动作独家消费（#1749）。"""
+    global _menu_exit_detach_completion
+    with _menu_exit_detach_lock:
+        completion = _menu_exit_detach_completion
+        _menu_exit_detach_completion = None
+        return completion
+
+
 def _db_path_is_live(db_path: str) -> bool:
     """#1749：归档前拒搬仍有持有者的路径——活 web_game 或菜单钉住（在飞 load_save/未确认 close）。
 
@@ -4762,8 +4793,8 @@ async def api_menu_new_game() -> Dict[str, Any]:
             # #1732 T1：退菜单后 / 无活 session 时仍归档旧主库。先等 exit detach 关连接，
             # 再走同一归档实现——不与仍写旧库的 detach 双移。
             # #1740：在本端点当拍持有对应 exit 的 completion，不在归档线程里重读全局最新位。
-            with _menu_exit_detach_lock:
-                exit_completion = _menu_exit_detach_completion
+            # #1749：取出 completion 独家消费，禁遗留 close_ok=False 毒化后续 continue。
+            exit_completion = _take_exit_detach_completion()
 
             def _archive_prev_after_exit_detach() -> None:
                 if exit_completion is not None:
@@ -4815,6 +4846,31 @@ async def api_menu_continue() -> StreamingResponse:
         try:
             # 首条阶段在抢锁前入队（#1195 ≤5s 首见）；重活构造在锁内，与 new_game 互斥。
             on_stage("准备载入上次进度...")
+            # #1749：构造前等 exit detach 关尽——禁与仍写同一主库的 exit drain 双开。
+            exit_completion = _take_exit_detach_completion()
+            if exit_completion is not None:
+                exit_completion.done.wait()
+                if not exit_completion.close_ok:
+                    # 失败 completion 放回，直至 new_game 取走；禁一次失败后误开脏路径。
+                    with _menu_exit_detach_lock:
+                        if _menu_exit_detach_completion is None:
+                            _menu_exit_detach_completion = exit_completion
+                    ev_queue.put((
+                        "__error__",
+                        {"message": "上一局尚未关闭完成，请稍后重试。"},
+                    ))
+                    return
+            # load_save 钉住主路径排空时，continue 不得抢先构造同一库。
+            main_for_wait = _get_main_db_path()
+            pin_deadline = time.monotonic() + 60.0
+            while _db_path_is_pinned(main_for_wait):
+                if time.monotonic() >= pin_deadline:
+                    ev_queue.put((
+                        "__error__",
+                        {"message": "菜单操作进行中，请稍后重试。"},
+                    ))
+                    return
+                time.sleep(0.01)
             old_runtime = None
             with _menu_lifecycle_lock:
                 if token != _menu_generation:
@@ -4874,13 +4930,15 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
     pinned_path = ""
     keep_pin = False
     published_game = None
+    old_closed_ok = False
+    old_closed_path = ""
     with _menu_lifecycle_lock:
         _menu_generation += 1
         token = _menu_generation
         old_game = web_game
         web_game = None
-        with _menu_exit_detach_lock:
-            exit_completion = _menu_exit_detach_completion
+        # 与 continue/new_game 同：取出 exit completion 独家消费。
+        exit_completion = _take_exit_detach_completion()
         pinned_path = _get_main_db_path()
         _pin_db_path(pinned_path)
 
@@ -4888,6 +4946,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
     try:
         # 旧局仍在或 exit detach 未完成：必须关尽后再碰主库路径。
         if old_game is not None:
+            old_closed_path = getattr(old_game, "db_path", "") or pinned_path
             completion = _spawn_drain_close(old_game, archive_db=False)
             await loop.run_in_executor(None, completion.done.wait)
             if not completion.close_ok:
@@ -4899,6 +4958,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
                 # 恢复成功：web_game 护路径，可解钉；否则保持钉住禁搬走。
                 keep_pin = not restored
                 raise HTTPException(status_code=409, detail="无法关闭当前局，请稍后重试。")
+            old_closed_ok = True
         elif exit_completion is not None:
             await loop.run_in_executor(None, exit_completion.done.wait)
             if not exit_completion.close_ok:
@@ -4907,9 +4967,18 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
                     status_code=409,
                     detail="上一局尚未关闭完成，请稍后重试。",
                 )
+            old_closed_ok = True
+            old_closed_path = pinned_path
 
         with _menu_lifecycle_lock:
             if token != _menu_generation:
+                # #1749：本拍已关旧连接但被 new_game 取代——new_game 可能因 pin 跳过归档；
+                # 解钉后转交归档（路径若已非 main 且无 holder）。
+                if old_closed_ok and old_closed_path:
+                    handoff = old_closed_path
+                    _unpin_db_path(pinned_path)
+                    pinned_path = ""
+                    _archive_closed_orphan_path(handoff)
                 raise HTTPException(status_code=409, detail="加载已取消（菜单状态已变更）。")
             candidate = None
             try:
