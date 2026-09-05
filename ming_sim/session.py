@@ -913,23 +913,35 @@ class GameSession:
             self._write_gate = self._write_queue.write_gate
             if fresh_save:
                 self.auto_save("begin")
-        except Exception:
+        except Exception as init_exc:
+            # #1749 B：半构造清理——close 成功才清空引用；close 失败保留 db/agno，
+            # 经 residual_session 携回同一 holder/CloseOp，禁无主活连接。
+            residual = False
             agno = getattr(self, "agno_db", None)
             if agno is not None:
                 close_fn = getattr(agno, "close", None)
                 if callable(close_fn):
                     try:
                         close_fn()
+                        self.agno_db = None  # type: ignore[assignment]
                     except Exception:
                         logger.exception("GameSession init failed; agno_db.close failed")
-                self.agno_db = None  # type: ignore[assignment]
+                        residual = True
+                else:
+                    self.agno_db = None  # type: ignore[assignment]
             db = getattr(self, "db", None)
             if db is not None:
                 try:
                     db.close()
+                    self.db = None  # type: ignore[assignment]
                 except Exception:
                     logger.exception("GameSession init failed; db.close failed")
-                self.db = None  # type: ignore[assignment]
+                    residual = True
+            if residual:
+                try:
+                    setattr(init_exc, "residual_session", self)
+                except Exception:
+                    logger.exception("GameSession init failed; attach residual_session failed")
             raise
 
     # ── 回合生命周期 ──────────────────────────────────────────────────────

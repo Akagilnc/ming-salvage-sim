@@ -17,6 +17,14 @@ def wait_until(predicate: Callable[[], bool]) -> None:
         poll.wait(0.01)
 
 
+def reset_menu_path_leases() -> None:
+    """测试夹具：清空菜单路径租约（不经生产钩子；两文件共用，禁重复定义）。"""
+    import web_app
+
+    with web_app._menu_path_lock:
+        web_app._menu_path_leases.clear()
+
+
 class ObservingLock:
     """Test-side Lock drop-in: signals contending when acquire finds the lock held.
     No production hooks; not a general framework.

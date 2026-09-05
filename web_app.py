@@ -23,6 +23,7 @@ import tempfile
 import time
 import threading
 from concurrent.futures import Future
+from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional
 
 # 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
@@ -730,24 +731,22 @@ class WebGame:
                 self.db.reconcile_interrupted_chat_turns()
             # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
             self._spawn_startup_extraction_catch_up()
-        except Exception:
+        except Exception as init_exc:
+            # #1749 B：构造失败携回——残余 session 交同一 holder/CloseOp（失败 op），
+            # 不得只 register close_op=None 的壳。
             session = getattr(self, "session", None)
-            if session is not None:
+            residual = getattr(init_exc, "residual_session", None)
+            if session is None and residual is not None:
+                self.session = residual
+                _handback_failed_runtime(self, db_path)
+            elif session is not None:
                 try:
                     session.close()
                 except Exception:
-                    # #1749 B：构造清理 close 失败时连接可能仍活——登记 holder 保所有权，
-                    # 禁 caller finally release_opening 后 path_live=False 而连接可写。
                     logger.exception(
                         "WebGame init failed; session.close failed path=%s", db_path,
                     )
-                    try:
-                        _register_holder(db_path, self)
-                    except Exception:
-                        logger.exception(
-                            "WebGame init close-fail: register holder failed path=%s",
-                            db_path,
-                        )
+                    _handback_failed_runtime(self, db_path)
             raise
 
     # ── 存档管理 ─────────────────────────────────────────────────────────
@@ -794,6 +793,48 @@ class WebGame:
             raise HTTPException(status_code=404, detail="存档不存在。")
         os.remove(target)
 
+    def _dispose_rebuild_residual(self) -> bool:
+        """#1749 B：处置上一失败 rebuild 候选。成功关闭返回 True；仍活则 False 且保留引用。"""
+        residual = getattr(self, "_rebuild_residual_runtime", None)
+        if residual is None:
+            return True
+        path = _path_norm_of_game(residual, getattr(self, "db_path", "") or "")
+        entry = _lookup_holder(path, residual) if path else None
+        ok = False
+        if entry is not None:
+            role, op = _claim_close(entry, path)
+            if role == "executor" and op is not None:
+                try:
+                    _drain_and_close_session(residual, entry=entry, close_op=op)
+                except Exception:
+                    logger.exception(
+                        "dispose rebuild residual drain failed path=%s", path,
+                    )
+                ok = bool(op.done.is_set() and op.close_ok)
+            elif role == "released_ok":
+                ok = True
+            elif op is not None:
+                op.done.wait()
+                ok = bool(op.close_ok)
+        else:
+            session = getattr(residual, "session", residual)
+            close_fn = getattr(session, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                    ok = True
+                except Exception:
+                    logger.exception(
+                        "dispose rebuild residual close failed path=%s", path,
+                    )
+                    _handback_failed_runtime(residual, path or self.db_path)
+                    ok = False
+            else:
+                ok = True
+        if ok:
+            self._rebuild_residual_runtime = None
+        return ok
+
     def _replace_database(self, destructive_replace: Callable[[], None]) -> None:
         """Replace the main DB transactionally, preserving the live runtime on prepare failure."""
         backup_fd, backup_path = tempfile.mkstemp(prefix="ming-hot-replace-", suffix=".db")
@@ -812,10 +853,19 @@ class WebGame:
             if not backup_complete:
                 raise
             try:
+                # 恢复重建前必须处置失败候选；仍活则禁止改文件/二次 rebuild。
+                if not self._dispose_rebuild_residual():
+                    logger.error(
+                        "hot replace recovery blocked: rebuild residual still live path=%s",
+                        self.db_path,
+                    )
+                    raise replace_exc
                 _delete_sqlite_db_files_or_raise(self.db_path)
                 shutil.copy2(backup_path, self.db_path)
                 self._rebuild_session(old_config)
             except Exception as recovery_exc:
+                if recovery_exc is replace_exc:
+                    raise
                 logger.exception("hot replace recovery failed")
                 raise replace_exc from recovery_exc
             raise
@@ -845,7 +895,11 @@ class WebGame:
 
     def _rebuild_session(self, llm_config: LLMConfig) -> None:
         """Fully initialize a candidate before publishing it as the active session."""
-        # #1749：GameSession 构造本身可能在返回前失败并自洁；返回后 begin_turn 等失败须 close。
+        # #1749：先处置上一失败候选；仍活则拒绝新候选，禁覆盖仍活资源。
+        if not self._dispose_rebuild_residual():
+            raise RuntimeError(
+                f"previous rebuild residual still live path={self.db_path}"
+            )
         candidate = None
         try:
             candidate = GameSession(self.db_path, llm_config)
@@ -866,22 +920,21 @@ class WebGame:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
             if hasattr(candidate.db, "conn"):
                 candidate.db.reconcile_interrupted_chat_turns()
-        except Exception:
-            if candidate is not None:
+        except Exception as rebuild_exc:
+            residual = candidate or getattr(rebuild_exc, "residual_session", None)
+            if residual is not None:
                 try:
-                    candidate.close()
+                    residual.close()
                 except Exception:
-                    # #1749 B：热替换候选 close 失败——保留 session 引用供后续定点关闭，
-                    # 不得只 log 后丢弃仍活连接。
                     logger.exception("failed to close rejected replacement session")
-                    try:
-                        self.session = candidate
-                        _register_holder(self.db_path, self)
-                    except Exception:
-                        logger.exception(
-                            "rebuild close-fail: register holder failed path=%s",
-                            self.db_path,
-                        )
+                    wrapper = SimpleNamespace(
+                        db_path=self.db_path,
+                        session=residual,
+                        _write_queue=getattr(residual, "_write_queue", None),
+                        _write_gate=getattr(residual, "_write_gate", None),
+                    )
+                    _handback_failed_runtime(wrapper, self.db_path)
+                    self._rebuild_residual_runtime = wrapper
             raise
 
         self.session = candidate
@@ -4410,26 +4463,27 @@ def _claim_opening(path: str) -> str:
     return norm
 
 
+def _c7_ready_locked(lease: _MenuPathLease) -> bool:
+    """C7 唯一资格谓词（path 锁内）。"""
+    return lease.opening <= 0 and not lease.holders and lease.archive_pending
+
+
 def _release_opening(path: str) -> None:
-    """释放本次 opening；opening→0 且 holders 空且 pending → C7-release。"""
+    """释放本次 opening；有 pending 时走 C7-release（资格只在 C7 判定）。"""
     norm = _normalize_db_path(path) if path else ""
     if not norm:
         return
-    ready = False
+    has_pending = False
     with _menu_path_lock:
         lease = _menu_path_leases.get(norm)
         if lease is None:
             return
         if lease.opening > 0:
             lease.opening = 0
-        ready = (
-            lease.opening <= 0
-            and not lease.holders
-            and lease.archive_pending
-        )
-        if not ready:
+        has_pending = bool(lease.archive_pending)
+        if not has_pending:
             _path_lease_gc_locked(norm, lease)
-    if ready:
+    if has_pending:
         _c7_try_fulfill_archive(norm)
 
 
@@ -4462,6 +4516,35 @@ def _lookup_holder(path: str, runtime: Any) -> Optional[_HolderEntry]:
         return lease.holders.get(gid)
 
 
+def _handback_failed_runtime(runtime: Any, path: str = "") -> Optional[_HolderEntry]:
+    """#1749 B：构造/清理 close 失败携回——同一 holder + 失败 CloseOp（A5；done∧¬ok∧AS）。
+
+    不得只 register close_op=None 的壳冒充失败交卷。
+    """
+    norm = _path_norm_of_game(runtime, path)
+    if not norm or runtime is None:
+        return None
+    entry = _register_holder(norm, runtime)
+    if entry is None:
+        return None
+    op = entry.close_op
+    if op is None or (op.done.is_set() and not op.close_ok):
+        op = _CloseOp(db_path=norm)
+        entry.close_op = op
+    op.close_ok = False
+    if not op.db_path:
+        op.db_path = norm
+    try:
+        _note_close_result(entry, False, norm)
+    except Exception:
+        logger.exception("handback note_close_result failed path=%s", norm)
+    finally:
+        op.close_ok = False
+        op.done.set()
+        op.archive_settled.set()
+    return entry
+
+
 def _claim_close(
     entry: _HolderEntry,
     path: str = "",
@@ -4469,9 +4552,10 @@ def _claim_close(
     """领关闭 op。返回 (role, op)：
 
     - executor：新领 op，调用方必须 drain
-    - waiter：已有 op（进行中或已完成），只等
+    - waiter：已有 op（进行中或成功完成），只等
     - orphan：entry 已不在 holders 且无 op → 禁冒成功
     - released_ok / released_failed：entry 已删但调用方持有已完成 op 的引用
+    - A8：在册且 done∧¬ok → 允许方获新 op 重试
     """
     if entry is None:
         return ("orphan", None)
@@ -4497,6 +4581,11 @@ def _claim_close(
             op = _CloseOp(db_path=norm)
             entry.close_op = op
             return ("executor", op)
+        # A8：失败已完成 op → 允许方重试（新 op）；进行中或成功完成仍 waiter/released。
+        if op.done.is_set() and not op.close_ok:
+            op = _CloseOp(db_path=norm)
+            entry.close_op = op
+            return ("executor", op)
         return ("waiter", op)
 
 
@@ -4505,13 +4594,16 @@ def _note_close_result(
     close_ok: bool,
     path: str = "",
 ) -> None:
-    """A4/A5：executor 关闭结果入账。成功删 entry 并 C7-note；失败留 entry。"""
+    """A4/A5：executor 关闭结果入账。成功删 entry 并 C7-note；失败留 entry。
+
+    资格谓词只在 C7；此处不重复实现搬库条件。
+    """
     runtime = entry.runtime
     norm = _path_norm_of_game(runtime, path)
     if not norm:
         return
     gid = id(runtime) if runtime is not None else 0
-    ready = False
+    has_pending = False
     with _menu_path_lock:
         lease = _menu_path_leases.setdefault(norm, _MenuPathLease())
         current = lease.holders.get(gid)
@@ -4523,19 +4615,14 @@ def _note_close_result(
         if close_ok:
             if current is entry:
                 del lease.holders[gid]
-            ready = (
-                lease.opening <= 0
-                and not lease.holders
-                and lease.archive_pending
-            )
-            if not ready:
+            has_pending = bool(lease.archive_pending)
+            if not has_pending:
                 _path_lease_gc_locked(norm, lease)
         else:
-            # 失败：entry 必须仍在；若竞态被删则不补造成功态。
+            # 失败：entry 必须仍在；若竞态被删则补回，不升成功态（A5）。
             if current is None:
                 lease.holders[gid] = entry
-            # close_ok 保持 False（A5）
-    if ready:
+    if close_ok and has_pending:
         _c7_try_fulfill_archive(norm)
 
 
@@ -4553,30 +4640,40 @@ def _path_request_archive(path: str) -> None:
 def _c7_try_fulfill_archive(path: str) -> bool:
     """C7 唯一执行接缝：opening==0 ∧ holders 空 ∧ pending → 搬库。
 
-    失败/仍需保留职责时回写 pending。不在锁外做第二套资格真源。
+    资格与 pending 认领在 path 锁内；搬库在锁外。任一归档异常回写 pending、留真因，
+    不在 GC 后把异常当成功清空职责。
     """
     norm = _normalize_db_path(path) if path else ""
     if not norm:
         return False
-    run = False
+    claimed = False
     with _menu_path_lock:
         lease = _menu_path_leases.get(norm)
-        if lease is None:
+        if lease is None or not _c7_ready_locked(lease):
             return False
-        if lease.opening <= 0 and not lease.holders and lease.archive_pending:
-            lease.archive_pending = False
-            run = True
-            _path_lease_gc_locked(norm, lease)
-    if not run:
+        lease.archive_pending = False
+        claimed = True
+        # 搬库完成前不 GC——失败还得回写同一 lease 职责。
+    if not claimed:
         return False
-    if not os.path.exists(norm):
-        return True
-    if not _archive_move_db_files(norm):
-        # 搬库失败：职责回写，待后续边沿再试。
+    moved_ok = False
+    try:
+        if not os.path.exists(norm):
+            moved_ok = True
+        else:
+            moved_ok = bool(_archive_move_db_files(norm))
+    except Exception:
+        logger.exception("C7 archive execute failed path=%s", norm)
+        moved_ok = False
+    if not moved_ok:
         with _menu_path_lock:
             lease = _menu_path_leases.setdefault(norm, _MenuPathLease())
             lease.archive_pending = True
         return False
+    with _menu_path_lock:
+        lease = _menu_path_leases.get(norm)
+        if lease is not None:
+            _path_lease_gc_locked(norm, lease)
     return True
 
 
@@ -4596,6 +4693,7 @@ def _drain_path_holders(path: str) -> bool:
     """K2/L3：对 path 上所有 holder 定点 claim/wait/drain。
 
     任一 close_ok is False → False（保留失败 entry，开库前取消）。
+    orphan / released_failed 必须失败投影（A0″）；不得跳过当成功。
     调用方必须已持 opening。
     """
     entries = _snap_holders(path)
@@ -4603,6 +4701,7 @@ def _drain_path_holders(path: str) -> bool:
     for entry in entries:
         role, op = _claim_close(entry, path)
         if role == "orphan":
+            all_ok = False
             continue
         if role == "executor" and op is not None:
             _spawn_drain_close(entry.runtime, entry=entry, close_op=op)
@@ -4627,6 +4726,46 @@ def _point_retire_close(game: Any, path: str = "") -> Optional[_CloseOp]:
     return op
 
 
+def _settle_close_result(
+    *,
+    op: Optional[_CloseOp],
+    close_ok: bool,
+    entry: Optional[_HolderEntry] = None,
+    game: Any = None,
+    path: str = "",
+) -> None:
+    """#1749 C7/完成者：同步/异步/私有关闭唯一落结果。
+
+    note/归档异常不得跳过 done/archive_settled；waiter/调用方不补置位。
+    close 成功不因后续 note 异常倒写 close_ok。
+    """
+    try:
+        if entry is not None:
+            _note_close_result(entry, close_ok, path)
+        elif not close_ok and game is not None:
+            norm = path or _path_norm_of_game(game)
+            if norm:
+                registered = _register_holder(norm, game)
+                if registered is not None:
+                    if registered.close_op is None and op is not None:
+                        registered.close_op = op
+                    elif (
+                        op is not None
+                        and registered.close_op is not None
+                        and registered.close_op.done.is_set()
+                        and not registered.close_op.close_ok
+                    ):
+                        registered.close_op = op
+                    _note_close_result(registered, False, norm)
+    except Exception:
+        logger.exception("settle close note failed path=%s", path)
+    finally:
+        if op is not None:
+            op.close_ok = close_ok
+            op.done.set()
+            op.archive_settled.set()
+
+
 def _close_unregistered(
     game: Any,
     path: str = "",
@@ -4642,20 +4781,9 @@ def _close_unregistered(
         logger.exception("private close failed path=%s", norm)
         close_ok = False
     finally:
-        op.close_ok = close_ok
-        if not close_ok and norm:
-            # 失败连接仍活：补登为 holder，禁 unregister opening 后无主。
-            entry = _register_holder(norm, game)
-            if entry is not None:
-                if entry.close_op is None:
-                    entry.close_op = op
-                else:
-                    # 已有 op 则把本次失败记到已有通道
-                    entry.close_op.close_ok = False
-                    op = entry.close_op
-                _note_close_result(entry, False, norm)
-        op.done.set()
-        op.archive_settled.set()
+        _settle_close_result(
+            op=op, close_ok=close_ok, entry=None, game=game, path=norm,
+        )
     return op
 
 
@@ -4697,11 +4825,16 @@ def _archive_move_db_files(old_db_path: str) -> bool:
     """纯文件搬库（#396 / #1732 唯一实现）。成功 True；失败 False 并 log。
 
     不在此做 live/资格判断——资格只由 C7 谓词承担。
+    目录准备/move/WAL/SHM/回滚异常一律捕获留真因，返回 False（不抛穿 C7）。
     """
     if not old_db_path or not os.path.exists(old_db_path):
         return True
     saves_dir = user_data_path("saves")
-    os.makedirs(saves_dir, exist_ok=True)
+    try:
+        os.makedirs(saves_dir, exist_ok=True)
+    except Exception:
+        logger.exception("archive prep makedirs failed dir=%s", saves_dir)
+        return False
     target = os.path.join(saves_dir, f"drained_{time.time_ns()}.db")
     try:
         shutil.move(old_db_path, target)
@@ -4768,33 +4901,25 @@ def _drain_and_close_session(
     #396：菜单生命周期不在 write_gate 被持时直接 session.close()。
     #1353：seal + barrier + 持 write_gate 关连接。
     #1749 r7：不在此写 archive_pending——归档请求只经 AR-req。
-    同步 executor 唯一接缝：note + close_ok + done + archive_settled（与 spawn 同契约）。
+    同步 executor 与 spawn 共用 ``_settle_close_result``（note 异常亦必达 done/AS）。
     失败由 ``_drain_close_body`` 原样上抛（ADR 0005）。
     """
     op = close_op
     if op is None and entry is not None:
         op = entry.close_op
+    path = _path_norm_of_game(game)
     close_ok = False
     try:
         _drain_close_body(game)
         close_ok = True
     finally:
-        if entry is not None:
-            _note_close_result(entry, close_ok)
-        if op is not None:
-            op.close_ok = close_ok
-        if not close_ok and entry is None:
-            # 无 entry 的同步 drain 失败：若有路径则补登保所有权。
-            norm = _path_norm_of_game(game)
-            if norm:
-                registered = _register_holder(norm, game)
-                if registered is not None:
-                    if registered.close_op is None and op is not None:
-                        registered.close_op = op
-                    _note_close_result(registered, False, norm)
-        if op is not None:
-            op.done.set()
-            op.archive_settled.set()
+        _settle_close_result(
+            op=op,
+            close_ok=close_ok,
+            entry=entry,
+            game=game if entry is None else None,
+            path=path,
+        )
 
 
 def _spawn_drain_close(
@@ -4825,38 +4950,22 @@ def _spawn_drain_close(
             logger.exception("drain/close worker failed path=%s", path)
             close_ok = False
         finally:
-            active_entry = entry
-            if active_entry is not None:
-                _note_close_result(active_entry, close_ok, path)
-            elif not close_ok and path:
-                # 私有 close 失败：补登 holder，禁无主活连接。
-                active_entry = _register_holder(path, game)
-                if active_entry is not None:
-                    if active_entry.close_op is None:
-                        active_entry.close_op = op
-                    _note_close_result(active_entry, False, path)
-            op.close_ok = close_ok
-            op.done.set()
-            # AS：当次 executor finally（失败亦空完成）。
-            op.archive_settled.set()
+            _settle_close_result(
+                op=op,
+                close_ok=close_ok,
+                entry=entry,
+                game=game if entry is None else None,
+                path=path,
+            )
 
     try:
         threading.Thread(target=_run, daemon=True).start()
     except Exception:
         logger.exception("spawn drain/close thread failed")
-        op.close_ok = False
-        if entry is not None:
-            _note_close_result(entry, False, path)
-        else:
-            norm = path
-            if norm:
-                registered = _register_holder(norm, game)
-                if registered is not None:
-                    if registered.close_op is None:
-                        registered.close_op = op
-                    _note_close_result(registered, False, norm)
-        op.done.set()
-        op.archive_settled.set()
+        _settle_close_result(
+            op=op, close_ok=False, entry=entry,
+            game=game if entry is None else None, path=path,
+        )
         raise
     return op
 
@@ -4932,19 +5041,22 @@ def _parse_save_name(name: str) -> Dict[str, Any]:
 
 
 def _main_db_campaign_id() -> str:
+    """主库 campaign 身份只读。预期 IO/SQLite 错留真因后空串；未知代码错响亮失败。"""
     db_path = _get_main_db_path()
     if not os.path.isfile(db_path):
         return ""
     try:
-        import sqlite3 as _sqlite3
-
-        conn = _sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path)
         try:
-            row = conn.execute("SELECT value FROM kv_store WHERE key='campaign_id'").fetchone()
+            row = conn.execute(
+                "SELECT value FROM kv_store WHERE key='campaign_id'"
+            ).fetchone()
             return str(row[0]).strip() if row and row[0] else ""
         finally:
             conn.close()
-    except Exception:
+    except (OSError, sqlite3.Error):
+        # ADR 0005：预期读失败必 log，不得静默空身份。
+        logger.exception("main db campaign_id read failed path=%s", db_path)
         return ""
 
 
@@ -5161,18 +5273,17 @@ async def api_menu_new_game() -> Dict[str, Any]:
             # P1 path register（发布前入册）
             candidate_entry = _register_holder(new_db_path, new_game)
             retire = None
+            published = False
             prev_norm = _normalize_db_path(prev_db_path) if prev_db_path else ""
             with _menu_lifecycle_lock:
-                # P2 仅代际+指针
-                if token != _menu_generation:
-                    # P3 取消：只 claim 本 entry
-                    pass  # 锁外清理
-                else:
+                # P2 仅代际+指针——发布决定在锁内落定，禁锁外再读 token 改判。
+                if token == _menu_generation:
                     retire = web_game
                     web_game = new_game
+                    published = True
 
-            if token != _menu_generation:
-                # P3：取消本候选
+            if not published:
+                # P3：取消本候选（未发布）
                 if candidate_entry is not None:
                     role, op = _claim_close(candidate_entry, new_db_path)
                     if role == "executor" and op is not None:
@@ -5191,18 +5302,28 @@ async def api_menu_new_game() -> Dict[str, Any]:
                     status_code=409, detail="新游戏已取消（菜单状态已变更）。",
                 )
 
-            # ★ AR-req：成功发布后对 prev 写 pending（与 close executor 正交）
+            # ★ AR-req：已发布操作仍承担——对 prev 写 pending（与 close executor 正交）
             if prev_norm and not _same_db_path(prev_norm, new_db_path):
                 _path_request_archive(prev_norm)
 
-            # 定点退休 old（不依赖 drain 写 pending）
+            # 定点退休 old（不依赖 drain 写 pending）；已发布后 token 再 bump 不撤销此责
             if retire is not None and retire is not new_game:
                 _point_retire_close(retire)
 
-            return steam_events.with_events(
-                {"state": new_game.state_payload()},
-                [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-            )
+            # 响应：发布后可能被并发 exit 关闭 session，义务已落，payload 失败不撤销 AR/退休。
+            try:
+                return steam_events.with_events(
+                    {"state": new_game.state_payload()},
+                    [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
+                )
+            except Exception:
+                logger.exception(
+                    "new_game state_payload failed after publish path=%s", new_db_path,
+                )
+                return steam_events.with_events(
+                    {"ok": True},
+                    [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
+                )
         finally:
             # N5：release_opening（含 C7-release；new 侧通常无 pending）
             _release_opening(opening_path)
@@ -5343,14 +5464,20 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
             old_game = web_game
             web_game = None
 
+        def _restore_old_if_current_generation() -> None:
+            """失败恢复：仅当本代仍有效且无更新发布时恢复；禁只凭 web_game is None。"""
+            global web_game
+            if old_game is None or not _runtime_restorable(old_game):
+                return
+            with _menu_lifecycle_lock:
+                if token == _menu_generation and web_game is None:
+                    web_game = old_game
+
         try:
             # L2 仅 path
             opening_path = _claim_opening(main_before) if main_before else ""
             if main_before and not opening_path:
-                # 有人持 opening：恢复 old 指针
-                with _menu_lifecycle_lock:
-                    if web_game is None and old_game is not None:
-                        web_game = old_game
+                _restore_old_if_current_generation()
                 raise HTTPException(
                     status_code=409,
                     detail="有菜单操作进行中，请稍后重试。",
@@ -5362,10 +5489,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
                 if op is not None:
                     op.done.wait()
                     if not op.close_ok:
-                        if _runtime_restorable(old_game):
-                            with _menu_lifecycle_lock:
-                                if web_game is None:
-                                    web_game = old_game
+                        _restore_old_if_current_generation()
                         logger.exception(
                             "load_save close failed for previous runtime"
                         )
@@ -5373,10 +5497,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
                             status_code=409, detail="无法关闭当前局，请稍后重试。",
                         )
             if opening_path and not _drain_path_holders(opening_path):
-                if old_game is not None and _runtime_restorable(old_game):
-                    with _menu_lifecycle_lock:
-                        if web_game is None:
-                            web_game = old_game
+                _restore_old_if_current_generation()
                 raise HTTPException(
                     status_code=409,
                     detail="上一局尚未关闭完成，请稍后重试。",
@@ -5384,44 +5505,41 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
 
             # L3t
             if token != _menu_generation:
-                if old_game is not None and _runtime_restorable(old_game):
-                    with _menu_lifecycle_lock:
-                        if web_game is None:
-                            web_game = old_game
+                _restore_old_if_current_generation()
                 raise HTTPException(
                     status_code=409, detail="加载已取消（菜单状态已变更）。",
                 )
 
-            # L4–L5 构造 / 热替换
+            # L4–L5 构造 / 热替换：必须绑定已领取 opening 路径，禁重读可变全局路径。
+            bound_path = opening_path or main_before or ""
             candidate = None
             candidate_entry: Optional[_HolderEntry] = None
             try:
-                candidate = WebGame(fresh=False)
+                candidate = WebGame(fresh=False, db_path=bound_path or None)
                 candidate.load_save(name)
             except LLMUnavailable as exc:
                 if candidate is not None:
                     _close_unregistered(
-                        candidate, getattr(candidate, "db_path", "") or opening_path,
+                        candidate, getattr(candidate, "db_path", "") or bound_path,
                     )
                 raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
             except Exception:
                 if candidate is not None:
                     _close_unregistered(
-                        candidate, getattr(candidate, "db_path", "") or opening_path,
+                        candidate, getattr(candidate, "db_path", "") or bound_path,
                     )
                 raise
 
             cand_path = (
-                getattr(candidate, "db_path", "") or opening_path or main_before or ""
+                getattr(candidate, "db_path", "") or bound_path
             )
             candidate_entry = _register_holder(cand_path, candidate)
+            published = False
             with _menu_lifecycle_lock:
-                if token != _menu_generation:
-                    cancelled = True
-                else:
-                    cancelled = False
+                if token == _menu_generation:
                     web_game = candidate
-            if cancelled:
+                    published = True
+            if not published:
                 if candidate_entry is not None:
                     role, op = _claim_close(candidate_entry, cand_path)
                     if role == "executor" and op is not None:
@@ -5478,10 +5596,8 @@ async def api_menu_exit() -> Dict[str, Any]:
                 old_game = web_game
                 web_game = None
         if old_game is not None:
-            # X2/X3：定点退休，HTTP 不等待。E2_absent → 私有后台 close（不经 holders 扫表）。
-            op = _point_retire_close(old_game)
-            if op is None:
-                _spawn_drain_close(old_game)
+            # X2/X3：定点退休，HTTP 不等待。E2_absent → 零新 drain（已由他方 A4 删除）。
+            _point_retire_close(old_game)
         return {"ok": True}
 
     return await loop.run_in_executor(None, _exit_work)
