@@ -3504,6 +3504,11 @@ class WebGame:
         def worker() -> None:
             nonlocal pending_ticket
             payload: Optional[Dict[str, Any]] = None
+            # #1727：court_break 预领屏障；异常出口也须 complete，禁 has_open_barrier 永真。
+            close_barrier_ticket: Optional[WriteTicket] = None
+            # #1353 r12：payload 已成 ⇒ done 必先于 error（后处理失败回话已可见）。
+            # #1727 把尾随 spawn/屏障领票挪到 done 前，spawn 抛错时须由出口补 done。
+            reply_done_emitted = False
             try:
                 try:
                     # P5：唯一不依赖回话输出的独立调用 = CLI 动作意图分类（只读皇帝消息）。
@@ -3529,10 +3534,9 @@ class WebGame:
                         explicit_secret_order=explicit_secret_order,
                     )
 
-                    # P5：先 done（回话可见），再读心∥高亮∥抽取补挂，最后 end——玩家无「为后处理黑屏」。
-                    ev_queue.put({"type": "done", "payload": payload or {}})
                     answer = str((payload or {}).get("answer") or "")
                     message_id = int((payload or {}).get("minister_message_id") or 0)
+                    court_action = str((payload or {}).get("court_action") or "")
                     # #1353：三腿统一经 _spawn_pending_write_thread（claim→try callee→finally 归还）；
                     # seal/claim 拒绝 → 不起线程、零 LLM 零写。整轮票在 spawn 后空放行。
                     turn_key = ("turn", int(chat_turn_id)) if chat_turn_id else None
@@ -3541,6 +3545,8 @@ class WebGame:
                     mind_thread: Optional[threading.Thread] = None
                     highlight_box: List[str] = []
                     mind_box: List[Optional[Dict[str, Any]]] = []
+                    # #1727：court_break 预领屏障票——须在尾随领票之后、done 之前，
+                    # 使 has_open_barrier 对玩家写入口立刻可见；尾随 seq 更低仍可写。
 
                     if chat_turn_id and answer:
                         extraction_thread = self._spawn_extraction_trail(
@@ -3598,6 +3604,18 @@ class WebGame:
                         self._complete_pending_write(pending_ticket)
                         pending_ticket = None
 
+                    if court_action == "court_break":
+                        # 无尾随时也须放行整轮票，再领屏障（禁自等待）。
+                        if pending_ticket is not None:
+                            self._complete_pending_write(pending_ticket)
+                            pending_ticket = None
+                        close_barrier_ticket = self._runtime_write_queue().claim_barrier()
+
+                    # P5：先 done（回话可见），再 join 尾随 / 收夜 / end——玩家无「为后处理黑屏」。
+                    # #1727：court_break 时 done 前已领屏障，召对写入口不再全活。
+                    ev_queue.put({"type": "done", "payload": payload or {}})
+                    reply_done_emitted = True
+
                     if mind_thread is not None:
                         mind_thread.join()
                     mind_payload = mind_box[0] if mind_box else None
@@ -3622,11 +3640,15 @@ class WebGame:
 
                     # #526/#1353：尾随票已清后收夜。整轮票已 complete 时 ticketed gate 会
                     # TicketCancelled——收夜短写改走裸 runtime write_gate（腿已终态，无越屏障窗）。
+                    # #1727：预领屏障票交给 close 复用（barrier），禁再领第二张。
                     close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
                     if close_after is not None:
+                        # barrier_ticket 由 close.barrier / 早退 complete；
+                        # worker finally 再幂等 complete 一次兜底。
                         close_after(
-                            (payload or {}).get("court_action") or "",
+                            court_action,
                             write_gate=bare_write_gate,
+                            barrier_ticket=close_barrier_ticket,
                         )
 
                     ev_queue.put({"type": "end"})
@@ -3634,9 +3656,13 @@ class WebGame:
                     # #1353 r12/r13：worker 单一异常出口——payload / 后处理 / 收夜任一失败
                     # 皆 error→end；禁逐点补丁，禁只走 finally 致消费者永阻。
                     # payload 未成（回话失败）才 fail 本轮；后处理失败回话已可见。
+                    # #1727：done 前尾随/屏障步失败时，此处补 done，保「回话已可见」再 error。
                     # ADR 0005 / #1408：清理二次失败 logger.exception 记 traceback 不宽吞；
                     # abandon / 终态写分 try；清理异常不覆盖原始 error、不阻断 error→end。
                     # Scene drain stays outside write_gate (C9/T1/T10).
+                    if payload is not None and not reply_done_emitted:
+                        ev_queue.put({"type": "done", "payload": payload or {}})
+                        reply_done_emitted = True
                     if payload is None:
                         try:
                             if chat_turn_id:
@@ -3668,6 +3694,9 @@ class WebGame:
                         })
                     ev_queue.put({"type": "end"})
             finally:
+                if close_barrier_ticket is not None:
+                    self._runtime_write_queue().complete(close_barrier_ticket)
+                    close_barrier_ticket = None
                 self._complete_pending_write(pending_ticket)
 
         thread = threading.Thread(target=worker, daemon=True)
@@ -3910,6 +3939,21 @@ def _refuse_settling_or_busy_write_phase(game) -> None:
         if phase == TurnPhase.AWAITING_DECISION.value:
             raise HTTPException(status_code=409, detail="等待批红，请待批红完成后再操作。")
         raise HTTPException(status_code=409, detail="月末结算进行中，请待结算完成后再操作。")
+
+
+def _refuse_if_open_night_barrier(game) -> None:
+    """#1727：court_break 预领屏障开启期间拒玩家召对写入口。
+
+    复用 #1353 has_open_barrier 唯一真源；只挂在召对写入口，不改
+    `_serialized_web_write` 本体（favorites 等非召对写不属本拒）。
+    """
+    if not hasattr(game, "_runtime_write_queue"):
+        return
+    if game._runtime_write_queue().has_open_barrier():
+        raise HTTPException(
+            status_code=409,
+            detail="本夜收夜中，暂不能召对。",
+        )
 
 
 def _try_acquire_serialized_web_write_gate(game):
@@ -4971,6 +5015,8 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
     先原子条件 DELETE(以删成功为真源,免 check-then-act 竞态,pr-loop sourcery),
     失败再查行分流 404/409。"""
     game = get_game()
+    # #1727：收夜屏障窗内拒撤回 pending（与 undo/secret_order 同族召对写入口）。
+    _refuse_if_open_night_barrier(game)
     with _serialized_web_write(game):
         if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
             return {"withdrawn": action_id, "actions": _player_visible_pending_actions(
@@ -4987,6 +5033,8 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
 async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
     """重试本回合失败的密令下达，用已存 pending_actions payload 重新落库。"""
     game = get_game()
+    # #1727：收夜屏障窗内拒 retry pending（与 withdraw/undo 同族）。
+    _refuse_if_open_night_barrier(game)
     minister_name = ""
     with _serialized_web_write(game):
         try:
@@ -5216,6 +5264,9 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     if "deadline_months" in provided_fields and request.deadline_months is not None:
         lines.append(f"期限：{int(request.deadline_months)}月")
 
+    # #1727：端点侧补屏障拒——持闸兼容路 gate_already_held 会跳过 _chat_core 内检查。
+    _refuse_if_open_night_barrier(game)
+
     def _create_with_gate() -> Dict[str, Any]:
         with _serialized_web_write(game):
             return game._chat_with_write_gate_held(minister_name, "\n".join(lines))
@@ -5246,6 +5297,8 @@ async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
     # pre_settle 原子窗口，且 undo_chat_turn 直写共享连接 → 与其它写端点一致走 _write_gate
     # （cmr Gate2 r3 Finding1）。门内若相位门拒，HTTPException 经 finally 释放锁后正常上抛。
     game = get_game()
+    # #1727：收夜屏障窗内拒撤回本轮——禁 cancel_key 抽空屏障 wait_prior 所等尾随票。
+    _refuse_if_open_night_barrier(game)
     with _serialized_web_write(game):
         return game.undo_last_chat(minister_name)
 

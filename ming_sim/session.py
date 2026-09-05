@@ -1358,6 +1358,7 @@ class GameSession:
         court_action: str,
         *,
         write_gate: Any = None,
+        barrier_ticket: Any = None,
     ) -> None:
         """#526：回话落库后由 Web/CLI epilogue 触发高置信收夜（收夜=封窗=提交）。
 
@@ -1367,36 +1368,48 @@ class GameSession:
 
         #1353：经 session 队列屏障入队——须等已领尾随票清零后再 close（调用方不得
         在仍持本线程票据时调用，否则自等待死锁）。
+
+        barrier_ticket：#1727 可选预领屏障票（done 前 claim_barrier，使 has_open_barrier
+        对玩家写入口立刻可见）。传入则复用该票 wait→close→complete，不再另领。
         """
-        if str(court_action or "") != "court_break":
-            return
-        from ming_sim.audience_night import close_night, get_open_night
         from ming_sim.session_write_queue import get_session_write_queue
 
-        gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
-        # #1353 r7：入口探测开夜短持 gate（共享 conn 读；无 gate 时 CLI 单写者）。
-        if gate is not None:
-            with gate:
+        q = get_session_write_queue(self)
+        try:
+            if str(court_action or "") != "court_break":
+                return
+            from ming_sim.audience_night import close_night, get_open_night
+
+            gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
+            # #1353 r7：入口探测开夜短持 gate（共享 conn 读；无 gate 时 CLI 单写者）。
+            if gate is not None:
+                with gate:
+                    open_n = get_open_night(self.db)
+            else:
                 open_n = get_open_night(self.db)
-        else:
-            open_n = get_open_night(self.db)
-        if open_n is None:
-            return
+            if open_n is None:
+                return
 
-        def _do_close() -> None:
-            close_night(
-                self.db, self.state,
-                content=getattr(self, "content", None),
-                registry=getattr(self, "registry", None),
-                wait_timeout_s=0.0,
-                beat_generator=getattr(self, "_beat_generator", None),
-                llm_config=getattr(self, "llm_config", None),
-                write_gate=gate,
-                scene_registry=getattr(self, "_scene_registry", None),
-            )
+            def _do_close() -> None:
+                close_night(
+                    self.db, self.state,
+                    content=getattr(self, "content", None),
+                    registry=getattr(self, "registry", None),
+                    wait_timeout_s=0.0,
+                    beat_generator=getattr(self, "_beat_generator", None),
+                    llm_config=getattr(self, "llm_config", None),
+                    write_gate=gate,
+                    scene_registry=getattr(self, "_scene_registry", None),
+                )
 
-        # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
-        get_session_write_queue(self).barrier(_do_close)
+            # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
+            # #1727：预领票复用 barrier，禁再领第二张 barrier。
+            q.barrier(_do_close, ticket=barrier_ticket)
+            barrier_ticket = None  # barrier 已 complete
+        finally:
+            # 早退/异常：预领票仍须归还，避免 has_open_barrier 永真（complete 幂等）。
+            if barrier_ticket is not None:
+                q.complete(barrier_ticket)
 
     def _confirmation_intent_for_preexisting_pending(
         self,
