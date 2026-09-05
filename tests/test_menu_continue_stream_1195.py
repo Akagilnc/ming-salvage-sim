@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -112,83 +113,87 @@ def test_menu_continue_404_when_no_main_db(monkeypatch):
 
 
 def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
-    """#1195：continue 在飞时 exit_to_menu 先落定 → stale worker 不得覆盖 web_game，白建局 drain-close。"""
+    """#1195/#1749：continue bump 后、worker 构造前 exit 已 bump → 对号失败，不构造不发布。
+
+    门控 continue 的 worker Thread.start，使 exit 先 bump 世代再放行 worker。
+    """
     import asyncio
     import threading
-    import time
 
-    started = threading.Event()
-    release = threading.Event()
-    closed: list[str] = []
+    entered_ctor = threading.Event()
     results: dict = {}
+    worker_ready = threading.Event()
+    allow_worker = threading.Event()
+    OrigThread = web_app.threading.Thread
+    state = {"armed": False, "gated": 0}
 
-    class SlowWebGame:
+    class TrackingWebGame:
         def __init__(self, fresh: bool = False, on_stage=None) -> None:
             assert fresh is False
-            # 首条 stage 已由 worker 在构造前入队；此处阻塞以模拟构造重活。
-            started.set()
-            assert release.wait(timeout=5.0), "test release timed out"
+            entered_ctor.set()
             self._state = {"from": "stale-continue"}
             self._write_gate = threading.Lock()
-            self.session = SimpleNamespace(close=lambda: closed.append("stale"))
+            self.session = SimpleNamespace(close=lambda: None)
 
         def state_payload(self) -> dict:
             return self._state
 
+    class _GateThread(OrigThread):
+        def start(self):
+            if state["armed"] and self.daemon and state["gated"] == 0:
+                state["gated"] = 1
+                worker_ready.set()
+                assert allow_worker.wait(timeout=5.0), "allow_worker timeout"
+            return OrigThread.start(self)
+
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
-    monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
+    monkeypatch.setattr(web_app, "WebGame", TrackingWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
+    monkeypatch.setattr(web_app.threading, "Thread", _GateThread)
 
     def run_continue() -> None:
+        state["armed"] = True
         response = TestClient(web_app.app).post("/api/menu/continue")
         results["status"] = response.status_code
         results["events"] = _parse_sse(response.text)
 
     thread = threading.Thread(target=run_continue, daemon=True)
     thread.start()
-    assert started.wait(timeout=5.0), "continue worker did not enter WebGame ctor"
+    assert worker_ready.wait(timeout=5.0), "continue worker start not gated"
 
-    # exit 先落定：bump 世代 + web_game=None
     exit_result = asyncio.run(web_app.api_menu_exit())
     assert exit_result == {"ok": True}
     assert web_app.web_game is None
+    allow_worker.set()
 
-    release.set()
     thread.join(timeout=5.0)
     assert not thread.is_alive(), "continue stream thread hung"
-
     assert results.get("status") == 200
     events = results["events"]
-    assert events, "应有 SSE 事件"
-    assert events[-1][0] == "error"
-    assert web_app.web_game is None, "stale continue must not publish over exit"
-    # 白建 game 被 _drain_and_close_session 收掉
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline and closed != ["stale"]:
-        time.sleep(0.01)
-    assert closed == ["stale"]
+    assert events and events[-1][0] == "error"
+    assert web_app.web_game is None
+    assert not entered_ctor.is_set(), "superseded continue must not construct WebGame"
 
 
 def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_path):
-    """#1195：continue 在飞时 new_game 先落定 → stale worker 不得覆盖新局 web_game。"""
+    """#1195/#1749：continue bump 后、worker 构造前 new_game 已发布 → 对号失败不覆盖。"""
     import asyncio
     import threading
-    import time
 
-    started = threading.Event()
-    release = threading.Event()
-    closed: list[str] = []
+    entered_ctor = threading.Event()
     results: dict = {}
+    worker_ready = threading.Event()
+    allow_worker = threading.Event()
+    OrigThread = web_app.threading.Thread
+    state = {"armed": False, "gated": 0}
 
-    class SlowWebGame:
+    class TrackingWebGame:
         def __init__(self, fresh: bool = False, on_stage=None) -> None:
             assert fresh is False
-            # 首条 stage 已由 worker 在构造前入队；此处阻塞以模拟构造重活。
-            started.set()
-            assert release.wait(timeout=5.0), "test release timed out"
+            entered_ctor.set()
             self._state = {"from": "stale-continue"}
             self._write_gate = threading.Lock()
-            self.session = SimpleNamespace(close=lambda: closed.append("stale"))
+            self.session = SimpleNamespace(close=lambda: None)
 
         def state_payload(self) -> dict:
             return self._state
@@ -201,40 +206,42 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
         def state_payload(self) -> dict:
             return self._state
 
+    class _GateThread(OrigThread):
+        def start(self):
+            if state["armed"] and self.daemon and state["gated"] == 0:
+                state["gated"] = 1
+                worker_ready.set()
+                assert allow_worker.wait(timeout=5.0), "allow_worker timeout"
+            return OrigThread.start(self)
+
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
-    monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
+    monkeypatch.setattr(web_app, "WebGame", TrackingWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
     monkeypatch.delenv("MING_SIM_DB", raising=False)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
+    monkeypatch.setattr(web_app.threading, "Thread", _GateThread)
 
     def run_continue() -> None:
+        state["armed"] = True
         response = TestClient(web_app.app).post("/api/menu/continue")
         results["status"] = response.status_code
         results["events"] = _parse_sse(response.text)
 
     thread = threading.Thread(target=run_continue, daemon=True)
     thread.start()
-    assert started.wait(timeout=5.0), "continue worker did not enter WebGame ctor"
+    assert worker_ready.wait(timeout=5.0), "continue worker start not gated"
 
-    # new_game 在 continue 构造中途落定——换掉 WebGame 工厂供 fresh 构造
     monkeypatch.setattr(web_app, "WebGame", FreshWebGame)
     new_result = asyncio.run(web_app.api_menu_new_game())
     assert new_result["state"]["from"] == "new-game"
     settled = web_app.web_game
-    assert settled is not None
-    assert settled.state_payload()["from"] == "new-game"
+    assert settled is not None and settled.state_payload()["from"] == "new-game"
+    allow_worker.set()
 
-    release.set()
     thread.join(timeout=5.0)
-    assert not thread.is_alive(), "continue stream thread hung"
-
+    assert not thread.is_alive()
     assert results.get("status") == 200
-    events = results["events"]
-    assert events[-1][0] == "error"
-    assert web_app.web_game is settled, "stale continue must not overwrite new_game"
-    assert web_app.web_game.state_payload()["from"] == "new-game"
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline and closed != ["stale"]:
-        time.sleep(0.01)
-    assert closed == ["stale"]
+    assert results["events"][-1][0] == "error"
+    assert web_app.web_game is settled
+    assert not entered_ctor.is_set(), "superseded continue must not construct"
