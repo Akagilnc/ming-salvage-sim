@@ -313,7 +313,7 @@ def test_relation_and_faction_items_share_single_batch_in_parallel(game):
     _add_edge(db, state, source="毕自严", target="王绍徽", kind="站台",
               context="毕自严当面替王绍徽担名。", origin="audience:turn-1")
     # 同批 3 条工作项（1 关系＋2 派系）必须并行进入调用缝。
-    barrier = threading.Barrier(3, timeout=10)
+    barrier = threading.Barrier(3)
     threads: list = []
 
     def parallel_brew(payload_json: str) -> str:

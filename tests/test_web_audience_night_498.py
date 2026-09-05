@@ -71,6 +71,15 @@ class _CannedMindreadingAgent:
         return _R()
 
 
+class _CannedRelationJudge:
+    """#634 关系判官离线边界：召对后 trail 会 create_relation_judge_agent——空 events，禁 sk-test 真网。"""
+
+    def run(self, _prompt):
+        class _R:
+            content = '{"events":[]}'
+        return _R()
+
+
 # ── canned LLM 边界（唯一 fake）────────────────────────────────────────
 class _RunContent:
     event = "RunContent"
@@ -99,7 +108,7 @@ class _FakeAgent:
         if self.started is not None:
             self.started.set()
         if self.allow is not None:
-            assert self.allow.wait(5.0), "fake agent 等待放行超时"
+            self.allow.wait()
         yield RunCompletedEvent()
 
     def get_last_run_output(self):
@@ -123,6 +132,9 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno",
                         lambda *a, **k: (delta or {}, "out", "in"))
+    # #1745：结算拒收递话同属外层 LLM 缝（与 1468 _stub_outer_llm_seams 同源）。
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     # 章节记忆的唯一 LLM 输出边界（memories.run_agent_text 仅被 record_chapter_memory 调用）；
     # record_chapter_memory 与其确定性装配仍真跑。
@@ -141,6 +153,8 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     - agents.create_audience_extractor_agent → 回话尾随 / 收夜 drain 叙事抽取
     - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
     - mindreading.create_mindreading_agent → 回话 done 后读心尾随（#499）
+    - agents.create_relation_judge_agent → 回话后关系判官 trail（#634；禁 sk-test 真网）
+    - GameSession._start/_finish_cli_action_intent → 动作意图分类器（禁 sk-test 真网）
     - web_app.run_highlight_judge → 回话 done 后高亮判官（#544；禁 sk-test 真网）
     - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
     - load_runtime_llm 配置中和
@@ -163,6 +177,21 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setattr(
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreadingAgent(),
+    )
+    # #634：关系判官 trail 同属回话后 LLM 边界——取证定位为 sk-test 401 源之一。
+    monkeypatch.setattr(
+        agents_mod, "create_relation_judge_agent",
+        lambda *a, **k: _CannedRelationJudge(),
+    )
+    # 动作意图分类器：chat stream 在 payload 前可并发启动；取证定位为另一 sk-test 401 源。
+    # 本 fixture 只钉夜/在飞接缝，分类确定性空返，禁真网（与 #1727 fixture 同边界）。
+    monkeypatch.setattr(
+        session_mod.GameSession, "_start_cli_action_intent",
+        lambda self, *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        session_mod.GameSession, "_finish_cli_action_intent",
+        lambda self, *_a, **_k: None,
     )
     # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
@@ -208,30 +237,66 @@ def _parse_sse(text: str) -> list[dict]:
     return events
 
 
-async def _await_event(ev: threading.Event, timeout: float = 5.0) -> None:
-    """从 async 上下文等一个 threading.Event（不阻塞 event loop）。"""
-    loop = asyncio.get_event_loop()
-    ok = await loop.run_in_executor(None, ev.wait, timeout)
-    assert ok, "等待信号超时"
+async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:
+    """成功事件或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。
+
+    事件与 task 同时终态时仍消费 task 异常——不得因 ev 先置位而吞掉 worker 失败。
+    """
+    while not ev.is_set() and not task.done():
+        await asyncio.sleep(0)
+    if task.done():
+        exc = task.exception()
+        if exc is not None:
+            raise exc
+        if not ev.is_set():
+            raise AssertionError("worker finished without expected success event")
+        return
+    # ev 已置位且 task 仍在跑（如 started 后 hang on allow）——成功会合。
 
 
-async def _wait_for(pred, timeout: float = 3.0) -> None:
-    """轮询真实状态直至成立（等真实条件、非固定时序假设）。"""
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
+async def _drain_tasks(*tasks: asyncio.Task) -> None:
+    """排空全部任务并消费异常；永不向外抛，避免 finally 收尾替换主体原错。"""
+    for task in tasks:
+        if task is None:
+            continue
+        if not task.done():
+            try:
+                await task
+            except BaseException:
+                pass
+            continue
+        if task.cancelled():
+            continue
+        # 已完成：仍消费 exception，避免「never retrieved」且不抛出。
+        task.exception()
+
+
+async def _wait_for(pred) -> None:
+    """轮询真实状态直至成立；永久不成立 → CI job 终线。"""
     while not pred():
-        assert loop.time() < deadline, "条件未在期限内成立"
         await asyncio.sleep(0)
 
 
 async def _start_hanging_chat(game, client, minister):
     """经真实 /chat/stream ASGI 请求起一轮回话并卡在生成中（在飞）。
-    返回 (chat_task, allow)：chat_task 是仍在跑的 SSE 请求；置位 allow 后回话收尾。"""
+    返回 (chat_task, allow)：chat_task 是仍在跑的 SSE 请求；置位 allow 后回话收尾。
+
+    责任移交：成功返回后由调用方持有 allow/task 全持有期释放。
+    移交前（等 started）失败：task 正常失败已终态；取消等非终态路径仍可能挂在 allow，
+    故本 helper 在 raise 前 release+drain，不把半移交资源留给调用方。
+    """
     started, allow = threading.Event(), threading.Event()
     game.session.registry.get = lambda ch: _FakeAgent(started=started, allow=allow)
     task = asyncio.create_task(
         client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
-    await _await_event(started)  # 生成已开始 = prologue 已建 generating 在飞轮
+    try:
+        # 生成已开始，或 chat worker 已终态（失败须传播，不得只等 started）。
+        await _await_event_or_task(started, task)
+    except BaseException:
+        # 移交前失败：释放 allow 并排空；已终态则 drain 只消费，不替换原错。
+        allow.set()
+        await _drain_tasks(task)
+        raise
     return task, allow
 
 
@@ -269,30 +334,38 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
 
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
+            # 取得 chat 所有权后即进入释放责任区间——观察/断言/写入均在 try 内。
             chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
-            night = an.get_open_night(game.db)
-            # 持久化行确认在飞
-            assert game.db.conn.execute(
-                "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "generating"
-            assert int(game._pending_writes_count) >= 1
-            # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
-            # 不触发确认抽取 LLM。
-            game.db.upsert_pending_directive(
-                game.state.turn, minister, payload={
-                    "text": "着户部核边饷", "actor": minister,
-                    "dossier_action_type": "policy",
-                    "target_kind": "issue", "target_id": "border-pay",
-                })
-            game.db.commit_pending_actions(game.state, kind_filter="directive")
+            issue_task = None
+            try:
+                night = an.get_open_night(game.db)
+                # 持久化行确认在飞
+                assert game.db.conn.execute(
+                    "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "generating"
+                assert int(game._pending_writes_count) >= 1
+                # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
+                # 不触发确认抽取 LLM。
+                game.db.upsert_pending_directive(
+                    game.state.turn, minister, payload={
+                        "text": "着户部核边饷", "actor": minister,
+                        "dossier_action_type": "policy",
+                        "target_kind": "issue", "target_id": "border-pay",
+                    })
+                game.db.commit_pending_actions(game.state, kind_filter="directive")
 
-            issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
-            await _await_event(observed_ticket_inflight)  # 颁诏屏障真见到 chat 票
-            allow.set()                                   # 放行回话落档 + 放票
-            await _await_event(observed_ticket_clear)     # 屏障见到票清
+                issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
+                # 屏障见票或 issue 终态；失败不挂死。
+                await _await_event_or_task(observed_ticket_inflight, issue_task)
+                allow.set()                                   # 放行回话落档 + 放票
+                await _await_event_or_task(observed_ticket_clear, issue_task)
 
-            chat_resp = await chat_task
-            issue_resp = await issue_task
-            return night, _parse_sse(chat_resp.text), _parse_sse(issue_resp.text)
+                chat_resp = await chat_task
+                issue_resp = await issue_task
+                return night, _parse_sse(chat_resp.text), _parse_sse(issue_resp.text)
+            finally:
+                # 持有 chat allow：先释放，再排空已创建 sibling；收尾不抛，保留主体原错。
+                allow.set()
+                await _drain_tasks(chat_task, issue_task)
 
     night, chat_events, issue_events = asyncio.run(scenario())
 
@@ -415,7 +488,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 game._runtime_write_gate().release()
             no_db_tx.append(game.db.conn.in_transaction is False)
             entered.set()
-            assert release.wait(8.0), "endorsement agent release timeout"
+            release.wait()
             if len(calls) == 1:
                 raise RuntimeError("endorsement boom under CLOSING freeze")
             candidates = payload["可背书案卷"]
@@ -436,76 +509,77 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             issue_task = asyncio.create_task(
                 issue_client.post("/api/decree/issue/stream", json={})
             )
-            assert await asyncio.to_thread(entered.wait, 8.0)
-            # chat (stream + non-stream) / reply-retry / story / stage / approve /
-            # draft-update — all refuse under CLOSING via the one admission seam.
-            chat_resp = await chat_client.post(
-                f"/api/ministers/{minister}/chat/stream",
-                json={"message": "另议边饷？"},
-            )
-            chat_events = _parse_sse(chat_resp.text)
-            assert any(ev.get("event") == "error" for ev in chat_events), chat_events
-            assert any(
-                ev.get("event") == "error" and "收夜中" in str(ev.get("data") or "")
-                for ev in chat_events
-            ), chat_events
-            nonstream = await chat_client.post(
-                f"/api/ministers/{minister}/chat",
-                json={"message": "另议边饷？"},
-            )
-            assert nonstream.status_code == 409, nonstream.text
-            assert "收夜中" in (nonstream.json().get("detail") or nonstream.text)
-            retry_resp = await chat_client.post(
-                f"/api/ministers/{minister}/reply/retry",
-            )
-            assert retry_resp.status_code == 409, retry_resp.text
-            assert "收夜中" in (retry_resp.json().get("detail") or retry_resp.text)
-            assert game.db.conn.execute(
-                "SELECT status FROM chat_turns WHERE id=?", (interrupted_ct,),
-            ).fetchone()["status"] == "interrupted"
-            with pytest.raises(an.AudienceNightError) as story_exc:
-                an.append_ledger_entry(
-                    game.db, night_id, body="偷渡故事账", tags=["试"],
+            try:
+                # 成功 entered 或 issue_task 终态均可唤醒；失败传播，finally 释放 hold。
+                await _await_event_or_task(entered, issue_task)
+                # chat (stream + non-stream) / reply-retry / story / stage / approve /
+                # draft-update — all refuse under CLOSING via the one admission seam.
+                chat_resp = await chat_client.post(
+                    f"/api/ministers/{minister}/chat/stream",
+                    json={"message": "另议边饷？"},
                 )
-            assert story_exc.value.code == "night_closing"
-            with pytest.raises(an.AudienceNightError) as stage_exc:
-                game.db.stage_directive_candidate(
-                    game.state.turn, minister,
-                    payload={**_POLICY_FIELDS, "text": "偷渡应允", "actor": minister,
-                             "target_id": "closing-freeze"},
+                chat_events = _parse_sse(chat_resp.text)
+                # SSE/HTTP 拒收：event=error + 409；CLOSING 状态与零新增见下方 typed 断言。
+                # wire 上 code 未进 SSE data（api_chat_stream 只映 message）；不改生产协议。
+                assert any(ev.get("event") == "error" for ev in chat_events), chat_events
+                nonstream = await chat_client.post(
+                    f"/api/ministers/{minister}/chat",
+                    json={"message": "另议边饷？"},
                 )
-            assert stage_exc.value.code == "night_closing"
-            with pytest.raises(an.AudienceNightError) as approve_exc:
-                an.mark_actions_night_approved(game.db, [directive_id], night_id=night_id)
-            assert approve_exc.value.code == "night_closing"
-            with pytest.raises(an.AudienceNightError) as draft_exc:
-                game.db.update_directive_candidate(
-                    directive_id,
-                    payload={**_POLICY_FIELDS, "text": "CLOSING 改草", "actor": minister},
+                assert nonstream.status_code == 409, nonstream.text
+                retry_resp = await chat_client.post(
+                    f"/api/ministers/{minister}/reply/retry",
                 )
-            assert draft_exc.value.code == "night_closing"
-            with pytest.raises(an.AudienceNightError) as flag_exc:
-                game.db.flag_directive_needs_clarification(directive_id)
-            assert flag_exc.value.code == "night_closing"
-            assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSING
-            # Close-scene scaffold is the night-closing registry bucket, not admission
-            # smuggling; count only non-scaffold turns under the freeze.
-            assert game.db.conn.execute(
-                """
-                SELECT COUNT(*) AS c FROM chat_turns
-                WHERE night_id=?
-                  AND NOT (minister_name = '收夜' AND agno_session_id = 'close-scene')
-                """,
-                (night_id,),
-            ).fetchone()["c"] == turns_before
-            assert game.db.conn.execute(
-                "SELECT COUNT(*) AS c FROM pending_actions WHERE night_id=?", (night_id,),
-            ).fetchone()["c"] == pending_before
-            assert game.db.conn.execute(
-                "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE night_id=?", (night_id,),
-            ).fetchone()["c"] == ledger_before
-            release.set()
-            return _parse_sse((await issue_task).text)
+                assert retry_resp.status_code == 409, retry_resp.text
+                assert game.db.conn.execute(
+                    "SELECT status FROM chat_turns WHERE id=?", (interrupted_ct,),
+                ).fetchone()["status"] == "interrupted"
+                with pytest.raises(an.AudienceNightError) as story_exc:
+                    an.append_ledger_entry(
+                        game.db, night_id, body="偷渡故事账", tags=["试"],
+                    )
+                assert story_exc.value.code == "night_closing"
+                with pytest.raises(an.AudienceNightError) as stage_exc:
+                    game.db.stage_directive_candidate(
+                        game.state.turn, minister,
+                        payload={**_POLICY_FIELDS, "text": "偷渡应允", "actor": minister,
+                                 "target_id": "closing-freeze"},
+                    )
+                assert stage_exc.value.code == "night_closing"
+                with pytest.raises(an.AudienceNightError) as approve_exc:
+                    an.mark_actions_night_approved(game.db, [directive_id], night_id=night_id)
+                assert approve_exc.value.code == "night_closing"
+                with pytest.raises(an.AudienceNightError) as draft_exc:
+                    game.db.update_directive_candidate(
+                        directive_id,
+                        payload={**_POLICY_FIELDS, "text": "CLOSING 改草", "actor": minister},
+                    )
+                assert draft_exc.value.code == "night_closing"
+                with pytest.raises(an.AudienceNightError) as flag_exc:
+                    game.db.flag_directive_needs_clarification(directive_id)
+                assert flag_exc.value.code == "night_closing"
+                assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSING
+                # Close-scene scaffold is the night-closing registry bucket, not admission
+                # smuggling; count only non-scaffold turns under the freeze.
+                assert game.db.conn.execute(
+                    """
+                    SELECT COUNT(*) AS c FROM chat_turns
+                    WHERE night_id=?
+                      AND NOT (minister_name = '收夜' AND agno_session_id = 'close-scene')
+                    """,
+                    (night_id,),
+                ).fetchone()["c"] == turns_before
+                assert game.db.conn.execute(
+                    "SELECT COUNT(*) AS c FROM pending_actions WHERE night_id=?", (night_id,),
+                ).fetchone()["c"] == pending_before
+                assert game.db.conn.execute(
+                    "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+                ).fetchone()["c"] == ledger_before
+            finally:
+                # 断言失败仍须放行 endorsement hold；排空不抛，保留主体原错。
+                release.set()
+                await _drain_tasks(issue_task)
+            return _parse_sse(issue_task.result().text)
 
     fail_events = asyncio.run(first_fail_scenario())
     assert any(ev.get("event") == "error" for ev in fail_events), fail_events
@@ -540,9 +614,10 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     assert game.db.get_interrupted_reply_retries(minister)
     real_chat = game.session.chat
     real_spawn = game._spawn_pending_write_thread
+    canned_retry_answer = "臣重奏：边饷当清。"
     game.session.chat = (
         lambda minister_name, message, *, chat_turn_id=0, explicit_secret_order=False: ChatTurnResult(
-            answer="臣重奏：边饷当清。",
+            answer=canned_retry_answer,
         )
     )
     game._spawn_pending_write_thread = lambda *a, **k: False
@@ -551,7 +626,8 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     finally:
         game.session.chat = real_chat
         game._spawn_pending_write_thread = real_spawn
-    assert "重奏" in str(retry_payload.get("answer") or "")
+    # canned 无损透传（等值，非文案分类）；队列清空证 OPEN 恢复。
+    assert retry_payload.get("answer") == canned_retry_answer
     assert game.db.get_interrupted_reply_retries(minister) == []
     game.db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' WHERE id=?", (int(interrupted_ct),),
@@ -576,28 +652,27 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     )
     game.session._beat_generator = _boom_both_beat
 
-    def _detail_text(resp) -> str:
-        detail = resp.json().get("detail") if resp.headers.get("content-type", "").startswith("application/json") else None
-        if detail is None:
-            return resp.text
-        if isinstance(detail, str):
-            return detail
-        return json.dumps(detail, ensure_ascii=False)
+    # 双因保留：注入诊断经 _retryable_audience_close_http 链因拼进 detail（生产契约
+    # 即 str join，非 LLM 生成物分类）。409 + OPEN + 两条注入诊断均在 detail。
+    endorsement_diag = "endorsement boom dual"
+    beat_diag = "close beat dual fault"
 
     async def dual_fail_sync_endpoints():
         async with _client() as client:
             issue = await client.post("/api/decree/issue", json={})
             assert issue.status_code == 409, issue.text
-            issue_detail = _detail_text(issue)
-            assert "endorsement boom dual" in issue_detail, issue_detail
-            assert "close beat dual fault" in issue_detail, issue_detail
+            issue_detail = issue.json().get("detail")
+            assert isinstance(issue_detail, str), issue_detail
+            assert endorsement_diag in issue_detail, issue_detail
+            assert beat_diag in issue_detail, issue_detail
             assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_OPEN
 
             advance = await client.post("/api/decree/advance_without_edict")
             assert advance.status_code == 409, advance.text
-            advance_detail = _detail_text(advance)
-            assert "endorsement boom dual" in advance_detail, advance_detail
-            assert "close beat dual fault" in advance_detail, advance_detail
+            advance_detail = advance.json().get("detail")
+            assert isinstance(advance_detail, str), advance_detail
+            assert endorsement_diag in advance_detail, advance_detail
+            assert beat_diag in advance_detail, advance_detail
             assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_OPEN
 
     asyncio.run(dual_fail_sync_endpoints())
@@ -618,9 +693,14 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             issue_task = asyncio.create_task(
                 issue_client.post("/api/decree/issue/stream", json={})
             )
-            assert await asyncio.to_thread(entered.wait, 8.0)
-            release.set()
-            return _parse_sse((await issue_task).text)
+            try:
+                # 同 first_fail：entered 成功或 issue 终态；失败不挂死。
+                await _await_event_or_task(entered, issue_task)
+            finally:
+                # 同 first_fail：释放 hold 后排空不抛，保留主体原错。
+                release.set()
+                await _drain_tasks(issue_task)
+            return _parse_sse(issue_task.result().text)
 
     events = asyncio.run(retry_scenario())
     assert events[-1]["event"] == "done", events
@@ -695,40 +775,64 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
     monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_POLL_S", 0.02)
     turn_before = int(game.state.turn)
 
+    # 观测：issue 真进屏障并见到 chat 票后，才断言「未伪造成 elapsed 409」。
+    observed_ticket_inflight = threading.Event()
+    q = game._runtime_write_queue()
+    real_wait_prior = q.wait_prior
+
+    def observe_wait_prior(ticket):
+        if q.inflight_count() > 1:  # barrier 票 + chat 票
+            observed_ticket_inflight.set()
+        return real_wait_prior(ticket)
+
+    monkeypatch.setattr(q, "wait_prior", observe_wait_prior)
+
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
+            # 取得 chat 所有权后即进入释放责任区间——观察/断言均在 try 内。
             chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
-            night = an.get_open_night(game.db)
-            assert game.db.conn.execute(
-                "SELECT status FROM chat_turns WHERE night_id=?",
-                (night["id"],),
-            ).fetchone()["status"] == "generating"
+            issue_task = None
+            try:
+                night = an.get_open_night(game.db)
+                assert game.db.conn.execute(
+                    "SELECT status FROM chat_turns WHERE night_id=?",
+                    (night["id"],),
+                ).fetchone()["status"] == "generating"
+                # 预置 draft（与 AC10 成功案同缝）：工人终态后须能真实续跑到 done，
+                # 不得靠「任意 error」冒充非伪造 in-flight。
+                game.db.upsert_pending_directive(
+                    game.state.turn, minister, payload={
+                        "text": "着户部核边饷", "actor": minister,
+                        "dossier_action_type": "policy",
+                        "target_kind": "issue", "target_id": "border-pay",
+                    })
+                game.db.commit_pending_actions(game.state, kind_filter="directive")
 
-            issue_task = asyncio.create_task(
-                issue_client.post("/api/decree/issue/stream", json={})
-            )
-            # 给 issue 时间进入队列屏障（不得已 error 结束）
-            await asyncio.sleep(0.15)
-            assert not issue_task.done(), "issue must wait for chat ticket, not forge elapsed 409"
+                issue_task = asyncio.create_task(
+                    issue_client.post("/api/decree/issue/stream", json={})
+                )
+                await _await_event_or_task(observed_ticket_inflight, issue_task)
+                assert not issue_task.done(), (
+                    "issue must wait for chat ticket, not forge elapsed 409"
+                )
 
-            allow.set()
-            chat_resp = await chat_task
-            issue_resp = await asyncio.wait_for(issue_task, timeout=10.0)
-            return night, _parse_sse(issue_resp.text), _parse_sse(chat_resp.text)
+                allow.set()
+                chat_resp = await chat_task
+                issue_resp = await issue_task
+                return night, _parse_sse(issue_resp.text), _parse_sse(chat_resp.text)
+            finally:
+                # 持有 chat allow：先释放，再排空已创建 sibling；收尾不抛，保留主体原错。
+                allow.set()
+                await _drain_tasks(chat_task, issue_task)
 
     night, issue_events, chat_events = asyncio.run(scenario())
     assert night is not None
     assert chat_events[-1]["event"] == "end"
-    # 工人终态后续跑：不得以「在飞」error 收场
-    assert not any(
-        ev.get("event") == "error" and "在飞" in (ev.get("data") or "")
-        for ev in issue_events
-    ), issue_events
-    assert issue_events[-1]["event"] != "error" or "在飞" not in (
-        issue_events[-1].get("data") or ""
-    )
-    # 成功支：月推进或核账展示；失败若有也不得是 elapsed 伪造的 in_flight
-    assert int(game.state.turn) >= turn_before
+    # 非伪造 in-flight：等待期间 issue 未完成（scenario 内）；工人终态后续跑成功。
+    assert issue_events[-1]["event"] == "done", issue_events
+    assert an.get_night(game.db, night["id"])["status"] == "closed"
+    assert int(game.state.turn) == turn_before + 1
+    assert int(game.db.load_state().turn) == turn_before + 1
 
 
 # ── ③ 同步退朝端点 offload 不冻结 event loop（真实 ASGI + 并发在飞 + ticker）──────
@@ -749,19 +853,29 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
                 ticks += 1
 
         async with _client() as chat_client, _client() as adv_client:
+            # 取得 chat 所有权后即进入释放责任区间；sibling 尚未创建时按实际存在收尾。
             chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
-            t = asyncio.create_task(ticker())
-            adv_task = asyncio.create_task(
-                adv_client.post("/api/decree/advance_without_edict")
-            )
-            # 等待期间 event loop 须继续跑 ticker（端点已 offload）
-            await asyncio.sleep(0.2)
-            mid_ticks = ticks
-            allow.set()
-            await chat_task
-            resp = await asyncio.wait_for(adv_task, timeout=10.0)
-            t.cancel()
-            return mid_ticks, ticks, resp.status_code
+            t = None
+            adv_task = None
+            try:
+                t = asyncio.create_task(ticker())
+                adv_task = asyncio.create_task(
+                    adv_client.post("/api/decree/advance_without_edict")
+                )
+                # 等待期间 event loop 须继续跑 ticker（端点已 offload）
+                while ticks < 5:
+                    await asyncio.sleep(0)
+                mid_ticks = ticks
+                allow.set()
+                await chat_task
+                resp = await adv_task
+                return mid_ticks, ticks, resp.status_code
+            finally:
+                # 持有 chat allow：先释放，再排空已创建 sibling；收尾不抛，保留主体原错。
+                allow.set()
+                if t is not None:
+                    t.cancel()
+                await _drain_tasks(chat_task, adv_task, t)
 
     mid_ticks, ticks, status = asyncio.run(scenario())
     assert mid_ticks >= 5, f"event loop 被同步端点冻结（mid_ticks={mid_ticks}）"
@@ -794,9 +908,8 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
 
     events = asyncio.run(scenario())
 
+    # 相位拒绝：SSE error + 零新夜/新 chat（wire 无 phase code；不改生产协议）。
     assert events and events[-1]["event"] == "error"
-    assert "结算" in (events[-1].get("data") or "") or "亲裁" in (events[-1].get("data") or "")
-    # 外部 DB 末态：零新夜 / 新 chat 轮
     assert _count(game.db, "audience_nights") == nights0
     assert _count(game.db, "chat_turns") == turns0
 

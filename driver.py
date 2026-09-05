@@ -169,14 +169,17 @@ def run_prepare(db, state, content, *, registry=None, source: Provenance = Prove
 
 
 def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", registry=None,
-               source: Provenance = Provenance.player_decree) -> str:
+               source: Provenance = Provenance.player_decree,
+               settlement_attendant_runner=None) -> str:
     """后半段：消费同 turn 已 prepare 的 settling+ready=0 context，升 ready=1 后 settle。
 
     不再调用 pre_settle；未 prepare 响亮 ValueError 且零写。settling + ready=1 崩溃重入
     只读既有 context，不二次 prepare/tick。
 
-    source 默认 player_decree：探针每回合即皇帝下旨之结算，其落库拒收对玩家可见（邸报给一句
-    in-world 提示，ADR 0008 决定 5）。纯世界推演回合可由信封传 source=system_simulation 静默。
+    source 默认 player_decree：探针每回合即皇帝下旨之结算，拒收 source 门按 0008-D5；
+    呈现由外部 LLM/注入 runner 据实编织（0150-D5-b / P7），代码不写戏内固定句、
+    不造零宽占位。缺 runner 且有玩家来源拒收 → settle 诚实失败。纯世界推演可传
+    source=system_simulation。
 
     narrative 落 turn_logs/turn_reports 作下月前文 + 玩家邸报；canonical delta 先落
     pending_resolve_context 作重跑真源，turn_extractions.extractor_output 存 applied
@@ -257,6 +260,8 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
             dossier_ids_at_input=dossier_ids_at_input,
             secret_dossier_ids_at_input=secret_dossier_ids_at_input,
         ),
+        # 无默认零宽桩（P7/#1745）：由调用方注入真实文本 runner；缺则玩家拒收诚实失败。
+        settlement_attendant_runner=settlement_attendant_runner,
     )
     # settle 成功推进后才记审计：driver 不注入 chapter_recorder（无 llm_config，章节记忆由对话方另产），
     # 留一条痕迹便于事后查「哪回合没记起居注」（忘补=静默缺口，#19）。须在 settle 成功之后——

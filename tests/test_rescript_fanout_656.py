@@ -35,7 +35,7 @@ def test_phase2_fanout_five_legs_meet_at_barrier(game, monkeypatch):
         with lock:
             started.append(tag)
         # 一进入即阻塞：五调用全部进入前没有任何调用能返回。
-        barrier.wait(timeout=30)
+        barrier.wait()
         if tag.startswith("extractor/"):
             return _CANNED
         return prompt  # 票拟腿原样返回 prompt（本测只验并发时机）

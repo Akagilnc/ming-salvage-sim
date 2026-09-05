@@ -1099,6 +1099,12 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
     # 章节/关系酿制：禁 sk-test 打真网；record 空操作
     _set("record_chapter_memory", lambda *a, **k: None)
     _set("_make_relation_brew_runner", lambda *a, **k: None)
+    # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+    if hasattr(monkeypatch_or_module, "setattr"):
+        install_settlement_attendant_agent_stub(monkeypatch_or_module, dm)
+    else:
+        install_settlement_attendant_agent_stub(None, dm)
     # subprocess worker 内无 monkeypatch 对象时同步写 dm
 
 
@@ -1164,6 +1170,9 @@ def _657_subprocess_resolve(
         dm.create_rescript_draft_agent = lambda *a, **k: None
         dm.record_chapter_memory = lambda *a, **k: None
         dm._make_relation_brew_runner = lambda *a, **k: None
+        # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
+        from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+        install_settlement_attendant_agent_stub(None, dm)
 
         if crash == "phase2":
             def _kill_at_phase2(*a, **k):
@@ -3001,7 +3010,6 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
 def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     """Class4/S2 web 生产调用：真 HTTP → submit_hitl；①/③ 持同一 gate，② 释放。"""
     import threading
-    import time
 
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
@@ -3048,8 +3056,6 @@ def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     web_game.session.finish_rescript_phase2 = _finish  # type: ignore[method-assign]
 
     def _gen(inputs):
-        # 给 join 探针一点窗口
-        time.sleep(0.02)
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
         return f"{name}锁窗入殿。"
 
@@ -4185,11 +4191,9 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
 def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     """summon 同 body 并发：单 chat_turn / 单 ledger body / 单月推进；失败后可重入。"""
     import threading
-    import time
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor
 
     from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
-    from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     db, state = web_game.db, web_game.state
@@ -4206,7 +4210,7 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     def _gen(inputs):
         gen_calls["n"] += 1
         started.set()
-        assert release.wait(5), "generator not released"
+        release.wait()
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
         return f"{name}single-flight。"
 
@@ -4227,17 +4231,30 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     }]
     turn_before = int(state.turn)
 
+    # 本案契约：并发 HTTP 同 body → 外部 single-flight（单 origin body / 单 chat_turn / 单月推进）。
+    # 诊断：B 不能与 A 并发进入 join_retained——A 持 summon gen 时 B 只到 settlement entry；
+    # auto_close 可能挡住 B 等夜收，但绕过 auto_close 外部断言仍绿，故**不**把 auto_close
+    # 入口观察叫 single-flight 等待证，也**不**给生产添等待。仅证第二请求在 A 持 gen 时抵达。
+    second_arrived = threading.Event()
+    real_begin = web_app._begin_settlement_entry
+
+    def _observe_begin(game):
+        real_begin(game)
+        if int(getattr(game, "_settlement_entry_inflight", 0) or 0) >= 2:
+            second_arrived.set()
+
+    monkeypatch.setattr(web_app, "_begin_settlement_entry", _observe_begin)
+
     def _post():
         return asyncio.run(_post_resolve(body))
 
-    # 并发两路同 body：一路慢 generator 窗口内第二路须 coalesce
     with ThreadPoolExecutor(max_workers=2) as pool:
         f1 = pool.submit(_post)
-        assert started.wait(3), "first generator never started"
+        started.wait()
         f2 = pool.submit(_post)
-        time.sleep(0.15)  # 第二路进入 wait/coalesce 窗口
+        second_arrived.wait()  # 抵达证明：B 已进 entry，A 仍持 gen（非等待接缝主张）
         release.set()
-        results = [f.result(timeout=60) for f in (f1, f2)]
+        results = [f.result() for f in (f1, f2)]
 
     assert all(r.status_code == 200 for r in results), [r.status_code for r in results]
     kind, turn_s, idx_s = key.split(":")
@@ -4279,13 +4296,13 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
             if name == "turn_phase" and super().__getattribute__("_race_armed"):
                 super().__setattr__("_race_armed", False)
                 phase_sampled.set()
-                assert phase_published.wait(2.0), "phase1 publication did not complete"
+                phase_published.wait()
                 # Before the fix state_payload held no entry lock here, so require
                 # the real entry finally to finish and deterministically expose its
                 # mixed old-phase/zero-count tuple.  With the fix, returning lets
                 # the snapshot release that lock and the finally complete afterward.
                 if not entry_lock.locked():
-                    assert entry_ended.wait(2.0), "settlement entry did not finish"
+                    entry_ended.wait()
             return value
 
     state = PhaseRaceState(**original_state.__dict__)
@@ -4298,7 +4315,7 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
     desk_holder = {}
 
     def _publish_phase1():
-        assert phase_sampled.wait(2.0), "GET did not sample phase"
+        phase_sampled.wait()
         desk_holder["desk"] = _657_plant_awaiting_web(web_game, drafts=[{
             "title": "发布中的案头", "context": "c",
             "options": [
@@ -4315,7 +4332,7 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
     publisher.start()
     state._race_armed = True
     crossed = asyncio.run(_get_state())
-    publisher.join(5.0)
+    publisher.join()
     assert not publisher.is_alive()
 
     assert crossed["turn"]["phase"] == TurnPhase.SETTLING.value
@@ -4376,7 +4393,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     def _pending_with_reverse_race():
         desk_read.set()
         if not entry_lock.locked():
-            assert resolve_begun.wait(2.0), "resolve begin did not empty desk"
+            resolve_begun.wait()
         return original_pending()
 
     monkeypatch.setattr(
@@ -4384,7 +4401,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     )
 
     def _begin_and_empty_desk():
-        assert desk_read.wait(2.0), "GET did not reach desk read"
+        desk_read.wait()
         web_app._begin_settlement_entry(web_game)
         db.conn.execute(
             "UPDATE pending_decisions SET status='decided', choice_json=? "
@@ -4397,7 +4414,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     beginner = threading.Thread(target=_begin_and_empty_desk)
     beginner.start()
     crossed = asyncio.run(_get_state())
-    beginner.join(5.0)
+    beginner.join()
     assert not beginner.is_alive()
 
     assert crossed["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
@@ -4427,7 +4444,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
 
     def _phase2(*_a, **_k):
         entered.set()
-        assert release.wait(2.0)
+        release.wait()
         return "邸报"
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
@@ -4438,14 +4455,14 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
 
     t = threading.Thread(target=_run)
     t.start()
-    assert entered.wait(2.0), "phase2 须进入在飞窗"
+    entered.wait()
     payload = asyncio.run(_get_state())
     assert payload["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
     assert payload.get("resume_phase2") is False
     assert payload.get("settlement_entry_inflight") is True
     assert payload.get("pending_decisions") == []
     release.set()
-    t.join(5.0)
+    t.join()
     assert not t.is_alive()
     assert result["r"].status_code == 200
     done = asyncio.run(_get_state())

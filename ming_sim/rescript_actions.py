@@ -972,6 +972,7 @@ def _create_from_mapped(
     *,
     status: str,
     mode: str,
+    rejection_collector=None,
 ) -> List[int]:
     payload = dict(mapped)
     decree_text = str(payload.pop("_decree_text", "") or "")
@@ -1004,6 +1005,7 @@ def _create_from_mapped(
         status=status,
         due_turn=due_turn,
         commit=False,
+        rejection_collector=rejection_collector,
     ))
 
 
@@ -1094,6 +1096,7 @@ def _apply_deliberate(
     prewrite: PrewriteResults,
     *,
     content: Any = None,
+    rejection_collector=None,
 ) -> None:
     """#658 廷议 dossier-first：唯一 durable 主体＝proposed 案卷。
 
@@ -1134,6 +1137,7 @@ def _apply_deliberate(
         payload=payload,
         status="proposed",
         commit=False,
+        rejection_collector=rejection_collector,
     ))
     for name in supporters:
         db.add_dossier_endorsement(
@@ -1297,7 +1301,11 @@ def apply_rescript_batch(
     任一条失败 → 回滚（含 choice）。禁 save/clear 触碰 rescript_draft。
     禁任何 resolve_context 键承载本批 choices。
     """
+    from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
+    from ming_sim.error_pack import rejections_jsonl_path
+
     result = ApplyResult()
+    collector = RejectionCollector()
     with atomic_and_reload(db, state, content=content):
         for item in batch.items:
             if item.already_applied:
@@ -1321,6 +1329,7 @@ def apply_rescript_batch(
                     )
                     created = _create_from_mapped(
                         db, state, content, mapped, status="proposed", mode="ordinary",
+                        rejection_collector=collector,
                     )
                     if not created:
                         raise ValueError(
@@ -1377,6 +1386,7 @@ def apply_rescript_batch(
                 )
                 created = _create_from_mapped(
                     db, state, content, mapped, status="proposed", mode="ordinary",
+                    rejection_collector=collector,
                 )
                 if not created:
                     raise ValueError(
@@ -1395,6 +1405,7 @@ def apply_rescript_batch(
                 )
                 created = _create_from_mapped(
                     db, state, content, mapped, status="proposed", mode="midzhi",
+                    rejection_collector=collector,
                 )
                 if not created:
                     raise ValueError(
@@ -1405,7 +1416,10 @@ def apply_rescript_batch(
                 continue
 
             if action == "deliberate":
-                _apply_deliberate(db, state, item, prewrite, content=content)
+                _apply_deliberate(
+                    db, state, item, prewrite, content=content,
+                    rejection_collector=collector,
+                )
                 _cas_decided(db, item)
                 result.applied_keys.append(item.decision_key)
                 continue
@@ -1427,6 +1441,8 @@ def apply_rescript_batch(
                 continue
 
             raise ValueError(f"未知动作：{action}")
+        collector.flush_to_db(db)
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return result
 
 
