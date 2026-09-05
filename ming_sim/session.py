@@ -3881,9 +3881,9 @@ class GameSession:
         主库与 agno 共路径；只关 GameDB 就归档/搬移文件时，agno 仍持 WAL 句柄，
         进程 fd 会钉在 drained_*.db 上，活局写路径可落到 readonly。
 
-        次序：先 agno 后 GameDB。agno 失败则不上触 db——主库仍可写，调用方
-        （load_save 恢复指针）才有可写 runtime；若先关 db 再 agno 失败，恢复指针
-        会指向已关连接（ProgrammingError/裸 500）。任一侧失败都上抛（ADR 0005）。
+        次序：先 agno 后 db。agno 失败则立即上抛、不碰 db（两侧仍完整可恢复）。
+        agno 已成功后 ``_close_epoch`` 递增——此后即使 db.close 失败/conn 仍可探测，
+        也不得恢复为活局（registry 已失 agno）。任一侧失败上抛（ADR 0005）。
         """
         self._scene_registry.abandon_all()
         agno = getattr(self, "agno_db", None)
@@ -3895,4 +3895,10 @@ class GameSession:
                 except BaseException:
                     logger.exception("GameSession.agno_db.close failed")
                     raise
-        self.db.close()
+                self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
+        try:
+            self.db.close()
+        except BaseException:
+            logger.exception("GameSession.db.close failed")
+            raise
+        self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1

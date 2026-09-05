@@ -240,10 +240,14 @@ def test_drain_skips_archive_when_agno_close_fails(tmp_path, monkeypatch):
             web_app._drain_and_close_session(game, archive_db=True)
         assert os.path.isfile(dbp)
         assert _drained(tmp_path / "ud") == []
-        # agno 先失败则不上触 db：主库仍可写；drain 按可写 unseal，禁搬库
-        assert web_app._runtime_db_writable(game)
+        # agno 抛错且 _close_epoch 未置（失败在 close 调用中）→ 不可 restorable 若 epoch 已增
+        # 本注入在 agno.close 入口即抛：epoch 未增，db 未关 → restorable + unsealed
+        assert int(getattr(sess, "_close_epoch", 0) or 0) == 0
+        assert web_app._runtime_restorable(game)
         assert not sess._write_queue.is_sealed()
         sess.db.conn.execute("SELECT 1")
+        with sess.agno_db.db_engine.connect() as c:
+            c.exec_driver_sql("SELECT 1")
     finally:
         sess.agno_db.close = real_agno_close  # type: ignore[method-assign]
         try:
@@ -325,15 +329,29 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
         g0.db.conn.execute("SELECT 1")
 
-    # ── 路二：exit → new_game；exit 前真实 HTTP 写入须留旧归档（禁 seal 后直写冒充在飞）──
+    # ── 路二：exit→new_game；真实队列在飞票在 drain 窗完成并留旧归档 ──
     pre_exit = "着户部清核辽饷（pre-exit）。"
     _directive(client, pre_exit)
     _wait_pending_writes(g1)
-    pre_snap = _db_snapshot(p1)
-    assert pre_exit in pre_snap["directive_texts"]
+    # exit 前领真实写票——seal 后新 claim 会拒，本票须在 barrier 前 complete
+    q1 = g1._write_queue
+    late_ticket = q1.claim(key=("late-pre-exit",))
+    assert late_ticket is not None
+    late_text = "在飞旨意留旧局"
     n_exit = len(spawns)
     assert client.post("/api/menu/exit_to_menu").status_code == 200
     assert web_app.web_game is None
+    # drain 已 seal 并等本票：在旧连接上完成在飞写（队列受理的 ticket，非 seal 后新入口）
+    g1.db.add_directive(
+        g1.state, None, late_text, "手动新增",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue",
+            "target_id": "late-inflight",
+            "mode": "ordinary",
+        },
+    )
+    q1.complete(late_ticket)
     _wait_spawns(spawns, n_exit)
     assert os.path.exists(p1)  # exit 不搬库
 
@@ -352,6 +370,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
         if s["campaign_id"] == c1
     )
     assert pre_exit in old_arch["directive_texts"]
+    assert late_text in old_arch["directive_texts"], old_arch["directive_texts"]
     assert rec1["d_text"] in old_arch["directive_texts"]
     _assert_chat_persisted(
         old_arch,
@@ -363,6 +382,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     live2 = _db_snapshot(g2.db_path)
     assert live2["campaign_id"] == c2
     assert rec2["d_text"] in live2["directive_texts"]
+    assert late_text not in live2["directive_texts"]
     assert rec2["d_text"] not in old_arch["directive_texts"]
 
     # ── continue 恢复最新主库旨意与回话 ──
@@ -493,8 +513,11 @@ def test_webgame_begin_turn_failure_closes_session(tmp_path, monkeypatch):
         web_app.WebGame(fresh=True)
     assert len(held) == 1
     sess = held[0]
+    assert int(getattr(sess, "_close_epoch", 0) or 0) >= 1
     with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
         sess.db.conn.execute("SELECT 1")
+    # 双连接生命周期：close 已走过，restorable 必须为假
+    assert not web_app._runtime_restorable(SimpleNamespace(session=sess))
 
 
 def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
@@ -515,6 +538,7 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
         r = client.post("/api/menu/load_save/snap1749")
         assert r.status_code == 409, r.text
         assert web_app.web_game is g0
+        assert web_app._runtime_restorable(g0)
         assert not g0._write_queue.is_sealed(), "drain failure must unseal restored runtime"
         assert os.path.isfile(old_path)
         web_app._archive_drained_db_file(old_path)
