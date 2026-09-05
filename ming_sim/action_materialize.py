@@ -2063,11 +2063,6 @@ class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
                 "current": raw_fact.get("current"),
                 "expected": raw_fact.get("expected"),
             })
-        for field in fields:
-            key = str(field)
-            if key and key not in seen:
-                seen.add(key)
-                facts.append({"field": key, "current": None, "expected": None})
         self.field_failures = tuple(facts)
         super().__init__(
             "拨饷旨意缺少结构化字段："
