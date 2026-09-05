@@ -694,6 +694,162 @@ def test_provider_and_item_level_still_whole_batch(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# 补交响应解析/运输契约失败：消耗本次补交，不整批无头版
+# ---------------------------------------------------------------------------
+
+_BAD_HEAL_RESPONSES = {
+    "malformed_json": "already filled purpose. {not-json",
+    "fence_prose": (
+        "already filled purpose.\n"
+        "```json\n{\"heals\":[]}\n```\n"
+        "done."
+    ),
+    "top_array": "[{\"purpose\":\"补饷\"}]",
+}
+
+
+@pytest.mark.parametrize("bad_kind", sorted(_BAD_HEAL_RESPONSES))
+@pytest.mark.parametrize(
+    "succeed_on", [2, 3, None], ids=["ok_on_2", "ok_on_3", "exhaust"],
+)
+def test_heal_response_contract_failure_consumes_attempt_keeps_siblings(
+    bad_kind, succeed_on, monkeypatch, tmp_path,
+):
+    """已有底稿时补交响应非法 JSON/围栏外 prose/非 object → 消耗本次补交。
+
+    第 2/3 次成功保留全批；三次耗尽只剔坏项；兄弟逐字段不变；三轮日志完整。
+    下一次补交请求须结构化携带本次响应哪里不合契约（heal_response 事实）。
+    """
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _army_pay(label="坏项", amount=300)
+    bad.pop("purpose", None)
+    sibling = _hold(label="兄弟稳定", hint="keep-me")
+    sibling_frozen = dict(sibling)
+    # 另一急务此前已成功：整批不得因补交响应失败无头版
+    other_item = {
+        "title": "他务",
+        "context": "旁路",
+        "options": [
+            _hold(label="他务甲", hint="a"),
+            _hold(label="他务乙", hint="b"),
+        ],
+    }
+    other_frozen = deepcopy(other_item)
+    first = _items_json([
+        {"title": "缺目", "context": "c", "options": [bad, sibling]},
+        other_item,
+    ])
+    bad_raw = _BAD_HEAL_RESPONSES[bad_kind]
+    healed = _heals_json([("0:0", {"purpose": "补饷"})])
+    calls: list[dict] = []
+    n = {"i": 0}
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        n["i"] += 1
+        if n["i"] == 1:
+            response = first
+        elif succeed_on is not None and n["i"] == succeed_on + 1:
+            # succeed_on=k means heal attempt k succeeds → call index k+1
+            response = healed
+        else:
+            response = bad_raw
+        calls.append({
+            "tag": tag,
+            "prompt": prompt,
+            "response": response,
+            "roles": _prior_roles(prior_messages),
+            "contents": _prior_contents(prior_messages),
+        })
+        return response
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=61)
+    assert drafts is not None
+    _assert_call_history(calls)
+    tags = [c["tag"] for c in calls]
+    assert tags[0] == "rescript-draft"
+    assert all(t == "rescript-draft-heal" for t in tags[1:])
+
+    if succeed_on is None:
+        assert tags == (
+            ["rescript-draft"]
+            + ["rescript-draft-heal"] * RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+        )
+        # 耗尽：只剔坏项；兄弟与他务保留
+        by_title = {d["title"]: d for d in drafts}
+        assert set(by_title) == {"缺目", "他务"}
+        opts = by_title["缺目"]["options"]
+        assert len(opts) == 1
+        hold = opts[0]
+        for k, v in sibling_frozen.items():
+            assert hold.get(k) == v
+        other = by_title["他务"]
+        assert other["context"] == other_frozen["context"]
+        assert len(other["options"]) == 2
+        for got, exp in zip(other["options"], other_frozen["options"]):
+            for k, v in exp.items():
+                assert got.get(k) == v
+        note = (
+            tmp_path / "error_packs" / "rescript_draft_degraded" / "turn61.json"
+        )
+        note_obj = json.loads(note.read_text(encoding="utf-8"))
+        assert note_obj.get("reason") == "option_missing_fields_heal_exhausted"
+        trace = note_obj.get("heal_trace") or []
+        assert len(trace) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+        dropped = note_obj.get("dropped_options") or []
+        assert dropped and dropped[0].get("heal_id") == "0:0"
+    else:
+        assert len(tags) == succeed_on + 1
+        by_title = {d["title"]: d for d in drafts}
+        assert set(by_title) == {"缺目", "他务"}
+        opts = by_title["缺目"]["options"]
+        assert len(opts) == 2
+        fixed = next(o for o in opts if o.get("label") == "坏项")
+        assert fixed.get("purpose") == "补饷"
+        hold = next(o for o in opts if o.get("label") == sibling_frozen["label"])
+        for k, v in sibling_frozen.items():
+            assert hold.get(k) == v
+        other = by_title["他务"]
+        for got, exp in zip(other["options"], other_frozen["options"]):
+            for k, v in exp.items():
+                assert got.get(k) == v
+
+    # 每一次失败补交之后的下一次请求须携带 heal_response 契约事实
+    heal_calls = [c for c in calls if c["tag"] == "rescript-draft-heal"]
+    for idx in range(1, len(heal_calls)):
+        # heal_calls[idx] 的 prompt 对应前一次坏响应之后
+        prev_response = heal_calls[idx - 1]["response"]
+        if prev_response == bad_raw:
+            req = _parse_heal_request(heal_calls[idx]["prompt"])
+            ff = _field_failure_map(req["failures"][0])
+            assert "heal_response" in ff
+            assert "purpose" in ff  # 旧缺字段仍在
+            cur = ff["heal_response"]["current"]
+            assert isinstance(cur, dict)
+            assert cur.get("error")
+            assert "raw_summary" in cur
+            exp = ff["heal_response"]["expected"]
+            assert isinstance(exp, dict)
+            assert exp.get("type") == "object"
+
+
+def test_first_draw_parse_failure_still_whole_batch_degrade(monkeypatch, tmp_path):
+    """首抽顶层解析失败仍整批降级；不得误入补交回路。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    tags: list[str] = []
+
+    def _llm(_a, _p, tag="", prior_messages=None):
+        tags.append(tag)
+        return "not-json {"
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    assert generate_rescript_draft(object(), _ctx(), turn=62) is None
+    assert tags == ["rescript-draft"]
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn62.json"
+    assert note.is_file()
+
+
+# ---------------------------------------------------------------------------
 # heal_id 负向（typed 身份契约；不进 phase2 重复 k 链）
 # ---------------------------------------------------------------------------
 

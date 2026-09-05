@@ -1734,6 +1734,46 @@ def _failure_log_rows(
     return rows
 
 
+def _with_heal_response_contract_failure(
+    failures: Sequence[RescriptOptionMissingFailure],
+    *,
+    exc: BaseException,
+    raw: str,
+) -> List[RescriptOptionMissingFailure]:
+    """补交响应自身不合契约时，把失败位置/现值/期望并入既有 option 失败事实。
+
+    不另造循环：仍走同一 ≤3 补交/剔除回路；下一次请求经 field_failures 携带
+    本次响应哪里不合契约，不得只重复旧缺字段。
+    """
+    response_fact: Dict[str, object] = {
+        "field": "heal_response",
+        "current": {
+            "error": type(exc).__name__,
+            "detail": str(exc)[:500],
+            "raw_summary": (raw or "")[:500],
+        },
+        "expected": {
+            "type": "object",
+            "keys": ["heals", "items"],
+        },
+    }
+    out: List[RescriptOptionMissingFailure] = []
+    for failure in failures:
+        facts = tuple([dict(f) for f in failure.field_failures] + [dict(response_fact)])
+        out.append(
+            RescriptOptionMissingFailure(
+                item_index=failure.item_index,
+                option_index=failure.option_index,
+                title=failure.title,
+                missing_fields=tuple(str(f["field"]) for f in facts),
+                raw_option=failure.raw_option,
+                heal_id=failure.heal_id,
+                field_failures=facts,
+            )
+        )
+    return out
+
+
 def generate_rescript_draft(
     agent: Any,
     payload: Dict[str, object],
@@ -1858,53 +1898,62 @@ def generate_rescript_draft(
                 drafts = _validate(data, isolate_option_missing=True)
         except RescriptOptionMissingFieldsBatch as exc:
             pending_missing = list(exc.failures)
-            rows = _failure_log_rows(pending_missing)
-            if heal_attempt < heal_retries:
-                heal_attempt += 1
-                tlog(
-                    f"[rescript] option 契约失败补交 {heal_attempt}/{heal_retries}："
-                    f"{json.dumps(rows)}"
-                )
-                continue
-            # 耗尽：只剔失败 option，其余照出；不告知皇帝；后台响亮留痕
-            tlog(
-                f"[rescript] option 契约失败补交耗尽，剔除："
-                f"{json.dumps(rows)} "
-                f"heal_trace={json.dumps(heal_trace)}"
-            )
-            drop_rows = [
-                {**row, "heal_attempts": heal_retries}
-                for row in rows
-            ]
-            _write_degraded_note(
-                turn,
-                "option_missing_fields_heal_exhausted",
-                extra={
-                    "dropped_options": drop_rows,
-                    "heal_trace": heal_trace,
-                },
-            )
-            # 底稿在首抽/前轮已确立；非法则程序破坏自然上抛
-            dropped = _drop_options_by_failures(working_data, pending_missing)  # type: ignore[arg-type]
-            try:
-                # F2.2 局部修订：剔后剩 1 仍呈；0 option 条目已在 drop 时去掉
-                drafts = _validate(
-                    dropped,
-                    isolate_option_missing=False,
-                    min_options=1,
-                    max_options=3,
-                )
-            except (LLMContractError, ValueError) as drop_exc:
-                _degrade(drop_exc)
-                return None
-            tlog(
-                f"[rescript] 票拟生成 {len(drafts)} 条"
-                f"（契约失败剔除 {len(pending_missing)} option 后）。"
-            )
-            return drafts
         except (LLMContractError, ValueError) as exc:
-            # 顶层/条目/解析等非整单 option 面：整批降级
-            _degrade(exc)
+            # 已有底稿的补交响应契约失败（非法 JSON / 围栏外 prose / 非 object 等）
+            # → 消耗本次补交，保留底稿与已成功兄弟，沿唯一 ≤3 回路继续。
+            # 首抽顶层/急务条目失败仍整批降级（无 pending 底稿）。
+            if working_data is None or pending_missing is None:
+                _degrade(exc)
+                return None
+            pending_missing = _with_heal_response_contract_failure(
+                pending_missing, exc=exc, raw=raw,
+            )
+        else:
+            tlog(f"[rescript] 票拟生成 {len(drafts)} 条。")
+            return drafts
+
+        # 可定位 option 契约失败 / 补交响应契约失败：同一 continue-or-drop 回路
+        rows = _failure_log_rows(pending_missing)
+        if heal_attempt < heal_retries:
+            heal_attempt += 1
+            tlog(
+                f"[rescript] option 契约失败补交 {heal_attempt}/{heal_retries}："
+                f"{json.dumps(rows)}"
+            )
+            continue
+        # 耗尽：只剔失败 option，其余照出；不告知皇帝；后台响亮留痕
+        tlog(
+            f"[rescript] option 契约失败补交耗尽，剔除："
+            f"{json.dumps(rows)} "
+            f"heal_trace={json.dumps(heal_trace)}"
+        )
+        drop_rows = [
+            {**row, "heal_attempts": heal_retries}
+            for row in rows
+        ]
+        _write_degraded_note(
+            turn,
+            "option_missing_fields_heal_exhausted",
+            extra={
+                "dropped_options": drop_rows,
+                "heal_trace": heal_trace,
+            },
+        )
+        # 底稿在首抽/前轮已确立；非法则程序破坏自然上抛
+        dropped = _drop_options_by_failures(working_data, pending_missing)
+        try:
+            # F2.2 局部修订：剔后剩 1 仍呈；0 option 条目已在 drop 时去掉
+            drafts = _validate(
+                dropped,
+                isolate_option_missing=False,
+                min_options=1,
+                max_options=3,
+            )
+        except (LLMContractError, ValueError) as drop_exc:
+            _degrade(drop_exc)
             return None
-        tlog(f"[rescript] 票拟生成 {len(drafts)} 条。")
+        tlog(
+            f"[rescript] 票拟生成 {len(drafts)} 条"
+            f"（契约失败剔除 {len(pending_missing)} option 后）。"
+        )
         return drafts
