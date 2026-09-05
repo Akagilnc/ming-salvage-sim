@@ -205,6 +205,7 @@ export function App() {
   // hook 必须在 menu/loading 早退之前调用。
   const {
     settleStage,
+    settleProgress,
     settleThinking,
     settleNarrative,
     pendingDecisions,
@@ -812,6 +813,7 @@ export function App() {
       {sessionSettlingBusy ? (
         <SettlementLock
           stage={settleStage}
+          progress={settleProgress}
           thinking={settleThinking}
           narrative={settleNarrative}
         />

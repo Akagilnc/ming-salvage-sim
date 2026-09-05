@@ -2,8 +2,15 @@
 // 返回结束态：done（已结算）/ decisions（暂停待裁）/ error。
 export type SettleStreamOutcome = { kind: "done" | "decisions" | "error"; data: any };
 
+/** Stage SSE payload. current/total are typed wait-progress facts from the backend. */
+export type SettlementStageUpdate = {
+  content: string;
+  current?: number;
+  total?: number;
+};
+
 type SettleStreamCallbacks = {
-  onStage: (text: string) => void;
+  onStage: (update: SettlementStageUpdate) => void;
   onThinking: (chunk: string) => void;
   onNarrative: (chunk: string) => void;
 };
@@ -22,8 +29,14 @@ function consumeSettleBlocks(
     if (!evName || !dataRaw) continue;
     let data: any = {};
     try { data = JSON.parse(dataRaw); } catch { continue; }
-    if (evName === "stage") callbacks.onStage(data.content || "");
-    else if (evName === "thinking") callbacks.onThinking(data.content || "");
+    if (evName === "stage") {
+      // Pass typed progress fields through; never reverse-lookup from content labels.
+      callbacks.onStage({
+        content: typeof data.content === "string" ? data.content : "",
+        current: typeof data.current === "number" ? data.current : undefined,
+        total: typeof data.total === "number" ? data.total : undefined,
+      });
+    } else if (evName === "thinking") callbacks.onThinking(data.content || "");
     else if (evName === "text") callbacks.onNarrative(data.content || "");
     else if (evName === "error") return { kind: "error", data };
     else if (evName === "decisions") return { kind: "decisions", data };

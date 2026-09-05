@@ -493,7 +493,7 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
 describe("#1236 SettlementLock 装饰层自身契约", () => {
   it("装饰层无 aria-modal、role=status、pointer-events 不吞全屏", () => {
     const host = mount(
-      <SettlementLock stage="数值推演结算" thinking="推敲中" narrative="" />,
+      <SettlementLock stage="数值推演结算" progress={null} thinking="推敲中" narrative="" />,
     );
     const decor = host.querySelector("[data-testid=settlement-lock-decor]");
     expect(decor).not.toBeNull();
@@ -503,13 +503,18 @@ describe("#1236 SettlementLock 装饰层自身契约", () => {
 });
 
 describe("#1725 SettlementLock 中心进度呈现", () => {
-  it("六阶 stage 驱动 typed progressbar（current/total），阶段名可见", () => {
+  it("typed progress 驱动 progressbar；标签只显示、不参与刻度", () => {
     const host = mount(
-      <SettlementLock stage="推演月末邸报" thinking="" narrative="" />,
+      <SettlementLock
+        stage="任意显示文案"
+        progress={{ current: 3, total: 6 }}
+        thinking=""
+        narrative=""
+      />,
     );
     const decor = host.querySelector("[data-testid=settlement-lock-decor]");
     expect(decor).not.toBeNull();
-    expect(decor?.textContent || "").toContain("推演月末邸报");
+    expect(decor?.textContent || "").toContain("任意显示文案");
 
     const bar = host.querySelector("[data-testid=settlement-wait-progress]");
     expect(bar).not.toBeNull();
@@ -521,9 +526,19 @@ describe("#1725 SettlementLock 中心进度呈现", () => {
     expect(decor?.textContent || "").not.toMatch(/SETTLEMENT_WAIT|stageIndex|progress_current/);
   });
 
-  it("空 stage 无流式仍呈档房摘录 chrome，无 progressbar", () => {
+  it("无 typed progress 时即便 stage 是已知标签也不出 progressbar", () => {
     const host = mount(
-      <SettlementLock stage="" thinking="" narrative="" />,
+      <SettlementLock stage="推演月末邸报" progress={null} thinking="" narrative="" />,
+    );
+    expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")?.textContent || "").toContain(
+      "推演月末邸报",
+    );
+  });
+
+  it("空 stage 无 progress 仍呈档房摘录 chrome，无 progressbar", () => {
+    const host = mount(
+      <SettlementLock stage="" progress={null} thinking="" narrative="" />,
     );
     const decor = host.querySelector("[data-testid=settlement-lock-decor]");
     expect(decor).not.toBeNull();
@@ -531,9 +546,9 @@ describe("#1725 SettlementLock 中心进度呈现", () => {
     expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
   });
 
-  it("非冻结六阶标签不伪造进度刻度", () => {
+  it("HITL 续推文案无 typed progress 时不伪造刻度", () => {
     const host = mount(
-      <SettlementLock stage="圣意亲裁，续推时局" thinking="" narrative="" />,
+      <SettlementLock stage="圣意亲裁，续推时局" progress={null} thinking="" narrative="" />,
     );
     expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
     expect(host.querySelector("[data-testid=settlement-lock-decor]")?.textContent || "").toContain(
