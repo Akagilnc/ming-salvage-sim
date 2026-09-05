@@ -598,7 +598,10 @@ def test_stop_condition_only_without_marker_still_rejected(game):
 
 
 def test_beat6_three_matters_fan_out_three_independent_candidates(game, monkeypatch):
-    """beat 6：前轮三事经真实分类入口 → 逐事扇出三独立交办候选；案卷 text 取上下文链。"""
+    """beat 6：前轮三事经真实分类入口 → 逐事扇出三独立交办候选；案卷 text 取上下文链。
+
+    #1744 权威多独立交办行为证明（原 515 two_independent_assignments chat 平行样板已并入本测）。
+    """
     db, state, content = game
     actor = _active_ming(db, content)
     _seed_prior_three_matters(db, actor.name, state.turn)
@@ -654,7 +657,10 @@ def test_beat6_three_matters_fan_out_three_independent_candidates(game, monkeypa
 
 
 def test_beat8_reinforce_updates_existing_and_adds_fourth(game, monkeypatch):
-    """beat 8：真实分类入口重申三事更新既有 + 追加欠饷=第4候选，不重复建。"""
+    """beat 8：真实分类入口重申三事更新既有 + 追加欠饷=第4候选，不重复建。
+
+    无 draft 的跨轮续办权威证明；draft 共存/顺序边界见 515 draft_plus_digit_target_candidate。
+    """
     db, state, content = game
     actor = _active_ming(db, content)
     _seed_prior_three_matters(db, actor.name, state.turn)
