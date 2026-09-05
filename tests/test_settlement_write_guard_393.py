@@ -123,6 +123,10 @@ class _FakeGame:
     def state_payload(self):
         return {"turn": {"turn": self.state.turn, "phase": self.state.turn_phase}}
 
+    def mark_memorials_read(self, keys):
+        self.db.writes.append("mark_memorials_read")
+        return {"memorials": [], "unread_memorial_count": 0}
+
 
 def _invoke(coro):
     return asyncio.run(coro)
@@ -237,6 +241,8 @@ def _endpoint_cases():
         # #1732：局内销毁式 /api/game/reset 已删，热替换写门面只剩 load_save。
         ("create_save", lambda: web_app.api_create_save(web_app.SaveCreateRequest(name="存档"))),
         ("load_save", lambda: web_app.api_load_save("存档")),
+        # #1726 F1：奏疏已读写 kv，须走同一相位+非阻塞闸（修类不修点）。
+        ("memorials_read", lambda: web_app.api_memorials_read({"keys": ["progress:1"]})),
     ]
 
 

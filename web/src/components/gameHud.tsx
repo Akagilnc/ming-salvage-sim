@@ -76,6 +76,13 @@ export function GameHud({
   const showIssueQuad = showSituation || showClosedIssues;
   const mapSelectable = isFaceReachable("node_intel", settlementDisplay);
   const showWangSlip = wangSettlementSlipVisible(settlementDisplay);
+  // #1726：奏疏 badge/sub = 未读奏报数（与 issues 局势脱钩）；核账期 memorials 只读仍计未读。
+  const memorialsReachable = isFaceReachable("memorials", settlementDisplay);
+  const unreadMemorials = memorialsReachable
+    ? (typeof state.unread_memorial_count === "number"
+      ? state.unread_memorial_count
+      : (state.memorials || []).filter((m) => m.unread).length)
+    : 0;
 
   return (
     <div className="hud2-stage" ref={stageRef}>
@@ -192,10 +199,10 @@ export function GameHud({
       })}
 
       {/* 底部 5 命令物件（扣图填进木牌） */}
-      {/* 奏疏 badge/sub 同源 situation 谓词：核账期零半程件数，禁平行计数源 */}
+      {/* #1726 奏疏 badge/sub = 未读奏报数（与局势 issues 脱钩） */}
       {/* #1458：台开时安全区整条开洞——其余命令 blocked，只放行拟诏收起 */}
-      <CommandSlot slotKey="奏疏" img="奏疏" badge={showSituation ? state.issues.length : 0}
-        caption="奏疏" sub={showSituation ? `${state.issues.length} 件待览` : "0 件待览"}
+      <CommandSlot slotKey="奏疏" img="奏疏" badge={unreadMemorials}
+        caption="奏疏" sub={`${unreadMemorials} 件待览`}
         blocked={edictOpen}
         onClick={() => gatedModal("memorials", "state")} />
       <CommandSlot slotKey="邸报" img="邸报"

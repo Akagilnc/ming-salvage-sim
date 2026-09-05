@@ -333,11 +333,18 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
         stageRef={() => {}}
         ready={true}
         state={opts.state ?? makeState(false, {
+          // 局势仍可有 3 条，但奏疏计数须与之脱钩（#1726）
           issues: [
             { id: 1, kind: "situation", title: "户部亏空", status: "open", progress: 10, fail_condition: "" } as never,
             { id: 2, kind: "situation", title: "辽东索饷", status: "open", progress: 10, fail_condition: "" } as never,
             { id: 3, kind: "situation", title: "陕西流寇起", status: "open", progress: 10, fail_condition: "" } as never,
           ],
+          memorials: [
+            { key: "progress:1", kind: "progress", turn: 1, author_name: "杨嗣昌", memorial_text: "拨银进度一", unread: true },
+            { key: "progress:2", kind: "progress", turn: 1, author_name: "杨嗣昌", memorial_text: "拨银进度二", unread: true },
+            { key: "denunciation:1", kind: "denunciation", turn: 1, author_name: "某给事", memorial_text: "检举正文", unread: true },
+          ],
+          unread_memorial_count: 3,
           events: [],
         })}
         mapNodes={[]}
@@ -399,18 +406,24 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     expect(navCalls).toEqual(["court"]);
   });
 
-  it("#1285 奏疏 badge/副文接 issues；木牌 gatedModal face=memorials 打开 state 槽", () => {
+  it("#1726 奏疏 badge/副文接未读奏报数；与局势 issues 脱钩；木牌打开 state 槽", () => {
     const { host, opened } = mountHud();
     const memorial = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
       (b.getAttribute("aria-label") || "").startsWith("奏疏"),
     );
     expect(memorial).toBeTruthy();
     expect(memorial?.textContent).toMatch(/3\s*件待览/);
-    // badge 挂在木牌按钮上（events=[] 时仍应显示 issues 数；禁平行 badge 源）
     const badge = host.querySelector(".hud2-cmd-badge");
     expect(badge?.textContent).toBe("3");
+    // 零未读时不得借 issues 条数充数
+    const { host: hostZero } = mountHud({
+      state: makeState(false, { issues: makeState(false).issues, memorials: [], unread_memorial_count: 0 }),
+    });
+    const zeroCap = Array.from(hostZero.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("奏疏"),
+    );
+    expect(zeroCap?.textContent).toMatch(/0\s*件待览/);
     act(() => { memorial?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    // ModalName 仍用 state 槽承载奏疏面（main 以 memorials 面键门控）
     expect(opened).toEqual(["state"]);
   });
 
