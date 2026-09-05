@@ -17891,7 +17891,11 @@ class GameDB:
         """显式拟旨（前缀「拟旨如下：」/ tool propose_directive）落候选的**单一 seam**（#502 L2，
         CLI 非流式 + web streaming 共用，杜绝双路径漂移）。显式拟旨每次都是**新拟独立一道**：
         该大臣已有 ≥1 道 pending directive 时 INSERT 新候选（不 upsert 压扁前一道）；无候选时
-        走 upsert（首道 INSERT，行为与旧路等价）。返回候选行 id。"""
+        走 upsert（首道 INSERT，行为与旧路等价）。返回候选行 id。
+
+        mode 只接 typed token（midzhi/ordinary/中旨直发/普通）或 None（#1731）：
+        来源为路径内分类器 typed 判断；无 typed 判断时传 None，新旨回退 ordinary。
+        玩家散文不得入此槽。"""
         from ming_sim.cli_backend import resolve_directive_mode
 
         payload = {

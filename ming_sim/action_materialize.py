@@ -900,11 +900,32 @@ def _stage_office_pending_core(
         ):
             return None
 
+    # #1731：新建亦 resolve extracted→existing→ordinary；同名同职既有命中
+    # 已在上方 _apply_existing_appointment_hit 早退，此处覆盖 office 后补填等残留。
+    existing_mode = None
+    if appt_name and appt_office:
+        residual_hits = [
+            r for r in _match_office_row_by_name_office(
+                _list_pending_office_rows(
+                    session.db, int(session.state.turn),
+                    pend_for_minister=ctx.pend_for_minister,
+                ),
+                name=appt_name,
+                office=appt_office,
+                content=content_ref,
+                db=session.db,
+            )
+            if str(r.get("action") or "") == action
+        ]
+        if len(residual_hits) == 1:
+            existing_mode = _office_payload(residual_hits[0]).get("mode")
     payload = {
         "name": appt_name,
         "office": appt_office,
         "appointer": minister_name,
-        "mode": resolve_directive_mode(extracted=appt.get("mode")),
+        "mode": resolve_directive_mode(
+            extracted=appt.get("mode"), existing=existing_mode,
+        ),
         "summon_after": "是" if want_summon else "否",
     }
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）

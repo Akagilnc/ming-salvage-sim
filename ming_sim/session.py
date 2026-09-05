@@ -2270,8 +2270,11 @@ class GameSession:
             acts = {"decree_text": None, "secret_order": None}
         if not has_directive and acts["decree_text"]:
             # #502 L2：前缀「拟旨如下：」显式拟旨走单一 seam——已有候选则新拟独立一道，不压扁前道。
+            # #1731：mode 只接分类器 typed token / None，玩家散文永不入 typed 槽。
             out["pending_action_id"] = self.db.stage_explicit_directive(
-                self.state.turn, minister_name, acts["decree_text"], mode=message_text)
+                self.state.turn, minister_name, acts["decree_text"],
+                mode=(intent or {}).get("mode"),
+            )
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             assignee = so.get("assignee") or minister_name
             payload = {
@@ -2341,9 +2344,10 @@ class GameSession:
                 ),
             )
             if fallback["decree_text"]:
+                # #1731：mode 只接分类器 typed token / None，玩家散文永不入 typed 槽。
                 out["pending_action_id"] = self.db.stage_explicit_directive(
                     self.state.turn, minister_name, fallback["decree_text"],
-                    mode=message_text,
+                    mode=(intent or {}).get("mode"),
                 )
         return out
 
@@ -2732,9 +2736,26 @@ class GameSession:
         if action == "任命" and not office:
             return 0
         staged_payload = {"name": name, "office": office, "appointer": appointer.name}
+        from ming_sim.action_materialize import (
+            _list_pending_office_rows,
+            _match_office_row_by_name_office,
+            _office_payload,
+        )
         from ming_sim.cli_backend import resolve_directive_mode
+        # #1731：省略 mode = 沉默；同名同职既有候选保留其 typed 判断。
+        existing_mode = None
+        existing_hits = _match_office_row_by_name_office(
+            _list_pending_office_rows(self.db, int(self.state.turn)),
+            name=name,
+            office=office,
+            content=getattr(self, "content", None),
+            db=self.db,
+        )
+        if len(existing_hits) == 1:
+            existing_mode = _office_payload(existing_hits[0]).get("mode")
         staged_payload["mode"] = resolve_directive_mode(
             extracted=data.get("mode") or data.get("颁布方式"),
+            existing=existing_mode,
         )
         metadata_aliases = {
             "office_type": "官署类别",
