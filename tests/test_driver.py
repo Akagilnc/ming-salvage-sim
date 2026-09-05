@@ -20,12 +20,12 @@ from pathlib import Path
 import pytest
 
 import driver
-from driver import run_prepare, run_settle
+from driver import run_prepare
 from ming_sim.applier import Provenance
 from ming_sim.distance import DistanceMatrix
 from ming_sim.models import TurnPhase
 from tests.conftest import active_ming_character
-from tests.section_rejection_helpers import prepare_then_settle
+from tests.section_rejection_helpers import prepare_then_settle, run_settle
 
 _ROOT = Path(__file__).resolve().parents[1]
 _MATRIX = DistanceMatrix.from_file(_ROOT / "content/distance_matrix.json")

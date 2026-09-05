@@ -98,24 +98,10 @@ def test_attempt_derived_from_error_pack_dirs(game, monkeypatch, tmp_path):
 
 
 def _stub_settlement_attendant(monkeypatch, decree_mod, *, text="递话", capture=None):
-    """#1745：替身下移到真实 runner 的 agent 边界；不锁措辞，只保结构化输入与槽位。
-
-    capture 若给出，追加生产事实包中的 rejections 列表（section/category/reason）。
-    """
-    class _Out:
-        content = text
-
-    class _Agent:
-        def run(self, prompt):
-            if capture is not None:
-                payload = json.loads(prompt)
-                capture.append(list(payload.get("rejections") or []))
-            return _Out()
-
-    monkeypatch.setattr(
-        decree_mod,
-        "create_settlement_attendant_agent",
-        lambda *_a, **_k: _Agent(),
+    """#1745：复用 section_rejection_helpers 单一 agent 边界夹具。"""
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+    install_settlement_attendant_agent_stub(
+        monkeypatch, decree_mod, text=text, capture=capture,
     )
 
 
