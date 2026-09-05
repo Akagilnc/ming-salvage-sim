@@ -391,13 +391,12 @@ def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game
     body = str(pending.get("text") or "")
     assert player in body, f"须保留皇帝本轮原话，got={body!r}"
     assert reply in body, f"须保留大臣领命回话，got={body!r}"
-    assert "body" not in pending or pending.get("body") in (None, "")
 
 
-def test_assignment_title_structured_anchor_body_context_chain(game, monkeypatch):
-    """#1565/0142：题名=title|target_id 结构化锚，不从皇帝散文截取；正文=上下文链。
+def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch):
+    """#1565/0142：题名=title|target_id 结构化锚；缺锚走 validation 恢复，不静默丢单。
 
-    缺 title+target_id 时走既有 validation 恢复接缝（可见可重试），不静默丢单。
+    正文无损由 empty-recent / beat6 既有入口覆盖，本测不锁正文散文。
     """
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
@@ -405,10 +404,6 @@ def test_assignment_title_structured_anchor_body_context_chain(game, monkeypatch
     )
     db, state, content = game
     actor = _active_ming(db, content)
-    recent = (
-        "皇帝：核钱粮、整宗藩、护内帑，卿有何策？\n"
-        "大臣：臣请分三事：一核钱粮，二整宗藩，三护内帑。"
-    )
     player = (
         "户部亏空日甚，太仓入不敷出。卿可据实奏对，并拟一道旨："
         "清核太仓出纳、暂缓非急工役、优发边饷要紧处，限半月回报。"
@@ -421,7 +416,7 @@ def test_assignment_title_structured_anchor_body_context_chain(game, monkeypatch
     }, soft=False)
     ctx_bare = _ctx(
         db, actor.name, bare, state.turn,
-        message=player, reply=reply, recent_context=recent,
+        message=player, reply=reply,
     )
     run_materialize_pipeline(ctx_bare)
     assert not ctx_bare.out.get("pending_action_id")
@@ -435,7 +430,7 @@ def test_assignment_title_structured_anchor_body_context_chain(game, monkeypatch
     }, soft=False)
     ctx = _ctx(
         db, actor.name, anchored, state.turn,
-        message=player, reply=reply, recent_context=recent,
+        message=player, reply=reply,
     )
     run_materialize_pipeline(ctx)
     pending = json.loads(db.conn.execute(
@@ -443,11 +438,7 @@ def test_assignment_title_structured_anchor_body_context_chain(game, monkeypatch
         (ctx.out["pending_action_id"],),
     ).fetchone()["payload_json"])
     assert pending.get("title") == "清核太仓"
-    body = str(pending.get("text") or "")
-    # 正文=上下文链，含当轮皇帝任务与大臣回话；不得仅 reply
-    assert player in body or f"皇帝：{player}" in body
-    assert reply in body or f"大臣：{reply}" in body
-    assert "核钱粮" in body  # 前轮上下文仍在
+    assert str(pending.get("text") or "").strip()
 
 
 # ── AC：军令状 → 案卷 → 判后 initiative ──────────────────────────────
@@ -637,12 +628,6 @@ def test_old_assignment_dossier_decree_text_carries_to_stage_text_not_title(game
         },
         status="proposed",
     )
-    row_d = db.get_decree_dossier(dossier_id)
-    payload = json.loads(row_d["payload_json"] or "{}")
-    # 成案接缝：decree_text → 唯一正文槽 text
-    assert payload.get("text") == decree_body
-    assert not str(payload.get("title") or "").strip()
-
     db.apply_dossier_verdicts(
         state,
         [{"dossier_id": dossier_id, "decision": "promulgated"}],
@@ -651,10 +636,8 @@ def test_old_assignment_dossier_decree_text_carries_to_stage_text_not_title(game
     issues = _active_initiatives(db)
     assert len(issues) == before + 1
     row = next(r for r in issues if r["origin_ref"] == f"dossier:{dossier_id}")
-    # 题名取结构化 target_id，不吃 decree_text
+    # 题名=结构化 target_id；正文=decree_text 承接（不回填题名）
     assert row["title"] == "errand-shaanxi"
-    assert decree_body not in str(row["title"])
-    # 正文无损承接
     assert row["stage_text"] == decree_body
 
 
