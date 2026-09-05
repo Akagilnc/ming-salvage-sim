@@ -1,0 +1,12 @@
+{
+  "db_path": "/workspace/Ming_LLM/data-8013/ming_sim_1788600739021297874.db",
+  "turn": 2,
+  "year": 1627,
+  "period": 11,
+  "version": "0.53.0.0",
+  "attempt": 2,
+  "exception_type": "LLMContractError",
+  "exception_message": "颁布判决须逐案覆盖全部 proposed 案卷，不能静默跳过",
+  "timestamp": "2026-09-05T10:09:43.961065+00:00",
+  "ready_payload_digest": null
+}

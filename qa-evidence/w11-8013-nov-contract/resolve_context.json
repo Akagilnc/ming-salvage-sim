@@ -1,0 +1,13 @@
+{
+  "decree_text": "奉天承运皇帝，诏曰：\n\n太仓乃国用根本，所储粮银，备军国缓急之需。今命户部即行开仓，将太仓现存备用银两，照数解出，以充各项急需支用。尔部务须核实数目，依限解运，毋得稽迟亏耗。户部其慎之，速办毋忽。\n\n钦此。",
+  "narrative": "",
+  "simulator_payload": {
+    "transit_arrivals": []
+  },
+  "secret_orders": {},
+  "relevant_memories": [],
+  "extracted": null,
+  "resolve_contract_version": 0,
+  "source": "player_decree",
+  "attendant_message": ""
+}
