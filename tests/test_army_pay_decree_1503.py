@@ -1720,11 +1720,8 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         assert all(isinstance(item, dict) and item for item in items)
         if validation_case == "incomplete_xiexang":
             assert any(item.get("grant_action") == "协饷" for item in items)
-        elif validation_case == "region_mismatch":
-            assert any(item.get("kind") == "draft" for item in items)
         else:
-            # serial existing-draft falls back to partial_result; rejected item
-            # keeps typed keys from the failed (already-canonicalized) payload.
+            # T6：typed 失败优先落 partial_result；item_json 须含被拒旨稿结构化字段。
             assert any(
                 item.get("target_id") == "beizhili" and item.get("region_id") == "shaanxi"
                 for item in items
@@ -2079,3 +2076,219 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             game.session.close()
         except Exception:
             pass
+
+
+def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(game, monkeypatch, tmp_path):
+    """T1+T2：混合批任一 typed 失败 → 已暂存兄弟撤回，投影与零写入一致。"""
+    import ming_sim.cli_backend as cb
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下改说。", 1),
+    )
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    pending_before = {
+        int(row["id"]) for row in db.list_pending_actions(state.turn)
+    }
+    dossier_before = {int(d["id"]) for d in db.list_decree_dossiers()}
+    candidates = candidates_from_classifier_payload([
+        {
+            "kind": "grant_allocation", "grant_action": "协饷",
+            "amount": 15, "account": "国库", "purpose": "补饷",
+            "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
+        },
+        {
+            "kind": "grant_allocation", "grant_action": "协饷",
+            "amount": 10, "account": "国库", "purpose": "补饷",
+            "target_kind": "army", "target_id": "not_an_army", "cadence": "一次性",
+        },
+    ], soft=False)
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="拟旨如下：拨关宁与登莱军饷。",
+        reply="臣请户部发帑协济关宁与登莱，请陛下定夺。",
+    )
+    run_materialize_pipeline(ctx)
+    assert set(int(row["id"]) for row in db.list_pending_actions(state.turn)) == pending_before
+    assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
+    assert not ctx.out.get("pending_action_id")
+    recovery = ctx.out.get("decree_validation_failure") or {}
+    assert recovery.get("failed_fields")
+    assert recovery.get("report")
+    ledger = db.conn.execute(
+        "SELECT item_json, category, source FROM rejection_reports "
+        "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+        (state.turn,),
+    ).fetchall()
+    assert ledger
+    assert all(row["source"] == "player_decree" for row in ledger)
+
+
+@pytest.mark.parametrize("bad_amount", [None, True, 1.5])
+def test_non_xiexang_grant_shape_failure_is_typed_rejection(game, monkeypatch, tmp_path, bad_amount):
+    """T3：非协饷 grant shape 裸 ValueError 在物化缝转 typed 拒收，pending 零写入。"""
+    import ming_sim.cli_backend as cb
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下明示银两。", 1),
+    )
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    pending_before = db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0]
+    payload = {
+        "kind": "grant_allocation",
+        "grant_action": "赈灾",
+        "target_kind": "region",
+        "target_id": "beizhili",
+    }
+    if bad_amount is not None:
+        payload["amount"] = bad_amount
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="拟旨如下：赈济京师。",
+        reply="臣请发帑赈济京师灾民。",
+    )
+    run_materialize_pipeline(ctx)
+    pending_after = db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0]
+    assert pending_after == pending_before
+    assert not ctx.out.get("pending_action_id")
+    recovery = ctx.out.get("decree_validation_failure") or {}
+    assert "amount" in set(recovery.get("failed_fields") or [])
+    assert recovery.get("report")
+    rows = db.conn.execute(
+        "SELECT item_json, reason, category, source FROM rejection_reports "
+        "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+        (state.turn,),
+    ).fetchall()
+    assert rows
+    assert all(row["category"] == "decree_validation" for row in rows)
+    assert all(row["source"] == "player_decree" for row in rows)
+    assert all(row["reason"] for row in rows)
+    items = [json.loads(row["item_json"]) for row in rows]
+    assert any(item.get("grant_action") == "赈灾" for item in items)
+
+
+def test_batch_draft_combo_failure_cached_and_attributed(game, monkeypatch, tmp_path):
+    """T7：批 draft 组合失败一次缓存；仅 draft_failures 索引落拒收，合法兄弟不记。"""
+    import ming_sim.cli_backend as cb
+    from ming_sim.structured_decree import StructuredDecreeCombinationError
+
+    extract_calls = []
+
+    def fake_extract(*_a, **_k):
+        extract_calls.append(1)
+        raise StructuredDecreeCombinationError(
+            "region mismatch",
+            partial_result={
+                "drafts": [
+                    {
+                        "draft_action": "拟旨",
+                        "draft_text": "整饬京师。",
+                        "dossier_action_type": "special_decree",
+                        "target_kind": "region",
+                        "target_id": "beizhili",
+                        "region_id": "beizhili",
+                        "locality_scope": "single",
+                    },
+                    {
+                        "draft_action": "拟旨",
+                        "draft_text": "整饬陕西。",
+                        "dossier_action_type": "special_decree",
+                        "target_kind": "region",
+                        "target_id": "京师",
+                        "region_id": "shaanxi",
+                        "locality_scope": "single",
+                    },
+                ],
+            },
+            failed_fields=frozenset({"region_id", "target_id"}),
+            draft_failures={1: frozenset({"region_id", "target_id"})},
+        )
+
+    monkeypatch.setattr(cb, "extract_draft_intent_with_roster_heal", fake_extract)
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下改说所指地域。", 1),
+    )
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    pending_before = db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0]
+    dossier_before = {int(d["id"]) for d in db.list_decree_dossiers()}
+    candidates = candidates_from_classifier_payload([
+        {"kind": "draft", "draft_action": "拟旨"},
+        {"kind": "draft", "draft_action": "拟旨"},
+    ], soft=False)
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="请拟两道旨。",
+        reply="臣遵旨拟办。",
+    )
+    run_materialize_pipeline(ctx)
+    # 批级只抽一次（含 heal 有界重试）；不得按候选倍增整批重抽。
+    assert 1 <= len(extract_calls) <= 3
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0] == pending_before
+    assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
+    recovery = ctx.out.get("decree_validation_failure") or {}
+    assert {"region_id", "target_id"} <= set(recovery.get("failed_fields") or [])
+    rows = db.conn.execute(
+        "SELECT item_json FROM rejection_reports "
+        "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+        (state.turn,),
+    ).fetchall()
+    items = [json.loads(row["item_json"]) for row in rows]
+    assert len(items) == 1
+    assert items[0].get("target_id") == "京师"
+    assert items[0].get("region_id") == "shaanxi"
+
+
+def test_inworld_fact_report_whitespace_only_is_unavailable(monkeypatch):
+    """T5：共享回禀 helper 纯空白走 LLMUnavailable；原文不改写契约仍在。"""
+    import pytest
+    import ming_sim.cli_backend as cb
+    from ming_sim.exceptions import LLMUnavailable
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("   \n\t  ", 1),
+    )
+    with pytest.raises(LLMUnavailable):
+        cb._compose_inworld_fact_report(
+            "prompt", llm_config=None, tag="decree_validation_recovery",
+        )
+
+    kept = []
+
+    def backend(_p, _c=None, *, tag=""):
+        text = "  臣请陛下改说。  "
+        kept.append(text)
+        return text, 1
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+    out = cb._compose_inworld_fact_report(
+        "prompt", llm_config=None, tag="decree_validation_recovery",
+    )
+    assert out == kept[0]
