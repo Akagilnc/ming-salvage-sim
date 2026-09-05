@@ -6337,28 +6337,52 @@ def api_advance_without_edict(
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
-    settlement_result = None
+    # #1749：entry 释放 write_gate 后 drain 可关旧库；成功/错误响应所需 DB 事实须在
+    # 持闸阶段物化，禁门后 state_payload / failure 记录再读退休连接。
+    error_failures: Optional[List[Dict[str, Any]]] = None
     try:
         # #1241 S1：受理样板收 helper；advance 锁语义 = 非阻塞抢锁 409（禁改用阻塞 gate）。
         with _settlement_period_entry(game, write_cm=_serialized_web_write):
-            # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
-            _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
-            # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
-            # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
-            # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
-            settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
-            if settlement_result is None or not settlement_result.awaiting:
-                game.session.end_turn()
-                game.refresh_turn()
+            try:
+                # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
+                _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
+                # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
+                # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
+                # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
+                settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
+                if settlement_result is None or not settlement_result.awaiting:
+                    game.session.end_turn()
+                    game.refresh_turn()
+                # 成功响应在 write_cm 内快照（return 仍先跑样板 clear 再出 with）。
+                return {
+                    "state": game.state_payload(),
+                    "awaiting_decision": bool(
+                        settlement_result is not None and settlement_result.awaiting
+                    ),
+                    "decisions": (
+                        settlement_result.decisions
+                        if settlement_result is not None and settlement_result.awaiting
+                        else []
+                    ),
+                    "pending_action_failures": _new_secret_order_failure_payloads_for_turn(
+                        game, turn_before, failed_before),
+                }
+            except HTTPException:
+                raise
+            except Exception:
+                # 仍持 write_cm：错误投影用失败记录在此物化，禁 entry 退出后再读库。
+                error_failures = _new_secret_order_failure_payloads_for_turn(
+                    game, turn_before, failed_before)
+                raise
     except HTTPException:
         # 令牌/相位/锁门 409 等既有 HTTP 面原样上抛，禁被下方 Exception 改包。
         raise
     except ValueError as e:
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        failures = error_failures or []
         detail: Any = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=400, detail=detail) from None
     except SettlementAbort as e:
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        failures = error_failures or []
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
     except (AudienceNightError, ExceptionGroup) as e:
@@ -6367,7 +6391,7 @@ def api_advance_without_edict(
     except Exception as e:  # noqa: BLE001
         # #1433：同流式颁诏 4616-4623——LLMUnavailable→可读 _llm_error_detail；其余 Exception→str。
         # HTTP 面 LLM 死走 412（菜单/连通先例）；禁裸 500 无 detail。
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        failures = error_failures or []
         if isinstance(e, LLMUnavailable):
             detail = _llm_error_detail(e)
             if failures:
@@ -6379,18 +6403,6 @@ def api_advance_without_edict(
             if failures else {"message": message}
         )
         raise HTTPException(status_code=500, detail=detail) from None
-    return {
-        "state": game.state_payload(),
-        "awaiting_decision": bool(
-            settlement_result is not None and settlement_result.awaiting
-        ),
-        "decisions": (
-            settlement_result.decisions
-            if settlement_result is not None and settlement_result.awaiting else []
-        ),
-        "pending_action_failures": _new_secret_order_failure_payloads_for_turn(
-            game, turn_before, failed_before),
-    }
 
 
 # #1341/#1338：PATCH /api/decree 已删（web/src 零真实调用方；裸设总诏绕过 directives
@@ -6437,53 +6449,64 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
+    # #1749：错误分支失败记录须在持闸阶段物化；成功支已在 entry 内 return。
+    error_failures: Optional[List[Dict[str, Any]]] = None
     try:
         # #1241 S1：受理样板收 helper；issue 锁语义 = 阻塞 _game_write_gate（禁改非阻塞）。
         with _settlement_period_entry(game, write_cm=_game_write_gate):
-            # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
-            _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
-            result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
-            decree = game.session.last_decree
-            failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-            if result.awaiting:
-                # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
-                return {
-                    **_settlement_player_payload(
-                        decree=decree,
-                        decisions=result.decisions,
-                        pending_action_failures=failures,
-                    ),
-                    "awaiting_decision": True,
-                }
-            report = result.report
-            game.session.end_turn()
-            game.refresh_turn()
-            events = [
-                steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-            ]
-            if not was_ended and game.state.ended:
-                events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-            return steam_events.with_events(_settlement_player_payload(
-                decree=decree,
-                report=report,
-                pending_action_failures=failures,
-            ), events)
+            try:
+                # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
+                _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
+                result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
+                decree = game.session.last_decree
+                failures = _new_secret_order_failure_payloads_for_turn(
+                    game, turn_before, failed_before)
+                if result.awaiting:
+                    # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
+                    return {
+                        **_settlement_player_payload(
+                            decree=decree,
+                            decisions=result.decisions,
+                            pending_action_failures=failures,
+                        ),
+                        "awaiting_decision": True,
+                    }
+                report = result.report
+                game.session.end_turn()
+                game.refresh_turn()
+                events = [
+                    steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                    steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                    steam_events.set_stat(
+                        steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+                ]
+                if not was_ended and game.state.ended:
+                    events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                return steam_events.with_events(_settlement_player_payload(
+                    decree=decree,
+                    report=report,
+                    pending_action_failures=failures,
+                ), events)
+            except HTTPException:
+                raise
+            except Exception:
+                error_failures = _new_secret_order_failure_payloads_for_turn(
+                    game, turn_before, failed_before)
+                raise
     except ValueError as e:
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        failures = error_failures or []
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=400, detail=detail) from None
     except SettlementAbort as e:
         # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试，detail 即玩家指引
         # （含错误包路径+「请发给作者」）。非 500——这是已处理的可重试态，不是服务器 bug。
         # settling 已落则 helper 保留交恢复。
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        failures = error_failures or []
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
     except LLMUnavailable as e:
         # #1452：非流式颁诏 LLM 死 → 结构化错误，禁裸 500（对齐 _llm_error_detail）。
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        failures = error_failures or []
         detail = _llm_error_detail(e)
         if failures:
             detail = {**detail, "pending_action_failures": failures}
@@ -6510,6 +6533,8 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         game = None
         turn_before = 0
         failed_before: set[int] = set()
+        # #1749：entry 退出后禁再读失败记录；持闸阶段物化供 __error__ 投影。
+        error_failures: Optional[List[Dict[str, Any]]] = None
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
@@ -6520,52 +6545,57 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             # 与 settled_ok 同核：clear 抛错走 __error__，禁先推成功终态。
             terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(game, write_cm=_game_write_gate):
-                # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
-                _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
-                result = game.session.resolve_turn(
-                    on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
-                decree = game.session.last_decree
-                failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if result.awaiting:
-                    # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
-                    terminal = ("__decisions__", _settlement_player_payload(
-                        decree=decree,
-                        decisions=result.decisions,
-                        pending_action_failures=failures,
-                    ))
-                else:
-                    report = result.report
-                    game.session.end_turn()
-                    game.refresh_turn()
-                    events = [
-                        steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                        steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-                    ]
-                    if not was_ended and game.state.ended:
-                        events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-                    terminal = ("__done__", _settlement_player_payload(
-                        decree=decree,
-                        report=report,
-                        steam_events=events,
-                        pending_action_failures=failures,
-                    ))
+                try:
+                    # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
+                    _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
+                    result = game.session.resolve_turn(
+                        on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
+                    decree = game.session.last_decree
+                    failures = _new_secret_order_failure_payloads_for_turn(
+                        game, turn_before, failed_before)
+                    if result.awaiting:
+                        # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
+                        terminal = ("__decisions__", _settlement_player_payload(
+                            decree=decree,
+                            decisions=result.decisions,
+                            pending_action_failures=failures,
+                        ))
+                    else:
+                        report = result.report
+                        game.session.end_turn()
+                        game.refresh_turn()
+                        events = [
+                            steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                            steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                            steam_events.set_stat(
+                                steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+                        ]
+                        if not was_ended and game.state.ended:
+                            events.append(
+                                steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                        terminal = ("__done__", _settlement_player_payload(
+                            decree=decree,
+                            report=report,
+                            steam_events=events,
+                            pending_action_failures=failures,
+                        ))
+                except HTTPException:
+                    raise
+                except Exception:
+                    error_failures = _new_secret_order_failure_payloads_for_turn(
+                        game, turn_before, failed_before)
+                    raise
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:
             # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
-            failures = (
-                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if game is not None else []
-            )
+            failures = error_failures or []
             ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
         except HTTPException as e:
             # #1277：令牌 409 等须保留 detail.turn / status_code，供 FE 复用 advance 的
             # 「serverTurn>expected → reload 不报错」；禁 str(HTTPException) 丢结构。
-            failures = (
-                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if game is not None else []
-            )
+            # 令牌拒不附失败记录（未入结算副作用）；其它 HTTP 面同形保留 status_code。
+            failures = error_failures or []
             detail = e.detail
             if isinstance(detail, dict):
                 payload = dict(detail)
@@ -6580,10 +6610,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                 ev_queue.put(("__error__", payload))
         except Exception as e:  # noqa: BLE001
             # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
-            failures = (
-                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if game is not None else []
-            )
+            failures = error_failures or []
             message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
             ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))
 
@@ -6633,6 +6660,9 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         game = None
         turn_before = 0
         failed_before: set[int] = set()
+        # #1749：分段 hold_write_for_body=False——失败记录只在短持 gate 时物化；
+        # entry 退出后 / gate-free 窗禁再读退休连接。
+        error_failures: Optional[List[Dict[str, Any]]] = None
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
@@ -6650,50 +6680,58 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             with _settlement_period_entry(
                 game, write_cm=_game_write_gate, hold_write_for_body=False,
             ):
-                report = game.session.submit_hitl_choices(
-                    body.choices,
-                    write_gate=_game_write_gate(game),
-                    on_event=on_event,
-                    cheat_directive=body.cheat,
-                )
-                decree = game.session.last_decree
-                failures = _new_secret_order_failure_payloads_for_turn(
-                    game, turn_before, failed_before,
-                )
-                # #1702 A2：尾写短持既有 write_gate，与热替换/其它持闸写者单写；
-                # 不整段 body 持锁（join 仍在 gate 外）；成功 clear 仍走样板 False 支短持。
-                with _game_write_gate(game):
-                    game.session.end_turn()
-                    game.refresh_turn()
-                events = [
-                    steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                    steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                    steam_events.set_stat(
-                        steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn),
-                    ),
-                ]
-                if not was_ended and game.state.ended:
-                    events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-                terminal = ("__done__", _settlement_player_payload(
-                    decree=decree,
-                    report=report,
-                    steam_events=events,
-                    pending_action_failures=failures,
-                ))
+                try:
+                    report = game.session.submit_hitl_choices(
+                        body.choices,
+                        write_gate=_game_write_gate(game),
+                        on_event=on_event,
+                        cheat_directive=body.cheat,
+                    )
+                    decree = game.session.last_decree
+                    # #1702 A2：尾写短持既有 write_gate，与热替换/其它持闸写者单写；
+                    # 不整段 body 持锁（join 仍在 gate 外）；成功 clear 仍走样板 False 支短持。
+                    # #1749：failures 与 end_turn 同段短持——分段 gate-free 窗后禁无门读库。
+                    with _game_write_gate(game):
+                        failures = _new_secret_order_failure_payloads_for_turn(
+                            game, turn_before, failed_before,
+                        )
+                        game.session.end_turn()
+                        game.refresh_turn()
+                    events = [
+                        steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                        steam_events.set_stat(
+                            steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn),
+                        ),
+                    ]
+                    if not was_ended and game.state.ended:
+                        events.append(
+                            steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                    terminal = ("__done__", _settlement_player_payload(
+                        decree=decree,
+                        report=report,
+                        steam_events=events,
+                        pending_action_failures=failures,
+                    ))
+                except Exception:
+                    # 短持 gate 物化；若 gate-free 窗内库已退休则 enrichment 为空，主异常照常上抛。
+                    try:
+                        with _game_write_gate(game):
+                            error_failures = _new_secret_order_failure_payloads_for_turn(
+                                game, turn_before, failed_before,
+                            )
+                    except Exception:
+                        error_failures = []
+                    raise
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:
             # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
-            failures = (
-                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if game is not None else []
-            )
+            # 相位预检在 entry 前抛时 error_failures 仍为 None → []（无结算副作用可读）。
+            failures = error_failures or []
             ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
         except Exception as e:  # noqa: BLE001
-            failures = (
-                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if game is not None else []
-            )
+            failures = error_failures or []
             message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
             ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))
 
