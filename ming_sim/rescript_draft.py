@@ -98,6 +98,7 @@ class RescriptOptionMissingFieldsError(ValueError):
 
     缺字段、错值、组合矛盾、未知键、非 object 等凡可定位到 option 的失败
     均走同一补交回路（heal-covers-illegal-values-too）；非顶层/急务条目非法。
+    权威失败事实只有 field_failures（field/current/expected）。
     """
 
     def __init__(
@@ -107,7 +108,6 @@ class RescriptOptionMissingFieldsError(ValueError):
         missing_fields: Sequence[str],
         raw_option: object = None,
         field_failures: Optional[Sequence[Mapping[str, object]]] = None,
-        field_reasons: Optional[Mapping[str, str]] = None,
         replace_option: bool = False,
     ) -> None:
         self.missing_fields = tuple(str(f) for f in missing_fields)
@@ -132,10 +132,6 @@ class RescriptOptionMissingFieldsError(ValueError):
                 seen.add(key)
                 normalized.append(_field_failure(key, current=None, expected=None))
         self.field_failures: Tuple[Dict[str, object], ...] = tuple(normalized)
-        # 日志兼容：非权威期望源
-        self.field_reasons: Dict[str, str] = {
-            str(k): str(v) for k, v in dict(field_reasons or {}).items()
-        }
         super().__init__(message)
 
 
@@ -145,7 +141,6 @@ def _raise_option_missing_fields(
     missing_fields: Sequence[str],
     raw_option: object = None,
     field_failures: Optional[Sequence[Mapping[str, object]]] = None,
-    field_reasons: Optional[Mapping[str, str]] = None,
     replace_option: bool = False,
 ) -> None:
     """抛可定位单 option 契约失败（#1746 heal-by-resume）。不问错误种类。"""
@@ -154,7 +149,6 @@ def _raise_option_missing_fields(
         missing_fields=missing_fields,
         raw_option=raw_option,
         field_failures=field_failures,
-        field_reasons=field_reasons,
         replace_option=replace_option,
     )
 
@@ -162,8 +156,6 @@ def _raise_option_missing_fields(
 def _note_failed(
     bucket: List[str],
     *fields: str,
-    reasons: Optional[Dict[str, str]] = None,
-    reason: str = "",
     facts: Optional[Dict[str, Dict[str, object]]] = None,
     current: object = None,
     expected: object = None,
@@ -177,8 +169,6 @@ def _note_failed(
             continue
         if key not in bucket:
             bucket.append(key)
-        if reasons is not None and reason and key not in reasons:
-            reasons[key] = reason
         if facts is not None:
             cur = current
             exp = expected
@@ -200,8 +190,6 @@ class RescriptOptionMissingFailure:
     heal_id: str = ""
     field_failures: Tuple[Dict[str, object], ...] = ()
     replace_option: bool = False
-    # 旧日志兼容；权威期望在 field_failures。
-    field_reasons: Tuple[Tuple[str, str], ...] = ()
 
 
 class RescriptOptionMissingFieldsBatch(ValueError):
@@ -472,7 +460,6 @@ def _enforce_layer_a_action_conditional(
     *,
     shape: Mapping[str, object],
     missing_out: List[str],
-    reasons_out: Optional[Dict[str, str]] = None,
     facts_out: Optional[Dict[str, Dict[str, object]]] = None,
 ) -> None:
     """按 shape.action_conditional 强制七类必填/互斥/枚举（写回 out）。
@@ -502,7 +489,6 @@ def _enforce_layer_a_action_conditional(
 
     def _fail(
         *fields: str,
-        reason: str = "",
         current: object = None,
         expected: object = None,
         currents: Optional[Mapping[str, object]] = None,
@@ -510,7 +496,6 @@ def _enforce_layer_a_action_conditional(
     ) -> None:
         _note_failed(
             missing_out, *fields,
-            reasons=reasons_out, reason=reason,
             facts=facts_out,
             current=current, expected=expected,
             currents=currents, expecteds=expecteds,
@@ -535,7 +520,6 @@ def _enforce_layer_a_action_conditional(
             except (TypeError, ValueError):
                 _fail(
                     key,
-                    reason=f"{action}.{key} 非法：{val!r}",
                     current=val,
                     expected={"type": "positive_int"},
                 )
@@ -550,10 +534,6 @@ def _enforce_layer_a_action_conditional(
         if got and got not in allowed_tk:
             _fail(
                 "target_kind",
-                reason=(
-                    f"{action}.target_kind 须为"
-                    f"{'|'.join(sorted(allowed_tk))}，得 {got!r}"
-                ),
                 current=got,
                 expected=sorted(allowed_tk),
             )
@@ -564,7 +544,6 @@ def _enforce_layer_a_action_conditional(
         if not val:
             _fail(
                 key_s,
-                reason=f"{action} 缺必填：{key_s}",
                 current=_raw_or_out(key_s),
                 expected={"nonempty_str": True},
             )
@@ -580,7 +559,6 @@ def _enforce_layer_a_action_conditional(
         if not any(_require_any_present(k) for k in keys):
             _fail(
                 *keys,
-                reason=f"{action} 须具备其一：{'/'.join(keys)}",
                 currents={k: _raw_or_out(k) for k in keys},
                 expecteds={k: {"any_of_group": list(keys)} for k in keys},
             )
@@ -602,7 +580,6 @@ def _enforce_layer_a_action_conditional(
             if val not in allowed_set:
                 _fail(
                     key_s,
-                    reason=f"{action}.{key_s} 非法：{val!r}",
                     current=val,
                     expected=sorted(allowed_set),
                 )
@@ -620,7 +597,6 @@ def _enforce_layer_a_action_conditional(
             if not _nonempty_str(rk_s):
                 _fail(
                     rk_s,
-                    reason=f"{action} 当 {ctrl}={cval} 缺 {rk_s}",
                     current=_raw_or_out(rk_s),
                     expected={"required_when": {ctrl: cval}},
                 )
@@ -635,7 +611,6 @@ def _enforce_layer_a_action_conditional(
             # 互斥并存：两字段都列入补交，由 LLM 择一保留
             _fail(
                 *present,
-                reason=f"{action} 互斥键不得并存：{'/'.join(present)}",
                 currents={k: _raw_or_out(k) for k in present},
                 expecteds={k: {"mutex": list(keys), "keep_one": True} for k in present},
             )
@@ -648,7 +623,6 @@ def _enforce_layer_a_action_conditional(
             if amt_raw is None or amt_raw == "":
                 _fail(
                     "amount",
-                    reason=f"{action} {cval} 缺 amount",
                     current=amt_raw,
                     expected={"type": "positive_int"},
                 )
@@ -660,7 +634,6 @@ def _enforce_layer_a_action_conditional(
                 except (TypeError, ValueError):
                     _fail(
                         "amount",
-                        reason=f"{action} amount 非法：{amt_raw!r}",
                         current=amt_raw,
                         expected={"type": "positive_int"},
                     )
@@ -668,7 +641,6 @@ def _enforce_layer_a_action_conditional(
                     if amount <= 0:
                         _fail(
                             "amount",
-                            reason=f"{action} amount 须为正整数，得 {amount}",
                             current=amount,
                             expected={"type": "positive_int"},
                         )
@@ -689,7 +661,6 @@ def _enforce_layer_a_action_conditional(
             if amount > 0:
                 _fail(
                     "amount",
-                    reason=f"{action} 非 {cval} 不得带正 amount",
                     current=amt_raw,
                     expected={"forbid_positive_unless": {ctrl: cval}},
                 )
@@ -751,13 +722,11 @@ def normalize_rescript_layer_a_option(
     capability_int_keys = shape["capability_int_keys"]  # type: ignore[assignment]
     out: Dict[str, object] = {}
     failed: List[str] = []
-    reasons: Dict[str, str] = {}
     facts: Dict[str, Dict[str, object]] = {}
     replace_option = False
 
     def _fail(
         *fields: str,
-        reason: str = "",
         current: object = None,
         expected: object = None,
         currents: Optional[Mapping[str, object]] = None,
@@ -765,7 +734,6 @@ def normalize_rescript_layer_a_option(
     ) -> None:
         _note_failed(
             failed, *fields,
-            reasons=reasons, reason=reason,
             facts=facts,
             current=current, expected=expected,
             currents=currents, expecteds=expecteds,
@@ -778,14 +746,12 @@ def normalize_rescript_layer_a_option(
         for key in unknown:
             _fail(
                 key,
-                reason=f"票拟 option 含未知字段：{key}",
                 current=raw.get(key),
                 expected={"allowed_keys": sorted(_LAYER_A_ALLOWED_KEYS)},
             )
         if _OPTION_REPLACE_FIELD not in failed:
             _fail(
                 _OPTION_REPLACE_FIELD,
-                reason="未知键须提交完整合法 option 或去掉多余键",
                 current=unknown,
                 expected={"allowed_keys": sorted(_LAYER_A_ALLOWED_KEYS)},
             )
@@ -795,7 +761,6 @@ def normalize_rescript_layer_a_option(
         if key_s not in raw or raw.get(key_s) is None:
             _fail(
                 key_s,
-                reason=f"缺必填：{key_s}",
                 current=None if key_s not in raw else raw.get(key_s),
                 expected={"type": "nonempty_str"},
             )
@@ -804,7 +769,6 @@ def normalize_rescript_layer_a_option(
         if not isinstance(val, str):
             _fail(
                 key_s,
-                reason=f"{key_s} 须为 str，拒 {type(val).__name__}",
                 current=val,
                 expected={"type": "nonempty_str"},
             )
@@ -812,7 +776,6 @@ def normalize_rescript_layer_a_option(
         if not val.strip():
             _fail(
                 key_s,
-                reason=f"缺必填：{key_s}",
                 current=val,
                 expected={"type": "nonempty_str"},
             )
@@ -825,7 +788,6 @@ def normalize_rescript_layer_a_option(
         if action_type not in action_types:
             _fail(
                 "action_type",
-                reason=f"action_type 非七类 routable：{action_type!r}",
                 current=action_type,
                 expected=sorted(action_types),
             )
@@ -838,7 +800,6 @@ def normalize_rescript_layer_a_option(
                 if raw_kind is not None and str(raw_kind).strip():
                     _fail(
                         "grant_kind",
-                        reason=f"非 grant_allocation 不得带 grant_kind：{raw_kind!r}",
                         current=raw_kind,
                         expected=None,
                     )
@@ -848,7 +809,6 @@ def normalize_rescript_layer_a_option(
         if target_kind not in TARGET_KINDS:
             _fail(
                 "target_kind",
-                reason=f"target_kind 非法：{target_kind!r}",
                 current=target_kind,
                 expected=sorted(TARGET_KINDS),
             )
@@ -866,7 +826,6 @@ def normalize_rescript_layer_a_option(
         except (TypeError, ValueError) as exc:
             _fail(
                 "locality_scope",
-                reason=f"locality_scope 非法：{exc}",
                 current=out.get("locality_scope"),
                 expected=sorted(LOCALITY_SCOPES),
             )
@@ -877,7 +836,6 @@ def normalize_rescript_layer_a_option(
         if key_s not in raw:
             _fail(
                 key_s,
-                reason=f"缺须在键：{key_s}",
                 current=None,
                 expected={"type": "str", "allow_empty": True},
             )
@@ -886,7 +844,6 @@ def normalize_rescript_layer_a_option(
         if not isinstance(value, str):
             _fail(
                 key_s,
-                reason=f"{key_s} 须为 str（可空串），拒 {type(value).__name__}",
                 current=value,
                 expected={"type": "str", "allow_empty": True},
             )
@@ -897,7 +854,7 @@ def normalize_rescript_layer_a_option(
     if action_type:
         _enforce_layer_a_action_conditional(
             out, raw, shape=shape,
-            missing_out=failed, reasons_out=reasons, facts_out=facts,
+            missing_out=failed, facts_out=facts,
         )
 
     # #1624/#1746 组合：属地矩阵与完整组合失败收进同一 option 补交，不整批重抽。
@@ -940,7 +897,6 @@ def normalize_rescript_layer_a_option(
                     expecteds[f] = None
             _fail(
                 *field_list,
-                reason=message,
                 currents=currents,
                 expecteds=expecteds,
             )
@@ -986,7 +942,6 @@ def normalize_rescript_layer_a_option(
         except ValueError as exc:
             _fail(
                 "stop_condition",
-                reason=str(exc),
                 current=raw.get("stop_condition"),
                 expected={"type": "str"},
             )
@@ -1003,7 +958,6 @@ def normalize_rescript_layer_a_option(
             except (TypeError, ValueError):
                 _fail(
                     key,
-                    reason=f"{key} 非法：{raw[key]!r}",
                     current=raw[key],
                     expected={"type": "int"},
                 )
@@ -1029,7 +983,6 @@ def normalize_rescript_layer_a_option(
             # 双缺辨别：索其一；不预断 army_pay，不平行金额预检
             _fail(
                 "grant_kind", "grant_action",
-                reason="grant_allocation 须补 grant_kind 或 grant_action",
                 currents={"grant_kind": None, "grant_action": None},
                 expecteds={
                     "grant_kind": grant_kind_army_pay,
@@ -1040,16 +993,12 @@ def normalize_rescript_layer_a_option(
             if grant_kind != grant_kind_army_pay:
                 _fail(
                     "grant_kind",
-                    reason=f"grant 非法 grant_kind：{grant_kind!r}",
                     current=grant_kind,
                     expected=grant_kind_army_pay,
                 )
             elif raw_ga:
                 _fail(
                     "grant_kind", "grant_action",
-                    reason=(
-                        f"grant_kind=army_pay 不得同时显式给 grant_action：{raw_ga!r}"
-                    ),
                     currents={"grant_kind": grant_kind, "grant_action": raw_ga},
                     expecteds={
                         "grant_kind": grant_kind_army_pay,
@@ -1061,7 +1010,6 @@ def normalize_rescript_layer_a_option(
         elif generation_admission and raw_ga == "协饷":
             _fail(
                 "grant_kind",
-                reason="生成侧军饷须用 grant_kind=army_pay，不得直接 grant_action=协饷",
                 current=None,
                 expected=grant_kind_army_pay,
             )
@@ -1098,7 +1046,6 @@ def normalize_rescript_layer_a_option(
                     exp = sorted(GRANT_ACTIONS - {"无"})
                 _fail(
                     field,
-                    reason=str(exc),
                     current=(
                         raw.get(field) if field in raw
                         else out.get(field)
@@ -1160,7 +1107,6 @@ def normalize_rescript_layer_a_option(
                         }
                         _fail(
                             *[str(f) for f in exc.failed_fields],
-                            reason=str(exc),
                             currents=currents,
                             expecteds={
                                 str(f): xiexang_expected.get(str(f))
@@ -1180,7 +1126,6 @@ def normalize_rescript_layer_a_option(
             missing_fields=tuple(failed),
             raw_option=raw,
             field_failures=list(facts.values()),
-            field_reasons=reasons,
             replace_option=replace_option,
         )
 
@@ -1385,10 +1330,6 @@ def _option_failure_from_exc(
     raw_option: object = None,
 ) -> RescriptOptionMissingFailure:
     raw_for = raw_option if raw_option is not None else exc.raw_option
-    reasons = tuple(
-        (str(k), str(v))
-        for k, v in dict(getattr(exc, "field_reasons", {}) or {}).items()
-    )
     facts = tuple(
         dict(f) for f in tuple(getattr(exc, "field_failures", ()) or ())
         if isinstance(f, Mapping)
@@ -1402,7 +1343,6 @@ def _option_failure_from_exc(
         heal_id=_option_heal_id(item_index, option_index),
         field_failures=facts,
         replace_option=bool(getattr(exc, "replace_option", False)),
-        field_reasons=reasons,
     )
 
 
@@ -1575,7 +1515,6 @@ def validate_rescript_draft_items(
                     missing_fields=tuple(fields),
                     raw_option=raw_for,
                     field_failures=facts,
-                    field_reasons=exc.field_reasons,
                     replace_option=replace,
                 )
                 item_missing.append(_option_failure_from_exc(
@@ -2087,8 +2026,6 @@ def _failure_log_rows(
                 if isinstance(f, Mapping)
             ],
         }
-        if failure.field_reasons:
-            row["field_reasons"] = dict(failure.field_reasons)
         if isinstance(failure.raw_option, dict):
             label = failure.raw_option.get("label")
             if label is not None:
