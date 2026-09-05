@@ -2047,26 +2047,17 @@ class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
         *,
         field_failures: Optional[list] = None,
     ) -> None:
-        fields = tuple(missing_fields)
+        # 权威 require_explicit_xiexang_fields 一次给出完整事实；此处只携带
+        facts = tuple(
+            dict(f) for f in (field_failures or ())
+            if isinstance(f, dict) and str(f.get("field") or "").strip()
+        )
+        fields = tuple(str(f["field"]) for f in facts) if facts else tuple(missing_fields)
         self.missing_fields = fields  # compatibility alias for existing callers
-        facts: list = []
-        seen: set[str] = set()
-        for raw_fact in field_failures or ():
-            if not isinstance(raw_fact, dict):
-                continue
-            field = str(raw_fact.get("field") or "").strip()
-            if not field or field in seen:
-                continue
-            seen.add(field)
-            facts.append({
-                "field": field,
-                "current": raw_fact.get("current"),
-                "expected": raw_fact.get("expected"),
-            })
-        self.field_failures = tuple(facts)
+        self.field_failures = facts
         super().__init__(
             "拨饷旨意缺少结构化字段："
-            + "/".join(str(f) for f in missing_fields)
+            + "/".join(str(f) for f in fields)
             + "（不猜散文）",
             failed_fields=fields,
         )
