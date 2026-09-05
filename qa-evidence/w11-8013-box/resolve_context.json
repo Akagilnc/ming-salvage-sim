@@ -1,0 +1,13 @@
+{
+  "decree_text": "奉天承运皇帝，诏曰：\n\n国家经费，出纳有经。今户部即于国库内拨银五十万两，解送太仓收贮备用，以充军国之需。辽东重镇，将士劳苦，军饷支给，务须优先，毋得稽迟。京营官俸，照常关支，以安人心。\n\n陕西地方，军需孔急，赈济亦属要务，然钱粮有限，当量入为出。户部会同该省抚按，核实实在数目，酌量缓急，分拨接济，务使兵食有赖，民困稍苏，毋得虚糜。\n\n尔部其钦承朕命，速行办理，仍将拨解及分拨数目，具实奏闻。故谕。",
+  "narrative": "",
+  "simulator_payload": {
+    "transit_arrivals": []
+  },
+  "secret_orders": {},
+  "relevant_memories": [],
+  "extracted": null,
+  "resolve_contract_version": 0,
+  "source": "player_decree",
+  "attendant_message": ""
+}
