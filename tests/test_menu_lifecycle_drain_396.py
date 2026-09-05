@@ -11,18 +11,12 @@ from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
-
-
-def _wait_for(predicate) -> None:
-    """Poll until predicate; permanent hang → CI job final line."""
-    poll = threading.Event()
-    while True:
-        if predicate():
-            return
-        poll.wait(0.01)  # backoff only; not a correctness deadline
+from tests.wait_utils import wait_until
 
 
 def test_drain_and_close_session_waits_for_gate_then_closes():
+    from ming_sim.session_write_queue import get_session_write_queue
+
     gate = threading.Lock()
     closed: list[int] = []
     game = SimpleNamespace(
@@ -38,7 +32,8 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
         daemon=True,
     )
     thread.start()
-
+    # Prove drain reached barrier/close acquire while gate held — not start-race is_set.
+    wait_until(lambda: get_session_write_queue(game).has_open_barrier())
     assert not done.is_set()
     assert closed == []
 
@@ -68,7 +63,7 @@ def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch):
 
     gate.release()
 
-    _wait_for(lambda: closed == [1])
+    wait_until(lambda: closed == [1])
     assert not gate.locked()
 
 
@@ -99,7 +94,7 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
 
     gate.release()
 
-    _wait_for(lambda: closed == [1])
+    wait_until(lambda: closed == [1])
     assert not gate.locked()
 
 
@@ -147,7 +142,7 @@ def test_new_game_switches_db_path_and_archives_old_after_drain(monkeypatch, tmp
 
     gate.release()  # worker finishes → drain proceeds
 
-    _wait_for(lambda: closed == [1])
+    wait_until(lambda: closed == [1])
     assert not gate.locked()
 
     # Old DB is moved to saves/ after the drain finishes
@@ -377,6 +372,8 @@ def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tm
 
 
 def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
+    from ming_sim.session_write_queue import get_session_write_queue
+
     gate = threading.Lock()
     closed: list[int] = []
     killed: list[object] = []
@@ -398,7 +395,7 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
 
     thread = threading.Thread(target=lambda: asyncio.run(run_shutdown()), daemon=True)
     thread.start()
-
+    wait_until(lambda: get_session_write_queue(fake_game).has_open_barrier())
     assert not done.is_set()
     assert closed == []
     assert killed == []
@@ -407,7 +404,7 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
 
     done.wait()
     assert closed == [1]
-    _wait_for(lambda: bool(killed))
+    wait_until(lambda: bool(killed))
 
 
 def test_shutdown_without_web_game_skips_drain_and_kills(monkeypatch):
@@ -422,7 +419,7 @@ def test_shutdown_without_web_game_skips_drain_and_kills(monkeypatch):
     result = asyncio.run(web_app.api_menu_shutdown())
 
     assert result == {"ok": True}
-    _wait_for(lambda: bool(killed))
+    wait_until(lambda: bool(killed))
 
 
 # ── Gap A: MING_SIM_DB 配置路径下 new_game 不删旧库 ────────────────────────
@@ -468,7 +465,7 @@ def test_new_game_with_ming_sim_db_env_does_not_clobber_old_configured_db(monkey
 
     gate.release()
 
-    _wait_for(lambda: closed == [1])
+    wait_until(lambda: closed == [1])
     assert not gate.locked()
 
     save_files = list((tmp_path / "saves").glob("*.db"))
@@ -653,7 +650,7 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     thread_b.start()
 
     # B 已进入 chat_stream 体（mark 后 counter >= 2）
-    _wait_for(lambda: runtime._pending_writes_count >= 2)
+    wait_until(lambda: runtime._pending_writes_count >= 2)
 
     # drain 启动（须等 B 跑完才关）
     drain_done = threading.Event()
@@ -664,14 +661,16 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
 
     thread_drain = threading.Thread(target=run_drain, daemon=True)
     thread_drain.start()
-
+    # Prove drain entered barrier while B ticket still open.
+    wait_until(lambda: runtime._write_queue.has_open_barrier())
     assert not drain_done.is_set(), "drain 在排队 B 跑完前就关了连接"
 
     # A 完成 → 释放 gate → B 拿到锁开始跑
     allow_finish_a.set()
-    _wait_for(lambda: any(e.get("type") == "delta" for e in b_events))
+    wait_until(lambda: any(e.get("type") == "delta" for e in b_events))
 
     # B 仍持锁（agent 阻塞在 allow_finish_b）→ drain 仍未关
+    assert runtime._write_queue.has_open_barrier()
     assert not drain_done.is_set(), "drain 在 B 仍持锁时关了连接"
 
     allow_finish_b.set()
@@ -706,7 +705,7 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
     )
     thread.start()
 
-    _wait_for(lambda: runtime._write_queue.is_sealed())
+    wait_until(lambda: runtime._write_queue.is_sealed())
     assert runtime._mark_pending_write() is None
     # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
     assert runtime._pending_writes_count <= 1
@@ -786,7 +785,7 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     with open(web_app._active_db_path_file(), "r", encoding="utf-8") as f:
         assert f.read().strip() == new_path
     # #1732 T1：无活 session 也归档旧主库
-    _wait_for(lambda: not os.path.exists(old_db_path))
+    wait_until(lambda: not os.path.exists(old_db_path))
     saves_dir = tmp_path / "saves"
     save_files = list(saves_dir.glob("*.db"))
     assert len(save_files) == 1
@@ -870,10 +869,10 @@ def test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains(monkeyp
     conn.commit()
     gate.release()
 
-    _wait_for(lambda: closed == [1])
+    wait_until(lambda: closed == [1])
     assert not gate.locked()
     # #1732 T1：排空关闭后旧库归档，含迟到后台回奏；可被存档列表看见
-    _wait_for(lambda: not os.path.exists(old_db_path))
+    wait_until(lambda: not os.path.exists(old_db_path))
     save_files = list((tmp_path / "saves").glob("*.db"))
     assert len(save_files) == 1
     check = sqlite3.connect(str(save_files[0]))

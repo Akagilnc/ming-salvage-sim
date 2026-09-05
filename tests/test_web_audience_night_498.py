@@ -691,6 +691,18 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
     monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_POLL_S", 0.02)
     turn_before = int(game.state.turn)
 
+    # 观测：issue 真进屏障并见到 chat 票后，才断言「未伪造成 elapsed 409」。
+    observed_ticket_inflight = threading.Event()
+    q = game._runtime_write_queue()
+    real_wait_prior = q.wait_prior
+
+    def observe_wait_prior(ticket):
+        if q.inflight_count() > 1:  # barrier 票 + chat 票
+            observed_ticket_inflight.set()
+        return real_wait_prior(ticket)
+
+    monkeypatch.setattr(q, "wait_prior", observe_wait_prior)
+
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
             chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
@@ -703,7 +715,7 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
             issue_task = asyncio.create_task(
                 issue_client.post("/api/decree/issue/stream", json={})
             )
-            # 在飞 chat 未放行前 issue 不得伪造成 elapsed 409；终态断言在放行后核验
+            await _await_event(observed_ticket_inflight)
             assert not issue_task.done(), "issue must wait for chat ticket, not forge elapsed 409"
 
             allow.set()

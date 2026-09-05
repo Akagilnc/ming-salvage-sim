@@ -5,12 +5,12 @@ import pytest
 import asyncio
 import json
 import threading
-import time
 from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
+from tests.wait_utils import wait_until
 
 
 class _RunContent:
@@ -177,11 +177,46 @@ class _RecordingDB:
         return []
 
 
+class _ObservingWriteGate:
+    """Test lock: signals when acquire is attempted while settlement_holding is set.
+
+    Drop-in for threading.Lock so get_session_write_queue reuses the same gate the
+    stream epilogue TicketedWriteGate acquires — without production test hooks.
+    """
+
+    def __init__(self, holding: threading.Event, contending: threading.Event):
+        self._lock = threading.Lock()
+        self._holding = holding
+        self._contending = contending
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        if self._holding.is_set():
+            self._contending.set()
+        if timeout is None or timeout < 0:
+            return self._lock.acquire(blocking)
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *args) -> bool:
+        self.release()
+        return False
+
+
 def _runtime_for_stream_race():
     allow_finish = threading.Event()
     settlement_attempting = threading.Event()
     settlement_holding = threading.Event()
     settlement_release = threading.Event()
+    epilogue_contending = threading.Event()
     character = SimpleNamespace(name="测试大臣")
     agent = _FakeAgent(allow_finish)
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
@@ -190,7 +225,7 @@ def _runtime_for_stream_race():
     runtime = object.__new__(web_app.WebGame)
     runtime.session = _FakeSession(character, agent, state, db)
     runtime.chat_history = {character.name: []}
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = _ObservingWriteGate(settlement_holding, epilogue_contending)
     runtime.directive_rows = lambda: []
     runtime.directive_payload = lambda row: row
     runtime.suggestions_for = lambda character: []
@@ -206,6 +241,7 @@ def _runtime_for_stream_race():
 
     settlement.holding = settlement_holding  # type: ignore[attr-defined]
     settlement.release_event = settlement_release  # type: ignore[attr-defined]
+    settlement.epilogue_contending = epilogue_contending  # type: ignore[attr-defined]
     return runtime, character.name, allow_finish, settlement_attempting, settlement
 
 
@@ -221,24 +257,22 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     settlement_thread.start()
     settlement_attempting.wait()
     settlement.holding.wait()
-    allow_finish.set()
-    # Overlap: stream epilogue must see settlement_holding while committing.
+
     done_box: list = []
-    epilogue_entered = threading.Event()
+    done_collected = threading.Event()
 
     def _take_done() -> None:
         done_box.append(next(stream))
-        epilogue_entered.set()  # misnamed: done collected
+        done_collected.set()
 
     threading.Thread(target=_take_done, daemon=True).start()
-    # Release settlement only after stream thread has had a chance to block on gate.
-    # Observable: holding still set and done not yet collected proves contention window open;
-    # we release unconditionally after allow_finish so epilogue can finish — RecordingDB
-    # flags overlapped_minister_commit if commit lands while holding was set.
-    # Pump: wait until either done arrives (no contention needed) or we observe holding.
-    # Always release so test cannot hang; CI final line is backstop.
+    allow_finish.set()
+    # Prove stream epilogue reached write_gate while settlement still holds it.
+    settlement.epilogue_contending.wait()
+    assert settlement.holding.is_set(), "settlement released before epilogue contended"
+    assert not done_collected.is_set(), "done arrived before settlement released gate"
     settlement.release_event.set()
-    epilogue_entered.wait()
+    done_collected.wait()
     done = done_box[0]
     settlement_thread.join()
 
@@ -365,14 +399,6 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     assert chat_result["answer"] == "臣已知悉。"
 
 
-def _wait_for(predicate) -> None:
-    """Poll until predicate; permanent hang → CI job final line."""
-    while True:
-        if predicate():
-            return
-        time.sleep(0.01)  # backoff only; not a correctness deadline
-
-
 @pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_drain_waits_for_in_flight_nonstream_chat():
     """非流式 chat 在飞（慢 LLM）时 drain 须等待——pending 覆盖 LLM 窗 + epilogue。
@@ -452,7 +478,7 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     drain_thread = threading.Thread(target=run_drain, daemon=True)
     drain_thread.start()
 
-    _wait_for(lambda: runtime._write_queue.is_sealed())
+    wait_until(lambda: runtime._write_queue.is_sealed())
     # 负向：LLM 仍在飞时 drain 不得关连接
     assert not drain_done.is_set(), "drain 在非流式 chat 仍在飞时就关了 session"
     assert closed == []
