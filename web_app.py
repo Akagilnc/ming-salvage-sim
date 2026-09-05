@@ -4517,9 +4517,9 @@ def _lookup_holder(path: str, runtime: Any) -> Optional[_HolderEntry]:
 
 
 def _handback_failed_runtime(runtime: Any, path: str = "") -> Optional[_HolderEntry]:
-    """#1749 B：构造/清理 close 失败携回——同一 holder + 失败 CloseOp（A5；done∧¬ok∧AS）。
+    """#1749 B：构造/清理 close 失败携回——同一 holder + 失败 CloseOp（A5）。
 
-    不得只 register close_op=None 的壳冒充失败交卷。
+    只装配 entry/op，落结果走唯一 ``_settle_close_result``，不另开置位。
     """
     norm = _path_norm_of_game(runtime, path)
     if not norm or runtime is None:
@@ -4531,17 +4531,9 @@ def _handback_failed_runtime(runtime: Any, path: str = "") -> Optional[_HolderEn
     if op is None or (op.done.is_set() and not op.close_ok):
         op = _CloseOp(db_path=norm)
         entry.close_op = op
-    op.close_ok = False
     if not op.db_path:
         op.db_path = norm
-    try:
-        _note_close_result(entry, False, norm)
-    except Exception:
-        logger.exception("handback note_close_result failed path=%s", norm)
-    finally:
-        op.close_ok = False
-        op.done.set()
-        op.archive_settled.set()
+    _settle_close_result(op=op, close_ok=False, entry=entry, path=norm)
     return entry
 
 
