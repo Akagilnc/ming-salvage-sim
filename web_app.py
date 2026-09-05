@@ -4776,68 +4776,102 @@ async def api_menu_new_game() -> Dict[str, Any]:
     （裁定二前提「旧局自动归档为存档」）。exit 本身不搬库；归档只在旧连接排空后、
     由本端点承接同一 _archive_drained_db_file 权威实现。
 
-    #1749：临界区在 executor 中持 _menu_lifecycle_lock 跑完——不堵事件循环；
-    锁覆盖构造窗，禁止 web_game=None 时二次 new_game 把在建路径当 prev 归档。
-    取消窗口在构造前（continue 等 exit / 世代对号）；持锁构造期间其它菜单动作串行等待。"""
-    global web_game, _menu_generation
+    #1749：路径切换/世代 bump 持短锁；WebGame 构造在锁外——exit 可在构造中途响应并 bump
+    （删除持锁构造）。新路径登记 opening live。整段 executor 不堵事件循环。
+    """
+    global web_game, _menu_generation, _menu_opening_db_path
     loop = asyncio.get_running_loop()
 
-    def _new_game_under_lock() -> Dict[str, Any]:
-        global web_game, _menu_generation
+    def _new_game_work() -> Dict[str, Any]:
+        global web_game, _menu_generation, _menu_opening_db_path
+        opening_path = ""
+        token = 0
+        old_game = None
+        snapshot: tuple[bool, str, bool, str] | None = None
+        prev_db_path = ""
+        new_db_path = ""
         with _menu_lifecycle_lock:
             _menu_generation += 1
+            token = _menu_generation
             old_game = web_game
-            # #396 Step5 R4: 无论 web_game 是否为 None（退菜单后 / 服务端首次 new_game），
-            # fresh=True 前都必须切换主库路径到新文件——否则 WebGame 会解析到旧配置库（env /
-            # active_db.txt）并在 fresh=True 时删/覆盖旧库，而旧 detach worker 可能仍写旧库。
             snapshot = _snapshot_main_db_path_config()
             prev_db_path = _get_main_db_path()
             new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
             try:
                 _set_main_db_path(new_db_path)
                 web_game = None
-                new_game = WebGame(fresh=True)
-            except LLMUnavailable as exc:
-                _restore_main_db_path_config(snapshot)
-                web_game = old_game
-                raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+                opening_path = new_db_path
+                with _menu_opening_lock:
+                    _menu_opening_db_path = opening_path
             except Exception:
                 _restore_main_db_path_config(snapshot)
                 web_game = old_game
                 raise
-            web_game = new_game
-            if old_game is not None:
-                _spawn_drain_close(old_game, archive_db=True)
-            else:
-                # #1732/#1749：peek 共享 exit completion；close 完成后才归档。
-                exit_completion = _peek_exit_detach_completion()
-                prev_db_path = _normalize_db_path(prev_db_path) if prev_db_path else ""
+        try:
+            try:
+                new_game = WebGame(fresh=True)
+            except LLMUnavailable as exc:
+                with _menu_lifecycle_lock:
+                    assert snapshot is not None
+                    _restore_main_db_path_config(snapshot)
+                    web_game = old_game
+                raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+            except Exception:
+                with _menu_lifecycle_lock:
+                    assert snapshot is not None
+                    _restore_main_db_path_config(snapshot)
+                    web_game = old_game
+                raise
+            with _menu_lifecycle_lock:
+                if token != _menu_generation:
+                    try:
+                        _drain_and_close_session(new_game)
+                    except Exception:
+                        logger.exception("discard superseded new_game session failed")
+                    assert snapshot is not None
+                    _restore_main_db_path_config(snapshot)
+                    if web_game is None:
+                        web_game = old_game
+                    raise HTTPException(
+                        status_code=409, detail="新游戏已取消（菜单状态已变更）。",
+                    )
+                web_game = new_game
+                if old_game is not None:
+                    _spawn_drain_close(old_game, archive_db=True)
+                else:
+                    exit_completion = _peek_exit_detach_completion()
+                    prev_norm = _normalize_db_path(prev_db_path) if prev_db_path else ""
 
-                def _archive_prev_after_exit_detach() -> None:
-                    if exit_completion is not None:
-                        exit_completion.done.wait()
-                        ok = exit_completion.close_ok
-                        _clear_exit_detach_completion(exit_completion)
-                        if not ok:
+                    def _archive_prev_after_exit_detach() -> None:
+                        if exit_completion is not None:
+                            exit_completion.done.wait()
+                            ok = exit_completion.close_ok
+                            _clear_exit_detach_completion(exit_completion)
+                            if not ok:
+                                return
+                        if not prev_norm or _same_db_path(prev_norm, new_db_path):
                             return
-                    if not prev_db_path or _same_db_path(prev_db_path, new_db_path):
-                        return
-                    if _db_path_is_live(prev_db_path):
-                        logger.error(
-                            "skip post-exit archive of live db path=%s", prev_db_path,
-                        )
-                        return
-                    _archive_drained_db_file(prev_db_path)
+                        if _db_path_is_live(prev_norm):
+                            logger.error(
+                                "skip post-exit archive of live db path=%s", prev_norm,
+                            )
+                            return
+                        _archive_drained_db_file(prev_norm)
 
-                threading.Thread(
-                    target=_archive_prev_after_exit_detach, daemon=True,
-                ).start()
-            return steam_events.with_events(
-                {"state": web_game.state_payload()},
-                [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-            )
+                    threading.Thread(
+                        target=_archive_prev_after_exit_detach, daemon=True,
+                    ).start()
+                return steam_events.with_events(
+                    {"state": web_game.state_payload()},
+                    [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
+                )
+        finally:
+            if opening_path:
+                with _menu_opening_lock:
+                    if _menu_opening_db_path == opening_path:
+                        _menu_opening_db_path = ""
 
-    return await loop.run_in_executor(None, _new_game_under_lock)
+    return await loop.run_in_executor(None, _new_game_work)
 
 
 @app.post("/api/menu/continue")
