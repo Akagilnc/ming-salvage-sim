@@ -226,26 +226,154 @@ def _invoke_materializer(
         failures.append((_rejection_item_for_exc(original_item, exc), exc))
 
 
-def _pending_action_ids(db: Any, turn: int) -> set[int]:
-    return {
-        int(row["id"])
-        for row in db.list_pending_actions(int(turn))
-        if str(row.get("status") or "") == "pending"
-    }
+_PENDING_BASELINE_COLS = (
+    "id", "turn", "kind", "action", "target_id", "minister_name",
+    "payload_json", "status", "night_id", "night_approved", "created_at",
+)
+
+
+def _snapshot_pending_baseline(db: Any, turn: int) -> tuple[dict[str, Any], ...]:
+    """Full pending-row baseline for batch all-or-nothing restore.
+
+    Covers create / in-place update / hedge-delete, not merely new ids.
+    """
+    rows = db.conn.execute(
+        f"SELECT {', '.join(_PENDING_BASELINE_COLS)} FROM pending_actions "
+        "WHERE turn=? AND status='pending' ORDER BY id",
+        (int(turn),),
+    ).fetchall()
+    return tuple(
+        {col: row[col] for col in _PENDING_BASELINE_COLS}
+        for row in rows
+    )
+
+
+def _sync_office_summon_to_baseline_row(db: Any, row: dict[str, Any]) -> None:
+    """Align inactive office summon ledger with restored pending payload."""
+    if str(row.get("kind") or "") != "office":
+        return
+    from ming_sim.audience_night import (
+        discard_inactive_office_summon,
+        ensure_inactive_office_summon,
+    )
+
+    action_id = int(row["id"])
+    try:
+        payload = json.loads(str(row.get("payload_json") or "{}"))
+    except (TypeError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    want_summon = str(payload.get("summon_after") or "").strip() == "是"
+    person = str(payload.get("name") or "").strip()
+    night_id = int(row.get("night_id") or 0)
+    if not want_summon or not person or night_id <= 0:
+        discard_inactive_office_summon(db, action_id)
+        return
+    ensure_inactive_office_summon(
+        db, action_id, person, night_id=night_id, origin_chat_turn_id=0,
+    )
+
+
+def _restore_pending_baseline(
+    db: Any, turn: int, baseline: tuple[dict[str, Any], ...],
+) -> None:
+    """Restore turn pending rows to baseline write set (create/update/delete)."""
+    from ming_sim.applier import atomic
+
+    turn_i = int(turn)
+    baseline_by_id = {int(row["id"]): row for row in baseline}
+    cols_sql = ", ".join(_PENDING_BASELINE_COLS)
+    with atomic(db):
+        current_rows = db.conn.execute(
+            f"SELECT {cols_sql} FROM pending_actions "
+            "WHERE turn=? AND status='pending' ORDER BY id",
+            (turn_i,),
+        ).fetchall()
+        current_ids = {int(row["id"]) for row in current_rows}
+        baseline_ids = set(baseline_by_id)
+
+        # Drop batch-created rows (withdraw also clears inactive office summons).
+        for action_id in sorted(current_ids - baseline_ids):
+            db.withdraw_pending_action(action_id, turn_i)
+
+        # Revert in-place updates to baseline payload/meta.
+        for action_id in sorted(current_ids & baseline_ids):
+            before = baseline_by_id[action_id]
+            db.conn.execute(
+                "UPDATE pending_actions SET turn=?, kind=?, action=?, target_id=?, "
+                "minister_name=?, payload_json=?, status=?, night_id=?, "
+                "night_approved=?, created_at=? WHERE id=?",
+                (
+                    int(before["turn"]),
+                    str(before["kind"]),
+                    str(before["action"]),
+                    before["target_id"],
+                    str(before["minister_name"] or ""),
+                    str(before["payload_json"] or "{}"),
+                    str(before["status"] or "pending"),
+                    int(before["night_id"] or 0),
+                    int(before["night_approved"] or 0),
+                    str(before["created_at"] or ""),
+                    action_id,
+                ),
+            )
+            _sync_office_summon_to_baseline_row(db, before)
+
+        # Recreate baseline rows deleted by hedge/offset inside the batch.
+        for action_id in sorted(baseline_ids - current_ids):
+            before = baseline_by_id[action_id]
+            db.conn.execute(
+                "INSERT INTO pending_actions "
+                "(id, turn, kind, action, target_id, minister_name, payload_json, "
+                "status, night_id, night_approved, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    action_id,
+                    int(before["turn"]),
+                    str(before["kind"]),
+                    str(before["action"]),
+                    before["target_id"],
+                    str(before["minister_name"] or ""),
+                    str(before["payload_json"] or "{}"),
+                    str(before["status"] or "pending"),
+                    int(before["night_id"] or 0),
+                    int(before["night_approved"] or 0),
+                    str(before["created_at"] or ""),
+                ),
+            )
+            _sync_office_summon_to_baseline_row(db, before)
+
+        max_row = db.conn.execute(
+            "SELECT MAX(id) AS m FROM pending_actions"
+        ).fetchone()
+        max_id = int(max_row["m"] or 0) if max_row is not None else 0
+        if max_id > 0:
+            seq_row = db.conn.execute(
+                "SELECT seq FROM sqlite_sequence WHERE name='pending_actions'"
+            ).fetchone()
+            if seq_row is None:
+                db.conn.execute(
+                    "INSERT INTO sqlite_sequence(name, seq) VALUES ('pending_actions', ?)",
+                    (max_id,),
+                )
+            elif int(seq_row["seq"] or 0) < max_id:
+                db.conn.execute(
+                    "UPDATE sqlite_sequence SET seq=? WHERE name='pending_actions'",
+                    (max_id,),
+                )
 
 
 def _rollback_batch_writes(
     ctx: MaterializeCtx,
     *,
-    pending_before: set[int],
+    pending_baseline: tuple[dict[str, Any], ...],
     baseline_out: dict[str, Any],
 ) -> None:
-    """All-or-nothing: withdraw siblings staged in this batch; align out projection."""
+    """All-or-nothing: restore full pending write set; align out projection."""
     db = ctx.session.db
     turn = int(ctx.session.state.turn)
-    staged = _pending_action_ids(db, turn) - pending_before
-    for action_id in sorted(staged):
-        db.withdraw_pending_action(action_id, turn)
+    _restore_pending_baseline(db, turn, pending_baseline)
     # Projection must match reality after rollback (no hidden pending id).
     if "pending_action_id" in baseline_out:
         ctx.out["pending_action_id"] = baseline_out["pending_action_id"]
@@ -302,7 +430,10 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
         kind_indexes: Dict[str, int] = {}
         grant_staged = False
-        pending_before = _pending_action_ids(ctx.session.db, ctx.session.state.turn)
+        # Snapshot full pending write set before any candidate mutates it.
+        pending_baseline = _snapshot_pending_baseline(
+            ctx.session.db, ctx.session.state.turn,
+        )
         for candidate, original_candidate, original_kind, original_draft_index in candidate_records:
             kind = str(candidate.get("kind") or "")
             cluster = cluster_by_kind(kind)
@@ -346,11 +477,15 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             if candidate_ctx.draft_staged:
                 ctx.draft_staged = True
         if validation_failures:
-            # Mixed batch: any typed failure → withdraw siblings already staged.
+            # Mixed batch: any typed failure → restore full pending write set.
+            # Fail path must not enter the writable office tail afterward.
             _rollback_batch_writes(
-                ctx, pending_before=pending_before, baseline_out=baseline_out,
+                ctx,
+                pending_baseline=pending_baseline,
+                baseline_out=baseline_out,
             )
             _record_decree_validation_failures(ctx, ctx.out, validation_failures)
+            return
         # #1380：拟旨优先后仍须并行 office（仅 LLM 分类路；前缀路禁，见 #344 US3）
         if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
             parallel_stage_office_from_appointment_intent(ctx)
