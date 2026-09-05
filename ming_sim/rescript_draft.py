@@ -1051,14 +1051,13 @@ def validate_rescript_draft_items(
                 ) from exc
             except RescriptOptionMissingFieldsError as exc:
                 if isolate_option_missing:
-                    heal_id = f"{item_index}:{option_index}"
                     item_missing.append(RescriptOptionMissingFailure(
                         item_index=item_index,
                         option_index=option_index,
                         title=title,
                         missing_fields=tuple(exc.missing_fields),
                         raw_option=opt if isinstance(opt, dict) else exc.raw_option,
-                        heal_id=heal_id,
+                        heal_id=_option_heal_id(item_index, option_index),
                     ))
                     continue
                 raise ValueError(
