@@ -117,11 +117,6 @@ def _note_failed(
             reasons[key] = reason
 
 
-# 兼容旧名（模块内历史调用点）
-def _note_missing(bucket: List[str], *fields: str) -> None:
-    _note_failed(bucket, *fields)
-
-
 @dataclass(frozen=True)
 class RescriptOptionMissingFailure:
     item_index: int
