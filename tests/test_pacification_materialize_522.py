@@ -343,14 +343,14 @@ def test_pacification_effect_rejects_mismatched_target_binds_canonical(game):
 @pytest.mark.parametrize(
     ("player_message", "intent_mode", "expected_mode"),
     [
-        ("中旨直发招抚张献忠归顺朝廷。", None, "midzhi"),
+        ("中旨直发招抚张献忠归顺朝廷。", "midzhi", "midzhi"),
         ("招抚张献忠归顺朝廷。", None, "ordinary"),
         ("招抚张献忠归顺朝廷。", "midzhi", "midzhi"),
     ],
-    ids=["emperor_midzhi", "ordinary_default", "classifier_mode"],
+    ids=["typed_midzhi", "ordinary_default", "classifier_mode"],
 )
 def test_pacification_preserves_declared_mode(game, player_message, intent_mode, expected_mode):
-    """C2：招抚候选保留皇帝/classifier 声明的颁布方式。"""
+    """C2：招抚候选保留 classifier 的 typed 颁布方式。"""
     db, state, content = game
     _activate_canonical_bandit(db, content)
     actor = db.conn.execute(
@@ -499,7 +499,11 @@ def test_pacification_same_target_updates_candidate_different_target_independent
 
 def test_api_tool_propose_directive_stages_pacification_with_admission(game):
     """C3：API propose_directive 与 CLI 同构进招抚准入；非法对象拒绝。"""
+    from inspect import signature
+
+    from ming_sim.models import CourtContext
     from ming_sim.session import GameSession
+    from ming_sim.tools import build_minister_tools
 
     db, state, content = game
     _activate_canonical_bandit(db, content)
@@ -507,17 +511,30 @@ def test_api_tool_propose_directive_stages_pacification_with_admission(game):
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
 
+    propose_directive = {
+        tool.__name__: tool
+        for tool in build_minister_tools(
+            content.characters[minister], CourtContext(state=state, db=db),
+        )
+    }["propose_directive"]
+
     class Agent:
-        def __init__(self, text):
+        def __init__(self, text, mode=None):
             self._text = text
+            self._mode = mode
 
         def run(self, _message):
+            supplied = {"decree_text": self._text}
+            if self._mode is not None:
+                supplied["mode"] = self._mode
+            bound = signature(propose_directive).bind(**supplied)
+            bound.apply_defaults()
             return SimpleNamespace(
                 content="臣已拟招抚之旨，请陛下定夺。",
                 tools=[SimpleNamespace(
                     tool_name="propose_directive",
-                    result="",
-                    arguments={"decree_text": self._text},
+                    result=propose_directive(**supplied),
+                    arguments=bound.arguments,
                 )],
             )
 
@@ -544,7 +561,8 @@ def test_api_tool_propose_directive_stages_pacification_with_admission(game):
         sess._finish_cli_action_intent = lambda *_a, **_k: None
         return sess
 
-    ok_sess = _api_session(Agent("着招抚张献忠归顺朝廷，授游击将军。"))
+    draft = "着招抚张献忠归顺朝廷，授游击将军。"
+    ok_sess = _api_session(Agent(draft, mode="midzhi"))
     result = GameSession.chat(ok_sess, minister, "中旨直发，招抚张献忠。")
     assert result.pending_action_id
     pending = [
@@ -555,6 +573,21 @@ def test_api_tool_propose_directive_stages_pacification_with_admission(game):
     assert payload["dossier_action_type"] == "pacification"
     assert payload["target_id"] == "张献忠"
     assert payload.get("mode") == "midzhi"
+
+    # Re-enter through the real tool callable with mode omitted. Its empty
+    # transport value must preserve the existing typed judgment and candidate.
+    update = GameSession.chat(
+        _api_session(Agent(draft)), minister, "仍照此旨拟来。",
+    )
+    assert update.pending_action_id == result.pending_action_id
+    matching = [
+        row for row in db.list_pending_actions(state.turn, minister_name=minister)
+        if row["kind"] == "directive"
+        and json.loads(row["payload_json"]).get("target_id") == "张献忠"
+    ]
+    assert len(matching) == 1
+    assert json.loads(matching[0]["payload_json"])["mode"] == "midzhi"
+
     assert db.commit_pending_actions(state, content=content, minister_name=minister)
     dossier = next(d for d in db.list_decree_dossiers() if d["action_type"] == "pacification")
     assert dossier["target_id"] == "张献忠"
@@ -885,7 +918,10 @@ def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(ga
                     SimpleNamespace(
                         tool_name="propose_directive",
                         result="",
-                        arguments={"decree_text": "着户部速筹军饷，以济边需。"},
+                        arguments={
+                            "decree_text": "着户部速筹军饷，以济边需。",
+                            "mode": "midzhi",
+                        },
                     ),
                     SimpleNamespace(
                         tool_name="propose_directive",
@@ -963,6 +999,8 @@ def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(ga
         int(payload["pending_action_id"])
     ]
     assert web_staged.get("dossier_action_type") == "special_decree"
+    assert web_staged.get("mode") == "midzhi"
+    assert len(_pending_directive_payloads(db, state.turn, minister)) == 1
 
 
 def test_pacification_successful_promulgation_closes_dossier(game):

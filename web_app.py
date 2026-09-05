@@ -2625,6 +2625,7 @@ class WebGame:
                                 backing_dossier_id=args.get("backing_dossier_id"),
                                 issue_id=args.get("issue_id"),
                                 issue_disposition=args.get("issue_disposition"),
+                                mode=args.get("mode") or args.get("颁布方式"),
                                 intent_candidates=preclassified_intent,
                             ),
                         )
@@ -2647,7 +2648,7 @@ class WebGame:
                     pending_action_id = coalesce_pending_action_id(
                         pending_action_id,
                         self.session._stage_appointment_candidate(
-                            payload_json, character, message_text,
+                            payload_json, character,
                         ),
                     )
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
