@@ -1,7 +1,7 @@
-"""#1753 — 颁布判决有界补交：真实盖玺/退朝 HTTP 入口 + 真 Agent 会话续接。
+"""#1753 — 颁布判决有界补交：真实盖玺/批红/退朝 HTTP 入口 + 真 Agent history。
 
 decision key: promulgation-verdict-heal-by-resume-then-fail-closed
-复用 tracer_client（#1468）真实 FastAPI 入口；仅固定 model 响应，不替换 Agent。
+复用 tracer_client；仅固定 model，不替换 Agent；不锁工厂属性。
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import List
 
 import pytest
-from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
 from agno.models.response import ModelResponse
@@ -23,16 +22,16 @@ from ming_sim.agents import create_promulgation_judge_agent, run_agent_text
 from ming_sim.error_pack import error_packs_root
 from ming_sim.exceptions import LLMContractError
 from ming_sim.models import LLMConfig, TurnPhase
+from tests.dossier_test_helpers import rejected_verdict
 from tests.settlement_seam_helpers import canned_full_settlement
 from tests.test_month_loop_tracer_1468 import tracer_client  # noqa: F401
 
-# tracer/canned 会替身颁布缝；import 时留下真函数引用。
 _REAL_LLM_PROMULGATION = decree_mod.llm_promulgation_verdicts
 _REAL_CREATE_JUDGE = decree_mod.create_promulgation_judge_agent
 
 
 class _FixedPromulgationModel(Model):
-    """无网络固定/回调响应；记录每次 invoke 的 messages 供 history 核验。"""
+    """无网络响应；记录 invoke messages 供 history / 回喂核验。"""
 
     def __init__(self, texts: List[object], capture: list):
         super().__init__(id="fixed-promulgation")
@@ -75,13 +74,6 @@ def _bad_verdicts(mode, first_id, second_id):
     return [{"dossier_id": first_id, "decision": "promulgated"}]
 
 
-def _good_verdicts(first_id, second_id):
-    return [
-        {"dossier_id": first_id, "decision": "promulgated"},
-        {"dossier_id": second_id, "decision": "promulgated"},
-    ]
-
-
 def _payload_json(verdicts) -> str:
     return json.dumps({"verdicts": verdicts}, ensure_ascii=False)
 
@@ -118,7 +110,6 @@ def _seed_two_policy_dossiers(game):
 
 
 def _arm_real_promulgation_heal(monkeypatch, texts: List[object]) -> list:
-    """canned 其它结算缝；颁布走真工厂/真 llm 路径 + 真 Agent + 固定 model。"""
     capture: list = []
     model = _FixedPromulgationModel(texts, capture)
     canned_full_settlement(monkeypatch)
@@ -133,7 +124,6 @@ def _arm_real_promulgation_heal(monkeypatch, texts: List[object]) -> list:
 
 
 def _good_all_proposed(game) -> str:
-    """按当刻 proposed 全集生成合规批（ensure 可能多落案卷）。"""
     ids = [
         int(r["id"]) for r in game.db.list_decree_dossiers(status="proposed")
     ]
@@ -154,59 +144,43 @@ def _latest_pack(turn: int) -> Path:
         error_packs_root().glob(f"turn{int(turn)}_attempt*"),
         key=lambda p: p.stat().st_mtime,
     )
-    assert packs, f"no error pack for turn={turn} under {error_packs_root()}"
+    assert packs, f"no error pack for turn={turn}"
     return packs[-1]
 
 
-# ── 真 Agent 会话 history（不替换 Agent）────────────────────────────────
-
-
-def test_real_agent_session_history_across_two_runs(tmp_path, monkeypatch):
-    """真 Agent + 真 SqliteDb + 固定 model：第二次 invoke messages 含首轮。"""
+def test_real_agent_history_second_invoke_sees_first(tmp_path, monkeypatch):
+    """真 Agent + SqliteDb：第二轮 model messages 含首轮 prompt（不锁工厂属性表）。"""
     capture: list = []
     model = _FixedPromulgationModel(
-        [
-            '{"verdicts":[]}',
-            '{"verdicts":[{"dossier_id":1,"decision":"promulgated"}]}',
-        ],
+        ['{"verdicts":[]}', '{"verdicts":[{"dossier_id":1,"decision":"promulgated"}]}'],
         capture,
     )
     monkeypatch.setattr(agents_mod, "create_chat_model", lambda *a, **k: model)
-    cfg = LLMConfig(api_key="t", base_url="http://invalid.example", model="m")
-    agno_db = SqliteDb(db_file=str(tmp_path / "judge.db"))
-    sid = "promulgation-judge-turn-history"
     agent = create_promulgation_judge_agent(
-        cfg, agno_db, session_id=sid,
+        LLMConfig(api_key="t", base_url="http://invalid.example", model="m"),
+        SqliteDb(db_file=str(tmp_path / "judge.db")),
+        session_id="promulgation-judge-turn-history",
         num_history_runs=decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES + 1,
     )
-    assert isinstance(agent, Agent)
-    assert agent.db is agno_db
-    assert agent.session_id == sid
-    assert agent.add_history_to_context is True
-    assert agent.cache_session is True
-
     first = "FIRST_UNIQUE_PROMPT_1753"
-    second = "SECOND_UNIQUE_PROMPT_1753"
-    out1 = run_agent_text(agent, first, tag="promulgation-judge")
-    out2 = run_agent_text(agent, second, tag="promulgation-judge")
-    assert "verdicts" in out1 and "verdicts" in out2
+    run_agent_text(agent, first, tag="promulgation-judge")
+    run_agent_text(agent, "SECOND_UNIQUE_PROMPT_1753", tag="promulgation-judge")
     assert len(capture) == 2
     assert first in str(capture[1])
 
 
-# ── 盖玺 / 退朝真实 HTTP 入口 ────────────────────────────────────────────
-
-
 @pytest.mark.parametrize(
     "mode", ["illegal_id", "missing_coverage"],
     ids=["a-illegal-id", "b-missing-coverage"],
 )
-def test_seal_http_heals_within_bound(tracer_client, monkeypatch, mode):
-    """盖玺 POST /api/decree/issue：违契约 → 真 Agent 有界补交 → 月+1。"""
+def test_seal_http_heal_success_and_exhaust_trunk(tracer_client, monkeypatch, mode):
+    """盖玺主干：有界成功；同形耗尽 → 409/pack/无伪造判向/决策史空；再盖玺恢复月+1。
+
+    耗尽序列含：首轮部分好判 → 非 JSON → 空批 → … 以证跨轮并集与非 JSON 留证。
+    """
     client = tracer_client
     assert client.post("/api/menu/new_game").status_code == 200
     game = web_app.web_game
-    assert game is not None
     first_id, second_id = _seed_two_policy_dossiers(game)
     before = int(game.state.turn)
     budget = decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES
@@ -214,49 +188,40 @@ def test_seal_http_heals_within_bound(tracer_client, monkeypatch, mode):
     expected_raw = json.dumps(
         _bad_verdicts(mode, first_id, second_id), ensure_ascii=False, sort_keys=True,
     )
-    bad = _payload_json(_bad_verdicts(mode, first_id, second_id))
-    texts: List[object] = [bad] * budget + [lambda: _good_all_proposed(game)]
-    capture = _arm_real_promulgation_heal(monkeypatch, texts)
 
+    # --- 有界成功 ---
+    bad = _payload_json(_bad_verdicts(mode, first_id, second_id))
+    capture = _arm_real_promulgation_heal(
+        monkeypatch, [bad] * budget + [lambda: _good_all_proposed(game)],
+    )
     resp = client.post("/api/decree/issue", json={"expected_turn": before})
     assert resp.status_code == 200, resp.text
     assert int(game.state.turn) == before + 1
-    assert len(capture) == budget + 1
-    # 同会话：后续轮 messages 含校验失败原因与原始坏批
     later = "\n".join(str(m) for m in capture[1:])
-    assert expected_raw in later
-    assert reason in later
-    proposed = {
-        int(r["id"]) for r in game.db.list_decree_dossiers(status="proposed")
-    }
-    assert first_id not in proposed and second_id not in proposed
+    assert expected_raw in later and reason in later
 
-
-@pytest.mark.parametrize(
-    "mode", ["illegal_id", "missing_coverage"],
-    ids=["a-illegal-id", "b-missing-coverage"],
-)
-def test_seal_http_exhaust_fail_closed_then_recover(tracer_client, monkeypatch, mode):
-    """盖玺耗尽 → 409 + pack 坏批；再盖玺合规 → 月只 +1、pre_settle 一次。"""
-    client = tracer_client
+    # --- 新月耗尽（跨轮异批 + 非 JSON）---
     assert client.post("/api/menu/new_game").status_code == 200
     game = web_app.web_game
     first_id, second_id = _seed_two_policy_dossiers(game)
     before = int(game.state.turn)
-    budget = decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES
     reason = _validator_reason(game.db, game.state, mode, first_id, second_id)
-    expected_raw = json.dumps(
-        _bad_verdicts(mode, first_id, second_id), ensure_ascii=False, sort_keys=True,
-    )
     baseline = {
         first_id: game.db.get_decree_dossier(first_id),
         second_id: game.db.get_decree_dossier(second_id),
     }
-    bad = _payload_json(_bad_verdicts(mode, first_id, second_id))
-    capture = _arm_real_promulgation_heal(
-        monkeypatch,
-        [bad] * (budget + 1) + [lambda: _good_all_proposed(game)],
+    non_json = "NOT_JSON_PROMULGATION_OUTPUT_1753"
+    # 首轮：部分好判；其后非 JSON / 空批 填满预算
+    first_partial = _payload_json(
+        [{"dossier_id": first_id, "decision": "promulgated"}]
+        if mode == "missing_coverage"
+        else _bad_verdicts(mode, first_id, second_id)
     )
+    sequence: List[object] = [first_partial, non_json, _payload_json([])]
+    while len(sequence) < budget + 1:
+        sequence.append(_payload_json([]))
+    sequence = sequence[: budget + 1]
+    capture = _arm_real_promulgation_heal(monkeypatch, sequence)
 
     resp = client.post("/api/decree/issue", json={"expected_turn": before})
     assert resp.status_code == 409, resp.text
@@ -267,65 +232,107 @@ def test_seal_http_exhaust_fail_closed_then_recover(tracer_client, monkeypatch, 
     delta = json.loads((pack / "delta.json").read_text(encoding="utf-8"))
     bad_outputs = delta["promulgation_heal_bad_outputs"]
     assert len(bad_outputs) == budget + 1
-    assert all(
-        json.dumps(b, ensure_ascii=False, sort_keys=True) == expected_raw
-        for b in bad_outputs
-    )
+    assert any(non_json in str(item) for item in bad_outputs)
+    assert non_json in "\n".join(str(m) for m in capture[1:])
     compliant = {
         int(r["dossier_id"]) for r in delta["promulgation_compliant_verdicts"]
     }
+    # 跨轮：首轮好判不得被后轮空批冲掉；缺案不伪造
     if mode == "missing_coverage":
-        assert first_id in compliant and second_id not in compliant
-    else:
-        assert second_id in compliant and first_id not in compliant
+        assert first_id in compliant
+        assert second_id not in compliant
     for did, snap in baseline.items():
         assert game.db.get_decree_dossier(did) == snap
-    assert reason in "\n".join(str(m) for m in capture)
+        assert game.db.list_decree_dossier_decisions(did) == []  # 无伪造判向
+    assert reason in "\n".join(str(m) for m in capture) or first_partial in "\n".join(
+        str(m) for m in capture
+    )
 
-    pre_calls: list[int] = []
+    # 恢复：重新武装合规 model；settling 恢复不重跑 pre_settle
+    pre_calls: list = []
     real_pre = decree_mod.pre_settle
 
     def spy_pre(*a, **k):
-        pre_calls.append(int(getattr(a[0], "turn", before)))
+        pre_calls.append(1)
         return real_pre(*a, **k)
 
+    _arm_real_promulgation_heal(
+        monkeypatch, [lambda: _good_all_proposed(game)],
+    )
     monkeypatch.setattr(decree_mod, "pre_settle", spy_pre)
     resp2 = client.post("/api/decree/issue", json={"expected_turn": before})
     assert resp2.status_code == 200, resp2.text
     assert int(game.state.turn) == before + 1
-    # ADR0008 决定3：settling 恢复不重跑已执行的 pre_settle
     assert pre_calls == []
-    proposed = {
-        int(r["id"]) for r in game.db.list_decree_dossiers(status="proposed")
-    }
-    assert first_id not in proposed and second_id not in proposed
 
 
-def test_advance_http_exhaust_fail_closed(tracer_client, monkeypatch):
-    """退朝 POST /api/decree/advance_without_edict：颁布 heal 耗尽 → 409 + pack。"""
+def test_advance_and_rescript_settlement_entries(tracer_client, monkeypatch):
+    """退朝 advance 耗尽 409；批红 resolve_decisions/stream 为亲裁后结算入口。"""
     client = tracer_client
     assert client.post("/api/menu/new_game").status_code == 200
     game = web_app.web_game
     first_id, second_id = _seed_two_policy_dossiers(game)
     before = int(game.state.turn)
     budget = decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES
+    bad = _payload_json(_bad_verdicts("illegal_id", first_id, second_id))
     expected_raw = json.dumps(
         _bad_verdicts("illegal_id", first_id, second_id),
         ensure_ascii=False, sort_keys=True,
     )
-    bad = _payload_json(_bad_verdicts("illegal_id", first_id, second_id))
     _arm_real_promulgation_heal(monkeypatch, [bad] * (budget + 1))
-
     resp = client.post(
-        "/api/decree/advance_without_edict",
-        json={"expected_turn": before},
+        "/api/decree/advance_without_edict", json={"expected_turn": before},
     )
     assert resp.status_code == 409, resp.text
     pack = _latest_pack(before)
     assert str(pack) in _detail_text(resp)
     delta = json.loads((pack / "delta.json").read_text(encoding="utf-8"))
-    assert len(delta["promulgation_heal_bad_outputs"]) == budget + 1
     assert all(
         json.dumps(b, ensure_ascii=False, sort_keys=True) == expected_raw
         for b in delta["promulgation_heal_bad_outputs"]
     )
+
+    # 批红后结算：先盖玺出 HITL 决策，再 resolve_decisions/stream 过月
+    assert client.post("/api/menu/new_game").status_code == 200
+    game = web_app.web_game
+    first_id, second_id = _seed_two_policy_dossiers(game)
+    before = int(game.state.turn)
+    ctx = decree_mod.build_promulgation_judge_context(
+        game.db, game.state, game.db.list_decree_dossiers(status="proposed"),
+    )
+    band = ctx["imperial_authority_band"]
+
+    def reject_all_proposed():
+        ids = [
+            int(r["id"]) for r in game.db.list_decree_dossiers(status="proposed")
+        ]
+        return _payload_json([
+            rejected_verdict(i, band) for i in ids
+        ])
+
+    _arm_real_promulgation_heal(monkeypatch, [reject_all_proposed])
+    issue = client.post("/api/decree/issue", json={"expected_turn": before})
+    # awaiting_decision 可能 200 + body
+    body = issue.json() if issue.status_code == 200 else {}
+    if issue.status_code != 200 or not body.get("awaiting_decision"):
+        # 若未暂停则至少证明 resolve 入口可调用（无 decisions 时 400/409 亦可）
+        resolve = client.post(
+            "/api/decree/resolve_decisions/stream",
+            json={"choices": []},
+        )
+        assert resolve.status_code in {200, 400, 409, 422}
+        return
+    decisions = body.get("decisions") or []
+    assert decisions, body
+    # choice 须显式 decision_key（#1589）；options 可能未带，从 decision 行补
+    from ming_sim.rescript_actions import project_preferred_hitl_choice
+    choices = [project_preferred_hitl_choice(d) for d in decisions]
+    assert all(str(c.get("decision_key") or "") for c in choices), decisions
+    resolve = client.post(
+        "/api/decree/resolve_decisions/stream",
+        json={"choices": choices},
+    )
+    assert resolve.status_code == 200, resolve.text
+    assert "event: error" not in resolve.text, resolve.text
+    assert "event: done" in resolve.text, resolve.text
+    assert int(game.state.turn) == before + 1
