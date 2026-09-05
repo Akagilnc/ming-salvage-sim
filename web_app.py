@@ -4433,15 +4433,6 @@ def _release_opening(path: str) -> None:
         _c7_try_fulfill_archive(norm)
 
 
-def _opening_held(path: str) -> bool:
-    norm = _normalize_db_path(path) if path else ""
-    if not norm:
-        return False
-    with _menu_path_lock:
-        lease = _menu_path_leases.get(norm)
-        return bool(lease is not None and lease.opening > 0)
-
-
 def _register_holder(path: str, runtime: Any) -> Optional[_HolderEntry]:
     """P1：登记 holder 强引用；同 id 幂等返回原 entry。claim 永不经此补登。"""
     norm = _path_norm_of_game(runtime, path)
@@ -4738,17 +4729,6 @@ def _archive_move_db_files(old_db_path: str) -> bool:
     return True
 
 
-def _archive_drained_db_file(old_db_path: str) -> None:
-    """兼容入口：转发 C7（若 pending 已在则尝试兑现；否则无请求不搬）。
-
-    生产归档请求只经 ``_path_request_archive``；本函数不再做 live 二次门闩。
-    """
-    norm = _normalize_db_path(old_db_path) if old_db_path else ""
-    if not norm:
-        return
-    _c7_try_fulfill_archive(norm)
-
-
 def _drain_close_body(game: Any) -> None:
     """seal + barrier + session.close 本体；失败上抛并按可写 unseal。"""
     q = get_session_write_queue(game)
@@ -4788,6 +4768,7 @@ def _drain_and_close_session(
     #396：菜单生命周期不在 write_gate 被持时直接 session.close()。
     #1353：seal + barrier + 持 write_gate 关连接。
     #1749 r7：不在此写 archive_pending——归档请求只经 AR-req。
+    同步 executor 唯一接缝：note + close_ok + done + archive_settled（与 spawn 同契约）。
     失败由 ``_drain_close_body`` 原样上抛（ADR 0005）。
     """
     op = close_op
@@ -4811,6 +4792,9 @@ def _drain_and_close_session(
                     if registered.close_op is None and op is not None:
                         registered.close_op = op
                     _note_close_result(registered, False, norm)
+        if op is not None:
+            op.done.set()
+            op.archive_settled.set()
 
 
 def _spawn_drain_close(
@@ -5200,9 +5184,6 @@ async def api_menu_new_game() -> Dict[str, Any]:
                             logger.exception(
                                 "discard superseded new_game session failed"
                             )
-                        finally:
-                            op.done.set()
-                            op.archive_settled.set()
                 else:
                     _close_unregistered(new_game, new_db_path)
                 _rollback_path_if_ours()
@@ -5302,9 +5283,6 @@ async def api_menu_continue() -> StreamingResponse:
                             logger.exception(
                                 "discard superseded continue session failed"
                             )
-                        finally:
-                            op.done.set()
-                            op.archive_settled.set()
                 else:
                     _close_unregistered(game, opening_path)
                 ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
@@ -5453,9 +5431,6 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
                             )
                         except Exception:
                             logger.exception("load_save discard cancelled candidate")
-                        finally:
-                            op.done.set()
-                            op.archive_settled.set()
                 raise HTTPException(
                     status_code=409, detail="加载已取消（菜单状态已变更）。",
                 )
@@ -5533,13 +5508,9 @@ async def api_menu_shutdown() -> Dict[str, Any]:
             if entry is not None:
                 role, op = _claim_close(entry)
                 if role == "executor" and op is not None:
-                    try:
-                        _drain_and_close_session(
-                            old_game, entry=entry, close_op=op,
-                        )
-                    finally:
-                        op.done.set()
-                        op.archive_settled.set()
+                    _drain_and_close_session(
+                        old_game, entry=entry, close_op=op,
+                    )
                 elif op is not None:
                     op.done.wait()
             else:
