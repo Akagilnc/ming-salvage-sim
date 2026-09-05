@@ -231,3 +231,89 @@ def test_draft_plus_titled_independent_assignment_both_stage(game, monkeypatch):
     assert by_type["assignment"].get("title") == "陕西巡抚督办赈灾"
     assert by_type["policy"].get("mode") == "ordinary"
     assert by_type["assignment"].get("mode") == "ordinary"
+
+
+def test_draft_plus_titleless_assignment_with_target_candidate_updates_existing(
+    game, monkeypatch,
+):
+    """#520 契约：batch 有 draft 时，title 空但 target_candidate=既有 id 仍须原地更新。
+
+    不得被 #1744 同意图门闩吞掉显式 typed 更新指针。
+    """
+    from ming_sim.action_materialize import stage_assignment_candidate
+
+    db, state, content = game
+    minister = _bi(db, content)
+    sess = _bind_apply(db, state, content)
+    _silence_serial(monkeypatch)
+
+    old_id = stage_assignment_candidate(
+        db, state.turn, minister.name,
+        text="旧交办正文", title="旧交办", target_id="旧锚",
+    )
+    assert old_id > 0
+    before_text = _payload(
+        next(r for r in db.list_pending_actions(state.turn, minister_name=minister.name)
+             if int(r["id"]) == old_id)
+    ).get("text")
+
+    # draft 显式「新」：不得 upsert 吞既有 assignment 行
+    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
+        "draft_action": "拟旨",
+        "draft_text": "新拟旨正文清核太仓",
+        "target_candidate": "新",
+        "dossier_action_type": "policy",
+        "target_kind": "policy",
+        "target_id": _DRAFT_TARGET,
+        "mode": "ordinary",
+        "locality_scope": "national",
+        "participant_roster": [{
+            "character_id": minister.name,
+            "tier": "主办",
+            "role": "督办",
+            "delegator_id": None,
+        }],
+    })
+
+    reinforce_reply = "臣请强化旧交办：限半月清核完报。并另拟清核太仓旨。"
+    scripted = candidates_from_classifier_payload([
+        {"kind": "draft"},
+        {
+            "kind": "assignment",
+            "title": "",
+            "target_id": "旧锚",
+            "target_candidate": str(old_id),
+        },
+    ], soft=False)
+
+    before_ids = {
+        int(r["id"]) for r in db.list_pending_actions(state.turn, minister_name=minister.name)
+    }
+    sess.apply_cli_conversation_actions(
+        minister,
+        "拟一道旨清核太仓，并强化先前交办。",
+        reinforce_reply,
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=scripted,
+    )
+
+    rows = list(db.list_pending_actions(state.turn, minister_name=minister.name))
+    by_id = {int(r["id"]): r for r in rows if r.get("status") == "pending"}
+    assert old_id in by_id, "既有 assignment 行不得被删"
+    updated = _payload(by_id[old_id])
+    assert updated.get("dossier_action_type") == "assignment"
+    # title 空时 stage 既有回落皇帝句（非本票范围）；关键是走过 update 改写 text
+    assert str(updated.get("text") or "") != str(before_text or ""), (
+        "target_candidate 点名更新须改写既有 assignment 正文"
+    )
+    body = str(updated.get("text") or "")
+    assert reinforce_reply in body or "大臣：" in body
+
+    new_dirs = [
+        r for r in rows
+        if int(r["id"]) not in before_ids
+        and r.get("kind") == "directive"
+        and r.get("status") == "pending"
+    ]
+    assert len(new_dirs) == 1, f"draft 应新建恰一，实际 {len(new_dirs)}"
+    assert _payload(new_dirs[0]).get("dossier_action_type") == "policy"
