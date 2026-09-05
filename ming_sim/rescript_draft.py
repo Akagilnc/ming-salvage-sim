@@ -1125,66 +1125,74 @@ def _find_healed_option_for_failure(
     healed: Dict[str, Any],
     failure: RescriptOptionMissingFailure,
 ) -> Optional[dict]:
-    """从补交产出中定位对应 option（身份优先，防重排错位吞兄弟）。
+    """从补交产出中定位对应 option（急务身份 × option 身份，防跨急务/重排错配）。
 
-    次序：① 同 item 内 label 精确匹配；② 全局 label；③ 无 label 时同坐标且
-    action_type 与首抽一致。禁止「仅同坐标、label 不符」——重排后 index 0 常是
-    兄弟项，会把缺字段 option 顶丢。
+    急务身份：title 精确匹配（items 可重排）；找不到同 title 则不跨急务捞。
+    option 身份：label + action_type（有则必核）；禁止仅 index、禁止全局 label。
     """
     healed_items = healed.get("items")
     if not isinstance(healed_items, list):
         return None
+    want_title = str(failure.title or "").strip()
     want_label = ""
     want_action = ""
     if isinstance(failure.raw_option, dict):
         want_label = str(failure.raw_option.get("label") or "").strip()
         want_action = str(failure.raw_option.get("action_type") or "").strip()
 
-    def _label_hit(opts: object) -> Optional[dict]:
-        if not want_label or not isinstance(opts, list):
+    def _option_hit(opts: object) -> Optional[dict]:
+        if not isinstance(opts, list):
             return None
-        hits = [
-            cand for cand in opts
-            if isinstance(cand, dict)
-            and str(cand.get("label") or "").strip() == want_label
-        ]
+        hits: List[dict] = []
+        for cand in opts:
+            if not isinstance(cand, dict):
+                continue
+            if want_label and str(cand.get("label") or "").strip() != want_label:
+                continue
+            if want_action and str(cand.get("action_type") or "").strip() != want_action:
+                continue
+            # 无 label 时不得靠「任意 dict」命中；须有 action 或退回坐标路径
+            if not want_label and not want_action:
+                continue
+            if not want_label and want_action:
+                # 仅 action：只在唯一命中时采纳
+                hits.append(cand)
+                continue
+            hits.append(cand)
         if len(hits) == 1:
             return hits[0]
-        if len(hits) > 1 and want_action:
-            typed = [
-                h for h in hits
-                if str(h.get("action_type") or "").strip() == want_action
-            ]
-            if len(typed) == 1:
-                return typed[0]
-        return hits[0] if len(hits) == 1 else None
+        return None
 
-    # ① 同急务 item 内按 label
-    if failure.item_index < len(healed_items) and isinstance(
-        healed_items[failure.item_index], dict
-    ):
-        hit = _label_hit(healed_items[failure.item_index].get("options"))
+    # 只在同 title 急务内找（可多项同 title 时逐个试，仍不跨其它 title）
+    titled = [
+        item for item in healed_items
+        if isinstance(item, dict) and str(item.get("title") or "").strip() == want_title
+    ]
+    for item in titled:
+        hit = _option_hit(item.get("options"))
         if hit is not None:
             return hit
-    # ② 全局 label（补交可能重排 items）
-    if want_label:
-        for item in healed_items:
-            if not isinstance(item, dict):
-                continue
-            hit = _label_hit(item.get("options"))
-            if hit is not None:
-                return hit
-        return None
-    # ③ 无 label：同坐标 + action_type 一致才采纳（避免重排误吞）
+
+    # 无 title 可配时：仅同 item_index 坐标 + label/action 约束（仍不跨急务）
     if failure.item_index < len(healed_items) and isinstance(
         healed_items[failure.item_index], dict
     ):
-        opts = healed_items[failure.item_index].get("options")
-        if isinstance(opts, list) and failure.option_index < len(opts):
-            cand = opts[failure.option_index]
-            if isinstance(cand, dict):
-                if not want_action or str(cand.get("action_type") or "").strip() == want_action:
-                    return cand
+        same_idx_item = healed_items[failure.item_index]
+        # 若该坐标项有 title 且与 failure 不同，拒绝（防重排后 index 错位跨急务）
+        idx_title = str(same_idx_item.get("title") or "").strip()
+        if want_title and idx_title and idx_title != want_title:
+            return None
+        hit = _option_hit(same_idx_item.get("options"))
+        if hit is not None:
+            return hit
+        # 无 label 的最后退路：同坐标 + action_type
+        if not want_label:
+            opts = same_idx_item.get("options")
+            if isinstance(opts, list) and failure.option_index < len(opts):
+                cand = opts[failure.option_index]
+                if isinstance(cand, dict):
+                    if not want_action or str(cand.get("action_type") or "").strip() == want_action:
+                        return cand
     return None
 
 
