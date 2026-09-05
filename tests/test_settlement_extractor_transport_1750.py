@@ -319,63 +319,83 @@ def test_extractor_one_retryable_transport_failure_self_heals(
     )
 
 
-# ── 终失败回路（绿基线 + 证明力修正；不整条藏 xfail） ─────────────────
+# ── 终失败回路（共享建场；绿基线与 pending 红灯分案不断） ─────────────
+
+
+def _drive_terminal_extractor_fail(client, monkeypatch, *, step: str) -> dict:
+    """持续 ERROR 共享建场：new_game → 注入 → issue/stream → error 终态。
+
+    返回绿/红两案共用的结构化现场；断言分属调用方，避免重复建场形状。
+    """
+    turn0, game = _new_game_with_directive(client)
+    agents = _default_agents(always_error_module="relations")
+    _wire_real_extract_path(monkeypatch, agents)
+    before = _month_open_view(_get_state(client))
+    resp = _issue_stream(client, expected_turn=turn0, step=step)
+    event, data = _terminal_sse(resp)
+    assert event == "error", (event, data)
+    transport_attempts = agents["relations"].calls
+    _wait_pending_writes(game)
+    after = _get_state(client)
+    recovery = after.get("settlement_recovery")
+    assert isinstance(recovery, dict), recovery
+    manifest = _pack_manifest(recovery)
+    return {
+        "turn0": turn0,
+        "game": game,
+        "agents": agents,
+        "before": before,
+        "after": after,
+        "data": data,
+        "recovery": recovery,
+        "manifest": manifest,
+        "transport_attempts": transport_attempts,
+        "surfaces": _player_error_surfaces(data, recovery),
+    }
 
 
 def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
     tracer_client, monkeypatch,
 ):
-    """持续 ERROR → fail-closed 绿基线。
+    """持续 ERROR → fail-closed 绿基线（共享建场；不断 status_code）。
 
-    证明力分层：
-    - transport_attempts = fail 模块 agent.run.calls（本阶段无 #1465 重试 → 通常 1）
-    - pack_attempt = manifest.attempt（写包序号，另列，不冒充 transport 账）
-    - 异常来源 = manifest.exception_type（注入经 extract_agent_text → LLMUnavailable）
-    - 可操作失败 = event:error + recovery.message 存在 + 不泄 Traceback
-    - 0148 终失败后：settlement_display + metrics 保持点击前月初快照
-    不在此断言玩家面 status_code（阶段 0 真缺口，见诊断；不造 pack schema）。
+    - transport_attempts = agent.run.calls（写包序号另列）
+    - exception_type / message 存在 / 禁 Traceback
+    - 0148 终失败后月初快照
     """
-    client = tracer_client
-    turn0, game = _new_game_with_directive(client)
-    agents = _default_agents(always_error_module="relations")
-    _wire_real_extract_path(monkeypatch, agents)
+    scene = _drive_terminal_extractor_fail(
+        tracer_client, monkeypatch, step="terminal-fail",
+    )
+    turn0 = scene["turn0"]
+    after = scene["after"]
+    recovery = scene["recovery"]
+    manifest = scene["manifest"]
+    transport_attempts = scene["transport_attempts"]
+    surfaces = scene["surfaces"]
 
-    before = _month_open_view(_get_state(client))
-    resp = _issue_stream(client, expected_turn=turn0, step="terminal-fail")
-    event, data = _terminal_sse(resp)
-    assert event == "error", (event, data)
-
-    transport_attempts = agents["relations"].calls
     assert transport_attempts >= 1, transport_attempts
-
-    _wait_pending_writes(game)
-    after = _get_state(client)
     assert _turn_of(after) == turn0
     assert (after.get("turn") or {}).get("phase") == TurnPhase.SETTLING.value
-    recovery = after.get("settlement_recovery")
-    assert isinstance(recovery, dict)
     assert recovery.get("ready_replay") is False
     assert recovery.get("error_pack_path")
-    # 可操作失败：结构化 message 存在（不锁中文措辞/常量名）
-    surfaces = _player_error_surfaces(data, recovery)
     assert any(
         isinstance(s.get("message"), str) and s["message"].strip()
         for s in surfaces
     ), surfaces
-    blob = json.dumps(data, ensure_ascii=False) if not isinstance(data, str) else str(data)
+    blob = (
+        json.dumps(scene["data"], ensure_ascii=False)
+        if not isinstance(scene["data"], str)
+        else str(scene["data"])
+    )
     assert "Traceback" not in blob
 
-    manifest = _pack_manifest(recovery)
     pack_attempt = int(manifest.get("attempt") or 0)
     assert pack_attempt >= 1, f"pack write seq; got {pack_attempt}"
-    # 写包序号 ≠ transport 账：只并列记录，不以 pack_attempt 代替 transport_attempts
-    assert transport_attempts >= 1
     assert manifest.get("exception_type") == "LLMUnavailable", manifest
 
-    # 0148：终失败后刷新投影仍为月初快照
     after_view = _month_open_view(after)
     assert after_view["settlement_display"] is True
-    assert after_view["metrics"] == before["metrics"]
+    assert after_view["metrics"] == scene["before"]["metrics"]
     assert after_view["turn"] == turn0
 
 
@@ -389,40 +409,25 @@ def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
 def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     tracer_client, monkeypatch,
 ):
-    """终失败未结契约红灯（阶段0 pending）：预算耗尽 + 上游 status 进既有 typed 面。
+    """终失败 pending 红灯：预算耗尽 + 上游 status（共享建场，只加未结断言）。
 
-    与绿基线同入口/同注入；本条不断中文措辞、不要求新 manifest 键。
-    - 预算：#1465 默认重试 2 → 持续失败 transport_attempts >= 3
-    - 上游：既有 _llm_error_detail 契约键 status_code 出现在 stream error 或 recovery
-    - 类别：code 保真为 extract_agent_text 注入的 llm_run_error（非仅真值）
+    - 预算：#1465 默认重试 2 → transport_attempts >= 3
+    - status_code 出现在 stream/recovery 既有 typed 面
+    - code 保真 llm_run_error（非仅真值）
     """
-    client = tracer_client
-    turn0, game = _new_game_with_directive(client)
-    agents = _default_agents(always_error_module="relations")
-    _wire_real_extract_path(monkeypatch, agents)
-
-    resp = _issue_stream(client, expected_turn=turn0, step="terminal-budget-status")
-    event, data = _terminal_sse(resp)
-    assert event == "error", (event, data)
-
-    transport_attempts = agents["relations"].calls
-    # #1465 owner：默认重试 2 → 持续失败应打满 initial+retries
+    scene = _drive_terminal_extractor_fail(
+        tracer_client, monkeypatch, step="terminal-budget-status",
+    )
+    transport_attempts = scene["transport_attempts"]
     assert transport_attempts >= 3, (
         f"budget exhausted requires transport_attempts>=3; got {transport_attempts}"
     )
-
-    _wait_pending_writes(game)
-    after = _get_state(client)
-    assert _turn_of(after) == turn0
-    recovery = after.get("settlement_recovery")
-    assert isinstance(recovery, dict)
-    manifest = _pack_manifest(recovery)
-    pack_attempt = int(manifest.get("attempt") or 0)
-    # 写包序号另列，不冒充 transport 账
+    assert _turn_of(scene["after"]) == scene["turn0"]
+    pack_attempt = int(scene["manifest"].get("attempt") or 0)
     assert pack_attempt >= 1
-    assert manifest.get("exception_type") == "LLMUnavailable", manifest
+    assert scene["manifest"].get("exception_type") == "LLMUnavailable", scene["manifest"]
 
-    surfaces = _player_error_surfaces(data, recovery)
+    surfaces = scene["surfaces"]
     assert any(s.get("status_code") is not None for s in surfaces), (
         f"upstream status_code missing on typed surfaces: {surfaces!r}"
     )
