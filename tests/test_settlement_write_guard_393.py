@@ -236,11 +236,11 @@ def _endpoint_cases():
         # 撤回召对：undo_chat_turn 直写共享连接，自带的相位门是 phase-only（守不住 pre_settle 窗口），
         # 现一并走 _write_gate（cmr Gate2 r3 Finding1）。守门先于 undo_last_chat 触发。
         ("undo_chat", lambda: web_app.api_undo_chat("某大臣")),
-        # 生命周期写（save 备份 commit / load·reset 关连接热替换）：worker 持锁期间不得并发跑，
-        # 否则撞 _commit_suspended（save→500）或关掉 worker 正写的连接（load/reset 崩）。cmr Gate2 r5。
+        # 生命周期写（save 备份 commit / load 关连接热替换）：worker 持锁期间不得并发跑，
+        # 否则撞 _commit_suspended（save→500）或关掉 worker 正写的连接（load 崩）。cmr Gate2 r5。
+        # #1732：局内销毁式 /api/game/reset 已删，热替换写门面只剩 load_save。
         ("create_save", lambda: web_app.api_create_save(web_app.SaveCreateRequest(name="存档"))),
         ("load_save", lambda: web_app.api_load_save("存档")),
-        ("reset_game", lambda: web_app.api_reset_game()),
         # #1726 F1：奏疏已读写 kv，须走同一相位+非阻塞闸（修类不修点）。
         ("memorials_read", lambda: web_app.api_memorials_read({"keys": ["progress:1"]})),
     ]

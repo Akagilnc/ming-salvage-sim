@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { consumeSettleStream } from "./settleStream";
+import {
+  SETTLEMENT_WAIT_STAGES,
+  resolveSettlementWaitProgress,
+} from "./settlementProgress";
 
 function streamResponse(chunks: string[], ok = true): Response {
   const encoder = new TextEncoder();
@@ -95,5 +99,31 @@ describe("consumeSettleStream continue-style stages (#1195)", () => {
     await expect(
       consumeSettleStream(response, silent, { httpErrorLabel: "继续失败" }),
     ).rejects.toThrow("无上次进度可继续，请先新游戏或加载存档。");
+  });
+});
+
+describe("#1725 issue/stream stages drive typed wait progress", () => {
+  it("six named stages from decree stream resolve to current/total progress", async () => {
+    const stages = [...SETTLEMENT_WAIT_STAGES];
+    const onStage = vi.fn();
+    const chunks = [
+      ...stages.map((label) => `event: stage\ndata: ${JSON.stringify({ content: label })}\n\n`),
+      'event: done\ndata: {"ok":true}\n\n',
+    ];
+    const outcome = await consumeSettleStream(
+      streamResponse(chunks),
+      { onStage, onThinking: vi.fn(), onNarrative: vi.fn() },
+    );
+    expect(outcome.kind).toBe("done");
+    expect(onStage.mock.calls.map((c) => c[0])).toEqual(stages);
+    expect(
+      onStage.mock.calls.map((c) => resolveSettlementWaitProgress(c[0] as string)),
+    ).toEqual(
+      stages.map((label, i) => ({
+        label,
+        current: i + 1,
+        total: 6,
+      })),
+    );
   });
 });

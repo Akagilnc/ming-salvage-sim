@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>#1732 呈现规格 · A 统一奏疏牌</title>
+<style>
+  :root {
+    font-family: "Songti SC", "STSong", "SimSun", "Noto Serif SC", serif;
+    font-size: 16px;
+    line-height: 1.5;
+    color: #f3e6c4;
+    --gold: #d2a34a;
+    --gold-soft: #8a6424;
+    --cinnabar: #9e3429;
+    --ink: #2e1b0a;
+    --muted: #b8a878;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #14100a; }
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse at 50% 12%, rgba(213, 187, 115, 0.12), transparent 40%),
+      linear-gradient(160deg, #2a2218 0%, #14100a 50%, #0e0c09 100%);
+    font-weight: 700;
+  }
+  code { color: #f0d58a; font-weight: 600; font-size: 0.88em; }
+  .page { max-width: 1280px; margin: 0 auto; padding: 28px 18px 72px; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid rgba(226, 180, 86, 0.45); color: #f0d58a;
+    font-size: 0.75rem; letter-spacing: 0.12em; margin-bottom: 10px;
+  }
+  h1 { margin: 0 0 8px; color: #f5dfad; font-size: 1.45rem; letter-spacing: 0.04em; }
+  .lead { margin: 0 0 22px; color: var(--muted); font-size: 0.92rem; font-weight: 500; max-width: 52em; }
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 26px; }
+  .toc a {
+    color: #f3e6c4; text-decoration: none; font-size: 0.82rem;
+    padding: 7px 12px; border-radius: 6px;
+    border: 1px solid rgba(226, 180, 86, 0.35);
+    background: rgba(255, 235, 180, 0.06);
+  }
+  .toc a:hover { border-color: rgba(240, 200, 100, 0.7); background: rgba(48, 33, 15, 0.72); }
+
+  .case {
+    margin-bottom: 36px; padding-bottom: 28px;
+    border-bottom: 1px solid rgba(226, 180, 86, 0.18);
+  }
+  .case h2 {
+    margin: 0 0 6px; color: #f5dfad; font-size: 1.15rem; letter-spacing: 0.06em;
+  }
+  .path {
+    margin: 0 0 14px; color: #c9b48a; font-size: 0.82rem; font-weight: 500;
+    padding: 8px 12px; border-radius: 6px;
+    background: rgba(255, 245, 215, 0.05);
+    border: 1px solid rgba(226, 180, 86, 0.2);
+  }
+
+  .triptych {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 980px) {
+    .triptych { grid-template-columns: 1fr; }
+  }
+  .cell {
+    margin: 0;
+    border: 1px solid rgba(226, 180, 86, 0.3);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #1a1510;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  }
+  .cell figcaption {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    background: rgba(20, 16, 10, 0.92);
+    border-bottom: 1px solid rgba(226, 180, 86, 0.22);
+    color: #f0d58a; font-size: 0.82rem; letter-spacing: 0.08em;
+  }
+  .cell figcaption .n {
+    display: inline-grid; place-items: center;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: rgba(158, 52, 41, 0.85); color: #fff3d0;
+    font-size: 0.72rem;
+  }
+  .cell.evil figcaption .n { background: #555; color: #eee; }
+  .cell.proposal figcaption .n { background: linear-gradient(180deg, #9c392c, #561f19); }
+
+  .frame {
+    position: relative;
+    aspect-ratio: 1500 / 937;
+    background: #0a0806;
+    overflow: hidden;
+  }
+  .frame.tall { aspect-ratio: 1500 / 964; }
+  .frame img {
+    display: block; width: 100%; height: 100%;
+    object-fit: cover; object-position: center;
+    user-select: none; pointer-events: none;
+  }
+
+  /* 点这里 */
+  .pin {
+    position: absolute; z-index: 5;
+    transform: translate(-50%, -100%);
+    display: flex; flex-direction: column; align-items: center;
+    pointer-events: none; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.65));
+  }
+  .pin-label {
+    background: #c0432f; color: #fff8e8;
+    font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em;
+    padding: 4px 10px; border-radius: 4px;
+    border: 1px solid rgba(255, 220, 160, 0.55);
+    white-space: nowrap;
+  }
+  .pin-arrow {
+    width: 0; height: 0;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 10px solid #c0432f;
+  }
+  .pin-ring {
+    position: absolute; z-index: 4;
+    width: 42px; height: 28px;
+    border: 2px solid #ff5a3a;
+    border-radius: 6px;
+    box-shadow: 0 0 0 2px rgba(255, 90, 58, 0.25), 0 0 16px rgba(255, 80, 40, 0.45);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(255, 90, 58, 0.25), 0 0 12px rgba(255, 80, 40, 0.35); }
+    50% { box-shadow: 0 0 0 4px rgba(255, 90, 58, 0.15), 0 0 22px rgba(255, 80, 40, 0.55); }
+  }
+
+  /* 浏览器原生灰框仿真 */
+  .native-dialog {
+    position: absolute; z-index: 10;
+    top: 14%; left: 50%; transform: translateX(-50%);
+    width: min(72%, 320px);
+    background: #f3f3f3;
+    border-radius: 10px;
+    box-shadow:
+      0 0 0 1px rgba(0,0,0,0.12),
+      0 18px 48px rgba(0,0,0,0.45);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-weight: 400;
+    color: #1b1b1b;
+    overflow: hidden;
+  }
+  .native-dialog .nd-title {
+    padding: 14px 16px 0;
+    font-size: 0.78rem; font-weight: 600; text-align: center;
+  }
+  .native-dialog .nd-body {
+    padding: 8px 16px 14px;
+    font-size: 0.7rem; line-height: 1.45; text-align: center;
+    color: #333; font-weight: 400;
+  }
+  .native-dialog .nd-actions {
+    display: grid; grid-template-columns: 1fr 1fr;
+    border-top: 1px solid rgba(0,0,0,0.12);
+  }
+  .native-dialog .nd-actions span {
+    padding: 9px 6px; text-align: center; font-size: 0.72rem;
+    border-right: 1px solid rgba(0,0,0,0.1);
+    color: #0b5fff; font-weight: 500;
+  }
+  .native-dialog .nd-actions span:last-child {
+    border-right: 0; font-weight: 600;
+  }
+  .native-dialog.alert-only .nd-actions { grid-template-columns: 1fr; }
+  .native-dialog.blank .nd-body {
+    min-height: 28px; color: #999; font-style: italic;
+  }
+  .native-scrim {
+    position: absolute; inset: 0; z-index: 8;
+    background: rgba(0,0,0,0.18);
+    pointer-events: none;
+  }
+  .out-of-place {
+    position: absolute; z-index: 11;
+    top: 8px; right: 8px;
+    background: rgba(120, 20, 10, 0.88); color: #ffe0c8;
+    font-size: 0.65rem; letter-spacing: 0.06em;
+    padding: 3px 8px; border-radius: 4px;
+    border: 1px solid rgba(255, 180, 120, 0.4);
+  }
+
+  /* A 提案：统一奏疏牌 */
+  .proposal-scrim {
+    position: absolute; inset: 0; z-index: 8;
+    background: rgba(18, 12, 6, 0.48);
+  }
+  .memorial {
+    position: absolute; z-index: 12;
+    left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: min(78%, 300px);
+    border: 1px solid rgba(120, 60, 20, 0.5);
+    border-radius: 6px;
+    background: linear-gradient(180deg, #fff8e6, #f4e3b7);
+    box-shadow: 0 16px 40px rgba(18, 12, 6, 0.5), inset 0 1px 0 rgba(255,250,235,0.8);
+    color: var(--ink); overflow: hidden;
+  }
+  .memorial::before {
+    content: "";
+    position: absolute; left: 0; top: 0; bottom: 0; width: 7px;
+    background: linear-gradient(180deg, #9e3429, #6a1e18 55%, #4a140f);
+  }
+  .memorial.danger::before {
+    background: linear-gradient(180deg, #c0432f, #8a261b 55%, #5a1810);
+  }
+  .memorial.alert::before {
+    background: linear-gradient(180deg, #b07020, #8a6424);
+  }
+  .memorial-head {
+    display: flex; justify-content: space-between; gap: 8px;
+    padding: 12px 12px 8px 16px;
+    border-bottom: 1px solid rgba(120, 60, 20, 0.18);
+  }
+  .memorial-kicker {
+    font-size: 0.58rem; letter-spacing: 0.18em; color: #7a4a10;
+  }
+  .memorial-head h3 {
+    margin: 3px 0 0; font-size: 0.92rem; color: #0e0a06; letter-spacing: 0.06em;
+  }
+  .memorial-seal {
+    flex: 0 0 auto; width: 36px; height: 36px;
+    border: 1.5px solid rgba(158, 52, 41, 0.75); border-radius: 3px;
+    color: #9e3429; display: grid; place-items: center;
+    font-size: 0.58rem; letter-spacing: 0.08em; line-height: 1.1; text-align: center;
+    transform: rotate(-8deg);
+    background: rgba(158, 52, 41, 0.06);
+  }
+  .memorial-body {
+    padding: 10px 12px 6px 16px;
+    font-size: 0.72rem; font-weight: 500; line-height: 1.65; color: #2a1c0e;
+  }
+  .memorial-consequence {
+    margin: 6px 12px 0 16px; padding: 7px 9px;
+    border-left: 3px solid rgba(158, 52, 41, 0.55);
+    background: rgba(176, 58, 40, 0.08);
+    color: #6a1a1a; font-size: 0.64rem; font-weight: 500;
+  }
+  .memorial-gate {
+    margin: 8px 12px 0 16px;
+  }
+  .memorial-gate label {
+    display: block; font-size: 0.62rem; color: #6a5a3a; margin-bottom: 4px; font-weight: 500;
+  }
+  .memorial-gate input {
+    width: 100%; padding: 5px 8px; font: inherit; font-size: 0.72rem;
+    border: 1px solid rgba(120, 80, 30, 0.4); border-radius: 4px;
+    background: rgba(255, 248, 224, 0.85); color: #1a1410;
+  }
+  .memorial-actions {
+    display: flex; justify-content: flex-end; gap: 6px;
+    padding: 10px 12px 12px 16px;
+  }
+  .memorial-actions span {
+    font-size: 0.68rem; font-weight: 700;
+    padding: 5px 10px; border-radius: 4px;
+    border: 1px solid rgba(120, 86, 42, 0.4);
+    background: rgba(252, 247, 232, 0.92); color: #2a1c0e;
+  }
+  .memorial-actions .yes {
+    background: linear-gradient(180deg, #c0432f, #8a261b);
+    color: #ffe9d8; border-color: rgba(150, 36, 28, 0.6);
+  }
+  .memorial-actions .yes.ink {
+    background: #6a4014; color: #fff5d8; border-color: #6a4014;
+  }
+  .memorial-actions .yes.disabled {
+    opacity: 0.45;
+  }
+
+  .note {
+    margin-top: 12px; padding: 10px 12px; border-radius: 6px;
+    background: rgba(255, 245, 215, 0.05);
+    border: 1px solid rgba(226, 180, 86, 0.2);
+    color: #c9b48a; font-size: 0.8rem; font-weight: 500;
+  }
+  .cost {
+    margin-top: 28px; padding: 16px 18px;
+    border: 1px solid rgba(226, 180, 86, 0.28); border-radius: 8px;
+    background: rgba(20, 16, 10, 0.55);
+  }
+  .cost h3 { margin: 0 0 8px; color: #f0d58a; font-size: 1rem; }
+  .cost ul { margin: 0; padding-left: 1.2em; color: #d8c89c; font-size: 0.86rem; font-weight: 500; }
+  .cost li { margin-bottom: 6px; }
+  .catalog {
+    margin-top: 18px; padding: 14px 16px;
+    border: 1px solid rgba(226, 180, 86, 0.22); border-radius: 8px;
+    background: rgba(20, 16, 10, 0.4);
+  }
+  .catalog h3 { margin: 0 0 8px; color: #f0d58a; font-size: 0.95rem; }
+  .catalog p { margin: 0 0 8px; color: var(--muted); font-size: 0.8rem; font-weight: 500; }
+  .catalog table {
+    width: 100%; border-collapse: collapse; font-size: 0.78rem; font-weight: 500;
+  }
+  .catalog th, .catalog td {
+    text-align: left; padding: 6px 8px;
+    border-bottom: 1px solid rgba(226, 180, 86, 0.12);
+    color: #d8c89c; vertical-align: top;
+  }
+  .catalog th { color: #f0d58a; font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="badge">#1732 · 取向 A · 统一奏疏牌 · 第二轮（锚定真屏）</div>
+    <h1>所有确认 / 告警 → 同一块画面内奏疏牌</h1>
+    <p class="lead">
+      每一场景三格横排：<strong>现状</strong>（真截图 +「点这里」）→
+      <strong>现状之恶</strong>（同屏盖浏览器原生灰框）→
+      <strong>提案</strong>（同屏盖统一奏疏牌）。
+      截图即游戏真屏，提案叠在屏上——不再画在空白页。文案均为票面原句。
+    </p>
+    <nav class="toc">
+      <a href="#c1">① 回到主菜单</a>
+      <a href="#c2">② 重开新局</a>
+      <a href="#c3">③ 拟诏无参</a>
+      <a href="#c4">④ 上传失败 alert</a>
+      <a href="#c5">⑤ 主菜单·覆盖主进度</a>
+      <a href="#c6">⑥ 主菜单·删除存档</a>
+    </nav>
+
+    <!-- ① 回到主菜单 -->
+    <section class="case" id="c1">
+      <h2>① 回到主菜单</h2>
+      <p class="path">
+        入口：HUD 左下「菜单」→ 游戏菜单 → 左列「回到主菜单」→ 点右侧棕色按钮 ·
+        <code>gameMenu.tsx:230</code>
+        · 屏：局内 HUD + 游戏菜单白卡（加载/重开/回主菜单/退出/删档 五处 confirm 都从这左列进）
+      </p>
+      <div class="triptych">
+        <figure class="cell">
+          <figcaption><span class="n">1</span> 现状 · 真屏入口</figcaption>
+          <div class="frame">
+            <img src="shots/8013-backtomenu-confirm-and-after.png" alt="游戏菜单 · 回到主菜单面板" />
+            <div class="pin-ring" style="left:48.6%; top:52.1%; width:9%; height:5%;"></div>
+            <div class="pin" style="left:48.6%; top:48%;">
+              <div class="pin-label">点这里</div>
+              <div class="pin-arrow"></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell evil">
+          <figcaption><span class="n">2</span> 现状之恶 · 原生灰框</figcaption>
+          <div class="frame">
+            <img src="shots/8013-backtomenu-confirm-and-after.png" alt="" />
+            <div class="native-scrim"></div>
+            <div class="out-of-place">出戏 · 系统对话框</div>
+            <div class="native-dialog">
+              <div class="nd-title">localhost:5173 显示</div>
+              <div class="nd-body">回到主菜单？当前对局会关闭（DB 仍保留，可从「继续上局」回到此处）。</div>
+              <div class="nd-actions"><span>取消</span><span>确定</span></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell proposal">
+          <figcaption><span class="n">3</span> 提案 · 统一奏疏牌</figcaption>
+          <div class="frame">
+            <img src="shots/8013-backtomenu-confirm-and-after.png" alt="" />
+            <div class="proposal-scrim"></div>
+            <div class="memorial">
+              <div class="memorial-head">
+                <div>
+                  <div class="memorial-kicker">会话事务</div>
+                  <h3>回到主菜单</h3>
+                </div>
+                <div class="memorial-seal">准<br>行</div>
+              </div>
+              <div class="memorial-body">回到主菜单？当前对局会关闭（DB 仍保留，可从「继续上局」回到此处）。</div>
+              <div class="memorial-actions">
+                <span>取消</span>
+                <span class="yes ink">回到主菜单</span>
+              </div>
+            </div>
+          </div>
+        </figure>
+      </div>
+      <p class="note">面板说明保留作导引；点棕色按钮 → 奏疏牌一次授权。去掉原生框。若认为面板已够一次确认，见取向 B。</p>
+    </section>
+
+    <!-- ② 重开新局 -->
+    <section class="case" id="c2">
+      <h2>② 重开新局（手打「重开」不削弱）</h2>
+      <p class="path">
+        入口：HUD 左下「菜单」→ 游戏菜单 → 左列「重开新局」→ 面板内手打「重开」后点按钮 ·
+        <code>gameMenu.tsx:189</code>
+        · 同屏（下图仍停在「回到主菜单」页，红框标左列「重开新局」入口位）
+      </p>
+      <div class="triptych">
+        <figure class="cell">
+          <figcaption><span class="n">1</span> 现状 · 真屏入口</figcaption>
+          <div class="frame">
+            <img src="shots/8013-backtomenu-confirm-and-after.png" alt="游戏菜单 · 重开入口在左列" />
+            <div class="pin-ring" style="left:37%; top:50%; width:10%; height:4.5%;"></div>
+            <div class="pin" style="left:37%; top:45.5%;">
+              <div class="pin-label">点这里 · 重开新局</div>
+              <div class="pin-arrow"></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell evil">
+          <figcaption><span class="n">2</span> 现状之恶 · 手打后再弹灰框</figcaption>
+          <div class="frame">
+            <img src="shots/8013-backtomenu-confirm-and-after.png" alt="" />
+            <div class="native-scrim"></div>
+            <div class="out-of-place">出戏 · 双重确认的第二下</div>
+            <div class="native-dialog">
+              <div class="nd-title">localhost:5173 显示</div>
+              <div class="nd-body">确定重开新局？当前局所有数据将被永久清空（存档目录不动）。</div>
+              <div class="nd-actions"><span>取消</span><span>确定</span></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell proposal">
+          <figcaption><span class="n">3</span> 提案 · 牌内手打解锁</figcaption>
+          <div class="frame">
+            <img src="shots/8013-backtomenu-confirm-and-after.png" alt="" />
+            <div class="proposal-scrim"></div>
+            <div class="memorial danger">
+              <div class="memorial-head">
+                <div>
+                  <div class="memorial-kicker">不可逆清库</div>
+                  <h3>重开新局</h3>
+                </div>
+                <div class="memorial-seal">朱<br>批</div>
+              </div>
+              <div class="memorial-body">确定重开新局？当前局所有数据将被永久清空（存档目录不动）。</div>
+              <div class="memorial-consequence">聊天记录、回合奏报、局势、ledger 全清。存档目录既有 .db 不动。</div>
+              <div class="memorial-gate">
+                <label>输入「重开」二字以解锁：</label>
+                <input type="text" value="" placeholder="输入：重开" readonly tabindex="-1" />
+              </div>
+              <div class="memorial-actions">
+                <span>取消</span>
+                <span class="yes disabled">重开新局</span>
+              </div>
+            </div>
+          </div>
+        </figure>
+      </div>
+      <p class="note">手打「重开」从面板挪进奏疏牌；授权强度不降。面板按钮只负责唤起牌面。</p>
+    </section>
+
+    <!-- ③ 拟诏 -->
+    <section class="case" id="c3">
+      <h2>③ 拟诏台 · 无参空白 confirm</h2>
+      <p class="path">
+        入口：底栏「拟诏」→ 诏书草案台（failed-only）→ 点右下「退朝结束本月 →」 ·
+        <code>edictModal.tsx:59</code>
+        · <strong>真 bug</strong>：<code>window.confirm()</code> 无参数，弹空白框
+      </p>
+      <div class="triptych">
+        <figure class="cell">
+          <figcaption><span class="n">1</span> 现状 · 真屏入口</figcaption>
+          <div class="frame tall">
+            <img src="shots/8013-STOP-empty-edict-desk.png" alt="拟诏台 · 退朝结束本月" />
+            <div class="pin-ring" style="left:84.9%; top:79.9%; width:14%; height:6%;"></div>
+            <div class="pin" style="left:84.9%; top:74%;">
+              <div class="pin-label">点这里</div>
+              <div class="pin-arrow"></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell evil">
+          <figcaption><span class="n">2</span> 现状之恶 · 空白灰框</figcaption>
+          <div class="frame tall">
+            <img src="shots/8013-STOP-empty-edict-desk.png" alt="" />
+            <div class="native-scrim"></div>
+            <div class="out-of-place">真 bug · 无任何说明</div>
+            <div class="native-dialog blank">
+              <div class="nd-title">localhost:5173 显示</div>
+              <div class="nd-body">（无文案）</div>
+              <div class="nd-actions"><span>取消</span><span>确定</span></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell proposal">
+          <figcaption><span class="n">3</span> 提案 · 同形牌 + 补文</figcaption>
+          <div class="frame tall">
+            <img src="shots/8013-STOP-empty-edict-desk.png" alt="" />
+            <div class="proposal-scrim"></div>
+            <div class="memorial">
+              <div class="memorial-head">
+                <div>
+                  <div class="memorial-kicker">拟诏台 · 退朝</div>
+                  <h3>退朝结束本月</h3>
+                </div>
+                <div class="memorial-seal">退<br>朝</div>
+              </div>
+              <div class="memorial-body">本月无可颁诏草案，仍有失败密令未处理。确认不经盖玺颁诏、直接退朝结束本月？</div>
+              <div class="memorial-consequence">将走 advance_without_edict；失败密令可稍后在失败恢复中继续处理。</div>
+              <div class="memorial-actions">
+                <span>取消</span>
+                <span class="yes">退朝结束本月</span>
+              </div>
+            </div>
+          </div>
+        </figure>
+      </div>
+      <p class="note">补文依据 failed-only 主钮语义，非产品改稿；拍板时可改措辞。形态与其他 confirm 同一奏疏牌。</p>
+    </section>
+
+    <!-- ④ alert -->
+    <section class="case" id="c4">
+      <h2>④ 上传失败 alert</h2>
+      <p class="path">
+        入口：常规 HUD 局内（上传存档/文件失败时） ·
+        <code>hud.tsx:169</code>
+        · 屏：书案 HUD + 地图（无菜单浮层）
+      </p>
+      <div class="triptych">
+        <figure class="cell">
+          <figcaption><span class="n">1</span> 现状 · 真屏</figcaption>
+          <div class="frame tall">
+            <img src="shots/8013-after-reopen-hud.png" alt="常规 HUD" />
+            <div class="pin" style="left:50%; top:42%;">
+              <div class="pin-label">失败时弹出系统 alert</div>
+              <div class="pin-arrow"></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell evil">
+          <figcaption><span class="n">2</span> 现状之恶 · 原生 alert</figcaption>
+          <div class="frame tall">
+            <img src="shots/8013-after-reopen-hud.png" alt="" />
+            <div class="native-scrim"></div>
+            <div class="out-of-place">出戏 · 系统告警</div>
+            <div class="native-dialog alert-only">
+              <div class="nd-title">localhost:5173 显示</div>
+              <div class="nd-body">上传失败：网络中断</div>
+              <div class="nd-actions"><span>确定</span></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell proposal">
+          <figcaption><span class="n">3</span> 提案 · 同形奏疏牌（单钮）</figcaption>
+          <div class="frame tall">
+            <img src="shots/8013-after-reopen-hud.png" alt="" />
+            <div class="proposal-scrim"></div>
+            <div class="memorial alert">
+              <div class="memorial-head">
+                <div>
+                  <div class="memorial-kicker">系统告警</div>
+                  <h3>上传失败</h3>
+                </div>
+                <div class="memorial-seal">阅<br>知</div>
+              </div>
+              <div class="memorial-body">上传失败：网络中断</div>
+              <div class="memorial-actions">
+                <span class="yes ink">知悉</span>
+              </div>
+            </div>
+          </div>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ⑤ 主菜单覆盖 -->
+    <section class="case" id="c5">
+      <h2>⑤ 主菜单 · 开始新游戏（覆盖主进度）</h2>
+      <p class="path">
+        入口：启动主菜单 →「开始新游戏」（已有主进度时） ·
+        <code>menuPage.tsx:42</code>
+        · 屏：海报主菜单（开始新游戏／继续／加载存档）
+        <br />注：备档 <code>shots/8013-main-menu-real.png</code> 实测为游戏菜单近副本，本格改用生产海报合成的主菜单真构图（<code>main-menu-composed.png</code>）。
+      </p>
+      <div class="triptych">
+        <figure class="cell">
+          <figcaption><span class="n">1</span> 现状 · 真屏入口</figcaption>
+          <div class="frame">
+            <img src="shots/main-menu-composed.png" alt="主菜单" />
+            <div class="pin-ring" style="left:14%; top:58%; width:19%; height:5.5%;"></div>
+            <div class="pin" style="left:14%; top:53.5%;">
+              <div class="pin-label">点这里</div>
+              <div class="pin-arrow"></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell evil">
+          <figcaption><span class="n">2</span> 现状之恶 · 原生灰框</figcaption>
+          <div class="frame">
+            <img src="shots/main-menu-composed.png" alt="" />
+            <div class="native-scrim"></div>
+            <div class="out-of-place">出戏 · 系统对话框</div>
+            <div class="native-dialog">
+              <div class="nd-title">localhost:5173 显示</div>
+              <div class="nd-body">将覆盖当前主进度，是否继续？建议先在游戏中保存为存档。</div>
+              <div class="nd-actions"><span>取消</span><span>确定</span></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell proposal">
+          <figcaption><span class="n">3</span> 提案 · 统一奏疏牌</figcaption>
+          <div class="frame">
+            <img src="shots/main-menu-composed.png" alt="" />
+            <div class="proposal-scrim"></div>
+            <div class="memorial danger">
+              <div class="memorial-head">
+                <div>
+                  <div class="memorial-kicker">主进度</div>
+                  <h3>覆盖主进度</h3>
+                </div>
+                <div class="memorial-seal">准<br>行</div>
+              </div>
+              <div class="memorial-body">将覆盖当前主进度，是否继续？建议先在游戏中保存为存档。</div>
+              <div class="memorial-actions">
+                <span>取消</span>
+                <span class="yes">继续覆盖</span>
+              </div>
+            </div>
+          </div>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ⑥ 删除存档 -->
+    <section class="case" id="c6">
+      <h2>⑥ 主菜单 · 删除存档</h2>
+      <p class="path">
+        入口：主菜单 →「加载存档」列表 → 行内删除 ·
+        <code>menuPage.tsx:427</code>
+      </p>
+      <div class="triptych">
+        <figure class="cell">
+          <figcaption><span class="n">1</span> 现状 · 真屏入口</figcaption>
+          <div class="frame">
+            <img src="shots/main-menu-load-saves.png" alt="主菜单加载存档列表" />
+            <div class="pin-ring" style="left:62.6%; top:40%; width:5%; height:4%;"></div>
+            <div class="pin" style="left:62.6%; top:35.5%;">
+              <div class="pin-label">点这里 · 删除</div>
+              <div class="pin-arrow"></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell evil">
+          <figcaption><span class="n">2</span> 现状之恶 · 原生灰框</figcaption>
+          <div class="frame">
+            <img src="shots/main-menu-load-saves.png" alt="" />
+            <div class="native-scrim"></div>
+            <div class="out-of-place">出戏 · 系统对话框</div>
+            <div class="native-dialog">
+              <div class="nd-title">localhost:5173 显示</div>
+              <div class="nd-body">删除存档「辽饷吃紧」？此操作不可撤销。</div>
+              <div class="nd-actions"><span>取消</span><span>确定</span></div>
+            </div>
+          </div>
+        </figure>
+        <figure class="cell proposal">
+          <figcaption><span class="n">3</span> 提案 · 统一奏疏牌</figcaption>
+          <div class="frame">
+            <img src="shots/main-menu-load-saves.png" alt="" />
+            <div class="proposal-scrim"></div>
+            <div class="memorial danger">
+              <div class="memorial-head">
+                <div>
+                  <div class="memorial-kicker">存档事务</div>
+                  <h3>删除存档</h3>
+                </div>
+                <div class="memorial-seal">销<br>档</div>
+              </div>
+              <div class="memorial-body">删除存档「辽饷吃紧」？此操作不可撤销。</div>
+              <div class="memorial-actions">
+                <span>取消</span>
+                <span class="yes">删除</span>
+              </div>
+            </div>
+          </div>
+        </figure>
+      </div>
+    </section>
+
+    <div class="catalog">
+      <h3>其余调用点 · 同形奏疏牌（屏归位）</h3>
+      <p>全部与上列同一组件，只换文案。从属屏幕与入口如下。</p>
+      <table>
+        <thead>
+          <tr><th>调用点</th><th>所在屏</th><th>入口</th><th>票面原句</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>gameMenu.tsx:158</code></td>
+            <td>局内 · 游戏菜单</td>
+            <td>左列「加载存档」</td>
+            <td>确定加载 N.db？当前未保存进度会丢失。</td>
+          </tr>
+          <tr>
+            <td><code>gameMenu.tsx:260</code></td>
+            <td>局内 · 游戏菜单</td>
+            <td>左列「退出游戏」</td>
+            <td>退出整个游戏？前后端进程都会关闭，未保存的进度会丢失。</td>
+          </tr>
+          <tr>
+            <td><code>gameMenu.tsx:303</code></td>
+            <td>局内 · 游戏菜单</td>
+            <td>加载/保存列表行内删除</td>
+            <td>删除 N.db？</td>
+          </tr>
+          <tr>
+            <td><code>useChatActions.ts:290</code></td>
+            <td>局内 HUD · 召对</td>
+            <td>composer「撤回上一轮」</td>
+            <td>将撤回最近一轮召对及其政务影响，是否继续？</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="cost">
+      <h3>取向 A · 代价（不标推荐）</h3>
+      <ul>
+        <li>低危与高危共用骨架，若不分视觉权重，容易「看起来都一样重」。</li>
+        <li>已有完整说明面板的动作仍会再出一次牌——双重确认从「原生」变成「画面内」，次数未必减到 1。</li>
+        <li>全仓一刀切，改动面集中；任何文案/分级微调都碰同一组件。</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

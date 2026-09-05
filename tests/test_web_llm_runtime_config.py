@@ -944,8 +944,9 @@ def test_fresh_start_zero_llm_calls_disposes_old_main_db(tmp_path, monkeypatch):
             pass
 
 
-def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
-    """#1228 行为：continue / load_save / 重置进 HUD，全程零 LLM 调用直至真实动作。"""
+def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
+    """#1228 行为：continue / load_save 进 HUD，全程零 LLM 调用直至真实动作。
+    #1732：局内销毁式 reset 已删；新局走 menu/new_game 归档路径，不在此覆盖。"""
     db_path = tmp_path / "ming.db"
     ud = tmp_path / "ud"
     monkeypatch.setenv("MING_SIM_DB", str(db_path))
@@ -1025,22 +1026,7 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
         cont.db.kv_set("favorites", json.dumps(sorted(cont.favorites), ensure_ascii=False))
         assert seed_marker in json.loads(cont.db.kv_get("favorites"))
 
-        # 重置：清主库重建，并为重建后新 campaign 的首月留下唯一 begin。
-        cont.reset_game()
-        _assert_hud(cont.state_payload())
-        reset_campaign_id = cont.db.kv_get("campaign_id")
-        reset_begin_paths = list((ud / "saves").glob(
-            f"auto_{reset_campaign_id}_{cont.state.year:04d}_{cont.state.period:02d}_"
-            f"t{cont.state.turn:04d}_begin.db"
-        ))
-        assert len(reset_begin_paths) == 1
-        with sqlite3.connect(reset_begin_paths[0]) as checkpoint:
-            archived_turn = checkpoint.execute(
-                "SELECT year, period, turn FROM game_state WHERE id = 1"
-            ).fetchone()
-        assert archived_turn == (cont.state.year, cont.state.period, cont.state.turn)
-
-        assert calls == [], f"continue/load_save/重置不应触发 LLM 调用，实得 {calls}"
+        assert calls == [], f"continue/load_save 不应触发 LLM 调用，实得 {calls}"
     finally:
         try:
             cont.session.close()
@@ -1048,8 +1034,8 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
             pass
 
 
-@pytest.mark.parametrize("op", ["load", "reset"])
-def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch, op):
+def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch):
+    """#1732：热替换成功路径只覆盖 load_save（局内 reset 已删）。"""
     db_path = tmp_path / "ming.db"
     monkeypatch.setenv("MING_SIM_DB", str(db_path))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
@@ -1060,30 +1046,24 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
     runtime.favorites = {saved_marker}
     runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
-    if op == "load":
-        from ming_sim import audience_extraction
-        from tests.test_audience_extraction_501 import (
-            _minister,
-            _open_night_with_persisted_reply,
-        )
+    from ming_sim import audience_extraction
+    from tests.test_audience_extraction_501 import (
+        _minister,
+        _open_night_with_persisted_reply,
+    )
 
-        _open_night_with_persisted_reply(
-            runtime.db, runtime.state, _minister(runtime.db, runtime.content),
-        )
-        assert runtime.db.list_unextracted_replies()
-        monkeypatch.setattr(
-            audience_extraction, "extract_story_facts", lambda *_a, **_k: [],
-        )
+    _open_night_with_persisted_reply(
+        runtime.db, runtime.state, _minister(runtime.db, runtime.content),
+    )
+    assert runtime.db.list_unextracted_replies()
+    monkeypatch.setattr(
+        audience_extraction, "extract_story_facts", lambda *_a, **_k: [],
+    )
     runtime.save_to("before")
-    if op == "load":
-        runtime.favorites = {live_marker}
-        runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    runtime.favorites = {live_marker}
+    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
 
-    path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
-    # #1721 C: under `pytest tests/test_web_llm_runtime_config.py -n auto`
-    # this [reset] case measured 2.62s call time — over the 2.0s hang helper.
-    # Rebuild is real work, not an idle gate; use unbounded sync POST.
-    response = TestClient(web_app.app).post(path)
+    response = TestClient(web_app.app).post("/api/saves/before/load")
     assert response.status_code == 200
     state = TestClient(web_app.app).get("/api/game/state")
     assert state.status_code == 200
@@ -1092,21 +1072,18 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     assert write.status_code == 200
     favorites = write.json()["favorites"]
     assert write_minister in favorites
-    if op == "load":
-        assert saved_marker in favorites
-        assert live_marker not in favorites
-        runtime._runtime_write_queue().barrier(lambda: None)
-        assert runtime.db.list_unextracted_replies() == []
-    else:
-        assert saved_marker not in favorites
+    assert saved_marker in favorites
+    assert live_marker not in favorites
+    runtime._runtime_write_queue().barrier(lambda: None)
+    assert runtime.db.list_unextracted_replies() == []
     runtime.session.close()
 
 
-@pytest.mark.parametrize("op", ["load", "reset"])
 @pytest.mark.parametrize("failure", ["candidate", "backup"])
 def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
-    tmp_path, monkeypatch, op, failure,
+    tmp_path, monkeypatch, failure,
 ):
+    """#1732：热替换失败路径只覆盖 load_save（局内 reset 已删）。"""
     db_path = tmp_path / "ming.db"
     monkeypatch.setenv("MING_SIM_DB", str(db_path))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
@@ -1118,9 +1095,8 @@ def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
     runtime.favorites = {saved_marker}
     runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
     runtime.save_to("before")
-    if op == "load":
-        runtime.favorites = {live_marker}
-        runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    runtime.favorites = {live_marker}
+    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
     old_turn = runtime.state.turn
 
     if failure == "candidate":
@@ -1141,10 +1117,7 @@ def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
             lambda _path: (_ for _ in ()).throw(RuntimeError("backup sentinel")),
         )
 
-    path = "/api/saves/before/load" if op == "load" else "/api/game/reset"
-    # Same as the success sibling: rebuild/load work under xdist can exceed the
-    # 2s hang helper without being a freeze. Failure path still reaches 500.
-    response = TestClient(web_app.app).post(path)
+    response = TestClient(web_app.app).post("/api/saves/before/load")
     assert response.status_code == 500
     state = TestClient(web_app.app).get("/api/game/state")
     assert state.status_code == 200
@@ -1152,10 +1125,8 @@ def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
     write = TestClient(web_app.app).post(f"/api/favorites/{write_minister}")
     assert write.status_code == 200
     favorites = write.json()["favorites"]
-    expected_marker = live_marker if op == "load" else saved_marker
-    rejected_marker = saved_marker if op == "load" else live_marker
-    assert expected_marker in favorites
-    assert rejected_marker not in favorites
+    assert live_marker in favorites
+    assert saved_marker not in favorites
     assert write_minister in favorites
     runtime.session.close()
 
