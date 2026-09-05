@@ -4769,6 +4769,44 @@ def _close_unregistered(
     return op
 
 
+class _MenuCandidateCancelled(Exception):
+    """菜单候选代际取消：经统一未发布收口后，投影为入口既有取消身份（非 worker 崩）。"""
+
+
+def _discard_unpublished_candidate(
+    runtime: Any,
+    entry: Optional[_HolderEntry],
+    path: str = "",
+) -> None:
+    """未发布候选的取消/准备失败收口：经 holder/CloseOp/drain 唯一接缝关闭。
+
+    已登记走 claim_close→drain；未登记走 _close_unregistered。
+    close 失败由 settle 留存失败 holder/op 供重试，不删活引用、不冒成功。
+    次生异常只 logger.exception 留痕，不上改调用方主异常身份。
+    """
+    if runtime is None:
+        return
+    try:
+        if entry is not None:
+            role, op = _claim_close(entry, path)
+            if role == "executor" and op is not None:
+                try:
+                    _drain_and_close_session(
+                        runtime, entry=entry, close_op=op,
+                    )
+                except Exception:
+                    logger.exception(
+                        "discard unpublished candidate drain failed path=%s",
+                        path,
+                    )
+        else:
+            _close_unregistered(runtime, path)
+    except Exception:
+        logger.exception(
+            "discard unpublished candidate failed path=%s", path,
+        )
+
+
 def _runtime_restorable(game: Any) -> bool:
     """#1749：失败 close 后可否恢复为活局——db 与 agno 都必须仍可用，且未进入 close 半态。
 
@@ -5256,51 +5294,45 @@ async def api_menu_new_game() -> Dict[str, Any]:
             candidate_entry = _register_holder(new_db_path, new_game)
             # #1749：响应快照须在发布前物化——持 opening + 未入 web_game 时独占活连接；
             # 发布后 exit/new_game 可经 web_game 定点退休关库，锁外 state_payload 会读已关连接。
-            state_snapshot = new_game.state_payload()
+            # 准备失败（含快照）与代际取消共用未发布收口，不另造清理分支。
             retire = None
             published = False
-            prev_norm = _normalize_db_path(prev_db_path) if prev_db_path else ""
-            with _menu_lifecycle_lock:
-                # P2 仅代际+指针——发布决定在锁内落定，禁锁外再读 token 改判。
-                if token == _menu_generation:
-                    retire = web_game
-                    web_game = new_game
-                    published = True
+            try:
+                state_snapshot = new_game.state_payload()
+                prev_norm = _normalize_db_path(prev_db_path) if prev_db_path else ""
+                with _menu_lifecycle_lock:
+                    # P2 仅代际+指针——发布决定在锁内落定，禁锁外再读 token 改判。
+                    if token == _menu_generation:
+                        retire = web_game
+                        web_game = new_game
+                        published = True
 
-            if not published:
-                # P3：取消本候选（未发布）
-                if candidate_entry is not None:
-                    role, op = _claim_close(candidate_entry, new_db_path)
-                    if role == "executor" and op is not None:
-                        try:
-                            _drain_and_close_session(
-                                new_game, entry=candidate_entry, close_op=op,
-                            )
-                        except Exception:
-                            logger.exception(
-                                "discard superseded new_game session failed"
-                            )
-                else:
-                    _close_unregistered(new_game, new_db_path)
-                _rollback_path_if_ours()
-                raise HTTPException(
-                    status_code=409, detail="新游戏已取消（菜单状态已变更）。",
+                if not published:
+                    raise HTTPException(
+                        status_code=409, detail="新游戏已取消（菜单状态已变更）。",
+                    )
+
+                # ★ AR-req：已发布操作仍承担——对 prev 写 pending（与 close executor 正交）
+                if prev_norm and not _same_db_path(prev_norm, new_db_path):
+                    _path_request_archive(prev_norm)
+
+                # 定点退休 old（不依赖 drain 写 pending）；已发布后 token 再 bump 不撤销此责
+                if retire is not None and retire is not new_game:
+                    _point_retire_close(retire)
+
+                # 响应用发布前快照；payload 未知代码错必须响亮失败（ADR 0005），
+                # 不得宽捕获后返回 ok=True 洗白成功。finally 仍 release_opening。
+                return steam_events.with_events(
+                    {"state": state_snapshot},
+                    [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
                 )
-
-            # ★ AR-req：已发布操作仍承担——对 prev 写 pending（与 close executor 正交）
-            if prev_norm and not _same_db_path(prev_norm, new_db_path):
-                _path_request_archive(prev_norm)
-
-            # 定点退休 old（不依赖 drain 写 pending）；已发布后 token 再 bump 不撤销此责
-            if retire is not None and retire is not new_game:
-                _point_retire_close(retire)
-
-            # 响应用发布前快照；payload 未知代码错必须响亮失败（ADR 0005），
-            # 不得宽捕获后返回 ok=True 洗白成功。finally 仍 release_opening。
-            return steam_events.with_events(
-                {"state": state_snapshot},
-                [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-            )
+            except Exception:
+                if not published:
+                    _discard_unpublished_candidate(
+                        new_game, candidate_entry, new_db_path,
+                    )
+                    _rollback_path_if_ours()
+                raise
         finally:
             # N5：release_opening（含 C7-release；new 侧通常无 pending）
             _release_opening(opening_path)
@@ -5333,6 +5365,9 @@ async def api_menu_continue() -> StreamingResponse:
         global web_game
         opening_path = ""
         candidate_entry: Optional[_HolderEntry] = None
+        # 记录本 worker 启动时的活指针身份：失败收口只摘「仍是该旧对象且已不可恢复」的指针，
+        # 不得清掉代际间已被 new_game/load 发布的新局。
+        initial_web_game = web_game
         try:
             on_stage("准备载入上次进度...")
             main_for_open = _get_main_db_path()
@@ -5360,37 +5395,45 @@ async def api_menu_continue() -> StreamingResponse:
             # P1
             candidate_entry = _register_holder(opening_path, game)
             # #1749：发布前快照——持 opening + 未入 web_game 时独占；发布后可被定点退休关库。
-            state_snapshot = game.state_payload()
+            # 准备失败（含快照）与代际取消共用未发布收口；不保留已关闭旧 runtime 指针。
             old_runtime = None
-            cancelled = False
-            with _menu_lifecycle_lock:
-                # P2
-                if token != _menu_generation:
-                    cancelled = True
-                else:
-                    old_runtime = web_game
-                    web_game = game
-            if cancelled:
-                # P3：只关本 entry
-                if candidate_entry is not None:
-                    role, op = _claim_close(candidate_entry, opening_path)
-                    if role == "executor" and op is not None:
-                        try:
-                            _drain_and_close_session(
-                                game, entry=candidate_entry, close_op=op,
-                            )
-                        except Exception:
-                            logger.exception(
-                                "discard superseded continue session failed"
-                            )
-                else:
-                    _close_unregistered(game, opening_path)
-                ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
-                return
-            # K5out：退休 old，不 AR-req（#1732 续玩）
-            if old_runtime is not None and old_runtime is not game:
-                _point_retire_close(old_runtime)
-            ev_queue.put(("__done__", {"state": state_snapshot}))
+            published = False
+            try:
+                state_snapshot = game.state_payload()
+                with _menu_lifecycle_lock:
+                    # P2
+                    if token == _menu_generation:
+                        old_runtime = web_game
+                        web_game = game
+                        published = True
+                if not published:
+                    raise _MenuCandidateCancelled(
+                        "继续已取消（菜单状态已变更）。",
+                    )
+                # K5out：退休 old，不 AR-req（#1732 续玩）
+                if old_runtime is not None and old_runtime is not game:
+                    _point_retire_close(old_runtime)
+                ev_queue.put(("__done__", {"state": state_snapshot}))
+            except Exception:
+                if not published:
+                    _discard_unpublished_candidate(
+                        game, candidate_entry, opening_path,
+                    )
+                    # K2 可能已排空本路径启动时的旧 holder；仅当活指针仍是该旧对象
+                    # 且已不可恢复时摘掉——禁清后继发布的新局。
+                    cur = web_game
+                    if (
+                        cur is not None
+                        and cur is initial_web_game
+                        and cur is not game
+                        and not _runtime_restorable(cur)
+                    ):
+                        with _menu_lifecycle_lock:
+                            if web_game is cur:
+                                web_game = None
+                raise
+        except _MenuCandidateCancelled as exc:
+            ev_queue.put(("__error__", {"message": str(exc)}))
         except LLMUnavailable as exc:
             ev_queue.put(("__error__", _llm_error_detail(exc)))
         except DependencyMismatch as exc:
@@ -5514,26 +5557,25 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
             )
             candidate_entry = _register_holder(cand_path, candidate)
             # #1749：发布前快照——opening 释放后 / 发布后 exit 可关库；响应不得再读活连接。
-            state_snapshot = candidate.state_payload()
+            # 准备失败（含快照）与代际取消共用未发布收口。
             published = False
-            with _menu_lifecycle_lock:
-                if token == _menu_generation:
-                    web_game = candidate
-                    published = True
-            if not published:
-                if candidate_entry is not None:
-                    role, op = _claim_close(candidate_entry, cand_path)
-                    if role == "executor" and op is not None:
-                        try:
-                            _drain_and_close_session(
-                                candidate, entry=candidate_entry, close_op=op,
-                            )
-                        except Exception:
-                            logger.exception("load_save discard cancelled candidate")
-                raise HTTPException(
-                    status_code=409, detail="加载已取消（菜单状态已变更）。",
-                )
-            return candidate, state_snapshot
+            try:
+                state_snapshot = candidate.state_payload()
+                with _menu_lifecycle_lock:
+                    if token == _menu_generation:
+                        web_game = candidate
+                        published = True
+                if not published:
+                    raise HTTPException(
+                        status_code=409, detail="加载已取消（菜单状态已变更）。",
+                    )
+                return candidate, state_snapshot
+            except Exception:
+                if not published:
+                    _discard_unpublished_candidate(
+                        candidate, candidate_entry, cand_path,
+                    )
+                raise
         finally:
             _release_opening(opening_path)
 
