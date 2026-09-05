@@ -861,7 +861,7 @@ def clamp_grant_arrival_amount(
 ) -> int:
     """P2：软判提案 → 代码只 clamp 到护行口径界内。
 
-    提案须已由调用方解析为 int；非法量字段不得落入此函数（fail-loud 在 record）。
+    提案须已由调用方解析为 int；非法量字段在 record 侧逐项拒收，不入本函数。
     合法无提案中位默认仅经 record_monthly_grant_reconciliations 内联路径。
     """
     lo, hi = grant_arrival_bounds(int(ordered_amount), escorted=escorted)
@@ -10171,6 +10171,7 @@ class GameDB:
             accepted.append(item)
 
         new_ids: List[int] = []
+        collector = None
         with atomic(self):
             if rejected:
                 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
@@ -10207,6 +10208,11 @@ class GameDB:
                 "WHERE id = ? AND close_commit_cursor < ?",
                 (int(CLOSE_STEP_ENDORSEMENT_BOUND), nid, int(CLOSE_STEP_ENDORSEMENT_BOUND)),
             )
+        # 本方法即外层 owner：atomic 提交后镜像（0008-D5；#1745 补缺镜像）。
+        if collector is not None:
+            from ming_sim.applier import mirror_rejections_after_commit
+            from ming_sim.error_pack import rejections_jsonl_path
+            mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return new_ids
 
     def settle_story_extraction(
@@ -10260,6 +10266,7 @@ class GameDB:
             accepted.append(fact)
 
         new_ids: List[int] = []
+        collector = None
         with atomic(self):
             if rejected:
                 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
@@ -10297,6 +10304,11 @@ class GameDB:
                 "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
                 (cid,),
             )
+        # 本方法即外层 owner：atomic 提交后镜像（0008-D5；#1745 补缺镜像）。
+        if collector is not None:
+            from ming_sim.applier import mirror_rejections_after_commit
+            from ming_sim.error_pack import rejections_jsonl_path
+            mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return new_ids
 
     def list_unextracted_replies(
@@ -13119,58 +13131,117 @@ class GameDB:
         return snapshots
 
     def record_monthly_grant_reconciliations(
-        self, turn: int, generated: object = None,
+        self, turn: int, generated: object = None, *,
+        rejection_collector=None,
+        source: object = None,
     ) -> List[Dict[str, object]]:
         """月度节拍：逐路软判实抵 → clamp → 落被护侧对账记录。
 
         无提案时用护行口径中位（无护行亦可机械落账，供 S10 结案合并）。
         不写 0058 进展、不二次扣库、不改原 economy_move。
+
+        #1745 / ADR 0015-D6/D7：域级坏项逐项拒收；形状（非 list/非 dict 项）归
+        sanitize_delta_shape 独家，本方法不平行净化。好项与未提案目标的中位落账
+        仍在同一 atomic。拒收归属外层 RejectionCollector（flush/commit/mirror/
+        rollback 由 settle 编排所有者负责；本方法不自建 collector）。
         """
+        from ming_sim.applier import Provenance, RejectedItem
+
         targets = {
             int(item["dossier_id"]): item
             for item in self.list_monthly_grant_reconciliation_targets()
         }
-        if not targets:
-            if generated in (None, []):
-                return []
-            raise ValueError("无在途拨帑却收到对账提案")
-
-        supplied: Dict[int, Tuple[object, str]] = {}
         if generated is None:
             generated = []
+        if not targets and generated in (None, []):
+            return []
+
+        # source 走 collector 归一；None 取 typed 默认 unknown（0008-D5）。
+        if source is None:
+            source = Provenance.unknown
+
+        def _reject(raw_item: object, reason: str, category: str) -> None:
+            # 无外层归属不得无痕继续（0150-D2/D3；#1745 删自有 collector 旁路）。
+            if rejection_collector is None:
+                from ming_sim.applier import RejectionCollectorRequired
+                raise RejectionCollectorRequired(
+                    "dossier_reconciliations 拒收须由外层 RejectionCollector 归属"
+                )
+            # ADR 0015 F1：RejectedItem.item 恒 dict；非 dict 包装 raw_value。
+            # 域级拒收的 item 已是 dict；形状级（非 list/非 dict 项）归 sanitize_delta_shape
+            # 独家（0015-D6/F1，#1745 删双 producer）。
+            if isinstance(raw_item, dict):
+                payload = dict(raw_item)
+            else:
+                payload = {"raw_value": raw_item}
+            rejection_collector.record(
+                "dossier_reconciliations",
+                RejectedItem(
+                    item=payload, reason=reason, category=category, source=source,
+                ),
+                int(turn),
+            )
+
+        # 形状净化归 sanitize_delta_shape 独家（0015-D6；#1745 删本段平行形状拒收）。
+        # 非 list / 非 dict 项此处跳过域逻辑；settle 后半段 sanitize→collector 一次拒收。
         if not isinstance(generated, list):
-            raise ValueError("对账提案须为列表")
+            generated = []
+
+        supplied: Dict[int, Tuple[object, str]] = {}
         for item in generated:
             if not isinstance(item, dict):
-                raise ValueError("对账提案格式无效")
+                continue
             try:
                 dossier_id = strict_int(item.get("dossier_id", 0))
                 if dossier_id <= 0:
                     raise ValueError("not positive")
-            except (TypeError, ValueError) as exc:
-                raise ValueError("对账提案案卷编号无效") from exc
+            except (TypeError, ValueError):
+                _reject(item, "对账提案案卷编号无效", "invalid_enum")
+                continue
             if dossier_id not in targets:
-                raise ValueError(f"对账提案指向非在途拨帑案卷：{dossier_id}")
+                _reject(
+                    item,
+                    f"对账提案指向非在途拨帑案卷：{dossier_id}",
+                    "missing_ref",
+                )
+                continue
             if dossier_id in supplied:
-                raise ValueError("对账提案存在重复案卷")
-            if "arrived_amount" in item:
+                _reject(item, "对账提案存在重复案卷", "invalid_enum")
+                continue
+            has_arrived = "arrived_amount" in item
+            has_loss = "loss_amount" in item
+            if has_arrived and has_loss:
+                # DELTA_SCHEMA 二选一：两字段同在不猜优先，逐项拒收（0015-D4 不猜）
+                _reject(
+                    item,
+                    "对账提案 arrived_amount 与 loss_amount 须二选一",
+                    "invalid_enum",
+                )
+                continue
+            if has_arrived:
                 raw_amount = item.get("arrived_amount")
                 amount_label = "实抵"
-            elif "loss_amount" in item:
+            elif has_loss:
                 raw_amount = item.get("loss_amount")
                 amount_label = "折损"
             else:
-                raise ValueError("对账提案须含 arrived_amount 或 loss_amount")
+                _reject(item, "对账提案须含 arrived_amount 或 loss_amount", "missing_field")
+                continue
             try:
                 amount = strict_int(raw_amount)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"对账{amount_label}值无效") from exc
+            except (TypeError, ValueError):
+                _reject(item, f"对账{amount_label}值无效", "invalid_enum")
+                continue
             if amount_label == "实抵":
                 proposed = amount
             else:
                 proposed = int(targets[dossier_id]["ordered_amount"]) - amount
             note = str(item.get("note") or "").strip()
             supplied[dossier_id] = (proposed, note)
+
+        # 无在途目标：坏提案已逐项拒收，不落假对账行。
+        if not targets:
+            return []
 
         reports: List[Dict[str, object]] = []
         for dossier_id, target in targets.items():
@@ -14694,11 +14765,15 @@ class GameDB:
             None,
         )
         if rejected_entry is not None:
-            from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-            route = rejected_entry["route"]  # type: ignore[index]
+            from ming_sim.applier import Provenance, RejectedItem
+            # 0150-D2 / #1745：无 owns_rejection_collector 自建；拒收归属外层 collector。
+            if rejection_collector is None:
+                from ming_sim.applier import RejectionCollectorRequired
+                raise RejectionCollectorRequired(
+                    "executor_routing 拒收须由外层 RejectionCollector 归属"
+                )
             rid = str(rejected_entry.get("region_id") or "")
-            coll = rejection_collector if rejection_collector is not None else RejectionCollector()
-            coll.record(
+            rejection_collector.record(
                 "executor_routing",
                 RejectedItem(
                     item={
@@ -14714,9 +14789,6 @@ class GameDB:
                 ),
                 int(state.turn),
             )
-            if rejection_collector is None and commit:
-                coll.flush_to_db(self)
-                self._commit_dossier_write(True)
             return []
 
         # 校验名单引用（写库前）；失败上抛由三路成案点各自终态处理
@@ -15024,11 +15096,15 @@ class GameDB:
         self._validate_participant_roster_references(roster)
         self._validate_dossier_delegations(roster)
 
-        owns_rejection_collector = rejection_collector is None
         if route["rejection"] is not None:
-            from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+            from ming_sim.applier import Provenance, RejectedItem
+            # 0150-D2 / #1745：无 owns_rejection_collector 自建；拒收归属外层 collector。
+            # Admission rejection：不落案卷；flush/commit/mirror 由外层 owner 负责。
             if rejection_collector is None:
-                rejection_collector = RejectionCollector()
+                from ming_sim.applier import RejectionCollectorRequired
+                raise RejectionCollectorRequired(
+                    "executor_routing 拒收须由外层 RejectionCollector 归属"
+                )
             rejection_collector.record(
                 "executor_routing",
                 RejectedItem(
@@ -15046,19 +15122,7 @@ class GameDB:
                 ),
                 int(state.turn),
             )
-            # Admission rejection owns this item: no dossier or downstream
-            # knowledge/allocation rows may be materialized.  An external
-            # collector is flushed by its transaction owner; the canonical
-            # kernel must not outlive that owner's rollback boundary.
-            if commit and owns_rejection_collector:
-                rejection_collector.flush_to_db(self)
             self._commit_dossier_write(commit)
-            if commit and owns_rejection_collector:
-                from ming_sim.applier import mirror_rejections_after_commit
-                from ming_sim.error_pack import rejections_jsonl_path
-                mirror_rejections_after_commit(
-                    self, rejection_collector, rejections_jsonl_path,
-                )
             return 0
         durable_extension = dict(extension or {})
         signal = route.get("signal")
@@ -15121,12 +15185,7 @@ class GameDB:
                 source_id=f"decree_dossier:{dossier_id}", commit=False,
             )
         self._commit_dossier_write(commit)
-        if commit and owns_rejection_collector and rejection_collector is not None:
-            from ming_sim.applier import mirror_rejections_after_commit
-            from ming_sim.error_pack import rejections_jsonl_path
-            mirror_rejections_after_commit(
-                self, rejection_collector, rejections_jsonl_path,
-            )
+        # 拒收镜像归外层 RejectionCollector owner（0150-D2；本核不自建不自镜像）。
         return dossier_id
 
     @staticmethod
@@ -18464,10 +18523,7 @@ class GameDB:
             raise ValueError("kind_filter and kind_filter_exclude are mutually exclusive")
         if directive_status not in ("draft", "pending"):
             raise ValueError("directive_status must be 'draft' or 'pending'")
-        from ming_sim.applier import RejectionCollector
-        owns_rejection_collector = rejection_collector is None
-        if rejection_collector is None:
-            rejection_collector = RejectionCollector()
+        # 0150-D2 / #1745：无 owns_rejection_collector 自建；外层传入则沿用，缺则嵌套拒收响亮。
         applied: List[Dict[str, object]] = []
         rows = self.list_pending_actions(
             int(state.turn), status="pending", minister_name=minister_name)
@@ -18555,6 +18611,10 @@ class GameDB:
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
+                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
+                    from ming_sim.applier import RejectionCollectorRequired
+                    if isinstance(exc, RejectionCollectorRequired):
+                        raise
                     rejection = getattr(exc, "dossier_link_rejection", None)
                     if rejection is not None:
                         self._record_dossier_link_rejection(
@@ -18566,7 +18626,8 @@ class GameDB:
                         "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
-                rejection_collector.flush_to_db(self)
+                if rejection_collector is not None:
+                    rejection_collector.flush_to_db(self)
             if ok:
                 item: Dict[str, object] = {
                     "id": pa["id"],
@@ -18605,12 +18666,7 @@ class GameDB:
                 if affected:
                     item["affected_people"] = sorted(affected)
                 applied.append(item)
-        if owns_transaction and owns_rejection_collector:
-            from ming_sim.applier import mirror_rejections_after_commit
-            from ming_sim.error_pack import rejections_jsonl_path
-            mirror_rejections_after_commit(
-                self, rejection_collector, rejections_jsonl_path,
-            )
+        # 镜像归外层 collector owner（0150-D2；本方法不自建不自镜像）。
         return applied
 
     def retry_failed_pending_action(
@@ -18736,6 +18792,10 @@ class GameDB:
                 except Exception as exc:
                     # #654 r3-C.2 路1：directive 特路与通用分支同款——回滚后标 failed，不崩结算
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
+                    from ming_sim.applier import RejectionCollectorRequired
+                    if isinstance(exc, RejectionCollectorRequired):
+                        raise
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?",
                         (int(pa["id"]),),
@@ -18747,7 +18807,8 @@ class GameDB:
                     result = None
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
-                rejection_collector.flush_to_db(self)
+                if rejection_collector is not None:
+                    rejection_collector.flush_to_db(self)
         except Exception as exc:
             tlog(f"[pending_actions] 落库异常 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
             raise

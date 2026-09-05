@@ -55,7 +55,8 @@ def canned_full_settlement(
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
-    # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁
+    # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁。
+    # 替身换 llm_promulgation_verdicts 后生产不触 get_or_create，无需再 patch 工厂。
     def _promulgate(dossiers, *_a, **_k):
         return [
             {"dossier_id": int(row["id"]), "decision": "promulgated"}
@@ -104,6 +105,9 @@ def canned_full_settlement(
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_rescript_draft_agent", lambda *a, **k: object())
+    # #1745：复用单一 agent 边界夹具（不整换 run_settlement_attendant_message）。
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     monkeypatch.setattr(
         memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}',
     )

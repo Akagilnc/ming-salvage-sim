@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from ming_sim.agents import (
     create_faction_brew_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
+    create_settlement_attendant_agent,
     parse_agent_json,
     run_agent_text,
 )
@@ -47,7 +49,12 @@ from ming_sim.error_pack import (
     settlement_abort_message,
     write_error_pack,
 )
-from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import (
+    LLMContractError,
+    LLMUnavailable,
+    PromulgationHealEvidence,
+    SettlementAbort,
+)
 from ming_sim.faction_brew import VIEW_FACTION_STANCE
 from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
 from ming_sim.issues import (
@@ -260,12 +267,60 @@ def run_arrival_attendant_message(
     return text  # 原文，含首尾空白（P6：零删改）
 
 
+def run_settlement_attendant_message(
+    llm_config: LLMConfig,
+    *,
+    year: int,
+    period: int,
+    rejections: Sequence[Mapping[str, object]],
+    agent=None,
+) -> str:
+    """#1745：王承恩结算拒收递话 one-shot。有玩家来源拒收而空文 → LLMContractError。
+
+    只吃结构化 section/category/reason；原文返回（P6 零删改）。
+    """
+    if not rejections:
+        return ""
+    facts = {
+        "year": int(year),
+        "period": int(period),
+        "rejections": [
+            {
+                "section": str(row.get("section") or ""),
+                "category": str(row.get("category") or ""),
+                "reason": str(row.get("reason") or ""),
+            }
+            for row in rejections
+        ],
+    }
+    if not facts["rejections"]:
+        return ""
+    runner = agent if agent is not None else create_settlement_attendant_agent(llm_config)
+    try:
+        text = run_agent_text(
+            runner,
+            json.dumps(facts, ensure_ascii=False),
+            tag="settlement-attendant",
+        )
+    except (APITimeoutError, APIConnectionError, APIStatusError) as error:
+        raise llm_unavailable_from_error(error, "王承恩结算拒收递话") from error
+    text = str(text or "")
+    if not text.strip():
+        raise LLMContractError("王承恩结算拒收递话返回空文")
+    return text  # 原文，含首尾空白（P6：零删改）
+
+
 class PromulgationVerdictProvider(Protocol):
     """颁布判决注入 seam；实现不得写 DB，判决在后半段 atomic 内统一落库。"""
 
     def __call__(
         self, dossiers: Sequence[Dict[str, object]], state: GameState,
     ) -> List[Dict[str, object]]: ...
+
+
+# #1753 decision key promulgation-verdict-heal-by-resume-then-fail-closed：
+# 颁布判决 LLM 违契约 → 同一会话有界纠正补交次数（单一真源；不含首次）。
+PROMULGATION_VERDICT_HEAL_RETRIES = 3
 
 
 def stub_promulgation_verdicts(
@@ -277,6 +332,86 @@ def stub_promulgation_verdicts(
         {"dossier_id": int(row["id"]), "decision": "promulgated"}
         for row in dossiers
     ]
+
+
+def promulgation_verdict_correction_feedback(
+    exc: BaseException,
+    *,
+    raw_output: object,
+    required_dossier_ids: Sequence[int],
+) -> str:
+    """有界补交回喂：同会话续接，附原始产出与校验失败原因（#1753）。
+
+    形状对齐 draft/rescript 的 combination_correction_feedback 骨架——只回填结构化
+    verdict 契约（0052 两格 / 0066），不另造第三套 heal，不代填判向。
+    required_dossier_ids：待判全集（调用方必传非空 reviewed 集），漏盖时补交侧
+    知道缺哪一道（不依赖 history 是否已生效）。
+    """
+    raw_text = json.dumps(raw_output, ensure_ascii=False, sort_keys=True)
+    ids = list(required_dossier_ids)
+    return (
+        "【颁布判决契约校验失败，请按结构化 verdict 契约整批补交】\n"
+        f"校验失败原因：{exc}\n"
+        f"原始产出：{raw_text}\n"
+        f"待判案卷 dossier_id 全集（须逐案恰好一项）：{ids}\n"
+        "须返回 {\"verdicts\":[...]}，逐案恰好一项；"
+        "dossier_id 必须为输入快照中的有效 SQLite 正整数；"
+        "decision 只能为 promulgated 或 rejected；"
+        "须逐案覆盖全部待判案卷，不能静默跳过；"
+        "打回须含 blocked_layer/reason/primary_opponents/gatekeeper_id/"
+        "criteria_snapshot 等既有结构化字段（0052/0066）。\n"
+    )
+
+
+def _collect_compliant_promulgation_items(
+    batch: object,
+    db: GameDB,
+    *,
+    proposed_modes: Dict[int, str],
+    prepared_context: Optional[Dict[str, object]],
+    reviewed_dossier_ids: Optional[set[int]],
+) -> List[Dict[str, object]]:
+    """从不合规整批中收集单项已过闸的判决（证据保留，不落判、不伪造缺案）。"""
+    if not isinstance(batch, list):
+        return []
+    good: List[Dict[str, object]] = []
+    seen: set[int] = set()
+    for candidate in batch:
+        try:
+            valid = _validate_promulgation_verdict_item(
+                candidate, db,
+                proposed_modes=proposed_modes,
+                prepared_context=prepared_context,
+            )
+        except LLMContractError:
+            continue
+        dossier_id = int(valid["dossier_id"])
+        if reviewed_dossier_ids is not None and dossier_id not in reviewed_dossier_ids:
+            continue
+        if dossier_id in seen:
+            continue
+        seen.add(dossier_id)
+        good.append(valid)
+    return good
+
+
+def _merge_compliant_promulgation_items(
+    accumulated: List[Dict[str, object]],
+    fresh: Sequence[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    """跨补交轮次并集保留已合规判决：先到先留，后轮不得冲掉前轮好判（#1753）。
+
+    输入仅来自 _collect_compliant_promulgation_items 已过闸项，不再二次类型过滤。
+    """
+    by_id: Dict[int, Dict[str, object]] = {}
+    order: List[int] = []
+    for row in list(accumulated) + list(fresh):
+        dossier_id = int(row["dossier_id"])
+        if dossier_id in by_id:
+            continue
+        by_id[dossier_id] = row
+        order.append(dossier_id)
+    return [by_id[item] for item in order]
 
 
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
@@ -457,21 +592,95 @@ def _require_promulgation_verdict_list(
     return generated
 
 
+@dataclass
+class _PromulgationJudgeSession:
+    """Attempt-scoped judge holder：单次 resolve/直呼尝试内 heal 复用同一 agent。
+
+    session 身份在 holder 构造时固定；同月另一次结算/恢复新建 holder 不得
+    复用上一尝试的 Agno 持久化历史。turn 仅作可读前缀，不充当跨尝试主键。
+    """
+
+    llm_config: object
+    agno_db: object
+    turn: int
+    agent: object | None = None
+    session_id: str = field(default="")
+
+    def __post_init__(self) -> None:
+        if not self.session_id:
+            self.session_id = (
+                f"promulgation-judge-turn-{int(self.turn)}-{uuid.uuid4().hex}"
+            )
+
+    def get_or_create(self) -> object:
+        if self.agent is None:
+            self.agent = create_promulgation_judge_agent(
+                self.llm_config,
+                self.agno_db,
+                session_id=self.session_id,
+                num_history_runs=PROMULGATION_VERDICT_HEAL_RETRIES + 1,
+            )
+        return self.agent
+
+
+def _validate_and_save_promulgation_batch(
+    reviewed_generated: object,
+    *,
+    exempt: Sequence[Dict[str, object]],
+    state: GameState,
+    db: GameDB,
+    promulgable_dossiers: Sequence[Dict[str, object]],
+    prepared_context: Optional[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    """Provider 与 LLM 共用：拼豁免 stub → 校验 → 持久化 pending（单一装配）。"""
+    full_batch = _require_promulgation_verdict_list(reviewed_generated) + (
+        stub_promulgation_verdicts(exempt, state) if exempt else []
+    )
+    verdict_rows = validate_promulgation_verdicts(
+        full_batch, promulgable_dossiers, db, prepared_context=prepared_context,
+    )
+    db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
+    return verdict_rows
+
+
 def llm_promulgation_verdicts(
     dossiers: Sequence[Dict[str, object]], state: GameState, *, db: GameDB,
     agno_db: SqliteDb, llm_config: LLMConfig,
     prepared_context: Optional[Dict[str, object]] = None,
+    judge_session: Optional[_PromulgationJudgeSession] = None,
+    correction_feedback: str = "",
 ) -> List[Dict[str, object]]:
-    """Run exactly one LLM call for one reviewed promulgation batch."""
+    """Run exactly one LLM call for one reviewed promulgation batch.
+
+    judge_session / correction_feedback：#1753 有界补交复用同一会话。
+    首抽送输入快照；补交 = 同 agent 会话续接 + correction（原始产出/失败原因/
+    待判 id）+ 再次附带首抽快照（draft 同款回喂形，确保缺盖时补交输入仍含
+    全案卷身份，不单靠 history）。
+    判官工厂只在 _PromulgationJudgeSession.get_or_create：同一 holder 复用同一
+    agent/session；直呼（scripts）无 session 时本函数建临时 holder，临时 holder
+    同样获得独立 session 身份，单一装配不平行。
+    替身替换本函数则不触工厂（既有 tracer 契约）。
+    """
     context = prepared_context or build_promulgation_judge_context(db, state, dossiers)
-    agent = create_promulgation_judge_agent(llm_config, agno_db)
-    raw = run_agent_text(
-        agent, json.dumps(context, ensure_ascii=False, sort_keys=True),
-        tag="promulgation-judge",
+    context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
+    # 单一装配：heal holder 与 scripts 直呼都经 get_or_create，不平行调工厂。
+    session = judge_session or _PromulgationJudgeSession(
+        llm_config=llm_config,
+        agno_db=agno_db,
+        turn=int(state.turn),
     )
+    judge = session.get_or_create()
+    if correction_feedback:
+        # 同会话续接：history 应已有首轮；仍附首抽快照（draft 骨架），
+        # 使补交输入可独立核验含全案卷身份。
+        prompt = f"{correction_feedback}\n{context_json}"
+    else:
+        prompt = context_json
+    raw = run_agent_text(judge, prompt, tag="promulgation-judge")
     parsed = parse_agent_json(raw, "颁布判官")
-    verdicts = parsed.get("verdicts") if isinstance(parsed, dict) else None
-    return _require_promulgation_verdict_list(verdicts, raw_value=parsed)
+    return _require_promulgation_verdict_list(
+        parsed.get("verdicts"), raw_value=parsed,
+    )
 
 
 def _validate_promulgation_verdict_item(
@@ -1200,26 +1409,121 @@ def resolve_directives(
                 )
             else:
                 provider = promulgation_verdict_provider
-                generated = (
-                    provider(reviewed, state) if provider is not None else
-                    llm_promulgation_verdicts(
-                        reviewed, state, db=db, agno_db=agno_db,
-                        llm_config=llm_config, prepared_context=prepared_context,
+                if provider is not None:
+                    # 测试/注入 seam：单次校验，不走 LLM 有界补交（补交只辖真 LLM 会话）。
+                    generated = provider(reviewed, state) if reviewed else []
+                    rejected_verdict_batch = generated
+                    verdict_rows = _validate_and_save_promulgation_batch(
+                        generated,
+                        exempt=exempt,
+                        state=state,
+                        db=db,
+                        promulgable_dossiers=promulgable_dossiers,
+                        prepared_context=prepared_context,
                     )
-                ) if reviewed else []
-                rejected_verdict_batch = generated
-                generated = _require_promulgation_verdict_list(generated) + (
-                    stub_promulgation_verdicts(exempt, state) if exempt else []
-                )
-                verdict_rows = validate_promulgation_verdicts(
-                    generated, promulgable_dossiers, db,
-                    prepared_context=prepared_context,
-                )
-                db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
+                elif not reviewed:
+                    # 空待判不调 LLM；豁免自动顺颁。
+                    verdict_rows = _validate_and_save_promulgation_batch(
+                        [],
+                        exempt=exempt,
+                        state=state,
+                        db=db,
+                        promulgable_dossiers=promulgable_dossiers,
+                        prepared_context=prepared_context,
+                    )
+                else:
+                    # #1753：同一 LLM 会话有界纠正补交；3=单一真源；耗尽 fail-closed。
+                    # 判官仅在 llm_promulgation_verdicts 真执行时经 judge_session 创建。
+                    judge_session = _PromulgationJudgeSession(
+                        llm_config=llm_config,
+                        agno_db=agno_db,
+                        turn=int(state.turn),
+                    )
+                    correction = ""
+                    bad_outputs: List[object] = []
+                    compliant_verdicts: List[Dict[str, object]] = []
+                    verdict_rows = []
+                    for attempt in range(PROMULGATION_VERDICT_HEAL_RETRIES + 1):
+                        attempt_batch: object = None
+                        try:
+                            attempt_batch = llm_promulgation_verdicts(
+                                reviewed, state, db=db, agno_db=agno_db,
+                                llm_config=llm_config,
+                                prepared_context=prepared_context,
+                                judge_session=judge_session,
+                                correction_feedback=correction,
+                            )
+                            rejected_verdict_batch = attempt_batch
+                            verdict_rows = _validate_and_save_promulgation_batch(
+                                attempt_batch,
+                                exempt=exempt,
+                                state=state,
+                                db=db,
+                                promulgable_dossiers=promulgable_dossiers,
+                                prepared_context=prepared_context,
+                            )
+                            break
+                        except LLMContractError as heal_exc:
+                            raw_for_attempt = (
+                                attempt_batch
+                                if attempt_batch is not None
+                                else heal_exc.raw_value
+                            )
+                            rejected_verdict_batch = raw_for_attempt
+                            bad_outputs.append(raw_for_attempt)
+                            # 跨轮并集：前轮已合规判决不得被后轮缺席冲掉。
+                            compliant_verdicts = (
+                                _merge_compliant_promulgation_items(
+                                    compliant_verdicts,
+                                    _collect_compliant_promulgation_items(
+                                        raw_for_attempt,
+                                        db,
+                                        proposed_modes=proposed_modes,
+                                        prepared_context=prepared_context,
+                                        reviewed_dossier_ids=(
+                                            reviewed_dossier_ids
+                                        ),
+                                    ),
+                                )
+                            )
+                            if attempt >= PROMULGATION_VERDICT_HEAL_RETRIES:
+                                raise LLMContractError(
+                                    str(heal_exc),
+                                    raw_value=(
+                                        heal_exc.raw_value
+                                        if heal_exc.raw_value is not None
+                                        else raw_for_attempt
+                                    ),
+                                    heal_evidence=PromulgationHealEvidence(
+                                        bad_outputs=tuple(bad_outputs),
+                                        compliant_verdicts=tuple(
+                                            compliant_verdicts
+                                        ),
+                                    ),
+                                ) from heal_exc
+                            correction = (
+                                promulgation_verdict_correction_feedback(
+                                    heal_exc,
+                                    raw_output=raw_for_attempt,
+                                    required_dossier_ids=sorted(
+                                        reviewed_dossier_ids
+                                    ),
+                                )
+                            )
     except LLMContractError as exc:
         # Attribute item failures through the same validator used above.  Synthetic
         # exempt stubs never enter this provider audit input.
-        if exc.raw_value is not None:
+        heal_evidence = exc.heal_evidence
+        if isinstance(heal_evidence, PromulgationHealEvidence):
+            # #1753：首次 + 每次补交各留一份坏输出证据（最多 1+3=4）。
+            rejected_items = [
+                (
+                    {"raw_value": batch, "heal_attempt": index},
+                    str(exc),
+                )
+                for index, batch in enumerate(heal_evidence.bad_outputs)
+            ]
+        elif exc.raw_value is not None:
             rejected_items = [(exc.raw_value, str(exc))]
         elif isinstance(rejected_verdict_batch, list):
             rejected_items = []
@@ -1263,9 +1567,17 @@ def resolve_directives(
                 )
             collector.flush_to_db(db)
         mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
+        pack_extracted = None
+        if isinstance(heal_evidence, PromulgationHealEvidence):
+            pack_extracted = {
+                "promulgation_heal_bad_outputs": list(heal_evidence.bad_outputs),
+                "promulgation_compliant_verdicts": list(
+                    heal_evidence.compliant_verdicts
+                ),
+            }
         try:
             pack_path = write_error_pack(
-                db, state, exc=exc, extracted=None,
+                db, state, exc=exc, extracted=pack_extracted,
                 resolve_ctx=db.get_resolve_context(state.turn),
             )
         except Exception as pack_exc:
@@ -1713,6 +2025,9 @@ def _replay_settle(
         ),
         dossier_rescript_actions=dossier_rescript_actions,
         attendant_message=attendant_message,
+        settlement_attendant_runner=lambda **kw: run_settlement_attendant_message(
+            llm_config, **kw,
+        ),
     )
     return report
 
@@ -2018,6 +2333,9 @@ def _settle_after_narrative(
         dossier_verdicts=dossier_verdicts,
         dossier_rescript_actions=dossier_rescript_actions,
         attendant_message=attendant_message,
+        settlement_attendant_runner=lambda **kw: run_settlement_attendant_message(
+            llm_config, **kw,
+        ),
     )
 
 
@@ -2454,16 +2772,17 @@ def settle_with_delta(
     dossier_verdicts: Optional[List[Dict[str, object]]] = None,
     dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
     attendant_message: str = "",
+    settlement_attendant_runner=None,
 ) -> str:
     """确定性结算「后括号」：apply→turn_logs→inertia→留痕→章节记忆→clear→结局判定→next_period。
 
     收一份**已规范化**的 extracted（英文 canonical key，见 simulation._canonicalize_extraction）。
-    不依赖 llm_config —— 章节记忆 / 结局总评 / 落库 enrichment 全经注入闭包：
+    不依赖 llm_config —— 章节记忆 / 结局总评 / 落库 enrichment / 拒收递话 全经注入闭包：
     章节记忆=chapter_recorder、结局总评=ending_summarizer、落库（含 issue/office 的
-    通道感知 enrichment）=delta_applier。真实流程传捕获 llm_config 的闭包；探针 driver 对
-    chapter_recorder/ending_summarizer 传 None（不产 LLM 叙事），对 delta_applier 传一个
-    **channel=api 确定性配置**的闭包（不走 legacy env enrichment,#54）——无论哪种,结算核
-    本体都不见 llm_config（ADR 0004）。返回 full_report 文本。
+    通道感知 enrichment）=delta_applier、玩家来源拒收呈现=settlement_attendant_runner。
+    真实流程传捕获 llm_config 的闭包；探针 driver 对 chapter_recorder/ending_summarizer
+    传 None，对 settlement_attendant_runner 由调用方注入（缺则玩家拒收诚实失败，P7），对
+    delta_applier 传 channel=api 确定性闭包——结算核本体都不见 llm_config（ADR 0004）。
 
     delta_applier(db, state, extracted, content, registry) -> applied dict；None 时回退到
     `apply_score_extraction(llm_config=None)`——**不注入运行时通道**。注意裸 None 分支不等于
@@ -2585,6 +2904,7 @@ def settle_with_delta(
                     _start_relation_brew if relation_brew_runner is not None else None
                 ),
                 attendant_message=attendant_message,
+                settlement_attendant_runner=settlement_attendant_runner,
             )
     except BaseException as exc:
         # 酿制腿异常路排空（判词：异常时也排空）：等 brew() 收尾并丢弃结果——结算
@@ -2701,8 +3021,8 @@ def _collect_inline_rejections(
                     _scan(f"{section}.{subkey}", subvalue)
 
 
-def _has_durable_player_visible_rejection(db: GameDB, turn: int) -> bool:
-    """True when any non-resimulation-invalidated player-source rejection exists for turn."""
+def _ensure_rejection_reports_table(db: GameDB) -> str:
+    """Ensure rejection_reports exists; return SQL fragment for non-invalidated rows."""
     db.conn.execute(
         """
         CREATE TABLE IF NOT EXISTS rejection_reports (
@@ -2720,16 +3040,38 @@ def _has_durable_player_visible_rejection(db: GameDB, turn: int) -> bool:
         """
     )
     cols = {str(row[1]) for row in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
-    invalidated_expr = "resimulation_invalidated = 0" if "resimulation_invalidated" in cols else "1=1"
-    row = db.conn.execute(
+    return "resimulation_invalidated = 0" if "resimulation_invalidated" in cols else "1=1"
+
+
+def list_durable_player_visible_rejections(
+    db: GameDB, turn: int,
+) -> List[Dict[str, object]]:
+    """0008-D5 来源门：本 turn 未作废的 player_decree/hitl_decision 拒收结构化事实。
+
+    只投影 section/category/reason 供 LLM 呈现接缝；不含 item 明细（不泄技术载荷）。
+    """
+    invalidated_expr = _ensure_rejection_reports_table(db)
+    rows = db.conn.execute(
         f"""
-        SELECT 1 FROM rejection_reports
+        SELECT section, category, reason FROM rejection_reports
         WHERE turn=? AND source IN (?, ?) AND {invalidated_expr}
-        LIMIT 1
+        ORDER BY id
         """,
         (int(turn), Provenance.player_decree.value, Provenance.hitl_decision.value),
-    ).fetchone()
-    return row is not None
+    ).fetchall()
+    return [
+        {
+            "section": str(r["section"] or ""),
+            "category": str(r["category"] or ""),
+            "reason": str(r["reason"] or ""),
+        }
+        for r in rows
+    ]
+
+
+def _has_durable_player_visible_rejection(db: GameDB, turn: int) -> bool:
+    """True when any non-resimulation-invalidated player-source rejection exists for turn."""
+    return bool(list_durable_player_visible_rejections(db, turn))
 
 
 def _settle_after_extract_body(
@@ -2753,6 +3095,7 @@ def _settle_after_extract_body(
     source: Provenance = Provenance.unknown,
     start_relation_brew: Optional[Callable[[], None]] = None,
     attendant_message: str = "",
+    settlement_attendant_runner: Optional[Callable[..., str]] = None,
 ) -> str:
     """settle_with_delta 的后半段写序列正文（被其 atomic 包裹调用）。
 
@@ -2775,8 +3118,10 @@ def _settle_after_extract_body(
         state, extracted.get("faction_denunciations"), commit=False,
     )
     # #567：在途拨帑月度机械对账（被护侧真源）；与 #566 进展分轨，不扩 0058。
+    # #1745：无目标/坏引用提案逐项拒收进 collector，好项同 atomic 落库（0015-D7）。
     db.record_monthly_grant_reconciliations(
         before_turn, extracted.get("dossier_reconciliations"),
+        rejection_collector=collector, source=source,
     )
     # 对账落账后：loss>0 ∧ 本 turn 稽核在场 → 空子暴露。
     db.record_monthly_loophole_exposures_from_reconciliations(
@@ -2889,12 +3234,29 @@ def _settle_after_extract_body(
     # #623：断供/挪用/撤人机器扫描 → 当回合只写挽留 todo（改弦走 revoke 拦截缝）。
     scan_and_write_breach_pleas(db, state, commit=False)
 
-    # ADR 0008 决定 5：主 apply + inertia 拒收全部收齐后，玩家来源(player_decree/hitl_decision)的
-    # 落库拒收 → 邸报附一句 in-world 提示，并**持久化进 turn_report**（web/history/重读都见，非仅即时
-    # 返回串；涵盖 inertia-only 拒收，codex R1 P2 + CodeRabbit Major）。system_simulation 来源静默。
-    # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
-    if _has_durable_player_visible_rejection(db, before_turn):
-        narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
+    # ADR 0008 决定 5 来源门 + 0150-D5-b / P7：玩家来源拒收 → 结构化事实包送
+    # settlement attendant LLM 接缝，原文写入 attendant_message 槽；代码不写戏内句、
+    # 不改 narrative。system_simulation 来源不进此门。空文/失败 fail-loud（整 settle 回滚）。
+    # 既有抵京 companion 稿占槽时：同槽第二段换行并列（代码只做布局拼接）。
+    player_rejections = list_durable_player_visible_rejections(db, before_turn)
+    if player_rejections:
+        if settlement_attendant_runner is None:
+            raise LLMContractError(
+                "玩家来源拒收须经 settlement attendant 呈现接缝"
+            )
+        rejection_speech = settlement_attendant_runner(
+            year=int(state.year),
+            period=int(state.period),
+            rejections=player_rejections,
+        )
+        if not str(rejection_speech or "").strip():
+            raise LLMContractError("王承恩结算拒收递话返回空文")
+        # P6/0142：判空用临时副本；拼接只加布局分隔，不 rstrip/裁剪任一份 LLM 原文。
+        existing = str(attendant_message or "")
+        if existing.strip():
+            attendant_message = existing + "\n" + str(rejection_speech)
+        else:
+            attendant_message = str(rejection_speech)
     # 机械人口真相只留在 extraction/applied 内账；公开回响由下方既有邸报来源承担，
     # 不再把精确人数强制广播为所有角色的公共知识。
     # #976: release held pure-public audience chat (non-withheld) before
