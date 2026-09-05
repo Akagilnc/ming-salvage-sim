@@ -1,0 +1,36 @@
+110:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+114:ERROR    Error in Agent run: Unknown model error                                
+115:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+119:ERROR    Error in Agent run: Unknown model error                                
+128:[09:35:06.228] [大臣对话/黄立极] LLM messages 已 dump → scripts/runs/llm_dump_1604522.log
+154:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+158:ERROR    Error in Agent run: Unknown model error                                
+159:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+163:ERROR    Error in Agent run: Unknown model error                                
+164:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+168:ERROR    Error in Agent run: Unknown model error                                
+169:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+173:ERROR    Error in Agent run: Unknown model error                                
+183:[09:36:24.862] [大臣对话/郭允厚] LLM messages 已 dump → scripts/runs/llm_dump_1604522.log
+192:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+196:ERROR    Error in Agent run: Unknown model error                                
+197:relation judge degraded: 通传未达，请稍后再召。
+206:ming_sim.exceptions.LLMUnavailable: 通传未达，请稍后再召。
+228:[TOKEN] caller=? model=self-dploy/DeepSeek-V4-Flash prompt=4297 cached=3840 completion=165 reasoning=0 total=4462
+229:[TOKEN] caller=? model=self-dploy/DeepSeek-V4-Flash prompt=4297 cached=3840 completion=165 reasoning=0 total=4462
+230:[TOKEN] caller=? model=self-dploy/DeepSeek-V4-Flash prompt=4297 cached=3840 completion=165 reasoning=0 total=4462
+231:[TOKEN] caller=? model=self-dploy/DeepSeek-V4-Flash prompt=4297 cached=3840 completion=165 reasoning=0 total=4462
+248:[09:37:40.467] [大臣对话/郭允厚] LLM messages 已 dump → scripts/runs/llm_dump_1604522.log
+250:[09:37:54.964] [大臣对话/黄立极] LLM messages 已 dump → scripts/runs/llm_dump_1604522.log
+281:[09:39:08.778] [大臣对话/郭允厚] LLM messages 已 dump → scripts/runs/llm_dump_1604522.log
+308:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+312:ERROR    Error in Agent run: Unknown model error                                
+313:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+317:ERROR    Error in Agent run: Unknown model error                                
+335:[09:40:14.367] [大臣对话/黄立极] LLM messages 已 dump → scripts/runs/llm_dump_1604522.log
+381:[09:40:56.777] [大臣对话/郭允厚] LLM messages 已 dump → scripts/runs/llm_dump_1604522.log
+759:[TOKEN] caller=decree-writer model=self-dploy/DeepSeek-V4-Flash prompt=1535 cached=768 completion=144 reasoning=0 total=1679
+760:[TOKEN] caller=decree-writer model=self-dploy/DeepSeek-V4-Flash prompt=1535 cached=768 completion=144 reasoning=0 total=1679
+761:[TOKEN] caller=decree-writer model=self-dploy/DeepSeek-V4-Flash prompt=1535 cached=768 completion=144 reasoning=0 total=1679
+762:[TOKEN] caller=decree-writer model=self-dploy/DeepSeek-V4-Flash prompt=1535 cached=768 completion=144 reasoning=0 total=1679
+764:[09:43:20.196] [pending_actions] 颁诏批量落库 2 条：[('directive', '拟旨'), ('directive', '拟旨')]

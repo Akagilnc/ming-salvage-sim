@@ -1,0 +1,67 @@
+{
+  "db": "/workspace/Ming_LLM/data-8013/ming_sim_1788600739021297874.db",
+  "game_state": {
+    "id": 1,
+    "year": 1627,
+    "period": 10,
+    "turn": 1,
+    "turn_phase": "settling",
+    "ended": 0,
+    "ending_status": ""
+  },
+  "turn_directives": [
+    {
+      "id": 1,
+      "actor": null,
+      "source": "手动新增",
+      "status": "draft",
+      "text_head": "解太仓备用",
+      "created_at": "2026-09-05 09:39:46"
+    },
+    {
+      "id": 2,
+      "actor": "郭允厚",
+      "source": "大臣拟旨",
+      "status": "draft",
+      "text_head": "臣郭允厚，领旨。\n\n陛下欲解太仓备用，臣请先陈太仓实情，再请圣裁。\n\n太仓存银，账面上有三百二十万两，然其中**可动之银不足半数**。臣不敢欺瞒——此数乃臣与户",
+      "created_at": "2026-09-05 09:43:20"
+    },
+    {
+      "id": 3,
+      "actor": "黄立极",
+      "source": "大臣拟旨",
+      "status": "draft",
+      "text_head": "陛下，臣黄立极恭聆圣谕。\n\n陛下欲解太仓备用之银，臣谨领旨。然太仓乃国家根本，出纳须有章程。臣斗胆请陛下明示：此解银所为何用——是补边饷、充京营、赈陕西饥荒，抑",
+      "created_at": "2026-09-05 09:43:20"
+    }
+  ],
+  "pending_actions": [
+    {
+      "id": 1,
+      "kind": "directive",
+      "action": "拟旨",
+      "minister_name": "郭允厚",
+      "status": "committed",
+      "committed_directive_id": 2,
+      "created_at": "2026-09-05 09:39:10"
+    },
+    {
+      "id": 2,
+      "kind": "directive",
+      "action": "拟旨",
+      "minister_name": "黄立极",
+      "status": "committed",
+      "committed_directive_id": 3,
+      "created_at": "2026-09-05 09:40:27"
+    }
+  ],
+  "pending_resolve": [
+    {
+      "turn": 1,
+      "source": "player_decree",
+      "extracted_ready": 0,
+      "decree_head": "奉天承运皇帝，诏曰：\n\n朕初登大宝，念国用维艰，太仓所储乃军国根本。今欲解太仓备用之银，以济缓急。户部尚书郭允厚、内阁辅臣黄立极所奏，俱见忠谨。\n\n着户部将太仓现存实数逐一开列，核其可动之数，具奏以闻。其解银用项，朕已另有区处，候户部实数奏",
+      "created_at": "2026-09-05 09:43:20"
+    }
+  ]
+}
