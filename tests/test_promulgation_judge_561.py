@@ -785,7 +785,11 @@ def test_promulgation_judge_omits_max_tokens(monkeypatch):
     monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
     cfg = LLMConfig(api_key="test", base_url="http://unused", model="test")
 
-    agents_mod.create_promulgation_judge_agent(cfg, object())
+    agents_mod.create_promulgation_judge_agent(
+        cfg, object(),
+        session_id="promulgation-judge-turn-test",
+        num_history_runs=4,
+    )
 
     assert "max_tokens" not in seen
 

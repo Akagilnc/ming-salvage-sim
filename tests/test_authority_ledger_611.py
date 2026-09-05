@@ -542,6 +542,8 @@ def test_promulgation_judge_instructions_cover_held_authority_modifiers(monkeypa
     agent = agents_mod.create_promulgation_judge_agent(
         LLMConfig(api_key="test", base_url="http://unused", model="test"),
         object(),
+        session_id="promulgation-judge-turn-test",
+        num_history_runs=4,
     )
     text = "\n".join(str(item) for item in agent["instructions"])
     assert "held_authorities" in text
