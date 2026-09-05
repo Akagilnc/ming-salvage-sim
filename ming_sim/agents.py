@@ -310,7 +310,8 @@ def create_promulgation_judge_agent(
     #1753 heal-by-resume：必须绑 db + session_id + cache_session，且
     add_history_to_context=True——否则 Agno 不会把前一次 run 放入补交上下文，
     「同一 LLM 会话续接」不成立（大臣 registry 同款接缝）。
-    session_id / num_history_runs 由调用方按 turn 与单一补交预算传入。
+    session_id / num_history_runs 由调用方按单次尝试身份与单一补交预算传入
+    （跨结算/恢复尝试不得共用同一 session_id）。
     """
     cfg = _llm_for_role(llm_config, "simulator")
     return Agent(

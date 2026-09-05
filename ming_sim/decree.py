@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -549,19 +550,30 @@ def _require_promulgation_verdict_list(
 
 @dataclass
 class _PromulgationJudgeSession:
-    """Turn-scoped judge holder：仅真实 LLM 首调创建，heal 复用同一 agent。"""
+    """Attempt-scoped judge holder：单次 resolve/直呼尝试内 heal 复用同一 agent。
+
+    session 身份在 holder 构造时固定；同月另一次结算/恢复新建 holder 不得
+    复用上一尝试的 Agno 持久化历史。turn 仅作可读前缀，不充当跨尝试主键。
+    """
 
     llm_config: object
     agno_db: object
     turn: int
     agent: object | None = None
+    session_id: str = field(default="")
+
+    def __post_init__(self) -> None:
+        if not self.session_id:
+            self.session_id = (
+                f"promulgation-judge-turn-{int(self.turn)}-{uuid.uuid4().hex}"
+            )
 
     def get_or_create(self) -> object:
         if self.agent is None:
             self.agent = create_promulgation_judge_agent(
                 self.llm_config,
                 self.agno_db,
-                session_id=f"promulgation-judge-turn-{int(self.turn)}",
+                session_id=self.session_id,
                 num_history_runs=PROMULGATION_VERDICT_HEAL_RETRIES + 1,
             )
         return self.agent
@@ -600,8 +612,9 @@ def llm_promulgation_verdicts(
     首抽送输入快照；补交 = 同 agent 会话续接 + correction（原始产出/失败原因/
     待判 id）+ 再次附带首抽快照（draft 同款回喂形，确保缺盖时补交输入仍含
     全案卷身份，不单靠 history）。
-    判官工厂只在 _PromulgationJudgeSession.get_or_create：holder 复用同一 agent；
-    直呼（scripts）无 session 时本函数建临时 holder，单一装配不平行。
+    判官工厂只在 _PromulgationJudgeSession.get_or_create：同一 holder 复用同一
+    agent/session；直呼（scripts）无 session 时本函数建临时 holder，临时 holder
+    同样获得独立 session 身份，单一装配不平行。
     替身替换本函数则不触工厂（既有 tracer 契约）。
     """
     context = prepared_context or build_promulgation_judge_context(db, state, dossiers)
