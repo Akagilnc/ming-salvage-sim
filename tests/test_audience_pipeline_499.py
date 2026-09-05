@@ -21,6 +21,7 @@ from ming_sim.audience_pipeline import (
     mindreading_eligible,
     run_mindreading_for_turn,
 )
+from tests.wait_utils import wait_until
 
 
 def test_mindreading_eligible_skips_self_and_missing_slot(game):
@@ -112,7 +113,7 @@ def test_run_mindreading_for_turn_empty_narration_is_absent_no_record(game):
 def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatch):
     """真实 chat_stream：done 先于 mindreading；读心事件可浮现；输入为完整回话。"""
     import web_app as web_app_mod
-    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
+    from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
     minister_name = "温体仁"
@@ -166,7 +167,7 @@ def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatc
     assert seen_replies == ["臣先陈军务，不敢删节。"]
     assert "军务如何？" not in seen_replies[0]
     # 公共信号（非私有计数）：读心任务达终态（记录已落）——worker DB 工作已收尾。
-    _wait_for(lambda: db.list_mindreading_records(int(mind_event["chat_turn_id"])))
+    wait_until(lambda: db.list_mindreading_records(int(mind_event["chat_turn_id"])))
 
 
 def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
@@ -178,7 +179,7 @@ def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
     import web_app as web_app_mod
     from concurrent.futures import ThreadPoolExecutor
 
-    from tests.test_audience_background import RunContent, RunOutput, _web_game, _wait_for
+    from tests.test_audience_background import RunContent, RunOutput, _web_game
 
     db, state, content = game
     minister_name = "温体仁"
@@ -237,7 +238,7 @@ def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
         assert intent_consumed == [{"kind": "none"}]
         assert seen_intent_messages == ["军务如何？"]
         # 公共信号：读心任务达终态（记录或 failed/skip）——worker 已收尾。
-        _wait_for(lambda: not web_game.mindreading_for_minister(minister_name)["mindreading_pending"])
+        wait_until(lambda: not web_game.mindreading_for_minister(minister_name)["mindreading_pending"])
     finally:
         intent_exec.shutdown(wait=True)
 
@@ -245,7 +246,7 @@ def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
 def test_mindreading_poll_path_after_stream(game, monkeypatch):
     """轮询/恢复路径：落库后 mindreading_for_minister 可读。"""
     import web_app as web_app_mod
-    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
+    from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
     minister_name = "温体仁"
@@ -268,7 +269,7 @@ def test_mindreading_poll_path_after_stream(game, monkeypatch):
     monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", spy)
     list(web_game.chat_stream(minister_name, "如何？"))
     # 公共信号：读心记录已落（API 输出可读）——worker 已收尾。
-    _wait_for(lambda: web_game.mindreading_for_minister(minister_name)["mindreading"])
+    wait_until(lambda: web_game.mindreading_for_minister(minister_name)["mindreading"])
     out = web_game.mindreading_for_minister(minister_name)
     assert out["chat_turn_id"] > 0
     assert out["mindreading"]
@@ -311,7 +312,7 @@ def test_failed_mindreading_marks_terminal_and_stops_pending(game, monkeypatch):
     轮询寿命系于服务端终态而非魔法次数上限：终态一落，重开轮询即终止（#499）。
     """
     import web_app as web_app_mod
-    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
+    from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
     minister = "温体仁"
@@ -325,7 +326,7 @@ def test_failed_mindreading_marks_terminal_and_stops_pending(game, monkeypatch):
 
     cid = int(db.get_last_active_chat_turn(minister, state.turn)["id"])
     # 公共信号：终态 failed 落库（任务态可读）——worker 已收尾。
-    _wait_for(lambda: db.get_mindreading_status(cid) == "failed")
+    wait_until(lambda: db.get_mindreading_status(cid) == "failed")
     out = web_game.mindreading_for_minister(minister, cid)
     assert out["mindreading"] == []
     assert out["mindreading_pending"] is False  # 终态 → 单轮 pending 停
@@ -344,7 +345,7 @@ def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeyp
 
     import web_app as web_app_mod
     from tests.test_audience_background import (
-        _FakeAgent, _web_game, _wait_for, _wait_for_pending_writes_to_drain,
+        _FakeAgent, _web_game, _wait_for_pending_writes_to_drain,
     )
 
     db, state, content = game
@@ -354,7 +355,7 @@ def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeyp
     release = _t.Event()
 
     def blocked(**_kwargs):
-        # 显式 release 控制：测试断言完成前不返回；禁与 _wait_for 共用 timeout 竞态
+        # 显式 release 控制：测试断言完成前不返回；禁与 wait_until 共用 timeout 竞态
         release.wait()
         return None
 
@@ -378,7 +379,7 @@ def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeyp
         return False
 
     try:
-        _wait_for(_reply_linked_and_accepted)
+        wait_until(_reply_linked_and_accepted)
         cid = holder["cid"]
         # 公共恢复结果：重开 API 见任务 pending（accepted 已持久，恢复会轮询/投递）
         assert web_game.mindreading_for_minister(minister, cid)["mindreading_pending"] is True
@@ -388,7 +389,7 @@ def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeyp
         _wait_for_pending_writes_to_drain(web_game)
 
     cid = holder["cid"]
-    _wait_for(lambda: db.get_mindreading_status(cid) in {"skip", "failed"})
+    wait_until(lambda: db.get_mindreading_status(cid) in {"skip", "failed"})
 
 
 def test_real_chat_poll_survives_shared_connection_reads(game, monkeypatch):
@@ -401,7 +402,7 @@ def test_real_chat_poll_survives_shared_connection_reads(game, monkeypatch):
 
     import web_app as web_app_mod
     from tests.test_audience_background import (
-        _FakeAgent, _web_game, _wait_for, _wait_for_pending_writes_to_drain,
+        _FakeAgent, _web_game, _wait_for_pending_writes_to_drain,
     )
 
     db, state, content = game
@@ -441,7 +442,7 @@ def test_real_chat_poll_survives_shared_connection_reads(game, monkeypatch):
     stream_thread.start()
     holder: dict = {}
     try:
-        _wait_for(
+        wait_until(
             lambda: (
                 (row := db.get_last_active_chat_turn(minister, state.turn))
                 and row.get("minister_message_id")
