@@ -116,9 +116,9 @@ def test_menu_continue_404_when_no_main_db(monkeypatch):
 
 
 def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
-    """#1195/#1749：continue 在 exit-completion 等待窗内被 exit bump → 对号失败，不构造不发布。
+    """#1195/#1749：取消窗口在构造前——exit-completion 等待窗内被 exit bump → 对号失败，不构造不发布。
 
-    复用真实 exit completion 等待接缝（非 daemon 启动次序门控、非墙钟）。
+    持锁构造期间其它菜单串行；契约取消点是构造前世代对号（非 ctor 中途 SlowWebGame）。
     """
     import asyncio
     import threading
@@ -179,7 +179,7 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
 
 
 def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_path):
-    """#1195/#1749：continue 在 exit-completion 等待窗内 new_game 已发布 → 对号失败不覆盖。"""
+    """#1195/#1749：构造前等待窗内 new_game 已发布 → 世代对号失败不覆盖。"""
     import asyncio
     import threading
 
