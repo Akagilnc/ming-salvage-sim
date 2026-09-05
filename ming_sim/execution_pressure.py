@@ -187,13 +187,14 @@ class TargetLocalityMatrixError(ValueError):
         self,
         message: object,
         *,
-        failed_fields: frozenset[str],
         field_failures: tuple[dict[str, object], ...] = (),
     ) -> None:
         super().__init__(message)
-        self.failed_fields = frozenset(failed_fields)
-        # 权威失败点直接给事实；运输层只携带
+        # failed_fields 只从权威事实派生，不双持独立输入
         self.field_failures = tuple(dict(f) for f in field_failures)
+        self.failed_fields = frozenset(
+            str(f["field"]) for f in self.field_failures
+        )
 
 
 def project_target_locality_matrix_prompt() -> str:
@@ -246,12 +247,8 @@ def assert_target_locality_matrix(
         *,
         field_failures: tuple[dict[str, object], ...],
     ) -> None:
-        fields = frozenset(
-            str(f["field"]) for f in field_failures if str(f.get("field") or "").strip()
-        )
         raise TargetLocalityMatrixError(
             message,
-            failed_fields=fields,
             field_failures=field_failures,
         )
 

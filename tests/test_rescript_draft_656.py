@@ -691,7 +691,8 @@ def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypat
     assert generate_rescript_draft(object(), payload, state.turn) is None
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{state.turn}.json"
     assert note.is_file()
-    assert "LLM 不可用" in note.read_text(encoding="utf-8")
+    # 标准 JSON 转义保真：结构化 reason，不锁原文呈现
+    assert "LLM 不可用" in json.loads(note.read_text(encoding="utf-8"))["reason"]
 
 
 def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
@@ -955,7 +956,8 @@ def test_over_limit_legal_batch_degrades_whole_month_zero_rows(game, monkeypatch
     assert db.list_rescript_drafts() == []   # 零行落库：第六条不再被静默截丢
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
     assert note.is_file()                    # 降级附记在（响亮而非静默）
-    assert "超上限" in note.read_text(encoding="utf-8")
+    # 标准 JSON 转义保真：结构化 reason，不锁原文呈现
+    assert "超上限" in json.loads(note.read_text(encoding="utf-8"))["reason"]
     assert state.turn == turn + 1            # 结算不中止、回合照常推进
 
 

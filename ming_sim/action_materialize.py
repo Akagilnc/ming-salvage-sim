@@ -2043,16 +2043,12 @@ class DecreeMaterializationValidationError(ValueError):
 class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
     def __init__(
         self,
-        missing_fields: list,
         *,
-        field_failures: Optional[list] = None,
+        field_failures: list,
     ) -> None:
         # 权威 require_explicit_xiexang_fields 一次给出完整事实；此处只携带
-        facts = tuple(
-            dict(f) for f in (field_failures or ())
-            if isinstance(f, dict) and str(f.get("field") or "").strip()
-        )
-        fields = tuple(str(f["field"]) for f in facts) if facts else tuple(missing_fields)
+        facts = tuple(dict(f) for f in field_failures)
+        fields = tuple(str(f["field"]) for f in facts)
         self.missing_fields = fields  # compatibility alias for existing callers
         self.field_failures = facts
         super().__init__(
@@ -2075,11 +2071,9 @@ def require_explicit_xiexang_fields(
     """#1503 单一权威接缝：严格验形并归一 typed 字段。"""
     from ming_sim.strict_types import strict_int
 
-    missing: list = []
     facts: list = []
 
     def _note(field: str, *, current: object, expected: object) -> None:
-        missing.append(field)
         facts.append({"field": field, "current": current, "expected": expected})
 
     try:
@@ -2112,8 +2106,8 @@ def require_explicit_xiexang_fields(
             current=cadence_value,
             expected=["一次性", "每月", ""],
         )
-    if missing:
-        raise IncompleteXiexangPayloadError(missing, field_failures=facts)
+    if facts:
+        raise IncompleteXiexangPayloadError(field_failures=facts)
     return {
         "amount": n,
         "account": canonical_account,
