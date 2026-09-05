@@ -248,6 +248,11 @@ class PromulgationVerdictProvider(Protocol):
     ) -> List[Dict[str, object]]: ...
 
 
+# #1753 decision key promulgation-verdict-heal-by-resume-then-fail-closed：
+# 颁布判决 LLM 违契约 → 同一会话有界纠正补交次数（单一真源；不含首次）。
+PROMULGATION_VERDICT_HEAL_RETRIES = 3
+
+
 def stub_promulgation_verdicts(
     dossiers: Sequence[Dict[str, object]], state: GameState,
 ) -> List[Dict[str, object]]:
@@ -257,6 +262,63 @@ def stub_promulgation_verdicts(
         {"dossier_id": int(row["id"]), "decision": "promulgated"}
         for row in dossiers
     ]
+
+
+def promulgation_verdict_correction_feedback(
+    exc: BaseException, *, raw_output: object,
+) -> str:
+    """有界补交回喂：同会话续接，附原始产出与校验失败原因（#1753）。
+
+    形状对齐 draft/rescript 的 combination_correction_feedback 骨架——只回填结构化
+    verdict 契约（0052 两格 / 0066），不另造第三套 heal，不代填判向。
+    """
+    try:
+        raw_text = json.dumps(raw_output, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        raw_text = repr(raw_output)
+    return (
+        "【颁布判决契约校验失败，请按结构化 verdict 契约整批补交】\n"
+        f"校验失败原因：{exc}\n"
+        f"原始产出：{raw_text}\n"
+        "须返回 {\"verdicts\":[...]}，逐案恰好一项；"
+        "dossier_id 必须为输入快照中的有效 SQLite 正整数；"
+        "decision 只能为 promulgated 或 rejected；"
+        "须逐案覆盖全部待判案卷，不能静默跳过；"
+        "打回须含 blocked_layer/reason/primary_opponents/gatekeeper_id/"
+        "criteria_snapshot 等既有结构化字段（0052/0066）。\n"
+    )
+
+
+def _collect_compliant_promulgation_items(
+    batch: object,
+    db: GameDB,
+    *,
+    proposed_modes: Dict[int, str],
+    prepared_context: Optional[Dict[str, object]],
+    reviewed_dossier_ids: Optional[set[int]],
+) -> List[Dict[str, object]]:
+    """从不合规整批中收集单项已过闸的判决（证据保留，不落判、不伪造缺案）。"""
+    if not isinstance(batch, list):
+        return []
+    good: List[Dict[str, object]] = []
+    seen: set[int] = set()
+    for candidate in batch:
+        try:
+            valid = _validate_promulgation_verdict_item(
+                candidate, db,
+                proposed_modes=proposed_modes,
+                prepared_context=prepared_context,
+            )
+        except LLMContractError:
+            continue
+        dossier_id = int(valid["dossier_id"])
+        if reviewed_dossier_ids is not None and dossier_id not in reviewed_dossier_ids:
+            continue
+        if dossier_id in seen:
+            continue
+        seen.add(dossier_id)
+        good.append(valid)
+    return good
 
 
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
@@ -441,14 +503,29 @@ def llm_promulgation_verdicts(
     dossiers: Sequence[Dict[str, object]], state: GameState, *, db: GameDB,
     agno_db: SqliteDb, llm_config: LLMConfig,
     prepared_context: Optional[Dict[str, object]] = None,
+    agent: object = None,
+    correction_feedback: str = "",
+    agent_out: Optional[List[object]] = None,
 ) -> List[Dict[str, object]]:
-    """Run exactly one LLM call for one reviewed promulgation batch."""
+    """Run exactly one LLM call for one reviewed promulgation batch.
+
+    agent / correction_feedback / agent_out：#1753 有界补交复用同一会话。
+    correction 非空时只送补交指令（历史上下文已含首抽快照）；agent_out 非空 list
+    时写入本调用实际使用的 agent，供调用方下次传入。agent 仍惰性创建——测试替身
+    整函数时不必真造判官。
+    """
     context = prepared_context or build_promulgation_judge_context(db, state, dossiers)
-    agent = create_promulgation_judge_agent(llm_config, agno_db)
-    raw = run_agent_text(
-        agent, json.dumps(context, ensure_ascii=False, sort_keys=True),
-        tag="promulgation-judge",
+    judge = agent if agent is not None else create_promulgation_judge_agent(
+        llm_config, agno_db,
     )
+    if agent_out is not None and not agent_out:
+        agent_out.append(judge)
+    correction = str(correction_feedback or "").strip()
+    if correction:
+        prompt = correction
+    else:
+        prompt = json.dumps(context, ensure_ascii=False, sort_keys=True)
+    raw = run_agent_text(judge, prompt, tag="promulgation-judge")
     parsed = parse_agent_json(raw, "颁布判官")
     verdicts = parsed.get("verdicts") if isinstance(parsed, dict) else None
     return _require_promulgation_verdict_list(verdicts, raw_value=parsed)
@@ -1179,26 +1256,120 @@ def resolve_directives(
                 )
             else:
                 provider = promulgation_verdict_provider
-                generated = (
-                    provider(reviewed, state) if provider is not None else
-                    llm_promulgation_verdicts(
-                        reviewed, state, db=db, agno_db=agno_db,
-                        llm_config=llm_config, prepared_context=prepared_context,
+                if provider is not None:
+                    # 测试/注入 seam：单次校验，不走 LLM 有界补交（补交只辖真 LLM 会话）。
+                    generated = provider(reviewed, state) if reviewed else []
+                    rejected_verdict_batch = generated
+                    generated = _require_promulgation_verdict_list(generated) + (
+                        stub_promulgation_verdicts(exempt, state) if exempt else []
                     )
-                ) if reviewed else []
-                rejected_verdict_batch = generated
-                generated = _require_promulgation_verdict_list(generated) + (
-                    stub_promulgation_verdicts(exempt, state) if exempt else []
-                )
-                verdict_rows = validate_promulgation_verdicts(
-                    generated, promulgable_dossiers, db,
-                    prepared_context=prepared_context,
-                )
-                db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
+                    verdict_rows = validate_promulgation_verdicts(
+                        generated, promulgable_dossiers, db,
+                        prepared_context=prepared_context,
+                    )
+                    db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
+                else:
+                    # #1753：同一 LLM 会话有界纠正补交；3=单一真源；耗尽 fail-closed。
+                    # agent 惰性：由 llm_promulgation_verdicts 首调创建并经 agent_out 回传，
+                    # 整函数被测试替身时不造真判官（避免 None llm_config 崩）。
+                    heal_retries = max(0, int(PROMULGATION_VERDICT_HEAL_RETRIES))
+                    judge_agent_slot: List[object] = []
+                    correction = ""
+                    bad_outputs: List[object] = []
+                    compliant_verdicts: List[Dict[str, object]] = []
+                    last_generated: object = []
+                    verdict_rows: List[Dict[str, object]] = []
+                    for attempt in range(heal_retries + 1):
+                        attempt_batch: object = None
+                        try:
+                            attempt_batch = (
+                                llm_promulgation_verdicts(
+                                    reviewed, state, db=db, agno_db=agno_db,
+                                    llm_config=llm_config,
+                                    prepared_context=prepared_context,
+                                    agent=(
+                                        judge_agent_slot[0]
+                                        if judge_agent_slot else None
+                                    ),
+                                    correction_feedback=correction,
+                                    agent_out=judge_agent_slot,
+                                ) if reviewed else []
+                            )
+                            last_generated = attempt_batch
+                            rejected_verdict_batch = attempt_batch
+                            full_batch = _require_promulgation_verdict_list(
+                                attempt_batch,
+                            ) + (
+                                stub_promulgation_verdicts(exempt, state)
+                                if exempt else []
+                            )
+                            verdict_rows = validate_promulgation_verdicts(
+                                full_batch, promulgable_dossiers, db,
+                                prepared_context=prepared_context,
+                            )
+                            break
+                        except LLMContractError as heal_exc:
+                            if attempt_batch is None and heal_exc.raw_value is not None:
+                                attempt_batch = heal_exc.raw_value
+                            if attempt_batch is None:
+                                attempt_batch = last_generated
+                            last_generated = attempt_batch
+                            rejected_verdict_batch = attempt_batch
+                            if isinstance(attempt_batch, list):
+                                bad_outputs.append(list(attempt_batch))
+                            else:
+                                bad_outputs.append(attempt_batch)
+                            compliant_verdicts = _collect_compliant_promulgation_items(
+                                attempt_batch,
+                                db,
+                                proposed_modes=proposed_modes,
+                                prepared_context=prepared_context,
+                                reviewed_dossier_ids=reviewed_dossier_ids,
+                            )
+                            if attempt >= heal_retries:
+                                raise LLMContractError(
+                                    str(heal_exc),
+                                    raw_value=heal_exc.raw_value
+                                    if heal_exc.raw_value is not None
+                                    else attempt_batch,
+                                    heal_evidence={
+                                        "bad_outputs": list(bad_outputs),
+                                        "compliant_verdicts": list(
+                                            compliant_verdicts
+                                        ),
+                                    },
+                                ) from heal_exc
+                            correction = promulgation_verdict_correction_feedback(
+                                heal_exc, raw_output=attempt_batch,
+                            )
+                    else:
+                        # range 空时（不应发生）；保底 fail-closed。
+                        raise LLMContractError(
+                            "颁布判决有界补交未能产出合规批次",
+                            raw_value=last_generated,
+                            heal_evidence={
+                                "bad_outputs": list(bad_outputs),
+                                "compliant_verdicts": list(compliant_verdicts),
+                            },
+                        )
+                    db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
     except LLMContractError as exc:
         # Attribute item failures through the same validator used above.  Synthetic
         # exempt stubs never enter this provider audit input.
-        if exc.raw_value is not None:
+        heal_evidence = getattr(exc, "heal_evidence", None)
+        if isinstance(heal_evidence, dict) and heal_evidence.get("bad_outputs") is not None:
+            # #1753：首次 + 每次补交各留一份坏输出证据（最多 1+3=4）。
+            rejected_items = []
+            for index, batch in enumerate(list(heal_evidence.get("bad_outputs") or [])):
+                rejected_items.append((
+                    {"raw_value": batch, "heal_attempt": int(index)},
+                    str(exc),
+                ))
+            if not rejected_items:
+                rejected_items = [(
+                    {"raw_value": rejected_verdict_batch}, str(exc),
+                )]
+        elif exc.raw_value is not None:
             rejected_items = [(exc.raw_value, str(exc))]
         elif isinstance(rejected_verdict_batch, list):
             rejected_items = []
@@ -1242,9 +1413,19 @@ def resolve_directives(
                 )
             collector.flush_to_db(db)
         mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
+        pack_extracted = None
+        if isinstance(heal_evidence, dict):
+            pack_extracted = {
+                "promulgation_heal_bad_outputs": list(
+                    heal_evidence.get("bad_outputs") or []
+                ),
+                "promulgation_compliant_verdicts": list(
+                    heal_evidence.get("compliant_verdicts") or []
+                ),
+            }
         try:
             pack_path = write_error_pack(
-                db, state, exc=exc, extracted=None,
+                db, state, exc=exc, extracted=pack_extracted,
                 resolve_ctx=db.get_resolve_context(state.turn),
             )
         except Exception as pack_exc:

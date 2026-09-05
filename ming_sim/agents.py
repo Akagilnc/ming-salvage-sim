@@ -297,13 +297,17 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
 
 
 def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """Interim promulgation judge: one isolated call for the whole reviewed batch."""
+    """Interim promulgation judge: one isolated call for the whole reviewed batch.
+
+    add_history_to_context=True：#1753 有界补交须同一会话续接（heal-by-resume）。
+    """
     del agno_db
     cfg = _llm_for_role(llm_config, "simulator")
     return Agent(
         name="颁布判官",
         id="promulgation-judge",
         model=create_chat_model(cfg, temperature=0.2),
+        add_history_to_context=True,
         instructions=[
             "你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。"
             "派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。",
@@ -342,7 +346,6 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "一概打回；有 promulgation_history 批红强颁前科时与无前科差分，优先打回。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
         ],
-        add_history_to_context=False,
         markdown=False,
     )
 
