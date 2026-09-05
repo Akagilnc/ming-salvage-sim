@@ -1,6 +1,6 @@
 import React from "react";
 import { ApiRequestError, api } from "./api";
-import { consumeSettleStream } from "./settleStream";
+import { consumeSettleStream, type SettlementStageUpdate } from "./settleStream";
 import {
   needsPhase2Resume,
   replacePendingDecisionsOnRefresh,
@@ -33,6 +33,7 @@ export function useSettlementFlow({
   state: GameState | null;
 }) {
   const [settleStage, setSettleStage] = React.useState("");
+  const [settleProgress, setSettleProgress] = React.useState<{ current: number; total: number } | null>(null);
   const [settleThinking, setSettleThinking] = React.useState("");
   const [settleNarrative, setSettleNarrative] = React.useState("");
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
@@ -85,9 +86,24 @@ export function useSettlementFlow({
     if (route.error !== null) setPausedDecisionError(route.error);
   }, [state, loadState]);
 
+  const applyStage = (update: SettlementStageUpdate) => {
+    setSettleStage(update.content);
+    // Progress only from typed facts on the SSE payload — never reverse-lookup labels.
+    if (
+      typeof update.current === "number"
+      && typeof update.total === "number"
+      && update.total > 0
+      && update.current > 0
+    ) {
+      setSettleProgress({ current: update.current, total: update.total });
+    } else {
+      setSettleProgress(null);
+    }
+  };
+
   // 颁诏/续裁共用：消费 SSE 推演流（settleStream.ts），stage/thinking/text 实时更新进度区。
   const consumeSettle = (response: Response) => consumeSettleStream(response, {
-    onStage: (text) => setSettleStage(text),
+    onStage: applyStage,
     onThinking: (chunk) => setSettleThinking((prev) => prev + chunk),
     onNarrative: (chunk) => setSettleNarrative((prev) => prev + chunk),
   });
@@ -95,6 +111,7 @@ export function useSettlementFlow({
   const issueDecree = async () => {
     setBusy("月末结算");
     setSettleStage("");
+    setSettleProgress(null);
     setSettleThinking("");
     setSettleNarrative("");
     setError("");
@@ -175,7 +192,9 @@ export function useSettlementFlow({
   // #1620：成功前不清 pendingDecisions——失败时 DecisionModal 不卸载，已选批语自然保留。
   const submitDecisions = async (choices: DecisionChoice[]) => {
     setBusy("月末结算");
+    // HITL resume chrome only — no typed wait-progress on this client-side label.
     setSettleStage("圣意亲裁，续推时局");
+    setSettleProgress(null);
     setSettleThinking("");
     setSettleNarrative("");
     setError("");
@@ -326,6 +345,7 @@ export function useSettlementFlow({
 
   return {
     settleStage,
+    settleProgress,
     settleThinking,
     settleNarrative,
     pendingDecisions,
