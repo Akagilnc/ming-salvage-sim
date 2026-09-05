@@ -72,6 +72,35 @@ def _items_json(items: list) -> str:
     return json.dumps({"items": items}, ensure_ascii=False)
 
 
+# JSON 数字 1e309/-1e309 经 loads 成 ±inf；不能经 Python float 再 dumps（非 JSON 合规）。
+_OVERFLOW_SENTINEL = "__overflow_num__"
+
+
+def _items_json_num(items: list, number_literal: str) -> str:
+    """Serialize items；把哨兵字符串替换为裸 JSON 数字字面量。"""
+    return _items_json(items).replace(
+        json.dumps(_OVERFLOW_SENTINEL), number_literal,
+    )
+
+
+def _punish(**kw) -> dict:
+    base = {
+        "label": "惩戒拟",
+        "hint": "示惩",
+        "action_type": "punishment",
+        "target_kind": "character",
+        "target_id": "x",
+        "locality_scope": "none",
+        "region_id": "",
+        "assignee_name": "",
+        "transaction_category": "",
+        "punish_action": "罚俸",
+        "amount": 1,
+    }
+    base.update(kw)
+    return base
+
+
 def _stamp_heal_ids(items: list) -> list:
     out = deepcopy(items)
     for ii, it in enumerate(out):
@@ -441,6 +470,141 @@ def test_typed_illegal_also_heals(bad_factory, heal_fix, must_fields, monkeypatc
     for name in must_fields:
         assert name in ff
     assert any(o.get("label") == sibling["label"] for o in drafts[0]["options"])
+
+
+def _overflow_case_matrix():
+    """四整数键 ±超范围 + punishment 罚俸/非罚俸两条件转换。"""
+    cases = []
+    for key in ("end_turn", "deadline_months", "due_turn", "amount"):
+        for lit, sign in (("1e309", "pos"), ("-1e309", "neg")):
+            cases.append((
+                f"{key}_{sign}",
+                lambda k=key: _hold(**{k: _OVERFLOW_SENTINEL, "label": "坏项"}),
+                lit,
+                {key: 3},
+                (key,),
+                {"type": "int"},
+            ))
+    # 罚俸：positive_amount_when 原转换点；非罚俸（削籍）：forbid 吞溢出后 int_keys 收
+    cases.append((
+        "punish_fine_pos",
+        lambda: _punish(
+            punish_action="罚俸", amount=_OVERFLOW_SENTINEL, label="坏项",
+        ),
+        "1e309",
+        {"amount": 3},
+        ("amount",),
+        {"type": "positive_int"},
+    ))
+    cases.append((
+        "punish_strip_pos",
+        lambda: _punish(
+            punish_action="削籍", amount=_OVERFLOW_SENTINEL, label="坏项",
+        ),
+        "1e309",
+        {"amount": 0},
+        ("amount",),
+        {"type": "int"},
+    ))
+    return cases
+
+
+@pytest.mark.parametrize(
+    "case_id,bad_factory,number_lit,heal_fix,must_fields,expected_type",
+    _overflow_case_matrix(),
+    ids=[c[0] for c in _overflow_case_matrix()],
+)
+def test_overflow_json_number_heals_not_batch(
+    case_id, bad_factory, number_lit, heal_fix, must_fields,
+    expected_type, monkeypatch, tmp_path,
+):
+    """合法 JSON 超范围数字（±1e309→±inf）→ 同一补交；字段/现值/期望入 LLM；兄弟保留。"""
+    del case_id
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = bad_factory()
+    sibling = _hold(label="兄弟")
+    sibling_frozen = dict(sibling)
+    first = _items_json_num(
+        [{"title": "u", "context": "c", "options": [bad, sibling]}],
+        number_lit,
+    )
+    healed = _heals_json([("0:0", dict(heal_fix))])
+    calls: list[dict] = []
+    n = {"i": 0}
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        n["i"] += 1
+        calls.append({
+            "tag": tag,
+            "prompt": prompt,
+            "roles": _prior_roles(prior_messages),
+            "contents": _prior_contents(prior_messages),
+            "response": first if n["i"] == 1 else healed,
+        })
+        return calls[-1]["response"]
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=52)
+    assert drafts is not None
+    assert [c["tag"] for c in calls] == ["rescript-draft", "rescript-draft-heal"]
+    _assert_call_history(calls)
+    # 同会话：补交 prior 含首抽 user+assistant
+    assert calls[1]["roles"] == ["user", "assistant"]
+    assert calls[1]["contents"][1] == first
+    req = _parse_heal_request(calls[1]["prompt"])
+    ff = _field_failure_map(req["failures"][0])
+    for name in must_fields:
+        assert name in ff
+        assert "current" in ff[name] and "expected" in ff[name]
+        assert ff[name]["expected"] == expected_type
+        # ±inf 经 JSON 运输（Infinity）loads 后仍为非有限浮点
+        cur = ff[name]["current"]
+        assert isinstance(cur, float) and abs(cur) == float("inf")
+    opts = drafts[0]["options"]
+    hold = next(o for o in opts if o.get("label") == sibling_frozen["label"])
+    for k, v in sibling_frozen.items():
+        assert hold.get(k) == v
+    fixed = next(o for o in opts if o.get("label") == "坏项")
+    for k, v in heal_fix.items():
+        assert fixed.get(k) == v
+
+
+@pytest.mark.parametrize("number_lit", ["1e309", "-1e309"], ids=["pos", "neg"])
+def test_overflow_json_number_exhaust_drops_only_bad(
+    number_lit, monkeypatch, tmp_path,
+):
+    """超范围数字耗尽 → 只剔坏项；兄弟保留；error pack 响亮。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _hold(due_turn=_OVERFLOW_SENTINEL, label="坏项")
+    sibling = _hold(label="兄弟")
+    sibling_frozen = dict(sibling)
+    first = _items_json_num(
+        [{"title": "u", "context": "c", "options": [bad, sibling]}],
+        number_lit,
+    )
+    tags: list[str] = []
+
+    def _llm(_a, _p, tag="", prior_messages=None):
+        tags.append(tag)
+        return first  # 永不修
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=53)
+    assert drafts is not None
+    assert tags == ["rescript-draft"] + ["rescript-draft-heal"] * RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    opts = drafts[0]["options"]
+    assert len(opts) == 1
+    hold = opts[0]
+    for k, v in sibling_frozen.items():
+        assert hold.get(k) == v
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn53.json"
+    note_obj = json.loads(note.read_text(encoding="utf-8"))
+    assert note_obj.get("reason") == "option_missing_fields_heal_exhausted"
+    dropped = note_obj.get("dropped_options") or []
+    assert dropped and dropped[0].get("heal_id") == "0:0"
+    assert list(dropped[0].get("missing_fields") or []) == ["due_turn"]
+    trace = note_obj.get("heal_trace") or []
+    assert len(trace) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
 
 
 @pytest.mark.parametrize(

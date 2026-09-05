@@ -476,7 +476,7 @@ def _enforce_layer_a_action_conditional(
                 return False
             try:
                 return int(text) > 0
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 _fail(
                     key,
                     current=val,
@@ -590,7 +590,7 @@ def _enforce_layer_a_action_conditional(
                     if isinstance(amt_raw, bool):
                         raise ValueError("bool")
                     amount = int(amt_raw)  # type: ignore[arg-type]
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     _fail(
                         "amount",
                         current=amt_raw,
@@ -613,7 +613,7 @@ def _enforce_layer_a_action_conditional(
             amt_raw = _raw_or_out("amount")
             try:
                 amount = int(amt_raw) if amt_raw not in (None, "") else 0  # type: ignore[arg-type]
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 amount = 0
             if isinstance(amt_raw, bool):
                 amount = 0
@@ -858,7 +858,8 @@ def normalize_rescript_layer_a_option(
         if key in raw and raw[key] is not None and raw[key] != "":
             try:
                 out[key] = int(raw[key])  # type: ignore[arg-type]
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # JSON 1e309/-1e309 → ±inf；int(inf) 抛 OverflowError，与错类型同入补交
                 _fail(
                     key,
                     current=raw[key],
