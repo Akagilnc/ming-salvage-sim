@@ -22,6 +22,7 @@ from ming_sim.decree import settle_with_delta
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order
+from tests.section_rejection_helpers import default_settlement_attendant_runner
 
 
 ORDERED = 30  # 北极星三路各三十万两量级（引擎以「两」为单位的整数面值）
@@ -43,13 +44,6 @@ def _recon_rejections(db):
         "SELECT section, category, source, reason, item_json "
         "FROM rejection_reports ORDER BY id"
     ).fetchall())
-
-
-def _probe_settlement_attendant(*, year, period, rejections):
-    """settle 注入边界：结构化事实进、真实非空文本出；不锁措辞。"""
-    if not rejections:
-        return ""
-    return "递话"
 
 
 def _actor(db):
@@ -107,7 +101,7 @@ def _settle(db, state, content, *, reconciliations=None, progress=None, narrativ
         extracted["dossier_progress_reports"] = progress
     settle_with_delta(
         state, db, extracted, before_turn=state.turn, content=content, narrative=narrative,
-        settlement_attendant_runner=_probe_settlement_attendant,
+        settlement_attendant_runner=default_settlement_attendant_runner,
     )
 
 
@@ -341,7 +335,7 @@ def test_recon_section_non_list_rejected_other_sections_land(game):
             narrative="section-shape",
             source=Provenance.player_decree,
             delta_applier=issue_engine.apply_score_extraction,
-            settlement_attendant_runner=_probe_settlement_attendant,
+            settlement_attendant_runner=default_settlement_attendant_runner,
         )
     except SettlementAbort:
         pytest.fail("可拆非 list section 不得整月 SettlementAbort")
@@ -455,7 +449,7 @@ def test_recon_shape_rejected_once_via_shared_sanitize(game, shape, raw_value):
         narrative="shape-once",
         source=Provenance.player_decree,
         delta_applier=issue_engine.apply_score_extraction,
-        settlement_attendant_runner=_probe_settlement_attendant,
+        settlement_attendant_runner=default_settlement_attendant_runner,
     )
 
     assert int(state.turn) == turn_before + 1
@@ -532,7 +526,7 @@ def test_1745_settle_bad_and_good_recon_same_atomic(game):
             content=content,
             narrative="mixed-main",
             source=Provenance.player_decree,
-            settlement_attendant_runner=_probe_settlement_attendant,
+            settlement_attendant_runner=default_settlement_attendant_runner,
         )
     except SettlementAbort:
         pytest.fail("混合好/坏对账不得整月 abort")
@@ -617,7 +611,7 @@ def test_1745_recon_then_execution_same_settle(game):
             narrative="order",
             source=Provenance.player_decree,
             delta_applier=issue_engine.apply_score_extraction,
-            settlement_attendant_runner=_probe_settlement_attendant,
+            settlement_attendant_runner=default_settlement_attendant_runner,
         )
     except SettlementAbort:
         pytest.fail("同批 recon+execution 不得 abort")
@@ -691,7 +685,7 @@ def test_1745_web_state_payload_after_bad_recon_settle(
                 content=content,
                 narrative="web-proj",
                 source=Provenance.player_decree,
-                settlement_attendant_runner=_probe_settlement_attendant,
+                settlement_attendant_runner=default_settlement_attendant_runner,
             )
         except SettlementAbort:
             pytest.fail("坏 recon 不得 SettlementAbort")
@@ -716,3 +710,45 @@ def test_1745_web_state_payload_after_bad_recon_settle(
     finally:
         game_web.session.close()
         web_app.web_game = None
+
+
+def test_1745_good_recon_and_rejection_roll_back_together(game):
+    """#1745 0008-D2：recon 好项 + 拒收行与后继失败同 atomic 回滚。"""
+    db, state, content = game
+    good = _in_transit_grant(db, state)
+    turn_before = int(state.turn)
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    db.conn.commit()
+
+    def _boom_applier(*_a, **_k):
+        raise RuntimeError("forced post-recon failure for atomic proof")
+
+    with pytest.raises(SettlementAbort):
+        settle_with_delta(
+            state, db,
+            {"dossier_reconciliations": [
+                {"dossier_id": good, "arrived_amount": 16},
+                {"dossier_id": 88888, "arrived_amount": 5},
+            ]},
+            before_turn=turn_before,
+            content=content,
+            narrative="rollback",
+            source=Provenance.player_decree,
+            delta_applier=_boom_applier,
+            settlement_attendant_runner=default_settlement_attendant_runner,
+        )
+
+    # 回滚：好项 recon 与坏项拒收均不得残留
+    # （atomic 内 CREATE rejection_reports 亦随 SQLite 事务回滚 → 表可不存在）
+    assert db.list_dossier_reconciliations(good) == []
+    tables = {
+        r[0] for r in db.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "rejection_reports" in tables:
+        assert db.conn.execute(
+            "SELECT COUNT(*) AS n FROM rejection_reports"
+        ).fetchone()["n"] == 0
+    assert int(state.turn) == turn_before  # 月未推进
