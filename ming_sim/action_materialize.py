@@ -793,13 +793,18 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             bundle = _secret_extract_bundle(ctx, prefer_new=True)
         secret = dict(bundle.get("secret") or {})
         frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
+        # #1565/0142：题名只认抽取器结构化「标题」，禁散文合成。
+        # #354：缺 title/frozen 仍须暂存 content，不静默丢单；commit 标 failed 后走
+        # 既有 retry_failed_pending_action / 重拟入口，与 session 前缀路同纪律。
         title = str(secret.get("title") or "").strip()
-        # #1565/0142：题名只认抽取器结构化「标题」；缺标题/冻结合同均走既有可恢复失败接缝。
-        if not title or frozen is None:
-            reason = str(
-                secret.get("contract_error")
-                or ("密令缺少结构化标题" if not title else "密令抽取未能冻结合同")
-            ).strip()
+        content_text = str(secret.get("content") or "").strip()
+        contract_error = str(secret.get("contract_error") or "").strip()
+        if not title:
+            contract_error = contract_error or "密令缺少结构化标题"
+        if frozen is None:
+            contract_error = contract_error or "密令抽取未能冻结合同"
+        if not content_text:
+            reason = contract_error or "密令抽取未能冻结合同"
             failures = list(ctx.out.get("pending_action_failures") or [])
             failures.append({
                 "kind": "secret_order",
@@ -813,23 +818,27 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             ctx.conversation_intent_handled = True
             return
         ctx.conversation_intent_handled = True
+        payload = {
+            "title": title,
+            "content": content_text,
+            "assignee": secret.get("assignee") or minister_name,
+            "tags": secret.get("tags") or [],
+            "deadline_months": secret.get("deadline_months", 0),
+            "excluded_names": secret.get("excluded_names") or [],
+            "excluded_offices": secret.get("excluded_offices") or [],
+            "dossier_links": secret.get("dossier_links") or [],
+        }
+        if frozen is not None:
+            payload["covert_task"] = frozen
+        if contract_error:
+            payload["contract_error"] = contract_error
         ctx.out["pending_action_id"] = session.db.stage_pending_action(
             session.state.turn,
             kind="secret_order",
             action="新建",
             minister_name=minister_name,
             target_id=None,
-            payload={
-                "title": title,
-                "content": secret["content"],
-                "assignee": secret.get("assignee") or minister_name,
-                "tags": secret.get("tags") or [],
-                "deadline_months": secret.get("deadline_months", 0),
-                "excluded_names": secret.get("excluded_names") or [],
-                "excluded_offices": secret.get("excluded_offices") or [],
-                "dossier_links": secret.get("dossier_links") or [],
-                "covert_task": frozen,
-            },
+            payload=payload,
         )
         return
 

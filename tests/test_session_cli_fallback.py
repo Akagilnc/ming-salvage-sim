@@ -1893,7 +1893,13 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
 
 
 def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game, monkeypatch):
-    """#354: mixed confirmation still stages the edict plus supplement when extract fails."""
+    """#354: mixed confirmation still stages the edict plus supplement when extract fails.
+
+    #1565：缺结构化标题不合成散文题名；content 仍须暂存；commit 标 failed
+    （可见失败）。恢复=重拟带显式标题的密令（见同文件 recovery 案），
+    不在此用 retry 空 title payload 冒充成案。抽取器 stub/失败边界：本测只证
+    下游暂存与 commit 失败接缝，不证真实 LLM 题名语义。
+    """
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "魏忠贤"
@@ -1922,6 +1928,8 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     assert "督办陕西赈灾" in payload["content"]
     assert "三月内回奏" in payload["content"]
     assert "covert_task" not in payload
+    # 0142：不合成散文题名；空 title 由 commit 拒收
+    assert not str(payload.get("title") or "").strip()
     db.commit_pending_actions(state)
     assert db.list_secret_orders() == []
     pending = db.conn.execute(
@@ -1929,6 +1937,71 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
         (res["pending_action_id"],),
     ).fetchone()
     assert pending["status"] == "failed"
+
+
+def test_secret_order_missing_title_restages_with_structured_title(game, monkeypatch):
+    """#1565：密令缺标题可见失败后，重拟带结构化标题可合法成案。
+
+    路径：extract 无标题 → 暂存 content + 空 title → commit failed →
+    再 stage 带显式 title+covert_task → commit 成 secret_order。
+    """
+    from tests.test_pending_actions import LIAO_PAY_COVERT_TASK
+
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "魏忠贤"
+    db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾。")
+    db.append_chat_message(minister, state.turn, "minister", "臣领密旨。")
+
+    # ① 无标题：仍暂存 content，commit 失败
+    def extract_no_title(*_a, **_k):
+        return (json.dumps({
+            "标题": "", "内容": "命洪承畴督办陕西赈灾。",
+            "承办人": minister, "期限月数": 0,
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_api_for_config", extract_no_title)
+    res1 = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
+        SimpleNamespace(name=minister, office_type="司礼监"),
+        "密令如下：命洪承畴督办陕西赈灾。",
+        "臣领命。",
+        has_directive=False,
+        secret_order_id=None,
+    )
+    pid1 = int(res1["pending_action_id"] or 0)
+    assert pid1 > 0
+    p1 = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pid1,),
+    ).fetchone()["payload_json"])
+    assert "督办陕西赈灾" in p1["content"]
+    assert not str(p1.get("title") or "").strip()
+    db.commit_pending_actions(state)
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pid1,),
+    ).fetchone()["status"] == "failed"
+    assert db.list_secret_orders() == []
+
+    # ② 重拟：显式结构化标题 + covert_task → 合法成案
+    pid2 = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建",
+        minister_name=minister, target_id=None,
+        payload={
+            "title": "督赈陕西",
+            "content": p1["content"],  # 保留失败案正文
+            "assignee": minister,
+            "tags": [],
+            "deadline_months": 0,
+            "covert_task": LIAO_PAY_COVERT_TASK,
+        },
+    )
+    db.commit_pending_actions(state)
+    orders = db.list_secret_orders()
+    assert len(orders) == 1
+    assert orders[0]["title"] == "督赈陕西"
+    assert "督办陕西赈灾" in orders[0]["content"]
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pid2,),
+    ).fetchone()["status"] == "committed"
 
 
 def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game, monkeypatch):
