@@ -230,13 +230,15 @@ def _prevalidate_grant_allocation_candidate(
     ctx: MaterializeCtx,
     candidate: Dict[str, Any],
 ) -> None:
-    """Pure grant typed checks before any batch write transaction."""
+    """Pure grant typed checks before any batch write transaction.
+
+    No-op / non-materializable grants share _grant_allocation_attemptable with
+    the handler; only attemptable candidates run shape checks here.
+    """
+    if not _grant_allocation_attemptable(ctx, candidate):
+        return
     grant_action = str(candidate.get("grant_action") or "").strip()
-    if grant_action not in (GRANT_ACTIONS - {"无"}):
-        return
     target_kind, target_id = _grant_target(candidate)
-    if not target_id and grant_action != "协饷":
-        return
     body = str(ctx.reply or "").strip()
     if grant_action == "协饷":
         require_materializable_xiexang_payload(
@@ -383,47 +385,51 @@ def _secret_extract_admitted(ctx: MaterializeCtx) -> bool:
     )
 
 
-def _batch_records_have_kind(
-    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
-    *kinds: str,
+def _grant_allocation_attemptable(
+    ctx: MaterializeCtx, intent: Dict[str, Any],
 ) -> bool:
-    wanted = set(kinds)
-    return any(
-        str(candidate.get("kind") or "") in wanted
-        for candidate, _original, _original_kind, _idx in candidate_records
-    )
+    """Pure: grant handler 是否会调用 stage。handler 与批预热投影共用，禁平行预测。"""
+    if (
+        ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return False
+    grant_action = str(intent.get("grant_action") or "").strip()
+    if grant_action not in (GRANT_ACTIONS - {"无"}):
+        return False
+    _target_kind, target_id = _grant_target(intent)
+    # 协饷缺 target 仍交 stage fail-loud；其它 grant 无目标则无物化。
+    if not target_id and grant_action != "协饷":
+        return False
+    return True
 
 
-def _batch_draft_extract_required(
+def _batch_write_pass_admission_ctx(
     ctx: MaterializeCtx,
     candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
-) -> bool:
-    """批预热是否需要 draft 抽取：按写遍真实可准入消费决定，不裸跑 LLM。
+) -> MaterializeCtx:
+    """投影写遍 draft/secret 准入 ctx。
 
-    显式前缀下 draft handler 默认早退；仅当同批 grant 可能先 staged 并清
-    candidate 的 explicit_prefixed 时，写遍才会消费 draft 产物（#1503 旧行为）。
+    与 pipeline grant_staged 同口径：仅 _grant_allocation_attemptable 为真的
+    grant 会解除显式前缀；存在 grant kind 本身不构成解除（禁宽泛预测）。
     """
-    if ctx.has_directive or ctx.out.get("pending_action_id"):
-        return False
-    if not _batch_records_have_kind(candidate_records, "draft"):
-        return False
     if not ctx.explicit_prefixed:
-        return True
-    return _batch_records_have_kind(candidate_records, "grant_allocation")
-
-
-def _batch_secret_extract_required(
-    ctx: MaterializeCtx,
-    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
-) -> bool:
-    """批预热是否需要 secret/cultivate 抽取（与 handler 准入同口径）。"""
-    if ctx.out.get("pending_action_id") or ctx.out.get("secret_order_id"):
-        return False
-    if not _batch_records_have_kind(candidate_records, "secret", "cultivate"):
-        return False
-    if not ctx.explicit_prefixed:
-        return True
-    return _batch_records_have_kind(candidate_records, "grant_allocation")
+        return ctx
+    for candidate, _original, _original_kind, _idx in candidate_records:
+        if str(candidate.get("kind") or "") != "grant_allocation":
+            continue
+        projected = replace(
+            ctx,
+            intent=candidate,
+            intent_kind="grant_allocation",
+            intent_candidates=None,
+            conversation_intent_handled=False,
+            draft_staged=False,
+        )
+        if _grant_allocation_attemptable(projected, candidate):
+            return replace(ctx, explicit_prefixed=False)
+    return ctx
 
 
 def _secret_mode_needs(
@@ -456,14 +462,17 @@ def _preheat_batch_draft_extractions(
     legal siblings get no rejection row. Any typed failure keeps the batch at
     zero writes (caller skips the write pass). Admission shares handler authority.
     """
-    if not _batch_draft_extract_required(ctx, candidate_records):
-        return
     pure_draft_records = [
         (candidate, original, original_kind, original_draft_index)
         for candidate, original, original_kind, original_draft_index in candidate_records
         if str(candidate.get("kind") or "") == "draft"
     ]
     if not pure_draft_records:
+        return
+    # 无消费者不抽：写遍准入（含实际 grant 落地后解除前缀）与 handler 同一权威。
+    if not _draft_extract_admitted(
+        _batch_write_pass_admission_ctx(ctx, candidate_records),
+    ):
         return
 
     session = ctx.session
@@ -565,10 +574,13 @@ def _preheat_batch_secret_extractions(
     同批多 mode 分槽（new / actions）一次收齐；写遍只消费对应槽，禁止
     单槽 prefer_new 互斥导致写遍 fallback 重抽。无消费者（准入失败）不预热。
     """
-    if not _batch_secret_extract_required(ctx, candidate_records):
-        return
     need_new, need_actions = _secret_mode_needs(candidate_records)
     if not (need_new or need_actions):
+        return
+    # 无消费者不抽：写遍准入（含实际 grant 落地后解除前缀）与 handler 同一权威。
+    if not _secret_extract_admitted(
+        _batch_write_pass_admission_ctx(ctx, candidate_records),
+    ):
         return
     slots: Dict[str, Any] = {}
     if need_new:
@@ -2193,22 +2205,15 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
 
     #1503：显式拟旨前缀若带 typed grant 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
     draft_staged / 已有 pending 仍互斥，避免与 generic special_decree 双写。
+    是否 attempt stage 的纯门闩见 _grant_allocation_attemptable（与批预热共用）。
     """
-    if (
-        ctx.intent_kind != "grant_allocation"
-        or ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
+    if ctx.intent_kind != "grant_allocation":
         return
     intent = ctx.intent or {}
+    if not _grant_allocation_attemptable(ctx, intent):
+        return
     grant_action = str(intent.get("grant_action") or "").strip()
-    if grant_action not in (GRANT_ACTIONS - {"无"}):
-        return
     target_kind, target_id = _grant_target(intent)
-    # 协饷缺 target 仍交 stage fail-loud；其它 grant 无目标则无物化。
-    if not target_id and grant_action != "协饷":
-        return
     pending_id = stage_grant_allocation_candidate(
         ctx.session.db,
         ctx.session.state.turn,
