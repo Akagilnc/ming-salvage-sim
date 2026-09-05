@@ -51,13 +51,18 @@ from ming_sim.token_stats import tlog
 MAX_RESCRIPT_DRAFTS = 5
 # #1624：月末首抽 typed 组合失败 → 共同纠错反馈有界重抽一次；耗尽仍 F2.5 整批降级。
 RESCRIPT_COMBO_CORRECTION_RETRIES = 1
-# #1746：单 option 缺结构化字段 → 同一会话补交（不含首抽）；耗尽只剔该 option。
+# #1746：单 option 契约失败字段（缺或错）→ 同一会话补交（不含首抽）；耗尽只剔该 option。
 # decision: missing-field-heal-by-resume-not-drop / per-option-drop-after-heal-exhausted
+# decision: heal-covers-illegal-values-too（不分缺失 vs 非法）
 RESCRIPT_OPTION_FIELD_HEAL_RETRIES = 3
 
 
 class RescriptOptionMissingFieldsError(ValueError):
-    """可定位到单 option 的缺结构化字段（#1746 补交分支；非组合错、非顶层/条目非法）。"""
+    """可定位到单 option 的契约失败字段（#1746 补交分支）。
+
+    缺字段、错值、任何不合契约的 option 字段均走同一补交回路
+    （decision: heal-covers-illegal-values-too）；非组合错、非顶层/条目非法。
+    """
 
     def __init__(
         self,
@@ -65,9 +70,13 @@ class RescriptOptionMissingFieldsError(ValueError):
         *,
         missing_fields: Sequence[str],
         raw_option: object = None,
+        field_reasons: Optional[Mapping[str, str]] = None,
     ) -> None:
         self.missing_fields = tuple(str(f) for f in missing_fields)
         self.raw_option = raw_option
+        self.field_reasons: Dict[str, str] = {
+            str(k): str(v) for k, v in dict(field_reasons or {}).items()
+        }
         super().__init__(message)
 
 
@@ -76,25 +85,41 @@ def _raise_option_missing_fields(
     *,
     missing_fields: Sequence[str],
     raw_option: object = None,
+    field_reasons: Optional[Mapping[str, str]] = None,
 ) -> None:
-    """抛可定位单 option 缺字段（#1746）。
+    """抛可定位单 option 契约失败（#1746 heal-by-resume）。
 
-    分类在 normalize 权威缝收集：原始缺失进本异常；原始非法由 ValueError/
-    StructuredDecreeCombinationError 原样上抛。禁止填占位合法值再猜分流。
+    权威 shape/normalize 失败字段（缺或错）一律进本异常；不区分缺失 vs 非法。
+    组合错误仍由 StructuredDecreeCombinationError 原样上抛。
     """
     raise RescriptOptionMissingFieldsError(
         message,
         missing_fields=missing_fields,
         raw_option=raw_option,
+        field_reasons=field_reasons,
     )
 
 
-def _note_missing(bucket: List[str], *fields: str) -> None:
-    """收集缺失字段；去重且保序。"""
+def _note_failed(
+    bucket: List[str],
+    *fields: str,
+    reasons: Optional[Dict[str, str]] = None,
+    reason: str = "",
+) -> None:
+    """收集契约失败字段；去重且保序。可选写入结构化原因。"""
     for field in fields:
         key = str(field)
-        if key and key not in bucket:
+        if not key:
+            continue
+        if key not in bucket:
             bucket.append(key)
+        if reasons is not None and reason and key not in reasons:
+            reasons[key] = reason
+
+
+# 兼容旧名（模块内历史调用点）
+def _note_missing(bucket: List[str], *fields: str) -> None:
+    _note_failed(bucket, *fields)
 
 
 @dataclass(frozen=True)
@@ -102,10 +127,11 @@ class RescriptOptionMissingFailure:
     item_index: int
     option_index: int
     title: str
-    missing_fields: Tuple[str, ...]
+    missing_fields: Tuple[str, ...]  # 失败字段名（缺或错，同一补交列表）
     raw_option: object
     # 机面结构身份：补交请求显式携带、响应回指；不依赖 title/label 自由文。
     heal_id: str = ""
+    field_reasons: Tuple[Tuple[str, str], ...] = ()
 
 
 class RescriptOptionMissingFieldsBatch(ValueError):
@@ -376,10 +402,12 @@ def _enforce_layer_a_action_conditional(
     *,
     shape: Mapping[str, object],
     missing_out: List[str],
+    reasons_out: Optional[Dict[str, str]] = None,
 ) -> None:
     """按 shape.action_conditional 强制七类必填/互斥/枚举（写回 out）。
 
-    缺失写入 missing_out；非法 ValueError 立即上抛。不填占位值。
+    字段契约失败（缺或错）写入 missing_out；不填占位值。
+    互斥并存仍上抛 ValueError（非整单字段可补形态）。
     """
     action = str(out["action_type"])
     conditional = shape.get("action_conditional") or {}
@@ -402,12 +430,13 @@ def _enforce_layer_a_action_conditional(
             return ""
         return str(val).strip()
 
-    def _require_any_present(key: str) -> bool:
-        """require_any 在场：通用非空串（202571cc）；due_turn/deadline_months 须正值。
+    def _fail(*fields: str, reason: str = "") -> None:
+        _note_failed(missing_out, *fields, reasons=reasons_out, reason=reason)
 
-        正值仅罩军令 dual 的期限键，避免把 authorization name/assignee_name
-        的 "0"/布尔等既有字符串语义一并改写。
-        非空但不可解析为正整数 → 非法（ValueError），不得当作「未在场」进 missing。
+    def _require_any_present(key: str) -> bool:
+        """require_any 在场：通用非空串；due_turn/deadline_months 须正值。
+
+        非空但不可解析为正整数 → 记该键失败（补交），不短路其它扫描。
         """
         if key in ("due_turn", "deadline_months"):
             val = _raw_or_out(key)
@@ -420,38 +449,42 @@ def _enforce_layer_a_action_conditional(
                 return False
             try:
                 return int(text) > 0
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"票拟 option.{action}.{key} 非法：{val!r}"
-                ) from exc
+            except (TypeError, ValueError):
+                _fail(key, reason=f"{action}.{key} 非法：{val!r}")
+                return True  # 已记失败，不把该键当「未在场」再索 require_any 组
         return bool(_nonempty_str(key))
 
     tk_in = rules.get("target_kind_in")
     if tk_in:
         allowed_tk = frozenset(str(x) for x in tk_in)  # type: ignore[union-attr]
         got = str(out.get("target_kind") or "").strip()
-        # target_kind 本身缺失时由 required 收集；此处只咬「已给出但不在闭集」
+        # target_kind 本身缺失时由 required 收集；已给出但不在闭集 → 补交
         if got and got not in allowed_tk:
-            raise ValueError(
-                f"票拟 option.{action}.target_kind 须为"
-                f"{'|'.join(sorted(allowed_tk))}，得 {got!r}"
+            _fail(
+                "target_kind",
+                reason=(
+                    f"{action}.target_kind 须为"
+                    f"{'|'.join(sorted(allowed_tk))}，得 {got!r}"
+                ),
             )
 
     for key in rules.get("required_nonempty") or ():
         key_s = str(key)
         val = _nonempty_str(key_s)
         if not val:
-            _note_missing(missing_out, key_s)
+            _fail(key_s, reason=f"{action} 缺必填：{key_s}")
             continue
         src = _raw_or_out(key_s)
         out[key_s] = str(src) if src is not None else val
 
     for group in rules.get("require_any_nonempty") or ():
         keys = tuple(str(k) for k in group)  # type: ignore[union-attr]
-        if not any(_require_any_present(k) for k in keys):
-            _note_missing(missing_out, *keys)
+        # 组内已有键被记为非法时不再重复索整组
+        if any(k in missing_out for k in keys):
             continue
-        # 写回保持 202571cc：有非空串则 str 写回（期限 int 归一由后续 int_keys 处理）
+        if not any(_require_any_present(k) for k in keys):
+            _fail(*keys, reason=f"{action} 须具备其一：{'/'.join(keys)}")
+            continue
         for key_s in keys:
             val = _nonempty_str(key_s)
             if val and key_s not in out:
@@ -467,9 +500,8 @@ def _enforce_layer_a_action_conditional(
                 continue
             allowed_set = frozenset(str(x) for x in allowed)  # type: ignore[union-attr]
             if val not in allowed_set:
-                raise ValueError(
-                    f"票拟 option.{action}.{key_s} 非法：{val!r}"
-                )
+                _fail(key_s, reason=f"{action}.{key_s} 非法：{val!r}")
+                continue
             out[key_s] = val
 
     for item in rules.get("required_when") or ():
@@ -481,7 +513,7 @@ def _enforce_layer_a_action_conditional(
         for rk in rks:  # type: ignore[union-attr]
             rk_s = str(rk)
             if not _nonempty_str(rk_s):
-                _note_missing(missing_out, rk_s)
+                _fail(rk_s, reason=f"{action} 当 {ctrl}={cval} 缺 {rk_s}")
                 continue
             src = _raw_or_out(rk_s)
             out[rk_s] = str(src) if src is not None else _nonempty_str(rk_s)
@@ -490,8 +522,10 @@ def _enforce_layer_a_action_conditional(
         keys = tuple(str(k) for k in pair)  # type: ignore[union-attr]
         present = [k for k in keys if _nonempty_str(k)]
         if len(present) > 1:
-            raise ValueError(
-                f"票拟 option.{action} 互斥键不得并存：{'/'.join(present)}"
+            # 互斥并存：两字段都列入补交，由 LLM 择一保留
+            _fail(
+                *present,
+                reason=f"{action} 互斥键不得并存：{'/'.join(present)}",
             )
 
     pos_when = rules.get("positive_amount_when")
@@ -499,23 +533,23 @@ def _enforce_layer_a_action_conditional(
         ctrl, cval = str(pos_when[0]), str(pos_when[1])  # type: ignore[index]
         if _nonempty_str(ctrl) == cval:
             amt_raw = _raw_or_out("amount")
-            # #1746：仅空白/缺键走补交；已给非法/非正值仍属旧 F2.5 非法分支。
             if amt_raw is None or amt_raw == "":
-                _note_missing(missing_out, "amount")
+                _fail("amount", reason=f"{action} {cval} 缺 amount")
             else:
                 try:
                     if isinstance(amt_raw, bool):
                         raise ValueError("bool")
                     amount = int(amt_raw)  # type: ignore[arg-type]
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(
-                        f"票拟 option.{action} amount 非法：{amt_raw!r}"
-                    ) from exc
-                if amount <= 0:
-                    raise ValueError(
-                        f"票拟 option.{action} amount 须为正整数，得 {amount}"
-                    )
-                out["amount"] = amount
+                except (TypeError, ValueError):
+                    _fail("amount", reason=f"{action} amount 非法：{amt_raw!r}")
+                else:
+                    if amount <= 0:
+                        _fail(
+                            "amount",
+                            reason=f"{action} amount 须为正整数，得 {amount}",
+                        )
+                    else:
+                        out["amount"] = amount
 
     forbid = rules.get("forbid_positive_amount_unless")
     if forbid and len(forbid) >= 2:  # type: ignore[arg-type]
@@ -529,8 +563,9 @@ def _enforce_layer_a_action_conditional(
             if isinstance(amt_raw, bool):
                 amount = 0
             if amount > 0:
-                raise ValueError(
-                    f"票拟 option.{action} 非 {cval} 不得带正 amount"
+                _fail(
+                    "amount",
+                    reason=f"{action} 非 {cval} 不得带正 amount",
                 )
 
 
@@ -563,9 +598,9 @@ def normalize_rescript_layer_a_option(
     generation_admission=True：生成批次拒绝无 kind 直写 grant_action=协饷；
     内部 canonical 二次归一保持默认 False。
 
-    #1746 分类：沿本函数权威缝收集原始缺失 vs 原始非法；非法立即上抛（F2.5）；
-    全部可扫描缝走完后若仅有缺失 → RescriptOptionMissingFieldsError（补交）。
-    禁止填占位合法值制造组合错，禁止首个缺失短路遮住已有非法。
+    #1746（heal-covers-illegal-values-too）：权威 shape/normalize 一次收齐失败字段
+    （缺或错，不分类）→ RescriptOptionMissingFieldsError 走同一补交回路。
+    组合错误仍 StructuredDecreeCombinationError（有界重抽）。禁止填占位合法值。
     """
     if not isinstance(raw, dict):
         raise ValueError("票拟 option 非 object（层 A shape）")
@@ -578,25 +613,29 @@ def normalize_rescript_layer_a_option(
     capability_int_keys = shape["capability_int_keys"]  # type: ignore[assignment]
     unknown = set(raw) - _LAYER_A_ALLOWED_KEYS
     if unknown:
+        # 未知键：整批 shape（F2.5/F3.3），非单 option 补交
         raise ValueError(
             f"票拟 option 含未知字段（整批 shape 错，F2.5/F3.3）：{sorted(unknown)}"
         )
     out: Dict[str, object] = {}
-    missing: List[str] = []
+    failed: List[str] = []
+    reasons: Dict[str, str] = {}
+
+    def _fail(*fields: str, reason: str = "") -> None:
+        _note_failed(failed, *fields, reasons=reasons, reason=reason)
 
     for key in required_keys:  # type: ignore[union-attr]
         key_s = str(key)
         if key_s not in raw or raw.get(key_s) is None:
-            _note_missing(missing, key_s)
+            _fail(key_s, reason=f"缺必填：{key_s}")
             continue
         val = raw.get(key_s)
         if not isinstance(val, str):
-            # 错误类型 ≠ 缺失：旧 F2.5 整批 shape，不进补交
-            raise ValueError(
-                f"票拟 option.{key_s} 须为 str，拒 {type(val).__name__}"
-            )
+            # 错类型与缺值同一补交列表（heal-covers-illegal-values-too）
+            _fail(key_s, reason=f"{key_s} 须为 str，拒 {type(val).__name__}")
+            continue
         if not val.strip():
-            _note_missing(missing, key_s)
+            _fail(key_s, reason=f"缺必填：{key_s}")
             continue
         out[key_s] = val  # 原文；strip 仅判空
 
@@ -604,65 +643,113 @@ def normalize_rescript_layer_a_option(
     if "action_type" in out:
         action_type = str(out["action_type"]).strip()
         if action_type not in action_types:
-            raise ValueError(f"票拟 option.action_type 非七类 routable：{action_type!r}")
-        out["action_type"] = action_type
-        # #1620：grant_kind 仅 grant_allocation 合法；非 grant 不得因 allowed 白名单静默丢键。
-        if action_type != "grant_allocation":
-            raw_kind = raw.get("grant_kind") if "grant_kind" in raw else None
-            if raw_kind is not None and str(raw_kind).strip():
-                raise ValueError(
-                    f"非 grant_allocation 不得带 grant_kind：{raw_kind!r}"
-                )
+            _fail(
+                "action_type",
+                reason=f"action_type 非七类 routable：{action_type!r}",
+            )
+            action_type = ""
+        else:
+            out["action_type"] = action_type
+            # #1620：grant_kind 仅 grant_allocation 合法
+            if action_type != "grant_allocation":
+                raw_kind = raw.get("grant_kind") if "grant_kind" in raw else None
+                if raw_kind is not None and str(raw_kind).strip():
+                    _fail(
+                        "grant_kind",
+                        reason=f"非 grant_allocation 不得带 grant_kind：{raw_kind!r}",
+                    )
 
     if "target_kind" in out:
         target_kind = str(out["target_kind"]).strip()
         if target_kind not in TARGET_KINDS:
-            raise ValueError(f"票拟 option.target_kind 非法：{target_kind!r}")
-        out["target_kind"] = target_kind
+            _fail("target_kind", reason=f"target_kind 非法：{target_kind!r}")
+        else:
+            out["target_kind"] = target_kind
 
     if "locality_scope" in out:
         # #1624：locality 归一唯一真源；禁止平行别名表，禁止按 target_kind 覆盖
         from ming_sim.execution_pressure import normalize_locality_scope
-        out["locality_scope"] = normalize_locality_scope(out["locality_scope"])
+        try:
+            out["locality_scope"] = normalize_locality_scope(out["locality_scope"])
+        except (TypeError, ValueError) as exc:
+            _fail("locality_scope", reason=f"locality_scope 非法：{exc}")
 
-    # C.3：三键必须在且为 str（可 ""）；禁缺键补全 / None→"" / str(value) 洗值
+    # C.3：三键必须在且为 str（可 ""）；禁缺键补全 / None→"" / truthiness 洗值
     for key in present_keys:  # type: ignore[union-attr]
         key_s = str(key)
         if key_s not in raw:
-            _note_missing(missing, key_s)
+            _fail(key_s, reason=f"缺须在键：{key_s}")
             continue
         value = raw[key_s]
         if not isinstance(value, str):
-            raise ValueError(
-                f"票拟 option.{key_s} 须为 str（可空串），拒 {type(value).__name__}"
+            _fail(
+                key_s,
+                reason=f"{key_s} 须为 str（可空串），拒 {type(value).__name__}",
             )
+            continue
         out[key_s] = value
 
     # 七类 action-conditional（与 shape/renderer 同真源；先于组合闸）
     if action_type:
         _enforce_layer_a_action_conditional(
-            out, raw, shape=shape, missing_out=missing,
+            out, raw, shape=shape, missing_out=failed, reasons_out=reasons,
         )
 
-    # #1624：层 A 即走共同组合校验。缺组合前置字段时不跑——避免虚填导致假组合错。
-    combo_ready = all(
-        k in out and str(out.get(k) or "").strip()
-        for k in ("action_type", "target_kind", "target_id", "locality_scope")
-    )
-    if combo_ready:
-        from ming_sim.structured_decree import validate_structured_decree_combination
-        validate_structured_decree_combination(out)
+    # #1624 组合：属地矩阵可在无 target_id 时独立判定（不得被无关缺字段跳过）；
+    # 完整组合（含 target_id 必填）仅在 target_id 已给出时跑，避免把缺 target_id
+    # 误送组合重抽。组合矛盾仍 StructuredDecreeCombinationError。
+    if (
+        action_type
+        and "target_kind" in out
+        and str(out.get("target_kind") or "").strip()
+        and "locality_scope" in out
+        and str(out.get("locality_scope") or "").strip()
+        and "target_kind" not in failed
+        and "locality_scope" not in failed
+    ):
+        from ming_sim.execution_pressure import (
+            TargetLocalityMatrixError,
+            assert_target_locality_matrix,
+        )
+        from ming_sim.structured_decree import StructuredDecreeCombinationError
+        try:
+            assert_target_locality_matrix(
+                action_type=action_type,
+                target_kind=str(out["target_kind"]),
+                locality_scope=out.get("locality_scope"),
+            )
+        except TargetLocalityMatrixError as exc:
+            raise StructuredDecreeCombinationError(
+                str(exc), failed_fields=exc.failed_fields,
+            ) from exc
+        except ValueError as exc:
+            raise StructuredDecreeCombinationError(
+                str(exc),
+                failed_fields=frozenset(
+                    {"locality_scope", "target_kind", "action_type"}
+                ),
+            ) from exc
+        tid = str(out.get("target_id") or "").strip()
+        if tid and "target_id" not in failed:
+            from ming_sim.structured_decree import (
+                validate_structured_decree_combination,
+            )
+            validate_structured_decree_combination(out)
 
     # 其余 capability 闭集字段透传（有则规范化，无则由 derive 填默认）
     for key in capability_str_keys:  # type: ignore[union-attr]
         if key == "stop_condition":
             continue
         if key in raw and raw[key] is not None:
+            # 不 truthiness 洗值；bool/非 str 原样 str() 仅作运输，权威 shape 再判
             out[key] = str(raw[key])
     if "stop_condition" in raw and raw["stop_condition"] is not None:
-        out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
-    # #1620：grant amount 不走通用 int()——由 require_grant_allocation_shape 独掌
-    # （strict_int 拒 bool/float）；非 grant 整数字段维持既有 int()。
+        try:
+            out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
+        except ValueError as exc:
+            _fail("stop_condition", reason=str(exc))
+    # #1620：grant amount 不走通用 int()——由 require_grant_allocation_shape 独掌；
+    # 非 grant 整数字段维持既有 int()；失败进补交列表。
     int_keys = tuple(
         k for k in capability_int_keys  # type: ignore[union-attr]
         if k != "amount" or action_type != "grant_allocation"
@@ -671,17 +758,12 @@ def normalize_rescript_layer_a_option(
         if key in raw and raw[key] is not None and raw[key] != "":
             try:
                 out[key] = int(raw[key])  # type: ignore[arg-type]
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"票拟 option.{key} 非法：{raw[key]!r}") from exc
+            except (TypeError, ValueError):
+                _fail(key, reason=f"{key} 非法：{raw[key]!r}")
 
-    # #1620：grant 金额/account 走 require_grant_allocation_shape 唯一权威（与 mapper 同缝），
-    # 禁残缺 option 上桌；空 account 不回写默认，免 draft_capability 漂移；
-    # 非空 account 回写 shape 返回的 canonical（太仓→国库），与显式国库同 capability。
-    # amount 传 raw 原值；用返回值写 out["amount"]（honorific 无则不写）。
-    # grant_kind=army_pay → 内部 grant_action=协饷；kind 与显式 action 不得并存；
-    # 生成批次禁无 kind 直写协饷；内部 canonical 二次归一仍可（generation_admission=False）；
-    # 协饷五字段复用 require_explicit_xiexang_fields，不补 purpose/target。
-    # 双缺 discriminator：grant_kind 与 grant_action 任一可补（#656 现行契约），不预断 army_pay。
+    # #1620 grant：先 require_grant_allocation_shape 归一金额/account，
+    # 协饷再 require_explicit_xiexang_fields（吃已归一 amount）——恢复既有 grant 语义。
+    # 权威失败字段一律进补交，不分缺失/非法；不平行 strict_int/正金额预检。
     if action_type == "grant_allocation":
         from ming_sim.action_materialize import (
             IncompleteXiexangPayloadError,
@@ -696,169 +778,103 @@ def normalize_rescript_layer_a_option(
         if "grant_action" in raw and raw["grant_action"] is not None:
             raw_ga = str(raw["grant_action"]).strip()
 
-        discriminator_missing = not grant_kind and not raw_ga
-        if generation_admission and discriminator_missing:
-            # 两辨别字段皆无：索 require_any，允许 LLM 按契约补其一；不虚填 army_pay。
-            # 已给出的 amount 仍须在本缝验形——缺失辨别不得遮住非法/非正 amount。
-            _note_missing(missing, "grant_kind", "grant_action")
-            if "amount" in raw and raw["amount"] not in (None, ""):
-                from ming_sim.strict_types import strict_int
-                try:
-                    amt = strict_int(raw["amount"], accept_numeric_strings=True)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"grant amount 非法：{raw['amount']!r}"
-                    ) from exc
-                if amt <= 0:
-                    raise ValueError(f"grant amount 须为正整数，得 {amt}")
+        if generation_admission and not grant_kind and not raw_ga:
+            # 双缺辨别：索其一；不预断 army_pay，不平行金额预检
+            _fail(
+                "grant_kind", "grant_action",
+                reason="grant_allocation 须补 grant_kind 或 grant_action",
+            )
         elif grant_kind:
             if grant_kind != grant_kind_army_pay:
-                raise ValueError(f"grant 非法 grant_kind：{grant_kind!r}")
-            if raw_ga:
-                raise ValueError(
-                    f"grant_kind=army_pay 不得同时显式给 grant_action：{raw_ga!r}"
+                _fail("grant_kind", reason=f"grant 非法 grant_kind：{grant_kind!r}")
+            elif raw_ga:
+                _fail(
+                    "grant_kind", "grant_action",
+                    reason=(
+                        f"grant_kind=army_pay 不得同时显式给 grant_action：{raw_ga!r}"
+                    ),
                 )
-            out["grant_action"] = "协饷"
+            else:
+                out["grant_action"] = "协饷"
         elif generation_admission and raw_ga == "协饷":
-            raise ValueError(
-                "生成侧军饷须用 grant_kind=army_pay，不得直接 grant_action=协饷"
+            _fail(
+                "grant_kind",
+                reason="生成侧军饷须用 grant_kind=army_pay，不得直接 grant_action=协饷",
             )
         elif raw_ga:
             out["grant_action"] = raw_ga
 
-        is_xiexang = str(out.get("grant_action") or "").strip() == "协饷"
-        if is_xiexang:
-            # 协饷：权威 require_explicit_xiexang_fields 一次收齐全部 failed_fields，
-            # 再按原始值分 missing vs illegal——多个缺失不得遮住已有非法。
+        resolved_ga = str(out.get("grant_action") or "").strip()
+        if resolved_ga:
+            # account：保留 raw 原值给权威 shape（不 or "" 洗 false）
+            if "account" in raw and raw["account"] is not None and "account" not in out:
+                out["account"] = raw["account"]  # type: ignore[assignment]
+            input_account_present = (
+                "account" in out
+                and out.get("account") is not None
+                and str(out.get("account") or "").strip() != ""
+            )
             try:
-                explicit = require_explicit_xiexang_fields(
-                    amount=raw.get("amount") if "amount" in raw else out.get("amount", 0),
-                    account=str(
-                        out.get("account")
-                        if "account" in out
-                        else (raw.get("account") if "account" in raw else "")
-                        or ""
-                    ),
-                    purpose=str(
-                        out.get("purpose")
-                        if "purpose" in out
-                        else (raw.get("purpose") if "purpose" in raw else "")
-                        or ""
-                    ),
-                    target_kind=str(out.get("target_kind") or raw.get("target_kind") or ""),
-                    target_id=str(out.get("target_id") or raw.get("target_id") or ""),
-                    cadence=str(
-                        out.get("cadence")
-                        if "cadence" in out
-                        else (raw.get("cadence") if "cadence" in raw else "")
-                        or ""
+                shaped = require_grant_allocation_shape(
+                    grant_action=resolved_ga,
+                    amount=raw.get("amount") if "amount" in raw else None,
+                    account=out.get("account") if "account" in out else (
+                        raw.get("account") if "account" in raw else None
                     ),
                 )
-            except IncompleteXiexangPayloadError as exc:
-                truly_missing: List[str] = []
-                illegal_fields: List[str] = []
-
-                def _raw_field(name: str) -> object:
-                    if name in raw:
-                        return raw.get(name)
-                    if name in out:
-                        return out.get(name)
-                    return None
-
-                for field_name in exc.failed_fields:
-                    name = str(field_name)
-                    if name == "purpose":
-                        pv = str(_raw_field("purpose") or "").strip()
-                        (truly_missing if not pv else illegal_fields).append(name)
-                    elif name == "account":
-                        av = str(_raw_field("account") or "").strip()
-                        if av == "太仓":
-                            av = "国库"
-                        (truly_missing if not av else illegal_fields).append(name)
-                    elif name == "amount":
-                        amt_v = _raw_field("amount")
-                        if amt_v is None or amt_v == "":
-                            truly_missing.append(name)
-                        else:
-                            illegal_fields.append(name)
-                    elif name == "target_id":
-                        tv = str(_raw_field("target_id") or "").strip()
-                        (truly_missing if not tv else illegal_fields).append(name)
-                    elif name == "target_kind":
-                        tk = str(_raw_field("target_kind") or "").strip()
-                        (truly_missing if not tk else illegal_fields).append(name)
-                    elif name == "cadence":
-                        # 权威 shape：仅非空非法 cadence 入 failed_fields
-                        illegal_fields.append(name)
-                    else:
-                        truly_missing.append(name)
-                if illegal_fields:
-                    raise ValueError(
-                        f"票拟 option 协饷字段非法：{','.join(illegal_fields)}（{exc}"
-                        f"）"
-                    ) from exc
-                if truly_missing:
-                    _note_missing(missing, *truly_missing)
+            except ValueError as exc:
+                field = str(getattr(exc, "field", "") or "") or "grant_action"
+                _fail(field, reason=str(exc))
             else:
-                out["amount"] = explicit["amount"]
-                out["account"] = explicit["account"]
-                out["purpose"] = explicit["purpose"]
-                out["target_kind"] = explicit["target_kind"]
-                out["target_id"] = explicit["target_id"]
-        elif not discriminator_missing or not generation_admission:
-            # 非协饷 grant（或内部 canonical 二次归一）：grant shape 权威
-            # 双缺且 generation 已记 missing 时不再虚跑 shape（免 grant_action 空 → 误分流）
-            if not (generation_admission and discriminator_missing):
-                input_account = str(
-                    out.get("account")
-                    if "account" in out
-                    else (raw.get("account") if "account" in raw else "")
-                    or ""
-                ).strip()
-                if "account" in raw and raw["account"] is not None and "account" not in out:
-                    out["account"] = str(raw["account"])
-                try:
-                    shaped = require_grant_allocation_shape(
-                        grant_action=out.get("grant_action") or raw_ga or None,
-                        amount=raw.get("amount") if "amount" in raw else None,
-                        account=out.get("account") if "account" in out else (
-                            raw.get("account") if "account" in raw else None
-                        ),
-                    )
-                except ValueError as exc:
-                    # #1746：仅「真缺」进补交；非法枚举/非正/错误类型保持旧 F2.5。
-                    field = str(getattr(exc, "field", "") or "")
-                    if field == "amount":
-                        raw_amt = raw.get("amount") if "amount" in raw else None
-                        if raw_amt is None or raw_amt == "":
-                            _note_missing(missing, "amount")
-                        else:
-                            raise
-                    elif field == "grant_action" and not grant_kind and not raw_ga:
-                        if generation_admission:
-                            _note_missing(missing, "grant_kind", "grant_action")
-                        else:
-                            _note_missing(missing, "grant_action")
-                    elif field == "account":
-                        av = str(raw.get("account") if "account" in raw else "" or "").strip()
-                        if not av:
-                            _note_missing(missing, "account")
-                        else:
-                            raise
+                out["grant_action"] = shaped["grant_action"]
+                if "amount" in shaped:
+                    out["amount"] = shaped["amount"]
+                if input_account_present:
+                    out["account"] = shaped["account"]
+                if str(out.get("grant_action") or "").strip() == "协饷":
+                    # 吃 grant shape 已归一的 amount，恢复既有语义（"300"→300）
+                    try:
+                        explicit = require_explicit_xiexang_fields(
+                            amount=out.get("amount", 0),
+                            account=str(out.get("account") or ""),
+                            purpose=str(
+                                out.get("purpose")
+                                if "purpose" in out
+                                else (raw.get("purpose") if "purpose" in raw else "")
+                                or ""
+                            ),
+                            target_kind=str(
+                                out.get("target_kind") or raw.get("target_kind") or ""
+                            ),
+                            target_id=str(
+                                out.get("target_id") or raw.get("target_id") or ""
+                            ),
+                            cadence=str(
+                                out.get("cadence")
+                                if "cadence" in out
+                                else (raw.get("cadence") if "cadence" in raw else "")
+                                or ""
+                            ),
+                        )
+                    except IncompleteXiexangPayloadError as exc:
+                        # 权威 failed_fields 全部进补交——不再分缺失/非法
+                        _fail(
+                            *[str(f) for f in exc.failed_fields],
+                            reason=str(exc),
+                        )
                     else:
-                        raise
-                else:
-                    out["grant_action"] = shaped["grant_action"]
-                    if "amount" in shaped:
-                        out["amount"] = shaped["amount"]
-                    if input_account:
-                        out["account"] = shaped["account"]
+                        out["amount"] = explicit["amount"]
+                        out["account"] = explicit["account"]
+                        out["purpose"] = explicit["purpose"]
+                        out["target_kind"] = explicit["target_kind"]
+                        out["target_id"] = explicit["target_id"]
 
-    if missing:
+    if failed:
         _raise_option_missing_fields(
-            f"票拟 option 缺结构化字段：{'/'.join(missing)}",
-            missing_fields=tuple(missing),
+            f"票拟 option 契约失败字段：{'/'.join(failed)}",
+            missing_fields=tuple(failed),
             raw_option=raw,
+            field_reasons=reasons,
         )
 
     # derive 需要 action_type 等必填已齐
@@ -1066,11 +1082,11 @@ def validate_rescript_draft_items(
     - 顶层非法（非 dict / 无 items list）→ raise ValueError（整批降级，本月无头版）；
     - 条目必需字段缺失或非法（title/context）→ raise ValueError 整批失败；
     - options 数量：首抽/常规默认 2–3（F2.2）；#1746 剔除后 min_options=1 仍可呈；
-    - option 缺结构化字段（#1746）：isolate_option_missing=True 时收齐为
-      RescriptOptionMissingFieldsBatch（供同一会话补交／耗尽单 option 剔除）；
+    - option 契约失败字段（#1746，缺或错同一补交）：isolate_option_missing=True
+      时收齐为 RescriptOptionMissingFieldsBatch（补交／耗尽单 option 剔除）；
       False 时仍整批 ValueError（旧直调行为）；
     - 组合错误 → StructuredDecreeCombinationError（既有有界重抽，不动）；
-    - 其它 option shape 非法 / 未知键 → 整批 ValueError（F2.5 其它分支原样）；
+    - 未知键等非整单字段可补的 option shape → 整批 ValueError（F2.5 其它分支）；
     - 合法 `items=[]` 仍是「本月无急务」（F2.3）；
     - 自由文本零删改；draft_capability 服务端重算。
     """
@@ -1134,11 +1150,15 @@ def validate_rescript_draft_items(
                 ) from exc
             except RescriptOptionMissingFieldsError as exc:
                 if isolate_option_missing:
-                    # 缺字段 quarantine 不得跳过其它 F2.5 面：UTF-8 仍咬 raw option
+                    # 契约失败 quarantine 不得跳过其它 F2.5 面：UTF-8 仍咬 raw option
                     raw_for_miss = opt if isinstance(opt, dict) else exc.raw_option
                     if isinstance(raw_for_miss, dict):
                         _assert_utf8(str(raw_for_miss.get("label") or ""), "label")
                         _assert_utf8(str(raw_for_miss.get("hint") or ""), "hint")
+                    reasons = tuple(
+                        (str(k), str(v))
+                        for k, v in dict(getattr(exc, "field_reasons", {}) or {}).items()
+                    )
                     item_missing.append(RescriptOptionMissingFailure(
                         item_index=item_index,
                         option_index=option_index,
@@ -1146,6 +1166,7 @@ def validate_rescript_draft_items(
                         missing_fields=tuple(exc.missing_fields),
                         raw_option=raw_for_miss,
                         heal_id=_option_heal_id(item_index, option_index),
+                        field_reasons=reasons,
                     ))
                     continue
                 raise ValueError(
@@ -1285,19 +1306,20 @@ def _missing_field_heal_feedback(
     attempt: int,
     max_attempts: int,
 ) -> str:
-    """#1746 缺字段补交请求：同一会话已续接时只索缺字段 + 显式结构身份。
+    """#1746 契约失败补交请求：同一会话续接，带失败字段+结构化原因 + 显式身份。
 
-    原始首抽/历次补交由调用接缝的 prior_messages 入上下文，此处不再拼 original_raw。
+    缺字段与错值走同一回路（heal-covers-illegal-values-too）。
+    原始首抽/历次补交由 prior_messages 入上下文，此处不再拼 original_raw。
     与 combination_correction_feedback（整批结构重抽）是两种动作，不得混用。
     """
     lines = [
-        f"【缺字段补交 {attempt}/{max_attempts}】同一会话续接：下列 option 缺结构化字段。",
-        "请只补缺的结构化字段。可返回：",
-        '1) {"heals":[{"heal_id":"i:o", "<缺字段>":...},...]}',
+        f"【字段补交 {attempt}/{max_attempts}】同一会话续接：下列 option 未通过契约校验。",
+        "请只修正列出的失败字段（缺或错值）。可返回：",
+        '1) {"heals":[{"heal_id":"i:o", "<失败字段>":...},...]}',
         '2) {"heals":[{"heal_id":"i:o", "option":{...完整 option...}},...]}',
         '3) 完整 {"items":[...]}，且每个补交 option 必须回指同一 heal_id。',
-        "不要改写无缺失的 option；不要省略已给出的 amount/account/target 等世界事实字段。",
-        "代码不猜字段默认值——须由你补上。",
+        "不要改写未列出的 option；已给出且未失败的 amount/account/target 等保持原值。",
+        "代码不猜字段默认值——须由你补正。",
     ]
     for failure in failures:
         heal_id = failure.heal_id or _option_heal_id(
@@ -1308,6 +1330,13 @@ def _missing_field_heal_feedback(
             f"- heal_id={heal_id} item_index={failure.item_index} "
             f"option_index={failure.option_index} 缺字段: {fields}"
         )
+        reason_map = dict(failure.field_reasons or ())
+        if reason_map:
+            # 结构化原因：字段→原因；供 LLM 与日志，不作机器分支
+            lines.append(
+                "  失败原因: "
+                + json.dumps(reason_map, ensure_ascii=False)
+            )
         if isinstance(failure.raw_option, dict):
             snapshot = dict(failure.raw_option)
             snapshot["heal_id"] = heal_id
@@ -1413,10 +1442,11 @@ def _apply_missing_fields_only(
     replacement: dict,
     missing_fields: Sequence[str],
 ) -> Optional[dict]:
-    """只把缺字段从补交结果写入首抽 option；其它键一律冻结。
+    """只把失败字段从补交结果写入底稿 option；其它键一律冻结。
 
-    完整重交可接受其形态，但非缺失键（amount/account/target 等）以首抽为准——
-    补交不得借机改写已给出的世界事实字段。缺字段在 replacement 仍缺则拒绝（None）。
+    失败字段含缺与错值（heal-covers-illegal-values-too）。完整重交可接受其形态，
+    但未列入失败的键（amount/account/target 等）以底稿为准。
+    失败字段在 replacement 仍无有效值则拒绝（None）。
     """
     if not missing_fields:
         return None
@@ -1427,8 +1457,9 @@ def _apply_missing_fields_only(
         if key not in replacement:
             continue
         val = replacement[key]
-        # 空串/None 视为未补上
-        if val is None or (isinstance(val, str) and not str(val).strip()):
+        # None = 未补；空串若键显式给出则写回（present_keys 可空合法）
+        # 仍空/仍错由下一轮权威校验再进补交，不在此猜默认。
+        if val is None:
             continue
         out[key] = copy.deepcopy(val)
         filled += 1
@@ -1526,6 +1557,8 @@ def _failure_log_rows(
             "option_index": failure.option_index,
             "missing_fields": list(failure.missing_fields),
         }
+        if failure.field_reasons:
+            row["field_reasons"] = dict(failure.field_reasons)
         if isinstance(failure.raw_option, dict):
             label = failure.raw_option.get("label")
             if label is not None:
