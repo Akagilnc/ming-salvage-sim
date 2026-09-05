@@ -1495,10 +1495,11 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
         expect(bar?.getAttribute("aria-valuemin")).toBe("0");
       });
     });
-    const decor = host.querySelector('[data-testid="settlement-lock-decor"]');
-    expect(decor?.textContent || "").toContain("任意显示文案");
-    expect(decor?.textContent || "").toContain("推敲片段甲");
-    expect(decor?.textContent || "").toContain("奏章片段乙");
+    // Stage chrome via structured stage node — not whole-decor mixed narrative text.
+    const stageNode = host.querySelector(".settlement-lock-stage");
+    expect(stageNode).not.toBeNull();
+    expect(stageNode?.textContent || "").toContain("任意显示文案");
+    // thinking/narrative stream events may arrive; do not lock generated body text.
     // Center lock present; must not swallow recovery / decision faces (still settling recovery banner path).
     expect(host.querySelector(".settlement-lock")).not.toBeNull();
 
@@ -1515,7 +1516,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
         expect(bar?.getAttribute("aria-valuemax")).toBe("7");
       });
     });
-    expect(host.querySelector('[data-testid="settlement-lock-decor"]')?.textContent || "").toContain("结局收束文案");
+    expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain("结局收束文案");
 
     // End via decisions so we do not hit window.location.reload; keep chain proof intact.
     await act(async () => {

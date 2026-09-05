@@ -204,12 +204,10 @@ def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch)
 
     monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
 
-    t0 = time.monotonic()
     payload = cli_backend.capture_manual_directive_payload(
         text, None, db=db, content=content, capture_timeout_s=0.3,
     )
-    elapsed = time.monotonic() - t0
-    assert elapsed < 1.5, f"有界等待失控：{elapsed:.2f}s"
+    # 生产 capture_timeout_s 输入保留；旁侧 elapsed 墙钟证据删除（接缝无「N 秒内」契约）。
     assert payload["dossier_action_type"] == "special_decree"
 
     session = GameSession.__new__(GameSession)
@@ -223,7 +221,7 @@ def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch)
 
 
 def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
-    """POST /api/directives：capture 挂起时仍有界返回且草案落库（< 客户端 30s）。"""
+    """POST /api/directives：capture 挂起时仍经生产 timeout 返回且草案落库。"""
     import ming_sim.cli_backend as cli_backend
     import web_app
     from ming_sim.session import GameSession
@@ -254,12 +252,10 @@ def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
     )
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
 
-    t0 = time.monotonic()
     result = asyncio.run(web_app.api_create_directive(
         web_app.DirectiveRequest(text=text, notes="朝堂QA拟诏"),
     ))
-    elapsed = time.monotonic() - t0
-    assert elapsed < 5.0, f"web 拟诏无界等待：{elapsed:.2f}s"
+    # 生产 MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S 输入保留；旁侧 elapsed 墙钟证据删除。
     assert result["directive"]["id"] > 0
     assert result["directive"]["text"] == text
     assert db.list_directives(state)

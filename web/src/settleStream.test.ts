@@ -98,24 +98,5 @@ describe("consumeSettleStream continue-style stages (#1195)", () => {
   });
 });
 
-describe("#1725 stage SSE forwards typed progress facts", () => {
-  it("passes current/total through without deriving them from content labels", async () => {
-    const onStage = vi.fn();
-    const outcome = await consumeSettleStream(
-      streamResponse([
-        // Arbitrary display label + independent typed progress — proves no label reverse-lookup.
-        'event: stage\ndata: {"content":"任意显示文案","current":3,"total":6}\n\n',
-        'event: stage\ndata: {"content":"另一段","current":7,"total":7}\n\n',
-        'event: stage\ndata: {"content":"无进度的菜单文案"}\n\n',
-        'event: done\ndata: {"ok":true}\n\n',
-      ]),
-      { onStage, onThinking: vi.fn(), onNarrative: vi.fn() },
-    );
-    expect(outcome.kind).toBe("done");
-    expect(onStage.mock.calls.map((c) => c[0])).toEqual([
-      { content: "任意显示文案", current: 3, total: 6 },
-      { content: "另一段", current: 7, total: 7 },
-      { content: "无进度的菜单文案", current: undefined, total: undefined },
-    ]);
-  });
-});
+// #1725 3/6 & 7/7 typed progress happy-path owned by App entry wiring
+// (appDurableWiring). continue-style stages already cover missing current/total.

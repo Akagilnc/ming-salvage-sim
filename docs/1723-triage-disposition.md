@@ -67,7 +67,7 @@ PY
 
 1. **dead-leg drift**（`faf4bddec` 之前未合入草稿）：在工作树直接改 wait/join/sleep，含调试 print、持闸 join 自锁、#657 Barrier 错参与者等。**无**独立「先写完整清单」commit。
 2. **`faf4bddec`**：同 commit 交付 `docs/1723-triage-disposition.md` + 测试改动。同 commit **不证明**「先写清单再改代码」；只证明清单与改动一并落地。
-3. **判牒 r2 / r3 补卷**：在已落地改动上补竞态证法、sleep 重分诊、恢复 657 屏障，并**事后**以固定 SHA 展开完整位置清单。  
+3. **判牒 r2 / r3 补卷**：在已落地改动上补竞态证法、sleep 重分诊、恢复 657 屏障，并**事后**以固定 SHA 展开完整位置清单。
    **本清单明确为首轮施工之后补作的举证文件**——不得声称事后扫描补齐了「先分诊后施工」的历史事实；只补齐可核位置与三问，不改写 git 历史。
 
 ---
@@ -106,7 +106,7 @@ PY
 | `test_dossier_endorsements_612.py:352,389,467,479,507,511,540,545` | T-barrier | 缺陷 | bare |
 | `test_enter_settlement_period_1235.py:658,661,763,805,829,856,865,867,922,950,983` | T-barrier；持闸终态见 B/T-gate-final | 缺陷/有效 | bare；gate 终态保留 |
 | `test_menu_lifecycle_drain_396.py:22,43,48,403,409,506,670,678,682,719` | T-barrier；:22 为 poll backoff 见 C3；负向见 B | 缺陷 | bare；backoff 保留；负向改 gate/wait_prior 观测 |
-| `test_pihong_dossier_1490.py:4188,4215,4261,4267,4280,4358,4366,4409,4420` | T-barrier；single-flight 见 B | 缺陷 | bare；join 观测见 B |
+| `test_pihong_dossier_1490.py:4188,4215,4261,4267,4280,4358,4366,4409,4420` | T-barrier；single-flight 见 B | 缺陷 | bare；抵达/外部结果见 B（非 join 等待证） |
 | `test_qa_b3_409_ux.py:280,309,318` | T-barrier | 缺陷 | bare |
 | `test_qa_c2_phase_settlement_mask_1374.py:118` | T-barrier | 缺陷 | bare |
 | `test_qa_c2_settlement_display_lifecycle_1343.py:109,113` | T-barrier / T-gate-final | 缺陷/有效 | bare；gate 终态保留 |
@@ -116,7 +116,7 @@ PY
 | `test_session_write_queue_1353.py:52,59,69,85,106,123,127,160,167,179,239,241,249,267,268,296,317,323,338,350,360,361,389,396,409,433,439,455` | T-barrier | 缺陷 | bare |
 | `test_settlement_write_guard_393.py:382,402` | T-barrier | 缺陷 | bare |
 | `test_web_audience_night_498.py:102,418` | T-barrier | 缺陷 | bare |
-| `test_web_chat_serialization_393.py:34,219,371,419,435,439` | T-barrier；争锁见 B | 缺陷 | bare；ObservingWriteGate |
+| `test_web_chat_serialization_393.py:34,219,371,419,435,439` | T-barrier；争锁见 B | 缺陷 | bare；`tests.wait_utils.ObservingLock` |
 
 **另**：timeout= 行里的 `Event.wait`/`join`/`Barrier` 形参见 F；arrival/pipeline/highlight 等仅 timeout= 命中、无 wait(数字) 的文件见 F 表。
 
@@ -128,15 +128,15 @@ PY
 
 | 位置 | Q1 | Q2 | Q3 | 判定 | 处置（本轮） |
 | --- | --- | --- | --- | --- | --- |
-| `menu_lifecycle` 持闸 drain/shutdown | 无 | close 须 `gate.acquire` | 是 | 缺陷 | **ObservingGate.contending**：drain 真到 close acquire；**不用** has_open_barrier 冒充 wait |
+| `menu_lifecycle` 持闸 drain/shutdown | 无 | close 须 `gate.acquire` | 是 | 缺陷 | **ObservingLock.contending**（共享单源）：drain 真到 close acquire；**不用** has_open_barrier 冒充 wait |
 | `menu_lifecycle` drain vs 在飞 B | 无 | drain 不得先于 B 票清 | 是 | 缺陷 | **observe `wait_prior`** 后再负向；B delta 保留 |
 | `enter_settlement` / `qa_c2` clear 持闸 | 无 | clear 须持 gate | 是 | **有效** | **保留** T-gate-final |
 | `travel_gating` close vs 未完 scene | 无 | barrier 不得越过未完 scene | 是 | 缺陷 | **observe `wait_prior`**（非 has_open_barrier 领票） |
-| `web_chat_serialization` stream vs settlement | 无 | epilogue 须等 gate | 是 | 缺陷 | `_ObservingWriteGate`：holding 下 acquire → contending |
+| `web_chat_serialization` stream vs settlement | 无 | epilogue 须等 gate | 是 | 缺陷 | `ObservingLock(..., holding=)`：holding 下 acquire → contending |
 | `web_audience_night` issue vs 在飞 chat | 无 | issue 须进屏障等票 | 是 | 缺陷 | `wait_prior` 观测 inflight>1 |
-| `pihong` single-flight 第二路 | 无 | 第二路须抵真实等待接缝才 coalesce | 是 | 缺陷 | **最小诊断**：B 在 A 的 `join_retained` 窗内卡在 entry 的 `_auto_close_open_night_gate_free`（等 A 召见 scene/夜在飞），并发 `join_retained` 架构上不可达；观测 B 在 gen 仍持时进入 auto_close；**不用** `_begin_settlement_entry` 入口记账，也**不**假造并发 join 观测 |
+| `pihong` single-flight 第二路 | 无 | 外部契约=单 origin body/单 chat_turn/单月推进；**不**拥有「N 秒内 coalesce」 | 是 | **纠正主张** | **诊断**：B 不能与 A 并发进 `join_retained`；auto_close 可能挡住 B，但绕过 auto_close 外部断言仍绿 → **不**把 auto_close/入口观察叫等待证，**不**给生产添等待。处置：A 持 gen 时观测 B 抵达 settlement entry（inflight≥2）+ 外部 single-flight 结果；删 sleep 赌窗与 future.result(timeout) |
 | `beat` sibling join | 无 | join 须排空 sibling | 是 | 缺陷 | `wait_until(not registry.has(11))` 证 join 已 pop 入 drain；**禁止** join 调用前 `join_entered.set()` |
-| `beat` close 持闸 persist/cleanup | 无 | 须抵达 write_gate.acquire | 是 | 缺陷 | **ObservingGate.contending**；**不用** gen_done+is_alive+gate.locked 空窗 |
+| `beat` close 持闸 persist/cleanup | 无 | 须抵达 write_gate.acquire | 是 | 缺陷 | **ObservingLock.contending**（`tests.wait_utils` 单源）；**不用** gen_done+is_alive+gate.locked 空窗 |
 | `web_chat` drain vs 非流式 chat | 无 | drain 等票 | 是 | 缺陷 | sealed 观测 + not drain_done |
 
 **不造**：生产测试钩子、墙钟终线、杀进程护栏、平行证明套件、调用前信号、保持锁定状态替代抵达证明。
@@ -166,7 +166,7 @@ PY
 | `audience_extraction_501:303` sleep(0.05) | 无 | 赌第二路 | 是 | 赌调度 | 缺陷 | `len(seen)==1` 状态 |
 | `enter_settlement_period_1235:858,979` sleep(0.05) | 无 | 赌 A 未完/时序 | 是 | 赌调度 | 缺陷 | `not a_done` / 事件 |
 | `enter_settlement_period_1235:752` sleep(0.01) | 无 | 短延迟 | 是 | 近 backoff/赌窗 | 缺陷 | 事件/状态 |
-| `pihong_dossier_1490:4217` sleep(0.15) | 无 | 赌 coalesce 窗 | 是 | 赌调度 | 缺陷 | join 并发观测 |
+| `pihong_dossier_1490:4217` sleep(0.15) | 无 | 赌 coalesce 窗 | 是 | 赌调度 | 缺陷 | **删 sleep**；改 B 抵达 entry 观测 + 外部 single-flight（见 B；非 join 等待证） |
 | `pihong_dossier_1490:3052` sleep(0.02) | 无 | 短延迟 | 是 | 赌调度 | 缺陷 | 事件 |
 | `web_audience_night_498:711,758` sleep | 无 | 赌 issue/ticker | 是 | 赌调度 | 缺陷 | wait_prior / `sleep(0)` 让出 |
 | `web_chat_serialization_393:203,220,265` sleep | 无 | 赌 settlement/SSE | 是 | 赌调度 | 缺陷 | holding/release/contending |
@@ -196,17 +196,22 @@ PY
 
 | 位置（`ec65c824`） | Q1 | Q2 | Q3 | 归属 | 判定 | 处置 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `session_write_queue_1353:286` sleep(slow_s=0.08) | 无 | 不变式=`order==[worker_terminal,barrier]`，**不**读生产熔断秒数 | 是 | 慢工人终态顺序 | 曾误标超时输入 | **改**：worker 事件持票 + observe `wait_prior`；**删 sleep**；doc 去掉「超过旧 30s」 |
-| `session_write_queue_1353:312` sleep(0.02) | 无 | 短延迟 | 是 | 视具体测 | 按测改事件或保留 backoff 说明 | 核后按事件/backoff 归类 |
+| `session_write_queue_1353:286` sleep(slow_s=0.08) | 无 | 不变式=`order==[worker_terminal,barrier]`，**不**读生产熔断秒数 | 是 | 慢工人终态顺序 | 曾误标超时输入 | **已改**：worker 事件持票 + observe `wait_prior`；**删 sleep**；doc 去掉「超过旧 30s」 |
+| `session_write_queue_1353:312` sleep(0.02) | 无 | failing_worker 在 started 与 vacate 间的短延迟（非 backoff、非生产超时） | 是 | T-sleep-race 近亲 | **缺陷** | **已删 sleep**；`started` 事件 + vacate 终态顺序足够；不保留「待核」措辞 |
 
 ---
 
 ## E. 以墙钟为行为证据的断言
 
-| 位置 | 真源 | 判定 | 处置 |
-| --- | --- | --- | --- |
-| `parallel_extractors` `elapsed < delay * N` | T-wall-elapsed | 缺陷 | **删**；保留 max_active |
-| `qa_b3` `elapsed < 1.5` + wait_for | T-wall-elapsed | 缺陷 | 已删 |
+合法慢输入（D 表）**不**自动豁免同案旁侧 elapsed 上限；保留须接缝拥有具体秒数契约的法源，否则删墙钟证据、保留生产超时输入与外部结果。
+
+| 位置 | Q1 | Q2 | Q3 | 真源 | 判定 | 处置 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `parallel_extractors` `elapsed < delay * N` | 无 | 不声称 N 秒 | 是 | T-wall-elapsed | 缺陷 | **删**；保留 max_active |
+| `qa_b3` `elapsed < 1.5` + wait_for | 无 | 不声称 N 秒 | 是 | T-wall-elapsed | 缺陷 | 已删 |
+| `qa_d1_decree_normalize_1274:212` `elapsed < 1.5` | 无 | 接缝契约=capture 超时→special_decree，**不**拥有「1.5s 内返回」 | 是 | T-wall-elapsed | **缺陷** | **删 elapsed**；保留 sleep(2)+`capture_timeout_s=0.3` 与 special_decree/落库 |
+| `qa_d1_decree_normalize_1274:262` `elapsed < 5.0` | 无 | 接缝契约=web 拟诏有界 capture→草案落库，**不**拥有「5s 内」 | 是 | T-wall-elapsed | **缺陷** | **删 elapsed**；保留 `MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S=0.3` 与 directive id/text |
+| `highlight_judge_544:330` `elapsed < 1.0` | 无 | 接缝契约=timeout_s 后无高亮回话，**不**拥有「1s 内 chat 返回」 | 是 | T-wall-elapsed | **缺陷** | **删 elapsed**；保留 `timeout_s=0.05` 生产输入与 answer/空 highlights |
 
 ---
 
@@ -220,21 +225,46 @@ PY
 | `test_audience_pipeline_499.py` | 127,186,221,381,387,451,460,462 | T-barrier / 任务 wait | 缺陷 | bare |
 | `test_beat_orchestration_503.py` | 181,282,909,1673,1691,1756,1808,1895,2383,2391 | T-barrier；657 Barrier 见 H | 缺陷 | bare；657 参与者修正 |
 | `test_chat_stream_failpaths_393.py` | 137,150,168,326,395 | 任务/wait | 缺陷 | bare |
-| `test_cli_backend.py` | 893,1360,1361,1362,1720 | **T-config** 为主（CliChat timeout 透传） | 不打/分项 | 配置保留；非配置 bare |
+| `test_cli_backend.py:893` | `_iter_codex_stream_chunks(..., timeout=0.2)` | T-config / 生产超时形参透传 | **不打** | 保留：被测 API 超时参数 |
+| `test_cli_backend.py:1360` | `CliChat(..., timeout=111)` | T-config | **不打** | 保留 |
+| `test_cli_backend.py:1361` | `CliChat(..., timeout=222)` | T-config | **不打** | 保留 |
+| `test_cli_backend.py:1362` | `CliChat(..., timeout=333)` | T-config | **不打** | 保留 |
+| `test_cli_backend.py:1720` | `CliChat(..., timeout=99)` | T-config | **不打** | 保留 |
 | `test_dossier_links_559.py` | 595 | wait timeout | 缺陷 | bare |
 | `test_faction_brew_637.py` | 316 | T-barrier-to | 缺陷 | 去 Barrier timeout |
 | `test_highlight_judge_544.py` | 49,224,307 | wait timeout | 缺陷 | bare |
 | `test_menu_continue_stream_1195.py` | 130,149,157,188,218,229 | wait/poll | 缺陷 | bare / 无时限 poll |
 | `test_menu_lifecycle_drain_396.py` | 674 | 负向 wait timeout | 缺陷 | 改事件证法 |
 | `test_month_loop_tracer_1468.py` | 219,223,269 | 任务 wait | 缺陷 | bare |
-| `test_pihong_dossier_1490.py` | 4219 | 并发 wait | 缺陷 | 改 join 观测 |
+| `test_pihong_dossier_1490.py:4219` | `f.result(timeout=60)` | T-barrier 类 future 墙钟 | 缺陷 | bare `result()`；抵达+外部 single-flight 见 B（**非** join 等待证） |
 | `test_qa_b3_409_ux.py` | 203 | wait | 缺陷 | bare |
 | `test_qa_c3_secret_order_path_1357_1376.py` | 185 | join timeout | 缺陷 | bare join |
-| `test_qa_t1_extraction_dual_source_1353.py` | 128,129,804,805,844,900,901,948,1121 | wait/join；部分 helper 输入 | 缺陷/输入 | bare；负向 helper 输入保留 |
+| `test_qa_t1:128` | `owner_thread.join(timeout=5)` | T-barrier | **缺陷** | bare `join()` |
+| `test_qa_t1:129` | `ct.join(timeout=5)` | T-barrier | **缺陷** | bare `join()` |
+| `test_qa_t1:804` | `t.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_qa_t1:805` | `et.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_qa_t1:844` | `th.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_qa_t1:900` | `et.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_qa_t1:901` | `lt.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_qa_t1:948` | `wt.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_qa_t1:1121` | `th.join(timeout=1.0)` | T-barrier | **缺陷** | bare `join()` |
 | `test_relation_brew_636.py` | 467,516,524,903 | wait；死枝 | 缺陷 | bare；`release.wait()` |
 | `test_rescript_fanout_656.py` | 38 | Barrier timeout | 缺陷 | bare |
 | `test_runtime_llm_config.py` | 40 | **T-config** | 不打 | 保留 |
-| `test_session_write_queue_1353.py` | 86,87,105,112,185,186,269,270,362,363,413,414,456,457 | wait；`wait_idle(timeout_s=)` 负向输入 | 缺陷/输入 | bare；负向 timeout_s 保留 |
+| `test_session_write_queue:86` | `bt.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:87` | `th.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:105` | `both_waiting.wait(timeout=2.0)` | T-barrier | **缺陷** | bare `wait()` |
+| `test_session_write_queue:112` | `both_waiting.wait(timeout=2.0)` | T-barrier | **缺陷** | bare `wait()` |
+| `test_session_write_queue:185` | `bt.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:186` | `th.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:269` | `lt.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:270` | `bt.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:362` | `th.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:363` | `th2.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:413` | `et.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:414` | `mt.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:456` | `bt.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
+| `test_session_write_queue:457` | `lt.join(timeout=2.0)` | T-barrier | **缺陷** | bare `join()` |
 | `test_settlement_write_guard_393.py` | 349,357,405,414,463,471 | wait/acquire | 缺陷 | bare / nonblocking |
 | `test_web_audience_night_498.py` | 716,762 | wait | 缺陷 | bare |
 
@@ -247,8 +277,8 @@ PY
 | `future.result(timeout=N)` 测侧 | 缺陷 | bare `result()` |
 | `Lock.acquire(timeout=0.3)` | 缺陷 | `acquire(blocking=False)` |
 | `asyncio.wait_for(task, timeout=N)` 等测任务 | 缺陷 | bare await |
-| `q.wait_idle(timeout_s=5)` | 缺陷 | bare |
-| `wait_pending_writes(..., timeout_s=0.05)` 负向 helper | **被测输入** | 合法保留 |
+| `q.wait_idle(timeout_s=5)` 测侧终线 | 缺陷 | bare `wait_idle()`（默认无时限） |
+| `wait_pending_writes(..., timeout_s=0.05)` 负向 stuck 探测（`test_wait_pending_writes_fail_loud_*`） | **被测 helper 输入** | **合法保留**——不在上表十四行 join/wait 内；勿与 barrier join 混判 |
 
 ---
 
@@ -268,7 +298,7 @@ PY
 | 项 | 判定 | 处置 |
 | --- | --- | --- |
 | beat 6× `print("MAIN …")` | 调试残留 | 已剔 |
-| beat 持闸 `worker.join()` | 自锁 | ObservingGate contending；持闸不 join |
+| beat 持闸 `worker.join()` | 自锁 | ObservingLock contending；持闸不 join |
 | beat stream join mock 靠 abandon timeout | 挂 | atomic nullcontext + trail stub |
 | beat phase1 crash drain | 自锁 | close 改 worker 线程 |
 | **beat 657** `Barrier(2)` 含 open 共 3 gen | **错参与者** | **本类已结**：Barrier(2) 仅两 target enter；`join_saw_free == [True, True]` |
@@ -278,6 +308,7 @@ PY
 | relation_brew 死枝 | bare 后死 | `release.wait()` |
 | 失效 `import time` | 死 import | 删；**menu_lifecycle 的 time 供 monkeypatch，保留** |
 | 同步 wait helper 三合一 | 重复 | **本类已结**：`tests/wait_utils.py` |
+| beat/menu 四份 `_ObservingGate` + web_chat `_ObservingWriteGate` | 同构重复 | **合并** → `tests.wait_utils.ObservingLock`（holding 可选）；禁生产钩子/通用锁框架 |
 
 ---
 
@@ -287,7 +318,7 @@ PY
 - **HEAD 不是冻结 revision**；施工后行号可能漂移，对账以 SHA + 命令复现。
 - 生产代码超时、CI job 终线：不在范围。
 - #1726 未读数双实现：已由 **PR #1741 / `32db0d7f1`** 结清；本腿不重做。
-- #1725 typed 结算进度：生产主链已改向；贯通证明落现有 App 入口测试（SSE→progressbar），组件 happy-path 并入 App，组件负向保留。
+- #1725 typed 结算进度：生产主链已改向；贯通证明落现有 App 入口（SSE→ARIA progressbar + `.settlement-lock-stage` 阶段可见）；删 thinking/narrative `textContent` 正文约束；settleStream 3/6·7/7 callback 正向并入 App，组件负向保留。
 
 ---
 

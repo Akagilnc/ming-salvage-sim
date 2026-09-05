@@ -11,35 +11,12 @@ from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
-from tests.wait_utils import wait_until
+from tests.wait_utils import ObservingLock, wait_until
 
 
 def test_drain_and_close_session_waits_for_gate_then_closes():
     contending = threading.Event()
-
-    class _ObservingGate:
-        """Signals drain's close-under-gate acquire when lock is already held."""
-
-        def __init__(self) -> None:
-            self._lock = threading.Lock()
-
-        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
-            if not self._lock.acquire(blocking=False):
-                contending.set()
-                if not blocking:
-                    return False
-                if timeout is None or timeout < 0:
-                    return self._lock.acquire(blocking=True)
-                return self._lock.acquire(blocking=True, timeout=timeout)
-            return True
-
-        def release(self) -> None:
-            self._lock.release()
-
-        def locked(self) -> bool:
-            return self._lock.locked()
-
-    gate = _ObservingGate()
+    gate = ObservingLock(contending)
     closed: list[int] = []
     game = SimpleNamespace(
         _write_gate=gate,
@@ -396,28 +373,7 @@ def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tm
 
 def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
     contending = threading.Event()
-
-    class _ObservingGate:
-        def __init__(self) -> None:
-            self._lock = threading.Lock()
-
-        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
-            if not self._lock.acquire(blocking=False):
-                contending.set()
-                if not blocking:
-                    return False
-                if timeout is None or timeout < 0:
-                    return self._lock.acquire(blocking=True)
-                return self._lock.acquire(blocking=True, timeout=timeout)
-            return True
-
-        def release(self) -> None:
-            self._lock.release()
-
-        def locked(self) -> bool:
-            return self._lock.locked()
-
-    gate = _ObservingGate()
+    gate = ObservingLock(contending)
     closed: list[int] = []
     killed: list[object] = []
     fake_game = SimpleNamespace(

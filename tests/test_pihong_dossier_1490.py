@@ -4201,19 +4201,19 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     }]
     turn_before = int(state.turn)
 
-    # 第二路须抵达实际 single-flight 等待接缝，不是仅 _begin_settlement_entry 入口记账。
-    # 诊断：B 在 A 的 join_retained 窗内卡在 entry 的 auto_close（等 A 召见 scene/夜在飞），
-    # 而非并发进入 join_retained。故在 gen 仍持 release 时观测 B 进入 auto_close。
-    second_at_auto_close = threading.Event()
-    real_auto_close = web_app._auto_close_open_night_gate_free
+    # 本案契约：并发 HTTP 同 body → 外部 single-flight（单 origin body / 单 chat_turn / 单月推进）。
+    # 诊断：B 不能与 A 并发进入 join_retained——A 持 summon gen 时 B 只到 settlement entry；
+    # auto_close 可能挡住 B 等夜收，但绕过 auto_close 外部断言仍绿，故**不**把 auto_close
+    # 入口观察叫 single-flight 等待证，也**不**给生产添等待。仅证第二请求在 A 持 gen 时抵达。
+    second_arrived = threading.Event()
+    real_begin = web_app._begin_settlement_entry
 
-    def _observe_auto_close(game, **kwargs):
-        # A 已 start gen 且未放行 → 此时进入 auto_close 的是 B 的 entry 等待接缝。
-        if started.is_set() and not release.is_set():
-            second_at_auto_close.set()
-        return real_auto_close(game, **kwargs)
+    def _observe_begin(game):
+        real_begin(game)
+        if int(getattr(game, "_settlement_entry_inflight", 0) or 0) >= 2:
+            second_arrived.set()
 
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _observe_auto_close)
+    monkeypatch.setattr(web_app, "_begin_settlement_entry", _observe_begin)
 
     def _post():
         return asyncio.run(_post_resolve(body))
@@ -4222,7 +4222,7 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
         f1 = pool.submit(_post)
         started.wait()
         f2 = pool.submit(_post)
-        second_at_auto_close.wait()  # B 已进 auto_close，仍依赖 A 的 scene 终态
+        second_arrived.wait()  # 抵达证明：B 已进 entry，A 仍持 gen（非等待接缝主张）
         release.set()
         results = [f.result() for f in (f1, f2)]
 
