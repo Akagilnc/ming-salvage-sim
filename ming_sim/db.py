@@ -13163,7 +13163,8 @@ class GameDB:
         def _reject(raw_item: object, reason: str, category: str) -> None:
             # 无外层归属不得无痕继续（0150-D2/D3；#1745 删自有 collector 旁路）。
             if rejection_collector is None:
-                raise ValueError(
+                from ming_sim.applier import RejectionCollectorRequired
+                raise RejectionCollectorRequired(
                     "dossier_reconciliations 拒收须由外层 RejectionCollector 归属"
                 )
             # ADR 0015 F1：RejectedItem.item 恒 dict；非 dict 包装 raw_value。
@@ -14767,7 +14768,8 @@ class GameDB:
             from ming_sim.applier import Provenance, RejectedItem
             # 0150-D2 / #1745：无 owns_rejection_collector 自建；拒收归属外层 collector。
             if rejection_collector is None:
-                raise ValueError(
+                from ming_sim.applier import RejectionCollectorRequired
+                raise RejectionCollectorRequired(
                     "executor_routing 拒收须由外层 RejectionCollector 归属"
                 )
             rid = str(rejected_entry.get("region_id") or "")
@@ -15099,7 +15101,8 @@ class GameDB:
             # 0150-D2 / #1745：无 owns_rejection_collector 自建；拒收归属外层 collector。
             # Admission rejection：不落案卷；flush/commit/mirror 由外层 owner 负责。
             if rejection_collector is None:
-                raise ValueError(
+                from ming_sim.applier import RejectionCollectorRequired
+                raise RejectionCollectorRequired(
                     "executor_routing 拒收须由外层 RejectionCollector 归属"
                 )
             rejection_collector.record(
@@ -18608,8 +18611,9 @@ class GameDB:
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
-                    # 0150-D2 / #1745：collector 归属缺口不得吞成 pending failed（拒收无痕）。
-                    if "RejectionCollector" in str(exc):
+                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
+                    from ming_sim.applier import RejectionCollectorRequired
+                    if isinstance(exc, RejectionCollectorRequired):
                         raise
                     rejection = getattr(exc, "dossier_link_rejection", None)
                     if rejection is not None:
@@ -18788,8 +18792,9 @@ class GameDB:
                 except Exception as exc:
                     # #654 r3-C.2 路1：directive 特路与通用分支同款——回滚后标 failed，不崩结算
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    # 0150-D2 / #1745：collector 归属缺口不得吞成 pending failed。
-                    if "RejectionCollector" in str(exc):
+                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
+                    from ming_sim.applier import RejectionCollectorRequired
+                    if isinstance(exc, RejectionCollectorRequired):
                         raise
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?",

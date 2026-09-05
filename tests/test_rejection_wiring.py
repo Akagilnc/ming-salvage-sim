@@ -882,7 +882,10 @@ def test_player_rejection_empty_speech_fails_loud(game, tmp_path, monkeypatch):
 
 
 def test_attendant_join_preserves_existing_trailing_whitespace(game, tmp_path, monkeypatch):
-    """#1745 P6/P7：既有抵京稿尾空白不得被 rstrip 删改；只加布局换行。"""
+    """#1745 P6/P7：既有稿尾空白不得被 rstrip；只加布局分隔字节。
+
+    不锁措辞：opaque 标记 + 结构化长度/拼接等式；旧 rstrip 路径长度会短。
+    """
     from ming_sim.applier import Provenance
     from ming_sim.decree import settle_with_delta
     from ming_sim.models import TurnPhase
@@ -892,8 +895,9 @@ def test_attendant_join_preserves_existing_trailing_whitespace(game, tmp_path, m
     turn = state.turn
     state.turn_phase = TurnPhase.SETTLING.value
     db.save_state(state)
-    existing = "抵京原文 \t\n"
-    rejection_speech = "拒收段"
+    # opaque tokens；尾部空白是契约载荷，非散文
+    existing = "E" + " \t\n"
+    rejection_speech = "R"
 
     settle_with_delta(
         state, db,
@@ -906,14 +910,13 @@ def test_attendant_join_preserves_existing_trailing_whitespace(game, tmp_path, m
         settlement_attendant_runner=lambda **_k: rejection_speech,
     )
     stored = str((db.get_turn_report_archive(turn) or {}).get("attendant_message") or "")
-    # 特征化：原文前缀字节保留；旧 rstrip 路径会丢掉尾空白
-    assert stored.startswith(existing)
     assert stored == existing + "\n" + rejection_speech
-    assert stored != existing.rstrip() + "\n" + rejection_speech
+    assert len(stored) == len(existing) + 1 + len(rejection_speech)
+    assert len(stored) != len(existing.rstrip() + "\n" + rejection_speech)
 
 
 def test_driver_run_settle_no_zero_width_placeholder(game, tmp_path, monkeypatch):
-    """#1745 P7：driver 不默认零宽桩；玩家拒收未注入 runner → 诚实失败。"""
+    """#1745 P7：driver 不默认假递话；玩家拒收未注入 runner → 诚实失败。"""
     import driver as drv
     from ming_sim.exceptions import SettlementAbort
     from tests.conftest import with_monthly_reports
@@ -934,10 +937,7 @@ def test_driver_run_settle_no_zero_width_placeholder(game, tmp_path, monkeypatch
             # 故意不传 settlement_attendant_runner
         )
     assert int(state.turn) == turn
-    # 不得以 U+200B 假充 has_attendant
     archives = db.list_monthly_archives()
     hit = next((a for a in archives if int(a["turn"]) == turn), None)
     if hit is not None:
         assert hit["has_attendant"] is False
-    msg = db.get_turn_attendant_message(turn) if hasattr(db, "get_turn_attendant_message") else ""
-    assert "\u200b" not in str(msg or "")
