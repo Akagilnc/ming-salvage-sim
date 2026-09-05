@@ -631,9 +631,22 @@ def test_canonicalize_extraction_public_api():
 
 # ── ADR 0008 决定 5：拒收玩家可见性（player_decree/hitl → 邸报 in-world 提示）──
 
-def test_run_settle_player_sourced_rejection_durable_structured(game):
-    """driver 默认 player_decree：拒收四字段 + 来源门 + attendant 槽路由（0150-D5-b）。"""
+def test_run_settle_player_sourced_rejection_durable_structured(game, monkeypatch):
+    """driver 默认 player_decree：拒收四字段 + 来源门 + attendant 槽路由（0150-D5-b）。
+
+    runner 走真实 run_settlement_attendant_message；替身在 agent 边界。
+    """
+    import types
+    import ming_sim.decree as decree_mod
     from ming_sim.applier import Provenance
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+
+    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
+
+    def _via_real_runner(**kw):
+        return decree_mod.run_settlement_attendant_message(
+            types.SimpleNamespace(), **kw,
+        )
 
     db, state, content = game
     before = state.turn
@@ -641,6 +654,7 @@ def test_run_settle_player_sourced_rejection_durable_structured(game):
         db, state, content,
         {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人甲", "动作": "任命", "office": "首辅", "reason": "测试拒收"}]},
         narrative="本月邸报。",
+        settlement_attendant_runner=_via_real_runner,
     )
     rows = list(db.conn.execute(
         "SELECT section, category, source FROM rejection_reports WHERE turn=?", (before,),

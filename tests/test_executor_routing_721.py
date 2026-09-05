@@ -547,7 +547,8 @@ def test_create_dossier_unmapped_without_collector_fails_loud_no_self_build(env)
     before_n = 0
     if before_reports is not None:
         before_n = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
-    with pytest.raises(ValueError, match="RejectionCollector"):
+    from ming_sim.applier import RejectionCollectorRequired
+    with pytest.raises(RejectionCollectorRequired):
         _create(db, state, category="修仙", commit=True)
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
     # 不得留下自建 flush 的拒收行
@@ -588,7 +589,8 @@ def test_commit_pending_unmapped_without_collector_fails_loud(env):
         transaction_category="修仙",
     )
     assert pending_id > 0
-    with pytest.raises(ValueError, match="RejectionCollector"):
+    from ming_sim.applier import RejectionCollectorRequired
+    with pytest.raises(RejectionCollectorRequired):
         db.commit_pending_actions(
             state, content=content, action_ids=[pending_id],
         )

@@ -275,6 +275,12 @@ class ApplyContext:
 # 决定 5：拒收收集器
 # ---------------------------------------------------------------------------
 
+class RejectionCollectorRequired(ValueError):
+    """段/核需 record 拒收但未获外层 RejectionCollector（0150-D2 / #1745）。
+
+    typed 控制流标记：catch 只认本类，禁止解析异常散文。
+    """
+
 _CREATE_REJECTION_REPORTS = """
 CREATE TABLE IF NOT EXISTS rejection_reports (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,

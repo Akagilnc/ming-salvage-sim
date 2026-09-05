@@ -361,7 +361,8 @@ def test_recon_section_non_list_rejected_other_sections_land(game):
 def test_recon_domain_reject_without_collector_fails_loud(game):
     """直调无外层 collector 时域级拒收不得无痕继续（形状归 sanitize 独家）。"""
     db, state, _content = game
-    with pytest.raises(ValueError, match="RejectionCollector"):
+    from ming_sim.applier import RejectionCollectorRequired
+    with pytest.raises(RejectionCollectorRequired):
         db.record_monthly_grant_reconciliations(
             state.turn, [{"dossier_id": 999999, "arrived_amount": 1}],
         )
