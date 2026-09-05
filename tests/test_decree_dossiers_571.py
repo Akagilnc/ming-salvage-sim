@@ -358,6 +358,8 @@ def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypat
         if row["secret_order_id"] == secret_order_id
     )
     # prepare first; freeze happens at settle start (post-pre_settle, engine-aligned).
+    from tests.section_rejection_helpers import run_settle as settle_after_prepare
+
     driver.run_prepare(db, state, content)
     created = {}
     real_persist = driver.persist_resolve_context
@@ -380,7 +382,7 @@ def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypat
         {"dossier_id": dossier_id, "character_id": worker, "tier": "协办", "delegator_id": lead}
         for dossier_id in (visible_id, closed_id, secret_id)
     ]
-    driver.run_settle(
+    settle_after_prepare(
         db, state, content,
         covering_monthly_extract(None, db, state)[0] | {"dossier_participants": additions},
     )
@@ -1367,6 +1369,8 @@ def test_rejected_narrative_dossier_is_not_an_executable_or_extractor_origin(
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
 
     result = decree_mod.resolve_directives(
         state, db, None, None, [object()], raw_decree, content=content,

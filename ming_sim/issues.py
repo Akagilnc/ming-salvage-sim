@@ -9411,12 +9411,15 @@ def apply_score_extraction(
         except Exception as exc:
             applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
 
+    # report_section 保留 sanitize 原 section，供 _collect_inline_rejections 一次归属
+    # （0015-D6；禁止落入 validate_shape_rejections 假 section，#1745）。
     validate_rejection_items = [
         {
             "rejected": True,
             "item": item,
             "reason": reason,
             "category": "invalid_shape",
+            "report_section": _section,
         }
         for _section, item, reason in validate_rejections
     ]

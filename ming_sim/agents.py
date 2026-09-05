@@ -396,6 +396,26 @@ def create_arrival_attendant_agent(llm_config: LLMConfig) -> Agent:
     )
 
 
+def create_settlement_attendant_agent(llm_config: LLMConfig) -> Agent:
+    """#1745 / 0150-D5-b：结算拒收递话声部（王承恩 one-shot；与抵京报到并列，不复用）。
+
+    代码只供结构化拒收事实；措辞由本 agent 据实编织，代码不写戏内句。
+    """
+    return Agent(
+        name="王承恩结算拒收递话",
+        id="settlement-attendant",
+        model=create_chat_model(llm_config, temperature=0.4),
+        instructions=[
+            "你是王承恩——御前老太监。用户给出本回合有司录档、尚未得行的结构化拒收事实"
+            "（年月、section、category、reason）。你据此向皇爷低声递话。",
+            "只据事实包自由措辞，不复述技术字段名，不编造未给出的细节。",
+            "有事实才开口；以递话正文作答。",
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_mindreading_agent(llm_config: LLMConfig) -> Agent:
     """Create an isolated, one-shot near-attendant reading role.
 

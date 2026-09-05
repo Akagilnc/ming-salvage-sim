@@ -30,7 +30,8 @@ def env(game):
 
 
 def _create(db, state, *, action="assignment", category="清丈", payload=None,
-            target="validation", participants=None, commit=True):
+            target="validation", participants=None, commit=True,
+            rejection_collector=None):
     body = dict(payload or {})
     if category is not None:
         body["transaction_category"] = category
@@ -43,6 +44,7 @@ def _create(db, state, *, action="assignment", category="清丈", payload=None,
         payload=body,
         participants=participants,
         commit=commit,
+        rejection_collector=rejection_collector,
     )
 
 
@@ -337,9 +339,24 @@ def test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier(en
 
 
 def test_unmapped_rejection_rolls_back_with_uncommitted_dossier(env):
+    """#1745：commit=False 须外层 collector；flush 后随 outer atomic 回滚无残留。"""
+    from ming_sim.applier import RejectionCollector
+
     db, state, _ = env
-    assert _create(db, state, category="修仙", commit=False) == 0
-    db.conn.rollback()
+    collector = RejectionCollector()
+    try:
+        with atomic(db):
+            assert _create(
+                db, state, category="修仙", commit=False,
+                rejection_collector=collector,
+            ) == 0
+            collector.flush_to_db(db)
+            assert db.conn.execute(
+                "SELECT COUNT(*) FROM rejection_reports",
+            ).fetchone()[0] == 1
+            raise RuntimeError("force rollback")
+    except RuntimeError:
+        pass
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
     table = db.conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
@@ -519,3 +536,72 @@ def test_national_fanout_reuses_central_bi_ziyan(env):
     )
     assert single["leads"] == []
     assert (single.get("signal") or {}).get("code") == "idle_start"
+
+
+def test_create_dossier_unmapped_without_collector_fails_loud_no_self_build(env):
+    """#1745 / 0150-D2：commit=True 亦不得自建 collector；无外层 owner → 响亮失败。"""
+    db, state, _ = env
+    before_reports = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
+    ).fetchone()
+    before_n = 0
+    if before_reports is not None:
+        before_n = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
+    from ming_sim.applier import RejectionCollectorRequired
+    with pytest.raises(RejectionCollectorRequired):
+        _create(db, state, category="修仙", commit=True)
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
+    # 不得留下自建 flush 的拒收行
+    table = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
+    ).fetchone()
+    if table is not None:
+        assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == before_n
+
+
+def test_create_dossier_unmapped_with_outer_collector_records_once(env, tmp_path):
+    """#1745：外层 collector 归属 → 一次 record，外层 flush/mirror。"""
+    from ming_sim.applier import RejectionCollector
+
+    db, state, _ = env
+    mirror = tmp_path / "outer-own.jsonl"
+    collector = RejectionCollector()
+    assert _create(
+        db, state, category="修仙", commit=True, rejection_collector=collector,
+    ) == 0
+    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
+    # 尚未 flush：外层负责
+    collector.flush_to_db(db)
+    db.conn.commit()
+    collector.mirror_to_jsonl(str(mirror))
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='executor_routing'",
+    ).fetchone()[0] == 1
+    assert mirror.exists()
+    assert "duty_route_unmapped" in mirror.read_text(encoding="utf-8")
+
+
+def test_commit_pending_unmapped_without_collector_fails_loud(env):
+    """#1745：真实入口 commit_pending_actions 无 collector + 路由拒收 → 响亮，不标 failed 无痕。"""
+    db, state, content = env
+    pending_id = stage_assignment_candidate(
+        db, state.turn, "陈新甲", text="修仙", title="修仙",
+        transaction_category="修仙",
+    )
+    assert pending_id > 0
+    from ming_sim.applier import RejectionCollectorRequired
+    with pytest.raises(RejectionCollectorRequired):
+        db.commit_pending_actions(
+            state, content=content, action_ids=[pending_id],
+        )
+    # pending 不得被吞成 failed 而无拒收行
+    status = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["status"]
+    assert status == "pending"
+    table = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
+    ).fetchone()
+    assert table is None or db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports"
+    ).fetchone()[0] == 0
