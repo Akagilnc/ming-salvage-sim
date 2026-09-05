@@ -2347,6 +2347,11 @@ class GameSession:
                 payload["covert_task"] = frozen
             if contract_error:
                 payload["contract_error"] = contract_error
+            if so.get("extract_failed"):
+                payload["extract_failed"] = True
+            raw_excerpt = str(so.get("extract_raw") or "").strip()
+            if raw_excerpt:
+                payload["extract_raw"] = raw_excerpt
             return self.db.stage_pending_action(
                 self.state.turn, kind="secret_order", action="新建",
                 minister_name=minister_name, target_id=None,
