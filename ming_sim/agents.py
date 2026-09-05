@@ -285,11 +285,13 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
                     data = json.loads(first_block)
                 except json.JSONDecodeError as error:
                     raise LLMContractError(
-                        f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}"
+                        f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}",
+                        raw_value=raw,
                     ) from error
             else:
                 raise LLMContractError(
-                    f"{stage} 输出不是合法 JSON\n原始输出：{raw[:800]}"
+                    f"{stage} 输出不是合法 JSON\n原始输出：{raw[:800]}",
+                    raw_value=raw,
                 )
     if not isinstance(data, dict):
         abort_llm_contract(stage, "顶层必须是 JSON object", raw)

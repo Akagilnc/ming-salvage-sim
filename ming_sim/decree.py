@@ -335,6 +335,26 @@ def _collect_compliant_promulgation_items(
     return good
 
 
+def _merge_compliant_promulgation_items(
+    accumulated: List[Dict[str, object]],
+    fresh: Sequence[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    """跨补交轮次并集保留已合规判决：先到先留，后轮不得冲掉前轮好判（#1753）。"""
+    by_id: Dict[int, Dict[str, object]] = {}
+    order: List[int] = []
+    for row in list(accumulated) + list(fresh):
+        if not isinstance(row, dict):
+            continue
+        dossier_id = row.get("dossier_id")
+        if not isinstance(dossier_id, int):
+            continue
+        if dossier_id in by_id:
+            continue
+        by_id[dossier_id] = dict(row)
+        order.append(dossier_id)
+    return [by_id[item] for item in order]
+
+
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
     payload = row.get("payload")
     if isinstance(payload, dict):
@@ -544,7 +564,15 @@ def llm_promulgation_verdicts(
     else:
         prompt = context_json
     raw = run_agent_text(judge, prompt, tag="promulgation-judge")
-    parsed = parse_agent_json(raw, "颁布判官")
+    try:
+        parsed = parse_agent_json(raw, "颁布判官")
+    except LLMContractError as parse_exc:
+        # 解析错必须保住原始响应文本，供补交回喂与 error pack（#1753）。
+        if parse_exc.raw_value is None:
+            raise LLMContractError(
+                str(parse_exc), raw_value=raw,
+            ) from parse_exc
+        raise
     verdicts = parsed.get("verdicts") if isinstance(parsed, dict) else None
     return _require_promulgation_verdict_list(verdicts, raw_value=parsed)
 
@@ -1337,12 +1365,16 @@ def resolve_directives(
                                 bad_outputs.append(list(attempt_batch))
                             else:
                                 bad_outputs.append(attempt_batch)
-                            compliant_verdicts = _collect_compliant_promulgation_items(
-                                attempt_batch,
-                                db,
-                                proposed_modes=proposed_modes,
-                                prepared_context=prepared_context,
-                                reviewed_dossier_ids=reviewed_dossier_ids,
+                            # 跨轮并集：前轮已合规判决不得被后轮缺席冲掉。
+                            compliant_verdicts = _merge_compliant_promulgation_items(
+                                compliant_verdicts,
+                                _collect_compliant_promulgation_items(
+                                    attempt_batch,
+                                    db,
+                                    proposed_modes=proposed_modes,
+                                    prepared_context=prepared_context,
+                                    reviewed_dossier_ids=reviewed_dossier_ids,
+                                ),
                             )
                             if attempt >= heal_retries:
                                 raise LLMContractError(
