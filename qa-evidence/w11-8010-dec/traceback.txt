@@ -1,0 +1,30 @@
+Traceback (most recent call last):
+  File "/workspace/Ming_LLM/ming_sim/decree.py", line 1913, in _settle_after_narrative
+    extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
+                                                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        extractors, db, state, effective_narrative, decree_text=executable_decree_text, sanitizer=sanitizer,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        side_leg=side_leg,
+        ^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/workspace/Ming_LLM/ming_sim/simulation.py", line 1936, in extract_scores_by_modules_with_agno
+    raws = [f.result() for f in raw_futures]
+            ~~~~~~~~^^
+  File "/usr/lib/python3.13/concurrent/futures/_base.py", line 456, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/usr/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/workspace/Ming_LLM/ming_sim/simulation.py", line 1910, in _run_raw
+    return run_agent_text(agents[module], payload_json, tag=f"extractor/{module}")
+  File "/workspace/Ming_LLM/ming_sim/agents.py", line 97, in run_agent_text
+    text = extract_agent_text(output)
+  File "/workspace/Ming_LLM/ming_sim/llm_model.py", line 301, in extract_agent_text
+    raise LLMUnavailable(
+    ...<3 lines>...
+    )
+ming_sim.exceptions.LLMUnavailable: 通传未达，请稍后再召。
