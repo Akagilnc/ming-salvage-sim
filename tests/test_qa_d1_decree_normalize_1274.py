@@ -191,13 +191,15 @@ def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
 def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch):
     """非空载：LLM 慢/死时有界返回 special_decree，草案仍落库。
 
-    受控释放 + 因果记录：capture 返回时尚未释放 extractor；释放后才终态。
-    慢输入由 hold 屏障提供（触发生产 timeout）；不赌 sleep 结束前采样窗。
+    等待图：capture 线程等 shutdown；extractor 等 allow_finish；主线程拥有释放。
+    cleanup 接缝进入时记录 wait（join 前）——wait=True 变异在此断言红并可 finally 释放收尾；
+    不靠外部杀进程。hold 证明返回时 extractor 未终态；无 sleep 观察窗、无 causal 复述。
     """
     import threading
 
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
+    from tests.wait_utils import wait_until
 
     db, state, content = game
     text = "着户部核太仓实存，边饷京营优先发放。"
@@ -205,30 +207,62 @@ def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch)
     allow_finish = threading.Event()
     extractor_entered = threading.Event()
     extractor_finished = threading.Event()
-    # 主线程因果序：capture 返回 ≺ 释放 ≺ 观察到 extractor 终态
-    causal: list[str] = []
+    # cleanup 接缝进入瞬间的 wait 旗（join 前）；晚观察不改值。
+    shutdown_wait_flags: list[bool] = []
 
     def slow_extract(*_a, **_k):
         extractor_entered.set()
         try:
-            # 合法慢输入：受控 hold，触发生产 timeout；终态由测试释放，不兼负向 sleep 窗。
+            # 合法慢输入：受控 hold，触发生产 timeout；终态由测试释放。
             allow_finish.wait()
             return {"draft_action": "拟旨", "dossier_action_type": "policy",
                     "target_kind": "issue", "target_id": "x"}
         finally:
             extractor_finished.set()
 
-    monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
+    _BasePool = cli_backend.ThreadPoolExecutor
 
+    class _CleanupPool(_BasePool):
+        def shutdown(self, wait=True, *, cancel_futures=False):
+            # 进入 cleanup 即记 wait，先于任何 join——wait=True 可被主线程断言红。
+            shutdown_wait_flags.append(bool(wait))
+            return super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
+    monkeypatch.setattr(cli_backend, "ThreadPoolExecutor", _CleanupPool)
+
+    payload_box: list[dict] = []
+    error_box: list[BaseException] = []
+    capture_done = threading.Event()
+
+    def _run_capture() -> None:
+        try:
+            payload_box.append(
+                cli_backend.capture_manual_directive_payload(
+                    text, None, db=db, content=content, capture_timeout_s=0.3,
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001
+            error_box.append(exc)
+        finally:
+            capture_done.set()
+
+    worker = threading.Thread(target=_run_capture, name="qa-d1-capture")
+    worker.start()
     try:
-        payload = cli_backend.capture_manual_directive_payload(
-            text, None, db=db, content=content, capture_timeout_s=0.3,
+        extractor_entered.wait()
+        # shutdown 接缝已进入即可判 wait；不必等 capture 返回（打破互等）。
+        wait_until(lambda: len(shutdown_wait_flags) > 0)
+        assert shutdown_wait_flags == [False], (
+            "production cleanup must shutdown(wait=False); "
+            f"got {shutdown_wait_flags!r}"
         )
+        capture_done.wait()
+        assert not error_box, error_box
+        payload = payload_box[0]
         # 生产 capture_timeout_s 输入保留；旁侧 elapsed 墙钟证据删除。
         assert payload["dossier_action_type"] == "special_decree"
-        causal.append("capture_returned")
-        # 返回时仍持有释放屏障 → extractor 不能自行终态（与采样调度无关）。
-        extractor_entered.wait()
+        # 仍持有释放屏障：capture 已返回且 extractor 未终态。
         assert not allow_finish.is_set()
         assert not extractor_finished.is_set()
 
@@ -241,30 +275,27 @@ def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch)
         assert dv.id > 0
         assert any(r["text"] == text for r in db.list_directives(state))
 
-        # 显式释放后才见终态；证明返回 ≺ 释放 ≺ 终态。
         allow_finish.set()
-        causal.append("released")
         extractor_finished.wait()
-        causal.append("extractor_finished")
-        assert causal == [
-            "capture_returned", "released", "extractor_finished",
-        ]
     finally:
-        # 失败路径也必须真正释放再收尾；bare finished.wait 不是释放动作。
+        # 失败／变异路径也必须真正释放再收尾（含 wait=True 卡在 join 时）。
         allow_finish.set()
         extractor_finished.wait()
+        worker.join()
 
 
 def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
     """POST /api/directives：capture 挂起时仍经生产 timeout 返回且草案落库。
 
-    受控释放 + 因果记录：API 返回时尚未释放 extractor；释放后才终态。
+    同 capture 案：cleanup 接缝记 wait；hold 区分 API 返回与 extractor 终态；
+    finally 可释放收尾。
     """
     import threading
 
     import ming_sim.cli_backend as cli_backend
     import web_app
     from ming_sim.session import GameSession
+    from tests.wait_utils import wait_until
 
     db, state, content = game
     text = "着户部核太仓实存，不得加派于民。"
@@ -272,18 +303,26 @@ def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
     allow_finish = threading.Event()
     extractor_entered = threading.Event()
     extractor_finished = threading.Event()
-    causal: list[str] = []
+    shutdown_wait_flags: list[bool] = []
 
     def slow_extract(*_a, **_k):
         extractor_entered.set()
         try:
-            # 合法慢输入：受控 hold，触发生产 timeout；终态由测试释放，不兼负向 sleep 窗。
+            # 合法慢输入：受控 hold，触发生产 timeout；终态由测试释放。
             allow_finish.wait()
             return {"draft_action": "无"}
         finally:
             extractor_finished.set()
 
+    _BasePool = cli_backend.ThreadPoolExecutor
+
+    class _CleanupPool(_BasePool):
+        def shutdown(self, wait=True, *, cancel_futures=False):
+            shutdown_wait_flags.append(bool(wait))
+            return super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
     monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
+    monkeypatch.setattr(cli_backend, "ThreadPoolExecutor", _CleanupPool)
     # 压短默认有界，避免测时 20s
     monkeypatch.setattr(cli_backend, "MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S", 0.3)
 
@@ -301,27 +340,45 @@ def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
     )
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
 
+    result_box: list[dict] = []
+    error_box: list[BaseException] = []
+    api_done = threading.Event()
+
+    def _run_api() -> None:
+        try:
+            result_box.append(asyncio.run(web_app.api_create_directive(
+                web_app.DirectiveRequest(text=text, notes="朝堂QA拟诏"),
+            )))
+        except BaseException as exc:  # noqa: BLE001
+            error_box.append(exc)
+        finally:
+            api_done.set()
+
+    worker = threading.Thread(target=_run_api, name="qa-d1-api")
+    worker.start()
     try:
-        result = asyncio.run(web_app.api_create_directive(
-            web_app.DirectiveRequest(text=text, notes="朝堂QA拟诏"),
-        ))
+        extractor_entered.wait()
+        wait_until(lambda: len(shutdown_wait_flags) > 0)
+        assert shutdown_wait_flags == [False], (
+            "API cleanup must shutdown(wait=False); "
+            f"got {shutdown_wait_flags!r}"
+        )
+        api_done.wait()
+        assert not error_box, error_box
+        result = result_box[0]
         # 生产 MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S 输入保留；旁侧 elapsed 删除。
         assert result["directive"]["id"] > 0
         assert result["directive"]["text"] == text
         assert db.list_directives(state)
-        causal.append("api_returned")
-        extractor_entered.wait()
         assert not allow_finish.is_set()
         assert not extractor_finished.is_set()
 
         allow_finish.set()
-        causal.append("released")
         extractor_finished.wait()
-        causal.append("extractor_finished")
-        assert causal == ["api_returned", "released", "extractor_finished"]
     finally:
         allow_finish.set()
         extractor_finished.wait()
+        worker.join()
 
 
 def test_normal_capture_path_unchanged(game, monkeypatch):

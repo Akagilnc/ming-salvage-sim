@@ -151,11 +151,14 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
 
     q = game._runtime_write_queue()
     barrier_claimed = threading.Event()
+    # stream 终态或 claim 成功均可唤醒 probe——禁只等成功屏障而吞 stream_error。
+    probe_wake = threading.Event()
     real_claim = q.claim_barrier
 
     def _claim_and_signal():
         ticket = real_claim()
         barrier_claimed.set()
+        probe_wake.set()
         return ticket
 
     q.claim_barrier = _claim_and_signal  # type: ignore[method-assign]
@@ -179,12 +182,17 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
             asyncio.run(_go())
         except BaseException as exc:  # noqa: BLE001
             stream_error.append(exc)
+        finally:
+            probe_wake.set()
 
     def _probe_when_barrier_open() -> None:
         # 释放所有权在 probe finally：断言失败不得绕过 trail_release，
         # 否则主线程先 join stream 时外层 finally 不可达。
         try:
-            barrier_claimed.wait()
+            probe_wake.wait()
+            if not barrier_claimed.is_set():
+                # stream 已终态且未领屏障：不探针，交主线程传播 stream_error。
+                return
             # hold 窗内：屏障已开、尾随未放行 → 召对写入口必须外部可见拒。
             assert q.has_open_barrier(), "预领屏障后 has_open_barrier 应为 True"
             async def _probe() -> None:
@@ -231,10 +239,11 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
         q.claim_barrier = real_claim  # type: ignore[method-assign]
         restore_trails()
 
-    # 原异常在双方退出后传播（不在 join 前吞掉）。
+    # 原异常在双方退出后传播（不在 join 前吞掉；probe 不再只等成功屏障）。
     if probe_error:
         raise probe_error[0]
-    assert not stream_error, stream_error
+    if stream_error:
+        raise stream_error[0]
     assert not stream_thread.is_alive(), "stream 未在期限内结束"
     assert not probe_thread.is_alive(), "probe 未在期限内结束"
     assert barrier_claimed.is_set(), "未领 court_break 屏障票"

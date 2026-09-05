@@ -128,10 +128,16 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
     async def _go():
-        # 并行：放行 phase2 前先观测展示态
+        # 并行：放行 phase2 前先观测展示态。
+        # stop：stream/drain 终态关联——失败路径须能让 watcher 退出并释放 hold。
+        stop = threading.Event()
+
         async def _watch():
-            # bare 事件屏障；禁 run_in_executor(wait, 墙钟)。
-            await asyncio.get_event_loop().run_in_executor(None, phase2_started.wait)
+            # 可取消异步轮询（禁 executor 上 Event.wait：cancel 打不穿）。
+            while not phase2_started.is_set() and not stop.is_set():
+                await asyncio.sleep(0)
+            if not phase2_started.is_set():
+                return
             payload = runtime.state_payload()
             assert payload["turn"]["settlement_display"] is True
             for k in MONTH_OPEN_KEYS:
@@ -139,9 +145,16 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
             release_phase2.set()
 
         watch_task = asyncio.create_task(_watch())
-        serialized = await _drain_resolve_sse([{"label": "发"}])
-        await watch_task
-        return serialized
+        try:
+            serialized = await _drain_resolve_sse([{"label": "发"}])
+            await watch_task
+            return serialized
+        finally:
+            # 失败/早退：关联终态 + 真正释放 hold，watcher 可退出。
+            stop.set()
+            release_phase2.set()
+            if not watch_task.done():
+                await watch_task
 
     serialized = asyncio.run(_go())
     assert entered["n"] == 1
