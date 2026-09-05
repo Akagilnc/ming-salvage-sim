@@ -156,6 +156,8 @@ class ChatTurnResult:
     pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
     # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
     directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
+    # Typed decree validation recovery (failed_fields + LLM report); sync/retry must project it.
+    decree_validation_failure: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -1943,6 +1945,7 @@ class GameSession:
         preclassified_intent: Optional[Any] = None,
         confirm_target_ids: Optional[set[int]] = None,
         explicit_secret_order: bool = False,
+        prior_pending_action_failures: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """CLI 后端（无 function-calling）会话落地的【唯一真源】，session.chat 非流式路径与
         web streaming 路径共用，杜绝两边逻辑漂移（CMR F3 / codexC-1）。
@@ -2258,6 +2261,12 @@ class GameSession:
             # 抽取器（LLM 调用）一并跳过。
             return out
         # generic 拟旨 fallback 必须等 typed materialize 的真实结果；候选形状不代表成案。
+        # Tool-stage directive failure already decided this lane — do not re-stage via generic.
+        # Do not fake has_directive; only suppress the matching generic directive fallback.
+        prior_directive_failed = any(
+            str((failure or {}).get("kind") or "") == "directive"
+            for failure in (prior_pending_action_failures or [])
+        )
         needs_draft_fallback = False
         needs_secret_fallback = (
             not has_directive
@@ -2281,7 +2290,7 @@ class GameSession:
                     minister_name, self.state.turn))
         else:
             acts = {"decree_text": None, "secret_order": None}
-        if not has_directive and acts["decree_text"]:
+        if not has_directive and not prior_directive_failed and acts["decree_text"]:
             # #502 L2：前缀「拟旨如下：」显式拟旨走单一 seam——已有候选则新拟独立一道，不压扁前道。
             # #1731：mode 只接分类器 typed token / None，玩家散文永不入 typed 槽。
             out["pending_action_id"] = self.db.stage_explicit_directive(
@@ -2346,7 +2355,9 @@ class GameSession:
         run_materialize_pipeline(mat_ctx)
         if (
             not has_directive
+            and not prior_directive_failed
             and not out.get("pending_action_id")
+            and not out.get("decree_validation_failure")
             and message_text.startswith(_DRAFT_PREFIXES)
         ):
             fallback = resolve_minister_actions(
@@ -2365,17 +2376,14 @@ class GameSession:
         return out
 
     @staticmethod
-    def _ensure_unknown_participant_report_cue(answer: str, report: str) -> str:
-        """#1274 V-1：附上 LLM 已产的查无此人回禀（报告正文本身禁在此写死台词）。"""
-        text = (answer or "").strip()
-        body = (report or "").strip()
-        if not body:
-            return text
-        if body in text:
-            return text
-        if not text:
-            return body
-        return text + "\n" + body
+    def _append_action_reports(answer: str, actions: Dict[str, Any]) -> str:
+        """Append LLM-produced reports without inspecting or rewriting their prose."""
+        parts = [answer] if answer else []
+        for key in ("unknown_participant_escalate", "decree_validation_failure"):
+            report = str((actions.get(key) or {}).get("report") or "")
+            if report:
+                parts.append(report)
+        return "\n".join(parts)
 
     @staticmethod
     def _ensure_clarification_cue(answer: str, ambiguous: Dict[str, Any]) -> str:
@@ -2496,6 +2504,8 @@ class GameSession:
     ) -> None:
         """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
         preexisting_pending_id = int(getattr(result, "pending_action_id", 0) or 0)
+        # Carry tool-stage failures into shared landing so generic directive fallback can suppress.
+        prior_failures = list(getattr(result, "pending_action_failures", None) or [])
         # #568：当前轮 id 写入作用域供 apply→materialize 结构化排除点策轮（apply 签名不动）。
         prev_turn = getattr(self, "_active_chat_turn_id", 0)
         self._active_chat_turn_id = int(chat_turn_id or 0)
@@ -2507,6 +2517,7 @@ class GameSession:
                 preclassified_intent=preclassified_intent,
                 confirm_target_ids=confirm_target_ids,
                 explicit_secret_order=explicit_secret_order,
+                prior_pending_action_failures=prior_failures,
             )
         finally:
             self._active_chat_turn_id = prev_turn
@@ -2538,13 +2549,11 @@ class GameSession:
             result.directive_confirmation_ambiguous = res["directive_confirmation_ambiguous"]
             result.answer = GameSession._ensure_clarification_cue(
                 result.answer or "", res["directive_confirmation_ambiguous"])
-        # #1274 V-1：查无此人耗尽 → 大臣戏内回禀；草案不落、对话保留。
-        esc = res.get("unknown_participant_escalate") or {}
-        report = str(esc.get("report") or "").strip()
-        if report:
-            result.answer = GameSession._ensure_unknown_participant_report_cue(
-                result.answer or "", report,
-            )
+        # Project typed recovery onto ChatTurnResult so sync/retry web paths can pass it through.
+        if res.get("decree_validation_failure"):
+            result.decree_validation_failure = res["decree_validation_failure"]
+        # Typed failures share one projection seam; prose has already been generated by LLM.
+        result.answer = GameSession._append_action_reports(result.answer or "", res)
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。

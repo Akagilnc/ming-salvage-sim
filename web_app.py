@@ -1794,6 +1794,7 @@ class WebGame:
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
         directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None,
+        decree_validation_failure: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         # Durable chat_turn message ids first, then memory history.  Publishing
@@ -1846,6 +1847,7 @@ class WebGame:
             "pending_action_failures": pending_action_failures or [],
             # #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问；无则 None。
             "directive_confirmation_ambiguous": directive_confirmation_ambiguous or None,
+            "decree_validation_failure": decree_validation_failure or None,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
@@ -2147,6 +2149,8 @@ class WebGame:
                         # #502 R1：非流式路径同 surface 结构化含糊态（与 stream 同真源，禁双路径漂移）。
                         directive_confirmation_ambiguous=getattr(
                             result, "directive_confirmation_ambiguous", None),
+                        decree_validation_failure=getattr(
+                            result, "decree_validation_failure", None),
                     )
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 answer_text = str(getattr(result, "answer", "") or "")
@@ -2318,6 +2322,8 @@ class WebGame:
                         accepted_turn=accepted_turn,
                         directive_confirmation_ambiguous=getattr(
                             result, "directive_confirmation_ambiguous", None),
+                        decree_validation_failure=getattr(
+                            result, "decree_validation_failure", None),
                     )
                     # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
@@ -2525,6 +2531,7 @@ class WebGame:
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
                     directive_confirmation_ambiguous=interpreted["directive_ambiguous"],
+                    decree_validation_failure=interpreted["decree_validation_failure"],
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         return payload
@@ -2863,6 +2870,7 @@ class WebGame:
                 preclassified_intent=preclassified_intent,
                 confirm_target_ids=preexisting_pending_action_ids,
                 explicit_secret_order=explicit_secret_order,
+                prior_pending_action_failures=tool_stage_failures,
             )
         finally:
             self.session._active_chat_turn_id = prev_turn
@@ -2882,11 +2890,8 @@ class WebGame:
         directive_ambiguous = res.get("directive_confirmation_ambiguous")
         if directive_ambiguous:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
-        # #1274 V-1：查无此人 → 戏内回禀附于回话；不落草案、不回滚整轮。
-        esc = res.get("unknown_participant_escalate") or {}
-        report = str(esc.get("report") or "").strip()
-        if report:
-            answer = GameSession._ensure_unknown_participant_report_cue(answer, report)
+        # Sync/web consume the same typed action-report projection seam.
+        answer = GameSession._append_action_reports(answer, res)
         pending_action_failures = list(res.get("pending_action_failures") or [])
         if tool_stage_failures:
             pending_action_failures = pending_action_failures + list(tool_stage_failures)
@@ -2903,6 +2908,7 @@ class WebGame:
             "pending_action_id": pending_action_id,
             "pending_action_failures": pending_action_failures,
             "directive_ambiguous": directive_ambiguous,
+            "decree_validation_failure": res.get("decree_validation_failure"),
         }
 
     def _dispatch_relation_judge(self, chat_turn_id: Any) -> Optional[threading.Thread]:

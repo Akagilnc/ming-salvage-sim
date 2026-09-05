@@ -1799,6 +1799,43 @@ def build_participant_correction_feedback(
     return block
 
 
+def _compose_inworld_fact_report(
+    prompt: str,
+    *,
+    llm_config: Any,
+    tag: str,
+    timeout_s: float | None = None,
+) -> str:
+    """Shared player-lane fact-to-prose call; generated prose is never rewritten."""
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import cli_runner_unavailable
+
+    if timeout_s is not None and float(timeout_s) <= 0:
+        raise cli_runner_unavailable(TimeoutError(f"{tag} 无剩余预算"), backend=tag)
+
+    def _produce() -> str:
+        raw, _ = _run_backend_for_config(prompt, llm_config, tag=tag)
+        text = str(raw or "")
+        # strip 只判空；原文不改写（generated prose is never rewritten）。
+        if text.strip():
+            return text
+        raise cli_runner_unavailable(RuntimeError(f"{tag} 空响"), backend=tag)
+
+    try:
+        if timeout_s is None:
+            return _produce()
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            return pool.submit(_produce).result(timeout=float(timeout_s))
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+    except LLMUnavailable:
+        raise
+    except Exception as exc:
+        _log(f"{tag} 产文失败：{exc}")
+        raise cli_runner_unavailable(exc, backend=tag) from exc
+
+
 def compose_unknown_participant_inworld_report(
     names: Optional[List[str]] = None,
     *,
@@ -1813,9 +1850,6 @@ def compose_unknown_participant_inworld_report(
     剩余预算≤0、超时或产文失败 → typed LLMUnavailable（#1299/#1310/#1452
     失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
     """
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import cli_runner_unavailable
-
     cleaned = _normalize_unknown_participant_names(names)
     if voice == "minister" and str(speaker_name or "").strip():
         role = f"大臣{str(speaker_name).strip()}"
@@ -1827,45 +1861,44 @@ def compose_unknown_participant_inworld_report(
         f"只输出回禀正文，不要标题、不要系统术语、不要 JSON。\n"
         f"事实：{fact}\n"
     )
-    if timeout_s is not None and float(timeout_s) <= 0:
-        raise cli_runner_unavailable(
-            TimeoutError("查无此人回禀无剩余预算"),
-            backend="participant_escalate_report",
-        )
+    return _compose_inworld_fact_report(
+        prompt,
+        llm_config=llm_config,
+        tag="participant_escalate_report",
+        timeout_s=timeout_s,
+    )
 
-    def _produce() -> str:
-        raw, _ = _run_backend_for_config(
-            prompt, llm_config, tag="participant_escalate_report",
-        )
-        text = str(raw or "").strip()
-        if text.startswith("```"):
-            text = re.sub(r"^```\w*\n?", "", text)
-            text = re.sub(r"\n?```$", "", text)
-            text = text.strip()
-        # 抽取器 JSON / 空响 → 失败；只要非结构化戏内文。
-        if text and not text.lstrip().startswith("{"):
-            return text
-        raise cli_runner_unavailable(
-            RuntimeError("查无此人回禀空响或非戏内文"),
-            backend="participant_escalate_report",
-        )
 
-    try:
-        if timeout_s is None:
-            return _produce()
-        pool = ThreadPoolExecutor(max_workers=1)
-        try:
-            fut = pool.submit(_produce)
-            return fut.result(timeout=float(timeout_s))
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
-    except LLMUnavailable:
-        raise
-    except Exception as exc:
-        _log(f"查无此人回禀产文失败：{exc}")
-        raise cli_runner_unavailable(
-            exc, backend="participant_escalate_report",
-        ) from exc
+def compose_decree_validation_recovery(
+    failed_fields: Optional[List[str]] = None,
+    *,
+    speaker_name: str = "",
+    llm_config: Any = None,
+) -> str:
+    """Turn typed decree rejection facts into a player-facing retry cue via the LLM."""
+    field_groups = {
+        "银两数目": {"amount"},
+        "款项来源": {"account"},
+        "用途": {"purpose"},
+        "旨意正文": {"text", "body", "decree_text"},
+        "所指对象": {"target_kind", "target_id"},
+        "所指地域": {"region_id", "locality_scope"},
+        "承办人": {"assignee", "assignee_id", "assignee_name"},
+        "拨付节奏": {"cadence"},
+        "办理方式": {"action_type", "dossier_action_type", "transaction_category"},
+    }
+    failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
+    features = [label for label, keys in field_groups.items() if failed & keys]
+    feature = "、".join(features) if features else "旨意所指对象或必需内容"
+    prompt = (
+        f"你是大臣{str(speaker_name or '').strip()}。一份拟旨在记录前校验未通过，"
+        f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
+        "补充或改说所需信息后重拟。只输出一两句回禀正文，不要标题、JSON、字段名、"
+        "内部编号或系统术语。"
+    )
+    return _compose_inworld_fact_report(
+        prompt, llm_config=llm_config, tag="decree_validation_recovery",
+    )
 
 
 def _canon_person_id_key(raw: Any, *, db: Any, content: Any) -> Optional[str]:
@@ -2132,7 +2165,14 @@ def _revalidate_merged_combo_result(
         _finalize_extract_with_combo(result, draft_combo_flags=flags)
         return
     if failed_fields:
-        validate_structured_decree_combination(result)
+        try:
+            validate_structured_decree_combination(result)
+        except StructuredDecreeCombinationError as exc:
+            raise StructuredDecreeCombinationError(
+                str(exc),
+                partial_result=dict(result),
+                failed_fields=exc.failed_fields,
+            ) from exc
 
 
 def extract_draft_intent_with_roster_heal(
@@ -2217,7 +2257,14 @@ def extract_draft_intent_with_roster_heal(
                     )
                 except StructuredDecreeCombinationError as merged_exc:
                     if attempt >= retries:
-                        raise merged_exc
+                        raise StructuredDecreeCombinationError(
+                            str(merged_exc),
+                            partial_result=dict(result),
+                            failed_fields=merged_exc.failed_fields,
+                            draft_failures=getattr(
+                                merged_exc, "draft_failures", None
+                            ),
+                        ) from merged_exc
                     correction = combination_correction_feedback(merged_exc)
                     _log(
                         f"拟旨结构组合纠错重试 {attempt + 1}/{retries}: {merged_exc}"

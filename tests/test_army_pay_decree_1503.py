@@ -10,6 +10,7 @@ Seams:
 from __future__ import annotations
 
 import json
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -1544,24 +1545,26 @@ def test_draft_neitang_stays_generic_special_decree(game, monkeypatch):
     assert pending.get("dossier_action_type", "special_decree") == "special_decree"
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {
-            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
-        },
-        {
-            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
-            "amount": 15, "account": "太仓", "purpose": "补饷",
-            "target_kind": "army", "target_id": "liaodong",
-        },
-    ],
-    ids=["incomplete_xiexang", "unresolvable_target"],
-)
-def test_draft_xiexang_incomplete_or_illegal_fail_loud_zero_write(game, payload):
-    """残缺/非法协饷 draft：materialize fail-loud，pending/dossier 零增。"""
-    from ming_sim.action_materialize import IncompleteXiexangPayloadError
+@pytest.mark.parametrize("recovery_mode", ["ok", "raise", "whitespace"])
+def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
+    game, monkeypatch, tmp_path, recovery_mode,
+):
+    """残缺/非法协饷不落旨；恢复入口 typed 失败（raise/纯空白）仍保留拒收账本。"""
+    import ming_sim.cli_backend as cb
+    from ming_sim.exceptions import LLMUnavailable
 
+    recovery_calls = []
+
+    def recovery_backend(_prompt, _config=None, *, tag=""):
+        recovery_calls.append(tag)
+        if recovery_mode == "raise":
+            raise RuntimeError("recovery backend unavailable")
+        if recovery_mode == "whitespace":
+            return "   \n\t  ", 1
+        return "任意生成回禀", 1
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", recovery_backend)
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, _content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
@@ -1571,20 +1574,198 @@ def test_draft_xiexang_incomplete_or_illegal_fail_loud_zero_write(game, payload)
         (state.turn,),
     ).fetchone()[0]
     dossier_before = {int(d["id"]) for d in db.list_decree_dossiers()}
-    candidates = candidates_from_classifier_payload(payload, soft=False)
+    candidates = candidates_from_classifier_payload([
+        {
+            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+        },
+        {
+            "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+            "amount": 15, "account": "太仓", "purpose": "补饷",
+            "target_kind": "army", "target_id": "liaodong",
+        },
+    ], soft=False)
     ctx = _ctx(
         db, actor, candidates, state.turn,
         message="拟旨如下：准拨军饷。",
         reply="准拨，数目另议。",
     )
-    with pytest.raises((IncompleteXiexangPayloadError, ValueError)):
+    if recovery_mode in {"raise", "whitespace"}:
+        with pytest.raises(LLMUnavailable):
+            run_materialize_pipeline(ctx)
+    else:
         run_materialize_pipeline(ctx)
+    expected_fields = {"amount", "account", "purpose", "target_kind", "target_id"}
+    assert recovery_calls
+    assert all(tag == "decree_validation_recovery" for tag in recovery_calls)
+    if recovery_mode == "ok":
+        recovery = ctx.out.get("decree_validation_failure") or {}
+        assert set(recovery.get("failed_fields") or []) == expected_fields
+        assert recovery.get("report")
+    db_path = db.conn.execute("PRAGMA database_list").fetchone()[2]
+    with sqlite3.connect(db_path) as independent:
+        independent.row_factory = sqlite3.Row
+        durable = [
+            (json.loads(row["item_json"]), row["reason"], row["category"], row["source"])
+            for row in independent.execute(
+                "SELECT item_json, reason, category, source FROM rejection_reports "
+                "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+                (state.turn,),
+            )
+        ]
+    assert durable
+    persisted_items = {
+        json.dumps(item, ensure_ascii=False, sort_keys=True)
+        for item, _reason, _category, _source in durable
+    }
+    expected_items = {
+        json.dumps(candidate, ensure_ascii=False, sort_keys=True)
+        for candidate in candidates
+    }
+    assert len(durable) == len(candidates)
+    assert persisted_items == expected_items
+    assert all(reason for _item, reason, _category, _source in durable)
+    assert all(category == "decree_validation" for _item, _reason, category, _source in durable)
+    assert all(source == "player_decree" for _item, _reason, _category, source in durable)
     pending_after = db.conn.execute(
         "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
     ).fetchone()[0]
     assert pending_after == pending_before
     assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
+
+
+@pytest.mark.parametrize(
+    "validation_case",
+    ["incomplete_xiexang", "region_mismatch", "existing_draft_region_mismatch"],
+)
+def test_http_chat_stream_exposes_typed_decree_validation_recovery(
+    tmp_path, monkeypatch, _offline_scene_beat_generator, validation_case,
+):
+    """真实召对 SSE 以 typed failure 告知玩家恢复可用；生成正文不作机械断言。"""
+    from fastapi.testclient import TestClient
+
+    import ming_sim.cli_backend as cb
+    import web_app
+    from tests.test_audience_background import RunContent, RunOutput
+    from tests.test_menu_continue_stream_1195 import _parse_sse
+    from tests.test_month_loop_tracer_1468 import _stub_outer_llm_seams
+    from tests.test_session_write_queue_1353 import wait_pending_writes
+
+    class _AudienceAgent:
+        def run(self, *_args, **_kwargs):
+            return iter((RunContent("臣已奉旨查议。"), RunOutput([])))
+
+        def get_last_run_output(self):
+            return None
+
+    backend_tags = set()
+    # cli_backend resolves its default trace path at import time; isolate the
+    # real composer path explicitly so this tracer leaves no repository probe.
+    monkeypatch.setattr(cb, "_TRACE_PATH", str(tmp_path / "cli_trace.jsonl"))
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    _stub_outer_llm_seams(monkeypatch)
+    def backend(_prompt, _config=None, *, tag=""):
+        backend_tags.add(tag)
+        if tag == "action_intent":
+            if validation_case == "incomplete_xiexang":
+                candidate = {
+                    "kind": "grant_allocation", "grant_action": "协饷",
+                    "amount": 0, "account": "", "purpose": "补饷",
+                    "target_kind": "army", "target_id": "",
+                }
+            elif validation_case == "region_mismatch":
+                candidate = {"kind": "draft"}
+            else:
+                candidate = {"kind": "none"}
+            return json.dumps(candidate, ensure_ascii=False), 1
+        if tag == "draft_intent":
+            # Distinct provinces: 京师/@beizhili is alias-same after #1729 canonicalize.
+            return json.dumps({
+                "拟旨意图": "拟旨",
+                "动作类型": "policy",
+                "目标类型": "region",
+                "目标ID": "京师",
+                "地区ID": "陕西",
+                "施行范围": "single",
+                "事务类别": "",
+                "承办人": "",
+                "参与人": [],
+                "期限月数": None,
+                "目标案卷ID": None,
+            }, ensure_ascii=False), 1
+        if tag == "decree_validation_recovery":
+            return "任意生成回禀", 1
+        return "任意生成回禀", 1
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
+
+    game = web_app.WebGame(fresh=False)
+    monkeypatch.setattr(web_app, "web_game", game)
+    try:
+        name = next(
+            getattr(ch, "name", key)
+            for key, ch in game.content.characters.items()
+            if getattr(ch, "power_id", "ming") == "ming"
+            and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
+        )
+        game.session.registry.get = lambda _character: _AudienceAgent()
+        if game.session.llm_config is not None:
+            game.session.llm_config.channel = "cli"
+        if validation_case == "existing_draft_region_mismatch":
+            game.db.stage_directive_candidate(game.state.turn, name, payload={
+                "text": "整饬京师。", "actor": name,
+                "dossier_action_type": "special_decree",
+                "target_kind": "policy", "target_id": "整饬京师",
+            })
+        pending_before = [row["id"] for row in game.db.list_pending_actions(game.state.turn)]
+        dossiers_before = [row["id"] for row in game.db.list_decree_dossiers()]
+        message = (
+            "拟旨如下：整饬京师"
+            if validation_case == "incomplete_xiexang"
+            else "请拟旨整饬京师"
+        )
+        response = TestClient(web_app.app).post(
+            f"/api/ministers/{name}/chat/stream",
+            json={"message": message},
+        )
+        assert response.status_code == 200
+        events = _parse_sse(response.text)
+        assert all(event != "error" for event, _payload in events)
+        done = next(payload for event, payload in events if event == "done")
+        failure = done.get("decree_validation_failure") or {}
+        expected_fields = (
+            {"amount", "account", "target_id"}
+            if validation_case == "incomplete_xiexang"
+            else {"region_id", "target_id"}
+        )
+        assert expected_fields <= set(failure.get("failed_fields") or [])
+        assert failure.get("report")
+        assert "action_intent" in backend_tags
+        assert "decree_validation_recovery" in backend_tags
+        assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
+        assert [row["id"] for row in game.db.list_decree_dossiers()] == dossiers_before
+        ledger = game.db.conn.execute(
+            "SELECT item_json, source FROM rejection_reports "
+            "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+            (game.state.turn,),
+        ).fetchall()
+        assert ledger and all(row["source"] == "player_decree" for row in ledger)
+        items = [json.loads(row["item_json"]) for row in ledger]
+        assert all(isinstance(item, dict) and item for item in items)
+        if validation_case == "incomplete_xiexang":
+            assert any(item.get("grant_action") == "协饷" for item in items)
+        else:
+            # T6：typed 失败优先落 partial_result；item_json 须含被拒旨稿结构化字段。
+            assert any(
+                item.get("target_id") == "beizhili" and item.get("region_id") == "shaanxi"
+                for item in items
+            )
+    finally:
+        wait_pending_writes(game)
+        if game.session:
+            game.session.close()
 
 
 def test_http_chat_issue_stream_pay_decree_advances_month(
@@ -1612,12 +1793,19 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         def __init__(self):
             self._calls = 0
 
-        def run(self, *_a, **_k):
+        def run(self, *_a, **kwargs):
+            from tests.test_audience_background import RunContent, RunOutput
+
             self._calls += 1
             if self._calls == 1:
                 content = "臣请户部发帑十五万两协济关宁军前，请陛下定夺准驳。"
             else:
                 content = "臣遵旨。敕户部发太仓银十五万两协济关宁军前。钦此。"
+            if kwargs.get("stream"):
+                def chunks():
+                    yield RunContent(content)
+                    yield RunOutput([])
+                return chunks()
             return SimpleNamespace(content=content, tools=[])
 
         def get_last_run_output(self):
@@ -1924,3 +2112,349 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             game.session.close()
         except Exception:
             pass
+
+
+def _pending_rows(db, turn):
+    return [
+        {
+            "id": int(row["id"]),
+            "kind": row["kind"],
+            "action": row["action"],
+            "payload_json": row["payload_json"],
+            "status": row["status"],
+        }
+        for row in db.list_pending_actions(int(turn))
+    ]
+
+
+def _bad_sibling_candidate(*, kind: str) -> dict:
+    """Typed-failing sibling shared by create/update/delete/tail batch cases."""
+    if kind == "grant_allocation":
+        return {
+            "kind": "grant_allocation", "grant_action": "协饷",
+            "amount": 10, "account": "国库", "purpose": "补饷",
+            "target_kind": "army", "target_id": "not_an_army", "cadence": "一次性",
+        }
+    return {
+        "kind": "draft", "draft_action": "拟旨", "grant_action": "协饷",
+        "amount": 10, "account": "国库", "purpose": "补饷",
+        "target_kind": "army", "target_id": "not_an_army", "cadence": "一次性",
+    }
+
+
+def _office_summon_ledger(db, pending_id):
+    """Structured inactive office summon row (undo pin included)."""
+    row = db.conn.execute(
+        "SELECT id, origin_ref, origin_chat_turn_id, night_id, person_names, tags "
+        "FROM story_ledger_entries WHERE origin_ref=? LIMIT 1",
+        (f"office:{int(pending_id)}",),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "origin_ref": str(row["origin_ref"] or ""),
+        "origin_chat_turn_id": int(row["origin_chat_turn_id"] or 0),
+        "night_id": int(row["night_id"] or 0),
+        "person_names": json.loads(row["person_names"] or "[]"),
+        "tags": json.loads(row["tags"] or "[]"),
+    }
+
+
+def _story_ledger_ids(db):
+    return [
+        int(row["id"])
+        for row in db.conn.execute(
+            "SELECT id FROM story_ledger_entries ORDER BY id"
+        ).fetchall()
+    ]
+
+
+def _path_nature_ledger_rows(db, pending_id):
+    """Structured 特旨/署理 path-nature story rows tagged pending:<id>."""
+    pin = f"pending:{int(pending_id)}"
+    out = []
+    for row in db.conn.execute(
+        "SELECT id, tags, origin_ref FROM story_ledger_entries ORDER BY id"
+    ).fetchall():
+        tags = json.loads(row["tags"] or "[]")
+        if pin in tags and ("特旨" in tags or "署理" in tags):
+            out.append({
+                "id": int(row["id"]),
+                "tags": tags,
+                "origin_ref": str(row["origin_ref"] or ""),
+            })
+    return out
+
+
+@pytest.mark.parametrize("loop_kind", ["grant_allocation", "draft"])
+@pytest.mark.parametrize("path_mark", [None, "midzhi", "署理"])
+def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(
+    game, monkeypatch, tmp_path, loop_kind, path_mark,
+):
+    """T1+T2：混合批 typed 失败 → 新建/改写/删除/传召/路径账全恢复，尾部不重写。"""
+    import ming_sim.audience_night as an
+    import ming_sim.cli_backend as cb
+    from tests.conftest import open_audience_night
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下改说。", 1),
+    )
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    night_id = open_audience_night(db, state)
+    undo_pin = 4242
+    # Baseline: grant to rewrite + appointment-with-summon to be hedge-deleted
+    # (or path-annotated when path_mark is set).
+    existing_grant = _stage_xiexang(
+        db, state.turn, amount=5, target_id="guanning",
+        message="拨关宁军饷五万两。",
+        reply="臣请户部发帑5万两协济，请陛下定夺准驳。",
+    ).out["pending_action_id"]
+    existing_office = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=actor,
+        payload={
+            "name": actor, "office": "兵部尚书", "appointer": actor,
+            "mode": "ordinary", "summon_after": "是",
+        },
+    )
+    an.ensure_inactive_office_summon(
+        db, int(existing_office), actor,
+        night_id=int(night_id), origin_chat_turn_id=undo_pin,
+    )
+    baseline_summon = _office_summon_ledger(db, existing_office)
+    assert baseline_summon is not None
+    assert baseline_summon["origin_chat_turn_id"] == undo_pin
+    baseline_rows = _pending_rows(db, state.turn)
+    baseline_by_id = {row["id"]: row for row in baseline_rows}
+    assert existing_grant in baseline_by_id
+    assert existing_office in baseline_by_id
+    baseline_ledger_ids = _story_ledger_ids(db)
+    baseline_path_rows = _path_nature_ledger_rows(db, existing_office)
+    assert baseline_path_rows == []
+    dossier_before = {int(d["id"]) for d in db.list_decree_dossiers()}
+    bad = _bad_sibling_candidate(kind=loop_kind)
+    rewrite = {
+        "kind": "grant_allocation", "grant_action": "协饷",
+        "amount": 15, "account": "国库", "purpose": "补饷",
+        "target_kind": "army", "target_id": "guanning", "cadence": "一次性",
+        "target_candidate": str(existing_grant),
+    }
+    if path_mark is None:
+        # 罢免对冲删除 baseline 任命及其派生传召。
+        mutation = {
+            "kind": "appointment", "appoint_action": "罢免",
+            "name": actor, "office": "",
+        }
+    elif path_mark == "midzhi":
+        # 特旨路径应答：改写 pending + 派生路径故事账（r3 遗漏面）。
+        mutation = {
+            "kind": "appointment", "appoint_action": "无",
+            "mode": "midzhi", "target_candidate": str(existing_office),
+        }
+    else:
+        mutation = {
+            "kind": "appointment", "appoint_action": "无",
+            "appointment_tenure": "署理",
+            "target_candidate": str(existing_office),
+        }
+    candidates = candidates_from_classifier_payload(
+        [rewrite, mutation, bad], soft=False,
+    )
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="拟旨如下：改拨关宁军饷并罢免，另拨登莱。",
+        reply="臣遵旨拟办。",
+    )
+    run_materialize_pipeline(ctx)
+    after_rows = _pending_rows(db, state.turn)
+    assert after_rows == baseline_rows
+    restored_grant = json.loads(
+        next(row["payload_json"] for row in after_rows if row["id"] == existing_grant)
+    )
+    assert int(restored_grant.get("amount") or 0) == 5
+    restored_office = next(row for row in after_rows if row["id"] == existing_office)
+    assert restored_office["kind"] == "office" and restored_office["action"] == "任命"
+    restored_payload = json.loads(restored_office["payload_json"])
+    assert restored_payload.get("summon_after") == "是"
+    assert restored_payload.get("mode") in (None, "", "ordinary")
+    assert restored_payload.get("任别") not in {"署理"}
+    assert not any(
+        row["kind"] == "office" and row["action"] == "罢免" for row in after_rows
+    )
+    restored_summon = _office_summon_ledger(db, existing_office)
+    assert restored_summon == baseline_summon
+    assert restored_summon["origin_chat_turn_id"] == undo_pin
+    assert _story_ledger_ids(db) == baseline_ledger_ids
+    assert _path_nature_ledger_rows(db, existing_office) == []
+    assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
+    assert not ctx.out.get("pending_action_id")
+    recovery = ctx.out.get("decree_validation_failure") or {}
+    assert recovery.get("failed_fields")
+    assert recovery.get("report")
+    ledger = db.conn.execute(
+        "SELECT item_json, category, source FROM rejection_reports "
+        "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+        (state.turn,),
+    ).fetchall()
+    assert ledger
+    assert all(row["source"] == "player_decree" for row in ledger)
+    rejection_count = len(ledger)
+
+    # Replay same failed batch: still zero net write (no double-stage / no path double).
+    ctx2 = _ctx(
+        db, actor, candidates, state.turn,
+        message="拟旨如下：改拨关宁军饷并罢免，另拨登莱。",
+        reply="臣遵旨拟办。",
+    )
+    run_materialize_pipeline(ctx2)
+    assert _pending_rows(db, state.turn) == baseline_rows
+    assert _office_summon_ledger(db, existing_office) == baseline_summon
+    assert _story_ledger_ids(db) == baseline_ledger_ids
+    assert _path_nature_ledger_rows(db, existing_office) == []
+    assert not ctx2.out.get("pending_action_id")
+    ledger_after_replay = db.conn.execute(
+        "SELECT id FROM rejection_reports "
+        "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+        (state.turn,),
+    ).fetchall()
+    # 拒收账本在恢复之外独立累加；业务写集合仍为零净写。
+    assert len(ledger_after_replay) > rejection_count
+
+
+@pytest.mark.parametrize("bad_amount", [None, True, 1.5])
+def test_non_xiexang_grant_shape_failure_is_typed_rejection(game, monkeypatch, tmp_path, bad_amount):
+    """T3：非协饷 grant shape 裸 ValueError 在物化缝转 typed 拒收，pending 零写入。"""
+    import ming_sim.cli_backend as cb
+
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下明示银两。", 1),
+    )
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    pending_before = db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0]
+    payload = {
+        "kind": "grant_allocation",
+        "grant_action": "赈灾",
+        "target_kind": "region",
+        "target_id": "beizhili",
+    }
+    if bad_amount is not None:
+        payload["amount"] = bad_amount
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="拟旨如下：赈济京师。",
+        reply="臣请发帑赈济京师灾民。",
+    )
+    run_materialize_pipeline(ctx)
+    pending_after = db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0]
+    assert pending_after == pending_before
+    assert not ctx.out.get("pending_action_id")
+    recovery = ctx.out.get("decree_validation_failure") or {}
+    assert "amount" in set(recovery.get("failed_fields") or [])
+    assert recovery.get("report")
+    rows = db.conn.execute(
+        "SELECT item_json, reason, category, source FROM rejection_reports "
+        "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+        (state.turn,),
+    ).fetchall()
+    assert rows
+    assert all(row["category"] == "decree_validation" for row in rows)
+    assert all(row["source"] == "player_decree" for row in rows)
+    assert all(row["reason"] for row in rows)
+    items = [json.loads(row["item_json"]) for row in rows]
+    assert any(item.get("grant_action") == "赈灾" for item in items)
+
+
+def test_batch_draft_combo_failure_cached_and_attributed(game, monkeypatch, tmp_path):
+    """T7：批 draft 组合失败一次缓存；仅 draft_failures 索引落拒收，合法兄弟不记。"""
+    import ming_sim.cli_backend as cb
+    from ming_sim.structured_decree import StructuredDecreeCombinationError
+
+    def fake_extract(*_a, **_k):
+        raise StructuredDecreeCombinationError(
+            "region mismatch",
+            partial_result={
+                "drafts": [
+                    {
+                        "draft_action": "拟旨",
+                        "draft_text": "整饬京师。",
+                        "dossier_action_type": "special_decree",
+                        "target_kind": "region",
+                        "target_id": "beizhili",
+                        "region_id": "beizhili",
+                        "locality_scope": "single",
+                    },
+                    {
+                        "draft_action": "拟旨",
+                        "draft_text": "整饬陕西。",
+                        "dossier_action_type": "special_decree",
+                        "target_kind": "region",
+                        "target_id": "京师",
+                        "region_id": "shaanxi",
+                        "locality_scope": "single",
+                    },
+                ],
+            },
+            failed_fields=frozenset({"region_id", "target_id"}),
+            draft_failures={1: frozenset({"region_id", "target_id"})},
+        )
+
+    monkeypatch.setattr(cb, "extract_draft_intent_with_roster_heal", fake_extract)
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下改说所指地域。", 1),
+    )
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, _content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    pending_before = db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0]
+    dossier_before = {int(d["id"]) for d in db.list_decree_dossiers()}
+    candidates = candidates_from_classifier_payload([
+        {"kind": "draft", "draft_action": "拟旨"},
+        {"kind": "draft", "draft_action": "拟旨"},
+    ], soft=False)
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message="请拟两道旨。",
+        reply="臣遵旨拟办。",
+    )
+    run_materialize_pipeline(ctx)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
+        (state.turn,),
+    ).fetchone()[0] == pending_before
+    assert {int(d["id"]) for d in db.list_decree_dossiers()} == dossier_before
+    recovery = ctx.out.get("decree_validation_failure") or {}
+    assert {"region_id", "target_id"} <= set(recovery.get("failed_fields") or [])
+    rows = db.conn.execute(
+        "SELECT item_json FROM rejection_reports "
+        "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+        (state.turn,),
+    ).fetchall()
+    items = [json.loads(row["item_json"]) for row in rows]
+    assert len(items) == 1
+    assert items[0].get("target_id") == "京师"
+    assert items[0].get("region_id") == "shaanxi"
+
+
