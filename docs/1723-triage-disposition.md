@@ -134,7 +134,7 @@ PY
 | `travel_gating` close vs 未完 scene | 无 | barrier 不得越过未完 scene | 是 | 缺陷 | **observe `wait_prior`**（非 has_open_barrier 领票） |
 | `web_chat_serialization` stream vs settlement | 无 | epilogue 须等 gate | 是 | 缺陷 | `_ObservingWriteGate`：holding 下 acquire → contending |
 | `web_audience_night` issue vs 在飞 chat | 无 | issue 须进屏障等票 | 是 | 缺陷 | `wait_prior` 观测 inflight>1 |
-| `pihong` single-flight 第二路 | 无 | 第二路须进 **join_retained** 才 coalesce | 是 | 缺陷 | 观测 `join_rescript_summon_scene` 并发 inflight≥2；**不用** `_begin_settlement_entry` 入口记账 |
+| `pihong` single-flight 第二路 | 无 | 第二路须抵真实等待接缝才 coalesce | 是 | 缺陷 | **最小诊断**：B 在 A 的 `join_retained` 窗内卡在 entry 的 `_auto_close_open_night_gate_free`（等 A 召见 scene/夜在飞），并发 `join_retained` 架构上不可达；观测 B 在 gen 仍持时进入 auto_close；**不用** `_begin_settlement_entry` 入口记账，也**不**假造并发 join 观测 |
 | `beat` sibling join | 无 | join 须排空 sibling | 是 | 缺陷 | `wait_until(not registry.has(11))` 证 join 已 pop 入 drain；**禁止** join 调用前 `join_entered.set()` |
 | `beat` close 持闸 persist/cleanup | 无 | 须抵达 write_gate.acquire | 是 | 缺陷 | **ObservingGate.contending**；**不用** gen_done+is_alive+gate.locked 空窗 |
 | `web_chat` drain vs 非流式 chat | 无 | drain 等票 | 是 | 缺陷 | sealed 观测 + not drain_done |
