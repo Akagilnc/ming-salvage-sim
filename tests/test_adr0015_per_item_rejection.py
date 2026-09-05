@@ -69,7 +69,9 @@ def test_driver_validate_rejection_mirrors_jsonl_after_outer_atomic(game, tmp_pa
         decree_text="诏",
     )
 
-    assert "窒碍未行" in report
+    # 0150-D5-b：代码不写戏内固定补句；结构化拒收归属由 reports 承担
+    assert "窒碍未行" not in report
+    assert "有司奏" not in report
     rows = _reports(db)
     assert [(r["section"], json.loads(r["item_json"])) for r in rows] == [
         ("economy_moves", {"raw_value": None}),
@@ -151,7 +153,10 @@ def test_player_visible_rejection_aggregates_durable_rows_across_attempts_and_re
         narrative="本月邸报。",
         source=Provenance.player_decree,
     )
-    assert "窒碍未行" in report
+    # 0150-D5-b：结构化拒收 + 来源门；代码不注入戏内固定句
+    assert "窒碍未行" not in report
+    assert "有司奏" not in report
+    assert _reports(db)
 
     # 重模拟逃生口不删审计行，但应让旧 attempt 不再触发玩家可见门。
     state.turn = turn

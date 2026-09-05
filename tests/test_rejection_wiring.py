@@ -644,10 +644,11 @@ def test_resimulation_inherits_player_source_from_ctx(game, monkeypatch, tmp_pat
     assert rows[0][3] == "player_decree"  # #146 A：重抽贯穿 ctx 的 player，不退化 system
 
 
-def test_player_decree_rejection_surfaces_prompt_in_turn_report(game, monkeypatch, tmp_path):
-    """#146 A 闭环：皇帝下旨结算里 delta 被拒（player_decree 来源）→ 邸报附「窒碍未行」可见提示、落
-    turn_reports（决定 5）。修前 source 恒 system、has_player_visible_rejection 永 False、提示从不出。"""
+def test_player_decree_rejection_durable_source_gate(game, monkeypatch, tmp_path):
+    """#146 A / #1745：皇帝下旨结算 delta 被拒 → 拒收行 source=player_decree（0008-D5 门）；
+    代码不向 turn_report 写戏内固定补句（0150-D5-b）。"""
     import ming_sim.decree as decree_mod
+    from ming_sim.applier import Provenance
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -666,17 +667,19 @@ def test_player_decree_rejection_surfaces_prompt_in_turn_report(game, monkeypatc
     decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
                                   content=content, registry=None)
 
+    rows = _rejection_rows(db, turn)
+    assert len(rows) == 1
+    assert rows[0][3] == Provenance.player_decree.value
     report = db.conn.execute(
         "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
     assert report is not None
-    assert "窒碍未行" in report[0]  # #146 A：皇帝来源拒收 → 邸报可见提示（修前恒静默）
+    assert "窒碍未行" not in report[0]
+    assert "有司奏" not in report[0]
 
 
 def test_system_rejection_stays_silent_and_keeps_system_provenance(game, monkeypatch, tmp_path):
-    """#146 A 对照（B 面，Sourcery #175 建议）：无旨 / 世界自演变（system_simulation 来源）的 delta 被拒
-    → 拒收记 system_simulation、且邸报**不**出「窒碍未行」可见提示（系统拒收对玩家静默）。与
-    test_player_decree_rejection_surfaces_prompt_in_turn_report 构成 A/B 对照，锁死「可见性↔来源」
-    契约：玩家来源拒收提示、系统来源静默（决定 5），防回归把系统拒收暴露给皇帝。
+    """#146 A 对照（B 面）：无旨 system_simulation 来源拒收 → source 保真；代码不写戏内固定句。
+    与 test_player_decree_rejection_durable_source_gate 构成 A/B 来源门对照（0008-D5）。
     走重抽路（resolve_decisions_phase2 从 ctx['source'] 继承）顺带覆盖 _provenance_from_stored。"""
     import ming_sim.decree as decree_mod
     from ming_sim.applier import Provenance
@@ -709,11 +712,12 @@ def test_system_rejection_stays_silent_and_keeps_system_provenance(game, monkeyp
     assert len(rows) == 1
     assert rows[0][3] == "system_simulation"
 
-    # B 可见性：系统来源拒收对玩家静默——邸报无「窒碍未行」提示
+    # 代码不写戏内固定句（系统来源亦然）
     report = db.conn.execute(
         "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
     assert report is not None
     assert "窒碍未行" not in report[0]
+    assert "有司奏" not in report[0]
 
 
 def test_provenance_from_stored_recovers_all_forms():
@@ -739,17 +743,11 @@ def test_provenance_from_stored_recovers_all_forms():
 
 
 def test_settling_recovery_fallthrough_preserves_system_source(content, tmp_path, monkeypatch):
-    """#146 cmr r2（Claude clarity + codex medium concur）：SETTLING 非 ready 崩溃恢复
-    fallthrough（ctx 存在但 extracted is None）重走 resolve_directives 重新推演结算时，必须把存档
-    ctx['source'] 经 _provenance_from_stored 穿透传入——provenance 按构造保真。
+    """#146 cmr r2：SETTLING 非 ready 崩溃恢复 fallthrough 须把 ctx['source'] 经
+    _provenance_from_stored 穿透——拒收行 source==system_simulation，不被误标 player_decree；
+    代码不向邸报写戏内固定句。
 
-    构造一条 source=system_simulation 的非 ready SETTLING ctx（clear_for_resimulation 把 ready ctx
-    降级成 ready=0 保留 source、driver persist system 来源 ctx 都会留下此形态），让 extractor 产个会被拒
-    的坏 delta，经 session.resolve_turn() 走恢复 fallthrough 结算，断言：拒收行 source==system_simulation
-    （不被误标 player_decree）+ 邸报无「窒碍未行」（系统拒收对玩家静默）。
-
-    红验：把 step2 的 source 穿透改回硬编码 player_decree（resolve_directives 不读 ct'source）→ 该测试红
-    （source 误标 player、邸报出现「窒碍未行」）；恢复穿透后绿。"""
+    红验：source 穿透改回硬编码 player_decree → 拒收 source 误标 player。"""
     import ming_sim.decree as decree_mod
     from ming_sim.applier import Provenance
     from ming_sim.models import LLMConfig, TurnPhase
@@ -794,11 +792,11 @@ def test_settling_recovery_fallthrough_preserves_system_source(content, tmp_path
         assert len(rows) == 1
         assert rows[0][3] == "system_simulation"
 
-        # B 可见性：系统来源拒收对玩家静默——邸报无「窒碍未行」提示。
         report = db.conn.execute(
             "SELECT report FROM turn_reports WHERE turn=?", (turn,)).fetchone()
         assert report is not None
         assert "窒碍未行" not in report[0]
+        assert "有司奏" not in report[0]
     finally:
         try:
             sess.close()
