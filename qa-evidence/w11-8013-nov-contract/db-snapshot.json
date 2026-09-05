@@ -1,0 +1,80 @@
+{
+  "game": {
+    "id": 1,
+    "year": 1627,
+    "period": 11,
+    "turn": 2,
+    "turn_phase": "settling",
+    "ended": 0,
+    "ending_status": ""
+  },
+  "dossiers": [
+    {
+      "id": 1,
+      "action_type": "special_decree",
+      "status": "executing",
+      "target_id": "manual-directive",
+      "text_head": "解太仓备用"
+    },
+    {
+      "id": 2,
+      "action_type": "special_decree",
+      "status": "executing",
+      "target_id": "pending-directive:1",
+      "text_head": "臣郭允厚，领旨。\n\n陛下欲解太仓备用，臣请先陈太仓实情，再请圣裁。\n\n太仓存银，账面上有三百二十万两，然其中**可动之银"
+    },
+    {
+      "id": 3,
+      "action_type": "special_decree",
+      "status": "executing",
+      "target_id": "pending-directive:2",
+      "text_head": "陛下，臣黄立极恭聆圣谕。\n\n陛下欲解太仓备用之银，臣谨领旨。然太仓乃国家根本，出纳须有章程。臣斗胆请陛下明示：此解银所为"
+    },
+    {
+      "id": 4,
+      "action_type": "special_decree",
+      "status": "proposed",
+      "target_id": "manual-directive",
+      "text_head": "解太仓备用"
+    },
+    {
+      "id": 5,
+      "action_type": "special_decree",
+      "status": "proposed",
+      "target_id": "manual-directive",
+      "text_head": "解太仓备用"
+    }
+  ],
+  "directives": [
+    {
+      "id": 1,
+      "status": "issued",
+      "source": "手动新增",
+      "text_head": "解太仓备用"
+    },
+    {
+      "id": 2,
+      "status": "issued",
+      "source": "大臣拟旨",
+      "text_head": "臣郭允厚，领旨。\n\n陛下欲解太仓备用，臣请先陈太仓实情，再请圣裁。\n\n太仓存银，"
+    },
+    {
+      "id": 3,
+      "status": "issued",
+      "source": "大臣拟旨",
+      "text_head": "陛下，臣黄立极恭聆圣谕。\n\n陛下欲解太仓备用之银，臣谨领旨。然太仓乃国家根本，出"
+    },
+    {
+      "id": 4,
+      "status": "draft",
+      "source": "手动新增",
+      "text_head": "解太仓备用"
+    },
+    {
+      "id": 5,
+      "status": "draft",
+      "source": "手动新增",
+      "text_head": "解太仓备用"
+    }
+  ]
+}
