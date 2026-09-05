@@ -144,3 +144,42 @@
   color: #1a1410;
 }
 
+/* #1726 奏疏收件箱 */
+.memorial-inbox {
+  display: grid;
+  gap: 18px;
+}
+
+.memorial-card {
+  padding: 18px 22px 20px;
+  border: 1px solid rgba(111, 83, 46, 0.28);
+  background: rgba(255, 248, 230, 0.55);
+}
+
+.memorial-card-unread {
+  border-color: rgba(140, 72, 28, 0.55);
+  box-shadow: inset 3px 0 0 rgba(140, 72, 28, 0.65);
+}
+
+.memorial-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.memorial-author {
+  font-family: var(--font-brush), "ZCOOL XiaoWei", serif;
+  font-size: 1.02rem;
+  color: #5a3d18;
+  letter-spacing: 0.06em;
+}
+
+.memorial-unread-mark {
+  flex: none;
+  font-size: 0.78rem;
+  color: #8c481c;
+  letter-spacing: 0.12em;
+}
+
