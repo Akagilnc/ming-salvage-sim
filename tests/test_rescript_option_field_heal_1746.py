@@ -204,13 +204,6 @@ def test_run_agent_text_without_prior_passes_plain_prompt():
 # 契约失败 → 同一 heal 回路（heal-covers-illegal-values-too；缺或错不分类）
 # ---------------------------------------------------------------------------
 
-def _assert_heal_error(exc: BaseException, *must_fields: str) -> None:
-    assert isinstance(exc, rescript_mod.RescriptOptionMissingFieldsError), type(exc)
-    got = set(exc.missing_fields)
-    for f in must_fields:
-        assert f in got, (f, exc.missing_fields, getattr(exc, "field_failures", None))
-
-
 @pytest.mark.parametrize(
     "mutate, heal_steps, must_fields",
     [
@@ -280,10 +273,12 @@ def test_contract_failure_heals_not_batch_reject(
     first = _items_json([{"title": "u", "context": "c", "options": [bad, sibling]}])
     steps = [_heals_json([("0:0", dict(s))]) for s in heal_steps]
     tags: list[str] = []
+    prompts: list[str] = []
     n = {"i": 0}
 
-    def _llm(_a, _p, tag="", prior_messages=None):
+    def _llm(_a, prompt, tag="", prior_messages=None):
         tags.append(tag)
+        prompts.append(prompt)
         n["i"] += 1
         if n["i"] == 1:
             return first
@@ -291,13 +286,14 @@ def test_contract_failure_heals_not_batch_reject(
         return steps[idx] if idx < len(steps) else steps[-1]
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
-    with pytest.raises(rescript_mod.RescriptOptionMissingFieldsError) as ei:
-        normalize_rescript_layer_a_option(bad, generation_admission=True)
-    _assert_heal_error(ei.value, *must_fields)
-
     drafts = generate_rescript_draft(object(), _ctx(), turn=40)
     assert drafts is not None
     assert "rescript-draft-heal" in tags
+    heal_prompt = next(p for t, p in zip(tags, prompts) if t == "rescript-draft-heal")
+    req = _parse_heal_request(heal_prompt)
+    ff = _field_failure_map(req["failures"][0])
+    for name in must_fields:
+        assert name in ff
     opts = drafts[0]["options"]
     assert any(o.get("label") == sibling["label"] for o in opts)
     grant = next(o for o in opts if o.get("grant_action") == "协饷")
@@ -350,13 +346,6 @@ def test_army_single_combo_heals_not_batch_redraw(monkeypatch, tmp_path):
     """army+single 组合矛盾 → 同一 option heal；不整批组合重抽。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     bad = _army_pay(locality_scope="single", target_id="")
-    with pytest.raises(rescript_mod.RescriptOptionMissingFieldsError) as ei:
-        normalize_rescript_layer_a_option(bad, generation_admission=True)
-    assert "locality_scope" in set(ei.value.missing_fields)
-    facts = {f["field"]: f for f in ei.value.field_failures}
-    assert facts["locality_scope"]["current"] == "single"
-    assert "none" in (facts["locality_scope"]["expected"] or [])
-
     first = _items_json([{"title": "u", "context": "c", "options": [bad, _hold()]}])
     healed = _heals_json([("0:0", {"locality_scope": "none", "target_id": "guanning"})])
     tags: list[str] = []
@@ -376,6 +365,10 @@ def test_army_single_combo_heals_not_batch_redraw(monkeypatch, tmp_path):
     req = _parse_heal_request(prompts[1])
     ff = _field_failure_map(req["failures"][0])
     assert "locality_scope" in ff
+    assert ff["locality_scope"]["current"] == "single"
+    assert "none" in (ff["locality_scope"]["expected"] or [])
+    # 缺 target_id 同时 army+single：权威一次给出完整事实
+    assert "target_id" in ff
     grant = next(o for o in drafts[0]["options"] if o.get("grant_action") == "协饷")
     assert grant["locality_scope"] == "none"
     assert any(o.get("label") == "缓议候报" for o in drafts[0]["options"])
@@ -434,19 +427,22 @@ def test_typed_illegal_also_heals(bad_factory, heal_fix, must_fields, monkeypatc
     first = _items_json([{"title": "u", "context": "c", "options": [bad, sibling]}])
     healed = _heals_json([("0:0", dict(heal_fix))])
     tags: list[str] = []
+    prompts: list[str] = []
     n = {"i": 0}
 
-    def _llm(_a, _p, tag="", prior_messages=None):
+    def _llm(_a, prompt, tag="", prior_messages=None):
         tags.append(tag)
+        prompts.append(prompt)
         n["i"] += 1
         return first if n["i"] == 1 else healed
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
-    with pytest.raises(rescript_mod.RescriptOptionMissingFieldsError) as ei:
-        normalize_rescript_layer_a_option(bad, generation_admission=True)
-    _assert_heal_error(ei.value, *must_fields)
     drafts = generate_rescript_draft(object(), _ctx(), turn=45)
     assert drafts is not None and "rescript-draft-heal" in tags
+    heal_prompt = next(p for t, p in zip(tags, prompts) if t == "rescript-draft-heal")
+    ff = _field_failure_map(_parse_heal_request(heal_prompt)["failures"][0])
+    for name in must_fields:
+        assert name in ff
     assert any(o.get("label") == sibling["label"] for o in drafts[0]["options"])
 
 
@@ -641,6 +637,8 @@ def _assert_no_tech_keys_on_player_rows(rows: list) -> None:
         "combo_then_heal",
         "reorder_identity",
         "utf8_label_nonzero",
+        "utf8_mixed_cn_label_nonzero",
+        "utf8_mixed_cn_office_exhaust",
         "bad_category_nonzero",
         "region_mismatch_nonzero",
     ],
@@ -756,6 +754,55 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
         must_fields = ("label",)
         expected_present = {"label": {"encoding": "utf-8"}}
         draft_present = None
+        draft_absent = ()
+        heal_id_want = "0:1"
+
+    elif scenario == "utf8_mixed_cn_label_nonzero":
+        # 合法中文 + 孤立 surrogate：只剔坏项，不整批降级
+        bad = _army_pay(label="边饷拟", amount=150)
+        bad["label"] = "边" + chr(0xD800)
+        first_raw = _items_json([{
+            "title": "关宁欠饷", "context": "边军待哺。",
+            "options": [sibling, bad],
+        }])
+        heal_raw = _heals_json([("0:1", {"label": "边饷拟"})])
+        step = {"i": 0}
+
+        def _script(tag, prior_messages):
+            step["i"] += 1
+            return first_raw if step["i"] == 1 else heal_raw
+
+        expected_heal_calls = 1
+        succeed_on = "utf8_mixed"
+        bad_amount = 150
+        bad_option_index = 1
+        must_fields = ("label",)
+        expected_present = {"label": {"encoding": "utf-8"}}
+        draft_present = {"label": "边" + chr(0xD800)}
+        draft_absent = ()
+        heal_id_want = "0:1"
+
+    elif scenario == "utf8_mixed_cn_office_exhaust":
+        # 混合中文 office 编码失败耗尽：只剔坏项，兄弟保留
+        bad = _army_pay(label="边饷拟", amount=150)
+        bad["assignee_name"] = "官" + chr(0xD800)
+        first_raw = _items_json([{
+            "title": "关宁欠饷", "context": "边军待哺。",
+            "options": [sibling, bad],
+        }])
+        step = {"i": 0}
+
+        def _script(tag, prior_messages):
+            step["i"] += 1
+            return first_raw
+
+        expected_heal_calls = RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+        succeed_on = None
+        bad_amount = 150
+        bad_option_index = 1
+        must_fields = ("assignee_name",)
+        expected_present = {"assignee_name": {"encoding": "utf-8"}}
+        draft_present = {"assignee_name": "官" + chr(0xD800)}
         draft_absent = ()
         heal_id_want = "0:1"
 
@@ -926,10 +973,20 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
                 assert draft.get(k) == v
         return fact
 
-    if scenario in ("utf8_label_nonzero", "bad_category_nonzero", "region_mismatch_nonzero"):
-        assert [c["tag"] for c in calls] == [
-            "rescript-draft", "rescript-draft-heal",
-        ]
+    if scenario in (
+        "utf8_label_nonzero",
+        "utf8_mixed_cn_label_nonzero",
+        "utf8_mixed_cn_office_exhaust",
+        "bad_category_nonzero",
+        "region_mismatch_nonzero",
+    ):
+        if scenario == "utf8_mixed_cn_office_exhaust":
+            assert calls[0]["tag"] == "rescript-draft"
+            assert len(heal_calls) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+        else:
+            assert [c["tag"] for c in calls] == [
+                "rescript-draft", "rescript-draft-heal",
+            ]
         assert heal_calls[0]["contents"][1] == first_raw
         _expect_heal_req(
             heal_reqs[0],
@@ -941,6 +998,11 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
             heal_id=heal_id_want,
             option_index=bad_option_index,
         )
+        # 混合编码：current 经 JSON 运输解码后与源值一致
+        if scenario.startswith("utf8_mixed"):
+            ff = _field_failure_map(heal_reqs[0]["failures"][0])
+            field = must_fields[0]
+            assert ff[field]["current"] == draft_present[field]
     elif scenario == "combo_then_heal":
         assert [c["tag"] for c in calls] == [
             "rescript-draft", "rescript-draft-heal",
@@ -986,7 +1048,7 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
             )
             assert hc["contents"][1] == first_raw
 
-    if scenario == "exhaust":
+    if scenario in ("exhaust", "utf8_mixed_cn_office_exhaust"):
         assert len(opts) == 1
         hold = opts[0]
         for k, v in sibling_frozen.items():
@@ -996,16 +1058,22 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
         assert note_obj.get("reason") == "option_missing_fields_heal_exhausted"
         assert "missing_fields_detail" not in note_obj
         dropped = note_obj.get("dropped_options") or []
-        assert dropped and dropped[0].get("heal_id") == "0:0"
-        assert list(dropped[0].get("missing_fields") or []) == ["purpose"]
+        if scenario == "utf8_mixed_cn_office_exhaust":
+            want_id = "0:1"
+            want_fields = ["assignee_name"]
+        else:
+            want_id = "0:0"
+            want_fields = ["purpose"]
+        assert dropped and dropped[0].get("heal_id") == want_id
+        assert list(dropped[0].get("missing_fields") or []) == want_fields
         trace = note_obj.get("heal_trace") or []
         assert len(trace) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
         for i, entry in enumerate(trace, start=1):
             assert entry.get("attempt") == i
             assert str(entry.get("raw_summary") or "").strip()
             fails = entry.get("failures") or []
-            assert fails[0].get("heal_id") == "0:0"
-            assert list(fails[0].get("missing_fields") or []) == ["purpose"]
+            assert fails[0].get("heal_id") == want_id
+            assert list(fails[0].get("missing_fields") or []) == want_fields
         return
 
     assert len(opts) == 2
@@ -1019,7 +1087,7 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
         else:
             assert fixed.get("region_id") == "shaanxi"
         return
-    if scenario == "utf8_label_nonzero":
+    if scenario in ("utf8_label_nonzero", "utf8_mixed_cn_label_nonzero"):
         hold = next(o for o in opts if o.get("label") == sibling_frozen["label"])
         for k, v in sibling_frozen.items():
             assert hold.get(k) == v, f"sibling field {k} mutated"
@@ -1031,11 +1099,16 @@ def test_phase2_entry_heal_k_or_exhaust(scenario, game, monkeypatch, tmp_path):
     grant = next(o for o in opts if o.get("grant_action") == "协饷")
     hold = next(o for o in opts if o.get("action_type") == "assignment")
     assert grant["purpose"] == "补饷"
+    # 票面验收 6：完整 option 重交接受（含 amount=999）；部分补交合并提供字段
     if scenario == "partial_progress":
         assert grant["account"] == "国库"
-        assert grant["amount"] == bad_amount
-    elif scenario in ("combo_then_heal", "reorder_identity"):
-        assert grant["amount"] == bad_amount
+        assert grant["amount"] == 999
+    elif scenario in ("combo_then_heal", "reorder_identity", "k1", "k2", "k3"):
+        assert grant["amount"] == 999
+        if scenario in ("k1", "k2", "k3"):
+            assert grant["label"] == "边饷拟"
+            assert grant["account"] == "国库"
+            assert grant["target_id"] == "guanning"
     else:
         assert grant["amount"] == 150
         assert grant["label"] == "边饷拟"
