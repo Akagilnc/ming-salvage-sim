@@ -70,6 +70,8 @@ from ming_sim.strict_types import (
 )
 from ming_sim.token_stats import tlog
 
+logger = logging.getLogger(__name__)
+
 CURRENT_RESOLVE_CONTRACT_VERSION = 1
 
 # ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
@@ -882,20 +884,29 @@ class GameDB:
         # factory=_SuspendableConnection：使 atomic() 能暂停全库 commit（ADR 0008 决定 2/8）。
         # 暂停标志默认 off，下面 init_schema 建表照常提交。
         from ming_sim.applier import _SuspendableConnection
+        # #1749：connect 成功后 PRAGMA/init_schema 任一步失败须关连接，保留原异常；
+        # GameSession 在 GameDB 返回前 self.db 仍为 None，无法代为清理半成品。
         self.conn = sqlite3.connect(
             path,
             check_same_thread=False,
             cached_statements=0,
             factory=_SuspendableConnection,
         )
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
-        if int(self.conn.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
-            raise RuntimeError("SQLite foreign-key enforcement could not be enabled")
-        # 遗产修正符缓存：legacy_modifiers 在落账热路径被频繁调用，缓存聚合结果，
-        # 仅在 active 遗产集变化（insert_legacy / expire_legacies）时失效。
-        self._legacy_mod_cache: Optional[Dict[str, object]] = None
-        self.init_schema()
+        try:
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA foreign_keys = ON")
+            if int(self.conn.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
+                raise RuntimeError("SQLite foreign-key enforcement could not be enabled")
+            # 遗产修正符缓存：legacy_modifiers 在落账热路径被频繁调用，缓存聚合结果，
+            # 仅在 active 遗产集变化（insert_legacy / expire_legacies）时失效。
+            self._legacy_mod_cache: Optional[Dict[str, object]] = None
+            self.init_schema()
+        except Exception:
+            try:
+                self.conn.close()
+            except Exception:
+                logger.exception("GameDB init failed; conn.close failed")
+            raise
 
     def owns_transaction(self) -> bool:
         """Return True when this GameDB call site should commit its own writes."""

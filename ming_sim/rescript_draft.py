@@ -20,10 +20,12 @@ issue 盘面事实，不新建 issue。event_id 绑定走 bind_decisions_to_cand
 
 from __future__ import annotations
 
+import copy
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
@@ -40,15 +42,127 @@ from ming_sim.decree_vocabulary import (
 from ming_sim.error_pack import error_packs_root
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.models import GameState, reign_period_label
-from ming_sim.structured_decree import (
-    StructuredDecreeCombinationError,
-    combination_correction_feedback,
-)
+from ming_sim.structured_decree import StructuredDecreeCombinationError
 from ming_sim.token_stats import tlog
 
 MAX_RESCRIPT_DRAFTS = 5
-# #1624：月末首抽 typed 组合失败 → 共同纠错反馈有界重抽一次；耗尽仍 F2.5 整批降级。
-RESCRIPT_COMBO_CORRECTION_RETRIES = 1
+# #1746：单 option 契约失败（缺/错/组合/接地/形）→ 同一会话补交（不含首抽）；耗尽只剔该 option。
+# decision: missing-field-heal-by-resume-not-drop / per-option-drop-after-heal-exhausted
+# decision: heal-covers-illegal-values-too（不问错在哪；不按错误种类分闸）
+RESCRIPT_OPTION_FIELD_HEAL_RETRIES = 3
+# 整 option 替换语义标记（非 object 等）；出现在 missing_fields 时合并器接受完整 option 体。
+_OPTION_REPLACE_FIELD = "option"
+
+
+def _field_failure(
+    field: str,
+    *,
+    current: object = None,
+    expected: object = None,
+) -> Dict[str, object]:
+    """权威失败事实一条；current/expected 保持源值，转义只在 JSON 运输边界。"""
+    return {
+        "field": str(field),
+        "current": current,
+        "expected": expected,
+    }
+
+
+def _merge_field_failure(
+    facts: Dict[str, Dict[str, object]],
+    field: str,
+    *,
+    current: object = None,
+    expected: object = None,
+) -> None:
+    key = str(field)
+    if not key or key in facts:
+        return
+    facts[key] = _field_failure(key, current=current, expected=expected)
+
+
+def _note_failed(
+    facts: Dict[str, Dict[str, object]],
+    *fields: str,
+    current: object = None,
+    expected: object = None,
+    currents: Optional[Mapping[str, object]] = None,
+    expecteds: Optional[Mapping[str, object]] = None,
+) -> None:
+    """唯一事实集合：字段/现值/期望；failed 名由此派生。"""
+    for field in fields:
+        key = str(field)
+        if not key:
+            continue
+        cur = current
+        exp = expected
+        if currents is not None and key in currents:
+            cur = currents[key]
+        if expecteds is not None and key in expecteds:
+            exp = expecteds[key]
+        _merge_field_failure(facts, key, current=cur, expected=exp)
+
+
+class RescriptOptionMissingFieldsError(ValueError):
+    """可定位到单 option 的契约失败（#1746 补交分支）。
+
+    缺字段、错值、组合矛盾、未知键、非 object 等凡可定位到 option 的失败
+    均走同一补交回路（heal-covers-illegal-values-too）；非顶层/急务条目非法。
+    权威失败事实只有 field_failures（field/current/expected）；missing_fields 由其派生。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_option: object = None,
+        field_failures: Optional[Sequence[Mapping[str, object]]] = None,
+    ) -> None:
+        self.raw_option = raw_option
+        # 权威接缝已给出事实；此处只承载，不过滤/去重/补空
+        self.field_failures: Tuple[Dict[str, object], ...] = tuple(
+            dict(f) for f in (field_failures or ())
+        )
+        self.missing_fields = tuple(str(f["field"]) for f in self.field_failures)
+        super().__init__(message)
+
+
+def _raise_option_missing_fields(
+    message: str,
+    *,
+    raw_option: object = None,
+    field_failures: Optional[Sequence[Mapping[str, object]]] = None,
+) -> None:
+    """抛可定位单 option 契约失败（#1746 heal-by-resume）。不问错误种类。"""
+    raise RescriptOptionMissingFieldsError(
+        message,
+        raw_option=raw_option,
+        field_failures=field_failures,
+    )
+
+
+@dataclass(frozen=True)
+class RescriptOptionMissingFailure:
+    item_index: int
+    option_index: int
+    title: str
+    missing_fields: Tuple[str, ...]  # 由 field_failures 派生
+    raw_option: object
+    # 机面结构身份：补交请求显式携带、响应回指；不依赖 title/label 自由文。
+    heal_id: str = ""
+    field_failures: Tuple[Dict[str, object], ...] = ()
+
+
+class RescriptOptionMissingFieldsBatch(ValueError):
+    """一批 option 契约失败（validate isolate 模式一次收齐，供补交/剔除）。"""
+
+    def __init__(self, failures: Sequence[RescriptOptionMissingFailure]) -> None:
+        self.failures = list(failures)
+        parts = [
+            f"{f.title!r}#{f.option_index}:{','.join(f.missing_fields)}"
+            for f in self.failures
+        ]
+        super().__init__("票拟 option 契约失败：" + "; ".join(parts))
 
 # #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
 # #1624 / PR#1719：required/present/action-conditional 为 typed 单源——
@@ -306,8 +420,12 @@ def _enforce_layer_a_action_conditional(
     raw: Mapping[str, object],
     *,
     shape: Mapping[str, object],
+    facts_out: Dict[str, Dict[str, object]],
 ) -> None:
-    """按 shape.action_conditional 强制七类必填/互斥/枚举（写回 out）。"""
+    """按 shape.action_conditional 强制七类必填/互斥/枚举（写回 out）。
+
+    字段契约失败（缺或错）写入唯一事实集合；不填占位值。
+    """
     action = str(out["action_type"])
     conditional = shape.get("action_conditional") or {}
     if not isinstance(conditional, Mapping):
@@ -329,11 +447,23 @@ def _enforce_layer_a_action_conditional(
             return ""
         return str(val).strip()
 
-    def _require_any_present(key: str) -> bool:
-        """require_any 在场：通用非空串（202571cc）；due_turn/deadline_months 须正值。
+    def _fail(
+        *fields: str,
+        current: object = None,
+        expected: object = None,
+        currents: Optional[Mapping[str, object]] = None,
+        expecteds: Optional[Mapping[str, object]] = None,
+    ) -> None:
+        _note_failed(
+            facts_out, *fields,
+            current=current, expected=expected,
+            currents=currents, expecteds=expecteds,
+        )
 
-        正值仅罩军令 dual 的期限键，避免把 authorization name/assignee_name
-        的 "0"/布尔等既有字符串语义一并改写。
+    def _require_any_present(key: str) -> bool:
+        """require_any 在场：通用非空串；due_turn/deadline_months 须正值。
+
+        非空但不可解析为正整数 → 记该键失败（补交），不短路其它扫描。
         """
         if key in ("due_turn", "deadline_months"):
             val = _raw_or_out(key)
@@ -346,35 +476,52 @@ def _enforce_layer_a_action_conditional(
                 return False
             try:
                 return int(text) > 0
-            except (TypeError, ValueError):
-                return False
+            except (TypeError, ValueError, OverflowError):
+                _fail(
+                    key,
+                    current=val,
+                    expected={"type": "positive_int"},
+                )
+                return True  # 已记失败，不把该键当「未在场」再索 require_any 组
         return bool(_nonempty_str(key))
 
     tk_in = rules.get("target_kind_in")
     if tk_in:
         allowed_tk = frozenset(str(x) for x in tk_in)  # type: ignore[union-attr]
         got = str(out.get("target_kind") or "").strip()
-        if got not in allowed_tk:
-            raise ValueError(
-                f"票拟 option.{action}.target_kind 须为"
-                f"{'|'.join(sorted(allowed_tk))}，得 {got!r}"
+        # target_kind 本身缺失时由 required 收集；已给出但不在闭集 → 补交
+        if got and got not in allowed_tk:
+            _fail(
+                "target_kind",
+                current=got,
+                expected=sorted(allowed_tk),
             )
 
     for key in rules.get("required_nonempty") or ():
         key_s = str(key)
         val = _nonempty_str(key_s)
         if not val:
-            raise ValueError(f"票拟 option.{action} 缺必填：{key_s}")
+            _fail(
+                key_s,
+                current=_raw_or_out(key_s),
+                expected={"nonempty_str": True},
+            )
+            continue
         src = _raw_or_out(key_s)
         out[key_s] = str(src) if src is not None else val
 
     for group in rules.get("require_any_nonempty") or ():
         keys = tuple(str(k) for k in group)  # type: ignore[union-attr]
+        # 组内已有键被记为非法时不再重复索整组
+        if any(k in facts_out for k in keys):
+            continue
         if not any(_require_any_present(k) for k in keys):
-            raise ValueError(
-                f"票拟 option.{action} 须具备其一：{'/'.join(keys)}"
+            _fail(
+                *keys,
+                currents={k: _raw_or_out(k) for k in keys},
+                expecteds={k: {"any_of_group": list(keys)} for k in keys},
             )
-        # 写回保持 202571cc：有非空串则 str 写回（期限 int 归一由后续 int_keys 处理）
+            continue
         for key_s in keys:
             val = _nonempty_str(key_s)
             if val and key_s not in out:
@@ -390,9 +537,12 @@ def _enforce_layer_a_action_conditional(
                 continue
             allowed_set = frozenset(str(x) for x in allowed)  # type: ignore[union-attr]
             if val not in allowed_set:
-                raise ValueError(
-                    f"票拟 option.{action}.{key_s} 非法：{val!r}"
+                _fail(
+                    key_s,
+                    current=val,
+                    expected=sorted(allowed_set),
                 )
+                continue
             out[key_s] = val
 
     for item in rules.get("required_when") or ():
@@ -404,9 +554,12 @@ def _enforce_layer_a_action_conditional(
         for rk in rks:  # type: ignore[union-attr]
             rk_s = str(rk)
             if not _nonempty_str(rk_s):
-                raise ValueError(
-                    f"票拟 option.{action} 当 {ctrl}={cval} 时缺 {rk_s}"
+                _fail(
+                    rk_s,
+                    current=_raw_or_out(rk_s),
+                    expected={"required_when": {ctrl: cval}},
                 )
+                continue
             src = _raw_or_out(rk_s)
             out[rk_s] = str(src) if src is not None else _nonempty_str(rk_s)
 
@@ -414,8 +567,11 @@ def _enforce_layer_a_action_conditional(
         keys = tuple(str(k) for k in pair)  # type: ignore[union-attr]
         present = [k for k in keys if _nonempty_str(k)]
         if len(present) > 1:
-            raise ValueError(
-                f"票拟 option.{action} 互斥键不得并存：{'/'.join(present)}"
+            # 互斥并存：两字段都列入补交，由 LLM 择一保留
+            _fail(
+                *present,
+                currents={k: _raw_or_out(k) for k in present},
+                expecteds={k: {"mutex": list(keys), "keep_one": True} for k in present},
             )
 
     pos_when = rules.get("positive_amount_when")
@@ -423,19 +579,32 @@ def _enforce_layer_a_action_conditional(
         ctrl, cval = str(pos_when[0]), str(pos_when[1])  # type: ignore[index]
         if _nonempty_str(ctrl) == cval:
             amt_raw = _raw_or_out("amount")
-            try:
-                if isinstance(amt_raw, bool) or amt_raw is None or amt_raw == "":
-                    raise ValueError
-                amount = int(amt_raw)  # type: ignore[arg-type]
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"票拟 option.{action} {cval} 须正 amount"
-                ) from exc
-            if amount <= 0:
-                raise ValueError(
-                    f"票拟 option.{action} {cval} 须正 amount"
+            if amt_raw is None or amt_raw == "":
+                _fail(
+                    "amount",
+                    current=amt_raw,
+                    expected={"type": "positive_int"},
                 )
-            out["amount"] = amount
+            else:
+                try:
+                    if isinstance(amt_raw, bool):
+                        raise ValueError("bool")
+                    amount = int(amt_raw)  # type: ignore[arg-type]
+                except (TypeError, ValueError, OverflowError):
+                    _fail(
+                        "amount",
+                        current=amt_raw,
+                        expected={"type": "positive_int"},
+                    )
+                else:
+                    if amount <= 0:
+                        _fail(
+                            "amount",
+                            current=amount,
+                            expected={"type": "positive_int"},
+                        )
+                    else:
+                        out["amount"] = amount
 
     forbid = rules.get("forbid_positive_amount_unless")
     if forbid and len(forbid) >= 2:  # type: ignore[arg-type]
@@ -444,13 +613,15 @@ def _enforce_layer_a_action_conditional(
             amt_raw = _raw_or_out("amount")
             try:
                 amount = int(amt_raw) if amt_raw not in (None, "") else 0  # type: ignore[arg-type]
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 amount = 0
             if isinstance(amt_raw, bool):
                 amount = 0
             if amount > 0:
-                raise ValueError(
-                    f"票拟 option.{action} 非 {cval} 不得带正 amount"
+                _fail(
+                    "amount",
+                    current=amt_raw,
+                    expected={"forbid_positive_unless": {ctrl: cval}},
                 )
 
 
@@ -482,9 +653,23 @@ def normalize_rescript_layer_a_option(
     draft_capability 一律服务端重算覆盖，禁止 LLM 自带为准。
     generation_admission=True：生成批次拒绝无 kind 直写 grant_action=协饷；
     内部 canonical 二次归一保持默认 False。
+
+    #1746（heal-covers-illegal-values-too）：权威 shape/normalize/组合一次收齐
+    失败字段（不问错在哪）→ RescriptOptionMissingFieldsError 同一补交回路。
+    禁止填占位合法值；不按错误种类分流。
     """
     if not isinstance(raw, dict):
-        raise ValueError("票拟 option 非 object（层 A shape）")
+        _raise_option_missing_fields(
+            "票拟 option 非 object（层 A shape）",
+            raw_option=raw,
+            field_failures=[
+                _field_failure(
+                    _OPTION_REPLACE_FIELD,
+                    current=type(raw).__name__,
+                    expected="object",
+                )
+            ],
+        )
     shape = layer_a_option_shape()
     required_keys = shape["required_keys"]  # type: ignore[assignment]
     present_keys = shape["present_keys"]  # type: ignore[assignment]
@@ -492,61 +677,179 @@ def normalize_rescript_layer_a_option(
     grant_kind_army_pay = str(shape["grant_kind_army_pay"])
     capability_str_keys = shape["capability_str_keys"]  # type: ignore[assignment]
     capability_int_keys = shape["capability_int_keys"]  # type: ignore[assignment]
-    unknown = set(raw) - _LAYER_A_ALLOWED_KEYS
-    if unknown:
-        raise ValueError(
-            f"票拟 option 含未知字段（整批 shape 错，F2.5/F3.3）：{sorted(unknown)}"
-        )
     out: Dict[str, object] = {}
+    facts: Dict[str, Dict[str, object]] = {}
+
+    def _fail(
+        *fields: str,
+        current: object = None,
+        expected: object = None,
+        currents: Optional[Mapping[str, object]] = None,
+        expecteds: Optional[Mapping[str, object]] = None,
+    ) -> None:
+        _note_failed(
+            facts, *fields,
+            current=current, expected=expected,
+            currents=currents, expecteds=expecteds,
+        )
+
+    unknown = sorted(set(raw) - _LAYER_A_ALLOWED_KEYS)
+    if unknown:
+        # 未知键：单 option 补交（完整替换或去掉未知键）；不整批降级
+        for key in unknown:
+            _fail(
+                key,
+                current=raw.get(key),
+                expected={"allowed_keys": sorted(_LAYER_A_ALLOWED_KEYS)},
+            )
+        if _OPTION_REPLACE_FIELD not in facts:
+            _fail(
+                _OPTION_REPLACE_FIELD,
+                current=unknown,
+                expected={"allowed_keys": sorted(_LAYER_A_ALLOWED_KEYS)},
+            )
+
     for key in required_keys:  # type: ignore[union-attr]
-        value = raw.get(key)
-        if not isinstance(value, str) or not str(value).strip():
-            raise ValueError(f"票拟 option 缺层 A 必填键或为空白：{key}")
-        out[key] = str(value)  # 原文；strip 仅判空
-    action_type = str(out["action_type"]).strip()
-    if action_type not in action_types:
-        raise ValueError(f"票拟 option.action_type 非七类 routable：{action_type!r}")
-    out["action_type"] = action_type
-    # #1620：grant_kind 仅 grant_allocation 合法；非 grant 不得因 allowed 白名单静默丢键。
-    # 内部 canonical（无 grant_kind、grant_action=协饷）仍可二次归一——本闸只咬显式 kind。
-    if action_type != "grant_allocation":
-        raw_kind = raw.get("grant_kind") if "grant_kind" in raw else None
-        if raw_kind is not None and str(raw_kind).strip():
-            raise ValueError(
-                f"非 grant_allocation 不得带 grant_kind：{raw_kind!r}"
+        key_s = str(key)
+        if key_s not in raw or raw.get(key_s) is None:
+            _fail(
+                key_s,
+                current=None if key_s not in raw else raw.get(key_s),
+                expected={"type": "nonempty_str"},
             )
-    target_kind = str(out["target_kind"]).strip()
-    if target_kind not in TARGET_KINDS:
-        raise ValueError(f"票拟 option.target_kind 非法：{target_kind!r}")
-    out["target_kind"] = target_kind
-    # #1624：locality 归一唯一真源；禁止平行别名表，禁止按 target_kind 覆盖
-    from ming_sim.execution_pressure import normalize_locality_scope
-    out["locality_scope"] = normalize_locality_scope(out["locality_scope"])
-    # C.3：三键必须在且为 str（可 ""）；禁缺键补全 / None→"" / str(value) 洗值
+            continue
+        val = raw.get(key_s)
+        if not isinstance(val, str):
+            _fail(
+                key_s,
+                current=val,
+                expected={"type": "nonempty_str"},
+            )
+            continue
+        if not val.strip():
+            _fail(
+                key_s,
+                current=val,
+                expected={"type": "nonempty_str"},
+            )
+            continue
+        out[key_s] = val  # 原文；strip 仅判空
+
+    action_type = ""
+    if "action_type" in out:
+        action_type = str(out["action_type"]).strip()
+        if action_type not in action_types:
+            _fail(
+                "action_type",
+                current=action_type,
+                expected=sorted(action_types),
+            )
+            action_type = ""
+        else:
+            out["action_type"] = action_type
+            # #1620：grant_kind 仅 grant_allocation 合法
+            if action_type != "grant_allocation":
+                raw_kind = raw.get("grant_kind") if "grant_kind" in raw else None
+                if raw_kind is not None and str(raw_kind).strip():
+                    _fail(
+                        "grant_kind",
+                        current=raw_kind,
+                        expected={"allowed_when_action": "grant_allocation"},
+                    )
+
+    if "target_kind" in out:
+        target_kind = str(out["target_kind"]).strip()
+        if target_kind not in TARGET_KINDS:
+            _fail(
+                "target_kind",
+                current=target_kind,
+                expected=sorted(TARGET_KINDS),
+            )
+        else:
+            out["target_kind"] = target_kind
+
+    if "locality_scope" in out:
+        # #1624：locality 归一唯一真源；禁止平行别名表，禁止按 target_kind 覆盖
+        from ming_sim.execution_pressure import (
+            LOCALITY_SCOPES,
+            normalize_locality_scope,
+        )
+        try:
+            out["locality_scope"] = normalize_locality_scope(out["locality_scope"])
+        except (TypeError, ValueError):
+            _fail(
+                "locality_scope",
+                current=out.get("locality_scope"),
+                expected=sorted(LOCALITY_SCOPES),
+            )
+
+    # C.3：三键必须在且为 str（可 ""）；禁缺键补全 / None→"" / truthiness 洗值
     for key in present_keys:  # type: ignore[union-attr]
-        if key not in raw:
-            raise ValueError(f"票拟 option 缺层 A 须在键：{key}")
-        value = raw[key]
-        if not isinstance(value, str):
-            raise ValueError(
-                f"票拟 option.{key} 须为 str（可空串），拒 {type(value).__name__}"
+        key_s = str(key)
+        if key_s not in raw:
+            _fail(
+                key_s,
+                current=None,
+                expected={"type": "str", "allow_empty": True},
             )
-        out[key] = value
+            continue
+        value = raw[key_s]
+        if not isinstance(value, str):
+            _fail(
+                key_s,
+                current=value,
+                expected={"type": "str", "allow_empty": True},
+            )
+            continue
+        out[key_s] = value
+
     # 七类 action-conditional（与 shape/renderer 同真源；先于组合闸）
-    _enforce_layer_a_action_conditional(out, raw, shape=shape)
-    # #1624：层 A 即走共同组合校验（动作×目标×属地×承办），落库前不再另写平行闸
-    from ming_sim.structured_decree import validate_structured_decree_combination
-    validate_structured_decree_combination(out)
+    if action_type:
+        _enforce_layer_a_action_conditional(
+            out, raw, shape=shape, facts_out=facts,
+        )
+
+    # #1624/#1746：完整组合判定只走权威接缝一次；消费端只携带事实。
+    if (
+        action_type
+        and "target_kind" in out
+        and str(out.get("target_kind") or "").strip()
+        and "locality_scope" in out
+        and str(out.get("locality_scope") or "").strip()
+        and "target_kind" not in facts
+        and "locality_scope" not in facts
+    ):
+        from ming_sim.structured_decree import (
+            validate_structured_decree_combination,
+        )
+        try:
+            validate_structured_decree_combination(out)
+        except StructuredDecreeCombinationError as exc:
+            for raw_fact in exc.field_failures:
+                _note_failed(
+                    facts, str(raw_fact["field"]),
+                    current=raw_fact.get("current"),
+                    expected=raw_fact.get("expected"),
+                )
+
     # 其余 capability 闭集字段透传（有则规范化，无则由 derive 填默认）
     for key in capability_str_keys:  # type: ignore[union-attr]
         if key == "stop_condition":
             continue
         if key in raw and raw[key] is not None:
+            # 不 truthiness 洗值；bool/非 str 原样 str() 仅作运输，权威 shape 再判
             out[key] = str(raw[key])
     if "stop_condition" in raw and raw["stop_condition"] is not None:
-        out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
-    # #1620：grant amount 不走通用 int()——由 require_grant_allocation_shape 独掌
-    # （strict_int 拒 bool/float）；非 grant 整数字段维持既有 int()。
+        try:
+            out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
+        except ValueError:
+            _fail(
+                "stop_condition",
+                current=raw.get("stop_condition"),
+                expected={"type": "str"},
+            )
+    # #1620：grant amount 不走通用 int()——由 require_grant_allocation_shape 独掌；
+    # 非 grant 整数字段维持既有 int()；失败进补交列表。
     int_keys = tuple(
         k for k in capability_int_keys  # type: ignore[union-attr]
         if k != "amount" or action_type != "grant_allocation"
@@ -555,17 +858,20 @@ def normalize_rescript_layer_a_option(
         if key in raw and raw[key] is not None and raw[key] != "":
             try:
                 out[key] = int(raw[key])  # type: ignore[arg-type]
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"票拟 option.{key} 非法：{raw[key]!r}") from exc
-    # #1620：grant 金额/account 走 require_grant_allocation_shape 唯一权威（与 mapper 同缝），
-    # 禁残缺 option 上桌；空 account 不回写默认，免 draft_capability 漂移；
-    # 非空 account 回写 shape 返回的 canonical（太仓→国库），与显式国库同 capability。
-    # amount 传 raw 原值；用返回值写 out["amount"]（honorific 无则不写）。
-    # grant_kind=army_pay → 内部 grant_action=协饷；kind 与显式 action 不得并存；
-    # 生成批次禁无 kind 直写协饷；内部 canonical 二次归一仍可（generation_admission=False）；
-    # 协饷五字段复用 require_explicit_xiexang_fields，不补 purpose/target。
+            except (TypeError, ValueError, OverflowError):
+                # JSON 1e309/-1e309 → ±inf；int(inf) 抛 OverflowError，与错类型同入补交
+                _fail(
+                    key,
+                    current=raw[key],
+                    expected={"type": "int"},
+                )
+
+    # #1620 grant：先 require_grant_allocation_shape 归一金额/account，
+    # 协饷再 require_explicit_xiexang_fields（吃已归一 amount）——恢复既有 grant 语义。
+    # 权威失败字段一律进补交，不分缺失/非法；不平行 strict_int/正金额预检。
     if action_type == "grant_allocation":
         from ming_sim.action_materialize import (
+            IncompleteXiexangPayloadError,
             require_explicit_xiexang_fields,
             require_grant_allocation_shape,
         )
@@ -576,42 +882,136 @@ def normalize_rescript_layer_a_option(
         raw_ga = ""
         if "grant_action" in raw and raw["grant_action"] is not None:
             raw_ga = str(raw["grant_action"]).strip()
-        if grant_kind:
+
+        if generation_admission and not grant_kind and not raw_ga:
+            # 双缺辨别：索其一；不预断 army_pay，不平行金额预检
+            _fail(
+                "grant_kind", "grant_action",
+                currents={"grant_kind": None, "grant_action": None},
+                expecteds={
+                    "grant_kind": grant_kind_army_pay,
+                    "grant_action": {"nonempty_grant_action": True},
+                },
+            )
+        elif grant_kind:
             if grant_kind != grant_kind_army_pay:
-                raise ValueError(f"grant 非法 grant_kind：{grant_kind!r}")
-            if raw_ga:
-                raise ValueError(
-                    f"grant_kind=army_pay 不得同时显式给 grant_action：{raw_ga!r}"
+                _fail(
+                    "grant_kind",
+                    current=grant_kind,
+                    expected=grant_kind_army_pay,
                 )
-            out["grant_action"] = "协饷"
+            elif raw_ga:
+                _fail(
+                    "grant_kind", "grant_action",
+                    currents={"grant_kind": grant_kind, "grant_action": raw_ga},
+                    expecteds={
+                        "grant_kind": grant_kind_army_pay,
+                        "grant_action": {
+                            "mutex_with": "grant_kind",
+                            "must_be_empty": True,
+                        },
+                    },
+                )
+            else:
+                out["grant_action"] = "协饷"
         elif generation_admission and raw_ga == "协饷":
-            raise ValueError(
-                "生成侧军饷须用 grant_kind=army_pay，不得直接 grant_action=协饷"
+            _fail(
+                "grant_kind",
+                current=None,
+                expected=grant_kind_army_pay,
             )
-        input_account = str(out.get("account") or "").strip()
-        shaped = require_grant_allocation_shape(
-            grant_action=out.get("grant_action"),
-            amount=raw.get("amount") if "amount" in raw else None,
-            account=out.get("account"),
+        elif raw_ga:
+            out["grant_action"] = raw_ga
+
+        resolved_ga = str(out.get("grant_action") or "").strip()
+        if resolved_ga:
+            # account：保留 raw 原值给权威 shape（不 or "" 洗 false）
+            if "account" in raw and raw["account"] is not None and "account" not in out:
+                out["account"] = raw["account"]  # type: ignore[assignment]
+            input_account_present = (
+                "account" in out
+                and out.get("account") is not None
+                and str(out.get("account") or "").strip() != ""
+            )
+            try:
+                shaped = require_grant_allocation_shape(
+                    grant_action=resolved_ga,
+                    amount=raw.get("amount") if "amount" in raw else None,
+                    account=out.get("account") if "account" in out else (
+                        raw.get("account") if "account" in raw else None
+                    ),
+                )
+            except ValueError as exc:
+                field = str(getattr(exc, "field", "") or "").strip()
+                if not field:
+                    raise
+                current = getattr(exc, "current", None)
+                if current is None:
+                    current = (
+                        raw.get(field) if field in raw else out.get(field)
+                    )
+                expected = getattr(exc, "expected", None)
+                if expected is None and not hasattr(exc, "expected"):
+                    raise
+                _fail(field, current=current, expected=expected)
+            else:
+                out["grant_action"] = shaped["grant_action"]
+                if "amount" in shaped:
+                    out["amount"] = shaped["amount"]
+                if input_account_present:
+                    out["account"] = shaped["account"]
+                if str(out.get("grant_action") or "").strip() == "协饷":
+                    # 吃 grant shape 已归一的 amount，恢复既有语义（"300"→300）
+                    purpose_cur = str(
+                        out.get("purpose")
+                        if "purpose" in out
+                        else (raw.get("purpose") if "purpose" in raw else "")
+                        or ""
+                    )
+                    cadence_cur = str(
+                        out.get("cadence")
+                        if "cadence" in out
+                        else (raw.get("cadence") if "cadence" in raw else "")
+                        or ""
+                    )
+                    try:
+                        explicit = require_explicit_xiexang_fields(
+                            amount=out.get("amount", 0),
+                            account=str(out.get("account") or ""),
+                            purpose=purpose_cur,
+                            target_kind=str(
+                                out.get("target_kind") or raw.get("target_kind") or ""
+                            ),
+                            target_id=str(
+                                out.get("target_id") or raw.get("target_id") or ""
+                            ),
+                            cadence=cadence_cur,
+                        )
+                    except IncompleteXiexangPayloadError as exc:
+                        for raw_fact in exc.field_failures:
+                            _note_failed(
+                                facts, str(raw_fact["field"]),
+                                current=raw_fact.get("current"),
+                                expected=raw_fact.get("expected"),
+                            )
+                    else:
+                        out["amount"] = explicit["amount"]
+                        out["account"] = explicit["account"]
+                        out["purpose"] = explicit["purpose"]
+                        out["target_kind"] = explicit["target_kind"]
+                        out["target_id"] = explicit["target_id"]
+
+    # 首次消耗前：可归属 option 的编码失败并入同一补交事实集（不擦洗、不改哈希契约）
+    _note_option_utf8_failures(raw, out, facts=facts)
+
+    if facts:
+        _raise_option_missing_fields(
+            f"票拟 option 契约失败字段：{'/'.join(facts)}",
+            raw_option=raw,
+            field_failures=list(facts.values()),
         )
-        if "amount" in shaped:
-            out["amount"] = shaped["amount"]
-        if input_account:
-            out["account"] = shaped["account"]
-        if str(out.get("grant_action") or "").strip() == "协饷":
-            explicit = require_explicit_xiexang_fields(
-                amount=out.get("amount", 0),
-                account=str(out.get("account") or ""),
-                purpose=str(out.get("purpose") or ""),
-                target_kind=str(out.get("target_kind") or ""),
-                target_id=str(out.get("target_id") or ""),
-                cadence=str(out.get("cadence") or ""),
-            )
-            out["amount"] = explicit["amount"]
-            out["account"] = explicit["account"]
-            out["purpose"] = explicit["purpose"]
-            out["target_kind"] = explicit["target_kind"]
-            out["target_id"] = explicit["target_id"]
+
+    # derive 需要 action_type 等必填已齐；编码已在上环收束，不再经 ValueError 整批
     out["draft_capability"] = derive_draft_capability(out)
     return out
 
@@ -803,26 +1203,120 @@ def build_rescript_draft_payload(
     }
 
 
+def _option_failure_from_exc(
+    *,
+    item_index: int,
+    option_index: int,
+    title: str,
+    exc: RescriptOptionMissingFieldsError,
+    raw_option: object = None,
+) -> RescriptOptionMissingFailure:
+    raw_for = raw_option if raw_option is not None else exc.raw_option
+    facts = tuple(dict(f) for f in exc.field_failures)
+    return RescriptOptionMissingFailure(
+        item_index=item_index,
+        option_index=option_index,
+        title=title,
+        missing_fields=tuple(exc.missing_fields),
+        raw_option=raw_for,
+        heal_id=_option_heal_id(item_index, option_index),
+        field_failures=facts,
+    )
+
+
+def _target_catalog_for_kind(
+    kind: str,
+    *,
+    region_target_ids: Optional[set[str]],
+    army_target_ids: Optional[set[str]],
+) -> Optional[set[str]]:
+    if kind == "region":
+        return region_target_ids
+    if kind == "army":
+        return army_target_ids
+    return None
+
+
+def _ungrounded_target_failure(
+    raw_option: object,
+    *,
+    region_target_ids: Optional[set[str]],
+    army_target_ids: Optional[set[str]],
+) -> Optional[RescriptOptionMissingFieldsError]:
+    """option 级 target 未接地 → 补交失败（非整批）。无目录时不检。"""
+    if not isinstance(raw_option, dict):
+        return None
+    kind = str(raw_option.get("target_kind") or "").strip()
+    tid = str(raw_option.get("target_id") or "").strip()
+    if not tid:
+        return None
+    catalog = _target_catalog_for_kind(
+        kind,
+        region_target_ids=region_target_ids,
+        army_target_ids=army_target_ids,
+    )
+    if catalog is None or tid in catalog:
+        return None
+    return RescriptOptionMissingFieldsError(
+        f"票拟 option.target_id 不在同批 {kind}_targets：{tid!r}",
+        raw_option=raw_option,
+        field_failures=[
+            _field_failure(
+                "target_id",
+                current=tid,
+                expected=sorted(catalog),
+            )
+        ],
+    )
+
+
+def _note_option_utf8_failures(
+    *sources: object,
+    facts: Dict[str, Dict[str, object]],
+) -> None:
+    """capability/序列化字符串字段 UTF-8 不可编码 → 并入同一失败事实集。
+
+    在 derive_draft_capability / options_json 首次消耗前调用；不擦洗字符。
+    """
+    for src in sources:
+        if not isinstance(src, Mapping):
+            continue
+        for key, val in src.items():
+            key_s = str(key)
+            if not key_s or key_s in facts:
+                continue
+            if not isinstance(val, str):
+                continue
+            try:
+                val.encode("utf-8")
+            except UnicodeEncodeError:
+                _note_failed(
+                    facts, key_s,
+                    current=val,
+                    expected={"encoding": "utf-8"},
+                )
+
+
 def validate_rescript_draft_items(
     data: object,
     board_issue_ids: set[int],
+    *,
+    min_options: int = 2,
+    max_options: int = 3,
+    isolate_option_missing: bool = False,
+    region_target_ids: Optional[set[str]] = None,
+    army_target_ids: Optional[set[str]] = None,
 ) -> List[Dict[str, object]]:
-    """shape 校验（F2.2/F2.5 整批响亮降级的判据面）＋权威快照绑定＋原样不变式（F3.3）。
+    """shape 校验（F2.2/F2.5）＋权威快照绑定＋原样不变式（F3.3）。
 
     - 顶层非法（非 dict / 无 items list）→ raise ValueError（整批降级，本月无头版）；
-    - 任一条目必需字段缺失或非法（title/context 非空字符串 / options 非 2-3 项 /
-      option 须过层 A 单真源 normalize）→ raise ValueError 整批失败（F2.2/F2.5：
-      不得保留合法项形成部分头版，不得把缺失洗成空串）；合法 `items=[]` 仍是
-      「本月无急务」；
-    - 自由文本零删改（CLAUDE.md P6 / F3.3）：strip 只作判空的临时值，落库一律原文；
-    - option 经 normalize_rescript_layer_a_option：C.3 必填 + C.4 闭集；
-      draft_capability 服务端重算；未知键响亮失败（不再接受仅 label/hint 两键）；
-    - 处理条目前先校验 items 总数：超过 MAX_RESCRIPT_DRAFTS 即 raise ValueError
-      整批响亮降级（#656 A1：不截断、不静默丢弃后项、不保留前五条，F2.5）；
-    - item 层白名单外未知字段 → raise ValueError 整批失败（r2 B2）；
-      issue_id 是唯一豁免的可选绑定键；
-    - event_id 只采信出现在权威盘面里的 issue_id 回指（bind 同款纪律）；其余留给
-      落库层合成 `urgent:{turn}:{idx}`。
+    - 条目必需字段缺失或非法（title/context）→ raise ValueError 整批失败；
+    - options 数量：首抽/常规默认 2–3（F2.2）；#1746 剔除后 min_options=1 仍可呈；
+    - 可定位单 option 的契约失败（#1746，不问错种类）：isolate_option_missing=True
+      时收齐为 RescriptOptionMissingFieldsBatch（补交／耗尽单 option 剔除）；
+      False 时仍整批 ValueError（旧直调行为）；
+    - 合法 `items=[]` 仍是「本月无急务」（F2.3）；
+    - 自由文本零删改；draft_capability 服务端重算。
     """
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
         raise ValueError("票拟生成输出顶层非法：须为 {\"items\":[...]}")
@@ -845,7 +1339,8 @@ def validate_rescript_draft_items(
         return value  # 原样返回，零删改（F3.3）
 
     drafts: List[Dict[str, object]] = []
-    for raw in items:
+    missing_failures: List[RescriptOptionMissingFailure] = []
+    for item_index, raw in enumerate(items):
         if not isinstance(raw, dict):
             raise ValueError("票拟条目非 object（整批失败，F2.5）")
         unknown = set(raw) - _ITEM_ALLOWED_KEYS
@@ -856,40 +1351,62 @@ def validate_rescript_draft_items(
         title = _required_text(raw, "title")
         context = _required_text(raw, "context")
         raw_opts = raw.get("options")
-        if not isinstance(raw_opts, list) or not (2 <= len(raw_opts) <= 3):
-            raise ValueError(f"票拟条目 options 非 2-3 项（整批失败，F2.2）：{title!r}")
+        if not isinstance(raw_opts, list) or not (
+            min_options <= len(raw_opts) <= max_options
+        ):
+            raise ValueError(
+                f"票拟条目 options 非 {min_options}-{max_options} 项"
+                f"（整批失败，F2.2）：{title!r}"
+            )
         options: List[Dict[str, object]] = []
-        for opt in raw_opts:
-            if not isinstance(opt, dict):
-                raise ValueError(f"票拟 option 非 object（整批失败，F2.2）：{title!r}")
-            # 层 A 单真源：完整 option + 服务端 draft_capability
-            # 生成 admission：落实 grant_kind discriminator，拒直写协饷旁路
+        item_missing: List[RescriptOptionMissingFailure] = []
+        for option_index, opt in enumerate(raw_opts):
             try:
                 normalized_opt = normalize_rescript_layer_a_option(
                     opt, generation_admission=True,
                 )
-            except StructuredDecreeCombinationError as exc:
-                # typed 组合失败原样上抛（保留 failed_fields）；generate 可有界结构重抽。
-                # 不得包成普通 ValueError 导致月末跳过纠错直接 F2.5。
-                raise StructuredDecreeCombinationError(
-                    f"票拟 option 结构组合失败：{title!r} {exc}",
-                    failed_fields=exc.failed_fields,
-                ) from exc
-            except ValueError as exc:
+            except RescriptOptionMissingFieldsError as exc:
+                if isolate_option_missing:
+                    item_missing.append(_option_failure_from_exc(
+                        item_index=item_index,
+                        option_index=option_index,
+                        title=title,
+                        exc=exc,
+                        raw_option=opt if isinstance(opt, dict) else exc.raw_option,
+                    ))
+                    continue
                 raise ValueError(
                     f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
                 ) from exc
-            # 自由文本 UTF-8 可编码性（label/hint 原文）
-            _assert_utf8(str(normalized_opt.get("label") or ""), "label")
-            _assert_utf8(str(normalized_opt.get("hint") or ""), "hint")
+            except ValueError as exc:
+                # 非 option 可归属的程序/契约异常：整批降级（保留边界）
+                raise ValueError(
+                    f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
+                ) from exc
+            # 成功归一后唯一接地检查；失败进同一补交
+            ground_exc = _ungrounded_target_failure(
+                normalized_opt,
+                region_target_ids=region_target_ids,
+                army_target_ids=army_target_ids,
+            )
+            if ground_exc is not None:
+                if isolate_option_missing:
+                    item_missing.append(_option_failure_from_exc(
+                        item_index=item_index,
+                        option_index=option_index,
+                        title=title,
+                        exc=ground_exc,
+                        raw_option=opt if isinstance(opt, dict) else ground_exc.raw_option,
+                    ))
+                    continue
+                raise ValueError(
+                    f"票拟 option 接地失败（整批失败，F2.5）：{title!r} {ground_exc}"
+                ) from ground_exc
             options.append(normalized_opt)
-        # options_json 序列化前再校验 ensure_ascii=False 场景的可编码性
-        try:
-            json.dumps(options, ensure_ascii=False).encode("utf-8")
-        except UnicodeEncodeError as exc:  # noqa: BLE001
-            raise ValueError(
-                f"票拟字段含 SQLite 不可编码字符（整批 shape 错，F2.5）：options {exc}"
-            ) from exc
+        if item_missing:
+            # 本条有失败 option：收齐后统一 batch；不把本条 partial 当成功 draft
+            missing_failures.extend(item_missing)
+            continue
         draft: Dict[str, object] = {"title": title, "context": context, "options": options}
         # 权威快照为准：只认喂给 LLM 的 issue 盘面里真实存在的 issue_id（不信回显）。
         issue_id = raw.get("issue_id")
@@ -904,19 +1421,9 @@ def validate_rescript_draft_items(
         if issue_id is not None and issue_id in board_issue_ids:
             draft["event_id"] = f"issue:{issue_id}"
         drafts.append(draft)
+    if missing_failures:
+        raise RescriptOptionMissingFieldsBatch(missing_failures)
     return drafts
-
-
-def _assert_region_targets_grounded(
-    drafts: List[Dict[str, object]], region_target_ids: set[str]
-) -> None:
-    for draft in drafts:
-        for option in draft["options"]:  # type: ignore[union-attr]
-            if option["target_kind"] == "region" \
-                    and option["target_id"] not in region_target_ids:
-                raise ValueError(
-                    f"票拟 option.target_id 不在同批 region_targets：{option['target_id']!r}"
-                )
 
 
 def _assert_army_targets_grounded(
@@ -924,16 +1431,19 @@ def _assert_army_targets_grounded(
 ) -> None:
     """仅 army target_id 对同批 army_targets 接地。
 
+    成员判定唯一实现 = _ungrounded_target_failure；本入口只做改票适配。
     military_order 的 target_kind/assignee_name 形状由层 A action-conditional
-    单源在 normalize 强制；此处不平行复述。
+    单源在 normalize 强制；此处不平行复述。session 改票入口仍调用本契约。
     """
     for draft in drafts:
         for option in draft["options"]:  # type: ignore[union-attr]
-            if option["target_kind"] == "army" \
-                    and option["target_id"] not in army_target_ids:
-                raise ValueError(
-                    f"票拟 option.target_id 不在同批 army_targets：{option['target_id']!r}"
-                )
+            ground_exc = _ungrounded_target_failure(
+                option,
+                region_target_ids=None,
+                army_target_ids=army_target_ids,
+            )
+            if ground_exc is not None:
+                raise ValueError(str(ground_exc))
 
 
 def _board_issue_ids(active_issues: object) -> set[int]:
@@ -946,21 +1456,322 @@ def _board_issue_ids(active_issues: object) -> set[int]:
     return ids
 
 
-def _write_degraded_note(turn: int, reason: str) -> None:
-    """响亮降级的 error pack 附记：诊断目录留 JSON 注记（不写整包热备——结算未中止）。"""
+def _write_degraded_note(
+    turn: int,
+    reason: str,
+    *,
+    extra: Optional[Dict[str, object]] = None,
+) -> None:
+    """响亮降级/剔除的 error pack 附记：诊断目录留 JSON 注记（不写整包热备——结算未中止）。"""
     try:
         root = error_packs_root() / "rescript_draft_degraded"
         root.mkdir(parents=True, exist_ok=True)
-        note = {
+        note: Dict[str, object] = {
             "turn": int(turn),
             "reason": reason,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        if extra:
+            note.update(extra)
         (root / f"turn{int(turn)}.json").write_text(
-            json.dumps(note, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(note, indent=2), encoding="utf-8"
         )
     except Exception as exc:  # noqa: BLE001 — 附记是诊断旁路，任何异常不得拖垮结算
         tlog(f"[rescript] 降级附记写盘失败：{exc}")
+
+
+def _option_heal_id(item_index: int, option_index: int) -> str:
+    return f"{int(item_index)}:{int(option_index)}"
+
+
+def _missing_field_heal_feedback(
+    failures: Sequence[RescriptOptionMissingFailure],
+    *,
+    attempt: int,
+    max_attempts: int,
+) -> str:
+    """#1746 契约失败补交请求：同一会话续接的结构化 JSON（字段/现值/期望 + 身份 + 底稿）。
+
+    heal-covers-illegal-values-too：不问错种类。请求体是实际送给 LLM 的 user 内容，
+    机器与测试只认 typed 键，不解析散文。源值经 JSON 运输边界转义，loads 后与源一致。
+    """
+    payload_failures: List[Dict[str, object]] = []
+    for failure in failures:
+        heal_id = failure.heal_id or _option_heal_id(
+            failure.item_index, failure.option_index,
+        )
+        field_failures = [dict(fact) for fact in failure.field_failures]
+        draft_option: object = None
+        if isinstance(failure.raw_option, dict):
+            draft_option = dict(failure.raw_option)
+            draft_option["heal_id"] = heal_id
+        elif failure.raw_option is not None:
+            draft_option = failure.raw_option
+        payload_failures.append({
+            "heal_id": heal_id,
+            "item_index": int(failure.item_index),
+            "option_index": int(failure.option_index),
+            "missing_fields": list(failure.missing_fields),
+            "field_failures": field_failures,
+            "draft_option": draft_option,
+        })
+    body: Dict[str, object] = {
+        "kind": "rescript_option_field_heal",
+        "attempt": int(attempt),
+        "max_attempts": int(max_attempts),
+        "rules": [
+            "Fix listed field_failures (field/current/expected).",
+            'Return partial fields: {"heals":[{"heal_id":"i:o", "<field>":...},...]} ',
+            'or complete option: {"heals":[{"heal_id":"i:o", "option":{...}}]} ',
+            'or items with explicit heal_id on each fixed option.',
+            "Do not rewrite sibling options; code does not guess defaults.",
+        ],
+        "failures": payload_failures,
+    }
+    return json.dumps(body)
+
+
+def _explicit_heal_id(blob: Mapping[str, Any]) -> str:
+    """只认显式 heal_id；不按坐标/标题/标签/位次猜配。"""
+    raw = blob.get("heal_id")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip()
+    return ""
+
+
+def _healed_options_by_id(
+    healed: Dict[str, Any],
+) -> Dict[str, Tuple[dict, bool]]:
+    """一次解析补交响应 → heal_id 索引。
+
+    契约三形态（显式语义，不猜形）：
+    - 部分字段 heals（无 option 键）→ replace=False，合并；
+    - 完整 option heals（有 option 键）→ replace=True，整份替换；
+    - 带显式 heal_id 的 items → replace=True，整份替换。
+    同 id 多命中记为冲突（值 None），查找时拒绝。
+    """
+    index: Dict[str, Optional[Tuple[dict, bool]]] = {}
+    _ID_KEYS = frozenset({"heal_id", "item_index", "option_index"})
+
+    def _push(heal_id: str, option: object, *, replace: bool) -> None:
+        if not heal_id or not isinstance(option, dict):
+            return
+        cleaned = {k: v for k, v in option.items() if k not in _ID_KEYS}
+        # 部分体清洗后为空不形成响应；完整体空壳仍入索引由 apply 拒绝
+        if not cleaned and not replace:
+            return
+        if heal_id in index:
+            index[heal_id] = None  # duplicate → refuse
+            return
+        index[heal_id] = (cleaned, replace)
+
+    heals = healed.get("heals")
+    if isinstance(heals, list):
+        for entry in heals:
+            if not isinstance(entry, dict):
+                continue
+            heal_id = _explicit_heal_id(entry)
+            if "option" in entry:
+                # 显式 option 包装 = 完整替换语义；不因缺 required 键降成合并
+                opt = entry.get("option")
+                if isinstance(opt, dict):
+                    _push(heal_id, opt, replace=True)
+                continue
+            # 身份键清洗唯一在 _push；部分体直接移交 entry
+            _push(heal_id, entry, replace=False)
+
+    items = healed.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            opts = item.get("options")
+            if not isinstance(opts, list):
+                continue
+            for cand in opts:
+                if not isinstance(cand, dict):
+                    continue
+                _push(_explicit_heal_id(cand), cand, replace=True)
+
+    return {k: v for k, v in index.items() if v is not None}
+
+
+def _find_healed_option_for_failure(
+    by_id: Mapping[str, Tuple[dict, bool]],
+    failure: RescriptOptionMissingFailure,
+) -> Optional[Tuple[dict, bool]]:
+    """按补交请求显式 heal_id 回指定位；缺失或冲突均拒绝。"""
+    want = (failure.heal_id or _option_heal_id(
+        failure.item_index, failure.option_index,
+    )).strip()
+    if not want:
+        return None
+    return by_id.get(want)
+
+
+def _apply_option_heal(
+    baseline_opt: object,
+    replacement: dict,
+    failure: RescriptOptionMissingFailure,
+    *,
+    replace: bool,
+) -> Optional[dict]:
+    """把补交结果写入底稿 option。
+
+    - 显式完整 option（option 包装 / items 形态）→ 整份替换，交权威完整校验；
+    - 部分字段 → 合并提供的键；未知多余键若在失败集且未再给出则删除；
+    - 底稿非 object：接受替换体；
+    - 不按 required 键猜完整形态；不把显式完整体自动补成原稿。
+    """
+    # 一次 deepcopy 隔离 ownership；合并路径不再对同一值二次复制
+    body = {k: copy.deepcopy(v) for k, v in replacement.items()}
+    if not isinstance(baseline_opt, dict) or replace:
+        return body or None
+
+    if not body and not failure.missing_fields:
+        return None
+    out = copy.deepcopy(baseline_opt)
+    changed = False
+    for key, val in body.items():
+        if val is None:
+            continue
+        out[key] = val
+        changed = True
+    for field in failure.missing_fields:
+        key = str(field)
+        if key == _OPTION_REPLACE_FIELD or key in body:
+            continue
+        # 未知/多余键：补交未再给出 → 从底稿删除
+        if key in out and key not in _LAYER_A_ALLOWED_KEYS:
+            del out[key]
+            changed = True
+    return out if changed else None
+
+
+def _merge_healed_missing_options(
+    baseline: Dict[str, Any],
+    healed: Dict[str, Any],
+    failures: Sequence[RescriptOptionMissingFailure],
+) -> Dict[str, Any]:
+    """#1746：回填失败 option；兄弟 option 不改写。
+
+    显式完整 option 整份替换；部分字段合并。底稿与坐标依已成立不变式直接消费。
+    缺响应/身份冲突 → 跳过该项，继续下一次补交（外部输入契约）。
+    """
+    result = copy.deepcopy(baseline)
+    base_items = result["items"]
+    by_id = _healed_options_by_id(healed)
+    for failure in failures:
+        base_item = base_items[failure.item_index]
+        base_opts = base_item["options"]
+        base_opt = base_opts[failure.option_index]
+        found = _find_healed_option_for_failure(by_id, failure)
+        if found is None:
+            continue  # 缺响应或身份冲突：外部输入，下次补交
+        replacement, replace = found
+        patched = _apply_option_heal(
+            base_opt, replacement, failure, replace=replace,
+        )
+        if patched is None:
+            continue
+        base_opts[failure.option_index] = patched
+    return result
+
+
+def _drop_options_by_failures(
+    data: Dict[str, Any],
+    failures: Sequence[RescriptOptionMissingFailure],
+) -> Dict[str, Any]:
+    """耗尽后只剔失败 option；急务条目 options 空则整条去掉（F2.3 不足照实）。
+
+    底稿 items 依已成立不变式直接消费；程序破坏自然上抛。
+    """
+    drop_map: Dict[int, set[int]] = {}
+    for failure in failures:
+        drop_map.setdefault(int(failure.item_index), set()).add(int(failure.option_index))
+    raw_items = data["items"]
+    kept_items: List[object] = []
+    for item_index, item in enumerate(raw_items):
+        drop_idxs = drop_map.get(item_index) or set()
+        if not drop_idxs:
+            kept_items.append(item)
+            continue
+        raw_opts = item["options"]
+        kept_opts = [
+            opt for option_index, opt in enumerate(raw_opts)
+            if option_index not in drop_idxs
+        ]
+        if not kept_opts:
+            # 该急务 options 全剔 → 条目消失，其它急务不受牵连
+            continue
+        new_item = dict(item)
+        new_item["options"] = kept_opts
+        kept_items.append(new_item)
+    return {"items": kept_items}
+
+
+def _failure_log_rows(
+    failures: Sequence[RescriptOptionMissingFailure],
+) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    for failure in failures:
+        heal_id = failure.heal_id or _option_heal_id(
+            failure.item_index, failure.option_index,
+        )
+        row: Dict[str, object] = {
+            "heal_id": heal_id,
+            "title": failure.title,
+            "item_index": failure.item_index,
+            "option_index": failure.option_index,
+            "missing_fields": list(failure.missing_fields),
+            "field_failures": [dict(f) for f in failure.field_failures],
+        }
+        if isinstance(failure.raw_option, dict):
+            label = failure.raw_option.get("label")
+            if label is not None:
+                row["label"] = label
+        rows.append(row)
+    return rows
+
+
+def _with_heal_response_contract_failure(
+    failures: Sequence[RescriptOptionMissingFailure],
+    *,
+    exc: BaseException,
+    raw: str,
+) -> List[RescriptOptionMissingFailure]:
+    """补交响应自身不合契约时，把失败位置/现值/期望并入既有 option 失败事实。
+
+    不另造循环：仍走同一 ≤3 补交/剔除回路；下一次请求经 field_failures 携带
+    本次响应哪里不合契约，不得只重复旧缺字段。
+    """
+    response_fact: Dict[str, object] = {
+        "field": "heal_response",
+        "current": {
+            "error": type(exc).__name__,
+            "detail": str(exc)[:500],
+            "raw_summary": (raw or "")[:500],
+        },
+        "expected": {
+            "type": "object",
+            "keys": ["heals", "items"],
+        },
+    }
+    out: List[RescriptOptionMissingFailure] = []
+    for failure in failures:
+        facts = tuple([dict(f) for f in failure.field_failures] + [dict(response_fact)])
+        out.append(
+            RescriptOptionMissingFailure(
+                item_index=failure.item_index,
+                option_index=failure.option_index,
+                title=failure.title,
+                missing_fields=tuple(str(f["field"]) for f in facts),
+                raw_option=failure.raw_option,
+                heal_id=failure.heal_id,
+                field_failures=facts,
+            )
+        )
+    return out
 
 
 def generate_rescript_draft(
@@ -976,9 +1787,11 @@ def generate_rescript_draft(
     本月视作无头版。程序错（RuntimeError/KeyError/TypeError 等）**响亮上抛**——票拟
     业务降级 ≠ 代码故障降级，不再以「非承重支路」为由吞程序错误。
 
-    #1624：首抽若触发 typed StructuredDecreeCombinationError，复用共同
-    combination_correction_feedback 有界结构重抽并重验整批；耗尽后仍 F2.5 整批降级，
-    零部分头版。禁止静默改写 army+single→none / army→region 或另造月末矩阵。
+    #1746：可定位到单 option 的契约失败（缺/错/组合/接地/形，不问种类）→ 同一会话
+    补交（结构化失败事实 field/current/expected，最多 RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    次）；耗尽只剔除该 option，其余急务/option 照出，不告知皇帝；后台 tlog + error pack
+    响亮留痕。剔后剩 1 个 option 仍可呈（F2.2 局部修订）；剩 0 则该急务条目不足照实消失。
+    顶层/急务条目/provider 调用失败仍整批降级，不扩成所有异常都 heal。
     """
     # payload 序列化是纯程序逻辑：其错误属代码侧错（ADR 0005），不在降级面内，响亮上抛。
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
@@ -1000,19 +1813,50 @@ def generate_rescript_draft(
     } if isinstance(army_targets, list) else set()
     board_ids = _board_issue_ids(payload.get("active_issues"))
 
-    def _parse_and_validate(raw: str) -> List[Dict[str, object]]:
-        data = _parse_rescript_json_strict(raw)
-        drafts = validate_rescript_draft_items(data, board_ids)
-        _assert_region_targets_grounded(drafts, region_target_ids)
-        _assert_army_targets_grounded(drafts, army_target_ids)
-        return drafts
+    def _validate(
+        data: object,
+        *,
+        isolate_option_missing: bool,
+        min_options: int = 2,
+        max_options: int = 3,
+    ) -> List[Dict[str, object]]:
+        # grounding 由 validate 内唯一完整 option 校验负责（不在此重复末端断言）
+        return validate_rescript_draft_items(
+            data,
+            board_ids,
+            min_options=min_options,
+            max_options=max_options,
+            isolate_option_missing=isolate_option_missing,
+            region_target_ids=region_target_ids,
+            army_target_ids=army_target_ids,
+        )
 
-    correction = ""
-    retries = max(0, int(RESCRIPT_COMBO_CORRECTION_RETRIES))
-    for attempt in range(retries + 1):
-        prompt = payload_json if not correction else f"{correction}\n{payload_json}"
+    heal_retries = max(0, int(RESCRIPT_OPTION_FIELD_HEAL_RETRIES))
+    heal_attempt = 0
+    pending_missing: Optional[List[RescriptOptionMissingFailure]] = None
+    # 单一底稿：首抽/补交合并共用。
+    working_data: Optional[Dict[str, Any]] = None
+    heal_trace: List[Dict[str, object]] = []
+    # 本票拟链局部会话：真实 user/assistant 轮次入 prior_messages（不持久化、不启其它角色）。
+    session_messages: List[Any] = []
+    while True:
+        if pending_missing is not None and heal_attempt >= 1:
+            prompt = _missing_field_heal_feedback(
+                pending_missing,
+                attempt=heal_attempt,
+                max_attempts=heal_retries,
+            )
+            tag = "rescript-draft-heal"
+        else:
+            prompt = payload_json
+            tag = "rescript-draft"
         try:
-            raw = run_agent_text(agent, prompt, tag="rescript-draft")
+            raw = run_agent_text(
+                agent,
+                prompt,
+                tag=tag,
+                prior_messages=session_messages or None,
+            )
         except (APITimeoutError, APIConnectionError, APIStatusError) as error:
             # 窄捕 provider 已知故障→译 typed（照抄 decree.py:1991 Z3 缝）
             _degrade(llm_unavailable_from_error(error, "急务票拟生成"))
@@ -1020,20 +1864,96 @@ def generate_rescript_draft(
         except LLMUnavailable as exc:  # LLM 调用缝：只收 typed 声明，程序错上抛
             _degrade(exc)
             return None
+        # 续接本链会话：保留原始输入/输出与历次补交（机面 Message，不落库）
+        session_messages.append({"role": "user", "content": prompt})
+        session_messages.append({"role": "assistant", "content": raw})
+        if tag == "rescript-draft-heal":
+            entry = {
+                "attempt": heal_attempt,
+                "raw_summary": raw[:800],
+                "failures": _failure_log_rows(pending_missing or ()),
+            }
+            heal_trace.append(entry)
+            tlog(
+                f"[rescript] option 契约失败补交产出 {heal_attempt}/{heal_retries} "
+                f"raw_summary={json.dumps(entry['raw_summary'])} "
+                f"failures={json.dumps(entry['failures'])}"
+            )
         try:
-            drafts = _parse_and_validate(raw)
-        except StructuredDecreeCombinationError as exc:
-            # typed 组合：有界重抽；耗尽才 F2.5（StructuredDecree 是 ValueError 子类，
-            # 必须先于下方宽捕，否则会跳过纠错）。
-            if attempt >= retries:
+            if tag == "rescript-draft-heal" and working_data is not None and pending_missing:
+                healed_data = _parse_rescript_json_strict(raw)
+                if not isinstance(healed_data, dict):
+                    raise ValueError(
+                        '票拟补交产出顶层非法：须为 {"heals":[...]} 或 {"items":[...]}'
+                    )
+                merged = _merge_healed_missing_options(
+                    working_data, healed_data, pending_missing,
+                )
+                working_data = merged
+                drafts = _validate(merged, isolate_option_missing=True)
+            else:
+                data = _parse_rescript_json_strict(raw)
+                if isinstance(data, dict):
+                    working_data = copy.deepcopy(data)
+                drafts = _validate(data, isolate_option_missing=True)
+        except RescriptOptionMissingFieldsBatch as exc:
+            pending_missing = list(exc.failures)
+        except (LLMContractError, ValueError) as exc:
+            # 已有底稿的补交响应契约失败（非法 JSON / 围栏外 prose / 非 object 等）
+            # → 消耗本次补交，保留底稿与已成功兄弟，沿唯一 ≤3 回路继续。
+            # 首抽顶层/急务条目失败仍整批降级（无 pending 底稿）。
+            if working_data is None or pending_missing is None:
                 _degrade(exc)
                 return None
-            correction = combination_correction_feedback(exc)
-            tlog(f"[rescript] 结构组合纠错重试 {attempt + 1}/{retries}: {exc}")
+            pending_missing = _with_heal_response_contract_failure(
+                pending_missing, exc=exc, raw=raw,
+            )
+        else:
+            tlog(f"[rescript] 票拟生成 {len(drafts)} 条。")
+            return drafts
+
+        # 可定位 option 契约失败 / 补交响应契约失败：同一 continue-or-drop 回路
+        rows = _failure_log_rows(pending_missing)
+        if heal_attempt < heal_retries:
+            heal_attempt += 1
+            tlog(
+                f"[rescript] option 契约失败补交 {heal_attempt}/{heal_retries}："
+                f"{json.dumps(rows)}"
+            )
             continue
-        except (LLMContractError, ValueError) as exc:  # 解析/非组合 shape：整批降级
-            _degrade(exc)
+        # 耗尽：只剔失败 option，其余照出；不告知皇帝；后台响亮留痕
+        tlog(
+            f"[rescript] option 契约失败补交耗尽，剔除："
+            f"{json.dumps(rows)} "
+            f"heal_trace={json.dumps(heal_trace)}"
+        )
+        drop_rows = [
+            {**row, "heal_attempts": heal_retries}
+            for row in rows
+        ]
+        _write_degraded_note(
+            turn,
+            "option_missing_fields_heal_exhausted",
+            extra={
+                "dropped_options": drop_rows,
+                "heal_trace": heal_trace,
+            },
+        )
+        # 底稿在首抽/前轮已确立；非法则程序破坏自然上抛
+        dropped = _drop_options_by_failures(working_data, pending_missing)
+        try:
+            # F2.2 局部修订：剔后剩 1 仍呈；0 option 条目已在 drop 时去掉
+            drafts = _validate(
+                dropped,
+                isolate_option_missing=False,
+                min_options=1,
+                max_options=3,
+            )
+        except (LLMContractError, ValueError) as drop_exc:
+            _degrade(drop_exc)
             return None
-        tlog(f"[rescript] 票拟生成 {len(drafts)} 条。")
+        tlog(
+            f"[rescript] 票拟生成 {len(drafts)} 条"
+            f"（契约失败剔除 {len(pending_missing)} option 后）。"
+        )
         return drafts
-    return None

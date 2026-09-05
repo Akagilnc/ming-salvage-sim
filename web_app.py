@@ -23,6 +23,7 @@ import tempfile
 import time
 import threading
 from concurrent.futures import Future
+from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional
 
 # 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
@@ -628,17 +629,25 @@ def _audience_prompt_for_web_chat(session: Any, text: str, character: Character,
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
-    def __init__(self, fresh: bool = False, on_stage: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(
+        self,
+        fresh: bool = False,
+        on_stage: Optional[Callable[[str], None]] = None,
+        db_path: Optional[str] = None,
+    ) -> None:
         """实例化 = 真正进入游戏。无 API key 直接抛 LLMUnavailable。
         fresh=True：先清空主 DB（新游戏）再建 session。
-        on_stage：#1195 可选阶段回调（仅推叙事文案，不改 GameSession 初始化序）。"""
+        on_stage：#1195 可选阶段回调（仅推叙事文案，不改 GameSession 初始化序）。
+        db_path：#1749 候选路径绑定——构造期不重读全局 _get_main_db_path，避免并发切换串库。
+        """
         def _stage(label: str) -> None:
             if on_stage is not None:
                 on_stage(label)
 
-        db_path = _get_main_db_path()
-        if not os.path.isabs(db_path):
-            db_path = str(user_data_dir() / db_path)
+        if db_path:
+            db_path = _normalize_db_path(db_path)
+        else:
+            db_path = _get_main_db_path()
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -684,41 +693,61 @@ class WebGame:
         if fresh:
             _delete_sqlite_db_files_or_raise(db_path)
         _stage("载入上次进度...")
-        self.session = GameSession(db_path, llm_config)
-        # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
-        # #1353：per-session 单写者票据队列 = 唯一写点；write_gate 并入队列执行器。
-        self._write_queue: SessionWriteQueue = get_session_write_queue(self.session)
-        self._write_gate = self._write_queue.write_gate
-        self.session._write_gate = self._write_gate  # type: ignore[attr-defined]
-        self.session._write_queue = self._write_queue  # type: ignore[attr-defined]
-        # #1235 r4：点即入入口 in-flight 计数——accept 后 gate-free 窗锁闲≠孤儿；
-        # 非创建者 exit 仅当无其他入口仍在办时才可清（见 _begin/_end_settlement_entry）。
-        self._settlement_entry_lock = threading.Lock()
-        self._settlement_entry_inflight = 0
-        _stage("重整朝堂名册...")
-        self.session.begin_turn()
-        # #1234：唯一服务进程启动缝——孤儿月初快照清除（相位常态∧快照在→清+一行日志；
-        # settling/awaiting 不清，交既有恢复）。与故障注入 oracle 同调具名函数。
-        from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
-        clear_orphan_month_open_snapshot(self.db, self.state)
-        # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
-        _stage("恢复召对记录...")
-        self.chat_history: Dict[str, List[Dict[str, str]]] = {
-            name: [] for name in self.session.content.characters
-        }
-        for name, msgs in self.db.load_all_chat_history().items():
-            self.chat_history.setdefault(name, []).extend(msgs)
-        _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
-        _fav_raw = self.db.kv_get("favorites")
-        self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
-        if not _fav_raw:
-            self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
-        # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
-        # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
-        if hasattr(self.db, "conn"):
-            self.db.reconcile_interrupted_chat_turns()
-        # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
-        self._spawn_startup_extraction_catch_up()
+        # #1749：GameSession 建立后任一后续步骤失败须 close，禁泄漏 db/agno 连接。
+        self.session = None  # type: ignore[assignment]
+        try:
+            self.session = GameSession(db_path, llm_config)
+            # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
+            # #1353：per-session 单写者票据队列 = 唯一写点；write_gate 并入队列执行器。
+            self._write_queue: SessionWriteQueue = get_session_write_queue(self.session)
+            self._write_gate = self._write_queue.write_gate
+            self.session._write_gate = self._write_gate  # type: ignore[attr-defined]
+            self.session._write_queue = self._write_queue  # type: ignore[attr-defined]
+            # #1235 r4：点即入入口 in-flight 计数——accept 后 gate-free 窗锁闲≠孤儿；
+            # 非创建者 exit 仅当无其他入口仍在办时才可清（见 _begin/_end_settlement_entry）。
+            self._settlement_entry_lock = threading.Lock()
+            self._settlement_entry_inflight = 0
+            _stage("重整朝堂名册...")
+            self.session.begin_turn()
+            # #1234：唯一服务进程启动缝——孤儿月初快照清除（相位常态∧快照在→清+一行日志；
+            # settling/awaiting 不清，交既有恢复）。与故障注入 oracle 同调具名函数。
+            from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
+            clear_orphan_month_open_snapshot(self.db, self.state)
+            # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
+            _stage("恢复召对记录...")
+            self.chat_history: Dict[str, List[Dict[str, str]]] = {
+                name: [] for name in self.session.content.characters
+            }
+            for name, msgs in self.db.load_all_chat_history().items():
+                self.chat_history.setdefault(name, []).extend(msgs)
+            _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
+            _fav_raw = self.db.kv_get("favorites")
+            self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
+            if not _fav_raw:
+                self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
+            # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
+            # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
+            if hasattr(self.db, "conn"):
+                self.db.reconcile_interrupted_chat_turns()
+            # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
+            self._spawn_startup_extraction_catch_up()
+        except Exception as init_exc:
+            # #1749 B：构造失败携回——残余 session 交同一 holder/CloseOp（失败 op），
+            # 不得只 register close_op=None 的壳。
+            session = getattr(self, "session", None)
+            residual = getattr(init_exc, "residual_session", None)
+            if session is None and residual is not None:
+                self.session = residual
+                _handback_failed_runtime(self, db_path)
+            elif session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    logger.exception(
+                        "WebGame init failed; session.close failed path=%s", db_path,
+                    )
+                    _handback_failed_runtime(self, db_path)
+            raise
 
     # ── 存档管理 ─────────────────────────────────────────────────────────
     def saves_dir(self) -> str:
@@ -764,6 +793,48 @@ class WebGame:
             raise HTTPException(status_code=404, detail="存档不存在。")
         os.remove(target)
 
+    def _dispose_rebuild_residual(self) -> bool:
+        """#1749 B：处置上一失败 rebuild 候选。成功关闭返回 True；仍活则 False 且保留引用。"""
+        residual = getattr(self, "_rebuild_residual_runtime", None)
+        if residual is None:
+            return True
+        path = _path_norm_of_game(residual, getattr(self, "db_path", "") or "")
+        entry = _lookup_holder(path, residual) if path else None
+        ok = False
+        if entry is not None:
+            role, op = _claim_close(entry, path)
+            if role == "executor" and op is not None:
+                try:
+                    _drain_and_close_session(residual, entry=entry, close_op=op)
+                except Exception:
+                    logger.exception(
+                        "dispose rebuild residual drain failed path=%s", path,
+                    )
+                ok = bool(op.done.is_set() and op.close_ok)
+            elif role == "released_ok":
+                ok = True
+            elif op is not None:
+                op.done.wait()
+                ok = bool(op.close_ok)
+        else:
+            session = getattr(residual, "session", residual)
+            close_fn = getattr(session, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                    ok = True
+                except Exception:
+                    logger.exception(
+                        "dispose rebuild residual close failed path=%s", path,
+                    )
+                    _handback_failed_runtime(residual, path or self.db_path)
+                    ok = False
+            else:
+                ok = True
+        if ok:
+            self._rebuild_residual_runtime = None
+        return ok
+
     def _replace_database(self, destructive_replace: Callable[[], None]) -> None:
         """Replace the main DB transactionally, preserving the live runtime on prepare failure."""
         backup_fd, backup_path = tempfile.mkstemp(prefix="ming-hot-replace-", suffix=".db")
@@ -782,10 +853,19 @@ class WebGame:
             if not backup_complete:
                 raise
             try:
+                # 恢复重建前必须处置失败候选；仍活则禁止改文件/二次 rebuild。
+                if not self._dispose_rebuild_residual():
+                    logger.error(
+                        "hot replace recovery blocked: rebuild residual still live path=%s",
+                        self.db_path,
+                    )
+                    raise replace_exc
                 _delete_sqlite_db_files_or_raise(self.db_path)
                 shutil.copy2(backup_path, self.db_path)
                 self._rebuild_session(old_config)
             except Exception as recovery_exc:
+                if recovery_exc is replace_exc:
+                    raise
                 logger.exception("hot replace recovery failed")
                 raise replace_exc from recovery_exc
             raise
@@ -815,14 +895,20 @@ class WebGame:
 
     def _rebuild_session(self, llm_config: LLMConfig) -> None:
         """Fully initialize a candidate before publishing it as the active session."""
-        candidate = GameSession(self.db_path, llm_config)
-        q = getattr(self, "_write_queue", None)
-        if not isinstance(q, SessionWriteQueue):
-            q = get_session_write_queue(candidate)
-        else:
-            candidate._write_queue = q  # type: ignore[attr-defined]
-            candidate._write_gate = q.write_gate  # type: ignore[attr-defined]
+        # #1749：先处置上一失败候选；仍活则拒绝新候选，禁覆盖仍活资源。
+        if not self._dispose_rebuild_residual():
+            raise RuntimeError(
+                f"previous rebuild residual still live path={self.db_path}"
+            )
+        candidate = None
         try:
+            candidate = GameSession(self.db_path, llm_config)
+            q = getattr(self, "_write_queue", None)
+            if not isinstance(q, SessionWriteQueue):
+                q = get_session_write_queue(candidate)
+            else:
+                candidate._write_queue = q  # type: ignore[attr-defined]
+                candidate._write_gate = q.write_gate  # type: ignore[attr-defined]
             candidate.begin_turn()
             chat_history = {name: [] for name in candidate.content.characters}
             for name, msgs in candidate.db.load_all_chat_history().items():
@@ -834,11 +920,21 @@ class WebGame:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
             if hasattr(candidate.db, "conn"):
                 candidate.db.reconcile_interrupted_chat_turns()
-        except Exception:
-            try:
-                candidate.close()
-            except Exception:
-                logger.exception("failed to close rejected replacement session")
+        except Exception as rebuild_exc:
+            residual = candidate or getattr(rebuild_exc, "residual_session", None)
+            if residual is not None:
+                try:
+                    residual.close()
+                except Exception:
+                    logger.exception("failed to close rejected replacement session")
+                    wrapper = SimpleNamespace(
+                        db_path=self.db_path,
+                        session=residual,
+                        _write_queue=getattr(residual, "_write_queue", None),
+                        _write_gate=getattr(residual, "_write_gate", None),
+                    )
+                    _handback_failed_runtime(wrapper, self.db_path)
+                    self._rebuild_residual_runtime = wrapper
             raise
 
         self.session = candidate
@@ -4191,6 +4287,7 @@ def _active_db_path_file() -> str:
 
 
 def _read_active_db_path() -> str:
+    """读 active_db.txt。文件不存在 → 空串；读失败响亮上抛（ADR 0005），禁静默退 env/default。"""
     active_file = _active_db_path_file()
     if not os.path.exists(active_file):
         return ""
@@ -4198,7 +4295,8 @@ def _read_active_db_path() -> str:
         with open(active_file, "r", encoding="utf-8") as f:
             return f.read().strip()
     except Exception:
-        return ""
+        logger.exception("read active_db path failed path=%s", active_file)
+        raise
 
 
 def _atomic_write_text(path: str, text: str) -> None:
@@ -4213,7 +4311,7 @@ def _atomic_write_text(path: str, text: str) -> None:
             try:
                 os.remove(tmp_file)
             except Exception:
-                pass
+                logger.exception("cleanup atomic write tmp failed path=%s", tmp_file)
 
 
 def _write_active_db_path(db_path: str) -> None:
@@ -4221,6 +4319,7 @@ def _write_active_db_path(db_path: str) -> None:
 
 
 def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
+    """快照主库路径配置。active 文件存在则必读成功——读失败上抛，禁空值冒充快照（ADR 0005）。"""
     active_file = _active_db_path_file()
     active_exists = os.path.exists(active_file)
     active_value = ""
@@ -4229,7 +4328,8 @@ def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
             with open(active_file, "r", encoding="utf-8") as f:
                 active_value = f.read()
         except Exception:
-            active_value = ""
+            logger.exception("snapshot active_db read failed path=%s", active_file)
+            raise
     return (
         "MING_SIM_DB" in os.environ,
         os.environ.get("MING_SIM_DB", ""),
@@ -4239,6 +4339,7 @@ def _snapshot_main_db_path_config() -> tuple[bool, str, bool, str]:
 
 
 def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
+    """按快照恢复主库路径。删/写失败上抛——禁静默改写成 env/default 另一身份（ADR 0005）。"""
     env_exists, env_value, active_exists, active_value = snapshot
     if env_exists:
         os.environ["MING_SIM_DB"] = env_value
@@ -4251,11 +4352,8 @@ def _restore_main_db_path_config(snapshot: tuple[bool, str, bool, str]) -> None:
         try:
             os.remove(active_file)
         except Exception:
-            fallback_path = env_value if env_exists and env_value else user_data_path("ming_sim.db")
-            try:
-                _atomic_write_text(active_file, fallback_path)
-            except Exception:
-                pass
+            logger.exception("restore: remove stale active_db failed path=%s", active_file)
+            raise
 
 
 def _set_main_db_path(db_path: str) -> None:
@@ -4263,68 +4361,554 @@ def _set_main_db_path(db_path: str) -> None:
     _write_active_db_path(db_path)
 
 
+def _normalize_db_path(path: str) -> str:
+    """#1749 / #14：路径身份唯一真源。
+
+    相对路径按 user_data_dir 解析（与 WebGame.__init__ 同），再 abspath。
+    abspath 失败直接上抛——禁静默退回另一套身份语义（ADR 0005）。
+    """
+    if not path:
+        return ""
+    if not os.path.isabs(path):
+        path = str(user_data_dir() / path)
+    return os.path.abspath(path)
+
+
 def _get_main_db_path() -> str:
     """解析当前主库路径：active_db.txt > env > 默认 ming_sim.db。
 
     #396：new_game 不删旧库文件（旧后台 worker 仍写，删了会触发 SQLite readonly database），
     而是把主库路径切到新文件，旧连接排空关闭后旧库归档为存档。active_db.txt 持久化该切换，
-    使重启后仍能加载新库。"""
+    使重启后仍能加载新库。
+    返回值经 _normalize_db_path——与 WebGame 打开、归档比较同一身份。
+    """
     active_path = _read_active_db_path()
     if active_path:
-        return active_path
+        return _normalize_db_path(active_path)
     db_path = os.environ.get("MING_SIM_DB", "")
     if db_path:
-        return db_path
-    return user_data_path("ming_sim.db")
+        return _normalize_db_path(db_path)
+    return _normalize_db_path(user_data_path("ming_sim.db"))
 
 
-def _archive_drained_db_file(old_db_path: str) -> None:
-    """把已排空关闭的主库文件移入 saves/（#396 / #1732 唯一归档实现）。
+def _same_db_path(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    return _normalize_db_path(left) == _normalize_db_path(right)
 
-    调用方须保证旧连接已关；本函数不碰 session。文件不存在则静默返回。
+
+class _CloseOp:
+    """单次关闭结果唯一通道（per-holder CloseOp；#1749 r7）。"""
+
+    __slots__ = ("done", "close_ok", "db_path", "archive_settled")
+
+    def __init__(self, db_path: str = "") -> None:
+        self.done = threading.Event()
+        self.close_ok = False
+        self.db_path = db_path  # normalized；空=无路径身份
+        # AS：当次 close executor finally 置位（失败亦空完成，不冒归档成功）。
+        self.archive_settled = threading.Event()
+
+
+class _HolderEntry:
+    """路径持有者强引用；close_op 为关闭结果唯一通道。"""
+
+    __slots__ = ("runtime", "close_op")
+
+    def __init__(self, runtime: Any) -> None:
+        self.runtime = runtime
+        self.close_op: Optional[_CloseOp] = None
+
+
+class _MenuPathLease:
+    """一 norm 一租约：单槽 opening + holders 强引用 + 归档请求真源。
+
+    关闭结果只走 entry.close_op；归档请求只走 archive_pending；执行只走 C7。
+    无 lease.completion 单槽。
+    """
+
+    __slots__ = ("opening", "holders", "archive_pending")
+
+    def __init__(self) -> None:
+        self.opening: int = 0  # ∈ {0, 1}
+        self.holders: dict[int, _HolderEntry] = {}  # id(runtime) → entry
+        self.archive_pending: bool = False
+
+
+# 路径 → 租约。C7 谓词：opening==0 ∧ holders 空 ∧ archive_pending。
+_menu_path_leases: dict[str, _MenuPathLease] = {}
+_menu_path_lock = threading.Lock()
+
+
+def _path_lease_gc_locked(norm: str, lease: _MenuPathLease) -> None:
+    if lease.opening <= 0 and not lease.holders and not lease.archive_pending:
+        _menu_path_leases.pop(norm, None)
+
+
+def _path_norm_of_game(game: Any, path: str = "") -> str:
+    raw = path or (getattr(game, "db_path", "") or "")
+    return _normalize_db_path(raw) if raw else ""
+
+
+def _claim_opening(path: str) -> str:
+    """C1 单槽：opening 0→1 成功返回 norm；已占用或空路径返回 ""。"""
+    norm = _normalize_db_path(path) if path else ""
+    if not norm:
+        return ""
+    with _menu_path_lock:
+        lease = _menu_path_leases.setdefault(norm, _MenuPathLease())
+        if lease.opening != 0:
+            return ""
+        lease.opening = 1
+    return norm
+
+
+def _c7_ready_locked(lease: _MenuPathLease) -> bool:
+    """C7 唯一资格谓词（path 锁内）。"""
+    return lease.opening <= 0 and not lease.holders and lease.archive_pending
+
+
+def _release_opening(path: str) -> None:
+    """释放本次 opening；有 pending 时走 C7-release（资格只在 C7 判定）。"""
+    norm = _normalize_db_path(path) if path else ""
+    if not norm:
+        return
+    has_pending = False
+    with _menu_path_lock:
+        lease = _menu_path_leases.get(norm)
+        if lease is None:
+            return
+        if lease.opening > 0:
+            lease.opening = 0
+        has_pending = bool(lease.archive_pending)
+        if not has_pending:
+            _path_lease_gc_locked(norm, lease)
+    if has_pending:
+        _c7_try_fulfill_archive(norm)
+
+
+def _register_holder(path: str, runtime: Any) -> Optional[_HolderEntry]:
+    """P1：登记 holder 强引用；同 id 幂等返回原 entry。claim 永不经此补登。"""
+    norm = _path_norm_of_game(runtime, path)
+    if not norm or runtime is None:
+        return None
+    gid = id(runtime)
+    with _menu_path_lock:
+        lease = _menu_path_leases.setdefault(norm, _MenuPathLease())
+        existing = lease.holders.get(gid)
+        if existing is not None:
+            return existing
+        entry = _HolderEntry(runtime)
+        lease.holders[gid] = entry
+        return entry
+
+
+def _lookup_holder(path: str, runtime: Any) -> Optional[_HolderEntry]:
+    """定点查 entry；不扫全表、不补登。"""
+    norm = _path_norm_of_game(runtime, path)
+    if not norm or runtime is None:
+        return None
+    gid = id(runtime)
+    with _menu_path_lock:
+        lease = _menu_path_leases.get(norm)
+        if lease is None:
+            return None
+        return lease.holders.get(gid)
+
+
+def _handback_failed_runtime(runtime: Any, path: str = "") -> Optional[_HolderEntry]:
+    """#1749 B：构造/清理 close 失败携回——同一 holder + 失败 CloseOp（A5）。
+
+    只装配 entry/op，落结果走唯一 ``_settle_close_result``，不另开置位。
+    """
+    norm = _path_norm_of_game(runtime, path)
+    if not norm or runtime is None:
+        return None
+    entry = _register_holder(norm, runtime)
+    if entry is None:
+        return None
+    op = entry.close_op
+    if op is None or (op.done.is_set() and not op.close_ok):
+        op = _CloseOp(db_path=norm)
+        entry.close_op = op
+    if not op.db_path:
+        op.db_path = norm
+    _settle_close_result(op=op, close_ok=False, entry=entry, path=norm)
+    return entry
+
+
+def _claim_close(
+    entry: _HolderEntry,
+    path: str = "",
+) -> tuple[str, Optional[_CloseOp]]:
+    """领关闭 op。返回 (role, op)：
+
+    - executor：新领 op，调用方必须 drain
+    - waiter：已有 op（进行中或成功完成），只等
+    - orphan：entry 已不在 holders 且无 op → 禁冒成功
+    - released_ok / released_failed：entry 已删但调用方持有已完成 op 的引用
+    - A8：在册且 done∧¬ok → 允许方获新 op 重试
+    """
+    if entry is None:
+        return ("orphan", None)
+    runtime = entry.runtime
+    norm = _path_norm_of_game(runtime, path)
+    gid = id(runtime) if runtime is not None else 0
+    with _menu_path_lock:
+        lease = _menu_path_leases.get(norm) if norm else None
+        current = lease.holders.get(gid) if lease is not None else None
+        if current is not entry:
+            # 已删或非本 entry
+            op = entry.close_op
+            if op is None:
+                return ("orphan", None)
+            if op.done.is_set():
+                return (
+                    "released_ok" if op.close_ok else "released_failed",
+                    op,
+                )
+            return ("waiter", op)
+        op = entry.close_op
+        if op is None:
+            op = _CloseOp(db_path=norm)
+            entry.close_op = op
+            return ("executor", op)
+        # A8：失败已完成 op → 允许方重试（新 op）；进行中或成功完成仍 waiter/released。
+        if op.done.is_set() and not op.close_ok:
+            op = _CloseOp(db_path=norm)
+            entry.close_op = op
+            return ("executor", op)
+        return ("waiter", op)
+
+
+def _note_close_result(
+    entry: _HolderEntry,
+    close_ok: bool,
+    path: str = "",
+) -> None:
+    """A4/A5：executor 关闭结果入账。成功删 entry 并 C7-note；失败留 entry。
+
+    资格谓词只在 C7；此处不重复实现搬库条件。
+    """
+    runtime = entry.runtime
+    norm = _path_norm_of_game(runtime, path)
+    if not norm:
+        return
+    gid = id(runtime) if runtime is not None else 0
+    has_pending = False
+    with _menu_path_lock:
+        lease = _menu_path_leases.setdefault(norm, _MenuPathLease())
+        current = lease.holders.get(gid)
+        op = entry.close_op
+        if op is not None:
+            op.close_ok = close_ok
+            if not op.db_path:
+                op.db_path = norm
+        if close_ok:
+            if current is entry:
+                del lease.holders[gid]
+            has_pending = bool(lease.archive_pending)
+            if not has_pending:
+                _path_lease_gc_locked(norm, lease)
+        else:
+            # 失败：entry 必须仍在；若竞态被删则补回，不升成功态（A5）。
+            if current is None:
+                lease.holders[gid] = entry
+    if close_ok and has_pending:
+        _c7_try_fulfill_archive(norm)
+
+
+def _path_request_archive(path: str) -> None:
+    """AR-req：归档请求唯一写入入口（成功发布的 new_game）。C7-fulfill 边沿。"""
+    norm = _normalize_db_path(path) if path else ""
+    if not norm:
+        return
+    with _menu_path_lock:
+        lease = _menu_path_leases.setdefault(norm, _MenuPathLease())
+        lease.archive_pending = True
+    _c7_try_fulfill_archive(norm)
+
+
+def _c7_try_fulfill_archive(path: str) -> bool:
+    """C7 唯一执行接缝：opening==0 ∧ holders 空 ∧ pending → 搬库。
+
+    资格判定与搬库均在 path 锁内一次完成（r5①C / r7 C7）；失败保持 pending、留真因，
+    不在 GC 后把异常当成功清空职责。禁止 claimed→锁外 move→再取锁回写。
+    """
+    norm = _normalize_db_path(path) if path else ""
+    if not norm:
+        return False
+    with _menu_path_lock:
+        lease = _menu_path_leases.get(norm)
+        if lease is None or not _c7_ready_locked(lease):
+            return False
+        moved_ok = False
+        try:
+            if not os.path.exists(norm):
+                moved_ok = True
+            else:
+                moved_ok = bool(_archive_move_db_files(norm))
+        except Exception:
+            logger.exception("C7 archive execute failed path=%s", norm)
+            moved_ok = False
+        if not moved_ok:
+            # pending 保持 True；holders/opening 未变，不 GC。
+            return False
+        lease.archive_pending = False
+        _path_lease_gc_locked(norm, lease)
+        return True
+
+
+def _snap_holders(path: str) -> list[_HolderEntry]:
+    """opening 持有者扫表：快照当前 holders（仅调用方已持 opening 时合法）。"""
+    norm = _normalize_db_path(path) if path else ""
+    if not norm:
+        return []
+    with _menu_path_lock:
+        lease = _menu_path_leases.get(norm)
+        if lease is None:
+            return []
+        return list(lease.holders.values())
+
+
+def _drain_path_holders(path: str) -> bool:
+    """K2/L3：对 path 上所有 holder 定点 claim/wait/drain。
+
+    任一 close_ok is False → False（保留失败 entry，开库前取消）。
+    orphan / released_failed 必须失败投影（A0″）；不得跳过当成功。
+    调用方必须已持 opening。
+    """
+    entries = _snap_holders(path)
+    all_ok = True
+    for entry in entries:
+        role, op = _claim_close(entry, path)
+        if role == "orphan":
+            all_ok = False
+            continue
+        if role == "executor" and op is not None:
+            _spawn_drain_close(entry.runtime, entry=entry, close_op=op)
+        if op is not None:
+            op.done.wait()
+            if not op.close_ok:
+                all_ok = False
+        elif role == "released_failed":
+            all_ok = False
+    return all_ok
+
+
+def _point_retire_close(game: Any, path: str = "") -> Optional[_CloseOp]:
+    """E2/E3 / X2：定点退休。E2_absent → 不 drain、不伪造 op。"""
+    norm = _path_norm_of_game(game, path)
+    entry = _lookup_holder(norm, game)
+    if entry is None:
+        return None  # E2_absent
+    role, op = _claim_close(entry, norm)
+    if role == "executor" and op is not None:
+        _spawn_drain_close(game, entry=entry, close_op=op)
+    return op
+
+
+def _settle_close_result(
+    *,
+    op: Optional[_CloseOp],
+    close_ok: bool,
+    entry: Optional[_HolderEntry] = None,
+    game: Any = None,
+    path: str = "",
+) -> None:
+    """#1749 C7/完成者：同步/异步/私有关闭唯一落结果。
+
+    note/归档异常不得跳过 done/archive_settled；waiter/调用方不补置位。
+    close 成功不因后续 note 异常倒写 close_ok。
+    """
+    try:
+        if entry is not None:
+            _note_close_result(entry, close_ok, path)
+        elif not close_ok and game is not None:
+            norm = path or _path_norm_of_game(game)
+            if norm:
+                registered = _register_holder(norm, game)
+                if registered is not None:
+                    if registered.close_op is None and op is not None:
+                        registered.close_op = op
+                    elif (
+                        op is not None
+                        and registered.close_op is not None
+                        and registered.close_op.done.is_set()
+                        and not registered.close_op.close_ok
+                    ):
+                        registered.close_op = op
+                    _note_close_result(registered, False, norm)
+    except Exception:
+        logger.exception("settle close note failed path=%s", path)
+    finally:
+        if op is not None:
+            op.close_ok = close_ok
+            op.done.set()
+            op.archive_settled.set()
+
+
+def _close_unregistered(
+    game: Any,
+    path: str = "",
+) -> Optional[_CloseOp]:
+    """构造失败/取消且未 P1：私有 close；失败则补登 holder 保所有权。"""
+    norm = _path_norm_of_game(game, path)
+    op = _CloseOp(db_path=norm)
+    close_ok = False
+    try:
+        _drain_close_body(game)
+        close_ok = True
+    except Exception:
+        logger.exception("private close failed path=%s", norm)
+        close_ok = False
+    finally:
+        _settle_close_result(
+            op=op, close_ok=close_ok, entry=None, game=game, path=norm,
+        )
+    return op
+
+
+class _MenuCandidateCancelled(Exception):
+    """菜单候选代际取消：经统一未发布收口后，投影为入口既有取消身份（非 worker 崩）。"""
+
+
+def _discard_unpublished_candidate(
+    runtime: Any,
+    entry: Optional[_HolderEntry],
+    path: str = "",
+) -> None:
+    """未发布候选的取消/准备失败收口：经 holder/CloseOp/drain 唯一接缝关闭。
+
+    已登记走 claim_close→drain；未登记走 _close_unregistered。
+    close 失败由 settle 留存失败 holder/op 供重试，不删活引用、不冒成功。
+    次生异常只 logger.exception 留痕，不上改调用方主异常身份。
+    """
+    if runtime is None:
+        return
+    try:
+        if entry is not None:
+            role, op = _claim_close(entry, path)
+            if role == "executor" and op is not None:
+                try:
+                    _drain_and_close_session(
+                        runtime, entry=entry, close_op=op,
+                    )
+                except Exception:
+                    logger.exception(
+                        "discard unpublished candidate drain failed path=%s",
+                        path,
+                    )
+        else:
+            _close_unregistered(runtime, path)
+    except Exception:
+        logger.exception(
+            "discard unpublished candidate failed path=%s", path,
+        )
+
+
+def _drop_live_pointer_if_unrecoverable(
+    expected: Any,
+    *,
+    exclude: Any = None,
+) -> None:
+    """菜单失败出口：仅当活指针仍是本请求启动时的 expected 且已不可恢复时摘掉。
+
+    身份匹配 + restorable 谓词：不碰后继已发布对象，不碰 exclude（本请求候选）。
+    指针交换在 lifecycle 锁内；restorable 探测在锁外（可触 DB，不扩大锁窗）。
+    """
+    global web_game
+    if expected is None:
+        return
+    if exclude is not None and expected is exclude:
+        return
+    cur = web_game
+    if cur is not expected:
+        return
+    if _runtime_restorable(cur):
+        return
+    with _menu_lifecycle_lock:
+        if web_game is expected:
+            web_game = None
+
+
+def _runtime_restorable(game: Any) -> bool:
+    """#1749：失败 close 后可否恢复为活局——db 与 agno 都必须仍可用，且未进入 close 半态。
+
+    探测异常必 logger.exception（ADR 0005）；不得宽 catch 静默 False。
+    """
+    session = getattr(game, "session", None)
+    if session is None:
+        return False
+    if int(getattr(session, "_close_epoch", 0) or 0) > 0:
+        return False
+    db = getattr(session, "db", None)
+    conn = getattr(db, "conn", None) if db is not None else None
+    if conn is None:
+        return False
+    try:
+        conn.execute("SELECT 1")
+    except Exception:
+        logger.exception("runtime restorable probe: db.conn failed")
+        return False
+    agno = getattr(session, "agno_db", None)
+    if agno is None:
+        return False
+    engine = getattr(agno, "db_engine", None)
+    if engine is None:
+        return False
+    try:
+        with engine.connect() as c:
+            c.exec_driver_sql("SELECT 1")
+    except Exception:
+        logger.exception("runtime restorable probe: agno engine failed")
+        return False
+    return True
+
+
+def _archive_move_db_files(old_db_path: str) -> bool:
+    """纯文件搬库（#396 / #1732 唯一实现）。成功 True；失败 False 并 log。
+
+    不在此做 live/资格判断——资格只由 C7 谓词承担。
+    目录准备/move/WAL/SHM/回滚异常一律捕获留真因，返回 False（不抛穿 C7）。
     """
     if not old_db_path or not os.path.exists(old_db_path):
-        return
+        return True
     saves_dir = user_data_path("saves")
-    os.makedirs(saves_dir, exist_ok=True)
+    try:
+        os.makedirs(saves_dir, exist_ok=True)
+    except Exception:
+        logger.exception("archive prep makedirs failed dir=%s", saves_dir)
+        return False
     target = os.path.join(saves_dir, f"drained_{time.time_ns()}.db")
-    moved = False
     try:
         shutil.move(old_db_path, target)
-        moved = True
     except Exception:
-        pass
-    if not moved:
-        return
+        logger.exception("archive move failed path=%s → %s", old_db_path, target)
+        return False
     wal_path = old_db_path + "-wal"
     if os.path.exists(wal_path):
         try:
             shutil.move(wal_path, target + "-wal")
         except Exception:
+            logger.exception("archive wal move failed path=%s", wal_path)
             try:
                 shutil.move(target, old_db_path)
             except Exception:
-                pass
-            return
+                logger.exception("archive rollback failed path=%s", old_db_path)
+            return False
     shm_path = old_db_path + "-shm"
     if os.path.exists(shm_path):
         try:
             shutil.move(shm_path, target + "-shm")
         except Exception:
-            pass
+            logger.exception("archive shm move failed path=%s", shm_path)
+            # shm 失败不回滚主库（与既有行为一致：仅 log）；主库已进 saves。
+    return True
 
 
-def _drain_and_close_session(game, archive_db: bool = False) -> None:
-    """等在途后台写入（召对 worker / 结算 worker）排空后再关连接。
-
-    #396：菜单生命周期端点（exit_to_menu / new_game / shutdown）不再在 write_gate 被
-    持时直接 session.close()——否则后台 worker 崩在 closed database（#382 连接级并发）。
-    exit_to_menu 立刻清 web_game 并返回，连接在后台 daemon 线程延后关（detach）；
-    new_game 先把旧库 park 旁路、再立刻建新局（零等待）；排空后关连接并把旁路库归档为存档；
-    shutdown await 排空后再杀进程。
-
-    #1353：seal 拒新领票 + barrier 等既有票据清 + 持 write_gate 关连接。
-    """
+def _drain_close_body(game: Any) -> None:
+    """seal + barrier + session.close 本体；失败上抛并按可写 unseal。"""
     q = get_session_write_queue(game)
     q.seal()
 
@@ -4341,31 +4925,102 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
     try:
         q.barrier(_close_under_gate)
     except Exception:
-        # #1740 / ADR 0005：排空关库失败不得无痕 return——保留原异常上抛；
-        # 调用方（detach 完成通道 / archive_db）据此不得搬库。
-        logger.exception("drain/close session failed; skip archive")
+        # #1740 / ADR 0005：排空关库失败不得无痕 return——保留原异常上抛。
+        logger.exception("drain/close session failed")
+        if _runtime_restorable(game):
+            try:
+                q.unseal()
+            except Exception:
+                logger.exception("unseal after drain/close failure failed")
         raise
-    if archive_db:
-        _archive_drained_db_file(getattr(game, "db_path", "") or "")
+
+
+def _drain_and_close_session(
+    game: Any,
+    *,
+    entry: Optional[_HolderEntry] = None,
+    close_op: Optional[_CloseOp] = None,
+) -> None:
+    """等在途后台写入排空后再关连接；结果经 entry/close_op 入账。
+
+    #396：菜单生命周期不在 write_gate 被持时直接 session.close()。
+    #1353：seal + barrier + 持 write_gate 关连接。
+    #1749 r7：不在此写 archive_pending——归档请求只经 AR-req。
+    同步 executor 与 spawn 共用 ``_settle_close_result``（note 异常亦必达 done/AS）。
+    失败由 ``_drain_close_body`` 原样上抛（ADR 0005）。
+    """
+    op = close_op
+    if op is None and entry is not None:
+        op = entry.close_op
+    path = _path_norm_of_game(game)
+    close_ok = False
+    try:
+        _drain_close_body(game)
+        close_ok = True
+    finally:
+        _settle_close_result(
+            op=op,
+            close_ok=close_ok,
+            entry=entry,
+            game=game if entry is None else None,
+            path=path,
+        )
+
+
+def _spawn_drain_close(
+    game: Any,
+    *,
+    entry: Optional[_HolderEntry] = None,
+    close_op: Optional[_CloseOp] = None,
+) -> _CloseOp:
+    """后台 drain/close；返回 CloseOp（executor 通道）。不写 archive_pending。"""
+    path = _path_norm_of_game(game)
+    op = close_op
+    if op is None:
+        if entry is not None and entry.close_op is not None:
+            op = entry.close_op
+        else:
+            op = _CloseOp(db_path=path)
+            if entry is not None and entry.close_op is None:
+                entry.close_op = op
+    elif not op.db_path and path:
+        op.db_path = path
+
+    def _run() -> None:
+        close_ok = False
+        try:
+            _drain_close_body(game)
+            close_ok = True
+        except Exception:
+            logger.exception("drain/close worker failed path=%s", path)
+            close_ok = False
+        finally:
+            _settle_close_result(
+                op=op,
+                close_ok=close_ok,
+                entry=entry,
+                game=game if entry is None else None,
+                path=path,
+            )
+
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        logger.exception("spawn drain/close thread failed")
+        _settle_close_result(
+            op=op, close_ok=False, entry=entry,
+            game=game if entry is None else None, path=path,
+        )
+        raise
+    return op
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
 # #1195：菜单生命周期世代。continue worker 发布 web_game 前对号；失配则丢弃白建局。
 _menu_generation: int = 0
-# #1732 T1：exit_to_menu 的 detach 完成信号。new_game 在 old_game is None 时须等此信号
-# 再归档旧主库，避免与仍写旧库的 detach 双移/抢文件（#396 readonly 约束）。
-# #1740：完成信号与 close 结果绑定在同一次 exit 的 completion 上——归档消费者须在
-# new_game 当拍持有该对象，不得重读跨任务可变的全局最新结果。
-class _MenuExitDetachCompletion:
-    __slots__ = ("done", "close_ok")
-
-    def __init__(self) -> None:
-        self.done = threading.Event()
-        self.close_ok = False
-
-
-_menu_exit_detach_lock = threading.Lock()
-_menu_exit_detach_completion: Optional[_MenuExitDetachCompletion] = None
+# #1749：new_game/exit 互斥——禁止 web_game=None 窗口内二次 new_game 把
+# 仍在构造的新库路径当 prev 归档（活连接钉 drained_*.db → readonly）。
+_menu_lifecycle_lock = threading.Lock()
 
 
 app = FastAPI(title="Ming Salvage MVP Web")
@@ -4431,21 +5086,22 @@ def _parse_save_name(name: str) -> Dict[str, Any]:
 
 
 def _main_db_campaign_id() -> str:
+    """主库 campaign 身份只读。预期 IO/SQLite 错留真因后空串；未知代码错响亮失败。"""
     db_path = _get_main_db_path()
-    if not os.path.isabs(db_path):
-        db_path = str(user_data_dir() / db_path)
     if not os.path.isfile(db_path):
         return ""
     try:
-        import sqlite3 as _sqlite3
-
-        conn = _sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path)
         try:
-            row = conn.execute("SELECT value FROM kv_store WHERE key='campaign_id'").fetchone()
+            row = conn.execute(
+                "SELECT value FROM kv_store WHERE key='campaign_id'"
+            ).fetchone()
             return str(row[0]).strip() if row and row[0] else ""
         finally:
             conn.close()
-    except Exception:
+    except (OSError, sqlite3.Error):
+        # ADR 0005：预期读失败必 log，不得静默空身份。
+        logger.exception("main db campaign_id read failed path=%s", db_path)
         return ""
 
 
@@ -4508,10 +5164,7 @@ def _scan_campaigns() -> List[Dict[str, Any]]:
 
 def _has_main_db() -> bool:
     """主 DB 文件是否存在 → 决定「继续」按钮可不可点。"""
-    db_path = _get_main_db_path()
-    if not os.path.isabs(db_path):
-        db_path = str(user_data_dir() / db_path)
-    return os.path.isfile(db_path)
+    return os.path.isfile(_get_main_db_path())
 
 
 @app.get("/api/menu/status")
@@ -4599,85 +5252,127 @@ async def api_menu_status() -> Dict[str, Any]:
 
 @app.post("/api/menu/new_game")
 async def api_menu_new_game() -> Dict[str, Any]:
-    """开始新游戏：清主 DB → 新建 WebGame。
+    """开始新游戏：切主库路径 → 新建 WebGame → 发布时再退休旧 runtime。
 
-    #396：与 exit_to_menu 同构——界面立刻退（web_game=None + 构建新局），
-    旧 session 的后台召对队列在 daemon 线程里续跑写入、排空 write_gate 后再关连接（detach）。
-    先把旧库 park 旁路再 fresh=True 建新库——不在旧 worker 仍写旧连接时 os.remove 底层文件；
-    排空后关旧连接并把旁路库归档为存档，玩家可再次进入看到迟到的后台回奏；
-    #382 通用并发模型（Windows file-lock 等）不在本轮 scope。
-
-    #1732 T1：经 exit_to_menu 后 web_game 已是 None，仍须把旧主库归档进 saves/
-    （裁定二前提「旧局自动归档为存档」）。exit 本身不搬库；归档只在旧连接排空后、
-    由本端点承接同一 _archive_drained_db_file 权威实现。"""
+    #396/#1732/#1749 r7：
+    N1a lifecycle bump+set main；N1b claim_opening(new)；N2 构造；
+    P1 register → P2 代际发布；AR-req(prev) 与定点退休正交；N5 release_opening。
+    构造期不 detach 旧 web_game；失配不复活旧局。
+    """
     global web_game, _menu_generation
-    _menu_generation += 1
-    old_game = web_game
-    # #396 Step5 R4: 无论 web_game 是否为 None（退菜单后 / 服务端首次 new_game），
-    # fresh=True 前都必须切换主库路径到新文件——否则 WebGame 会解析到旧配置库（env /
-    # active_db.txt）并在 fresh=True 时删/覆盖旧库，而旧 detach worker 可能仍写旧库。
-    # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
-    # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
-    snapshot = _snapshot_main_db_path_config()
-    prev_db_path = _get_main_db_path()
-    new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
-    try:
-        # 同步覆写 env + active_db.txt → 新局落新路径，重启也继续新路径。
-        _set_main_db_path(new_db_path)
-        web_game = None
-        new_game = WebGame(fresh=True)
-    except LLMUnavailable as exc:
-        _restore_main_db_path_config(snapshot)
-        web_game = old_game
-        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
-    except Exception:
-        _restore_main_db_path_config(snapshot)
-        web_game = old_game
-        raise
-    web_game = new_game
-    if old_game is not None:
-        # detach：新局已确认可用后，才退休旧连接 + 归档旧库（#396）。
-        threading.Thread(
-            target=_drain_and_close_session,
-            args=(old_game, True),
-            daemon=True,
-        ).start()
-    else:
-        # #1732 T1：退菜单后 / 无活 session 时仍归档旧主库。先等 exit detach 关连接，
-        # 再走同一归档实现——不与仍写旧库的 detach 双移。
-        # #1740：在本端点当拍持有对应 exit 的 completion，不在归档线程里重读全局最新位。
-        with _menu_exit_detach_lock:
-            exit_completion = _menu_exit_detach_completion
+    loop = asyncio.get_running_loop()
 
-        def _archive_prev_after_exit_detach() -> None:
-            if exit_completion is not None:
-                exit_completion.done.wait()
-                if not exit_completion.close_ok:
-                    # 本次 exit 排空/关库未确认——不得搬对应旧库（#1740）
-                    return
-            if prev_db_path and prev_db_path != new_db_path:
-                _archive_drained_db_file(prev_db_path)
+    def _new_game_work() -> Dict[str, Any]:
+        global web_game, _menu_generation
+        opening_path = ""
+        token = 0
+        snapshot: Optional[tuple[bool, str, bool, str]] = None
+        prev_db_path = ""
+        new_db_path = ""
+        candidate_entry: Optional[_HolderEntry] = None
+        with _menu_lifecycle_lock:
+            # N1a
+            _menu_generation += 1
+            token = _menu_generation
+            snapshot = _snapshot_main_db_path_config()
+            prev_db_path = _get_main_db_path()
+            new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
+            try:
+                _set_main_db_path(new_db_path)
+            except Exception:
+                _restore_main_db_path_config(snapshot)
+                raise
+        # N1b 仅 path
+        opening_path = _claim_opening(new_db_path)
 
-        threading.Thread(target=_archive_prev_after_exit_detach, daemon=True).start()
-    return steam_events.with_events(
-        {"state": web_game.state_payload()},
-        [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-    )
+        def _rollback_path_if_ours() -> None:
+            """归属检查+配置恢复在 lifecycle 锁内一次完成；不覆盖后继已切走的主路径。"""
+            assert snapshot is not None
+            with _menu_lifecycle_lock:
+                if _same_db_path(_get_main_db_path(), new_db_path):
+                    _restore_main_db_path_config(snapshot)
+
+        if not opening_path:
+            _rollback_path_if_ours()
+            raise HTTPException(status_code=409, detail="新游戏路径忙，请稍后重试。")
+
+        try:
+            try:
+                # N2 无锁构造
+                new_game = WebGame(fresh=True, db_path=new_db_path)
+            except LLMUnavailable as exc:
+                _rollback_path_if_ours()
+                raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+            except Exception:
+                _rollback_path_if_ours()
+                raise
+
+            # P1 path register（发布前入册）
+            candidate_entry = _register_holder(new_db_path, new_game)
+            # #1749：响应快照须在发布前物化——持 opening + 未入 web_game 时独占活连接；
+            # 发布后 exit/new_game 可经 web_game 定点退休关库，锁外 state_payload 会读已关连接。
+            # 准备失败（含快照）与代际取消共用未发布收口，不另造清理分支。
+            retire = None
+            published = False
+            try:
+                state_snapshot = new_game.state_payload()
+                prev_norm = _normalize_db_path(prev_db_path) if prev_db_path else ""
+                with _menu_lifecycle_lock:
+                    # P2 仅代际+指针——发布决定在锁内落定，禁锁外再读 token 改判。
+                    if token == _menu_generation:
+                        retire = web_game
+                        web_game = new_game
+                        published = True
+
+                if not published:
+                    raise HTTPException(
+                        status_code=409, detail="新游戏已取消（菜单状态已变更）。",
+                    )
+
+                # ★ AR-req：已发布操作仍承担——对 prev 写 pending（与 close executor 正交）
+                if prev_norm and not _same_db_path(prev_norm, new_db_path):
+                    _path_request_archive(prev_norm)
+
+                # 定点退休 old（不依赖 drain 写 pending）；已发布后 token 再 bump 不撤销此责
+                if retire is not None and retire is not new_game:
+                    _point_retire_close(retire)
+
+                # 响应用发布前快照；payload 未知代码错必须响亮失败（ADR 0005），
+                # 不得宽捕获后返回 ok=True 洗白成功。finally 仍 release_opening。
+                return steam_events.with_events(
+                    {"state": state_snapshot},
+                    [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
+                )
+            except Exception:
+                if not published:
+                    _discard_unpublished_candidate(
+                        new_game, candidate_entry, new_db_path,
+                    )
+                    _rollback_path_if_ours()
+                raise
+        finally:
+            # N5：release_opening（含 C7-release；new 侧通常无 pending）
+            _release_opening(opening_path)
+
+    return await loop.run_in_executor(None, _new_game_work)
 
 
 @app.post("/api/menu/continue")
 async def api_menu_continue() -> StreamingResponse:
     """继续：用上次主 DB 启动 WebGame。
 
-    #1195：与颁诏 settle 同构 SSE——stage 逐段推文案，done 带 state，
-    error 带 message。首条 stage 在重活前即发（目标 ≤5s 首见）。
+    #1195：SSE stage → done/error。
+    #1749 r7：K1 bump → K3 claim_opening → K2 排空 holders → K3t 代际核验
+    → K4 构造 → P1/P2/P3 → K5out 退休 old（不 AR）→ K6 release_opening。
     """
     global _menu_generation
     if not _has_main_db():
         raise HTTPException(status_code=404, detail="无上次进度可继续，请先新游戏或加载存档。")
 
-    _menu_generation += 1
-    token = _menu_generation
+    with _menu_lifecycle_lock:
+        # K1
+        _menu_generation += 1
+        token = _menu_generation
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def on_stage(label: str) -> None:
@@ -4685,25 +5380,84 @@ async def api_menu_continue() -> StreamingResponse:
 
     def worker() -> None:
         global web_game
+        opening_path = ""
+        candidate_entry: Optional[_HolderEntry] = None
+        # 记录本 worker 启动时的活指针身份：失败收口只摘「仍是该旧对象且已不可恢复」的指针，
+        # 不得清掉代际间已被 new_game/load 发布的新局。
+        initial_web_game = web_game
+        # 排空一旦开扫，旧 holder 可能已半关/全关——此后任一失败/取消出口统一履行死指针处置。
+        drain_attempted = False
+        published = False
+        game = None
         try:
-            # 首条阶段立即入队：生成器可在 WebGame 构造重活前就 yield（#1195 ≤5s 首见）
-            # #1228：构造不再做连通 smoke，文案须诚实反映载入准备（非「检查模型后端」）。
             on_stage("准备载入上次进度...")
-            game = WebGame(fresh=False, on_stage=on_stage)
-            # #1195：发布前对世代号——exit/new_game/load_save/新 continue 已 bump 则丢弃白建局
+            main_for_open = _get_main_db_path()
+            # K3 仅 path：消费准入
+            opening_path = _claim_opening(main_for_open)
+            if not opening_path:
+                ev_queue.put((
+                    "__error__",
+                    {"message": "有菜单操作进行中，请稍后重试。"},
+                ))
+                return
+            # K2：排空本路径 holders（仅 opening 持有者可扫）
+            drain_attempted = True
+            if not _drain_path_holders(opening_path):
+                ev_queue.put((
+                    "__error__",
+                    {"message": "上一局尚未关闭完成，请稍后重试。"},
+                ))
+                return
+            # K3t：排空后、构造前强制代际核验
             if token != _menu_generation:
-                _drain_and_close_session(game)
                 ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
                 return
-            web_game = game
-            ev_queue.put(("__done__", {"state": game.state_payload()}))
+            # K4 无锁构造
+            game = WebGame(fresh=False, on_stage=on_stage, db_path=opening_path)
+            # P1
+            candidate_entry = _register_holder(opening_path, game)
+            # #1749：发布前快照——持 opening + 未入 web_game 时独占；发布后可被定点退休关库。
+            # 准备失败（含快照）与代际取消共用未发布收口；死指针在 finally 统一摘。
+            old_runtime = None
+            try:
+                state_snapshot = game.state_payload()
+                with _menu_lifecycle_lock:
+                    # P2
+                    if token == _menu_generation:
+                        old_runtime = web_game
+                        web_game = game
+                        published = True
+                if not published:
+                    raise _MenuCandidateCancelled(
+                        "继续已取消（菜单状态已变更）。",
+                    )
+                # K5out：退休 old，不 AR-req（#1732 续玩）
+                if old_runtime is not None and old_runtime is not game:
+                    _point_retire_close(old_runtime)
+                ev_queue.put(("__done__", {"state": state_snapshot}))
+            except Exception:
+                if not published:
+                    _discard_unpublished_candidate(
+                        game, candidate_entry, opening_path,
+                    )
+                raise
+        except _MenuCandidateCancelled as exc:
+            ev_queue.put(("__error__", {"message": str(exc)}))
         except LLMUnavailable as exc:
             ev_queue.put(("__error__", _llm_error_detail(exc)))
         except DependencyMismatch as exc:
-            # #1721：依赖不合规不得压成 message-only，须带 typed facts 抵达玩家。
             ev_queue.put(("__error__", _dependency_mismatch_detail(exc)))
         except Exception as exc:  # noqa: BLE001 — SSE 终态收束，不让线程死掉
+            logger.exception("continue worker failed")
             ev_queue.put(("__error__", {"message": str(exc)}))
+        finally:
+            # 排空后任一失败/取消出口：仅摘本请求启动时已不可恢复的旧指针。
+            if drain_attempted and not published:
+                _drop_live_pointer_if_unrecoverable(
+                    initial_web_game, exclude=game,
+                )
+            # K6：必达 release（含 C7-release）
+            _release_opening(opening_path)
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
@@ -4724,16 +5478,124 @@ async def api_menu_continue() -> StreamingResponse:
 
 @app.post("/api/menu/load_save/{name}")
 async def api_menu_load_save(name: str) -> Dict[str, Any]:
-    """从存档启动：先启动空 WebGame（fresh）→ 调 load_save 热替换主 DB。"""
+    """从存档启动：先启动空 WebGame（fresh=False）→ 调 load_save 热替换主 DB。
+
+    #1749 r7：L1 bump+摘 old → L2 claim_opening → L3/L3c 排空 → L3t 代际
+    → L4/L5 构造/replace → P1/P2/P3 → L7 release_opening。
+    锁序禁 lifecycle→path；发布后只用本地 published 引用。
+    """
     global web_game, _menu_generation
-    _menu_generation += 1
-    try:
-        web_game = WebGame(fresh=False)  # 先有 session 才能 load_save
-    except LLMUnavailable as exc:
-        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
-    web_game.load_save(name)
-    _spawn_startup_catch_up_nonfatal(web_game)
-    return {"state": web_game.state_payload()}
+    loop = asyncio.get_running_loop()
+
+    def _load_work() -> Any:
+        global web_game, _menu_generation
+        opening_path = ""
+        token = 0
+        old_game = None
+        # L1 lifecycle：bump + 摘指针
+        with _menu_lifecycle_lock:
+            _menu_generation += 1
+            token = _menu_generation
+            main_before = _get_main_db_path()
+            old_game = web_game
+            web_game = None
+
+        def _restore_old_if_current_generation() -> None:
+            """失败恢复：仅当本代仍有效且无更新发布时恢复；禁只凭 web_game is None。"""
+            global web_game
+            if old_game is None or not _runtime_restorable(old_game):
+                return
+            with _menu_lifecycle_lock:
+                if token == _menu_generation and web_game is None:
+                    web_game = old_game
+
+        try:
+            # L2 仅 path
+            opening_path = _claim_opening(main_before) if main_before else ""
+            if main_before and not opening_path:
+                _restore_old_if_current_generation()
+                raise HTTPException(
+                    status_code=409,
+                    detail="有菜单操作进行中，请稍后重试。",
+                )
+
+            # L3：定点关 old + L3c 扫剩余 holders
+            if old_game is not None:
+                op = _point_retire_close(old_game, main_before or "")
+                if op is not None:
+                    op.done.wait()
+                    if not op.close_ok:
+                        _restore_old_if_current_generation()
+                        logger.exception(
+                            "load_save close failed for previous runtime"
+                        )
+                        raise HTTPException(
+                            status_code=409, detail="无法关闭当前局，请稍后重试。",
+                        )
+            if opening_path and not _drain_path_holders(opening_path):
+                _restore_old_if_current_generation()
+                raise HTTPException(
+                    status_code=409,
+                    detail="上一局尚未关闭完成，请稍后重试。",
+                )
+
+            # L3t
+            if token != _menu_generation:
+                _restore_old_if_current_generation()
+                raise HTTPException(
+                    status_code=409, detail="加载已取消（菜单状态已变更）。",
+                )
+
+            # L4–L5 构造 / 热替换：必须绑定已领取 opening 路径，禁重读可变全局路径。
+            bound_path = opening_path or main_before or ""
+            candidate = None
+            candidate_entry: Optional[_HolderEntry] = None
+            try:
+                candidate = WebGame(fresh=False, db_path=bound_path or None)
+                candidate.load_save(name)
+            except LLMUnavailable as exc:
+                if candidate is not None:
+                    _close_unregistered(
+                        candidate, getattr(candidate, "db_path", "") or bound_path,
+                    )
+                raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+            except Exception:
+                if candidate is not None:
+                    _close_unregistered(
+                        candidate, getattr(candidate, "db_path", "") or bound_path,
+                    )
+                raise
+
+            cand_path = (
+                getattr(candidate, "db_path", "") or bound_path
+            )
+            candidate_entry = _register_holder(cand_path, candidate)
+            # #1749：发布前快照——opening 释放后 / 发布后 exit 可关库；响应不得再读活连接。
+            # 准备失败（含快照）与代际取消共用未发布收口。
+            published = False
+            try:
+                state_snapshot = candidate.state_payload()
+                with _menu_lifecycle_lock:
+                    if token == _menu_generation:
+                        web_game = candidate
+                        published = True
+                if not published:
+                    raise HTTPException(
+                        status_code=409, detail="加载已取消（菜单状态已变更）。",
+                    )
+                return candidate, state_snapshot
+            except Exception:
+                if not published:
+                    _discard_unpublished_candidate(
+                        candidate, candidate_entry, cand_path,
+                    )
+                raise
+        finally:
+            _release_opening(opening_path)
+
+    published_game, state_snapshot = await loop.run_in_executor(None, _load_work)
+    _spawn_startup_catch_up_nonfatal(published_game)
+    return {"state": state_snapshot}
 
 
 @app.delete("/api/menu/saves/{name}")
@@ -4754,34 +5616,28 @@ async def api_menu_delete_save(name: str) -> Dict[str, Any]:
 async def api_menu_exit() -> Dict[str, Any]:
     """退回菜单：关 session 但不删 DB。
 
-    #396：界面立刻退（web_game=None + 响应返回），后台召对 worker 继续跑完、写进档；
-    session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。
-
-    #1732 T1：本端点不搬主库文件——「继续上局」须照常可用；归档由后续 new_game 承接。
+    #396：界面立刻退（web_game=None + 响应返回），后台 detach 关连接。
+    #1732 T1：不搬主库；归档由后续 new_game AR-req 承接。
+    #1749 r7：X1 lifecycle 摘指针；X2 定点 claim|E2_absent；X3 后台 E3；不 AR、无单槽 completion。
     """
-    global web_game, _menu_generation, _menu_exit_detach_completion
-    _menu_generation += 1
-    if web_game is not None:
-        old_game = web_game
-        web_game = None  # 界面立刻退
-        completion = _MenuExitDetachCompletion()
-        with _menu_exit_detach_lock:
-            _menu_exit_detach_completion = completion
+    global web_game, _menu_generation
+    loop = asyncio.get_running_loop()
 
-        def _detach_exit() -> None:
-            try:
-                _drain_and_close_session(old_game)
-                completion.close_ok = True
-            except Exception:
-                # 原异常已由 _drain_and_close_session logger.exception 留痕；
-                # 本 completion.close_ok 保持 False，持有本对象的归档不得搬库。
-                completion.close_ok = False
-            finally:
-                completion.done.set()
+    def _exit_work() -> Dict[str, Any]:
+        global web_game, _menu_generation
+        old_game = None
+        with _menu_lifecycle_lock:
+            # X1
+            _menu_generation += 1
+            if web_game is not None:
+                old_game = web_game
+                web_game = None
+        if old_game is not None:
+            # X2/X3：定点退休，HTTP 不等待。E2_absent → 零新 drain（已由他方 A4 删除）。
+            _point_retire_close(old_game)
+        return {"ok": True}
 
-        # detach：等 write_gate 排空后再关连接（#396）；不归档（#1732 T1）
-        threading.Thread(target=_detach_exit, daemon=True).start()
-    return {"ok": True}
+    return await loop.run_in_executor(None, _exit_work)
 
 
 @app.post("/api/menu/shutdown")
@@ -4799,8 +5655,22 @@ async def api_menu_shutdown() -> Dict[str, Any]:
         web_game = None
         # 关进程前等队列排空（#396 owner decision）。#1740：drain 失败已 logger 留痕，
         # 此处仍继续杀进程——关进程通道不得因关库失败而卡死。
+        # #1749 r7：S1 同步通道；拆锁，不嵌套 lifecycle→path。
+        def _shutdown_close() -> None:
+            entry = _lookup_holder(_path_norm_of_game(old_game), old_game)
+            if entry is not None:
+                role, op = _claim_close(entry)
+                if role == "executor" and op is not None:
+                    _drain_and_close_session(
+                        old_game, entry=entry, close_op=op,
+                    )
+                elif op is not None:
+                    op.done.wait()
+            else:
+                _drain_and_close_session(old_game)
+
         try:
-            await asyncio.get_running_loop().run_in_executor(None, _drain_and_close_session, old_game)
+            await asyncio.get_running_loop().run_in_executor(None, _shutdown_close)
         except Exception:
             logger.exception("shutdown drain/close failed; continuing process exit")
     # 先返回响应，再异步终止进程。SIGTERM 在 *nix 走优雅退出；
@@ -5054,6 +5924,41 @@ def _new_secret_order_failure_payloads_for_turn(
     ]
 
 
+def _capture_settlement_failure_snapshot(
+    current: Optional[List[Dict[str, Any]]],
+    game: WebGame,
+    turn_before: int,
+    failed_before: set[int],
+    *,
+    primary: BaseException,
+    hold_gate: bool = False,
+) -> Optional[List[Dict[str, Any]]]:
+    """#1749：错误路径唯一 retain + 次生快照捕获。
+
+    已物化 list（含空 list）原样保留、不再查询。仅 current is None 且仍在保护窗时
+    才次生查询；查询失败 logger.exception + 返回 None，主异常由调用方继续 raise。
+    成功路径不走本 helper——直调 _new_secret_order_failure_payloads_for_turn。
+    """
+    if current is not None:
+        return current
+    try:
+        if hold_gate:
+            with _game_write_gate(game):
+                return _new_secret_order_failure_payloads_for_turn(
+                    game, turn_before, failed_before,
+                )
+        return _new_secret_order_failure_payloads_for_turn(
+            game, turn_before, failed_before,
+        )
+    except Exception:
+        logger.exception(
+            "settlement failure snapshot failed after primary=%s",
+            type(primary).__name__,
+            exc_info=True,
+        )
+        return None
+
+
 @app.get("/api/pending_actions")
 async def api_pending_actions() -> Dict[str, Any]:
     """列出本回合待确认动作(动作闸门 ADR 0006):皇帝复核区,颁诏批量落库前可见可撤。"""
@@ -5080,9 +5985,10 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
         if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
             return {"withdrawn": action_id, "actions": _player_visible_pending_actions(
                 game.db.list_pending_actions(int(game.state.turn)))}
-    # 删不动:查清是不存在还是已落库/非本回合
-    row = game.db.conn.execute(
-        "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),)).fetchone()
+        # #1749：404/409 分流也须在 gate 内读库；门外读会撞退休关闭。
+        row = game.db.conn.execute(
+            "SELECT turn, status FROM pending_actions WHERE id=?", (int(action_id),),
+        ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="该待确认动作不存在。")
     raise HTTPException(status_code=409, detail="该动作已落库或非本回合，无法撤回。")
@@ -5111,18 +6017,23 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
                 )
                 if result.get("committed"):
                     game.db.retire_chat_turn_for_pending_action_retry(int(action_id))
+            # #1749：响应投影在 gate 内快照，禁门后读退休连接。
+            return {
+                "retry": result,
+                "actions": _player_visible_pending_actions(
+                    game.db.list_pending_actions(int(game.state.turn))),
+                "secret_orders": game.db.list_secret_orders(),
+                "can_undo_last_chat": (
+                    game.can_undo_last_chat(minister_name) if minister_name else False
+                ),
+                "pending_action_failures": (
+                    game.pending_action_failures_for(minister_name) if minister_name else []
+                ),
+            }
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
-    return {
-        "retry": result,
-        "actions": _player_visible_pending_actions(
-            game.db.list_pending_actions(int(game.state.turn))),
-        "secret_orders": game.db.list_secret_orders(),
-        "can_undo_last_chat": game.can_undo_last_chat(minister_name) if minister_name else False,
-        "pending_action_failures": game.pending_action_failures_for(minister_name) if minister_name else [],
-    }
 
 
 @app.get("/api/history/turns")
@@ -5431,6 +6342,8 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
         )
         # 会话层 _refuse_if_settling 仅查相位，守不住 pre_settle 原子块在 settling 落定前的窗口；
         # 与直写端点同走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面：会话写也要串行）。
+        # #1749：响应快照必须在临界段内完成——gate 释放后 drain 可关旧库，
+        # 门外 directive_rows 会 ProgrammingError: closed database。
         with _serialized_web_write(game):
             if int(game.state.turn) != capture_turn:
                 raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
@@ -5438,15 +6351,17 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
                 request.text.strip(), notes=request.notes,
                 dossier_payload=dossier_payload,
             )
+            return {
+                "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
+                "directives": [
+                    game.directive_payload(item) for item in game.directive_rows()
+                ],
+            }
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
     except LLMUnavailable as e:
         # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
-    return {
-        "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
-        "directives": [game.directive_payload(item) for item in game.directive_rows()],
-    }
 
 
 @app.patch("/api/directives/{directive_id}")
@@ -5474,29 +6389,39 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             **({"db": game.db, "content": game.content}
                if getattr(game, "content", None) is not None else {}),
         )
+        # #1749：同 create——响应列表在 gate 内快照，禁门后读退休连接。
         with _serialized_web_write(game):
             if int(game.state.turn) != capture_turn:
                 raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
             game.session.update_directive(
                 directive_id, text.strip(), dossier_payload=dossier_payload,
             )
+            return {
+                "directives": [
+                    game.directive_payload(item) for item in game.directive_rows()
+                ],
+            }
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     except LLMUnavailable as e:
         # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
-    return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
 
 
 @app.delete("/api/directives/{directive_id}")
 async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
     game = get_game()
     try:
+        # #1749：同 create/update——删除后列表投影在 gate 内完成。
         with _serialized_web_write(game):
             game.session.delete_directive(directive_id)
+            return {
+                "directives": [
+                    game.directive_payload(item) for item in game.directive_rows()
+                ],
+            }
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
-    return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
 
 
 @app.post("/api/decree/advance_without_edict")
@@ -5510,29 +6435,60 @@ def api_advance_without_edict(
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
-    settlement_result = None
+    # #1749：entry 释放 write_gate 后 drain 可关旧库；完整错误快照须在持闸窗物化进
+    # failure_snapshot（None=未知；list=已物化）。门后只读 holder，禁再查库。
+    failure_snapshot: Optional[List[Dict[str, Any]]] = None
     try:
         # #1241 S1：受理样板收 helper；advance 锁语义 = 非阻塞抢锁 409（禁改用阻塞 gate）。
         with _settlement_period_entry(game, write_cm=_serialized_web_write):
-            # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
-            _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
-            # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
-            # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
-            # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
-            settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
-            if settlement_result is None or not settlement_result.awaiting:
-                game.session.end_turn()
-                game.refresh_turn()
+            try:
+                # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
+                _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
+                # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
+                # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
+                # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
+                settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
+                if settlement_result is None or not settlement_result.awaiting:
+                    game.session.end_turn()
+                    game.refresh_turn()
+                # §2.2：end_turn/refresh 后、return 前直查并立即赋 holder（失败进原异常链）。
+                failure_snapshot = _new_secret_order_failure_payloads_for_turn(
+                    game, turn_before, failed_before)
+                return {
+                    "state": game.state_payload(),
+                    "awaiting_decision": bool(
+                        settlement_result is not None and settlement_result.awaiting
+                    ),
+                    "decisions": (
+                        settlement_result.decisions
+                        if settlement_result is not None and settlement_result.awaiting
+                        else []
+                    ),
+                    "pending_action_failures": failure_snapshot,
+                }
+            except HTTPException:
+                raise
+            except Exception as body_exc:
+                # 仍持 write_cm：唯一次生窗；无条件赋 retain helper 返回值。
+                failure_snapshot = _capture_settlement_failure_snapshot(
+                    failure_snapshot, game, turn_before, failed_before,
+                    primary=body_exc,
+                )
+                raise
     except HTTPException:
         # 令牌/相位/锁门 409 等既有 HTTP 面原样上抛，禁被下方 Exception 改包。
         raise
     except ValueError as e:
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-        detail: Any = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        detail: Any = (
+            {"message": str(e), "pending_action_failures": failure_snapshot}
+            if failure_snapshot else str(e)
+        )
         raise HTTPException(status_code=400, detail=detail) from None
     except SettlementAbort as e:
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-        detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        detail = (
+            {"message": str(e), "pending_action_failures": failure_snapshot}
+            if failure_snapshot else str(e)
+        )
         raise HTTPException(status_code=409, detail=detail) from None
     except (AudienceNightError, ExceptionGroup) as e:
         # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
@@ -5540,30 +6496,17 @@ def api_advance_without_edict(
     except Exception as e:  # noqa: BLE001
         # #1433：同流式颁诏 4616-4623——LLMUnavailable→可读 _llm_error_detail；其余 Exception→str。
         # HTTP 面 LLM 死走 412（菜单/连通先例）；禁裸 500 无 detail。
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         if isinstance(e, LLMUnavailable):
             detail = _llm_error_detail(e)
-            if failures:
-                detail = {**detail, "pending_action_failures": failures}
+            if failure_snapshot:
+                detail = {**detail, "pending_action_failures": failure_snapshot}
             raise HTTPException(status_code=412, detail=detail) from None
         message = str(e) or "退朝结算失败，请重试。"
         detail = (
-            {"message": message, "pending_action_failures": failures}
-            if failures else {"message": message}
+            {"message": message, "pending_action_failures": failure_snapshot}
+            if failure_snapshot else {"message": message}
         )
         raise HTTPException(status_code=500, detail=detail) from None
-    return {
-        "state": game.state_payload(),
-        "awaiting_decision": bool(
-            settlement_result is not None and settlement_result.awaiting
-        ),
-        "decisions": (
-            settlement_result.decisions
-            if settlement_result is not None and settlement_result.awaiting else []
-        ),
-        "pending_action_failures": _new_secret_order_failure_payloads_for_turn(
-            game, turn_before, failed_before),
-    }
 
 
 # #1341/#1338：PATCH /api/decree 已删（web/src 零真实调用方；裸设总诏绕过 directives
@@ -5610,60 +6553,89 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
+    # #1749：完整错误快照 holder；成功支第一次 query 成功即赋；clear 外溢只读 holder。
+    failure_snapshot: Optional[List[Dict[str, Any]]] = None
     try:
         # #1241 S1：受理样板收 helper；issue 锁语义 = 阻塞 _game_write_gate（禁改非阻塞）。
         with _settlement_period_entry(game, write_cm=_game_write_gate):
-            # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
-            _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
-            result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
-            decree = game.session.last_decree
-            failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-            if result.awaiting:
-                # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
-                return {
-                    **_settlement_player_payload(
-                        decree=decree,
-                        decisions=result.decisions,
-                        pending_action_failures=failures,
-                    ),
-                    "awaiting_decision": True,
-                }
-            report = result.report
-            game.session.end_turn()
-            game.refresh_turn()
-            events = [
-                steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-            ]
-            if not was_ended and game.state.ended:
-                events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-            return steam_events.with_events(_settlement_player_payload(
-                decree=decree,
-                report=report,
-                pending_action_failures=failures,
-            ), events)
+            try:
+                # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
+                _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
+                result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
+                decree = game.session.last_decree
+                # §2.2：第一次 query 成功处立刻赋 holder；awaiting/done 两 return 共用。
+                failure_snapshot = _new_secret_order_failure_payloads_for_turn(
+                    game, turn_before, failed_before)
+                if result.awaiting:
+                    # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
+                    return {
+                        **_settlement_player_payload(
+                            decree=decree,
+                            decisions=result.decisions,
+                            pending_action_failures=failure_snapshot,
+                        ),
+                        "awaiting_decision": True,
+                    }
+                report = result.report
+                game.session.end_turn()
+                game.refresh_turn()
+                events = [
+                    steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                    steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                    steam_events.set_stat(
+                        steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+                ]
+                if not was_ended and game.state.ended:
+                    events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                return steam_events.with_events(_settlement_player_payload(
+                    decree=decree,
+                    report=report,
+                    pending_action_failures=failure_snapshot,
+                ), events)
+            except HTTPException:
+                raise
+            except Exception as body_exc:
+                failure_snapshot = _capture_settlement_failure_snapshot(
+                    failure_snapshot, game, turn_before, failed_before,
+                    primary=body_exc,
+                )
+                raise
+    except HTTPException:
+        # §5.2：非流式 catch-all 前保留 HTTP 身份；status/detail/headers 不改包。
+        raise
     except ValueError as e:
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-        detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        detail = (
+            {"message": str(e), "pending_action_failures": failure_snapshot}
+            if failure_snapshot else str(e)
+        )
         raise HTTPException(status_code=400, detail=detail) from None
     except SettlementAbort as e:
         # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试，detail 即玩家指引
         # （含错误包路径+「请发给作者」）。非 500——这是已处理的可重试态，不是服务器 bug。
         # settling 已落则 helper 保留交恢复。
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-        detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
+        detail = (
+            {"message": str(e), "pending_action_failures": failure_snapshot}
+            if failure_snapshot else str(e)
+        )
         raise HTTPException(status_code=409, detail=detail) from None
     except LLMUnavailable as e:
         # #1452：非流式颁诏 LLM 死 → 结构化错误，禁裸 500（对齐 _llm_error_detail）。
-        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        # 注意：本入口 LLM 仍走 400（不是 advance 的 412）。
         detail = _llm_error_detail(e)
-        if failures:
-            detail = {**detail, "pending_action_failures": failures}
+        if failure_snapshot:
+            detail = {**detail, "pending_action_failures": failure_snapshot}
         raise HTTPException(status_code=400, detail=detail) from None
     except (AudienceNightError, ExceptionGroup) as e:
         # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
         raise _retryable_audience_close_http(e) from None
+    except Exception as e:  # noqa: BLE001
+        # §5.2：只补本入口缺失的未映射异常出口（含 clear RuntimeError）；非抄 advance 整表。
+        message = str(e) or "颁诏结算失败，请重试。"
+        detail = (
+            {"message": message, "pending_action_failures": failure_snapshot}
+            if failure_snapshot else {"message": message}
+        )
+        raise HTTPException(status_code=500, detail=detail) from None
 
 
 @app.post("/api/decree/issue/stream")
@@ -5683,6 +6655,8 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         game = None
         turn_before = 0
         failed_before: set[int] = set()
+        # #1749：完整错误快照 holder；entry 退出后只读 holder，禁再查库。
+        failure_snapshot: Optional[List[Dict[str, Any]]] = None
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
@@ -5693,72 +6667,82 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             # 与 settled_ok 同核：clear 抛错走 __error__，禁先推成功终态。
             terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(game, write_cm=_game_write_gate):
-                # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
-                _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
-                result = game.session.resolve_turn(
-                    on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
-                decree = game.session.last_decree
-                failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if result.awaiting:
-                    # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
-                    terminal = ("__decisions__", _settlement_player_payload(
-                        decree=decree,
-                        decisions=result.decisions,
-                        pending_action_failures=failures,
-                    ))
-                else:
-                    report = result.report
-                    game.session.end_turn()
-                    game.refresh_turn()
-                    events = [
-                        steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                        steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-                    ]
-                    if not was_ended and game.state.ended:
-                        events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-                    terminal = ("__done__", _settlement_player_payload(
-                        decree=decree,
-                        report=report,
-                        steam_events=events,
-                        pending_action_failures=failures,
-                    ))
+                try:
+                    # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
+                    _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
+                    result = game.session.resolve_turn(
+                        on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
+                    decree = game.session.last_decree
+                    # §2.2：第一次 query 成功处立刻赋 holder；与 terminal 同一份 list。
+                    failure_snapshot = _new_secret_order_failure_payloads_for_turn(
+                        game, turn_before, failed_before)
+                    if result.awaiting:
+                        # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
+                        terminal = ("__decisions__", _settlement_player_payload(
+                            decree=decree,
+                            decisions=result.decisions,
+                            pending_action_failures=failure_snapshot,
+                        ))
+                    else:
+                        report = result.report
+                        game.session.end_turn()
+                        game.refresh_turn()
+                        events = [
+                            steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                            steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                            steam_events.set_stat(
+                                steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+                        ]
+                        if not was_ended and game.state.ended:
+                            events.append(
+                                steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                        terminal = ("__done__", _settlement_player_payload(
+                            decree=decree,
+                            report=report,
+                            steam_events=events,
+                            pending_action_failures=failure_snapshot,
+                        ))
+                except HTTPException:
+                    raise
+                except Exception as body_exc:
+                    failure_snapshot = _capture_settlement_failure_snapshot(
+                        failure_snapshot, game, turn_before, failed_before,
+                        primary=body_exc,
+                    )
+                    raise
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:
             # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
-            failures = (
-                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if game is not None else []
-            )
-            ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
+            ev_queue.put((
+                "__error__",
+                {"message": str(e), "pending_action_failures": failure_snapshot}
+                if failure_snapshot else str(e),
+            ))
         except HTTPException as e:
             # #1277：令牌 409 等须保留 detail.turn / status_code，供 FE 复用 advance 的
             # 「serverTurn>expected → reload 不报错」；禁 str(HTTPException) 丢结构。
-            failures = (
-                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if game is not None else []
-            )
+            # §5.3：既有 HTTP→SSE；dict setdefault / 非 dict 包装后再附非空 holder。
             detail = e.detail
             if isinstance(detail, dict):
                 payload = dict(detail)
                 payload.setdefault("status_code", e.status_code)
-                if failures and "pending_action_failures" not in payload:
-                    payload["pending_action_failures"] = failures
+                if failure_snapshot and "pending_action_failures" not in payload:
+                    payload["pending_action_failures"] = failure_snapshot
                 ev_queue.put(("__error__", payload))
             else:
                 payload = {"message": str(detail), "status_code": e.status_code}
-                if failures:
-                    payload["pending_action_failures"] = failures
+                if failure_snapshot:
+                    payload["pending_action_failures"] = failure_snapshot
                 ev_queue.put(("__error__", payload))
         except Exception as e:  # noqa: BLE001
             # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
-            failures = (
-                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if game is not None else []
-            )
             message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
-            ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))
+            ev_queue.put((
+                "__error__",
+                {"message": message, "pending_action_failures": failure_snapshot}
+                if failure_snapshot else message,
+            ))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
@@ -5806,6 +6790,9 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         game = None
         turn_before = 0
         failed_before: set[int] = set()
+        # #1749：分段 hold_write_for_body=False——完整错误快照只在短持 gate 时物化；
+        # entry 退出后 / gate-free 窗禁再读退休连接。无静默 except→[]。
+        failure_snapshot: Optional[List[Dict[str, Any]]] = None
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
@@ -5823,52 +6810,64 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             with _settlement_period_entry(
                 game, write_cm=_game_write_gate, hold_write_for_body=False,
             ):
-                report = game.session.submit_hitl_choices(
-                    body.choices,
-                    write_gate=_game_write_gate(game),
-                    on_event=on_event,
-                    cheat_directive=body.cheat,
-                )
-                decree = game.session.last_decree
-                failures = _new_secret_order_failure_payloads_for_turn(
-                    game, turn_before, failed_before,
-                )
-                # #1702 A2：尾写短持既有 write_gate，与热替换/其它持闸写者单写；
-                # 不整段 body 持锁（join 仍在 gate 外）；成功 clear 仍走样板 False 支短持。
-                with _game_write_gate(game):
-                    game.session.end_turn()
-                    game.refresh_turn()
-                events = [
-                    steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                    steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                    steam_events.set_stat(
-                        steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn),
-                    ),
-                ]
-                if not was_ended and game.state.ended:
-                    events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-                terminal = ("__done__", _settlement_player_payload(
-                    decree=decree,
-                    report=report,
-                    steam_events=events,
-                    pending_action_failures=failures,
-                ))
+                try:
+                    report = game.session.submit_hitl_choices(
+                        body.choices,
+                        write_gate=_game_write_gate(game),
+                        on_event=on_event,
+                        cheat_directive=body.cheat,
+                    )
+                    decree = game.session.last_decree
+                    # #1702 A2：尾写短持既有 write_gate，与热替换/其它持闸写者单写；
+                    # 不整段 body 持锁（join 仍在 gate 外）；成功 clear 仍走样板 False 支短持。
+                    # §2.2：与 end_turn 同一短持段内直查写 holder；terminal 用同一份。
+                    with _game_write_gate(game):
+                        failure_snapshot = _new_secret_order_failure_payloads_for_turn(
+                            game, turn_before, failed_before,
+                        )
+                        game.session.end_turn()
+                        game.refresh_turn()
+                    events = [
+                        steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                        steam_events.set_stat(
+                            steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn),
+                        ),
+                    ]
+                    if not was_ended and game.state.ended:
+                        events.append(
+                            steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                    terminal = ("__done__", _settlement_player_payload(
+                        decree=decree,
+                        report=report,
+                        steam_events=events,
+                        pending_action_failures=failure_snapshot,
+                    ))
+                except Exception as body_exc:
+                    # §3.1：唯一次生窗；hold_gate=True 短持；删静默 = []。
+                    failure_snapshot = _capture_settlement_failure_snapshot(
+                        failure_snapshot, game, turn_before, failed_before,
+                        primary=body_exc, hold_gate=True,
+                    )
+                    raise
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:
             # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
-            failures = (
-                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if game is not None else []
-            )
-            ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
+            # 相位预检在 entry 前抛时 failure_snapshot 仍为 None → 不附键（无结算副作用可读）。
+            ev_queue.put((
+                "__error__",
+                {"message": str(e), "pending_action_failures": failure_snapshot}
+                if failure_snapshot else str(e),
+            ))
         except Exception as e:  # noqa: BLE001
-            failures = (
-                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if game is not None else []
-            )
+            # §5.4：无独立 HTTP/AudienceNight 分表；通用 SSE + 非空 holder 附载。
             message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
-            ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))
+            ev_queue.put((
+                "__error__",
+                {"message": message, "pending_action_failures": failure_snapshot}
+                if failure_snapshot else message,
+            ))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
@@ -5944,8 +6943,10 @@ async def api_select_consort(name: str) -> Dict[str, Any]:
         consort.status = "active"
         # 同步进 registry（新增 agent）
         game.session.registry.register(consort)
+        # #1749：public_character 读 DB；须在 gate 内快照，禁门后撞退休关闭。
+        selected = game.public_character(consort)
     game.chat_history.setdefault(name, [])
-    return {"selected": game.public_character(consort)}
+    return {"selected": selected}
 
 
 @app.get("/api/saves")
@@ -5961,8 +6962,10 @@ async def api_create_save(request: SaveCreateRequest) -> Dict[str, Any]:
     game = get_game()
     with _serialized_web_write(game):
         info = game.save_to(request.name)
+        # #1749：list_saves 读 campaign_id（DB）；响应列表在 gate 内快照。
+        saves = game.list_saves()
     return steam_events.with_events(
-        {"save": info, "saves": game.list_saves()},
+        {"save": info, "saves": saves},
         [steam_events.add_stat(steam_events.STAT_SAVES_CREATED)],
     )
 
