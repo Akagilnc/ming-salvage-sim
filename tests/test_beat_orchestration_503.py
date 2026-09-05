@@ -33,6 +33,7 @@ from ming_sim.beat_orchestration import (
     assemble_beat_inputs,
     beat_input_field_names,
 )
+from tests.wait_utils import ObservingLock
 
 
 def test_abandon_running_scene_drains_without_persisting_result():
@@ -2090,38 +2091,7 @@ def test_close_final_exit_generator_failure_rolls_back_final_exit(game):
     release_gen = threading.Event()
     contending = threading.Event()
 
-    class _ObservingGate:
-        """Signals when acquire finds lock held — proves gate seam, not mere is_alive."""
-
-        def __init__(self) -> None:
-            self._lock = threading.Lock()
-
-        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
-            # Non-blocking probe: if held, we are at the contention seam.
-            if not self._lock.acquire(blocking=False):
-                contending.set()
-                if not blocking:
-                    return False
-                if timeout is None or timeout < 0:
-                    return self._lock.acquire(blocking=True)
-                return self._lock.acquire(blocking=True, timeout=timeout)
-            return True
-
-        def release(self) -> None:
-            self._lock.release()
-
-        def locked(self) -> bool:
-            return self._lock.locked()
-
-        def __enter__(self):
-            self.acquire()
-            return self
-
-        def __exit__(self, *args) -> bool:
-            self.release()
-            return False
-
-    gate = _ObservingGate()
+    gate = ObservingLock(contending)
 
     def boom_exit(inputs: BeatInputs) -> str:
         started.set()
@@ -2190,35 +2160,7 @@ def test_close_scene_join_free_but_persist_and_cleanup_hold_write_gate(game):
     release_gen = threading.Event()
     contending = threading.Event()
 
-    class _ObservingGate:
-        def __init__(self) -> None:
-            self._lock = threading.Lock()
-
-        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
-            if not self._lock.acquire(blocking=False):
-                contending.set()
-                if not blocking:
-                    return False
-                if timeout is None or timeout < 0:
-                    return self._lock.acquire(blocking=True)
-                return self._lock.acquire(blocking=True, timeout=timeout)
-            return True
-
-        def release(self) -> None:
-            self._lock.release()
-
-        def locked(self) -> bool:
-            return self._lock.locked()
-
-        def __enter__(self):
-            self.acquire()
-            return self
-
-        def __exit__(self, *args) -> bool:
-            self.release()
-            return False
-
-    gate = _ObservingGate()
+    gate = ObservingLock(contending)
 
     def gen(inputs: BeatInputs) -> str:
         started.set()

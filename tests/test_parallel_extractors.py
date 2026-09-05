@@ -177,22 +177,35 @@ def test_parallel_extract_runs_concurrently(read_game, monkeypatch):
 
 
 def test_serial_extract_stays_serial(read_game, monkeypatch):
-    """parallel=False（形态1/api 默认）峰值并发==1，串行不受影响。"""
+    """parallel=False（形态1/api 默认）在调用线程串行跑模块，峰值并发==1。
+
+    忠实证明：run 窗口内计数 + 调用线程同一性。旧夹具把 ++/max/-- 放同一锁块且
+    run 在计数外，生产忽略 parallel 走 ThreadPool 后串行案仍绿。
+    """
     db, state, content = read_game
     active = 0
     max_active = 0
     lock = threading.Lock()
+    caller = threading.get_ident()
+    off_caller: list[int] = []
 
     def _track(agent, prompt, tag):
         nonlocal active, max_active
+        tid = threading.get_ident()
+        if tid != caller:
+            off_caller.append(tid)
         with lock:
             active += 1
             max_active = max(max_active, active)
-            active -= 1
-        return _fake_run(agent, prompt, tag)
+        try:
+            return _fake_run(agent, prompt, tag)
+        finally:
+            with lock:
+                active -= 1
 
     monkeypatch.setattr(simulation, "run_agent_text", _track)
     extract_scores_by_modules_with_agno(_dummy_agents(), db, state, "邸报", parallel=False)
+    assert off_caller == [], f"串行路径离开调用线程（疑 ThreadPool）：{off_caller}"
     assert max_active == 1, f"串行路径出现并发，峰值={max_active}"
 
 

@@ -511,7 +511,7 @@ describe("#1725 SettlementLock 中心进度呈现（组件面负向；贯通 hap
       <SettlementLock stage="推演月末邸报" progress={null} thinking="" narrative="" />,
     );
     expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
-    expect(host.querySelector("[data-testid=settlement-lock-decor]")?.textContent || "").toContain(
+    expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain(
       "推演月末邸报",
     );
   });
@@ -520,9 +520,9 @@ describe("#1725 SettlementLock 中心进度呈现（组件面负向；贯通 hap
     const host = mount(
       <SettlementLock stage="" progress={null} thinking="" narrative="" />,
     );
-    const decor = host.querySelector("[data-testid=settlement-lock-decor]");
-    expect(decor).not.toBeNull();
-    expect(decor?.textContent || "").toContain("档房摘录正在呈递。");
+    expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain(
+      "档房摘录正在呈递。",
+    );
     expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
   });
 
@@ -531,7 +531,7 @@ describe("#1725 SettlementLock 中心进度呈现（组件面负向；贯通 hap
       <SettlementLock stage="圣意亲裁，续推时局" progress={null} thinking="" narrative="" />,
     );
     expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
-    expect(host.querySelector("[data-testid=settlement-lock-decor]")?.textContent || "").toContain(
+    expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain(
       "圣意亲裁，续推时局",
     );
   });

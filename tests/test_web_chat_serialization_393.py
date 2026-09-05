@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
-from tests.wait_utils import wait_until
+from tests.wait_utils import ObservingLock, wait_until
 
 
 class _RunContent:
@@ -177,40 +177,6 @@ class _RecordingDB:
         return []
 
 
-class _ObservingWriteGate:
-    """Test lock: signals when acquire is attempted while settlement_holding is set.
-
-    Drop-in for threading.Lock so get_session_write_queue reuses the same gate the
-    stream epilogue TicketedWriteGate acquires — without production test hooks.
-    """
-
-    def __init__(self, holding: threading.Event, contending: threading.Event):
-        self._lock = threading.Lock()
-        self._holding = holding
-        self._contending = contending
-
-    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
-        if self._holding.is_set():
-            self._contending.set()
-        if timeout is None or timeout < 0:
-            return self._lock.acquire(blocking)
-        return self._lock.acquire(blocking, timeout)
-
-    def release(self) -> None:
-        self._lock.release()
-
-    def locked(self) -> bool:
-        return self._lock.locked()
-
-    def __enter__(self):
-        self.acquire()
-        return self
-
-    def __exit__(self, *args) -> bool:
-        self.release()
-        return False
-
-
 def _runtime_for_stream_race():
     allow_finish = threading.Event()
     settlement_attempting = threading.Event()
@@ -225,7 +191,7 @@ def _runtime_for_stream_race():
     runtime = object.__new__(web_app.WebGame)
     runtime.session = _FakeSession(character, agent, state, db)
     runtime.chat_history = {character.name: []}
-    runtime._write_gate = _ObservingWriteGate(settlement_holding, epilogue_contending)
+    runtime._write_gate = ObservingLock(epilogue_contending, holding=settlement_holding)
     runtime.directive_rows = lambda: []
     runtime.directive_payload = lambda row: row
     runtime.suggestions_for = lambda character: []
