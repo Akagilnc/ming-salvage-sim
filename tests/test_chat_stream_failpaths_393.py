@@ -21,8 +21,11 @@ from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
 
 
-def _assert_write_path_free(runtime, *, timeout: float = 1.0) -> None:
-    """After failpath cleanup, a subsequent gated write and drain must not block."""
+def _assert_write_path_free(runtime) -> None:
+    """After failpath cleanup, a subsequent gated write and drain must not block.
+
+    Hang → CI job final line; no fixed wall-clock probe (#1723).
+    """
     entered = threading.Event()
 
     def _try_serialized_write() -> None:
@@ -31,7 +34,8 @@ def _assert_write_path_free(runtime, *, timeout: float = 1.0) -> None:
 
     t = threading.Thread(target=_try_serialized_write, daemon=True)
     t.start()
-    t.join(timeout=timeout)
+    entered.wait()
+    t.join()
     assert entered.is_set() and not t.is_alive(), "serialized write path still blocked"
 
     drained = threading.Event()
@@ -44,7 +48,8 @@ def _assert_write_path_free(runtime, *, timeout: float = 1.0) -> None:
 
     td = threading.Thread(target=_try_drain, daemon=True)
     td.start()
-    td.join(timeout=timeout)
+    drained.wait()
+    td.join()
     assert drained.is_set() and not td.is_alive(), "drain still blocked (pending write leak)"
 
 
@@ -134,7 +139,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
         try:
             with web_app._serialized_web_write(runtime):
                 other_entered.set()
-                assert allow_other_exit.wait(timeout=2.0)
+                allow_other_exit.wait()
             other_completed_ok.append(True)
         except Exception:
             other_completed_ok.append(False)
@@ -147,9 +152,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
         other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
         other_thread_holder.append(other)
         other.start()
-        assert other_entered.wait(timeout=2.0), (
-            "foreign writer did not enter _serialized_web_write"
-        )
+        other_entered.wait()
 
     runtime._complete_pending_write = complete_then_hand_path_to_other
 
@@ -165,7 +168,7 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
     )
     allow_other_exit.set()
     assert other_thread_holder, "foreign writer thread was not started"
-    other_thread_holder[0].join(timeout=2.0)
+    other_thread_holder[0].join()
     assert not other_thread_holder[0].is_alive()
     assert other_completed_ok == [True], (
         "foreign holder could not complete its own serialized write"
@@ -320,10 +323,8 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     with caplog.at_level(logging.ERROR, logger="web_app"):
         th = threading.Thread(target=consume, daemon=True)
         th.start()
-        assert done.wait(5.0), (
-            "double cleanup failure must terminalize original error+end; hung on ev_queue"
-        )
-        th.join(timeout=1.0)
+        done.wait()
+        th.join()
 
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
@@ -391,8 +392,8 @@ def test_worker_postprocess_exception_emits_error_end():
 
     th = threading.Thread(target=consume, daemon=True)
     th.start()
-    assert done.wait(5.0), "postprocess exception must terminalize error+end; hung on ev_queue"
-    th.join(timeout=1.0)
+    done.wait()
+    th.join()
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
     assert "done" in types, events  # 回话已可见

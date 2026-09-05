@@ -5946,7 +5946,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
     """
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
-    def on_event(kind: str, data: str) -> None:
+    def on_event(kind: str, data: Any) -> None:
         ev_queue.put((kind, data))
 
     def worker() -> None:
@@ -6045,8 +6045,11 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             if kind == "__error__":
                 yield sse_event("error", data if isinstance(data, dict) else {"message": data})
                 break
-            # stage / thinking / text
-            yield sse_event(kind, {"content": data})
+            # stage carries typed progress dict {content,current,total}; thinking/text are strings.
+            if kind == "stage" and isinstance(data, dict):
+                yield sse_event(kind, data)
+            else:
+                yield sse_event(kind, {"content": data})
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -6066,7 +6069,7 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
     keyed 权威由 validate_all 整批拒），SSE 推 stage/text + done。"""
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
-    def on_event(kind: str, data: str) -> None:
+    def on_event(kind: str, data: Any) -> None:
         ev_queue.put((kind, data))
 
     def worker() -> None:
@@ -6149,7 +6152,10 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             if kind == "__error__":
                 yield sse_event("error", data if isinstance(data, dict) else {"message": data})
                 break
-            yield sse_event(kind, {"content": data})
+            if kind == "stage" and isinstance(data, dict):
+                yield sse_event(kind, data)
+            else:
+                yield sse_event(kind, {"content": data})
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

@@ -861,7 +861,7 @@ def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
 
     class _HangStdout:
         def __iter__(self):
-            killed.wait(5.0)
+            killed.wait()
             return iter(())
 
         def close(self):

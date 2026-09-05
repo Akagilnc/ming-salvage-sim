@@ -135,7 +135,9 @@ def test_resolve_context_survives_mid_settle_crash(game, monkeypatch, tmp_path):
     class _Boom(RuntimeError):
         pass
 
-    def _explode(label):
+    def _explode(payload):
+        # stage 现为 typed payload dict；content 仍是显示标签。
+        label = payload.get("content") if isinstance(payload, dict) else payload
         if label == "记起居注":   # 落库之后、clear 之前的阶段
             raise _Boom("中途崩")
 
