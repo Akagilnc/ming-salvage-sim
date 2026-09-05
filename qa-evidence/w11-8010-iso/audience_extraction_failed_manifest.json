@@ -1,0 +1,12 @@
+{
+  "kind": "extraction_failed",
+  "message": "叙事抽取失败（llm_run_error）：通传未达，请稍后再召。",
+  "detail": {
+    "chat_turn_id": 1,
+    "night_id": 1,
+    "minister_name": "黄立极",
+    "code": "llm_run_error",
+    "stage": "extract"
+  },
+  "written_at": "2026-09-05T09:36:33+00:00"
+}
