@@ -666,7 +666,7 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     validator 抛 RuntimeError（代码故障）必须响亮上抛——票拟业务降级 ≠ 代码故障降级。"""
     db, state, _content = game
 
-    def _buggy_validate(data, ids):
+    def _buggy_validate(data, ids, **_kwargs):
         raise RuntimeError("programmer bug sentinel")
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", lambda a, p, tag: "{\"items\": []}")
