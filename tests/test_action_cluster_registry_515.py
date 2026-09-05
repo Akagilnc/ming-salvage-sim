@@ -1091,22 +1091,50 @@ def _bind_draft_extract_1744(monkeypatch, *, minister_name: str):
     })
 
 
-def test_classify_real_entry_normalizes_single_draft_for_one_decree(monkeypatch):
-    """真实 classify 入口：LLM 对同意图只回 draft → 候选归一恰一条 draft。"""
+def test_classify_entry_normalizes_probe_shaped_draft_payload(monkeypatch):
+    """classify 入口 + 候选归一：冻结案形 raw（动作类型=拟旨）→ 恰一条 draft。
+
+    raw 字段形取自一次性真实 classifier 探针（回执留证）；本测不调真实 LLM。
+    """
+    # 探针 raw 关键 typed 键（完整探针见回执 /tmp/1744-classifier-probe.json）
+    probe_raw = {
+        "动作类型": "拟旨",
+        "颁布方式": "ordinary",
+        "标题": "清核太仓出纳",
+        "目标": "太仓出纳、非急工役、边饷要紧处",
+        "目标类型": "policy",
+        "事务类别": "钱粮",
+        "责任机关": "户部",
+        "恩赏拨帑": "无",
+        "确认": "无",
+        "密令动作": "无",
+        "任免动作": "无",
+        "惩处动作": "无",
+        "权项": "无",
+        "事项处置": "无",
+        "承诺类型": "无",
+    }
 
     def _scripted(prompt, llm_config=None, tag=""):
         assert tag == "action_intent"
         assert _EMPEROR_1744 in prompt
-        return (json.dumps({"kind": "draft"}, ensure_ascii=False), 0)
+        return (json.dumps(probe_raw, ensure_ascii=False), 0)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
     got = cb.classify_cli_action_intent(_EMPEROR_1744)
     assert [c.get("kind") for c in got] == ["draft"]
+    assert got[0].get("mode") == "ordinary"
+    assert got[0].get("title") == "清核太仓出纳"
+    assert got[0].get("target_kind") == "policy"
+    assert "太仓出纳" in str(got[0].get("target_id") or "")
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_one_intent_draft_chat_to_pending_api_one_ordinary(game, monkeypatch):
-    """#1744 生产闭环：召对入口 → 动作完成 → GET /api/pending_actions 恰一 ordinary。"""
+    """#1744 生产闭环：召对入口 → 动作完成 → GET /api/pending_actions 恰一 ordinary。
+
+    分类器输出形取自真实探针（单 draft）；本测 script 该形，不断言真实 LLM。
+    """
     db, state, content = game
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
@@ -1115,10 +1143,14 @@ def test_one_intent_draft_chat_to_pending_api_one_ordinary(game, monkeypatch):
     def _scripted(prompt, llm_config=None, tag=""):
         assert tag == "action_intent"
         assert _EMPEROR_1744 in prompt
-        return (json.dumps({"kind": "draft"}, ensure_ascii=False), 0)
+        # 与真实探针 kinds=['draft'] 同形
+        return (json.dumps({
+            "动作类型": "拟旨", "颁布方式": "ordinary",
+            "标题": "清核太仓出纳", "目标类型": "policy",
+            "目标": _DRAFT_TARGET_1744,
+        }, ensure_ascii=False), 0)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
-    # 不 mock classify：走真实入口 + 脚本 backend，再进 WebGame.chat。
     wg = _wire_web_game(
         db, state, content, _SyncAgent(_REPLY_1744), monkeypatch,
     )
@@ -1159,11 +1191,16 @@ def test_draft_plus_independent_titleless_assignment_both_stage(game, monkeypatc
     rows = _pending_directives_via_api(monkeypatch, wg, minister_name=minister.name)
     new_rows = [r for r in rows if int(r["id"]) not in before]
     assert len(new_rows) == 2
-    types_seen = {
-        str(json.loads(r.get("payload_json") or "{}").get("dossier_action_type") or "")
+    by_type = {
+        str(json.loads(r.get("payload_json") or "{}").get("dossier_action_type") or ""):
+        json.loads(r.get("payload_json") or "{}")
         for r in new_rows
     }
-    assert types_seen == {"policy", "assignment"}
+    assert set(by_type) == {"policy", "assignment"}
+    assert _DRAFT_TARGET_1744 in str(by_type["policy"].get("target_id") or "")
+    assert by_type["policy"].get("mode") == "ordinary"
+    assert str(by_type["assignment"].get("target_id") or "") == "陕西赈灾"
+    assert by_type["assignment"].get("mode") == "ordinary"
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -1189,10 +1226,18 @@ def test_two_independent_assignments_still_two_via_chat(game, monkeypatch):
     rows = _pending_directives_via_api(monkeypatch, wg, minister_name=minister.name)
     new_rows = [r for r in rows if int(r["id"]) not in before]
     assert len(new_rows) == 2
-    assert {
-        str(json.loads(r.get("payload_json") or "{}").get("dossier_action_type") or "")
+    identities = {
+        (
+            str(json.loads(r.get("payload_json") or "{}").get("title") or ""),
+            str(json.loads(r.get("payload_json") or "{}").get("target_id") or ""),
+            str(json.loads(r.get("payload_json") or "{}").get("dossier_action_type") or ""),
+        )
         for r in new_rows
-    } == {"assignment"}
+    }
+    assert identities == {
+        ("拨饷关宁", "关宁", "assignment"),
+        ("陕西巡抚督办赈灾", "陕西", "assignment"),
+    }
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -1263,6 +1308,7 @@ def test_draft_plus_digit_target_candidate_updates_existing(game, monkeypatch):
         assert old_id in by_id
         updated = json.loads(by_id[old_id]["payload_json"])
         assert updated.get("dossier_action_type") == "assignment"
+        assert str(updated.get("target_id") or "") == "旧锚"
         assert str(updated.get("text") or "") != str(before_text or "")
         new_dirs = [
             r for r in rows
@@ -1271,7 +1317,9 @@ def test_draft_plus_digit_target_candidate_updates_existing(game, monkeypatch):
             and r.get("status") == "pending"
         ]
         assert len(new_dirs) == 1
-        assert json.loads(new_dirs[0]["payload_json"]).get("dossier_action_type") == "policy"
+        draft_payload = json.loads(new_dirs[0]["payload_json"])
+        assert draft_payload.get("dossier_action_type") == "policy"
+        assert _DRAFT_TARGET_1744 in str(draft_payload.get("target_id") or "")
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -1319,13 +1367,19 @@ def test_draft_xiexang_promoted_plus_titleless_assignment_both_stage(game, monke
         r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
         if int(r["id"]) not in before and r.get("status") == "pending"
     ]
-    assign_rows = [
-        r for r in pending
+    by_type = {
+        str(json.loads(r.get("payload_json") or "{}").get("dossier_action_type") or ""):
+        json.loads(r.get("payload_json") or "{}")
+        for r in pending
         if r.get("kind") == "directive"
-        and json.loads(r.get("payload_json") or "{}").get("dossier_action_type") == "assignment"
-    ]
-    # 不得因 draft→grant 改写 kind 而吞独立 titleless assignment
-    assert len(assign_rows) == 1
-    assert str(
-        json.loads(assign_rows[0].get("payload_json") or "{}").get("target_id") or ""
-    ) == "陕西赈灾"
+    }
+    # promoted draft(协饷) + 独立 titleless assignment 双写
+    assert set(by_type) == {"grant_allocation", "assignment"}
+    grant = by_type["grant_allocation"]
+    assert grant.get("grant_action") == "协饷"
+    assert str(grant.get("target_id") or "") == "guanning"
+    assert int(grant.get("amount") or 0) == 10000
+    assert grant.get("mode") == "ordinary"
+    assign = by_type["assignment"]
+    assert str(assign.get("target_id") or "") == "陕西赈灾"
+    assert assign.get("mode") == "ordinary"
