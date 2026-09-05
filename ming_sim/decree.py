@@ -113,6 +113,9 @@ SETTLEMENT_STAGE_LABELS = (
     "落库与事项推进",
     "记起居注",
 )
+# #1740：结局回合第七段——不并入六名表（普通回合永不发；total 动态化=新机制，见 PR #1736 T6）。
+# 与六阶同受权威约束：emit 只引用本常量，前后端同源冻结。
+SETTLEMENT_ENDING_STAGE_LABEL = "国史编纂结局总评"
 
 # 结算 payload 工具（注入文案常量 / 决策块解析 / 密令分组承载 / 已裁决策正文 / 玩家可见
 # 呈现脱敏）已抽到 ming_sim.settlement_payload（#91 coordinator 拆分第一刀，纯搬家、行为保持）。
@@ -657,7 +660,7 @@ def _rescript_decisions(
             "options": [
                 *([] if verdict.get("midzhi_unpromulgatable") is True else [{
                     "label": "强颁",
-                    "hint": "以中旨强行颁出",
+                    "hint": "改走中旨强行颁出，并承担中旨代价",
                     "dossier_id": dossier_id,
                     "dossier_decision": "force_promulgated",
                 }]),
@@ -3126,7 +3129,7 @@ def _generate_ending_summary(
     timeline = build_timeline(db, upto_turn=state.turn)
     summary_text = ""
     try:
-        _emit("stage", "国史编纂结局总评")
+        _emit("stage", SETTLEMENT_ENDING_STAGE_LABEL)
         ending_agent = create_ending_summary_agent(llm_config, agno_db)
         payload = {
             "ending": {"status": outcome.get("status"), "summary": outcome.get("summary")},

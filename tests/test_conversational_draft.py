@@ -21,7 +21,11 @@ import pytest
 import ming_sim.cli_backend as cb
 from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
+from tests.dossier_test_helpers import (
+    TYPED_COVERT_TASK,
+    _cost_events,
+    create_test_secret_order,
+)
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -114,7 +118,7 @@ def test_conversational_draft_intent_stages_pending(game, monkeypatch):
     assert directives == 0
 
 
-def test_new_conversational_draft_uses_emperor_mode_over_extractor(game, monkeypatch):
+def test_new_conversational_draft_ignores_conflicting_player_prose_mode(game, monkeypatch):
     db, state, content = game
     _run_conversational_draft(
         db, state, content, monkeypatch,
@@ -126,7 +130,7 @@ def test_new_conversational_draft_uses_emperor_mode_over_extractor(game, monkeyp
         },
     )
     payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
-    assert payload["mode"] == "midzhi"
+    assert payload["mode"] == "ordinary"
 
 
 def test_no_draft_pending_when_no_intent(read_game, monkeypatch):
@@ -171,6 +175,85 @@ def test_explicit_prefix_stages_same_pending_directive_as_natural_language(game,
     assert payload["actor"] == name
     assert db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    ("typed_mode", "expected"),
+    [("midzhi", "midzhi"), ("ordinary", "ordinary"), (None, "ordinary")],
+)
+def test_explicit_prefix_uses_typed_classifier_mode_not_player_prose(
+    game, monkeypatch, typed_mode, expected,
+):
+    """#1731 类A：前缀入口 mode 只吃分类器 typed；玩家散文「中旨直发」不入槽。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    draft_text = "着户部清核辽饷，限期完报。"
+    monkeypatch.setattr(
+        cb, "resolve_minister_actions",
+        lambda *_a, **_k: {"decree_text": draft_text, "secret_order": None},
+    )
+    # materialize 对显式前缀早退；禁串行抽取旁路。
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no serial extractor")),
+    )
+    intent = {"kind": "draft"}
+    if typed_mode is not None:
+        intent["mode"] = typed_mode
+    sess = _fake_session(db, state)
+    out = GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="拟旨如下：中旨直发，着户部清核辽饷。",
+        answer=draft_text,
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=intent,
+    )
+    assert out.get("pending_action_id")
+    pending = next(
+        p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"
+    )
+    payload = json.loads(pending["payload_json"])
+    assert payload["mode"] == expected
+    assert payload["text"] == draft_text
+
+    # 前缀入口 → 成案 → 内阁顺颁：代价/污名按 mode 结构化落账（#1731 类A）。
+    db.commit_pending_actions(state, kind_filter="directive")
+    db.ensure_dossiers_for_draft_directives(state)
+    dossiers = db.list_decree_dossiers()
+    assert len(dossiers) == 1
+    assert dossiers[0]["mode"] == expected
+    authority_before = int(state.metrics.get("皇威", 0))
+    verdict = {
+        "dossier_id": dossiers[0]["id"],
+        "decision": "promulgated",
+    }
+    # ordinary 顺颁必须省略 affected_parties；midzhi 可夹带空清单。
+    if expected == "midzhi":
+        verdict["affected_parties"] = []
+    db.apply_dossier_verdicts(state, [verdict], content=content)
+    stored = db.get_decree_dossier(dossiers[0]["id"])
+    midzhi_stigma = [
+        item for item in (stored.get("stigma") or [])
+        if isinstance(item, dict) and item.get("kind") == "midzhi"
+    ]
+    auth_costs = [
+        event for event in _cost_events(db, dossiers[0]["id"])
+        if event["cost_kind"] == "authority"
+    ]
+    if expected == "midzhi":
+        assert midzhi_stigma == [{
+            "kind": "midzhi", "reason": "predeclared", "turn": state.turn,
+            "source_action": "promulgated",
+        }]
+        assert {
+            (event["cost_identity"], int(event["delta"])) for event in auth_costs
+        } == {("override", -5)}
+        assert int(state.metrics["皇威"]) == max(0, authority_before - 5)
+    else:
+        assert midzhi_stigma == []
+        assert auth_costs == []
+        assert int(state.metrics["皇威"]) == authority_before
 
 
 # ── ② pending 原地更新 last-write-wins ───────────────────────────────────
@@ -276,7 +359,9 @@ def test_real_conversation_draft_supplement_preserves_and_appends_roster(
 
     extracted = {
         "draft_action": "拟旨", "draft_text": "补充后的草稿",
-        **_POLICY_FIELDS, "target_candidate": target, "mode": "ordinary",
+        **_POLICY_FIELDS,
+        "target_candidate": target,
+        "mode": None if player_message == "再补一条。" else "ordinary",
     }
     if supplement == "empty":
         extracted["participant_roster"] = []

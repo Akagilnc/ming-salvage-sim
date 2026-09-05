@@ -459,14 +459,10 @@ def test_non_army_grant_does_not_clear_arrears(game):
     assert _army_row(db)["arrears"] == pytest.approx(before["arrears"])
 
 
-@pytest.mark.parametrize("grant_action,message,reply", [
-    ("项目经费", "拨关宁军械项目经费十万两。", "臣请户部发帑十万两作军械项目经费。"),
-    ("项目经费", "拨关宁筑城经费十万两。", "臣请户部发帑十万两作筑城经费。"),
-])
-def test_army_target_non_pay_grant_does_not_clear_arrears(
-    game, grant_action, message, reply,
-):
-    """army 对象的军械/筑城/项目经费：可扣库，不得升格协饷销欠。"""
+def test_army_target_non_pay_grant_does_not_clear_arrears(game):
+    """army 对象的项目经费：可扣库，不得升格协饷销欠。"""
+    grant_action = "项目经费"
+    reply = "臣请户部发帑十万两作军械项目经费。"
     db, state, content = game
     _set_guanning_arrears(db, 60, central=60, province=0)
     before = _army_row(db)
@@ -484,7 +480,6 @@ def test_army_target_non_pay_grant_does_not_clear_arrears(
         grant_action=grant_action,
         target_kind="army",
         target_id="guanning",
-        emperor_text=message,
         amount=10,
         account="国库",
     )
@@ -1258,19 +1253,19 @@ def _real_chat_session(db, state, content, monkeypatch, *, scripted, agent_tools
 def test_real_chat_explicit_prefix_suppresses_tool_twin_and_durable_one_dossier(
     game, monkeypatch,
 ):
-    """真实 session.chat：draft 协饷升格、tool 孪生抑制，commit/颁布后唯一 durable 扣库销欠。"""
+    """真实 session.chat：普通旨封驳后可强颁，且唯一消费拨饷载荷。"""
+    import ming_sim.decree as decree_mod
     db, state, content = game
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
     _set_guanning_arrears(db, 60, central=60, province=0)
     state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
-    treasury_before = int(state.metrics["国库"])
-    arrears_before = _army_row(db)
     scripted = candidates_from_classifier_payload({
         "kind": "draft", "draft_action": "拟旨",
         "grant_action": "协饷", "amount": 15, "account": "太仓",
         "purpose": "补饷", "target_kind": "army", "target_id": "guanning",
+        "mode": "ordinary",
     }, soft=False)
     twin_tools = [SimpleNamespace(
         tool_name="propose_directive",
@@ -1291,12 +1286,52 @@ def test_real_chat_explicit_prefix_suppresses_tool_twin_and_durable_one_dossier(
     assert len(rows) == 1
     pending = json.loads(rows[0]["payload_json"])
     assert pending["dossier_action_type"] == "grant_allocation"
+    assert pending["mode"] == "ordinary"
 
     dossier = _close_night_dossier(db, state, content, pending_id)
-    _promulgate(db, state, content, dossier["id"])
+    linked = [
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    ]
+    assert len(linked) == 1
+    assert dossier["mode"] == "ordinary"
+
+    monkeypatch.setattr(
+        decree_mod, "create_season_simulator_agent", lambda *a, **k: object(),
+    )
+    monkeypatch.setattr(
+        decree_mod,
+        "simulate_season_with_payload",
+        lambda _simulator, _state, _db, _decree_text, _previous, **kwargs: (
+            "本月邸报。", kwargs["simulator_payload"],
+        ),
+    )
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [object()], dossier["decree_text"],
+        content=content,
+        promulgation_verdict_provider=lambda *_a, **_k: [
+            _rejected_verdict(dossier["id"])
+        ],
+    )
+    decision = next(
+        row for row in result.decisions
+        if row.get("event_id") == f"dossier:{dossier['id']}"
+    )
+    force = next(
+        option for option in decision["options"]
+        if option.get("dossier_decision") == "force_promulgated"
+    )
+    assert force["dossier_id"] == dossier["id"]
+
+    db.apply_dossier_verdicts(
+        state, [_rejected_verdict(dossier["id"])], content=content,
+    )
+    treasury_before = int(state.metrics["国库"])
+    arrears_before = _army_row(db)
+    _promulgate(db, state, content, dossier["id"], force["dossier_decision"])
     moves = [
-        m for m in db.list_economy_moves_for_dossier(dossier["id"])
-        if m.get("purpose") == "补饷" and m.get("target_id") == "guanning"
+        move for move in db.list_economy_moves_for_dossier(dossier["id"])
+        if move.get("purpose") == "补饷" and move.get("target_id") == "guanning"
     ]
     assert len(moves) == 1
     assert int(moves[0]["delta"]) == -15

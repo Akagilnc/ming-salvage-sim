@@ -2101,7 +2101,7 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
     assert dossier["decree_text"] == revised_text
     assert dossier["action_type"] == "grant_allocation"
     assert (payload["amount"], payload["account"], payload["mode"]) == (
-        25, "国库", "midzhi",
+        25, "国库", "ordinary",
     )
     db.apply_dossier_promulgation(
         state, dossier["id"], "promulgated", content=content,

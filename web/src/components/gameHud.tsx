@@ -11,7 +11,17 @@ import { BudgetHover, CommandSlot, HUD_BG, HUD_SLOTS, LegacyBar } from "./hud";
 import { GrandMap } from "./map";
 import { SituationPanel } from "./situation";
 import { scoreTone } from "../format";
-import type { GameState, MapNode, ModalName } from "../types";
+import type { GameState, MapNode, Memorial, ModalName } from "../types";
+
+/** #1740 / #1726：未读奏报数唯一规则——优先 numeric unread_memorial_count，否则 filter unread。 */
+export function resolveUnreadMemorialCount(state: {
+  unread_memorial_count?: number;
+  memorials?: Memorial[];
+}): number {
+  return typeof state.unread_memorial_count === "number"
+    ? state.unread_memorial_count
+    : (state.memorials || []).filter((m) => m.unread).length;
+}
 
 // 主界面 HUD：整图底图 + 地图/局势/顶栏五匾/右侧部院导航/底部五命令，全部按坑位绝对定位。
 export function GameHud({
@@ -24,6 +34,7 @@ export function GameHud({
   activeDrawerKey,
   navHandlers,
   secretOrderActiveCount,
+  unreadMemorialCount,
   onOpenModal,
   onClosedFaceAttempt,
   edictOpen = false,
@@ -38,6 +49,8 @@ export function GameHud({
   activeDrawerKey: string;
   navHandlers: Record<string, () => void>;
   secretOrderActiveCount: number;
+  /** 未读奏报数（由主数据流 resolveUnreadMemorialCount 算一次传入）。 */
+  unreadMemorialCount: number;
   onOpenModal: (modal: ModalName) => void;
   /** 关闭组入口被点时的戏内提示（可选）。 */
   onClosedFaceAttempt?: (reason: string) => void;
@@ -77,12 +90,9 @@ export function GameHud({
   const mapSelectable = isFaceReachable("node_intel", settlementDisplay);
   const showWangSlip = wangSettlementSlipVisible(settlementDisplay);
   // #1726：奏疏 badge/sub = 未读奏报数（与 issues 局势脱钩）；核账期 memorials 只读仍计未读。
+  // 计数规则在 resolveUnreadMemorialCount；此处只保留可达性门控。
   const memorialsReachable = isFaceReachable("memorials", settlementDisplay);
-  const unreadMemorials = memorialsReachable
-    ? (typeof state.unread_memorial_count === "number"
-      ? state.unread_memorial_count
-      : (state.memorials || []).filter((m) => m.unread).length)
-    : 0;
+  const unreadMemorials = memorialsReachable ? unreadMemorialCount : 0;
 
   return (
     <div className="hud2-stage" ref={stageRef}>

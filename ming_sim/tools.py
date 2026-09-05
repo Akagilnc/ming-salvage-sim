@@ -468,6 +468,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         backing_dossier_id: Optional[int] = None,
         issue_id: Optional[int] = None,
         issue_disposition: str = "",
+        mode: Optional[str] = None,
     ) -> str:
         """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。
 
@@ -477,6 +478,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         backing_dossier_id 指向原廷议案卷；若处置弹劾潮，填 issue_id 与
         issue_disposition，并在办人时从该事项标靶中明确选择单一 target_id。
         仅在正文讨论廷杖/流放/昭雪等制度、未填结构化字段时，不得当作已决惩处。
+        mode 是 LLM 对皇帝本意的新 typed 判定：确为中旨时填 midzhi，
+        确为普通旨时填 ordinary；没有新判断时不填。
         """
         text = (decree_text or "").strip()
         if not text:
@@ -486,22 +489,30 @@ def build_minister_tools(character: Character, context: CourtContext,
         # 返回草稿标记，由 minister_chat / GameSession.chat 截获展示给皇帝确认，不在此入库。
         return f"__pending_directive__{text}"
 
-    def propose_appointment(name: str, office: str, faction: str = "中立", reason: str = "", replaces: str = "") -> str:
-        """吏部铨选拟任。name 为拟任者，office 为拟授官职，replaces 为需腾缺的现任官员。"""
+    def propose_appointment(
+        name: str, office: str, faction: str = "中立", reason: str = "",
+        replaces: str = "", mode: Optional[str] = None,
+    ) -> str:
+        """吏部铨选拟任。
+
+        mode 是 LLM 对皇帝本意的新 typed 判定：确为中旨时填 midzhi，
+        确为普通旨时填 ordinary；没有新判断时不填（#1731 None=沉默）。
+        """
         nm = (name or "").strip()
         off = (office or "").strip()
         if not nm or not off:
             return "铨选失败：姓名或拟授官职为空。"
         import json as _json
-        payload = _json.dumps(
-            {
-                "name": nm, "office": off,
-                "faction": (faction or "中立").strip(),
-                "reason": (reason or "").strip(),
-                "replaces": (replaces or "").strip(),
-            },
-            ensure_ascii=False,
-        )
+        body = {
+            "name": nm, "office": off,
+            "faction": (faction or "中立").strip(),
+            "reason": (reason or "").strip(),
+            "replaces": (replaces or "").strip(),
+        }
+        raw_mode = str(mode or "").strip()
+        if raw_mode:
+            body["mode"] = "midzhi" if raw_mode == "midzhi" else "ordinary"
+        payload = _json.dumps(body, ensure_ascii=False)
         return f"__pending_appointment__{payload}"
 
     def register_unlisted_person(

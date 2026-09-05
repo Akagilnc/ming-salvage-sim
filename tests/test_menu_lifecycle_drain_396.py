@@ -310,7 +310,7 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
 
 
 def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path):
-    """#402 R2（CodeRabbit）：旧连接没关成功时，不移动仍可能被占用的 DB 文件。"""
+    """#402 R2（CodeRabbit）+#1740：旧连接没关成功时上抛原异常，且不移动仍可能被占用的 DB 文件。"""
     db_path = str(tmp_path / "ming_sim.db")
     with open(db_path, "w", encoding="utf-8") as f:
         f.write("db")
@@ -324,7 +324,8 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.shutil, "move", lambda src, dst: moves.append((src, dst)))
 
-    web_app._drain_and_close_session(game, archive_db=True)
+    with pytest.raises(RuntimeError, match="close failed"):
+        web_app._drain_and_close_session(game, archive_db=True)
 
     assert moves == []
     assert os.path.exists(db_path)
@@ -768,7 +769,7 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     monkeypatch.setenv("MING_SIM_DB", old_db_path)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     # 无进行中的 exit detach
-    monkeypatch.setattr(web_app, "_menu_exit_detach_done", None)
+    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
     monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
@@ -828,7 +829,8 @@ def test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains(monkeyp
     import sqlite3
 
     old_db_path = str(tmp_path / "old_configured.db")
-    conn = sqlite3.connect(old_db_path)
+    # detach 在后台线程 close；与同文件其它 drain 案一致，允许跨线程用连接。
+    conn = sqlite3.connect(old_db_path, check_same_thread=False)
     conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
     conn.execute("INSERT INTO kv_store VALUES ('data', 'before_exit')")
     conn.commit()
@@ -882,3 +884,69 @@ def test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains(monkeyp
     assert rows["reply"] == "detach_reply"
     scanned = web_app._scan_saves()
     assert any(s["name"] == save_files[0].stem for s in scanned)
+
+
+def test_new_game_after_exit_skips_archive_when_detach_close_fails(monkeypatch, tmp_path):
+    """#1740：exit detach 关库失败时，后续 new_game 不得把仍可能占用的旧主库搬进 saves/。
+
+    与 test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains 同回路：
+    真实 api_menu_exit → api_menu_new_game 与真实归档实现；仅 session.close 改为失败。
+    收束靠 join 本回合菜单线程（不轮询 close 列表、不读 completion 内部形、
+    不替换归档、不依赖私有闭包名）。外部判据：旧库仍在、saves 无档、内容可读。
+    """
+    import sqlite3
+
+    old_db_path = str(tmp_path / "old_fail_close.db")
+    conn = sqlite3.connect(old_db_path, check_same_thread=False)
+    conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO kv_store VALUES ('data', 'must_stay')")
+    conn.commit()
+    conn.close()
+
+    fake_old_game = SimpleNamespace(
+        _write_gate=threading.Lock(),
+        db_path=old_db_path,
+        session=SimpleNamespace(
+            close=lambda: (_ for _ in ()).throw(OSError("close failed")),
+        ),
+    )
+    monkeypatch.setattr(web_app, "web_game", fake_old_game)
+    monkeypatch.setenv("MING_SIM_DB", old_db_path)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+
+    started: list[threading.Thread] = []
+    orig_thread = web_app.threading.Thread
+
+    class _JoinableThread(orig_thread):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            started.append(self)
+
+    monkeypatch.setattr(web_app.threading, "Thread", _JoinableThread)
+
+    try:
+        asyncio.run(web_app.api_menu_exit())
+        assert web_app.web_game is None
+        assert os.path.exists(old_db_path)
+        assert web_app._has_main_db()
+
+        fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
+        monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+        monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
+
+        result = asyncio.run(web_app.api_menu_new_game())
+        assert "state" in result
+        assert web_app.web_game is fake_new_game
+        assert os.environ["MING_SIM_DB"] != old_db_path
+    finally:
+        for t in started:
+            t.join(timeout=2.0)
+
+    assert all(not t.is_alive() for t in started)
+    assert os.path.exists(old_db_path)
+    assert list((tmp_path / "saves").glob("*.db")) == []
+    check = sqlite3.connect(old_db_path)
+    rows = dict(check.execute("SELECT key, value FROM kv_store").fetchall())
+    check.close()
+    assert rows["data"] == "must_stay"
+    assert web_app._scan_saves() == []
