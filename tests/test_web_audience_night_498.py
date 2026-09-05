@@ -235,15 +235,37 @@ def _parse_sse(text: str) -> list[dict]:
 
 
 async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:
-    """成功事件或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。"""
+    """成功事件或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。
+
+    事件与 task 同时终态时仍消费 task 异常——不得因 ev 先置位而吞掉 worker 失败。
+    """
     while not ev.is_set() and not task.done():
         await asyncio.sleep(0)
-    if ev.is_set():
+    if task.done():
+        exc = task.exception()
+        if exc is not None:
+            raise exc
+        if not ev.is_set():
+            raise AssertionError("worker finished without expected success event")
         return
-    exc = task.exception()
-    if exc is not None:
-        raise exc
-    raise AssertionError("worker finished without expected success event")
+    # ev 已置位且 task 仍在跑（如 started 后 hang on allow）——成功会合。
+
+
+async def _drain_tasks(*tasks: asyncio.Task) -> None:
+    """排空全部任务并消费异常；永不向外抛，避免 finally 收尾替换主体原错。"""
+    for task in tasks:
+        if task is None:
+            continue
+        if not task.done():
+            try:
+                await task
+            except BaseException:
+                pass
+            continue
+        if task.cancelled():
+            continue
+        # 已完成：仍消费 exception，避免「never retrieved」且不抛出。
+        task.exception()
 
 
 async def _wait_for(pred) -> None:
@@ -325,12 +347,9 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
                 issue_resp = await issue_task
                 return night, _parse_sse(chat_resp.text), _parse_sse(issue_resp.text)
             finally:
-                # 持有 chat allow：await 失败也须释放并收尾任务（同 M1 finally 形）。
+                # 持有 chat allow：先释放，再排空全部任务；收尾不抛，保留主体原错。
                 allow.set()
-                if not chat_task.done():
-                    await chat_task
-                if not issue_task.done():
-                    await issue_task
+                await _drain_tasks(chat_task, issue_task)
 
     night, chat_events, issue_events = asyncio.run(scenario())
 
@@ -545,10 +564,9 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                     "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE night_id=?", (night_id,),
                 ).fetchone()["c"] == ledger_before
             finally:
-                # 断言失败仍须放行 endorsement hold，并排空 issue_task（executor/后台终态）。
+                # 断言失败仍须放行 endorsement hold；排空不抛，保留主体原错。
                 release.set()
-                if not issue_task.done():
-                    await issue_task
+                await _drain_tasks(issue_task)
             return _parse_sse(issue_task.result().text)
 
     fail_events = asyncio.run(first_fail_scenario())
@@ -666,9 +684,9 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 # 同 first_fail：entered 成功或 issue 终态；失败不挂死。
                 await _await_event_or_task(entered, issue_task)
             finally:
+                # 同 first_fail：释放 hold 后排空不抛，保留主体原错。
                 release.set()
-                if not issue_task.done():
-                    await issue_task
+                await _drain_tasks(issue_task)
             return _parse_sse(issue_task.result().text)
 
     events = asyncio.run(retry_scenario())
@@ -779,12 +797,9 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
                 issue_resp = await issue_task
                 return night, _parse_sse(issue_resp.text), _parse_sse(chat_resp.text)
             finally:
-                # 持有 chat allow：屏障前失败也须释放并收尾（同 M1 finally 形）。
+                # 持有 chat allow：先释放，再排空全部任务；收尾不抛，保留主体原错。
                 allow.set()
-                if not chat_task.done():
-                    await chat_task
-                if not issue_task.done():
-                    await issue_task
+                await _drain_tasks(chat_task, issue_task)
 
     night, issue_events, chat_events = asyncio.run(scenario())
     assert night is not None
@@ -834,13 +849,10 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
                 resp = await adv_task
                 return mid_ticks, ticks, resp.status_code
             finally:
-                # 持有 chat allow：中途失败也须释放并收尾任务。
+                # 持有 chat allow：先释放，再排空全部任务；收尾不抛，保留主体原错。
                 allow.set()
                 t.cancel()
-                if not chat_task.done():
-                    await chat_task
-                if not adv_task.done():
-                    await adv_task
+                await _drain_tasks(chat_task, adv_task, t)
 
     mid_ticks, ticks, status = asyncio.run(scenario())
     assert mid_ticks >= 5, f"event loop 被同步端点冻结（mid_ticks={mid_ticks}）"
