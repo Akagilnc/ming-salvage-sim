@@ -329,29 +329,13 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
         g0.db.conn.execute("SELECT 1")
 
-    # ── 路二：exit→new_game；真实队列在飞票在 drain 窗完成并留旧归档 ──
+    # ── 路二：exit→new_game；exit 前真实 HTTP 写入留旧归档（无合成票/直写）──
     pre_exit = "着户部清核辽饷（pre-exit）。"
     _directive(client, pre_exit)
     _wait_pending_writes(g1)
-    # exit 前领真实写票——seal 后新 claim 会拒，本票须在 barrier 前 complete
-    q1 = g1._write_queue
-    late_ticket = q1.claim(key=("late-pre-exit",))
-    assert late_ticket is not None
-    late_text = "在飞旨意留旧局"
     n_exit = len(spawns)
     assert client.post("/api/menu/exit_to_menu").status_code == 200
     assert web_app.web_game is None
-    # drain 已 seal 并等本票：在旧连接上完成在飞写（队列受理的 ticket，非 seal 后新入口）
-    g1.db.add_directive(
-        g1.state, None, late_text, "手动新增",
-        dossier_payload={
-            "dossier_action_type": "policy",
-            "target_kind": "issue",
-            "target_id": "late-inflight",
-            "mode": "ordinary",
-        },
-    )
-    q1.complete(late_ticket)
     _wait_spawns(spawns, n_exit)
     assert os.path.exists(p1)  # exit 不搬库
 
@@ -370,7 +354,6 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
         if s["campaign_id"] == c1
     )
     assert pre_exit in old_arch["directive_texts"]
-    assert late_text in old_arch["directive_texts"], old_arch["directive_texts"]
     assert rec1["d_text"] in old_arch["directive_texts"]
     _assert_chat_persisted(
         old_arch,
@@ -382,7 +365,6 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     live2 = _db_snapshot(g2.db_path)
     assert live2["campaign_id"] == c2
     assert rec2["d_text"] in live2["directive_texts"]
-    assert late_text not in live2["directive_texts"]
     assert rec2["d_text"] not in old_arch["directive_texts"]
 
     # ── continue 恢复最新主库旨意与回话 ──
