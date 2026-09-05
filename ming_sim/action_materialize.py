@@ -1926,10 +1926,18 @@ GRANT_MONEY_ACTIONS = GRANT_ACTIONS - {"无"} - GRANT_HONORIFICS
 XIEXIANG_TARGET_KINDS = frozenset({"army"})
 
 
-def _grant_shape_value_error(message: str, *, field: str) -> ValueError:
-    """ValueError carrying the failed shape field; callers catching ValueError unchanged."""
+def _grant_shape_value_error(
+    message: str,
+    *,
+    field: str,
+    current: object = None,
+    expected: object = None,
+) -> ValueError:
+    """ValueError carrying failed shape field + structured fact; callers catching ValueError unchanged."""
     exc = ValueError(message)
     exc.field = field  # type: ignore[attr-defined]
+    exc.current = current  # type: ignore[attr-defined]
+    exc.expected = expected  # type: ignore[attr-defined]
     return exc
 
 
@@ -1952,7 +1960,10 @@ def resolve_grant_account(*, grant_action: object = None, account: object = None
     if ga in GRANT_MONEY_ACTIONS:
         if raw_account and raw_account not in {"国库", "内库"}:
             raise _grant_shape_value_error(
-                f"grant 非法 account：{raw_account!r}", field="account",
+                f"grant 非法 account：{raw_account!r}",
+                field="account",
+                current=raw_account,
+                expected=["国库", "内库"],
             )
         return raw_account if raw_account in {"国库", "内库"} else "国库"
     return ""
@@ -1974,30 +1985,51 @@ def require_grant_allocation_shape(
     from ming_sim.strict_types import strict_int
 
     ga = str(grant_action or "").strip()
+    grant_action_domain = sorted(GRANT_ACTIONS - {"无"})
+    amount_expected: object = {"type": "positive_int"}
     if not ga:
         raise _grant_shape_value_error(
-            "grant_allocation 缺 grant_action", field="grant_action",
+            "grant_allocation 缺 grant_action",
+            field="grant_action",
+            current=grant_action,
+            expected=grant_action_domain,
         )
     if ga not in (GRANT_ACTIONS - {"无"}):
         raise _grant_shape_value_error(
-            f"grant 非法 grant_action：{ga!r}", field="grant_action",
+            f"grant 非法 grant_action：{ga!r}",
+            field="grant_action",
+            current=ga,
+            expected=grant_action_domain,
         )
     resolved_account = resolve_grant_account(grant_action=ga, account=account)
     out: Dict[str, Any] = {"grant_action": ga, "account": resolved_account}
     if ga in GRANT_HONORIFICS:
         return out
     if amount is None or amount == "":
-        raise _grant_shape_value_error("grant 金钱缺正 amount", field="amount")
+        raise _grant_shape_value_error(
+            "grant 金钱缺正 amount",
+            field="amount",
+            current=amount,
+            expected=amount_expected,
+        )
     # #1716：整数字符串是 classifier/LLM 运输常态（#658 normalize raw 直达本边界）；bool/float 仍拒。
     # #1620 原 accept_numeric_strings=False 把 "8" 一并拒掉，拟旨 grant 物化中断、pending 零落。
     try:
         amt = strict_int(amount, accept_numeric_strings=True)
     except ValueError as exc:
         raise _grant_shape_value_error(
-            f"grant 金钱 amount 须为正整数，拒 {amount!r}", field="amount",
+            f"grant 金钱 amount 须为正整数，拒 {amount!r}",
+            field="amount",
+            current=amount,
+            expected=amount_expected,
         ) from exc
     if amt <= 0:
-        raise _grant_shape_value_error("grant 金钱缺正 amount", field="amount")
+        raise _grant_shape_value_error(
+            "grant 金钱缺正 amount",
+            field="amount",
+            current=amount,
+            expected=amount_expected,
+        )
     out["amount"] = amt
     return out
 
@@ -2074,11 +2106,20 @@ class DecreeMaterializationValidationError(ValueError):
 
 
 class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
-    def __init__(self, missing_fields: list) -> None:
-        fields = tuple(missing_fields)
-        self.missing_fields = fields  # compatibility projection for existing callers
+    def __init__(
+        self,
+        *,
+        field_failures: list,
+    ) -> None:
+        # 权威 require_explicit_xiexang_fields 一次给出完整事实；此处只携带
+        facts = tuple(dict(f) for f in field_failures)
+        fields = tuple(str(f["field"]) for f in facts)
+        self.missing_fields = fields  # compatibility alias for existing callers
+        self.field_failures = facts
         super().__init__(
-            "拨饷旨意缺少结构化字段：" + "/".join(missing_fields) + "（不猜散文）",
+            "拨饷旨意缺少结构化字段："
+            + "/".join(str(f) for f in fields)
+            + "（不猜散文）",
             failed_fields=fields,
         )
 
@@ -2095,35 +2136,49 @@ def require_explicit_xiexang_fields(
     """#1503 单一权威接缝：严格验形并归一 typed 字段。"""
     from ming_sim.strict_types import strict_int
 
-    missing: list = []
+    facts: list = []
+
+    def _note(field: str, *, current: object, expected: object) -> None:
+        facts.append({"field": field, "current": current, "expected": expected})
+
     try:
         n = strict_int(amount, accept_numeric_strings=False)
     except ValueError:
         n = 0
     if n <= 0:
-        missing.append("amount")
+        _note("amount", current=amount, expected={"type": "positive_int"})
     # #1620：太仓→国库唯一权威 resolve_grant_account；此处不再平行 if。
     canonical_account = resolve_grant_account(grant_action="协饷", account=account)
     if canonical_account not in {"国库", "内库"}:
-        missing.append("account")
-    if str(purpose or "").strip() != "补饷":
-        missing.append("purpose")
+        _note("account", current=account, expected=["国库", "内库"])
+    purpose_cur = str(purpose or "").strip()
+    if purpose_cur != "补饷":
+        _note("purpose", current=purpose_cur or purpose, expected="补饷")
     canonical_target_kind = str(target_kind or "").strip()
     if canonical_target_kind not in XIEXIANG_TARGET_KINDS:
-        missing.append("target_kind")
-    if not str(target_id or "").strip():
-        missing.append("target_id")
+        _note(
+            "target_kind",
+            current=canonical_target_kind or target_kind,
+            expected=sorted(XIEXIANG_TARGET_KINDS),
+        )
+    target_id_cur = str(target_id or "").strip()
+    if not target_id_cur:
+        _note("target_id", current=target_id, expected={"nonempty_str": True})
     cadence_value = str(cadence or "").strip()
     if cadence_value and cadence_value not in {"一次性", "每月"}:
-        missing.append("cadence")
-    if missing:
-        raise IncompleteXiexangPayloadError(missing)
+        _note(
+            "cadence",
+            current=cadence_value,
+            expected=["一次性", "每月", ""],
+        )
+    if facts:
+        raise IncompleteXiexangPayloadError(field_failures=facts)
     return {
         "amount": n,
         "account": canonical_account,
         "purpose": "补饷",
         "target_kind": canonical_target_kind,
-        "target_id": str(target_id).strip(),
+        "target_id": target_id_cur,
     }
 
 

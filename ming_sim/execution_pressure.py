@@ -178,11 +178,23 @@ def _region_row_to_locality(row) -> str:
 
 
 class TargetLocalityMatrixError(ValueError):
-    """属地矩阵不变式失败；failed_fields 为可修字段边界（禁异常文本识别）。"""
+    """属地矩阵不变式失败；failed_fields 为可修字段边界（禁异常文本识别）。
 
-    def __init__(self, message: object, *, failed_fields: frozenset[str]) -> None:
+    field_failures：权威结构化失败事实（field/current/expected）；运输层只携带。
+    """
+
+    def __init__(
+        self,
+        message: object,
+        *,
+        field_failures: tuple[dict[str, object], ...] = (),
+    ) -> None:
         super().__init__(message)
-        self.failed_fields = frozenset(failed_fields)
+        # failed_fields 只从权威事实派生，不双持独立输入
+        self.field_failures = tuple(dict(f) for f in field_failures)
+        self.failed_fields = frozenset(
+            str(f["field"]) for f in self.field_failures
+        )
 
 
 def project_target_locality_matrix_prompt() -> str:
@@ -220,46 +232,96 @@ def assert_target_locality_matrix(
     """
     kind = str(target_kind or "").strip()
     action = str(action_type or "").strip()
-    scope = normalize_locality_scope(locality_scope)
-    allowed = TARGET_KIND_LOCALITY_SCOPES.get(kind)
-    if allowed is None or kind not in TARGET_KINDS:
+    kinds_expected = sorted(TARGET_KINDS)
+
+    def _fact(
+        field: str,
+        *,
+        current: object,
+        expected: object,
+    ) -> dict[str, object]:
+        return {"field": field, "current": current, "expected": expected}
+
+    def _matrix_fail(
+        message: str,
+        *,
+        field_failures: tuple[dict[str, object], ...],
+    ) -> None:
         raise TargetLocalityMatrixError(
-            f"target_kind 非法：{kind!r}",
-            failed_fields=frozenset({"target_kind"}),
+            message,
+            field_failures=field_failures,
         )
 
+    try:
+        scope = normalize_locality_scope(locality_scope)
+    except ValueError as exc:
+        _matrix_fail(
+            str(exc),
+            field_failures=(
+                _fact(
+                    "locality_scope",
+                    current=locality_scope,
+                    expected=sorted(LOCALITY_SCOPES),
+                ),
+            ),
+        )
+
+    allowed = TARGET_KIND_LOCALITY_SCOPES.get(kind)
+
+    if allowed is None or kind not in TARGET_KINDS:
+        _matrix_fail(
+            f"target_kind 非法：{kind!r}",
+            field_failures=(
+                _fact("target_kind", current=kind, expected=kinds_expected),
+            ),
+        )
+
+    scope_allowed = sorted(allowed)
     if scope not in allowed:
         # 保留历史失败措辞（下游测试/诊断认语义，不锁字符串为闸）
+        kind_fact = _fact("target_kind", current=kind, expected=kinds_expected)
+        scope_fact = _fact(
+            "locality_scope", current=scope, expected=scope_allowed,
+        )
         if kind == "region":
-            raise TargetLocalityMatrixError(
+            _matrix_fail(
                 f"region 目标与 locality_scope={scope!r} 矛盾（须 single）",
-                failed_fields=frozenset({"locality_scope"}),
+                field_failures=(scope_fact,),
             )
         if kind == "dossier":
-            raise TargetLocalityMatrixError(
+            _matrix_fail(
                 f"target_kind=dossier 与 locality_scope={scope!r} 矛盾（须 none）",
-                failed_fields=frozenset({"locality_scope"}),
+                field_failures=(scope_fact,),
             )
         if scope == "single":
-            raise TargetLocalityMatrixError(
+            _matrix_fail(
                 f"locality_scope=single 只配 region 目标，得 target_kind={kind!r}",
-                failed_fields=frozenset({"locality_scope", "target_kind"}),
+                field_failures=(scope_fact, kind_fact),
             )
         if scope == "national":
-            raise TargetLocalityMatrixError(
+            _matrix_fail(
                 f"target_kind={kind!r} 不得 national fan-out",
-                failed_fields=frozenset({"locality_scope", "target_kind"}),
+                field_failures=(scope_fact, kind_fact),
             )
-        raise TargetLocalityMatrixError(
+        _matrix_fail(
             f"target_kind={kind!r} 与 locality_scope={scope!r} 矛盾"
-            f"（允许 {'|'.join(sorted(allowed))}）",
-            failed_fields=frozenset({"locality_scope", "target_kind"}),
+            f"（允许 {'|'.join(scope_allowed)}）",
+            field_failures=(scope_fact, kind_fact),
         )
 
     if scope == "national" and action not in NATIONAL_FANOUT_ACTION_TYPES:
-        raise TargetLocalityMatrixError(
+        _matrix_fail(
             f"national fan-out 动作不在白名单：{action!r}",
-            failed_fields=frozenset({"locality_scope", "action_type"}),
+            field_failures=(
+                _fact(
+                    "locality_scope", current=scope, expected=scope_allowed,
+                ),
+                _fact(
+                    "action_type",
+                    current=action,
+                    expected=sorted(NATIONAL_FANOUT_ACTION_TYPES),
+                ),
+            ),
         )
     return scope
 

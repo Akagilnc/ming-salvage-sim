@@ -55,7 +55,8 @@ def canned_full_settlement(
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
-    # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁
+    # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁。
+    # 替身换 llm_promulgation_verdicts 后生产不触 get_or_create，无需再 patch 工厂。
     def _promulgate(dossiers, *_a, **_k):
         return [
             {"dossier_id": int(row["id"]), "decision": "promulgated"}
