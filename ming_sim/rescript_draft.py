@@ -138,11 +138,10 @@ class RescriptOptionMissingFieldsError(ValueError):
                 current=raw_fact.get("current"),
                 expected=raw_fact.get("expected"),
             ))
-        for key in self.missing_fields:
-            if key not in seen:
-                seen.add(key)
-                normalized.append(_field_failure(key, current=None, expected=None))
+        # 失败清单只从权威 field_failures 派生；不合成空期望
         self.field_failures: Tuple[Dict[str, object], ...] = tuple(normalized)
+        if normalized:
+            self.missing_fields = tuple(str(f["field"]) for f in normalized)
         super().__init__(message)
 
 
@@ -888,11 +887,6 @@ def normalize_rescript_layer_a_option(
             TARGET_KIND_LOCALITY_SCOPES.get(kind_s, frozenset())
         )
 
-        def _current_for(field: str) -> object:
-            if field in out:
-                return out.get(field)
-            return raw.get(field) if isinstance(raw, dict) else None
-
         try:
             assert_target_locality_matrix(
                 action_type=action_type,
@@ -903,13 +897,6 @@ def normalize_rescript_layer_a_option(
             _carry_authority_field_failures(
                 failed, facts,
                 field_failures=getattr(exc, "field_failures", ()),
-                failed_fields=exc.failed_fields or (
-                    "locality_scope", "target_kind",
-                ),
-                currents={
-                    f: _current_for(str(f))
-                    for f in (exc.failed_fields or ())
-                },
             )
         except ValueError as exc:
             _fail(
@@ -942,13 +929,6 @@ def normalize_rescript_layer_a_option(
                 _carry_authority_field_failures(
                     failed, facts,
                     field_failures=getattr(exc, "field_failures", ()),
-                    failed_fields=exc.failed_fields or (
-                        "locality_scope", "target_kind",
-                    ),
-                    currents={
-                        f: _current_for(str(f))
-                        for f in (exc.failed_fields or ())
-                    },
                 )
 
     # 其余 capability 闭集字段透传（有则规范化，无则由 derive 填默认）
@@ -1105,7 +1085,6 @@ def normalize_rescript_layer_a_option(
                         _carry_authority_field_failures(
                             failed, facts,
                             field_failures=getattr(exc, "field_failures", ()),
-                            failed_fields=exc.failed_fields,
                         )
                     else:
                         out["amount"] = explicit["amount"]
@@ -1421,10 +1400,8 @@ def _carry_authority_field_failures(
     facts: Dict[str, Dict[str, object]],
     *,
     field_failures: object = None,
-    failed_fields: object = None,
-    currents: Optional[Mapping[str, object]] = None,
 ) -> bool:
-    """运输权威接缝 field_failures；无事实时仅按 failed_fields 记字段名。"""
+    """运输权威接缝 field_failures；不合成空期望，不按 failed_fields 降级。"""
     carried = False
     for raw_fact in field_failures or ():  # type: ignore[union-attr]
         if not isinstance(raw_fact, Mapping):
@@ -1439,17 +1416,7 @@ def _carry_authority_field_failures(
             current=raw_fact.get("current"),
             expected=raw_fact.get("expected"),
         )
-    if carried:
-        return True
-    field_list = [str(f) for f in (failed_fields or ()) if str(f)]
-    if not field_list:
-        return False
-    _note_failed(
-        failed, *field_list,
-        facts=facts,
-        currents=currents,
-    )
-    return True
+    return carried
 
 
 def validate_rescript_draft_items(
@@ -1664,6 +1631,7 @@ def _missing_field_heal_feedback(
         heal_id = failure.heal_id or _option_heal_id(
             failure.item_index, failure.option_index,
         )
+        # 只携带权威 field_failures；不合成空期望
         field_failures = [
             _field_failure(
                 str(fact.get("field") or ""),
@@ -1673,12 +1641,6 @@ def _missing_field_heal_feedback(
             for fact in (failure.field_failures or ())
             if isinstance(fact, Mapping) and str(fact.get("field") or "").strip()
         ]
-        if not field_failures:
-            for name in failure.missing_fields:
-                cur = None
-                if isinstance(failure.raw_option, dict) and name in failure.raw_option:
-                    cur = failure.raw_option.get(name)
-                field_failures.append(_field_failure(name, current=cur, expected=None))
         draft_option: object = None
         if isinstance(failure.raw_option, dict):
             # 运输安全副本；源 raw_option 不擦洗
