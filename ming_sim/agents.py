@@ -10,7 +10,7 @@ import json
 import os
 import re
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -87,13 +87,40 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
         tlog(f"[{tag}] dump 写盘失败：{e}")
 
 
-def run_agent_text(agent: Agent, prompt: str, tag: str) -> str:
+def run_agent_text(
+    agent: Agent,
+    prompt: str,
+    tag: str,
+    *,
+    prior_messages: Optional[Sequence[Any]] = None,
+) -> str:
     """非流式跑 agent，返回最终完整文本。
-    extractor/sanitizer 这类要严格 JSON 的场合用——避免流式 buffer 把 LLM 偶发重发段累加成畸形。"""
+    extractor/sanitizer 这类要严格 JSON 的场合用——避免流式 buffer 把 LLM 偶发重发段累加成畸形。
+
+    prior_messages：可选的既有 user/assistant 轮次（Message 或 {role,content}）。
+    票拟缺字段补交链用它在同一次 generate 调用内续接真实对话上下文；
+    不写库、不启其它角色 history（#1746 局部装配）。
+    """
     tlog(f"[{tag}] 开始非流式推演（等待完整响应）")
     t0 = time.monotonic()
-    output = agent.run(prompt)
-    _dump_llm_messages(output, tag)
+    if prior_messages:
+        from agno.models.message import Message
+
+        payload: list[Any] = []
+        for item in prior_messages:
+            if isinstance(item, Message):
+                payload.append(item)
+            elif isinstance(item, dict) and "role" in item:
+                payload.append(Message.model_validate(item))
+            else:
+                raise TypeError(
+                    f"prior_messages 项须为 Message 或 role-dict，得 {type(item).__name__}"
+                )
+        payload.append(Message(role="user", content=prompt))
+        output = agent.run(payload)
+    else:
+        output = agent.run(prompt)
+    _dump_llm_messages(output, tag, agent=agent)
     text = extract_agent_text(output)
     tlog(f"[{tag}] 完成，{len(text)} 字，用时 {time.monotonic() - t0:.1f}s")
     return text
