@@ -4201,26 +4201,28 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     }]
     turn_before = int(state.turn)
 
-    # 第二路须真正进入 settlement entry（inflight>=2），不能在 asyncio.run 前冒充 submitted。
-    second_entered = threading.Event()
-    real_begin = web_app._begin_settlement_entry
+    # 第二路须抵达实际 single-flight 等待接缝，不是仅 _begin_settlement_entry 入口记账。
+    # 诊断：B 在 A 的 join_retained 窗内卡在 entry 的 auto_close（等 A 召见 scene/夜在飞），
+    # 而非并发进入 join_retained。故在 gen 仍持 release 时观测 B 进入 auto_close。
+    second_at_auto_close = threading.Event()
+    real_auto_close = web_app._auto_close_open_night_gate_free
 
-    def _observe_begin(game):
-        real_begin(game)
-        if int(getattr(game, "_settlement_entry_inflight", 0) or 0) >= 2:
-            second_entered.set()
+    def _observe_auto_close(game, **kwargs):
+        # A 已 start gen 且未放行 → 此时进入 auto_close 的是 B 的 entry 等待接缝。
+        if started.is_set() and not release.is_set():
+            second_at_auto_close.set()
+        return real_auto_close(game, **kwargs)
 
-    monkeypatch.setattr(web_app, "_begin_settlement_entry", _observe_begin)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _observe_auto_close)
 
     def _post():
         return asyncio.run(_post_resolve(body))
 
-    # 并发两路同 body：一路慢 generator 窗口内第二路须 coalesce
     with ThreadPoolExecutor(max_workers=2) as pool:
         f1 = pool.submit(_post)
         started.wait()
         f2 = pool.submit(_post)
-        second_entered.wait()  # 第二路已进 settlement entry；持 release 直至其可 coalesce
+        second_at_auto_close.wait()  # B 已进 auto_close，仍依赖 A 的 scene 终态
         release.set()
         results = [f.result() for f in (f1, f2)]
 

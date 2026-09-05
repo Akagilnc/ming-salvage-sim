@@ -1372,14 +1372,21 @@ def test_web_chat_offsite_scene_keeps_pending_until_settled(game, stream):
     worker.start()
     started.wait()
     q = runtime._runtime_write_queue()
+    wait_prior_entered = threading.Event()
+    real_wait_prior = q.wait_prior
+
+    def observe_wait_prior(ticket):
+        wait_prior_entered.set()
+        return real_wait_prior(ticket)
+
+    q.wait_prior = observe_wait_prior  # type: ignore[method-assign]
     close_worker = threading.Thread(
         target=lambda: q.barrier(close_entered.set),
         daemon=True,
     )
     close_worker.start()
-    # Prove close reached barrier while scene ticket still open — not a start-race is_set.
-    from tests.wait_utils import wait_until
-    wait_until(q.has_open_barrier)
+    # Prove close reached wait_prior while scene ticket still open — not claim-only has_open_barrier.
+    wait_prior_entered.wait()
     assert not close_entered.is_set(), "close barrier crossed an unfinished scene"
     release.set()
     worker.join()
@@ -1421,13 +1428,20 @@ def test_web_chat_offsite_scene_failure_releases_close_barrier(game, stream):
     worker.start()
     started.wait()
     q = runtime._runtime_write_queue()
+    wait_prior_entered = threading.Event()
+    real_wait_prior = q.wait_prior
+
+    def observe_wait_prior(ticket):
+        wait_prior_entered.set()
+        return real_wait_prior(ticket)
+
+    q.wait_prior = observe_wait_prior  # type: ignore[method-assign]
     close_worker = threading.Thread(
         target=lambda: q.barrier(close_entered.set),
         daemon=True,
     )
     close_worker.start()
-    from tests.wait_utils import wait_until
-    wait_until(q.has_open_barrier)
+    wait_prior_entered.wait()
     assert not close_entered.is_set(), "close barrier crossed an unfinished scene"
     release.set()
     worker.join()

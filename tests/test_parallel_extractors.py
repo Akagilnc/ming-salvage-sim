@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import threading
-import time
 
 import ming_sim.simulation as simulation
 from ming_sim.simulation import EXTRACTION_MODULES, extract_scores_by_modules_with_agno
@@ -149,24 +148,30 @@ def test_merge_keeps_distinct_non_recurring_commitments_under_same_origin_ref():
 
 
 def test_parallel_extract_runs_concurrently(read_game, monkeypatch):
-    """parallel=True 时模块 LLM 调用真并发：峰值并发 ≥2（状态证，不用墙钟比串行）。"""
+    """parallel=True 时模块 LLM 调用真并发：峰值并发 ≥2（会合证，不赌 sleep 观察窗）。"""
     db, state, content = read_game
     active = 0
     max_active = 0
     lock = threading.Lock()
-    delay = 0.25
+    # Rendezvous: first arrivals wait until a peer is also in-flight — proves overlap
+    # without wall-clock sleep. Serial path would hang here (CI job final line owns hang).
+    overlap = threading.Condition(lock)
 
-    def _slow(agent, prompt, tag):
+    def _rendezvous(agent, prompt, tag):
         nonlocal active, max_active
-        with lock:
+        with overlap:
             active += 1
             max_active = max(max_active, active)
-        time.sleep(delay)  # 假慢协作方，供 max_active 观测重叠
-        with lock:
+            if max_active >= 2:
+                overlap.notify_all()
+            else:
+                # Wait until a peer has also entered (overlap proven).
+                while max_active < 2:
+                    overlap.wait()
             active -= 1
         return _fake_run(agent, prompt, tag)
 
-    monkeypatch.setattr(simulation, "run_agent_text", _slow)
+    monkeypatch.setattr(simulation, "run_agent_text", _rendezvous)
     extract_scores_by_modules_with_agno(_dummy_agents(), db, state, "邸报", parallel=True)
     assert max_active >= 2, f"未真正并发，峰值并发={max_active}"
 
@@ -183,8 +188,6 @@ def test_serial_extract_stays_serial(read_game, monkeypatch):
         with lock:
             active += 1
             max_active = max(max_active, active)
-        time.sleep(0.05)
-        with lock:
             active -= 1
         return _fake_run(agent, prompt, tag)
 

@@ -502,29 +502,9 @@ describe("#1236 SettlementLock 装饰层自身契约", () => {
   });
 });
 
-describe("#1725 SettlementLock 中心进度呈现", () => {
-  it("typed progress 驱动 progressbar；标签只显示、不参与刻度", () => {
-    const host = mount(
-      <SettlementLock
-        stage="任意显示文案"
-        progress={{ current: 3, total: 6 }}
-        thinking=""
-        narrative=""
-      />,
-    );
-    const decor = host.querySelector("[data-testid=settlement-lock-decor]");
-    expect(decor).not.toBeNull();
-    expect(decor?.textContent || "").toContain("任意显示文案");
-
-    const bar = host.querySelector("[data-testid=settlement-wait-progress]");
-    expect(bar).not.toBeNull();
-    expect(bar?.getAttribute("role")).toBe("progressbar");
-    expect(bar?.getAttribute("aria-valuenow")).toBe("3");
-    expect(bar?.getAttribute("aria-valuemax")).toBe("6");
-    expect(bar?.getAttribute("aria-valuemin")).toBe("0");
-    // 玩家侧不见内部枚举／字段名
-    expect(decor?.textContent || "").not.toMatch(/SETTLEMENT_WAIT|stageIndex|progress_current/);
-  });
+describe("#1725 SettlementLock 中心进度呈现（组件面负向；贯通 happy-path 见 appDurableWiring）", () => {
+  // Happy-path typed progress → progressbar is owned by App entry wiring test.
+  // Keep only component-local negatives: no progress invents no bar.
 
   it("无 typed progress 时即便 stage 是已知标签也不出 progressbar", () => {
     const host = mount(
