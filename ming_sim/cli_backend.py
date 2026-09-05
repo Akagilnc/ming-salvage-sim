@@ -3905,7 +3905,7 @@ def _extract_secret_order(
         extractor_content=_content_llm,
     )
     # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。
-    # 缺标题由下游 commit 闸（title 必填）可见失败，不在此合成。
+    # 缺标题由下游 stage 接缝（pending_action_failures / contract_error）可见可恢复，不在此合成。
     title = str(obj.get("标题") or "").strip()
     # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
     # extractor 散文反推）。
@@ -3996,6 +3996,8 @@ def _extract_secret_order(
         contract_error = str(exc)
     else:
         contract_error = ""
+    if not title and not contract_error:
+        contract_error = "密令缺少结构化标题"
     result = {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
             "excluded_offices": excluded_offices, "dossier_links": dossier_links,

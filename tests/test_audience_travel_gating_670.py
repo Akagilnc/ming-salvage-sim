@@ -1632,7 +1632,30 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
         setattr(s, name, MethodType(getattr(GameSession, name), s))
 
 
-def _assert_secret_order_pending(db, state, *, minister_name: str, pid: int, edict: str) -> None:
+def _patch_secret_order_extract(monkeypatch, *, title: str) -> None:
+    """#1565/0142：密令题名只认抽取器显式「标题」；测试灌入结构化 title，禁 [:14] 散文 oracle。"""
+    import ming_sim.cli_backend as cb
+
+    def _stub(
+        player_command, minister_reply, default_assignee="", llm_config=None, **_kw,
+    ):
+        return {
+            "title": title,
+            "content": str(player_command or "").strip(),
+            "assignee": default_assignee or "",
+            "tags": [],
+            "deadline_months": 0,
+            "excluded_names": [],
+            "excluded_offices": [],
+            "dossier_links": [],
+        }
+
+    monkeypatch.setattr(cb, "_extract_secret_order", _stub)
+
+
+def _assert_secret_order_pending(
+    db, state, *, minister_name: str, pid: int, edict: str, title: str,
+) -> None:
     assert pid > 0, f"密令须落入 pending 管线，got pending_action_id={pid}"
     row = next(
         (p for p in db.list_pending_actions(state.turn) if int(p["id"]) == pid),
@@ -1645,7 +1668,9 @@ def _assert_secret_order_pending(db, state, *, minister_name: str, pid: int, edi
     assert row["status"] == "pending"
     payload = json.loads(row["payload_json"])
     assert payload["content"] == edict
-    assert payload["title"] == edict[:14]
+    # 题名=显式结构化字段，非 content/edict 散文截取
+    assert payload["title"] == title
+    assert str(payload["title"]).strip()
     # extractor 未冻合同时仍须暂存；禁止 staging 合成 covert_task
     assert "covert_task" not in payload
 
@@ -1708,7 +1733,7 @@ def _http_typed_secret_order_payload(client, minister_name, message, *, stream):
 
 
 @pytest.mark.parametrize("stream", [False, True], ids=["sync", "stream"])
-def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
+def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream, monkeypatch):
     """#1566：场外正式密令挂当前夜轮，不 consume 传召、不入殿；
 
     summon+dismiss tool 与 typed 退朝均不得派 court_action / 换人 / exit / 留侍 / 收夜。
@@ -1720,6 +1745,8 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
         1 for p in db.list_pending_actions(state.turn) if p.get("kind") == "secret_order"
     )
 
+    secret_title = "陕北赈抚探报"
+    _patch_secret_order_extract(monkeypatch, title=secret_title)
     runtime = _secret_order_runtime(db, state, content, stream=stream)
     old_pending_id = int(db.stage_pending_action(
         state.turn,
@@ -1749,7 +1776,7 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream):
     )
     pid = int(payload.get("pending_action_id") or 0)
     _assert_secret_order_pending(
-        db, state, minister_name=remote.name, pid=pid, edict=edict,
+        db, state, minister_name=remote.name, pid=pid, edict=edict, title=secret_title,
     )
     assert an.list_unsettled_summons(db) == before_summons
     assert sum(
@@ -1811,6 +1838,8 @@ def test_http_typed_secret_order_intent_forwards_to_webgame(game, stream, monkey
 
     db, state, content = game
     remote = _set_place(game, "洪承畴", location="shaanxi")
+    secret_title = "陕北赈抚探报"
+    _patch_secret_order_extract(monkeypatch, title=secret_title)
     runtime = _secret_order_runtime(db, state, content, stream=stream)
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "web_game", runtime)
@@ -1825,7 +1854,7 @@ def test_http_typed_secret_order_intent_forwards_to_webgame(game, stream, monkey
     )
     pid = int(payload.get("pending_action_id") or 0)
     _assert_secret_order_pending(
-        db, state, minister_name=remote.name, pid=pid, edict=edict,
+        db, state, minister_name=remote.name, pid=pid, edict=edict, title=secret_title,
     )
 
 

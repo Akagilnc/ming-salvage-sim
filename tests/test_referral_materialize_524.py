@@ -77,7 +77,24 @@ def _stage_referral(
 
 
 def _close_night_dossier(db, state, content, pending_id):
-    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    """收夜 directive 成案接缝：开夜 → 挂本夜 → 应允 → _commit_night_approved(directive)。"""
+    import ming_sim.audience_night as an
+    night = an.get_open_night(db) or an.open_night(db, state)
+    nid = int(night["id"])
+    db.conn.execute(
+        "UPDATE pending_actions SET night_id=?, night_approved=0 "
+        "WHERE id=? AND status='pending'",
+        (nid, int(pending_id)),
+    )
+    db.conn.commit()
+    n = db.mark_pending_night_approved([int(pending_id)], night_id=nid)
+    assert n == 1, f"应允白名单未命中 pending_id={pending_id} night={nid}"
+    an._commit_night_approved(
+        db, state, nid,
+        kinds=an._CLOSE_COMMIT_KINDS_DIRECTIVE,
+        content=content, registry=None,
+        directive_status="draft",
+    )
     return next(
         d for d in db.list_decree_dossiers()
         if d["pending_action_id"] == pending_id

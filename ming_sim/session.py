@@ -2318,9 +2318,26 @@ class GameSession:
                 mode=(intent or {}).get("mode"),
             )
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
+            # #1565/0142：题名只认抽取器结构化「标题」；缺则走 pending_action_failures，
+            # 不 stage 空串、不截散文合成题名。
+            title = str(so.get("title") or "").strip()
+            if not title:
+                reason = str(
+                    so.get("contract_error") or "密令缺少结构化标题"
+                ).strip()
+                failures = list(out.get("pending_action_failures") or [])
+                failures.append({
+                    "kind": "secret_order",
+                    "action": "新建",
+                    "minister_name": minister_name,
+                    "retryable": True,
+                    "message": f"密令未能正式落库：{reason}",
+                })
+                out["pending_action_failures"] = failures
+                return 0
             assignee = so.get("assignee") or minister_name
             payload = {
-                "title": so["title"],
+                "title": title,
                 "content": so["content"],
                 "assignee": assignee,
                 "tags": so.get("tags") or [],
