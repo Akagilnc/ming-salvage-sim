@@ -1,0 +1,9 @@
+8013 GET /api/ministers/黄立极/chat at hang:
+- history: 1 user msg only, no assistant reply
+- pending_turn_ids: []
+- reply_retry: null
+- chat_turn_id: 10 vs history chat_turn_id: 13 (mismatch)
+- phase: summoning 1627-11
+UI still showed 上轮问奏仍在进行.
+
+turn2_attempt1 pack db_path=ming_sim_1788597803068938977.db belongs to 边政 campaign, NOT 朝堂 5bf5bb186316 — shared error_packs dir collision across 8010/8012/8013.
