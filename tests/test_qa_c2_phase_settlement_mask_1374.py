@@ -149,14 +149,30 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
                 release_phase2.set()
 
         watch_task = asyncio.create_task(_watch())
+        body_exc: BaseException | None = None
+        watch_exc: BaseException | None = None
+        result = None
         try:
-            return await _drain_resolve_sse([{"label": "发"}])
+            result = await _drain_resolve_sse([{"label": "发"}])
+        except BaseException as exc:
+            body_exc = exc
         finally:
-            # drain 已返回（done 或 error SSE）：先 stop/release，再收 watcher
-            # （resolve 失败、phase2 永不置位时 stop 让 poll 退出）。
+            # drain 已返回或失败：先 stop/release，再收 watcher。
+            # 先排空并消费 watch 异常，再按 body>watch 次序重抛——收尾不替换主体原错。
             stop.set()
             release_phase2.set()
-            await watch_task
+            if not watch_task.done():
+                try:
+                    await watch_task
+                except BaseException as exc:
+                    watch_exc = exc
+            elif not watch_task.cancelled():
+                watch_exc = watch_task.exception()
+        if body_exc is not None:
+            raise body_exc
+        if watch_exc is not None:
+            raise watch_exc
+        return result
 
     serialized = asyncio.run(_go())
     assert entered["n"] == 1
