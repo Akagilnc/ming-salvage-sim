@@ -169,6 +169,19 @@ def test_patch_decree_route_removed_and_directives_remain():
 # ── 4) #1327 空载/有界 capture ─────────────────────────────────────
 
 
+def _install_cleanup_wait_recorder(monkeypatch, cli_backend, wait_flags: list[bool]):
+    """本文件唯一 cleanup shutdown(wait=) 记录夹具；两 timeout 案共用，不扩通用框架。"""
+    _BasePool = cli_backend.ThreadPoolExecutor
+
+    class _CleanupPool(_BasePool):
+        def shutdown(self, wait=True, *, cancel_futures=False):
+            # 进入 cleanup 即记 wait，先于任何 join——wait=True 可被主线程断言红。
+            wait_flags.append(bool(wait))
+            return super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    monkeypatch.setattr(cli_backend, "ThreadPoolExecutor", _CleanupPool)
+
+
 def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
     """空载：无可抽取正文 → 零 LLM、直落 special_decree。"""
     import ming_sim.cli_backend as cli_backend
@@ -220,16 +233,8 @@ def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch)
         finally:
             extractor_finished.set()
 
-    _BasePool = cli_backend.ThreadPoolExecutor
-
-    class _CleanupPool(_BasePool):
-        def shutdown(self, wait=True, *, cancel_futures=False):
-            # 进入 cleanup 即记 wait，先于任何 join——wait=True 可被主线程断言红。
-            shutdown_wait_flags.append(bool(wait))
-            return super().shutdown(wait=wait, cancel_futures=cancel_futures)
-
     monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
-    monkeypatch.setattr(cli_backend, "ThreadPoolExecutor", _CleanupPool)
+    _install_cleanup_wait_recorder(monkeypatch, cli_backend, shutdown_wait_flags)
 
     payload_box: list[dict] = []
     error_box: list[BaseException] = []
@@ -314,15 +319,8 @@ def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
         finally:
             extractor_finished.set()
 
-    _BasePool = cli_backend.ThreadPoolExecutor
-
-    class _CleanupPool(_BasePool):
-        def shutdown(self, wait=True, *, cancel_futures=False):
-            shutdown_wait_flags.append(bool(wait))
-            return super().shutdown(wait=wait, cancel_futures=cancel_futures)
-
     monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
-    monkeypatch.setattr(cli_backend, "ThreadPoolExecutor", _CleanupPool)
+    _install_cleanup_wait_recorder(monkeypatch, cli_backend, shutdown_wait_flags)
     # 压短默认有界，避免测时 20s
     monkeypatch.setattr(cli_backend, "MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S", 0.3)
 

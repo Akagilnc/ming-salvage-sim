@@ -135,21 +135,25 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
 
         async def _watch():
             # 可取消异步轮询（禁 executor 上 Event.wait：cancel 打不穿）。
-            while not phase2_started.is_set() and not stop.is_set():
-                await asyncio.sleep(0)
-            if not phase2_started.is_set():
-                return
-            payload = runtime.state_payload()
-            assert payload["turn"]["settlement_display"] is True
-            for k in MONTH_OPEN_KEYS:
-                assert payload["metrics"][k] == before[k]
-            release_phase2.set()
+            # release 归 watcher 持有：观察/断言失败也必达，打破 resolve↔drain 互等。
+            try:
+                while not phase2_started.is_set() and not stop.is_set():
+                    await asyncio.sleep(0)
+                if not phase2_started.is_set():
+                    return
+                payload = runtime.state_payload()
+                assert payload["turn"]["settlement_display"] is True
+                for k in MONTH_OPEN_KEYS:
+                    assert payload["metrics"][k] == before[k]
+            finally:
+                release_phase2.set()
 
         watch_task = asyncio.create_task(_watch())
         try:
             return await _drain_resolve_sse([{"label": "发"}])
         finally:
-            # drain 已返回（done 或 error SSE）：先关联终态并释放 hold，再收 watcher。
+            # drain 已返回（done 或 error SSE）：先 stop/release，再收 watcher
+            # （resolve 失败、phase2 永不置位时 stop 让 poll 退出）。
             stop.set()
             release_phase2.set()
             await watch_task
