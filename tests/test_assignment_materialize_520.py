@@ -430,6 +430,46 @@ def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game
     assert reply in body, f"须保留大臣领命回话，got={body!r}"
 
 
+def test_assignment_body_keeps_current_turn_short_line_against_prior_substring(game):
+    """#520 正文义务：当轮短句不得因是前轮长文子串而被 _context_line_present 吞掉。
+
+    题名仍只认结构化 title|target_id（0142，不恢复散文题名 oracle）。
+    正文链 = recent + 当轮皇帝/大臣整行；短句「三事」须显式成行。
+    """
+    db, state, content = game
+    actor = _active_ming(db, content)
+    # 前轮长文含当轮短句子串「三事」
+    recent = (
+        "皇帝：核钱粮、整宗藩、护内帑，卿有何策？\n"
+        "大臣：臣请分三事：一核钱粮，二整宗藩，三护内帑。"
+    )
+    player = "三事"  # 短句，是前文「分三事」的子串
+    reply = "臣遵旨分办。请陛下定夺准驳。"
+    candidates = candidates_from_classifier_payload({
+        "kind": "assignment",
+        "title": "分办三事",
+        "target_id": "three-matters",
+        "commitment_kind": "无",
+    }, soft=False)
+    ctx = _ctx(
+        db, actor.name, candidates, state.turn,
+        message=player, reply=reply, recent_context=recent,
+    )
+    run_materialize_pipeline(ctx)
+    pending_id = ctx.out["pending_action_id"]
+    assert pending_id
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending.get("title") == "分办三事"
+    body = str(pending.get("text") or "")
+    # 正文须显式含当轮短句整行，不得因 substring 被吞
+    assert f"皇帝：{player}" in body or body.strip().endswith(player)
+    assert "核钱粮" in body  # 上下文链仍在
+    assert reply in body or f"大臣：{reply}" in body
+
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch):
     """#1565 B：缺锚恢复全链 typed 证据（WebGame.chat 真实入口，不旁路 materialize）。
