@@ -738,8 +738,23 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             )
             return
 
+        # 批候选各自从 baseline 复制完整 out 再写；顺序 update 会用后项 0/空 failures
+        # 抹掉先项成功 ID 与独立失败。与 session.coalesce_pending_action_id 同规：
+        # 非零 ID 不被 0 覆盖；各候选相对 baseline 新追加的 failures 累计。
+        from ming_sim.session import coalesce_pending_action_id
+
+        baseline_failure_count = len(baseline_out.get("pending_action_failures") or [])
         for merged in out_merges:
+            prior_id = int(ctx.out.get("pending_action_id") or 0)
+            prior_failures = list(ctx.out.get("pending_action_failures") or [])
+            staged_id = int(merged.get("pending_action_id") or 0)
+            cand_failures = list(merged.get("pending_action_failures") or [])
+            added_failures = cand_failures[baseline_failure_count:]
             ctx.out.update(merged)
+            ctx.out["pending_action_id"] = coalesce_pending_action_id(
+                prior_id, staged_id,
+            )
+            ctx.out["pending_action_failures"] = prior_failures + added_failures
         if draft_staged_any:
             ctx.draft_staged = True
 

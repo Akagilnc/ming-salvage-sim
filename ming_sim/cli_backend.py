@@ -3891,7 +3891,14 @@ def _extract_secret_order(
         # executor here guarantees cleanup even if any later normalization raises.
         if confirmation_pool is not None:
             confirmation_pool.shutdown(wait=True)
-    obj = _loads_lenient(raw) or {}
+    # 解析失败（None）与合法空对象 {} 分流：前者保留 extract_failed 身份，
+    # 后者仍走下游零契约路径（#1504）；不得 or {} 合流洗成成功空抽取。
+    parsed = _loads_lenient(raw)
+    if parsed is None:
+        extract_failed = True
+        obj = {}
+    else:
+        obj = parsed
     _content_llm = str(obj.get("内容") or "").strip()
     _assignee_llm = str(obj.get("承办人") or "").strip()
     # 上下文合成路径（force_default_assignee，#354 短确认从对话取正文）：player_command 是带

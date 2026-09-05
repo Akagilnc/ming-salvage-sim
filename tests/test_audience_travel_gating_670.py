@@ -1632,10 +1632,15 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
         setattr(s, name, MethodType(getattr(GameSession, name), s))
 
 
+# 共享夹具：抽取器正文必须与 player_command 相异，才能发现装配吞独立内容（#1565 F7）。
+SECRET_ORDER_STRUCTURED_CONTENT = "【抽取结构化正文】密查边饷侵冒并限期密报"
+
+
 def _patch_secret_order_extract(monkeypatch, *, title: str) -> None:
     """#1565/0142：密令题名只认抽取器显式「标题」；测试灌入结构化 title，禁 [:14] 散文 oracle。
 
     闸门测只关心 pending 管线与 travel 行为，灌完整 covert_task（非零契约）。
+    content 固定为与 player_command 相异的结构化正文——命令来源与抽取正文分槽验证。
     零契约不暂存见 #1504；抽取异常仍暂存见 #354——两契约不在本夹具范围。
     """
     import ming_sim.cli_backend as cb
@@ -1644,9 +1649,11 @@ def _patch_secret_order_extract(monkeypatch, *, title: str) -> None:
     def _stub(
         player_command, minister_reply, default_assignee="", llm_config=None, **_kw,
     ):
+        # 故意不回写 player_command：相异正文才能锁住「抽取 content 槽」不被命令覆盖。
+        assert str(player_command or "").strip() != SECRET_ORDER_STRUCTURED_CONTENT
         return {
             "title": title,
-            "content": str(player_command or "").strip(),
+            "content": SECRET_ORDER_STRUCTURED_CONTENT,
             "assignee": default_assignee or "",
             "tags": [],
             "deadline_months": 0,
@@ -1673,7 +1680,11 @@ def _assert_secret_order_pending(
     assert row["minister_name"] == minister_name
     assert row["status"] == "pending"
     payload = json.loads(row["payload_json"])
-    assert payload["content"] == edict
+    # 两种来源分槽：命令原文 ≠ 抽取结构化正文；pending 承接抽取 content 槽。
+    assert str(edict or "").strip(), "命令来源（player_command）须非空"
+    assert edict != SECRET_ORDER_STRUCTURED_CONTENT
+    assert payload["content"] == SECRET_ORDER_STRUCTURED_CONTENT
+    assert payload["content"] != edict
     # 题名=显式结构化字段，非 content/edict 散文截取
     assert payload["title"] == title
     assert str(payload["title"]).strip()
