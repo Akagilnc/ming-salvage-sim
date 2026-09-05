@@ -162,7 +162,7 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
 
     stream_events: list[dict] = []
     stream_error: list[BaseException] = []
-    concurrent_result: dict = {}
+    concurrent_results: dict[str, dict] = {}
 
     def _run_stream() -> None:
         try:
@@ -185,12 +185,27 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
         assert q.has_open_barrier(), "预领屏障后 has_open_barrier 应为 True"
         async def _probe() -> None:
             async with _client() as client:
-                probe = await client.post(
-                    f"/api/ministers/{minister}/chat",
-                    json={"message": "再问边饷？"},
-                )
-                concurrent_result["status"] = probe.status_code
-                concurrent_result["body"] = probe.text
+                probes = {
+                    "chat": client.post(
+                        f"/api/ministers/{minister}/chat",
+                        json={"message": "再问边饷？"},
+                    ),
+                    # #1727 T1/T2：撤回本轮不得绕过屏障（亦防 cancel_key 抽空尾随票）。
+                    "undo": client.post(f"/api/ministers/{minister}/chat/undo"),
+                    # 同类补扫：secret_order 持闸兼容路亦须端点侧拒。
+                    "secret_order": client.post(
+                        f"/api/ministers/{minister}/secret_order",
+                        json={"title": "边饷", "content": "速办边饷"},
+                    ),
+                    # pending withdraw 同属召对写入口族。
+                    "withdraw": client.post("/api/pending_actions/1/withdraw"),
+                }
+                for name, awaitable in probes.items():
+                    probe = await awaitable
+                    concurrent_results[name] = {
+                        "status": probe.status_code,
+                        "body": probe.text,
+                    }
 
         asyncio.run(_probe())
         trail_release.set()
@@ -223,9 +238,12 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
     assert isinstance(done_payload, dict), done_payload
     # D1 同形常绿：判词链无辜——done 已带 court_break。
     assert done_payload.get("court_action") == "court_break", done_payload
-    # 写入口外可见锁：hold 窗内并发 chat 结构化拒写（HTTP 409）；不锁呈现措辞。
-    assert concurrent_result.get("status") == 409, concurrent_result
-    # end 后终态：夜 closed + 收尾三拍。
+    # 写入口外可见锁：hold 窗内并发召对写入口结构化拒写（HTTP 409）；不锁呈现措辞。
+    for name in ("chat", "undo", "secret_order", "withdraw"):
+        assert concurrent_results.get(name, {}).get("status") == 409, (
+            name, concurrent_results.get(name),
+        )
+    # end 后终态：夜 closed + 收尾三拍 + 告退轮仍在（未被 undo 抽空）。
     row = game.db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),
     ).fetchone()
@@ -235,3 +253,8 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
     scroll = an.read_night_scroll(game.db, night_id)
     beats = _named_scene_beats(scroll)
     assert "exit" in beats and "divider" in beats and "closing" in beats, beats
+    # 告退轮仍在：undo 被拒，未抽空本轮（结构化：minister 对话气泡带 chat_turn_id）。
+    assert any(
+        m.get("role") == "minister" and int(m.get("chat_turn_id") or 0) > 0
+        for m in scroll
+    ), scroll
