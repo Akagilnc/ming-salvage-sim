@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
+import ming_sim.cli_backend as cb
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
     ActionCandidateShapeError,
@@ -176,11 +177,11 @@ def test_jiaobuyi_lands_initiative_only_after_promulgation(game):
     assert pending["dossier_action_type"] == "referral"
     assert pending["end_turn"] == state.turn + 6
     assert pending["responsible_bodies"] == bodies
-    # #1565/0142：题名=title；body 与 text 均=大臣回话
+    # #1565/0142：题名=结构化 title；正文唯一真源=payload.text（reply 供料）
     assert pending.get("title") == "清核边饷"
     reply = "臣请交吏户二部会商。请陛下定夺准驳。"
-    assert pending.get("body") == reply
     assert pending.get("text") == reply
+    assert "body" not in pending or pending.get("body") in (None, "")
     # 下议零个人 owner
     assert not str(pending.get("assignee") or pending.get("assignee_id") or "").strip()
     assert len(_active_initiatives(db)) == before, "物化前不得创建 initiative"
@@ -204,8 +205,9 @@ def test_jiaobuyi_lands_initiative_only_after_promulgation(game):
     assert row["kind"] == "initiative"
     assert row["title"] == "清核边饷"
     d_payload = json.loads(dossier["payload_json"] or "{}")
-    assert d_payload.get("body") == reply
-    assert row["stage_text"] == d_payload.get("body")
+    assert row["stage_text"] == d_payload.get("text")
+    assert row["origin_kind"] == "decree"
+    assert int(dossier["pending_action_id"] or 0) == int(pending_id)
     assert int(row["end_turn"]) == state.turn + 6
     participants = json.loads(row["participants"])
     assert participants == bodies
@@ -213,8 +215,12 @@ def test_jiaobuyi_lands_initiative_only_after_promulgation(game):
     assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
 
 
-def test_referral_title_from_target_id_when_classifier_title_empty(game):
-    """#1565：缺 title 时题名取 target_id；body/text=回话；双空则零 stage。"""
+def test_referral_title_from_target_id_when_classifier_title_empty(game, monkeypatch):
+    """#1565：缺 title 时题名取 target_id；正文=reply 供料；双空走 validation 恢复。"""
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下明示下议题名后重拟。", 1),
+    )
     db, state, content = game
     actor = _minister(db)
     reply = "臣请交部议。请陛下定夺准驳。"
@@ -232,6 +238,9 @@ def test_referral_title_from_target_id_when_classifier_title_empty(game):
     )
     run_materialize_pipeline(ctx_bare)
     assert not ctx_bare.out.get("pending_action_id")
+    failure = ctx_bare.out.get("decree_validation_failure") or {}
+    assert "title" in set(failure.get("failed_fields") or [])
+    assert failure.get("report")
 
     anchored = candidates_from_classifier_payload({
         "kind": "referral",
@@ -247,7 +256,6 @@ def test_referral_title_from_target_id_when_classifier_title_empty(game):
     run_materialize_pipeline(ctx)
     pending = _pending_payload(db, ctx.out["pending_action_id"])
     assert pending.get("title") == "清核边饷"
-    assert pending.get("body") == reply
     assert pending.get("text") == reply
 
 

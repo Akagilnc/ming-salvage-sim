@@ -2401,10 +2401,17 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
             ).fetchone()
             if issue is None:
                 continue
+            # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
+            # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
             title = str(
-                payload.get("title") or row.get("decree_text") or issue["title"] or ""
+                payload.get("title")
+                or payload.get("target_id")
+                or issue["title"]
+                or ""
             ).strip()
-            body = str(payload.get("body") or row.get("decree_text") or "").strip()
+            body = str(
+                payload.get("text") or row.get("decree_text") or ""
+            ).strip()
             # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
@@ -3897,9 +3904,9 @@ def _extract_secret_order(
         emperor_intent=_emperor_fallback,
         extractor_content=_content_llm,
     )
-    # No formal title hard-cap: keep the full extracted title; only synthesize a
-    # short fallback when the extractor omitted 标题 entirely.
-    title = str(obj.get("标题") or "").strip() or (content or player_command)[:14]
+    # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。
+    # 缺标题由下游 commit 闸（title 必填）可见失败，不在此合成。
+    title = str(obj.get("标题") or "").strip()
     # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
     # extractor 散文反推）。
     assignee = default_assignee if force_default_assignee else _choose_assignee(
