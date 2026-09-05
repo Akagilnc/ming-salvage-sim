@@ -378,6 +378,72 @@ def test_action_conditional_missing_heals_not_whole_batch(monkeypatch, tmp_path)
     assert sib["label"] == sibling["label"] and sib["hint"] == sibling["hint"]
 
 
+def test_heal_accepts_grant_kind_when_first_draw_omitted_kind(monkeypatch, tmp_path):
+    """首抽无 grant_kind/grant_action → missing=grant_kind；补交 grant_kind=army_pay 可采纳。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _army_pay(label="pay-kind")
+    bad.pop("grant_kind", None)
+    bad.pop("purpose", None)  # 也会在 kind 补上后暴露；先只测 kind 路径
+    # 仅缺 kind：保留 purpose 等
+    bad["purpose"] = "补饷"
+    sibling = _hold(label="sib", hint="k")
+    first = _items_json([{
+        "title": "u", "context": "c", "options": [bad, sibling],
+    }])
+    fixed = dict(bad, grant_kind="army_pay")
+    healed = _items_json([{
+        "title": "u", "context": "c", "options": [fixed, sibling],
+    }])
+    n = {"i": 0}
+
+    def _llm(*_a, **_k):
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=36)
+    assert drafts is not None, "grant_kind 补交应被采纳"
+    grant = next(o for o in drafts[0]["options"] if o.get("grant_action") == "协饷")
+    assert grant["purpose"] == "补饷"
+    assert grant["amount"] == bad["amount"]
+    assert grant["target_id"] == bad["target_id"]
+
+
+def test_heal_partial_progress_keeps_filled_missing_fields(monkeypatch, tmp_path):
+    """多缺字段可分次回填：先 purpose 后 account，不得因未一次补齐丢弃进度。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _army_pay(label="pay-partial", amount=300, account="")
+    bad.pop("purpose", None)
+    sibling = _hold(label="sib", hint="p")
+    first = _items_json([{
+        "title": "u", "context": "c", "options": [bad, sibling],
+    }])
+    # 第 1 次补交只给 purpose
+    mid = dict(bad, purpose="补饷")  # account 仍空
+    # 第 2 次补 account
+    done = dict(bad, purpose="补饷", account="国库")
+    seq = [
+        first,
+        _items_json([{"title": "u", "context": "c", "options": [mid, sibling]}]),
+        _items_json([{"title": "u", "context": "c", "options": [done, sibling]}]),
+    ]
+    n = {"i": 0}
+
+    def _llm(*_a, **_k):
+        i = n["i"]
+        n["i"] += 1
+        return seq[min(i, len(seq) - 1)]
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=37)
+    assert drafts is not None
+    grant = next(o for o in drafts[0]["options"] if o.get("grant_action") == "协饷")
+    assert grant["purpose"] == "补饷"
+    assert grant["account"] == "国库"
+    assert grant["amount"] == 300
+    assert n["i"] == 3  # 首抽 + 2 次补交
+
+
 def test_heal_only_fills_missing_fields_preserves_world_facts(monkeypatch, tmp_path):
     """补交只回填缺字段；amount/account/target 等首抽世界事实不得被改写。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))

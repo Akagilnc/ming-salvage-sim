@@ -646,6 +646,14 @@ def normalize_rescript_layer_a_option(
         raw_ga = ""
         if "grant_action" in raw and raw["grant_action"] is not None:
             raw_ga = str(raw["grant_action"]).strip()
+        # 生成契约军饷只认 grant_kind=army_pay；双缺记 raw 字段 grant_kind，
+        # 不得记派生 grant_action（否则补交回填 grant_kind 对不上 missing 列表）。
+        if generation_admission and not grant_kind and not raw_ga:
+            raise RescriptOptionMissingFieldsError(
+                "生成侧 grant_allocation 军饷须补 grant_kind=army_pay",
+                missing_fields=("grant_kind",),
+                raw_option=raw,
+            )
         if grant_kind:
             if grant_kind != grant_kind_army_pay:
                 raise ValueError(f"grant 非法 grant_kind：{grant_kind!r}")
@@ -668,9 +676,16 @@ def normalize_rescript_layer_a_option(
         except ValueError as exc:
             field = getattr(exc, "field", None)
             if field:
+                miss = str(field)
+                if (
+                    generation_admission
+                    and miss == "grant_action"
+                    and not grant_kind
+                ):
+                    miss = "grant_kind"
                 raise RescriptOptionMissingFieldsError(
                     str(exc),
-                    missing_fields=(str(field),),
+                    missing_fields=(miss,),
                     raw_option=raw,
                 ) from exc
             raise
@@ -1201,12 +1216,7 @@ def _apply_missing_fields_only(
         filled += 1
     if filled == 0:
         return None
-    # 若仍有声明缺失键未从 replacement 取得非空值 → 整次不采纳，保持缺字段态
-    for field in missing_fields:
-        key = str(field)
-        val = out.get(key)
-        if val is None or (isinstance(val, str) and not str(val).strip()):
-            return None
+    # 部分进展合法（如先 purpose 后 account）：已填键保留，其余留给后续补交
     return out
 
 
