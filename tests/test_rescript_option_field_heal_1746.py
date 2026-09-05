@@ -205,15 +205,20 @@ def test_missing_grant_kind_with_illegal_amount_not_heal(monkeypatch, tmp_path):
     "bad_kw, match",
     [
         ({"label": "", "amount": -5}, "amount"),
-        ({"label": "", "amount": 3.5}, "amount"),  # float 拒，不得 int() 截断
+        ({"label": "", "amount": 3.5}, "amount"),
         ({"label": "", "grant_kind": "bogus"}, "grant_kind"),
+        ({"label": "", "cadence": "weekly"}, "cadence"),  # 权威 xiexang 非空非法
+        ({"label": "", "account": "坏账"}, "account"),
     ],
-    ids=["neg_amount", "float_amount", "bogus_grant_kind"],
+    ids=[
+        "neg_amount", "float_amount", "bogus_grant_kind",
+        "illegal_cadence", "illegal_account",
+    ],
 )
 def test_missing_label_with_coexisting_illegal_not_heal(
     bad_kw, match, monkeypatch, tmp_path,
 ):
-    """前置缺 label + 同 option 非法值 → F2.5，不进补交。"""
+    """前置缺 label + 同 option 非法值 → 权威 normalize 重探 F2.5，不进补交。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     bad = _army_pay(**bad_kw)
     raw = _items_json([{"title": "u", "context": "c", "options": [bad, _hold()]}])
