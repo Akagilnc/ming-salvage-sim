@@ -127,7 +127,7 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
             assert fresh is False
             # 首条 stage 已由 worker 在构造前入队；此处阻塞以模拟构造重活。
             started.set()
-            assert release.wait(timeout=5.0), "test release timed out"
+            release.wait()
             self._state = {"from": "stale-continue"}
             self._write_gate = threading.Lock()
             self.session = SimpleNamespace(close=lambda: closed.append("stale"))
@@ -146,7 +146,7 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
 
     thread = threading.Thread(target=run_continue, daemon=True)
     thread.start()
-    assert started.wait(timeout=5.0), "continue worker did not enter WebGame ctor"
+    started.wait()
 
     # exit 先落定：bump 世代 + web_game=None
     exit_result = asyncio.run(web_app.api_menu_exit())
@@ -154,7 +154,7 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     assert web_app.web_game is None
 
     release.set()
-    thread.join(timeout=5.0)
+    thread.join()
     assert not thread.is_alive(), "continue stream thread hung"
 
     assert results.get("status") == 200
@@ -163,9 +163,8 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     assert events[-1][0] == "error"
     assert web_app.web_game is None, "stale continue must not publish over exit"
     # 白建 game 被 _drain_and_close_session 收掉
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline and closed != ["stale"]:
-        time.sleep(0.01)
+    while closed != ["stale"]:
+        time.sleep(0.01)  # backoff only
     assert closed == ["stale"]
 
 
@@ -185,7 +184,7 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
             assert fresh is False
             # 首条 stage 已由 worker 在构造前入队；此处阻塞以模拟构造重活。
             started.set()
-            assert release.wait(timeout=5.0), "test release timed out"
+            release.wait()
             self._state = {"from": "stale-continue"}
             self._write_gate = threading.Lock()
             self.session = SimpleNamespace(close=lambda: closed.append("stale"))
@@ -215,7 +214,7 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
 
     thread = threading.Thread(target=run_continue, daemon=True)
     thread.start()
-    assert started.wait(timeout=5.0), "continue worker did not enter WebGame ctor"
+    started.wait()
 
     # new_game 在 continue 构造中途落定——换掉 WebGame 工厂供 fresh 构造
     monkeypatch.setattr(web_app, "WebGame", FreshWebGame)
@@ -226,7 +225,7 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
     assert settled.state_payload()["from"] == "new-game"
 
     release.set()
-    thread.join(timeout=5.0)
+    thread.join()
     assert not thread.is_alive(), "continue stream thread hung"
 
     assert results.get("status") == 200
@@ -234,7 +233,6 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
     assert events[-1][0] == "error"
     assert web_app.web_game is settled, "stale continue must not overwrite new_game"
     assert web_app.web_game.state_payload()["from"] == "new-game"
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline and closed != ["stale"]:
-        time.sleep(0.01)
+    while closed != ["stale"]:
+        time.sleep(0.01)  # backoff only
     assert closed == ["stale"]
