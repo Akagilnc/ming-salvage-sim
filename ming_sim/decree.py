@@ -10,7 +10,7 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterator, List, Mapping, Optional, Protocol, Sequence
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Protocol, Sequence
 
 from agno.db.sqlite import SqliteDb
 from openai import APIConnectionError, APIStatusError, APITimeoutError
@@ -105,7 +105,8 @@ from ming_sim.token_stats import tlog
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
 
-# #1725：月末结算 SSE stage 名唯一权威（顺序即进度刻度）。六名冻结，emit 只引用本表。
+# #1725：月末结算 SSE stage 唯一权威。六名冻结；emit 只经 settlement_stage_payload，
+# 携带独立于显示措辞的 typed 进度事实（current/total），前端不得文案反查。
 SETTLEMENT_STAGE_LABELS = (
     "固定月度财政入账",
     "回顾近来朝局",
@@ -114,9 +115,28 @@ SETTLEMENT_STAGE_LABELS = (
     "落库与事项推进",
     "记起居注",
 )
-# #1740：结局回合第七段——不并入六名表（普通回合永不发；total 动态化=新机制，见 PR #1736 T6）。
-# 与六阶同受权威约束：emit 只引用本常量，前后端同源冻结。
+# #1740：结局回合第七段——不并入六名表（普通回合永不发）。
+# emit 只经 settlement_ending_stage_payload，current/total=7；普通六阶 total 仍为 6。
 SETTLEMENT_ENDING_STAGE_LABEL = "国史编纂结局总评"
+
+
+def settlement_stage_payload(index: int) -> Dict[str, Any]:
+    """Ordinary wait-stage fact: display label + typed 1-based current/total."""
+    return {
+        "content": SETTLEMENT_STAGE_LABELS[index],
+        "current": index + 1,
+        "total": len(SETTLEMENT_STAGE_LABELS),
+    }
+
+
+def settlement_ending_stage_payload() -> Dict[str, Any]:
+    """Ending-round seventh stage; total becomes 7 only on this emit."""
+    total = len(SETTLEMENT_STAGE_LABELS) + 1
+    return {
+        "content": SETTLEMENT_ENDING_STAGE_LABEL,
+        "current": total,
+        "total": total,
+    }
 
 # 结算 payload 工具（注入文案常量 / 决策块解析 / 密令分组承载 / 已裁决策正文 / 玩家可见
 # 呈现脱敏）已抽到 ming_sim.settlement_payload（#91 coordinator 拆分第一刀，纯搬家、行为保持）。
@@ -1143,7 +1163,7 @@ def resolve_directives(
     decree_text: str,
     deaths_this_turn: Optional[List[Dict[str, str]]] = None,
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
-    on_event: Optional[Callable[[str, str], None]] = None,
+    on_event: Optional[Callable[[str, Any], None]] = None,
     content=None,
     registry=None,
     cheat_directive: str = "",
@@ -1159,7 +1179,8 @@ def resolve_directives(
     记 system、对玩家静默），不依赖「非 ready SETTLING ctx 恒 player」这一脆弱不变式。
 
     on_event(kind, data): 推演过程实时回调。
-    kind ∈ {stage, thinking, text}；stage 携带阶段名，thinking/text 携带增量片段。
+    kind ∈ {stage, thinking, text}；stage 为 settlement_stage_payload 字典
+    （content + typed current/total），thinking/text 为增量字符串。
 
     cheat_directive: 作弊控制台（Ctrl+~）下的强制结算指令。非空时拼到当期邸报最前面
     一起喂给 extractor，按字面当既成事实落库。唯一入口——只此一处写入标记前缀（见
@@ -1168,7 +1189,7 @@ def resolve_directives(
     返回 ResolveResult：simulator 邸报含决策点 → 存上下文+决策点暂停（awaiting=True，
     回合未推进）；无决策点 → 直接续跑 extractor 结算，返回完整报告（awaiting=False）。
     """
-    def _emit(kind: str, data: str) -> None:
+    def _emit(kind: str, data: Any) -> None:
         if on_event:
             on_event(kind, data)
 
@@ -1188,7 +1209,7 @@ def resolve_directives(
         registry=registry,
         scene_registry=scene_registry,
         source=source,
-        on_stage=lambda label: _emit("stage", label),
+        on_stage=lambda payload: _emit("stage", payload),
     )
 
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
@@ -1336,7 +1357,7 @@ def resolve_directives(
     relevant_memories: List[Dict] = []
     secret_orders_for_sim: Dict[str, list] = {}  # try 外初始化：检索失败也不能让后续 NameError
     try:
-        _emit("stage", SETTLEMENT_STAGE_LABELS[1])
+        _emit("stage", settlement_stage_payload(1))
         # state.turn 此刻仍是本回合（尚未 next_period），章节记忆存的是 turn-1 及更早的已结算回合。
         relevant_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
         tlog(f"[memory/chapters] inject={len(relevant_memories)} upto_turn={state.turn}")
@@ -1361,7 +1382,7 @@ def resolve_directives(
 
     # 2) 推演 agent: 写邸报
     tlog("结算 2/4 推演 agent（月末邸报）")
-    _emit("stage", SETTLEMENT_STAGE_LABELS[2])
+    _emit("stage", settlement_stage_payload(2))
     previous_narrative = db.previous_turn_summary(state) or ""
     # #668：transit_arrivals 只读 pending_resolve_context 占位键（首跑与 settling 恢复同一真源；不重跑 tick）。
     durable_arrivals: List[Dict[str, object]] = []
@@ -1629,7 +1650,7 @@ def resolve_settling_recovery(
     llm_config: LLMConfig,
     ctx: Dict[str, object],
     *,
-    on_event: Optional[Callable[[str, str], None]] = None,
+    on_event: Optional[Callable[[str, Any], None]] = None,
     content=None,
     registry=None,
 ) -> ResolveResult:
@@ -1642,7 +1663,7 @@ def resolve_settling_recovery(
     按真实流程同款构造（决定 3/4 明示重调可接受）。pre_settle 的 settling 相位已提交，恢复路
     不重跑前半段（财政不二跑）。
     """
-    def _emit(kind: str, data: str) -> None:
+    def _emit(kind: str, data: Any) -> None:
         if on_event:
             on_event(kind, data)
 
@@ -1700,7 +1721,7 @@ def _replay_settle(
     dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
     content=None,
     registry=None,
-    _emit: Callable[[str, str], None],
+    _emit: Callable[[str, Any], None],
     source: Provenance = Provenance.system_simulation,
     attendant_message: str = "",
 ) -> str:
@@ -1728,7 +1749,7 @@ def _replay_settle(
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
             secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders),
         ),
-        on_stage=lambda label: _emit("stage", label),
+        on_stage=lambda payload: _emit("stage", payload),
         source=source,  # 恢复重放沿用原始来源（#144）：玩家来源拒收恢复后仍给提示，不被记成 system
         dossier_verdicts=(
             simulator_payload.get("dossier_verdicts")
@@ -1842,7 +1863,7 @@ def _settle_after_narrative(
     relevant_memories: List[Dict],
     secret_orders: Dict[str, object],
     before_turn: int,
-    _emit: Callable[[str, str], None],
+    _emit: Callable[[str, Any], None],
     content=None,
     registry=None,
     cheat_directive: str = "",
@@ -1873,7 +1894,7 @@ def _settle_after_narrative(
 
     # 3) 结算 agent: 读邸报抽 JSON
     tlog("结算 3/4 结算 agent（抽 JSON）")
-    _emit("stage", SETTLEMENT_STAGE_LABELS[3])
+    _emit("stage", settlement_stage_payload(3))
     # simulator_payload 的 decree_text 已在 phase1 收敛为本批可执行诏文；extractor
     # 必须复用同一授权输入，不能重新接回包含封驳案卷的原始聚合文本。
     executable_decree_text = str(simulator_payload.get("decree_text") or "")
@@ -2037,7 +2058,7 @@ def _settle_after_narrative(
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
             secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders_for_sim),
         ),
-        on_stage=lambda label: _emit("stage", label),
+        on_stage=lambda payload: _emit("stage", payload),
         # 来源贯穿（#146 A，整批按触发源）：皇帝下旨触发=player_decree（拒收提示皇帝）、
         # 无旨/世界自演变=system_simulation（静默）。重抽路从 ctx['source'] 继承、不因重抽改变。
         source=source,
@@ -2215,7 +2236,7 @@ def prepare_resolve_front_half(
     registry=None,
     scene_registry=None,
     source: object = Provenance.player_decree,
-    on_stage: Optional[Callable[[str], None]] = None,
+    on_stage: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> List[Dict[str, object]]:
     """共享前半段 seam（ADR 0004 / #668）：pre_settle + ready=0 占位（含 transit_arrivals）。
 
@@ -2357,7 +2378,7 @@ def pre_settle(
                 )
             tlog("结算 1/4 固定月度财政 tick")
             if on_stage is not None:
-                on_stage(SETTLEMENT_STAGE_LABELS[0])
+                on_stage(settlement_stage_payload(0))
             # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
             apply_fixed_period_flows(db, state)
             # 0095/#668 在途倒数 tick：remaining -= 1.0*factor，≤0 引擎抵达。
@@ -2512,9 +2533,9 @@ def settle_with_delta(
         int(state.turn), int(state.year), int(state.period),
     )
 
-    def _stage(label: str) -> None:
+    def _stage(payload: Dict[str, Any]) -> None:
         if on_stage is not None:
-            on_stage(label)
+            on_stage(payload)
 
     # ADR 0008 S7（决定 2）：整个后半段写序列包进单事务——apply→turn_logs→inertia→留痕→章节记忆
     # →clear→结局→next_period 全有或全无。崩在中途（含 save_state 之后、clear 之前那个
@@ -2801,7 +2822,7 @@ def _settle_after_extract_body(
     chapter_recorder,
     ending_summarizer,
     delta_applier,
-    _stage: Callable[[str], None],
+    _stage: Callable[[Dict[str, Any]], None],
     collector: Optional[RejectionCollector] = None,
     source: Provenance = Provenance.unknown,
     start_relation_brew: Optional[Callable[[], None]] = None,
@@ -2813,7 +2834,7 @@ def _settle_after_extract_body(
     抽成独立函数只为让 settle_with_delta 的 try/atomic/except 块清爽；不单独对外。
     """
     tlog("结算 4/4 落库 + inertia/ongoing")
-    _stage(SETTLEMENT_STAGE_LABELS[4])
+    _stage(settlement_stage_payload(4))
     # Persist private monthly reports before applying disclosure updates from
     # the same extraction, so the one authorized promotion event can project
     # the complete canonical history.  The enclosing atomic transaction keeps
@@ -3019,7 +3040,7 @@ def _settle_after_extract_body(
         start_relation_brew()
 
     # 章节记忆：注入回调（真实流程= LLM 浓缩落 event_memories；driver= None 跳过）。失败不抛断。
-    _stage(SETTLEMENT_STAGE_LABELS[5])
+    _stage(settlement_stage_payload(5))
     if chapter_recorder is not None:
         try:
             chapter_recorder(db, state, decree_text, narrative, applied)
@@ -3107,14 +3128,14 @@ def resolve_decisions_phase2(
     db: GameDB,
     agno_db: SqliteDb,
     llm_config: LLMConfig,
-    on_event: Optional[Callable[[str, str], None]] = None,
+    on_event: Optional[Callable[[str, Any], None]] = None,
     content=None,
     registry=None,
     cheat_directive: str = "",
 ) -> str:
     """phase2：皇帝亲裁完，读回 phase1 暂存上下文 + 已存决策点选择，续跑结算。
     要求本回合处于 awaiting_decision（已有 resolve_context）。返回完整结算报告。"""
-    def _emit(kind: str, data: str) -> None:
+    def _emit(kind: str, data: Any) -> None:
         if on_event:
             on_event(kind, data)
 
@@ -3215,7 +3236,7 @@ def _generate_ending_summary(
     llm_config: LLMConfig,
     agno_db: SqliteDb,
     outcome: Dict[str, object],
-    _emit: Callable[[str, str], None],
+    _emit: Callable[[str, Any], None],
 ) -> str:
     """国史编纂官读全部章节记忆生成结局总评，落库 ending_summary（含逐回合时间线）。
     LLM 失败时用章节拼保底总评。返回总评正文（也已落库）。"""
@@ -3223,7 +3244,7 @@ def _generate_ending_summary(
     timeline = build_timeline(db, upto_turn=state.turn)
     summary_text = ""
     try:
-        _emit("stage", SETTLEMENT_ENDING_STAGE_LABEL)
+        _emit("stage", settlement_ending_stage_payload())
         ending_agent = create_ending_summary_agent(llm_config, agno_db)
         payload = {
             "ending": {"status": outcome.get("status"), "summary": outcome.get("summary")},

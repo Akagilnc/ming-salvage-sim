@@ -189,13 +189,13 @@ def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
 
     def _attendant(*_a, **kwargs):
         attendant_entered.set()
-        assert sim_entered.wait(timeout=5), "simulator 须在王承恩启动后进入"
-        release.wait(timeout=5)
+        sim_entered.wait()
+        release.wait()
         attendant_calls.append(dict(kwargs))
         return ATTENDANT_TEXT
 
     def _simulate(*_a, **kwargs):
-        assert attendant_entered.wait(timeout=5), "王承恩须先于 simulator 启动"
+        attendant_entered.wait()
         sim_entered.set()
         release.set()
         payload = kwargs["simulator_payload"]

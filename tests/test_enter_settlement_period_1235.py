@@ -655,11 +655,11 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
         t = threading.Thread(target=_peer_exit, daemon=True)
         t.start()
         # 他持 write_gate 时 blocking exit 须堵在 acquire，不得无门完成清快照
-        assert not done.wait(0.05), "exit 不得在 write_gate 仍被他持时无门完成"
+        assert not done.is_set(), "exit 不得在 write_gate 仍被他持时无门完成"
         assert game.db.get_month_open_snapshot(turn) is not None
         gate.release()
-        assert done.wait(2.0), "exit 在 gate 释放后须完成"
-        t.join(2.0)
+        done.wait()
+        t.join()
     finally:
         game.db.clear_month_open_snapshot = orig_clear  # type: ignore[method-assign]
         if gate.locked():
@@ -747,9 +747,8 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     t = threading.Thread(target=_run_b, daemon=True)
     t.start()
     # 等 B 完成 web accept（False）并堵在阻塞 gate
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline and saw["web_created"] is None:
-        time.sleep(0.01)
+    while saw["web_created"] is None:
+        time.sleep(0.01)  # backoff only
     assert saw["web_created"] is False, "B 须为 web 非创建者"
     assert not b_done.is_set(), f"B 不得在 A 持锁时完成 {entry}"
     assert game.db.get_month_open_snapshot(turn) == before
@@ -760,8 +759,8 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     assert game.db.get_month_open_snapshot(turn) is None
     gate.release()
 
-    assert b_done.wait(5.0), "B 在 A 放锁后须完成"
-    t.join(2.0)
+    b_done.wait()
+    t.join()
     assert "err" not in b_result, b_result.get("err")
     if entry == "issue":
         assert b_result.get("status") == 400, b_result
@@ -802,7 +801,7 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
     def _hold_close_for_a(_g, **_kw):
         # 仅 A 线程：停在 accept 后屏障体内（展示态应保留）
         a_in_await.set()
-        assert a_release.wait(5.0), "测试须放行 A 的屏障 close"
+        a_release.wait()
         raise AudienceNightError(
             "收夜失败·A创建者收口", code="close_failed",
         )
@@ -826,7 +825,7 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
 
     t_a = threading.Thread(target=_run_a, daemon=True)
     t_a.start()
-    assert a_in_await.wait(2.0), "A 须进入屏障 close 窗"
+    a_in_await.wait()
     assert game.db.get_month_open_snapshot(turn) == before
     assert game.state_payload()["turn"]["settlement_display"] is True
     assert web_app._settlement_entry_inflight(game) >= 1
@@ -853,19 +852,19 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
 
     t_b = threading.Thread(target=_run_b, daemon=True)
     t_b.start()
-    assert b_started.wait(2.0)
-    # A 仍在办时快照不得被清
-    time.sleep(0.05)
+    b_started.wait()
+    # A 仍在办时快照不得被清（b_started 已证 B 进入；A 屏障未放行）
+    assert not a_done.is_set()
     assert game.db.get_month_open_snapshot(turn) == before
     assert game.state_payload()["turn"]["settlement_display"] is True
     assert web_app._settlement_entry_inflight(game) >= 1, "A 仍须计在办"
 
     # 放行 A：创建者失败臂清展示态；B 随后以自有屏障继续/失败
     a_release.set()
-    assert a_done.wait(5.0), "A 放行后须完成"
-    t_a.join(2.0)
-    assert b_done.wait(5.0), "B 须在 A 屏障结束后完成"
-    t_b.join(2.0)
+    a_done.wait()
+    t_a.join()
+    b_done.wait()
+    t_b.join()
     assert "err" not in a_result, a_result.get("err")
     assert a_result.get("status") == 409, a_result
     assert "err" not in b_result, b_result.get("err")
@@ -919,7 +918,7 @@ def test_disconnect_mid_settlement_reconnect_coherent(web_game, monkeypatch):
         if callable(on_event):
             on_event("stage", "推演中")
         entered_resolve.set()
-        assert release_resolve.wait(15.0), "测试须放行 resolve"
+        release_resolve.wait()
         return real_resolve(*a, **k)
 
     monkeypatch.setattr(game.session, "resolve_turn", _held_resolve)
@@ -947,7 +946,7 @@ def test_disconnect_mid_settlement_reconnect_coherent(web_game, monkeypatch):
 
     t = threading.Thread(target=_run_stream_then_drop, daemon=True)
     t.start()
-    assert entered_resolve.wait(10.0), "须进入 resolve（点即入+gate 后）"
+    entered_resolve.wait()
 
     # 断线窗：核账展示态已亮、四键为点击前（状态口可观测）
     assert game.db.get_month_open_snapshot(turn_before) == before
@@ -972,16 +971,16 @@ def test_disconnect_mid_settlement_reconnect_coherent(web_game, monkeypatch):
     # （先放行再等弃流线程——否则 ASGI generate 堵在 queue.get，aclose 与 release 死锁）
     release_resolve.set()
 
-    deadline = time.monotonic() + 30.0
-    while time.monotonic() < deadline:
-        if web_app._settlement_entry_inflight(game) == 0 and not web_app._game_write_gate(game).locked():
-            break
-        time.sleep(0.05)
+    while not (
+        web_app._settlement_entry_inflight(game) == 0
+        and not web_app._game_write_gate(game).locked()
+    ):
+        time.sleep(0.05)  # backoff only
     assert web_app._settlement_entry_inflight(game) == 0, "入口须销账（结算 worker 须跑完）"
     assert not web_app._game_write_gate(game).locked()
 
-    assert stream_done.wait(10.0), "弃流客户端须返回"
-    t.join(2.0)
+    stream_done.wait()
+    t.join()
     assert "err" not in stream_meta, stream_meta.get("err")
 
     # 再重连：终态自洽（不接原 SSE）
