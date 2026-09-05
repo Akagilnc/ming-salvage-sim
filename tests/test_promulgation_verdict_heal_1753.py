@@ -174,43 +174,46 @@ def _assert_promulgated_verdicts_landed(db, dossier_ids) -> None:
         assert str(row.get("status") or "") != "proposed"
 
 
-def _invoke_messages_text(messages) -> str:
-    """从 model invoke messages 抽 content 正文（不依赖 Message repr 转义）。"""
-    if messages is None:
-        return ""
-    parts: List[str] = []
+def _new_heal_request_text(messages) -> str:
+    """按 role/调用序定位本轮新补交 user 请求（跳过 history，不拼全量 messages）。"""
+    assert messages, "heal invoke missing messages"
+    new_user_texts: List[str] = []
     for message in messages:
-        content = getattr(message, "content", message)
-        if isinstance(content, str):
-            parts.append(content)
-        elif isinstance(content, list):
-            for item in content:
-                if isinstance(item, str):
-                    parts.append(item)
-                elif isinstance(item, dict) and "text" in item:
-                    parts.append(str(item["text"]))
-                else:
-                    parts.append(str(item))
-        else:
-            parts.append(str(content))
-    return "\n".join(parts)
+        if getattr(message, "role", None) != "user":
+            continue
+        if getattr(message, "from_history", False):
+            continue
+        content = getattr(message, "content", None)
+        assert isinstance(content, str) and content, (
+            f"new user request content must be non-empty str, got {type(content)!r}"
+        )
+        new_user_texts.append(content)
+    assert new_user_texts, "heal invoke missing new user request"
+    return new_user_texts[-1]
 
 
 def _assert_round_feedback_correspondence(
     capture: list, model_texts: List[str], reasons: List[str],
 ) -> None:
-    """逐轮：第 k 次补交 invoke 含第 k-1 次原产出与对应失败原因；不拼全量、不二选一。"""
-    assert len(capture) >= 2
+    """逐轮：第 k 次补交的**同一**新 user 请求含第 k-1 次原产出与其失败原因。
+
+    定位靠 role + from_history/调用序；禁止全量拼串、禁止旧 assistant/旧 user
+    分别凑绿、禁止 min 截短预期轮数。
+    """
     assert len(reasons) == len(model_texts)
-    heal_rounds = min(len(capture) - 1, len(model_texts))
-    for i in range(heal_rounds):
-        round_text = _invoke_messages_text(capture[i + 1])
+    expected_heals = len(model_texts)
+    assert expected_heals >= 1
+    assert len(capture) == expected_heals + 1, (
+        f"expected first + {expected_heals} heal invokes, got {len(capture)}"
+    )
+    for i in range(expected_heals):
+        request = _new_heal_request_text(capture[i + 1])
         expected_raw = _feedback_raw_from_model_text(model_texts[i])
-        assert expected_raw in round_text, (
-            f"heal round {i + 1} missing prior raw output"
+        assert expected_raw in request, (
+            f"heal round {i + 1} new request missing prior raw output"
         )
-        assert reasons[i] in round_text, (
-            f"heal round {i + 1} missing prior failure reason"
+        assert reasons[i] in request, (
+            f"heal round {i + 1} new request missing prior failure reason"
         )
 
 
