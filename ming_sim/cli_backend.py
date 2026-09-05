@@ -3880,10 +3880,12 @@ def _extract_secret_order(
         confirmation_pool = ThreadPoolExecutor(max_workers=1)
         confirmation_future = confirmation_pool.submit(
             confirm_dossier_links, minister_reply, dossier_candidates, broad_proposals, llm_config)
+    extract_failed = False
     try:
         raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
         _log(f"密令提取失败：{exc}")
+        extract_failed = True
     finally:
         # The confirmation future remains readable after shutdown.  Owning the
         # executor here guarantees cleanup even if any later normalization raises.
@@ -4006,6 +4008,10 @@ def _extract_secret_order(
         result["covert_task"] = covert_task
     if contract_error:
         result["contract_error"] = contract_error
+    # #354 vs #1504 边界：抽取器抛异常 → extract_failed（下游可暂存旨意+补充）；
+    # 抽取成功但契约为零 → 无此标记（下游走 pending_action_failures 可见失败）。
+    if extract_failed:
+        result["extract_failed"] = True
     return result
 
 def resolve_minister_actions(

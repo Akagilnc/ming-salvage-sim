@@ -794,17 +794,24 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         secret = dict(bundle.get("secret") or {})
         frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
         # #1565/0142：题名只认抽取器结构化「标题」，禁散文合成。
-        # #354：缺 title/frozen 仍须暂存 content，不静默丢单；commit 标 failed 后走
-        # 既有 retry_failed_pending_action / 重拟入口，与 session 前缀路同纪律。
+        # #354：抽取器抛异常 → extract_failed，有 content 仍暂存旨意+补充；commit 标 failed。
+        # #1504：抽取成功但契约为零（无 title / 无 frozen）→ 不暂存，落可见失败。
         title = str(secret.get("title") or "").strip()
         content_text = str(secret.get("content") or "").strip()
         contract_error = str(secret.get("contract_error") or "").strip()
+        extract_failed = bool(secret.get("extract_failed"))
         if not title:
             contract_error = contract_error or "密令缺少结构化标题"
         if frozen is None:
             contract_error = contract_error or "密令抽取未能冻结合同"
-        if not content_text:
-            reason = contract_error or "密令抽取未能冻结合同"
+        # #354 仅在抽取异常且有 content 时允许不完整暂存；其余缺 title/frozen/content 均可见失败。
+        allow_incomplete_stage = extract_failed and bool(content_text)
+        if not content_text or (
+            not allow_incomplete_stage and (not title or frozen is None)
+        ):
+            reason = contract_error or (
+                "密令缺少结构化标题" if not title else "密令抽取未能冻结合同"
+            )
             failures = list(ctx.out.get("pending_action_failures") or [])
             failures.append({
                 "kind": "secret_order",
