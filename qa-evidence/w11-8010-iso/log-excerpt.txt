@@ -1,0 +1,11 @@
+23:INFO:     127.0.0.1:48994 - "POST /api/menu/new_game HTTP/1.1" 200 OK
+86:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+89:         'token_rate_limit_exceeded'}}}                                         
+90:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+93:         'token_rate_limit_exceeded'}}}                                         
+94:ERROR    Error in Agent run: Unknown model error                                
+95:ERROR    Error in Agent run: Unknown model error                                
+96:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+99:         'token_rate_limit_exceeded'}}}                                         
+100:ERROR    Error in Agent run: Unknown model error                                
+101:highlight judge degraded (contract/unavailable): 通传未达，请稍后再召。
