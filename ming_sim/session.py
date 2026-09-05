@@ -1727,6 +1727,7 @@ class GameSession:
                             ),
                             issue_id=args.get("issue_id"),
                             issue_disposition=args.get("issue_disposition"),
+                            mode=args.get("mode") or args.get("颁布方式"),
                             intent_candidates=preclassified_intent,
                         ),
                     )
@@ -1744,7 +1745,7 @@ class GameSession:
                 result.pending_action_id = coalesce_pending_action_id(
                     result.pending_action_id,
                     self._stage_appointment_candidate(
-                        payload, character, message_text,
+                        payload, character,
                     ),
                 )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
@@ -2081,7 +2082,8 @@ class GameSession:
                     if not isinstance(payload, dict):
                         continue
                     payload["mode"] = resolve_directive_mode(
-                        player_message, existing=payload.get("mode"),
+                        extracted=(intent or {}).get("mode"),
+                        existing=payload.get("mode"),
                     )
                     if pending["kind"] == "directive" and (
                             recovery_confirmation or open_n is not None):
@@ -2281,8 +2283,11 @@ class GameSession:
             acts = {"decree_text": None, "secret_order": None}
         if not has_directive and acts["decree_text"]:
             # #502 L2：前缀「拟旨如下：」显式拟旨走单一 seam——已有候选则新拟独立一道，不压扁前道。
+            # #1731：mode 只接分类器 typed token / None，玩家散文永不入 typed 槽。
             out["pending_action_id"] = self.db.stage_explicit_directive(
-                self.state.turn, minister_name, acts["decree_text"], mode=message_text)
+                self.state.turn, minister_name, acts["decree_text"],
+                mode=(intent or {}).get("mode"),
+            )
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             assignee = so.get("assignee") or minister_name
             payload = {
@@ -2352,9 +2357,10 @@ class GameSession:
                 ),
             )
             if fallback["decree_text"]:
+                # #1731：mode 只接分类器 typed token / None，玩家散文永不入 typed 槽。
                 out["pending_action_id"] = self.db.stage_explicit_directive(
                     self.state.turn, minister_name, fallback["decree_text"],
-                    mode=message_text,
+                    mode=(intent or {}).get("mode"),
                 )
         return out
 
@@ -2595,6 +2601,7 @@ class GameSession:
         backing_dossier_id: object = None,
         issue_id: object = None,
         issue_disposition: object = None,
+        mode: object = None,
         intent_candidates: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
@@ -2637,7 +2644,7 @@ class GameSession:
                 minister_name,
                 text=text,
                 target_id=target,
-                emperor_text=message_text,
+                extracted_mode=mode,
             )
             return int(pending_id or 0)
 
@@ -2689,7 +2696,7 @@ class GameSession:
                 text=text,
                 target_id=target,
                 punish_action=action,
-                emperor_text=message_text,
+                extracted_mode=mode,
                 amount=n if action == "罚俸" else 0,
                 transaction_category=transaction_category,
                 backing_dossier_id=backing_dossier_id,
@@ -2716,11 +2723,11 @@ class GameSession:
             return 0
 
         return self.db.stage_explicit_directive(
-            self.state.turn, minister_name, text, mode=message_text,
+            self.state.turn, minister_name, text, mode=mode,
         )
 
     def _stage_appointment_candidate(
-        self, payload: str, appointer: Character, message_text: str,
+        self, payload: str, appointer: Character,
     ) -> int:
         """把吏部 propose_appointment 工具结果接入与口头任免相同的确认闸门。"""
         if GameSession._proposal_blocked(self.state):
@@ -2741,11 +2748,38 @@ class GameSession:
             return 0
         if action == "任命" and not office:
             return 0
-        staged_payload = {"name": name, "office": office, "appointer": appointer.name}
-        from ming_sim.cli_backend import resolve_directive_mode
-        staged_payload["mode"] = resolve_directive_mode(
-            message_text, data.get("mode") or data.get("颁布方式"),
+        from ming_sim.action_materialize import (
+            _apply_existing_appointment_hit,
+            _same_direction_office_hits,
         )
+        from ming_sim.cli_backend import resolve_directive_mode
+        # #1731：同向命中走唯一合并点（mode 可升可降）；多命中禁插；无命中才新建。
+        extracted_mode = data.get("mode") or data.get("颁布方式")
+        existing_hits = _same_direction_office_hits(
+            self.db,
+            int(self.state.turn),
+            name=name,
+            office=office,
+            action=action,
+            content=getattr(self, "content", None),
+        )
+        if len(existing_hits) > 1:
+            # 多命中≠无命中：不得再 INSERT
+            return 0
+        if len(existing_hits) == 1:
+            return _apply_existing_appointment_hit(
+                self,
+                existing_hits[0],
+                extracted_mode=extracted_mode,
+                minister_name=appointer.name,
+                turn=int(self.state.turn),
+                person_name=name,
+                annotate=True,
+            )
+        staged_payload = {
+            "name": name, "office": office, "appointer": appointer.name,
+            "mode": resolve_directive_mode(extracted=extracted_mode),
+        }
         metadata_aliases = {
             "office_type": "官署类别",
             "faction": "派系",

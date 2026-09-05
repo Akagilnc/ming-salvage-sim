@@ -923,6 +923,7 @@ def test_api_tool_args_deliver_punishment_fields_through_chat(game):
                             "punish_action": "罚俸",
                             "target_id": target.name,
                             "amount": 120,
+                            "mode": "midzhi",
                         },
                     )
                 ],
@@ -946,7 +947,9 @@ def test_api_tool_args_deliver_punishment_fields_through_chat(game):
     sess._start_cli_action_intent = lambda *_args, **_kwargs: None
     sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
 
-    result = GameSession.chat(sess, minister, f"拟旨罚{target.name}俸。")
+    result = GameSession.chat(
+        sess, minister, f"按普通程序拟旨罚{target.name}俸。",
+    )
     assert result.pending_action_id
     payload = dict(_pending_directive_payloads(db, state.turn, minister))[
         int(result.pending_action_id)
@@ -955,6 +958,7 @@ def test_api_tool_args_deliver_punishment_fields_through_chat(game):
     assert payload["punish_action"] == "罚俸"
     assert payload["target_id"] == target.name
     assert int(payload["amount"]) == 120
+    assert payload["mode"] == "midzhi"
 
 
 def test_propose_directive_exposes_optional_transaction_category(game):

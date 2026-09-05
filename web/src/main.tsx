@@ -11,7 +11,7 @@ import { useChatActions } from "./useChatActions";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
 import { FullscreenModal } from "./components/hud";
-import { GameHud } from "./components/gameHud";
+import { GameHud, resolveUnreadMemorialCount } from "./components/gameHud";
 import { NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
 import { AudienceArchiveModal } from "./components/audienceArchiveModal";
@@ -548,9 +548,8 @@ export function App() {
   // memorials 面键真源（#1285/#1726）；ModalName 仍用既有 "state" 槽承载奏疏收件箱。
   // 内容接 memorials 投影，与局势 issues 脱钩；核账期只读仍可达。
   const memorialsOpen = activeModal === "state" && isFaceReachable("memorials", settlementDisplay);
-  const unreadMemorialCount = typeof state.unread_memorial_count === "number"
-    ? state.unread_memorial_count
-    : (state.memorials || []).filter((m) => m.unread).length;
+  // #1740：未读计数唯一规则，主数据流算一次；HUD badge 与奏疏 modal 共用。
+  const unreadMemorialCount = resolveUnreadMemorialCount(state);
   const historyOpen = activeModal === "history" && isFaceReachable("history", settlementDisplay);
   // C：起居注入口单闸 = isFaceReachable(audience_archive)；不再经 gameHud.gatedModal 死枝。
   const audienceArchiveOpen = activeModal === "audience_archive" && isFaceReachable("audience_archive", settlementDisplay);
@@ -571,6 +570,7 @@ export function App() {
         activeDrawerKey={activeDrawerKey}
         navHandlers={navHandlers}
         secretOrderActiveCount={secretOrders.filter((o) => o.status === "active").length}
+        unreadMemorialCount={unreadMemorialCount}
         onOpenModal={openModal}
         onClosedFaceAttempt={(reason) => setError(reason)}
         edictOpen={edictOpen}

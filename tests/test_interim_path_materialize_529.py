@@ -502,6 +502,106 @@ def test_same_person_office_noop_keeps_midzhi_semantics(game):
     assert _payload(db, pending_id)["mode"] == "midzhi"
 
 
+@pytest.mark.parametrize(
+    ("appoint_action", "name", "office"),
+    [
+        ("任命", "续拟降甲", "陕西巡抚"),
+        ("罢免", "续拟降乙", "山西巡抚"),
+        ("无", "续拟降丙", "宣大总督"),
+    ],
+)
+def test_continue_draft_ordinary_with_tenure_reuses_same_id(
+    game, appoint_action, name, office,
+):
+    """#1731 r4：mode=ordinary+署理 续拟 → 同一 id，mode 降 ordinary，任别补署理。
+
+    覆盖路径早退口（tenure 触发）与核心同向命中；含任命/罢免/路径-only。
+    """
+    db, state, _content = game
+    actor = _minister(db)
+    seed_action = "任命" if appoint_action == "无" else appoint_action
+    first = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": seed_action,
+            "name": name,
+            "office": office,
+            "mode": "midzhi",
+        },
+        actor=actor,
+        message=f"{seed_action}{name}为{office}。",
+    )
+    pending_id = first.out["pending_action_id"]
+    assert pending_id
+    assert _payload(db, pending_id)["mode"] == "midzhi"
+
+    second = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": appoint_action,
+            "name": name,
+            "office": office,
+            "mode": "ordinary",
+            "appointment_tenure": "署理",
+        },
+        actor=actor,
+        message=f"改普通署理续拟{name}。",
+        pend=_office_pendings(db, state.turn),
+    )
+    assert second.out.get("pending_action_id") == pending_id
+    rows = _office_pendings(db, state.turn)
+    mine = [
+        p for p in rows
+        if _payload(db, p["id"]).get("name") == name
+    ]
+    assert len(mine) == 1
+    assert int(mine[0]["id"]) == int(pending_id)
+    payload = _payload(db, pending_id)
+    assert payload["mode"] == "ordinary"
+    assert payload.get("任别") == "署理" or payload.get("appointment_tenure") == "署理"
+
+
+def test_dismissal_silence_preserves_existing_midzhi(game):
+    """#1731：罢免同向命中 + 沉默 mode → 同一 id、mode 仍 midzhi。"""
+    db, state, _content = game
+    actor = _minister(db)
+    name, office = "罢免续拟人", "兵部尚书"
+    first = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "罢免",
+            "name": name,
+            "office": office,
+            "mode": "midzhi",
+        },
+        actor=actor,
+        message=f"罢免{name}。",
+    )
+    pending_id = first.out["pending_action_id"]
+    second = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "罢免",
+            "name": name,
+            "office": office,
+        },
+        actor=actor,
+        message=f"再议罢免{name}。",
+        pend=_office_pendings(db, state.turn),
+    )
+    assert second.out.get("pending_action_id") == pending_id
+    mine = [
+        p for p in _office_pendings(db, state.turn)
+        if _payload(db, p["id"]).get("name") == name
+    ]
+    assert len(mine) == 1
+    assert _payload(db, pending_id)["mode"] == "midzhi"
+
+
 def test_fallback_full_appointment_without_pending_stages_new(game):
     """无对应暂存 + 结构化人职 → 普通人事候选（带中旨）。"""
     db, state, _content = game
