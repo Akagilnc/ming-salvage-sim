@@ -3945,6 +3945,21 @@ def _refuse_settling_or_busy_write_phase(game) -> None:
         raise HTTPException(status_code=409, detail="月末结算进行中，请待结算完成后再操作。")
 
 
+def _refuse_if_open_night_barrier(game) -> None:
+    """#1727：court_break 预领屏障开启期间拒玩家召对写入口。
+
+    复用 #1353 has_open_barrier 唯一真源；只挂在召对写入口，不改
+    `_serialized_web_write` 本体（favorites 等非召对写不属本拒）。
+    """
+    if not hasattr(game, "_runtime_write_queue"):
+        return
+    if game._runtime_write_queue().has_open_barrier():
+        raise HTTPException(
+            status_code=409,
+            detail="本夜收夜中，暂不能召对。",
+        )
+
+
 def _try_acquire_serialized_web_write_gate(game):
     """非阻塞抢 write_gate；抢不到立即 409（不挂死）。返回已持锁的 gate。"""
     gate = _game_write_gate(game)
@@ -4961,6 +4976,8 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
     先原子条件 DELETE(以删成功为真源,免 check-then-act 竞态,pr-loop sourcery),
     失败再查行分流 404/409。"""
     game = get_game()
+    # #1727：收夜屏障窗内拒撤回 pending（与 undo/secret_order 同族召对写入口）。
+    _refuse_if_open_night_barrier(game)
     with _serialized_web_write(game):
         if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
             return {"withdrawn": action_id, "actions": _player_visible_pending_actions(
@@ -4977,6 +4994,8 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
 async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
     """重试本回合失败的密令下达，用已存 pending_actions payload 重新落库。"""
     game = get_game()
+    # #1727：收夜屏障窗内拒 retry pending（与 withdraw/undo 同族）。
+    _refuse_if_open_night_barrier(game)
     minister_name = ""
     with _serialized_web_write(game):
         try:
@@ -5206,6 +5225,9 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     if "deadline_months" in provided_fields and request.deadline_months is not None:
         lines.append(f"期限：{int(request.deadline_months)}月")
 
+    # #1727：端点侧补屏障拒——持闸兼容路 gate_already_held 会跳过 _chat_core 内检查。
+    _refuse_if_open_night_barrier(game)
+
     def _create_with_gate() -> Dict[str, Any]:
         with _serialized_web_write(game):
             return game._chat_with_write_gate_held(minister_name, "\n".join(lines))
@@ -5236,6 +5258,8 @@ async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
     # pre_settle 原子窗口，且 undo_chat_turn 直写共享连接 → 与其它写端点一致走 _write_gate
     # （cmr Gate2 r3 Finding1）。门内若相位门拒，HTTPException 经 finally 释放锁后正常上抛。
     game = get_game()
+    # #1727：收夜屏障窗内拒撤回本轮——禁 cancel_key 抽空屏障 wait_prior 所等尾随票。
+    _refuse_if_open_night_barrier(game)
     with _serialized_web_write(game):
         return game.undo_last_chat(minister_name)
 
