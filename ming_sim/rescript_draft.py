@@ -76,14 +76,75 @@ def _raise_option_missing_fields(
     *,
     missing_fields: Sequence[str],
     raw_option: object = None,
+    reprobe: bool = True,
 ) -> None:
-    """抛 missing 前先扫同 option 已给非法值——有非法则 ValueError（F2.5），不进补交。"""
-    _assert_raw_option_no_coexisting_illegals(raw_option)
+    """抛 missing 前：仅填补本次 missing 空白后重跑权威 normalize。
+
+    若重跑仍只缺字段 → 原 missing 成立；若撞 ValueError/组合错 → 该非法优先（F2.5），
+    不进补交。禁止手写第二套 shape 表。
+    """
+    if reprobe:
+        _reprobe_missing_for_coexisting_failures(
+            raw_option, missing_fields=missing_fields,
+        )
     raise RescriptOptionMissingFieldsError(
         message,
         missing_fields=missing_fields,
         raw_option=raw_option,
     )
+
+
+def _reprobe_missing_for_coexisting_failures(
+    raw_option: object,
+    *,
+    missing_fields: Sequence[str],
+) -> None:
+    """只填 missing_fields 中的空白以解锁下游权威校验；非法则原样上抛。"""
+    if not isinstance(raw_option, dict):
+        return
+    probe = copy.deepcopy(raw_option)
+    shape = layer_a_option_shape()
+    required = {str(k) for k in (shape.get("required_keys") or ())}  # type: ignore[union-attr]
+    present = {str(k) for k in (shape.get("present_keys") or ())}  # type: ignore[union-attr]
+    for field in missing_fields:
+        key = str(field)
+        cur = probe.get(key) if key in probe else None
+        blank = (
+            key not in probe
+            or cur is None
+            or (isinstance(cur, str) and not str(cur).strip())
+        )
+        if not blank:
+            continue
+        if key == "action_type":
+            # 中性合法 action，仅用于解锁后续校验；不假装业务已补
+            probe[key] = "assignment"
+        elif key in present:
+            probe[key] = ""
+        elif key in required:
+            if key == "target_kind":
+                probe[key] = "region"
+            elif key == "locality_scope":
+                probe[key] = "none"
+            else:
+                probe[key] = "_"
+        elif key == "grant_kind":
+            probe[key] = _GRANT_KIND_ARMY_PAY
+        else:
+            # amount/purpose/account 等：不填，留给权威报 missing 或非法
+            continue
+    try:
+        normalize_rescript_layer_a_option(
+            probe,
+            generation_admission=True,
+            _missing_reprobe=False,
+        )
+    except RescriptOptionMissingFieldsError:
+        return
+    except StructuredDecreeCombinationError:
+        raise
+    except ValueError:
+        raise
 
 
 @dataclass(frozen=True)
@@ -364,6 +425,7 @@ def _enforce_layer_a_action_conditional(
     raw: Mapping[str, object],
     *,
     shape: Mapping[str, object],
+    missing_reprobe: bool = True,
 ) -> None:
     """按 shape.action_conditional 强制七类必填/互斥/枚举（写回 out）。"""
     action = str(out["action_type"])
@@ -430,6 +492,7 @@ def _enforce_layer_a_action_conditional(
                 f"票拟 option.{action} 缺必填：{key_s}",
                 missing_fields=(key_s,),
                 raw_option=raw,
+                reprobe=missing_reprobe,
             )
         src = _raw_or_out(key_s)
         out[key_s] = str(src) if src is not None else val
@@ -441,6 +504,7 @@ def _enforce_layer_a_action_conditional(
                 f"票拟 option.{action} 须具备其一：{'/'.join(keys)}",
                 missing_fields=keys,
                 raw_option=raw,
+                reprobe=missing_reprobe,
             )
         # 写回保持 202571cc：有非空串则 str 写回（期限 int 归一由后续 int_keys 处理）
         for key_s in keys:
@@ -476,6 +540,7 @@ def _enforce_layer_a_action_conditional(
                     f"票拟 option.{action} 当 {ctrl}={cval} 时缺 {rk_s}",
                     missing_fields=(rk_s,),
                     raw_option=raw,
+                    reprobe=missing_reprobe,
                 )
             src = _raw_or_out(rk_s)
             out[rk_s] = str(src) if src is not None else _nonempty_str(rk_s)
@@ -499,6 +564,7 @@ def _enforce_layer_a_action_conditional(
                     f"票拟 option.{action} {cval} 缺 amount",
                     missing_fields=("amount",),
                     raw_option=raw,
+                    reprobe=missing_reprobe,
                 )
             try:
                 if isinstance(amt_raw, bool):
@@ -548,138 +614,11 @@ def normalize_stop_condition(raw: object) -> str:
     )
 
 
-def _assert_raw_option_no_coexisting_illegals(raw: object) -> None:
-    """#1746：标 missing 进补交前，同 option 已给非法值仍 F2.5（不得被缺字段短路）。
-
-    只判「已给出的值是否非法」；空白/缺键不在此变 missing。
-    金额/account/grant_action 走 require_grant_allocation_shape / strict_int 权威，
-    禁止平行 int() 放宽 float。
-    """
-    if not isinstance(raw, dict):
-        return
-    from ming_sim.strict_types import strict_int
-
-    shape = layer_a_option_shape()
-    action_types = frozenset(str(a) for a in shape.get("action_types") or ())  # type: ignore[union-attr]
-    action = str(raw.get("action_type") or "").strip()
-    if action and action not in action_types:
-        raise ValueError(f"票拟 option.action_type 非七类 routable：{action!r}")
-
-    # grant_kind 非空必须为权威军饷 kind（与 normalize 同判）
-    if "grant_kind" in raw and raw.get("grant_kind") is not None:
-        gk = str(raw.get("grant_kind") or "").strip()
-        if gk and gk != _GRANT_KIND_ARMY_PAY:
-            raise ValueError(f"grant 非法 grant_kind：{gk!r}")
-        if gk and action and action != "grant_allocation":
-            raise ValueError(f"非 grant_allocation 不得带 grant_kind：{raw.get('grant_kind')!r}")
-
-    # target_kind 非空须在闭集
-    if "target_kind" in raw and raw.get("target_kind") is not None:
-        tk = str(raw.get("target_kind") or "").strip()
-        if tk and tk not in TARGET_KINDS:
-            raise ValueError(f"票拟 option.target_kind 非法：{tk!r}")
-
-    # locality_scope 非空走权威归一（非法别名 → ValueError）
-    if "locality_scope" in raw and raw.get("locality_scope") is not None:
-        loc = raw.get("locality_scope")
-        if not isinstance(loc, str):
-            raise ValueError(
-                f"票拟 option.locality_scope 须为 str，拒 {type(loc).__name__}"
-            )
-        if str(loc).strip():
-            from ming_sim.execution_pressure import normalize_locality_scope
-            normalize_locality_scope(loc)
-
-    # amount / grant_action / account：有足够上下文则走权威 grant shape；
-    # 仅有 amount 时用与 shape 同款 strict_int（拒 bool/float）。
-    amt_present = "amount" in raw and raw.get("amount") not in (None, "")
-    ga_raw = ""
-    if "grant_action" in raw and raw.get("grant_action") is not None:
-        ga_raw = str(raw.get("grant_action") or "").strip()
-    gk_s = ""
-    if "grant_kind" in raw and raw.get("grant_kind") is not None:
-        gk_s = str(raw.get("grant_kind") or "").strip()
-    effective_ga = "协饷" if gk_s == _GRANT_KIND_ARMY_PAY else ga_raw
-    looks_grant = (
-        action == "grant_allocation" or bool(gk_s) or bool(ga_raw) or amt_present
-    )
-    if looks_grant and (effective_ga or amt_present):
-        if effective_ga:
-            from ming_sim.action_materialize import require_grant_allocation_shape
-
-            try:
-                require_grant_allocation_shape(
-                    grant_action=effective_ga,
-                    amount=raw.get("amount") if amt_present else None,
-                    account=raw.get("account") if "account" in raw else None,
-                )
-            except ValueError as exc:
-                field = str(getattr(exc, "field", "") or "")
-                # 权威 shape 的「缺」不在此升格；仅转发非法
-                if field == "amount" and amt_present:
-                    raise ValueError(str(exc)) from exc
-                if field == "grant_action" and ga_raw:
-                    raise ValueError(str(exc)) from exc
-                if field == "account":
-                    acc = str(raw.get("account") or "").strip()
-                    if acc:
-                        raise ValueError(str(exc)) from exc
-                # 其余 missing 类 shape 错忽略（留给主 normalize）
-        elif amt_present:
-            try:
-                amt_v = strict_int(raw.get("amount"), accept_numeric_strings=True)
-            except ValueError as exc:
-                raise ValueError(
-                    f"票拟 option.amount 非法：{raw.get('amount')!r}"
-                ) from exc
-            if amt_v <= 0:
-                raise ValueError(f"票拟 option.amount 须为正整数，得 {amt_v}")
-
-    # 其它 capability int：非空须 strict_int（与 amount 同拒 float/bool）
-    for key in shape.get("capability_int_keys") or ():  # type: ignore[union-attr]
-        key_s = str(key)
-        if key_s == "amount":
-            continue
-        if key_s not in raw or raw.get(key_s) in (None, ""):
-            continue
-        val = raw.get(key_s)
-        try:
-            strict_int(val, accept_numeric_strings=True)
-        except ValueError as exc:
-            raise ValueError(f"票拟 option.{key_s} 非法：{val!r}") from exc
-
-    purpose_raw = raw.get("purpose") if "purpose" in raw else None
-    if purpose_raw is not None and str(purpose_raw).strip():
-        purpose_s = str(purpose_raw).strip()
-        if purpose_s != "补饷" and (
-            gk_s == _GRANT_KIND_ARMY_PAY or effective_ga == "协饷"
-        ):
-            raise ValueError(f"票拟 option.purpose 非法：{purpose_raw!r}")
-
-    conditional = shape.get("action_conditional") or {}
-    if action and isinstance(conditional, Mapping):
-        rules = conditional.get(action) or {}
-        if isinstance(rules, Mapping):
-            enums = rules.get("enum_in") or {}
-            if isinstance(enums, Mapping):
-                for key, allowed in enums.items():
-                    key_s = str(key)
-                    if key_s not in raw or raw.get(key_s) in (None, ""):
-                        continue
-                    val_s = str(raw.get(key_s) or "").strip()
-                    if not val_s:
-                        continue
-                    allowed_set = frozenset(str(x) for x in allowed)  # type: ignore[union-attr]
-                    if val_s not in allowed_set:
-                        raise ValueError(
-                            f"票拟 option.{action}.{key_s} 非法：{val_s!r}"
-                        )
-
-
 def normalize_rescript_layer_a_option(
     raw: object,
     *,
     generation_admission: bool = False,
+    _missing_reprobe: bool = True,
 ) -> Dict[str, object]:
     """#657 层 A option shape 校验 + 服务端写 draft_capability（生产票拟/改票单真源）。
 
@@ -722,6 +661,7 @@ def normalize_rescript_layer_a_option(
             f"票拟 option 缺层 A 必填键或为空白：{'/'.join(missing_required)}",
             missing_fields=tuple(missing_required),
             raw_option=raw,
+            reprobe=_missing_reprobe,
         )
     for key in required_keys:  # type: ignore[union-attr]
         out[str(key)] = str(raw.get(key))  # 原文；strip 仅判空
@@ -754,6 +694,7 @@ def normalize_rescript_layer_a_option(
             f"票拟 option 缺层 A 须在键：{'/'.join(missing_present)}",
             missing_fields=tuple(missing_present),
             raw_option=raw,
+            reprobe=_missing_reprobe,
         )
     for key in present_keys:  # type: ignore[union-attr]
         value = raw[key]
@@ -763,7 +704,7 @@ def normalize_rescript_layer_a_option(
             )
         out[key] = value
     # 七类 action-conditional（与 shape/renderer 同真源；先于组合闸）
-    _enforce_layer_a_action_conditional(out, raw, shape=shape)
+    _enforce_layer_a_action_conditional(out, raw, shape=shape, missing_reprobe=_missing_reprobe)
     # #1624：层 A 即走共同组合校验（动作×目标×属地×承办），落库前不再另写平行闸
     from ming_sim.structured_decree import validate_structured_decree_combination
     validate_structured_decree_combination(out)
@@ -814,6 +755,7 @@ def normalize_rescript_layer_a_option(
                 "生成侧 grant_allocation 须补 grant_kind 辨别字段",
                 missing_fields=("grant_kind",),
                 raw_option=raw,
+                reprobe=_missing_reprobe,
             )
         if grant_kind:
             if grant_kind != grant_kind_army_pay:
@@ -845,6 +787,7 @@ def normalize_rescript_layer_a_option(
                         str(exc),
                         missing_fields=("amount",),
                         raw_option=raw,
+                        reprobe=_missing_reprobe,
                     )
                 raise
             if field == "grant_action" and not grant_kind and not raw_ga:
@@ -853,6 +796,7 @@ def normalize_rescript_layer_a_option(
                     str(exc),
                     missing_fields=(miss,),
                     raw_option=raw,
+                    reprobe=_missing_reprobe,
                 )
             raise
         if "amount" in shaped:
@@ -920,6 +864,7 @@ def normalize_rescript_layer_a_option(
                         str(exc),
                         missing_fields=tuple(truly_missing),
                         raw_option=raw,
+                        reprobe=_missing_reprobe,
                     )
                 raise ValueError(str(exc))
             out["amount"] = explicit["amount"]
