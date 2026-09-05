@@ -129,7 +129,8 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
 
     async def _go():
         # 并行：放行 phase2 前先观测展示态。
-        # stop：stream/drain 终态关联——失败路径须能让 watcher 退出并释放 hold。
+        # drain 终态必须先 stop/release，再 await watcher——禁在 finally 前无条件等 watch
+        # （resolve 失败产出 error SSE 后 drain 正常返回，phase2 永不置位）。
         stop = threading.Event()
 
         async def _watch():
@@ -146,15 +147,12 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
 
         watch_task = asyncio.create_task(_watch())
         try:
-            serialized = await _drain_resolve_sse([{"label": "发"}])
-            await watch_task
-            return serialized
+            return await _drain_resolve_sse([{"label": "发"}])
         finally:
-            # 失败/早退：关联终态 + 真正释放 hold，watcher 可退出。
+            # drain 已返回（done 或 error SSE）：先关联终态并释放 hold，再收 watcher。
             stop.set()
             release_phase2.set()
-            if not watch_task.done():
-                await watch_task
+            await watch_task
 
     serialized = asyncio.run(_go())
     assert entered["n"] == 1
