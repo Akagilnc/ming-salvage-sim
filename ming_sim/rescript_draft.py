@@ -54,17 +54,28 @@ RESCRIPT_OPTION_FIELD_HEAL_RETRIES = 3
 _OPTION_REPLACE_FIELD = "option"
 
 
-def _jsonable_fact(value: object) -> object:
-    """失败事实运输：只保留 JSON 可序列化形态，不解析散文。"""
-    if value is None or isinstance(value, (str, int, float, bool)):
+def _utf8_transport_str(value: str) -> str:
+    """运输层 UTF-8 安全形态：不改源 option；仅事实/反馈序列化时转义非法码点。"""
+    try:
+        value.encode("utf-8")
         return value
+    except UnicodeEncodeError:
+        return value.encode("utf-8", errors="backslashreplace").decode("ascii")
+
+
+def _jsonable_fact(value: object) -> object:
+    """失败事实运输：只保留 JSON 可序列化且 UTF-8 可编码形态，不解析散文。"""
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, str):
+        return _utf8_transport_str(value)
     if isinstance(value, Mapping):
         return {str(k): _jsonable_fact(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_jsonable_fact(v) for v in value]
     if isinstance(value, (set, frozenset)):
         return sorted((_jsonable_fact(v) for v in value), key=lambda x: str(x))
-    return str(value)
+    return _utf8_transport_str(str(value))
 
 
 def _field_failure(
@@ -877,29 +888,10 @@ def normalize_rescript_layer_a_option(
             TARGET_KIND_LOCALITY_SCOPES.get(kind_s, frozenset())
         )
 
-        def _combo_fail(fields: object, message: str) -> None:
-            field_list = [str(f) for f in (fields or ())]  # type: ignore[union-attr]
-            if not field_list:
-                field_list = ["locality_scope", "target_kind"]
-            currents = {
-                f: out.get(f, raw.get(f) if isinstance(raw, dict) else None)
-                for f in field_list
-            }
-            expecteds: Dict[str, object] = {}
-            for f in field_list:
-                if f == "locality_scope":
-                    expecteds[f] = scope_expected
-                elif f == "target_kind":
-                    expecteds[f] = sorted(TARGET_KINDS)
-                elif f == "action_type":
-                    expecteds[f] = sorted(action_types)
-                else:
-                    expecteds[f] = None
-            _fail(
-                *field_list,
-                currents=currents,
-                expecteds=expecteds,
-            )
+        def _current_for(field: str) -> object:
+            if field in out:
+                return out.get(field)
+            return raw.get(field) if isinstance(raw, dict) else None
 
         try:
             assert_target_locality_matrix(
@@ -908,12 +900,32 @@ def normalize_rescript_layer_a_option(
                 locality_scope=out.get("locality_scope"),
             )
         except TargetLocalityMatrixError as exc:
-            _combo_fail(exc.failed_fields, str(exc))
-        except ValueError as exc:
-            _combo_fail(
-                frozenset({"locality_scope", "target_kind", "action_type"}),
-                str(exc),
+            _carry_authority_field_failures(
+                failed, facts,
+                field_failures=getattr(exc, "field_failures", ()),
+                failed_fields=exc.failed_fields or (
+                    "locality_scope", "target_kind",
+                ),
+                currents={
+                    f: _current_for(str(f))
+                    for f in (exc.failed_fields or ())
+                },
             )
+        except ValueError as exc:
+            _fail(
+                "locality_scope", "target_kind", "action_type",
+                currents={
+                    "locality_scope": out.get("locality_scope"),
+                    "target_kind": kind_s,
+                    "action_type": action_type,
+                },
+                expecteds={
+                    "locality_scope": scope_expected,
+                    "target_kind": sorted(TARGET_KINDS),
+                    "action_type": sorted(action_types),
+                },
+            )
+            del exc
         tid = str(out.get("target_id") or "").strip()
         if (
             tid
@@ -927,7 +939,17 @@ def normalize_rescript_layer_a_option(
             try:
                 validate_structured_decree_combination(out)
             except StructuredDecreeCombinationError as exc:
-                _combo_fail(exc.failed_fields, str(exc))
+                _carry_authority_field_failures(
+                    failed, facts,
+                    field_failures=getattr(exc, "field_failures", ()),
+                    failed_fields=exc.failed_fields or (
+                        "locality_scope", "target_kind",
+                    ),
+                    currents={
+                        f: _current_for(str(f))
+                        for f in (exc.failed_fields or ())
+                    },
+                )
 
     # 其余 capability 闭集字段透传（有则规范化，无则由 derive 填默认）
     for key in capability_str_keys:  # type: ignore[union-attr]
@@ -1036,21 +1058,15 @@ def normalize_rescript_layer_a_option(
                 )
             except ValueError as exc:
                 field = str(getattr(exc, "field", "") or "") or "grant_action"
-                exp: object = None
-                if field == "amount":
-                    exp = {"type": "positive_int"}
-                elif field == "account":
-                    exp = ["国库", "内库"]
-                elif field == "grant_action":
-                    from ming_sim.action_materialize import GRANT_ACTIONS
-                    exp = sorted(GRANT_ACTIONS - {"无"})
+                current = getattr(exc, "current", None)
+                if current is None:
+                    current = (
+                        raw.get(field) if field in raw else out.get(field)
+                    )
                 _fail(
                     field,
-                    current=(
-                        raw.get(field) if field in raw
-                        else out.get(field)
-                    ),
-                    expected=exp,
+                    current=current,
+                    expected=getattr(exc, "expected", None),
                 )
             else:
                 out["grant_action"] = shaped["grant_action"]
@@ -1086,32 +1102,10 @@ def normalize_rescript_layer_a_option(
                             cadence=cadence_cur,
                         )
                     except IncompleteXiexangPayloadError as exc:
-                        from ming_sim.action_materialize import XIEXIANG_TARGET_KINDS
-                        xiexang_expected = {
-                            "amount": {"type": "positive_int"},
-                            "account": ["国库", "内库"],
-                            "purpose": "补饷",
-                            "target_kind": sorted(XIEXIANG_TARGET_KINDS),
-                            "target_id": {"nonempty_str": True},
-                            "cadence": ["一次性", "每月", ""],
-                        }
-                        currents = {
-                            "amount": out.get("amount", raw.get("amount")),
-                            "account": out.get("account", raw.get("account")),
-                            "purpose": purpose_cur,
-                            "target_kind": out.get(
-                                "target_kind", raw.get("target_kind"),
-                            ),
-                            "target_id": out.get("target_id", raw.get("target_id")),
-                            "cadence": cadence_cur,
-                        }
-                        _fail(
-                            *[str(f) for f in exc.failed_fields],
-                            currents=currents,
-                            expecteds={
-                                str(f): xiexang_expected.get(str(f))
-                                for f in exc.failed_fields
-                            },
+                        _carry_authority_field_failures(
+                            failed, facts,
+                            field_failures=getattr(exc, "field_failures", ()),
+                            failed_fields=exc.failed_fields,
                         )
                     else:
                         out["amount"] = explicit["amount"]
@@ -1119,6 +1113,9 @@ def normalize_rescript_layer_a_option(
                         out["purpose"] = explicit["purpose"]
                         out["target_kind"] = explicit["target_kind"]
                         out["target_id"] = explicit["target_id"]
+
+    # 首次消耗前：可归属 option 的编码失败并入同一补交事实集（不擦洗、不改哈希契约）
+    _note_option_utf8_failures(raw, out, failed=failed, facts=facts)
 
     if failed:
         _raise_option_missing_fields(
@@ -1129,7 +1126,7 @@ def normalize_rescript_layer_a_option(
             replace_option=replace_option,
         )
 
-    # derive 需要 action_type 等必填已齐
+    # derive 需要 action_type 等必填已齐；编码已在上环收束，不再经 ValueError 整批
     out["draft_capability"] = derive_draft_capability(out)
     return out
 
@@ -1388,35 +1385,71 @@ def _ungrounded_target_failure(
     return None
 
 
-def _utf8_field_failure(raw_option: object) -> Optional[RescriptOptionMissingFieldsError]:
-    """option 自由文本 UTF-8 不可编码 → 字段补交。"""
-    if not isinstance(raw_option, dict):
-        return None
-    failed: List[str] = []
-    facts: List[Dict[str, object]] = []
-    for field in ("label", "hint"):
-        val = raw_option.get(field)
-        if val is None:
+def _note_option_utf8_failures(
+    *sources: object,
+    failed: List[str],
+    facts: Dict[str, Dict[str, object]],
+) -> None:
+    """capability/序列化字符串字段 UTF-8 不可编码 → 并入同一失败事实集。
+
+    在 derive_draft_capability / options_json 首次消耗前调用；不擦洗字符。
+    """
+    seen: set[str] = set()
+    for src in sources:
+        if not isinstance(src, Mapping):
             continue
-        text = str(val)
-        try:
-            text.encode("utf-8")
-        except UnicodeEncodeError as exc:
-            failed.append(field)
-            facts.append(_field_failure(
-                field,
-                current=text,
-                expected={"encoding": "utf-8"},
-            ))
-            del exc
-    if not failed:
-        return None
-    return RescriptOptionMissingFieldsError(
-        f"票拟字段含 SQLite 不可编码字符：{'/'.join(failed)}",
-        missing_fields=tuple(failed),
-        raw_option=raw_option,
-        field_failures=facts,
+        for key, val in src.items():
+            key_s = str(key)
+            if not key_s or key_s in seen or key_s in facts:
+                continue
+            if not isinstance(val, str):
+                continue
+            try:
+                val.encode("utf-8")
+            except UnicodeEncodeError:
+                seen.add(key_s)
+                _note_failed(
+                    failed, key_s,
+                    facts=facts,
+                    current=val,
+                    expected={"encoding": "utf-8"},
+                )
+
+
+def _carry_authority_field_failures(
+    failed: List[str],
+    facts: Dict[str, Dict[str, object]],
+    *,
+    field_failures: object = None,
+    failed_fields: object = None,
+    currents: Optional[Mapping[str, object]] = None,
+) -> bool:
+    """运输权威接缝 field_failures；无事实时仅按 failed_fields 记字段名。"""
+    carried = False
+    for raw_fact in field_failures or ():  # type: ignore[union-attr]
+        if not isinstance(raw_fact, Mapping):
+            continue
+        field = str(raw_fact.get("field") or "").strip()
+        if not field:
+            continue
+        carried = True
+        _note_failed(
+            failed, field,
+            facts=facts,
+            current=raw_fact.get("current"),
+            expected=raw_fact.get("expected"),
+        )
+    if carried:
+        return True
+    field_list = [str(f) for f in (failed_fields or ()) if str(f)]
+    if not field_list:
+        return False
+    _note_failed(
+        failed, *field_list,
+        facts=facts,
+        currents=currents,
     )
+    return True
 
 
 def validate_rescript_draft_items(
@@ -1483,172 +1516,52 @@ def validate_rescript_draft_items(
         options: List[Dict[str, object]] = []
         item_missing: List[RescriptOptionMissingFailure] = []
         for option_index, opt in enumerate(raw_opts):
-            def _quarantine(exc: RescriptOptionMissingFieldsError) -> None:
-                raw_for = opt if isinstance(opt, dict) else exc.raw_option
-                # 合并 grounding / utf8 到同一 option 失败（不另分闸）
-                fields = list(exc.missing_fields)
-                facts = [
-                    dict(f) for f in tuple(exc.field_failures or ())
-                    if isinstance(f, Mapping)
-                ]
-                replace = bool(exc.replace_option)
-                ground_exc = _ungrounded_target_failure(
-                    raw_for if isinstance(raw_for, dict) else opt,
-                    region_target_ids=region_target_ids,
-                    army_target_ids=army_target_ids,
-                )
-                if ground_exc is not None:
-                    for f in ground_exc.missing_fields:
-                        if f not in fields:
-                            fields.append(f)
-                    facts.extend(dict(x) for x in ground_exc.field_failures)
-                utf_exc = _utf8_field_failure(
-                    raw_for if isinstance(raw_for, dict) else opt,
-                )
-                if utf_exc is not None:
-                    for f in utf_exc.missing_fields:
-                        if f not in fields:
-                            fields.append(f)
-                    facts.extend(dict(x) for x in utf_exc.field_failures)
-                merged = RescriptOptionMissingFieldsError(
-                    str(exc),
-                    missing_fields=tuple(fields),
-                    raw_option=raw_for,
-                    field_failures=facts,
-                    replace_option=replace,
-                )
-                item_missing.append(_option_failure_from_exc(
-                    item_index=item_index,
-                    option_index=option_index,
-                    title=title,
-                    exc=merged,
-                    raw_option=raw_for,
-                ))
-
-            if not isinstance(opt, dict):
-                non_obj = RescriptOptionMissingFieldsError(
-                    f"票拟 option 非 object（F2.2）：{title!r}",
-                    missing_fields=(_OPTION_REPLACE_FIELD,),
-                    raw_option=opt,
-                    field_failures=[
-                        _field_failure(
-                            _OPTION_REPLACE_FIELD,
-                            current=type(opt).__name__,
-                            expected="object",
-                        )
-                    ],
-                    replace_option=True,
-                )
-                if isolate_option_missing:
-                    _quarantine(non_obj)
-                    continue
-                raise ValueError(str(non_obj)) from non_obj
-            # 层 A 单真源：完整 option + 服务端 draft_capability
-            # 生成 admission：落实 grant_kind discriminator，拒直写协饷旁路
             try:
                 normalized_opt = normalize_rescript_layer_a_option(
                     opt, generation_admission=True,
                 )
             except RescriptOptionMissingFieldsError as exc:
                 if isolate_option_missing:
-                    _quarantine(exc)
+                    item_missing.append(_option_failure_from_exc(
+                        item_index=item_index,
+                        option_index=option_index,
+                        title=title,
+                        exc=exc,
+                        raw_option=opt if isinstance(opt, dict) else exc.raw_option,
+                    ))
                     continue
                 raise ValueError(
                     f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
-                ) from exc
-            except StructuredDecreeCombinationError as exc:
-                # 防御：normalize 已收组合进补交；若仍上抛，isolate 时同样进补交。
-                combo_exc = RescriptOptionMissingFieldsError(
-                    f"票拟 option 结构组合失败：{title!r} {exc}",
-                    missing_fields=tuple(sorted(str(f) for f in exc.failed_fields))
-                    or ("locality_scope", "target_kind"),
-                    raw_option=opt,
-                    field_failures=[
-                        _field_failure(
-                            str(f),
-                            current=opt.get(str(f)) if isinstance(opt, dict) else None,
-                            expected=None,
-                        )
-                        for f in (exc.failed_fields or ())
-                    ],
-                )
-                if isolate_option_missing:
-                    _quarantine(combo_exc)
-                    continue
-                raise ValueError(
-                    f"票拟 option 结构组合失败（整批失败）：{title!r} {exc}"
                 ) from exc
             except ValueError as exc:
+                # 非 option 可归属的程序/契约异常：整批降级（保留边界）
                 raise ValueError(
                     f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
                 ) from exc
-            # 成功归一后仍检 grounding / utf8；失败进同一补交
+            # 成功归一后唯一接地检查；失败进同一补交
             ground_exc = _ungrounded_target_failure(
                 normalized_opt,
                 region_target_ids=region_target_ids,
                 army_target_ids=army_target_ids,
             )
-            if ground_exc is None:
-                # raw 也可能带未归一 target；以 raw 再咬一次
-                ground_exc = _ungrounded_target_failure(
-                    opt,
-                    region_target_ids=region_target_ids,
-                    army_target_ids=army_target_ids,
-                )
-            utf_exc = _utf8_field_failure(normalized_opt) or _utf8_field_failure(opt)
-            post_failed: Optional[RescriptOptionMissingFieldsError] = None
-            if ground_exc is not None or utf_exc is not None:
-                fields: List[str] = []
-                facts: List[Dict[str, object]] = []
-                for part in (ground_exc, utf_exc):
-                    if part is None:
-                        continue
-                    for f in part.missing_fields:
-                        if f not in fields:
-                            fields.append(f)
-                    facts.extend(dict(x) for x in part.field_failures)
-                post_failed = RescriptOptionMissingFieldsError(
-                    f"票拟 option 接地/编码失败：{'/'.join(fields)}",
-                    missing_fields=tuple(fields),
-                    raw_option=opt,
-                    field_failures=facts,
-                )
-            if post_failed is not None:
+            if ground_exc is not None:
                 if isolate_option_missing:
-                    _quarantine(post_failed)
+                    item_missing.append(_option_failure_from_exc(
+                        item_index=item_index,
+                        option_index=option_index,
+                        title=title,
+                        exc=ground_exc,
+                        raw_option=opt if isinstance(opt, dict) else ground_exc.raw_option,
+                    ))
                     continue
                 raise ValueError(
-                    f"票拟 option 接地/编码失败（整批失败，F2.5）：{title!r} {post_failed}"
-                ) from post_failed
+                    f"票拟 option 接地失败（整批失败，F2.5）：{title!r} {ground_exc}"
+                ) from ground_exc
             options.append(normalized_opt)
         if item_missing:
             # 本条有失败 option：收齐后统一 batch；不把本条 partial 当成功 draft
             missing_failures.extend(item_missing)
             continue
-        # options_json 序列化前再校验 ensure_ascii=False 场景的可编码性
-        try:
-            json.dumps(options, ensure_ascii=False).encode("utf-8")
-        except UnicodeEncodeError as exc:  # noqa: BLE001
-            if isolate_option_missing:
-                # 编码失败已在逐 option 检；此处兜底整项
-                raise RescriptOptionMissingFieldsBatch([
-                    RescriptOptionMissingFailure(
-                        item_index=item_index,
-                        option_index=0,
-                        title=title,
-                        missing_fields=("label", "hint"),
-                        raw_option=raw_opts[0] if raw_opts else None,
-                        heal_id=_option_heal_id(item_index, 0),
-                        field_failures=(
-                            _field_failure(
-                                "label", current=None, expected={"encoding": "utf-8"},
-                            ),
-                        ),
-                    )
-                ]) from exc
-            raise ValueError(
-                f"票拟字段含 SQLite 不可编码字符（整批 shape 错，F2.5）：options {exc}"
-            )
         draft: Dict[str, object] = {"title": title, "context": context, "options": options}
         # 权威快照为准：只认喂给 LLM 的 issue 盘面里真实存在的 issue_id（不信回显）。
         issue_id = raw.get("issue_id")
@@ -1768,10 +1681,12 @@ def _missing_field_heal_feedback(
                 field_failures.append(_field_failure(name, current=cur, expected=None))
         draft_option: object = None
         if isinstance(failure.raw_option, dict):
-            draft_option = dict(failure.raw_option)
-            draft_option["heal_id"] = heal_id
+            # 运输安全副本；源 raw_option 不擦洗
+            draft_option = _jsonable_fact(dict(failure.raw_option))
+            if isinstance(draft_option, dict):
+                draft_option["heal_id"] = heal_id
         elif failure.replace_option:
-            draft_option = failure.raw_option
+            draft_option = _jsonable_fact(failure.raw_option)
         payload_failures.append({
             "heal_id": heal_id,
             "item_index": int(failure.item_index),
@@ -2029,7 +1944,7 @@ def _failure_log_rows(
         if isinstance(failure.raw_option, dict):
             label = failure.raw_option.get("label")
             if label is not None:
-                row["label"] = label
+                row["label"] = _jsonable_fact(label)
         rows.append(row)
     return rows
 
@@ -2080,8 +1995,8 @@ def generate_rescript_draft(
         min_options: int = 2,
         max_options: int = 3,
     ) -> List[Dict[str, object]]:
-        # grounding 收进 isolate 补交；成功路径再做一次权威接地断言（目录已喂给 validate）
-        drafts = validate_rescript_draft_items(
+        # grounding 由 validate 内唯一完整 option 校验负责（不在此重复末端断言）
+        return validate_rescript_draft_items(
             data,
             board_ids,
             min_options=min_options,
@@ -2090,10 +2005,6 @@ def generate_rescript_draft(
             region_target_ids=region_target_ids,
             army_target_ids=army_target_ids,
         )
-        if not isolate_option_missing:
-            _assert_region_targets_grounded(drafts, region_target_ids)
-            _assert_army_targets_grounded(drafts, army_target_ids)
-        return drafts
 
     heal_retries = max(0, int(RESCRIPT_OPTION_FIELD_HEAL_RETRIES))
     heal_attempt = 0

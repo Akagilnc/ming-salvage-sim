@@ -520,14 +520,108 @@ def test_option_shape_failures_heal_not_batch(
     assert any(o.get("label") == sibling["label"] for o in drafts[0]["options"])
 
 
-def test_bogus_target_kind_structured_expected_domain():
-    """target_kind 非法：结构化失败含期望域（TARGET_KINDS），非仅自然语言。"""
-    bad = _army_pay(target_kind="bogus")
-    with pytest.raises(rescript_mod.RescriptOptionMissingFieldsError) as ei:
-        normalize_rescript_layer_a_option(bad, generation_admission=True)
-    facts = {f["field"]: f for f in ei.value.field_failures}
-    assert facts["target_kind"]["current"] == "bogus"
-    assert "army" in (facts["target_kind"]["expected"] or [])
+
+@pytest.mark.parametrize(
+    "mutate,heal_fix,must_field,expected_check",
+    [
+        (
+            lambda o: o.update({"transaction_category": "bogus"}),
+            {"transaction_category": "督赈"},
+            "transaction_category",
+            lambda exp: isinstance(exp, list) and "督赈" in exp,
+        ),
+        (
+            lambda o: o.update({"region_id": "henan", "target_id": "shaanxi"}),
+            {"region_id": "shaanxi"},
+            "region_id",
+            lambda exp: exp == "shaanxi",
+        ),
+        (
+            lambda o: o.update({"target_kind": "bogus"}),
+            {"target_kind": "region"},
+            "target_kind",
+            lambda exp: isinstance(exp, list) and "region" in exp,
+        ),
+    ],
+    ids=["bad_category", "region_mismatch", "bogus_target_kind"],
+)
+def test_combo_authority_expected_in_heal_request(
+    mutate, heal_fix, must_field, expected_check, monkeypatch, tmp_path,
+):
+    """非 locality 组合期望由权威接缝提供；实际 LLM 补交请求携带 expected。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _hold(label="组合拟")
+    mutate(bad)
+    sibling = _hold(label="兄弟")
+    # 坏项放非零位
+    first = _items_json([{"title": "u", "context": "c", "options": [sibling, bad]}])
+    healed = _heals_json([("0:1", dict(heal_fix))])
+    tags: list[str] = []
+    prompts: list[str] = []
+    n = {"i": 0}
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        tags.append(tag)
+        prompts.append(prompt)
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=48)
+    assert drafts is not None and "rescript-draft-heal" in tags
+    req = _parse_heal_request(next(
+        p for t, p in zip(tags, prompts) if t == "rescript-draft-heal"
+    ))
+    assert req["failures"][0]["option_index"] == 1
+    ff = _field_failure_map(req["failures"][0])
+    assert must_field in ff
+    assert expected_check(ff[must_field]["expected"]), ff[must_field]
+    assert any(o.get("label") == sibling["label"] for o in drafts[0]["options"])
+
+
+@pytest.mark.parametrize(
+    "field,bad_val,fix_val",
+    [
+        ("label", "\ud800", "边饷拟"),
+        ("hint", "\ud800", "边饷急"),
+        ("office", "\ud800", ""),
+    ],
+    ids=["label", "hint", "office"],
+)
+def test_utf8_option_field_heals_not_batch(
+    field, bad_val, fix_val, monkeypatch, tmp_path,
+):
+    """编码失败接入同一补交；坏项非零位；兄弟不改写。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _army_pay(label="边饷拟")
+    bad[field] = bad_val
+    sibling = _hold(label="缓议兄")
+    first = _items_json([{"title": "u", "context": "c", "options": [sibling, bad]}])
+    healed = _heals_json([("0:1", {field: fix_val})])
+    tags: list[str] = []
+    prompts: list[str] = []
+    n = {"i": 0}
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        tags.append(tag)
+        prompts.append(prompt)
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=49)
+    assert drafts is not None
+    assert tags == ["rescript-draft", "rescript-draft-heal"]
+    req = _parse_heal_request(prompts[1])
+    assert req["failures"][0]["option_index"] == 1
+    ff = _field_failure_map(req["failures"][0])
+    assert field in ff
+    assert ff[field]["expected"] == {"encoding": "utf-8"}
+    opts = drafts[0]["options"]
+    assert any(o.get("label") == sibling["label"] for o in opts)
+    grant = next(o for o in opts if o.get("grant_action") == "协饷")
+    assert grant.get(field) == fix_val
+    assert grant["amount"] == 300
 
 
 def test_provider_and_item_level_still_whole_batch(monkeypatch, tmp_path):
