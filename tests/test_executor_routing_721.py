@@ -578,3 +578,28 @@ def test_create_dossier_unmapped_with_outer_collector_records_once(env, tmp_path
     ).fetchone()[0] == 1
     assert mirror.exists()
     assert "duty_route_unmapped" in mirror.read_text(encoding="utf-8")
+
+
+def test_commit_pending_unmapped_without_collector_fails_loud(env):
+    """#1745：真实入口 commit_pending_actions 无 collector + 路由拒收 → 响亮，不标 failed 无痕。"""
+    db, state, content = env
+    pending_id = stage_assignment_candidate(
+        db, state.turn, "陈新甲", text="修仙", title="修仙",
+        transaction_category="修仙",
+    )
+    assert pending_id > 0
+    with pytest.raises(ValueError, match="RejectionCollector"):
+        db.commit_pending_actions(
+            state, content=content, action_ids=[pending_id],
+        )
+    # pending 不得被吞成 failed 而无拒收行
+    status = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["status"]
+    assert status == "pending"
+    table = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
+    ).fetchone()
+    assert table is None or db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports"
+    ).fetchone()[0] == 0
