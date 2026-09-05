@@ -276,13 +276,24 @@ async def _wait_for(pred) -> None:
 
 async def _start_hanging_chat(game, client, minister):
     """经真实 /chat/stream ASGI 请求起一轮回话并卡在生成中（在飞）。
-    返回 (chat_task, allow)：chat_task 是仍在跑的 SSE 请求；置位 allow 后回话收尾。"""
+    返回 (chat_task, allow)：chat_task 是仍在跑的 SSE 请求；置位 allow 后回话收尾。
+
+    责任移交：成功返回后由调用方持有 allow/task 全持有期释放。
+    移交前（等 started）失败：task 正常失败已终态；取消等非终态路径仍可能挂在 allow，
+    故本 helper 在 raise 前 release+drain，不把半移交资源留给调用方。
+    """
     started, allow = threading.Event(), threading.Event()
     game.session.registry.get = lambda ch: _FakeAgent(started=started, allow=allow)
     task = asyncio.create_task(
         client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
-    # 生成已开始，或 chat worker 已终态（失败须传播，不得只等 started）。
-    await _await_event_or_task(started, task)
+    try:
+        # 生成已开始，或 chat worker 已终态（失败须传播，不得只等 started）。
+        await _await_event_or_task(started, task)
+    except BaseException:
+        # 移交前失败：释放 allow 并排空；已终态则 drain 只消费，不替换原错。
+        allow.set()
+        await _drain_tasks(task)
+        raise
     return task, allow
 
 
@@ -320,24 +331,26 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
 
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
+            # 取得 chat 所有权后即进入释放责任区间——观察/断言/写入均在 try 内。
             chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
-            night = an.get_open_night(game.db)
-            # 持久化行确认在飞
-            assert game.db.conn.execute(
-                "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "generating"
-            assert int(game._pending_writes_count) >= 1
-            # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
-            # 不触发确认抽取 LLM。
-            game.db.upsert_pending_directive(
-                game.state.turn, minister, payload={
-                    "text": "着户部核边饷", "actor": minister,
-                    "dossier_action_type": "policy",
-                    "target_kind": "issue", "target_id": "border-pay",
-                })
-            game.db.commit_pending_actions(game.state, kind_filter="directive")
-
-            issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
+            issue_task = None
             try:
+                night = an.get_open_night(game.db)
+                # 持久化行确认在飞
+                assert game.db.conn.execute(
+                    "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "generating"
+                assert int(game._pending_writes_count) >= 1
+                # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
+                # 不触发确认抽取 LLM。
+                game.db.upsert_pending_directive(
+                    game.state.turn, minister, payload={
+                        "text": "着户部核边饷", "actor": minister,
+                        "dossier_action_type": "policy",
+                        "target_kind": "issue", "target_id": "border-pay",
+                    })
+                game.db.commit_pending_actions(game.state, kind_filter="directive")
+
+                issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
                 # 屏障见票或 issue 终态；失败不挂死。
                 await _await_event_or_task(observed_ticket_inflight, issue_task)
                 allow.set()                                   # 放行回话落档 + 放票
@@ -347,7 +360,7 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
                 issue_resp = await issue_task
                 return night, _parse_sse(chat_resp.text), _parse_sse(issue_resp.text)
             finally:
-                # 持有 chat allow：先释放，再排空全部任务；收尾不抛，保留主体原错。
+                # 持有 chat allow：先释放，再排空已创建 sibling；收尾不抛，保留主体原错。
                 allow.set()
                 await _drain_tasks(chat_task, issue_task)
 
@@ -776,17 +789,19 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
 
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
+            # 取得 chat 所有权后即进入释放责任区间——观察/断言均在 try 内。
             chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
-            night = an.get_open_night(game.db)
-            assert game.db.conn.execute(
-                "SELECT status FROM chat_turns WHERE night_id=?",
-                (night["id"],),
-            ).fetchone()["status"] == "generating"
-
-            issue_task = asyncio.create_task(
-                issue_client.post("/api/decree/issue/stream", json={})
-            )
+            issue_task = None
             try:
+                night = an.get_open_night(game.db)
+                assert game.db.conn.execute(
+                    "SELECT status FROM chat_turns WHERE night_id=?",
+                    (night["id"],),
+                ).fetchone()["status"] == "generating"
+
+                issue_task = asyncio.create_task(
+                    issue_client.post("/api/decree/issue/stream", json={})
+                )
                 await _await_event_or_task(observed_ticket_inflight, issue_task)
                 assert not issue_task.done(), (
                     "issue must wait for chat ticket, not forge elapsed 409"
@@ -797,7 +812,7 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
                 issue_resp = await issue_task
                 return night, _parse_sse(issue_resp.text), _parse_sse(chat_resp.text)
             finally:
-                # 持有 chat allow：先释放，再排空全部任务；收尾不抛，保留主体原错。
+                # 持有 chat allow：先释放，再排空已创建 sibling；收尾不抛，保留主体原错。
                 allow.set()
                 await _drain_tasks(chat_task, issue_task)
 
@@ -834,12 +849,15 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
                 ticks += 1
 
         async with _client() as chat_client, _client() as adv_client:
+            # 取得 chat 所有权后即进入释放责任区间；sibling 尚未创建时按实际存在收尾。
             chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
-            t = asyncio.create_task(ticker())
-            adv_task = asyncio.create_task(
-                adv_client.post("/api/decree/advance_without_edict")
-            )
+            t = None
+            adv_task = None
             try:
+                t = asyncio.create_task(ticker())
+                adv_task = asyncio.create_task(
+                    adv_client.post("/api/decree/advance_without_edict")
+                )
                 # 等待期间 event loop 须继续跑 ticker（端点已 offload）
                 while ticks < 5:
                     await asyncio.sleep(0)
@@ -849,9 +867,10 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
                 resp = await adv_task
                 return mid_ticks, ticks, resp.status_code
             finally:
-                # 持有 chat allow：先释放，再排空全部任务；收尾不抛，保留主体原错。
+                # 持有 chat allow：先释放，再排空已创建 sibling；收尾不抛，保留主体原错。
                 allow.set()
-                t.cancel()
+                if t is not None:
+                    t.cancel()
                 await _drain_tasks(chat_task, adv_task, t)
 
     mid_ticks, ticks, status = asyncio.run(scenario())
