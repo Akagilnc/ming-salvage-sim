@@ -1148,13 +1148,18 @@ def _commit_night_approved(
     if not rows:
         return []
     action_ids = [int(r["id"]) for r in rows]
+    from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
+    from ming_sim.error_pack import rejections_jsonl_path
+    collector = RejectionCollector()
     applied = db.commit_pending_actions(
         state,
         content=content,
         registry=registry,
         action_ids=action_ids,
         directive_status=directive_status,
+        rejection_collector=collector,
     )
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return list(applied or [])
 
 
