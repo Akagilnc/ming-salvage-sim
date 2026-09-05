@@ -4568,16 +4568,11 @@ def _wait_exit_detach_for_open(for_path: Optional[str] = None) -> bool:
 
 
 def _clear_menu_path_completions_for_tests() -> None:
-    """测试夹具：清空路径回执（替代旧单槽赋值 None）。"""
+    """测试夹具：清空路径回执。"""
     with _menu_path_lock:
         for key, lease in list(_menu_path_leases.items()):
             lease.completion = None
             _path_lease_gc_locked(key, lease)
-
-
-# 旧单槽名保留为可 monkeypatch 的占位；权威在 _menu_path_leases。
-# 赋值 None 时请同时 _clear_menu_path_completions_for_tests()（夹具已改用 clear）。
-_menu_exit_detach_completion: Optional[_MenuExitDetachCompletion] = None
 
 
 def _runtime_restorable(game: Any) -> bool:
