@@ -97,66 +97,6 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     assert not gate.locked()
 
 
-def test_new_game_switches_db_path_and_archives_old_after_drain(monkeypatch, tmp_path):
-    """#396 completeness: new_game must not delete or rename the old DB under a still-writing
-    background worker. It switches the main DB path to a new file so fresh=True doesn't clobber it.
-    The old worker continues writing to the old DB file safely. After drain, the old DB is archived."""
-    import sqlite3
-
-    db_path = str(tmp_path / "ming_sim.db")
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
-    conn.execute("INSERT INTO kv_store VALUES ('data', 'before_new_game')")
-    conn.commit()
-
-    gate = threading.Lock()
-    closed: list[int] = []
-    fake_old_game = SimpleNamespace(
-        _write_gate=gate,
-        db_path=db_path,
-        session=SimpleNamespace(close=lambda: (closed.append(1), conn.close())),
-    )
-    monkeypatch.setattr(web_app, "web_game", fake_old_game)
-    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-    monkeypatch.delenv("MING_SIM_DB", raising=False)
-
-    fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
-    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
-
-    gate.acquire()  # simulate in-flight background worker
-
-    result = asyncio.run(web_app.api_menu_new_game())
-
-    # Returns immediately with new game
-    assert "state" in result
-    assert web_app.web_game is fake_new_game
-
-    # Old DB file is NOT deleted or renamed, so the old worker can write to it safely
-    assert os.path.exists(db_path)
-
-    # Background worker writes through the old (still-open) connection
-    conn.execute("INSERT INTO kv_store VALUES ('reply', 'background_minister_reply')")
-    conn.commit()
-
-    gate.release()  # worker finishes → drain proceeds
-
-    wait_until(lambda: closed == [1])
-    assert not gate.locked()
-
-    # Old DB is moved to saves/ after the drain finishes
-    saves_dir = tmp_path / "saves"
-    save_files = list(saves_dir.glob("*.db"))
-    assert len(save_files) == 1
-    assert not os.path.exists(db_path)  # moved out of the original path
-
-    # Archived save contains both old data and the background-written reply
-    check = sqlite3.connect(str(save_files[0]))
-    rows = dict(check.execute("SELECT key, value FROM kv_store").fetchall())
-    check.close()
-    assert rows["data"] == "before_new_game"
-    assert rows["reply"] == "background_minister_reply"
-
 
 def test_get_main_db_path_prefers_active_db_over_launch_env(monkeypatch, tmp_path):
     """#402 R1（Codex）：重启后 active_db.txt 必须压过启动 env，才能继续 new_game 切出的新主库。"""
@@ -835,75 +775,12 @@ def test_new_game_switches_db_path_when_web_game_none_and_no_env(monkeypatch, tm
         assert f.read().strip() == new_path
 
 
-def test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains(monkeypatch, tmp_path):
-    """#396 Step5 R4 P1 + #1732 T1 完整路径：退菜单→web_game=None+detach drain 写旧库→
-    new_game 须切到新库路径，不与仍写的 detach 抢搬；排空关闭后旧库归档进 saves/。
-    exit_to_menu 本身不搬库——「继续上局」在仅 exit 时仍可见主库。"""
-    import sqlite3
-
-    old_db_path = str(tmp_path / "old_configured.db")
-    # detach 在后台线程 close；与同文件其它 drain 案一致，允许跨线程用连接。
-    conn = sqlite3.connect(old_db_path, check_same_thread=False)
-    conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
-    conn.execute("INSERT INTO kv_store VALUES ('data', 'before_exit')")
-    conn.commit()
-
-    closed: list[int] = []
-    gate = threading.Lock()
-    fake_old_game = SimpleNamespace(
-        _write_gate=gate,
-        db_path=old_db_path,
-        session=SimpleNamespace(close=lambda: (closed.append(1), conn.close())),
-    )
-    monkeypatch.setattr(web_app, "web_game", fake_old_game)
-    monkeypatch.setenv("MING_SIM_DB", old_db_path)
-    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-
-    # 退菜单：web_game=None，detach drain 启动（gate 被持 = 旧 worker 在写旧库）
-    gate.acquire()
-    asyncio.run(web_app.api_menu_exit())
-    assert web_app.web_game is None
-    # #1732 T1：exit 本身不搬主库——继续上局仍可见
-    assert os.path.exists(old_db_path)
-    assert web_app._has_main_db()
-
-    # new_game：web_game=None，但仍须切到新库路径
-    fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
-    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
-
-    result = asyncio.run(web_app.api_menu_new_game())
-
-    assert "state" in result
-    assert web_app.web_game is fake_new_game
-    assert os.environ["MING_SIM_DB"] != old_db_path  # 已切到新路径
-    assert os.path.exists(old_db_path)  # 旧库未被删——detach worker 仍可安全续写
-
-    # 旧 detach drain 仍写旧库（gate 释放后 close 才跑）
-    conn.execute("INSERT INTO kv_store VALUES ('reply', 'detach_reply')")
-    conn.commit()
-    gate.release()
-
-    wait_until(lambda: closed == [1])
-    assert not gate.locked()
-    # #1732 T1：排空关闭后旧库归档，含迟到后台回奏；可被存档列表看见
-    wait_until(lambda: not os.path.exists(old_db_path))
-    save_files = list((tmp_path / "saves").glob("*.db"))
-    assert len(save_files) == 1
-    check = sqlite3.connect(str(save_files[0]))
-    rows = dict(check.execute("SELECT key, value FROM kv_store").fetchall())
-    check.close()
-    assert rows["data"] == "before_exit"
-    assert rows["reply"] == "detach_reply"
-    scanned = web_app._scan_saves()
-    assert any(s["name"] == save_files[0].stem for s in scanned)
-
 
 def test_new_game_after_exit_skips_archive_when_detach_close_fails(monkeypatch, tmp_path):
     """#1740：exit detach 关库失败时，后续 new_game 不得把仍可能占用的旧主库搬进 saves/。
 
-    与 test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains 同回路：
-    真实 api_menu_exit → api_menu_new_game 与真实归档实现；仅 session.close 改为失败。
+    裸 seam：真实 api_menu_exit → api_menu_new_game 与真实归档实现；仅 session.close 改为失败。
+    （主干 tracer 已毕业 happy-path 真连接；本案只证 close 失败不搬库。）
     收束靠 join 本回合菜单线程（不轮询 close 列表、不读 completion 内部形、
     不替换归档、不依赖私有闭包名）。外部判据：旧库仍在、saves 无档、内容可读。
     """
