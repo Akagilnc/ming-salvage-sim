@@ -230,6 +230,11 @@ _PENDING_BASELINE_COLS = (
     "id", "turn", "kind", "action", "target_id", "minister_name",
     "payload_json", "status", "night_id", "night_approved", "created_at",
 )
+_SUMMON_LEDGER_BASELINE_COLS = (
+    "id", "night_id", "seq", "person_names", "audibility", "body", "tags",
+    "source_chat_turn_id", "presence_effect", "order_key", "origin_chat_turn_id",
+    "origin_ref", "created_at",
+)
 
 
 def _snapshot_pending_baseline(db: Any, turn: int) -> tuple[dict[str, Any], ...]:
@@ -248,41 +253,90 @@ def _snapshot_pending_baseline(db: Any, turn: int) -> tuple[dict[str, Any], ...]
     )
 
 
-def _sync_office_summon_to_baseline_row(db: Any, row: dict[str, Any]) -> None:
-    """Align inactive office summon ledger with restored pending payload."""
-    if str(row.get("kind") or "") != "office":
-        return
-    from ming_sim.audience_night import (
-        discard_inactive_office_summon,
-        ensure_inactive_office_summon,
-    )
+def _snapshot_office_summon_baseline(
+    db: Any, pending_rows: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    """Snapshot inactive office:<pending_id> summon ledger rows as data.
 
-    action_id = int(row["id"])
-    try:
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
-    want_summon = str(payload.get("summon_after") or "").strip() == "是"
-    person = str(payload.get("name") or "").strip()
-    night_id = int(row.get("night_id") or 0)
-    if not want_summon or not person or night_id <= 0:
-        discard_inactive_office_summon(db, action_id)
-        return
-    ensure_inactive_office_summon(
-        db, action_id, person, night_id=night_id, origin_chat_turn_id=0,
-    )
+    Whole-row restore — no parallel ensure/discard derivation rules.
+    """
+    cols_sql = ", ".join(_SUMMON_LEDGER_BASELINE_COLS)
+    out: list[dict[str, Any]] = []
+    for row in pending_rows:
+        if str(row.get("kind") or "") != "office":
+            continue
+        origin = f"office:{int(row['id'])}"
+        entry = db.conn.execute(
+            f"SELECT {cols_sql} FROM story_ledger_entries "
+            "WHERE origin_ref=? LIMIT 1",
+            (origin,),
+        ).fetchone()
+        if entry is None:
+            continue
+        out.append({col: entry[col] for col in _SUMMON_LEDGER_BASELINE_COLS})
+    return tuple(out)
 
 
-def _restore_pending_baseline(
-    db: Any, turn: int, baseline: tuple[dict[str, Any], ...],
+def _snapshot_batch_write_baseline(db: Any, turn: int) -> dict[str, Any]:
+    pending = _snapshot_pending_baseline(db, turn)
+    return {
+        "pending": pending,
+        "summons": _snapshot_office_summon_baseline(db, pending),
+    }
+
+
+def _restore_office_summon_baseline(
+    db: Any,
+    *,
+    pending_baseline: tuple[dict[str, Any], ...],
+    summon_baseline: tuple[dict[str, Any], ...],
 ) -> None:
-    """Restore turn pending rows to baseline write set (create/update/delete)."""
+    """Restore office summon ledger rows to baseline snapshot (data, not rules)."""
+    from ming_sim.audience_night import discard_inactive_office_summon
+
+    baseline_office_ids = {
+        int(row["id"])
+        for row in pending_baseline
+        if str(row.get("kind") or "") == "office"
+    }
+    by_origin = {
+        str(row.get("origin_ref") or ""): row for row in summon_baseline
+    }
+    cols_sql = ", ".join(_SUMMON_LEDGER_BASELINE_COLS)
+    placeholders = ", ".join("?" for _ in _SUMMON_LEDGER_BASELINE_COLS)
+    for action_id in sorted(baseline_office_ids):
+        origin = f"office:{action_id}"
+        before = by_origin.get(origin)
+        current = db.conn.execute(
+            "SELECT id FROM story_ledger_entries WHERE origin_ref=? LIMIT 1",
+            (origin,),
+        ).fetchone()
+        if before is None:
+            if current is not None:
+                # Batch-created summon on a pre-existing office — drop via owner seam.
+                discard_inactive_office_summon(db, action_id)
+            continue
+        before_id = int(before["id"])
+        if current is not None and int(current["id"]) == before_id:
+            continue
+        if current is not None:
+            discard_inactive_office_summon(db, action_id)
+        db.conn.execute(
+            f"INSERT INTO story_ledger_entries ({cols_sql}) VALUES ({placeholders})",
+            tuple(before[col] for col in _SUMMON_LEDGER_BASELINE_COLS),
+        )
+
+
+def _restore_batch_write_baseline(
+    db: Any, turn: int, baseline: dict[str, Any],
+) -> None:
+    """Restore turn pending + office-summon write set to baseline snapshot."""
     from ming_sim.applier import atomic
 
     turn_i = int(turn)
-    baseline_by_id = {int(row["id"]): row for row in baseline}
+    pending_baseline = tuple(baseline.get("pending") or ())
+    summon_baseline = tuple(baseline.get("summons") or ())
+    baseline_by_id = {int(row["id"]): row for row in pending_baseline}
     cols_sql = ", ".join(_PENDING_BASELINE_COLS)
     with atomic(db):
         current_rows = db.conn.execute(
@@ -318,7 +372,6 @@ def _restore_pending_baseline(
                     action_id,
                 ),
             )
-            _sync_office_summon_to_baseline_row(db, before)
 
         # Recreate baseline rows deleted by hedge/offset inside the batch.
         for action_id in sorted(baseline_ids - current_ids):
@@ -342,19 +395,25 @@ def _restore_pending_baseline(
                     str(before["created_at"] or ""),
                 ),
             )
-            _sync_office_summon_to_baseline_row(db, before)
+
+        # Summon ledger is restored as frozen rows, not re-derived from payload.
+        _restore_office_summon_baseline(
+            db,
+            pending_baseline=pending_baseline,
+            summon_baseline=summon_baseline,
+        )
 
 
 def _rollback_batch_writes(
     ctx: MaterializeCtx,
     *,
-    pending_baseline: tuple[dict[str, Any], ...],
+    write_baseline: dict[str, Any],
     baseline_out: dict[str, Any],
 ) -> None:
-    """All-or-nothing: restore full pending write set; align out projection."""
+    """All-or-nothing: restore full pending+summon write set; align out projection."""
     db = ctx.session.db
     turn = int(ctx.session.state.turn)
-    _restore_pending_baseline(db, turn, pending_baseline)
+    _restore_batch_write_baseline(db, turn, write_baseline)
     # Projection must match reality after rollback (no hidden pending id).
     if "pending_action_id" in baseline_out:
         ctx.out["pending_action_id"] = baseline_out["pending_action_id"]
@@ -411,8 +470,8 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
         kind_indexes: Dict[str, int] = {}
         grant_staged = False
-        # Snapshot full pending write set before any candidate mutates it.
-        pending_baseline = _snapshot_pending_baseline(
+        # Snapshot full pending + office-summon write set before mutations.
+        write_baseline = _snapshot_batch_write_baseline(
             ctx.session.db, ctx.session.state.turn,
         )
         for candidate, original_candidate, original_kind, original_draft_index in candidate_records:
@@ -462,7 +521,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             # Fail path must not enter the writable office tail afterward.
             _rollback_batch_writes(
                 ctx,
-                pending_baseline=pending_baseline,
+                write_baseline=write_baseline,
                 baseline_out=baseline_out,
             )
             _record_decree_validation_failures(ctx, ctx.out, validation_failures)
