@@ -378,6 +378,47 @@ def test_action_conditional_missing_heals_not_whole_batch(monkeypatch, tmp_path)
     assert sib["label"] == sibling["label"] and sib["hint"] == sibling["hint"]
 
 
+def test_heal_only_fills_missing_fields_preserves_world_facts(monkeypatch, tmp_path):
+    """补交只回填缺字段；amount/account/target 等首抽世界事实不得被改写。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _army_pay(
+        label="pay", amount=300, account="国库", target_id="guanning",
+    )
+    bad.pop("purpose", None)
+    sibling = _hold(label="sib", hint="keep")
+    first = _items_json([{
+        "title": "u", "context": "c", "options": [bad, sibling],
+    }])
+    # 补交同身份但篡改世界事实字段
+    mutated = dict(
+        bad,
+        purpose="补饷",
+        amount=999,
+        account="内库",
+        target_id="xuanfu",
+    )
+    healed = _items_json([{
+        "title": "u", "context": "c",
+        "options": [mutated, _hold(label="CHANGED", hint="x")],
+    }])
+    n = {"i": 0}
+
+    def _llm(*_a, **_k):
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=35)
+    assert drafts is not None
+    grant = next(o for o in drafts[0]["options"] if o.get("grant_action") == "协饷")
+    assert grant["purpose"] == "补饷"
+    assert grant["amount"] == bad["amount"]
+    assert grant["account"] == bad["account"]
+    assert grant["target_id"] == bad["target_id"]
+    sib = next(o for o in drafts[0]["options"] if o.get("action_type") == "assignment")
+    assert sib["label"] == sibling["label"] and sib["hint"] == sibling["hint"]
+
+
 def test_heal_freezes_sibling_options_from_first_draw(monkeypatch, tmp_path):
     """补交只采纳缺字段 option；兄弟 option 冻结首抽原文（LLM 改写无效）。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -726,7 +767,15 @@ def test_settle_entry_heals_same_agent_and_persists(game, monkeypatch, tmp_path)
         "options": [bad, sibling],
     }]
     first_raw = _items_json(first_items)
-    healed_raw = _items_json(_healed_items_from(first_items))
+    # 补交故意篡改 amount/account/target——结算落库须仍是首抽世界事实
+    healed_items = _healed_items_from(first_items)
+    for it in healed_items:
+        for opt in it["options"]:
+            if opt.get("action_type") == "grant_allocation":
+                opt["amount"] = 999
+                opt["account"] = "内库"
+                opt["target_id"] = "xuanfu"
+    healed_raw = _items_json(healed_items)
     agents_seen: list[object] = []
     tags_seen: list[str] = []
     n = {"i": 0}
@@ -781,9 +830,98 @@ def test_settle_entry_heals_same_agent_and_persists(game, monkeypatch, tmp_path)
     grant = next(o for o in opts if o.get("grant_action") == "协饷")
     assert grant["purpose"] == "补饷"
     assert grant["amount"] == bad["amount"]
+    assert grant["account"] == bad["account"]
+    assert grant["target_id"] == bad["target_id"]  # 非 999/内库/xuanfu
     hold = next(o for o in opts if o.get("action_type") == "assignment")
     for key in (
         "label", "hint", "target_id", "locality_scope",
         "region_id", "transaction_category",
     ):
         assert hold.get(key) == sibling.get(key)
+
+
+@pytest.mark.parametrize("succeed_on", [1, 2, 3, None])
+def test_settle_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path):
+    """真实结算入口参数化：补交第 k 次成功，或耗尽剔除后落库。"""
+    import ming_sim.decree as decree_mod
+    import ming_sim.simulation as simulation
+    from ming_sim.decree import _settle_after_narrative
+    from tests.test_rescript_draft_656 import (
+        _CANNED,
+        _add_character,
+        _retire_existing_actors,
+        _stub_settle_agents,
+    )
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, content = game
+    turn = state.turn
+    _stub_settle_agents(monkeypatch)
+    _retire_existing_actors(db)
+    _add_character(db, "测试首辅", "内阁首辅", "阉党")
+
+    bad = _army_pay(label="边饷拟", amount=150)
+    bad.pop("purpose", None)
+    sibling = _hold(label="缓边", hint="候核")
+    first_items = [{
+        "title": "关宁欠饷", "context": "边军待哺。",
+        "options": [bad, sibling],
+    }]
+    first_raw = _items_json(first_items)
+    healed_raw = _items_json(_healed_items_from(first_items))
+    heal_n = {"i": 0}
+
+    def _fake_run(agent, prompt, tag=""):
+        del agent, prompt
+        if tag.startswith("extractor/"):
+            return _CANNED
+        if tag in ("rescript-draft", "rescript-draft-heal"):
+            heal_n["i"] += 1
+            if succeed_on is None:
+                return first_raw
+            # 第 1 次=首抽；heal 轮序号 = i-1
+            if heal_n["i"] == 1:
+                return first_raw
+            if heal_n["i"] - 1 < succeed_on:
+                return first_raw
+            return healed_raw
+        return _CANNED
+
+    monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _fake_run)
+    monkeypatch.setattr(
+        decree_mod, "create_rescript_draft_agent", lambda *a, **k: object(),
+    )
+
+    _settle_after_narrative(
+        state, db, None, None,
+        decree_text="诏", narrative="邸报",
+        simulator_payload={
+            "active_issues": [],
+            "regions": {"cols": ["id", "name", "kind"],
+                        "rows": [["shaanxi", "陕西", "布政司"]]},
+            "armies": {
+                "cols": ["id", "name", "station", "owner_power"],
+                "rows": [["guanning", "关宁", "宁远", "ming"]],
+            },
+            "transit_semantics": [],
+        },
+        relevant_memories=[], secret_orders={},
+        before_turn=turn, _emit=lambda *a: None, content=content,
+    )
+
+    rows = db.list_rescript_drafts()
+    assert len(rows) == 1
+    opts = rows[0]["options"]
+    if succeed_on is None:
+        assert len(opts) == 1
+        assert opts[0]["label"] == sibling["label"]
+        note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
+        assert note.is_file()
+        trace = json.loads(note.read_text(encoding="utf-8")).get("heal_trace") or []
+        assert len(trace) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    else:
+        assert len(opts) == 2
+        grant = next(o for o in opts if o.get("grant_action") == "协饷")
+        assert grant["purpose"] == "补饷" and grant["amount"] == bad["amount"]
+        assert heal_n["i"] == 1 + succeed_on

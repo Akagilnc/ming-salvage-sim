@@ -1175,14 +1175,49 @@ def _find_healed_option_for_failure(
     return None
 
 
+def _apply_missing_fields_only(
+    baseline_opt: dict,
+    replacement: dict,
+    missing_fields: Sequence[str],
+) -> Optional[dict]:
+    """只把缺字段从补交结果写入首抽 option；其它键一律冻结。
+
+    完整重交可接受其形态，但非缺失键（amount/account/target 等）以首抽为准——
+    补交不得借机改写已给出的世界事实字段。缺字段在 replacement 仍缺则拒绝（None）。
+    """
+    if not missing_fields:
+        return None
+    out = copy.deepcopy(baseline_opt)
+    filled = 0
+    for field in missing_fields:
+        key = str(field)
+        if key not in replacement:
+            continue
+        val = replacement[key]
+        # 空串/None 视为未补上
+        if val is None or (isinstance(val, str) and not str(val).strip()):
+            continue
+        out[key] = copy.deepcopy(val)
+        filled += 1
+    if filled == 0:
+        return None
+    # 若仍有声明缺失键未从 replacement 取得非空值 → 整次不采纳，保持缺字段态
+    for field in missing_fields:
+        key = str(field)
+        val = out.get(key)
+        if val is None or (isinstance(val, str) and not str(val).strip()):
+            return None
+    return out
+
+
 def _merge_healed_missing_options(
     baseline: Dict[str, Any],
     healed: Dict[str, Any],
     failures: Sequence[RescriptOptionMissingFailure],
 ) -> Dict[str, Any]:
-    """#1746：只采纳缺字段 option 的补交结果；未缺字段的兄弟 option 冻结为首抽原文。
+    """#1746：只回填缺字段；兄弟 option 与已有结构化键冻结为首抽。
 
-    接受 LLM 对缺字段 option 的完整重交；禁止补交轮改写正常 sibling。
+    完整重交仅用于提供缺失键的值；禁止覆盖 amount/account/target 等已有字段。
     """
     result = copy.deepcopy(baseline)
     base_items = result.get("items")
@@ -1197,10 +1232,18 @@ def _merge_healed_missing_options(
         base_opts = base_item.get("options")
         if not isinstance(base_opts, list) or failure.option_index >= len(base_opts):
             continue
+        base_opt = base_opts[failure.option_index]
+        if not isinstance(base_opt, dict):
+            continue
         replacement = _find_healed_option_for_failure(healed, failure)
         if replacement is None:
             continue
-        base_opts[failure.option_index] = copy.deepcopy(replacement)
+        patched = _apply_missing_fields_only(
+            base_opt, replacement, failure.missing_fields,
+        )
+        if patched is None:
+            continue
+        base_opts[failure.option_index] = patched
     return result
 
 
