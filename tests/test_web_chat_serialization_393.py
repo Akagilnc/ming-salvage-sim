@@ -191,7 +191,7 @@ def _runtime_for_stream_race():
     runtime = object.__new__(web_app.WebGame)
     runtime.session = _FakeSession(character, agent, state, db)
     runtime.chat_history = {character.name: []}
-    runtime._write_gate = ObservingLock(epilogue_contending, holding=settlement_holding)
+    runtime._write_gate = ObservingLock(epilogue_contending)
     runtime.directive_rows = lambda: []
     runtime.directive_payload = lambda row: row
     runtime.suggestions_for = lambda character: []

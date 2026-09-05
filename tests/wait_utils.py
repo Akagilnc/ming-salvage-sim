@@ -5,7 +5,7 @@ Permanent hang is owned by the CI job final line — not by a test-local deadlin
 from __future__ import annotations
 
 import threading
-from typing import Callable, Optional
+from typing import Callable
 
 
 def wait_until(predicate: Callable[[], bool]) -> None:
@@ -18,31 +18,21 @@ def wait_until(predicate: Callable[[], bool]) -> None:
 
 
 class ObservingLock:
-    """Test-side Lock drop-in: signals contending when acquire finds the lock held
-    (or optional holding event is set). No production hooks; not a general framework.
+    """Test-side Lock drop-in: signals contending when acquire finds the lock held.
+    No production hooks; not a general framework.
     """
 
-    def __init__(
-        self,
-        contending: threading.Event,
-        *,
-        holding: Optional[threading.Event] = None,
-    ) -> None:
+    def __init__(self, contending: threading.Event) -> None:
         self._lock = threading.Lock()
         self._contending = contending
-        self._holding = holding
 
-    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
-        if self._holding is not None and self._holding.is_set():
-            self._contending.set()
+    def acquire(self, blocking: bool = True) -> bool:
         if self._lock.acquire(blocking=False):
             return True
         self._contending.set()
         if not blocking:
             return False
-        if timeout is None or timeout < 0:
-            return self._lock.acquire(blocking=True)
-        return self._lock.acquire(blocking=True, timeout=timeout)
+        return self._lock.acquire(blocking=True)
 
     def release(self) -> None:
         self._lock.release()
