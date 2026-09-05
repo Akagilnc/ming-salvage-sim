@@ -3296,11 +3296,21 @@ def test_1620_layer_a_money_grant_requires_positive_amount():
     assert "amount" not in honor
 
 
-def test_1620_materialize_rejects_illegal_account_like_shape(game):
-    """#1620：真 pipeline——太仓→国库成案；缺/0/bool/float amount 写前失败零 pending。"""
+def test_1620_materialize_rejects_illegal_account_like_shape(
+    game, monkeypatch, tmp_path,
+):
+    """#1620/#1730：真 pipeline——太仓→国库成案；缺/0/bool/float amount typed 拒收零净写。"""
     import types
 
+    import ming_sim.cli_backend as cb
     from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+
+    # T3 后 grant shape 走 typed 拒收 + recovery 回禀；替身 LLM 边界，禁真 agy。
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下明示银两。", 1),
+    )
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
 
     db, state, _content = game
     actor = db.conn.execute(
@@ -3354,14 +3364,25 @@ def test_1620_materialize_rejects_illegal_account_like_shape(game):
     assert str(payload.get("account") or "") == "国库"
     assert int(payload.get("amount") or 0) == 10
 
-    # normalized classifier candidate：缺/0/bool/float 均须 DB 写前失败且零新增 pending
+    # normalized classifier candidate：缺/0/bool/float → typed 拒收；零新增 pending
     before = _count_pending()
     for bad in (None, 0, True, 1.5):
         bad_ctx = _run(bad)
-        with pytest.raises(ValueError):
-            run_materialize_pipeline(bad_ctx)
+        run_materialize_pipeline(bad_ctx)
         assert bad_ctx.out.get("pending_action_id") in (None, 0, "")
         assert _count_pending() == before
+        recovery = bad_ctx.out.get("decree_validation_failure") or {}
+        assert "amount" in set(recovery.get("failed_fields") or [])
+        assert recovery.get("report")
+        ledger = db.conn.execute(
+            "SELECT category, source, reason FROM rejection_reports "
+            "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
+            (int(state.turn),),
+        ).fetchall()
+        assert ledger
+        assert all(row["category"] == "decree_validation" for row in ledger)
+        assert all(row["source"] == "player_decree" for row in ledger)
+        assert all(row["reason"] for row in ledger)
 
 
 def test_657_follow_draft_ignores_client_field_overlay(game):
