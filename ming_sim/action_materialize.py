@@ -672,6 +672,12 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             _record_decree_validation_failures(ctx, ctx.out, validation_failures)
             return
 
+        # #1744：批写集是否含 draft——供 assignment 同意图门闩（与写序无关；共享 batch_state）。
+        ctx.batch_state["batch_has_draft"] = any(
+            str(candidate.get("kind") or "") == "draft"
+            for candidate, _orig, _okind, _oidx in candidate_records
+        )
+
         # Pass 2: short deterministic write atomic only (no LLM).
         kind_indexes: Dict[str, int] = {}
         grant_staged = False
@@ -2569,6 +2575,10 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
     """暂存交办·责成案卷；initiative 按 ADR 0055 判决后落。
 
     #1503：显式拟旨前缀若带真实 assignment 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
+    #1744 / one-intent-one-row：多候选批中已有 draft 时，无分类器 title 的 assignment
+    是拟旨同意图的阴影（title 回落皇帝句前 40），不是第二道独立旨意——不得再插一行。
+    有 title 的 assignment 视为独立事项（ADR 0040 反向保护），与 draft 并存。
+    判据是 typed 字段有无，不是标题正文/动作类型去重。
     """
     if (
         ctx.intent_kind != "assignment"
@@ -2579,6 +2589,12 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
         return
     intent = ctx.intent or {}
     title = str(intent.get("title") or "").strip()
+    if (
+        ctx.multi_intent_batch
+        and ctx.batch_state.get("batch_has_draft")
+        and not title
+    ):
+        return
     target_id = str(intent.get("target_id") or "").strip()
     # 标题来源：分类 title → 当轮皇帝句；不得在缺 title 时吃跨轮 body 头
     if not title:
