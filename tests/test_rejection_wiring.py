@@ -818,3 +818,126 @@ def test_settling_recovery_fallthrough_preserves_system_source(content, tmp_path
             sess.close()
         except Exception:
             pass
+
+
+def test_player_rejection_missing_runner_fails_loud(game, tmp_path, monkeypatch):
+    """#1745 P7：玩家来源拒收缺 settlement_attendant_runner → 诚实失败，不假充已递话。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.decree import settle_with_delta
+    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.models import TurnPhase
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, content = game
+    turn = state.turn
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+
+    with pytest.raises(SettlementAbort):
+        settle_with_delta(
+            state, db,
+            {"character_status_changes": [
+                {"origin_ref": "盘面自发", "name": "查无此人缺", "status": "dead", "reason": "测"},
+            ]},
+            before_turn=turn,
+            content=content,
+            narrative="no-runner",
+            source=Provenance.player_decree,
+            settlement_attendant_runner=None,
+        )
+    # 失败不推进月、不占 attendant 槽
+    assert int(state.turn) == turn
+    archives = db.list_monthly_archives()
+    hit = next((a for a in archives if int(a["turn"]) == turn), None)
+    if hit is not None:
+        assert hit["has_attendant"] is False
+
+
+def test_player_rejection_empty_speech_fails_loud(game, tmp_path, monkeypatch):
+    """#1745 P7：runner 返回空文 → LLMContractError 路径诚实失败。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.decree import settle_with_delta
+    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.models import TurnPhase
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, content = game
+    turn = state.turn
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+
+    with pytest.raises(SettlementAbort):
+        settle_with_delta(
+            state, db,
+            {"character_status_changes": [
+                {"origin_ref": "盘面自发", "name": "查无此人空", "status": "dead", "reason": "测"},
+            ]},
+            before_turn=turn,
+            content=content,
+            narrative="empty-speech",
+            source=Provenance.player_decree,
+            settlement_attendant_runner=lambda **_k: "   \t\n",
+        )
+    assert int(state.turn) == turn
+
+
+def test_attendant_join_preserves_existing_trailing_whitespace(game, tmp_path, monkeypatch):
+    """#1745 P6/P7：既有抵京稿尾空白不得被 rstrip 删改；只加布局换行。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.decree import settle_with_delta
+    from ming_sim.models import TurnPhase
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, content = game
+    turn = state.turn
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    existing = "抵京原文 \t\n"
+    rejection_speech = "拒收段"
+
+    settle_with_delta(
+        state, db,
+        {"economy_moves": [None]},
+        before_turn=turn,
+        content=content,
+        narrative="join-ws",
+        source=Provenance.player_decree,
+        attendant_message=existing,
+        settlement_attendant_runner=lambda **_k: rejection_speech,
+    )
+    stored = str((db.get_turn_report_archive(turn) or {}).get("attendant_message") or "")
+    # 特征化：原文前缀字节保留；旧 rstrip 路径会丢掉尾空白
+    assert stored.startswith(existing)
+    assert stored == existing + "\n" + rejection_speech
+    assert stored != existing.rstrip() + "\n" + rejection_speech
+
+
+def test_driver_run_settle_no_zero_width_placeholder(game, tmp_path, monkeypatch):
+    """#1745 P7：driver 不默认零宽桩；玩家拒收未注入 runner → 诚实失败。"""
+    import driver as drv
+    from ming_sim.exceptions import SettlementAbort
+    from tests.conftest import with_monthly_reports
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, content = game
+    turn = state.turn
+    drv.run_prepare(db, state, content)
+    with pytest.raises(SettlementAbort):
+        drv.run_settle(
+            db, state, content,
+            with_monthly_reports(db, {
+                "character_status_changes": [
+                    {"origin_ref": "盘面自发", "name": "查无此人桩", "status": "dead", "reason": "测"},
+                ],
+            }),
+            narrative="driver-no-zwsp",
+            # 故意不传 settlement_attendant_runner
+        )
+    assert int(state.turn) == turn
+    # 不得以 U+200B 假充 has_attendant
+    archives = db.list_monthly_archives()
+    hit = next((a for a in archives if int(a["turn"]) == turn), None)
+    if hit is not None:
+        assert hit["has_attendant"] is False
+    msg = db.get_turn_attendant_message(turn) if hasattr(db, "get_turn_attendant_message") else ""
+    assert "\u200b" not in str(msg or "")

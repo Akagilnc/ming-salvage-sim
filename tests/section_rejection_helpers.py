@@ -16,10 +16,6 @@ def default_settlement_attendant_runner(*, year, period, rejections):
     return "递话" if rejections else ""
 
 
-# 旧名兼容
-_default_settlement_attendant_runner = default_settlement_attendant_runner
-
-
 def install_settlement_attendant_agent_stub(
     monkeypatch, decree_mod, *, text="递话", capture=None,
 ):
