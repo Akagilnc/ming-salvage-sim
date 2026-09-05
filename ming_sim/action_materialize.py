@@ -793,8 +793,13 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             bundle = _secret_extract_bundle(ctx, prefer_new=True)
         secret = dict(bundle.get("secret") or {})
         frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
-        if frozen is None:
-            reason = str(secret.get("contract_error") or "密令抽取未能冻结合同").strip()
+        title = str(secret.get("title") or "").strip()
+        # #1565/0142：题名只认抽取器结构化「标题」；缺标题/冻结合同均走既有可恢复失败接缝。
+        if not title or frozen is None:
+            reason = str(
+                secret.get("contract_error")
+                or ("密令缺少结构化标题" if not title else "密令抽取未能冻结合同")
+            ).strip()
             failures = list(ctx.out.get("pending_action_failures") or [])
             failures.append({
                 "kind": "secret_order",
@@ -815,7 +820,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             minister_name=minister_name,
             target_id=None,
             payload={
-                "title": secret["title"],
+                "title": title,
                 "content": secret["content"],
                 "assignee": secret.get("assignee") or minister_name,
                 "tags": secret.get("tags") or [],
@@ -2428,6 +2433,7 @@ def stage_assignment_candidate(
     stages: object = None,
     target_candidate: object = None,
     transaction_category: object = "",
+    source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared assignment candidate write (#520 / #502).
@@ -2498,6 +2504,12 @@ def stage_assignment_candidate(
         "title": matter_title,
         "mode": mode,
     }
+    try:
+        origin_cid = int(source_chat_turn_id or 0)
+    except (TypeError, ValueError):
+        origin_cid = 0
+    if origin_cid > 0:
+        staged["source_chat_turn_id"] = origin_cid
     category = str(transaction_category or "").strip()
     if category:
         staged["transaction_category"] = category
@@ -2589,8 +2601,7 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
     title = str(intent.get("title") or "").strip()
     target_id = str(intent.get("target_id") or "").strip()
     body = _assignment_dossier_text(ctx)
-    if not title and not target_id and not body:
-        return
+    # #1565：已识别 assignment 不得三空静默早退；缺正文/题名交 stage validation 恢复接缝。
     pending_id = stage_assignment_candidate(
         ctx.session.db,
         ctx.session.state.turn,
@@ -2607,6 +2618,7 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
         stages=intent.get("stages"),
         target_candidate=intent.get("target_candidate"),
         transaction_category=intent.get("transaction_category"),
+        source_chat_turn_id=ctx.chat_turn_id,
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
@@ -3397,6 +3409,7 @@ def stage_referral_candidate(
     responsible_bodies: object = None,
     extracted_mode: object = None,
     target_candidate: object = None,
+    source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared referral candidate write (#524 / #502).
@@ -3483,6 +3496,12 @@ def stage_referral_candidate(
         "responsible_bodies": bodies,
         "mode": mode,
     }
+    try:
+        origin_cid = int(source_chat_turn_id or 0)
+    except (TypeError, ValueError):
+        origin_cid = 0
+    if origin_cid > 0:
+        staged["source_chat_turn_id"] = origin_cid
     # 禁个人 owner：显式不写 assignee/assignee_id
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
@@ -3507,8 +3526,7 @@ def _materialize_referral(ctx: MaterializeCtx) -> None:
     title = str(intent.get("title") or "").strip()
     target_id = str(intent.get("target_id") or "").strip()
     body = str(ctx.reply or ctx.player_message or "").strip()
-    if not title and not target_id and not body:
-        return
+    # #1565：已识别 referral 不得三空静默早退；缺正文/题名交 stage validation 恢复接缝。
     pending_id = stage_referral_candidate(
         ctx.session.db,
         ctx.session.state.turn,
@@ -3520,6 +3538,7 @@ def _materialize_referral(ctx: MaterializeCtx) -> None:
         responsible_bodies=intent.get("responsible_bodies"),
         extracted_mode=intent.get("mode"),
         target_candidate=intent.get("target_candidate"),
+        source_chat_turn_id=ctx.chat_turn_id,
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
