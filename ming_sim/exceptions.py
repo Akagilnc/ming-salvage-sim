@@ -34,9 +34,17 @@ class LLMUnavailable(Exception):
 
 
 class LLMContractError(Exception):
-    def __init__(self, message: str, *, raw_value: object = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_value: object = None,
+        heal_evidence: object = None,
+    ) -> None:
         super().__init__(message)
         self.raw_value = raw_value
+        # #1753：颁布判决有界补交耗尽时携带首次+补交坏输出与已合规判决证据。
+        self.heal_evidence = heal_evidence
 
 
 class SettlementAbort(Exception):
