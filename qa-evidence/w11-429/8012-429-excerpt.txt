@@ -1,0 +1,31 @@
+[08:50:18.642] [extractor/relations] user payload total=199 chars (~132 tok)
+[08:50:18.646] [extractor/relations] 开始非流式推演（等待完整响应）
+[08:50:18.647] [rescript] user payload total=4037 chars (~2691 tok)
+[08:50:18.648] [rescript-draft] 开始非流式推演（等待完整响应）
+INFO:     127.0.0.1:37318 - "GET /api/game/state HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37318 - "GET /api/game/state HTTP/1.1" 200 OK
+ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+         {'error': {'message': 'Model API rate limit exceeded; please retry     
+         later', 'type': 'rate_limit_error', 'code':                            
+         'token_concurrency_rate_limit_exceeded'}}}                             
+ERROR    Error in Agent run: Unknown model error                                
+[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=24606 cached=17408 completion=7 reasoning=0 total=24613
+[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=24606 cached=17408 completion=7 reasoning=0 total=24613
+[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=24606 cached=17408 completion=7 reasoning=0 total=24613
+[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=24606 cached=17408 completion=7 reasoning=0 total=24613
+[08:50:22.824] [extractor/relations] 完成，12 字，用时 4.2s
+ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+         {'error': {'message': "Model 'DeepSeek-V4-Flash' is at its concurrency 
+         limit (80); please retry later or use another model", 'type':          
+         'rate_limit_error', 'code': 'model_concurrency_rate_limit_exceeded'}}} 
+ERROR    Error in Agent run: Unknown model error                                
+INFO:     127.0.0.1:37318 - "GET /api/game/state HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37318 - "GET /api/game/state HTTP/1.1" 200 OK
+[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=32117 cached=23296 completion=71 reasoning=0 total=32188
+[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=32117 cached=23296 completion=71 reasoning=0 total=32188
+[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=32117 cached=23296 completion=71 reasoning=0 total=32188
+[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=32117 cached=23296 completion=71 reasoning=0 total=32188
+[08:50:25.984] [extractor/internal] 完成，146 字，用时 7.4s
+INFO:     127.0.0.1:37318 - "GET /api/game/state HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37318 - "GET /api/game/state HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37318 - "GET /api/game/state HTTP/1.1" 200 OK
