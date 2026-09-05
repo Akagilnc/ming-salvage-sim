@@ -4353,8 +4353,9 @@ def _wait_exit_detach_for_open() -> bool:
     return True
 
 
-# 在建候选路径集合（每条候选自登记/自清理）——归档前视为 live；非 pin 表，只防搬在建文件。
-_menu_opening_db_paths: set[str] = set()
+# 在建候选路径引用计数（每条候选自登记/自清理）——归档前视为 live。
+# 同路径多构造者必须 refcount：set.discard 会在一人结束时误消另一人仍在建的保护。
+_menu_opening_db_paths: dict[str, int] = {}
 _menu_opening_lock = threading.Lock()
 
 
@@ -4363,7 +4364,7 @@ def _register_opening_db_path(path: str) -> str:
     if not norm:
         return ""
     with _menu_opening_lock:
-        _menu_opening_db_paths.add(norm)
+        _menu_opening_db_paths[norm] = int(_menu_opening_db_paths.get(norm, 0) or 0) + 1
     return norm
 
 
@@ -4372,7 +4373,19 @@ def _unregister_opening_db_path(path: str) -> None:
     if not norm:
         return
     with _menu_opening_lock:
-        _menu_opening_db_paths.discard(norm)
+        count = int(_menu_opening_db_paths.get(norm, 0) or 0)
+        if count <= 1:
+            _menu_opening_db_paths.pop(norm, None)
+        else:
+            _menu_opening_db_paths[norm] = count - 1
+
+
+def _opening_refcount(path: str) -> int:
+    norm = _normalize_db_path(path) if path else ""
+    if not norm:
+        return 0
+    with _menu_opening_lock:
+        return int(_menu_opening_db_paths.get(norm, 0) or 0)
 
 
 def _db_path_is_live(db_path: str) -> bool:
@@ -4384,7 +4397,7 @@ def _db_path_is_live(db_path: str) -> bool:
     if not db_path:
         return False
     with _menu_opening_lock:
-        openings = set(_menu_opening_db_paths)
+        openings = list(_menu_opening_db_paths.keys())
     for opening in openings:
         if _same_db_path(db_path, opening):
             return True
@@ -4527,7 +4540,8 @@ def _spawn_drain_close(
             _drain_and_close_session(game, archive_db=archive_db)
             completion.close_ok = True
         except Exception:
-            # 原异常已由 _drain_and_close_session logger.exception 留痕
+            # 下层 drain 已 logger.exception；此处再留 spawn 边界，禁只改 close_ok 无总账。
+            logger.exception("drain/close worker failed archive_db=%s", archive_db)
             completion.close_ok = False
         finally:
             completion.done.set()
@@ -4791,11 +4805,12 @@ async def api_menu_status() -> Dict[str, Any]:
 
 @app.post("/api/menu/new_game")
 async def api_menu_new_game() -> Dict[str, Any]:
-    """开始新游戏：清主 DB → 新建 WebGame。
+    """开始新游戏：切主库路径 → 新建 WebGame → 发布时再退休旧 runtime。
 
     #396/#1732/#1749：短锁切换路径并登记 opening；构造绑显式 db_path（不重读全局）；
-    发布前对号。失配回滚仅当主路径仍是本拍 new_db_path，且 web_game 仍空——禁覆盖
-    并发已发布代际。构造在锁外，exit 可中途 bump。
+    发布前对号。构造期**不** detach 旧 web_game——exit 才能在构造窗找到并退休真持有者；
+    失配/失败只回滚本拍路径，绝不以 web_game is None 复活旧局（区分本拍空窗与更新 exit）。
+    构造在锁外，exit 可中途 bump。
     """
     global web_game, _menu_generation
     loop = asyncio.get_running_loop()
@@ -4804,90 +4819,95 @@ async def api_menu_new_game() -> Dict[str, Any]:
         global web_game, _menu_generation
         opening_path = ""
         token = 0
-        old_game = None
         snapshot: Optional[tuple[bool, str, bool, str]] = None
         prev_db_path = ""
         new_db_path = ""
         with _menu_lifecycle_lock:
             _menu_generation += 1
             token = _menu_generation
-            old_game = web_game
+            # 只观察旧 runtime，构造期保持其仍为 web_game，供 exit/并发发布者交接。
             snapshot = _snapshot_main_db_path_config()
             prev_db_path = _get_main_db_path()
             new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
             try:
                 _set_main_db_path(new_db_path)
-                web_game = None
                 opening_path = _register_opening_db_path(new_db_path)
             except Exception:
                 _restore_main_db_path_config(snapshot)
-                web_game = old_game
                 raise
+
+        def _rollback_path_if_ours() -> None:
+            assert snapshot is not None
+            if _same_db_path(_get_main_db_path(), new_db_path):
+                _restore_main_db_path_config(snapshot)
+
         try:
             try:
                 # 绑定本拍路径，禁构造期重读被并发切换的全局 main。
                 new_game = WebGame(fresh=True, db_path=new_db_path)
             except LLMUnavailable as exc:
                 with _menu_lifecycle_lock:
-                    assert snapshot is not None
-                    if _same_db_path(_get_main_db_path(), new_db_path):
-                        _restore_main_db_path_config(snapshot)
-                    if web_game is None:
-                        web_game = old_game
+                    # 仅本拍仍持世代时回滚路径；失配说明 exit/更新代际已接管，不动 web_game。
+                    if token == _menu_generation:
+                        _rollback_path_if_ours()
+                    elif _same_db_path(_get_main_db_path(), new_db_path):
+                        _rollback_path_if_ours()
                 raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
             except Exception:
                 with _menu_lifecycle_lock:
-                    assert snapshot is not None
-                    if _same_db_path(_get_main_db_path(), new_db_path):
-                        _restore_main_db_path_config(snapshot)
-                    if web_game is None:
-                        web_game = old_game
+                    if token == _menu_generation:
+                        _rollback_path_if_ours()
+                    elif _same_db_path(_get_main_db_path(), new_db_path):
+                        _rollback_path_if_ours()
                 raise
+            retire = None
             with _menu_lifecycle_lock:
                 if token != _menu_generation:
                     try:
                         _drain_and_close_session(new_game)
                     except Exception:
                         logger.exception("discard superseded new_game session failed")
-                    assert snapshot is not None
                     # 仅当主路径仍是本拍候选时回滚——禁覆盖更新代际的路径。
-                    if _same_db_path(_get_main_db_path(), new_db_path):
-                        _restore_main_db_path_config(snapshot)
-                    if web_game is None:
-                        web_game = old_game
+                    _rollback_path_if_ours()
+                    # 失配：不复活旧局。旧 runtime 若仍在 web_game 上，属更新代际/未 exit；
+                    # 若 exit 已摘走，由其 completion 退休——本拍从未独占旧持有者。
                     raise HTTPException(
                         status_code=409, detail="新游戏已取消（菜单状态已变更）。",
                     )
+                # 发布：此刻才交接旧持有者；retire 用发布前快照，禁锁外重读全局。
+                retire = web_game
                 web_game = new_game
-                if old_game is not None:
-                    _spawn_drain_close(old_game, archive_db=True)
-                else:
-                    exit_completion = _peek_exit_detach_completion()
-                    prev_norm = _normalize_db_path(prev_db_path) if prev_db_path else ""
+            if retire is not None and retire is not new_game:
+                _spawn_drain_close(retire, archive_db=True)
+            else:
+                exit_completion = _peek_exit_detach_completion()
+                prev_norm = _normalize_db_path(prev_db_path) if prev_db_path else ""
 
-                    def _archive_prev_after_exit_detach() -> None:
-                        if exit_completion is not None:
-                            exit_completion.done.wait()
-                            ok = exit_completion.close_ok
-                            _clear_exit_detach_completion(exit_completion)
-                            if not ok:
-                                return
-                        if not prev_norm or _same_db_path(prev_norm, new_db_path):
+                def _archive_prev_after_exit_detach() -> None:
+                    if exit_completion is not None:
+                        exit_completion.done.wait()
+                        ok = exit_completion.close_ok
+                        # 成功才清回执（与 _wait_exit_detach_for_open 同契约）；
+                        # 失败保留 completion，供后续 open/new_game 看见 close_ok=False。
+                        if not ok:
                             return
-                        if _db_path_is_live(prev_norm):
-                            logger.error(
-                                "skip post-exit archive of live db path=%s", prev_norm,
-                            )
-                            return
-                        _archive_drained_db_file(prev_norm)
+                        _clear_exit_detach_completion(exit_completion)
+                    if not prev_norm or _same_db_path(prev_norm, new_db_path):
+                        return
+                    if _db_path_is_live(prev_norm):
+                        logger.error(
+                            "skip post-exit archive of live db path=%s", prev_norm,
+                        )
+                        return
+                    _archive_drained_db_file(prev_norm)
 
-                    threading.Thread(
-                        target=_archive_prev_after_exit_detach, daemon=True,
-                    ).start()
-                return steam_events.with_events(
-                    {"state": web_game.state_payload()},
-                    [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-                )
+                threading.Thread(
+                    target=_archive_prev_after_exit_detach, daemon=True,
+                ).start()
+            return steam_events.with_events(
+                {"state": new_game.state_payload()},
+                [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
+            )
         finally:
             _unregister_opening_db_path(opening_path)
 
@@ -4954,6 +4974,8 @@ async def api_menu_continue() -> StreamingResponse:
         except DependencyMismatch as exc:
             ev_queue.put(("__error__", _dependency_mismatch_detail(exc)))
         except Exception as exc:  # noqa: BLE001 — SSE 终态收束，不让线程死掉
+            # ADR 0005：SSE 可对前端只给 message，真因必须落日志。
+            logger.exception("continue worker failed")
             ev_queue.put(("__error__", {"message": str(exc)}))
         finally:
             _unregister_opening_db_path(opening_path)
@@ -4991,6 +5013,14 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
         global web_game, _menu_generation
         with _menu_lifecycle_lock:
             _menu_generation += 1
+            # 锁外候选（continue/new_game opening）未清时拒热替换——持锁等待会死锁
+            # （候选结束发布仍需本锁）；不新造登记表，只读 opening refcount。
+            main_before = _get_main_db_path()
+            if main_before and _opening_refcount(main_before) > 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="有菜单操作进行中，请稍后重试。",
+                )
             old_game = web_game
             web_game = None
 
