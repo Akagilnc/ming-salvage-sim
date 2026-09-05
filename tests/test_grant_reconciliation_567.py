@@ -369,6 +369,39 @@ def test_recon_bad_item_rejected_target_gets_midpoint(game, bad, category):
         assert item == {"raw_value": raw}
 
 
+def test_recon_both_amount_fields_rejected_no_guess(game):
+    """#1745：arrived_amount 与 loss_amount 同在 → invalid_enum 拒收，不静默优先其一。"""
+    import json
+
+    from ming_sim.applier import Provenance
+    from ming_sim.db import grant_arrival_bounds
+
+    db, state, _content = game
+    gid = _in_transit_grant(db, state)
+    both = {
+        "dossier_id": gid,
+        "arrived_amount": 16,
+        "loss_amount": 5,
+    }
+    reports = db.record_monthly_grant_reconciliations(
+        state.turn, [both], source=Provenance.player_decree,
+    )
+    # 坏项不进 supplied → 目标仍落中位（非 16、非 ordered-5）
+    assert len(reports) == 1 and reports[0]["dossier_id"] == gid
+    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
+    assert reports[0]["arrived_amount"] == (lo + hi) // 2
+    rej = list(db.conn.execute(
+        "SELECT category, item_json, reason FROM rejection_reports "
+        "WHERE section='dossier_reconciliations'"
+    ).fetchall())
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
+    assert str(rej[0]["reason"] or "").strip()
+    item = json.loads(rej[0]["item_json"])
+    assert "arrived_amount" in item and "loss_amount" in item
+    assert item["dossier_id"] == gid
+
+
 def test_recon_duplicate_keeps_first_rejects_second(game):
     """#1745：重复案卷——首份落账，次份 invalid_enum 拒收。"""
     from ming_sim.applier import Provenance, RejectionCollector
