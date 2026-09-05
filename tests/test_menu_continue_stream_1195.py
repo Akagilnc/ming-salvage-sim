@@ -10,6 +10,12 @@ import web_app
 from tests.wait_utils import wait_until
 
 
+def _reset_path_leases() -> None:
+    """测试夹具：清空路径租约（不经生产钩子）。"""
+    with web_app._menu_path_lock:
+        web_app._menu_path_leases.clear()
+
+
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
     events: list[tuple[str, dict]] = []
     for block in text.strip().split("\n\n"):
@@ -45,8 +51,9 @@ def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
         def state_payload(self) -> dict:
             return self._state
 
-    web_app._clear_menu_path_completions_for_tests()
+    _reset_path_leases()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: "/tmp/continue-main.db")
     monkeypatch.setattr(web_app, "WebGame", FakeWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
 
@@ -77,8 +84,9 @@ def test_menu_continue_streams_error_when_llm_unavailable(monkeypatch):
         def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
             raise web_app.LLMUnavailable("未配 API key，请先到设置页填写。")
 
-    web_app._clear_menu_path_completions_for_tests()
+    _reset_path_leases()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: "/tmp/continue-boom.db")
     monkeypatch.setattr(web_app, "WebGame", BoomWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
 
@@ -120,8 +128,9 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
         def state_payload(self) -> dict:
             return self._state
 
-    web_app._clear_menu_path_completions_for_tests()
+    _reset_path_leases()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: "/tmp/continue-stale-exit.db")
     monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
 
@@ -179,8 +188,10 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
         def state_payload(self) -> dict:
             return self._state
 
-    web_app._clear_menu_path_completions_for_tests()
+    _reset_path_leases()
+    main_db = str(tmp_path / "continue-stale-ng.db")
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: main_db)
     monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
     monkeypatch.delenv("MING_SIM_DB", raising=False)
