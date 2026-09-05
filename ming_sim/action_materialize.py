@@ -365,6 +365,85 @@ def _attribute_draft_combo_failures(
             )
 
 
+def _draft_extract_admitted(ctx: MaterializeCtx) -> bool:
+    """draft 抽取/物化准入唯一权威——preheat 与 handler 共用，禁平行复制。"""
+    return not (
+        ctx.explicit_prefixed
+        or ctx.has_directive
+        or ctx.out.get("pending_action_id")
+    )
+
+
+def _secret_extract_admitted(ctx: MaterializeCtx) -> bool:
+    """secret/cultivate 抽取/物化准入唯一权威——preheat 与 handler 共用。"""
+    return not (
+        ctx.out.get("pending_action_id")
+        or ctx.out.get("secret_order_id")
+        or ctx.explicit_prefixed
+    )
+
+
+def _batch_records_have_kind(
+    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+    *kinds: str,
+) -> bool:
+    wanted = set(kinds)
+    return any(
+        str(candidate.get("kind") or "") in wanted
+        for candidate, _original, _original_kind, _idx in candidate_records
+    )
+
+
+def _batch_draft_extract_required(
+    ctx: MaterializeCtx,
+    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+) -> bool:
+    """批预热是否需要 draft 抽取：按写遍真实可准入消费决定，不裸跑 LLM。
+
+    显式前缀下 draft handler 默认早退；仅当同批 grant 可能先 staged 并清
+    candidate 的 explicit_prefixed 时，写遍才会消费 draft 产物（#1503 旧行为）。
+    """
+    if ctx.has_directive or ctx.out.get("pending_action_id"):
+        return False
+    if not _batch_records_have_kind(candidate_records, "draft"):
+        return False
+    if not ctx.explicit_prefixed:
+        return True
+    return _batch_records_have_kind(candidate_records, "grant_allocation")
+
+
+def _batch_secret_extract_required(
+    ctx: MaterializeCtx,
+    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+) -> bool:
+    """批预热是否需要 secret/cultivate 抽取（与 handler 准入同口径）。"""
+    if ctx.out.get("pending_action_id") or ctx.out.get("secret_order_id"):
+        return False
+    if not _batch_records_have_kind(candidate_records, "secret", "cultivate"):
+        return False
+    if not ctx.explicit_prefixed:
+        return True
+    return _batch_records_have_kind(candidate_records, "grant_allocation")
+
+
+def _secret_mode_needs(
+    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+) -> tuple[bool, bool]:
+    """同批 secret 模式需求：新建 → new；既有动作/cultivate → actions。可并存。"""
+    need_new = False
+    need_actions = False
+    for candidate, _original, _original_kind, _idx in candidate_records:
+        kind = str(candidate.get("kind") or "")
+        if kind == "cultivate":
+            need_actions = True
+        elif kind == "secret":
+            if candidate.get("secret_action") == "新建":
+                need_new = True
+            else:
+                need_actions = True
+    return need_new, need_actions
+
+
 def _preheat_batch_draft_extractions(
     ctx: MaterializeCtx,
     candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
@@ -375,8 +454,10 @@ def _preheat_batch_draft_extractions(
 
     Multi-draft combo failure is attributed per draft_failures index only;
     legal siblings get no rejection row. Any typed failure keeps the batch at
-    zero writes (caller skips the write pass).
+    zero writes (caller skips the write pass). Admission shares handler authority.
     """
+    if not _batch_draft_extract_required(ctx, candidate_records):
+        return
     pure_draft_records = [
         (candidate, original, original_kind, original_draft_index)
         for candidate, original, original_kind, original_draft_index in candidate_records
@@ -479,21 +560,23 @@ def _preheat_batch_secret_extractions(
     ctx: MaterializeCtx,
     candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
 ) -> None:
-    """Run secret/cultivate LLM extractions into batch_state before writes."""
-    needs_secret = any(
-        str(candidate.get("kind") or "") in {"secret", "cultivate"}
-        for candidate, _original, _original_kind, _idx in candidate_records
-    )
-    if not needs_secret:
+    """Run secret/cultivate LLM extractions into batch_state before writes.
+
+    同批多 mode 分槽（new / actions）一次收齐；写遍只消费对应槽，禁止
+    单槽 prefer_new 互斥导致写遍 fallback 重抽。无消费者（准入失败）不预热。
+    """
+    if not _batch_secret_extract_required(ctx, candidate_records):
         return
-    prefer_new = any(
-        str(candidate.get("kind") or "") == "secret"
-        and candidate.get("secret_action") == "新建"
-        for candidate, _original, _original_kind, _idx in candidate_records
-    )
-    ctx.batch_state["secret_extract"] = _secret_extract_bundle(
-        ctx, prefer_new=prefer_new,
-    )
+    need_new, need_actions = _secret_mode_needs(candidate_records)
+    if not (need_new or need_actions):
+        return
+    slots: Dict[str, Any] = {}
+    if need_new:
+        slots["new"] = _secret_extract_bundle(ctx, prefer_new=True)
+    if need_actions:
+        slots["actions"] = _secret_extract_bundle(ctx, prefer_new=False)
+    # Key presence marks batch write path: handler must not re-extract.
+    ctx.batch_state["secret_extract_by_mode"] = slots
 
 
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
@@ -676,20 +759,24 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
 
 def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
     """密令会话动作 + 调教：并发判词与串行 extract_minister_actions 同缝。"""
-    if ctx.out.get("pending_action_id") or ctx.out.get("secret_order_id") or ctx.explicit_prefixed:
+    if not _secret_extract_admitted(ctx):
         return
     session = ctx.session
     minister_name = ctx.character.name
     intent = ctx.intent
     intent_kind = ctx.intent_kind
-    cached_secret = ctx.batch_state.get("secret_extract")
+    # Batch path: preheat owned multi-mode slots. Key presence ⇒ never re-extract.
+    in_batch = "secret_extract_by_mode" in ctx.batch_state
+    mode_slots = ctx.batch_state.get("secret_extract_by_mode") if in_batch else None
     if (
         intent is not None
         and intent_kind == "secret"
         and intent.get("secret_action") == "新建"
     ):
-        if isinstance(cached_secret, dict) and cached_secret.get("mode") == "new":
-            bundle = cached_secret
+        if in_batch:
+            bundle = mode_slots.get("new") if isinstance(mode_slots, dict) else None
+            if not isinstance(bundle, dict):
+                return
         else:
             bundle = _secret_extract_bundle(ctx, prefer_new=True)
         secret = dict(bundle.get("secret") or {})
@@ -729,8 +816,17 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         )
         return
 
-    if isinstance(cached_secret, dict) and cached_secret.get("mode") in {"actions", "none"}:
-        bundle = cached_secret
+    # Kind gate BEFORE actions extract（F5：非批不得在 kind 拒绝前开 LLM）。
+    if intent is not None and intent_kind not in ("secret", "cultivate", "none"):
+        return
+    if intent is not None and intent_kind == "none":
+        # 分类器已定 none：空 act 无消费者，免抽。
+        return
+
+    if in_batch:
+        bundle = mode_slots.get("actions") if isinstance(mode_slots, dict) else None
+        if not isinstance(bundle, dict):
+            return
     else:
         bundle = _secret_extract_bundle(ctx, prefer_new=False)
     is_consort = bool(bundle.get("is_consort"))
@@ -738,10 +834,6 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
     if not (active or is_consort):
         return
 
-    # 仅当分类器未跑，或判为 secret/cultivate 时走抽取/物化；
-    # 其它 kind 的并发判词不得串行重抽密令。
-    if intent is not None and intent_kind not in ("secret", "cultivate", "none"):
-        return
     if intent is not None and intent_kind in ("secret", "cultivate"):
         extracted = dict(bundle.get("act") or {})
         act = extracted if (
@@ -749,12 +841,8 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             or extracted.get("cultivate_skill")
             or extracted.get("cultivate_trait")
         ) else intent
-    elif intent is not None and intent_kind == "none":
-        act = {
-            "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-            "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-        }
     else:
+        # intent is None：分类器未跑，串行回落。
         act = dict(bundle.get("act") or {})
 
     sa = act["secret_action"]
@@ -845,7 +933,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     ):
         return
 
-    if ctx.explicit_prefixed or ctx.has_directive or ctx.out.get("pending_action_id"):
+    if not _draft_extract_admitted(ctx):
         return
 
     if (
