@@ -565,7 +565,9 @@ def test_close_waits_for_overlapping_judge_provider_before_closed(game, monkeypa
             on_closing=closing_seen.set,
         )))
         worker.start()
-        closing_seen.wait(); judge_entered.wait(); scene_entered.wait()
+        closing_seen.wait()
+        judge_entered.wait()
+        scene_entered.wait()
         assert worker.is_alive()
         release_judge.set()
         worker.join()
@@ -709,6 +711,7 @@ def test_split_finalize_waits_for_provider_result_before_watermark(game):
     worker.start()
     entered.wait()
     assert _judge_status(db, ctid) == ""
-    release.set(); worker.join()
+    release.set()
+    worker.join()
     finalize_summon_relation_judge(prepared, box["result"], write_gate=threading.Lock())
     assert _judge_status(db, ctid) == "done"

@@ -130,7 +130,8 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
     async def _go():
         # 并行：放行 phase2 前先观测展示态
         async def _watch():
-            assert await asyncio.get_event_loop().run_in_executor(None, phase2_started.wait, 5.0)
+            # bare 事件屏障；禁 run_in_executor(wait, 墙钟)。
+            await asyncio.get_event_loop().run_in_executor(None, phase2_started.wait)
             payload = runtime.state_payload()
             assert payload["turn"]["settlement_display"] is True
             for k in MONTH_OPEN_KEYS:
