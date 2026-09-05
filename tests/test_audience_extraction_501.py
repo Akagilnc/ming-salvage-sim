@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -280,7 +279,7 @@ def test_catch_up_processes_source_turns_serially_even_on_parallel_safe_backend(
             seen_present.append((reply, list(payload.get("当前在场") or [])))
             if "退至殿侧" in reply:
                 started.set()
-                assert release_first.wait(5)
+                release_first.wait()
                 return (
                     '{"facts":[{"body":"自行退至殿侧","person_names":["'
                     + minister + '"],"presence_effect":"exit"}]}'
@@ -299,11 +298,11 @@ def test_catch_up_processes_source_turns_serially_even_on_parallel_safe_backend(
         extractor_agent=_PresenceAwareAgent(),
     ))
     worker.start()
-    assert started.wait(5)
-    time.sleep(0.05)
+    started.wait()
+    # first generator entered and holds release_first — second must not have started
     assert len(seen_present) == 1
     release_first.set()
-    worker.join(5)
+    worker.join()
     assert not worker.is_alive()
     assert [reply for reply, _present in seen_present] == [
         "臣请退至殿侧。", "近前再奏。",
