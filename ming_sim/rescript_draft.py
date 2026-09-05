@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
@@ -49,6 +50,45 @@ from ming_sim.token_stats import tlog
 MAX_RESCRIPT_DRAFTS = 5
 # #1624：月末首抽 typed 组合失败 → 共同纠错反馈有界重抽一次；耗尽仍 F2.5 整批降级。
 RESCRIPT_COMBO_CORRECTION_RETRIES = 1
+# #1746：单 option 缺结构化字段 → 同一会话补交（不含首抽）；耗尽只剔该 option。
+# decision: missing-field-heal-by-resume-not-drop / per-option-drop-after-heal-exhausted
+RESCRIPT_OPTION_FIELD_HEAL_RETRIES = 3
+
+
+class RescriptOptionMissingFieldsError(ValueError):
+    """可定位到单 option 的缺结构化字段（#1746 补交分支；非组合错、非顶层/条目非法）。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        missing_fields: Sequence[str],
+        raw_option: object = None,
+    ) -> None:
+        self.missing_fields = tuple(str(f) for f in missing_fields)
+        self.raw_option = raw_option
+        super().__init__(message)
+
+
+@dataclass(frozen=True)
+class RescriptOptionMissingFailure:
+    item_index: int
+    option_index: int
+    title: str
+    missing_fields: Tuple[str, ...]
+    raw_option: object
+
+
+class RescriptOptionMissingFieldsBatch(ValueError):
+    """一批 option 缺字段（validate isolate 模式一次收齐，供补交/剔除）。"""
+
+    def __init__(self, failures: Sequence[RescriptOptionMissingFailure]) -> None:
+        self.failures = list(failures)
+        parts = [
+            f"{f.title!r}#{f.option_index}:{','.join(f.missing_fields)}"
+            for f in self.failures
+        ]
+        super().__init__("票拟 option 缺结构化字段：" + "; ".join(parts))
 
 # #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
 # #1624 / PR#1719：required/present/action-conditional 为 typed 单源——
@@ -498,11 +538,19 @@ def normalize_rescript_layer_a_option(
             f"票拟 option 含未知字段（整批 shape 错，F2.5/F3.3）：{sorted(unknown)}"
         )
     out: Dict[str, object] = {}
+    missing_required = [
+        str(key)
+        for key in required_keys  # type: ignore[union-attr]
+        if not isinstance(raw.get(key), str) or not str(raw.get(key)).strip()
+    ]
+    if missing_required:
+        raise RescriptOptionMissingFieldsError(
+            f"票拟 option 缺层 A 必填键或为空白：{'/'.join(missing_required)}",
+            missing_fields=tuple(missing_required),
+            raw_option=raw,
+        )
     for key in required_keys:  # type: ignore[union-attr]
-        value = raw.get(key)
-        if not isinstance(value, str) or not str(value).strip():
-            raise ValueError(f"票拟 option 缺层 A 必填键或为空白：{key}")
-        out[key] = str(value)  # 原文；strip 仅判空
+        out[key] = str(raw.get(key))  # 原文；strip 仅判空
     action_type = str(out["action_type"]).strip()
     if action_type not in action_types:
         raise ValueError(f"票拟 option.action_type 非七类 routable：{action_type!r}")
@@ -523,9 +571,17 @@ def normalize_rescript_layer_a_option(
     from ming_sim.execution_pressure import normalize_locality_scope
     out["locality_scope"] = normalize_locality_scope(out["locality_scope"])
     # C.3：三键必须在且为 str（可 ""）；禁缺键补全 / None→"" / str(value) 洗值
+    missing_present = [
+        str(key) for key in present_keys  # type: ignore[union-attr]
+        if key not in raw
+    ]
+    if missing_present:
+        raise RescriptOptionMissingFieldsError(
+            f"票拟 option 缺层 A 须在键：{'/'.join(missing_present)}",
+            missing_fields=tuple(missing_present),
+            raw_option=raw,
+        )
     for key in present_keys:  # type: ignore[union-attr]
-        if key not in raw:
-            raise ValueError(f"票拟 option 缺层 A 须在键：{key}")
         value = raw[key]
         if not isinstance(value, str):
             raise ValueError(
@@ -589,24 +645,44 @@ def normalize_rescript_layer_a_option(
                 "生成侧军饷须用 grant_kind=army_pay，不得直接 grant_action=协饷"
             )
         input_account = str(out.get("account") or "").strip()
-        shaped = require_grant_allocation_shape(
-            grant_action=out.get("grant_action"),
-            amount=raw.get("amount") if "amount" in raw else None,
-            account=out.get("account"),
-        )
+        try:
+            shaped = require_grant_allocation_shape(
+                grant_action=out.get("grant_action"),
+                amount=raw.get("amount") if "amount" in raw else None,
+                account=out.get("account"),
+            )
+        except ValueError as exc:
+            field = getattr(exc, "field", None)
+            if field:
+                raise RescriptOptionMissingFieldsError(
+                    str(exc),
+                    missing_fields=(str(field),),
+                    raw_option=raw,
+                ) from exc
+            raise
         if "amount" in shaped:
             out["amount"] = shaped["amount"]
         if input_account:
             out["account"] = shaped["account"]
         if str(out.get("grant_action") or "").strip() == "协饷":
-            explicit = require_explicit_xiexang_fields(
-                amount=out.get("amount", 0),
-                account=str(out.get("account") or ""),
-                purpose=str(out.get("purpose") or ""),
-                target_kind=str(out.get("target_kind") or ""),
-                target_id=str(out.get("target_id") or ""),
-                cadence=str(out.get("cadence") or ""),
-            )
+            from ming_sim.action_materialize import IncompleteXiexangPayloadError
+
+            try:
+                explicit = require_explicit_xiexang_fields(
+                    amount=out.get("amount", 0),
+                    account=str(out.get("account") or ""),
+                    purpose=str(out.get("purpose") or ""),
+                    target_kind=str(out.get("target_kind") or ""),
+                    target_id=str(out.get("target_id") or ""),
+                    cadence=str(out.get("cadence") or ""),
+                )
+            except IncompleteXiexangPayloadError as exc:
+                # #1746：协饷缺字段 → 补交分支（不猜默认、不整批降级）
+                raise RescriptOptionMissingFieldsError(
+                    str(exc),
+                    missing_fields=tuple(exc.failed_fields),
+                    raw_option=raw,
+                ) from exc
             out["amount"] = explicit["amount"]
             out["account"] = explicit["account"]
             out["purpose"] = explicit["purpose"]
@@ -806,23 +882,23 @@ def build_rescript_draft_payload(
 def validate_rescript_draft_items(
     data: object,
     board_issue_ids: set[int],
+    *,
+    min_options: int = 2,
+    max_options: int = 3,
+    isolate_option_missing: bool = False,
 ) -> List[Dict[str, object]]:
-    """shape 校验（F2.2/F2.5 整批响亮降级的判据面）＋权威快照绑定＋原样不变式（F3.3）。
+    """shape 校验（F2.2/F2.5）＋权威快照绑定＋原样不变式（F3.3）。
 
     - 顶层非法（非 dict / 无 items list）→ raise ValueError（整批降级，本月无头版）；
-    - 任一条目必需字段缺失或非法（title/context 非空字符串 / options 非 2-3 项 /
-      option 须过层 A 单真源 normalize）→ raise ValueError 整批失败（F2.2/F2.5：
-      不得保留合法项形成部分头版，不得把缺失洗成空串）；合法 `items=[]` 仍是
-      「本月无急务」；
-    - 自由文本零删改（CLAUDE.md P6 / F3.3）：strip 只作判空的临时值，落库一律原文；
-    - option 经 normalize_rescript_layer_a_option：C.3 必填 + C.4 闭集；
-      draft_capability 服务端重算；未知键响亮失败（不再接受仅 label/hint 两键）；
-    - 处理条目前先校验 items 总数：超过 MAX_RESCRIPT_DRAFTS 即 raise ValueError
-      整批响亮降级（#656 A1：不截断、不静默丢弃后项、不保留前五条，F2.5）；
-    - item 层白名单外未知字段 → raise ValueError 整批失败（r2 B2）；
-      issue_id 是唯一豁免的可选绑定键；
-    - event_id 只采信出现在权威盘面里的 issue_id 回指（bind 同款纪律）；其余留给
-      落库层合成 `urgent:{turn}:{idx}`。
+    - 条目必需字段缺失或非法（title/context）→ raise ValueError 整批失败；
+    - options 数量：首抽/常规默认 2–3（F2.2）；#1746 剔除后 min_options=1 仍可呈；
+    - option 缺结构化字段（#1746）：isolate_option_missing=True 时收齐为
+      RescriptOptionMissingFieldsBatch（供同一会话补交／耗尽单 option 剔除）；
+      False 时仍整批 ValueError（旧直调行为）；
+    - 组合错误 → StructuredDecreeCombinationError（既有有界重抽，不动）；
+    - 其它 option shape 非法 / 未知键 → 整批 ValueError（F2.5 其它分支原样）；
+    - 合法 `items=[]` 仍是「本月无急务」（F2.3）；
+    - 自由文本零删改；draft_capability 服务端重算。
     """
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
         raise ValueError("票拟生成输出顶层非法：须为 {\"items\":[...]}")
@@ -845,7 +921,8 @@ def validate_rescript_draft_items(
         return value  # 原样返回，零删改（F3.3）
 
     drafts: List[Dict[str, object]] = []
-    for raw in items:
+    missing_failures: List[RescriptOptionMissingFailure] = []
+    for item_index, raw in enumerate(items):
         if not isinstance(raw, dict):
             raise ValueError("票拟条目非 object（整批失败，F2.5）")
         unknown = set(raw) - _ITEM_ALLOWED_KEYS
@@ -856,10 +933,15 @@ def validate_rescript_draft_items(
         title = _required_text(raw, "title")
         context = _required_text(raw, "context")
         raw_opts = raw.get("options")
-        if not isinstance(raw_opts, list) or not (2 <= len(raw_opts) <= 3):
-            raise ValueError(f"票拟条目 options 非 2-3 项（整批失败，F2.2）：{title!r}")
+        if not isinstance(raw_opts, list) or not (
+            min_options <= len(raw_opts) <= max_options
+        ):
+            raise ValueError(
+                f"票拟条目 options 非 {min_options}-{max_options} 项"
+                f"（整批失败，F2.2）：{title!r}"
+            )
         options: List[Dict[str, object]] = []
-        for opt in raw_opts:
+        for option_index, opt in enumerate(raw_opts):
             if not isinstance(opt, dict):
                 raise ValueError(f"票拟 option 非 object（整批失败，F2.2）：{title!r}")
             # 层 A 单真源：完整 option + 服务端 draft_capability
@@ -875,6 +957,19 @@ def validate_rescript_draft_items(
                     f"票拟 option 结构组合失败：{title!r} {exc}",
                     failed_fields=exc.failed_fields,
                 ) from exc
+            except RescriptOptionMissingFieldsError as exc:
+                if isolate_option_missing:
+                    missing_failures.append(RescriptOptionMissingFailure(
+                        item_index=item_index,
+                        option_index=option_index,
+                        title=title,
+                        missing_fields=tuple(exc.missing_fields),
+                        raw_option=opt if isinstance(opt, dict) else exc.raw_option,
+                    ))
+                    continue
+                raise ValueError(
+                    f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
+                ) from exc
             except ValueError as exc:
                 raise ValueError(
                     f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
@@ -883,6 +978,12 @@ def validate_rescript_draft_items(
             _assert_utf8(str(normalized_opt.get("label") or ""), "label")
             _assert_utf8(str(normalized_opt.get("hint") or ""), "hint")
             options.append(normalized_opt)
+        if missing_failures and isolate_option_missing:
+            # 本 item 仍有缺字段 option：整批在收齐后抛 batch，不提前 partial 返回
+            continue
+        if not options:
+            # 隔离模式下本条 options 全缺字段 → 留给 batch；非隔离不应到此
+            continue
         # options_json 序列化前再校验 ensure_ascii=False 场景的可编码性
         try:
             json.dumps(options, ensure_ascii=False).encode("utf-8")
@@ -904,6 +1005,8 @@ def validate_rescript_draft_items(
         if issue_id is not None and issue_id in board_issue_ids:
             draft["event_id"] = f"issue:{issue_id}"
         drafts.append(draft)
+    if missing_failures:
+        raise RescriptOptionMissingFieldsBatch(missing_failures)
     return drafts
 
 
@@ -946,21 +1049,117 @@ def _board_issue_ids(active_issues: object) -> set[int]:
     return ids
 
 
-def _write_degraded_note(turn: int, reason: str) -> None:
-    """响亮降级的 error pack 附记：诊断目录留 JSON 注记（不写整包热备——结算未中止）。"""
+def _write_degraded_note(
+    turn: int,
+    reason: str,
+    *,
+    extra: Optional[Dict[str, object]] = None,
+) -> None:
+    """响亮降级/剔除的 error pack 附记：诊断目录留 JSON 注记（不写整包热备——结算未中止）。"""
     try:
         root = error_packs_root() / "rescript_draft_degraded"
         root.mkdir(parents=True, exist_ok=True)
-        note = {
+        note: Dict[str, object] = {
             "turn": int(turn),
             "reason": reason,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        if extra:
+            note.update(extra)
         (root / f"turn{int(turn)}.json").write_text(
             json.dumps(note, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception as exc:  # noqa: BLE001 — 附记是诊断旁路，任何异常不得拖垮结算
         tlog(f"[rescript] 降级附记写盘失败：{exc}")
+
+
+def _missing_field_heal_feedback(
+    failures: Sequence[RescriptOptionMissingFailure],
+    *,
+    original_raw: str,
+    attempt: int,
+    max_attempts: int,
+) -> str:
+    """#1746 缺字段补交请求：续同一会话语义——附原始产出、只索缺字段（接受完整重交）。
+
+    与 combination_correction_feedback（整批结构重抽）是两种动作，不得混用。
+    """
+    lines = [
+        f"【缺字段补交 {attempt}/{max_attempts}】同一会话续接：上轮票拟产出中下列 option 缺结构化字段。",
+        "请只补交缺的结构化字段；重交完整 option 或完整 {\"items\":[...]} 亦可。",
+        "不要改写无缺失的 option；不要省略已给出的 amount/account/target 等世界事实字段。",
+        "代码不猜字段默认值——须由你补上。",
+    ]
+    for failure in failures:
+        fields = ",".join(failure.missing_fields)
+        lines.append(
+            f"- 急务 {failure.title!r} option[{failure.option_index}] "
+            f"缺字段: {fields}"
+        )
+        if isinstance(failure.raw_option, dict):
+            lines.append(
+                "  原始 option: "
+                + json.dumps(failure.raw_option, ensure_ascii=False)
+            )
+    lines.append("上轮完整原始产出：")
+    lines.append(original_raw)
+    lines.append('请输出补齐后的完整 {"items":[...]} JSON。')
+    return "\n".join(lines)
+
+
+def _drop_options_by_failures(
+    data: Dict[str, Any],
+    failures: Sequence[RescriptOptionMissingFailure],
+) -> Dict[str, Any]:
+    """耗尽后只剔失败 option；急务条目 options 空则整条去掉（F2.3 不足照实）。"""
+    drop_map: Dict[int, set[int]] = {}
+    for failure in failures:
+        drop_map.setdefault(int(failure.item_index), set()).add(int(failure.option_index))
+    raw_items = data.get("items")
+    if not isinstance(raw_items, list):
+        return {"items": []}
+    kept_items: List[object] = []
+    for item_index, item in enumerate(raw_items):
+        if not isinstance(item, dict):
+            kept_items.append(item)
+            continue
+        drop_idxs = drop_map.get(item_index) or set()
+        if not drop_idxs:
+            kept_items.append(item)
+            continue
+        raw_opts = item.get("options")
+        if not isinstance(raw_opts, list):
+            continue
+        kept_opts = [
+            opt for option_index, opt in enumerate(raw_opts)
+            if option_index not in drop_idxs
+        ]
+        if not kept_opts:
+            # 该急务 options 全剔 → 条目消失，其它急务不受牵连
+            continue
+        new_item = dict(item)
+        new_item["options"] = kept_opts
+        kept_items.append(new_item)
+    return {"items": kept_items}
+
+
+def _failure_log_rows(
+    failures: Sequence[RescriptOptionMissingFailure],
+) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    for failure in failures:
+        row: Dict[str, object] = {
+            "title": failure.title,
+            "item_index": failure.item_index,
+            "option_index": failure.option_index,
+            "missing_fields": list(failure.missing_fields),
+        }
+        if isinstance(failure.raw_option, dict):
+            label = failure.raw_option.get("label")
+            if label is not None:
+                row["label"] = label
+        rows.append(row)
+    return rows
 
 
 def generate_rescript_draft(
@@ -979,6 +1178,11 @@ def generate_rescript_draft(
     #1624：首抽若触发 typed StructuredDecreeCombinationError，复用共同
     combination_correction_feedback 有界结构重抽并重验整批；耗尽后仍 F2.5 整批降级，
     零部分头版。禁止静默改写 army+single→none / army→region 或另造月末矩阵。
+
+    #1746：可定位到单 option 的缺结构化字段 → 同一会话补交（附原始产出、索缺字段，
+    最多 RESCRIPT_OPTION_FIELD_HEAL_RETRIES 次，与组合重抽是两种动作）；耗尽只剔除该
+    option，其余急务/option 照出，不告知皇帝；后台 tlog + error pack 响亮留痕。
+    剔后剩 1 个 option 仍可呈（F2.2 局部修订）；剩 0 则该急务条目不足照实消失。
     """
     # payload 序列化是纯程序逻辑：其错误属代码侧错（ADR 0005），不在降级面内，响亮上抛。
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
@@ -1000,19 +1204,54 @@ def generate_rescript_draft(
     } if isinstance(army_targets, list) else set()
     board_ids = _board_issue_ids(payload.get("active_issues"))
 
-    def _parse_and_validate(raw: str) -> List[Dict[str, object]]:
-        data = _parse_rescript_json_strict(raw)
-        drafts = validate_rescript_draft_items(data, board_ids)
+    def _ground(drafts: List[Dict[str, object]]) -> List[Dict[str, object]]:
         _assert_region_targets_grounded(drafts, region_target_ids)
         _assert_army_targets_grounded(drafts, army_target_ids)
         return drafts
 
-    correction = ""
-    retries = max(0, int(RESCRIPT_COMBO_CORRECTION_RETRIES))
-    for attempt in range(retries + 1):
-        prompt = payload_json if not correction else f"{correction}\n{payload_json}"
+    def _parse_and_validate(
+        raw: str,
+        *,
+        isolate_option_missing: bool,
+        min_options: int = 2,
+        max_options: int = 3,
+    ) -> List[Dict[str, object]]:
+        data = _parse_rescript_json_strict(raw)
+        drafts = validate_rescript_draft_items(
+            data,
+            board_ids,
+            min_options=min_options,
+            max_options=max_options,
+            isolate_option_missing=isolate_option_missing,
+        )
+        return _ground(drafts)
+
+    combo_correction = ""
+    combo_retries = max(0, int(RESCRIPT_COMBO_CORRECTION_RETRIES))
+    combo_attempt = 0
+    heal_retries = max(0, int(RESCRIPT_OPTION_FIELD_HEAL_RETRIES))
+    heal_attempt = 0
+    pending_missing: Optional[List[RescriptOptionMissingFailure]] = None
+    original_raw: Optional[str] = None
+    heal_trace: List[Dict[str, object]] = []
+    # 有界循环骨架与组合重抽共用；补交/重抽分支分叉，不另造第三套 heal 机器。
+    while True:
+        if pending_missing is not None and heal_attempt >= 1 and original_raw is not None:
+            prompt = _missing_field_heal_feedback(
+                pending_missing,
+                original_raw=original_raw,
+                attempt=heal_attempt,
+                max_attempts=heal_retries,
+            )
+            tag = "rescript-draft-heal"
+        elif combo_correction:
+            prompt = f"{combo_correction}\n{payload_json}"
+            tag = "rescript-draft"
+        else:
+            prompt = payload_json
+            tag = "rescript-draft"
         try:
-            raw = run_agent_text(agent, prompt, tag="rescript-draft")
+            raw = run_agent_text(agent, prompt, tag=tag)
         except (APITimeoutError, APIConnectionError, APIStatusError) as error:
             # 窄捕 provider 已知故障→译 typed（照抄 decree.py:1991 Z3 缝）
             _degrade(llm_unavailable_from_error(error, "急务票拟生成"))
@@ -1020,20 +1259,87 @@ def generate_rescript_draft(
         except LLMUnavailable as exc:  # LLM 调用缝：只收 typed 声明，程序错上抛
             _degrade(exc)
             return None
+        if original_raw is None:
+            original_raw = raw
+        if tag == "rescript-draft-heal":
+            heal_trace.append({
+                "attempt": heal_attempt,
+                "raw_summary": raw[:800],
+                "failures": _failure_log_rows(pending_missing or ()),
+            })
         try:
-            drafts = _parse_and_validate(raw)
+            drafts = _parse_and_validate(raw, isolate_option_missing=True)
         except StructuredDecreeCombinationError as exc:
             # typed 组合：有界重抽；耗尽才 F2.5（StructuredDecree 是 ValueError 子类，
-            # 必须先于下方宽捕，否则会跳过纠错）。
-            if attempt >= retries:
+            # 必须先于下方宽捕，否则会跳过纠错）。与缺字段补交分流。
+            if combo_attempt >= combo_retries:
                 _degrade(exc)
                 return None
-            correction = combination_correction_feedback(exc)
-            tlog(f"[rescript] 结构组合纠错重试 {attempt + 1}/{retries}: {exc}")
+            combo_attempt += 1
+            combo_correction = combination_correction_feedback(exc)
+            pending_missing = None
+            tlog(f"[rescript] 结构组合纠错重试 {combo_attempt}/{combo_retries}: {exc}")
             continue
-        except (LLMContractError, ValueError) as exc:  # 解析/非组合 shape：整批降级
+        except RescriptOptionMissingFieldsBatch as exc:
+            pending_missing = list(exc.failures)
+            rows = _failure_log_rows(pending_missing)
+            if heal_attempt < heal_retries:
+                heal_attempt += 1
+                tlog(
+                    f"[rescript] option 缺字段补交 {heal_attempt}/{heal_retries}："
+                    f"{json.dumps(rows, ensure_ascii=False)}"
+                )
+                continue
+            # 耗尽：只剔失败 option，其余照出；不告知皇帝；后台响亮留痕
+            tlog(
+                f"[rescript] option 缺字段补交耗尽，剔除："
+                f"{json.dumps(rows, ensure_ascii=False)} "
+                f"heal_trace={len(heal_trace)}"
+            )
+            _write_degraded_note(
+                turn,
+                "option_missing_fields_heal_exhausted",
+                extra={
+                    "dropped_options": rows,
+                    "heal_trace": heal_trace,
+                    "missing_fields_detail": [
+                        {
+                            **row,
+                            "heal_attempts": heal_retries,
+                        }
+                        for row in rows
+                    ],
+                },
+            )
+            try:
+                data = _parse_rescript_json_strict(raw)
+            except (LLMContractError, ValueError) as parse_exc:
+                _degrade(parse_exc)
+                return None
+            if not isinstance(data, dict):
+                _degrade(exc)
+                return None
+            dropped = _drop_options_by_failures(data, pending_missing)
+            try:
+                # F2.2 局部修订：剔后剩 1 仍呈；0 option 条目已在 drop 时去掉
+                drafts = validate_rescript_draft_items(
+                    dropped,
+                    board_ids,
+                    min_options=1,
+                    max_options=3,
+                    isolate_option_missing=False,
+                )
+                drafts = _ground(drafts)
+            except (LLMContractError, ValueError) as drop_exc:
+                _degrade(drop_exc)
+                return None
+            tlog(
+                f"[rescript] 票拟生成 {len(drafts)} 条"
+                f"（缺字段剔除 {len(pending_missing)} option 后）。"
+            )
+            return drafts
+        except (LLMContractError, ValueError) as exc:  # 解析/非组合/非缺字段 shape：整批降级
             _degrade(exc)
             return None
         tlog(f"[rescript] 票拟生成 {len(drafts)} 条。")
         return drafts
-    return None
