@@ -263,6 +263,97 @@ def _prevalidate_grant_allocation_candidate(
         ) from exc
 
 
+def _draft_heal_or_escalate(
+    ctx: MaterializeCtx, **kwargs: Any,
+) -> Optional[Dict[str, Any]]:
+    """自愈抽取；真不在册 → 戏内回禀、不落草案、不炸整轮。
+
+    唯一权威：batch preheat 与 draft handler 共用，禁平行闭包。
+    """
+    from ming_sim.cli_backend import (
+        UnknownParticipantEscalate,
+        compose_unknown_participant_inworld_report,
+        extract_draft_intent_with_roster_heal,
+    )
+
+    try:
+        return extract_draft_intent_with_roster_heal(**kwargs)
+    except UnknownParticipantEscalate as exc:
+        report = compose_unknown_participant_inworld_report(
+            exc.names,
+            voice="minister",
+            speaker_name=ctx.character.name,
+            llm_config=ctx.llm_config,
+        )
+        payload = {"names": list(exc.names), "report": report}
+        ctx.out["unknown_participant_escalate"] = payload
+        ctx.batch_state["unknown_participant_escalate"] = payload
+        return None
+
+
+def _draft_existing_surface(ctx: MaterializeCtx) -> Dict[str, Any]:
+    """pending/committed draft 探测与 dir_candidates 装配——preheat 与 handler 单源。"""
+    session = ctx.session
+    minister_name = ctx.character.name
+    pend_for_minister = ctx.pend_for_minister
+    has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
+    committed_draft = None
+    if not has_pending_directive:
+        for _directive in reversed(
+            session.db.list_directives(session.state, statuses=("draft",))
+        ):
+            if session.db.get_dossier_for_directive(int(_directive["id"])) is not None:
+                continue
+            if str(_directive["actor"] or "") == minister_name:
+                committed_draft = _directive
+                break
+    dir_candidates: list[dict[str, Any]] = []
+    for _p in pend_for_minister:
+        if _p["kind"] != "directive":
+            continue
+        _val = _p["payload_json"] or "{}"
+        try:
+            _cp = _val if isinstance(_val, (list, dict)) else json.loads(_val)
+        except (ValueError, TypeError):
+            _cp = {}
+        _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
+        _mode = _cp.get("mode") if isinstance(_cp, dict) else None
+        dir_candidates.append({
+            "id": int(_p["id"]), "text": _txt, "summary": _txt[:40], "mode": _mode,
+        })
+    existing_draft_text = ""
+    if dir_candidates:
+        existing_draft_text = str(dir_candidates[-1].get("text") or "")
+    elif committed_draft is not None and not has_pending_directive:
+        existing_draft_text = str(committed_draft["text"] or "")
+    has_committed_directive = committed_draft is not None
+    return {
+        "has_pending_directive": has_pending_directive,
+        "committed_draft": committed_draft,
+        "has_committed_directive": has_committed_directive,
+        "has_existing_draft": has_pending_directive or has_committed_directive,
+        "dir_candidates": dir_candidates,
+        "existing_draft_text": existing_draft_text,
+    }
+
+
+def _attribute_draft_combo_failures(
+    exc: StructuredDecreeCombinationError,
+    pure_draft_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+    validation_failures: list[tuple[dict[str, Any], BaseException]],
+) -> None:
+    """Map combo draft_failures indexes onto batch rejection rows (legal siblings skip)."""
+    for (
+        _candidate, original_candidate, _original_kind, original_draft_index,
+    ) in pure_draft_records:
+        try:
+            _raise_cached_draft_combo_failure(exc, original_draft_index)
+        except StructuredDecreeCombinationError as attributed:
+            validation_failures.append(
+                (_rejection_item_for_exc(original_candidate, attributed), attributed),
+            )
+
+
 def _preheat_batch_draft_extractions(
     ctx: MaterializeCtx,
     candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
@@ -283,52 +374,19 @@ def _preheat_batch_draft_extractions(
     if not pure_draft_records:
         return
 
-    from ming_sim.cli_backend import (
-        UnknownParticipantEscalate,
-        compose_unknown_participant_inworld_report,
-        extract_draft_intent_with_roster_heal,
-    )
-
     session = ctx.session
-    minister_name = ctx.character.name
-
-    def _heal_or_escalate(**kwargs: Any) -> Optional[Dict[str, Any]]:
-        try:
-            return extract_draft_intent_with_roster_heal(**kwargs)
-        except UnknownParticipantEscalate as exc:
-            report = compose_unknown_participant_inworld_report(
-                exc.names,
-                voice="minister",
-                speaker_name=minister_name,
-                llm_config=ctx.llm_config,
-            )
-            ctx.out["unknown_participant_escalate"] = {
-                "names": list(exc.names),
-                "report": report,
-            }
-            ctx.batch_state["unknown_participant_escalate"] = ctx.out[
-                "unknown_participant_escalate"
-            ]
-            return None
 
     if draft_total > 1:
         if "drafts" in ctx.batch_state or "draft_combo_error" in ctx.batch_state:
             cached_combo = ctx.batch_state.get("draft_combo_error")
             if isinstance(cached_combo, StructuredDecreeCombinationError):
-                for (
-                    _candidate, original_candidate, _original_kind, original_draft_index,
-                ) in pure_draft_records:
-                    try:
-                        _raise_cached_draft_combo_failure(
-                            cached_combo, original_draft_index,
-                        )
-                    except StructuredDecreeCombinationError as exc:
-                        validation_failures.append(
-                            (_rejection_item_for_exc(original_candidate, exc), exc),
-                        )
+                _attribute_draft_combo_failures(
+                    cached_combo, pure_draft_records, validation_failures,
+                )
             return
         try:
-            batch_res = _heal_or_escalate(
+            batch_res = _draft_heal_or_escalate(
+                ctx,
                 player_message=ctx.player_message,
                 minister_reply=ctx.reply,
                 llm_config=ctx.llm_config,
@@ -339,15 +397,9 @@ def _preheat_batch_draft_extractions(
         except StructuredDecreeCombinationError as exc:
             ctx.batch_state["draft_combo_error"] = exc
             ctx.batch_state["drafts"] = []
-            for (
-                _candidate, original_candidate, _original_kind, original_draft_index,
-            ) in pure_draft_records:
-                try:
-                    _raise_cached_draft_combo_failure(exc, original_draft_index)
-                except StructuredDecreeCombinationError as attributed:
-                    validation_failures.append(
-                        (_rejection_item_for_exc(original_candidate, attributed), attributed),
-                    )
+            _attribute_draft_combo_failures(
+                exc, pure_draft_records, validation_failures,
+            )
             return
         if batch_res is None:
             ctx.batch_state["drafts"] = []
@@ -359,45 +411,16 @@ def _preheat_batch_draft_extractions(
     if "draft_single" in ctx.batch_state:
         return
     _candidate, original_candidate, _original_kind, _original_draft_index = pure_draft_records[0]
-    # Match handler inputs for existing-draft supplement path.
-    pend_for_minister = ctx.pend_for_minister
-    has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
-    committed_draft = None
-    if not has_pending_directive:
-        for _directive in reversed(session.db.list_directives(session.state, statuses=("draft",))):
-            if session.db.get_dossier_for_directive(int(_directive["id"])) is not None:
-                continue
-            if str(_directive["actor"] or "") == minister_name:
-                committed_draft = _directive
-                break
-    has_existing_draft = has_pending_directive or committed_draft is not None
-    dir_candidates = []
-    for _p in pend_for_minister:
-        if _p["kind"] != "directive":
-            continue
-        _val = _p["payload_json"] or "{}"
-        try:
-            _cp = _val if isinstance(_val, (list, dict)) else json.loads(_val)
-        except (ValueError, TypeError):
-            _cp = {}
-        _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
-        _mode = _cp.get("mode") if isinstance(_cp, dict) else None
-        dir_candidates.append({
-            "id": int(_p["id"]), "text": _txt, "summary": _txt[:40], "mode": _mode,
-        })
-    existing_draft_text = ""
-    if dir_candidates:
-        existing_draft_text = str(dir_candidates[-1].get("text") or "")
-    elif committed_draft is not None and not has_pending_directive:
-        existing_draft_text = str(committed_draft["text"] or "")
+    surface = _draft_existing_surface(ctx)
     try:
-        healed = _heal_or_escalate(
+        healed = _draft_heal_or_escalate(
+            ctx,
             player_message=ctx.player_message,
             minister_reply=ctx.reply,
             llm_config=ctx.llm_config,
-            has_pending_draft=has_existing_draft,
-            existing_draft_text=existing_draft_text,
-            existing_candidates=dir_candidates or None,
+            has_pending_draft=surface["has_existing_draft"],
+            existing_draft_text=surface["existing_draft_text"],
+            existing_candidates=surface["dir_candidates"] or None,
             content=getattr(session, "content", None),
             db=session.db,
         )
@@ -802,9 +825,6 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
 
 def _materialize_draft(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import (
-        UnknownParticipantEscalate,
-        compose_unknown_participant_inworld_report,
-        extract_draft_intent_with_roster_heal,
         normalize_draft_person_roster,
         resolve_directive_mode,
     )
@@ -813,20 +833,14 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     minister_name = ctx.character.name
     intent = ctx.intent
     intent_kind = ctx.intent_kind
-    pend_for_minister = ctx.pend_for_minister
 
-    # 一次扫描 pending + 最近 committed draft（入口条件与后续物化共用）
-    has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
-    committed_draft = None
-    if not has_pending_directive:
-        for _directive in reversed(session.db.list_directives(session.state, statuses=("draft",))):
-            if session.db.get_dossier_for_directive(int(_directive["id"])) is not None:
-                continue
-            if str(_directive["actor"] or "") == minister_name:
-                committed_draft = _directive
-                break
-    has_committed_directive = committed_draft is not None
-    has_existing_draft = has_pending_directive or has_committed_directive
+    surface = _draft_existing_surface(ctx)
+    has_pending_directive = surface["has_pending_directive"]
+    committed_draft = surface["committed_draft"]
+    has_committed_directive = surface["has_committed_directive"]
+    has_existing_draft = surface["has_existing_draft"]
+    dir_candidates = surface["dir_candidates"]
+    existing_draft_text = surface["existing_draft_text"]
     if not (
         (intent is not None and intent_kind == "draft")
         or has_pending_directive
@@ -837,85 +851,18 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     if ctx.explicit_prefixed or ctx.has_directive or ctx.out.get("pending_action_id"):
         return
 
-    dir_candidates = []
-    for _p in pend_for_minister:
-        if _p["kind"] != "directive":
-            continue
-        _val = _p["payload_json"] or "{}"
-        try:
-            _cp = _val if isinstance(_val, (list, dict)) else json.loads(_val)
-        except (ValueError, TypeError):
-            _cp = {}
-        _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
-        _mode = _cp.get("mode") if isinstance(_cp, dict) else None
-        dir_candidates.append({
-            "id": int(_p["id"]), "text": _txt, "summary": _txt[:40], "mode": _mode,
-        })
-    existing_draft_text = ""
-    if dir_candidates:
-        existing_draft_text = str(dir_candidates[-1].get("text") or "")
-    elif committed_draft is not None and not has_pending_directive:
-        existing_draft_text = str(committed_draft["text"] or "")
-
-    def _heal_or_escalate(**kwargs: Any) -> Optional[Dict[str, Any]]:
-        """自愈抽取；真不在册 → 戏内回禀、不落草案、不炸整轮。"""
-        try:
-            return extract_draft_intent_with_roster_heal(**kwargs)
-        except UnknownParticipantEscalate as exc:
-            report = compose_unknown_participant_inworld_report(
-                exc.names,
-                voice="minister",
-                speaker_name=minister_name,
-                llm_config=ctx.llm_config,
-            )
-            ctx.out["unknown_participant_escalate"] = {
-                "names": list(exc.names),
-                "report": report,
-            }
-            return None
-
     if (
         intent is not None
         and intent_kind == "draft"
         and ctx.candidate_kind_count > 1
     ):
-        cached_combo = ctx.batch_state.get("draft_combo_error")
-        if isinstance(cached_combo, StructuredDecreeCombinationError):
-            # 批级组合失败缓存命中：按 draft_failures 归属，不重抽。
-            _raise_cached_draft_combo_failure(
-                cached_combo, ctx.candidate_kind_index,
-            )
+        # Batch multi-draft: preheat owns extract/combo; handler only consumes cache.
+        if "unknown_participant_escalate" in ctx.batch_state:
+            ctx.out["unknown_participant_escalate"] = ctx.batch_state[
+                "unknown_participant_escalate"
+            ]
             return
-        if "drafts" not in ctx.batch_state:
-            if "unknown_participant_escalate" in ctx.batch_state:
-                ctx.out["unknown_participant_escalate"] = ctx.batch_state[
-                    "unknown_participant_escalate"
-                ]
-                return
-            try:
-                batch_res = _heal_or_escalate(
-                    player_message=ctx.player_message,
-                    minister_reply=ctx.reply,
-                    llm_config=ctx.llm_config,
-                    draft_count=ctx.candidate_kind_count,
-                    content=getattr(session, "content", None),
-                    db=session.db,
-                )
-            except StructuredDecreeCombinationError as exc:
-                # 批级组合失败同 unknown_participant_escalate：一次缓存，兄弟不重抽。
-                ctx.batch_state["draft_combo_error"] = exc
-                ctx.batch_state["drafts"] = []
-                _raise_cached_draft_combo_failure(exc, ctx.candidate_kind_index)
-                return
-            if batch_res is None:
-                # 批抽一次耗尽：记入 batch_state，兄弟 kind 同回禀不重复 LLM
-                esc = ctx.out.get("unknown_participant_escalate")
-                if esc is not None:
-                    ctx.batch_state["unknown_participant_escalate"] = esc
-                ctx.batch_state["drafts"] = []
-                return
-            ctx.batch_state["drafts"] = list(batch_res.get("drafts") or [])
-        drafts = ctx.batch_state["drafts"]
+        drafts = list(ctx.batch_state.get("drafts") or [])
         if ctx.candidate_kind_index >= len(drafts):
             return
         batch_draft = drafts[ctx.candidate_kind_index]
@@ -933,7 +880,8 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 return
             draft_res = dict(healed) if isinstance(healed, dict) else healed
         else:
-            healed = _heal_or_escalate(
+            healed = _draft_heal_or_escalate(
+                ctx,
                 player_message=ctx.player_message,
                 minister_reply=ctx.reply,
                 llm_config=ctx.llm_config,
