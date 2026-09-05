@@ -1395,8 +1395,10 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch, 
 
     #354 异常失败路径仍由 session_cli_fallback 既有前缀入口覆盖，不在此重复。
     不预调 _extract_secret_order；不另造平行样板。
+    #1565：zero/empty 走真实批 candidates 入口；显式零键保留存在性。
     """
     from ming_sim import cli_backend as cb
+    from ming_sim.action_clusters import candidates_from_classifier_payload
 
     db, state, _ = game
     name = _minister(db)
@@ -1407,15 +1409,31 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch, 
         cb, "_run_json_extractor_for_config",
         lambda *_a, **_k: (raw, 1),
     )
-    ctx = MaterializeCtx(
-        session=SimpleNamespace(db=db, state=state),
-        character=SimpleNamespace(name=name, office_type="文官"),
-        player_message="查核辽饷侵冒", reply="臣领密旨",
-        message_text="查核辽饷侵冒", explicit_prefixed=False,
-        has_directive=False, pend_for_minister=[], out={},
-        intent={"secret_action": "新建"}, intent_kind="secret",
-        llm_config=None, intent_candidates=[],
-    )
+    # zero/empty：真实批 candidates 列表入口（显式零键存在性）
+    # malformed：单 intent 路仍覆盖 extract_failed 暂存身份
+    if case in ("empty_object", "zero_contract"):
+        candidates = candidates_from_classifier_payload(
+            [{"kind": "secret", "secret_action": "新建"}], soft=False,
+        )
+        ctx = MaterializeCtx(
+            session=SimpleNamespace(db=db, state=state),
+            character=SimpleNamespace(name=name, office_type="文官"),
+            player_message="查核辽饷侵冒", reply="臣领密旨",
+            message_text="查核辽饷侵冒", explicit_prefixed=False,
+            has_directive=False, pend_for_minister=[], out={},
+            intent=None, intent_kind="none",
+            llm_config=None, intent_candidates=candidates,
+        )
+    else:
+        ctx = MaterializeCtx(
+            session=SimpleNamespace(db=db, state=state),
+            character=SimpleNamespace(name=name, office_type="文官"),
+            player_message="查核辽饷侵冒", reply="臣领密旨",
+            message_text="查核辽饷侵冒", explicit_prefixed=False,
+            has_directive=False, pend_for_minister=[], out={},
+            intent={"secret_action": "新建"}, intent_kind="secret",
+            llm_config=None, intent_candidates=[],
+        )
     run_materialize_pipeline(ctx)
 
     if case == "malformed":
@@ -1432,9 +1450,11 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch, 
         assert not list(ctx.out.get("pending_action_failures") or [])
         return
 
-    # empty_object / zero_contract：合法成功抽取、契约为零 → 拒暂存
-    assert int(ctx.out.get("pending_action_id") or 0) == 0
-    failures = list(ctx.out.get("pending_action_failures") or [])
+    # empty_object / zero_contract：合法成功抽取、契约为零 → 拒暂存；显式零键保留
+    assert "pending_action_id" in ctx.out
+    assert ctx.out["pending_action_id"] == 0
+    assert "pending_action_failures" in ctx.out
+    failures = list(ctx.out["pending_action_failures"])
     assert failures
     assert all(row.get("kind") == "secret_order" for row in failures)
     assert db.list_secret_orders() == []
@@ -1527,6 +1547,91 @@ def test_batch_assignment_id_survives_invalid_secret_both_orders(
     failures = list(ctx.out.get("pending_action_failures") or [])
     assert failures, f"secret 失败记录须保留（order={kinds})"
     assert any(f.get("kind") == "secret_order" for f in failures)
+
+
+@pytest.mark.parametrize(
+    "kinds",
+    [
+        ("assignment", "secret"),
+        ("secret", "assignment"),
+    ],
+    ids=["assignment_then_secret", "secret_then_assignment"],
+)
+def test_batch_nonempty_failure_baseline_prefix_once_both_orders(
+    game, monkeypatch, kinds,
+):
+    """#1565：非空失败 baseline 前缀只出现一次；候选后缀 δ 累计。
+
+    复用双序批入口；保留 assignment 成功 ID 与 secret 失败身份。
+    """
+    from ming_sim import cli_backend as cb
+    from ming_sim.action_clusters import candidates_from_classifier_payload
+
+    db, state, _ = game
+    name = _minister(db)
+    canned = json.dumps({
+        "标题": "",
+        "内容": "",
+        "承办人": name,
+        "期限月数": 0,
+        "标签": [],
+        "差务": "",
+        "价值轴": [],
+        "方向": 1,
+        "交付单位": "",
+        "交付目标": 0,
+    }, ensure_ascii=False)
+    monkeypatch.setattr(
+        cb, "_run_json_extractor_for_config",
+        lambda *_a, **_k: (canned, 1),
+    )
+
+    by_kind = {
+        "assignment": {
+            "kind": "assignment",
+            "title": "清核太仓",
+            "target_id": "qinghe-taicang",
+            "commitment_kind": "无",
+        },
+        "secret": {"kind": "secret", "secret_action": "新建"},
+    }
+    payload = [by_kind[k] for k in kinds]
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    assert len(candidates) == 2
+
+    F0 = [{"kind": "baseline_fail", "message": "prefix-once", "retryable": True}]
+    ctx = MaterializeCtx(
+        session=SimpleNamespace(db=db, state=state),
+        character=SimpleNamespace(name=name, office_type="文官"),
+        player_message="清核太仓，并密查辽饷。",
+        reply="臣请分办。",
+        message_text="清核太仓，并密查辽饷。",
+        explicit_prefixed=False,
+        has_directive=False,
+        pend_for_minister=[],
+        out={"pending_action_failures": list(F0)},
+        intent=None,
+        intent_kind="none",
+        llm_config=None,
+        intent_candidates=candidates,
+    )
+    run_materialize_pipeline(ctx)
+
+    pid = int(ctx.out.get("pending_action_id") or 0)
+    assert pid > 0, f"assignment 成功 ID 须保留（order={kinds}），got 0"
+    row = db.conn.execute(
+        "SELECT kind, payload_json FROM pending_actions WHERE id=?", (pid,),
+    ).fetchone()
+    assert row is not None
+    assert row["kind"] == "directive"
+    staged = json.loads(row["payload_json"])
+    assert staged.get("dossier_action_type") == "assignment"
+    assert staged.get("title") == "清核太仓"
+
+    fails = list(ctx.out["pending_action_failures"])
+    assert fails[:1] == F0
+    assert sum(1 for f in fails if f == F0[0]) == 1
+    assert any(f.get("kind") == "secret_order" for f in fails[1:])
 
 
 def test_create_secret_order_rejects_missing_contract(game):

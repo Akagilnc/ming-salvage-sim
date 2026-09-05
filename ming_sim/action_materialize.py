@@ -741,18 +741,28 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         # 批候选各自从 baseline 复制完整 out 再写；顺序 update 会用后项 0/空 failures
         # 抹掉先项成功 ID 与独立失败。与 session.coalesce_pending_action_id 同规：
         # 非零 ID 不被 0 覆盖；各候选相对 baseline 新追加的 failures 累计。
-        # 稀疏契约：无结果不发 pending_action_id；无失败不发 pending_action_failures
-        # （#651：暂存成功键恰为 {pending_action_id}；未暂存则两键皆缺）。
+        # 键存在性按 baseline/候选键并集：无结果不发键（#651）；显式零/空键保留（#1504）。
+        # 不得以值真假 pop（值假 ≠ 键缺）。
         from ming_sim.session import coalesce_pending_action_id
 
         baseline_failure_count = len(baseline_out.get("pending_action_failures") or [])
         _PENDING_MERGE_KEYS = ("pending_action_id", "pending_action_failures")
         for merged in out_merges:
-            prior_id = int(ctx.out.get("pending_action_id") or 0)
-            prior_failures = list(ctx.out.get("pending_action_failures") or [])
+            has_prior_id = "pending_action_id" in ctx.out
             has_cand_id = "pending_action_id" in merged
-            staged_id = int(merged["pending_action_id"] or 0) if has_cand_id else 0
-            if "pending_action_failures" in merged:
+            prior_id = (
+                int(ctx.out.get("pending_action_id") or 0) if has_prior_id else 0
+            )
+            staged_id = (
+                int(merged.get("pending_action_id") or 0) if has_cand_id else 0
+            )
+            has_prior_failures = "pending_action_failures" in ctx.out
+            has_cand_failures = "pending_action_failures" in merged
+            prior_failures = (
+                list(ctx.out.get("pending_action_failures") or [])
+                if has_prior_failures else []
+            )
+            if has_cand_failures:
                 cand_failures = list(merged.get("pending_action_failures") or [])
                 added_failures = cand_failures[baseline_failure_count:]
             else:
@@ -760,14 +770,14 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             ctx.out.update(
                 {k: v for k, v in merged.items() if k not in _PENDING_MERGE_KEYS}
             )
-            coalesced = coalesce_pending_action_id(prior_id, staged_id)
-            if coalesced:
-                ctx.out["pending_action_id"] = coalesced
+            if has_prior_id or has_cand_id:
+                ctx.out["pending_action_id"] = coalesce_pending_action_id(
+                    prior_id, staged_id,
+                )
             else:
                 ctx.out.pop("pending_action_id", None)
-            combined_failures = prior_failures + added_failures
-            if combined_failures:
-                ctx.out["pending_action_failures"] = combined_failures
+            if has_prior_failures or has_cand_failures:
+                ctx.out["pending_action_failures"] = prior_failures + added_failures
             else:
                 ctx.out.pop("pending_action_failures", None)
         if draft_staged_any:
@@ -871,9 +881,8 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             payload["contract_error"] = contract_error
         if extract_failed:
             payload["extract_failed"] = True
-        raw_excerpt = str(secret.get("extract_raw") or "").strip()
-        if raw_excerpt:
-            payload["extract_raw"] = raw_excerpt
+        if "extract_raw" in secret:
+            payload["extract_raw"] = secret["extract_raw"]
         ctx.out["pending_action_id"] = session.db.stage_pending_action(
             session.state.turn,
             kind="secret_order",
