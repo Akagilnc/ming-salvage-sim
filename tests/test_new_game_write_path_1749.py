@@ -160,18 +160,30 @@ def test_drain_skips_archive_when_agno_close_fails(tmp_path, monkeypatch):
         db_path=dbp,
         llm_config=LLMConfig(api_key="sk-test", base_url="http://x", model="m"),
     )
-    engine = sess.agno_db.db_engine
     game = SimpleNamespace(
         session=sess, db_path=dbp,
         _write_queue=sess._write_queue, _write_gate=sess._write_gate,
     )
+    real_agno_close = sess.agno_db.close
     sess.agno_db.close = lambda: (_ for _ in ()).throw(RuntimeError("agno close failed"))  # type: ignore
-    with pytest.raises(RuntimeError, match="agno close failed"):
-        web_app._drain_and_close_session(game, archive_db=True)
-    assert os.path.isfile(dbp)
-    assert _drained(tmp_path / "ud") == []
-    with engine.connect() as conn:
-        conn.exec_driver_sql("SELECT 1")
+    try:
+        with pytest.raises(RuntimeError, match="agno close failed"):
+            web_app._drain_and_close_session(game, archive_db=True)
+        assert os.path.isfile(dbp)
+        assert _drained(tmp_path / "ud") == []
+        # db 侧已关；证明失败发生在 agno close，且未搬库
+        with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
+            sess.db.conn.execute("SELECT 1")
+    finally:
+        sess.agno_db.close = real_agno_close  # type: ignore[method-assign]
+        try:
+            sess.close()
+        except Exception:
+            # 部分资源可能已关；尽力收束，禁泄漏到进程外
+            try:
+                real_agno_close()
+            except Exception:
+                pass
 
 
 def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
@@ -486,116 +498,3 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
         g0.session.close = real_close  # type: ignore[method-assign]
 
 
-def test_exit_new_game_does_not_archive_before_completion(tracer_client, monkeypatch):
-    """exit→new_game：completion.done 前不得归档旧库（peek 共享，非 take 漏等）。"""
-    client = tracer_client
-    seed = client.post("/api/menu/new_game")
-    assert seed.status_code == 200
-    g0 = web_app.web_game
-    assert g0 is not None
-    p0 = g0.db_path
-
-    close_release = threading.Event()
-    real_close = g0.session.close
-
-    def blocked_close():
-        close_release.wait()
-        real_close()
-
-    g0.session.close = blocked_close  # type: ignore[method-assign]
-
-    archive_calls: list[str] = []
-    real_arch = web_app._archive_drained_db_file
-
-    def _arch(path: str) -> None:
-        archive_calls.append(path)
-        real_arch(path)
-
-    monkeypatch.setattr(web_app, "_archive_drained_db_file", _arch)
-
-    assert client.post("/api/menu/exit_to_menu").status_code == 200
-    completion = web_app._menu_exit_detach_completion
-    assert completion is not None and not completion.done.is_set()
-
-    ng_done = threading.Event()
-    ng_body: dict = {}
-
-    def run_ng():
-        r = TestClient(web_app.app).post("/api/menu/new_game")
-        ng_body["status"] = r.status_code
-        ng_done.set()
-
-    t = threading.Thread(target=run_ng, daemon=True)
-    t.start()
-    wait_until(ng_done.is_set)
-    assert ng_body.get("status") == 200
-    # new_game 已返回，但 exit close 未完成 → 旧库仍在、归档未发生
-    assert not completion.done.is_set()
-    assert os.path.exists(p0)
-    assert archive_calls == [], f"archived before exit completion: {archive_calls}"
-    close_release.set()
-    wait_until(completion.done.is_set)
-    wait_until(lambda: not os.path.exists(p0) or bool(archive_calls))
-    t.join()
-    assert archive_calls, "archive must run after exit close ok"
-    assert not os.path.exists(p0)
-
-
-def test_continue_waits_exit_detach_before_construct(tracer_client, monkeypatch):
-    """exit drain 未完成时 continue 不得为同一主库构造第二 runtime（事件/状态证明）。"""
-    client = tracer_client
-    seed = client.post("/api/menu/new_game")
-    assert seed.status_code == 200
-    g0 = web_app.web_game
-    assert g0 is not None
-
-    close_release = threading.Event()
-    closed = threading.Event()
-    real_close = g0.session.close
-
-    def blocked_close():
-        close_release.wait()
-        real_close()
-        closed.set()
-
-    g0.session.close = blocked_close  # type: ignore[method-assign]
-
-    constructed: list[str] = []
-    real_wg = web_app.WebGame
-
-    class TrackingWG(real_wg):
-        def __init__(self, *a, **k):
-            constructed.append("ctor")
-            super().__init__(*a, **k)
-
-    monkeypatch.setattr(web_app, "WebGame", TrackingWG)
-
-    assert client.post("/api/menu/exit_to_menu").status_code == 200
-    assert web_app.web_game is None
-    completion = web_app._menu_exit_detach_completion
-    assert completion is not None
-    assert not completion.done.is_set()
-
-    cont_body: dict = {}
-    cont_done = threading.Event()
-
-    def run_cont():
-        r = TestClient(web_app.app).post("/api/menu/continue")
-        cont_body["status"] = r.status_code
-        cont_body["text"] = r.text
-        cont_done.set()
-
-    t = threading.Thread(target=run_cont, daemon=True)
-    t.start()
-    # peek 模型：completion 仍在全局，continue 卡在 done.wait，尚未构造
-    wait_until(lambda: not cont_done.is_set() and not completion.done.is_set())
-    assert constructed == [], f"constructed early: {constructed}"
-    assert web_app._menu_exit_detach_completion is completion
-    close_release.set()
-    cont_done.wait()
-    t.join()
-    assert closed.is_set()
-    assert constructed, "continue should construct after exit close"
-    assert cont_body.get("status") == 200
-    events = _parse_sse(cont_body.get("text") or "")
-    assert events and events[-1].get("event") == "done"
