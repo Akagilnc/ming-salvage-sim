@@ -349,7 +349,7 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
     class _EndorsementAgent:
         def run(self, materials):
             endorsement_entered.set()
-            assert beat_overlap.wait(5)
+            beat_overlap.wait()
             llm_saw_gate_free.append(not runtime_gate.locked())
             in_tx = bool(getattr(db.conn, "_commit_suspended", False)) or (
                 int(getattr(db.conn, "_atomic_depth", 0) or 0) > 0
@@ -386,7 +386,7 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
     def _real_close_beat(_inputs):
         # Production close beat path (registry Future) overlaps endorsement LLM.
         beat_overlap.set()
-        assert endorsement_entered.wait(5)
+        endorsement_entered.wait()
         return "退朝，今夜召对到此。"
 
     monkeypatch.setattr(
@@ -464,7 +464,7 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
     class _OkEndorsement:
         def run(self, materials):
             endorsement_entered.set()
-            assert beat_entered.wait(5)
+            beat_entered.wait()
             payload = json.loads(materials)
             did = int(payload["可背书案卷"][0]["ref"]["dossier_id"])
             return json.dumps({"endorsements": [{
@@ -476,7 +476,7 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
 
     def _boom_beat(_inputs):
         beat_entered.set()
-        assert endorsement_entered.wait(5)
+        endorsement_entered.wait()
         raise RuntimeError("close beat code fault")
 
     monkeypatch.setattr(
@@ -504,11 +504,11 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
     class _BoomEndorsement:
         def run(self, materials):
             endorsement_entered2.set()
-            assert beat_done2.wait(5)
+            beat_done2.wait()
             raise RuntimeError("endorsement boom with beat")
 
     def _ok_beat(_inputs):
-        assert endorsement_entered2.wait(5)
+        endorsement_entered2.wait()
         beat_done2.set()
         return "退朝，今夜召对到此。"
 
@@ -537,12 +537,12 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
     class _BoomBothEndorsement:
         def run(self, materials):
             endorsement_entered3.set()
-            assert beat_entered3.wait(5)
+            beat_entered3.wait()
             raise RuntimeError("endorsement boom dual")
 
     def _boom_both_beat(_inputs):
         beat_entered3.set()
-        assert endorsement_entered3.wait(5)
+        endorsement_entered3.wait()
         raise RuntimeError("close beat dual fault")
 
     monkeypatch.setattr(

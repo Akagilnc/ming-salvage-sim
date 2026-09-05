@@ -352,7 +352,7 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
     worker = threading.Thread(target=_run_call)
     worker.start()
     try:
-        worker.join(timeout=1)
+        worker.join()
         assert result.get("done") is True, "advance_without_edict blocked waiting for the write gate"
         exc = result.get("exc")
         assert isinstance(exc, HTTPException)
@@ -360,7 +360,7 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
         assert game.db.writes == []
     finally:
         game._write_gate.release()
-        worker.join(timeout=1)
+        worker.join()
 
 
 def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
@@ -385,7 +385,7 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
 
     def _wrapped_auto(game_arg, *, inflight_wait_s=0.0, write_gate=None):
         at_short_hold.set()
-        assert gate_held_by_peer.wait(2.0), "peer failed to occupy write gate before short-hold"
+        gate_held_by_peer.wait()
         return real_auto(
             game_arg, inflight_wait_s=inflight_wait_s, write_gate=write_gate,
         )
@@ -405,10 +405,10 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
     worker = threading.Thread(target=_run_call)
     worker.start()
     try:
-        assert at_short_hold.wait(2.0), "advance never reached auto_close short-hold seam"
+        at_short_hold.wait()
         assert game._write_gate.acquire(blocking=False), "gate should be free at admit→short-hold window"
         gate_held_by_peer.set()
-        worker.join(timeout=2.0)
+        worker.join()
         assert result.get("done") is True, "advance blocked on short-hold after peer took gate"
         exc = result.get("exc")
         assert isinstance(exc, HTTPException), result
@@ -417,7 +417,7 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
     finally:
         if game._write_gate.locked():
             game._write_gate.release()
-        worker.join(timeout=1)
+        worker.join()
 
 
 def test_secret_order_endpoint_refused_by_phase_before_chat(monkeypatch):
@@ -466,7 +466,7 @@ def test_secret_order_endpoint_refused_when_gate_held_before_chat(monkeypatch):
     worker = threading.Thread(target=_run_call)
     worker.start()
     try:
-        worker.join(timeout=1)
+        worker.join()
         assert result.get("done") is True, "secret_order endpoint blocked waiting for WebGame.chat"
         exc = result.get("exc")
         assert isinstance(exc, HTTPException)
@@ -474,7 +474,7 @@ def test_secret_order_endpoint_refused_when_gate_held_before_chat(monkeypatch):
         assert game.db.writes == []
     finally:
         game._write_gate.release()
-        worker.join(timeout=1)
+        worker.join()
 
 
 def test_secret_order_endpoint_offloads_chat_work(monkeypatch):

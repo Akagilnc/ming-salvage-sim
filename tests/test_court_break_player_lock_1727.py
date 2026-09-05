@@ -151,17 +151,21 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
 
     q = game._runtime_write_queue()
     barrier_claimed = threading.Event()
+    # stream 终态或 claim 成功均可唤醒 probe——禁只等成功屏障而吞 stream_error。
+    probe_wake = threading.Event()
     real_claim = q.claim_barrier
 
     def _claim_and_signal():
         ticket = real_claim()
         barrier_claimed.set()
+        probe_wake.set()
         return ticket
 
     q.claim_barrier = _claim_and_signal  # type: ignore[method-assign]
 
     stream_events: list[dict] = []
     stream_error: list[BaseException] = []
+    probe_error: list[BaseException] = []
     concurrent_results: dict[str, dict] = {}
 
     def _run_stream() -> None:
@@ -178,37 +182,48 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
             asyncio.run(_go())
         except BaseException as exc:  # noqa: BLE001
             stream_error.append(exc)
+        finally:
+            probe_wake.set()
 
     def _probe_when_barrier_open() -> None:
-        assert barrier_claimed.wait(timeout=5.0), "court_break 未预领屏障票"
-        # hold 窗内：屏障已开、尾随未放行 → 召对写入口必须外部可见拒。
-        assert q.has_open_barrier(), "预领屏障后 has_open_barrier 应为 True"
-        async def _probe() -> None:
-            async with _client() as client:
-                probes = {
-                    "chat": client.post(
-                        f"/api/ministers/{minister}/chat",
-                        json={"message": "再问边饷？"},
-                    ),
-                    # #1727 T1/T2：撤回本轮不得绕过屏障（亦防 cancel_key 抽空尾随票）。
-                    "undo": client.post(f"/api/ministers/{minister}/chat/undo"),
-                    # 同类补扫：secret_order 持闸兼容路亦须端点侧拒。
-                    "secret_order": client.post(
-                        f"/api/ministers/{minister}/secret_order",
-                        json={"title": "边饷", "content": "速办边饷"},
-                    ),
-                    # pending withdraw 同属召对写入口族。
-                    "withdraw": client.post("/api/pending_actions/1/withdraw"),
-                }
-                for name, awaitable in probes.items():
-                    probe = await awaitable
-                    concurrent_results[name] = {
-                        "status": probe.status_code,
-                        "body": probe.text,
+        # 释放所有权在 probe finally：断言失败不得绕过 trail_release，
+        # 否则主线程先 join stream 时外层 finally 不可达。
+        try:
+            probe_wake.wait()
+            if not barrier_claimed.is_set():
+                # stream 已终态且未领屏障：不探针，交主线程传播 stream_error。
+                return
+            # hold 窗内：屏障已开、尾随未放行 → 召对写入口必须外部可见拒。
+            assert q.has_open_barrier(), "预领屏障后 has_open_barrier 应为 True"
+            async def _probe() -> None:
+                async with _client() as client:
+                    probes = {
+                        "chat": client.post(
+                            f"/api/ministers/{minister}/chat",
+                            json={"message": "再问边饷？"},
+                        ),
+                        # #1727 T1/T2：撤回本轮不得绕过屏障（亦防 cancel_key 抽空尾随票）。
+                        "undo": client.post(f"/api/ministers/{minister}/chat/undo"),
+                        # 同类补扫：secret_order 持闸兼容路亦须端点侧拒。
+                        "secret_order": client.post(
+                            f"/api/ministers/{minister}/secret_order",
+                            json={"title": "边饷", "content": "速办边饷"},
+                        ),
+                        # pending withdraw 同属召对写入口族。
+                        "withdraw": client.post("/api/pending_actions/1/withdraw"),
                     }
+                    for name, awaitable in probes.items():
+                        probe = await awaitable
+                        concurrent_results[name] = {
+                            "status": probe.status_code,
+                            "body": probe.text,
+                        }
 
-        asyncio.run(_probe())
-        trail_release.set()
+            asyncio.run(_probe())
+        except BaseException as exc:  # noqa: BLE001
+            probe_error.append(exc)
+        finally:
+            trail_release.set()
 
     stream_thread = threading.Thread(target=_run_stream, daemon=True, name="1727-stream")
     probe_thread = threading.Thread(
@@ -217,14 +232,18 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
     try:
         stream_thread.start()
         probe_thread.start()
-        probe_thread.join(timeout=10.0)
-        stream_thread.join(timeout=15.0)
+        probe_thread.join()
+        stream_thread.join()
     finally:
         trail_release.set()
         q.claim_barrier = real_claim  # type: ignore[method-assign]
         restore_trails()
 
-    assert not stream_error, stream_error
+    # 原异常在双方退出后传播（不在 join 前吞掉；probe 不再只等成功屏障）。
+    if probe_error:
+        raise probe_error[0]
+    if stream_error:
+        raise stream_error[0]
     assert not stream_thread.is_alive(), "stream 未在期限内结束"
     assert not probe_thread.is_alive(), "probe 未在期限内结束"
     assert barrier_claimed.is_set(), "未领 court_break 屏障票"

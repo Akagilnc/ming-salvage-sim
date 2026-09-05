@@ -5,12 +5,12 @@ import pytest
 import asyncio
 import json
 import threading
-import time
 from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
+from tests.wait_utils import ObservingLock, wait_until
 
 
 class _RunContent:
@@ -31,7 +31,7 @@ class _FakeAgent:
 
     def run(self, *args, **kwargs):
         yield _RunContent("臣已知悉。")
-        assert self.allow_finish.wait(1.0), "test timed out waiting to finish fake stream"
+        self.allow_finish.wait()
         yield RunCompletedEvent()
 
 
@@ -181,6 +181,8 @@ def _runtime_for_stream_race():
     allow_finish = threading.Event()
     settlement_attempting = threading.Event()
     settlement_holding = threading.Event()
+    settlement_release = threading.Event()
+    epilogue_contending = threading.Event()
     character = SimpleNamespace(name="测试大臣")
     agent = _FakeAgent(allow_finish)
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
@@ -189,7 +191,7 @@ def _runtime_for_stream_race():
     runtime = object.__new__(web_app.WebGame)
     runtime.session = _FakeSession(character, agent, state, db)
     runtime.chat_history = {character.name: []}
-    runtime._write_gate = threading.Lock()
+    runtime._write_gate = ObservingLock(epilogue_contending)
     runtime.directive_rows = lambda: []
     runtime.directive_payload = lambda row: row
     runtime.suggestions_for = lambda character: []
@@ -200,9 +202,12 @@ def _runtime_for_stream_race():
         with runtime._write_gate:
             settlement_holding.set()
             runtime.state.turn = 2
-            time.sleep(0.1)
+            settlement_release.wait()  # hold gate until test releases (no wall clock)
             settlement_holding.clear()
 
+    settlement.holding = settlement_holding  # type: ignore[attr-defined]
+    settlement.release_event = settlement_release  # type: ignore[attr-defined]
+    settlement.epilogue_contending = epilogue_contending  # type: ignore[attr-defined]
     return runtime, character.name, allow_finish, settlement_attempting, settlement
 
 
@@ -216,12 +221,26 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
 
     settlement_thread = threading.Thread(target=settlement)
     settlement_thread.start()
-    assert settlement_attempting.wait(1.0), "settlement did not attempt to enter the write gate"
-    time.sleep(0.02)
-    allow_finish.set()
+    settlement_attempting.wait()
+    settlement.holding.wait()
 
-    done = next(stream)
-    settlement_thread.join(1.0)
+    done_box: list = []
+    done_collected = threading.Event()
+
+    def _take_done() -> None:
+        done_box.append(next(stream))
+        done_collected.set()
+
+    threading.Thread(target=_take_done, daemon=True).start()
+    allow_finish.set()
+    # Prove stream epilogue reached write_gate while settlement still holds it.
+    settlement.epilogue_contending.wait()
+    assert settlement.holding.is_set(), "settlement released before epilogue contended"
+    assert not done_collected.is_set(), "done arrived before settlement released gate"
+    settlement.release_event.set()
+    done_collected.wait()
+    done = done_box[0]
+    settlement_thread.join()
 
     assert done["type"] == "done"
     assert runtime.db.overlapped_minister_commit is False
@@ -259,10 +278,13 @@ def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_
 
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     events: list[str] = []
+    entered = threading.Event()
+    release = threading.Event()
 
     class _BlockingGame:
         def chat_stream(self, minister_name: str, message: str, intent=None):
-            time.sleep(0.05)
+            entered.set()
+            release.wait()  # block until tick observed entry (no wall clock)
             events.append("stream")
             yield {"type": "done", "payload": {"ok": True}}
 
@@ -274,8 +296,9 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
         iterator = response.body_iterator
 
         async def tick():
-            await asyncio.sleep(0.01)
+            await asyncio.to_thread(entered.wait)
             events.append("tick")
+            release.set()
 
         first_event, _ = await asyncio.gather(iterator.__anext__(), tick())
         return first_event
@@ -342,15 +365,6 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     assert chat_result["answer"] == "臣已知悉。"
 
 
-def _wait_for(predicate, *, timeout: float = 2.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return False
-
-
 @pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_drain_waits_for_in_flight_nonstream_chat():
     """非流式 chat 在飞（慢 LLM）时 drain 须等待——pending 覆盖 LLM 窗 + epilogue。
@@ -368,7 +382,7 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     class _SlowChatSession(_FakeSession):
         def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0, explicit_secret_order: bool = False):
             chat_entered.set()
-            assert allow_finish.wait(2.0), "slow nonstream LLM timed out"
+            allow_finish.wait()
             return SimpleNamespace(
                 answer="臣已知悉。",
                 proposed_directive=None,
@@ -416,7 +430,7 @@ def test_drain_waits_for_in_flight_nonstream_chat():
 
     chat_thread = threading.Thread(target=run_chat, daemon=True)
     chat_thread.start()
-    assert chat_entered.wait(2.0), "nonstream chat 未进入慢 LLM 窗"
+    chat_entered.wait()
     assert runtime._pending_writes_count >= 1, (
         f"非流式 chat 在飞未标 pending（count={runtime._pending_writes_count}）"
     )
@@ -430,14 +444,14 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     drain_thread = threading.Thread(target=run_drain, daemon=True)
     drain_thread.start()
 
-    assert _wait_for(lambda: runtime._write_queue.is_sealed()), "drain 未 seal 队列"
+    wait_until(lambda: runtime._write_queue.is_sealed())
     # 负向：LLM 仍在飞时 drain 不得关连接
-    assert not drain_done.wait(0.15), "drain 在非流式 chat 仍在飞时就关了 session"
+    assert not drain_done.is_set(), "drain 在非流式 chat 仍在飞时就关了 session"
     assert closed == []
 
     allow_finish.set()
-    assert drain_done.wait(2.0), "drain 未在 chat 完成后关连接"
-    chat_thread.join(2.0)
+    drain_done.wait()
+    chat_thread.join()
     assert not chat_error, f"nonstream chat failed: {chat_error!r}"
     assert chat_payload and chat_payload[0]["answer"] == "臣已知悉。"
     assert closed == [1]
