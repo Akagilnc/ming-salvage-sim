@@ -1,0 +1,232 @@
+#1565 C4 全用途盘点（校正版 · HEAD a22dbd219 · r7）
+扫描范围：ming_sim/decree_vocabulary.py DOSSIER_ACTION_TYPES 全集；
+ming_sim/db.py apply_dossier_verdicts / 效果分发（约 16145-16450）与 _apply_pending_action；
+ming_sim/db.py:_initiative_title_and_body、_create_decree_dossier_row、_ensure_directive_dossier、
+create_secret_order、secret_order 新建 commit（18927）；
+web_app.py POST|PATCH /api/directives（5416-5489）；
+ming_sim/cli_backend.py:capture_manual_directive_payload（2956-3110）；
+ming_sim/session.py add/update_directive；
+ming_sim/action_materialize.py assignment/referral/secret stage；
+ming_sim/decree.py narrative 投影。
+不爬工作树外；不新造生产机制；本文件为审计回执。
+
+判据：题名生成 vs 正文搬运分开；不要求非 initiative 类型共享 title|target_id 规则；
+不得机械删除合法 reason/decree_text。本盘点**未发现**与 #1565 同根的
+「题名回落到 decree_text/皇帝散文」生产缺陷（assignment/referral 已用
+_initiative_title_and_body；其余类型不创建 initiative 题名）。
+
+================================================================
+〇、权威闭集（生产真源）
+================================================================
+
+DOSSIER_ACTION_TYPES（decree_vocabulary.py:9-25）共 22：
+  policy, appointment, acting_appointment, assignment, military_order,
+  grant_allocation, authorization, secret_authorization,
+  secret_investigation, protection, strategy_selection, approve_reject,
+  secret_order, special_decree, revoke_decree, punishment, pacification,
+  referral, revoke_authority, dismiss_assignment, pay_order_override,
+  prohibit_covert_levy
+
+effect_owner 三分（dossier_action_policy）：
+  immediate = {secret_order}          — 成案/admission 已物化，verdict 不再进 payload 分发
+  narrative = {policy, strategy_selection, approve_reject, special_decree,
+               secret_investigation, protection}
+              — 效果归 simulator/extractor；verdict 只转 executing
+  payload   = 其余全部              — 进 db.py 判后分发（约 16214-16440）
+
+initiative 题名**唯一**规则：db._initiative_title_and_body（17306-17321）
+  title = payload.title.strip() or payload.target_id.strip()
+  body  = payload.text or row.decree_text   # 旧案正文承接；不回填题名
+  消费方仅 assignment + referral
+
+================================================================
+一、verdict payload 分发全集（db.py ~16145-16450）
+================================================================
+
+入口：apply 路径在 policy.effect_owner=="payload" 后进入下列分支；
+narrative → transition executing 后 return；immediate（含 内库 grant 等）→
+成案时已生效/失败记账后 return。
+
+| action_type | effect_owner | 分发/指针 | 题名行为 | 正文/reason 行为 | 留存理由 |
+|---|---|---|---|---|---|
+| assignment | payload | _apply_assignment_verdict_effect db.py:17417+；分发 16422-16427 | _initiative_title_and_body；缺锚 failed+closed「交办缺少结构化题名」 | stage_text=body；ni 叙事只用 stage_text | #1565 核心；0142 结构化题名 |
+| referral | payload | _apply_referral_verdict_effect db.py:17323+；分发 16428-16433 | 同上；缺锚「下议缺少结构化题名」 | 同上 | 与 assignment 共用题名规则 |
+| military_order | payload | _apply_military_order_verdict_effect 17258+；分发 16434-16439 | **不**创建 initiative；无 title\|target_id 题名规则 | reason = text\|decree_text\|"军令调遣"（17279-17280） | 军令效果 reason 叙述，合法；禁删 |
+| authorization | payload | _apply_authorization_verdict_effect 17059+；分发 16401-16407 | 不创建 initiative | authority_changes 授予；无 initiative body | #528/#611 权限槽 |
+| secret_authorization | payload | 分发 16408-16411：`pass` | 不创建 initiative；本分发无效果 | 无正文回落题名 | 注释钉死「密授不归本片（#528）」；privileges 只经 authority_changes。**非待核** |
+| revoke_authority | payload | _apply_revoke_authority_verdict_effect 17122+；分发 16412-16416 | 不创建 initiative | 收权 authority_changes | #523 |
+| revoke_decree | payload | _apply_revoke_decree_verdict_effect 17158+；分发 16417-16421 | 不创建 initiative；可关既有 initiative | reason = text\|decree_text\|"撤回成命"（17226-17227） | 撤回理由叙述，合法 |
+| punishment | payload | _apply_punishment_verdict_effect 17515+；分发 16339-16343 | 不创建 initiative | reason = text\|decree_text\|punish_action（17567-17568） | 惩处叙述，合法 |
+| pacification | payload | 分发内联 16344-16400（_apply_person_changes） | 不创建 initiative | reason = text\|decree_text\|"受抚归明"（16377） | 招抚叙述，合法；#522 |
+| appointment | payload | 分发 16214-16255 → _commit_office_action | 不创建 initiative；案卷 decree_text 合成「任命{名}为{职}」 | 人事效果；payload 含 _office_action/_minister_name | 任免 ≠ initiative 题名链 |
+| dismiss_assignment | payload | 同上分支（与 appointment 共用） | 不创建 initiative；decree_text「罢免…」 | 同上；capture 侧补 name/_office_action=罢免 | 罢免终端 surface=terminal |
+| grant_allocation | payload（内库可被 policy 改 immediate） | 分发 16256-16330；honorific/monthly/army_pay/普通扣库 | 不创建 initiative | reason/text 用 decree_text 或 payload.reason 作钱粮 move 叙述（16311 等） | 拨帑/协饷/加衔效果；decree_text 作 reason 合法 |
+| pay_order_override | payload | _apply_pay_order_override_effect 17708+；分发 16331-16338 | 不创建 initiative | fiscal_config 物化；无 initiative 题名 | #653/0090；payload.entries |
+| prohibit_covert_levy | payload | **分发无独立 elif**：落入分支后直接 terminal「颁布即终局」 | 不创建 initiative | 召对 materialize 时 stage 指向暴露案卷（action_materialize._materialize_prohibit_covert_levy）；正文在 stage payload.text=player_message | 终端禁绝令；与 initiative 题名正交。盘点为完备性收录，**非** #1565 同根缺陷 |
+| acting_appointment | payload | **verdict 分发无独立支**；create 时与 appointment 共享部分校验（db.py:15089） | 不创建 initiative | 草案抽取显式排除（cli_backend DRAFT_ACTION_TYPES 去掉 acting_appointment；#529 走人事 pending） | 署理不经手工草案 acting_appointment 成案；与 initiative 题名正交 |
+
+narrative 组（effect_owner=narrative；**不进**上表 elif）：
+| action_type | verdict 行为 | 正文如何承接 | 题名 | 留存 |
+|---|---|---|---|---|
+| special_decree | transition executing（16162-16165） | 案卷 decree_text + payload.text（成案时 _create_decree_dossier_row 14917-14919 从 decree_text 填 text）；simulator 投影 track=narrative（decree.py:1094-1099），command/摘要读 decree_text | **不**走 _initiative_title_and_body；不写 issues.kind=initiative 题名 | 叙事案卷真源=decree_text/text；效果归推演 |
+| policy | 同上 | 同上 | 同上 | 国策/政策叙事 |
+| strategy_selection | 同上 | 同上 | 同上 | 策略选择叙事 |
+| approve_reject | 同上 | 同上 | 同上 | 准驳叙事 |
+| secret_investigation | 同上 | 同上 | 同上 | 密察；external_review 豁免 |
+| protection | 同上 | 同上 | 同上 | 荫庇；external_review 豁免 |
+
+immediate：
+| action_type | 入口 | 题名 | 正文 | 说明 |
+|---|---|---|---|---|
+| secret_order | **不成** payload 分发；admission 已 promulgated。可见列表显式 continue 跳过（db.py:15816-15817） | secret_orders.title ← 结构化 payload.title（见 §三） | secret_orders.content；案卷 decree_text=content；payload.title/content | 密令有自己的 title 列，**不是** initiative 题名规则 |
+
+grant_allocation 特例：account=内库时 policy 改 effect_owner=immediate（成案时已扣），verdict 走 16166+ 记账支，仍不创建 initiative。
+
+================================================================
+二、上游 stage / 成案写 title·text（initiative 相关）
+================================================================
+
+| 入口 | 规则 | 指针 |
+|---|---|---|
+| assignment stage_assignment_candidate | matter_title=title\|target_id；双空 → DecreeMaterializationValidationError(failed_fields=title) | action_materialize.py:2461-2476, 2519-2520 |
+| referral stage_referral_candidate | 同 assignment | action_materialize.py:3436-3452, 3508-3509 |
+| assignment materialize handler | title/target_id 从 intent；body=_assignment_dossier_text | action_materialize.py:2580-2620 一带 |
+| referral materialize handler | title/target_id 从 intent；body=reply\|player_message | action_materialize.py:3530-3552 |
+| _assignment_dossier_text | recent_context + 当轮皇帝/大臣整行；_context_line_present 整行相等；空 recent 仍留当轮 | 正文真源供料，**不是**题名解析 |
+| create_decree_dossier 行内核 | 无 payload.text 且有 decree_text → payload.text=decree_text | db.py:14917-14919；**只填正文槽，不回填 title** |
+| _ensure_directive_dossier | decree_text=directive.text；action 从 dossier_action_type；payload 原样结构化字段 | db.py:19843-19918 |
+| session pending 展示 | title\|target_id 显示，不写库 | session.py:637, 644 |
+| 读回 list_active_issues / issue_payloads | 读已落库 issues.title | 读回不重生题名 |
+| knowledge/邸报 default_title | 非 initiative 链 | db.py 一带 — 邸报独立表面 |
+
+已删除的非法题名路径（本票既有）：
+- player_message[:40] 散文截题
+- decree_text → initiative title 回落
+- 默认「交办差事/下议事项」题名
+
+================================================================
+三、secret_order 新建 commit（原「db.py:18927 开卷核对」落实）
+================================================================
+
+**caller 已落实，不再留待核占位。**
+
+指针链：
+1. db._apply_pending_action → `if pa["kind"] == "secret_order"`（约 18923）
+2. `if pa["action"] == "新建":`（约 18925）
+3. **db.py:18927** `title = str(payload.get("title") or "").strip()`
+4. 同块：content_text=payload.content；assignee=payload.assignee|minister；
+   缺 title/content/assignee → return False（不建令）
+5. → create_secret_order(..., title, content_text, ...)（约 18951）
+6. create_secret_order（22021+）：
+   - INSERT secret_orders(title, content, ...)
+   - create_decree_dossier(action_type="secret_order", decree_text=content,
+     payload={title, content, tags, ...CONTRACT}, status="promulgated")
+   - 内批自动顺颁
+
+上游写 payload.title：
+- session._stage_secret_order_candidate：抽取器「标题」原样；空 title 不合成散文
+- action_materialize 意图路 secret 新建：同；零契约拒暂存 #1504
+- 前缀路 #504：候选必暂存（可 contract_error，commit 标 failed）
+
+题名性质：密令 **secret_orders.title** 与 initiative **issues.title** 是两条表面；
+密令 title 来自结构化抽取字段，不经 _initiative_title_and_body，也不从
+decree_text 截皇帝问话。
+
+================================================================
+四、非召对 / 手工编辑链（纠正 r5「只透传」失准）
+================================================================
+
+### 4.1 HTTP 入口（web_app.py:5416-5489）
+
+POST `/api/directives`（5416-5450）：
+  1. 校验 text 非空；抓 capture_turn
+  2. **必调** `capture_manual_directive_payload(text, llm_config, db=, content=)`
+  3. 回合未变则 `session.add_directive(text, notes, dossier_payload=捕获结果)`
+
+PATCH `/api/directives/{id}`（5452-5489）：
+  1. 读既有 row；text = request.text 或 row.text
+  2. existing_mode = read_directive_dossier_payload(row).mode
+  3. **同样必调** `capture_manual_directive_payload(text, ..., existing_mode=existing_mode, db=, content=)`
+  4. `session.update_directive(id, text, dossier_payload=捕获结果)`
+
+**纠正**：PATCH **不是**「仅透传既有结构化字段」。每次 POST/PATCH 都对
+**当前正文**做一次有界 LLM 重抽取（或空载/超时降级 special_decree）。
+
+### 4.2 capture_manual_directive_payload（cli_backend.py:2956-3110）
+
+行为摘要：
+- 空 text → 零 LLM，直落 `_manual_special_decree_payload(mode)`（special_decree）
+- 非空 → extract_draft_intent_with_roster_heal（有界超时；挂死→special_decree 原文照落）
+- draft_action !=「拟旨」→ special_decree
+- 否则组装：
+  必选：dossier_action_type, target_kind, target_id, mode
+  条件挑选（非空才写入）：amount, account, execution_surface, assignee,
+    deadline_months, participant_roster, locality_scope, entries,
+    target_dossier_id, grant_action, purpose, cadence, region_id,
+    transaction_category
+  **不挑选 title 字段**（手工旨无独立 title 槽；若成 assignment/referral，
+   判后题名回落 payload.target_id——与 _initiative_title_and_body 一致）
+  **不挑选 text 字段**（正文真源=directive.text → 成案 decree_text → payload.text）
+- dismiss_assignment：补 name=target_id, _office_action=罢免
+- grant_allocation 协饷：canonicalize / require 显式字段
+- classify_directive_structured_kind：push → 只留 target_dossier_id+mode；
+  empty → special_decree；ordinary → assemble_structured_decree 后返回
+
+### 4.3 session / db 写入
+
+session.add_directive（2997-3010）：
+  directive_payload_admits_structured_write 闸 → db.add_directive(..., dossier_payload)
+
+session.update_directive（3012-3019）→ db.update_directive_text：
+  已成案拒编；_merge_directive_payload(旧 json, 新 capture)：
+    ordinary 改草清 target_dossier_id；push 清 triad；再 normalize
+  **合并的是「重抽取结果 ⊕ 旧载荷」**，不是「只改 notes 的透传」
+
+成案 _ensure_directive_dossier（19843+）：
+  decree_text = directive.text（玩家可见旨文）
+  payload = 结构化 capture/normalize 结果
+  → create_decree_dossiers；行内核补 payload.text←decree_text（若缺）
+
+判后：
+  - 若 action 为 assignment/referral → _initiative_title_and_body
+    （title|target_id；body=text|decree_text）
+  - 若 special_decree/policy/… narrative → 不写 initiative 题名；
+    正文留 decree_text 供 simulator
+  - 其它 payload 类型按 §一，不共享 initiative 题名规则
+
+### 4.4 命中与合法留存（本链）
+
+| 环节 | 命中 | 合法留存 |
+|---|---|---|
+| 重抽取 | 每次 POST/PATCH | 超时/非拟旨 → special_decree，旨文仍落 draft.text |
+| 字段挑选 | 上列闭集；无 title | target_id 可作 assignment 题名锚；不从散文截 title |
+| 正文 | directive.text → decree_text → payload.text | 旧案/手工无单独 text 字段时的正文唯一槽 |
+| 成案后编辑 | get_dossier_for_directive 已存在 → 拒 | 防成案后改结构化身份 |
+| 读回 | issue_payloads / list_active_issues | 只读已落库 title/stage_text |
+
+================================================================
+五、0151 / 颁布（C5）边界（沿既有处置，本项不施工）
+================================================================
+
+- ADR 0151：案卷持久化归 DossierStore；本仓 entities/dossier 未落地（#1571）。
+  本票不新造 store/facade，不重构 DossierStore。
+- 颁布 heal（#1753/#1746）与 title 规则正交；main 侧集成保留 heal 测试与
+  decree 接缝——**C5 已结清来源审计**；本 C4 不借项扩修颁布/main 集成。
+- settlement canned _promulgate 全顺颁 → apply 效果仍走本票 title 规则。
+
+================================================================
+六、扫描结论（生产缺陷？）
+================================================================
+
+就「initiative 题名回落到 decree_text/皇帝散文」同根而言：
+- assignment/referral：已收敛 _initiative_title_and_body；stage 双空拒
+- 其余 20 个 action_type：不创建该 initiative 题名规则（上表逐条）
+- secret_order:18927：已落实为新建 commit 的结构化 title，非未识别 caller
+- 手工 PATCH：重抽取而非透传；不引入散文截题
+- narrative：正文=decree_text/text 供推演，不写 HUD initiative 题名
+
+→ **本轮不改生产代码**；只交校正盘点。
+C2（真实 LLM 后端 run + 人工审读）仍由 owner 承担，不在本轮。
+
+复扫（r7）：DOSSIER_ACTION_TYPES 22 条均有归类与指针；无「等」省略；
+无「开卷核对」占位；编辑链与 18927 已按源码纠正。
