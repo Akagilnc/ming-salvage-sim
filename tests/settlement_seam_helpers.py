@@ -104,19 +104,9 @@ def canned_full_settlement(
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_rescript_draft_agent", lambda *a, **k: object())
-    # #1745：替身下移到真实 runner 的 agent 边界（不整换 run_settlement_attendant_message）。
-    class _AttendantOut:
-        content = "递话"
-
-    class _AttendantAgent:
-        def run(self, prompt):
-            return _AttendantOut()
-
-    monkeypatch.setattr(
-        decree_mod,
-        "create_settlement_attendant_agent",
-        lambda *_a, **_k: _AttendantAgent(),
-    )
+    # #1745：复用单一 agent 边界夹具（不整换 run_settlement_attendant_message）。
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     monkeypatch.setattr(
         memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}',
     )
