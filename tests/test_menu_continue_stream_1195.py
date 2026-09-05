@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import web_app
+from tests.wait_utils import wait_until
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
@@ -50,10 +51,8 @@ def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
         def state_payload(self) -> dict:
             return self._state
 
-    # #1749：隔离前序 exit completion / pin。
+    # #1749：隔离前序 exit completion。
     monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
-    with web_app._menu_pin_lock:
-        web_app._menu_pinned_db_paths.clear()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
     monkeypatch.setattr(web_app, "WebGame", FakeWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
@@ -95,6 +94,7 @@ def test_menu_continue_streams_error_when_llm_unavailable(monkeypatch):
             # 首条 stage 已由 worker 在构造前入队；ctor 内可直接失败。
             raise web_app.LLMUnavailable("未配 API key，请先到设置页填写。")
 
+    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
     monkeypatch.setattr(web_app, "WebGame", BoomWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
@@ -116,20 +116,15 @@ def test_menu_continue_404_when_no_main_db(monkeypatch):
 
 
 def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
-    """#1195/#1749：continue bump 后、worker 构造前 exit 已 bump → 对号失败，不构造不发布。
+    """#1195/#1749：continue 在 exit-completion 等待窗内被 exit bump → 对号失败，不构造不发布。
 
-    门控 continue 的 worker Thread.start，使 exit 先 bump 世代再放行 worker。
-    （#1723 SlowWebGame-in-ctor 与 #1749 持锁构造互斥，故用 start 门控证明 stale 语义。）
+    复用真实 exit completion 等待接缝（非 daemon 启动次序门控、非墙钟）。
     """
     import asyncio
     import threading
 
     entered_ctor = threading.Event()
     results: dict = {}
-    worker_ready = threading.Event()
-    allow_worker = threading.Event()
-    OrigThread = web_app.threading.Thread
-    state = {"armed": False, "gated": 0}
 
     class TrackingWebGame:
         def __init__(self, fresh: bool = False, on_stage=None) -> None:
@@ -142,35 +137,29 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
         def state_payload(self) -> dict:
             return self._state
 
-    class _GateThread(OrigThread):
-        def start(self):
-            if state["armed"] and self.daemon and state["gated"] == 0:
-                state["gated"] = 1
-                worker_ready.set()
-                assert allow_worker.wait(timeout=5.0), "allow_worker timeout"
-            return OrigThread.start(self)
-
+    stuck = web_app._MenuExitDetachCompletion()
+    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", stuck)
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
     monkeypatch.setattr(web_app, "WebGame", TrackingWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
-    monkeypatch.setattr(web_app.threading, "Thread", _GateThread)
 
     def run_continue() -> None:
-        state["armed"] = True
         response = TestClient(web_app.app).post("/api/menu/continue")
         results["status"] = response.status_code
         results["events"] = _parse_sse(response.text)
 
     thread = threading.Thread(target=run_continue, daemon=True)
     thread.start()
-    assert worker_ready.wait(timeout=5.0), "continue worker start not gated"
+    # continue 已 take 走 stuck → 全局 completion 位空，且仍卡在 stuck.done
+    wait_until(lambda: web_app._menu_exit_detach_completion is None)
 
     exit_result = asyncio.run(web_app.api_menu_exit())
     assert exit_result == {"ok": True}
     assert web_app.web_game is None
-    allow_worker.set()
 
-    thread.join(timeout=5.0)
+    stuck.close_ok = True
+    stuck.done.set()
+    thread.join()
     assert not thread.is_alive(), "continue stream thread hung"
     assert results.get("status") == 200
     events = results["events"]
@@ -180,16 +169,12 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
 
 
 def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_path):
-    """#1195/#1749：continue bump 后、worker 构造前 new_game 已发布 → 对号失败不覆盖。"""
+    """#1195/#1749：continue 在 exit-completion 等待窗内 new_game 已发布 → 对号失败不覆盖。"""
     import asyncio
     import threading
 
     entered_ctor = threading.Event()
     results: dict = {}
-    worker_ready = threading.Event()
-    allow_worker = threading.Event()
-    OrigThread = web_app.threading.Thread
-    state = {"armed": False, "gated": 0}
 
     class TrackingWebGame:
         def __init__(self, fresh: bool = False, on_stage=None) -> None:
@@ -210,40 +195,33 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
         def state_payload(self) -> dict:
             return self._state
 
-    class _GateThread(OrigThread):
-        def start(self):
-            if state["armed"] and self.daemon and state["gated"] == 0:
-                state["gated"] = 1
-                worker_ready.set()
-                assert allow_worker.wait(timeout=5.0), "allow_worker timeout"
-            return OrigThread.start(self)
-
+    stuck = web_app._MenuExitDetachCompletion()
+    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", stuck)
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
     monkeypatch.setattr(web_app, "WebGame", TrackingWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
     monkeypatch.delenv("MING_SIM_DB", raising=False)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
-    monkeypatch.setattr(web_app.threading, "Thread", _GateThread)
 
     def run_continue() -> None:
-        state["armed"] = True
         response = TestClient(web_app.app).post("/api/menu/continue")
         results["status"] = response.status_code
         results["events"] = _parse_sse(response.text)
 
     thread = threading.Thread(target=run_continue, daemon=True)
     thread.start()
-    assert worker_ready.wait(timeout=5.0), "continue worker start not gated"
+    wait_until(lambda: web_app._menu_exit_detach_completion is None)
 
     monkeypatch.setattr(web_app, "WebGame", FreshWebGame)
     new_result = asyncio.run(web_app.api_menu_new_game())
     assert new_result["state"]["from"] == "new-game"
     settled = web_app.web_game
     assert settled is not None and settled.state_payload()["from"] == "new-game"
-    allow_worker.set()
 
-    thread.join(timeout=5.0)
+    stuck.close_ok = True
+    stuck.done.set()
+    thread.join()
     assert not thread.is_alive()
     assert results.get("status") == 200
     assert results["events"][-1][0] == "error"
