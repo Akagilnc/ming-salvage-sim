@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -120,6 +119,7 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     """#1195/#1749：continue bump 后、worker 构造前 exit 已 bump → 对号失败，不构造不发布。
 
     门控 continue 的 worker Thread.start，使 exit 先 bump 世代再放行 worker。
+    （#1723 SlowWebGame-in-ctor 与 #1749 持锁构造互斥，故用 start 门控证明 stale 语义。）
     """
     import asyncio
     import threading
