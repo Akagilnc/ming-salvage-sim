@@ -18608,6 +18608,9 @@ class GameDB:
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
+                    # 0150-D2 / #1745：collector 归属缺口不得吞成 pending failed（拒收无痕）。
+                    if "RejectionCollector" in str(exc):
+                        raise
                     rejection = getattr(exc, "dossier_link_rejection", None)
                     if rejection is not None:
                         self._record_dossier_link_rejection(
@@ -18785,6 +18788,9 @@ class GameDB:
                 except Exception as exc:
                     # #654 r3-C.2 路1：directive 特路与通用分支同款——回滚后标 failed，不崩结算
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    # 0150-D2 / #1745：collector 归属缺口不得吞成 pending failed。
+                    if "RejectionCollector" in str(exc):
+                        raise
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?",
                         (int(pa["id"]),),
