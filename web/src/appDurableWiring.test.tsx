@@ -2208,6 +2208,63 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     ).toBe(false);
   });
 
+  // #1726 F2：真实 App 挂载面锚定 gen-before-guards——关面板后迟到已读回执不得覆写 applied state。
+  it("#1726 关奏疏面板后，迟到已读回执不得覆写未读数", async () => {
+    const MEMORIAL_BODY = "迟到回执不得把未读覆写成已读。";
+    const unreadMemorial = {
+      key: "progress:11",
+      kind: "progress",
+      turn: 5,
+      author_name: "杨嗣昌",
+      memorial_text: MEMORIAL_BODY,
+      unread: true,
+    };
+    stubSettlementFetch({
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      memorials: [unreadMemorial],
+      unread_memorial_count: 1,
+    });
+    let resolveRead!: (response: Response) => void;
+    const pendingRead = new Promise<Response>((resolve) => { resolveRead = resolve; });
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const prevImpl = fetchMock.getMockImplementation() as
+      ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/memorials/read") && init?.method === "POST") {
+        return pendingRead;
+      }
+      if (prevImpl) return prevImpl(input, init);
+      return new Response("{}", { status: 404 });
+    });
+    const host = await mountApp();
+    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
+    await click(cmdByCaption(host, "奏疏"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
+    });
+    expect(
+      fetchMock.mock.calls.some(([url, init]) =>
+        String(url).includes("/api/memorials/read") && (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(true);
+    await closeOpenOverlay(host);
+    await act(async () => {
+      resolveRead(new Response(JSON.stringify({
+        memorials: [{ ...unreadMemorial, unread: false }],
+        unread_memorial_count: 0,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      await pendingRead;
+    });
+    await tick();
+    // 关面板后 gen 已 bump；迟到回执不得把 HUD 未读数覆写成 0。
+    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
+  });
+
   it("#1342 朝堂抽屉开着时点拟诏：关抽屉并开拟诏台", async () => {
     stubSettlementFetch({
       ...settlementBaseState("player"),
