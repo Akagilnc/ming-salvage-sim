@@ -4008,8 +4008,9 @@ def _extract_secret_order(
         result["covert_task"] = covert_task
     if contract_error:
         result["contract_error"] = contract_error
-    # #354 vs #1504 边界：抽取器抛异常 → extract_failed（下游可暂存旨意+补充）；
-    # 抽取成功但契约为零 → 无此标记（下游走 pending_action_failures 可见失败）。
+    # extract_failed 标记供下游分流：
+    # - session 显式前缀路（#504/#354）：一律暂存；异常时靠此标记+content 保留旨意+补充。
+    # - materialize 意图路（#1504）：成功抽取但契约为零 → 无此标记，走 pending_action_failures。
     if extract_failed:
         result["extract_failed"] = True
     return result
