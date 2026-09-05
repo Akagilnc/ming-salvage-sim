@@ -268,6 +268,11 @@ def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    # #1749：独立可复核——清空活局/钉住，禁被前序用例的 MING_SIM_DB/pin 污染。
+    monkeypatch.setattr(web_app, "web_game", None)
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+    with web_app._menu_pin_lock:
+        web_app._menu_pinned_db_paths.clear()
 
     web_app._drain_and_close_session(game, archive_db=True)
 

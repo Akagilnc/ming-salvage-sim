@@ -303,6 +303,38 @@ def test_exit_new_game_keeps_late_writes_on_old_archive(tracer_client, monkeypat
     assert _counts(g1.db_path)["directives"] >= 1
 
 
+def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monkeypatch):
+    """#1749：GameSession 构造中 load_state 失败 → db/agno 均关，禁部分资源泄漏。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    import ming_sim.beat_orchestration as bo
+    from ming_sim.db import GameDB
+    from ming_sim.models import LLMConfig
+    from tests.conftest import deterministic_test_beat_generator
+
+    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
+    dbp = str(tmp_path / "ud" / "partial-gs.db")
+    os.makedirs(os.path.dirname(dbp), exist_ok=True)
+
+    opened: list = []
+    real_load = GameDB.load_state
+
+    def boom_load(self, *a, **k):
+        opened.append(self)
+        raise RuntimeError("load_state boom")
+
+    monkeypatch.setattr(GameDB, "load_state", boom_load)
+    with pytest.raises(RuntimeError, match="load_state boom"):
+        GameSession(
+            db_path=dbp,
+            llm_config=LLMConfig(api_key="sk-test", base_url="http://x", model="m"),
+        )
+    assert opened
+    db = opened[0]
+    with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
+        db.conn.execute("SELECT 1")
+
+
 def test_webgame_begin_turn_failure_closes_session(tmp_path, monkeypatch):
     """#1749：GameSession 已建、begin_turn 失败 → session.close，禁泄漏 db/agno。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
@@ -316,10 +348,8 @@ def test_webgame_begin_turn_failure_closes_session(tmp_path, monkeypatch):
     dbp = str(tmp_path / "ud" / "partial.db")
     os.makedirs(os.path.dirname(dbp), exist_ok=True)
     monkeypatch.setenv("MING_SIM_DB", dbp)
-    # 强制 active 指向该路径
     web_app._write_active_db_path(dbp)
 
-    real_begin = GameSession.begin_turn
     held: list = []
 
     def boom_begin(self, *a, **k):
@@ -335,53 +365,43 @@ def test_webgame_begin_turn_failure_closes_session(tmp_path, monkeypatch):
         sess.db.conn.execute("SELECT 1")
 
 
-def test_load_save_close_fail_keeps_pin_blocks_archive(tmp_path, monkeypatch):
-    """#1749：load_save 关旧局失败 → 409、恢复指针、钉住路径；new_game 不得搬走。"""
+def test_load_save_close_fail_restores_pointer_and_blocks_stray_archive(tmp_path, monkeypatch):
+    """#1749：load_save 关旧局失败 → 409、恢复指针；web_game 护路径，归档不得搬。"""
     import asyncio
 
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_DB", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(web_app.steam_events, "with_events", lambda p, e: p)
     import ming_sim.beat_orchestration as bo
     from tests.conftest import deterministic_test_beat_generator
 
     monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
 
-    # 真开一局
     web_app.web_game = None
+    with web_app._menu_pin_lock:
+        web_app._menu_pinned_db_paths.clear()
     g = web_app.WebGame(fresh=True)
     web_app.web_game = g
     old_path = g.db_path
     assert os.path.isfile(old_path)
 
-    # drain 时 close 失败
-    def boom_close():
-        raise RuntimeError("close boom")
+    g.session.close = lambda: (_ for _ in ()).throw(RuntimeError("close boom"))  # type: ignore
 
-    g.session.close = boom_close  # type: ignore[method-assign]
-
-    # 造一个假存档名路径（load_save 会在 close 失败时 409，到不了读档）
     saves = tmp_path / "ud" / "saves"
     saves.mkdir(parents=True, exist_ok=True)
-    (saves / "snap.db").write_bytes(b"SQLite format 3\x00")  # 不会真正 load
+    (saves / "snap.db").write_bytes(b"SQLite format 3\x00")
 
     with pytest.raises(web_app.HTTPException) as ei:
         asyncio.run(web_app.api_menu_load_save("snap"))
     assert ei.value.status_code == 409
-    # 指针恢复，路径仍在
     assert web_app.web_game is g
     assert os.path.isfile(old_path)
-    # 钉住 → 归档跳过
+    # 恢复后由 web_game 护路径（pin 已解）；直接 archive 仍拒 live web_game
     web_app._archive_drained_db_file(old_path)
     assert os.path.isfile(old_path)
     assert _drained(tmp_path / "ud") == []
-    # new_game 经 drain archive 也不得搬走未确认关闭的路径
-    # 恢复可 close，避免泄漏
     g.session.close = lambda: None  # type: ignore
-    # 解钉以便后续（测试清理）
-    web_app._unpin_db_path(old_path)
 
 
 def test_load_save_pins_path_while_draining(tmp_path, monkeypatch):
