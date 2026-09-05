@@ -4807,6 +4807,31 @@ def _discard_unpublished_candidate(
         )
 
 
+def _drop_live_pointer_if_unrecoverable(
+    expected: Any,
+    *,
+    exclude: Any = None,
+) -> None:
+    """菜单失败出口：仅当活指针仍是本请求启动时的 expected 且已不可恢复时摘掉。
+
+    身份匹配 + restorable 谓词：不碰后继已发布对象，不碰 exclude（本请求候选）。
+    指针交换在 lifecycle 锁内；restorable 探测在锁外（可触 DB，不扩大锁窗）。
+    """
+    global web_game
+    if expected is None:
+        return
+    if exclude is not None and expected is exclude:
+        return
+    cur = web_game
+    if cur is not expected:
+        return
+    if _runtime_restorable(cur):
+        return
+    with _menu_lifecycle_lock:
+        if web_game is expected:
+            web_game = None
+
+
 def _runtime_restorable(game: Any) -> bool:
     """#1749：失败 close 后可否恢复为活局——db 与 agno 都必须仍可用，且未进入 close 半态。
 
@@ -5259,35 +5284,27 @@ async def api_menu_new_game() -> Dict[str, Any]:
                 raise
         # N1b 仅 path
         opening_path = _claim_opening(new_db_path)
-        if not opening_path:
-            with _menu_lifecycle_lock:
-                if _same_db_path(_get_main_db_path(), new_db_path):
-                    assert snapshot is not None
-                    _restore_main_db_path_config(snapshot)
-            raise HTTPException(status_code=409, detail="新游戏路径忙，请稍后重试。")
 
         def _rollback_path_if_ours() -> None:
+            """归属检查+配置恢复在 lifecycle 锁内一次完成；不覆盖后继已切走的主路径。"""
             assert snapshot is not None
-            if _same_db_path(_get_main_db_path(), new_db_path):
-                _restore_main_db_path_config(snapshot)
+            with _menu_lifecycle_lock:
+                if _same_db_path(_get_main_db_path(), new_db_path):
+                    _restore_main_db_path_config(snapshot)
+
+        if not opening_path:
+            _rollback_path_if_ours()
+            raise HTTPException(status_code=409, detail="新游戏路径忙，请稍后重试。")
 
         try:
             try:
                 # N2 无锁构造
                 new_game = WebGame(fresh=True, db_path=new_db_path)
             except LLMUnavailable as exc:
-                with _menu_lifecycle_lock:
-                    if token == _menu_generation or _same_db_path(
-                        _get_main_db_path(), new_db_path
-                    ):
-                        _rollback_path_if_ours()
+                _rollback_path_if_ours()
                 raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
             except Exception:
-                with _menu_lifecycle_lock:
-                    if token == _menu_generation or _same_db_path(
-                        _get_main_db_path(), new_db_path
-                    ):
-                        _rollback_path_if_ours()
+                _rollback_path_if_ours()
                 raise
 
             # P1 path register（发布前入册）
@@ -5368,6 +5385,10 @@ async def api_menu_continue() -> StreamingResponse:
         # 记录本 worker 启动时的活指针身份：失败收口只摘「仍是该旧对象且已不可恢复」的指针，
         # 不得清掉代际间已被 new_game/load 发布的新局。
         initial_web_game = web_game
+        # 排空一旦开扫，旧 holder 可能已半关/全关——此后任一失败/取消出口统一履行死指针处置。
+        drain_attempted = False
+        published = False
+        game = None
         try:
             on_stage("准备载入上次进度...")
             main_for_open = _get_main_db_path()
@@ -5380,6 +5401,7 @@ async def api_menu_continue() -> StreamingResponse:
                 ))
                 return
             # K2：排空本路径 holders（仅 opening 持有者可扫）
+            drain_attempted = True
             if not _drain_path_holders(opening_path):
                 ev_queue.put((
                     "__error__",
@@ -5395,9 +5417,8 @@ async def api_menu_continue() -> StreamingResponse:
             # P1
             candidate_entry = _register_holder(opening_path, game)
             # #1749：发布前快照——持 opening + 未入 web_game 时独占；发布后可被定点退休关库。
-            # 准备失败（含快照）与代际取消共用未发布收口；不保留已关闭旧 runtime 指针。
+            # 准备失败（含快照）与代际取消共用未发布收口；死指针在 finally 统一摘。
             old_runtime = None
-            published = False
             try:
                 state_snapshot = game.state_payload()
                 with _menu_lifecycle_lock:
@@ -5419,18 +5440,6 @@ async def api_menu_continue() -> StreamingResponse:
                     _discard_unpublished_candidate(
                         game, candidate_entry, opening_path,
                     )
-                    # K2 可能已排空本路径启动时的旧 holder；仅当活指针仍是该旧对象
-                    # 且已不可恢复时摘掉——禁清后继发布的新局。
-                    cur = web_game
-                    if (
-                        cur is not None
-                        and cur is initial_web_game
-                        and cur is not game
-                        and not _runtime_restorable(cur)
-                    ):
-                        with _menu_lifecycle_lock:
-                            if web_game is cur:
-                                web_game = None
                 raise
         except _MenuCandidateCancelled as exc:
             ev_queue.put(("__error__", {"message": str(exc)}))
@@ -5442,6 +5451,11 @@ async def api_menu_continue() -> StreamingResponse:
             logger.exception("continue worker failed")
             ev_queue.put(("__error__", {"message": str(exc)}))
         finally:
+            # 排空后任一失败/取消出口：仅摘本请求启动时已不可恢复的旧指针。
+            if drain_attempted and not published:
+                _drop_live_pointer_if_unrecoverable(
+                    initial_web_game, exclude=game,
+                )
             # K6：必达 release（含 C7-release）
             _release_opening(opening_path)
 
