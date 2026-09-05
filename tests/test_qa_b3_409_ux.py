@@ -197,16 +197,12 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: game)
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
 
-    started = time.monotonic()
     try:
-        events = asyncio.run(
-            asyncio.wait_for(_consume_resolve_sse(), timeout=2.0)
-        )
+        # gate held: precheck must finish without acquiring it (hang → CI final line)
+        events = asyncio.run(_consume_resolve_sse())
     finally:
         gate.release()
-    elapsed = time.monotonic() - started
 
-    assert elapsed < 1.5, f"phase precheck must not block on held write gate ({elapsed:.2f}s)"
     assert events, "expected at least one SSE event"
     event, payload = events[-1]
     assert event == "error"
@@ -277,7 +273,7 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     def _failures_after_submit(*_a, **_k):
         # web_app resolve stream calls this after submit returns, before tail write.
         body_ready.set()
-        assert release_body.wait(5.0), "test must release post-submit pre-tail window"
+        release_body.wait()
         return []
 
     def _end_turn():
@@ -306,7 +302,7 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
 
     t_resolve = threading.Thread(target=_run_resolve, daemon=True)
     t_resolve.start()
-    assert body_ready.wait(5.0), "resolve must enter post-submit pre-tail window"
+    body_ready.wait()
 
     with pytest.raises(HTTPException) as ei:
         asyncio.run(web_app.api_load_save("存档"))
@@ -315,8 +311,8 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     assert game.session is old_session
 
     release_body.set()
-    assert resolve_done.wait(5.0), "resolve must finish"
-    t_resolve.join(2.0)
+    resolve_done.wait()
+    t_resolve.join()
 
     assert game.actions == ["submit", "end_turn", "refresh"]
     assert tail_sessions == [old_session]

@@ -180,7 +180,7 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
             stream_error.append(exc)
 
     def _probe_when_barrier_open() -> None:
-        assert barrier_claimed.wait(timeout=5.0), "court_break 未预领屏障票"
+        barrier_claimed.wait()
         # hold 窗内：屏障已开、尾随未放行 → 召对写入口必须外部可见拒。
         assert q.has_open_barrier(), "预领屏障后 has_open_barrier 应为 True"
         async def _probe() -> None:
@@ -217,8 +217,8 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
     try:
         stream_thread.start()
         probe_thread.start()
-        probe_thread.join(timeout=10.0)
-        stream_thread.join(timeout=15.0)
+        probe_thread.join()
+        stream_thread.join()
     finally:
         trail_release.set()
         q.claim_barrier = real_claim  # type: ignore[method-assign]

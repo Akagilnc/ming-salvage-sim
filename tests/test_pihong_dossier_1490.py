@@ -3048,8 +3048,6 @@ def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     web_game.session.finish_rescript_phase2 = _finish  # type: ignore[method-assign]
 
     def _gen(inputs):
-        # 给 join 探针一点窗口
-        time.sleep(0.02)
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
         return f"{name}锁窗入殿。"
 
@@ -4185,7 +4183,7 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     def _gen(inputs):
         gen_calls["n"] += 1
         started.set()
-        assert release.wait(5), "generator not released"
+        release.wait()
         name = str(getattr(inputs, "person_name", "") or "") or "臣"
         return f"{name}single-flight。"
 
@@ -4206,17 +4204,21 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     }]
     turn_before = int(state.turn)
 
-    def _post():
+    second_submitted = threading.Event()
+
+    def _post(mark_second: bool = False):
+        if mark_second:
+            second_submitted.set()
         return asyncio.run(_post_resolve(body))
 
     # 并发两路同 body：一路慢 generator 窗口内第二路须 coalesce
     with ThreadPoolExecutor(max_workers=2) as pool:
         f1 = pool.submit(_post)
-        assert started.wait(3), "first generator never started"
-        f2 = pool.submit(_post)
-        time.sleep(0.15)  # 第二路进入 wait/coalesce 窗口
+        started.wait()
+        f2 = pool.submit(_post, True)
+        second_submitted.wait()  # 第二路已提交进入；持 release 直至其可 coalesce
         release.set()
-        results = [f.result(timeout=60) for f in (f1, f2)]
+        results = [f.result() for f in (f1, f2)]
 
     assert all(r.status_code == 200 for r in results), [r.status_code for r in results]
     kind, turn_s, idx_s = key.split(":")
@@ -4258,13 +4260,13 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
             if name == "turn_phase" and super().__getattribute__("_race_armed"):
                 super().__setattr__("_race_armed", False)
                 phase_sampled.set()
-                assert phase_published.wait(2.0), "phase1 publication did not complete"
+                phase_published.wait()
                 # Before the fix state_payload held no entry lock here, so require
                 # the real entry finally to finish and deterministically expose its
                 # mixed old-phase/zero-count tuple.  With the fix, returning lets
                 # the snapshot release that lock and the finally complete afterward.
                 if not entry_lock.locked():
-                    assert entry_ended.wait(2.0), "settlement entry did not finish"
+                    entry_ended.wait()
             return value
 
     state = PhaseRaceState(**original_state.__dict__)
@@ -4277,7 +4279,7 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
     desk_holder = {}
 
     def _publish_phase1():
-        assert phase_sampled.wait(2.0), "GET did not sample phase"
+        phase_sampled.wait()
         desk_holder["desk"] = _657_plant_awaiting_web(web_game, drafts=[{
             "title": "发布中的案头", "context": "c",
             "options": [
@@ -4294,7 +4296,7 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
     publisher.start()
     state._race_armed = True
     crossed = asyncio.run(_get_state())
-    publisher.join(5.0)
+    publisher.join()
     assert not publisher.is_alive()
 
     assert crossed["turn"]["phase"] == TurnPhase.SETTLING.value
@@ -4355,7 +4357,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     def _pending_with_reverse_race():
         desk_read.set()
         if not entry_lock.locked():
-            assert resolve_begun.wait(2.0), "resolve begin did not empty desk"
+            resolve_begun.wait()
         return original_pending()
 
     monkeypatch.setattr(
@@ -4363,7 +4365,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     )
 
     def _begin_and_empty_desk():
-        assert desk_read.wait(2.0), "GET did not reach desk read"
+        desk_read.wait()
         web_app._begin_settlement_entry(web_game)
         db.conn.execute(
             "UPDATE pending_decisions SET status='decided', choice_json=? "
@@ -4376,7 +4378,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     beginner = threading.Thread(target=_begin_and_empty_desk)
     beginner.start()
     crossed = asyncio.run(_get_state())
-    beginner.join(5.0)
+    beginner.join()
     assert not beginner.is_alive()
 
     assert crossed["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
@@ -4406,7 +4408,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
 
     def _phase2(*_a, **_k):
         entered.set()
-        assert release.wait(2.0)
+        release.wait()
         return "邸报"
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
@@ -4417,14 +4419,14 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
 
     t = threading.Thread(target=_run)
     t.start()
-    assert entered.wait(2.0), "phase2 须进入在飞窗"
+    entered.wait()
     payload = asyncio.run(_get_state())
     assert payload["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
     assert payload.get("resume_phase2") is False
     assert payload.get("settlement_entry_inflight") is True
     assert payload.get("pending_decisions") == []
     release.set()
-    t.join(5.0)
+    t.join()
     assert not t.is_alive()
     assert result["r"].status_code == 200
     done = asyncio.run(_get_state())

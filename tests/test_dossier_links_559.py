@@ -592,7 +592,7 @@ def test_cli_secret_extraction_overlaps_independent_confirmation(monkeypatch):
         {"目标案卷ID": 11, "类型": "护卫", "说明": "护送"}]}
     def runner(*args, **kwargs):
         seen.append(kwargs.get("tag"))
-        barrier.wait(timeout=2)
+        barrier.wait()
         value = ({"confirmed_links": [{"target_dossier_id": 11, "relation_type": "护卫"}]}
                  if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
         return json.dumps(value, ensure_ascii=False), 1

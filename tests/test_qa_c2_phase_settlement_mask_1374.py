@@ -115,7 +115,7 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
             )
             db.conn.commit()
             phase2_started.set()
-            assert release_phase2.wait(5.0)
+            release_phase2.wait()
             if on_event:
                 on_event("stage", "数值推演结算")
             return "邸报：测。"

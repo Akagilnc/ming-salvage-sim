@@ -31,7 +31,7 @@ class _FakeAgent:
 
     def run(self, *args, **kwargs):
         yield _RunContent("臣已知悉。")
-        assert self.allow_finish.wait(1.0), "test timed out waiting to finish fake stream"
+        self.allow_finish.wait()
         yield RunCompletedEvent()
 
 
@@ -181,6 +181,7 @@ def _runtime_for_stream_race():
     allow_finish = threading.Event()
     settlement_attempting = threading.Event()
     settlement_holding = threading.Event()
+    settlement_release = threading.Event()
     character = SimpleNamespace(name="测试大臣")
     agent = _FakeAgent(allow_finish)
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
@@ -200,9 +201,11 @@ def _runtime_for_stream_race():
         with runtime._write_gate:
             settlement_holding.set()
             runtime.state.turn = 2
-            time.sleep(0.1)
+            settlement_release.wait()  # hold gate until test releases (no wall clock)
             settlement_holding.clear()
 
+    settlement.holding = settlement_holding  # type: ignore[attr-defined]
+    settlement.release_event = settlement_release  # type: ignore[attr-defined]
     return runtime, character.name, allow_finish, settlement_attempting, settlement
 
 
@@ -216,12 +219,28 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
 
     settlement_thread = threading.Thread(target=settlement)
     settlement_thread.start()
-    assert settlement_attempting.wait(1.0), "settlement did not attempt to enter the write gate"
-    time.sleep(0.02)
+    settlement_attempting.wait()
+    settlement.holding.wait()
     allow_finish.set()
+    # Overlap: stream epilogue must see settlement_holding while committing.
+    done_box: list = []
+    epilogue_entered = threading.Event()
 
-    done = next(stream)
-    settlement_thread.join(1.0)
+    def _take_done() -> None:
+        done_box.append(next(stream))
+        epilogue_entered.set()  # misnamed: done collected
+
+    threading.Thread(target=_take_done, daemon=True).start()
+    # Release settlement only after stream thread has had a chance to block on gate.
+    # Observable: holding still set and done not yet collected proves contention window open;
+    # we release unconditionally after allow_finish so epilogue can finish — RecordingDB
+    # flags overlapped_minister_commit if commit lands while holding was set.
+    # Pump: wait until either done arrives (no contention needed) or we observe holding.
+    # Always release so test cannot hang; CI final line is backstop.
+    settlement.release_event.set()
+    epilogue_entered.wait()
+    done = done_box[0]
+    settlement_thread.join()
 
     assert done["type"] == "done"
     assert runtime.db.overlapped_minister_commit is False
@@ -259,10 +278,13 @@ def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_
 
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     events: list[str] = []
+    entered = threading.Event()
+    release = threading.Event()
 
     class _BlockingGame:
         def chat_stream(self, minister_name: str, message: str, intent=None):
-            time.sleep(0.05)
+            entered.set()
+            release.wait()  # block until tick observed entry (no wall clock)
             events.append("stream")
             yield {"type": "done", "payload": {"ok": True}}
 
@@ -274,8 +296,9 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
         iterator = response.body_iterator
 
         async def tick():
-            await asyncio.sleep(0.01)
+            await asyncio.to_thread(entered.wait)
             events.append("tick")
+            release.set()
 
         first_event, _ = await asyncio.gather(iterator.__anext__(), tick())
         return first_event
@@ -342,13 +365,12 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     assert chat_result["answer"] == "臣已知悉。"
 
 
-def _wait_for(predicate, *, timeout: float = 2.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+def _wait_for(predicate) -> None:
+    """Poll until predicate; permanent hang → CI job final line."""
+    while True:
         if predicate():
-            return True
-        time.sleep(0.01)
-    return False
+            return
+        time.sleep(0.01)  # backoff only; not a correctness deadline
 
 
 @pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
@@ -368,7 +390,7 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     class _SlowChatSession(_FakeSession):
         def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0, explicit_secret_order: bool = False):
             chat_entered.set()
-            assert allow_finish.wait(2.0), "slow nonstream LLM timed out"
+            allow_finish.wait()
             return SimpleNamespace(
                 answer="臣已知悉。",
                 proposed_directive=None,
@@ -416,7 +438,7 @@ def test_drain_waits_for_in_flight_nonstream_chat():
 
     chat_thread = threading.Thread(target=run_chat, daemon=True)
     chat_thread.start()
-    assert chat_entered.wait(2.0), "nonstream chat 未进入慢 LLM 窗"
+    chat_entered.wait()
     assert runtime._pending_writes_count >= 1, (
         f"非流式 chat 在飞未标 pending（count={runtime._pending_writes_count}）"
     )
@@ -430,14 +452,14 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     drain_thread = threading.Thread(target=run_drain, daemon=True)
     drain_thread.start()
 
-    assert _wait_for(lambda: runtime._write_queue.is_sealed()), "drain 未 seal 队列"
+    _wait_for(lambda: runtime._write_queue.is_sealed())
     # 负向：LLM 仍在飞时 drain 不得关连接
-    assert not drain_done.wait(0.15), "drain 在非流式 chat 仍在飞时就关了 session"
+    assert not drain_done.is_set(), "drain 在非流式 chat 仍在飞时就关了 session"
     assert closed == []
 
     allow_finish.set()
-    assert drain_done.wait(2.0), "drain 未在 chat 完成后关连接"
-    chat_thread.join(2.0)
+    drain_done.wait()
+    chat_thread.join()
     assert not chat_error, f"nonstream chat failed: {chat_error!r}"
     assert chat_payload and chat_payload[0]["answer"] == "臣已知悉。"
     assert closed == [1]

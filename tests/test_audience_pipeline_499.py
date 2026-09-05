@@ -124,7 +124,7 @@ def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatc
 
     def slow_spy_run(**kwargs):
         seen_replies.append(kwargs.get("minister_reply") or "")
-        release_mind.wait(timeout=2.0)
+        release_mind.wait()
         payload = {
             "reader": "王承恩",
             "target": minister_name,
@@ -166,7 +166,7 @@ def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatc
     assert seen_replies == ["臣先陈军务，不敢删节。"]
     assert "军务如何？" not in seen_replies[0]
     # 公共信号（非私有计数）：读心任务达终态（记录已落）——worker DB 工作已收尾。
-    assert _wait_for(lambda: db.list_mindreading_records(int(mind_event["chat_turn_id"])))
+    _wait_for(lambda: db.list_mindreading_records(int(mind_event["chat_turn_id"])))
 
 
 def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
@@ -183,7 +183,7 @@ def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
     db, state, content = game
     minister_name = "温体仁"
 
-    both_in_flight = threading.Barrier(2, timeout=2.0)
+    both_in_flight = threading.Barrier(2)
     intent_started = threading.Event()
     reply_streaming = threading.Event()
 
@@ -218,7 +218,7 @@ def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
         return intent_exec.submit(_classify)
 
     def _finish_intent(future):
-        result = future.result(timeout=2.0) if future is not None else None
+        result = future.result() if future is not None else None
         intent_consumed.append(result)
         return result
 
@@ -237,7 +237,7 @@ def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
         assert intent_consumed == [{"kind": "none"}]
         assert seen_intent_messages == ["军务如何？"]
         # 公共信号：读心任务达终态（记录或 failed/skip）——worker 已收尾。
-        assert _wait_for(lambda: not web_game.mindreading_for_minister(minister_name)["mindreading_pending"])
+        _wait_for(lambda: not web_game.mindreading_for_minister(minister_name)["mindreading_pending"])
     finally:
         intent_exec.shutdown(wait=True)
 
@@ -268,7 +268,7 @@ def test_mindreading_poll_path_after_stream(game, monkeypatch):
     monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", spy)
     list(web_game.chat_stream(minister_name, "如何？"))
     # 公共信号：读心记录已落（API 输出可读）——worker 已收尾。
-    assert _wait_for(lambda: web_game.mindreading_for_minister(minister_name)["mindreading"])
+    _wait_for(lambda: web_game.mindreading_for_minister(minister_name)["mindreading"])
     out = web_game.mindreading_for_minister(minister_name)
     assert out["chat_turn_id"] > 0
     assert out["mindreading"]
@@ -325,7 +325,7 @@ def test_failed_mindreading_marks_terminal_and_stops_pending(game, monkeypatch):
 
     cid = int(db.get_last_active_chat_turn(minister, state.turn)["id"])
     # 公共信号：终态 failed 落库（任务态可读）——worker 已收尾。
-    assert _wait_for(lambda: db.get_mindreading_status(cid) == "failed")
+    _wait_for(lambda: db.get_mindreading_status(cid) == "failed")
     out = web_game.mindreading_for_minister(minister, cid)
     assert out["mindreading"] == []
     assert out["mindreading_pending"] is False  # 终态 → 单轮 pending 停
@@ -378,17 +378,17 @@ def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeyp
         return False
 
     try:
-        assert _wait_for(_reply_linked_and_accepted, timeout=2.0)
+        _wait_for(_reply_linked_and_accepted)
         cid = holder["cid"]
         # 公共恢复结果：重开 API 见任务 pending（accepted 已持久，恢复会轮询/投递）
         assert web_game.mindreading_for_minister(minister, cid)["mindreading_pending"] is True
     finally:
         release.set()
-        stream_thread.join(timeout=5.0)
+        stream_thread.join()
         _wait_for_pending_writes_to_drain(web_game)
 
     cid = holder["cid"]
-    assert _wait_for(lambda: db.get_mindreading_status(cid) in {"skip", "failed"})
+    _wait_for(lambda: db.get_mindreading_status(cid) in {"skip", "failed"})
 
 
 def test_real_chat_poll_survives_shared_connection_reads(game, monkeypatch):
@@ -441,14 +441,13 @@ def test_real_chat_poll_survives_shared_connection_reads(game, monkeypatch):
     stream_thread.start()
     holder: dict = {}
     try:
-        assert _wait_for(
+        _wait_for(
             lambda: (
                 (row := db.get_last_active_chat_turn(minister, state.turn))
                 and row.get("minister_message_id")
                 and db.get_mindreading_status(int(row["id"])) == "running"
                 and holder.update(cid=int(row["id"])) is None
             ),
-            timeout=2.0,
         )
         assert web_game.mindreading_for_minister(minister, holder["cid"])[
             "mindreading_pending"
@@ -457,9 +456,9 @@ def test_real_chat_poll_survives_shared_connection_reads(game, monkeypatch):
     finally:
         release.set()
         stop.set()
-        stream_thread.join(timeout=5.0)
+        stream_thread.join()
         for t in pollers:
-            t.join(timeout=1.0)
+            t.join()
         _wait_for_pending_writes_to_drain(web_game)
     assert errors == []
 

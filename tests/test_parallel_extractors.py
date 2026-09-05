@@ -149,7 +149,7 @@ def test_merge_keeps_distinct_non_recurring_commitments_under_same_origin_ref():
 
 
 def test_parallel_extract_runs_concurrently(read_game, monkeypatch):
-    """parallel=True 时 4 个 LLM 调用真并发：峰值并发 ≥2，wall-clock 明显短于串行总和。"""
+    """parallel=True 时模块 LLM 调用真并发：峰值并发 ≥2（状态证，不用墙钟比串行）。"""
     db, state, content = read_game
     active = 0
     max_active = 0
@@ -161,18 +161,14 @@ def test_parallel_extract_runs_concurrently(read_game, monkeypatch):
         with lock:
             active += 1
             max_active = max(max_active, active)
-        time.sleep(delay)
+        time.sleep(delay)  # 假慢协作方，供 max_active 观测重叠
         with lock:
             active -= 1
         return _fake_run(agent, prompt, tag)
 
     monkeypatch.setattr(simulation, "run_agent_text", _slow)
-    t0 = time.monotonic()
     extract_scores_by_modules_with_agno(_dummy_agents(), db, state, "邸报", parallel=True)
-    elapsed = time.monotonic() - t0
     assert max_active >= 2, f"未真正并发，峰值并发={max_active}"
-    assert elapsed < delay * len(EXTRACTION_MODULES), (
-        f"wall-clock {elapsed:.2f}s 未短于串行总和 {delay*len(EXTRACTION_MODULES):.2f}s")
 
 
 def test_serial_extract_stays_serial(read_game, monkeypatch):

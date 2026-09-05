@@ -46,7 +46,7 @@ def test_run_highlight_judge_timeout_and_exception_degrade_silently():
 
     class _Slow:
         def run(self, *_a, **_k):
-            release.wait(timeout=2.0)
+            release.wait()
             return SimpleNamespace(content='{"highlights": ["迟到"]}')
 
     class _Boom:
@@ -221,7 +221,7 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
 
     def slow_ok(**kwargs):
         seen_reply.append(str(kwargs.get("minister_reply") or ""))
-        release.wait(timeout=2.0)
+        release.wait()
         return ["军务"]
 
     monkeypatch.setattr(web_app_mod, "run_highlight_judge", slow_ok)
@@ -304,7 +304,7 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
 
     class _Slow:
         def run(self, *_a, **_k):
-            release.wait(timeout=2.0)
+            release.wait()
             return SimpleNamespace(content='{"highlights": ["不该出现"]}')
 
     real_run = hj.run_highlight_judge
