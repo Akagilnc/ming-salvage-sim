@@ -377,13 +377,6 @@ def _preheat_batch_draft_extractions(
     session = ctx.session
 
     if draft_total > 1:
-        if "drafts" in ctx.batch_state or "draft_combo_error" in ctx.batch_state:
-            cached_combo = ctx.batch_state.get("draft_combo_error")
-            if isinstance(cached_combo, StructuredDecreeCombinationError):
-                _attribute_draft_combo_failures(
-                    cached_combo, pure_draft_records, validation_failures,
-                )
-            return
         try:
             batch_res = _draft_heal_or_escalate(
                 ctx,
@@ -408,8 +401,6 @@ def _preheat_batch_draft_extractions(
         return
 
     # Single pure draft: preheat so the write pass never opens LLM I/O.
-    if "draft_single" in ctx.batch_state:
-        return
     _candidate, original_candidate, _original_kind, _original_draft_index = pure_draft_records[0]
     surface = _draft_existing_surface(ctx)
     try:
@@ -433,6 +424,47 @@ def _preheat_batch_draft_extractions(
     ctx.batch_state["draft_single"] = healed
 
 
+def _secret_extract_bundle(
+    ctx: MaterializeCtx, *, prefer_new: bool,
+) -> Dict[str, Any]:
+    """secret/cultivate LLM 抽取装配唯一权威（preheat 与 handler fallback 共调）。"""
+    from ming_sim.cli_backend import _extract_secret_order, extract_minister_actions
+
+    session = ctx.session
+    minister_name = ctx.character.name
+    if prefer_new:
+        return {
+            "mode": "new",
+            "secret": _extract_secret_order(
+                ctx.player_message,
+                ctx.reply,
+                minister_name,
+                ctx.llm_config,
+                force_default_assignee=False,
+                dossier_candidates=session.db.list_referenceable_dossiers(
+                    minister_name, session.state.turn,
+                ),
+            ),
+        }
+    is_consort = getattr(ctx.character, "office_type", "") == "后宫"
+    active = list(session.db.get_active_secret_orders_for_minister(minister_name) or [])
+    if not (active or is_consort):
+        return {
+            "mode": "none",
+            "act": None,
+            "active": active,
+            "is_consort": is_consort,
+        }
+    return {
+        "mode": "actions",
+        "act": extract_minister_actions(
+            ctx.player_message, ctx.reply, active, is_consort, llm_config=ctx.llm_config,
+        ),
+        "active": active,
+        "is_consort": is_consort,
+    }
+
+
 def _preheat_batch_secret_extractions(
     ctx: MaterializeCtx,
     candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
@@ -442,45 +474,16 @@ def _preheat_batch_secret_extractions(
         str(candidate.get("kind") or "") in {"secret", "cultivate"}
         for candidate, _original, _original_kind, _idx in candidate_records
     )
-    if not needs_secret or "secret_extract" in ctx.batch_state:
+    if not needs_secret:
         return
-    from ming_sim.cli_backend import _extract_secret_order, extract_minister_actions
-
-    session = ctx.session
-    minister_name = ctx.character.name
-    # Prefer structured "新建" extract when present; else active-order extract.
-    for candidate, _original, _original_kind, _idx in candidate_records:
-        kind = str(candidate.get("kind") or "")
-        if kind != "secret":
-            continue
-        if candidate.get("secret_action") == "新建":
-            ctx.batch_state["secret_extract"] = {
-                "mode": "new",
-                "secret": _extract_secret_order(
-                    ctx.player_message,
-                    ctx.reply,
-                    minister_name,
-                    ctx.llm_config,
-                    force_default_assignee=False,
-                    dossier_candidates=session.db.list_referenceable_dossiers(
-                        minister_name, session.state.turn,
-                    ),
-                ),
-            }
-            return
-    is_consort = getattr(ctx.character, "office_type", "") == "后宫"
-    active = session.db.get_active_secret_orders_for_minister(minister_name)
-    if not (active or is_consort):
-        ctx.batch_state["secret_extract"] = {"mode": "none", "act": None}
-        return
-    ctx.batch_state["secret_extract"] = {
-        "mode": "actions",
-        "act": extract_minister_actions(
-            ctx.player_message, ctx.reply, active, is_consort, llm_config=ctx.llm_config,
-        ),
-        "active": active,
-        "is_consort": is_consort,
-    }
+    prefer_new = any(
+        str(candidate.get("kind") or "") == "secret"
+        and candidate.get("secret_action") == "新建"
+        for candidate, _original, _original_kind, _idx in candidate_records
+    )
+    ctx.batch_state["secret_extract"] = _secret_extract_bundle(
+        ctx, prefer_new=prefer_new,
+    )
 
 
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
@@ -663,8 +666,6 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
 
 def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
     """密令会话动作 + 调教：并发判词与串行 extract_minister_actions 同缝。"""
-    from ming_sim.cli_backend import _extract_secret_order, extract_minister_actions
-
     if ctx.out.get("pending_action_id") or ctx.out.get("secret_order_id") or ctx.explicit_prefixed:
         return
     session = ctx.session
@@ -678,17 +679,10 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         and intent.get("secret_action") == "新建"
     ):
         if isinstance(cached_secret, dict) and cached_secret.get("mode") == "new":
-            secret = dict(cached_secret.get("secret") or {})
+            bundle = cached_secret
         else:
-            secret = _extract_secret_order(
-                ctx.player_message,
-                ctx.reply,
-                minister_name,
-                ctx.llm_config,
-                force_default_assignee=False,
-                dossier_candidates=session.db.list_referenceable_dossiers(
-                    minister_name, session.state.turn),
-            )
+            bundle = _secret_extract_bundle(ctx, prefer_new=True)
+        secret = dict(bundle.get("secret") or {})
         frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
         if frozen is None:
             reason = str(secret.get("contract_error") or "密令抽取未能冻结合同").strip()
@@ -725,12 +719,12 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         )
         return
 
-    if isinstance(cached_secret, dict) and cached_secret.get("mode") == "actions":
-        is_consort = bool(cached_secret.get("is_consort"))
-        active = list(cached_secret.get("active") or [])
+    if isinstance(cached_secret, dict) and cached_secret.get("mode") in {"actions", "none"}:
+        bundle = cached_secret
     else:
-        is_consort = getattr(ctx.character, "office_type", "") == "后宫"
-        active = session.db.get_active_secret_orders_for_minister(minister_name)
+        bundle = _secret_extract_bundle(ctx, prefer_new=False)
+    is_consort = bool(bundle.get("is_consort"))
+    active = list(bundle.get("active") or [])
     if not (active or is_consort):
         return
 
@@ -739,11 +733,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
     if intent is not None and intent_kind not in ("secret", "cultivate", "none"):
         return
     if intent is not None and intent_kind in ("secret", "cultivate"):
-        if isinstance(cached_secret, dict) and cached_secret.get("mode") == "actions":
-            extracted = dict(cached_secret.get("act") or {})
-        else:
-            extracted = extract_minister_actions(
-                ctx.player_message, ctx.reply, active, is_consort, llm_config=ctx.llm_config)
+        extracted = dict(bundle.get("act") or {})
         act = extracted if (
             extracted.get("secret_action") != "无"
             or extracted.get("cultivate_skill")
@@ -754,11 +744,8 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
             "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
         }
-    elif isinstance(cached_secret, dict) and cached_secret.get("mode") == "actions":
-        act = dict(cached_secret.get("act") or {})
     else:
-        act = extract_minister_actions(
-            ctx.player_message, ctx.reply, active, is_consort, llm_config=ctx.llm_config)
+        act = dict(bundle.get("act") or {})
 
     sa = act["secret_action"]
     if sa and sa != "无":
