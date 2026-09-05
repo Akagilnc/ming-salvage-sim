@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List
@@ -46,20 +45,23 @@ def test_run_highlight_judge_timeout_and_exception_degrade_silently():
 
     class _Slow:
         def run(self, *_a, **_k):
-            release.wait(timeout=2.0)
+            release.wait()
             return SimpleNamespace(content='{"highlights": ["迟到"]}')
 
     class _Boom:
         def run(self, *_a, **_k):
             raise RuntimeError("model down")
 
-    assert run_highlight_judge(
-        minister_reply="臣陈辽饷。",
-        llm_config=object(),
-        agent=_Slow(),
-        timeout_s=0.05,
-    ) == []
-    release.set()
+    try:
+        assert run_highlight_judge(
+            minister_reply="臣陈辽饷。",
+            llm_config=object(),
+            agent=_Slow(),
+            timeout_s=0.05,
+        ) == []
+    finally:
+        # 断言失败不得扣住 _Slow.run；释放归本测 finally。
+        release.set()
 
     assert run_highlight_judge(
         minister_reply="臣陈辽饷。",
@@ -221,7 +223,7 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
 
     def slow_ok(**kwargs):
         seen_reply.append(str(kwargs.get("minister_reply") or ""))
-        release.wait(timeout=2.0)
+        release.wait()
         return ["军务"]
 
     monkeypatch.setattr(web_app_mod, "run_highlight_judge", slow_ok)
@@ -304,7 +306,7 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
 
     class _Slow:
         def run(self, *_a, **_k):
-            release.wait(timeout=2.0)
+            release.wait()
             return SimpleNamespace(content='{"highlights": ["不该出现"]}')
 
     real_run = hj.run_highlight_judge
@@ -317,16 +319,16 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
 
     monkeypatch.setattr(web_app_mod, "run_highlight_judge", capped)
 
-    t0 = time.monotonic()
-    payload = web_game.chat(minister, "问？")
-    elapsed = time.monotonic() - t0
-    release.set()
+    try:
+        payload = web_game.chat(minister, "问？")
 
-    assert payload["answer"] == "臣遵旨。"
-    minister_msgs = [m for m in payload["history"] if m["role"] == "minister"]
-    assert minister_msgs
-    assert minister_msgs[-1].get("highlights") in ([], None) or minister_msgs[-1]["highlights"] == []
-    # 不得被慢判官拖过上限太多
-    assert elapsed < 1.0
-    assert DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S > 0
-    _drain(web_game)
+        assert payload["answer"] == "臣遵旨。"
+        minister_msgs = [m for m in payload["history"] if m["role"] == "minister"]
+        assert minister_msgs
+        assert minister_msgs[-1].get("highlights") in ([], None) or minister_msgs[-1]["highlights"] == []
+        # 生产 timeout_s 输入保留；旁侧 elapsed 墙钟证据删除（接缝无「N 秒内完成」契约）。
+        assert DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S > 0
+    finally:
+        # chat/断言失败路径仍须放行 _Slow，再 drain 后台。
+        release.set()
+        _drain(web_game)

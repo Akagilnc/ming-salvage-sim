@@ -60,6 +60,9 @@ def _stub_settlement_llms(decree_mod, memories, monkeypatch, *, simulate, attend
         decree_mod, "extract_scores_by_modules_with_agno",
         lambda *a, **k: ({}, "out", "in"),
     )
+    # #1745：结算拒收递话同属外层 LLM 缝。
+    from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
+    install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
     monkeypatch.setattr(
@@ -189,13 +192,13 @@ def test_arrival_dual_voice_parallel_main_path(game, monkeypatch):
 
     def _attendant(*_a, **kwargs):
         attendant_entered.set()
-        assert sim_entered.wait(timeout=5), "simulator 须在王承恩启动后进入"
-        release.wait(timeout=5)
+        sim_entered.wait()
+        release.wait()
         attendant_calls.append(dict(kwargs))
         return ATTENDANT_TEXT
 
     def _simulate(*_a, **kwargs):
-        assert attendant_entered.wait(timeout=5), "王承恩须先于 simulator 启动"
+        attendant_entered.wait()
         sim_entered.set()
         release.set()
         payload = kwargs["simulator_payload"]

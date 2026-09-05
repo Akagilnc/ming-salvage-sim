@@ -312,25 +312,45 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
                     data = json.loads(first_block)
                 except json.JSONDecodeError as error:
                     raise LLMContractError(
-                        f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}"
+                        f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}",
+                        raw_value=raw,
                     ) from error
             else:
                 raise LLMContractError(
-                    f"{stage} 输出不是合法 JSON\n原始输出：{raw[:800]}"
+                    f"{stage} 输出不是合法 JSON\n原始输出：{raw[:800]}",
+                    raw_value=raw,
                 )
     if not isinstance(data, dict):
         abort_llm_contract(stage, "顶层必须是 JSON object", raw)
     return data
 
 
-def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """Interim promulgation judge: one isolated call for the whole reviewed batch."""
-    del agno_db
+def create_promulgation_judge_agent(
+    llm_config: LLMConfig,
+    agno_db: SqliteDb,
+    *,
+    session_id: str,
+    num_history_runs: int,
+) -> Agent:
+    """Interim promulgation judge for one reviewed batch.
+
+    #1753 heal-by-resume：必须绑 db + session_id + cache_session，且
+    add_history_to_context=True——否则 Agno 不会把前一次 run 放入补交上下文，
+    「同一 LLM 会话续接」不成立（大臣 registry 同款接缝）。
+    session_id / num_history_runs 由调用方按单次尝试身份与单一补交预算传入
+    （跨结算/恢复尝试不得共用同一 session_id）。
+    """
     cfg = _llm_for_role(llm_config, "simulator")
     return Agent(
         name="颁布判官",
         id="promulgation-judge",
         model=create_chat_model(cfg, temperature=0.2),
+        add_history_to_context=True,
+        cache_session=True,
+        num_history_runs=num_history_runs,
+        markdown=False,
+        db=agno_db,
+        session_id=session_id,
         instructions=[
             "你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。"
             "派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。",
@@ -369,8 +389,6 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "一概打回；有 promulgation_history 批红强颁前科时与无前科差分，优先打回。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
         ],
-        add_history_to_context=False,
-        markdown=False,
     )
 
 
@@ -399,6 +417,26 @@ def create_arrival_attendant_agent(llm_config: LLMConfig) -> Agent:
             "（年月、人名、地点、候旨状态）。你据此向皇爷低声递话。",
             "名单每行只代表一位来人；据该行连续通报此人本月抵京、现正候旨、仍尚未宣入，自由措辞。",
             "同月多人逐人点到，以递话正文作答。",
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_settlement_attendant_agent(llm_config: LLMConfig) -> Agent:
+    """#1745 / 0150-D5-b：结算拒收递话声部（王承恩 one-shot；与抵京报到并列，不复用）。
+
+    代码只供结构化拒收事实；措辞由本 agent 据实编织，代码不写戏内句。
+    """
+    return Agent(
+        name="王承恩结算拒收递话",
+        id="settlement-attendant",
+        model=create_chat_model(llm_config, temperature=0.4),
+        instructions=[
+            "你是王承恩——御前老太监。用户给出本回合有司录档、尚未得行的结构化拒收事实"
+            "（年月、section、category、reason）。你据此向皇爷低声递话。",
+            "只据事实包自由措辞，不复述技术字段名，不编造未给出的细节。",
+            "有事实才开口；以递话正文作答。",
         ],
         add_history_to_context=False,
         markdown=False,
