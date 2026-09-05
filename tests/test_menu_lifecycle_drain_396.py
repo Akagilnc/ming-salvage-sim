@@ -773,7 +773,7 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     monkeypatch.setenv("MING_SIM_DB", old_db_path)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     # 无进行中的 exit detach
-    monkeypatch.setattr(web_app, "_menu_exit_detach_done", None)
+    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
     monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
@@ -888,3 +888,180 @@ def test_new_game_after_exit_does_not_clobber_old_db_while_detach_drains(monkeyp
     assert rows["reply"] == "detach_reply"
     scanned = web_app._scan_saves()
     assert any(s["name"] == save_files[0].stem for s in scanned)
+
+
+def test_new_game_after_exit_skips_archive_when_detach_close_fails(monkeypatch, tmp_path):
+    """#1740：exit detach 关库失败时，后续 new_game 不得把仍可能占用的旧主库搬进 saves/。"""
+    import sqlite3
+
+    old_db_path = str(tmp_path / "old_fail_close.db")
+    conn = sqlite3.connect(old_db_path, check_same_thread=False)
+    conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO kv_store VALUES ('data', 'must_stay')")
+    conn.commit()
+    conn.close()
+
+    closed: list[str] = []
+    archived: list[str] = []
+    archive_ran = threading.Event()
+
+    def _boom_close() -> None:
+        closed.append("attempted")
+        raise OSError("close failed")
+
+    def _record_archive(path: str) -> None:
+        archived.append(path)
+        archive_ran.set()
+        raise AssertionError(f"must not archive after close failure: {path}")
+
+    fake_old_game = SimpleNamespace(
+        _write_gate=threading.Lock(),
+        db_path=old_db_path,
+        session=SimpleNamespace(close=_boom_close),
+    )
+    monkeypatch.setattr(web_app, "web_game", fake_old_game)
+    monkeypatch.setenv("MING_SIM_DB", old_db_path)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setattr(web_app, "_archive_drained_db_file", _record_archive)
+
+    asyncio.run(web_app.api_menu_exit())
+    assert web_app.web_game is None
+    assert _wait_for(lambda: closed == ["attempted"])
+    completion = web_app._menu_exit_detach_completion
+    assert completion is not None and completion.done.is_set() and completion.close_ok is False
+
+    fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
+
+    archive_finished = threading.Event()
+    orig_thread = web_app.threading.Thread
+
+    class _FinishArchiveThread(orig_thread):
+        def __init__(self, *args, **kwargs):
+            target = kwargs.get("target") or (args[0] if args else None)
+            if getattr(target, "__name__", "") == "_archive_prev_after_exit_detach":
+                def _wrapped():
+                    try:
+                        target()
+                    finally:
+                        archive_finished.set()
+                kwargs = dict(kwargs)
+                if args:
+                    args = (_wrapped,) + args[1:]
+                else:
+                    kwargs["target"] = _wrapped
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(web_app.threading, "Thread", _FinishArchiveThread)
+    result = asyncio.run(web_app.api_menu_new_game())
+    assert "state" in result
+    assert web_app.web_game is fake_new_game
+    assert archive_finished.wait(2.0)
+    assert not archive_ran.is_set()
+    assert archived == []
+    assert os.path.exists(old_db_path)
+    assert list((tmp_path / "saves").glob("*.db")) == []
+
+
+def test_exit_detach_close_result_stays_bound_across_later_exit(monkeypatch, tmp_path):
+    """#1740：A 退出关库失败后 new_game 持有 A 的 completion；后续 B 退出成功不得串放 A 归档。
+
+    用真实 Thread 跑 A 的归档消费者，仅用 Event 卡住其启动前序，使 B 先完成；
+    不新增永久并发探针。"""
+    import sqlite3
+
+    db_a = str(tmp_path / "game_a.db")
+    db_b = str(tmp_path / "game_b.db")
+    for path, tag in ((db_a, "A"), (db_b, "B")):
+        conn = sqlite3.connect(path, check_same_thread=False)
+        conn.execute("CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO kv_store VALUES ('owner', ?)", (tag,))
+        conn.commit()
+        conn.close()
+
+    archived: list[str] = []
+
+    def _record_archive(path: str) -> None:
+        archived.append(path)
+
+    monkeypatch.setattr(web_app, "_archive_drained_db_file", _record_archive)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+
+    def _fail_close() -> None:
+        raise OSError("A close failed")
+
+    game_a = SimpleNamespace(
+        _write_gate=threading.Lock(),
+        db_path=db_a,
+        session=SimpleNamespace(close=_fail_close),
+    )
+    monkeypatch.setattr(web_app, "web_game", game_a)
+    monkeypatch.setenv("MING_SIM_DB", db_a)
+    asyncio.run(web_app.api_menu_exit())
+    assert _wait_for(
+        lambda: web_app._menu_exit_detach_completion is not None
+        and web_app._menu_exit_detach_completion.done.is_set()
+    )
+    completion_a = web_app._menu_exit_detach_completion
+    assert completion_a is not None
+    assert completion_a.close_ok is False
+
+    # new_game 当拍捕获 A 的 completion；阻塞归档线程 body，模拟「已排未执行」
+    hold_archive = threading.Event()
+    archive_started = threading.Event()
+    archive_finished = threading.Event()
+    orig_thread = web_app.threading.Thread
+
+    class _HoldArchiveThread(orig_thread):
+        def __init__(self, *args, **kwargs):
+            target = kwargs.get("target") or (args[0] if args else None)
+            if getattr(target, "__name__", "") == "_archive_prev_after_exit_detach":
+                def _wrapped():
+                    archive_started.set()
+                    hold_archive.wait(2.0)
+                    try:
+                        target()
+                    finally:
+                        archive_finished.set()
+                kwargs = dict(kwargs)
+                if args:
+                    args = (_wrapped,) + args[1:]
+                else:
+                    kwargs["target"] = _wrapped
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(web_app.threading, "Thread", _HoldArchiveThread)
+    fake_new = SimpleNamespace(state_payload=lambda: {"turn": 1})
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new)
+    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
+
+    asyncio.run(web_app.api_menu_new_game())
+    assert archive_started.wait(2.0)
+
+    # B 退出成功：旧全局 close_ok 会被写成 True；绑定修法下不得串放 A
+    game_b = SimpleNamespace(
+        _write_gate=threading.Lock(),
+        db_path=db_b,
+        session=SimpleNamespace(close=lambda: None),
+    )
+    monkeypatch.setattr(web_app, "web_game", game_b)
+    monkeypatch.setenv("MING_SIM_DB", db_b)
+    monkeypatch.setattr(web_app.threading, "Thread", orig_thread)
+    asyncio.run(web_app.api_menu_exit())
+    assert _wait_for(
+        lambda: web_app._menu_exit_detach_completion is not None
+        and web_app._menu_exit_detach_completion is not completion_a
+        and web_app._menu_exit_detach_completion.done.is_set()
+    )
+    completion_b = web_app._menu_exit_detach_completion
+    assert completion_b is not None
+    assert completion_b.close_ok is True
+    assert completion_a.close_ok is False
+
+    hold_archive.set()
+    assert archive_finished.wait(2.0)
+
+    assert archived == []
+    assert os.path.exists(db_a)
+    assert os.path.exists(db_b)

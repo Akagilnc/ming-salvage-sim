@@ -4347,10 +4347,18 @@ web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继�
 _menu_generation: int = 0
 # #1732 T1：exit_to_menu 的 detach 完成信号。new_game 在 old_game is None 时须等此信号
 # 再归档旧主库，避免与仍写旧库的 detach 双移/抢文件（#396 readonly 约束）。
-# #1740：完成通道同时表达 close 成败——done 仅表示 detach 终了，close_ok 才允许搬库。
+# #1740：完成信号与 close 结果绑定在同一次 exit 的 completion 上——归档消费者须在
+# new_game 当拍持有该对象，不得重读跨任务可变的全局最新结果。
+class _MenuExitDetachCompletion:
+    __slots__ = ("done", "close_ok")
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.close_ok = False
+
+
 _menu_exit_detach_lock = threading.Lock()
-_menu_exit_detach_done: Optional[threading.Event] = None
-_menu_exit_detach_close_ok: bool = False
+_menu_exit_detach_completion: Optional[_MenuExitDetachCompletion] = None
 
 
 app = FastAPI(title="Ming Salvage MVP Web")
@@ -4630,15 +4638,15 @@ async def api_menu_new_game() -> Dict[str, Any]:
     else:
         # #1732 T1：退菜单后 / 无活 session 时仍归档旧主库。先等 exit detach 关连接，
         # 再走同一归档实现——不与仍写旧库的 detach 双移。
+        # #1740：在本端点当拍持有对应 exit 的 completion，不在归档线程里重读全局最新位。
+        with _menu_exit_detach_lock:
+            exit_completion = _menu_exit_detach_completion
+
         def _archive_prev_after_exit_detach() -> None:
-            with _menu_exit_detach_lock:
-                done = _menu_exit_detach_done
-            if done is not None:
-                done.wait()
-                with _menu_exit_detach_lock:
-                    close_ok = _menu_exit_detach_close_ok
-                if not close_ok:
-                    # detach 已终了但排空/关库未确认——不得搬库（#1740）
+            if exit_completion is not None:
+                exit_completion.done.wait()
+                if not exit_completion.close_ok:
+                    # 本次 exit 排空/关库未确认——不得搬对应旧库（#1740）
                     return
             if prev_db_path and prev_db_path != new_db_path:
                 _archive_drained_db_file(prev_db_path)
@@ -4744,29 +4752,25 @@ async def api_menu_exit() -> Dict[str, Any]:
 
     #1732 T1：本端点不搬主库文件——「继续上局」须照常可用；归档由后续 new_game 承接。
     """
-    global web_game, _menu_generation, _menu_exit_detach_done, _menu_exit_detach_close_ok
+    global web_game, _menu_generation, _menu_exit_detach_completion
     _menu_generation += 1
     if web_game is not None:
         old_game = web_game
         web_game = None  # 界面立刻退
-        done = threading.Event()
+        completion = _MenuExitDetachCompletion()
         with _menu_exit_detach_lock:
-            _menu_exit_detach_done = done
-            _menu_exit_detach_close_ok = False
+            _menu_exit_detach_completion = completion
 
         def _detach_exit() -> None:
-            global _menu_exit_detach_close_ok
             try:
                 _drain_and_close_session(old_game)
-                with _menu_exit_detach_lock:
-                    _menu_exit_detach_close_ok = True
+                completion.close_ok = True
             except Exception:
                 # 原异常已由 _drain_and_close_session logger.exception 留痕；
-                # 完成通道 close_ok=False，后续 new_game 归档不得搬库。
-                with _menu_exit_detach_lock:
-                    _menu_exit_detach_close_ok = False
+                # 本 completion.close_ok 保持 False，持有本对象的归档不得搬库。
+                completion.close_ok = False
             finally:
-                done.set()
+                completion.done.set()
 
         # detach：等 write_gate 排空后再关连接（#396）；不归档（#1732 T1）
         threading.Thread(target=_detach_exit, daemon=True).start()
