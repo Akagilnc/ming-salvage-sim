@@ -4278,12 +4278,37 @@ def _get_main_db_path() -> str:
     return user_data_path("ming_sim.db")
 
 
+def _same_db_path(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    try:
+        return os.path.abspath(left) == os.path.abspath(right)
+    except Exception:
+        return left == right
+
+
+def _db_path_is_live(db_path: str) -> bool:
+    """#1749：归档前拒搬仍是当前主库或活局所持路径的文件。"""
+    if not db_path:
+        return False
+    if _same_db_path(db_path, _get_main_db_path()):
+        return True
+    game = web_game
+    if game is None:
+        return False
+    return _same_db_path(db_path, getattr(game, "db_path", "") or "")
+
+
 def _archive_drained_db_file(old_db_path: str) -> None:
     """把已排空关闭的主库文件移入 saves/（#396 / #1732 唯一归档实现）。
 
     调用方须保证旧连接已关；本函数不碰 session。文件不存在则静默返回。
+    #1749：活主库 / 活局路径不得搬——否则 open 中的连接会钉到 drained_*.db 并 readonly。
     """
     if not old_db_path or not os.path.exists(old_db_path):
+        return
+    if _db_path_is_live(old_db_path):
+        logger.error("skip archive of live db path=%s", old_db_path)
         return
     saves_dir = user_data_path("saves")
     os.makedirs(saves_dir, exist_ok=True)
@@ -4346,12 +4371,18 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
         logger.exception("drain/close session failed; skip archive")
         raise
     if archive_db:
-        _archive_drained_db_file(getattr(game, "db_path", "") or "")
+        old_path = getattr(game, "db_path", "") or ""
+        # #1749：关连接后再次确认不是活主库路径，再搬文件。
+        if old_path and not _db_path_is_live(old_path):
+            _archive_drained_db_file(old_path)
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
 # #1195：菜单生命周期世代。continue worker 发布 web_game 前对号；失配则丢弃白建局。
 _menu_generation: int = 0
+# #1749：new_game/exit 互斥——禁止 web_game=None 窗口内二次 new_game 把
+# 仍在构造的新库路径当 prev 归档（活连接钉 drained_*.db → readonly）。
+_menu_lifecycle_lock = threading.Lock()
 # #1732 T1：exit_to_menu 的 detach 完成信号。new_game 在 old_game is None 时须等此信号
 # 再归档旧主库，避免与仍写旧库的 detach 双移/抢文件（#396 readonly 约束）。
 # #1740：完成信号与 close 结果绑定在同一次 exit 的 completion 上——归档消费者须在
@@ -4609,60 +4640,81 @@ async def api_menu_new_game() -> Dict[str, Any]:
 
     #1732 T1：经 exit_to_menu 后 web_game 已是 None，仍须把旧主库归档进 saves/
     （裁定二前提「旧局自动归档为存档」）。exit 本身不搬库；归档只在旧连接排空后、
-    由本端点承接同一 _archive_drained_db_file 权威实现。"""
-    global web_game, _menu_generation
-    _menu_generation += 1
-    old_game = web_game
-    # #396 Step5 R4: 无论 web_game 是否为 None（退菜单后 / 服务端首次 new_game），
-    # fresh=True 前都必须切换主库路径到新文件——否则 WebGame 会解析到旧配置库（env /
-    # active_db.txt）并在 fresh=True 时删/覆盖旧库，而旧 detach worker 可能仍写旧库。
-    # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
-    # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
-    snapshot = _snapshot_main_db_path_config()
-    prev_db_path = _get_main_db_path()
-    new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
-    try:
-        # 同步覆写 env + active_db.txt → 新局落新路径，重启也继续新路径。
-        _set_main_db_path(new_db_path)
-        web_game = None
-        new_game = WebGame(fresh=True)
-    except LLMUnavailable as exc:
-        _restore_main_db_path_config(snapshot)
-        web_game = old_game
-        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
-    except Exception:
-        _restore_main_db_path_config(snapshot)
-        web_game = old_game
-        raise
-    web_game = new_game
-    if old_game is not None:
-        # detach：新局已确认可用后，才退休旧连接 + 归档旧库（#396）。
-        threading.Thread(
-            target=_drain_and_close_session,
-            args=(old_game, True),
-            daemon=True,
-        ).start()
-    else:
-        # #1732 T1：退菜单后 / 无活 session 时仍归档旧主库。先等 exit detach 关连接，
-        # 再走同一归档实现——不与仍写旧库的 detach 双移。
-        # #1740：在本端点当拍持有对应 exit 的 completion，不在归档线程里重读全局最新位。
-        with _menu_exit_detach_lock:
-            exit_completion = _menu_exit_detach_completion
+    由本端点承接同一 _archive_drained_db_file 权威实现。
 
-        def _archive_prev_after_exit_detach() -> None:
-            if exit_completion is not None:
-                exit_completion.done.wait()
-                if not exit_completion.close_ok:
-                    # 本次 exit 排空/关库未确认——不得搬对应旧库（#1740）
+    #1749：全程持 _menu_lifecycle_lock——禁止 web_game=None 窗口被第二次 new_game
+    把仍在构造的新路径当 prev 归档；发布前对世代号（同 continue #1195）。"""
+    global web_game, _menu_generation
+    with _menu_lifecycle_lock:
+        _menu_generation += 1
+        token = _menu_generation
+        old_game = web_game
+        # #396 Step5 R4: 无论 web_game 是否为 None（退菜单后 / 服务端首次 new_game），
+        # fresh=True 前都必须切换主库路径到新文件——否则 WebGame 会解析到旧配置库（env /
+        # active_db.txt）并在 fresh=True 时删/覆盖旧库，而旧 detach worker 可能仍写旧库。
+        # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
+        # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
+        snapshot = _snapshot_main_db_path_config()
+        prev_db_path = _get_main_db_path()
+        new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
+        try:
+            # 同步覆写 env + active_db.txt → 新局落新路径，重启也继续新路径。
+            _set_main_db_path(new_db_path)
+            web_game = None
+            new_game = WebGame(fresh=True)
+        except LLMUnavailable as exc:
+            _restore_main_db_path_config(snapshot)
+            web_game = old_game
+            raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+        except Exception:
+            _restore_main_db_path_config(snapshot)
+            web_game = old_game
+            raise
+        # #1195/#1749：发布前对世代号——持锁下仍作防御；失配则丢弃白建局、恢复指针。
+        if token != _menu_generation:
+            try:
+                _drain_and_close_session(new_game)
+            except Exception:
+                logger.exception("discard superseded new_game session failed")
+            _restore_main_db_path_config(snapshot)
+            web_game = old_game
+            raise HTTPException(status_code=409, detail="新游戏已取消（菜单状态已变更）。")
+        web_game = new_game
+        if old_game is not None:
+            # detach：新局已确认可用后，才退休旧连接 + 归档旧库（#396）。
+            threading.Thread(
+                target=_drain_and_close_session,
+                args=(old_game, True),
+                daemon=True,
+            ).start()
+        else:
+            # #1732 T1：退菜单后 / 无活 session 时仍归档旧主库。先等 exit detach 关连接，
+            # 再走同一归档实现——不与仍写旧库的 detach 双移。
+            # #1740：在本端点当拍持有对应 exit 的 completion，不在归档线程里重读全局最新位。
+            with _menu_exit_detach_lock:
+                exit_completion = _menu_exit_detach_completion
+
+            def _archive_prev_after_exit_detach() -> None:
+                if exit_completion is not None:
+                    exit_completion.done.wait()
+                    if not exit_completion.close_ok:
+                        # 本次 exit 排空/关库未确认——不得搬对应旧库（#1740）
+                        return
+                if not prev_db_path or _same_db_path(prev_db_path, new_db_path):
                     return
-            if prev_db_path and prev_db_path != new_db_path:
+                # #1749：异步归档时再次确认路径未变成活主库/活局所持。
+                if _db_path_is_live(prev_db_path):
+                    logger.error(
+                        "skip post-exit archive of live db path=%s", prev_db_path,
+                    )
+                    return
                 _archive_drained_db_file(prev_db_path)
 
-        threading.Thread(target=_archive_prev_after_exit_detach, daemon=True).start()
-    return steam_events.with_events(
-        {"state": web_game.state_payload()},
-        [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-    )
+            threading.Thread(target=_archive_prev_after_exit_detach, daemon=True).start()
+        return steam_events.with_events(
+            {"state": web_game.state_payload()},
+            [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
+        )
 
 
 @app.post("/api/menu/continue")
@@ -4758,29 +4810,32 @@ async def api_menu_exit() -> Dict[str, Any]:
     session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。
 
     #1732 T1：本端点不搬主库文件——「继续上局」须照常可用；归档由后续 new_game 承接。
+    #1749：与 new_game 同持 _menu_lifecycle_lock，避免 exit 清 web_game 与 new_game
+    构造窗交错。
     """
     global web_game, _menu_generation, _menu_exit_detach_completion
-    _menu_generation += 1
-    if web_game is not None:
-        old_game = web_game
-        web_game = None  # 界面立刻退
-        completion = _MenuExitDetachCompletion()
-        with _menu_exit_detach_lock:
-            _menu_exit_detach_completion = completion
+    with _menu_lifecycle_lock:
+        _menu_generation += 1
+        if web_game is not None:
+            old_game = web_game
+            web_game = None  # 界面立刻退
+            completion = _MenuExitDetachCompletion()
+            with _menu_exit_detach_lock:
+                _menu_exit_detach_completion = completion
 
-        def _detach_exit() -> None:
-            try:
-                _drain_and_close_session(old_game)
-                completion.close_ok = True
-            except Exception:
-                # 原异常已由 _drain_and_close_session logger.exception 留痕；
-                # 本 completion.close_ok 保持 False，持有本对象的归档不得搬库。
-                completion.close_ok = False
-            finally:
-                completion.done.set()
+            def _detach_exit() -> None:
+                try:
+                    _drain_and_close_session(old_game)
+                    completion.close_ok = True
+                except Exception:
+                    # 原异常已由 _drain_and_close_session logger.exception 留痕；
+                    # 本 completion.close_ok 保持 False，持有本对象的归档不得搬库。
+                    completion.close_ok = False
+                finally:
+                    completion.done.set()
 
-        # detach：等 write_gate 排空后再关连接（#396）；不归档（#1732 T1）
-        threading.Thread(target=_detach_exit, daemon=True).start()
+            # detach：等 write_gate 排空后再关连接（#396）；不归档（#1732 T1）
+            threading.Thread(target=_detach_exit, daemon=True).start()
     return {"ok": True}
 
 
