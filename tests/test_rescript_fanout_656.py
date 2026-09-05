@@ -31,7 +31,7 @@ def test_phase2_fanout_five_legs_meet_at_barrier(game, monkeypatch):
     started: list[str] = []
     lock = threading.Lock()
 
-    def _fake_leg(agent, prompt, tag):
+    def _fake_leg(agent, prompt, tag, **_kwargs):
         with lock:
             started.append(tag)
         # 一进入即阻塞：五调用全部进入前没有任何调用能返回。
@@ -62,7 +62,7 @@ def test_side_leg_program_error_propagates_via_future(game, monkeypatch):
     import pytest as _pytest
 
     db, state, _content = game
-    monkeypatch.setattr(simulation, "run_agent_text", lambda agent, prompt, tag: _CANNED)
+    monkeypatch.setattr(simulation, "run_agent_text", lambda agent, prompt, tag, **_k: _CANNED)
 
     def _buggy_leg() -> None:
         raise RuntimeError("side leg programmer bug")

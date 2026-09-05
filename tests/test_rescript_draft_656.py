@@ -657,7 +657,7 @@ def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypat
     db, state, _content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
 
-    def _boom(agent, prompt, tag):
+    def _boom(agent, prompt, tag, **_kwargs):
         raise LLMUnavailable("LLM 不可用")
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _boom)
@@ -676,7 +676,10 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     def _buggy_validate(data, ids, **_kwargs):
         raise RuntimeError("programmer bug sentinel")
 
-    monkeypatch.setattr(rescript_mod, "run_agent_text", lambda a, p, tag: "{\"items\": []}")
+    monkeypatch.setattr(
+        rescript_mod, "run_agent_text",
+        lambda a, p, tag, **_k: "{\"items\": []}",
+    )
     monkeypatch.setattr(rescript_mod, "validate_rescript_draft_items", _buggy_validate)
     payload = {
         "active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {},
@@ -719,7 +722,7 @@ def test_settlement_persists_drafts_verbatim_and_survives_clear(game, monkeypatc
         "options": _two_opts("发帑赈济", "所安者饥民", "缓议加派", "所拂者小农"),
     }]}, ensure_ascii=False)
 
-    def _fake_run(agent, prompt, tag):
+    def _fake_run(agent, prompt, tag, **_kwargs):
         if tag == "rescript-draft":
             return draft_raw
         return _CANNED
@@ -787,7 +790,7 @@ def test_extractor_abort_rolls_back_drafts(game, monkeypatch, tmp_path):
         "options": _two_opts("发帑赈济", "所安者饥民", "缓议加派", "所拂者小农"),
     }]}, ensure_ascii=False)
 
-    def _fake_run(agent, prompt, tag):
+    def _fake_run(agent, prompt, tag, **_kwargs):
         if tag.startswith("extractor/"):
             raise RuntimeError("extractor boom")
         return draft_raw
@@ -818,7 +821,7 @@ def test_draft_degrade_does_not_abort_settlement(game, monkeypatch, tmp_path):
     _retire_existing_actors(db)
     _add_character(db, "测试首辅", "内阁首辅", "阉党")
 
-    def _fake_run(agent, prompt, tag):
+    def _fake_run(agent, prompt, tag, **_kwargs):
         if tag == "rescript-draft":
             return "这不是 JSON"
         return _CANNED
@@ -861,7 +864,7 @@ def test_mixed_batch_shape_failure_degrades_whole_month(game, monkeypatch, tmp_p
             {"label": "加派小农", "hint": "所拂者小农"}]},
     ]}, ensure_ascii=False)
 
-    def _fake_run(agent, prompt, tag):
+    def _fake_run(agent, prompt, tag, **_kwargs):
         if tag == "rescript-draft":
             return draft_raw
         return _CANNED
@@ -907,7 +910,7 @@ def test_over_limit_legal_batch_degrades_whole_month_zero_rows(game, monkeypatch
         for i in range(6)  # 6 条全合法，仍超上限 → 整批失败
     ]}, ensure_ascii=False)
 
-    def _fake_run(agent, prompt, tag):
+    def _fake_run(agent, prompt, tag, **_kwargs):
         if tag == "rescript-draft":
             return draft_raw
         return _CANNED
@@ -947,7 +950,7 @@ def test_sixth_item_illegal_degrades_whole_month_zero_rows(game, monkeypatch, tm
     items.append({"title": "缺导语第六条"})  # 第 6 条非法
     draft_raw = json.dumps({"items": items}, ensure_ascii=False)
 
-    def _fake_run(agent, prompt, tag):
+    def _fake_run(agent, prompt, tag, **_kwargs):
         if tag == "rescript-draft":
             return draft_raw
         return _CANNED
@@ -992,7 +995,7 @@ def test_ready_context_recovery_reads_drafts_back_without_rerun(game, monkeypatc
 
     calls: list[str] = []
 
-    def _forbidden_draft_run(agent, prompt, tag):
+    def _forbidden_draft_run(agent, prompt, tag, **_kwargs):
         calls.append(tag)
         raise AssertionError("恢复重放不得重跑票拟生成步")
 
@@ -1291,7 +1294,7 @@ def test_r3_strict_parse_degrades_via_generate(game, monkeypatch, tmp_path):
     payload = {"active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {}}
     # 拼接对象 raw
     raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
-    monkeypatch.setattr(rescript_mod, "run_agent_text", lambda a, p, tag: raw)
+    monkeypatch.setattr(rescript_mod, "run_agent_text", lambda a, p, tag, **_k: raw)
     # 假设 turn 取自 fixture? 用固定值避免依赖
     turn = 99
     assert generate_rescript_draft(object(), payload, turn) is None
