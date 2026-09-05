@@ -5254,6 +5254,9 @@ async def api_menu_new_game() -> Dict[str, Any]:
 
             # P1 path register（发布前入册）
             candidate_entry = _register_holder(new_db_path, new_game)
+            # #1749：响应快照须在发布前物化——持 opening + 未入 web_game 时独占活连接；
+            # 发布后 exit/new_game 可经 web_game 定点退休关库，锁外 state_payload 会读已关连接。
+            state_snapshot = new_game.state_payload()
             retire = None
             published = False
             prev_norm = _normalize_db_path(prev_db_path) if prev_db_path else ""
@@ -5292,10 +5295,10 @@ async def api_menu_new_game() -> Dict[str, Any]:
             if retire is not None and retire is not new_game:
                 _point_retire_close(retire)
 
-            # 响应：AR/退休义务已在发布后落定；payload 未知代码错必须响亮失败（ADR 0005），
+            # 响应用发布前快照；payload 未知代码错必须响亮失败（ADR 0005），
             # 不得宽捕获后返回 ok=True 洗白成功。finally 仍 release_opening。
             return steam_events.with_events(
-                {"state": new_game.state_payload()},
+                {"state": state_snapshot},
                 [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
             )
         finally:
@@ -5356,6 +5359,8 @@ async def api_menu_continue() -> StreamingResponse:
             game = WebGame(fresh=False, on_stage=on_stage, db_path=opening_path)
             # P1
             candidate_entry = _register_holder(opening_path, game)
+            # #1749：发布前快照——持 opening + 未入 web_game 时独占；发布后可被定点退休关库。
+            state_snapshot = game.state_payload()
             old_runtime = None
             cancelled = False
             with _menu_lifecycle_lock:
@@ -5385,7 +5390,7 @@ async def api_menu_continue() -> StreamingResponse:
             # K5out：退休 old，不 AR-req（#1732 续玩）
             if old_runtime is not None and old_runtime is not game:
                 _point_retire_close(old_runtime)
-            ev_queue.put(("__done__", {"state": game.state_payload()}))
+            ev_queue.put(("__done__", {"state": state_snapshot}))
         except LLMUnavailable as exc:
             ev_queue.put(("__error__", _llm_error_detail(exc)))
         except DependencyMismatch as exc:
@@ -5508,6 +5513,8 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
                 getattr(candidate, "db_path", "") or bound_path
             )
             candidate_entry = _register_holder(cand_path, candidate)
+            # #1749：发布前快照——opening 释放后 / 发布后 exit 可关库；响应不得再读活连接。
+            state_snapshot = candidate.state_payload()
             published = False
             with _menu_lifecycle_lock:
                 if token == _menu_generation:
@@ -5526,13 +5533,13 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
                 raise HTTPException(
                     status_code=409, detail="加载已取消（菜单状态已变更）。",
                 )
-            return candidate
+            return candidate, state_snapshot
         finally:
             _release_opening(opening_path)
 
-    published_game = await loop.run_in_executor(None, _load_work)
+    published_game, state_snapshot = await loop.run_in_executor(None, _load_work)
     _spawn_startup_catch_up_nonfatal(published_game)
-    return {"state": published_game.state_payload()}
+    return {"state": state_snapshot}
 
 
 @app.delete("/api/menu/saves/{name}")
