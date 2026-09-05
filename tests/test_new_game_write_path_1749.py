@@ -210,29 +210,11 @@ def _write_and_verify_live(client: TestClient, game, *, label: str) -> dict:
     }
 
 
-def _old_handle_commit(game, marker: str) -> None:
-    """旧 runtime 句柄仍可提交：经同一连接写入 kv 标记（证明非只读探测）。"""
-    game.db.conn.execute(
-        "INSERT OR REPLACE INTO kv_store(key, value) VALUES (?, ?)",
-        (f"late_write:{marker}", marker),
-    )
-    game.db.conn.commit()
-
-
-def _kv_has(db_path: str, marker: str) -> bool:
-    conn = sqlite3.connect(db_path)
-    try:
-        row = conn.execute(
-            "SELECT value FROM kv_store WHERE key=?",
-            (f"late_write:{marker}",),
-        ).fetchone()
-        return bool(row and str(row[0]) == marker)
-    finally:
-        conn.close()
-
-
 def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
-    """主干：直接 new_game 与 exit→new_game；迟到写；旧档 load_save 恢复。"""
+    """主干：直接 new_game 与 exit→new_game；旧档 load_save 恢复。
+
+    迟到写/双句柄并发仅临时真跑，不进永久案（r5④ / r7 禁永久并发证明）。
+    """
     client = tracer_client
     _install_canned_minister_factory(monkeypatch)
     spawns = _capture_spawns(monkeypatch)
@@ -248,7 +230,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     c0 = seed_rec["campaign_id"]
     d0_count = _db_snapshot(p0)["directives"]
 
-    # ── 路一：直接 new_game（持 gate 双句柄并发证明按蓝图移为临时真跑，不进永久案）──
+    # ── 路一：直接 new_game（确定性主干；迟到写/双句柄并发留临时真跑）──
     n0 = len(spawns)
     ng = client.post("/api/menu/new_game")
     _assert_not_bare_500(ng, step="new_game-direct")
@@ -257,15 +239,6 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     assert g1 is not None and g1 is not g0
     p1 = g1.db_path
     assert p1 != p0
-    # 非持 gate：若旧连接尚未关，迟到写只许进旧库，不得进新 campaign 库。
-    late_direct = "着户部清核辽饷（late-direct-old-handle）。"
-    wrote_late = False
-    try:
-        _old_handle_commit(g0, late_direct)
-        wrote_late = True
-        assert not _kv_has(p1, late_direct)
-    except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-        wrote_late = False
     rec1 = _write_and_verify_live(client, g1, label="direct-new")
     c1 = rec1["campaign_id"]
     assert c1 and c1 != c0
@@ -288,8 +261,6 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     assert old_hit["directives"] >= d0_count
     assert seed_rec["d_text"] in old_hit["directive_texts"]
     c0_archive = next(p for p in drained if _db_snapshot(str(p))["campaign_id"] == c0)
-    if wrote_late:
-        assert _kv_has(str(c0_archive), late_direct)
     live = _db_snapshot(p1)
     assert live["campaign_id"] == c1
     assert rec1["d_text"] in live["directive_texts"]
