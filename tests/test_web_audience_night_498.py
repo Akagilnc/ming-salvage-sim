@@ -71,6 +71,15 @@ class _CannedMindreadingAgent:
         return _R()
 
 
+class _CannedRelationJudge:
+    """#634 关系判官离线边界：召对后 trail 会 create_relation_judge_agent——空 events，禁 sk-test 真网。"""
+
+    def run(self, _prompt):
+        class _R:
+            content = '{"events":[]}'
+        return _R()
+
+
 # ── canned LLM 边界（唯一 fake）────────────────────────────────────────
 class _RunContent:
     event = "RunContent"
@@ -141,6 +150,8 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     - agents.create_audience_extractor_agent → 回话尾随 / 收夜 drain 叙事抽取
     - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
     - mindreading.create_mindreading_agent → 回话 done 后读心尾随（#499）
+    - agents.create_relation_judge_agent → 回话后关系判官 trail（#634；禁 sk-test 真网）
+    - GameSession._start/_finish_cli_action_intent → 动作意图分类器（禁 sk-test 真网）
     - web_app.run_highlight_judge → 回话 done 后高亮判官（#544；禁 sk-test 真网）
     - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
     - load_runtime_llm 配置中和
@@ -163,6 +174,21 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setattr(
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreadingAgent(),
+    )
+    # #634：关系判官 trail 同属回话后 LLM 边界——取证定位为 sk-test 401 源之一。
+    monkeypatch.setattr(
+        agents_mod, "create_relation_judge_agent",
+        lambda *a, **k: _CannedRelationJudge(),
+    )
+    # 动作意图分类器：chat stream 在 payload 前可并发启动；取证定位为另一 sk-test 401 源。
+    # 本 fixture 只钉夜/在飞接缝，分类确定性空返，禁真网（与 #1727 fixture 同边界）。
+    monkeypatch.setattr(
+        session_mod.GameSession, "_start_cli_action_intent",
+        lambda self, *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        session_mod.GameSession, "_finish_cli_action_intent",
+        lambda self, *_a, **_k: None,
     )
     # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
@@ -432,76 +458,82 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             issue_task = asyncio.create_task(
                 issue_client.post("/api/decree/issue/stream", json={})
             )
-            assert await asyncio.to_thread(entered.wait, 8.0)
-            # chat (stream + non-stream) / reply-retry / story / stage / approve /
-            # draft-update — all refuse under CLOSING via the one admission seam.
-            chat_resp = await chat_client.post(
-                f"/api/ministers/{minister}/chat/stream",
-                json={"message": "另议边饷？"},
-            )
-            chat_events = _parse_sse(chat_resp.text)
-            assert any(ev.get("event") == "error" for ev in chat_events), chat_events
-            assert any(
-                ev.get("event") == "error" and "收夜中" in str(ev.get("data") or "")
-                for ev in chat_events
-            ), chat_events
-            nonstream = await chat_client.post(
-                f"/api/ministers/{minister}/chat",
-                json={"message": "另议边饷？"},
-            )
-            assert nonstream.status_code == 409, nonstream.text
-            assert "收夜中" in (nonstream.json().get("detail") or nonstream.text)
-            retry_resp = await chat_client.post(
-                f"/api/ministers/{minister}/reply/retry",
-            )
-            assert retry_resp.status_code == 409, retry_resp.text
-            assert "收夜中" in (retry_resp.json().get("detail") or retry_resp.text)
-            assert game.db.conn.execute(
-                "SELECT status FROM chat_turns WHERE id=?", (interrupted_ct,),
-            ).fetchone()["status"] == "interrupted"
-            with pytest.raises(an.AudienceNightError) as story_exc:
-                an.append_ledger_entry(
-                    game.db, night_id, body="偷渡故事账", tags=["试"],
+            try:
+                # bare 事件屏障（复用 _await_event）；禁 to_thread(wait, 墙钟)。
+                await _await_event(entered)
+                # chat (stream + non-stream) / reply-retry / story / stage / approve /
+                # draft-update — all refuse under CLOSING via the one admission seam.
+                chat_resp = await chat_client.post(
+                    f"/api/ministers/{minister}/chat/stream",
+                    json={"message": "另议边饷？"},
                 )
-            assert story_exc.value.code == "night_closing"
-            with pytest.raises(an.AudienceNightError) as stage_exc:
-                game.db.stage_directive_candidate(
-                    game.state.turn, minister,
-                    payload={**_POLICY_FIELDS, "text": "偷渡应允", "actor": minister,
-                             "target_id": "closing-freeze"},
+                chat_events = _parse_sse(chat_resp.text)
+                assert any(ev.get("event") == "error" for ev in chat_events), chat_events
+                assert any(
+                    ev.get("event") == "error" and "收夜中" in str(ev.get("data") or "")
+                    for ev in chat_events
+                ), chat_events
+                nonstream = await chat_client.post(
+                    f"/api/ministers/{minister}/chat",
+                    json={"message": "另议边饷？"},
                 )
-            assert stage_exc.value.code == "night_closing"
-            with pytest.raises(an.AudienceNightError) as approve_exc:
-                an.mark_actions_night_approved(game.db, [directive_id], night_id=night_id)
-            assert approve_exc.value.code == "night_closing"
-            with pytest.raises(an.AudienceNightError) as draft_exc:
-                game.db.update_directive_candidate(
-                    directive_id,
-                    payload={**_POLICY_FIELDS, "text": "CLOSING 改草", "actor": minister},
+                assert nonstream.status_code == 409, nonstream.text
+                assert "收夜中" in (nonstream.json().get("detail") or nonstream.text)
+                retry_resp = await chat_client.post(
+                    f"/api/ministers/{minister}/reply/retry",
                 )
-            assert draft_exc.value.code == "night_closing"
-            with pytest.raises(an.AudienceNightError) as flag_exc:
-                game.db.flag_directive_needs_clarification(directive_id)
-            assert flag_exc.value.code == "night_closing"
-            assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSING
-            # Close-scene scaffold is the night-closing registry bucket, not admission
-            # smuggling; count only non-scaffold turns under the freeze.
-            assert game.db.conn.execute(
-                """
-                SELECT COUNT(*) AS c FROM chat_turns
-                WHERE night_id=?
-                  AND NOT (minister_name = '收夜' AND agno_session_id = 'close-scene')
-                """,
-                (night_id,),
-            ).fetchone()["c"] == turns_before
-            assert game.db.conn.execute(
-                "SELECT COUNT(*) AS c FROM pending_actions WHERE night_id=?", (night_id,),
-            ).fetchone()["c"] == pending_before
-            assert game.db.conn.execute(
-                "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE night_id=?", (night_id,),
-            ).fetchone()["c"] == ledger_before
-            release.set()
-            return _parse_sse((await issue_task).text)
+                assert retry_resp.status_code == 409, retry_resp.text
+                assert "收夜中" in (retry_resp.json().get("detail") or retry_resp.text)
+                assert game.db.conn.execute(
+                    "SELECT status FROM chat_turns WHERE id=?", (interrupted_ct,),
+                ).fetchone()["status"] == "interrupted"
+                with pytest.raises(an.AudienceNightError) as story_exc:
+                    an.append_ledger_entry(
+                        game.db, night_id, body="偷渡故事账", tags=["试"],
+                    )
+                assert story_exc.value.code == "night_closing"
+                with pytest.raises(an.AudienceNightError) as stage_exc:
+                    game.db.stage_directive_candidate(
+                        game.state.turn, minister,
+                        payload={**_POLICY_FIELDS, "text": "偷渡应允", "actor": minister,
+                                 "target_id": "closing-freeze"},
+                    )
+                assert stage_exc.value.code == "night_closing"
+                with pytest.raises(an.AudienceNightError) as approve_exc:
+                    an.mark_actions_night_approved(game.db, [directive_id], night_id=night_id)
+                assert approve_exc.value.code == "night_closing"
+                with pytest.raises(an.AudienceNightError) as draft_exc:
+                    game.db.update_directive_candidate(
+                        directive_id,
+                        payload={**_POLICY_FIELDS, "text": "CLOSING 改草", "actor": minister},
+                    )
+                assert draft_exc.value.code == "night_closing"
+                with pytest.raises(an.AudienceNightError) as flag_exc:
+                    game.db.flag_directive_needs_clarification(directive_id)
+                assert flag_exc.value.code == "night_closing"
+                assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSING
+                # Close-scene scaffold is the night-closing registry bucket, not admission
+                # smuggling; count only non-scaffold turns under the freeze.
+                assert game.db.conn.execute(
+                    """
+                    SELECT COUNT(*) AS c FROM chat_turns
+                    WHERE night_id=?
+                      AND NOT (minister_name = '收夜' AND agno_session_id = 'close-scene')
+                    """,
+                    (night_id,),
+                ).fetchone()["c"] == turns_before
+                assert game.db.conn.execute(
+                    "SELECT COUNT(*) AS c FROM pending_actions WHERE night_id=?", (night_id,),
+                ).fetchone()["c"] == pending_before
+                assert game.db.conn.execute(
+                    "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+                ).fetchone()["c"] == ledger_before
+            finally:
+                # 断言失败仍须放行 endorsement hold，并排空 issue_task（executor/后台终态）。
+                release.set()
+                if not issue_task.done():
+                    await issue_task
+            return _parse_sse(issue_task.result().text)
 
     fail_events = asyncio.run(first_fail_scenario())
     assert any(ev.get("event") == "error" for ev in fail_events), fail_events
@@ -614,9 +646,13 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             issue_task = asyncio.create_task(
                 issue_client.post("/api/decree/issue/stream", json={})
             )
-            assert await asyncio.to_thread(entered.wait, 8.0)
-            release.set()
-            return _parse_sse((await issue_task).text)
+            try:
+                await _await_event(entered)
+            finally:
+                release.set()
+                if not issue_task.done():
+                    await issue_task
+            return _parse_sse(issue_task.result().text)
 
     events = asyncio.run(retry_scenario())
     assert events[-1]["event"] == "done", events

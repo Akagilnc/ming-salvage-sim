@@ -190,17 +190,31 @@ def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
 
 
 def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch):
-    """非空载：LLM 慢/死时有界返回 special_decree，草案仍落库。"""
+    """非空载：LLM 慢/死时有界返回 special_decree，草案仍落库。
+
+    返回顺序：capture 已返回时 extractor 尚未终态；随后 extractor 可靠释放收尾。
+    （区分 API 返回 vs extractor 终态；禁 wait=True 清理把两者洗成同时。）
+    """
+    import threading
+
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
+    from tests.wait_utils import wait_until
 
     db, state, content = game
     text = "着户部核太仓实存，边饷京营优先发放。"
 
+    extractor_started = threading.Event()
+    extractor_finished = threading.Event()
+
     def slow_extract(*_a, **_k):
-        time.sleep(2.0)
-        return {"draft_action": "拟旨", "dossier_action_type": "policy",
-                "target_kind": "issue", "target_id": "x"}
+        extractor_started.set()
+        try:
+            time.sleep(2.0)
+            return {"draft_action": "拟旨", "dossier_action_type": "policy",
+                    "target_kind": "issue", "target_id": "x"}
+        finally:
+            extractor_finished.set()
 
     monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
 
@@ -209,6 +223,13 @@ def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch)
     )
     # 生产 capture_timeout_s 输入保留；旁侧 elapsed 墙钟证据删除（接缝无「N 秒内」契约）。
     assert payload["dossier_action_type"] == "special_decree"
+    # API/capture 已返回，extractor 仍在跑（尚未释放/终态）。
+    assert extractor_started.is_set()
+    assert not extractor_finished.is_set(), (
+        "capture 返回时 extractor 已终态——等待式 cleanup 会洗掉返回先于释放的契约"
+    )
+    wait_until(extractor_finished.is_set)
+    assert extractor_finished.is_set()
 
     session = GameSession.__new__(GameSession)
     session.db = db
@@ -221,18 +242,31 @@ def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch)
 
 
 def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
-    """POST /api/directives：capture 挂起时仍经生产 timeout 返回且草案落库。"""
+    """POST /api/directives：capture 挂起时仍经生产 timeout 返回且草案落库。
+
+    返回顺序：API 已返回时 extractor 尚未终态；随后可靠释放收尾。
+    """
+    import threading
+
     import ming_sim.cli_backend as cli_backend
     import web_app
     from ming_sim.session import GameSession
+    from tests.wait_utils import wait_until
 
     db, state, content = game
     text = "着户部核太仓实存，不得加派于民。"
 
+    extractor_started = threading.Event()
+    extractor_finished = threading.Event()
+
     # capture 内部超时路径：挂 extract，短 timeout
     def slow_extract(*_a, **_k):
-        time.sleep(2.0)
-        return {"draft_action": "无"}
+        extractor_started.set()
+        try:
+            time.sleep(2.0)
+            return {"draft_action": "无"}
+        finally:
+            extractor_finished.set()
 
     monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
     # 压短默认有界，避免测时 20s
@@ -259,6 +293,12 @@ def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
     assert result["directive"]["id"] > 0
     assert result["directive"]["text"] == text
     assert db.list_directives(state)
+    assert extractor_started.is_set()
+    assert not extractor_finished.is_set(), (
+        "API 返回时 extractor 已终态——等待式 cleanup 会洗掉返回先于释放的契约"
+    )
+    wait_until(extractor_finished.is_set)
+    assert extractor_finished.is_set()
 
 
 def test_normal_capture_path_unchanged(game, monkeypatch):

@@ -120,6 +120,85 @@ PY
 
 **另**：timeout= 行里的 `Event.wait`/`join`/`Barrier` 形参见 F；arrival/pipeline/highlight 等仅 timeout= 命中、无 wait(数字) 的文件见 F 表。
 
+### A′. positional `Thread.join(N)` 明细（`ec65c824` 盲点补卷）
+
+扫描命令（与 §0 同面，**不**改 A/C/F 原计数）：
+
+```bash
+.venv/bin/python - <<'PY'
+import re, subprocess
+rev='ec65c824'
+files=[l for l in subprocess.check_output(
+    ['git','ls-tree','-r','--name-only',rev,'tests'], text=True
+).splitlines() if l.endswith('.py')]
+hits=[]
+for path in files:
+    text=subprocess.check_output(['git','show',f'{rev}:{path}'], text=True)
+    for i,line in enumerate(text.splitlines(),1):
+        if re.search(r'\.join\(\s*\d', line):
+            hits.append((path,i,line.strip()))
+print(len(hits), 'rows /', len({p for p,_,_ in hits}), 'files')
+for p,i,l in hits: print(f'{p}:{i}: {l}')
+PY
+```
+
+实测：**37 行 / 10 文件** = **35 条线程 `join(N)`**（9 文件）+ **2 条 scene-id**（`registry.join(11)` / `_scene_registry.join(1)`，**非 timeout**）。  
+A 表原 wait(数字) 计数、C sleep 计数、F `timeout=` 计数**不改**；本表只补 positional join 逐命中账。真源默认 **T-barrier**（三问同 §三问真源，不重抄）；scene-id 引 **T-scene-id**。
+
+| 冻结位置（`ec65c824`） | 冻结原文 | 真源 | 判定 | 唯一处置 | 当前对应 |
+| --- | --- | --- | --- | --- | --- |
+| `test_audience_extraction_501.py:306` | `worker.join(5)` | T-barrier | 缺陷 | bare `join()` | `:305` `worker.join()` |
+| `test_audience_travel_gating_670.py:1381` | `worker.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:1392` `worker.join()` |
+| `test_audience_travel_gating_670.py:1382` | `close_worker.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:1393` `close_worker.join()` |
+| `test_audience_travel_gating_670.py:1426` | `worker.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:1447` `worker.join()` |
+| `test_audience_travel_gating_670.py:1427` | `close_worker.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:1448` `close_worker.join()` |
+| `test_audience_travel_gating_670.py:1484` | `worker.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:1504` `worker.join()` |
+| `test_audience_travel_gating_670.py:1544` | `worker.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:1564` `worker.join()` |
+| `test_beat_orchestration_503.py:58` | `waiter.join(1)` | T-barrier | 缺陷 | bare `join()` | `:59` `waiter.join()` |
+| `test_beat_orchestration_503.py:94` | `outcome["result"] = registry.join(11)` | T-scene-id | 非 timeout | **保留** scene-id | `:95` 仍 `registry.join(11)` |
+| `test_beat_orchestration_503.py:101` | `waiter.join(0.2)` | T-barrier / T-neg-race | 缺陷 | 删短 join 赌窗；改 `wait_until(not registry.has(11))` 证 join 已入 drain | `:106-108` `wait_until`（无短 join） |
+| `test_beat_orchestration_503.py:107` | `waiter.join(2)` | T-barrier | 缺陷 | bare `join()` | `:111` `waiter.join()` |
+| `test_beat_orchestration_503.py:184` | `t.join(2)` | T-barrier | 缺陷 | bare `join()` | `:188` `t.join()` |
+| `test_beat_orchestration_503.py:390` | `t.join(2)` | T-barrier | 缺陷 | bare `join()` | `:394` `t.join()` |
+| `test_beat_orchestration_503.py:436` | `starter.join(2)` | T-barrier | 缺陷 | bare `join()` | `:440` `starter.join()` |
+| `test_beat_orchestration_503.py:808` | `worker.join(2)` | T-barrier | 缺陷 | bare `join()` | `:812` `worker.join()` |
+| `test_beat_orchestration_503.py:1676` | `t.join(3)` | T-barrier | 缺陷 | bare `join()` | `:1685` `t.join()` |
+| `test_beat_orchestration_503.py:1694` | `t2.join(3)` | T-barrier | 缺陷 | bare `join()` | `:1705` `t2.join()` |
+| `test_beat_orchestration_503.py:1777` | `worker.join(3)` | T-barrier | 缺陷 | bare `join()` | `:1788` `worker.join()` |
+| `test_beat_orchestration_503.py:2093` | `worker.join(0.2)` | T-barrier / T-neg-race | 缺陷 | 删短 join 赌窗；改 ObservingLock.contending | `:2125-2130` contending 证法（无短 join） |
+| `test_beat_orchestration_503.py:2096` | `worker.join(2)` | T-barrier | 缺陷 | bare `join()` | `:2130` `worker.join()` |
+| `test_beat_orchestration_503.py:2152` | `worker.join(0.2)` | T-barrier / T-neg-race | 缺陷 | 删短 join 赌窗；改 ObservingLock.contending | `:2191-2198` contending 证法（无短 join） |
+| `test_beat_orchestration_503.py:2159` | `worker.join(2)` | T-barrier | 缺陷 | bare `join()` | `:2198` `worker.join()` |
+| `test_conftest_lifecycle_opt_in_542.py:47` | `assert GameSession._scene_registry.join(1) == []` | T-scene-id | 非 timeout | **保留** scene-id | `:47` 仍 `_scene_registry.join(1)` |
+| `test_enter_settlement_period_1235.py:662` | `t.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:662` `t.join()` |
+| `test_enter_settlement_period_1235.py:764` | `t.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:763` `t.join()` |
+| `test_enter_settlement_period_1235.py:866` | `t_a.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:865` `t_a.join()` |
+| `test_enter_settlement_period_1235.py:868` | `t_b.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:867` `t_b.join()` |
+| `test_enter_settlement_period_1235.py:984` | `t.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:983` `t.join()` |
+| `test_pihong_dossier_1490.py:4297` | `publisher.join(5.0)` | T-barrier | 缺陷 | bare `join()` | `:4305` `publisher.join()` |
+| `test_pihong_dossier_1490.py:4379` | `beginner.join(5.0)` | T-barrier | 缺陷 | bare `join()` | `:4387` `beginner.join()` |
+| `test_pihong_dossier_1490.py:4427` | `t.join(5.0)` | T-barrier | 缺陷 | bare `join()` | `:4435` `t.join()` |
+| `test_qa_b3_409_ux.py:319` | `t_resolve.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:314` `t_resolve.join()` |
+| `test_qa_c2_settlement_display_lifecycle_1343.py:114` | `t.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:114` `t.join()` |
+| `test_relation_judge_634.py:571` | `worker.join(3)` | T-barrier | 缺陷 | bare `join()` | `:573` `worker.join()` |
+| `test_relation_judge_634.py:711` | `release.set(); worker.join(2)` | T-barrier | 缺陷 | bare `join()` | `:715` `worker.join()`（分号拆句见表达清理） |
+| `test_web_chat_serialization_393.py:224` | `settlement_thread.join(1.0)` | T-barrier | 缺陷 | bare `join()` | `:243` `settlement_thread.join()` |
+| `test_web_chat_serialization_393.py:440` | `chat_thread.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:454` `chat_thread.join()` |
+
+**计数核对**：上表 37 行 = 35 线程 + 2 scene-id；与独立扫描一致。当前线程 join 已 bare 者不重改代码——本轮只补账。
+
+### A″. 间接 `Event.wait` 数字墙钟（方法作实参）
+
+全 `tests/` 顶层 AST：`to_thread` / `run_in_executor` 把 **数字** 作为 `Event.wait` 实参的形状，恰三处（本轮核）：
+
+| 位置（施工前 HEAD） | 形状 | 真源 | 判定 | 处置 |
+| --- | --- | --- | --- | --- |
+| `test_web_audience_night_498.py:435` | `asyncio.to_thread(entered.wait, 8.0)` | T-barrier | 缺陷 | 删 `8.0`；复用既有 `_await_event(entered)` |
+| `test_web_audience_night_498.py:617` | `asyncio.to_thread(entered.wait, 8.0)` | T-barrier | 缺陷 | 同上 |
+| `test_qa_c2_phase_settlement_mask_1374.py:133` | `run_in_executor(None, phase2_started.wait, 5.0)` | T-barrier | 缺陷 | 删 `5.0`；`run_in_executor(None, phase2_started.wait)` bare 屏障 |
+
+三问：Q1 无永久挂起证据；Q2 屏障不声称 N 秒；Q3 CI 承接。不扩写平行总则；不伪造「先清单后施工」历史（§0 真实时序仍成立）。
+
 ---
 
 ## B. 负向时序 / 竞态证法 — 灰区「打；改事件/状态证法」；**须证明已抵竞争接缝**
