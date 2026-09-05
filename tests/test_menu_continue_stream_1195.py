@@ -143,6 +143,15 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     monkeypatch.setattr(web_app, "WebGame", TrackingWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
 
+    cont_started = threading.Event()
+    real_wait = stuck.done.wait
+
+    def wait_mark(timeout=None):
+        cont_started.set()
+        return real_wait(timeout)
+
+    stuck.done.wait = wait_mark  # type: ignore[method-assign]
+
     def run_continue() -> None:
         response = TestClient(web_app.app).post("/api/menu/continue")
         results["status"] = response.status_code
@@ -150,8 +159,9 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
 
     thread = threading.Thread(target=run_continue, daemon=True)
     thread.start()
-    # continue 已 take 走 stuck → 全局 completion 位空，且仍卡在 stuck.done
-    wait_until(lambda: web_app._menu_exit_detach_completion is None)
+    # peek 模型：continue 卡在 stuck.done，completion 仍在全局位
+    wait_until(cont_started.is_set)
+    assert web_app._menu_exit_detach_completion is stuck
 
     exit_result = asyncio.run(web_app.api_menu_exit())
     assert exit_result == {"ok": True}
@@ -204,6 +214,15 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
+    cont_started = threading.Event()
+    real_wait = stuck.done.wait
+
+    def wait_mark(timeout=None):
+        cont_started.set()
+        return real_wait(timeout)
+
+    stuck.done.wait = wait_mark  # type: ignore[method-assign]
+
     def run_continue() -> None:
         response = TestClient(web_app.app).post("/api/menu/continue")
         results["status"] = response.status_code
@@ -211,7 +230,8 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
 
     thread = threading.Thread(target=run_continue, daemon=True)
     thread.start()
-    wait_until(lambda: web_app._menu_exit_detach_completion is None)
+    wait_until(cont_started.is_set)
+    assert web_app._menu_exit_detach_completion is stuck
 
     monkeypatch.setattr(web_app, "WebGame", FreshWebGame)
     new_result = asyncio.run(web_app.api_menu_new_game())
