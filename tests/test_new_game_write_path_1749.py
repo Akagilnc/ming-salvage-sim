@@ -31,7 +31,11 @@ def _campaign(game) -> str:
 
 
 def _db_snapshot(db_path: str) -> dict:
-    """独立只读连接：campaign + 旨意/夜/回话身份，不经活 session。"""
+    """独立只读连接：campaign + 旨意/夜/回话终态身份，不经活 session。
+
+    chat_turns 带 minister_message_id；并 join chat_messages 证回话正文已落库
+    （禁只认 SSE accepted / 空 minister_message_id 的轮）。
+    """
     conn = sqlite3.connect(db_path)
     try:
         camp = conn.execute(
@@ -44,14 +48,37 @@ def _db_snapshot(db_path: str) -> dict:
             "SELECT id FROM audience_nights ORDER BY id"
         ).fetchall()
         turns = conn.execute(
-            "SELECT id, night_id FROM chat_turns ORDER BY id"
+            "SELECT id, night_id, minister_message_id, status FROM chat_turns ORDER BY id"
         ).fetchall()
+        chat_rows = []
+        for tid, nid, mid, status in turns:
+            msg = None
+            if mid:
+                msg = conn.execute(
+                    "SELECT id, role, content FROM chat_messages WHERE id=?",
+                    (int(mid),),
+                ).fetchone()
+            chat_rows.append({
+                "chat_turn_id": int(tid),
+                "night_id": int(nid or 0),
+                "minister_message_id": int(mid or 0),
+                "status": str(status or ""),
+                "message": (
+                    {
+                        "id": int(msg[0]),
+                        "role": str(msg[1]),
+                        "content": str(msg[2]),
+                    }
+                    if msg
+                    else None
+                ),
+            })
         return {
             "campaign_id": str(camp[0]) if camp and camp[0] else "",
             "directive_ids": [int(r[0]) for r in dirs],
             "directive_texts": [str(r[1]) for r in dirs],
             "night_ids": [int(r[0]) for r in nights],
-            "chat_turns": [(int(r[0]), int(r[1] or 0)) for r in turns],
+            "chat_turns": chat_rows,
             "directives": len(dirs),
             "nights": len(nights),
         }
@@ -107,6 +134,7 @@ def _directive(client: TestClient, text: str) -> None:
 
 
 def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
+    """真实 chat/stream：须 SSE accepted + done；done 带 typed minister_message_id。"""
     r = client.post(
         f"/api/ministers/{minister}/chat/stream", json={"message": msg},
     )
@@ -115,31 +143,73 @@ def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
     events = _parse_sse(r.text)
     assert not any(e.get("event") == "error" for e in events), r.text
     acc = next(e for e in events if e.get("event") == "accepted")
-    data = json.loads(acc["data"])
-    assert data.get("campaign_id") and int(data.get("night_id") or 0) >= 1
-    assert int(data.get("chat_turn_id") or 0) >= 1
-    return data
+    acc_data = json.loads(acc["data"])
+    assert acc_data.get("campaign_id") and int(acc_data.get("night_id") or 0) >= 1
+    assert int(acc_data.get("chat_turn_id") or 0) >= 1
+    done = next((e for e in events if e.get("event") == "done"), None)
+    assert done is not None, f"chat/stream missing done; events={events!r}"
+    done_data = json.loads(done["data"]) if isinstance(done.get("data"), str) else done.get("data")
+    assert isinstance(done_data, dict), done_data
+    mid = int(done_data.get("minister_message_id") or 0)
+    assert mid >= 1, f"done missing minister_message_id: {done_data!r}"
+    answer = str(done_data.get("answer") or "")
+    assert answer, f"done missing answer: {done_data!r}"
+    return {
+        "campaign_id": acc_data["campaign_id"],
+        "night_id": int(acc_data["night_id"]),
+        "chat_turn_id": int(acc_data["chat_turn_id"]),
+        "minister_message_id": mid,
+        "answer": answer,
+    }
+
+
+def _assert_chat_persisted(snap: dict, *, chat_turn_id: int, night_id: int,
+                           minister_message_id: int, answer: str) -> None:
+    """独立 DB：chat_turns.minister_message_id 链接 chat_messages 正文。"""
+    row = next(
+        (t for t in snap["chat_turns"] if t["chat_turn_id"] == chat_turn_id),
+        None,
+    )
+    assert row is not None, snap["chat_turns"]
+    assert row["night_id"] == night_id
+    assert row["minister_message_id"] == minister_message_id
+    assert row["minister_message_id"] >= 1
+    assert row["message"] is not None, row
+    assert row["message"]["id"] == minister_message_id
+    assert row["message"]["role"] == "minister"
+    assert row["message"]["content"] == answer
+    assert night_id in snap["night_ids"]
 
 
 def _write_and_verify_live(client: TestClient, game, *, label: str) -> dict:
-    """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/记录身份。"""
+    """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/回话终态。"""
     d_text = f"着户部清核辽饷（{label}）。"
     _directive(client, d_text)
     _wait_pending_writes(game)
     st = client.get("/api/game/state")
     minister = _pick_active_minister(st.json())
-    acc = _chat_stream(client, minister, f"边饷如何？{label}")
+    chat = _chat_stream(client, minister, f"边饷如何？{label}")
     camp = _campaign(game)
-    assert acc["campaign_id"] == camp
+    assert chat["campaign_id"] == camp
     _wait_pending_writes(game)
     snap = _db_snapshot(game.db_path)
     assert snap["campaign_id"] == camp
     assert d_text in snap["directive_texts"]
-    turn_id = int(acc["chat_turn_id"])
-    night_id = int(acc["night_id"])
-    assert any(t[0] == turn_id and t[1] == night_id for t in snap["chat_turns"]), snap
-    assert night_id in snap["night_ids"]
-    return {"campaign_id": camp, "chat_turn_id": turn_id, "night_id": night_id, "d_text": d_text}
+    _assert_chat_persisted(
+        snap,
+        chat_turn_id=chat["chat_turn_id"],
+        night_id=chat["night_id"],
+        minister_message_id=chat["minister_message_id"],
+        answer=chat["answer"],
+    )
+    return {
+        "campaign_id": camp,
+        "chat_turn_id": chat["chat_turn_id"],
+        "night_id": chat["night_id"],
+        "minister_message_id": chat["minister_message_id"],
+        "answer": chat["answer"],
+        "d_text": d_text,
+    }
 
 
 def test_drain_skips_archive_when_agno_close_fails(tmp_path, monkeypatch):
@@ -256,7 +326,13 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     live = _db_snapshot(p1)
     assert live["campaign_id"] == c1
     assert rec1["d_text"] in live["directive_texts"]
-    assert any(t[0] == rec1["chat_turn_id"] for t in live["chat_turns"])
+    _assert_chat_persisted(
+        live,
+        chat_turn_id=rec1["chat_turn_id"],
+        night_id=rec1["night_id"],
+        minister_message_id=rec1["minister_message_id"],
+        answer=rec1["answer"],
+    )
     main = str(list(g1.db.conn.execute("PRAGMA database_list"))[0][2])
     assert web_app._same_db_path(main, p1)
     for p in drained:
@@ -356,8 +432,13 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     restored = _db_snapshot(g3.db_path)
     assert restored["campaign_id"] == c2
     assert rec2["d_text"] in restored["directive_texts"]
-    assert any(t[0] == rec2["chat_turn_id"] and t[1] == rec2["night_id"]
-               for t in restored["chat_turns"])
+    _assert_chat_persisted(
+        restored,
+        chat_turn_id=rec2["chat_turn_id"],
+        night_id=rec2["night_id"],
+        minister_message_id=rec2["minister_message_id"],
+        answer=rec2["answer"],
+    )
     _directive(client, "着再拨饷银（续）。")
     _wait_pending_writes(g3)
     assert "着再拨饷银（续）。" in _db_snapshot(g3.db_path)["directive_texts"]
