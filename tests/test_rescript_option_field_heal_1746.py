@@ -285,6 +285,94 @@ def test_multi_urgent_multi_bad_options_isolated(monkeypatch, tmp_path):
     assert all(o.get("grant_action") != "协饷" for o in g2)
 
 
+def test_combo_then_field_heal_uses_corrected_baseline(monkeypatch, tmp_path):
+    """首抽组合错 → 重抽修好组合项 → 另一项缺字段补交：底稿须为组合重抽后版本。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    # option0: army+single 组合非法；option1: 协饷缺 purpose
+    combo_bad = _army_pay(label="combo", locality_scope="single")
+    field_bad = _army_pay(label="field", target_id="guanning", amount=200)
+    field_bad.pop("purpose", None)
+    # 组合重抽：combo 修好为 none，field 仍缺 purpose
+    combo_fixed = dict(combo_bad, locality_scope="none")
+    # 补交：field 补 purpose；故意把 combo 改回 single（若误用首抽底稿会整批挂）
+    field_fixed = dict(field_bad, purpose="补饷")
+    combo_poison = dict(combo_fixed, locality_scope="single")
+
+    first = _items_json([{
+        "title": "辽东欠饷", "context": "九边告匮。",
+        "options": [combo_bad, field_bad],
+    }])
+    after_combo = _items_json([{
+        "title": "辽东欠饷", "context": "九边告匮。",
+        "options": [combo_fixed, field_bad],
+    }])
+    after_heal = _items_json([{
+        "title": "辽东欠饷", "context": "九边告匮。",
+        "options": [combo_poison, field_fixed],  # poison 不得写回
+    }])
+    calls: list[str] = []
+
+    def _llm(_agent, prompt, tag=""):
+        calls.append(tag)
+        if len(calls) == 1:
+            return first
+        if "结构组合校验失败" in prompt:
+            return after_combo
+        return after_heal
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=30)
+    assert drafts is not None, f"calls={calls}"
+    opts = drafts[0]["options"]
+    assert len(opts) == 2
+    by_label = {o["label"]: o for o in opts}
+    assert by_label["combo"]["locality_scope"] == "none"  # 组合重抽结果保留
+    assert by_label["field"]["purpose"] == "补饷"
+    assert by_label["field"]["amount"] == 200
+
+
+def test_action_conditional_missing_heals_not_whole_batch(monkeypatch, tmp_path):
+    """military_order 缺 assignee_name → 进补交分支，不整批无头版。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    mo_bad = {
+        "label": "调关宁赴援",
+        "hint": "边情急",
+        "action_type": "military_order",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "assignee_name": "",  # 缺必填
+        "transaction_category": "",
+        "station": "宁远",
+    }
+    mo_good = dict(mo_bad, assignee_name="袁崇焕")
+    sibling = _hold(label="缓议", hint="候报")
+    first = _items_json([{
+        "title": "关宁请援", "context": "奴贼压境。",
+        "options": [mo_bad, sibling],
+    }])
+    healed = _items_json([{
+        "title": "关宁请援", "context": "奴贼压境。",
+        "options": [mo_good, _hold(label="CHANGED", hint="x")],
+    }])
+    n = {"i": 0}
+
+    def _llm(*_a, **_k):
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=31)
+    assert drafts is not None
+    assert n["i"] == 2  # 首抽 + 1 次补交
+    opts = drafts[0]["options"]
+    assert len(opts) == 2
+    mo = next(o for o in opts if o["action_type"] == "military_order")
+    assert mo["assignee_name"] == "袁崇焕"
+    assert next(o for o in opts if o["label"] == "缓议")["hint"] == "候报"
+
+
 def test_heal_freezes_sibling_options_from_first_draw(monkeypatch, tmp_path):
     """补交只采纳缺字段 option；兄弟 option 冻结首抽原文（LLM 改写无效）。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))

@@ -501,7 +501,9 @@ def test_generate_rejects_military_order_with_region_target(monkeypatch):
     }, 1) is None
 
 
-def test_generate_rejects_military_order_empty_assignee(monkeypatch):
+def test_generate_rejects_military_order_empty_assignee(monkeypatch, tmp_path):
+    """#1746：可定位 option 缺 assignee_name → 补交耗尽后只剔该 option，兄弟项仍呈。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     item = _legal_item()
     item["options"][0].update({
         "action_type": "military_order",
@@ -515,11 +517,16 @@ def test_generate_rejects_military_order_empty_assignee(monkeypatch):
         rescript_mod, "run_agent_text",
         lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
     )
-    assert generate_rescript_draft(object(), {
+    drafts = generate_rescript_draft(object(), {
         "active_issues": [],
         "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
         "army_targets": [{"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"}],
-    }, 1) is None
+    }, 1)
+    assert drafts is not None and len(drafts) == 1
+    opts = drafts[0]["options"]
+    assert len(opts) == 1
+    assert opts[0]["action_type"] == "assignment"
+    assert opts[0]["label"] == item["options"][1]["label"]
 
 
 def test_payload_projection_without_active_issues_degrades_to_empty():

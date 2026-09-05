@@ -405,15 +405,22 @@ def _enforce_layer_a_action_conditional(
         key_s = str(key)
         val = _nonempty_str(key_s)
         if not val:
-            raise ValueError(f"票拟 option.{action} 缺必填：{key_s}")
+            # #1746：可定位单 option 的缺字段 → 补交分支（非整批 shape）
+            raise RescriptOptionMissingFieldsError(
+                f"票拟 option.{action} 缺必填：{key_s}",
+                missing_fields=(key_s,),
+                raw_option=raw,
+            )
         src = _raw_or_out(key_s)
         out[key_s] = str(src) if src is not None else val
 
     for group in rules.get("require_any_nonempty") or ():
         keys = tuple(str(k) for k in group)  # type: ignore[union-attr]
         if not any(_require_any_present(k) for k in keys):
-            raise ValueError(
-                f"票拟 option.{action} 须具备其一：{'/'.join(keys)}"
+            raise RescriptOptionMissingFieldsError(
+                f"票拟 option.{action} 须具备其一：{'/'.join(keys)}",
+                missing_fields=keys,
+                raw_option=raw,
             )
         # 写回保持 202571cc：有非空串则 str 写回（期限 int 归一由后续 int_keys 处理）
         for key_s in keys:
@@ -445,8 +452,10 @@ def _enforce_layer_a_action_conditional(
         for rk in rks:  # type: ignore[union-attr]
             rk_s = str(rk)
             if not _nonempty_str(rk_s):
-                raise ValueError(
-                    f"票拟 option.{action} 当 {ctrl}={cval} 时缺 {rk_s}"
+                raise RescriptOptionMissingFieldsError(
+                    f"票拟 option.{action} 当 {ctrl}={cval} 时缺 {rk_s}",
+                    missing_fields=(rk_s,),
+                    raw_option=raw,
                 )
             src = _raw_or_out(rk_s)
             out[rk_s] = str(src) if src is not None else _nonempty_str(rk_s)
@@ -469,12 +478,16 @@ def _enforce_layer_a_action_conditional(
                     raise ValueError
                 amount = int(amt_raw)  # type: ignore[arg-type]
             except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"票拟 option.{action} {cval} 须正 amount"
+                raise RescriptOptionMissingFieldsError(
+                    f"票拟 option.{action} {cval} 须正 amount",
+                    missing_fields=("amount",),
+                    raw_option=raw,
                 ) from exc
             if amount <= 0:
-                raise ValueError(
-                    f"票拟 option.{action} {cval} 须正 amount"
+                raise RescriptOptionMissingFieldsError(
+                    f"票拟 option.{action} {cval} 须正 amount",
+                    missing_fields=("amount",),
+                    raw_option=raw,
                 )
             out["amount"] = amount
 
@@ -1367,8 +1380,10 @@ def generate_rescript_draft(
                 )
                 drafts = _ground(drafts)
             else:
+                # 首抽与组合重抽都刷新底稿——补交合并必须以最新有效整批为基
+                # （#1746：组合修好的 option 不得被首抽失效底稿吞回）
                 data = _parse_rescript_json_strict(raw)
-                if isinstance(data, dict) and working_data is None:
+                if isinstance(data, dict):
                     working_data = copy.deepcopy(data)
                 drafts = _parse_and_validate(raw, isolate_option_missing=True)
         except StructuredDecreeCombinationError as exc:
