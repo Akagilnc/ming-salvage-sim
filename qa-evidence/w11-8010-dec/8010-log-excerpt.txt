@@ -1,0 +1,40 @@
+831:[08:58:49.114] [extractor/personnel_secret] 使用模型 DeepSeek-V4-Flash
+832:[08:58:49.115] [extractor/relations] 使用模型 DeepSeek-V4-Flash
+833:[08:58:49.118] [extractor] 并发抽取 6 腿（wall-clock≈最慢单个）
+834:[08:58:49.119] [extractor/internal] user payload total=354 chars (~236 tok)
+835:[08:58:49.119] [extractor/internal] 开始非流式推演（等待完整响应）
+836:[08:58:49.119] [extractor/military_external] user payload total=267 chars (~178 tok)
+837:[08:58:49.123] [extractor/issues] user payload total=426 chars (~284 tok)
+838:[08:58:49.123] [extractor/personnel_secret] user payload total=329 chars (~219 tok)
+839:[08:58:49.123] [extractor/issues] 开始非流式推演（等待完整响应）
+840:[08:58:49.123] [extractor/relations] user payload total=199 chars (~132 tok)
+841:[08:58:49.123] [extractor/personnel_secret] 开始非流式推演（等待完整响应）
+843:[08:58:49.124] [extractor/military_external] 开始非流式推演（等待完整响应）
+845:[08:58:49.123] [extractor/relations] 开始非流式推演（等待完整响应）
+846:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+849:         'token_concurrency_rate_limit_exceeded'}}}                             
+851:[08:58:52.680] [extractor/internal] LLM messages 已 dump → scripts/runs/llm_dump_1338187.log
+852:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=28553 cached=27648 completion=7 reasoning=0 total=28560
+853:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=28553 cached=27648 completion=7 reasoning=0 total=28560
+854:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=28553 cached=27648 completion=7 reasoning=0 total=28560
+855:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=28553 cached=27648 completion=7 reasoning=0 total=28560
+856:[08:58:54.694] [extractor/relations] LLM messages 已 dump → scripts/runs/llm_dump_1338187.log
+857:[08:58:54.694] [extractor/relations] 完成，12 字，用时 5.6s
+858:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=33485 cached=27136 completion=59 reasoning=0 total=33544
+859:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=33485 cached=27136 completion=59 reasoning=0 total=33544
+860:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=33485 cached=27136 completion=59 reasoning=0 total=33544
+861:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=33485 cached=27136 completion=59 reasoning=0 total=33544
+862:[08:58:56.944] [extractor/personnel_secret] LLM messages 已 dump → scripts/runs/llm_dump_1338187.log
+863:[08:58:56.944] [extractor/personnel_secret] 完成，153 字，用时 7.8s
+864:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=31542 cached=20736 completion=138 reasoning=0 total=31680
+865:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=31542 cached=20736 completion=138 reasoning=0 total=31680
+866:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=31542 cached=20736 completion=138 reasoning=0 total=31680
+867:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=31542 cached=20736 completion=138 reasoning=0 total=31680
+868:[08:59:01.012] [extractor/military_external] LLM messages 已 dump → scripts/runs/llm_dump_1338187.log
+869:[08:59:01.012] [extractor/military_external] 完成，300 字，用时 11.9s
+870:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=40184 cached=27136 completion=587 reasoning=0 total=40771
+871:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=40184 cached=27136 completion=587 reasoning=0 total=40771
+872:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=40184 cached=27136 completion=587 reasoning=0 total=40771
+873:[TOKEN] caller=extractor model=self-dploy/DeepSeek-V4-Flash prompt=40184 cached=27136 completion=587 reasoning=0 total=40771
+874:[08:59:25.412] [extractor/issues] LLM messages 已 dump → scripts/runs/llm_dump_1338187.log
+875:[08:59:25.412] [extractor/issues] 完成，922 字，用时 36.3s
