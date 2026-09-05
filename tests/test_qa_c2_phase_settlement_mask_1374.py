@@ -115,7 +115,7 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
             )
             db.conn.commit()
             phase2_started.set()
-            assert release_phase2.wait(5.0)
+            release_phase2.wait()
             if on_event:
                 on_event("stage", "数值推演结算")
             return "邸报：测。"
@@ -128,19 +128,51 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
     async def _go():
-        # 并行：放行 phase2 前先观测展示态
+        # 并行：放行 phase2 前先观测展示态。
+        # drain 终态必须先 stop/release，再 await watcher——禁在 finally 前无条件等 watch
+        # （resolve 失败产出 error SSE 后 drain 正常返回，phase2 永不置位）。
+        stop = threading.Event()
+
         async def _watch():
-            assert await asyncio.get_event_loop().run_in_executor(None, phase2_started.wait, 5.0)
-            payload = runtime.state_payload()
-            assert payload["turn"]["settlement_display"] is True
-            for k in MONTH_OPEN_KEYS:
-                assert payload["metrics"][k] == before[k]
-            release_phase2.set()
+            # 可取消异步轮询（禁 executor 上 Event.wait：cancel 打不穿）。
+            # release 归 watcher 持有：观察/断言失败也必达，打破 resolve↔drain 互等。
+            try:
+                while not phase2_started.is_set() and not stop.is_set():
+                    await asyncio.sleep(0)
+                if not phase2_started.is_set():
+                    return
+                payload = runtime.state_payload()
+                assert payload["turn"]["settlement_display"] is True
+                for k in MONTH_OPEN_KEYS:
+                    assert payload["metrics"][k] == before[k]
+            finally:
+                release_phase2.set()
 
         watch_task = asyncio.create_task(_watch())
-        serialized = await _drain_resolve_sse([{"label": "发"}])
-        await watch_task
-        return serialized
+        body_exc: BaseException | None = None
+        watch_exc: BaseException | None = None
+        result = None
+        try:
+            result = await _drain_resolve_sse([{"label": "发"}])
+        except BaseException as exc:
+            body_exc = exc
+        finally:
+            # drain 已返回或失败：先 stop/release，再收 watcher。
+            # 先排空并消费 watch 异常，再按 body>watch 次序重抛——收尾不替换主体原错。
+            stop.set()
+            release_phase2.set()
+            if not watch_task.done():
+                try:
+                    await watch_task
+                except BaseException as exc:
+                    watch_exc = exc
+            elif not watch_task.cancelled():
+                watch_exc = watch_task.exception()
+        if body_exc is not None:
+            raise body_exc
+        if watch_exc is not None:
+            raise watch_exc
+        return result
 
     serialized = asyncio.run(_go())
     assert entered["n"] == 1

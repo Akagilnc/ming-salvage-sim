@@ -2569,6 +2569,7 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
     """暂存交办·责成案卷；initiative 按 ADR 0055 判决后落。
 
     #1503：显式拟旨前缀若带真实 assignment 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
+    意图粒度由分类/候选归一表达；本 handler 按候选契约单轨记账，不从 title 有无猜独立性。
     """
     if (
         ctx.intent_kind != "assignment"
