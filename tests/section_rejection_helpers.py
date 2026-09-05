@@ -22,6 +22,8 @@ def install_settlement_attendant_agent_stub(
     """#1745：替身下移到真实 runner 的 agent 边界（不整换 run_settlement_attendant_message）。
 
     capture 若给出，追加生产事实包 rejections 列表（section/category/reason）。
+    monkeypatch 可为 pytest MonkeyPatch，或带 setattr(module, name, value) 的同形对象；
+    为 None 时直接写 decree_mod（子进程 worker 无 monkeypatch 对象）。
     """
     class _Out:
         content = text
@@ -33,11 +35,15 @@ def install_settlement_attendant_agent_stub(
                 capture.append(list(payload.get("rejections") or []))
             return _Out()
 
-    monkeypatch.setattr(
-        decree_mod,
-        "create_settlement_attendant_agent",
-        lambda *_a, **_k: _Agent(),
-    )
+    factory = lambda *_a, **_k: _Agent()  # noqa: E731 — 与既有 lambda 工厂同形
+    if monkeypatch is None:
+        setattr(decree_mod, "create_settlement_attendant_agent", factory)
+    else:
+        monkeypatch.setattr(
+            decree_mod,
+            "create_settlement_attendant_agent",
+            factory,
+        )
 
 
 def prepare_then_settle(db, state, content, raw_delta, **kwargs):
