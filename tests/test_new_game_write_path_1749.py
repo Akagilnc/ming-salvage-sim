@@ -242,11 +242,6 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     rec1 = _write_and_verify_live(client, g1, label="direct-new")
     c1 = rec1["campaign_id"]
     assert c1 and c1 != c0
-    # 新局旨意不得落进旧库路径（静默丢写假说：错局落账）
-    if os.path.exists(p0):
-        old_snap = _db_snapshot(p0)
-        assert rec1["d_text"] not in old_snap["directive_texts"]
-        assert old_snap["campaign_id"] == c0
     new_snap = _db_snapshot(p1)
     assert rec1["d_text"] in new_snap["directive_texts"]
     assert new_snap["campaign_id"] == c1
@@ -258,8 +253,11 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     old_hit = next(
         s for s in (_db_snapshot(str(p)) for p in drained) if s["campaign_id"] == c0
     )
+    assert old_hit["campaign_id"] == c0
     assert old_hit["directives"] >= d0_count
     assert seed_rec["d_text"] in old_hit["directive_texts"]
+    # 隔离：新局旨意不得进旧档（静默丢写假说）——归档后快照一次性断言，不与 C7 竞速
+    assert rec1["d_text"] not in old_hit["directive_texts"]
     c0_archive = next(p for p in drained if _db_snapshot(str(p))["campaign_id"] == c0)
     live = _db_snapshot(p1)
     assert live["campaign_id"] == c1
