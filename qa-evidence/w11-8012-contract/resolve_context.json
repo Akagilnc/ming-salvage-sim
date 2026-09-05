@@ -1,0 +1,13 @@
+{
+  "decree_text": "奉天承运皇帝，诏曰：\n\n朕初登大宝，深惟国事艰难，积弊日深，实由诸司因循玩愒，上下相蒙所致。兹特命各部院衙门，自接诏之日起，将本衙门所辖钱粮、刑名、军政、河工、盐法、关税等一切事务，逐一清查积年弊窦，凡有亏空、侵渔、隐占、虚冒情弊，务须据实开列，按月具奏，不得隐饰。\n\n其有能自首举发者，朕当酌量宽宥；若仍前欺隐，一经察出，定行重治，决不姑贷。尔部院堂上官，务须实心任事，严督所属，以副朕整饬厘革至意。\n\n钦此。",
+  "narrative": "",
+  "simulator_payload": {
+    "transit_arrivals": []
+  },
+  "secret_orders": {},
+  "relevant_memories": [],
+  "extracted": null,
+  "resolve_contract_version": 0,
+  "source": "player_decree",
+  "attendant_message": ""
+}

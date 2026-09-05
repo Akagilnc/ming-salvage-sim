@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/workspace/Ming_LLM/ming_sim/decree.py", line 1193, in resolve_directives
+    verdict_rows = validate_promulgation_verdicts(
+        generated, promulgable_dossiers, db,
+        prepared_context=prepared_context,
+    )
+  File "/workspace/Ming_LLM/ming_sim/decree.py", line 620, in validate_promulgation_verdicts
+    _validate_promulgation_verdict_item(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        row, db, proposed_modes=proposed_modes, prepared_context=context,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/workspace/Ming_LLM/ming_sim/decree.py", line 471, in _validate_promulgation_verdict_item
+    raise LLMContractError("颁布判决 dossier_id 必须为有效 SQLite 正整数")
+ming_sim.exceptions.LLMContractError: 颁布判决 dossier_id 必须为有效 SQLite 正整数

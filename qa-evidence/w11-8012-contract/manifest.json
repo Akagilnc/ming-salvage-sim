@@ -1,0 +1,12 @@
+{
+  "db_path": "/workspace/Ming_LLM/data/ming_sim_1788597803068938977.db",
+  "turn": 3,
+  "year": 1627,
+  "period": 12,
+  "version": "0.53.0.0",
+  "attempt": 2,
+  "exception_type": "LLMContractError",
+  "exception_message": "颁布判决 dossier_id 必须为有效 SQLite 正整数",
+  "timestamp": "2026-09-05T09:10:41.388446+00:00",
+  "ready_payload_digest": null
+}
