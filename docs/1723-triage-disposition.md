@@ -132,7 +132,7 @@ PY
 | `menu_lifecycle` drain vs 在飞 B | 无 | drain 不得先于 B 票清 | 是 | 缺陷 | **observe `wait_prior`** 后再负向；B delta 保留 |
 | `enter_settlement` / `qa_c2` clear 持闸 | 无 | clear 须持 gate | 是 | **有效** | **保留** T-gate-final |
 | `travel_gating` close vs 未完 scene | 无 | barrier 不得越过未完 scene | 是 | 缺陷 | **observe `wait_prior`**（非 has_open_barrier 领票） |
-| `web_chat_serialization` stream vs settlement | 无 | epilogue 须等 gate | 是 | 缺陷 | `ObservingLock(..., holding=)`：holding 下 acquire → contending |
+| `web_chat_serialization` stream vs settlement | 无 | epilogue 须等 gate | 是 | 缺陷 | **ObservingLock.contending**：settlement 持闸时 epilogue 非阻塞 acquire 失败即证争锁 |
 | `web_audience_night` issue vs 在飞 chat | 无 | issue 须进屏障等票 | 是 | 缺陷 | `wait_prior` 观测 inflight>1 |
 | `pihong` single-flight 第二路 | 无 | 外部契约=单 origin body/单 chat_turn/单月推进；**不**拥有「N 秒内 coalesce」 | 是 | **纠正主张** | **诊断**：B 不能与 A 并发进 `join_retained`；auto_close 可能挡住 B，但绕过 auto_close 外部断言仍绿 → **不**把 auto_close/入口观察叫等待证，**不**给生产添等待。处置：A 持 gen 时观测 B 抵达 settlement entry（inflight≥2）+ 外部 single-flight 结果；删 sleep 赌窗与 future.result(timeout) |
 | `beat` sibling join | 无 | join 须排空 sibling | 是 | 缺陷 | `wait_until(not registry.has(11))` 证 join 已 pop 入 drain；**禁止** join 调用前 `join_entered.set()` |
@@ -308,7 +308,7 @@ PY
 | relation_brew 死枝 | bare 后死 | `release.wait()` |
 | 失效 `import time` | 死 import | 删；**menu_lifecycle 的 time 供 monkeypatch，保留** |
 | 同步 wait helper 三合一 | 重复 | **本类已结**：`tests/wait_utils.py` |
-| beat/menu 四份 `_ObservingGate` + web_chat `_ObservingWriteGate` | 同构重复 | **合并** → `tests.wait_utils.ObservingLock`（holding 可选）；禁生产钩子/通用锁框架 |
+| beat/menu 四份 `_ObservingGate` + web_chat `_ObservingWriteGate` | 同构重复 | **合并** → `tests.wait_utils.ObservingLock`；禁生产钩子/通用锁框架；holding/timeout 支路已删 |
 
 ---
 
