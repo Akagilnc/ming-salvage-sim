@@ -89,24 +89,20 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 
 ### 2.1 链路（现行代码）
 
+规范语义真源：`docs/SETTLEMENT_FLOW.md`（崩溃/中止恢复段）+ ADR 0008 D3/D6；此处只记本票刀口与失败观察，不复述全流程。
+
 ```
 盖玺 / issue/stream
-  → session.resolve_turn
-  → decree.resolve_directives
-  → pre_settle（atomic；turn_phase=settling；ready=0 占位）     … ADR 0008 前半段
-  → simulate_season_with_payload                                   … LLM 叙事
+  → session.resolve_turn → decree.resolve_directives
+  → pre_settle（settling 占位）→ simulate_season_with_payload
   → extract_scores_by_modules_with_agno (parallel=True)            … 本票刀口
-       ThreadPoolExecutor(max_workers=leg_count)
        leg_count = len(EXTRACTION_MODULES) + (1 if side_leg else 0)
-       EXTRACTION_MODULES = 5（internal / military_external / issues /
-                              personnel_secret / relations）
-       side_leg = 票拟 companion（ADR 0093 / #656）→ 日志「6 腿」
+       EXTRACTION_MODULES = 5；side_leg = 票拟 companion → 日志「6 腿」
        每腿：create_score_extractor_module_agent
             → run_agent_text → agent.run → extract_agent_text
   → 任一腿异常：write_error_pack + SettlementAbort(stage=extract)
-  → web：stream event:error / 非流式 HTTP 409 detail=abort message
-  → state_payload.settlement_recovery{ready_replay,error_pack_path,message}
-  → 前端「可重试 / 重新推演｜续跑结算」面板（#1620 typed）
+  → web：stream event:error；state_payload.settlement_recovery{ready_replay,error_pack_path,message}
+  → 前端恢复面板（#1620 typed）
 ```
 
 ### 2.2 错误分类 →「可重试」
@@ -138,29 +134,35 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 | QA 三车道 | 8010/8012/8013 同服同模型共享该额度 |
 | 关系 | 单局 6 腿 ≪ 80；**多局并行 + 召对/其它 API 同窗**时总和可触 80。阶段 0 只记录该乘积关系；限扇出/排队若需要 → 归 #1465 预算/并发设计，**本票不授权** |
 
-### 2.5 0148 / 0008 恢复接缝（与红灯对应）
+### 2.5 0148 / 0008 恢复接缝（按相位分；与红灯对应）
 
-| 接缝 | 现行 |
+规范指针：`docs/SETTLEMENT_FLOW.md` 恢复分流；`error_pack.clear_for_resimulation`（error_pack.py:270 起）；`session.resolve_turn` settling 分支（session.py:3090 起）；`resolve_decisions_phase2`（decree.py:3011 起）。
+
+| 相位 / 接缝 | 现行（据代码，非票面愿望） |
 |------|------|
-| 月初快照 | 点即入 `accept_settlement_period`；`settling`/`awaiting_decision` 下 `exit_settlement_display_on_failure` **不清**快照 |
-| D6 未 ready 重推演 | `clear_for_resimulation` 降级 extracted；`resolve_turn` fallthrough 重跑 sim/extract；pre_settle 因 settling 守门不二跑 |
-| D3 ready 重放 | `resolve_settling_recovery` 直入 apply；**不**重跑 sim/extract（既有 `tests/test_settlement_recovery_projection_1620.py` 真 HTTP 绿） |
+| 0148 月初快照 | 点即入 `accept_settlement_period`；`settling`/`awaiting_decision` 下失败 **不清**快照 |
+| **(a1) settling + ready=0**（盖玺后、批红前 extractor 终失败） | 玩家「重新推演」真入口 = `POST /api/decree/issue/stream`。`resolve_turn` 见非 ready ctx → **fallthrough 重跑 sim/extract**；`pre_settle` 因 settling 守门不二跑。**不**经 `clear_for_resimulation`（该函数主要服务 ready 毒包降级 / version=0 逃生，见 SETTLEMENT_FLOW）。票面写「走 D6 clear_for_resimulation」与现行 ready=0 自然重入 **有可核缺口**——阶段 0 测试记录 `clear_calls==0`，不改生产凑绿。 |
+| **(a2) HITL/phase2 批红后**（awaiting_decision，叙事已持久、extracted 空） | 续跑入口 = `POST /api/decree/resolve_decisions/stream`。`resolve_decisions_phase2` **复用 ctx 叙事/亲裁，只重抽 extractor**，不重新生成 simulator。与 (a1) 不得混成「一律重跑 simulator」。 |
+| **(b) settling + ready=1** | `resolve_settling_recovery` 直入 apply；**不**重跑 sim/extract（既有 `tests/test_settlement_recovery_projection_1620.py`，本片不重复 D3 案）。 |
+| clear_for_resimulation 本体 | 降级 extracted、保留 phase1 字段；settling 相位不清前半段；HITL 叉降级后走 phase2 非 ready 重抽（error_pack.py:270 文档串）。 |
 
 ---
 
 ## 3. 阶段 0 红灯位置
 
 文件：`tests/test_settlement_extractor_transport_1750.py`  
-入口：沿 #1468 `tracer_client` 真 HTTP；LLM transport 边界替身（`run_agent_text` / extractor 腿）。  
-标记：`xfail(strict=True, reason="待 #1465")` 用于现行应红项；**不改生产**使灯绿。
+入口：沿 #1468 `tracer_client` 真 HTTP（复用 fixture，无平行 transport_tracer_client）；transport 替身在模块 `agent.run`。  
+标记：仅自愈与自愈期 0148 为 `xfail(strict, 待 #1465)`；**不改生产**使灯绿。
 
-| 红灯 | 期望 | 现行预期色 |
-|------|------|------------|
-| 自愈回路 | 一腿预算内可重试失败 → 月+1、无失败面板 | 红（无统一预算自愈） |
-| 终失败回路 | 超预算持续失败 → 保留原月；错误含上游状态/类别/attempt；系统人话 | 保月/人话/pack.attempt 绿；上游 status/code 未进既有 `_llm_error_detail` 玩家面 → xfail（不新造 manifest schema） |
-| 恢复 D6 | 未 ready 后重新推演不重跑 pre_settle | 基线可绿（既有 0008 守门） |
-| 恢复 D3 | ready 后重放不重跑 LLM | 既有 1620 绿；本文件薄钉 |
-| 0148 呈现 | 自愈中与终失败后 api_state 为月初快照 | 终失败 settling 下近绿；自愈中随自愈红 |
+| 项 | 期望 | 现行预期色 | 证明力口径 |
+|------|------|------------|------------|
+| 自愈 | 一腿预算内可重试 → transport calls≥2、成功 fingerprint 落账、月+1 | 红（无 #1465 预算） | calls=agent.run 次数；≠ manifest.attempt |
+| 终失败 | 持续失败 → 保月 + recovery + exception_type + 不泄栈 | **绿基线** | transport_attempts 与 pack_attempt 分列；不锁中文措辞 |
+| 恢复 (a1) | settling ready=0 → issue/stream 重跑 sim/extract、pre_settle=0、包保留 | **绿**（行为）；clear 缺口可核 | clear_calls 现行 0，见 §2.5 |
+| 恢复 (a2) | 批红后失败 → 只重抽、不重跑 simulator、月+1、包保留 | **绿** | 与 (a1) 分案 |
+| 恢复 (b) D3 | ready 重放不重跑 LLM | 既有 1620 绿 | 本片不重复 |
+| 0148 终失败后 | api_state 月初快照 | **绿**（并入终失败案） | settlement_display + metrics |
+| 0148 自愈窗 | 失败后重试窗内仍月初快照 | 红（随自愈） | 采样在 fail 返回后，不在 _finish 成功后回看冒充 |
 
 ---
 

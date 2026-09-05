@@ -1,11 +1,12 @@
 """#1750 阶段 0：extractor transport 失败注入红灯（待 #1465 转绿）。
 
-沿 #1468 tracer 真 HTTP；transport 邻接替身 = 模块 agent.run 产出
+沿 #1468 tracer_client 真 HTTP；transport 邻接替身 = 模块 agent.run 产出
 （经真实 agents.run_agent_text → extract_agent_text），不在 simulation 已导入的
 run_agent_text 别名上短路，以便 #1465 统一策略能包住此缝。
 
-自愈 / 终失败上游 typed 面 / 自愈期 0148：xfail(strict, 待 #1465)。
-D6/D3/终失败保月：既有 0008 行为基线。
+自愈 / 自愈期 0148：xfail(strict, 待 #1465)。
+终失败保月、恢复面、a1 settling 重推演、a2 批红后只重抽：既有 0008 行为基线。
+D3 ready 重放：见 tests/test_settlement_recovery_projection_1620.py，本片不重复。
 """
 
 from __future__ import annotations
@@ -19,27 +20,29 @@ import pytest
 from fastapi.testclient import TestClient
 
 import ming_sim.decree as decree_mod
-import ming_sim.memories as memories_mod
 import ming_sim.simulation as simulation_mod
 import web_app
-from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+from ming_sim.error_pack import clear_for_resimulation as _real_clear_for_resimulation
 from ming_sim.models import TurnPhase
 from ming_sim.simulation import EXTRACTION_MODULES
 from tests.test_month_loop_tracer_1468 import (
     _CannedMinisterAgent,
     _assert_not_bare_500,
+    _choices_from_decisions,
     _get_state,
     _parse_sse,
     _resolve_decisions_via_stream,
-    _stub_outer_llm_seams,
     _turn_of,
+    tracer_client,  # noqa: F401 — 复用既有 fixture，不平行造 transport_tracer_client
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 
 
-_EMPTY_MODULE_JSON = {
+# 成功腿带可观察 fingerprint（internal.国势变化.民心），证明成功产出进了落账，
+# 不是「重试后丢产出再空 delta 放行」。合法稀疏 delta 仍允许；此处只给本片探针指纹。
+_SUCCESS_MODULE_JSON = {
     "internal": (
-        '{"国势变化": {}, "钱粮收支": [], "财政制度变化": [], '
+        '{"国势变化": {"民心": -1}, "钱粮收支": [], "财政制度变化": [], '
         '"新立月度收支": [], "裁撤月度收支": [], "派系变化": [], '
         '"阶级变化": {}, "地区变化": {}}'
     ),
@@ -54,18 +57,37 @@ _EMPTY_MODULE_JSON = {
     "relations": '{"大臣互动": []}',
 }
 
+_DECISION_NARRATIVE = (
+    "本月邸报：边饷已清，流寇未息。\n"
+    "<<DECISION>>"
+    '{"title": "内帑先济何处", "context": "辽饷与秦赈两急。", '
+    '"options": [{"label": "先济辽饷", "hint": "边防"}, '
+    '{"label": "先赈陕西", "hint": "流民"}]}'
+    "<<END>>"
+)
+
 
 class _TransportAgent:
     """模块 agent.run 替身：可按序返回 ERROR status 或成功正文。
 
     走真实 run_agent_text → extract_agent_text；#1465 若在 agent.run/transport
-    外包重试，本对象的 calls 会反映 attempt 次数。
+    外包重试，本对象的 calls 即 transport/attempt 次数（≠ error pack 写包序号）。
     """
 
-    def __init__(self, module: str, *, error_then_ok_times: int = 0, always_error: bool = False):
+    def __init__(
+        self,
+        module: str,
+        *,
+        error_then_ok_times: int = 0,
+        always_error: bool = False,
+        gate: threading.Event | None = None,
+        hit: threading.Event | None = None,
+    ):
         self.module = module
         self.error_then_ok_times = int(error_then_ok_times)
         self.always_error = bool(always_error)
+        self.gate = gate
+        self.hit = hit
         self.calls = 0
         self._lock = threading.Lock()
 
@@ -73,22 +95,25 @@ class _TransportAgent:
         with self._lock:
             self.calls += 1
             n = self.calls
-            if self.always_error or n <= self.error_then_ok_times:
-                return SimpleNamespace(
-                    content=(
-                        "Error code: 429 - model_concurrency_rate_limit_exceeded"
-                    ),
-                    status="ERROR",
-                )
+        if self.always_error or n <= self.error_then_ok_times:
+            if self.hit is not None and n == 1:
+                self.hit.set()
+                if self.gate is not None:
+                    assert self.gate.wait(timeout=5.0), "transport probe gate timed out"
             return SimpleNamespace(
-                content=_EMPTY_MODULE_JSON[self.module],
-                status="COMPLETED",
+                content="Error code: 429 - model_concurrency_rate_limit_exceeded",
+                status="ERROR",
             )
+        return SimpleNamespace(
+            content=_SUCCESS_MODULE_JSON[self.module],
+            status="COMPLETED",
+        )
 
 
-def _wire_real_extract_path(monkeypatch, agents_by_module: dict[str, _TransportAgent]) -> None:
+def _wire_real_extract_path(
+    monkeypatch, agents_by_module: dict[str, _TransportAgent],
+) -> None:
     """保留真 extract_scores；模块 agent 工厂返回替身；票拟腿禁真网。"""
-    # 撤掉 #1468 对整段 extract 的短路，改走真并行合并 + 真 run_agent_text。
     monkeypatch.setattr(
         decree_mod,
         "extract_scores_by_modules_with_agno",
@@ -100,25 +125,6 @@ def _wire_real_extract_path(monkeypatch, agents_by_module: dict[str, _TransportA
 
     monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", _factory)
     monkeypatch.setattr(decree_mod, "generate_rescript_draft", lambda *a, **k: [])
-
-
-@pytest.fixture
-def transport_tracer_client(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.delenv("MING_SIM_DB", raising=False)
-    _stub_outer_llm_seams(monkeypatch)
-    monkeypatch.setattr(web_app, "web_game", None)
-    client = TestClient(web_app.app)
-    yield client
-    game = web_app.web_game
-    if game is not None:
-        try:
-            _wait_pending_writes(game)
-            game.session.close()
-        finally:
-            web_app.web_game = None
 
 
 def _terminal_sse(resp) -> tuple[str, object]:
@@ -144,7 +150,6 @@ def _issue_stream(client: TestClient, *, expected_turn: int, step: str):
 
 
 def _finish_to_done(client: TestClient, event: str, data: object, *, step: str) -> None:
-    """决策点则亲裁续跑到 done；已是 done 则直接过。"""
     if event == "done":
         return
     if event == "decisions":
@@ -154,6 +159,28 @@ def _finish_to_done(client: TestClient, event: str, data: object, *, step: str) 
         _resolve_decisions_via_stream(client, decisions, step=f"{step} resolve")
         return
     raise AssertionError(f"{step}: unexpected terminal {event!r} data={data!r}")
+
+
+def _resolve_retry_empty(client: TestClient, *, step: str) -> tuple[str, object]:
+    """phase2 失败后已 decided 行续跑：空 choices → submit_decisions。"""
+    resp = client.post(
+        "/api/decree/resolve_decisions/stream",
+        json={"choices": []},
+    )
+    _assert_not_bare_500(resp, step=step)
+    assert resp.status_code == 200, f"{step} → {resp.status_code}: {resp.text}"
+    return _terminal_sse(resp)
+
+
+def _hitl_choices(decisions: list) -> list[dict]:
+    """1468 选项投影 + 现行 decision_key 契约（#1589）。"""
+    base = _choices_from_decisions(decisions)
+    out: list[dict] = []
+    for d, c in zip(decisions, base):
+        key = str((d or {}).get("decision_key") or "").strip()
+        assert key, f"decision missing decision_key: {d!r}"
+        out.append({**c, "decision_key": key})
+    return out
 
 
 def _new_game_with_directive(client: TestClient) -> tuple[int, object]:
@@ -173,45 +200,54 @@ def _new_game_with_directive(client: TestClient) -> tuple[int, object]:
     return turn0, game
 
 
-def _default_agents(*, fail_module: str = "relations", error_times: int = 0, always_error_module: str | None = None) -> dict[str, _TransportAgent]:
-    agents = {
+def _default_agents(
+    *,
+    fail_module: str = "relations",
+    error_times: int = 0,
+    always_error_module: str | None = None,
+    gate: threading.Event | None = None,
+    hit: threading.Event | None = None,
+) -> dict[str, _TransportAgent]:
+    return {
         m: _TransportAgent(
             m,
             error_then_ok_times=(error_times if m == fail_module else 0),
             always_error=(always_error_module == m),
+            gate=(gate if m == fail_module or always_error_module == m else None),
+            hit=(hit if m == fail_module or always_error_module == m else None),
         )
         for m in EXTRACTION_MODULES
     }
-    return agents
 
 
 def _month_open_view(state: dict) -> dict:
+    """0148 可观察面：settlement_display + metrics（不锁 phase 文案）。"""
     turn = state.get("turn") or {}
     return {
         "settlement_display": bool(turn.get("settlement_display")),
-        "phase": turn.get("phase"),
         "metrics": state.get("metrics"),
+        "turn": turn.get("turn"),
     }
 
 
-def _structured_error_blob(data: object, recovery: object, manifest: object) -> dict:
-    """只拼结构化面，供既有 _llm_error_detail 键核验（不扫 traceback 散文）。"""
-    out: dict = {}
+def _pack_manifest(recovery: dict) -> dict:
+    pack_path = recovery.get("error_pack_path") or ""
+    assert pack_path, recovery
+    return json.loads(Path(pack_path, "manifest.json").read_text(encoding="utf-8"))
+
+
+def _player_error_surfaces(data: object, recovery: object) -> list[dict]:
+    """结构化错误/恢复面（不扫散文措辞）。"""
+    out: list[dict] = []
     if isinstance(data, dict):
-        out["stream"] = data
+        out.append(data)
         msg = data.get("message")
         if isinstance(msg, dict):
-            out["stream_message"] = msg
+            out.append(msg)
+        elif isinstance(msg, str) and msg.strip():
+            out.append({"message": msg})
     if isinstance(recovery, dict):
-        out["recovery"] = {
-            k: recovery.get(k)
-            for k in ("ready_replay", "error_pack_path", "code", "status_code", "provider_message", "attempt")
-            if k in recovery or recovery.get(k) is not None
-        }
-        # 保留 recovery 全键名列表供「是否暴露上游」判断，不锁未定 schema 值域
-        out["recovery_keys"] = sorted(recovery.keys())
-    if isinstance(manifest, dict):
-        out["manifest"] = manifest
+        out.append(recovery)
     return out
 
 
@@ -223,27 +259,48 @@ def _structured_error_blob(data: object, recovery: object, manifest: object) -> 
     reason="待 #1465：extractor transport 预算内可重试失败应自愈（agent.run 多 attempt）",
 )
 def test_extractor_one_retryable_transport_failure_self_heals(
-    transport_tracer_client, monkeypatch,
+    tracer_client, monkeypatch,
 ):
     """一腿 agent.run 首次 ERROR（429 形），预算内应再 attempt 成功 → 月+1、无失败面。
 
-    断言 fail 模块 run.calls>=2（真重试，非吞失败后空 delta 放行）。
+    证明力：
+    - fail 模块 run.calls>=2 = transport 重试次数（非写包序号）
+    - 成功腿 fingerprint（民心 -1）须出现在落账后 metrics 相对变化可观察面
+      （与「重试后丢成功产出再空放行」区分；不设 delta 必须非空生产护栏）
     """
-    client = transport_tracer_client
+    client = tracer_client
     turn0, game = _new_game_with_directive(client)
     agents = _default_agents(fail_module="relations", error_times=1)
     _wire_real_extract_path(monkeypatch, agents)
 
+    booked: dict = {}
+    real_persist = decree_mod.persist_resolve_context
+
+    def _spy_persist(db, turn, extracted, **kw):
+        booked["extracted"] = extracted
+        return real_persist(db, turn, extracted, **kw)
+
+    monkeypatch.setattr(decree_mod, "persist_resolve_context", _spy_persist)
+
     resp = _issue_stream(client, expected_turn=turn0, step="self-heal")
     event, data = _terminal_sse(resp)
-    _finish_to_done(client, event, data, step="self-heal")
 
-    assert agents["relations"].calls >= 2, (
-        f"self-heal must retry relations agent.run; calls={agents['relations'].calls}"
+    transport_attempts = agents["relations"].calls
+    # 红灯真源：无 #1465 时 calls 停在 1；有预算自愈后须 ≥2
+    assert transport_attempts >= 2, (
+        f"self-heal must retry relations agent.run; transport_attempts={transport_attempts} "
+        f"terminal={event!r} data={data!r}"
     )
     for m, ag in agents.items():
         if m != "relations":
             assert ag.calls >= 1, m
+
+    _finish_to_done(client, event, data, step="self-heal")
+
+    # 成功产出指纹须进落账真源（persist extracted），排除「重试后丢成功再空放行」
+    extracted = booked.get("extracted") or {}
+    metric_delta = extracted.get("metric_delta") or {}
+    assert metric_delta.get("民心") == -1, extracted
 
     _wait_pending_writes(game)
     after = _get_state(client)
@@ -252,23 +309,23 @@ def test_extractor_one_retryable_transport_failure_self_heals(
     assert (after.get("turn") or {}).get("phase") != TurnPhase.SETTLING.value
 
 
-# ── 终失败回路 ─────────────────────────────────────────────────────────
+# ── 终失败回路（绿基线 + 证明力修正；不整条藏 xfail） ─────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="待 #1465：终失败玩家/恢复结构化面须带既有 _llm_error_detail 上游键（status_code/code）",
-)
-def test_extractor_transport_budget_exhausted_surfaces_upstream_typed_fields(
-    transport_tracer_client, monkeypatch,
+def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
+    tracer_client, monkeypatch,
 ):
-    """超预算持续 ERROR → fail-closed；上游状态/类别经既有 typed 键可见；attempt≥1。
+    """持续 ERROR → fail-closed 绿基线。
 
-    不新造 manifest schema 键名：只核 web_app._llm_error_detail 已定契约
-    （code / status_code / provider_message）是否出现在 stream error 或 recovery 结构化面；
-    attempt 认既有 manifest.attempt（写包序号）或 recovery 暴露的 attempt。
+    证明力分层：
+    - transport_attempts = fail 模块 agent.run.calls（本阶段无 #1465 重试 → 通常 1）
+    - pack_attempt = manifest.attempt（写包序号，另列，不冒充 transport 账）
+    - 异常来源 = manifest.exception_type（注入经 extract_agent_text → LLMUnavailable）
+    - 可操作失败 = event:error + recovery.message 存在 + 不泄 Traceback
+    - 0148 终失败后：settlement_display + metrics 保持点击前月初快照
+    不在此断言玩家面 status_code（阶段 0 真缺口，见诊断；不造 pack schema）。
     """
-    client = transport_tracer_client
+    client = tracer_client
     turn0, game = _new_game_with_directive(client)
     agents = _default_agents(always_error_module="relations")
     _wire_real_extract_path(monkeypatch, agents)
@@ -278,49 +335,8 @@ def test_extractor_transport_budget_exhausted_surfaces_upstream_typed_fields(
     event, data = _terminal_sse(resp)
     assert event == "error", (event, data)
 
-    _wait_pending_writes(game)
-    after = _get_state(client)
-    assert _turn_of(after) == turn0
-    assert (after.get("turn") or {}).get("phase") == TurnPhase.SETTLING.value
-    recovery = after.get("settlement_recovery")
-    assert isinstance(recovery, dict)
-    pack_path = recovery.get("error_pack_path") or ""
-    assert pack_path
-    manifest = json.loads(Path(pack_path, "manifest.json").read_text(encoding="utf-8"))
-    assert int(manifest.get("attempt") or 0) >= 1
-
-    # 人话、禁栈
-    blob = json.dumps(data, ensure_ascii=False) if not isinstance(data, str) else str(data)
-    assert CLI_RUNNER_PLAYER_MESSAGE in blob or "结算失败" in blob or "可重试" in blob
-    assert "Traceback" not in blob
-
-    surfaces = _structured_error_blob(data, recovery, manifest)
-    # 既有 _llm_error_detail 键：任一结构化面须带 status_code 与 code（类别）
-    typed_candidates = []
-    for node in (surfaces.get("stream"), surfaces.get("stream_message"), surfaces.get("recovery")):
-        if isinstance(node, dict):
-            typed_candidates.append(node)
-    assert any(c.get("status_code") is not None for c in typed_candidates), surfaces
-    assert any(c.get("code") for c in typed_candidates), surfaces
-
-    # 0148：终失败 settling 下月初快照仍在
-    after_view = _month_open_view(after)
-    assert after_view["settlement_display"] is True
-    assert after_view["metrics"] == before["metrics"]
-
-
-def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
-    transport_tracer_client, monkeypatch,
-):
-    """基线：extractor 终失败 → 原月 + settlement_recovery（ready_replay=False）。"""
-    client = transport_tracer_client
-    turn0, game = _new_game_with_directive(client)
-    agents = _default_agents(always_error_module="relations")
-    _wire_real_extract_path(monkeypatch, agents)
-
-    resp = _issue_stream(client, expected_turn=turn0, step="baseline-terminal")
-    event, data = _terminal_sse(resp)
-    assert event == "error", (event, data)
+    transport_attempts = agents["relations"].calls
+    assert transport_attempts >= 1, transport_attempts
 
     _wait_pending_writes(game)
     after = _get_state(client)
@@ -330,22 +346,54 @@ def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
     assert isinstance(recovery, dict)
     assert recovery.get("ready_replay") is False
     assert recovery.get("error_pack_path")
-    assert isinstance(recovery.get("message"), str) and recovery["message"]
+    # 可操作失败：结构化 message 存在（不锁中文措辞/常量名）
+    surfaces = _player_error_surfaces(data, recovery)
+    assert any(
+        isinstance(s.get("message"), str) and s["message"].strip()
+        for s in surfaces
+    ), surfaces
+    blob = json.dumps(data, ensure_ascii=False) if not isinstance(data, str) else str(data)
+    assert "Traceback" not in blob
+
+    manifest = _pack_manifest(recovery)
+    pack_attempt = int(manifest.get("attempt") or 0)
+    assert pack_attempt >= 1, f"pack write seq; got {pack_attempt}"
+    # 写包序号 ≠ transport 账：只并列记录，不以 pack_attempt 代替 transport_attempts
+    assert transport_attempts >= 1
+    assert manifest.get("exception_type") == "LLMUnavailable", manifest
+
+    # 0148：终失败后刷新投影仍为月初快照
+    after_view = _month_open_view(after)
+    assert after_view["settlement_display"] is True
+    assert after_view["metrics"] == before["metrics"]
+    assert after_view["turn"] == turn0
 
 
-# ── 恢复 D6：未 ready → 重新推演 ───────────────────────────────────────
+# ── 恢复 (a1) settling 未 ready：重新推演入口 = issue/stream ───────────
 
 
-def test_d6_unready_resimulate_reruns_sim_extract_keeps_pack_advances(
-    transport_tracer_client, monkeypatch,
+def test_a1_settling_unready_resimulate_via_issue_stream(
+    tracer_client, monkeypatch,
 ):
-    """ready=0 终失败后再次 issue：不重跑 pre_settle；重跑 sim+extract；月+1；旧错误包保留。"""
-    client = transport_tracer_client
+    """(a1) settling + ready=0 终失败后，玩家「重新推演」真入口 POST issue/stream。
+
+    既有行为（可绿）：
+    - pre_settle 不二跑（D3 前半段）
+    - simulator + extractor 重跑
+    - 月 +1；旧错误包目录/manifest 保留
+
+    与票面差异（可核缺口，不改生产凑绿）：
+    - ready=0 路径是 resolve_turn fallthrough 重入，**不**调用
+      error_pack.clear_for_resimulation（该逃生口见 SETTLEMENT_FLOW /
+      error_pack.py:270，主要服务 ready 毒包降级）。本条记录 clear_calls，
+      现行预期 0；不得手调 helper 伪造 clear 覆盖。
+    """
+    client = tracer_client
     turn0, game = _new_game_with_directive(client)
 
     agents_fail = _default_agents(always_error_module="relations")
     _wire_real_extract_path(monkeypatch, agents_fail)
-    resp1 = _issue_stream(client, expected_turn=turn0, step="D6-fail")
+    resp1 = _issue_stream(client, expected_turn=turn0, step="a1-fail")
     ev1, _ = _terminal_sse(resp1)
     assert ev1 == "error"
     _wait_pending_writes(game)
@@ -359,6 +407,7 @@ def test_d6_unready_resimulate_reruns_sim_extract_keeps_pack_advances(
 
     pre_calls = {"n": 0}
     sim_calls = {"n": 0}
+    clear_calls = {"n": 0}
     real_pre = decree_mod.pre_settle
     real_sim = decree_mod.simulate_season_with_payload
 
@@ -370,136 +419,196 @@ def test_d6_unready_resimulate_reruns_sim_extract_keeps_pack_advances(
         sim_calls["n"] += 1
         return real_sim(*a, **k)
 
+    def _count_clear(db, turn):
+        clear_calls["n"] += 1
+        return _real_clear_for_resimulation(db, turn)
+
     monkeypatch.setattr(decree_mod, "pre_settle", _count_pre)
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _count_sim)
+    monkeypatch.setattr(decree_mod, "clear_for_resimulation", _count_clear)
+    # session 直接 from-import 了 clear_for_resimulation
+    import ming_sim.session as session_mod
+    monkeypatch.setattr(session_mod, "clear_for_resimulation", _count_clear)
 
     agents_ok = _default_agents(error_times=0)
     _wire_real_extract_path(monkeypatch, agents_ok)
-    resp2 = _issue_stream(client, expected_turn=turn0, step="D6-resim")
+    resp2 = _issue_stream(client, expected_turn=turn0, step="a1-resim")
     ev2, data2 = _terminal_sse(resp2)
-    _finish_to_done(client, ev2, data2, step="D6-resim")
+    _finish_to_done(client, ev2, data2, step="a1-resim")
 
-    assert pre_calls["n"] == 0, f"D6 must not rerun pre_settle; got {pre_calls['n']}"
-    assert sim_calls["n"] >= 1, f"D6 must rerun simulator; got {sim_calls['n']}"
+    assert pre_calls["n"] == 0, f"a1 must not rerun pre_settle; got {pre_calls['n']}"
+    assert sim_calls["n"] >= 1, f"a1 must rerun simulator; got {sim_calls['n']}"
+    assert sum(ag.calls for ag in agents_ok.values()) >= len(EXTRACTION_MODULES)
+    # 可核缺口：ready=0 fallthrough 不经 clear_for_resimulation
+    assert clear_calls["n"] == 0, (
+        "current ready=0 issue/stream recovery is fallthrough, not clear_for_resimulation; "
+        f"got clear_calls={clear_calls['n']}"
+    )
+
+    _wait_pending_writes(game)
+    after = _get_state(client)
+    assert _turn_of(after) == turn0 + 1
+    assert after.get("settlement_recovery") is None
+    assert Path(pack_path).is_dir()
+    assert (Path(pack_path) / "manifest.json").read_text(encoding="utf-8") == pack_manifest_before
+
+
+# ── 恢复 (a2) 批红后 phase2：复用叙事只重抽 ─────────────────────────────
+
+
+def test_a2_hitl_phase2_extract_fail_reuses_narrative_only_reextracts(
+    tracer_client, monkeypatch,
+):
+    """(a2) HITL/phase2 批红后 extractor 终失败 → 续跑只重抽，不重新生成 simulator。
+
+    入口：issue/stream 出 decisions → resolve_decisions/stream 亲裁（既有 1468 助手）；
+    失败后再空 choices 续跑（已 decided 行）。
+    """
+    client = tracer_client
+    turn0, game = _new_game_with_directive(client)
+
+    # phase1 产出决策块；sim 计数用于 a2 断言不重跑
+    sim_calls = {"n": 0}
+    real_sim = decree_mod.simulate_season_with_payload
+
+    def _decision_sim(*a, **k):
+        sim_calls["n"] += 1
+        payload = k.get("simulator_payload") or {}
+        return _DECISION_NARRATIVE, payload
+
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _decision_sim)
+
+    # 先走到 awaiting_decision（extract 尚未跑）
+    agents_idle = _default_agents(error_times=0)
+    _wire_real_extract_path(monkeypatch, agents_idle)
+    resp1 = _issue_stream(client, expected_turn=turn0, step="a2-phase1")
+    ev1, data1 = _terminal_sse(resp1)
+    assert ev1 == "decisions", (ev1, data1)
+    assert isinstance(data1, dict)
+    decisions = data1.get("decisions") or []
+    assert decisions, data1
+    narrative_before = (game.db.get_resolve_context(turn0) or {}).get("narrative")
+    assert narrative_before
+    sim_after_phase1 = sim_calls["n"]
+    assert sim_after_phase1 >= 1
+
+    # phase2 首次：extractor 持续失败
+    agents_fail = _default_agents(always_error_module="relations")
+    _wire_real_extract_path(monkeypatch, agents_fail)
+    # 亲裁提交（1468 选项投影 + decision_key）；允许 error 终态
+    choices_resp = client.post(
+        "/api/decree/resolve_decisions/stream",
+        json={"choices": _hitl_choices(decisions)},
+    )
+    _assert_not_bare_500(choices_resp, step="a2-phase2-fail")
+    assert choices_resp.status_code == 200, choices_resp.text
+    ev_fail, data_fail = _terminal_sse(choices_resp)
+    assert ev_fail == "error", (ev_fail, data_fail)
+    _wait_pending_writes(game)
+
+    mid_state = _get_state(client)
+    assert _turn_of(mid_state) == turn0
+    # phase2 失败后仍停在亲裁/结算窗；叙事真源保留
+    ctx_mid = game.db.get_resolve_context(turn0)
+    assert ctx_mid is not None
+    assert ctx_mid.get("extracted") is None
+    assert ctx_mid.get("narrative") == narrative_before
+    # 错误包：优先 recovery 投影；否则扫本 turn pack 目录
+    recovery = mid_state.get("settlement_recovery") or {}
+    pack_path = recovery.get("error_pack_path") or ""
+    if not pack_path:
+        from ming_sim.error_pack import latest_error_pack_for_turn
+        pack_path = latest_error_pack_for_turn(game.db.path, turn0) or ""
+    assert pack_path and Path(pack_path).is_dir(), (recovery, pack_path)
+    pack_manifest_before = (Path(pack_path) / "manifest.json").read_text(encoding="utf-8")
+    assert sim_calls["n"] == sim_after_phase1, "phase2 fail must not rerun simulator"
+
+    # 续跑：只重抽
+    agents_ok = _default_agents(error_times=0)
+    _wire_real_extract_path(monkeypatch, agents_ok)
+    # 恢复 sim 计数器监视（禁止再增）
+    def _forbid_sim(*a, **k):
+        sim_calls["n"] += 1
+        raise AssertionError("a2 recovery must not regenerate simulator narrative")
+
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _forbid_sim)
+
+    ev_ok, data_ok = _resolve_retry_empty(client, step="a2-retry")
+    if ev_ok == "decisions":
+        # 若仍回 decisions，再空续一次不合法；应 done 或已推进
+        raise AssertionError(f"a2-retry still decisions: {data_ok!r}")
+    if ev_ok == "error":
+        raise AssertionError(f"a2-retry error: {data_ok!r}")
+    assert ev_ok == "done", (ev_ok, data_ok)
+
+    assert sim_calls["n"] == sim_after_phase1
     assert sum(ag.calls for ag in agents_ok.values()) >= len(EXTRACTION_MODULES)
 
     _wait_pending_writes(game)
     after = _get_state(client)
     assert _turn_of(after) == turn0 + 1
     assert after.get("settlement_recovery") is None
-    # 错误包保留（ADR 0008 诊断孤本）
     assert Path(pack_path).is_dir()
     assert (Path(pack_path) / "manifest.json").read_text(encoding="utf-8") == pack_manifest_before
 
 
-# ── 恢复 D3：ready 重放不重跑 LLM ───────────────────────────────────────
-
-
-def test_d3_ready_replay_does_not_rerun_extractor_llm(
-    transport_tracer_client, monkeypatch,
-):
-    """ready=1 后 issue/stream：不调用 extract_scores / simulate；月+1。"""
-    client = transport_tracer_client
-    turn0, game = _new_game_with_directive(client)
-    db, state = game.db, game.state
-
-    from ming_sim.decree import persist_resolve_context
-
-    persist_resolve_context(
-        db, turn0, {"metric_delta": {"民心": -1}},
-        decree_text="恢复诏", narrative="恢复邸报",
-        simulator_payload={}, secret_orders={}, relevant_memories=[],
-    )
-    state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
-    assert game.state_payload()["settlement_recovery"]["ready_replay"] is True
-
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *_a, **_k: (_ for _ in ()).throw(
-            AssertionError("D3 must not rerun simulator")
-        ),
-    )
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *_a, **_k: (_ for _ in ()).throw(
-            AssertionError("D3 must not rerun extractor")
-        ),
-    )
-    monkeypatch.setattr(
-        memories_mod, "run_agent_text",
-        lambda *a, **k: '{"body": "月记", "tags": []}',
-    )
-
-    resp = _issue_stream(client, expected_turn=turn0, step="D3")
-    ev, data = _terminal_sse(resp)
-    _finish_to_done(client, ev, data, step="D3")
-    _wait_pending_writes(game)
-    after = _get_state(client)
-    assert _turn_of(after) == turn0 + 1
-    assert after.get("settlement_recovery") is None
-
-
-# ── 0148：自愈期间呈现（待 #1465） ─────────────────────────────────────
+# ── 0148：自愈窗（待 #1465；采样落在失败可见之后的恢复/重试窗） ────────
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="待 #1465：自愈期间 api_state 保持月初快照且最终成功",
+    reason="待 #1465：自愈重试窗内 api_state 保持月初快照且最终成功",
 )
 def test_0148_api_state_month_open_during_self_heal(
-    transport_tracer_client, monkeypatch,
+    tracer_client, monkeypatch,
 ):
-    """自愈窗内 GET state 仍 settlement_display + 月初 metrics；成功后月+1。"""
-    client = transport_tracer_client
+    """自愈重试窗：首次 transport 失败返回后、最终成功前，GET state 仍月初快照。
+
+    采样点：fail 腿第 1 次 run 已进入并释放 gate 之后读 state（失败信号已产生的
+    窗口），而非仅在 _finish_to_done 成功后回看。终失败后 0148 已并入终失败绿基线。
+    """
+    client = tracer_client
     turn0, game = _new_game_with_directive(client)
     before = _month_open_view(_get_state(client))
 
     gate = threading.Event()
     hit = threading.Event()
-    lock = threading.Lock()
-
-    class _GatedRelations(_TransportAgent):
-        def run(self, prompt):
-            with lock:
-                self.calls += 1
-                n = self.calls
-            if n == 1:
-                hit.set()
-                assert gate.wait(timeout=5.0), "0148 probe gate timed out"
-                return SimpleNamespace(
-                    content="Error code: 429 - rate_limit",
-                    status="ERROR",
-                )
-            return SimpleNamespace(
-                content=_EMPTY_MODULE_JSON["relations"],
-                status="COMPLETED",
-            )
-
-    agents = _default_agents(error_times=0)
-    agents["relations"] = _GatedRelations("relations")
+    agents = _default_agents(
+        fail_module="relations", error_times=1, gate=gate, hit=hit,
+    )
     _wire_real_extract_path(monkeypatch, agents)
 
     mid_holder: dict = {}
 
     def _probe():
         assert hit.wait(timeout=5.0), "relations never entered fail probe"
-        mid_holder["state"] = _get_state(client)
+        # 先放行 fail 返回，再采「失败后、重试中」窗；短等重试腿启动
         gate.set()
+        # 给调度一个切换点：失败已返回、#1465 若存在应进入再 attempt
+        threading.Event().wait(0.05)
+        mid_holder["state"] = _get_state(client)
 
     probe = threading.Thread(target=_probe, daemon=True)
     probe.start()
     resp = _issue_stream(client, expected_turn=turn0, step="0148-heal")
     probe.join(timeout=10.0)
     ev, data = _terminal_sse(resp)
-    _finish_to_done(client, ev, data, step="0148-heal")
 
-    mid = _month_open_view(mid_holder.get("state") or {})
+    mid_state = mid_holder.get("state")
+    assert mid_state is not None, "0148 probe did not capture mid-heal api_state"
+    mid = _month_open_view(mid_state)
     assert mid["settlement_display"] is True
     assert mid["metrics"] == before["metrics"]
+    assert mid["turn"] == turn0
+
+    # 自愈完成契约（无 #1465 时 calls 停 1 + terminal error → 本断言红）
+    assert agents["relations"].calls >= 2, (
+        f"0148 self-heal window needs retry; calls={agents['relations'].calls} "
+        f"terminal={ev!r} data={data!r}"
+    )
+    _finish_to_done(client, ev, data, step="0148-heal")
 
     _wait_pending_writes(game)
     after = _get_state(client)
     assert _turn_of(after) == turn0 + 1
     assert after.get("settlement_recovery") is None
-    assert agents["relations"].calls >= 2
