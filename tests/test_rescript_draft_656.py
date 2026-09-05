@@ -409,17 +409,28 @@ def test_payload_projects_consumable_region_targets_from_real_monthly_board(game
             )
 
 
-def test_generate_rejects_region_id_outside_same_batch_catalog(monkeypatch):
+def test_generate_ungrounded_region_heals_then_drops_sibling_kept(monkeypatch, tmp_path):
+    """#1746：region target 未接地 → heal 耗尽只剔该 option，兄弟保留。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     item = _legal_item()
+    # 兄弟锚定同批目录 liaodong；坏项 target 游离
+    for opt in item["options"]:
+        opt["target_id"] = "liaodong"
+        opt["region_id"] = "liaodong"
+    sibling = dict(item["options"][1])
     item["options"][0]["target_id"] = "ningyuan"
+    item["options"][0]["region_id"] = "ningyuan"
     monkeypatch.setattr(
         rescript_mod, "run_agent_text",
         lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
     )
-    assert generate_rescript_draft(object(), {
+    drafts = generate_rescript_draft(object(), {
         "active_issues": [],
         "region_targets": [{"id": "liaodong", "name": "辽东 / 宁锦", "kind": "边镇"}],
-    }, 1) is None
+    }, 1)
+    assert drafts is not None and len(drafts) == 1
+    assert len(drafts[0]["options"]) == 1
+    assert drafts[0]["options"][0].get("label") == sibling.get("label")
 
 
 def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
@@ -456,8 +467,11 @@ def test_payload_projects_consumable_army_targets_from_real_monthly_board(game):
     assert payload["grant_kinds"] == ["army_pay"]
 
 
-def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
+def test_generate_ungrounded_army_heals_then_drops_sibling_kept(monkeypatch, tmp_path):
+    """#1746：army target 未接地 → heal 耗尽只剔该 option，兄弟保留。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     item = _legal_item()
+    sibling = dict(item["options"][1])
     item["options"][0].update({
         "action_type": "military_order",
         "target_kind": "army",
@@ -470,11 +484,14 @@ def test_generate_rejects_army_id_outside_same_batch_catalog(monkeypatch):
         rescript_mod, "run_agent_text",
         lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
     )
-    assert generate_rescript_draft(object(), {
+    drafts = generate_rescript_draft(object(), {
         "active_issues": [],
         "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
         "army_targets": [{"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"}],
-    }, 1) is None
+    }, 1)
+    assert drafts is not None and len(drafts) == 1
+    assert len(drafts[0]["options"]) == 1
+    assert drafts[0]["options"][0].get("label") == sibling.get("label")
 
 
 def test_generate_military_order_region_target_heals_then_drops(monkeypatch, tmp_path):
@@ -646,10 +663,10 @@ def test_validate_items_rejects_unknown_item_field_whole_batch():
 
 
 def test_validate_items_rejects_unknown_option_field_whole_batch():
-    """r2 裁决 B2：option 层未知字段同样不得静默省略——整批 shape 错。"""
+    """非 isolate：option 未知键仍整批 ValueError（generate isolate 时走 heal）。"""
     item = _legal_item()
     item["options"][0]["extra_option"] = "模型多写的合法自由文本"
-    with pytest.raises(ValueError, match="未知字段"):
+    with pytest.raises(ValueError, match="extra_option|未知|契约失败"):
         validate_rescript_draft_items({"items": [item]}, set())
 
 
