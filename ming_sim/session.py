@@ -2318,23 +2318,10 @@ class GameSession:
                 mode=(intent or {}).get("mode"),
             )
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
-            # #1565/0142：题名只认抽取器结构化「标题」；缺则走 pending_action_failures，
-            # 不 stage 空串、不截散文合成题名。
+            # #1565/0142：题名只认抽取器结构化「标题」，禁散文截取合成。
+            # #354：extract 失败仍须暂存 content（旨意+补充），不静默丢单；
+            # 缺 title/covert_task 由 commit 标 failed，走既有 retry_failed_pending_action 恢复。
             title = str(so.get("title") or "").strip()
-            if not title:
-                reason = str(
-                    so.get("contract_error") or "密令缺少结构化标题"
-                ).strip()
-                failures = list(out.get("pending_action_failures") or [])
-                failures.append({
-                    "kind": "secret_order",
-                    "action": "新建",
-                    "minister_name": minister_name,
-                    "retryable": True,
-                    "message": f"密令未能正式落库：{reason}",
-                })
-                out["pending_action_failures"] = failures
-                return 0
             assignee = so.get("assignee") or minister_name
             payload = {
                 "title": title,
@@ -2351,6 +2338,9 @@ class GameSession:
             frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
             if frozen is not None:
                 payload["covert_task"] = frozen
+            contract_error = str(so.get("contract_error") or "").strip()
+            if contract_error and "contract_error" not in payload:
+                payload["contract_error"] = contract_error
             return self.db.stage_pending_action(
                 self.state.turn, kind="secret_order", action="新建",
                 minister_name=minister_name, target_id=None,

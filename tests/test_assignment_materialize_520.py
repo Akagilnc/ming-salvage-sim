@@ -195,12 +195,23 @@ class _EmptyEndorsementAgent:
         return json.dumps({"endorsements": []}, ensure_ascii=False)
 
 
+def _mark_night_extracts_done(db, night_id):
+    """本测不覆盖故事抽取 drain：收夜前清待补（同 audience_night_498）。"""
+    db.conn.execute(
+        "UPDATE chat_turns SET extract_status = 'done' "
+        "WHERE night_id = ? AND extract_status != 'done'",
+        (int(night_id),),
+    )
+    db.conn.commit()
+
+
 def _close_night_approved_directives(db, state, content, night_id, pending_ids):
     """收夜真源：应允白名单 → audience_night.close_night。"""
     import ming_sim.audience_night as an
     ids = [int(p) for p in pending_ids]
     n = db.mark_pending_night_approved(ids, night_id=int(night_id))
     assert n == len(ids), f"应允未全中 night={night_id} ids={ids} marked={n}"
+    _mark_night_extracts_done(db, night_id)
     result = an.close_night(
         db, state, night_id=int(night_id), content=content,
         endorsement_extractor_agent=_EmptyEndorsementAgent(),
@@ -440,10 +451,14 @@ def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game
 
 
 def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch):
-    """#1565/0142：题名=title|target_id 结构化锚；缺锚走 validation 恢复，不静默丢单。
+    """#1565 B：缺锚恢复全链 typed 证据。
 
+    实际入口 materialize → 缺锚 validation 失败（无 pending）→ 补正 title/target_id
+    重拟 → pending → close_night 成案 → 盖玺 initiative。
     正文无损由 empty-recent / beat6 既有入口覆盖，本测不锁正文散文。
     """
+    import ming_sim.audience_night as an
+
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
         lambda _p, _c=None, *, tag="": ("臣请陛下明示交办题名后重拟。", 1),
@@ -455,7 +470,9 @@ def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch)
         "清核太仓出纳、暂缓非急工役、优发边饷要紧处，限半月回报。"
     )
     reply = "臣遵旨分办。请陛下定夺准驳。"
+    before_initiatives = len(_active_initiatives(db))
 
+    # ① 缺锚失败：零 pending，validation 留因可恢复
     bare = candidates_from_classifier_payload({
         "kind": "assignment", "title": "", "target_id": "",
         "commitment_kind": "无",
@@ -469,22 +486,53 @@ def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch)
     failure = ctx_bare.out.get("decree_validation_failure") or {}
     assert "title" in set(failure.get("failed_fields") or [])
     assert failure.get("report")
+    assert not _assignment_pendings(db, state.turn, minister_name=actor.name)
 
+    # ② 补正/重拟：结构化 target_id 锚 → 合法 pending
+    night = an.open_night(db, state)
+    nid = int(night["id"])
+    chat_turn_id = _complete_audience_chat_turn(
+        db, state, actor.name, nid, message=player, reply=reply,
+    )
     anchored = candidates_from_classifier_payload({
         "kind": "assignment", "title": "", "target_id": "清核太仓",
         "commitment_kind": "无",
     }, soft=False)
     ctx = _ctx(
         db, actor.name, anchored, state.turn,
-        message=player, reply=reply,
+        message=player, reply=reply, chat_turn_id=chat_turn_id,
     )
     run_materialize_pipeline(ctx)
+    pending_id = int(ctx.out.get("pending_action_id") or 0)
+    assert pending_id > 0
     pending = json.loads(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?",
-        (ctx.out["pending_action_id"],),
+        (pending_id,),
     ).fetchone()["payload_json"])
     assert pending.get("title") == "清核太仓"
     assert str(pending.get("text") or "").strip()
+    assert int(pending.get("source_chat_turn_id") or 0) == chat_turn_id
+
+    # ③ 收夜成案 → 盖玺 → initiative（合法成案 typed 回指）
+    _close_night_approved_directives(db, state, content, nid, [pending_id])
+    dossier = next(
+        d for d in db.list_decree_dossiers()
+        if int(d["pending_action_id"] or 0) == pending_id
+    )
+    assert int(dossier.get("source_chat_turn_id") or 0) == chat_turn_id
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    assert len(_active_initiatives(db)) == before_initiatives + 1
+    issue = next(
+        r for r in _active_initiatives(db)
+        if r["origin_ref"] == f"dossier:{dossier['id']}"
+    )
+    assert issue["origin_kind"] == "decree"
+    assert issue["title"] == "清核太仓"
+    assert str(issue["stage_text"] or "").strip()
 
 
 # ── AC：军令状 → 案卷 → 判后 initiative ──────────────────────────────
@@ -567,58 +615,61 @@ def test_assignment_rejected_verdict_creates_no_initiative(game):
     assert len(_active_initiatives(db)) == before
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_ordinary_assignment_without_commitment_lands(game, monkeypatch):
     """无验收承诺的普通交办可落；stop_condition 空、无 until_stop marker。
 
-    #1565 验收2：真实召对（分类入口）→ 应允收夜 close_night → 盖玺 → 读回
-    typed 回指 source_chat_turn_id / pending_id / directive_id / dossier_id / origin。
+    #1565 验收2：WebGame.chat 真实召对持久完成 → 应允收夜 close_night → 盖玺
+    → issue_payloads（/api/game/state 同源）读回；typed 回指
+    source_chat_turn_id / pending_id / directive_id / dossier_id / origin。
+    分类 stub 只证明下游传递，不证明真实 LLM 题名/正文语义。
     """
     import ming_sim.audience_night as an
 
     db, state, content = game
     actor = _active_ming(db, content)
-    before_issue_ids = {int(r["id"]) for r in db.list_active_issues()}
-    before_initiatives = len(_active_initiatives(db))
-    night = an.open_night(db, state)
-    nid = int(night["id"])
     message = "这核钱粮的事你办。"
     reply = "臣请奉行：核钱粮。请陛下定夺准驳。"
-    chat_turn_id = _complete_audience_chat_turn(
-        db, state, actor.name, nid, message=message, reply=reply,
-    )
+    before_issue_ids = {int(r["id"]) for r in db.list_active_issues()}
+    before_initiatives = len(_active_initiatives(db))
 
-    # 真实分类入口（仅 stub LLM backend），apply 消费分类结果并钉 chat_turn
-    scripted = _classify_assignment_via_real_entry(
-        monkeypatch,
-        message=message,
-        scripted_payload={
+    def fake_classify(*_a, **_k):
+        return candidates_from_classifier_payload({
             "kind": "assignment",
             "title": "核钱粮",
             "target_id": "he-qianliang",
             "assignee": actor.name,
             "commitment_kind": "无",
-        },
-    )
+        }, soft=False)
+
+    # 串行抽取静默后覆盖 classify（_silence_serial 会把 classify 设成断言抛错）
     _silence_serial(monkeypatch)
-    sess = _bind_apply(db, state, content)
-    sess._active_chat_turn_id = chat_turn_id
-    out = sess.apply_cli_conversation_actions(
-        actor, message, reply,
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=scripted,
-    )
-    pending_id = int(out.get("pending_action_id") or 0)
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    wg = _wire_web_game(db, state, content, _SyncAgent(reply), monkeypatch)
+
+    # 真实 WebGame.chat 召对持久完成（产 chat_turn / pending，非手造 SQL）
+    payload = wg.chat(actor.name, message)
+    pending_id = int(payload.get("pending_action_id") or 0)
     assert pending_id > 0
-    pending = json.loads(db.conn.execute(
+    pending_row = db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["payload_json"])
+    ).fetchone()
+    pending = json.loads(pending_row["payload_json"])
     assert pending.get("title") == "核钱粮"
     assert str(pending.get("text") or "").strip()
-    assert int(pending.get("source_chat_turn_id") or 0) == chat_turn_id
+    chat_turn_id = int(pending.get("source_chat_turn_id") or 0)
+    assert chat_turn_id > 0
     assert pending.get("commitment_kind") in (None, "", "无")
     assert not pending.get("stop_condition")
+    # chat_turn 由生产 chat 路径写入
+    ct = db.conn.execute(
+        "SELECT id, status FROM chat_turns WHERE id=?", (chat_turn_id,),
+    ).fetchone()
+    assert ct is not None
 
-    # 收夜真源 close_night（非内部 commit helper）
+    night = an.get_open_night(db)
+    assert night is not None
+    nid = int(night["id"])
     _close_night_approved_directives(db, state, content, nid, [pending_id])
     pending_after = db.conn.execute(
         "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
@@ -635,9 +686,8 @@ def test_ordinary_assignment_without_commitment_lands(game, monkeypatch):
     assert int(dossier.get("source_chat_turn_id") or 0) == chat_turn_id
     d_payload = json.loads(dossier["payload_json"] or "{}")
     assert d_payload.get("title") == "核钱粮"
-    assert int(d_payload.get("source_chat_turn_id") or 0) == chat_turn_id
 
-    # 盖玺（0055 顺颁）
+    # 盖玺（0055 顺颁 seam；完整 settle LLM 不在本测）
     db.apply_dossier_verdicts(
         state,
         [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -650,10 +700,12 @@ def test_ordinary_assignment_without_commitment_lands(game, monkeypatch):
     assert row["title"] == "核钱粮"
     assert row["stage_text"] == d_payload.get("text")
     assert row["commitment_kind"] in ("", None)
-    # 外部读面：list_active_issues 可见新增 initiative
-    active_ids = {int(r["id"]) for r in db.list_active_issues()}
-    assert int(row["id"]) in active_ids
-    assert before_issue_ids <= active_ids
+
+    # GET issues 同源：WebGame.issue_payloads（/api/game/state 的 issues 槽）
+    api_issues = wg.issue_payloads()
+    api_ids = {int(i["id"]) for i in api_issues}
+    assert int(row["id"]) in api_ids
+    assert before_issue_ids <= api_ids
 
     # 恢复读回
     reload_state_from_db(db, state, content=content)
@@ -666,96 +718,77 @@ def test_ordinary_assignment_without_commitment_lands(game, monkeypatch):
     assert restored_issue["title"] == "核钱粮"
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_pure_inquiry_stages_zero_mechanical_matters(game, monkeypatch):
-    """#1565 验收1：基线 → 真实分类纯问事完成 → 收夜退出 → list_active_issues 零新增
+    """#1565 验收1：基线 → WebGame.chat 纯问事持久完成 → 收夜退出 → issue_payloads 零新增
     + 同链离殿交办正对照。
 
-    分类走 classify_cli_action_intent 真入口（stub backend）；禁预造 kind=none 旁路。
+    分类经 classify_cli_action_intent 挂点（stub kind=none）；stub 不证明真实 LLM 语义。
     """
     import ming_sim.audience_night as an
 
     db, state, content = game
     actor = _active_ming(db, content)
-    sess = _bind_apply(db, state, content)
     before_issue_ids = {int(r["id"]) for r in db.list_active_issues()}
     before_pending = len(db.list_pending_actions(state.turn))
     before_dossiers = len(db.list_decree_dossiers())
     before_initiatives = len(_active_initiatives(db))
 
-    night = an.open_night(db, state)
-    nid = int(night["id"])
-    q_msg = "户部亏空日甚，卿以为如何？"
-    q_reply = "臣以为当先清核太仓出纳，再议缓急。"
-    _complete_audience_chat_turn(
-        db, state, actor.name, nid, message=q_msg, reply=q_reply,
-    )
+    phase = {"n": 0}
 
-    # 真实分类入口 → kind=none（经 classify_cli_action_intent，非手填旁路）
-    none_intent = _classify_assignment_via_real_entry(
-        monkeypatch,
-        message=q_msg,
-        scripted_payload={"kind": "none"},
-    )
-    assert none_intent == []  # kind=none → candidates 空列表
-    # 串行抽取静默；分类结果已到手，apply 只消费 preclassified
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "无", "draft_text": "", "target_candidate": "",
-    })
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
-    out = sess.apply_cli_conversation_actions(
-        actor, q_msg, q_reply,
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=none_intent,
-    )
-    assert not out.get("pending_action_id")
-    assert not out.get("decree_validation_failure")
-    assert len(db.list_pending_actions(state.turn)) == before_pending
-
-    # 退出：收夜（无应允项亦封夜）
-    closed = an.close_night(
-        db, state, night_id=nid, content=content,
-        endorsement_extractor_agent=_EmptyEndorsementAgent(),
-    )
-    assert closed.get("closed") is True or closed.get("already") is True
-    assert {int(r["id"]) for r in db.list_active_issues()} == before_issue_ids
-    assert len(db.list_decree_dossiers()) == before_dossiers
-    assert len(_active_initiatives(db)) == before_initiatives
-
-    # 正对照：新夜 → 分类交办 → 应允收夜 → issues 新增
-    night2 = an.open_night(db, state)
-    nid2 = int(night2["id"])
-    a_msg = "这核钱粮的事你办。"
-    a_reply = "臣请奉行：核钱粮。请陛下定夺准驳。"
-    ct2 = _complete_audience_chat_turn(
-        db, state, actor.name, nid2, message=a_msg, reply=a_reply,
-    )
-    assign_intent = _classify_assignment_via_real_entry(
-        monkeypatch,
-        message=a_msg,
-        scripted_payload={
+    def fake_classify(*_a, **_k):
+        phase["n"] += 1
+        if phase["n"] == 1:
+            return []  # kind=none → 空候选
+        return candidates_from_classifier_payload({
             "kind": "assignment",
             "title": "核钱粮",
             "target_id": "he-qianliang",
             "assignee": actor.name,
             "commitment_kind": "无",
-        },
+        }, soft=False)
+
+    _silence_serial(monkeypatch)
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    q_reply = "臣以为当先清核太仓出纳，再议缓急。"
+    a_reply = "臣请奉行：核钱粮。请陛下定夺准驳。"
+    agent_phase = {"n": 0}
+
+    class _PhaseAgent:
+        def run(self, *_a, **_k):
+            agent_phase["n"] += 1
+            text = q_reply if agent_phase["n"] == 1 else a_reply
+            return SimpleNamespace(content=text, tools=[])
+
+    wg = _wire_web_game(db, state, content, _PhaseAgent(), monkeypatch)
+
+    # 纯问事：WebGame.chat 真实入口
+    out = wg.chat(actor.name, "户部亏空日甚，卿以为如何？")
+    assert not out.get("pending_action_id")
+    assert len(db.list_pending_actions(state.turn)) == before_pending
+
+    night = an.get_open_night(db)
+    assert night is not None
+    nid = int(night["id"])
+    _mark_night_extracts_done(db, nid)
+    closed = an.close_night(
+        db, state, night_id=nid, content=content,
+        endorsement_extractor_agent=_EmptyEndorsementAgent(),
     )
-    sess._active_chat_turn_id = ct2
-    assign_out = sess.apply_cli_conversation_actions(
-        actor, a_msg, a_reply,
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=assign_intent,
-    )
+    assert closed.get("closed") is True or closed.get("already") is True
+    # GET issues 同源读面零新增
+    api_ids = {int(i["id"]) for i in wg.issue_payloads()}
+    assert api_ids == before_issue_ids
+    assert len(db.list_decree_dossiers()) == before_dossiers
+    assert len(_active_initiatives(db)) == before_initiatives
+
+    # 正对照：同链离殿交办 → 应允收夜 → 盖玺 → issues 新增
+    assign_out = wg.chat(actor.name, "这核钱粮的事你办。")
     pid = int(assign_out.get("pending_action_id") or 0)
     assert pid > 0
-    _close_night_approved_directives(db, state, content, nid2, [pid])
+    night2 = an.get_open_night(db)
+    assert night2 is not None
+    _close_night_approved_directives(db, state, content, int(night2["id"]), [pid])
     dossier = next(
         d for d in db.list_decree_dossiers()
         if int(d["pending_action_id"] or 0) == pid
@@ -765,7 +798,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(game, monkeypatch):
         [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         content=content,
     )
-    after_ids = {int(r["id"]) for r in db.list_active_issues()}
+    after_ids = {int(i["id"]) for i in wg.issue_payloads()}
     assert len(after_ids - before_issue_ids) >= 1
     assert any(
         r["origin_ref"] == f"dossier:{dossier['id']}"
@@ -810,10 +843,15 @@ def test_old_assignment_dossier_decree_text_carries_to_stage_text_not_title(game
 
 
 def test_old_assignment_missing_title_and_target_keeps_dossier_fails_execution(game):
-    """#1565 B：真缺锚旧案——保留案卷与正文，execution failed，不生成默认题名 initiative。"""
+    """#1565 B：真缺锚旧案——保留案卷与正文，execution failed+closed，零 initiative。
+
+    closed 无出边：同案卷不可 reopen。恢复入口=新拟 assignment（见
+    test_assignment_title_structured_anchor_not_emperor_prose 全链），不在此冒充可恢复。
+    """
     db, state, content = game
     actor = _active_ming(db, content)
     before = len(_active_initiatives(db))
+    before_ids = {int(r["id"]) for r in _active_initiatives(db)}
     decree_body = "清核太仓出纳、暂缓非急工役。"
     # 行级 target_id 仅满足建档 schema；payload 故意无 title/target_id（真缺锚）。
     dossier_id = db.create_decree_dossier(
@@ -849,14 +887,13 @@ def test_old_assignment_missing_title_and_target_keeps_dossier_fails_execution(g
         (dossier_id,),
     ).fetchone()
     assert row["execution_outcome"] == "failed"
-    # 案卷与正文保留；零 initiative（不生成默认题名事项）
+    assert row["status"] == "closed"  # 既裁生命周期：failed+close，无出边
+    # 案卷与正文保留；零新增 initiative（typed 身份，不锁生成题名措辞）
     assert row["decree_text"] == decree_body
     payload = json.loads(row["payload_json"] or "{}")
     assert payload.get("text") == decree_body
-    assert not any(
-        str(r.get("title") or "") in ("交办差事", "下议事项")
-        for r in _active_initiatives(db)
-    )
+    after_ids = {int(r["id"]) for r in _active_initiatives(db)}
+    assert after_ids == before_ids
 
 
 def test_stop_condition_only_without_marker_still_rejected(game):
