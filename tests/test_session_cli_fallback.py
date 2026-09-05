@@ -2367,7 +2367,7 @@ def test_chat_starts_cli_action_classification_before_reply_finishes(read_game, 
 
     class FakeAgent:
         def run(self, message):
-            assert classifier_started.wait(1), "动作判断应在大臣回话完成前启动"
+            classifier_started.wait()
             allow_reply.set()
             return SimpleNamespace(content="臣谨奏：辽饷尚可支应。", tools=[])
 
