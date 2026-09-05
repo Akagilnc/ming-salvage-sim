@@ -201,6 +201,42 @@ def test_missing_grant_kind_with_illegal_amount_not_heal(monkeypatch, tmp_path):
         normalize_rescript_layer_a_option(bad, generation_admission=True)
 
 
+def test_missing_label_with_illegal_amount_not_heal(monkeypatch, tmp_path):
+    """缺 required label + 已给非正 amount → 整批 F2.5，不进三次补交。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _army_pay(label="", amount=-5)
+    raw = _items_json([{"title": "u", "context": "c", "options": [bad, _hold()]}])
+    calls: list[str] = []
+
+    def _llm(*_a, **_k):
+        calls.append("x")
+        return raw
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    assert generate_rescript_draft(object(), _ctx(), turn=45) is None
+    assert len(calls) == 1
+    with pytest.raises(ValueError, match="amount"):
+        normalize_rescript_layer_a_option(bad, generation_admission=True)
+
+
+def test_deadline_months_non_int_is_illegal_not_absent():
+    mo = {
+        "label": "调关宁",
+        "hint": "边情",
+        "action_type": "military_order",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "assignee_name": "袁崇焕",
+        "transaction_category": "",
+        "station": "宁远",
+        "deadline_months": "abc",
+    }
+    with pytest.raises(ValueError, match="deadline_months"):
+        normalize_rescript_layer_a_option(mo, generation_admission=True)
+
+
 def test_illegal_purpose_value_does_not_enter_missing_heal(monkeypatch, tmp_path):
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     bad = _army_pay(purpose="赈灾")
@@ -532,16 +568,23 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
     heal_n = {"i": 0}
     priors: list[int] = []
 
+    heal_prompts: list[str] = []
+
     def _fake_run(agent, prompt, tag="", prior_messages=None):
-        del agent, prompt
+        del agent
         if tag.startswith("extractor/") or tag.startswith("sanitizer/"):
             return _CANNED
         if tag in ("rescript-draft", "rescript-draft-heal"):
             heal_n["i"] += 1
             priors.append(len(prior_messages or []))
             if tag == "rescript-draft-heal":
+                heal_prompts.append(prompt)
                 assert len(prior_messages or []) >= 2
                 assert (prior_messages or [])[1].get("content") == first_raw
+                # 结构化契约：请求携带 heal_id 与缺字段名，不整份粘贴首抽 raw
+                assert "0:0" in prompt
+                assert "purpose" in prompt
+                assert first_raw not in prompt
             if succeed_on is None:
                 return first_raw
             if heal_n["i"] == 1:
@@ -560,19 +603,18 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
     report = decree_mod.resolve_decisions_phase2(
         state, db, None, None, content=content,
     )
-    assert isinstance(report, str)
-    # 玩家可见报告通道：无补交/剔除技术键名作为结构/字段
-    banned = _banned_tech_keys()
-    assert not any(k in report for k in ("heal_id", "heal_attempts", "missing_fields"))
+    assert isinstance(report, str) and report  # 结算报告非空；不扫描正文措辞
 
     rows = db.list_rescript_drafts()
     assert len(rows) == 1
     _assert_no_tech_keys_on_player_rows(rows)
-    # desk 读面同源
+    banned = _banned_tech_keys()
+    # desk 读面：结构键成员，不扫自由文
     desk = [r for r in db.list_rescript_desk(turn) if r.get("kind") == "rescript_draft"]
-    if desk:
-        for d in desk:
-            assert not (banned & set(d))
+    for d in desk:
+        assert not (banned & set(d))
+        for o in d.get("options") or []:
+            assert not (banned & set(o))
 
     opts = rows[0]["options"]
     assert db.list_pending_decisions(turn) == []
@@ -584,7 +626,18 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
         note_obj = json.loads(note.read_text(encoding="utf-8"))
         assert note_obj.get("reason") == "option_missing_fields_heal_exhausted"
         assert "missing_fields_detail" not in note_obj
-        assert len(note_obj.get("heal_trace") or []) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+        dropped = note_obj.get("dropped_options") or []
+        assert dropped and dropped[0].get("heal_id") == "0:0"
+        assert "purpose" in (dropped[0].get("missing_fields") or [])
+        trace = note_obj.get("heal_trace") or []
+        assert len(trace) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+        for i, entry in enumerate(trace, start=1):
+            assert entry.get("attempt") == i
+            assert str(entry.get("raw_summary") or "").strip()
+            fails = entry.get("failures") or []
+            assert fails and fails[0].get("heal_id") == "0:0"
+            assert "purpose" in (fails[0].get("missing_fields") or [])
+        assert len(heal_prompts) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
     else:
         assert len(opts) == 2
         grant = next(o for o in opts if o.get("grant_action") == "协饷")
@@ -592,6 +645,7 @@ def test_phase2_entry_heal_k_or_exhaust(succeed_on, game, monkeypatch, tmp_path)
         assert heal_n["i"] == 1 + succeed_on
         assert priors[0] == 0
         assert all(p >= 2 for p in priors[1:])
+        assert heal_prompts  # 至少一次补交请求经真实回路
 
 
 def test_phase2_multi_urgent_isolation_and_zero_item(game, monkeypatch, tmp_path):
