@@ -285,10 +285,21 @@ def _draft_heal_or_escalate(
             speaker_name=ctx.character.name,
             llm_config=ctx.llm_config,
         )
-        payload = {"names": list(exc.names), "report": report}
-        ctx.out["unknown_participant_escalate"] = payload
-        ctx.batch_state["unknown_participant_escalate"] = payload
+        # batch_state is the sole store; handlers project into out when consuming.
+        ctx.batch_state["unknown_participant_escalate"] = {
+            "names": list(exc.names),
+            "report": report,
+        }
         return None
+
+
+def _project_unknown_participant_escalate(ctx: MaterializeCtx) -> bool:
+    """Copy escalate payload from batch_state into out. Returns True if projected."""
+    esc = ctx.batch_state.get("unknown_participant_escalate")
+    if esc is None:
+        return False
+    ctx.out["unknown_participant_escalate"] = esc
+    return True
 
 
 def _draft_existing_surface(ctx: MaterializeCtx) -> Dict[str, Any]:
@@ -388,14 +399,14 @@ def _preheat_batch_draft_extractions(
                 db=session.db,
             )
         except StructuredDecreeCombinationError as exc:
-            ctx.batch_state["draft_combo_error"] = exc
-            ctx.batch_state["drafts"] = []
+            # Failures land in validation_failures; pipeline returns before write pass.
+            # No draft_combo_error/drafts residue — handler multi path never runs here.
             _attribute_draft_combo_failures(
                 exc, pure_draft_records, validation_failures,
             )
             return
         if batch_res is None:
-            ctx.batch_state["drafts"] = []
+            # escalate already in batch_state via _draft_heal_or_escalate.
             return
         ctx.batch_state["drafts"] = list(batch_res.get("drafts") or [])
         return
@@ -419,7 +430,6 @@ def _preheat_batch_draft_extractions(
         validation_failures.append(
             (_rejection_item_for_exc(original_candidate, exc), exc),
         )
-        ctx.batch_state["draft_single"] = None
         return
     ctx.batch_state["draft_single"] = healed
 
@@ -844,10 +854,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         and ctx.candidate_kind_count > 1
     ):
         # Batch multi-draft: preheat owns extract/combo; handler only consumes cache.
-        if "unknown_participant_escalate" in ctx.batch_state:
-            ctx.out["unknown_participant_escalate"] = ctx.batch_state[
-                "unknown_participant_escalate"
-            ]
+        if _project_unknown_participant_escalate(ctx):
             return
         drafts = list(ctx.batch_state.get("drafts") or [])
         if ctx.candidate_kind_index >= len(drafts):
@@ -861,9 +868,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         if "draft_single" in ctx.batch_state:
             healed = ctx.batch_state.get("draft_single")
             if healed is None:
-                esc = ctx.batch_state.get("unknown_participant_escalate")
-                if esc is not None:
-                    ctx.out["unknown_participant_escalate"] = esc
+                _project_unknown_participant_escalate(ctx)
                 return
             draft_res = dict(healed) if isinstance(healed, dict) else healed
         else:
@@ -879,6 +884,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 db=session.db,
             )
             if healed is None:
+                _project_unknown_participant_escalate(ctx)
                 return
             draft_res = healed
         if intent is not None and intent_kind == "draft" and not has_existing_draft:
