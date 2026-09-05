@@ -17342,11 +17342,14 @@ class GameDB:
             )
             return False
 
-        title = str(
-            payload.get("title") or row.get("decree_text") or payload.get("text") or ""
-        ).strip()
+        # #1565/0142：题名/正文只认案卷结构化载荷 title|body|target_id，
+        # 不回落 decree_text/text 对话归档（那是案卷档案面，不是 initiative 题名）。
+        title = str(payload.get("title") or "").strip()
         if not title:
             title = str(payload.get("target_id") or "下议事项").strip()
+        stage_text = str(
+            payload.get("body") or payload.get("text") or title
+        ).strip() or title
 
         try:
             end_turn = int(payload.get("end_turn") or 0)
@@ -17368,7 +17371,7 @@ class GameDB:
             "origin_ref": origin_ref,
             "kind": "initiative",
             "title": title,
-            "stage_text": str(payload.get("text") or row.get("decree_text") or title),
+            "stage_text": stage_text,
             # 机关/职司名字符串列表 → issues.participants JSON
             "participants": bodies,
             "end_turn": end_turn,
@@ -17408,11 +17411,14 @@ class GameDB:
         if not owner:
             raise ValueError("交办案卷缺少主办")
 
-        title = str(
-            payload.get("title") or row.get("decree_text") or payload.get("text") or ""
-        ).strip()
+        # #1565/0142：题名/正文只认案卷结构化载荷 title|body|target_id，
+        # 不回落 decree_text（对话归档不得进 HUD initiative 题名）。
+        title = str(payload.get("title") or "").strip()
         if not title:
             title = str(payload.get("target_id") or "交办差事").strip()
+        stage_text = str(
+            payload.get("body") or payload.get("text") or title
+        ).strip() or title
 
         origin_ref = f"dossier:{int(dossier_id)}"
         commitment_kind = _normalize_commitment_kind(payload.get("commitment_kind"))
@@ -17427,7 +17433,7 @@ class GameDB:
             "origin_ref": origin_ref,
             "kind": "initiative",
             "title": title,
-            "stage_text": str(payload.get("text") or row.get("decree_text") or title),
+            "stage_text": stage_text,
             "participant_roster": [{"character_id": owner, "tier": "主办"}],
         }
         # 形状保留：承诺字段原样交给 apply_score_extraction。

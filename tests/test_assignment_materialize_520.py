@@ -360,10 +360,10 @@ def test_classify_prompt_stop_condition_example_is_single_layer_json(monkeypatch
     assert marker in prompt
 
 
-def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game):
-    """#520 r4：recent_context 空时案卷正文须同时保留皇帝任务描述与大臣领命回话。
+def test_assignment_empty_recent_context_keeps_structured_title_and_reply_body(game):
+    """#1565/0142：题名取分类 title；正文取大臣领命回话（body/text），不拼皇帝散文。
 
-    真实物化接缝：run_materialize_pipeline → pending payload text。
+    真实物化接缝：run_materialize_pipeline → pending payload title/body。
     """
     db, state, content = game
     actor = _active_ming(db, content)
@@ -387,31 +387,49 @@ def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game
     pending = json.loads(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["payload_json"])
-    body = str(pending.get("text") or "")
-    assert player in body, f"须保留皇帝本轮原话，got={body!r}"
-    assert reply in body, f"须保留大臣领命回话，got={body!r}"
+    assert pending.get("title") == "解决九边欠饷"
+    body = str(pending.get("body") or pending.get("text") or "")
+    assert body == reply, f"正文须为大臣领命回话，got={body!r}"
+    assert player not in body
 
 
-def test_assignment_title_and_body_keep_current_turn_anchor(game):
-    """缺 title 不得吃前轮 body 头；当轮短句不得被前文子串吞掉。"""
+def test_assignment_title_and_body_use_structured_fields_not_emperor_prose(game):
+    """#1565/0142：题名=title|target_id，正文=body/reply；禁皇帝散文截断回落。
+
+    缺分类 title 与 target_id 时不得 stage（不再 player_message[:40]）。
+    有 target_id 时 title 取该结构化锚；body/text 取大臣领命回话，不进对话链。
+    """
     db, state, content = game
     actor = _active_ming(db, content)
-    # 前轮长文含当轮短句子串「三事」
     recent = (
         "皇帝：核钱粮、整宗藩、护内帑，卿有何策？\n"
         "大臣：臣请分三事：一核钱粮，二整宗藩，三护内帑。"
     )
-    player = "三事"  # 短句，是前文「分三事」的子串
+    player = (
+        "户部亏空日甚，太仓入不敷出。卿可据实奏对，并拟一道旨："
+        "清核太仓出纳、暂缓非急工役、优发边饷要紧处，限半月回报。"
+    )
     reply = "臣遵旨分办。请陛下定夺准驳。"
-    payload = {
-        "kind": "assignment",
-        "title": "",  # 分类器未给 title
-        "target_id": "",
+
+    # 无结构化题名锚 → 零 stage（禁散文 title 回落）
+    bare = candidates_from_classifier_payload({
+        "kind": "assignment", "title": "", "target_id": "",
         "commitment_kind": "无",
-    }
-    candidates = candidates_from_classifier_payload(payload, soft=False)
+    }, soft=False)
+    ctx_bare = _ctx(
+        db, actor.name, bare, state.turn,
+        message=player, reply=reply, recent_context=recent,
+    )
+    run_materialize_pipeline(ctx_bare)
+    assert not ctx_bare.out.get("pending_action_id")
+
+    # 结构化 target_id 锚 → title 取 target_id；正文取回话
+    anchored = candidates_from_classifier_payload({
+        "kind": "assignment", "title": "", "target_id": "清核太仓",
+        "commitment_kind": "无",
+    }, soft=False)
     ctx = _ctx(
-        db, actor.name, candidates, state.turn,
+        db, actor.name, anchored, state.turn,
         message=player, reply=reply, recent_context=recent,
     )
     run_materialize_pipeline(ctx)
@@ -420,14 +438,13 @@ def test_assignment_title_and_body_keep_current_turn_anchor(game):
         (ctx.out["pending_action_id"],),
     ).fetchone()["payload_json"])
     title = str(pending.get("title") or "")
-    body = str(pending.get("text") or "")
-    # 标题来源=当轮，不得取前轮「核钱粮、整宗藩…」头 40
-    assert not title.startswith("皇帝：核钱粮")
-    assert "核钱粮、整宗藩" not in title
-    assert player in title or title == player
-    # 正文须显式含当轮短句，不得因 substring 被吞
-    assert f"皇帝：{player}" in body or body.strip().endswith(player)
-    assert "核钱粮" in body  # 上下文链仍在
+    body = str(pending.get("body") or pending.get("text") or "")
+    assert title == "清核太仓"
+    assert "户部亏空日甚" not in title
+    assert not title.startswith("皇帝：")
+    assert body == reply
+    assert "皇帝：" not in body
+    assert "核钱粮、整宗藩" not in body
 
 
 # ── AC：军令状 → 案卷 → 判后 initiative ──────────────────────────────
@@ -539,6 +556,13 @@ def test_ordinary_assignment_without_commitment_lands(game):
     assert row["commitment_kind"] in ("", None)
     assert not str(row["stop_condition"] or "").strip()
     assert row["origin_ref"] == f"dossier:{dossier['id']}"
+    # #1565：initiative 题名/正文取案卷结构化 title/body，不回落对话 decree_text
+    assert row["title"] == "核钱粮"
+    d_payload = json.loads(dossier["payload_json"] or "{}")
+    assert row["stage_text"] == str(
+        d_payload.get("body") or d_payload.get("text") or "核钱粮"
+    )
+    assert not str(row["title"] or "").startswith("皇帝：")
 
 
 def test_stop_condition_only_without_marker_still_rejected(game):
@@ -765,8 +789,11 @@ def test_beat8_reinforce_updates_existing_and_adds_fourth(game, monkeypatch):
     fourth = [pid for pid in staged if pid not in first_ids]
     assert len(fourth) == 1
     assert staged[fourth[0]].get("target_id") == "jiubian-arrears"
-    # 强化后正文仍走最近相关上下文链
-    assert "核钱粮" in str(staged[first_ids[0]].get("text") or "")
+    # #1565：事项身份在 title/target_id；正文为领命回话
+    assert "核钱粮" in str(staged[first_ids[0]].get("title") or "")
+    assert staged[first_ids[0]].get("body") == reinforce_reply or (
+        str(staged[first_ids[0]].get("text") or "") == reinforce_reply
+    )
 
     dossiers = [
         _close_night_dossier(db, state, content, pid) for pid in staged
@@ -825,8 +852,11 @@ def test_beat10_accept_three_lands_three_independent_initiatives(game, monkeypat
     staged = _assignment_pendings(db, state.turn, minister_name=actor.name)
     assert len(staged) == 3
     ids = [pid for pid, _ in staged]
+    titles = {str(payload.get("title") or "") for _, payload in staged}
+    assert {"核钱粮", "整宗藩", "护内帑"} <= titles
     for _, payload in staged:
-        assert "核钱粮" in str(payload.get("text") or "")
+        # #1565：正文=领命回话，事项身份在 title
+        assert str(payload.get("body") or payload.get("text") or "") == reply
 
     # 应允三道
     sess.apply_cli_conversation_actions(
