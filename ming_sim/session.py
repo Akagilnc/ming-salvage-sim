@@ -2744,6 +2744,7 @@ class GameSession:
         from ming_sim.cli_backend import resolve_directive_mode
         # #1731：省略 mode = 沉默。同名同职同向既有命中复用更新通道，
         # 一意一条——续拟保留同一 pending id，不得复制第二条。
+        # mode 规则 = resolve extracted→existing→ordinary；显式 ordinary 须原地降级。
         extracted_mode = data.get("mode") or data.get("颁布方式")
         existing_hits = [
             r for r in _match_office_row_by_name_office(
@@ -2755,6 +2756,9 @@ class GameSession:
             )
             if str(r.get("action") or "") == action
         ]
+        if len(existing_hits) > 1:
+            # 多命中≠无命中：不得再 INSERT
+            return 0
         if len(existing_hits) == 1:
             hit = existing_hits[0]
             resolved_mode = resolve_directive_mode(
@@ -2764,7 +2768,7 @@ class GameSession:
             return _apply_existing_appointment_hit(
                 self,
                 hit,
-                mode_mark="midzhi" if resolved_mode == "midzhi" else None,
+                mode_mark=resolved_mode,
                 minister_name=appointer.name,
                 turn=int(self.state.turn),
                 person_name=name,

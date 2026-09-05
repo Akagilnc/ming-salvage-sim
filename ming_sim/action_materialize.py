@@ -838,8 +838,14 @@ def _stage_office_pending_core(
     if action == "任命" and require_office_for_appoint and not appt_office:
         return None
 
-    # #519 同人同职 no-op 去重：仅对同向「任命」pending 并入，不双落。
-    if action == "任命" and appt_name:
+    def consume_same_direction_hit(office_for_match: str) -> Tuple[bool, Optional[int]]:
+        """#1731/#519：同名同职同向唯一命中 → 原地更新（含 mode resolve）；多命中不新建。
+
+        返回 (consumed, pending_id|None)。consumed=True 表示命中已消费（含多命中禁插）；
+        False 表示无命中，调用方继续 hedge/新建。
+        """
+        if not appt_name or not office_for_match:
+            return False, None
         existing_hits = [
             r for r in _match_office_row_by_name_office(
                 _list_pending_office_rows(
@@ -847,28 +853,42 @@ def _stage_office_pending_core(
                     pend_for_minister=ctx.pend_for_minister,
                 ),
                 name=appt_name,
-                office=appt_office,
+                office=office_for_match,
                 content=content_ref,
                 db=session.db,
             )
-            if str(r.get("action") or "") == "任命"
+            if str(r.get("action") or "") == action
         ]
-        if len(existing_hits) == 1:
-            resolved = _apply_existing_appointment_hit(
-                session,
-                existing_hits[0],
-                mode_mark=mode_mark,
-                tenure_mark=tenure_mark,
-                minister_name=minister_name,
-                turn=int(session.state.turn),
-                person_name=appt_name,
-                summon_after=want_summon,
-                origin_chat_turn_id=int(ctx.chat_turn_id or 0),
-                annotate=annotate_existing,
-            )
-            if write_primary_pending_id:
-                ctx.out["pending_action_id"] = resolved
-            return resolved
+        if len(existing_hits) > 1:
+            # 多命中≠无命中：不得再 INSERT 第三条
+            return True, None
+        if len(existing_hits) != 1:
+            return False, None
+        hit = existing_hits[0]
+        # extracted→existing→ordinary；路径 midzhi 标记与 appt.mode 同源，并入 extracted 位
+        resolved_mode = resolve_directive_mode(
+            extracted=appt.get("mode") or mode_mark,
+            existing=_office_payload(hit).get("mode"),
+        )
+        resolved = _apply_existing_appointment_hit(
+            session,
+            hit,
+            mode_mark=resolved_mode,
+            tenure_mark=tenure_mark if annotate_existing else None,
+            minister_name=minister_name,
+            turn=int(session.state.turn),
+            person_name=appt_name,
+            summon_after=want_summon,
+            origin_chat_turn_id=int(ctx.chat_turn_id or 0),
+            annotate=True,
+        )
+        return True, resolved
+
+    consumed, hit_id = consume_same_direction_hit(appt_office)
+    if consumed:
+        if hit_id and write_primary_pending_id:
+            ctx.out["pending_action_id"] = hit_id
+        return hit_id
 
     if action == "任命":
         hedged = _cancel_staged_opposing_office(
@@ -890,6 +910,12 @@ def _stage_office_pending_core(
                 "SELECT office FROM characters WHERE name=?", (canonical_name,),
             ).fetchone()
             appt_office = str(current_row["office"] or "").strip()
+            # 职名后补后再消费同向命中（字段后补≠无命中）
+            consumed, hit_id = consume_same_direction_hit(appt_office)
+            if consumed:
+                if hit_id and write_primary_pending_id:
+                    ctx.out["pending_action_id"] = hit_id
+                return hit_id
     elif action == "罢免":
         cancelled = _cancel_staged_opposing_office(
             session.db, "任命", appt_name, int(session.state.turn),
@@ -900,13 +926,12 @@ def _stage_office_pending_core(
         ):
             return None
 
-    # #1731：同名同职既有命中已在上方 _apply_existing_appointment_hit 早退；
-    # 新建只 resolve extracted→ordinary，不再重复搜既有命中。
+    # #1731：同向唯一命中已在上方消费；此处仅真正无命中才新建。
     payload = {
         "name": appt_name,
         "office": appt_office,
         "appointer": minister_name,
-        "mode": resolve_directive_mode(extracted=appt.get("mode")),
+        "mode": resolve_directive_mode(extracted=appt.get("mode") or mode_mark),
         "summon_after": "是" if want_summon else "否",
     }
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
@@ -3132,21 +3157,25 @@ def _annotate_office_pending_path(
     minister_name: str = "",
     turn: int = 0,
 ) -> int:
-    """原地改写 office pending：特旨只写 mode；署理只写 任别。返回 pending id。"""
+    """原地改写 office pending：typed mode 可升可降；署理只写 任别。返回 pending id。
+
+    mode 唯一规则同 resolve_directive_mode：调用方传入已 resolve 的
+    midzhi|ordinary；此处负责落到 payload（含既有 midzhi 被显式 ordinary 降级）。
+    """
     if not mode_mark and not tenure_mark:
         return 0
     pending_id = int(row["id"])
     payload = dict(_office_payload(row))
     changed = False
-    if mode_mark == "midzhi" and payload.get("mode") != "midzhi":
-        payload["mode"] = "midzhi"
+    if mode_mark in {"midzhi", "ordinary"} and payload.get("mode") != mode_mark:
+        payload["mode"] = mode_mark
         changed = True
     if tenure_mark == "署理" and payload.get("任别") != "署理":
         payload["任别"] = "署理"
         payload.pop("appointment_tenure", None)
         changed = True
     if not changed and (
-        (mode_mark == "midzhi" and payload.get("mode") == "midzhi")
+        (mode_mark in {"midzhi", "ordinary"} and payload.get("mode") == mode_mark)
         or (tenure_mark == "署理" and payload.get("任别") == "署理")
     ):
         # 语义已在：仍回 id（no-op 去重存活），可补留痕
