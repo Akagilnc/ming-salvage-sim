@@ -549,23 +549,93 @@ def normalize_stop_condition(raw: object) -> str:
 
 
 def _assert_raw_option_no_coexisting_illegals(raw: object) -> None:
-    """#1746：标 missing 进补交前，同 option 上已给的非法值仍走 F2.5（不得被缺字段短路）。
+    """#1746：标 missing 进补交前，同 option 已给非法值仍 F2.5（不得被缺字段短路）。
 
-    只扫「已给出的值是否非法」；空白/缺键不在此升格为 missing（由主 normalize 分类）。
+    只判「已给出的值是否非法」；空白/缺键不在此变 missing。
+    金额/account/grant_action 走 require_grant_allocation_shape / strict_int 权威，
+    禁止平行 int() 放宽 float。
     """
     if not isinstance(raw, dict):
         return
-    if "amount" in raw and raw.get("amount") not in (None, ""):
-        amt_raw = raw.get("amount")
-        try:
-            if isinstance(amt_raw, bool):
-                raise ValueError("bool")
-            amt_v = int(amt_raw)  # type: ignore[arg-type]
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"票拟 option.amount 非法：{amt_raw!r}") from exc
-        if amt_v <= 0:
-            raise ValueError(f"票拟 option.amount 须为正整数，得 {amt_v}")
+    from ming_sim.strict_types import strict_int
+
     shape = layer_a_option_shape()
+    action_types = frozenset(str(a) for a in shape.get("action_types") or ())  # type: ignore[union-attr]
+    action = str(raw.get("action_type") or "").strip()
+    if action and action not in action_types:
+        raise ValueError(f"票拟 option.action_type 非七类 routable：{action!r}")
+
+    # grant_kind 非空必须为权威军饷 kind（与 normalize 同判）
+    if "grant_kind" in raw and raw.get("grant_kind") is not None:
+        gk = str(raw.get("grant_kind") or "").strip()
+        if gk and gk != _GRANT_KIND_ARMY_PAY:
+            raise ValueError(f"grant 非法 grant_kind：{gk!r}")
+        if gk and action and action != "grant_allocation":
+            raise ValueError(f"非 grant_allocation 不得带 grant_kind：{raw.get('grant_kind')!r}")
+
+    # target_kind 非空须在闭集
+    if "target_kind" in raw and raw.get("target_kind") is not None:
+        tk = str(raw.get("target_kind") or "").strip()
+        if tk and tk not in TARGET_KINDS:
+            raise ValueError(f"票拟 option.target_kind 非法：{tk!r}")
+
+    # locality_scope 非空走权威归一（非法别名 → ValueError）
+    if "locality_scope" in raw and raw.get("locality_scope") is not None:
+        loc = raw.get("locality_scope")
+        if not isinstance(loc, str):
+            raise ValueError(
+                f"票拟 option.locality_scope 须为 str，拒 {type(loc).__name__}"
+            )
+        if str(loc).strip():
+            from ming_sim.execution_pressure import normalize_locality_scope
+            normalize_locality_scope(loc)
+
+    # amount / grant_action / account：有足够上下文则走权威 grant shape；
+    # 仅有 amount 时用与 shape 同款 strict_int（拒 bool/float）。
+    amt_present = "amount" in raw and raw.get("amount") not in (None, "")
+    ga_raw = ""
+    if "grant_action" in raw and raw.get("grant_action") is not None:
+        ga_raw = str(raw.get("grant_action") or "").strip()
+    gk_s = ""
+    if "grant_kind" in raw and raw.get("grant_kind") is not None:
+        gk_s = str(raw.get("grant_kind") or "").strip()
+    effective_ga = "协饷" if gk_s == _GRANT_KIND_ARMY_PAY else ga_raw
+    looks_grant = (
+        action == "grant_allocation" or bool(gk_s) or bool(ga_raw) or amt_present
+    )
+    if looks_grant and (effective_ga or amt_present):
+        if effective_ga:
+            from ming_sim.action_materialize import require_grant_allocation_shape
+
+            try:
+                require_grant_allocation_shape(
+                    grant_action=effective_ga,
+                    amount=raw.get("amount") if amt_present else None,
+                    account=raw.get("account") if "account" in raw else None,
+                )
+            except ValueError as exc:
+                field = str(getattr(exc, "field", "") or "")
+                # 权威 shape 的「缺」不在此升格；仅转发非法
+                if field == "amount" and amt_present:
+                    raise ValueError(str(exc)) from exc
+                if field == "grant_action" and ga_raw:
+                    raise ValueError(str(exc)) from exc
+                if field == "account":
+                    acc = str(raw.get("account") or "").strip()
+                    if acc:
+                        raise ValueError(str(exc)) from exc
+                # 其余 missing 类 shape 错忽略（留给主 normalize）
+        elif amt_present:
+            try:
+                amt_v = strict_int(raw.get("amount"), accept_numeric_strings=True)
+            except ValueError as exc:
+                raise ValueError(
+                    f"票拟 option.amount 非法：{raw.get('amount')!r}"
+                ) from exc
+            if amt_v <= 0:
+                raise ValueError(f"票拟 option.amount 须为正整数，得 {amt_v}")
+
+    # 其它 capability int：非空须 strict_int（与 amount 同拒 float/bool）
     for key in shape.get("capability_int_keys") or ():  # type: ignore[union-attr]
         key_s = str(key)
         if key_s == "amount":
@@ -574,20 +644,18 @@ def _assert_raw_option_no_coexisting_illegals(raw: object) -> None:
             continue
         val = raw.get(key_s)
         try:
-            if isinstance(val, bool):
-                raise ValueError("bool")
-            int(val)  # type: ignore[arg-type]
-        except (TypeError, ValueError) as exc:
+            strict_int(val, accept_numeric_strings=True)
+        except ValueError as exc:
             raise ValueError(f"票拟 option.{key_s} 非法：{val!r}") from exc
+
     purpose_raw = raw.get("purpose") if "purpose" in raw else None
     if purpose_raw is not None and str(purpose_raw).strip():
         purpose_s = str(purpose_raw).strip()
-        gk = str(raw.get("grant_kind") or "").strip()
-        ga = str(raw.get("grant_action") or "").strip()
-        if purpose_s != "补饷" and (gk == _GRANT_KIND_ARMY_PAY or ga == "协饷"):
+        if purpose_s != "补饷" and (
+            gk_s == _GRANT_KIND_ARMY_PAY or effective_ga == "协饷"
+        ):
             raise ValueError(f"票拟 option.purpose 非法：{purpose_raw!r}")
-    # action-conditional 枚举：非空但不在闭集 → 非法（与 enforce 同真源）
-    action = str(raw.get("action_type") or "").strip()
+
     conditional = shape.get("action_conditional") or {}
     if action and isinstance(conditional, Mapping):
         rules = conditional.get(action) or {}
@@ -741,20 +809,7 @@ def normalize_rescript_layer_a_option(
         # 生成契约：双缺时向 LLM 索取辨别字段 grant_kind（不预断必为 army_pay 值）。
         # 若已给出非法/非正 amount 等，不得被 missing 分类短路吞进补交（其它 F2.5 优先）。
         if generation_admission and not grant_kind and not raw_ga:
-            if "amount" in raw and raw.get("amount") not in (None, ""):
-                amt_raw = raw.get("amount")
-                try:
-                    if isinstance(amt_raw, bool):
-                        raise ValueError("bool")
-                    amt_v = int(amt_raw)  # type: ignore[arg-type]
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(
-                        f"票拟 option.amount 非法：{amt_raw!r}"
-                    ) from exc
-                if amt_v <= 0:
-                    raise ValueError(
-                        f"票拟 option.amount 须为正整数，得 {amt_v}"
-                    )
+            # 共处非法由 _raise_option_missing_fields → 权威扫描统一处理
             _raise_option_missing_fields(
                 "生成侧 grant_allocation 须补 grant_kind 辨别字段",
                 missing_fields=("grant_kind",),
