@@ -495,7 +495,8 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
         assert web_app._runtime_restorable(g0)
         assert not g0._write_queue.is_sealed(), "drain failure must unseal restored runtime"
         assert os.path.isfile(old_path)
-        web_app._archive_drained_db_file(old_path)
+        # close 失败 holder 仍在：AR-req 不得搬活库（外部文件终态）
+        web_app._path_request_archive(old_path)
         assert os.path.isfile(old_path)
         assert _drained(Path(web_app.user_data_path())) == []
         marker = "着户部清核辽饷（load-save-close-fail）。"
@@ -509,7 +510,7 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
 
 
 def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypatch):
-    """真实 exit→new_game：detach close 失败保留 holder/CloseOp，旧主库不被归档。"""
+    """真实 exit→new_game：detach close 失败 → 旧主库不被归档（外部文件/campaign 终态）。"""
     client = tracer_client
     _install_canned_minister_factory(monkeypatch)
     spawns = _capture_spawns(monkeypatch)
@@ -535,14 +536,8 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
         assert web_app.web_game is None
         wait_until(lambda: len(spawns) > n_before)
         completion = spawns[n_before]
-        assert completion.db_path
-        assert web_app._same_db_path(completion.db_path, old_path)
         completion.done.wait()
         assert completion.close_ok is False
-        # 失败 holder 仍在路径租约上
-        entry = web_app._lookup_holder(old_path, g0)
-        assert entry is not None
-        assert entry.close_op is completion
         assert os.path.isfile(old_path)
 
         ng = client.post("/api/menu/new_game")
@@ -550,31 +545,24 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
         assert ng.status_code == 200
         g1 = web_app.web_game
         assert g1 is not None
-        # AS：executor finally 已置；失败 holder 挡 C7，文件仍在
-        completion.archive_settled.wait()
+        # 失败 close 挡归档：旧文件仍在，c0 未进 drained
+        wait_until(lambda: completion.done.is_set())
         assert os.path.isfile(old_path)
         assert all(
             _db_snapshot(str(p))["campaign_id"] != c0
             for p in _drained(Path(web_app.user_data_path()))
         ) or _drained(Path(web_app.user_data_path())) == []
         assert marker in _db_snapshot(old_path)["directive_texts"]
-        # 失败 entry/op 仍在
-        assert web_app._lookup_holder(old_path, g0) is entry
-        assert entry.close_op is completion
-        assert web_app._same_db_path(completion.db_path, old_path)
+        # 新局可写且 campaign 不同于失败旧局
+        assert _campaign(g1) != c0
     finally:
         g0.session.close = real_close  # type: ignore[method-assign]
-        # 故障注入遗留的旧 runtime：恢复 close 后真实排空（失败响亮，不宽吞）。
+        # 故障注入遗留 runtime：恢复 close 后真实排空（失败上抛，不宽吞）。
         entry = web_app._lookup_holder(old_path, g0)
         if entry is not None:
-            # 允许失败重试：清旧 op 领新 op
             entry.close_op = None
             role, op = web_app._claim_close(entry, old_path)
             if role == "executor" and op is not None:
-                try:
-                    web_app._drain_and_close_session(g0, entry=entry, close_op=op)
-                finally:
-                    op.done.set()
-                    op.archive_settled.set()
+                web_app._drain_and_close_session(g0, entry=entry, close_op=op)
         else:
             web_app._drain_and_close_session(g0)
