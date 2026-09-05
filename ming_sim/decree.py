@@ -273,27 +273,23 @@ def promulgation_verdict_correction_feedback(
     exc: BaseException,
     *,
     raw_output: object,
-    required_dossier_ids: Sequence[int] = (),
+    required_dossier_ids: Sequence[int],
 ) -> str:
     """有界补交回喂：同会话续接，附原始产出与校验失败原因（#1753）。
 
     形状对齐 draft/rescript 的 combination_correction_feedback 骨架——只回填结构化
     verdict 契约（0052 两格 / 0066），不另造第三套 heal，不代填判向。
-    required_dossier_ids：待判全集显式写入，漏盖时补交侧知道缺哪一道
-    （不依赖 history 是否已生效）。
+    required_dossier_ids：待判全集（调用方必传非空 reviewed 集），漏盖时补交侧
+    知道缺哪一道（不依赖 history 是否已生效）。
     """
     raw_text = json.dumps(raw_output, ensure_ascii=False, sort_keys=True)
     ids = list(required_dossier_ids)
-    ids_line = (
-        f"待判案卷 dossier_id 全集（须逐案恰好一项）：{ids}\n"
-        if ids else ""
-    )
     return (
         "【颁布判决契约校验失败，请按结构化 verdict 契约整批补交】\n"
         f"校验失败原因：{exc}\n"
         f"原始产出：{raw_text}\n"
-        + ids_line
-        + "须返回 {\"verdicts\":[...]}，逐案恰好一项；"
+        f"待判案卷 dossier_id 全集（须逐案恰好一项）：{ids}\n"
+        "须返回 {\"verdicts\":[...]}，逐案恰好一项；"
         "dossier_id 必须为输入快照中的有效 SQLite 正整数；"
         "decision 只能为 promulgated 或 rejected；"
         "须逐案覆盖全部待判案卷，不能静默跳过；"
@@ -584,18 +580,19 @@ def llm_promulgation_verdicts(
     首抽送输入快照；补交 = 同 agent 会话续接 + correction（原始产出/失败原因/
     待判 id）+ 再次附带首抽快照（draft 同款回喂形，确保缺盖时补交输入仍含
     全案卷身份，不单靠 history）。
-    判官仅在本函数真执行时创建：替身替换本函数则不触工厂（既有 tracer 契约）。
+    判官工厂只在 _PromulgationJudgeSession.get_or_create：holder 复用同一 agent；
+    直呼（scripts）无 session 时本函数建临时 holder，单一装配不平行。
+    替身替换本函数则不触工厂（既有 tracer 契约）。
     """
     context = prepared_context or build_promulgation_judge_context(db, state, dossiers)
     context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
-    if judge_session is not None:
-        judge = judge_session.get_or_create()
-    else:
-        judge = create_promulgation_judge_agent(
-            llm_config, agno_db,
-            session_id=f"promulgation-judge-turn-{int(state.turn)}",
-            num_history_runs=PROMULGATION_VERDICT_HEAL_RETRIES + 1,
-        )
+    # 单一装配：heal holder 与 scripts 直呼都经 get_or_create，不平行调工厂。
+    session = judge_session or _PromulgationJudgeSession(
+        llm_config=llm_config,
+        agno_db=agno_db,
+        turn=int(state.turn),
+    )
+    judge = session.get_or_create()
     if correction_feedback:
         # 同会话续接：history 应已有首轮；仍附首抽快照（draft 骨架），
         # 使补交输入可独立核验含全案卷身份。
