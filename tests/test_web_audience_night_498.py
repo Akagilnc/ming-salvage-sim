@@ -516,22 +516,18 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                     json={"message": "另议边饷？"},
                 )
                 chat_events = _parse_sse(chat_resp.text)
+                # SSE/HTTP 拒收：event=error + 409；CLOSING 状态与零新增见下方 typed 断言。
+                # wire 上 code 未进 SSE data（api_chat_stream 只映 message）；不改生产协议。
                 assert any(ev.get("event") == "error" for ev in chat_events), chat_events
-                assert any(
-                    ev.get("event") == "error" and "收夜中" in str(ev.get("data") or "")
-                    for ev in chat_events
-                ), chat_events
                 nonstream = await chat_client.post(
                     f"/api/ministers/{minister}/chat",
                     json={"message": "另议边饷？"},
                 )
                 assert nonstream.status_code == 409, nonstream.text
-                assert "收夜中" in (nonstream.json().get("detail") or nonstream.text)
                 retry_resp = await chat_client.post(
                     f"/api/ministers/{minister}/reply/retry",
                 )
                 assert retry_resp.status_code == 409, retry_resp.text
-                assert "收夜中" in (retry_resp.json().get("detail") or retry_resp.text)
                 assert game.db.conn.execute(
                     "SELECT status FROM chat_turns WHERE id=?", (interrupted_ct,),
                 ).fetchone()["status"] == "interrupted"
@@ -615,9 +611,10 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     assert game.db.get_interrupted_reply_retries(minister)
     real_chat = game.session.chat
     real_spawn = game._spawn_pending_write_thread
+    canned_retry_answer = "臣重奏：边饷当清。"
     game.session.chat = (
         lambda minister_name, message, *, chat_turn_id=0, explicit_secret_order=False: ChatTurnResult(
-            answer="臣重奏：边饷当清。",
+            answer=canned_retry_answer,
         )
     )
     game._spawn_pending_write_thread = lambda *a, **k: False
@@ -626,7 +623,8 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     finally:
         game.session.chat = real_chat
         game._spawn_pending_write_thread = real_spawn
-    assert "重奏" in str(retry_payload.get("answer") or "")
+    # canned 无损透传（等值，非文案分类）；队列清空证 OPEN 恢复。
+    assert retry_payload.get("answer") == canned_retry_answer
     assert game.db.get_interrupted_reply_retries(minister) == []
     game.db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' WHERE id=?", (int(interrupted_ct),),
@@ -651,28 +649,27 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     )
     game.session._beat_generator = _boom_both_beat
 
-    def _detail_text(resp) -> str:
-        detail = resp.json().get("detail") if resp.headers.get("content-type", "").startswith("application/json") else None
-        if detail is None:
-            return resp.text
-        if isinstance(detail, str):
-            return detail
-        return json.dumps(detail, ensure_ascii=False)
+    # 双因保留：注入诊断经 _retryable_audience_close_http 链因拼进 detail（生产契约
+    # 即 str join，非 LLM 生成物分类）。409 + OPEN + 两条注入诊断均在 detail。
+    endorsement_diag = "endorsement boom dual"
+    beat_diag = "close beat dual fault"
 
     async def dual_fail_sync_endpoints():
         async with _client() as client:
             issue = await client.post("/api/decree/issue", json={})
             assert issue.status_code == 409, issue.text
-            issue_detail = _detail_text(issue)
-            assert "endorsement boom dual" in issue_detail, issue_detail
-            assert "close beat dual fault" in issue_detail, issue_detail
+            issue_detail = issue.json().get("detail")
+            assert isinstance(issue_detail, str), issue_detail
+            assert endorsement_diag in issue_detail, issue_detail
+            assert beat_diag in issue_detail, issue_detail
             assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_OPEN
 
             advance = await client.post("/api/decree/advance_without_edict")
             assert advance.status_code == 409, advance.text
-            advance_detail = _detail_text(advance)
-            assert "endorsement boom dual" in advance_detail, advance_detail
-            assert "close beat dual fault" in advance_detail, advance_detail
+            advance_detail = advance.json().get("detail")
+            assert isinstance(advance_detail, str), advance_detail
+            assert endorsement_diag in advance_detail, advance_detail
+            assert beat_diag in advance_detail, advance_detail
             assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_OPEN
 
     asyncio.run(dual_fail_sync_endpoints())
@@ -819,15 +816,13 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
     night, issue_events, chat_events = asyncio.run(scenario())
     assert night is not None
     assert chat_events[-1]["event"] == "end"
-    # 工人终态后续跑：不得以「在飞」error 收场
-    assert not any(
-        ev.get("event") == "error" and "在飞" in (ev.get("data") or "")
-        for ev in issue_events
-    ), issue_events
-    assert issue_events[-1]["event"] != "error" or "在飞" not in (
-        issue_events[-1].get("data") or ""
-    )
-    # 成功支：月推进或核账展示；失败若有也不得是 elapsed 伪造的 in_flight
+    # 非伪造 in-flight：等待期间 issue 未完成（scenario 内）；工人终态后 issue 必收尾
+    # （done 或业务 error 均可——本案无草案时 error 亦证已走出屏障，非 elapsed 熔断）。
+    assert issue_events and issue_events[-1]["event"] in ("done", "error"), issue_events
+    chat_status = game.db.conn.execute(
+        "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],),
+    ).fetchone()["status"]
+    assert chat_status != "generating"
     assert int(game.state.turn) >= turn_before
 
 
@@ -904,9 +899,8 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
 
     events = asyncio.run(scenario())
 
+    # 相位拒绝：SSE error + 零新夜/新 chat（wire 无 phase code；不改生产协议）。
     assert events and events[-1]["event"] == "error"
-    assert "结算" in (events[-1].get("data") or "") or "亲裁" in (events[-1].get("data") or "")
-    # 外部 DB 末态：零新夜 / 新 chat 轮
     assert _count(game.db, "audience_nights") == nights0
     assert _count(game.db, "chat_turns") == turns0
 

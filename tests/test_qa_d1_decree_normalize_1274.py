@@ -169,17 +169,41 @@ def test_patch_decree_route_removed_and_directives_remain():
 # ── 4) #1327 空载/有界 capture ─────────────────────────────────────
 
 
-def _install_cleanup_wait_recorder(monkeypatch, cli_backend, wait_flags: list[bool]):
-    """本文件唯一 cleanup shutdown(wait=) 记录夹具；两 timeout 案共用，不扩通用框架。"""
+def _install_cleanup_wait_recorder(
+    monkeypatch, cli_backend, wait_flags: list[bool], pools: list,
+):
+    """本文件唯一 cleanup shutdown(wait=) 记录夹具；两 timeout 案共用，不扩通用框架。
+
+    pools 收集 production 创建的 executor，供释放 hold 后 drain——
+    extract_draft_intent 返回后 heal 仍碰 db，fixture 拆库前必须 join pool 线程。
+    """
     _BasePool = cli_backend.ThreadPoolExecutor
 
     class _CleanupPool(_BasePool):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            pools.append(self)
+
         def shutdown(self, wait=True, *, cancel_futures=False):
             # 进入 cleanup 即记 wait，先于任何 join——wait=True 可被主线程断言红。
             wait_flags.append(bool(wait))
             return super().shutdown(wait=wait, cancel_futures=cancel_futures)
 
     monkeypatch.setattr(cli_backend, "ThreadPoolExecutor", _CleanupPool)
+
+
+def _drain_capture_pools(pools: list) -> None:
+    """释放 hold 后收尽 production shutdown(wait=False) 留下的 pool 线程。
+
+    根因：extractor_finished 只覆盖 extract_draft_intent；其后
+    _ground_relative_pay_order_deadlines 仍用同一 db。fixture 先拆连接时
+    后台线程可 worker 级 segfault（CI xdist gw crash）。
+    走基类 shutdown(wait=True) 只 join，不改 wait_flags 记录。
+    """
+    from concurrent.futures import ThreadPoolExecutor as _RealPool
+
+    for pool in pools:
+        _RealPool.shutdown(pool, wait=True, cancel_futures=False)
 
 
 def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
@@ -222,6 +246,7 @@ def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch)
     extractor_finished = threading.Event()
     # cleanup 接缝进入瞬间的 wait 旗（join 前）；晚观察不改值。
     shutdown_wait_flags: list[bool] = []
+    capture_pools: list = []
 
     def slow_extract(*_a, **_k):
         extractor_entered.set()
@@ -234,7 +259,9 @@ def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch)
             extractor_finished.set()
 
     monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
-    _install_cleanup_wait_recorder(monkeypatch, cli_backend, shutdown_wait_flags)
+    _install_cleanup_wait_recorder(
+        monkeypatch, cli_backend, shutdown_wait_flags, capture_pools,
+    )
 
     payload_box: list[dict] = []
     error_box: list[BaseException] = []
@@ -281,11 +308,11 @@ def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch)
         assert any(r["text"] == text for r in db.list_directives(state))
 
         allow_finish.set()
-        extractor_finished.wait()
+        _drain_capture_pools(capture_pools)
     finally:
-        # 失败／变异路径也必须真正释放再收尾（含 wait=True 卡在 join 时）。
+        # 失败／变异路径也必须真正释放再 drain pool（heal 仍碰 db）。
         allow_finish.set()
-        extractor_finished.wait()
+        _drain_capture_pools(capture_pools)
         worker.join()
 
 
@@ -309,6 +336,7 @@ def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
     extractor_entered = threading.Event()
     extractor_finished = threading.Event()
     shutdown_wait_flags: list[bool] = []
+    capture_pools: list = []
 
     def slow_extract(*_a, **_k):
         extractor_entered.set()
@@ -320,7 +348,9 @@ def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
             extractor_finished.set()
 
     monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
-    _install_cleanup_wait_recorder(monkeypatch, cli_backend, shutdown_wait_flags)
+    _install_cleanup_wait_recorder(
+        monkeypatch, cli_backend, shutdown_wait_flags, capture_pools,
+    )
     # 压短默认有界，避免测时 20s
     monkeypatch.setattr(cli_backend, "MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S", 0.3)
 
@@ -372,10 +402,10 @@ def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
         assert not extractor_finished.is_set()
 
         allow_finish.set()
-        extractor_finished.wait()
+        _drain_capture_pools(capture_pools)
     finally:
         allow_finish.set()
-        extractor_finished.wait()
+        _drain_capture_pools(capture_pools)
         worker.join()
 
 
