@@ -82,12 +82,16 @@ class _TransportAgent:
         always_error: bool = False,
         gate: threading.Event | None = None,
         hit: threading.Event | None = None,
+        retry_gate: threading.Event | None = None,
+        retry_hit: threading.Event | None = None,
     ):
         self.module = module
         self.error_then_ok_times = int(error_then_ok_times)
         self.always_error = bool(always_error)
         self.gate = gate
         self.hit = hit
+        self.retry_gate = retry_gate
+        self.retry_hit = retry_hit
         self.calls = 0
         self._lock = threading.Lock()
 
@@ -104,6 +108,11 @@ class _TransportAgent:
                 content="Error code: 429 - model_concurrency_rate_limit_exceeded",
                 status="ERROR",
             )
+        # 成功 attempt：供 0148 在「失败后、重试中」窗阻塞采样（Event，禁 sleep）
+        if self.retry_hit is not None and n == self.error_then_ok_times + 1:
+            self.retry_hit.set()
+            if self.retry_gate is not None:
+                assert self.retry_gate.wait(timeout=5.0), "transport retry gate timed out"
         return SimpleNamespace(
             content=_SUCCESS_MODULE_JSON[self.module],
             status="COMPLETED",
@@ -207,14 +216,21 @@ def _default_agents(
     always_error_module: str | None = None,
     gate: threading.Event | None = None,
     hit: threading.Event | None = None,
+    retry_gate: threading.Event | None = None,
+    retry_hit: threading.Event | None = None,
 ) -> dict[str, _TransportAgent]:
+    def _is_fail(m: str) -> bool:
+        return m == fail_module or always_error_module == m
+
     return {
         m: _TransportAgent(
             m,
             error_then_ok_times=(error_times if m == fail_module else 0),
             always_error=(always_error_module == m),
-            gate=(gate if m == fail_module or always_error_module == m else None),
-            hit=(hit if m == fail_module or always_error_module == m else None),
+            gate=(gate if _is_fail(m) else None),
+            hit=(hit if _is_fail(m) else None),
+            retry_gate=(retry_gate if m == fail_module else None),
+            retry_hit=(retry_hit if m == fail_module else None),
         )
         for m in EXTRACTION_MODULES
     }
@@ -265,22 +281,16 @@ def test_extractor_one_retryable_transport_failure_self_heals(
 
     证明力：
     - fail 模块 run.calls>=2 = transport 重试次数（非写包序号）
-    - 成功腿 fingerprint（民心 -1）须出现在落账后 metrics 相对变化可观察面
-      （与「重试后丢成功产出再空放行」区分；不设 delta 必须非空生产护栏）
+    - 成功腿 fingerprint（民心 -1）须反映到 GET state 的 metrics 落账面
+      （settle_with_delta 应用后的外部可见效果；不设 delta 必须非空生产护栏）
     """
     client = tracer_client
     turn0, game = _new_game_with_directive(client)
+    before_metrics = dict((_get_state(client).get("metrics") or {}))
+    before_morale = before_metrics.get("民心")
+    assert before_morale is not None, before_metrics
     agents = _default_agents(fail_module="relations", error_times=1)
     _wire_real_extract_path(monkeypatch, agents)
-
-    booked: dict = {}
-    real_persist = decree_mod.persist_resolve_context
-
-    def _spy_persist(db, turn, extracted, **kw):
-        booked["extracted"] = extracted
-        return real_persist(db, turn, extracted, **kw)
-
-    monkeypatch.setattr(decree_mod, "persist_resolve_context", _spy_persist)
 
     resp = _issue_stream(client, expected_turn=turn0, step="self-heal")
     event, data = _terminal_sse(resp)
@@ -297,16 +307,16 @@ def test_extractor_one_retryable_transport_failure_self_heals(
 
     _finish_to_done(client, event, data, step="self-heal")
 
-    # 成功产出指纹须进落账真源（persist extracted），排除「重试后丢成功再空放行」
-    extracted = booked.get("extracted") or {}
-    metric_delta = extracted.get("metric_delta") or {}
-    assert metric_delta.get("民心") == -1, extracted
-
     _wait_pending_writes(game)
     after = _get_state(client)
     assert _turn_of(after) == turn0 + 1
     assert after.get("settlement_recovery") is None
     assert (after.get("turn") or {}).get("phase") != TurnPhase.SETTLING.value
+    # 外部可见落账：成功 internal 指纹 民心-1 已 apply 进 state metrics
+    after_morale = (after.get("metrics") or {}).get("民心")
+    assert after_morale == before_morale - 1, (
+        f"success delta not booked: before={before_morale} after={after_morale}"
+    )
 
 
 # ── 终失败回路（绿基线 + 证明力修正；不整条藏 xfail） ─────────────────
@@ -367,6 +377,58 @@ def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
     assert after_view["settlement_display"] is True
     assert after_view["metrics"] == before["metrics"]
     assert after_view["turn"] == turn0
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "待 #1465：终失败须耗尽统一预算（transport 多 attempt）且玩家/恢复面 "
+        "带既有 _llm_error_detail.status_code；不新造 pack schema"
+    ),
+)
+def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
+    tracer_client, monkeypatch,
+):
+    """终失败未结契约红灯（阶段0 pending）：预算耗尽 + 上游 status 进既有 typed 面。
+
+    与绿基线同入口/同注入；本条不断中文措辞、不要求新 manifest 键。
+    - 预算：#1465 默认重试 2 → 持续失败 transport_attempts >= 3
+    - 上游：既有 _llm_error_detail 契约键 status_code 出现在 stream error 或 recovery
+    - 类别：code 保真为 extract_agent_text 注入的 llm_run_error（非仅真值）
+    """
+    client = tracer_client
+    turn0, game = _new_game_with_directive(client)
+    agents = _default_agents(always_error_module="relations")
+    _wire_real_extract_path(monkeypatch, agents)
+
+    resp = _issue_stream(client, expected_turn=turn0, step="terminal-budget-status")
+    event, data = _terminal_sse(resp)
+    assert event == "error", (event, data)
+
+    transport_attempts = agents["relations"].calls
+    # #1465 owner：默认重试 2 → 持续失败应打满 initial+retries
+    assert transport_attempts >= 3, (
+        f"budget exhausted requires transport_attempts>=3; got {transport_attempts}"
+    )
+
+    _wait_pending_writes(game)
+    after = _get_state(client)
+    assert _turn_of(after) == turn0
+    recovery = after.get("settlement_recovery")
+    assert isinstance(recovery, dict)
+    manifest = _pack_manifest(recovery)
+    pack_attempt = int(manifest.get("attempt") or 0)
+    # 写包序号另列，不冒充 transport 账
+    assert pack_attempt >= 1
+    assert manifest.get("exception_type") == "LLMUnavailable", manifest
+
+    surfaces = _player_error_surfaces(data, recovery)
+    assert any(s.get("status_code") is not None for s in surfaces), (
+        f"upstream status_code missing on typed surfaces: {surfaces!r}"
+    )
+    assert any(s.get("code") == "llm_run_error" for s in surfaces), (
+        f"exception category code not preserved as llm_run_error: {surfaces!r}"
+    )
 
 
 # ── 恢复 (a1) settling 未 ready：重新推演入口 = issue/stream ───────────
@@ -469,7 +531,6 @@ def test_a2_hitl_phase2_extract_fail_reuses_narrative_only_reextracts(
 
     # phase1 产出决策块；sim 计数用于 a2 断言不重跑
     sim_calls = {"n": 0}
-    real_sim = decree_mod.simulate_season_with_payload
 
     def _decision_sim(*a, **k):
         sim_calls["n"] += 1
@@ -562,10 +623,12 @@ def test_a2_hitl_phase2_extract_fail_reuses_narrative_only_reextracts(
 def test_0148_api_state_month_open_during_self_heal(
     tracer_client, monkeypatch,
 ):
-    """自愈重试窗：首次 transport 失败返回后、最终成功前，GET state 仍月初快照。
+    """自愈重试窗：首次 transport 失败返回后、再 attempt 持有中，GET state 仍月初快照。
 
-    采样点：fail 腿第 1 次 run 已进入并释放 gate 之后读 state（失败信号已产生的
-    窗口），而非仅在 _finish_to_done 成功后回看。终失败后 0148 已并入终失败绿基线。
+    双 Event（禁 sleep）：
+    - hit/gate：第 1 次 fail run 进入后由探针放行
+    - retry_hit/retry_gate：第 2 次 attempt（成功腿）进入后探针采样，再放行
+    无 #1465 时 retry_hit 永不置位 → 红在「重试未启动」。终失败后 0148 已并入绿基线。
     """
     client = tracer_client
     turn0, game = _new_game_with_directive(client)
@@ -573,35 +636,56 @@ def test_0148_api_state_month_open_during_self_heal(
 
     gate = threading.Event()
     hit = threading.Event()
+    retry_gate = threading.Event()
+    retry_hit = threading.Event()
     agents = _default_agents(
-        fail_module="relations", error_times=1, gate=gate, hit=hit,
+        fail_module="relations",
+        error_times=1,
+        gate=gate,
+        hit=hit,
+        retry_gate=retry_gate,
+        retry_hit=retry_hit,
     )
     _wire_real_extract_path(monkeypatch, agents)
 
     mid_holder: dict = {}
+    probe_done = threading.Event()
 
     def _probe():
-        assert hit.wait(timeout=5.0), "relations never entered fail probe"
-        # 先放行 fail 返回，再采「失败后、重试中」窗；短等重试腿启动
-        gate.set()
-        # 给调度一个切换点：失败已返回、#1465 若存在应进入再 attempt
-        threading.Event().wait(0.05)
-        mid_holder["state"] = _get_state(client)
+        try:
+            if not hit.wait(timeout=5.0):
+                mid_holder["error"] = "relations never entered first fail attempt"
+                return
+            gate.set()
+            # 等第 2 次 attempt 进入（#1465 自愈）；无预算则超时，主线程报红
+            if not retry_hit.wait(timeout=2.0):
+                mid_holder["error"] = (
+                    "retry attempt never started (no #1465 self-heal budget)"
+                )
+                return
+            mid_holder["state"] = _get_state(client)
+            retry_gate.set()
+        finally:
+            # 失败路径也放行，避免结算线程永久卡在 gate
+            gate.set()
+            retry_gate.set()
+            probe_done.set()
 
     probe = threading.Thread(target=_probe, daemon=True)
     probe.start()
     resp = _issue_stream(client, expected_turn=turn0, step="0148-heal")
-    probe.join(timeout=10.0)
+    assert probe_done.wait(timeout=10.0), "0148 probe thread did not finish"
+    probe.join(timeout=1.0)
+    assert not probe.is_alive(), "0148 probe thread still alive after probe_done"
     ev, data = _terminal_sse(resp)
 
+    assert mid_holder.get("error") is None, mid_holder.get("error")
     mid_state = mid_holder.get("state")
-    assert mid_state is not None, "0148 probe did not capture mid-heal api_state"
+    assert mid_state is not None, "0148 probe did not capture mid-retry api_state"
     mid = _month_open_view(mid_state)
     assert mid["settlement_display"] is True
     assert mid["metrics"] == before["metrics"]
     assert mid["turn"] == turn0
-
-    # 自愈完成契约（无 #1465 时 calls 停 1 + terminal error → 本断言红）
     assert agents["relations"].calls >= 2, (
         f"0148 self-heal window needs retry; calls={agents['relations'].calls} "
         f"terminal={ev!r} data={data!r}"
