@@ -636,9 +636,8 @@ class WebGame:
             if on_stage is not None:
                 on_stage(label)
 
+        # _get_main_db_path 已经 _normalize_db_path 唯一真源（相对→user_data_dir→abspath）。
         db_path = _get_main_db_path()
-        if not os.path.isabs(db_path):
-            db_path = str(user_data_dir() / db_path)
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -4553,8 +4552,6 @@ def _parse_save_name(name: str) -> Dict[str, Any]:
 
 def _main_db_campaign_id() -> str:
     db_path = _get_main_db_path()
-    if not os.path.isabs(db_path):
-        db_path = str(user_data_dir() / db_path)
     if not os.path.isfile(db_path):
         return ""
     try:
@@ -4629,10 +4626,7 @@ def _scan_campaigns() -> List[Dict[str, Any]]:
 
 def _has_main_db() -> bool:
     """主 DB 文件是否存在 → 决定「继续」按钮可不可点。"""
-    db_path = _get_main_db_path()
-    if not os.path.isabs(db_path):
-        db_path = str(user_data_dir() / db_path)
-    return os.path.isfile(db_path)
+    return os.path.isfile(_get_main_db_path())
 
 
 @app.get("/api/menu/status")
