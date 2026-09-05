@@ -33,15 +33,17 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 | 键 | 值 |
 |----|----|
 | 证据指针 | `qa-evidence/w11-8013-nov/error-1627-11-tongchuan.png` · `rejections.jsonl` · `w11-8013-pending/api-note.txt` |
-| 截图相位 | **召对 UI**（黄立极）；气泡「通传未达，请稍后再召。」；问话草稿「拟旨如下：解太仓备用」——**非**盖玺结算失败面板 |
+| 截图相位 | **召对 UI**（黄立极）；气泡文案「通传未达，请稍后再召。」；问话草稿「拟旨如下：解太仓备用」——**非**盖玺结算失败面板 |
 | 匹配 error pack | **无**。api-note 明示：同目录 `turn2_attempt1` 的 `db_path=ming_sim_1788597803068938977.db` 属**边政**档，不是朝堂 `5bf5bb186316`；共享 `error_packs/` 跨 box 串包 |
-| rejections.jsonl turn=2 | (a) `power_changes` / `invalid_enum`（流寇实力）；(b) `audience_decree` / **`decree_validation`**：「拨饷旨意缺少结构化字段：amount/target_id」 |
+| api-note 运行侧 | `pending_turn_ids=[]`；`chat_turn_id` 与 history 不一致；`reply_retry=null`；phase=summoning 1627-11 |
+| rejections.jsonl turn=2 | (a) `power_changes` / `invalid_enum`；(b) `audience_decree` / **`decree_validation`**：「拨饷旨意缺少结构化字段：amount/target_id」——**独立拒收账** |
 
-**判定（分清）**：
+**判定（分清；失败诚实）**：
 
-1. 十一月「通传未达」**主现象** = **召对 chat LLMUnavailable**（audience 通道），不是结算 extractor 断。  
-2. 同期 `decree_validation` 拒收是**另一条**结构化拒收账，**没有**被包装成「通传未达」文案的证据链（通传文案单源 = `CLI_RUNNER_PLAYER_MESSAGE` / `extract_agent_text` ERROR 路径）。  
-3. → **不在本票阶段 1 修理范围**。`decree_validation` 呈现若另有缺口 → **#1730 通道**；召对 hang/desync（api-note chat_turn_id 错位）另案，非 #1750 transport 自愈。
+1. **已证**：该次不是 1627-10 结算 extractor 包；无匹配朝堂 November settlement error pack；UI 落在召对面而非结算失败面板。  
+2. **未证**：一手证据**不能**把异常类型钉成 `LLMUnavailable` 或任一 transport 状态码——截图只证玩家可见文案，api-note 只证 hang/desync 形；根因/异常类型 **未证**。兼容假说含「召对通道失败且文案与 `CLI_RUNNER_PLAYER_MESSAGE` 同形」，但**不冒用**具体异常标签。  
+3. `decree_validation` 是**并行独立**待证分支，**无**证据表明它被包装成通传文案；若校验呈现缺口 → **#1730 通道**，不并入本票 transport 自愈。  
+4. → **不在本票阶段 1 修理范围**（结算 extractor 自愈/终失败）。
 
 ### 1.3 8012 · #1751 · `turn1_attempt2`（1627-10 结算）
 
@@ -77,7 +79,7 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 | 行 | pack 身份 | 类别判定 | 上游状态码 | 备注 |
 |----|-----------|----------|------------|------|
 | 8013 t1a1 | turn=1 period=10 db=…3903 attempt=1 | extractor transport/run → LLMUnavailable | 未取得 | 本票原始形态 |
-| 8013 十一月 | **无匹配结算 pack** | **召对 chat LLMUnavailable**；另有 decree_validation 拒收账 | n/a | → 不修；validation → #1730 |
+| 8013 十一月 | **无匹配结算 pack** | 非结算面板；**异常类型未证**（兼容召对失败同文案）；另有独立 decree_validation 账 | n/a | → 不修；validation → #1730 |
 | 8012 t1a2 | turn=1 period=10 db=…8977 attempt=2 | 同族 extractor LLMUnavailable | 未取得（日志有 429） | attempt 是写包序号 |
 | 8010 t3a1 | turn=3 period=12 db=…4942 attempt=1 | 同族 extractor LLMUnavailable | 未取得（日志有 429） | 6 腿扇出同秒 429 |
 
@@ -155,7 +157,7 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 | 红灯 | 期望 | 现行预期色 |
 |------|------|------------|
 | 自愈回路 | 一腿预算内可重试失败 → 月+1、无失败面板 | 红（无统一预算自愈） |
-| 终失败回路 | 超预算持续失败 → 保留原月；错误含上游状态/类别/attempt；系统人话 | 部分红（保留原月/人话近；status/类别/transport attempt 未进 pack） |
+| 终失败回路 | 超预算持续失败 → 保留原月；错误含上游状态/类别/attempt；系统人话 | 保月/人话/pack.attempt 绿；上游 status/code 未进既有 `_llm_error_detail` 玩家面 → xfail（不新造 manifest schema） |
 | 恢复 D6 | 未 ready 后重新推演不重跑 pre_settle | 基线可绿（既有 0008 守门） |
 | 恢复 D3 | ready 后重放不重跑 LLM | 既有 1620 绿；本文件薄钉 |
 | 0148 呈现 | 自愈中与终失败后 api_state 为月初快照 | 终失败 settling 下近绿；自愈中随自愈红 |
