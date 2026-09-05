@@ -1492,6 +1492,13 @@ GRANT_MONEY_ACTIONS = GRANT_ACTIONS - {"无"} - GRANT_HONORIFICS
 XIEXIANG_TARGET_KINDS = frozenset({"army"})
 
 
+def _grant_shape_value_error(message: str, *, field: str) -> ValueError:
+    """ValueError carrying the failed shape field; callers catching ValueError unchanged."""
+    exc = ValueError(message)
+    exc.field = field  # type: ignore[attr-defined]
+    return exc
+
+
 def resolve_grant_account(*, grant_action: object = None, account: object = None) -> str:
     """grant account 归一唯一权威（无 DB）。
 
@@ -1510,7 +1517,9 @@ def resolve_grant_account(*, grant_action: object = None, account: object = None
         return raw_account
     if ga in GRANT_MONEY_ACTIONS:
         if raw_account and raw_account not in {"国库", "内库"}:
-            raise ValueError(f"grant 非法 account：{raw_account!r}")
+            raise _grant_shape_value_error(
+                f"grant 非法 account：{raw_account!r}", field="account",
+            )
         return raw_account if raw_account in {"国库", "内库"} else "国库"
     return ""
 
@@ -1526,59 +1535,37 @@ def require_grant_allocation_shape(
     #1620：层 A 上桌与 rescript mapper 共用——禁平行第二套规则。
     顺序：action 闭集 → account（resolve_grant_account）→ amount（本函数独掌）。
     返回 grant_action、account；非 honorific 另含正 int amount。
+    校验失败仍 raise ValueError；附 field 属性供物化缝转 typed 拒收（#1730）。
     """
     from ming_sim.strict_types import strict_int
 
     ga = str(grant_action or "").strip()
     if not ga:
-        raise ValueError("grant_allocation 缺 grant_action")
+        raise _grant_shape_value_error(
+            "grant_allocation 缺 grant_action", field="grant_action",
+        )
     if ga not in (GRANT_ACTIONS - {"无"}):
-        raise ValueError(f"grant 非法 grant_action：{ga!r}")
+        raise _grant_shape_value_error(
+            f"grant 非法 grant_action：{ga!r}", field="grant_action",
+        )
     resolved_account = resolve_grant_account(grant_action=ga, account=account)
     out: Dict[str, Any] = {"grant_action": ga, "account": resolved_account}
     if ga in GRANT_HONORIFICS:
         return out
     if amount is None or amount == "":
-        raise ValueError("grant 金钱缺正 amount")
+        raise _grant_shape_value_error("grant 金钱缺正 amount", field="amount")
     # #1716：整数字符串是 classifier/LLM 运输常态（#658 normalize raw 直达本边界）；bool/float 仍拒。
     # #1620 原 accept_numeric_strings=False 把 "8" 一并拒掉，拟旨 grant 物化中断、pending 零落。
     try:
         amt = strict_int(amount, accept_numeric_strings=True)
     except ValueError as exc:
-        raise ValueError(f"grant 金钱 amount 须为正整数，拒 {amount!r}") from exc
+        raise _grant_shape_value_error(
+            f"grant 金钱 amount 须为正整数，拒 {amount!r}", field="amount",
+        ) from exc
     if amt <= 0:
-        raise ValueError("grant 金钱缺正 amount")
+        raise _grant_shape_value_error("grant 金钱缺正 amount", field="amount")
     out["amount"] = amt
     return out
-
-
-def _grant_shape_failed_fields(
-    *,
-    grant_action: object = None,
-    amount: object = None,
-    account: object = None,
-) -> tuple[str, ...]:
-    """Derive failed_fields for grant shape bare ValueError without message locks."""
-    from ming_sim.strict_types import strict_int
-
-    ga = str(grant_action or "").strip()
-    if not ga or ga not in (GRANT_ACTIONS - {"无"}):
-        return ("grant_action",)
-    try:
-        resolve_grant_account(grant_action=ga, account=account)
-    except ValueError:
-        return ("account",)
-    if ga in GRANT_HONORIFICS:
-        return ("grant_action",)
-    if amount is None or amount == "":
-        return ("amount",)
-    try:
-        amt = strict_int(amount, accept_numeric_strings=True)
-    except ValueError:
-        return ("amount",)
-    if amt <= 0:
-        return ("amount",)
-    return ("amount",)
 
 
 def _grant_cadence(intent: Dict[str, Any]) -> str:
@@ -1807,11 +1794,9 @@ def stage_grant_allocation_candidate(
                 account=account,
             )
         except ValueError as exc:
+            field = str(getattr(exc, "field", "") or "").strip() or "amount"
             raise DecreeMaterializationValidationError(
-                str(exc),
-                failed_fields=_grant_shape_failed_fields(
-                    grant_action=action, amount=amount, account=account,
-                ),
+                str(exc), failed_fields=(field,),
             ) from exc
         n = int(shaped["amount"]) if "amount" in shaped else 0
         account = str(shaped.get("account") or "")
