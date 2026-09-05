@@ -1823,7 +1823,8 @@ def _compose_inworld_fact_report(
     def _produce() -> str:
         raw, _ = _run_backend_for_config(prompt, llm_config, tag=tag)
         text = str(raw or "")
-        if text:
+        # strip 只判空；原文不改写（generated prose is never rewritten）。
+        if text.strip():
             return text
         raise cli_runner_unavailable(RuntimeError(f"{tag} 空响"), backend=tag)
 

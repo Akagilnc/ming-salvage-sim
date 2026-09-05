@@ -169,6 +169,47 @@ def _record_decree_validation_failures(
     }
 
 
+def _rejection_item_for_exc(
+    original_item: dict[str, Any],
+    exc: BaseException,
+) -> dict[str, Any]:
+    """Prefer typed partial_result when present; else fall back to classifier item."""
+    partial = getattr(exc, "partial_result", None)
+    if isinstance(partial, dict) and partial:
+        return dict(partial)
+    return dict(original_item or {})
+
+
+def _raise_cached_draft_combo_failure(
+    exc: StructuredDecreeCombinationError,
+    candidate_kind_index: int,
+) -> None:
+    """Re-raise batch combo failure only for indexes marked in draft_failures.
+
+    Legal siblings return without recording a rejection or re-extracting.
+    partial_result is narrowed to the failed draft so ledger item_json keeps
+    the actual rejected decree fields (ADR 0008 decision 5).
+    """
+    draft_failures = dict(getattr(exc, "draft_failures", None) or {})
+    idx = int(candidate_kind_index)
+    if draft_failures and idx not in draft_failures:
+        return
+    partial = getattr(exc, "partial_result", None)
+    drafts = partial.get("drafts") if isinstance(partial, dict) else None
+    draft_item: dict[str, Any] = {}
+    if isinstance(drafts, list) and 0 <= idx < len(drafts) and isinstance(drafts[idx], dict):
+        draft_item = dict(drafts[idx])
+    elif isinstance(partial, dict) and partial:
+        draft_item = dict(partial)
+    fields = frozenset(draft_failures.get(idx) or getattr(exc, "failed_fields", None) or ())
+    raise StructuredDecreeCombinationError(
+        str(exc),
+        partial_result=draft_item,
+        failed_fields=fields,
+        draft_failures={idx: fields} if fields else dict(draft_failures),
+    ) from exc
+
+
 def _invoke_materializer(
     ctx: MaterializeCtx,
     fn: Any,
@@ -182,9 +223,39 @@ def _invoke_materializer(
         StructuredDecreeCombinationError,
         DecreeMaterializationValidationError,
     ) as exc:
-        failures.append((
-            original_item or dict(getattr(exc, "partial_result", None) or {}), exc,
-        ))
+        failures.append((_rejection_item_for_exc(original_item, exc), exc))
+
+
+def _pending_action_ids(db: Any, turn: int) -> set[int]:
+    return {
+        int(row["id"])
+        for row in db.list_pending_actions(int(turn))
+        if str(row.get("status") or "") == "pending"
+    }
+
+
+def _rollback_batch_writes(
+    ctx: MaterializeCtx,
+    *,
+    pending_before: set[int],
+    baseline_out: dict[str, Any],
+) -> None:
+    """All-or-nothing: withdraw siblings staged in this batch; align out projection."""
+    db = ctx.session.db
+    turn = int(ctx.session.state.turn)
+    staged = _pending_action_ids(db, turn) - pending_before
+    for action_id in sorted(staged):
+        db.withdraw_pending_action(action_id, turn)
+    # Projection must match reality after rollback (no hidden pending id).
+    if "pending_action_id" in baseline_out:
+        ctx.out["pending_action_id"] = baseline_out["pending_action_id"]
+    else:
+        ctx.out.pop("pending_action_id", None)
+    if "directive" in baseline_out:
+        ctx.out["directive"] = baseline_out["directive"]
+    else:
+        ctx.out.pop("directive", None)
+    ctx.draft_staged = False
 
 
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
@@ -231,6 +302,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
         kind_indexes: Dict[str, int] = {}
         grant_staged = False
+        pending_before = _pending_action_ids(ctx.session.db, ctx.session.state.turn)
         for candidate, original_candidate, original_kind, original_draft_index in candidate_records:
             kind = str(candidate.get("kind") or "")
             cluster = cluster_by_kind(kind)
@@ -259,9 +331,13 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 conversation_intent_handled=False,
                 draft_staged=False,
             )
+            failure_count = len(validation_failures)
             _invoke_materializer(
                 candidate_ctx, fn, original_candidate, validation_failures,
             )
+            if len(validation_failures) > failure_count:
+                # Failed candidate must not wipe sibling projection via baseline_out.
+                continue
             if kind == "grant_allocation" and int(
                 candidate_out.get("pending_action_id") or 0
             ) > int(baseline_out.get("pending_action_id") or 0):
@@ -270,6 +346,10 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             if candidate_ctx.draft_staged:
                 ctx.draft_staged = True
         if validation_failures:
+            # Mixed batch: any typed failure → withdraw siblings already staged.
+            _rollback_batch_writes(
+                ctx, pending_before=pending_before, baseline_out=baseline_out,
+            )
             _record_decree_validation_failures(ctx, ctx.out, validation_failures)
         # #1380：拟旨优先后仍须并行 office（仅 LLM 分类路；前缀路禁，见 #344 US3）
         if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
@@ -524,20 +604,34 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         and intent_kind == "draft"
         and ctx.candidate_kind_count > 1
     ):
+        cached_combo = ctx.batch_state.get("draft_combo_error")
+        if isinstance(cached_combo, StructuredDecreeCombinationError):
+            # 批级组合失败缓存命中：按 draft_failures 归属，不重抽。
+            _raise_cached_draft_combo_failure(
+                cached_combo, ctx.candidate_kind_index,
+            )
+            return
         if "drafts" not in ctx.batch_state:
             if "unknown_participant_escalate" in ctx.batch_state:
                 ctx.out["unknown_participant_escalate"] = ctx.batch_state[
                     "unknown_participant_escalate"
                 ]
                 return
-            batch_res = _heal_or_escalate(
-                player_message=ctx.player_message,
-                minister_reply=ctx.reply,
-                llm_config=ctx.llm_config,
-                draft_count=ctx.candidate_kind_count,
-                content=getattr(session, "content", None),
-                db=session.db,
-            )
+            try:
+                batch_res = _heal_or_escalate(
+                    player_message=ctx.player_message,
+                    minister_reply=ctx.reply,
+                    llm_config=ctx.llm_config,
+                    draft_count=ctx.candidate_kind_count,
+                    content=getattr(session, "content", None),
+                    db=session.db,
+                )
+            except StructuredDecreeCombinationError as exc:
+                # 批级组合失败同 unknown_participant_escalate：一次缓存，兄弟不重抽。
+                ctx.batch_state["draft_combo_error"] = exc
+                ctx.batch_state["drafts"] = []
+                _raise_cached_draft_combo_failure(exc, ctx.candidate_kind_index)
+                return
             if batch_res is None:
                 # 批抽一次耗尽：记入 batch_state，兄弟 kind 同回禀不重复 LLM
                 esc = ctx.out.get("unknown_participant_escalate")
@@ -1458,6 +1552,35 @@ def require_grant_allocation_shape(
     return out
 
 
+def _grant_shape_failed_fields(
+    *,
+    grant_action: object = None,
+    amount: object = None,
+    account: object = None,
+) -> tuple[str, ...]:
+    """Derive failed_fields for grant shape bare ValueError without message locks."""
+    from ming_sim.strict_types import strict_int
+
+    ga = str(grant_action or "").strip()
+    if not ga or ga not in (GRANT_ACTIONS - {"无"}):
+        return ("grant_action",)
+    try:
+        resolve_grant_account(grant_action=ga, account=account)
+    except ValueError:
+        return ("account",)
+    if ga in GRANT_HONORIFICS:
+        return ("grant_action",)
+    if amount is None or amount == "":
+        return ("amount",)
+    try:
+        amt = strict_int(amount, accept_numeric_strings=True)
+    except ValueError:
+        return ("amount",)
+    if amt <= 0:
+        return ("amount",)
+    return ("amount",)
+
+
 def _grant_cadence(intent: Dict[str, Any]) -> str:
     cadence = str(intent.get("cadence") or "").strip()
     if cadence in {"一次性", "每月"}:
@@ -1676,11 +1799,20 @@ def stage_grant_allocation_candidate(
         if not body:
             return 0
         # #1620：非协饷写 pending 前消费 shape 唯一权威；删宽松 int(amount or 0)
-        shaped = require_grant_allocation_shape(
-            grant_action=action,
-            amount=amount,
-            account=account,
-        )
+        # #1730：物化缝把 shape 族裸 ValueError 转为 typed 拒收（权威函数语义不动）。
+        try:
+            shaped = require_grant_allocation_shape(
+                grant_action=action,
+                amount=amount,
+                account=account,
+            )
+        except ValueError as exc:
+            raise DecreeMaterializationValidationError(
+                str(exc),
+                failed_fields=_grant_shape_failed_fields(
+                    grant_action=action, amount=amount, account=account,
+                ),
+            ) from exc
         n = int(shaped["amount"]) if "amount" in shaped else 0
         account = str(shaped.get("account") or "")
 

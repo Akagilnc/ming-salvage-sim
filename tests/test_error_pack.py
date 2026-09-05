@@ -459,3 +459,55 @@ def test_complete_ready_packs_match_database_turn_digest_and_manifest_shape(game
 
     monkeypatch.setattr(error_pack_mod, "error_packs_root", lambda: _BoomGlob())
     assert complete_error_packs_for_ready(db.path, state.turn, payload) == []
+
+
+def test_clear_for_resimulation_preserves_audience_decree_rows(game):
+    """T4：重模拟作废范围排除召对段；settlement 段仍作废。"""
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+    from ming_sim.error_pack import clear_for_resimulation
+
+    db, state, _content = game
+    turn = state.turn
+    collector = RejectionCollector()
+    collector.record(
+        "audience_decree",
+        RejectedItem(
+            item={"kind": "draft"},
+            reason="audience validation",
+            category="decree_validation",
+            source=Provenance.player_decree,
+        ),
+        turn,
+    )
+    collector.record(
+        "region_delta",
+        RejectedItem(
+            item={"raw_value": []},
+            reason="settlement shape",
+            category="invalid_shape",
+            source=Provenance.player_decree,
+        ),
+        turn,
+    )
+    collector.flush_to_db(db)
+    db.conn.commit()
+
+    db.save_resolve_context(
+        turn, "d", "n", {"k": "v"},
+        secret_orders=[], relevant_memories=[],
+        extracted={"metric_delta": {"国库": 1}},
+        source="player_decree",
+    )
+    clear_for_resimulation(db, turn)
+
+    rows = {
+        str(row["section"]): int(row["resimulation_invalidated"] or 0)
+        for row in db.conn.execute(
+            "SELECT section, resimulation_invalidated FROM rejection_reports WHERE turn=?",
+            (turn,),
+        ).fetchall()
+    }
+    assert rows["audience_decree"] == 0
+    assert rows["region_delta"] == 1
+    assert decree_mod._has_durable_player_visible_rejection(db, turn)
+    db.clear_resolve_context(turn)
