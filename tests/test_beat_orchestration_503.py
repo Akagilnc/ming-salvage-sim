@@ -88,8 +88,10 @@ def test_join_exception_drains_uncancellable_sibling_before_propagating():
         registry._futures[11] = [fail_fut, slow_fut]
 
     outcome: dict = {}
+    join_entered = threading.Event()
 
     def run_join():
+        join_entered.set()
         try:
             outcome["result"] = registry.join(11)
         except BaseException as exc:
@@ -97,8 +99,8 @@ def test_join_exception_drains_uncancellable_sibling_before_propagating():
 
     waiter = threading.Thread(target=run_join)
     waiter.start()
+    join_entered.wait()  # prove join body reached before negative asserts
     # join must not return/raise while uncancellable sibling is still running.
-    # 状态证法（#1723）：sibling 未终态 + outcome 空 + waiter 仍活，无短墙钟 join。
     assert waiter.is_alive(), "join returned before draining sibling"
     assert "exc" not in outcome and "result" not in outcome
     assert not sibling_finished.is_set()
@@ -2116,9 +2118,10 @@ def test_close_final_exit_generator_failure_rolls_back_final_exit(game):
     started.wait()
     gate.acquire()
     release_gen.set()
-    # 负向状态证：gen 已终 + worker 仍活（finalize 等持闸）；持闸期间禁 join（会自锁）
+    # 负向状态证：gen 已终 + worker 仍活（finalize/回滚等持闸）；持闸期间禁 join（会自锁）
     gen_done.wait()
-    assert worker.is_alive()
+    assert worker.is_alive(), "close finished while write_gate still held"
+    assert gate.locked(), "test must still hold write_gate during negative window"
     gate.release()
     worker.join()
     assert not worker.is_alive()
@@ -2413,35 +2416,30 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     sess._write_gate = threading.Lock()
     sess._write_queue = type("Q", (), {"write_gate": sess._write_gate})()
 
-    # open+enter 每 target 可提交多 Future；Barrier(2) 会让第 3+ 方永等（旧 timeout 靠
-    # BrokenBarrier 自尽）。改 max_active 状态证并发，join_started 证 join 窗。
-    active = 0
-    max_active = 0
-    gen_lock = threading.Lock()
+    # 诊断（#1723 r2）：2 target → discover 产出 open×1（首夜）+ enter×2。
+    # Barrier 只会合两个带 person_name 的 enter（逐 target）；open 无 target 不入屏障。
+    # 旧 Barrier(2) 把 open 也算进去会让第 3 方永等（靠 timeout BrokenBarrier 自尽）。
+    generators_ready = threading.Barrier(2)
     join_started = threading.Event()
     join_saw_free = []
     gen_ok_body = f"{ok_name}入殿请安。"
 
     def mixed_gen(inputs):
-        nonlocal active, max_active
         name = str(getattr(inputs, "person_name", "") or "") or ""
-        with gen_lock:
-            active += 1
-            max_active = max(max_active, active)
-        try:
-            join_started.wait()
+        is_target_enter = bool(name)
+        if is_target_enter:
+            generators_ready.wait()  # 两 target enter 真会合后再进 join 窗
+        join_started.wait()
+        if is_target_enter:
             free = sess._write_gate.acquire(False)
             if free:
                 sess._write_gate.release()
             join_saw_free.append(bool(free))
-            if name == bad_name:
-                raise RuntimeError("target B boom")
-            if name == ok_name:
-                return gen_ok_body
-            return f"{name or '臣'}入殿请安。"
-        finally:
-            with gen_lock:
-                active -= 1
+        if name == bad_name:
+            raise RuntimeError("target B boom")
+        if name == ok_name:
+            return gen_ok_body
+        return f"{name or '臣'}入殿请安。"
 
     sess._beat_generator = mixed_gen
     monkeypatch.setattr(
@@ -2471,8 +2469,7 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     except ValueError:
         raised = True
     assert raised, "单 target 失败门闩须响亮 ValueError"
-    assert max_active >= 2, f"summon gens 须真并发 max_active={max_active}"
-    assert join_saw_free and all(join_saw_free), f"join 期间 gate 应空闲: {join_saw_free}"
+    assert join_saw_free == [True, True], f"join 期间 gate 应空闲: {join_saw_free}"
 
     # 成功 target 正文仍在（S7 失败域）
     k0 = next(k for k, n in zip(keys, ministers) if n == ok_name)

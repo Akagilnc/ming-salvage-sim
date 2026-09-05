@@ -3001,7 +3001,6 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
 def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     """Class4/S2 web 生产调用：真 HTTP → submit_hitl；①/③ 持同一 gate，② 释放。"""
     import threading
-    import time
 
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
@@ -4162,11 +4161,9 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
 def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     """summon 同 body 并发：单 chat_turn / 单 ledger body / 单月推进；失败后可重入。"""
     import threading
-    import time
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor
 
     from ming_sim.audience_night import TAG_ENTER, rescript_summon_origin_ref
-    from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     db, state = web_game.db, web_game.state
@@ -4204,19 +4201,26 @@ def test_657_summon_single_flight_concurrent_http(web_game, monkeypatch):
     }]
     turn_before = int(state.turn)
 
-    second_submitted = threading.Event()
+    # 第二路须真正进入 settlement entry（inflight>=2），不能在 asyncio.run 前冒充 submitted。
+    second_entered = threading.Event()
+    real_begin = web_app._begin_settlement_entry
 
-    def _post(mark_second: bool = False):
-        if mark_second:
-            second_submitted.set()
+    def _observe_begin(game):
+        real_begin(game)
+        if int(getattr(game, "_settlement_entry_inflight", 0) or 0) >= 2:
+            second_entered.set()
+
+    monkeypatch.setattr(web_app, "_begin_settlement_entry", _observe_begin)
+
+    def _post():
         return asyncio.run(_post_resolve(body))
 
     # 并发两路同 body：一路慢 generator 窗口内第二路须 coalesce
     with ThreadPoolExecutor(max_workers=2) as pool:
         f1 = pool.submit(_post)
         started.wait()
-        f2 = pool.submit(_post, True)
-        second_submitted.wait()  # 第二路已提交进入；持 release 直至其可 coalesce
+        f2 = pool.submit(_post)
+        second_entered.wait()  # 第二路已进 settlement entry；持 release 直至其可 coalesce
         release.set()
         results = [f.result() for f in (f1, f2)]
 
