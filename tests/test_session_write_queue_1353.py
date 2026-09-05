@@ -275,18 +275,27 @@ def test_post_barrier_claim_cannot_cross_barrier_write():
 
 
 def test_barrier_waits_healthy_slow_worker_terminal():
-    """K10a：健康工人慢于原 30s 熔断窗仍正常终态 → 屏障续跑，不伪造成挂死。"""
+    """K10a：健康工人仍 open 时屏障不得越过；工人终态后屏障续跑（终态顺序，非 elapsed 熔断）。"""
     q = SessionWriteQueue()
     t = q.claim(key=("turn", 1))
     assert t is not None
     order: list[str] = []
     barrier_done = threading.Event()
-    # 用可观测的“慢于旧熔断”窗（原 DEFAULT_TICKET_WAIT_S=30）；测试缩到 0.08s
-    # 证明屏障不按 elapsed 失败——工人 0.08s 后 complete，屏障必等其终态。
-    slow_s = 0.08
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    wait_prior_entered = threading.Event()
+
+    real_wait_prior = q.wait_prior
+
+    def observe_wait_prior(ticket):
+        wait_prior_entered.set()
+        return real_wait_prior(ticket)
+
+    q.wait_prior = observe_wait_prior  # type: ignore[method-assign]
 
     def slow_worker() -> None:
-        time.sleep(slow_s)
+        worker_started.set()
+        release_worker.wait()  # hold open until barrier is inside wait_prior
         order.append("worker_terminal")
         q.complete(t)
 
@@ -295,7 +304,11 @@ def test_barrier_waits_healthy_slow_worker_terminal():
         barrier_done.set()
 
     threading.Thread(target=slow_worker, daemon=True).start()
+    worker_started.wait()
     threading.Thread(target=run_barrier, daemon=True).start()
+    wait_prior_entered.wait()  # barrier reached wait_prior, not merely claimed ticket
+    assert not barrier_done.is_set(), "barrier crossed before worker terminal"
+    release_worker.set()
     barrier_done.wait()
     assert order == ["worker_terminal", "barrier"], order
     assert q.inflight_count() == 0

@@ -15,16 +15,38 @@ from tests.wait_utils import wait_until
 
 
 def test_drain_and_close_session_waits_for_gate_then_closes():
-    from ming_sim.session_write_queue import get_session_write_queue
+    contending = threading.Event()
 
-    gate = threading.Lock()
+    class _ObservingGate:
+        """Signals drain's close-under-gate acquire when lock is already held."""
+
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            if not self._lock.acquire(blocking=False):
+                contending.set()
+                if not blocking:
+                    return False
+                if timeout is None or timeout < 0:
+                    return self._lock.acquire(blocking=True)
+                return self._lock.acquire(blocking=True, timeout=timeout)
+            return True
+
+        def release(self) -> None:
+            self._lock.release()
+
+        def locked(self) -> bool:
+            return self._lock.locked()
+
+    gate = _ObservingGate()
     closed: list[int] = []
     game = SimpleNamespace(
         _write_gate=gate,
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
 
-    gate.acquire()
+    assert gate.acquire(blocking=False)
     done = threading.Event()
 
     thread = threading.Thread(
@@ -32,8 +54,8 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
         daemon=True,
     )
     thread.start()
-    # Prove drain reached barrier/close acquire while gate held — not start-race is_set.
-    wait_until(lambda: get_session_write_queue(game).has_open_barrier())
+    # Prove drain reached close gate.acquire while held — not has_open_barrier claim-only.
+    contending.wait()
     assert not done.is_set()
     assert closed == []
 
@@ -373,9 +395,29 @@ def test_new_game_active_write_failure_restores_env_and_old_game(monkeypatch, tm
 
 
 def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
-    from ming_sim.session_write_queue import get_session_write_queue
+    contending = threading.Event()
 
-    gate = threading.Lock()
+    class _ObservingGate:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            if not self._lock.acquire(blocking=False):
+                contending.set()
+                if not blocking:
+                    return False
+                if timeout is None or timeout < 0:
+                    return self._lock.acquire(blocking=True)
+                return self._lock.acquire(blocking=True, timeout=timeout)
+            return True
+
+        def release(self) -> None:
+            self._lock.release()
+
+        def locked(self) -> bool:
+            return self._lock.locked()
+
+    gate = _ObservingGate()
     closed: list[int] = []
     killed: list[object] = []
     fake_game = SimpleNamespace(
@@ -387,7 +429,7 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
     monkeypatch.setattr(os, "_exit", lambda code=0: killed.append(code))
     monkeypatch.setattr(time, "sleep", lambda *_args: None)
 
-    gate.acquire()
+    assert gate.acquire(blocking=False)
     done = threading.Event()
 
     async def run_shutdown() -> None:
@@ -396,7 +438,7 @@ def test_shutdown_waits_for_drain_before_returning_or_killing(monkeypatch):
 
     thread = threading.Thread(target=lambda: asyncio.run(run_shutdown()), daemon=True)
     thread.start()
-    wait_until(lambda: get_session_write_queue(fake_game).has_open_barrier())
+    contending.wait()  # drain close-under-gate acquire, not claim-only has_open_barrier
     assert not done.is_set()
     assert closed == []
     assert killed == []
@@ -660,10 +702,19 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
         web_app._drain_and_close_session(runtime)
         drain_done.set()
 
+    # Prove drain reached wait_prior (actual wait), not merely claimed a barrier ticket.
+    wait_prior_entered = threading.Event()
+    real_wait_prior = runtime._write_queue.wait_prior
+
+    def observe_wait_prior(ticket):
+        wait_prior_entered.set()
+        return real_wait_prior(ticket)
+
+    runtime._write_queue.wait_prior = observe_wait_prior  # type: ignore[method-assign]
+
     thread_drain = threading.Thread(target=run_drain, daemon=True)
     thread_drain.start()
-    # Prove drain entered barrier while B ticket still open.
-    wait_until(lambda: runtime._write_queue.has_open_barrier())
+    wait_prior_entered.wait()
     assert not drain_done.is_set(), "drain 在排队 B 跑完前就关了连接"
 
     # A 完成 → 释放 gate → B 拿到锁开始跑
@@ -671,7 +722,6 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     wait_until(lambda: any(e.get("type") == "delta" for e in b_events))
 
     # B 仍持锁（agent 阻塞在 allow_finish_b）→ drain 仍未关
-    assert runtime._write_queue.has_open_barrier()
     assert not drain_done.is_set(), "drain 在 B 仍持锁时关了连接"
 
     allow_finish_b.set()

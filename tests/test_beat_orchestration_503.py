@@ -88,10 +88,8 @@ def test_join_exception_drains_uncancellable_sibling_before_propagating():
         registry._futures[11] = [fail_fut, slow_fut]
 
     outcome: dict = {}
-    join_entered = threading.Event()
 
     def run_join():
-        join_entered.set()
         try:
             outcome["result"] = registry.join(11)
         except BaseException as exc:
@@ -99,7 +97,10 @@ def test_join_exception_drains_uncancellable_sibling_before_propagating():
 
     waiter = threading.Thread(target=run_join)
     waiter.start()
-    join_entered.wait()  # prove join body reached before negative asserts
+    # join pops the bucket before _drain; has() false proves join body reached,
+    # not a pre-call signal before registry.join.
+    from tests.wait_utils import wait_until
+    wait_until(lambda: not registry.has(11))
     # join must not return/raise while uncancellable sibling is still running.
     assert waiter.is_alive(), "join returned before draining sibling"
     assert "exc" not in outcome and "result" not in outcome
@@ -359,14 +360,15 @@ def test_start_open_enter_claims_atomically_under_concurrent_calls(game, monkeyp
     lock = threading.Lock()
     real_discover = bo.discover_open_enter_tasks
 
-    def slow_discover(*a, **k):
+    def counting_discover(*a, **k):
         nonlocal discover_calls
         with lock:
             discover_calls += 1
-        time.sleep(0.05)
+        # No sleep observe-window: claim is lock-atomic; second caller returns
+        # before discover. Sleep would only gamble a scheduling window.
         return real_discover(*a, **k)
 
-    monkeypatch.setattr(bo, "discover_open_enter_tasks", slow_discover)
+    monkeypatch.setattr(bo, "discover_open_enter_tasks", counting_discover)
 
     def counting_gen(inputs: BeatInputs) -> str:
         nonlocal gen_starts
@@ -2086,19 +2088,47 @@ def test_close_final_exit_generator_failure_rolls_back_final_exit(game):
 
     started = threading.Event()
     release_gen = threading.Event()
-    gate = threading.Lock()
+    contending = threading.Event()
 
-    gen_done = threading.Event()
+    class _ObservingGate:
+        """Signals when acquire finds lock held — proves gate seam, not mere is_alive."""
+
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            # Non-blocking probe: if held, we are at the contention seam.
+            if not self._lock.acquire(blocking=False):
+                contending.set()
+                if not blocking:
+                    return False
+                if timeout is None or timeout < 0:
+                    return self._lock.acquire(blocking=True)
+                return self._lock.acquire(blocking=True, timeout=timeout)
+            return True
+
+        def release(self) -> None:
+            self._lock.release()
+
+        def locked(self) -> bool:
+            return self._lock.locked()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *args) -> bool:
+            self.release()
+            return False
+
+    gate = _ObservingGate()
 
     def boom_exit(inputs: BeatInputs) -> str:
         started.set()
         release_gen.wait()
-        try:
-            if inputs.beat_kind == BEAT_EXIT:
-                raise RuntimeError("final exit generator boom")
-            return f"kind={inputs.beat_kind}|person={inputs.person_name}"
-        finally:
-            gen_done.set()
+        if inputs.beat_kind == BEAT_EXIT:
+            raise RuntimeError("final exit generator boom")
+        return f"kind={inputs.beat_kind}|person={inputs.person_name}"
 
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     err: list[BaseException] = []
@@ -2116,10 +2146,14 @@ def test_close_final_exit_generator_failure_rolls_back_final_exit(game):
     worker = threading.Thread(target=run_close)
     worker.start()
     started.wait()
-    gate.acquire()
+    # Hold gate only after close has released phase-1 sections and is joining gen.
+    # Wait until gate is free (close inside join), then take it before releasing gen.
+    from tests.wait_utils import wait_until
+    wait_until(lambda: not gate.locked())
+    assert gate.acquire(blocking=False)
     release_gen.set()
-    # 负向状态证：gen 已终 + worker 仍活（finalize/回滚等持闸）；持闸期间禁 join（会自锁）
-    gen_done.wait()
+    # Prove close reached write_gate.acquire while we hold it (cleanup/persist seam).
+    contending.wait()
     assert worker.is_alive(), "close finished while write_gate still held"
     assert gate.locked(), "test must still hold write_gate during negative window"
     gate.release()
@@ -2154,17 +2188,42 @@ def test_close_scene_join_free_but_persist_and_cleanup_hold_write_gate(game):
 
     started = threading.Event()
     release_gen = threading.Event()
-    gate = threading.Lock()
+    contending = threading.Event()
 
-    gen_done = threading.Event()
+    class _ObservingGate:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            if not self._lock.acquire(blocking=False):
+                contending.set()
+                if not blocking:
+                    return False
+                if timeout is None or timeout < 0:
+                    return self._lock.acquire(blocking=True)
+                return self._lock.acquire(blocking=True, timeout=timeout)
+            return True
+
+        def release(self) -> None:
+            self._lock.release()
+
+        def locked(self) -> bool:
+            return self._lock.locked()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *args) -> bool:
+            self.release()
+            return False
+
+    gate = _ObservingGate()
 
     def gen(inputs: BeatInputs) -> str:
         started.set()
         release_gen.wait()
-        try:
-            return f"kind={inputs.beat_kind}|person={inputs.person_name}"
-        finally:
-            gen_done.set()
+        return f"kind={inputs.beat_kind}|person={inputs.person_name}"
 
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     err: list[BaseException] = []
@@ -2182,10 +2241,12 @@ def test_close_scene_join_free_but_persist_and_cleanup_hold_write_gate(game):
     worker = threading.Thread(target=run_close)
     worker.start()
     started.wait()
-    gate.acquire()
+    from tests.wait_utils import wait_until
+    wait_until(lambda: not gate.locked())
+    assert gate.acquire(blocking=False)
     release_gen.set()
-    # gen 已终；persist/cleanup 仍等持闸 → worker 活着且卷轴尚无 exit
-    gen_done.wait()
+    # Prove persist/cleanup reached write_gate.acquire; scroll still has no exit.
+    contending.wait()
     assert worker.is_alive()
     blocked_scroll = an.read_night_scroll(db, int(night_id))
     blocked_beats = _named_scene_beats(blocked_scroll)

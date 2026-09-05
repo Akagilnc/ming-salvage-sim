@@ -1429,6 +1429,106 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
+  it("#1725 SSE typed progress 贯通 App：consumeSettleStream → useSettlementFlow → progressbar", async () => {
+    // Full chain via existing App entry. Arbitrary stage labels + current/total must drive
+    // the real progressbar; no mock of consumeSettleStream / useSettlementFlow / SettlementLock.
+    // Mutation (setSettleProgress → null) must fail this test; label reverse-lookup must not invent bars.
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    const liveState = settlementBaseState("settling", {
+      settlement_recovery: {
+        ready_replay: true,
+        error_pack_path: "/tmp/error_packs/turn5_attempt1",
+        message: "abort-guidance",
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
+    expect(resume).not.toBeNull();
+    await click(resume);
+
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+    });
+
+    // Stage label is arbitrary chrome; progress facts are independent typed fields.
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        'event: stage\ndata: {"content":"任意显示文案","current":3,"total":6}\n\n',
+      ));
+      streamController.enqueue(encoder.encode(
+        'event: thinking\ndata: {"content":"推敲片段甲"}\n\n',
+      ));
+      streamController.enqueue(encoder.encode(
+        'event: text\ndata: {"content":"奏章片段乙"}\n\n',
+      ));
+    });
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        const bar = host.querySelector('[data-testid="settlement-wait-progress"]');
+        expect(bar).not.toBeNull();
+        expect(bar?.getAttribute("role")).toBe("progressbar");
+        expect(bar?.getAttribute("aria-valuenow")).toBe("3");
+        expect(bar?.getAttribute("aria-valuemax")).toBe("6");
+        expect(bar?.getAttribute("aria-valuemin")).toBe("0");
+      });
+    });
+    const decor = host.querySelector('[data-testid="settlement-lock-decor"]');
+    expect(decor?.textContent || "").toContain("任意显示文案");
+    expect(decor?.textContent || "").toContain("推敲片段甲");
+    expect(decor?.textContent || "").toContain("奏章片段乙");
+    // Center lock present; must not swallow recovery / decision faces (still settling recovery banner path).
+    expect(host.querySelector(".settlement-lock")).not.toBeNull();
+
+    // Ending round 7/7 via same typed fields.
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        'event: stage\ndata: {"content":"结局收束文案","current":7,"total":7}\n\n',
+      ));
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        const bar = host.querySelector('[data-testid="settlement-wait-progress"]');
+        expect(bar?.getAttribute("aria-valuenow")).toBe("7");
+        expect(bar?.getAttribute("aria-valuemax")).toBe("7");
+      });
+    });
+    expect(host.querySelector('[data-testid="settlement-lock-decor"]')?.textContent || "").toContain("结局收束文案");
+
+    // End via decisions so we do not hit window.location.reload; keep chain proof intact.
+    await act(async () => {
+      streamController.enqueue(encoder.encode(
+        `event: decisions\ndata: ${JSON.stringify({ decisions: [validDecision] })}\n\n`,
+      ));
+      streamController.close();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+  });
+
   it("awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在", async () => {
     stubSettlementFetch(settlementBaseState("awaiting_decision", {
       pending_decisions: [validDecision],
