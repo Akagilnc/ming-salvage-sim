@@ -13191,10 +13191,20 @@ class GameDB:
             if dossier_id in supplied:
                 _reject(item, "对账提案存在重复案卷", "invalid_enum")
                 continue
-            if "arrived_amount" in item:
+            has_arrived = "arrived_amount" in item
+            has_loss = "loss_amount" in item
+            if has_arrived and has_loss:
+                # DELTA_SCHEMA 二选一：两字段同在不猜优先，逐项拒收（0015-D4 不猜）
+                _reject(
+                    item,
+                    "对账提案 arrived_amount 与 loss_amount 须二选一",
+                    "invalid_enum",
+                )
+                continue
+            if has_arrived:
                 raw_amount = item.get("arrived_amount")
                 amount_label = "实抵"
-            elif "loss_amount" in item:
+            elif has_loss:
                 raw_amount = item.get("loss_amount")
                 amount_label = "折损"
             else:
