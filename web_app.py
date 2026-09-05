@@ -3961,12 +3961,11 @@ def _refuse_settling_or_busy_write_phase(game) -> None:
 def _refuse_if_open_night_barrier(game) -> None:
     """#1727：court_break 预领屏障开启期间拒玩家召对写入口。
 
-    复用 #1353 has_open_barrier 唯一真源；只挂在召对写入口，不改
-    `_serialized_web_write` 本体（favorites 等非召对写不属本拒）。
+    复用 #1353 has_open_barrier 唯一真源（经 get_session_write_queue）；
+    只挂在召对写入口，不改 `_serialized_web_write` 本体（favorites 等非召对写不属本拒）。
+    #1740：禁 hasattr 缺方法早退——真实 WebGame 必有队列；缺接线不得当放行。
     """
-    if not hasattr(game, "_runtime_write_queue"):
-        return
-    if game._runtime_write_queue().has_open_barrier():
+    if get_session_write_queue(game).has_open_barrier():
         raise HTTPException(
             status_code=409,
             detail="本夜收夜中，暂不能召对。",
@@ -4332,13 +4331,13 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
         finally:
             gate.release()
 
-    close_failed = False
     try:
         q.barrier(_close_under_gate)
     except Exception:
-        close_failed = True
-    if close_failed:
-        return
+        # #1740 / ADR 0005：排空关库失败不得无痕 return——保留原异常上抛；
+        # 调用方（detach 完成通道 / archive_db）据此不得搬库。
+        logger.exception("drain/close session failed; skip archive")
+        raise
     if archive_db:
         _archive_drained_db_file(getattr(game, "db_path", "") or "")
 
@@ -4348,8 +4347,10 @@ web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继�
 _menu_generation: int = 0
 # #1732 T1：exit_to_menu 的 detach 完成信号。new_game 在 old_game is None 时须等此信号
 # 再归档旧主库，避免与仍写旧库的 detach 双移/抢文件（#396 readonly 约束）。
+# #1740：完成通道同时表达 close 成败——done 仅表示 detach 终了，close_ok 才允许搬库。
 _menu_exit_detach_lock = threading.Lock()
 _menu_exit_detach_done: Optional[threading.Event] = None
+_menu_exit_detach_close_ok: bool = False
 
 
 app = FastAPI(title="Ming Salvage MVP Web")
@@ -4634,6 +4635,11 @@ async def api_menu_new_game() -> Dict[str, Any]:
                 done = _menu_exit_detach_done
             if done is not None:
                 done.wait()
+                with _menu_exit_detach_lock:
+                    close_ok = _menu_exit_detach_close_ok
+                if not close_ok:
+                    # detach 已终了但排空/关库未确认——不得搬库（#1740）
+                    return
             if prev_db_path and prev_db_path != new_db_path:
                 _archive_drained_db_file(prev_db_path)
 
@@ -4738,7 +4744,7 @@ async def api_menu_exit() -> Dict[str, Any]:
 
     #1732 T1：本端点不搬主库文件——「继续上局」须照常可用；归档由后续 new_game 承接。
     """
-    global web_game, _menu_generation, _menu_exit_detach_done
+    global web_game, _menu_generation, _menu_exit_detach_done, _menu_exit_detach_close_ok
     _menu_generation += 1
     if web_game is not None:
         old_game = web_game
@@ -4746,10 +4752,19 @@ async def api_menu_exit() -> Dict[str, Any]:
         done = threading.Event()
         with _menu_exit_detach_lock:
             _menu_exit_detach_done = done
+            _menu_exit_detach_close_ok = False
 
         def _detach_exit() -> None:
+            global _menu_exit_detach_close_ok
             try:
                 _drain_and_close_session(old_game)
+                with _menu_exit_detach_lock:
+                    _menu_exit_detach_close_ok = True
+            except Exception:
+                # 原异常已由 _drain_and_close_session logger.exception 留痕；
+                # 完成通道 close_ok=False，后续 new_game 归档不得搬库。
+                with _menu_exit_detach_lock:
+                    _menu_exit_detach_close_ok = False
             finally:
                 done.set()
 
@@ -4771,8 +4786,12 @@ async def api_menu_shutdown() -> Dict[str, Any]:
     if web_game is not None:
         old_game = web_game
         web_game = None
-        # 关进程前等队列排空（#396 owner decision）
-        await asyncio.get_running_loop().run_in_executor(None, _drain_and_close_session, old_game)
+        # 关进程前等队列排空（#396 owner decision）。#1740：drain 失败已 logger 留痕，
+        # 此处仍继续杀进程——关进程通道不得因关库失败而卡死。
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, _drain_and_close_session, old_game)
+        except Exception:
+            logger.exception("shutdown drain/close failed; continuing process exit")
     # 先返回响应，再异步终止进程。SIGTERM 在 *nix 走优雅退出；
     # Windows 无完整 SIGTERM 语义（pywebview 主线程也不收信号），直接 os._exit 兜底。
     def _kill_later() -> None:

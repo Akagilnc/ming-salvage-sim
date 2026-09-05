@@ -45,9 +45,6 @@ describe("#1740 ending-round seventh stage progress", () => {
       current: 7,
       total: 7,
     });
-    // 六阶仍 total=6——普通回合不得被抬成「共 7 步」
-    for (const label of SETTLEMENT_WAIT_STAGES) {
-      expect(resolveSettlementWaitProgress(label)?.total).toBe(6);
-    }
+    // ordinary six-step totals stay covered by the #1725 case above (current/total=1..6/6)
   });
 });

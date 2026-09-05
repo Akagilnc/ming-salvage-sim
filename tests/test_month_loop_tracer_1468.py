@@ -915,16 +915,8 @@ def test_issue_stream_emits_frozen_settlement_stages_in_order(tracer_client):
 
 # Independent frozen ending-stage name (ticket #1740). Must not import
 # decree.SETTLEMENT_ENDING_STAGE_LABEL as the expected value — tautology.
+# Name authority is detected by the real-entry SSE case below, not a constant pin.
 _FROZEN_SETTLEMENT_ENDING_STAGE_LABEL = "国史编纂结局总评"
-
-
-def test_settlement_ending_stage_label_authority_pins_frozen_name():
-    """#1740：结局第七段权威常量钉名（六名表形状不动）。"""
-    from ming_sim.decree import SETTLEMENT_ENDING_STAGE_LABEL, SETTLEMENT_STAGE_LABELS
-
-    assert SETTLEMENT_ENDING_STAGE_LABEL == _FROZEN_SETTLEMENT_ENDING_STAGE_LABEL
-    assert SETTLEMENT_STAGE_LABELS == _FROZEN_SETTLEMENT_STAGE_LABELS
-    assert _FROZEN_SETTLEMENT_ENDING_STAGE_LABEL not in SETTLEMENT_STAGE_LABELS
 
 
 def test_issue_stream_ending_round_emits_seventh_stage(tracer_client, monkeypatch):

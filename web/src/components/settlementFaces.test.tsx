@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GameHud } from "./gameHud";
+import { GameHud, resolveUnreadMemorialCount } from "./gameHud";
 import { SettlementLock } from "./settlementLock";
 import { MinisterCardList, AppointmentDrawer } from "./drawers";
 import {
@@ -87,11 +87,12 @@ function minister(name = "周延儒"): Minister {
 
 describe("#1236 GameHud face gates eat settlement_display", () => {
   it("核账期：王承恩递话条出现；关闭组导航 aria-disabled；密令角标清零；半程局势藏、上月已结只读可达", () => {
+    const state = makeState(true);
     const host = mount(
       <GameHud
         stageRef={() => {}}
         ready={true}
-        state={makeState(true)}
+        state={state}
         mapNodes={[]}
         mapSelectedId=""
         onSelectMapNode={() => {}}
@@ -101,6 +102,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
           building: () => {}, economy: () => {}, appointment: () => {},
         }}
         secretOrderActiveCount={3}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
       />,
     );
@@ -143,11 +145,12 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
   });
 
   it("非核账：递话条隐藏；关闭组恢复可达；角标恢复", () => {
+    const state = makeState(false);
     const host = mount(
       <GameHud
         stageRef={() => {}}
         ready={true}
-        state={makeState(false)}
+        state={state}
         mapNodes={[]}
         mapSelectedId=""
         onSelectMapNode={() => {}}
@@ -157,6 +160,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
           building: () => {}, economy: () => {}, appointment: () => {},
         }}
         secretOrderActiveCount={3}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
       />,
     );
@@ -172,11 +176,12 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
 
   it("关闭组点击触发戏内理由回调", () => {
     const attempts: string[] = [];
+    const state = makeState(true);
     const host = mount(
       <GameHud
         stageRef={() => {}}
         ready={true}
-        state={makeState(true)}
+        state={state}
         mapNodes={[]}
         mapSelectedId=""
         onSelectMapNode={() => {}}
@@ -186,6 +191,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
           building: () => {}, economy: () => {}, appointment: () => {},
         }}
         secretOrderActiveCount={0}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
         onClosedFaceAttempt={(r) => attempts.push(r)}
       />,
@@ -197,11 +203,12 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
 
   it("#1323 awaiting_decision：递话/角标文案为有本待批；锁面机制仍关", () => {
     const attempts: string[] = [];
+    const state = makeState(true, {}, "awaiting_decision");
     const host = mount(
       <GameHud
         stageRef={() => {}}
         ready={true}
-        state={makeState(true, {}, "awaiting_decision")}
+        state={state}
         mapNodes={[]}
         mapSelectedId=""
         onSelectMapNode={() => {}}
@@ -211,6 +218,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
           building: () => {}, economy: () => {}, appointment: () => {},
         }}
         secretOrderActiveCount={0}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
         onClosedFaceAttempt={(r) => attempts.push(r)}
       />,
@@ -328,25 +336,26 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     const opened: string[] = [];
     const navCalls: string[] = [];
     const closed: string[] = [];
+    const state = opts.state ?? makeState(false, {
+      // 局势仍可有 3 条，但奏疏计数须与之脱钩（#1726）
+      issues: [
+        { id: 1, kind: "situation", title: "户部亏空", status: "open", progress: 10, fail_condition: "" } as never,
+        { id: 2, kind: "situation", title: "辽东索饷", status: "open", progress: 10, fail_condition: "" } as never,
+        { id: 3, kind: "situation", title: "陕西流寇起", status: "open", progress: 10, fail_condition: "" } as never,
+      ],
+      memorials: [
+        { key: "progress:1", kind: "progress", turn: 1, author_name: "杨嗣昌", memorial_text: "拨银进度一", unread: true },
+        { key: "progress:2", kind: "progress", turn: 1, author_name: "杨嗣昌", memorial_text: "拨银进度二", unread: true },
+        { key: "denunciation:1", kind: "denunciation", turn: 1, author_name: "某给事", memorial_text: "检举正文", unread: true },
+      ],
+      unread_memorial_count: 3,
+      events: [],
+    });
     const host = mount(
       <GameHud
         stageRef={() => {}}
         ready={true}
-        state={opts.state ?? makeState(false, {
-          // 局势仍可有 3 条，但奏疏计数须与之脱钩（#1726）
-          issues: [
-            { id: 1, kind: "situation", title: "户部亏空", status: "open", progress: 10, fail_condition: "" } as never,
-            { id: 2, kind: "situation", title: "辽东索饷", status: "open", progress: 10, fail_condition: "" } as never,
-            { id: 3, kind: "situation", title: "陕西流寇起", status: "open", progress: 10, fail_condition: "" } as never,
-          ],
-          memorials: [
-            { key: "progress:1", kind: "progress", turn: 1, author_name: "杨嗣昌", memorial_text: "拨银进度一", unread: true },
-            { key: "progress:2", kind: "progress", turn: 1, author_name: "杨嗣昌", memorial_text: "拨银进度二", unread: true },
-            { key: "denunciation:1", kind: "denunciation", turn: 1, author_name: "某给事", memorial_text: "检举正文", unread: true },
-          ],
-          unread_memorial_count: 3,
-          events: [],
-        })}
+        state={state}
         mapNodes={[]}
         mapSelectedId=""
         onSelectMapNode={() => {}}
@@ -361,6 +370,7 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
           appointment: () => navCalls.push("appointment"),
         }}
         secretOrderActiveCount={0}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
         edictOpen={opts.edictOpen}
         onCloseEdict={() => {
           closed.push("edict");
