@@ -202,10 +202,9 @@ def test_shared_validate_rejects_region_id_and_category_holes():
 
 
 def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
-    """真实月末入口 tracer：Owner 例；army+single 有界纠错接受；耗尽整批降级。
+    """真实月末入口 tracer：Owner 例；army+single 走 option heal；耗尽只剔坏项。
 
-    首抽 exact army+single（合并后复验残留）；纠错轮合法 army+none 被整批接受。
-    另证纠错仍非法 → F2.5 响亮降级、零部分头版。不静默改写 scope/kind。
+    #1746 heal-covers-illegal-values-too：option 组合矛盾不再整批组合重抽。
     改票真实入口由 test_pihong_dossier_1490 的 return_revise 路径覆盖。
     不申请 game：本 tracer 只经 generate_rescript_draft 真实入口，无 DB。
     """
@@ -244,46 +243,56 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
     assert monthly["transaction_category"] == "督赈"
     assert not str(monthly.get("assignee_name") or "").strip()
 
-    # army+single 首抽 → 一次有界重抽 army+none 合法接受
-    calls: list[int] = []
+    # army+single 首抽 → option heal 补 locality_scope=none；兄弟保留
+    calls: list[str] = []
 
     def _heal_once(_agent, prompt, tag="", **_kwargs):
-        del prompt, tag
-        calls.append(1)
+        del prompt
+        calls.append(tag or "")
         if len(calls) == 1:
             return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)
-        return json.dumps({"items": [_army_none_legal_item()]}, ensure_ascii=False)
+        return json.dumps(
+            {"heals": [{"heal_id": "0:0", "locality_scope": "none"}]},
+            ensure_ascii=False,
+        )
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _heal_once)
     healed = rescript_mod.generate_rescript_draft(
         object(), _month_end_ctx(), 2,
     )
-    assert len(calls) == 2  # spec：首抽 + 恰一次结构重抽
+    assert calls == ["rescript-draft", "rescript-draft-heal"]
     assert healed is not None and len(healed) == 1
-    grant = healed[0]["options"][0]
+    grant = next(o for o in healed[0]["options"] if o.get("grant_action") == "协饷")
     assert grant["target_kind"] == "army"
     assert grant["target_id"] == "guanning"
     assert grant["locality_scope"] == "none"
     assert grant.get("grant_action") == "协饷"
+    assert len(healed[0]["options"]) == 2
 
-    # 纠错耗尽仍 army+single → 整批降级、零部分头版（仍恰 2 次调用）
-    exhaust_calls: list[int] = []
+    # heal 耗尽仍 army+single → 只剔坏 option，兄弟仍可呈
+    exhaust_calls: list[str] = []
 
     def _never_heals(_agent, prompt, tag="", **_kwargs):
-        del prompt, tag
-        exhaust_calls.append(1)
+        del prompt
+        exhaust_calls.append(tag or "")
         return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _never_heals)
-    assert rescript_mod.generate_rescript_draft(
+    exhausted = rescript_mod.generate_rescript_draft(
         object(), _month_end_ctx(), 3,
-    ) is None
-    assert len(exhaust_calls) == 2  # spec：有界 1 次重抽后降级，不多抽
+    )
+    assert exhausted is not None and len(exhausted) == 1
+    assert len(exhausted[0]["options"]) == 1
+    assert exhausted[0]["options"][0].get("action_type") == "assignment"
+    assert exhaust_calls[0] == "rescript-draft"
+    assert exhaust_calls.count("rescript-draft-heal") == rescript_mod.RESCRIPT_OPTION_FIELD_HEAL_RETRIES
     note_path = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn3.json"
     assert note_path.is_file()
     note = json.loads(note_path.read_text(encoding="utf-8"))
     assert note.get("turn") == 3
-    assert str(note.get("reason") or "").strip()
+    assert note.get("reason") == "option_missing_fields_heal_exhausted"
+    dropped = note.get("dropped_options") or []
+    assert dropped and dropped[0].get("heal_id") == "0:0"
 
 
 def test_rescript_follow_draft_routes_hubu(game):
