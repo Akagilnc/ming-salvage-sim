@@ -628,16 +628,25 @@ def _audience_prompt_for_web_chat(session: Any, text: str, character: Character,
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
-    def __init__(self, fresh: bool = False, on_stage: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(
+        self,
+        fresh: bool = False,
+        on_stage: Optional[Callable[[str], None]] = None,
+        db_path: Optional[str] = None,
+    ) -> None:
         """实例化 = 真正进入游戏。无 API key 直接抛 LLMUnavailable。
         fresh=True：先清空主 DB（新游戏）再建 session。
-        on_stage：#1195 可选阶段回调（仅推叙事文案，不改 GameSession 初始化序）。"""
+        on_stage：#1195 可选阶段回调（仅推叙事文案，不改 GameSession 初始化序）。
+        db_path：#1749 候选路径绑定——构造期不重读全局 _get_main_db_path，避免并发切换串库。
+        """
         def _stage(label: str) -> None:
             if on_stage is not None:
                 on_stage(label)
 
-        # _get_main_db_path 已经 _normalize_db_path 唯一真源（相对→user_data_dir→abspath）。
-        db_path = _get_main_db_path()
+        if db_path:
+            db_path = _normalize_db_path(db_path)
+        else:
+            db_path = _get_main_db_path()
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -4344,13 +4353,30 @@ def _wait_exit_detach_for_open() -> bool:
     return True
 
 
-# continue 构造窗外持有的候选主路径——归档前视为 live（#1749 中途取消须构造在锁外）。
-_menu_opening_db_path: str = ""
+# 在建候选路径集合（每条候选自登记/自清理）——归档前视为 live；非 pin 表，只防搬在建文件。
+_menu_opening_db_paths: set[str] = set()
 _menu_opening_lock = threading.Lock()
 
 
+def _register_opening_db_path(path: str) -> str:
+    norm = _normalize_db_path(path)
+    if not norm:
+        return ""
+    with _menu_opening_lock:
+        _menu_opening_db_paths.add(norm)
+    return norm
+
+
+def _unregister_opening_db_path(path: str) -> None:
+    norm = _normalize_db_path(path) if path else ""
+    if not norm:
+        return
+    with _menu_opening_lock:
+        _menu_opening_db_paths.discard(norm)
+
+
 def _db_path_is_live(db_path: str) -> bool:
-    """#1749：归档前拒搬仍被活 web_game 或 continue 在建候选持有的路径。
+    """#1749：归档前拒搬仍被活 web_game 或在建候选持有的路径。
 
     不单凭 active 主路径指针判 live：排空关闭后的旧路径仍可能等于当时 main 配置，
     归档（exit→new_game / drain archive_db）必须在 close 确认后仍可搬文件。
@@ -4358,9 +4384,10 @@ def _db_path_is_live(db_path: str) -> bool:
     if not db_path:
         return False
     with _menu_opening_lock:
-        opening = _menu_opening_db_path
-    if opening and _same_db_path(db_path, opening):
-        return True
+        openings = set(_menu_opening_db_paths)
+    for opening in openings:
+        if _same_db_path(db_path, opening):
+            return True
     game = web_game
     if game is None:
         return False
@@ -4766,28 +4793,19 @@ async def api_menu_status() -> Dict[str, Any]:
 async def api_menu_new_game() -> Dict[str, Any]:
     """开始新游戏：清主 DB → 新建 WebGame。
 
-    #396：与 exit_to_menu 同构——界面立刻退（web_game=None + 构建新局），
-    旧 session 的后台召对队列在 daemon 线程里续跑写入、排空 write_gate 后再关连接（detach）。
-    先把旧库 park 旁路再 fresh=True 建新库——不在旧 worker 仍写旧连接时 os.remove 底层文件；
-    排空后关旧连接并把旁路库归档为存档，玩家可再次进入看到迟到的后台回奏；
-    #382 通用并发模型（Windows file-lock 等）不在本轮 scope。
-
-    #1732 T1：经 exit_to_menu 后 web_game 已是 None，仍须把旧主库归档进 saves/
-    （裁定二前提「旧局自动归档为存档」）。exit 本身不搬库；归档只在旧连接排空后、
-    由本端点承接同一 _archive_drained_db_file 权威实现。
-
-    #1749：路径切换/世代 bump 持短锁；WebGame 构造在锁外——exit 可在构造中途响应并 bump
-    （删除持锁构造）。新路径登记 opening live。整段 executor 不堵事件循环。
+    #396/#1732/#1749：短锁切换路径并登记 opening；构造绑显式 db_path（不重读全局）；
+    发布前对号。失配回滚仅当主路径仍是本拍 new_db_path，且 web_game 仍空——禁覆盖
+    并发已发布代际。构造在锁外，exit 可中途 bump。
     """
-    global web_game, _menu_generation, _menu_opening_db_path
+    global web_game, _menu_generation
     loop = asyncio.get_running_loop()
 
     def _new_game_work() -> Dict[str, Any]:
-        global web_game, _menu_generation, _menu_opening_db_path
+        global web_game, _menu_generation
         opening_path = ""
         token = 0
         old_game = None
-        snapshot: tuple[bool, str, bool, str] | None = None
+        snapshot: Optional[tuple[bool, str, bool, str]] = None
         prev_db_path = ""
         new_db_path = ""
         with _menu_lifecycle_lock:
@@ -4800,27 +4818,30 @@ async def api_menu_new_game() -> Dict[str, Any]:
             try:
                 _set_main_db_path(new_db_path)
                 web_game = None
-                opening_path = new_db_path
-                with _menu_opening_lock:
-                    _menu_opening_db_path = opening_path
+                opening_path = _register_opening_db_path(new_db_path)
             except Exception:
                 _restore_main_db_path_config(snapshot)
                 web_game = old_game
                 raise
         try:
             try:
-                new_game = WebGame(fresh=True)
+                # 绑定本拍路径，禁构造期重读被并发切换的全局 main。
+                new_game = WebGame(fresh=True, db_path=new_db_path)
             except LLMUnavailable as exc:
                 with _menu_lifecycle_lock:
                     assert snapshot is not None
-                    _restore_main_db_path_config(snapshot)
-                    web_game = old_game
+                    if _same_db_path(_get_main_db_path(), new_db_path):
+                        _restore_main_db_path_config(snapshot)
+                    if web_game is None:
+                        web_game = old_game
                 raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
             except Exception:
                 with _menu_lifecycle_lock:
                     assert snapshot is not None
-                    _restore_main_db_path_config(snapshot)
-                    web_game = old_game
+                    if _same_db_path(_get_main_db_path(), new_db_path):
+                        _restore_main_db_path_config(snapshot)
+                    if web_game is None:
+                        web_game = old_game
                 raise
             with _menu_lifecycle_lock:
                 if token != _menu_generation:
@@ -4829,7 +4850,9 @@ async def api_menu_new_game() -> Dict[str, Any]:
                     except Exception:
                         logger.exception("discard superseded new_game session failed")
                     assert snapshot is not None
-                    _restore_main_db_path_config(snapshot)
+                    # 仅当主路径仍是本拍候选时回滚——禁覆盖更新代际的路径。
+                    if _same_db_path(_get_main_db_path(), new_db_path):
+                        _restore_main_db_path_config(snapshot)
                     if web_game is None:
                         web_game = old_game
                     raise HTTPException(
@@ -4866,10 +4889,7 @@ async def api_menu_new_game() -> Dict[str, Any]:
                     [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
                 )
         finally:
-            if opening_path:
-                with _menu_opening_lock:
-                    if _menu_opening_db_path == opening_path:
-                        _menu_opening_db_path = ""
+            _unregister_opening_db_path(opening_path)
 
     return await loop.run_in_executor(None, _new_game_work)
 
@@ -4897,7 +4917,7 @@ async def api_menu_continue() -> StreamingResponse:
         ev_queue.put(("stage", label))
 
     def worker() -> None:
-        global web_game, _menu_opening_db_path
+        global web_game
         opening_path = ""
         try:
             # 首条阶段在重活前入队（#1195 ≤5s 首见）。
@@ -4912,11 +4932,9 @@ async def api_menu_continue() -> StreamingResponse:
                 if token != _menu_generation:
                     ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
                     return
-                opening_path = _get_main_db_path()
-                with _menu_opening_lock:
-                    _menu_opening_db_path = opening_path
-            # 构造在锁外：exit/new_game 可 bump；发布前再对号（#1195 中途取消）。
-            game = WebGame(fresh=False, on_stage=on_stage)
+                opening_path = _register_opening_db_path(_get_main_db_path())
+            # 构造在锁外：绑显式路径；exit/new_game 可 bump；发布前再对号。
+            game = WebGame(fresh=False, on_stage=on_stage, db_path=opening_path)
             old_runtime = None
             with _menu_lifecycle_lock:
                 if token != _menu_generation:
@@ -4938,10 +4956,7 @@ async def api_menu_continue() -> StreamingResponse:
         except Exception as exc:  # noqa: BLE001 — SSE 终态收束，不让线程死掉
             ev_queue.put(("__error__", {"message": str(exc)}))
         finally:
-            if opening_path:
-                with _menu_opening_lock:
-                    if _menu_opening_db_path == opening_path:
-                        _menu_opening_db_path = ""
+            _unregister_opening_db_path(opening_path)
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
