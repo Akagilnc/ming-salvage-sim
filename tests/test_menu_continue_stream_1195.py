@@ -7,13 +7,10 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import web_app
-from tests.wait_utils import wait_until
+from tests.wait_utils import reset_menu_path_leases, wait_until
 
-
-def _reset_path_leases() -> None:
-    """测试夹具：清空路径租约（不经生产钩子）。"""
-    with web_app._menu_path_lock:
-        web_app._menu_path_leases.clear()
+# 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
+_reset_path_leases = reset_menu_path_leases
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:

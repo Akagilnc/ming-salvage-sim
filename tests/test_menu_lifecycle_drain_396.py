@@ -11,12 +11,10 @@ from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
-from tests.wait_utils import ObservingLock, wait_until
+from tests.wait_utils import ObservingLock, reset_menu_path_leases, wait_until
 
-
-def _reset_path_leases() -> None:
-    with web_app._menu_path_lock:
-        web_app._menu_path_leases.clear()
+# 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
+_reset_path_leases = reset_menu_path_leases
 
 
 def _drain_then_archive(game, db_path: str) -> None:
