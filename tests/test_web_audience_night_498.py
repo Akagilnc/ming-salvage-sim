@@ -315,14 +315,22 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
             game.db.commit_pending_actions(game.state, kind_filter="directive")
 
             issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
-            # 屏障见票或 issue 终态；失败不挂死。
-            await _await_event_or_task(observed_ticket_inflight, issue_task)
-            allow.set()                                   # 放行回话落档 + 放票
-            await _await_event_or_task(observed_ticket_clear, issue_task)
+            try:
+                # 屏障见票或 issue 终态；失败不挂死。
+                await _await_event_or_task(observed_ticket_inflight, issue_task)
+                allow.set()                                   # 放行回话落档 + 放票
+                await _await_event_or_task(observed_ticket_clear, issue_task)
 
-            chat_resp = await chat_task
-            issue_resp = await issue_task
-            return night, _parse_sse(chat_resp.text), _parse_sse(issue_resp.text)
+                chat_resp = await chat_task
+                issue_resp = await issue_task
+                return night, _parse_sse(chat_resp.text), _parse_sse(issue_resp.text)
+            finally:
+                # 持有 chat allow：await 失败也须释放并收尾任务（同 M1 finally 形）。
+                allow.set()
+                if not chat_task.done():
+                    await chat_task
+                if not issue_task.done():
+                    await issue_task
 
     night, chat_events, issue_events = asyncio.run(scenario())
 
@@ -760,13 +768,23 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
             issue_task = asyncio.create_task(
                 issue_client.post("/api/decree/issue/stream", json={})
             )
-            await _await_event_or_task(observed_ticket_inflight, issue_task)
-            assert not issue_task.done(), "issue must wait for chat ticket, not forge elapsed 409"
+            try:
+                await _await_event_or_task(observed_ticket_inflight, issue_task)
+                assert not issue_task.done(), (
+                    "issue must wait for chat ticket, not forge elapsed 409"
+                )
 
-            allow.set()
-            chat_resp = await chat_task
-            issue_resp = await issue_task
-            return night, _parse_sse(issue_resp.text), _parse_sse(chat_resp.text)
+                allow.set()
+                chat_resp = await chat_task
+                issue_resp = await issue_task
+                return night, _parse_sse(issue_resp.text), _parse_sse(chat_resp.text)
+            finally:
+                # 持有 chat allow：屏障前失败也须释放并收尾（同 M1 finally 形）。
+                allow.set()
+                if not chat_task.done():
+                    await chat_task
+                if not issue_task.done():
+                    await issue_task
 
     night, issue_events, chat_events = asyncio.run(scenario())
     assert night is not None
@@ -806,15 +824,23 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
             adv_task = asyncio.create_task(
                 adv_client.post("/api/decree/advance_without_edict")
             )
-            # 等待期间 event loop 须继续跑 ticker（端点已 offload）
-            while ticks < 5:
-                await asyncio.sleep(0)
-            mid_ticks = ticks
-            allow.set()
-            await chat_task
-            resp = await adv_task
-            t.cancel()
-            return mid_ticks, ticks, resp.status_code
+            try:
+                # 等待期间 event loop 须继续跑 ticker（端点已 offload）
+                while ticks < 5:
+                    await asyncio.sleep(0)
+                mid_ticks = ticks
+                allow.set()
+                await chat_task
+                resp = await adv_task
+                return mid_ticks, ticks, resp.status_code
+            finally:
+                # 持有 chat allow：中途失败也须释放并收尾任务。
+                allow.set()
+                t.cancel()
+                if not chat_task.done():
+                    await chat_task
+                if not adv_task.done():
+                    await adv_task
 
     mid_ticks, ticks, status = asyncio.run(scenario())
     assert mid_ticks >= 5, f"event loop 被同步端点冻结（mid_ticks={mid_ticks}）"
