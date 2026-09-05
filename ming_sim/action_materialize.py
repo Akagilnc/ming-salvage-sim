@@ -17,7 +17,11 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.executor_routing import duty_route_categories
-from ming_sim.structured_decree import assemble_structured_decree, apply_assembled_to_payload
+from ming_sim.structured_decree import (
+    StructuredDecreeCombinationError,
+    apply_assembled_to_payload,
+    assemble_structured_decree,
+)
 
 from ming_sim.action_clusters import (
     ActionCluster,
@@ -84,7 +88,7 @@ def _materializable_draft_xiexang(
     """在真实写入前置条件齐全时，把 draft 协饷投影为本轮 grant 候选。
 
     列表契约逐项独立物化；不按付款字段相等折叠。
-    draft+协饷验证失败原样抛出（fail-loud，零写，不退回 ordinary draft）。
+    draft+协饷验证失败保持零写且产出 typed 呈现信号，不退回 ordinary draft。
     """
     if (
         str(candidate.get("kind") or "").strip() != "draft"
@@ -106,6 +110,487 @@ def _materializable_draft_xiexang(
     return promoted
 
 
+def _record_decree_validation_failures(
+    ctx: MaterializeCtx,
+    out: Dict[str, Any],
+    failures: list[tuple[dict[str, Any], BaseException]],
+) -> None:
+    """Persist every engine rejection, then generate a player-lane recovery report."""
+    from ming_sim.applier import (
+        Provenance, RejectedItem, RejectionCollector, atomic,
+        mirror_rejections_after_commit,
+    )
+    from ming_sim.cli_backend import compose_decree_validation_recovery
+
+    diagnostic_failures = [
+        {
+            "candidate": candidate,
+            "message": str(exc),
+            "failed_fields": sorted(str(field) for field in exc.failed_fields),
+        }
+        for candidate, exc in failures
+    ]
+    failed_fields = {
+        field
+        for failure in diagnostic_failures
+        for field in failure["failed_fields"]
+    }
+    collector = RejectionCollector()
+    for failure in diagnostic_failures:
+        collector.record(
+            "audience_decree",
+            RejectedItem(
+                item=failure["candidate"],
+                reason=failure["message"],
+                category="decree_validation",
+                source=Provenance.player_decree,
+            ),
+            int(ctx.session.state.turn),
+        )
+    # The existing rejection owner controls flush, transaction outcome, and
+    # post-commit mirror.  Recovery generation stays outside its write window.
+    from ming_sim.error_pack import rejections_jsonl_path
+
+    with atomic(ctx.session.db):
+        collector.flush_to_db(ctx.session.db)
+        mirror_rejections_after_commit(
+            ctx.session.db, collector, rejections_jsonl_path,
+        )
+    # Recovery is downstream of the committed engine facts: backend failure
+    # cannot erase the validation causes, and no write transaction spans LLM I/O.
+    report = compose_decree_validation_recovery(
+        sorted(failed_fields),
+        speaker_name=ctx.character.name,
+        llm_config=ctx.llm_config,
+    )
+    out["decree_validation_failure"] = {
+        "failed_fields": sorted(failed_fields),
+        "report": report,
+    }
+
+
+def _rejection_item_for_exc(
+    original_item: dict[str, Any],
+    exc: BaseException,
+) -> dict[str, Any]:
+    """Prefer typed partial_result when present; else fall back to classifier item."""
+    partial = getattr(exc, "partial_result", None)
+    if isinstance(partial, dict) and partial:
+        return dict(partial)
+    return dict(original_item or {})
+
+
+def _raise_cached_draft_combo_failure(
+    exc: StructuredDecreeCombinationError,
+    candidate_kind_index: int,
+) -> None:
+    """Re-raise batch combo failure only for indexes marked in draft_failures.
+
+    Legal siblings return without recording a rejection or re-extracting.
+    partial_result is narrowed to the failed draft so ledger item_json keeps
+    the actual rejected decree fields (ADR 0008 decision 5).
+    """
+    draft_failures = dict(getattr(exc, "draft_failures", None) or {})
+    idx = int(candidate_kind_index)
+    if draft_failures and idx not in draft_failures:
+        return
+    partial = getattr(exc, "partial_result", None)
+    drafts = partial.get("drafts") if isinstance(partial, dict) else None
+    draft_item: dict[str, Any] = {}
+    if isinstance(drafts, list) and 0 <= idx < len(drafts) and isinstance(drafts[idx], dict):
+        draft_item = dict(drafts[idx])
+    elif isinstance(partial, dict) and partial:
+        draft_item = dict(partial)
+    fields = frozenset(draft_failures.get(idx) or getattr(exc, "failed_fields", None) or ())
+    raise StructuredDecreeCombinationError(
+        str(exc),
+        partial_result=draft_item,
+        failed_fields=fields,
+        draft_failures={idx: fields} if fields else dict(draft_failures),
+    ) from exc
+
+
+def _invoke_materializer(
+    ctx: MaterializeCtx,
+    fn: Any,
+    original_item: dict[str, Any],
+    failures: list[tuple[dict[str, Any], BaseException]],
+) -> None:
+    """Run one materializer and route every typed validation failure identically."""
+    try:
+        fn(ctx)
+    except (
+        StructuredDecreeCombinationError,
+        DecreeMaterializationValidationError,
+    ) as exc:
+        failures.append((_rejection_item_for_exc(original_item, exc), exc))
+
+
+def _prevalidate_grant_allocation_candidate(
+    ctx: MaterializeCtx,
+    candidate: Dict[str, Any],
+) -> None:
+    """Pure grant typed checks before any batch write transaction.
+
+    No-op / non-materializable grants share _grant_allocation_attemptable with
+    the handler; only attemptable candidates run shape checks here.
+    """
+    if not _grant_allocation_attemptable(ctx, candidate):
+        return
+    grant_action = str(candidate.get("grant_action") or "").strip()
+    target_kind, target_id = _grant_target(candidate)
+    body = str(ctx.reply or "").strip()
+    if grant_action == "协饷":
+        require_materializable_xiexang_payload(
+            ctx.session.db,
+            text=body,
+            amount=candidate.get("amount"),
+            account=str(candidate.get("account") or ""),
+            purpose=str(candidate.get("purpose") or ""),
+            target_kind=str(target_kind or ""),
+            target_id=str(target_id or ""),
+            cadence=str(candidate.get("cadence") or ""),
+        )
+        return
+    try:
+        require_grant_allocation_shape(
+            grant_action=grant_action,
+            amount=candidate.get("amount"),
+            account=candidate.get("account"),
+        )
+    except ValueError as exc:
+        field = str(getattr(exc, "field", "") or "").strip() or "amount"
+        raise DecreeMaterializationValidationError(
+            str(exc), failed_fields=(field,),
+        ) from exc
+
+
+def _draft_heal_or_escalate(
+    ctx: MaterializeCtx, **kwargs: Any,
+) -> Optional[Dict[str, Any]]:
+    """自愈抽取；真不在册 → 戏内回禀、不落草案、不炸整轮。
+
+    唯一权威：batch preheat 与 draft handler 共用，禁平行闭包。
+    """
+    from ming_sim.cli_backend import (
+        UnknownParticipantEscalate,
+        compose_unknown_participant_inworld_report,
+        extract_draft_intent_with_roster_heal,
+    )
+
+    try:
+        return extract_draft_intent_with_roster_heal(**kwargs)
+    except UnknownParticipantEscalate as exc:
+        report = compose_unknown_participant_inworld_report(
+            exc.names,
+            voice="minister",
+            speaker_name=ctx.character.name,
+            llm_config=ctx.llm_config,
+        )
+        # batch_state is the sole store; handlers project into out when consuming.
+        ctx.batch_state["unknown_participant_escalate"] = {
+            "names": list(exc.names),
+            "report": report,
+        }
+        return None
+
+
+def _project_unknown_participant_escalate(ctx: MaterializeCtx) -> bool:
+    """Copy escalate payload from batch_state into out. Returns True if projected."""
+    esc = ctx.batch_state.get("unknown_participant_escalate")
+    if esc is None:
+        return False
+    ctx.out["unknown_participant_escalate"] = esc
+    return True
+
+
+def _draft_existing_surface(ctx: MaterializeCtx) -> Dict[str, Any]:
+    """pending/committed draft 探测与 dir_candidates 装配——preheat 与 handler 单源。"""
+    session = ctx.session
+    minister_name = ctx.character.name
+    pend_for_minister = ctx.pend_for_minister
+    has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
+    committed_draft = None
+    if not has_pending_directive:
+        for _directive in reversed(
+            session.db.list_directives(session.state, statuses=("draft",))
+        ):
+            if session.db.get_dossier_for_directive(int(_directive["id"])) is not None:
+                continue
+            if str(_directive["actor"] or "") == minister_name:
+                committed_draft = _directive
+                break
+    dir_candidates: list[dict[str, Any]] = []
+    for _p in pend_for_minister:
+        if _p["kind"] != "directive":
+            continue
+        _val = _p["payload_json"] or "{}"
+        try:
+            _cp = _val if isinstance(_val, (list, dict)) else json.loads(_val)
+        except (ValueError, TypeError):
+            _cp = {}
+        _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
+        _mode = _cp.get("mode") if isinstance(_cp, dict) else None
+        dir_candidates.append({
+            "id": int(_p["id"]), "text": _txt, "summary": _txt[:40], "mode": _mode,
+        })
+    existing_draft_text = ""
+    if dir_candidates:
+        existing_draft_text = str(dir_candidates[-1].get("text") or "")
+    elif committed_draft is not None and not has_pending_directive:
+        existing_draft_text = str(committed_draft["text"] or "")
+    has_committed_directive = committed_draft is not None
+    return {
+        "has_pending_directive": has_pending_directive,
+        "committed_draft": committed_draft,
+        "has_committed_directive": has_committed_directive,
+        "has_existing_draft": has_pending_directive or has_committed_directive,
+        "dir_candidates": dir_candidates,
+        "existing_draft_text": existing_draft_text,
+    }
+
+
+def _attribute_draft_combo_failures(
+    exc: StructuredDecreeCombinationError,
+    pure_draft_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+    validation_failures: list[tuple[dict[str, Any], BaseException]],
+) -> None:
+    """Map combo draft_failures indexes onto batch rejection rows (legal siblings skip)."""
+    for (
+        _candidate, original_candidate, _original_kind, original_draft_index,
+    ) in pure_draft_records:
+        try:
+            _raise_cached_draft_combo_failure(exc, original_draft_index)
+        except StructuredDecreeCombinationError as attributed:
+            validation_failures.append(
+                (_rejection_item_for_exc(original_candidate, attributed), attributed),
+            )
+
+
+def _draft_extract_admitted(ctx: MaterializeCtx) -> bool:
+    """draft 抽取/物化准入唯一权威——preheat 与 handler 共用，禁平行复制。"""
+    return not (
+        ctx.explicit_prefixed
+        or ctx.has_directive
+        or ctx.out.get("pending_action_id")
+    )
+
+
+def _secret_extract_admitted(ctx: MaterializeCtx) -> bool:
+    """secret/cultivate 抽取/物化准入唯一权威——preheat 与 handler 共用。"""
+    return not (
+        ctx.out.get("pending_action_id")
+        or ctx.out.get("secret_order_id")
+        or ctx.explicit_prefixed
+    )
+
+
+def _grant_allocation_attemptable(
+    ctx: MaterializeCtx, intent: Dict[str, Any],
+) -> bool:
+    """Pure: grant handler 是否会调用 stage。handler 与批预热投影共用，禁平行预测。"""
+    if (
+        ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return False
+    grant_action = str(intent.get("grant_action") or "").strip()
+    if grant_action not in (GRANT_ACTIONS - {"无"}):
+        return False
+    _target_kind, target_id = _grant_target(intent)
+    # 协饷缺 target 仍交 stage fail-loud；其它 grant 无目标则无物化。
+    if not target_id and grant_action != "协饷":
+        return False
+    return True
+
+
+def _batch_write_pass_admission_ctx(
+    ctx: MaterializeCtx,
+    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+) -> MaterializeCtx:
+    """投影写遍 draft/secret 准入 ctx。
+
+    与 pipeline grant_staged 同口径：仅 _grant_allocation_attemptable 为真的
+    grant 会解除显式前缀；存在 grant kind 本身不构成解除（禁宽泛预测）。
+    """
+    if not ctx.explicit_prefixed:
+        return ctx
+    for candidate, _original, _original_kind, _idx in candidate_records:
+        if str(candidate.get("kind") or "") != "grant_allocation":
+            continue
+        projected = replace(
+            ctx,
+            intent=candidate,
+            intent_kind="grant_allocation",
+            intent_candidates=None,
+            conversation_intent_handled=False,
+            draft_staged=False,
+        )
+        if _grant_allocation_attemptable(projected, candidate):
+            return replace(ctx, explicit_prefixed=False)
+    return ctx
+
+
+def _secret_mode_needs(
+    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+) -> tuple[bool, bool]:
+    """同批 secret 模式需求：新建 → new；既有动作/cultivate → actions。可并存。"""
+    need_new = False
+    need_actions = False
+    for candidate, _original, _original_kind, _idx in candidate_records:
+        kind = str(candidate.get("kind") or "")
+        if kind == "cultivate":
+            need_actions = True
+        elif kind == "secret":
+            if candidate.get("secret_action") == "新建":
+                need_new = True
+            else:
+                need_actions = True
+    return need_new, need_actions
+
+
+def _preheat_batch_draft_extractions(
+    ctx: MaterializeCtx,
+    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+    draft_total: int,
+    validation_failures: list[tuple[dict[str, Any], BaseException]],
+) -> None:
+    """Run draft LLM extractions into batch_state before any write transaction.
+
+    Multi-draft combo failure is attributed per draft_failures index only;
+    legal siblings get no rejection row. Any typed failure keeps the batch at
+    zero writes (caller skips the write pass). Admission shares handler authority.
+    """
+    pure_draft_records = [
+        (candidate, original, original_kind, original_draft_index)
+        for candidate, original, original_kind, original_draft_index in candidate_records
+        if str(candidate.get("kind") or "") == "draft"
+    ]
+    if not pure_draft_records:
+        return
+    # 无消费者不抽：写遍准入（含实际 grant 落地后解除前缀）与 handler 同一权威。
+    if not _draft_extract_admitted(
+        _batch_write_pass_admission_ctx(ctx, candidate_records),
+    ):
+        return
+
+    session = ctx.session
+
+    if draft_total > 1:
+        try:
+            batch_res = _draft_heal_or_escalate(
+                ctx,
+                player_message=ctx.player_message,
+                minister_reply=ctx.reply,
+                llm_config=ctx.llm_config,
+                draft_count=draft_total,
+                content=getattr(session, "content", None),
+                db=session.db,
+            )
+        except StructuredDecreeCombinationError as exc:
+            # Failures land in validation_failures; pipeline returns before write pass.
+            # No draft_combo_error/drafts residue — handler multi path never runs here.
+            _attribute_draft_combo_failures(
+                exc, pure_draft_records, validation_failures,
+            )
+            return
+        if batch_res is None:
+            # escalate already in batch_state via _draft_heal_or_escalate.
+            return
+        ctx.batch_state["drafts"] = list(batch_res.get("drafts") or [])
+        return
+
+    # Single pure draft: preheat so the write pass never opens LLM I/O.
+    _candidate, original_candidate, _original_kind, _original_draft_index = pure_draft_records[0]
+    surface = _draft_existing_surface(ctx)
+    try:
+        healed = _draft_heal_or_escalate(
+            ctx,
+            player_message=ctx.player_message,
+            minister_reply=ctx.reply,
+            llm_config=ctx.llm_config,
+            has_pending_draft=surface["has_existing_draft"],
+            existing_draft_text=surface["existing_draft_text"],
+            existing_candidates=surface["dir_candidates"] or None,
+            content=getattr(session, "content", None),
+            db=session.db,
+        )
+    except StructuredDecreeCombinationError as exc:
+        validation_failures.append(
+            (_rejection_item_for_exc(original_candidate, exc), exc),
+        )
+        return
+    ctx.batch_state["draft_single"] = healed
+
+
+def _secret_extract_bundle(
+    ctx: MaterializeCtx, *, prefer_new: bool,
+) -> Dict[str, Any]:
+    """secret/cultivate LLM 抽取装配唯一权威（preheat 与 handler fallback 共调）。"""
+    from ming_sim.cli_backend import _extract_secret_order, extract_minister_actions
+
+    session = ctx.session
+    minister_name = ctx.character.name
+    if prefer_new:
+        return {
+            "mode": "new",
+            "secret": _extract_secret_order(
+                ctx.player_message,
+                ctx.reply,
+                minister_name,
+                ctx.llm_config,
+                force_default_assignee=False,
+                dossier_candidates=session.db.list_referenceable_dossiers(
+                    minister_name, session.state.turn,
+                ),
+            ),
+        }
+    is_consort = getattr(ctx.character, "office_type", "") == "后宫"
+    active = list(session.db.get_active_secret_orders_for_minister(minister_name) or [])
+    if not (active or is_consort):
+        return {
+            "mode": "none",
+            "act": None,
+            "active": active,
+            "is_consort": is_consort,
+        }
+    return {
+        "mode": "actions",
+        "act": extract_minister_actions(
+            ctx.player_message, ctx.reply, active, is_consort, llm_config=ctx.llm_config,
+        ),
+        "active": active,
+        "is_consort": is_consort,
+    }
+
+
+def _preheat_batch_secret_extractions(
+    ctx: MaterializeCtx,
+    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+) -> None:
+    """Run secret/cultivate LLM extractions into batch_state before writes.
+
+    同批多 mode 分槽（new / actions）一次收齐；写遍只消费对应槽，禁止
+    单槽 prefer_new 互斥导致写遍 fallback 重抽。无消费者（准入失败）不预热。
+    """
+    need_new, need_actions = _secret_mode_needs(candidate_records)
+    if not (need_new or need_actions):
+        return
+    # 无消费者不抽：写遍准入（含实际 grant 落地后解除前缀）与 handler 同一权威。
+    if not _secret_extract_admitted(
+        _batch_write_pass_admission_ctx(ctx, candidate_records),
+    ):
+        return
+    slots: Dict[str, Any] = {}
+    if need_new:
+        slots["new"] = _secret_extract_bundle(ctx, prefer_new=True)
+    if need_actions:
+        slots["actions"] = _secret_extract_bundle(ctx, prefer_new=False)
+    # Key presence marks batch write path: handler must not re-extract.
+    ctx.batch_state["secret_extract_by_mode"] = slots
+
+
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     """按登记 priority 依次调用已注册 materializer。
 
@@ -116,6 +601,11 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     if ctx.intent_candidates:
         # classifier 的列表契约逐项消费；confirmation 仍在 session 上游按 primary
         # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
+        # 批路径选路 (a)/#1730：先收齐全批抽取+纯校验（无事务），任一 typed 失败
+        # 则零业务写直接落拒收；全成功再一次短 atomic 落 deterministic 写。
+        # 禁止 with atomic 包住任何 LLM 调用。
+        from ming_sim.applier import atomic
+
         baseline_out = dict(ctx.out)
         multi_batch = len(ctx.intent_candidates) > 1
         draft_total = sum(
@@ -124,75 +614,151 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         )
         draft_index = 0
         candidate_records = []
+        validation_failures: list[tuple[dict[str, Any], BaseException]] = []
         for candidate in ctx.intent_candidates:
+            original_candidate = dict(candidate)
             original_kind = str(candidate.get("kind") or "")
             original_draft_index = draft_index
             if original_kind == "draft":
                 draft_index += 1
+            try:
+                materializable = _materializable_draft_xiexang(ctx, candidate)
+            except DecreeMaterializationValidationError as exc:
+                validation_failures.append((original_candidate, exc))
+                continue
             candidate_records.append((
-                _materializable_draft_xiexang(ctx, candidate),
-                original_kind,
-                original_draft_index,
+                materializable, original_candidate, original_kind, original_draft_index,
             ))
         if ctx.explicit_prefixed:
             candidate_records.sort(
                 key=lambda record: str(record[0].get("kind") or "")
                 != "grant_allocation"
             )
+
+        # Pass 1 pure grant checks (no T): drop failing candidates from the write set.
+        validated_records = []
+        for (
+            candidate, original_candidate, original_kind, original_draft_index,
+        ) in candidate_records:
+            if str(candidate.get("kind") or "") == "grant_allocation":
+                try:
+                    _prevalidate_grant_allocation_candidate(ctx, candidate)
+                except DecreeMaterializationValidationError as exc:
+                    validation_failures.append(
+                        (_rejection_item_for_exc(original_candidate, exc), exc),
+                    )
+                    continue
+            validated_records.append(
+                (candidate, original_candidate, original_kind, original_draft_index),
+            )
+        candidate_records = validated_records
+
         kind_counts: Dict[str, int] = {}
-        for candidate, _original_kind, _original_index in candidate_records:
+        for candidate, _original_candidate, _original_kind, _original_index in candidate_records:
             kind = str(candidate.get("kind") or "")
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
+
+        # Typed failure already known → zero business write; skip LLM preheat.
+        if validation_failures:
+            _record_decree_validation_failures(ctx, ctx.out, validation_failures)
+            return
+
+        # Pass 1 LLM preheat (no T): draft/secret extractions land in batch_state.
+        _preheat_batch_draft_extractions(
+            ctx, candidate_records, draft_total, validation_failures,
+        )
+        _preheat_batch_secret_extractions(ctx, candidate_records)
+        if validation_failures:
+            _record_decree_validation_failures(ctx, ctx.out, validation_failures)
+            return
+
+        # Pass 2: short deterministic write atomic only (no LLM).
         kind_indexes: Dict[str, int] = {}
         grant_staged = False
-        for candidate, original_kind, original_draft_index in candidate_records:
-            kind = str(candidate.get("kind") or "")
-            cluster = cluster_by_kind(kind)
-            if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
-                continue
-            fn = cluster.materialize_fn
-            if fn is None:
-                continue
-            kind_index = kind_indexes.get(kind, 0)
-            kind_indexes[kind] = kind_index + 1
-            candidate_out = dict(baseline_out)
-            candidate_ctx = replace(
-                ctx,
-                out=candidate_out,
-                intent=candidate,
-                intent_kind=cluster.kind,
-                intent_candidates=None,
-                explicit_prefixed=ctx.explicit_prefixed and not grant_staged,
-                candidate_kind_index=(
-                    original_draft_index if original_kind == "draft" else kind_index
-                ),
-                candidate_kind_count=(
-                    draft_total if original_kind == "draft" else kind_counts[kind]
-                ),
-                multi_intent_batch=multi_batch,
-                conversation_intent_handled=False,
-                draft_staged=False,
+        out_merges: list[dict[str, Any]] = []
+        draft_staged_any = False
+        write_failures: list[tuple[dict[str, Any], BaseException]] = []
+        try:
+            with atomic(ctx.session.db):
+                for (
+                    candidate, original_candidate, original_kind, original_draft_index,
+                ) in candidate_records:
+                    kind = str(candidate.get("kind") or "")
+                    cluster = cluster_by_kind(kind)
+                    if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
+                        continue
+                    fn = cluster.materialize_fn
+                    if fn is None:
+                        continue
+                    kind_index = kind_indexes.get(kind, 0)
+                    kind_indexes[kind] = kind_index + 1
+                    candidate_out = dict(baseline_out)
+                    candidate_ctx = replace(
+                        ctx,
+                        out=candidate_out,
+                        intent=candidate,
+                        intent_kind=cluster.kind,
+                        intent_candidates=None,
+                        explicit_prefixed=ctx.explicit_prefixed and not grant_staged,
+                        candidate_kind_index=(
+                            original_draft_index if original_kind == "draft" else kind_index
+                        ),
+                        candidate_kind_count=(
+                            draft_total if original_kind == "draft" else kind_counts[kind]
+                        ),
+                        multi_intent_batch=multi_batch,
+                        conversation_intent_handled=False,
+                        draft_staged=False,
+                    )
+                    try:
+                        fn(candidate_ctx)
+                    except (
+                        StructuredDecreeCombinationError,
+                        DecreeMaterializationValidationError,
+                    ) as exc:
+                        # Unexpected after pre-validation: roll back the short write T.
+                        write_failures.append(
+                            (_rejection_item_for_exc(original_candidate, exc), exc),
+                        )
+                        raise
+                    if kind == "grant_allocation" and int(
+                        candidate_out.get("pending_action_id") or 0
+                    ) > int(baseline_out.get("pending_action_id") or 0):
+                        grant_staged = True
+                    out_merges.append(candidate_out)
+                    if candidate_ctx.draft_staged:
+                        draft_staged_any = True
+        except (
+            StructuredDecreeCombinationError,
+            DecreeMaterializationValidationError,
+        ):
+            # out never merged on this path — no projection reset needed.
+            _record_decree_validation_failures(
+                ctx, ctx.out, write_failures or validation_failures,
             )
-            fn(candidate_ctx)
-            if kind == "grant_allocation" and int(
-                candidate_out.get("pending_action_id") or 0
-            ) > int(baseline_out.get("pending_action_id") or 0):
-                grant_staged = True
-            ctx.out.update(candidate_out)
-            if candidate_ctx.draft_staged:
-                ctx.draft_staged = True
+            return
+
+        for merged in out_merges:
+            ctx.out.update(merged)
+        if draft_staged_any:
+            ctx.draft_staged = True
+
         # #1380：拟旨优先后仍须并行 office（仅 LLM 分类路；前缀路禁，见 #344 US3）
+        # D 成功尾部保持 COMMIT 后另起，不并进批 T。
         if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
             parallel_stage_office_from_appointment_intent(ctx)
         return
 
     seen: set = set()
+    validation_failures: list[tuple[dict[str, Any], BaseException]] = []
     for cluster in materialize_clusters_ordered():
         fn = cluster.materialize_fn
         if fn is None or fn in seen:
             continue
         seen.add(fn)
-        fn(ctx)
+        _invoke_materializer(ctx, fn, {}, validation_failures)
+    if validation_failures:
+        _record_decree_validation_failures(ctx, ctx.out, validation_failures)
     # #1380：LLM 分类拟旨路并行 office（无任免意图则 no-op）。
     # 显式「拟旨如下」前缀任免走随诏 extractor office_changes（#344 US3 / ADR 0028 /
     # test_decree_prefix_appointment_not_double_staged）；禁并行 LLM 抽取。
@@ -205,28 +771,27 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
 
 def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
     """密令会话动作 + 调教：并发判词与串行 extract_minister_actions 同缝。"""
-    from ming_sim.cli_backend import _extract_secret_order, extract_minister_actions
-
-    if ctx.out.get("pending_action_id") or ctx.out.get("secret_order_id") or ctx.explicit_prefixed:
+    if not _secret_extract_admitted(ctx):
         return
     session = ctx.session
     minister_name = ctx.character.name
     intent = ctx.intent
     intent_kind = ctx.intent_kind
+    # Batch path: preheat owned multi-mode slots. Key presence ⇒ never re-extract.
+    in_batch = "secret_extract_by_mode" in ctx.batch_state
+    mode_slots = ctx.batch_state.get("secret_extract_by_mode") if in_batch else None
     if (
         intent is not None
         and intent_kind == "secret"
         and intent.get("secret_action") == "新建"
     ):
-        secret = _extract_secret_order(
-            ctx.player_message,
-            ctx.reply,
-            minister_name,
-            ctx.llm_config,
-            force_default_assignee=False,
-            dossier_candidates=session.db.list_referenceable_dossiers(
-                minister_name, session.state.turn),
-        )
+        if in_batch:
+            bundle = mode_slots.get("new") if isinstance(mode_slots, dict) else None
+            if not isinstance(bundle, dict):
+                return
+        else:
+            bundle = _secret_extract_bundle(ctx, prefer_new=True)
+        secret = dict(bundle.get("secret") or {})
         frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
         if frozen is None:
             reason = str(secret.get("contract_error") or "密令抽取未能冻结合同").strip()
@@ -263,31 +828,34 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         )
         return
 
-    is_consort = getattr(ctx.character, "office_type", "") == "后宫"
-    active = session.db.get_active_secret_orders_for_minister(minister_name)
+    # Kind gate BEFORE actions extract（F5：非批不得在 kind 拒绝前开 LLM）。
+    if intent is not None and intent_kind not in ("secret", "cultivate", "none"):
+        return
+    if intent is not None and intent_kind == "none":
+        # 分类器已定 none：空 act 无消费者，免抽。
+        return
+
+    if in_batch:
+        bundle = mode_slots.get("actions") if isinstance(mode_slots, dict) else None
+        if not isinstance(bundle, dict):
+            return
+    else:
+        bundle = _secret_extract_bundle(ctx, prefer_new=False)
+    is_consort = bool(bundle.get("is_consort"))
+    active = list(bundle.get("active") or [])
     if not (active or is_consort):
         return
 
-    # 仅当分类器未跑，或判为 secret/cultivate 时走抽取/物化；
-    # 其它 kind 的并发判词不得串行重抽密令。
-    if intent is not None and intent_kind not in ("secret", "cultivate", "none"):
-        return
     if intent is not None and intent_kind in ("secret", "cultivate"):
-        extracted = extract_minister_actions(
-            ctx.player_message, ctx.reply, active, is_consort, llm_config=ctx.llm_config)
+        extracted = dict(bundle.get("act") or {})
         act = extracted if (
             extracted.get("secret_action") != "无"
             or extracted.get("cultivate_skill")
             or extracted.get("cultivate_trait")
         ) else intent
-    elif intent is not None and intent_kind == "none":
-        act = {
-            "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-            "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
-        }
     else:
-        act = extract_minister_actions(
-            ctx.player_message, ctx.reply, active, is_consort, llm_config=ctx.llm_config)
+        # intent is None：分类器未跑，串行回落。
+        act = dict(bundle.get("act") or {})
 
     sa = act["secret_action"]
     if sa and sa != "无":
@@ -354,9 +922,6 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
 
 def _materialize_draft(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import (
-        UnknownParticipantEscalate,
-        compose_unknown_participant_inworld_report,
-        extract_draft_intent_with_roster_heal,
         normalize_draft_person_roster,
         resolve_directive_mode,
     )
@@ -365,20 +930,14 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     minister_name = ctx.character.name
     intent = ctx.intent
     intent_kind = ctx.intent_kind
-    pend_for_minister = ctx.pend_for_minister
 
-    # 一次扫描 pending + 最近 committed draft（入口条件与后续物化共用）
-    has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
-    committed_draft = None
-    if not has_pending_directive:
-        for _directive in reversed(session.db.list_directives(session.state, statuses=("draft",))):
-            if session.db.get_dossier_for_directive(int(_directive["id"])) is not None:
-                continue
-            if str(_directive["actor"] or "") == minister_name:
-                committed_draft = _directive
-                break
-    has_committed_directive = committed_draft is not None
-    has_existing_draft = has_pending_directive or has_committed_directive
+    surface = _draft_existing_surface(ctx)
+    has_pending_directive = surface["has_pending_directive"]
+    committed_draft = surface["committed_draft"]
+    has_committed_directive = surface["has_committed_directive"]
+    has_existing_draft = surface["has_existing_draft"]
+    dir_candidates = surface["dir_candidates"]
+    existing_draft_text = surface["existing_draft_text"]
     if not (
         (intent is not None and intent_kind == "draft")
         or has_pending_directive
@@ -386,74 +945,18 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     ):
         return
 
-    if ctx.explicit_prefixed or ctx.has_directive or ctx.out.get("pending_action_id"):
+    if not _draft_extract_admitted(ctx):
         return
-
-    dir_candidates = []
-    for _p in pend_for_minister:
-        if _p["kind"] != "directive":
-            continue
-        _val = _p["payload_json"] or "{}"
-        try:
-            _cp = _val if isinstance(_val, (list, dict)) else json.loads(_val)
-        except (ValueError, TypeError):
-            _cp = {}
-        _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
-        _mode = _cp.get("mode") if isinstance(_cp, dict) else None
-        dir_candidates.append({
-            "id": int(_p["id"]), "text": _txt, "summary": _txt[:40], "mode": _mode,
-        })
-    existing_draft_text = ""
-    if dir_candidates:
-        existing_draft_text = str(dir_candidates[-1].get("text") or "")
-    elif committed_draft is not None and not has_pending_directive:
-        existing_draft_text = str(committed_draft["text"] or "")
-
-    def _heal_or_escalate(**kwargs: Any) -> Optional[Dict[str, Any]]:
-        """自愈抽取；真不在册 → 戏内回禀、不落草案、不炸整轮。"""
-        try:
-            return extract_draft_intent_with_roster_heal(**kwargs)
-        except UnknownParticipantEscalate as exc:
-            report = compose_unknown_participant_inworld_report(
-                exc.names,
-                voice="minister",
-                speaker_name=minister_name,
-                llm_config=ctx.llm_config,
-            )
-            ctx.out["unknown_participant_escalate"] = {
-                "names": list(exc.names),
-                "report": report,
-            }
-            return None
 
     if (
         intent is not None
         and intent_kind == "draft"
         and ctx.candidate_kind_count > 1
     ):
-        if "drafts" not in ctx.batch_state:
-            if "unknown_participant_escalate" in ctx.batch_state:
-                ctx.out["unknown_participant_escalate"] = ctx.batch_state[
-                    "unknown_participant_escalate"
-                ]
-                return
-            batch_res = _heal_or_escalate(
-                player_message=ctx.player_message,
-                minister_reply=ctx.reply,
-                llm_config=ctx.llm_config,
-                draft_count=ctx.candidate_kind_count,
-                content=getattr(session, "content", None),
-                db=session.db,
-            )
-            if batch_res is None:
-                # 批抽一次耗尽：记入 batch_state，兄弟 kind 同回禀不重复 LLM
-                esc = ctx.out.get("unknown_participant_escalate")
-                if esc is not None:
-                    ctx.batch_state["unknown_participant_escalate"] = esc
-                ctx.batch_state["drafts"] = []
-                return
-            ctx.batch_state["drafts"] = list(batch_res.get("drafts") or [])
-        drafts = ctx.batch_state["drafts"]
+        # Batch multi-draft: preheat owns extract/combo; handler only consumes cache.
+        if _project_unknown_participant_escalate(ctx):
+            return
+        drafts = list(ctx.batch_state.get("drafts") or [])
         if ctx.candidate_kind_index >= len(drafts):
             return
         batch_draft = drafts[ctx.candidate_kind_index]
@@ -461,19 +964,29 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             return
         draft_res = dict(batch_draft)
     else:
-        healed = _heal_or_escalate(
-            player_message=ctx.player_message,
-            minister_reply=ctx.reply,
-            llm_config=ctx.llm_config,
-            has_pending_draft=has_existing_draft,
-            existing_draft_text=existing_draft_text,
-            existing_candidates=dir_candidates or None,
-            content=getattr(session, "content", None),
-            db=session.db,
-        )
-        if healed is None:
-            return
-        draft_res = healed
+        # Batch path may preheat single-draft extract into batch_state (no L in write T).
+        if "draft_single" in ctx.batch_state:
+            healed = ctx.batch_state.get("draft_single")
+            if healed is None:
+                _project_unknown_participant_escalate(ctx)
+                return
+            draft_res = dict(healed) if isinstance(healed, dict) else healed
+        else:
+            healed = _draft_heal_or_escalate(
+                ctx,
+                player_message=ctx.player_message,
+                minister_reply=ctx.reply,
+                llm_config=ctx.llm_config,
+                has_pending_draft=has_existing_draft,
+                existing_draft_text=existing_draft_text,
+                existing_candidates=dir_candidates or None,
+                content=getattr(session, "content", None),
+                db=session.db,
+            )
+            if healed is None:
+                _project_unknown_participant_escalate(ctx)
+                return
+            draft_res = healed
         if intent is not None and intent_kind == "draft" and not has_existing_draft:
             # #515 的并行 classifier 已经确定“拟旨”，大臣回话仍是正文真源；
             # #571 的串行抽取只补案卷结构字段，失败不得吞掉已判定的动作。
@@ -1348,6 +1861,13 @@ GRANT_MONEY_ACTIONS = GRANT_ACTIONS - {"无"} - GRANT_HONORIFICS
 XIEXIANG_TARGET_KINDS = frozenset({"army"})
 
 
+def _grant_shape_value_error(message: str, *, field: str) -> ValueError:
+    """ValueError carrying the failed shape field; callers catching ValueError unchanged."""
+    exc = ValueError(message)
+    exc.field = field  # type: ignore[attr-defined]
+    return exc
+
+
 def resolve_grant_account(*, grant_action: object = None, account: object = None) -> str:
     """grant account 归一唯一权威（无 DB）。
 
@@ -1366,7 +1886,9 @@ def resolve_grant_account(*, grant_action: object = None, account: object = None
         return raw_account
     if ga in GRANT_MONEY_ACTIONS:
         if raw_account and raw_account not in {"国库", "内库"}:
-            raise ValueError(f"grant 非法 account：{raw_account!r}")
+            raise _grant_shape_value_error(
+                f"grant 非法 account：{raw_account!r}", field="account",
+            )
         return raw_account if raw_account in {"国库", "内库"} else "国库"
     return ""
 
@@ -1382,28 +1904,35 @@ def require_grant_allocation_shape(
     #1620：层 A 上桌与 rescript mapper 共用——禁平行第二套规则。
     顺序：action 闭集 → account（resolve_grant_account）→ amount（本函数独掌）。
     返回 grant_action、account；非 honorific 另含正 int amount。
+    校验失败仍 raise ValueError；附 field 属性供物化缝转 typed 拒收（#1730）。
     """
     from ming_sim.strict_types import strict_int
 
     ga = str(grant_action or "").strip()
     if not ga:
-        raise ValueError("grant_allocation 缺 grant_action")
+        raise _grant_shape_value_error(
+            "grant_allocation 缺 grant_action", field="grant_action",
+        )
     if ga not in (GRANT_ACTIONS - {"无"}):
-        raise ValueError(f"grant 非法 grant_action：{ga!r}")
+        raise _grant_shape_value_error(
+            f"grant 非法 grant_action：{ga!r}", field="grant_action",
+        )
     resolved_account = resolve_grant_account(grant_action=ga, account=account)
     out: Dict[str, Any] = {"grant_action": ga, "account": resolved_account}
     if ga in GRANT_HONORIFICS:
         return out
     if amount is None or amount == "":
-        raise ValueError("grant 金钱缺正 amount")
+        raise _grant_shape_value_error("grant 金钱缺正 amount", field="amount")
     # #1716：整数字符串是 classifier/LLM 运输常态（#658 normalize raw 直达本边界）；bool/float 仍拒。
     # #1620 原 accept_numeric_strings=False 把 "8" 一并拒掉，拟旨 grant 物化中断、pending 零落。
     try:
         amt = strict_int(amount, accept_numeric_strings=True)
     except ValueError as exc:
-        raise ValueError(f"grant 金钱 amount 须为正整数，拒 {amount!r}") from exc
+        raise _grant_shape_value_error(
+            f"grant 金钱 amount 须为正整数，拒 {amount!r}", field="amount",
+        ) from exc
     if amt <= 0:
-        raise ValueError("grant 金钱缺正 amount")
+        raise _grant_shape_value_error("grant 金钱缺正 amount", field="amount")
     out["amount"] = amt
     return out
 
@@ -1464,17 +1993,28 @@ def canonicalize_xiexang_army_target(db: Any, raw_target: object) -> str:
     tid = str(raw_target or "").strip()
     army_id = _resolve_xiexang_army_id(db, tid)
     if not army_id:
-        raise ValueError(
-            f"协饷旨意 target 无法解析为军队：{tid!r}（不猜散文）"
+        raise DecreeMaterializationValidationError(
+            f"协饷旨意 target 无法解析为军队：{tid!r}（不猜散文）",
+            failed_fields=("target_kind", "target_id"),
         )
     return army_id
 
 
-class IncompleteXiexangPayloadError(ValueError):
+class DecreeMaterializationValidationError(ValueError):
+    """Typed rejection raised before a decree candidate can be recorded."""
+
+    def __init__(self, message: str, *, failed_fields: tuple[str, ...] = ()) -> None:
+        self.failed_fields = failed_fields
+        super().__init__(message)
+
+
+class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
     def __init__(self, missing_fields: list) -> None:
-        self.missing_fields = tuple(missing_fields)
+        fields = tuple(missing_fields)
+        self.missing_fields = fields  # compatibility projection for existing callers
         super().__init__(
-            "拨饷旨意缺少结构化字段：" + "/".join(missing_fields) + "（不猜散文）"
+            "拨饷旨意缺少结构化字段：" + "/".join(missing_fields) + "（不猜散文）",
+            failed_fields=fields,
         )
 
 
@@ -1544,7 +2084,9 @@ def require_materializable_xiexang_payload(
     )
     body = str(text or "").strip()
     if not body:
-        raise ValueError("协饷旨意缺少正文（不猜散文）")
+        raise DecreeMaterializationValidationError(
+            "协饷旨意缺少正文（不猜散文）", failed_fields=("text",),
+        )
     army_id = canonicalize_xiexang_army_target(db, explicit["target_id"])
     cadence_value = str(cadence or "").strip() or "一次性"
     return {
@@ -1612,11 +2154,18 @@ def stage_grant_allocation_candidate(
         if not body:
             return 0
         # #1620：非协饷写 pending 前消费 shape 唯一权威；删宽松 int(amount or 0)
-        shaped = require_grant_allocation_shape(
-            grant_action=action,
-            amount=amount,
-            account=account,
-        )
+        # #1730：物化缝把 shape 族裸 ValueError 转为 typed 拒收（权威函数语义不动）。
+        try:
+            shaped = require_grant_allocation_shape(
+                grant_action=action,
+                amount=amount,
+                account=account,
+            )
+        except ValueError as exc:
+            field = str(getattr(exc, "field", "") or "").strip() or "amount"
+            raise DecreeMaterializationValidationError(
+                str(exc), failed_fields=(field,),
+            ) from exc
         n = int(shaped["amount"]) if "amount" in shaped else 0
         account = str(shaped.get("account") or "")
 
@@ -1698,22 +2247,15 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
 
     #1503：显式拟旨前缀若带 typed grant 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
     draft_staged / 已有 pending 仍互斥，避免与 generic special_decree 双写。
+    是否 attempt stage 的纯门闩见 _grant_allocation_attemptable（与批预热共用）。
     """
-    if (
-        ctx.intent_kind != "grant_allocation"
-        or ctx.draft_staged
-        or ctx.out.get("pending_action_id")
-        or ctx.conversation_intent_handled
-    ):
+    if ctx.intent_kind != "grant_allocation":
         return
     intent = ctx.intent or {}
+    if not _grant_allocation_attemptable(ctx, intent):
+        return
     grant_action = str(intent.get("grant_action") or "").strip()
-    if grant_action not in (GRANT_ACTIONS - {"无"}):
-        return
     target_kind, target_id = _grant_target(intent)
-    # 协饷缺 target 仍交 stage fail-loud；其它 grant 无目标则无物化。
-    if not target_id and grant_action != "协饷":
-        return
     pending_id = stage_grant_allocation_candidate(
         ctx.session.db,
         ctx.session.state.turn,
