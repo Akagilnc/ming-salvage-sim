@@ -2735,28 +2735,45 @@ class GameSession:
             return 0
         if action == "任命" and not office:
             return 0
-        staged_payload = {"name": name, "office": office, "appointer": appointer.name}
         from ming_sim.action_materialize import (
+            _apply_existing_appointment_hit,
             _list_pending_office_rows,
             _match_office_row_by_name_office,
             _office_payload,
         )
         from ming_sim.cli_backend import resolve_directive_mode
-        # #1731：省略 mode = 沉默；同名同职既有候选保留其 typed 判断。
-        existing_mode = None
-        existing_hits = _match_office_row_by_name_office(
-            _list_pending_office_rows(self.db, int(self.state.turn)),
-            name=name,
-            office=office,
-            content=getattr(self, "content", None),
-            db=self.db,
-        )
+        # #1731：省略 mode = 沉默。同名同职同向既有命中复用更新通道，
+        # 一意一条——续拟保留同一 pending id，不得复制第二条。
+        extracted_mode = data.get("mode") or data.get("颁布方式")
+        existing_hits = [
+            r for r in _match_office_row_by_name_office(
+                _list_pending_office_rows(self.db, int(self.state.turn)),
+                name=name,
+                office=office,
+                content=getattr(self, "content", None),
+                db=self.db,
+            )
+            if str(r.get("action") or "") == action
+        ]
         if len(existing_hits) == 1:
-            existing_mode = _office_payload(existing_hits[0]).get("mode")
-        staged_payload["mode"] = resolve_directive_mode(
-            extracted=data.get("mode") or data.get("颁布方式"),
-            existing=existing_mode,
-        )
+            hit = existing_hits[0]
+            resolved_mode = resolve_directive_mode(
+                extracted=extracted_mode,
+                existing=_office_payload(hit).get("mode"),
+            )
+            return _apply_existing_appointment_hit(
+                self,
+                hit,
+                mode_mark="midzhi" if resolved_mode == "midzhi" else None,
+                minister_name=appointer.name,
+                turn=int(self.state.turn),
+                person_name=name,
+                annotate=True,
+            )
+        staged_payload = {
+            "name": name, "office": office, "appointer": appointer.name,
+            "mode": resolve_directive_mode(extracted=extracted_mode),
+        }
         metadata_aliases = {
             "office_type": "官署类别",
             "faction": "派系",

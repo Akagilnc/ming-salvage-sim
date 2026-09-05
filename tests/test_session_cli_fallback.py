@@ -1295,7 +1295,7 @@ def test_propose_appointment_tool_mode_contract(game, tool_mode, expected):
 
 
 def test_propose_appointment_omitted_mode_preserves_existing_midzhi(game):
-    """#1731 类B：既有 midzhi 任免候选 + 省略 mode 的继续调用 → 保留 midzhi。"""
+    """#1731 类B：既有 midzhi 任免候选 + 省略 mode 续拟 → 同一 pending id、仅一行、mode 仍 midzhi。"""
     db, state, content = game
     minister = "毕自严"
     appointee = "既有中旨候选"
@@ -1320,16 +1320,18 @@ def test_propose_appointment_omitted_mode_preserves_existing_midzhi(game):
     sess.state = state
     sess.content = content
     sess.registry = None
-    second_id = sess._stage_appointment_candidate(
+    continued_id = sess._stage_appointment_candidate(
         json.dumps(body, ensure_ascii=False), character,
     )
-    assert second_id
-    staged = json.loads(
-        next(p for p in db.list_pending_actions(state.turn) if p["id"] == second_id)[
-            "payload_json"
-        ]
-    )
-    assert staged["mode"] == "midzhi"
+    assert continued_id == first_id
+    same_intent_rows = [
+        {"id": int(p["id"]), "mode": json.loads(p["payload_json"]).get("mode")}
+        for p in db.list_pending_actions(state.turn)
+        if p["kind"] == "office"
+        and json.loads(p["payload_json"]).get("name") == appointee
+        and json.loads(p["payload_json"]).get("office") == "户部尚书"
+    ]
+    assert same_intent_rows == [{"id": first_id, "mode": "midzhi"}]
 
 
 def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monkeypatch):
