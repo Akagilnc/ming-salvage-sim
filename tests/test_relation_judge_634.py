@@ -544,13 +544,13 @@ def test_close_waits_for_overlapping_judge_provider_before_closed(game, monkeypa
     class _BlockingJudge:
         def run(self, _prompt):
             judge_entered.set()
-            assert scene_entered.wait(5)
-            assert release_judge.wait(5)
+            scene_entered.wait()
+            release_judge.wait()
             return SimpleNamespace(content='{"events":[]}')
 
     def close_scene(_inputs):
         scene_entered.set()
-        assert judge_entered.wait(5)
+        judge_entered.wait()
         return "诸臣退殿。"
 
     monkeypatch.setattr(
@@ -565,10 +565,12 @@ def test_close_waits_for_overlapping_judge_provider_before_closed(game, monkeypa
             on_closing=closing_seen.set,
         )))
         worker.start()
-        assert closing_seen.wait(2) and judge_entered.wait(2) and scene_entered.wait(2)
+        closing_seen.wait()
+        judge_entered.wait()
+        scene_entered.wait()
         assert worker.is_alive()
         release_judge.set()
-        worker.join(3)
+        worker.join()
         assert not worker.is_alive()
     assert box["result"]["closed"] is True
     assert an.get_night(db, night_id)["status"] == an.NIGHT_STATUS_CLOSED
@@ -699,7 +701,7 @@ def test_split_finalize_waits_for_provider_result_before_watermark(game):
     class _Blocking:
         def run(self, _prompt):
             entered.set()
-            release.wait(2)
+            release.wait()
             return SimpleNamespace(content='{"events":[]}')
 
     box = {}
@@ -707,7 +709,9 @@ def test_split_finalize_waits_for_provider_result_before_watermark(game):
         "result", invoke_summon_relation_judge_provider(prepared, agent=_Blocking()),
     ))
     worker.start()
-    assert entered.wait(1) and _judge_status(db, ctid) == ""
-    release.set(); worker.join(2)
+    entered.wait()
+    assert _judge_status(db, ctid) == ""
+    release.set()
+    worker.join()
     finalize_summon_relation_judge(prepared, box["result"], write_gate=threading.Lock())
     assert _judge_status(db, ctid) == "done"

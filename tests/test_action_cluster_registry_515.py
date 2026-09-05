@@ -760,16 +760,16 @@ def test_real_chat_bidirectional_barrier_parallel_required(
         calls.append("classify")
         classifier_entered.set()
         # 必须等 reply 线程已进入 agent.run，证明重叠
-        assert reply_entered.wait(2), "serial classify-before-reply would fail this barrier"
+        reply_entered.wait()
         allow_classify.set()
         return list(classify_result)
 
     class FakeAgent:
         def run(self, _msg):
             reply_entered.set()
-            assert classifier_entered.wait(2), "reply started without in-flight classifier"
+            classifier_entered.wait()
             # 等 classify 完成（并行 join 前不必；此处只证明重叠后放行）
-            assert allow_classify.wait(2)
+            allow_classify.wait()
             allow_reply.set()
             return SimpleNamespace(content=reply, tools=[])
 

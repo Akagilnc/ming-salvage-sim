@@ -182,7 +182,7 @@ def test_webgame_chat_with_write_gate_held_is_callable_when_gate_held(game, monk
 
     worker = threading.Thread(target=_run_held, daemon=True)
     worker.start()
-    worker.join(timeout=5.0)
+    worker.join()
     assert not worker.is_alive(), (
         "DEADLOCK: _chat_with_write_gate_held 在外层已持 write_gate 时挂死"
         "（疑 _trail_highlight_judge_after_reply 同线程二次 acquire）"

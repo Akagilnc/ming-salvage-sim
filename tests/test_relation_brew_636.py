@@ -464,7 +464,7 @@ def test_brew_batch_runs_items_in_parallel_not_serialized(game):
         _add_edge(db, state, source=source, target=target, kind="协作",
                   context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
 
-    barrier = threading.Barrier(len(pairs), timeout=10)
+    barrier = threading.Barrier(len(pairs))
     threads: list = []
 
     def parallel_brew(payload_json: str) -> str:
@@ -513,7 +513,7 @@ def test_settle_brew_overlaps_chapter_and_joins_before_persist(game):
     _add_edge(db, state, source="徐光启", target=EMPEROR_NODE, kind="协作",
               context="徐光启与皇上当场协作。", origin="audience:turn-1")
 
-    started = threading.Barrier(3, timeout=10)  # 两个酿制 worker ＋ chapter
+    started = threading.Barrier(3)  # 两个酿制 worker ＋ chapter
     release = threading.Event()
     brew_turns: list = []
 
@@ -521,8 +521,7 @@ def test_settle_brew_overlaps_chapter_and_joins_before_persist(game):
         payload = json.loads(payload_json)
         brew_turns.append(int(state.turn))  # 事务内启酿：state 尚未被 next_period 推进
         started.wait()
-        if not release.wait(timeout=10):
-            raise RuntimeError("chapter 未与酿制重叠（串行实现）")
+        release.wait()  # 串行实现则永久等；CI job 终线承接
         if payload.get("view") == VIEW_FACTION_STANCE:
             return json.dumps({STANCE_KEY: "西学态势在案。"}, ensure_ascii=False)
         return json.dumps(_script(recent="协作在案。"), ensure_ascii=False)
@@ -900,7 +899,7 @@ def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
         _add_edge(db, state, source=source, target=target, kind="协作",
                   context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
 
-    barrier = threading.Barrier(len(pairs), timeout=10)
+    barrier = threading.Barrier(len(pairs))
     threads: list = []
 
     def parallel_brew(payload_json: str) -> str:

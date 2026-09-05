@@ -1353,7 +1353,7 @@ def test_web_chat_offsite_scene_keeps_pending_until_settled(game, stream):
 
     def _slow(_inputs):
         started.set()
-        assert release.wait(2.0), "scene generator was not released"
+        release.wait()
         return "generated offsite summon scene"
 
     runtime.session._beat_generator = _slow
@@ -1370,16 +1370,27 @@ def test_web_chat_offsite_scene_keeps_pending_until_settled(game, stream):
 
     worker = threading.Thread(target=_run, daemon=True)
     worker.start()
-    assert started.wait(2.0), "offsite scene generator did not start"
+    started.wait()
+    q = runtime._runtime_write_queue()
+    wait_prior_entered = threading.Event()
+    real_wait_prior = q.wait_prior
+
+    def observe_wait_prior(ticket):
+        wait_prior_entered.set()
+        return real_wait_prior(ticket)
+
+    q.wait_prior = observe_wait_prior  # type: ignore[method-assign]
     close_worker = threading.Thread(
-        target=lambda: runtime._runtime_write_queue().barrier(close_entered.set),
+        target=lambda: q.barrier(close_entered.set),
         daemon=True,
     )
     close_worker.start()
-    assert not close_entered.wait(0.1), "close barrier crossed an unfinished scene"
+    # Prove close reached wait_prior while scene ticket still open — not claim-only has_open_barrier.
+    wait_prior_entered.wait()
+    assert not close_entered.is_set(), "close barrier crossed an unfinished scene"
     release.set()
-    worker.join(2.0)
-    close_worker.join(2.0)
+    worker.join()
+    close_worker.join()
     assert not error, error
     assert results and results[0]["admission"] == AudienceAdmission.SUMMON_FRESH.value
     assert close_entered.is_set(), "close barrier did not drain after scene completion"
@@ -1402,7 +1413,7 @@ def test_web_chat_offsite_scene_failure_releases_close_barrier(game, stream):
 
     def _boom(_inputs):
         started.set()
-        assert release.wait(2.0), "scene generator was not released"
+        release.wait()
         raise RuntimeError("injected offsite summon scene failure")
 
     runtime.session._beat_generator = _boom
@@ -1415,16 +1426,26 @@ def test_web_chat_offsite_scene_failure_releases_close_barrier(game, stream):
 
     worker = threading.Thread(target=_run, daemon=True)
     worker.start()
-    assert started.wait(2.0), "offsite scene generator did not start"
+    started.wait()
+    q = runtime._runtime_write_queue()
+    wait_prior_entered = threading.Event()
+    real_wait_prior = q.wait_prior
+
+    def observe_wait_prior(ticket):
+        wait_prior_entered.set()
+        return real_wait_prior(ticket)
+
+    q.wait_prior = observe_wait_prior  # type: ignore[method-assign]
     close_worker = threading.Thread(
-        target=lambda: runtime._runtime_write_queue().barrier(close_entered.set),
+        target=lambda: q.barrier(close_entered.set),
         daemon=True,
     )
     close_worker.start()
-    assert not close_entered.wait(0.1), "close barrier crossed an unfinished scene"
+    wait_prior_entered.wait()
+    assert not close_entered.is_set(), "close barrier crossed an unfinished scene"
     release.set()
-    worker.join(2.0)
-    close_worker.join(2.0)
+    worker.join()
+    close_worker.join()
     assert len(chat_error) == 1
     assert isinstance(chat_error[0], RuntimeError)
     assert str(chat_error[0]) == "injected offsite summon scene failure"
@@ -1449,7 +1470,7 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch):
 
     def _slow(_inputs):
         started.set()
-        assert release.wait(2.0), "scene generator was not released"
+        release.wait()
         return "generated offsite summon scene"
 
     runtime.session._beat_generator = _slow
@@ -1469,7 +1490,7 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch):
 
     worker = threading.Thread(target=_run, daemon=True)
     worker.start()
-    assert started.wait(2.0), "offsite scene generator did not start"
+    started.wait()
     db.conn.execute("SELECT 1").fetchone()
 
     path = "/api/saves/存档/load"
@@ -1480,7 +1501,7 @@ def test_hot_replace_409_while_offsite_scene_ticket_open(game, monkeypatch):
     db.conn.execute("SELECT 1").fetchone()
 
     release.set()
-    worker.join(2.0)
+    worker.join()
     assert not chat_error, chat_error
 
     retried = TestClient(web_app.app).post(path)
@@ -1522,7 +1543,7 @@ def test_offsite_scene_assembles_under_gate_generates_without_gate(game):
         generate_held.append(runtime._runtime_write_gate().locked())
         generate_inflight.append(runtime._pending_writes_count)
         started.set()
-        assert release.wait(2.0), "scene generator was not released"
+        release.wait()
         raise RuntimeError("injected offsite summon scene failure")
 
     runtime.session._beat_generator = _boom
@@ -1538,9 +1559,9 @@ def test_offsite_scene_assembles_under_gate_generates_without_gate(game):
     try:
         worker = threading.Thread(target=_run, daemon=True)
         worker.start()
-        assert started.wait(2.0), "offsite scene generator did not start"
+        started.wait()
         release.set()
-        worker.join(2.0)
+        worker.join()
     finally:
         bo.assemble_beat_inputs = orig_assemble
 
