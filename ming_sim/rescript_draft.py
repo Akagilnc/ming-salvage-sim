@@ -71,6 +71,21 @@ class RescriptOptionMissingFieldsError(ValueError):
         super().__init__(message)
 
 
+def _raise_option_missing_fields(
+    message: str,
+    *,
+    missing_fields: Sequence[str],
+    raw_option: object = None,
+) -> None:
+    """抛 missing 前先扫同 option 已给非法值——有非法则 ValueError（F2.5），不进补交。"""
+    _assert_raw_option_no_coexisting_illegals(raw_option)
+    raise RescriptOptionMissingFieldsError(
+        message,
+        missing_fields=missing_fields,
+        raw_option=raw_option,
+    )
+
+
 @dataclass(frozen=True)
 class RescriptOptionMissingFailure:
     item_index: int
@@ -377,6 +392,7 @@ def _enforce_layer_a_action_conditional(
 
         正值仅罩军令 dual 的期限键，避免把 authorization name/assignee_name
         的 "0"/布尔等既有字符串语义一并改写。
+        非空但不可解析为正整数 → 非法（ValueError），不得当作「未在场」进 missing。
         """
         if key in ("due_turn", "deadline_months"):
             val = _raw_or_out(key)
@@ -389,8 +405,10 @@ def _enforce_layer_a_action_conditional(
                 return False
             try:
                 return int(text) > 0
-            except (TypeError, ValueError):
-                return False
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"票拟 option.{action}.{key} 非法：{val!r}"
+                ) from exc
         return bool(_nonempty_str(key))
 
     tk_in = rules.get("target_kind_in")
@@ -408,7 +426,7 @@ def _enforce_layer_a_action_conditional(
         val = _nonempty_str(key_s)
         if not val:
             # #1746：可定位单 option 的缺字段 → 补交分支（非整批 shape）
-            raise RescriptOptionMissingFieldsError(
+            _raise_option_missing_fields(
                 f"票拟 option.{action} 缺必填：{key_s}",
                 missing_fields=(key_s,),
                 raw_option=raw,
@@ -419,7 +437,7 @@ def _enforce_layer_a_action_conditional(
     for group in rules.get("require_any_nonempty") or ():
         keys = tuple(str(k) for k in group)  # type: ignore[union-attr]
         if not any(_require_any_present(k) for k in keys):
-            raise RescriptOptionMissingFieldsError(
+            _raise_option_missing_fields(
                 f"票拟 option.{action} 须具备其一：{'/'.join(keys)}",
                 missing_fields=keys,
                 raw_option=raw,
@@ -454,7 +472,7 @@ def _enforce_layer_a_action_conditional(
         for rk in rks:  # type: ignore[union-attr]
             rk_s = str(rk)
             if not _nonempty_str(rk_s):
-                raise RescriptOptionMissingFieldsError(
+                _raise_option_missing_fields(
                     f"票拟 option.{action} 当 {ctrl}={cval} 时缺 {rk_s}",
                     missing_fields=(rk_s,),
                     raw_option=raw,
@@ -477,7 +495,7 @@ def _enforce_layer_a_action_conditional(
             amt_raw = _raw_or_out("amount")
             # #1746：仅空白/缺键走补交；已给非法/非正值仍属旧 F2.5 非法分支。
             if amt_raw is None or amt_raw == "":
-                raise RescriptOptionMissingFieldsError(
+                _raise_option_missing_fields(
                     f"票拟 option.{action} {cval} 缺 amount",
                     missing_fields=("amount",),
                     raw_option=raw,
@@ -489,7 +507,7 @@ def _enforce_layer_a_action_conditional(
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"票拟 option.{action} amount 非法：{amt_raw!r}"
-                ) from exc
+                )
             if amount <= 0:
                 raise ValueError(
                     f"票拟 option.{action} amount 须为正整数，得 {amount}"
@@ -528,6 +546,66 @@ def normalize_stop_condition(raw: object) -> str:
     raise ValueError(
         f"stop_condition 须为 str（C.6），拒 {type(raw).__name__}"
     )
+
+
+def _assert_raw_option_no_coexisting_illegals(raw: object) -> None:
+    """#1746：标 missing 进补交前，同 option 上已给的非法值仍走 F2.5（不得被缺字段短路）。
+
+    只扫「已给出的值是否非法」；空白/缺键不在此升格为 missing（由主 normalize 分类）。
+    """
+    if not isinstance(raw, dict):
+        return
+    if "amount" in raw and raw.get("amount") not in (None, ""):
+        amt_raw = raw.get("amount")
+        try:
+            if isinstance(amt_raw, bool):
+                raise ValueError("bool")
+            amt_v = int(amt_raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"票拟 option.amount 非法：{amt_raw!r}") from exc
+        if amt_v <= 0:
+            raise ValueError(f"票拟 option.amount 须为正整数，得 {amt_v}")
+    shape = layer_a_option_shape()
+    for key in shape.get("capability_int_keys") or ():  # type: ignore[union-attr]
+        key_s = str(key)
+        if key_s == "amount":
+            continue
+        if key_s not in raw or raw.get(key_s) in (None, ""):
+            continue
+        val = raw.get(key_s)
+        try:
+            if isinstance(val, bool):
+                raise ValueError("bool")
+            int(val)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"票拟 option.{key_s} 非法：{val!r}") from exc
+    purpose_raw = raw.get("purpose") if "purpose" in raw else None
+    if purpose_raw is not None and str(purpose_raw).strip():
+        purpose_s = str(purpose_raw).strip()
+        gk = str(raw.get("grant_kind") or "").strip()
+        ga = str(raw.get("grant_action") or "").strip()
+        if purpose_s != "补饷" and (gk == _GRANT_KIND_ARMY_PAY or ga == "协饷"):
+            raise ValueError(f"票拟 option.purpose 非法：{purpose_raw!r}")
+    # action-conditional 枚举：非空但不在闭集 → 非法（与 enforce 同真源）
+    action = str(raw.get("action_type") or "").strip()
+    conditional = shape.get("action_conditional") or {}
+    if action and isinstance(conditional, Mapping):
+        rules = conditional.get(action) or {}
+        if isinstance(rules, Mapping):
+            enums = rules.get("enum_in") or {}
+            if isinstance(enums, Mapping):
+                for key, allowed in enums.items():
+                    key_s = str(key)
+                    if key_s not in raw or raw.get(key_s) in (None, ""):
+                        continue
+                    val_s = str(raw.get(key_s) or "").strip()
+                    if not val_s:
+                        continue
+                    allowed_set = frozenset(str(x) for x in allowed)  # type: ignore[union-attr]
+                    if val_s not in allowed_set:
+                        raise ValueError(
+                            f"票拟 option.{action}.{key_s} 非法：{val_s!r}"
+                        )
 
 
 def normalize_rescript_layer_a_option(
@@ -572,7 +650,7 @@ def normalize_rescript_layer_a_option(
         if not val.strip():
             missing_required.append(key_s)
     if missing_required:
-        raise RescriptOptionMissingFieldsError(
+        _raise_option_missing_fields(
             f"票拟 option 缺层 A 必填键或为空白：{'/'.join(missing_required)}",
             missing_fields=tuple(missing_required),
             raw_option=raw,
@@ -604,7 +682,7 @@ def normalize_rescript_layer_a_option(
         if key not in raw
     ]
     if missing_present:
-        raise RescriptOptionMissingFieldsError(
+        _raise_option_missing_fields(
             f"票拟 option 缺层 A 须在键：{'/'.join(missing_present)}",
             missing_fields=tuple(missing_present),
             raw_option=raw,
@@ -640,7 +718,7 @@ def normalize_rescript_layer_a_option(
             try:
                 out[key] = int(raw[key])  # type: ignore[arg-type]
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"票拟 option.{key} 非法：{raw[key]!r}") from exc
+                raise ValueError(f"票拟 option.{key} 非法：{raw[key]!r}")
     # #1620：grant 金额/account 走 require_grant_allocation_shape 唯一权威（与 mapper 同缝），
     # 禁残缺 option 上桌；空 account 不回写默认，免 draft_capability 漂移；
     # 非空 account 回写 shape 返回的 canonical（太仓→国库），与显式国库同 capability。
@@ -677,7 +755,7 @@ def normalize_rescript_layer_a_option(
                     raise ValueError(
                         f"票拟 option.amount 须为正整数，得 {amt_v}"
                     )
-            raise RescriptOptionMissingFieldsError(
+            _raise_option_missing_fields(
                 "生成侧 grant_allocation 须补 grant_kind 辨别字段",
                 missing_fields=("grant_kind",),
                 raw_option=raw,
@@ -708,19 +786,19 @@ def normalize_rescript_layer_a_option(
             if field == "amount":
                 raw_amt = raw.get("amount") if "amount" in raw else None
                 if raw_amt is None or raw_amt == "":
-                    raise RescriptOptionMissingFieldsError(
+                    _raise_option_missing_fields(
                         str(exc),
                         missing_fields=("amount",),
                         raw_option=raw,
-                    ) from exc
+                    )
                 raise
             if field == "grant_action" and not grant_kind and not raw_ga:
                 miss = "grant_kind" if generation_admission else "grant_action"
-                raise RescriptOptionMissingFieldsError(
+                _raise_option_missing_fields(
                     str(exc),
                     missing_fields=(miss,),
                     raw_option=raw,
-                ) from exc
+                )
             raise
         if "amount" in shaped:
             out["amount"] = shaped["amount"]
@@ -783,12 +861,12 @@ def normalize_rescript_layer_a_option(
                         f"）"
                     ) from exc
                 if truly_missing:
-                    raise RescriptOptionMissingFieldsError(
+                    _raise_option_missing_fields(
                         str(exc),
                         missing_fields=tuple(truly_missing),
                         raw_option=raw,
-                    ) from exc
-                raise ValueError(str(exc)) from exc
+                    )
+                raise ValueError(str(exc))
             out["amount"] = explicit["amount"]
             out["account"] = explicit["account"]
             out["purpose"] = explicit["purpose"]
@@ -1101,7 +1179,7 @@ def validate_rescript_draft_items(
         except UnicodeEncodeError as exc:  # noqa: BLE001
             raise ValueError(
                 f"票拟字段含 SQLite 不可编码字符（整批 shape 错，F2.5）：options {exc}"
-            ) from exc
+            )
         draft: Dict[str, object] = {"title": title, "context": context, "options": options}
         # 权威快照为准：只认喂给 LLM 的 issue 盘面里真实存在的 issue_id（不信回显）。
         issue_id = raw.get("issue_id")
