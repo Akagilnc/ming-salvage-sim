@@ -80,7 +80,7 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
-    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
     monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     gate.acquire()
@@ -394,7 +394,7 @@ def test_new_game_with_ming_sim_db_env_does_not_clobber_old_configured_db(monkey
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
-    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
     monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     gate.acquire()  # 模拟旧后台 worker 持锁
@@ -725,7 +725,7 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
-    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
     monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     result = asyncio.run(web_app.api_menu_new_game())
@@ -761,7 +761,7 @@ def test_new_game_switches_db_path_when_web_game_none_and_no_env(monkeypatch, tm
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
-    monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+    monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
     monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
     result = asyncio.run(web_app.api_menu_new_game())
@@ -821,7 +821,7 @@ def test_new_game_after_exit_skips_archive_when_detach_close_fails(monkeypatch, 
         assert web_app._has_main_db()
 
         fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
-        monkeypatch.setattr(web_app, "WebGame", lambda fresh: fake_new_game)
+        monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
         monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
 
         result = asyncio.run(web_app.api_menu_new_game())

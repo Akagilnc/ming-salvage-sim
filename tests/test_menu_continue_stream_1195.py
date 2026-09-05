@@ -33,7 +33,7 @@ def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
     stages_from_ctor: list[str] = []
 
     class FakeWebGame:
-        def __init__(self, fresh: bool = False, on_stage=None) -> None:
+        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
             assert fresh is False
             labels = [
                 "载入上次进度...",
@@ -85,7 +85,7 @@ def test_menu_continue_streams_error_when_llm_unavailable(monkeypatch):
     """LLM 不可用时以 SSE error 收束，不抛成非流响应。"""
 
     class BoomWebGame:
-        def __init__(self, fresh: bool = False, on_stage=None) -> None:
+        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
             raise web_app.LLMUnavailable("未配 API key，请先到设置页填写。")
 
     monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
@@ -120,7 +120,7 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     results: dict = {}
 
     class SlowWebGame:
-        def __init__(self, fresh: bool = False, on_stage=None) -> None:
+        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
             assert fresh is False
             started.set()
             release.wait()
@@ -171,7 +171,7 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
     results: dict = {}
 
     class SlowWebGame:
-        def __init__(self, fresh: bool = False, on_stage=None) -> None:
+        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
             assert fresh is False
             started.set()
             release.wait()
@@ -183,7 +183,7 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
             return self._state
 
     class FreshWebGame:
-        def __init__(self, fresh: bool = True, on_stage=None) -> None:
+        def __init__(self, fresh: bool = True, on_stage=None, **_kw) -> None:
             assert fresh is True
             self._state = {"from": "new-game"}
 
