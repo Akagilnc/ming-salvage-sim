@@ -94,8 +94,8 @@ def _capture_spawns(monkeypatch) -> list:
     out: list = []
     real = web_app._spawn_drain_close
 
-    def wrap(game, archive_db: bool = False, completion=None):
-        c = real(game, archive_db=archive_db, completion=completion)
+    def wrap(game, *, entry=None, close_op=None):
+        c = real(game, entry=entry, close_op=close_op)
         out.append(c)
         return c
 
@@ -437,11 +437,13 @@ def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatc
 
 
 def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monkeypatch):
-    """GameSession 构造中 load_state 失败 → db 与 agno.close 均执行，禁部分资源泄漏。"""
+    """GameSession 构造中 load_state 失败 → 已打开的 db 连接关闭（资源终态，非调用计数）。
+
+    agno 双连接关闭观察留临时真跑，不进永久实现计数案。
+    """
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     import ming_sim.beat_orchestration as bo
-    import ming_sim.session as session_mod
     from ming_sim.db import GameDB
     from ming_sim.models import LLMConfig
     from tests.conftest import deterministic_test_beat_generator
@@ -451,27 +453,12 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
     os.makedirs(os.path.dirname(dbp), exist_ok=True)
 
     opened: list = []
-    agno_close_calls: list = []
 
     def boom_load(self, *a, **k):
         opened.append(self)
         raise RuntimeError("load_state boom")
 
-    real_create_agno = session_mod.create_agno_db
-
-    def tracking_create_agno(path):
-        agno = real_create_agno(path)
-        real_close = agno.close
-
-        def _close() -> None:
-            agno_close_calls.append(1)
-            return real_close()
-
-        agno.close = _close  # type: ignore[method-assign]
-        return agno
-
     monkeypatch.setattr(GameDB, "load_state", boom_load)
-    monkeypatch.setattr(session_mod, "create_agno_db", tracking_create_agno)
     with pytest.raises(RuntimeError, match="load_state boom"):
         GameSession(
             db_path=dbp,
@@ -481,7 +468,6 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
     db = opened[0]
     with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
         db.conn.execute("SELECT 1")
-    assert agno_close_calls == [1], "agno.close must run on partial init failure"
 
 
 def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypatch):
@@ -523,9 +509,10 @@ def test_load_save_close_fail_restores_writable_old_game(tracer_client, monkeypa
 
 
 def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypatch):
-    """真实 exit→new_game：detach close 失败保留回执，旧主库不被归档。"""
+    """真实 exit→new_game：detach close 失败保留 holder/CloseOp，旧主库不被归档。"""
     client = tracer_client
     _install_canned_minister_factory(monkeypatch)
+    spawns = _capture_spawns(monkeypatch)
     seed = client.post("/api/menu/new_game")
     assert seed.status_code == 200
     g0 = web_app.web_game
@@ -543,16 +530,19 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
 
     g0.session.close = boom_close  # type: ignore[method-assign]
     try:
+        n_before = len(spawns)
         assert client.post("/api/menu/exit_to_menu").status_code == 200
         assert web_app.web_game is None
-        completion = web_app._peek_exit_detach_completion()
-        assert completion is not None
+        wait_until(lambda: len(spawns) > n_before)
+        completion = spawns[n_before]
         assert completion.db_path
         assert web_app._same_db_path(completion.db_path, old_path)
         completion.done.wait()
         assert completion.close_ok is False
-        # 失败回执不得被提前清除
-        assert web_app._peek_exit_detach_completion() is completion
+        # 失败 holder 仍在路径租约上
+        entry = web_app._lookup_holder(old_path, g0)
+        assert entry is not None
+        assert entry.close_op is completion
         assert os.path.isfile(old_path)
 
         ng = client.post("/api/menu/new_game")
@@ -560,22 +550,31 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
         assert ng.status_code == 200
         g1 = web_app.web_game
         assert g1 is not None
-        # 等归档消费者终态（非主路径已切换的早采样）
+        # AS：executor finally 已置；失败 holder 挡 C7，文件仍在
         completion.archive_settled.wait()
         assert os.path.isfile(old_path)
         assert all(
             _db_snapshot(str(p))["campaign_id"] != c0
             for p in _drained(Path(web_app.user_data_path()))
         ) or _drained(Path(web_app.user_data_path())) == []
-        # 旧文件内容仍在
         assert marker in _db_snapshot(old_path)["directive_texts"]
-        # 失败回执仍在（成功才清）；路径身份仍绑定旧库
-        assert web_app._peek_exit_detach_completion() is completion
+        # 失败 entry/op 仍在
+        assert web_app._lookup_holder(old_path, g0) is entry
+        assert entry.close_op is completion
         assert web_app._same_db_path(completion.db_path, old_path)
     finally:
         g0.session.close = real_close  # type: ignore[method-assign]
-        # 故障注入遗留的旧 runtime 已脱离 web_game，须真实关闭，禁只恢复方法。
-        try:
-            web_app._drain_and_close_session(g0, archive_db=False)
-        except Exception:
-            pass
+        # 故障注入遗留的旧 runtime：恢复 close 后真实排空（失败响亮，不宽吞）。
+        entry = web_app._lookup_holder(old_path, g0)
+        if entry is not None:
+            # 允许失败重试：清旧 op 领新 op
+            entry.close_op = None
+            role, op = web_app._claim_close(entry, old_path)
+            if role == "executor" and op is not None:
+                try:
+                    web_app._drain_and_close_session(g0, entry=entry, close_op=op)
+                finally:
+                    op.done.set()
+                    op.archive_settled.set()
+        else:
+            web_app._drain_and_close_session(g0)

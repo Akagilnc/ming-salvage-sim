@@ -14,6 +14,25 @@ from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_
 from tests.wait_utils import ObservingLock, wait_until
 
 
+def _reset_path_leases() -> None:
+    with web_app._menu_path_lock:
+        web_app._menu_path_leases.clear()
+
+
+def _drain_then_archive(game, db_path: str) -> None:
+    """测试辅助：登记 holder → 同步 drain → AR-req（生产归档不经 drain 写 pending）。"""
+    entry = web_app._register_holder(db_path, game)
+    assert entry is not None
+    role, op = web_app._claim_close(entry, db_path)
+    assert role == "executor" and op is not None
+    try:
+        web_app._drain_and_close_session(game, entry=entry, close_op=op)
+    finally:
+        op.done.set()
+        op.archive_settled.set()
+    web_app._path_request_archive(db_path)
+
+
 def test_drain_and_close_session_waits_for_gate_then_closes():
     contending = threading.Event()
     gate = ObservingLock(contending)
@@ -43,13 +62,17 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
     assert not gate.locked()
 
 
-def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch):
+def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     gate = threading.Lock()
     closed: list[int] = []
+    db_path = str(tmp_path / "exit-delay.db")
     fake_game = SimpleNamespace(
         _write_gate=gate,
+        db_path=db_path,
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
+    _reset_path_leases()
+    assert web_app._register_holder(db_path, fake_game) is not None
     monkeypatch.setattr(web_app, "web_game", fake_game)
 
     gate.acquire()
@@ -71,12 +94,18 @@ def test_new_game_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     旧 session 的后台队列在 daemon 线程排空 write_gate 后再关连接（detach）。"""
     gate = threading.Lock()
     closed: list[int] = []
+    old_db = str(tmp_path / "old_delayed.db")
+    Path = __import__("pathlib").Path
+    Path(old_db).write_text("old", encoding="utf-8")
     fake_old_game = SimpleNamespace(
         _write_gate=gate,
+        db_path=old_db,
         session=SimpleNamespace(close=lambda: closed.append(1)),
     )
+    _reset_path_leases()
+    assert web_app._register_holder(old_db, fake_old_game) is not None
     monkeypatch.setattr(web_app, "web_game", fake_old_game)
-    monkeypatch.delenv("MING_SIM_DB", raising=False)
+    monkeypatch.setenv("MING_SIM_DB", old_db)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
@@ -177,7 +206,8 @@ def test_drain_archive_move_failure_keeps_wal_and_shm(monkeypatch, tmp_path):
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.shutil, "move", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("locked")))
 
-    web_app._drain_and_close_session(game, archive_db=True)
+    _reset_path_leases()
+    _drain_then_archive(game, db_path)
 
     assert closed == [1]
     assert os.path.exists(db_path)
@@ -205,7 +235,8 @@ def test_drain_archive_moves_wal_and_shm_with_main_db(monkeypatch, tmp_path):
     monkeypatch.setattr(web_app, "web_game", None)
     monkeypatch.delenv("MING_SIM_DB", raising=False)
 
-    web_app._drain_and_close_session(game, archive_db=True)
+    _reset_path_leases()
+    _drain_then_archive(game, db_path)
 
     save_files = list((tmp_path / "saves").glob("*.db"))
     assert closed == [1]
@@ -243,7 +274,8 @@ def test_drain_archive_rolls_back_main_db_when_wal_move_fails(monkeypatch, tmp_p
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.shutil, "move", fail_wal_move)
 
-    web_app._drain_and_close_session(game, archive_db=True)
+    _reset_path_leases()
+    _drain_then_archive(game, db_path)
 
     assert closed == [1]
     assert os.path.exists(db_path)
@@ -266,8 +298,19 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
     monkeypatch.setattr(web_app.shutil, "move", lambda src, dst: moves.append((src, dst)))
 
+    _reset_path_leases()
+    entry = web_app._register_holder(db_path, game)
+    assert entry is not None
+    role, op = web_app._claim_close(entry, db_path)
+    assert role == "executor" and op is not None
     with pytest.raises(RuntimeError, match="close failed"):
-        web_app._drain_and_close_session(game, archive_db=True)
+        try:
+            web_app._drain_and_close_session(game, entry=entry, close_op=op)
+        finally:
+            op.done.set()
+            op.archive_settled.set()
+    # close 失败不发 AR；即使误发 C7 也被 holder 挡住
+    web_app._path_request_archive(db_path)
 
     assert moves == []
     assert os.path.exists(db_path)
@@ -668,8 +711,7 @@ def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
     monkeypatch.setattr(web_app, "web_game", None)
     monkeypatch.setenv("MING_SIM_DB", old_db_path)
     monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-    # 无进行中的 exit detach
-    web_app._clear_menu_path_completions_for_tests()
+    _reset_path_leases()
 
     fake_new_game = SimpleNamespace(state_payload=lambda: {"turn": 1})
     monkeypatch.setattr(web_app, "WebGame", lambda fresh, **_kw: fake_new_game)
