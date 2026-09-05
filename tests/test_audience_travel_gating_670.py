@@ -1633,8 +1633,13 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
 
 
 def _patch_secret_order_extract(monkeypatch, *, title: str) -> None:
-    """#1565/0142：密令题名只认抽取器显式「标题」；测试灌入结构化 title，禁 [:14] 散文 oracle。"""
+    """#1565/0142：密令题名只认抽取器显式「标题」；测试灌入结构化 title，禁 [:14] 散文 oracle。
+
+    闸门测只关心 pending 管线与 travel 行为，灌完整 covert_task（非零契约）。
+    零契约不暂存见 #1504；抽取异常仍暂存见 #354——两契约不在本夹具范围。
+    """
     import ming_sim.cli_backend as cb
+    from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
     def _stub(
         player_command, minister_reply, default_assignee="", llm_config=None, **_kw,
@@ -1648,6 +1653,7 @@ def _patch_secret_order_extract(monkeypatch, *, title: str) -> None:
             "excluded_names": [],
             "excluded_offices": [],
             "dossier_links": [],
+            "covert_task": dict(TYPED_COVERT_TASK),
         }
 
     monkeypatch.setattr(cb, "_extract_secret_order", _stub)
@@ -1671,8 +1677,8 @@ def _assert_secret_order_pending(
     # 题名=显式结构化字段，非 content/edict 散文截取
     assert payload["title"] == title
     assert str(payload["title"]).strip()
-    # extractor 未冻合同时仍须暂存；禁止 staging 合成 covert_task
-    assert "covert_task" not in payload
+    # 完整契约随 stub 入 payload；禁止 staging 散文合成题名/合同
+    assert isinstance(payload.get("covert_task"), dict)
 
 
 def _secret_order_runtime(db, state, content, *, stream: bool):

@@ -2319,13 +2319,37 @@ class GameSession:
             )
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             # #1565/0142：题名只认抽取器结构化「标题」，禁散文截取合成。
-            # #354：extract 失败仍须暂存 content（旨意+补充），不静默丢单；
-            # 缺 title/covert_task 由 commit 标 failed，走既有 retry_failed_pending_action 恢复。
+            # #354：抽取器抛异常 → extract_failed，有 content 仍暂存旨意+补充；
+            #       缺 title/covert_task 由 commit 标 failed，走既有 retry 恢复。
+            # #1504：抽取成功但契约为零 → 不暂存，落 pending_action_failures。
             title = str(so.get("title") or "").strip()
+            content_text = str(so.get("content") or "").strip()
+            frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
+            contract_error = str(so.get("contract_error") or "").strip()
+            extract_failed = bool(so.get("extract_failed"))
+            if not title:
+                contract_error = contract_error or "密令缺少结构化标题"
+            if frozen is None:
+                contract_error = contract_error or "密令抽取未能冻结合同"
+            allow_incomplete_stage = extract_failed and bool(content_text)
+            if not allow_incomplete_stage and (not title or frozen is None or not content_text):
+                reason = contract_error or (
+                    "密令缺少结构化标题" if not title else "密令抽取未能冻结合同"
+                )
+                failures = list(out.get("pending_action_failures") or [])
+                failures.append({
+                    "kind": "secret_order",
+                    "action": "新建",
+                    "minister_name": minister_name,
+                    "retryable": True,
+                    "message": f"密令未能正式落库：{reason}",
+                })
+                out["pending_action_failures"] = failures
+                return 0
             assignee = so.get("assignee") or minister_name
             payload = {
                 "title": title,
-                "content": so["content"],
+                "content": content_text,
                 "assignee": assignee,
                 "tags": so.get("tags") or [],
                 "deadline_months": so.get("deadline_months", 0),
@@ -2335,11 +2359,9 @@ class GameSession:
                 # minister's confirmation; carry that immutable set to commit.
                 "dossier_links": so.get("dossier_links") or [],
             }
-            frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
             if frozen is not None:
                 payload["covert_task"] = frozen
-            contract_error = str(so.get("contract_error") or "").strip()
-            if contract_error and "contract_error" not in payload:
+            if contract_error:
                 payload["contract_error"] = contract_error
             return self.db.stage_pending_action(
                 self.state.turn, kind="secret_order", action="新建",
