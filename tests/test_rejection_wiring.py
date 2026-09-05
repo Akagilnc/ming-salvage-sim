@@ -98,14 +98,18 @@ def test_attempt_derived_from_error_pack_dirs(game, monkeypatch, tmp_path):
 
 
 def _stub_settlement_attendant(monkeypatch, decree_mod, *, text="递话", capture=None):
-    """#1745：替身下移到真实 runner 的 agent 边界；不锁措辞，只保结构化输入与槽位。"""
+    """#1745：替身下移到真实 runner 的 agent 边界；不锁措辞，只保结构化输入与槽位。
+
+    capture 若给出，追加生产事实包中的 rejections 列表（section/category/reason）。
+    """
     class _Out:
         content = text
 
     class _Agent:
         def run(self, prompt):
             if capture is not None:
-                capture.append(prompt)
+                payload = json.loads(prompt)
+                capture.append(list(payload.get("rejections") or []))
             return _Out()
 
     monkeypatch.setattr(
@@ -678,19 +682,6 @@ def test_player_decree_rejection_durable_source_gate(game, monkeypatch, tmp_path
     turn = state.turn
     captured = []
 
-    prompts = []
-
-    class _Out:
-        content = "递话"
-
-    class _Agent:
-        def run(self, prompt):
-            import json as _json
-            payload = _json.loads(prompt)
-            captured.append(list(payload.get("rejections") or []))
-            prompts.append(prompt)
-            return _Out()
-
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
                         lambda *a, **k: ("本月邸报。", k.get("simulator_payload") or {}))
@@ -701,9 +692,7 @@ def test_player_decree_rejection_durable_source_gate(game, monkeypatch, tmp_path
         decree_mod, "extract_scores_by_modules_with_agno",
         lambda *a, **k: ({"character_status_changes": [
             {"origin_ref": "盘面自发", "name": "查无此人壬", "status": "dead", "reason": "测试"}]}, "out", "in"))
-    monkeypatch.setattr(
-        decree_mod, "create_settlement_attendant_agent", lambda *_a, **_k: _Agent(),
-    )
+    _stub_settlement_attendant(monkeypatch, decree_mod, capture=captured)
 
     decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
                                   content=content, registry=None)
@@ -712,7 +701,11 @@ def test_player_decree_rejection_durable_source_gate(game, monkeypatch, tmp_path
     assert len(rows) == 1
     assert rows[0][3] == Provenance.player_decree.value
     assert captured and captured[0]
-    assert all("section" in r and "category" in r for r in captured[0])
+    # 生产事实包三键齐全（decree.run_settlement_attendant_message）；缺 reason 的变异须红。
+    assert all(
+        str(r.get("section") or "") and str(r.get("category") or "") and str(r.get("reason") or "")
+        for r in captured[0]
+    )
     archives = db.list_monthly_archives()
     hit = next(a for a in archives if int(a["turn"]) == turn)
     assert hit["has_attendant"] is True
