@@ -129,34 +129,40 @@ def test_missing_purpose_heals_on_kth_resume(succeed_on, monkeypatch, tmp_path):
             return first_raw
         return healed_raw
 
+    sibling_in = next(
+        o for o in first_items[0]["options"] if o.get("action_type") == "assignment"
+    )
+    bad_in = next(
+        o for o in first_items[0]["options"]
+        if o.get("action_type") == "grant_allocation"
+    )
     monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
     drafts = generate_rescript_draft(object(), _ctx(), turn=11)
     assert drafts is not None
     assert len(drafts) == 1
     opts = drafts[0]["options"]
-    # good_n=1 + 1 bad + 隐式不再另加 → first had bad+1 good = 2
     assert len(opts) == 2
     grants = [o for o in opts if o.get("grant_action") == "协饷"]
     assert len(grants) == 1
     assert grants[0]["purpose"] == "补饷"
-    assert grants[0]["amount"] == 300
-    assert grants[0]["account"] == "国库"
-    assert grants[0]["target_id"] == "guanning"
-    # 正常 option 逐字段无改写
+    # 结构化字段相对首抽输入：金额/账户/目标不改写
+    assert grants[0]["amount"] == bad_in["amount"]
+    assert grants[0]["account"] == bad_in["account"]
+    assert grants[0]["target_id"] == bad_in["target_id"]
+    # 正常 option 逐字段相对输入无改写（期望来自捕获的输入，非独立措辞锁）
     normals = [o for o in opts if o.get("action_type") == "assignment"]
     assert len(normals) == 1
-    assert normals[0]["label"] == "正常拟0"
-    assert normals[0]["hint"] == "h0"
+    assert normals[0]["label"] == sibling_in["label"]
+    assert normals[0]["hint"] == sibling_in["hint"]
+    assert normals[0]["target_id"] == sibling_in["target_id"]
     # 经真实补交：首抽 + succeed_on 次补交
     assert len(calls) == 1 + succeed_on
     assert calls[0]["tag"] == "rescript-draft"
     for c in calls[1:]:
         assert "heal" in c["tag"]
-        # 原始产出进入补交上下文
-        assert first_raw in c["prompt"] or "补发关宁军饷" in c["prompt"]
+        # 原始产出进入补交上下文；焦点含缺字段名
+        assert first_raw in c["prompt"]
         assert "purpose" in c["prompt"]
-    # 补交 ≠ 组合重抽：补交 prompt 不得整批重抛 payload 冒充（无「结构组合校验失败」）
-    for c in calls[1:]:
         assert "结构组合校验失败" not in c["prompt"]
 
 
@@ -173,34 +179,24 @@ def test_heal_exhausted_drops_only_bad_option(monkeypatch, tmp_path):
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
     drafts = generate_rescript_draft(object(), _ctx(), turn=12)
+    sibling_in = next(
+        o for o in first_items[0]["options"] if o.get("action_type") == "assignment"
+    )
     assert drafts is not None
     assert len(drafts) == 1
     opts = drafts[0]["options"]
-    assert len(opts) == 1  # bad dropped
+    # F2.2：剔后剩 1 仍呈；且为捕获的兄弟项
+    assert len(opts) == 1
     assert opts[0]["action_type"] == "assignment"
-    assert opts[0]["label"] == "正常拟0"
-    # 首抽 + 3 补交
+    assert opts[0]["label"] == sibling_in["label"]
+    assert opts[0]["hint"] == sibling_in["hint"]
     assert len(calls) == 1 + RESCRIPT_OPTION_FIELD_HEAL_RETRIES
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn12.json"
     assert note.is_file()
-    body = note.read_text(encoding="utf-8")
-    assert "purpose" in body
-    assert "关宁欠饷" in body
-
-
-def test_drop_leaving_one_option_still_presents(monkeypatch, tmp_path):
-    """F2.2 局部修订：因剔除剩 1 个 option 仍可呈（非整批作废）。"""
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    # 恰 2 option：1 bad + 1 good → 剔后剩 1
-    items = _one_urgent_missing_purpose(good_n=1)
-    assert len(items[0]["options"]) == 2
-    raw = _items_json(items)
-    monkeypatch.setattr(
-        rescript_mod, "run_agent_text", lambda *_a, **_k: raw,
-    )
-    drafts = generate_rescript_draft(object(), _ctx(), turn=13)
-    assert drafts is not None
-    assert len(drafts[0]["options"]) == 1
+    note_obj = json.loads(note.read_text(encoding="utf-8"))
+    assert note_obj.get("reason") == "option_missing_fields_heal_exhausted"
+    dropped = note_obj.get("dropped_options") or []
+    assert any("purpose" in (d.get("missing_fields") or []) for d in dropped)
 
 
 def test_all_options_dropped_removes_item_other_urgents_remain(monkeypatch, tmp_path):
@@ -227,11 +223,13 @@ def test_all_options_dropped_removes_item_other_urgents_remain(monkeypatch, tmp_
     drafts = generate_rescript_draft(object(), _ctx(), turn=14)
     assert drafts is not None
     titles = [d["title"] for d in drafts]
-    assert "辽东索饷" not in titles
-    assert "陕西告饥" in titles
+    assert all_bad["title"] not in titles
+    assert good["title"] in titles
     assert len(drafts) == 1
     assert len(drafts[0]["options"]) == 2
-    assert [o["label"] for o in drafts[0]["options"]] == ["发帑赈济", "缓征加赈"]
+    assert [o["label"] for o in drafts[0]["options"]] == [
+        o["label"] for o in good["options"]
+    ]
 
 
 def test_multi_urgent_multi_bad_options_isolated(monkeypatch, tmp_path):
@@ -272,17 +270,18 @@ def test_multi_urgent_multi_bad_options_isolated(monkeypatch, tmp_path):
     drafts = generate_rescript_draft(object(), _ctx(), turn=15)
     assert drafts is not None
     by_title = {d["title"]: d for d in drafts}
-    assert set(by_title) == {"关宁急饷", "宣大欠饷"}
-    # u1：bad 已补上，2 option 全在
-    g1 = by_title["关宁急饷"]["options"]
+    assert set(by_title) == {u1["title"], u2["title"]}
+    g1 = by_title[u1["title"]]["options"]
     assert len(g1) == 2
     grant = next(o for o in g1 if o.get("grant_action") == "协饷")
-    assert grant["purpose"] == "补饷" and grant["label"] == "关宁补饷"
-    assert next(o for o in g1 if o["label"] == "关宁缓议")["hint"] == "候边报"
-    # u2：bad 剔除，两 good 原样
-    g2 = by_title["宣大欠饷"]["options"]
-    assert [o["label"] for o in g2] == ["宣大查核", "宣大缓派"]
+    assert grant["purpose"] == "补饷"
+    assert grant["label"] == bad1["label"]
+    sib1 = next(o for o in g1 if o.get("action_type") == "assignment")
+    assert sib1["label"] == good1["label"] and sib1["hint"] == good1["hint"]
+    g2 = by_title[u2["title"]]["options"]
+    assert len(g2) == 2
     assert all(o.get("grant_action") != "协饷" for o in g2)
+    assert {o["label"] for o in g2} == {good2a["label"], good2b["label"]}
 
 
 def test_combo_then_field_heal_uses_corrected_baseline(monkeypatch, tmp_path):
@@ -326,9 +325,9 @@ def test_combo_then_field_heal_uses_corrected_baseline(monkeypatch, tmp_path):
     opts = drafts[0]["options"]
     assert len(opts) == 2
     by_label = {o["label"]: o for o in opts}
-    assert by_label["combo"]["locality_scope"] == "none"  # 组合重抽结果保留
-    assert by_label["field"]["purpose"] == "补饷"
-    assert by_label["field"]["amount"] == 200
+    assert by_label[combo_fixed["label"]]["locality_scope"] == combo_fixed["locality_scope"]
+    assert by_label[field_fixed["label"]]["purpose"] == "补饷"
+    assert by_label[field_fixed["label"]]["amount"] == field_bad["amount"]
 
 
 def test_action_conditional_missing_heals_not_whole_batch(monkeypatch, tmp_path):
@@ -369,8 +368,9 @@ def test_action_conditional_missing_heals_not_whole_batch(monkeypatch, tmp_path)
     opts = drafts[0]["options"]
     assert len(opts) == 2
     mo = next(o for o in opts if o["action_type"] == "military_order")
-    assert mo["assignee_name"] == "袁崇焕"
-    assert next(o for o in opts if o["label"] == "缓议")["hint"] == "候报"
+    assert mo["assignee_name"] == mo_good["assignee_name"]
+    sib = next(o for o in opts if o.get("action_type") == "assignment")
+    assert sib["label"] == sibling["label"] and sib["hint"] == sibling["hint"]
 
 
 def test_heal_freezes_sibling_options_from_first_draw(monkeypatch, tmp_path):
@@ -383,7 +383,6 @@ def test_heal_freezes_sibling_options_from_first_draw(monkeypatch, tmp_path):
         "title": "u", "context": "c",
         "options": [bad, sibling],
     }])
-    # 补交轮故意改写兄弟 label/hint
     healed_bad = dict(bad, purpose="补饷")
     changed_sibling = _hold(label="CHANGED", hint="CHANGED")
     healed = _items_json([{
@@ -402,10 +401,47 @@ def test_heal_freezes_sibling_options_from_first_draw(monkeypatch, tmp_path):
     opts = drafts[0]["options"]
     assert len(opts) == 2
     grant = next(o for o in opts if o.get("grant_action") == "协饷")
-    assert grant["purpose"] == "补饷" and grant["label"] == "pay"
+    assert grant["purpose"] == "补饷" and grant["label"] == bad["label"]
     sib = next(o for o in opts if o.get("action_type") == "assignment")
-    assert sib["label"] == "stable"
-    assert sib["hint"] == "keep"
+    assert sib["label"] == sibling["label"] and sib["hint"] == sibling["hint"]
+
+
+def test_heal_reorder_matches_by_label_not_index(monkeypatch, tmp_path):
+    """补交重排 options：按 label 身份合并，不得把兄弟顶到缺字段槽。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bad = _army_pay(label="pay-grant")
+    bad.pop("purpose", None)
+    sibling = _hold(label="sib-hold", hint="keep-me")
+    first = _items_json([{
+        "title": "u", "context": "c",
+        "options": [bad, sibling],  # index0=bad
+    }])
+    # 重排：兄弟在前、修好的 grant 在后；若按 index 盲取会吞掉 grant
+    healed = _items_json([{
+        "title": "u", "context": "c",
+        "options": [
+            _hold(label="sib-hold", hint="CHANGED"),
+            dict(bad, purpose="补饷", amount=bad["amount"]),
+        ],
+    }])
+    n = {"i": 0}
+
+    def _llm(*_a, **_k):
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=23)
+    assert drafts is not None
+    opts = drafts[0]["options"]
+    assert len(opts) == 2
+    grants = [o for o in opts if o.get("grant_action") == "协饷"]
+    asserts_sib = [o for o in opts if o.get("action_type") == "assignment"]
+    assert len(grants) == 1 and grants[0]["purpose"] == "补饷"
+    assert grants[0]["label"] == bad["label"]
+    assert len(asserts_sib) == 1
+    assert asserts_sib[0]["label"] == sibling["label"]
+    assert asserts_sib[0]["hint"] == sibling["hint"]  # 冻结首抽，非 CHANGED
 
 
 def test_heal_tlog_includes_raw_summary_each_attempt(monkeypatch, tmp_path):
