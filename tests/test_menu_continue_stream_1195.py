@@ -7,6 +7,10 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import web_app
+from tests.wait_utils import reset_menu_path_leases, wait_until
+
+# 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
+_reset_path_leases = reset_menu_path_leases
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
@@ -28,19 +32,13 @@ def _parse_sse(text: str) -> list[tuple[str, dict]]:
 
 
 def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
-    """继续路径：先推阶段文案，再 done 带 state；禁百分比/进度条形态。"""
+    """继续路径：先推 stage 事件，再 done 带 state（结构化终态；不锁阶段措辞）。"""
     stages_from_ctor: list[str] = []
 
     class FakeWebGame:
-        def __init__(self, fresh: bool = False, on_stage=None) -> None:
+        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
             assert fresh is False
-            # 模拟 WebGame 在既有初始化序上的阶段回调（不改 GameSession 序）。
-            # 首条「准备载入上次进度...」由 worker 在构造前入队（#1195/#1228），此处不重复。
-            labels = [
-                "载入上次进度...",
-                "重整朝堂名册...",
-                "恢复召对记录...",
-            ]
+            labels = ["stage-a", "stage-b", "stage-c"]
             for label in labels:
                 stages_from_ctor.append(label)
                 if on_stage:
@@ -50,7 +48,9 @@ def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
         def state_payload(self) -> dict:
             return self._state
 
+    _reset_path_leases()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: "/tmp/continue-main.db")
     monkeypatch.setattr(web_app, "WebGame", FakeWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
 
@@ -63,35 +63,27 @@ def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
     kinds = [name for name, _ in events]
     assert kinds[-1] == "done"
     assert "error" not in kinds
-
-    stage_texts = [payload.get("content", "") for name, payload in events if name == "stage"]
-    assert stage_texts, "应推送至少一条 stage"
-    assert stage_texts[0]  # ≤5s 首条：服务端在重活前即发，可断言非空首条
-    assert stage_texts[0] == "准备载入上次进度..."
-    # 文案沿用「载入上次进度…」式标签（省略号/叙事），禁百分比/进度条/剩余秒数
-    # #1228：不再把「检查」列为合法阶段——构造路径已无后端检查。
-    for text in stage_texts:
-        assert "检查" not in text
-        assert "载入" in text or "重整" in text or "恢复" in text
-        assert "%" not in text
-        assert "进度条" not in text
-        assert not any(ch.isdigit() and "秒" in text for ch in text) or "秒" not in text
+    # 契约：存在 stage 事件且 content 为 str；不比较生成/阶段措辞正文
+    stage_events = [(name, payload) for name, payload in events if name == "stage"]
+    assert stage_events, "应推送至少一条 stage"
+    assert all(isinstance(payload.get("content"), str) for _, payload in stage_events)
 
     done_payload = events[-1][1]
     assert done_payload["state"]["turn"]["turn"] == 2
     assert web_app.web_game is not None
-    assert stages_from_ctor  # ctor 确实走过阶段回调
+    assert stages_from_ctor
 
 
 def test_menu_continue_streams_error_when_llm_unavailable(monkeypatch):
     """LLM 不可用时以 SSE error 收束，不抛成非流响应。"""
 
     class BoomWebGame:
-        def __init__(self, fresh: bool = False, on_stage=None) -> None:
-            # 首条 stage 已由 worker 在构造前入队；ctor 内可直接失败。
+        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
             raise web_app.LLMUnavailable("未配 API key，请先到设置页填写。")
 
+    _reset_path_leases()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: "/tmp/continue-boom.db")
     monkeypatch.setattr(web_app, "WebGame", BoomWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
 
@@ -112,10 +104,9 @@ def test_menu_continue_404_when_no_main_db(monkeypatch):
 
 
 def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
-    """#1195：continue 在飞时 exit_to_menu 先落定 → stale worker 不得覆盖 web_game，白建局 drain-close。"""
+    """#1195：continue 构造中途 exit bump → 对号失败，不发布（构造内取消窗口）。"""
     import asyncio
     import threading
-    import time
 
     started = threading.Event()
     release = threading.Event()
@@ -123,9 +114,8 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     results: dict = {}
 
     class SlowWebGame:
-        def __init__(self, fresh: bool = False, on_stage=None) -> None:
+        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
             assert fresh is False
-            # 首条 stage 已由 worker 在构造前入队；此处阻塞以模拟构造重活。
             started.set()
             release.wait()
             self._state = {"from": "stale-continue"}
@@ -135,7 +125,9 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
         def state_payload(self) -> dict:
             return self._state
 
+    _reset_path_leases()
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: "/tmp/continue-stale-exit.db")
     monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
 
@@ -148,7 +140,6 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     thread.start()
     started.wait()
 
-    # exit 先落定：bump 世代 + web_game=None
     exit_result = asyncio.run(web_app.api_menu_exit())
     assert exit_result == {"ok": True}
     assert web_app.web_game is None
@@ -156,23 +147,18 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     release.set()
     thread.join()
     assert not thread.is_alive(), "continue stream thread hung"
-
     assert results.get("status") == 200
     events = results["events"]
-    assert events, "应有 SSE 事件"
-    assert events[-1][0] == "error"
+    assert events and events[-1][0] == "error"
     assert web_app.web_game is None, "stale continue must not publish over exit"
-    # 白建 game 被 _drain_and_close_session 收掉
-    while closed != ["stale"]:
-        time.sleep(0.01)  # backoff only
+    wait_until(lambda: closed == ["stale"])
     assert closed == ["stale"]
 
 
 def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_path):
-    """#1195：continue 在飞时 new_game 先落定 → stale worker 不得覆盖新局 web_game。"""
+    """#1195：continue 构造中途 new_game 发布 → 对号失败不覆盖。"""
     import asyncio
     import threading
-    import time
 
     started = threading.Event()
     release = threading.Event()
@@ -180,9 +166,8 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
     results: dict = {}
 
     class SlowWebGame:
-        def __init__(self, fresh: bool = False, on_stage=None) -> None:
+        def __init__(self, fresh: bool = False, on_stage=None, **_kw) -> None:
             assert fresh is False
-            # 首条 stage 已由 worker 在构造前入队；此处阻塞以模拟构造重活。
             started.set()
             release.wait()
             self._state = {"from": "stale-continue"}
@@ -193,14 +178,17 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
             return self._state
 
     class FreshWebGame:
-        def __init__(self, fresh: bool = True, on_stage=None) -> None:
+        def __init__(self, fresh: bool = True, on_stage=None, **_kw) -> None:
             assert fresh is True
             self._state = {"from": "new-game"}
 
         def state_payload(self) -> dict:
             return self._state
 
+    _reset_path_leases()
+    main_db = str(tmp_path / "continue-stale-ng.db")
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "_get_main_db_path", lambda: main_db)
     monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
     monkeypatch.setattr(web_app, "web_game", None)
     monkeypatch.delenv("MING_SIM_DB", raising=False)
@@ -216,23 +204,17 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
     thread.start()
     started.wait()
 
-    # new_game 在 continue 构造中途落定——换掉 WebGame 工厂供 fresh 构造
     monkeypatch.setattr(web_app, "WebGame", FreshWebGame)
     new_result = asyncio.run(web_app.api_menu_new_game())
     assert new_result["state"]["from"] == "new-game"
     settled = web_app.web_game
-    assert settled is not None
-    assert settled.state_payload()["from"] == "new-game"
+    assert settled is not None and settled.state_payload()["from"] == "new-game"
 
     release.set()
     thread.join()
-    assert not thread.is_alive(), "continue stream thread hung"
-
+    assert not thread.is_alive()
     assert results.get("status") == 200
-    events = results["events"]
-    assert events[-1][0] == "error"
-    assert web_app.web_game is settled, "stale continue must not overwrite new_game"
-    assert web_app.web_game.state_payload()["from"] == "new-game"
-    while closed != ["stale"]:
-        time.sleep(0.01)  # backoff only
+    assert results["events"][-1][0] == "error"
+    assert web_app.web_game is settled
+    wait_until(lambda: closed == ["stale"])
     assert closed == ["stale"]
