@@ -176,6 +176,11 @@ def test_jiaobuyi_lands_initiative_only_after_promulgation(game):
     assert pending["dossier_action_type"] == "referral"
     assert pending["end_turn"] == state.turn + 6
     assert pending["responsible_bodies"] == bodies
+    # #1565/0142：题名=title；body 与 text 均=大臣回话
+    assert pending.get("title") == "清核边饷"
+    reply = "臣请交吏户二部会商。请陛下定夺准驳。"
+    assert pending.get("body") == reply
+    assert pending.get("text") == reply
     # 下议零个人 owner
     assert not str(pending.get("assignee") or pending.get("assignee_id") or "").strip()
     assert len(_active_initiatives(db)) == before, "物化前不得创建 initiative"
@@ -197,11 +202,53 @@ def test_jiaobuyi_lands_initiative_only_after_promulgation(game):
     assert len(issues) == before + 1
     row = next(r for r in issues if r["origin_ref"] == f"dossier:{dossier['id']}")
     assert row["kind"] == "initiative"
+    assert row["title"] == "清核边饷"
+    d_payload = json.loads(dossier["payload_json"] or "{}")
+    assert d_payload.get("body") == reply
+    assert row["stage_text"] == d_payload.get("body")
     assert int(row["end_turn"]) == state.turn + 6
     participants = json.loads(row["participants"])
     assert participants == bodies
     assert actor not in participants  # 零个人 owner
     assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
+
+
+def test_referral_title_from_target_id_when_classifier_title_empty(game):
+    """#1565：缺 title 时题名取 target_id；body/text=回话；双空则零 stage。"""
+    db, state, content = game
+    actor = _minister(db)
+    reply = "臣请交部议。请陛下定夺准驳。"
+
+    bare = candidates_from_classifier_payload({
+        "kind": "referral",
+        "title": "",
+        "target_id": "",
+        "deadline_months": 3,
+        "responsible_bodies": json.dumps(["户部"], ensure_ascii=False),
+    }, soft=False)
+    ctx_bare = _ctx(
+        db, actor, bare, state.turn,
+        message="着交部议。", reply=reply,
+    )
+    run_materialize_pipeline(ctx_bare)
+    assert not ctx_bare.out.get("pending_action_id")
+
+    anchored = candidates_from_classifier_payload({
+        "kind": "referral",
+        "title": "",
+        "target_id": "清核边饷",
+        "deadline_months": 3,
+        "responsible_bodies": json.dumps(["户部"], ensure_ascii=False),
+    }, soft=False)
+    ctx = _ctx(
+        db, actor, anchored, state.turn,
+        message="着交部议清核边饷。", reply=reply,
+    )
+    run_materialize_pipeline(ctx)
+    pending = _pending_payload(db, ctx.out["pending_action_id"])
+    assert pending.get("title") == "清核边饷"
+    assert pending.get("body") == reply
+    assert pending.get("text") == reply
 
 
 def test_referral_rejected_verdict_creates_no_initiative(game):

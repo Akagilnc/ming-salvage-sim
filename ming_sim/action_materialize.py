@@ -2419,7 +2419,6 @@ def stage_assignment_candidate(
     text: str,
     title: str = "",
     target_id: str = "",
-    emperor_text: object = None,
     extracted_mode: object = None,
     commitment_kind: object = None,
     stop_condition: object = None,
@@ -2437,11 +2436,11 @@ def stage_assignment_candidate(
     target_candidate id updates the named pending assignment (cross-round
     reinforce / ADR 0038 before-image).
     owner 单一来源 = 当前召对大臣（minister_name）；不接受分类器改派。
+    #1565/0142：题名=title|target_id；正文 text/body=大臣回话；无散文回落。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
     order_body = str(text or "").strip()
-    # #1565/0142：题名只认结构化 title|target_id，禁 emperor_text 散文截断回落。
     matter_title = str(title or "").strip() or str(target_id or "").strip()
     if not matter_title:
         return 0
@@ -2451,8 +2450,6 @@ def stage_assignment_candidate(
     owner = str(minister_name or "").strip()
     if not owner:
         return 0
-    # emperor_text 保留形参兼容旧调用方；题名不再消费它（0142）。
-    _ = emperor_text
 
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
@@ -2596,7 +2593,6 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
         text=order_body,
         title=title,
         target_id=target_id,
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         commitment_kind=intent.get("commitment_kind"),
         stop_condition=intent.get("stop_condition"),
@@ -3394,7 +3390,6 @@ def stage_referral_candidate(
     target_id: str = "",
     deadline_months: object = 0,
     responsible_bodies: object = None,
-    emperor_text: object = None,
     extracted_mode: object = None,
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
@@ -3404,18 +3399,17 @@ def stage_referral_candidate(
     下议只承 deadline_months(1–36) 与非空机关/职司 responsible_bodies；
     落 end_turn=turn+N 与 payload.responsible_bodies。禁个人 owner/assignee。
     initiative 按 ADR 0055 判后创建。
+    #1565/0142：题名=title|target_id；正文 text/body=大臣回话；无散文回落。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
     order_body = str(text or "").strip()
-    # #1565/0142：题名只认 title|target_id；禁 emperor_text 散文截断。
     matter_title = str(title or "").strip() or str(target_id or "").strip()
     if not matter_title:
         return 0
     if not order_body:
         order_body = matter_title
     matter_id = str(target_id or "").strip() or matter_title
-    _ = emperor_text
 
     try:
         months = int(deadline_months or 0)
@@ -3513,7 +3507,6 @@ def _materialize_referral(ctx: MaterializeCtx) -> None:
         target_id=target_id,
         deadline_months=intent.get("deadline_months"),
         responsible_bodies=intent.get("responsible_bodies"),
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         target_candidate=intent.get("target_candidate"),
         pend_for_minister=ctx.pend_for_minister,
