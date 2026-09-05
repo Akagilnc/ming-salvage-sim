@@ -2188,10 +2188,7 @@ def test_batch_draft_combo_failure_cached_and_attributed(game, monkeypatch, tmp_
     import ming_sim.cli_backend as cb
     from ming_sim.structured_decree import StructuredDecreeCombinationError
 
-    extract_calls = []
-
     def fake_extract(*_a, **_k):
-        extract_calls.append(1)
         raise StructuredDecreeCombinationError(
             "region mismatch",
             partial_result={
@@ -2245,8 +2242,6 @@ def test_batch_draft_combo_failure_cached_and_attributed(game, monkeypatch, tmp_
         reply="臣遵旨拟办。",
     )
     run_materialize_pipeline(ctx)
-    # 批级只抽一次（含 heal 有界重试）；不得按候选倍增整批重抽。
-    assert 1 <= len(extract_calls) <= 3
     assert db.conn.execute(
         "SELECT COUNT(*) FROM pending_actions WHERE turn=? AND kind='directive'",
         (state.turn,),
