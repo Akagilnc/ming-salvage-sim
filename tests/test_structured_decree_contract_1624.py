@@ -247,7 +247,7 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
     # army+single 首抽 → 一次有界重抽 army+none 合法接受
     calls: list[int] = []
 
-    def _heal_once(_agent, prompt, tag=""):
+    def _heal_once(_agent, prompt, tag="", **_kwargs):
         del prompt, tag
         calls.append(1)
         if len(calls) == 1:
@@ -269,7 +269,7 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
     # 纠错耗尽仍 army+single → 整批降级、零部分头版（仍恰 2 次调用）
     exhaust_calls: list[int] = []
 
-    def _never_heals(_agent, prompt, tag=""):
+    def _never_heals(_agent, prompt, tag="", **_kwargs):
         del prompt, tag
         exhaust_calls.append(1)
         return json.dumps({"items": [_army_single_bad_item()]}, ensure_ascii=False)

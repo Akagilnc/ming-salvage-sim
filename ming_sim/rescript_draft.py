@@ -661,7 +661,22 @@ def normalize_rescript_layer_a_option(
         if "grant_action" in raw and raw["grant_action"] is not None:
             raw_ga = str(raw["grant_action"]).strip()
         # 生成契约：双缺时向 LLM 索取辨别字段 grant_kind（不预断必为 army_pay 值）。
+        # 若已给出非法/非正 amount 等，不得被 missing 分类短路吞进补交（其它 F2.5 优先）。
         if generation_admission and not grant_kind and not raw_ga:
+            if "amount" in raw and raw.get("amount") not in (None, ""):
+                amt_raw = raw.get("amount")
+                try:
+                    if isinstance(amt_raw, bool):
+                        raise ValueError("bool")
+                    amt_v = int(amt_raw)  # type: ignore[arg-type]
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"票拟 option.amount 非法：{amt_raw!r}"
+                    ) from exc
+                if amt_v <= 0:
+                    raise ValueError(
+                        f"票拟 option.amount 须为正整数，得 {amt_v}"
+                    )
             raise RescriptOptionMissingFieldsError(
                 "生成侧 grant_allocation 须补 grant_kind 辨别字段",
                 missing_fields=("grant_kind",),
@@ -1051,12 +1066,17 @@ def validate_rescript_draft_items(
                 ) from exc
             except RescriptOptionMissingFieldsError as exc:
                 if isolate_option_missing:
+                    # 缺字段 quarantine 不得跳过其它 F2.5 面：UTF-8 仍咬 raw option
+                    raw_for_miss = opt if isinstance(opt, dict) else exc.raw_option
+                    if isinstance(raw_for_miss, dict):
+                        _assert_utf8(str(raw_for_miss.get("label") or ""), "label")
+                        _assert_utf8(str(raw_for_miss.get("hint") or ""), "hint")
                     item_missing.append(RescriptOptionMissingFailure(
                         item_index=item_index,
                         option_index=option_index,
                         title=title,
                         missing_fields=tuple(exc.missing_fields),
-                        raw_option=opt if isinstance(opt, dict) else exc.raw_option,
+                        raw_option=raw_for_miss,
                         heal_id=_option_heal_id(item_index, option_index),
                     ))
                     continue
@@ -1128,6 +1148,29 @@ def _assert_army_targets_grounded(
                 raise ValueError(
                     f"票拟 option.target_id 不在同批 army_targets：{option['target_id']!r}"
                 )
+
+
+def _assert_raw_option_targets_grounded(
+    raw_option: object,
+    *,
+    region_target_ids: set[str],
+    army_target_ids: set[str],
+) -> None:
+    """缺字段 quarantine 前仍咬 target 接地（其它 F2.5 不得被 isolate 掩盖）。"""
+    if not isinstance(raw_option, dict):
+        return
+    kind = str(raw_option.get("target_kind") or "").strip()
+    tid = str(raw_option.get("target_id") or "").strip()
+    if not tid:
+        return
+    if kind == "region" and tid not in region_target_ids:
+        raise ValueError(
+            f"票拟 option.target_id 不在同批 region_targets：{tid!r}"
+        )
+    if kind == "army" and tid not in army_target_ids:
+        raise ValueError(
+            f"票拟 option.target_id 不在同批 army_targets：{tid!r}"
+        )
 
 
 def _board_issue_ids(active_issues: object) -> set[int]:
@@ -1579,6 +1622,17 @@ def generate_rescript_draft(
             tlog(f"[rescript] 结构组合纠错重试 {combo_attempt}/{combo_retries}: {exc}")
             continue
         except RescriptOptionMissingFieldsBatch as exc:
+            # 混合失败：缺字段 option 若同时 target 未接地 → 整批 F2.5，不进补交 quarantine
+            try:
+                for failure in exc.failures:
+                    _assert_raw_option_targets_grounded(
+                        failure.raw_option,
+                        region_target_ids=region_target_ids,
+                        army_target_ids=army_target_ids,
+                    )
+            except ValueError as mixed_exc:
+                _degrade(mixed_exc)
+                return None
             pending_missing = list(exc.failures)
             rows = _failure_log_rows(pending_missing)
             if heal_attempt < heal_retries:
