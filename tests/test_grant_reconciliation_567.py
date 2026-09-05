@@ -681,5 +681,3 @@ def test_1745_web_state_payload_after_bad_recon_settle(
     finally:
         game_web.session.close()
         web_app.web_game = None
-
-
