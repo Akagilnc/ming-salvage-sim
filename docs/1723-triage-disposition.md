@@ -156,7 +156,7 @@ A 表原 wait(数字) 计数、C sleep 计数、F `timeout=` 计数**不改**；
 | `test_audience_travel_gating_670.py:1544` | `worker.join(2.0)` | T-barrier | 缺陷 | bare `join()` | `:1564` `worker.join()` |
 | `test_beat_orchestration_503.py:58` | `waiter.join(1)` | T-barrier | 缺陷 | bare `join()` | `:59` `waiter.join()` |
 | `test_beat_orchestration_503.py:94` | `outcome["result"] = registry.join(11)` | T-scene-id | 非 timeout | **保留** scene-id | `:95` 仍 `registry.join(11)` |
-| `test_beat_orchestration_503.py:101` | `waiter.join(0.2)` | T-barrier / T-neg-race | 缺陷 | 删短 join 赌窗；改 `wait_until(not registry.has(11))` 证 join 已入 drain | `:106-108` `wait_until`（无短 join） |
+| `test_beat_orchestration_503.py:101` | `waiter.join(0.2)` | T-barrier / T-neg-race | 缺陷 | 删短 join 赌窗；改 `wait_until(not registry.has(11))` 证 join 已入 drain | `:104` `wait_until`（无短 join；:106-108 为后续状态断言） |
 | `test_beat_orchestration_503.py:107` | `waiter.join(2)` | T-barrier | 缺陷 | bare `join()` | `:111` `waiter.join()` |
 | `test_beat_orchestration_503.py:184` | `t.join(2)` | T-barrier | 缺陷 | bare `join()` | `:188` `t.join()` |
 | `test_beat_orchestration_503.py:390` | `t.join(2)` | T-barrier | 缺陷 | bare `join()` | `:394` `t.join()` |
