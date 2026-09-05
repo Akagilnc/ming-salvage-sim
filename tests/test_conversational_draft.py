@@ -21,7 +21,11 @@ import pytest
 import ming_sim.cli_backend as cb
 from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
+from tests.dossier_test_helpers import (
+    TYPED_COVERT_TASK,
+    _cost_events,
+    create_test_secret_order,
+)
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -213,12 +217,43 @@ def test_explicit_prefix_uses_typed_classifier_mode_not_player_prose(
     assert payload["mode"] == expected
     assert payload["text"] == draft_text
 
+    # 前缀入口 → 成案 → 内阁顺颁：代价/污名按 mode 结构化落账（#1731 类A）。
+    db.commit_pending_actions(state, kind_filter="directive")
+    db.ensure_dossiers_for_draft_directives(state)
+    dossiers = db.list_decree_dossiers()
+    assert len(dossiers) == 1
+    assert dossiers[0]["mode"] == expected
+    authority_before = int(state.metrics.get("皇威", 0))
+    verdict = {
+        "dossier_id": dossiers[0]["id"],
+        "decision": "promulgated",
+    }
+    # ordinary 顺颁必须省略 affected_parties；midzhi 可夹带空清单。
     if expected == "midzhi":
-        db.commit_pending_actions(state, kind_filter="directive")
-        db.ensure_dossiers_for_draft_directives(state)
-        dossiers = db.list_decree_dossiers()
-        assert len(dossiers) == 1
-        assert dossiers[0]["mode"] == "midzhi"
+        verdict["affected_parties"] = []
+    db.apply_dossier_verdicts(state, [verdict], content=content)
+    stored = db.get_decree_dossier(dossiers[0]["id"])
+    midzhi_stigma = [
+        item for item in (stored.get("stigma") or [])
+        if isinstance(item, dict) and item.get("kind") == "midzhi"
+    ]
+    auth_costs = [
+        event for event in _cost_events(db, dossiers[0]["id"])
+        if event["cost_kind"] == "authority"
+    ]
+    if expected == "midzhi":
+        assert midzhi_stigma == [{
+            "kind": "midzhi", "reason": "predeclared", "turn": state.turn,
+            "source_action": "promulgated",
+        }]
+        assert {
+            (event["cost_identity"], int(event["delta"])) for event in auth_costs
+        } == {("override", -5)}
+        assert int(state.metrics["皇威"]) == max(0, authority_before - 5)
+    else:
+        assert midzhi_stigma == []
+        assert auth_costs == []
+        assert int(state.metrics["皇威"]) == authority_before
 
 
 # ── ② pending 原地更新 last-write-wins ───────────────────────────────────
