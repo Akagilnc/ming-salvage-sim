@@ -4377,6 +4377,29 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
             _archive_drained_db_file(old_path)
 
 
+def _spawn_drain_close(
+    game,
+    archive_db: bool = False,
+    completion: Optional["_MenuExitDetachCompletion"] = None,
+) -> "_MenuExitDetachCompletion":
+    """后台 drain/close（可选归档），返回与 exit 同形的完成信号（#1749 确定性握手）。"""
+    if completion is None:
+        completion = _MenuExitDetachCompletion()
+
+    def _run() -> None:
+        try:
+            _drain_and_close_session(game, archive_db=archive_db)
+            completion.close_ok = True
+        except Exception:
+            # 原异常已由 _drain_and_close_session logger.exception 留痕
+            completion.close_ok = False
+        finally:
+            completion.done.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return completion
+
+
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
 # #1195：菜单生命周期世代。continue worker 发布 web_game 前对号；失配则丢弃白建局。
 _menu_generation: int = 0
@@ -4682,11 +4705,8 @@ async def api_menu_new_game() -> Dict[str, Any]:
         web_game = new_game
         if old_game is not None:
             # detach：新局已确认可用后，才退休旧连接 + 归档旧库（#396）。
-            threading.Thread(
-                target=_drain_and_close_session,
-                args=(old_game, True),
-                daemon=True,
-            ).start()
+            # #1749：经 _spawn_drain_close 统一完成信号（close 失败 → close_ok=False）。
+            _spawn_drain_close(old_game, archive_db=True)
         else:
             # #1732 T1：退菜单后 / 无活 session 时仍归档旧主库。先等 exit detach 关连接，
             # 再走同一归档实现——不与仍写旧库的 detach 双移。
@@ -4723,13 +4743,17 @@ async def api_menu_continue() -> StreamingResponse:
 
     #1195：与颁诏 settle 同构 SSE——stage 逐段推文案，done 带 state，
     error 带 message。首条 stage 在重活前即发（目标 ≤5s 首见）。
+
+    #1749：世代 bump 与发布前对号+写 web_game 必须在 _menu_lifecycle_lock 内原子完成，
+    禁止 continue worker 在 check 通过后被 new_game 插队再覆盖活 runtime。
     """
     global _menu_generation
     if not _has_main_db():
         raise HTTPException(status_code=404, detail="无上次进度可继续，请先新游戏或加载存档。")
 
-    _menu_generation += 1
-    token = _menu_generation
+    with _menu_lifecycle_lock:
+        _menu_generation += 1
+        token = _menu_generation
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def on_stage(label: str) -> None:
@@ -4742,12 +4766,19 @@ async def api_menu_continue() -> StreamingResponse:
             # #1228：构造不再做连通 smoke，文案须诚实反映载入准备（非「检查模型后端」）。
             on_stage("准备载入上次进度...")
             game = WebGame(fresh=False, on_stage=on_stage)
-            # #1195：发布前对世代号——exit/new_game/load_save/新 continue 已 bump 则丢弃白建局
-            if token != _menu_generation:
-                _drain_and_close_session(game)
+            # #1195/#1749：对号与发布同临界区；失配则锁外 drain 丢弃白建局。
+            publish = False
+            with _menu_lifecycle_lock:
+                if token == _menu_generation:
+                    web_game = game
+                    publish = True
+            if not publish:
+                try:
+                    _drain_and_close_session(game)
+                except Exception:
+                    logger.exception("discard superseded continue session failed")
                 ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
                 return
-            web_game = game
             ev_queue.put(("__done__", {"state": game.state_payload()}))
         except LLMUnavailable as exc:
             ev_queue.put(("__error__", _llm_error_detail(exc)))
@@ -4776,14 +4807,27 @@ async def api_menu_continue() -> StreamingResponse:
 
 @app.post("/api/menu/load_save/{name}")
 async def api_menu_load_save(name: str) -> Dict[str, Any]:
-    """从存档启动：先启动空 WebGame（fresh）→ 调 load_save 热替换主 DB。"""
+    """从存档启动：先启动空 WebGame（fresh）→ 调 load_save 热替换主 DB。
+
+    #1749：世代 bump + 发布 web_game 在 _menu_lifecycle_lock 内完成，
+    与 new_game/continue/exit 同临界区。
+    """
     global web_game, _menu_generation
-    _menu_generation += 1
-    try:
-        web_game = WebGame(fresh=False)  # 先有 session 才能 load_save
-    except LLMUnavailable as exc:
-        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
-    web_game.load_save(name)
+    with _menu_lifecycle_lock:
+        _menu_generation += 1
+        try:
+            candidate = WebGame(fresh=False)  # 先有 session 才能 load_save
+            candidate.load_save(name)
+        except LLMUnavailable as exc:
+            raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
+        old_game = web_game
+        web_game = candidate
+    if old_game is not None and old_game is not web_game:
+        threading.Thread(
+            target=_drain_and_close_session,
+            args=(old_game,),
+            daemon=True,
+        ).start()
     _spawn_startup_catch_up_nonfatal(web_game)
     return {"state": web_game.state_payload()}
 
@@ -4823,19 +4867,9 @@ async def api_menu_exit() -> Dict[str, Any]:
             with _menu_exit_detach_lock:
                 _menu_exit_detach_completion = completion
 
-            def _detach_exit() -> None:
-                try:
-                    _drain_and_close_session(old_game)
-                    completion.close_ok = True
-                except Exception:
-                    # 原异常已由 _drain_and_close_session logger.exception 留痕；
-                    # 本 completion.close_ok 保持 False，持有本对象的归档不得搬库。
-                    completion.close_ok = False
-                finally:
-                    completion.done.set()
-
             # detach：等 write_gate 排空后再关连接（#396）；不归档（#1732 T1）
-            threading.Thread(target=_detach_exit, daemon=True).start()
+            # #1749：与 new_game 共用 _spawn_drain_close；completion 即全局 exit 完成信号。
+            _spawn_drain_close(old_game, archive_db=False, completion=completion)
     return {"ok": True}
 
 

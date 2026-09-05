@@ -3858,18 +3858,28 @@ class GameSession:
 
         主库与 agno 共路径；只关 GameDB 就归档/搬移文件时，agno 仍持 WAL 句柄，
         进程 fd 会钉在 drained_*.db 上，活局写路径可落到 readonly。
+
+        任一侧 close 失败都上抛（ADR 0005 / #1740）：drain 调用方据此不得搬库。
         """
         self._scene_registry.abandon_all()
+        db_exc: Optional[BaseException] = None
         try:
             self.db.close()
-        finally:
-            agno = getattr(self, "agno_db", None)
-            if agno is None:
-                return
+        except BaseException as exc:
+            db_exc = exc
+        agno_exc: Optional[BaseException] = None
+        agno = getattr(self, "agno_db", None)
+        if agno is not None:
             close_fn = getattr(agno, "close", None)
-            if not callable(close_fn):
-                return
-            try:
-                close_fn()
-            except Exception:
-                logger.exception("GameSession.agno_db.close failed")
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except BaseException as exc:
+                    logger.exception("GameSession.agno_db.close failed")
+                    agno_exc = exc
+        if db_exc is not None:
+            if agno_exc is not None:
+                raise db_exc from agno_exc
+            raise db_exc
+        if agno_exc is not None:
+            raise agno_exc
