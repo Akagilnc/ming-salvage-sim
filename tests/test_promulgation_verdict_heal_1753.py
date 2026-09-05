@@ -167,6 +167,18 @@ def test_promulgation_contract_error_heals_within_bound_then_settles(
     assert second_id not in remaining_proposed
 
 
+def _spy_create_agent(monkeypatch):
+    agents: list[object] = []
+
+    def spy_create(*a, **k):
+        agent = object()
+        agents.append(agent)
+        return agent
+
+    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", spy_create)
+    return agents
+
+
 @pytest.mark.parametrize(
     "mode",
     ["illegal_id", "missing_coverage"],
@@ -175,7 +187,10 @@ def test_promulgation_contract_error_heals_within_bound_then_settles(
 def test_promulgation_heal_exhausted_fail_closed_keeps_evidence(
     game, monkeypatch, mode,
 ):
-    """补交 3 次仍不合规 → 整月可恢复失败；error pack 含 ≤4 份坏输出 + 已合规判决。"""
+    """补交 3 次仍不合规 → 整月可恢复失败；error pack 含 ≤4 份坏输出 + 已合规判决。
+
+    走真实 llm_promulgation_verdicts + run_agent_text 边界（不整函数替身）。
+    """
     db, state, content = game
     first_id, second_id = _stage_two_policy_dossiers(db, state)
     before_turn = int(state.turn)
@@ -185,19 +200,31 @@ def test_promulgation_heal_exhausted_fail_closed_keeps_evidence(
     }
     heal_budget = int(decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES)
 
-    def always_bad(dossiers, _state, **kwargs):
-        if mode == "illegal_id":
-            return [
-                {"dossier_id": "bad-id", "decision": "promulgated"},
-                {"dossier_id": second_id, "decision": "promulgated"},
-            ]
-        # 漏盖：仅第一案合规，第二案缺席 → 保留单项已合规证据
-        return [{"dossier_id": first_id, "decision": "promulgated"}]
+    real_llm = decree_mod.llm_promulgation_verdicts
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", real_llm)
+    agents = _spy_create_agent(monkeypatch)
+    run_prompts: list[str] = []
 
-    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", always_bad)
-    monkeypatch.setattr(
-        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object(),
-    )
+    def always_bad_run(agent, prompt, tag=""):
+        run_prompts.append(str(prompt))
+        if mode == "illegal_id":
+            payload = {
+                "verdicts": [
+                    {"dossier_id": "bad-id", "decision": "promulgated"},
+                    {"dossier_id": second_id, "decision": "promulgated"},
+                ],
+            }
+        else:
+            # 漏盖：仅第一案合规
+            payload = {
+                "verdicts": [
+                    {"dossier_id": first_id, "decision": "promulgated"},
+                ],
+            }
+        return json.dumps(payload, ensure_ascii=False)
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", always_bad_run)
 
     with pytest.raises(SettlementAbort) as ei:
         decree_mod.resolve_directives(
@@ -206,10 +233,13 @@ def test_promulgation_heal_exhausted_fail_closed_keeps_evidence(
         )
 
     assert ei.value.stage == "promulgation"
-    assert int(state.turn) == before_turn  # 月份不推进
-    assert state.turn_phase == TurnPhase.SETTLING.value  # 可恢复
+    assert int(state.turn) == before_turn
+    assert state.turn_phase == TurnPhase.SETTLING.value
     assert db.get_pending_promulgation_verdicts(before_turn) == []
-    # 无伪造判向；案卷保持 proposed
+    assert len(run_prompts) == heal_budget + 1
+    assert len(agents) == 1
+    # 补交 prompt 含原始产出与失败原因（真解析路径）
+    assert any("校验失败原因" in p or "契约" in p for p in run_prompts[1:])
     for did, snap in baseline.items():
         assert db.get_decree_dossier(did) == snap
         assert db.list_decree_dossier_decisions(did) == []
@@ -219,77 +249,210 @@ def test_promulgation_heal_exhausted_fail_closed_keeps_evidence(
     delta = json.loads((pack / "delta.json").read_text(encoding="utf-8"))
     bad_outputs = delta.get("promulgation_heal_bad_outputs")
     assert isinstance(bad_outputs, list)
-    # 首次 + ≤3 次补交 = ≤4
-    assert 1 <= len(bad_outputs) <= heal_budget + 1
     assert len(bad_outputs) == heal_budget + 1
     compliant = delta.get("promulgation_compliant_verdicts")
     assert isinstance(compliant, list)
-    if mode == "missing_coverage":
-        assert any(int(row.get("dossier_id")) == first_id for row in compliant)
-    # 不伪造缺判案卷
     compliant_ids = {
         int(row["dossier_id"]) for row in compliant
         if isinstance(row, dict) and isinstance(row.get("dossier_id"), int)
     }
-    assert second_id not in compliant_ids or mode != "missing_coverage" or True
-    # missing_coverage: second must NOT appear as forged compliant
     if mode == "missing_coverage":
-        assert second_id not in compliant_ids
+        assert first_id in compliant_ids
+        assert second_id not in compliant_ids  # 不伪造缺判
+    if mode == "illegal_id":
+        assert second_id in compliant_ids
+        assert first_id not in compliant_ids
 
 
-def test_promulgation_heal_exhausted_recovery_settles_once_without_double_pre_settle(
+def test_promulgation_heal_keeps_earlier_compliant_across_attempts(
     game, monkeypatch,
 ):
-    """耗尽后从真实恢复入口接续 → 注入合规 verdict → 月份只 +1、pre_settle 不重复。"""
+    """首抽含案卷 A 合规、后续补交仍失败且不含 A → error pack 仍保留 A。"""
     db, state, content = game
     first_id, second_id = _stage_two_policy_dossiers(db, state)
-    before_turn = int(state.turn)
     heal_budget = int(decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES)
 
-    phase = {"n": 0}
-    pre_settle_calls: list[int] = []
-    real_pre_settle = decree_mod.pre_settle
+    real_llm = decree_mod.llm_promulgation_verdicts
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", real_llm)
+    _spy_create_agent(monkeypatch)
+    n = {"c": 0}
 
-    def spy_pre_settle(*a, **k):
-        pre_settle_calls.append(int(getattr(a[0], "turn", state.turn) if a else state.turn))
-        return real_pre_settle(*a, **k)
+    def shifting_bad(agent, prompt, tag=""):
+        n["c"] += 1
+        if n["c"] == 1:
+            # 首抽：A 合规 + 漏 B
+            payload = {
+                "verdicts": [
+                    {"dossier_id": first_id, "decision": "promulgated"},
+                ],
+            }
+        else:
+            # 后续：完全空批，A 不再出现
+            payload = {"verdicts": []}
+        return json.dumps(payload, ensure_ascii=False)
 
-    monkeypatch.setattr(decree_mod, "pre_settle", spy_pre_settle)
-
-    def llm_then_good(dossiers, _state, **kwargs):
-        phase["n"] += 1
-        # First resolve: always bad through heal budget+1 calls.
-        # Second resolve (recovery): good on first call.
-        if phase["n"] <= heal_budget + 1:
-            return [{"dossier_id": first_id, "decision": "promulgated"}]
-        return _good_batch(dossiers)
-
-    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", llm_then_good)
-    monkeypatch.setattr(
-        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object(),
-    )
+    monkeypatch.setattr(decree_mod, "run_agent_text", shifting_bad)
 
     with pytest.raises(SettlementAbort) as ei:
         decree_mod.resolve_directives(
             state, db, None, None, [object()], "清核河工并整饬漕运",
             content=content,
         )
+
+    assert n["c"] == heal_budget + 1
+    delta = json.loads(
+        Path(ei.value.error_pack_path, "delta.json").read_text(encoding="utf-8")
+    )
+    compliant = delta.get("promulgation_compliant_verdicts") or []
+    compliant_ids = {
+        int(row["dossier_id"]) for row in compliant
+        if isinstance(row, dict) and isinstance(row.get("dossier_id"), int)
+    }
+    assert first_id in compliant_ids  # 前轮好不得被后轮冲掉
+    assert second_id not in compliant_ids
+
+
+def test_promulgation_heal_preserves_non_json_raw_in_correction_and_pack(
+    game, monkeypatch,
+):
+    """非 JSON 原文须进入补交回喂与 error pack，不得落成空 list。"""
+    db, state, content = game
+    _stage_two_policy_dossiers(db, state)
+    heal_budget = int(decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES)
+
+    real_llm = decree_mod.llm_promulgation_verdicts
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", real_llm)
+    _spy_create_agent(monkeypatch)
+    raw_text = "这不是 JSON，只是判官胡言。"
+    prompts: list[str] = []
+
+    def non_json_run(agent, prompt, tag=""):
+        prompts.append(str(prompt))
+        return raw_text
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", non_json_run)
+
+    with pytest.raises(SettlementAbort) as ei:
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工并整饬漕运",
+            content=content,
+        )
+
+    assert len(prompts) == heal_budget + 1
+    # 补交须附原始非 JSON 文本
+    assert any(raw_text in p for p in prompts[1:])
+    delta = json.loads(
+        Path(ei.value.error_pack_path, "delta.json").read_text(encoding="utf-8")
+    )
+    bad_outputs = delta.get("promulgation_heal_bad_outputs") or []
+    assert len(bad_outputs) == heal_budget + 1
+    assert any(raw_text in str(item) for item in bad_outputs)
+
+
+def test_promulgation_heal_exhausted_recovery_via_resolve_turn(
+    game, monkeypatch,
+):
+    """耗尽后从 GameSession.resolve_turn 真实恢复入口接续 → 月份只 +1、pre_settle 不重复。"""
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    first_id, second_id = _stage_two_policy_dossiers(db, state)
+    # resolve_turn 需要 draft 指令才能过无旨门；案卷已有，再落一条 draft 关联即可。
+    db.add_directive(
+        state, None, "清核河工并整饬漕运", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": f"river-{state.turn}",
+        },
+    )
+    before_turn = int(state.turn)
+    heal_budget = int(decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES)
+
+    real_llm = decree_mod.llm_promulgation_verdicts
+    phase = {"n": 0}
+    pre_settle_calls: list[int] = []
+    real_pre_settle = decree_mod.pre_settle
+
+    def spy_pre_settle(*a, **k):
+        pre_settle_calls.append(
+            int(getattr(a[0], "turn", state.turn) if a else state.turn)
+        )
+        return real_pre_settle(*a, **k)
+
+    def run_then_good(agent, prompt, tag=""):
+        phase["n"] += 1
+        # 以当刻 proposed 为准（resolve_turn ensure 可能多落案卷）。
+        proposed_ids = [
+            int(row["id"]) for row in db.list_decree_dossiers(status="proposed")
+        ]
+        if phase["n"] <= heal_budget + 1:
+            # 漏盖：只判第一案
+            only = proposed_ids[:1] or [first_id]
+            return json.dumps({
+                "verdicts": [
+                    {"dossier_id": only[0], "decision": "promulgated"},
+                ],
+            }, ensure_ascii=False)
+        return json.dumps({
+            "verdicts": [
+                {"dossier_id": did, "decision": "promulgated"}
+                for did in proposed_ids
+            ],
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(decree_mod, "pre_settle", spy_pre_settle)
+    monkeypatch.setattr(decree_mod, "run_agent_text", run_then_good)
+    _spy_create_agent(monkeypatch)
+    # 保留真 llm_promulgation；canned 只钉 sim/extract
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", real_llm)
+    monkeypatch.setattr(decree_mod, "pre_settle", spy_pre_settle)
+    monkeypatch.setattr(decree_mod, "run_agent_text", run_then_good)
+
+    monkeypatch.setattr(session_mod, "MinisterRegistry", lambda *a, **k: object())
+    monkeypatch.setattr(
+        session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        session_mod, "write_decree_with_agno",
+        lambda *a, **k: "清核河工并整饬漕运",
+    )
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = None
+    sess.agno_db = None
+    sess.deaths_this_turn = []
+    sess.debuts_this_turn = []
+    sess.last_decree = "清核河工并整饬漕运"
+    sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._scene_registry = None
+    sess._beat_generator = None
+    sess._write_gate = None
+    monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
+    monkeypatch.setattr(
+        GameSession, "_write_gate_if_free", lambda self: None,
+    )
+    monkeypatch.setattr(
+        GameSession, "_draft_fingerprint", lambda self, _dirs: (),
+    )
+
+    with pytest.raises(SettlementAbort) as ei:
+        sess.resolve_turn(decree="清核河工并整饬漕运")
     assert ei.value.stage == "promulgation"
     assert state.turn_phase == TurnPhase.SETTLING.value
     assert pre_settle_calls == [before_turn]
 
-    # 真实恢复入口：settling 无 ready → fallthrough 重跑后半；canned 后再钉颁布 LLM。
-    canned_full_settlement(monkeypatch)
-    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", llm_then_good)
-    monkeypatch.setattr(decree_mod, "pre_settle", spy_pre_settle)
-    result = decree_mod.resolve_directives(
-        state, db, None, None, [object()], "清核河工并整饬漕运",
-        content=content,
-    )
-
+    # 真实恢复入口：settling 无 ready → resolve_turn fallthrough
+    result = sess.resolve_turn(decree="清核河工并整饬漕运")
     assert result.awaiting is False
     assert int(state.turn) == before_turn + 1
-    # pre_settle 不二跑（0008 决定 3）：恢复接续不得再入前半
     assert pre_settle_calls == [before_turn]
     remaining_proposed = {
         int(row["id"]) for row in db.list_decree_dossiers(status="proposed")
@@ -298,9 +461,28 @@ def test_promulgation_heal_exhausted_recovery_settles_once_without_double_pre_se
     assert second_id not in remaining_proposed
 
 
-def test_promulgation_heal_retries_is_single_source():
-    """3 为单一真源；不得另散落魔法数。"""
-    assert decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES == 3
-    src = Path(decree_mod.__file__).read_text(encoding="utf-8")
-    # 补交次数只认该常量名参与循环上界
-    assert "PROMULGATION_VERDICT_HEAL_RETRIES" in src
+def test_promulgation_heal_retries_is_single_source(game, monkeypatch):
+    """3 为单一真源：耗尽时真实 LLM 调用次数 = 1 + PROMULGATION_VERDICT_HEAL_RETRIES。"""
+    db, state, content = game
+    _stage_two_policy_dossiers(db, state)
+    heal_budget = int(decree_mod.PROMULGATION_VERDICT_HEAL_RETRIES)
+    assert heal_budget == 3
+
+    real_llm = decree_mod.llm_promulgation_verdicts
+    canned_full_settlement(monkeypatch)
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", real_llm)
+    _spy_create_agent(monkeypatch)
+    calls = {"n": 0}
+
+    def bad_run(agent, prompt, tag=""):
+        calls["n"] += 1
+        return json.dumps({"verdicts": [{"dossier_id": "x", "decision": "promulgated"}]})
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", bad_run)
+
+    with pytest.raises(SettlementAbort):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工并整饬漕运",
+            content=content,
+        )
+    assert calls["n"] == 1 + heal_budget
