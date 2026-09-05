@@ -569,6 +569,87 @@ def test_item_level_missing_still_whole_batch_degrade(monkeypatch, tmp_path):
     assert generate_rescript_draft(object(), _ctx(), turn=20) is None
 
 
+def test_heal_ambiguous_identity_refuses_merge_then_drops(monkeypatch, tmp_path):
+    """无唯一 option 身份（空 label + 同 action 兄弟）→ 拒绝合并，耗尽剔除坏项。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    # label 空白 → 缺字段；兄弟同为 assignment
+    bad = _hold(label="", hint="need-label")
+    sibling = _hold(label="stable", hint="keep")
+    first = _items_json([{
+        "title": "u", "context": "c",
+        "options": [bad, sibling],
+    }])
+    # 重排：兄弟在前；若按 action/index 静默取会复制 stable
+    healed = _items_json([{
+        "title": "u", "context": "c",
+        "options": [
+            _hold(label="stable", hint="CHANGED"),
+            _hold(label="fixed-now", hint="need-label"),
+        ],
+    }])
+    n = {"i": 0}
+
+    def _llm(*_a, **_k):
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=33)
+    assert drafts is not None
+    opts = drafts[0]["options"]
+    # 坏项因身份不唯一无法合并 → 耗尽剔除；只剩捕获的兄弟一份
+    assert len(opts) == 1
+    assert opts[0]["label"] == sibling["label"]
+    assert opts[0]["hint"] == sibling["hint"]
+
+
+def test_heal_same_title_duplicate_identity_refuses_cross_merge(monkeypatch, tmp_path):
+    """两急务同 title 且 option label/action 相同 → 身份不唯一，不得串 target。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    shared_label = "同名协饷"
+    bad = _army_pay(label=shared_label, target_id="guanning", amount=100)
+    bad.pop("purpose", None)
+    sib1 = _hold(label="缓一", hint="a")
+    u1 = {"title": "同题急务", "context": "甲。", "options": [bad, sib1]}
+    other = _army_pay(label=shared_label, target_id="xuanfu", amount=200)
+    sib2 = _hold(label="缓二", hint="b")
+    u2 = {"title": "同题急务", "context": "乙。", "options": [other, sib2]}
+    first = _items_json([u1, u2])
+    # 补交产出两份同 label/action 协饷（含 xuanfu）；唯一性闸须拒绝，不能把 xuanfu 并进 u1
+    healed = _items_json([
+        {
+            "title": "同题急务", "context": "乙。",
+            "options": [dict(other), sib2],
+        },
+        {
+            "title": "同题急务", "context": "甲。",
+            "options": [dict(bad, purpose="补饷", target_id="guanning"), sib1],
+        },
+    ])
+    n = {"i": 0}
+
+    def _llm(*_a, **_k):
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=34)
+    assert drafts is not None
+    by_ctx = {d["context"]: d for d in drafts}
+    # u1（甲）坏 grant 歧义未合并 → 剔除，只剩缓一；不得串入 xuanfu
+    assert u1["context"] in by_ctx
+    u1_opts = by_ctx[u1["context"]]["options"]
+    assert len(u1_opts) == 1
+    assert u1_opts[0]["label"] == sib1["label"]
+    assert all(o.get("grant_action") != "协饷" for o in u1_opts)
+    # u2（乙）原样保留 xuanfu 协饷
+    assert u2["context"] in by_ctx
+    u2_grants = [
+        o for o in by_ctx[u2["context"]]["options"] if o.get("grant_action") == "协饷"
+    ]
+    assert len(u2_grants) == 1 and u2_grants[0]["target_id"] == "xuanfu"
+
+
 def test_heal_does_not_cross_urgent_same_label(monkeypatch, tmp_path):
     """两急务同 label：补交重排后不得把另一急务的 assignment 并进失败急务的 grant 槽。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
