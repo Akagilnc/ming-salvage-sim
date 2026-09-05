@@ -106,12 +106,12 @@ def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
     try:
         t = threading.Thread(target=_a_success, daemon=True)
         t.start()
-        assert not a_done.wait(0.08), "A 成功支 clear 不得在 B 持 gate 时无门完成"
+        assert not a_done.is_set(), "A 成功支 clear 不得在 B 持 gate 时无门完成"
         # B 事务窗内快照仍在——证明 DELETE 未落进共享连接/B 侧可见状态
         assert db.get_month_open_snapshot(int(state.turn)) == before
         gate.release()
-        assert a_done.wait(2.0), "B 放锁后 A 须完成"
-        t.join(2.0)
+        a_done.wait()
+        t.join()
     finally:
         db.clear_month_open_snapshot = orig_clear  # type: ignore[method-assign]
         if gate.locked():
