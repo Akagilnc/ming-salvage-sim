@@ -235,9 +235,21 @@ def _parse_sse(text: str) -> list[dict]:
 
 
 async def _await_event(ev: threading.Event) -> None:
-    """从 async 上下文等一个 threading.Event（不阻塞 event loop）。"""
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, ev.wait)
+    """从 async 上下文等一个 threading.Event（可取消；不占 executor）。"""
+    while not ev.is_set():
+        await asyncio.sleep(0)
+
+
+async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:
+    """成功事件或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。"""
+    while not ev.is_set() and not task.done():
+        await asyncio.sleep(0)
+    if ev.is_set():
+        return
+    exc = task.exception()
+    if exc is not None:
+        raise exc
+    raise AssertionError("worker finished without expected success event")
 
 
 async def _wait_for(pred) -> None:
@@ -253,7 +265,8 @@ async def _start_hanging_chat(game, client, minister):
     game.session.registry.get = lambda ch: _FakeAgent(started=started, allow=allow)
     task = asyncio.create_task(
         client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
-    await _await_event(started)  # 生成已开始 = prologue 已建 generating 在飞轮
+    # 生成已开始，或 chat worker 已终态（失败须传播，不得只等 started）。
+    await _await_event_or_task(started, task)
     return task, allow
 
 
@@ -308,9 +321,10 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
             game.db.commit_pending_actions(game.state, kind_filter="directive")
 
             issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
-            await _await_event(observed_ticket_inflight)  # 颁诏屏障真见到 chat 票
+            # 屏障见票或 issue 终态；失败不挂死。
+            await _await_event_or_task(observed_ticket_inflight, issue_task)
             allow.set()                                   # 放行回话落档 + 放票
-            await _await_event(observed_ticket_clear)     # 屏障见到票清
+            await _await_event_or_task(observed_ticket_clear, issue_task)
 
             chat_resp = await chat_task
             issue_resp = await issue_task
@@ -459,8 +473,8 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 issue_client.post("/api/decree/issue/stream", json={})
             )
             try:
-                # bare 事件屏障（复用 _await_event）；禁 to_thread(wait, 墙钟)。
-                await _await_event(entered)
+                # 成功 entered 或 issue_task 终态均可唤醒；失败传播，finally 释放 hold。
+                await _await_event_or_task(entered, issue_task)
                 # chat (stream + non-stream) / reply-retry / story / stage / approve /
                 # draft-update — all refuse under CLOSING via the one admission seam.
                 chat_resp = await chat_client.post(
@@ -647,7 +661,8 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 issue_client.post("/api/decree/issue/stream", json={})
             )
             try:
-                await _await_event(entered)
+                # 同 first_fail：entered 成功或 issue 终态；失败不挂死。
+                await _await_event_or_task(entered, issue_task)
             finally:
                 release.set()
                 if not issue_task.done():
@@ -751,7 +766,7 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
             issue_task = asyncio.create_task(
                 issue_client.post("/api/decree/issue/stream", json={})
             )
-            await _await_event(observed_ticket_inflight)
+            await _await_event_or_task(observed_ticket_inflight, issue_task)
             assert not issue_task.done(), "issue must wait for chat ticket, not forge elapsed 409"
 
             allow.set()
