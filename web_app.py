@@ -4292,66 +4292,17 @@ def _get_main_db_path() -> str:
     return user_data_path("ming_sim.db")
 
 
+def _normalize_db_path(path: str) -> str:
+    """#1749 / #14：路径身份唯一真源。abspath 失败直接上抛——禁静默退回另一套身份语义（ADR 0005）。"""
+    if not path:
+        return ""
+    return os.path.abspath(path)
+
+
 def _same_db_path(left: str, right: str) -> bool:
     if not left or not right:
         return False
-    try:
-        return os.path.abspath(left) == os.path.abspath(right)
-    except Exception:
-        return left == right
-
-
-# #1749：菜单在途操作钉住的主库路径（load_save 排空窗 / close 未确认）。
-# 归档前必须与 live web_game、当前主路径一并检查——禁并发 new_game 搬走未关连接的库。
-_menu_pinned_db_paths: set[str] = set()
-_menu_pin_lock = threading.Lock()
-
-
-def _normalize_db_path(path: str) -> str:
-    if not path:
-        return ""
-    try:
-        return os.path.abspath(path)
-    except Exception:
-        return path
-
-
-def _pin_db_path(path: str) -> None:
-    norm = _normalize_db_path(path)
-    if not norm:
-        return
-    with _menu_pin_lock:
-        _menu_pinned_db_paths.add(norm)
-
-
-def _unpin_db_path(path: str) -> None:
-    norm = _normalize_db_path(path)
-    if not norm:
-        return
-    with _menu_pin_lock:
-        _menu_pinned_db_paths.discard(norm)
-
-
-def _db_path_is_pinned(path: str) -> bool:
-    norm = _normalize_db_path(path)
-    if not norm:
-        return False
-    with _menu_pin_lock:
-        return norm in _menu_pinned_db_paths
-
-
-def _archive_closed_orphan_path(path: str) -> None:
-    """#1749：本拍已确认 close 的路径，若不再是 main 且无 live holder，补归档。
-
-    load_save 被 new_game 取代时，new_game 可能因 pin 跳过归档；解钉后由本拍转交归档。
-    """
-    if not path or not os.path.exists(path):
-        return
-    if _same_db_path(path, _get_main_db_path()):
-        return
-    if _db_path_is_live(path):
-        return
-    _archive_drained_db_file(path)
+    return _normalize_db_path(left) == _normalize_db_path(right)
 
 
 def _take_exit_detach_completion() -> Optional["_MenuExitDetachCompletion"]:
@@ -4364,17 +4315,14 @@ def _take_exit_detach_completion() -> Optional["_MenuExitDetachCompletion"]:
 
 
 def _db_path_is_live(db_path: str) -> bool:
-    """#1749：归档前拒搬仍有持有者的路径——活 web_game 或菜单钉住（在飞 load_save/未确认 close）。
+    """#1749：归档前拒搬仍被活 web_game 持有的路径。
 
     不单凭 active 主路径指针判 live：排空关闭后的旧路径仍可能等于当时 main 配置，
     归档（exit→new_game / drain archive_db）必须在 close 确认后仍可搬文件。
+    菜单互斥由 _menu_lifecycle_lock 串行，不再另造 pin 登记表。
     """
     if not db_path:
         return False
-    norm = _normalize_db_path(db_path)
-    with _menu_pin_lock:
-        if norm and norm in _menu_pinned_db_paths:
-            return True
     game = web_game
     if game is None:
         return False
@@ -4400,7 +4348,7 @@ def _archive_drained_db_file(old_db_path: str) -> None:
         shutil.move(old_db_path, target)
         moved = True
     except Exception:
-        pass
+        logger.exception("archive move failed path=%s → %s", old_db_path, target)
     if not moved:
         return
     wal_path = old_db_path + "-wal"
@@ -4408,17 +4356,18 @@ def _archive_drained_db_file(old_db_path: str) -> None:
         try:
             shutil.move(wal_path, target + "-wal")
         except Exception:
+            logger.exception("archive wal move failed path=%s", wal_path)
             try:
                 shutil.move(target, old_db_path)
             except Exception:
-                pass
+                logger.exception("archive rollback failed path=%s", old_db_path)
             return
     shm_path = old_db_path + "-shm"
     if os.path.exists(shm_path):
         try:
             shutil.move(shm_path, target + "-shm")
         except Exception:
-            pass
+            logger.exception("archive shm move failed path=%s", shm_path)
 
 
 def _drain_and_close_session(game, archive_db: bool = False) -> None:
@@ -4748,11 +4697,10 @@ async def api_menu_new_game() -> Dict[str, Any]:
     由本端点承接同一 _archive_drained_db_file 权威实现。
 
     #1749：全程持 _menu_lifecycle_lock——禁止 web_game=None 窗口被第二次 new_game
-    把仍在构造的新路径当 prev 归档；发布前对世代号（同 continue #1195）。"""
+    把仍在构造的新路径当 prev 归档。世代 bump 供 continue 在锁外等待后对号。"""
     global web_game, _menu_generation
     with _menu_lifecycle_lock:
         _menu_generation += 1
-        token = _menu_generation
         old_game = web_game
         # #396 Step5 R4: 无论 web_game 是否为 None（退菜单后 / 服务端首次 new_game），
         # fresh=True 前都必须切换主库路径到新文件——否则 WebGame 会解析到旧配置库（env /
@@ -4775,15 +4723,7 @@ async def api_menu_new_game() -> Dict[str, Any]:
             _restore_main_db_path_config(snapshot)
             web_game = old_game
             raise
-        # #1195/#1749：发布前对世代号——持锁下仍作防御；失配则丢弃白建局、恢复指针。
-        if token != _menu_generation:
-            try:
-                _drain_and_close_session(new_game)
-            except Exception:
-                logger.exception("discard superseded new_game session failed")
-            _restore_main_db_path_config(snapshot)
-            web_game = old_game
-            raise HTTPException(status_code=409, detail="新游戏已取消（菜单状态已变更）。")
+        # 持锁构造：_menu_generation 写点均在本锁内，构造后世代不可能失配——不另加防御分支。
         web_game = new_game
         if old_game is not None:
             # detach：新局已确认可用后，才退休旧连接 + 归档旧库（#396）。
@@ -4842,7 +4782,9 @@ async def api_menu_continue() -> StreamingResponse:
         ev_queue.put(("stage", label))
 
     def worker() -> None:
-        global web_game
+        # #1749：失败 close 回执放回 _menu_exit_detach_completion 须声明 global，
+        # 否则赋值变 local → UnboundLocalError，且回执已被 take 清空。
+        global web_game, _menu_exit_detach_completion
         try:
             # 首条阶段在抢锁前入队（#1195 ≤5s 首见）；重活构造在锁内，与 new_game 互斥。
             on_stage("准备载入上次进度...")
@@ -4860,32 +4802,15 @@ async def api_menu_continue() -> StreamingResponse:
                         {"message": "上一局尚未关闭完成，请稍后重试。"},
                     ))
                     return
-            # load_save 钉住主路径排空时，continue 不得抢先构造同一库。
-            main_for_wait = _get_main_db_path()
-            pin_deadline = time.monotonic() + 60.0
-            while _db_path_is_pinned(main_for_wait):
-                if time.monotonic() >= pin_deadline:
-                    ev_queue.put((
-                        "__error__",
-                        {"message": "菜单操作进行中，请稍后重试。"},
-                    ))
-                    return
-                time.sleep(0.01)
             old_runtime = None
             with _menu_lifecycle_lock:
+                # 构造前对号：锁外等 exit 期间 new_game/exit/load_save 可能已 bump。
                 if token != _menu_generation:
                     ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
                     return
-                # #1228：构造不再做连通 smoke；持锁期间 new_game/exit/load 不得搬本候选路径。
+                # #1228：构造不再做连通 smoke；持锁期间其它菜单动作不得切入。
+                # 持锁构造：世代写点均在本锁内，构造后不必再对号。
                 game = WebGame(fresh=False, on_stage=on_stage)
-                if token != _menu_generation:
-                    # 持锁下世代不应变；防御分支仍 drain 丢弃。
-                    try:
-                        _drain_and_close_session(game)
-                    except Exception:
-                        logger.exception("discard superseded continue session failed")
-                    ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
-                    return
                 old_runtime = web_game
                 web_game = game
             # #1749：发布后退休被替换的 runtime（若有），禁泄漏旧连接。
@@ -4921,78 +4846,51 @@ async def api_menu_continue() -> StreamingResponse:
 async def api_menu_load_save(name: str) -> Dict[str, Any]:
     """从存档启动：先启动空 WebGame（fresh=False）→ 调 load_save 热替换主 DB。
 
-    #1749：bump 后钉住主库路径并排空旧 runtime / 等 exit detach（复用 _spawn_drain_close）；
-    钉住期间并发 new_game 不得归档该路径。close 未确认 → 409：若本代仍有效则恢复 old 指针并解钉
-    （由 web_game 护路径）；否则保持钉住。候选 close 失败同样保持钉住。
+    #1749：整段在 _menu_lifecycle_lock 内串行（executor 中执行，不堵事件循环抢锁语义）：
+    先关旧 runtime / 等 exit detach，再构造并发布。失败关旧 → 恢复指针并 409；
+    候选失败 → close 候选。不再另造 pin/orphan-handoff 登记表。
     发布后只用本地 published 引用做 catch_up/state（禁锁外读全局 web_game）。
     """
     global web_game, _menu_generation
-    pinned_path = ""
-    keep_pin = False
-    published_game = None
-    old_closed_ok = False
-    old_closed_path = ""
-    with _menu_lifecycle_lock:
-        _menu_generation += 1
-        token = _menu_generation
-        old_game = web_game
-        web_game = None
-        # 与 continue/new_game 同：取出 exit completion 独家消费。
-        exit_completion = _take_exit_detach_completion()
-        pinned_path = _get_main_db_path()
-        _pin_db_path(pinned_path)
-
     loop = asyncio.get_running_loop()
-    try:
-        # 旧局仍在或 exit detach 未完成：必须关尽后再碰主库路径。
-        if old_game is not None:
-            old_closed_path = getattr(old_game, "db_path", "") or pinned_path
-            completion = _spawn_drain_close(old_game, archive_db=False)
-            await loop.run_in_executor(None, completion.done.wait)
-            if not completion.close_ok:
-                restored = False
-                with _menu_lifecycle_lock:
-                    if token == _menu_generation and web_game is None:
-                        web_game = old_game
-                        restored = True
-                # 恢复成功：web_game 护路径，可解钉；否则保持钉住禁搬走。
-                keep_pin = not restored
-                raise HTTPException(status_code=409, detail="无法关闭当前局，请稍后重试。")
-            old_closed_ok = True
-        elif exit_completion is not None:
-            await loop.run_in_executor(None, exit_completion.done.wait)
-            if not exit_completion.close_ok:
-                keep_pin = True
-                raise HTTPException(
-                    status_code=409,
-                    detail="上一局尚未关闭完成，请稍后重试。",
-                )
-            old_closed_ok = True
-            old_closed_path = pinned_path
 
+    def _load_under_lock() -> Any:
+        global web_game, _menu_generation
         with _menu_lifecycle_lock:
-            if token != _menu_generation:
-                # #1749：本拍已关旧连接但被 new_game 取代——new_game 可能因 pin 跳过归档；
-                # 解钉后转交归档（路径若已非 main 且无 holder）。
-                if old_closed_ok and old_closed_path:
-                    handoff = old_closed_path
-                    _unpin_db_path(pinned_path)
-                    pinned_path = ""
-                    _archive_closed_orphan_path(handoff)
-                raise HTTPException(status_code=409, detail="加载已取消（菜单状态已变更）。")
+            _menu_generation += 1
+            old_game = web_game
+            web_game = None
+            exit_completion = _take_exit_detach_completion()
+
+            if exit_completion is not None:
+                exit_completion.done.wait()
+                if not exit_completion.close_ok:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="上一局尚未关闭完成，请稍后重试。",
+                    )
+
+            if old_game is not None:
+                try:
+                    _drain_and_close_session(old_game, archive_db=False)
+                except Exception:
+                    web_game = old_game
+                    logger.exception("load_save close failed for previous runtime")
+                    raise HTTPException(
+                        status_code=409, detail="无法关闭当前局，请稍后重试。",
+                    )
+
             candidate = None
             try:
                 candidate = WebGame(fresh=False)
                 candidate.load_save(name)
                 web_game = candidate
-                published_game = candidate
-                candidate = None
+                return candidate
             except LLMUnavailable as exc:
                 if candidate is not None:
                     try:
                         _drain_and_close_session(candidate, archive_db=False)
                     except Exception:
-                        keep_pin = True
                         logger.exception(
                             "load_save close failed candidate after LLMUnavailable"
                         )
@@ -5002,15 +4900,12 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
                     try:
                         _drain_and_close_session(candidate, archive_db=False)
                     except Exception:
-                        keep_pin = True
                         logger.exception("load_save close failed candidate")
                 raise
-        # 锁外只碰本拍发布的本地引用——禁再读全局 web_game（可能已被 exit 清空）。
-        _spawn_startup_catch_up_nonfatal(published_game)
-        return {"state": published_game.state_payload()}
-    finally:
-        if pinned_path and not keep_pin:
-            _unpin_db_path(pinned_path)
+
+    published_game = await loop.run_in_executor(None, _load_under_lock)
+    _spawn_startup_catch_up_nonfatal(published_game)
+    return {"state": published_game.state_payload()}
 
 
 @app.delete("/api/menu/saves/{name}")

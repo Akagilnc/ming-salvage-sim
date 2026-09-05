@@ -8,7 +8,6 @@ import json
 import os
 import sqlite3
 import threading
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,24 +23,37 @@ from tests.test_month_loop_tracer_1468 import (
     tracer_client,
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
+from tests.wait_utils import wait_until
 
 
 def _campaign(game) -> str:
     return str(game.db.kv_get("campaign_id") or "").strip()
 
 
-def _counts(db_path: str) -> dict:
+def _db_snapshot(db_path: str) -> dict:
+    """独立只读连接：campaign + 旨意/夜/回话身份，不经活 session。"""
     conn = sqlite3.connect(db_path)
     try:
         camp = conn.execute(
             "SELECT value FROM kv_store WHERE key='campaign_id'"
         ).fetchone()
-        dirs = conn.execute("SELECT COUNT(*) FROM turn_directives").fetchone()
-        nights = conn.execute("SELECT COUNT(*) FROM audience_nights").fetchone()
+        dirs = conn.execute(
+            "SELECT id, text FROM turn_directives ORDER BY id"
+        ).fetchall()
+        nights = conn.execute(
+            "SELECT id FROM audience_nights ORDER BY id"
+        ).fetchall()
+        turns = conn.execute(
+            "SELECT id, night_id FROM chat_turns ORDER BY id"
+        ).fetchall()
         return {
             "campaign_id": str(camp[0]) if camp and camp[0] else "",
-            "directives": int(dirs[0] if dirs else 0),
-            "nights": int(nights[0] if nights else 0),
+            "directive_ids": [int(r[0]) for r in dirs],
+            "directive_texts": [str(r[1]) for r in dirs],
+            "night_ids": [int(r[0]) for r in nights],
+            "chat_turns": [(int(r[0]), int(r[1] or 0)) for r in turns],
+            "directives": len(dirs),
+            "nights": len(nights),
         }
     finally:
         conn.close()
@@ -65,25 +77,27 @@ def _capture_spawns(monkeypatch) -> list:
     return out
 
 
-def _wait_spawns(spawns: list, start: int, *, timeout: float = 5.0) -> None:
-    deadline = time.monotonic() + timeout
-    fresh = spawns[start:]
-    assert fresh, "expected drain spawn"
-    for c in fresh:
-        assert c.done.wait(timeout=max(0.01, deadline - time.monotonic()))
+def _wait_spawns(spawns: list, start: int) -> None:
+    wait_until(lambda: len(spawns) > start)
+    for c in spawns[start:]:
+        c.done.wait()
         assert c.close_ok is True
 
 
-def _canned_minister(game) -> None:
+def _install_canned_minister_factory(monkeypatch) -> None:
+    """外层模型工厂缝：create_minister_agent → canned；保留真实 registry/session。"""
+    import ming_sim.registry as reg
+
     class _A:
         def run(self, *_a, **_k):
             t = "臣已知悉，边饷当速清。"
             yield SimpleNamespace(content=t, event="RunContent", tool=None, tools=[])
             yield SimpleNamespace(
-                content=t, event="RunCompleted", tool=None, tools=[], status=None, messages=[],
+                content=t, event="RunCompleted", tool=None, tools=[],
+                status=None, messages=[],
             )
 
-    game.session.registry.get = lambda _ch: _A()
+    monkeypatch.setattr(reg, "create_minister_agent", lambda *a, **k: _A())
 
 
 def _directive(client: TestClient, text: str) -> None:
@@ -105,6 +119,27 @@ def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
     assert data.get("campaign_id") and int(data.get("night_id") or 0) >= 1
     assert int(data.get("chat_turn_id") or 0) >= 1
     return data
+
+
+def _write_and_verify_live(client: TestClient, game, *, label: str) -> dict:
+    """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/记录身份。"""
+    d_text = f"着户部清核辽饷（{label}）。"
+    _directive(client, d_text)
+    _wait_pending_writes(game)
+    st = client.get("/api/game/state")
+    minister = _pick_active_minister(st.json())
+    acc = _chat_stream(client, minister, f"边饷如何？{label}")
+    camp = _campaign(game)
+    assert acc["campaign_id"] == camp
+    _wait_pending_writes(game)
+    snap = _db_snapshot(game.db_path)
+    assert snap["campaign_id"] == camp
+    assert d_text in snap["directive_texts"]
+    turn_id = int(acc["chat_turn_id"])
+    night_id = int(acc["night_id"])
+    assert any(t[0] == turn_id and t[1] == night_id for t in snap["chat_turns"]), snap
+    assert night_id in snap["night_ids"]
+    return {"campaign_id": camp, "chat_turn_id": turn_id, "night_id": night_id, "d_text": d_text}
 
 
 def test_drain_skips_archive_when_agno_close_fails(tmp_path, monkeypatch):
@@ -135,14 +170,14 @@ def test_drain_skips_archive_when_agno_close_fails(tmp_path, monkeypatch):
         web_app._drain_and_close_session(game, archive_db=True)
     assert os.path.isfile(dbp)
     assert _drained(tmp_path / "ud") == []
-    # agno 失败路径未 dispose：engine 仍可 connect（证明失败发生在 close 调用中）
     with engine.connect() as conn:
         conn.exec_driver_sql("SELECT 1")
 
 
-def test_new_game_write_path_and_continue_restore(tracer_client, monkeypatch):
-    """主干：seed 写 → 直接 new_game 写只落新库 → drain 完成后旧归档 → continue 恢复新局。"""
+def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
+    """主干：直接 new_game 与 exit→new_game 两路均经 directives+chat；独立 DB 身份；恢复。"""
     client = tracer_client
+    _install_canned_minister_factory(monkeypatch)
     spawns = _capture_spawns(monkeypatch)
 
     seed = client.post("/api/menu/new_game")
@@ -150,110 +185,88 @@ def test_new_game_write_path_and_continue_restore(tracer_client, monkeypatch):
     assert seed.status_code == 200
     g0 = web_app.web_game
     assert g0 is not None
-    p0, c0 = g0.db_path, _campaign(g0)
-    _directive(client, "着户部清核辽饷（seed）。")
-    _wait_pending_writes(g0)
-    d0 = _counts(p0)["directives"]
-    assert d0 >= 1
+    p0 = g0.db_path
+    seed_rec = _write_and_verify_live(client, g0, label="seed")
+    c0 = seed_rec["campaign_id"]
+    d0_count = _db_snapshot(p0)["directives"]
 
+    # ── 路一：直接 new_game（持旧 gate 保持双句柄可写窗）──
     n0 = len(spawns)
-    ng = client.post("/api/menu/new_game")
-    _assert_not_bare_500(ng, step="new_game")
-    assert ng.status_code == 200
-    g1 = web_app.web_game
-    assert g1 is not None and g1 is not g0
-    c1 = _campaign(g1)
-    assert c1 and c1 != c0
-    p1 = g1.db_path
-    assert p1 != p0
-
-    _directive(client, "着户部清核辽饷（新局）。")
-    _wait_pending_writes(g1)
-    st = client.get("/api/game/state")
-    minister = _pick_active_minister(st.json())
-    _canned_minister(g1)
-    acc = _chat_stream(client, minister, "边饷如何？新局")
-    assert acc["campaign_id"] == c1
-    _wait_pending_writes(g1)
+    old_gate = g0._write_gate
+    old_gate.acquire()
+    try:
+        ng = client.post("/api/menu/new_game")
+        _assert_not_bare_500(ng, step="new_game-direct")
+        assert ng.status_code == 200
+        g1 = web_app.web_game
+        assert g1 is not None and g1 is not g0
+        p1 = g1.db_path
+        assert p1 != p0
+        # 旧 drain 被 gate 挡住：两句柄同时可提交
+        g0.db.conn.execute("SELECT 1")
+        rec1 = _write_and_verify_live(client, g1, label="direct-new")
+        c1 = rec1["campaign_id"]
+        assert c1 and c1 != c0
+        # 静默丢写假说：新旨意只落新库；旧句柄直写只留旧库
+        g0.db.kv_set("_old_handle_mark", "1")
+        old_snap = _db_snapshot(p0)
+        new_snap = _db_snapshot(p1)
+        assert rec1["d_text"] in new_snap["directive_texts"]
+        assert rec1["d_text"] not in old_snap["directive_texts"]
+        assert old_snap["campaign_id"] == c0
+        conn = sqlite3.connect(p0)
+        try:
+            assert conn.execute(
+                "SELECT value FROM kv_store WHERE key='_old_handle_mark'"
+            ).fetchone() == ("1",)
+        finally:
+            conn.close()
+        conn = sqlite3.connect(p1)
+        try:
+            assert conn.execute(
+                "SELECT value FROM kv_store WHERE key='_old_handle_mark'"
+            ).fetchone() is None
+        finally:
+            conn.close()
+    finally:
+        if old_gate.locked():
+            old_gate.release()
 
     _wait_spawns(spawns, n0)
     assert not os.path.exists(p0)
     drained = _drained(Path(web_app.user_data_path()))
     assert drained
     old_hit = next(
-        c for c in (_counts(str(p)) for p in drained) if c["campaign_id"] == c0
+        s for s in (_db_snapshot(str(p)) for p in drained) if s["campaign_id"] == c0
     )
-    assert old_hit["directives"] == d0
-    live = _counts(p1)
-    assert live["campaign_id"] == c1 and live["directives"] >= 1 and live["nights"] >= 1
+    assert old_hit["directives"] == d0_count
+    assert seed_rec["d_text"] in old_hit["directive_texts"]
+    live = _db_snapshot(p1)
+    assert live["campaign_id"] == c1
+    assert rec1["d_text"] in live["directive_texts"]
+    assert any(t[0] == rec1["chat_turn_id"] for t in live["chat_turns"])
     main = str(list(g1.db.conn.execute("PRAGMA database_list"))[0][2])
-    assert os.path.abspath(main) == os.path.abspath(p1)
+    assert web_app._same_db_path(main, p1)
     for p in drained:
-        assert os.path.abspath(main) != os.path.abspath(str(p))
+        assert not web_app._same_db_path(main, str(p))
     with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
         g0.db.conn.execute("SELECT 1")
 
-    # 真实 exit → continue：退休 g1（含 agno close）后再续当前主库
-    agno_closed: list[int] = []
-    real_agno_close = g1.session.agno_db.close
-
-    def _track_agno_close() -> None:
-        agno_closed.append(1)
-        real_agno_close()
-
-    g1.session.agno_db.close = _track_agno_close  # type: ignore[method-assign]
-    n_ex = len(spawns)
-    assert client.post("/api/menu/exit_to_menu").status_code == 200
-    assert web_app.web_game is None
-    _wait_spawns(spawns, n_ex)
-    assert agno_closed == [1], "exit drain must close agno_db"
-    with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
-        g1.db.conn.execute("SELECT 1")
-
-    cont = client.post("/api/menu/continue")
-    _assert_not_bare_500(cont, step="continue")
-    assert cont.status_code == 200
-    events = _parse_sse(cont.text)
-    terminal = events[-1] if events else {}
-    assert terminal.get("event") == "done", cont.text
-    done = json.loads(terminal["data"])
-    assert isinstance(done.get("state"), dict)
-    g2 = web_app.web_game
-    assert g2 is not None and g2 is not g1
-    assert _campaign(g2) == c1
-    assert os.path.abspath(g2.db_path) == os.path.abspath(p1)
-    _directive(client, "着再拨饷银（续）。")
-    _wait_pending_writes(g2)
-    assert _counts(p1)["campaign_id"] == c1
-    assert _counts(p1)["directives"] >= 2
-
-
-def test_exit_new_game_keeps_late_writes_on_old_archive(tracer_client, monkeypatch):
-    """exit→new_game：completion 后归档；gate 内迟到写留旧 campaign。"""
-    client = tracer_client
-    spawns = _capture_spawns(monkeypatch)
-
-    seed = client.post("/api/menu/new_game")
-    assert seed.status_code == 200
-    g0 = web_app.web_game
-    assert g0 is not None
-    p0, c0 = g0.db_path, _campaign(g0)
-    _directive(client, "着户部清核辽饷（pre-exit）。")
-    _wait_pending_writes(g0)
-
-    gate = g0._write_gate
+    # ── 路二：exit → 迟到写 → new_game ──
+    gate = g1._write_gate
     gate.acquire()
     n_exit = len(spawns)
+    late_key = "_late_exit_new"
     try:
         assert client.post("/api/menu/exit_to_menu").status_code == 200
         assert web_app.web_game is None
-        g0.db.kv_set("_late", "1")
-        g0.db.add_directive(
-            g0.state, None, "迟到旨意留旧局", "手动新增",
+        g1.db.kv_set(late_key, "1")
+        g1.db.add_directive(
+            g1.state, None, "迟到旨意留旧局", "手动新增",
             dossier_payload={
                 "dossier_action_type": "policy",
                 "target_kind": "issue",
-                "target_id": "late",
+                "target_id": "late-exit-new",
                 "mode": "ordinary",
             },
         )
@@ -261,50 +274,125 @@ def test_exit_new_game_keeps_late_writes_on_old_archive(tracer_client, monkeypat
         if gate.locked():
             gate.release()
     _wait_spawns(spawns, n_exit)
-    assert os.path.exists(p0)  # exit 不搬库
+    assert os.path.exists(p1)  # exit 不搬库
 
     archived = threading.Event()
     seen: list[str] = []
-    real = web_app._archive_drained_db_file
+    real_arch = web_app._archive_drained_db_file
 
     def _arch(path: str) -> None:
-        real(path)
+        real_arch(path)
         seen.append(path)
         archived.set()
 
     monkeypatch.setattr(web_app, "_archive_drained_db_file", _arch)
 
-    ng = client.post("/api/menu/new_game")
-    assert ng.status_code == 200
-    g1 = web_app.web_game
-    assert g1 is not None and _campaign(g1) != c0
-    _directive(client, "着户部清核辽饷（exit-new）。")
-    _wait_pending_writes(g1)
-    assert archived.wait(5.0), f"archive not signaled; seen={seen}"
-    assert not os.path.exists(p0)
+    ng2 = client.post("/api/menu/new_game")
+    _assert_not_bare_500(ng2, step="new_game-after-exit")
+    assert ng2.status_code == 200
+    g2 = web_app.web_game
+    assert g2 is not None and g2 is not g1
+    rec2 = _write_and_verify_live(client, g2, label="exit-new")
+    c2 = rec2["campaign_id"]
+    assert c2 != c1
 
-    found = False
+    wait_until(archived.is_set)
+    assert not os.path.exists(p1)
+    found_late = False
     for path in _drained(Path(web_app.user_data_path())):
-        if _counts(str(path))["campaign_id"] != c0:
+        snap = _db_snapshot(str(path))
+        if snap["campaign_id"] != c1:
             continue
         conn = sqlite3.connect(str(path))
         try:
-            if conn.execute(
-                "SELECT value FROM kv_store WHERE key='_late'"
-            ).fetchone() == ("1",) and conn.execute(
-                "SELECT COUNT(*) FROM turn_directives WHERE text LIKE '%迟到%'"
-            ).fetchone()[0] >= 1:
-                found = True
-                break
+            late = conn.execute(
+                "SELECT value FROM kv_store WHERE key=?", (late_key,)
+            ).fetchone()
+            late_dir = conn.execute(
+                "SELECT id FROM turn_directives WHERE text=?",
+                ("迟到旨意留旧局",),
+            ).fetchone()
         finally:
             conn.close()
-    assert found
-    assert _counts(g1.db_path)["campaign_id"] == _campaign(g1)
-    assert _counts(g1.db_path)["directives"] >= 1
+        if late == ("1",) and late_dir is not None:
+            found_late = True
+            break
+    assert found_late
+    live2 = _db_snapshot(g2.db_path)
+    assert live2["campaign_id"] == c2
+    assert rec2["d_text"] in live2["directive_texts"]
+    assert rec2["d_text"] not in _db_snapshot(
+        next(str(p) for p in _drained(Path(web_app.user_data_path()))
+             if _db_snapshot(str(p))["campaign_id"] == c1)
+    )["directive_texts"]
+
+    # ── continue 恢复最新主库旨意与回话 ──
+    n_ex2 = len(spawns)
+    assert client.post("/api/menu/exit_to_menu").status_code == 200
+    _wait_spawns(spawns, n_ex2)
+
+    cont = client.post("/api/menu/continue")
+    _assert_not_bare_500(cont, step="continue")
+    assert cont.status_code == 200
+    events = _parse_sse(cont.text)
+    terminal = events[-1] if events else {}
+    assert terminal.get("event") == "done", cont.text
+    g3 = web_app.web_game
+    assert g3 is not None and g3 is not g2
+    assert _campaign(g3) == c2
+    assert web_app._same_db_path(g3.db_path, g2.db_path)
+    restored = _db_snapshot(g3.db_path)
+    assert restored["campaign_id"] == c2
+    assert rec2["d_text"] in restored["directive_texts"]
+    assert any(t[0] == rec2["chat_turn_id"] and t[1] == rec2["night_id"]
+               for t in restored["chat_turns"])
+    _directive(client, "着再拨饷银（续）。")
+    _wait_pending_writes(g3)
+    assert "着再拨饷银（续）。" in _db_snapshot(g3.db_path)["directive_texts"]
+
+
+def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatch):
+    """真实 new_game 入口：构造失败恢复旧指针与主库路径，旧局仍可写。"""
+    client = tracer_client
+    _install_canned_minister_factory(monkeypatch)
+
+    seed = client.post("/api/menu/new_game")
+    assert seed.status_code == 200
+    g0 = web_app.web_game
+    assert g0 is not None
+    p0 = g0.db_path
+    c0 = _campaign(g0)
+    _directive(client, "着户部清核辽饷（pre-fail）。")
+    _wait_pending_writes(g0)
+    main_before = web_app._get_main_db_path()
+
+    real_begin = GameSession.begin_turn
+    boom_on = {"armed": True}
+
+    def _boom_begin(self, *a, **k):
+        if boom_on["armed"]:
+            boom_on["armed"] = False
+            raise RuntimeError("begin_turn boom")
+        return real_begin(self, *a, **k)
+
+    monkeypatch.setattr(GameSession, "begin_turn", _boom_begin)
+    # TestClient 默认 raise_server_exceptions：构造失败原样上抛，仍须恢复旧局。
+    with pytest.raises(RuntimeError, match="begin_turn boom"):
+        client.post("/api/menu/new_game")
+    assert web_app.web_game is g0
+    assert web_app._same_db_path(web_app._get_main_db_path(), main_before)
+    assert web_app._same_db_path(g0.db_path, p0)
+    assert _campaign(g0) == c0
+    # 旧局仍可写
+    _directive(client, "着户部清核辽饷（after-fail）。")
+    _wait_pending_writes(g0)
+    snap = _db_snapshot(p0)
+    assert snap["campaign_id"] == c0
+    assert "着户部清核辽饷（after-fail）。" in snap["directive_texts"]
 
 
 def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monkeypatch):
-    """#1749：GameSession 构造中 load_state 失败 → db/agno 均关，禁部分资源泄漏。"""
+    """GameSession 构造中 load_state 失败 → db/agno 均关，禁部分资源泄漏。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     import ming_sim.beat_orchestration as bo
@@ -336,7 +424,7 @@ def test_gamesession_load_state_failure_closes_partial_resources(tmp_path, monke
 
 
 def test_webgame_begin_turn_failure_closes_session(tmp_path, monkeypatch):
-    """#1749：GameSession 已建、begin_turn 失败 → session.close，禁泄漏 db/agno。"""
+    """GameSession 已建、begin_turn 失败 → session.close，禁泄漏 db/agno。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_DB", raising=False)
@@ -365,189 +453,46 @@ def test_webgame_begin_turn_failure_closes_session(tmp_path, monkeypatch):
         sess.db.conn.execute("SELECT 1")
 
 
-def test_load_save_close_fail_restores_pointer_and_blocks_stray_archive(tmp_path, monkeypatch):
-    """#1749：load_save 关旧局失败 → 409、恢复指针；web_game 护路径，归档不得搬。"""
-    import asyncio
+def test_load_save_close_fail_restores_pointer(tracer_client, monkeypatch):
+    """真实 load_save 入口：关旧局失败 → 409、恢复指针；归档不得搬活路径。"""
+    client = tracer_client
+    seed = client.post("/api/menu/new_game")
+    assert seed.status_code == 200
+    g0 = web_app.web_game
+    assert g0 is not None
+    old_path = g0.db_path
+    g0.save_to("snap1749")
 
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_DB", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    import ming_sim.beat_orchestration as bo
-    from tests.conftest import deterministic_test_beat_generator
-
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
-
-    web_app.web_game = None
-    with web_app._menu_pin_lock:
-        web_app._menu_pinned_db_paths.clear()
-    g = web_app.WebGame(fresh=True)
-    web_app.web_game = g
-    old_path = g.db_path
+    g0.session.close = lambda: (_ for _ in ()).throw(RuntimeError("close boom"))  # type: ignore
+    r = client.post("/api/menu/load_save/snap1749")
+    assert r.status_code == 409, r.text
+    assert web_app.web_game is g0
     assert os.path.isfile(old_path)
-
-    g.session.close = lambda: (_ for _ in ()).throw(RuntimeError("close boom"))  # type: ignore
-
-    saves = tmp_path / "ud" / "saves"
-    saves.mkdir(parents=True, exist_ok=True)
-    (saves / "snap.db").write_bytes(b"SQLite format 3\x00")
-
-    with pytest.raises(web_app.HTTPException) as ei:
-        asyncio.run(web_app.api_menu_load_save("snap"))
-    assert ei.value.status_code == 409
-    assert web_app.web_game is g
-    assert os.path.isfile(old_path)
-    # 恢复后由 web_game 护路径（pin 已解）；直接 archive 仍拒 live web_game
     web_app._archive_drained_db_file(old_path)
     assert os.path.isfile(old_path)
-    assert _drained(tmp_path / "ud") == []
-    g.session.close = lambda: None  # type: ignore
+    assert _drained(Path(web_app.user_data_path())) == []
+    # 恢复可写：去掉坏 close 后仍是同一 runtime
+    g0.session.close = lambda: None  # type: ignore
 
 
-def test_load_save_pins_path_while_draining(tmp_path, monkeypatch):
-    """#1749：load_save 排空窗内路径被钉；并发归档调用不得搬走。"""
-    import asyncio
+def test_continue_waits_exit_detach_before_construct(tracer_client, monkeypatch):
+    """exit drain 未完成时 continue 不得为同一主库构造第二 runtime（事件/状态证明）。"""
+    client = tracer_client
+    seed = client.post("/api/menu/new_game")
+    assert seed.status_code == 200
+    g0 = web_app.web_game
+    assert g0 is not None
 
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_DB", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    import ming_sim.beat_orchestration as bo
-    from tests.conftest import deterministic_test_beat_generator
-
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
-
-    web_app.web_game = None
-    g = web_app.WebGame(fresh=True)
-    web_app.web_game = g
-    old_path = g.db_path
-
-    hold = threading.Event()
-    released = threading.Event()
-    real_drain = web_app._drain_and_close_session
-
-    def slow_drain(game, archive_db: bool = False):
-        hold.set()
-        assert released.wait(timeout=5.0)
-        return real_drain(game, archive_db=archive_db)
-
-    monkeypatch.setattr(web_app, "_drain_and_close_session", slow_drain)
-
-    saves = tmp_path / "ud" / "saves"
-    saves.mkdir(parents=True, exist_ok=True)
-    # minimal valid will fail load later - we abort after observing pin
-    result: dict = {}
-
-    def run_load():
-        try:
-            asyncio.run(web_app.api_menu_load_save("nope"))
-        except Exception as exc:
-            result["exc"] = exc
-
-    t = threading.Thread(target=run_load, daemon=True)
-    t.start()
-    assert hold.wait(timeout=5.0), "drain did not start"
-    # 排空中：路径应被钉，归档不得搬
-    assert web_app._db_path_is_live(old_path)
-    web_app._archive_drained_db_file(old_path)
-    assert os.path.isfile(old_path), "pinned path must not be archived during drain"
-    released.set()
-    t.join(timeout=10.0)
-    assert not t.is_alive()
-
-
-def test_load_save_superseded_after_close_archives_orphan(tmp_path, monkeypatch):
-    """#1749：load_save 已关旧局后被取代 → 解钉并 _archive_closed_orphan_path 转交归档。"""
-    import asyncio
-
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_DB", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    import ming_sim.beat_orchestration as bo
-    from tests.conftest import deterministic_test_beat_generator
-
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
-    web_app.web_game = None
-    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
-    with web_app._menu_pin_lock:
-        web_app._menu_pinned_db_paths.clear()
-
-    g = web_app.WebGame(fresh=True)
-    web_app.web_game = g
-    old_path = g.db_path
-
-    # 确定性：关旧局 → 钉住 → 切走 main（模拟 new_game）→ 解钉转交归档
-    c = web_app._spawn_drain_close(g, archive_db=False)
-    web_app.web_game = None
-    web_app._pin_db_path(old_path)
-    assert c.done.wait(timeout=5.0) and c.close_ok
-    new_path = str(tmp_path / "ud" / f"ming_sim_new_{time.time_ns()}.db")
-    web_app._set_main_db_path(new_path)
-    # 并发 new_game 因 pin 跳过归档时的现场：
-    web_app._archive_drained_db_file(old_path)
-    assert os.path.exists(old_path), "pin must block archive"
-    # load_save 失配转交：
-    web_app._unpin_db_path(old_path)
-    web_app._archive_closed_orphan_path(old_path)
-    assert not os.path.exists(old_path), f"orphan left at {old_path}"
-    assert _drained(tmp_path / "ud")
-
-    # 端点路径：token 失配分支也走同一 handoff（缺档 → 409 cancel 前先 close）
-    g2 = web_app.WebGame(fresh=True)
-    web_app.web_game = g2
-    p2 = g2.db_path
-    # 在 drain 完成后、token 检查前 bump 世代
-    real_wait = threading.Event.wait
-
-    def wait_then_bump(self, timeout=None):
-        ok = real_wait(self, timeout)
-        if ok and not getattr(wait_then_bump, "_bumped", False):
-            wait_then_bump._bumped = True
-            with web_app._menu_lifecycle_lock:
-                web_app._menu_generation += 1
-                web_app._set_main_db_path(
-                    str(tmp_path / "ud" / f"ming_sim_bump_{time.time_ns()}.db")
-                )
-        return ok
-
-    monkeypatch.setattr(threading.Event, "wait", wait_then_bump)
-    with pytest.raises(web_app.HTTPException) as ei:
-        asyncio.run(web_app.api_menu_load_save("missing"))
-    assert ei.value.status_code == 409
-    assert not os.path.exists(p2), "endpoint handoff must archive closed old path"
-
-
-def test_continue_waits_for_exit_detach_before_construct(tmp_path, monkeypatch):
-    """#1749：exit drain 未完成时 continue 不得为同一主库构造第二 runtime。"""
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_DB", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    import ming_sim.beat_orchestration as bo
-    from tests.conftest import deterministic_test_beat_generator
-
-    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _c: deterministic_test_beat_generator)
-    web_app.web_game = None
-    monkeypatch.setattr(web_app, "_menu_exit_detach_completion", None)
-    with web_app._menu_pin_lock:
-        web_app._menu_pinned_db_paths.clear()
-
-    g = web_app.WebGame(fresh=True)
-    web_app.web_game = g
-    main_path = g.db_path
-
-    # 卡住 session.close，使 exit completion 不 done
     close_release = threading.Event()
     closed = threading.Event()
-    real_close = g.session.close
+    real_close = g0.session.close
 
     def blocked_close():
-        assert close_release.wait(timeout=10.0)
+        close_release.wait()
         real_close()
         closed.set()
 
-    g.session.close = blocked_close  # type: ignore[method-assign]
+    g0.session.close = blocked_close  # type: ignore[method-assign]
 
     constructed: list[str] = []
     real_wg = web_app.WebGame
@@ -559,17 +504,15 @@ def test_continue_waits_for_exit_detach_before_construct(tmp_path, monkeypatch):
 
     monkeypatch.setattr(web_app, "WebGame", TrackingWG)
 
-    import asyncio
-    assert asyncio.run(web_app.api_menu_exit()) == {"ok": True}
+    assert client.post("/api/menu/exit_to_menu").status_code == 200
     assert web_app.web_game is None
     assert web_app._menu_exit_detach_completion is not None
     assert not web_app._menu_exit_detach_completion.done.is_set()
 
-    cont_done = threading.Event()
     cont_body: dict = {}
+    cont_done = threading.Event()
 
     def run_cont():
-        from fastapi.testclient import TestClient
         r = TestClient(web_app.app).post("/api/menu/continue")
         cont_body["status"] = r.status_code
         cont_body["text"] = r.text
@@ -577,15 +520,23 @@ def test_continue_waits_for_exit_detach_before_construct(tmp_path, monkeypatch):
 
     t = threading.Thread(target=run_cont, daemon=True)
     t.start()
-    # continue worker 应卡在 exit completion.wait
-    assert not cont_done.wait(timeout=0.5), cont_body.get("text", "")
+    # 可观察终态：completion 未 done 且尚未构造——非「N 秒内没发生」
+    wait_until(
+        lambda: web_app._menu_exit_detach_completion is None
+        or (
+            web_app._menu_exit_detach_completion is not None
+            and not web_app._menu_exit_detach_completion.done.is_set()
+            and not cont_done.is_set()
+        )
+    )
+    # continue 已 take completion → 全局位空，且仍未完成、未构造
+    wait_until(lambda: web_app._menu_exit_detach_completion is None and not cont_done.is_set())
     assert constructed == [], f"constructed early: {constructed}"
     close_release.set()
-    assert cont_done.wait(timeout=30.0), cont_body
-    t.join(timeout=5.0)
+    cont_done.wait()
+    t.join()
     assert closed.is_set()
     assert constructed, "continue should construct after exit close"
     assert cont_body.get("status") == 200
-    assert "event: done" in (cont_body.get("text") or "") or "event:done" in (
-        cont_body.get("text") or ""
-    ).replace(" ", "")
+    events = _parse_sse(cont_body.get("text") or "")
+    assert events and events[-1].get("event") == "done"
