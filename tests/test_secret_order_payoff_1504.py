@@ -1409,16 +1409,27 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch, 
         core = "not-json-BEGIN-" + ("X" * (cap + 9)) + "-END"
         raw = "  \n" + core + "\n  "
         assert len(raw) > cap
+        api_cfg = SimpleNamespace(channel="api")
+        monkeypatch.setattr(
+            cb, "_run_api_for_config",
+            lambda *_a, **_k: (raw, 1),
+        )
+        monkeypatch.setattr(
+            cb, "_run_backend_for_config",
+            lambda *_a, **_k: (_ for _ in ()).throw(
+                AssertionError("malformed 须走 API dispatcher，不得落 CLI backend")
+            ),
+        )
     elif case == "zero_contract":
         raw = raw.replace("PLACEHOLDER", name)
 
-    monkeypatch.setattr(
-        cb, "_run_json_extractor_for_config",
-        lambda *_a, **_k: (raw, 1),
-    )
-    # zero/empty：真实批 candidates 列表入口（显式零键存在性）
-    # malformed：单 intent 路仍覆盖 extract_failed 暂存身份
+    # zero/empty：批入口仍 stub extractor 边界（合法 JSON 契约分流，不经 API 通道）
+    # malformed：保留真实 _run_json_extractor_for_config，仅 stub _run_api_for_config
     if case in ("empty_object", "zero_contract"):
+        monkeypatch.setattr(
+            cb, "_run_json_extractor_for_config",
+            lambda *_a, **_k: (raw, 1),
+        )
         candidates = candidates_from_classifier_payload(
             [{"kind": "secret", "secret_action": "新建"}], soft=False,
         )
@@ -1439,7 +1450,7 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch, 
             message_text="查核辽饷侵冒", explicit_prefixed=False,
             has_directive=False, pend_for_minister=[], out={},
             intent={"secret_action": "新建"}, intent_kind="secret",
-            llm_config=None, intent_candidates=[],
+            llm_config=api_cfg, intent_candidates=[],
         )
     run_materialize_pipeline(ctx)
 
