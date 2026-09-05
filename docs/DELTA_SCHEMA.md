@@ -382,14 +382,14 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 
 引擎行为：只按护行/稽核在场口径 **clamp** 实抵上下界；**不二次扣库**、不改原 `economy_move`、**不写 0058 进展**（密奏仍走 personnel_secret / #566）。无提案时对扫描面内每路按口径中位机械落账（有/无护行同一存储、逐路键控）。
 
-> ⚠️ **与文档开头「section 内非法项逐项拒收留痕」通则相反**：本字段走 fail-loud。`record_monthly_grant_reconciliations` 对未知案卷、重复案卷、非在途拨帑、缺量字段、非列表提案一律 `raise`；落在 settle atomic 内 = **整月响亮中止**（同 #566 `dossier_progress_reports` 的 progress fail-loud 口径）。空提案（缺省/`[]`）合法——程序用中位默认。
+> #1745 / ADR 0015-D7：可拆项坏引用（未知/非在途/已结清/已撤回案卷、缺量字段、量值非法、重复、非 dict 项）**逐项拒收留痕**（`rejection_reports`，section=`dossier_reconciliations`，RejectedItem 四字段 item/reason/category/source）；好项与未提案目标的中位落账仍在同一 atomic。整段非 list 仍 fail-loud。空提案（缺省/`[]`）合法——程序用中位默认；无在途目标却收到提案 → 逐项 `missing_ref`，不落假对账行、不整月 abort。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
 personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。
 - 每项必须带 `dossier_id`、`progress_band`、`memorial_text`；三者皆非空。
 - 合资格集 = `decree_dossiers.status` 为 `promulgated` / `executing` 且所关联 `secret_orders.status='active'` 的案卷（读缝 `monthly_dossier_reports` / `list_monthly_dossier_progress_nudges`；#1504：不限 tag、不限期限月数）。
 - **必须完整覆盖**合资格集：不得漏项、不得重复、不得指向未知案卷；无合资格却收到提案亦拒。
-- 同 `dossier_reconciliations`：非法/不全 → fail-loud 整月中止，不走逐项拒收留痕。
+- 非法/不全 → fail-loud 整月中止，不走逐项拒收留痕（与 #1745 后的 `dossier_reconciliations` 分轨）。
 
 ### 颁布 verdict 契约（非 delta 字段）
 打回 verdict 的 `blocked_layer` 只收 `cabinet_drafting` / `palace_rescript` / `six_offices`；`primary_opponents` 是非空 typed 派系清单，每项须且仅含 `kind="faction"` 与在册派系 `key`；`gatekeeper_id` 只可为 null 或在册人物 id。`criteria_snapshot` 须且仅含 `imperial_authority_band`、`appointment_tenure`、`authorization_ids`、`endorsement_entry_ids`。前三类字符串值不得混入数字；阻力数值字段均非法。合法 typed 数值/布尔位仅包括正整数 `dossier_id`、正整数 `endorsement_entry_ids`（拒绝 bool/float/数字串），以及 bool `midzhi_unpromulgatable`。

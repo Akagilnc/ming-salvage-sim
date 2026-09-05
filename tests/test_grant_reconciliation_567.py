@@ -287,35 +287,35 @@ def test_issues_context_exposes_recon_for_soft_discount(game):
     assert hit["loss_amount"] == ORDERED - 16
 
 
+def test_recon_proposals_non_list_still_fail_loud(game):
+    """整段非 list 不可拆项 → 仍 fail-loud（0015-D7 前提是可拆 section）。"""
+    db, state, _content = game
+    gid = _in_transit_grant(db, state)
+    with pytest.raises(ValueError, match="对账提案须为列表"):
+        db.record_monthly_grant_reconciliations(state.turn, "not-a-list")
+    assert db.list_dossier_reconciliations(gid) == []
+
+
 @pytest.mark.parametrize(
-    "bad",
+    "bad, category",
     [
-        # DELTA_SCHEMA:253 五 raise 面
-        "not-a-list",
-        lambda gid: [{"dossier_id": 999999, "arrived_amount": 16}],
-        lambda gid: [
-            {"dossier_id": gid, "arrived_amount": 16},
-            {"dossier_id": gid, "arrived_amount": 17},
-        ],
-        lambda gid: [{"dossier_id": gid}],
-        lambda gid: [{"dossier_id": gid, "note": "无量"}],
-        # 量字段值非法：arrived / loss 同闸同拒
-        lambda gid: [{"dossier_id": gid, "arrived_amount": None}],
-        lambda gid: [{"dossier_id": gid, "arrived_amount": True}],
-        lambda gid: [{"dossier_id": gid, "arrived_amount": 1.5}],
-        lambda gid: [{"dossier_id": gid, "arrived_amount": "十六"}],
-        lambda gid: [{"dossier_id": gid, "loss_amount": None}],
-        lambda gid: [{"dossier_id": gid, "loss_amount": True}],
-        lambda gid: [{"dossier_id": gid, "loss_amount": 2.5}],
-        lambda gid: [{"dossier_id": gid, "loss_amount": "折半"}],
-        lambda gid: ["not-a-dict"],
-        lambda gid: [{"dossier_id": True, "arrived_amount": 16}],
-        lambda gid: [{"dossier_id": 0, "arrived_amount": 16}],
+        (lambda gid: [{"dossier_id": 999999, "arrived_amount": 16}], "missing_ref"),
+        (lambda gid: [{"dossier_id": gid}], "missing_field"),
+        (lambda gid: [{"dossier_id": gid, "note": "无量"}], "missing_field"),
+        (lambda gid: [{"dossier_id": gid, "arrived_amount": None}], "invalid_enum"),
+        (lambda gid: [{"dossier_id": gid, "arrived_amount": True}], "invalid_enum"),
+        (lambda gid: [{"dossier_id": gid, "arrived_amount": 1.5}], "invalid_enum"),
+        (lambda gid: [{"dossier_id": gid, "arrived_amount": "十六"}], "invalid_enum"),
+        (lambda gid: [{"dossier_id": gid, "loss_amount": None}], "invalid_enum"),
+        (lambda gid: [{"dossier_id": gid, "loss_amount": True}], "invalid_enum"),
+        (lambda gid: [{"dossier_id": gid, "loss_amount": 2.5}], "invalid_enum"),
+        (lambda gid: [{"dossier_id": gid, "loss_amount": "折半"}], "invalid_enum"),
+        (lambda gid: ["not-a-dict"], "invalid_shape"),
+        (lambda gid: [{"dossier_id": True, "arrived_amount": 16}], "invalid_enum"),
+        (lambda gid: [{"dossier_id": 0, "arrived_amount": 16}], "invalid_enum"),
     ],
     ids=[
-        "non_list",
         "unknown_or_not_in_transit",
-        "duplicate",
         "missing_amount",
         "missing_amount_note_only",
         "arrived_null",
@@ -331,11 +331,171 @@ def test_issues_context_exposes_recon_for_soft_discount(game):
         "dossier_id_zero",
     ],
 )
-def test_recon_proposals_fail_loud_symmetric_quantity_gate(game, bad):
-    """对账提案 fail-loud：五 raise 面 + arrived/loss 量字段同口径拒。"""
+def test_recon_bad_item_rejected_target_gets_midpoint(game, bad, category):
+    """#1745：坏提案逐项拒收；在途目标仍落机械中位（坏提案不进 supplied）。"""
+    from ming_sim.applier import Provenance, RejectionCollector
+    from ming_sim.db import grant_arrival_bounds
+
     db, state, _content = game
     gid = _in_transit_grant(db, state)
-    generated = bad if not callable(bad) else bad(gid)
-    with pytest.raises(ValueError):
-        db.record_monthly_grant_reconciliations(state.turn, generated)
+    collector = RejectionCollector()
+    reports = db.record_monthly_grant_reconciliations(
+        state.turn, bad(gid),
+        rejection_collector=collector, source=Provenance.player_decree,
+    )
+    collector.flush_to_db(db)
+    assert len(reports) == 1 and reports[0]["dossier_id"] == gid
+    lo, hi = grant_arrival_bounds(ORDERED, escorted=False)
+    assert reports[0]["arrived_amount"] == (lo + hi) // 2
+    rej = list(db.conn.execute(
+        "SELECT section, category, source FROM rejection_reports"
+    ).fetchall())
+    assert len(rej) >= 1
+    assert all(r["section"] == "dossier_reconciliations" for r in rej)
+    assert any(r["category"] == category for r in rej)
+    assert all(r["source"] == Provenance.player_decree.value for r in rej)
+
+
+def test_recon_duplicate_keeps_first_rejects_second(game):
+    """#1745：重复案卷——首份落账，次份 invalid_enum 拒收。"""
+    from ming_sim.applier import Provenance, RejectionCollector
+
+    db, state, _content = game
+    gid = _in_transit_grant(db, state)
+    collector = RejectionCollector()
+    reports = db.record_monthly_grant_reconciliations(
+        state.turn,
+        [
+            {"dossier_id": gid, "arrived_amount": 16},
+            {"dossier_id": gid, "arrived_amount": 17},
+        ],
+        rejection_collector=collector, source=Provenance.system_simulation,
+    )
+    collector.flush_to_db(db)
+    assert len(reports) == 1
+    assert reports[0]["arrived_amount"] == 16
+    rej = db.conn.execute(
+        "SELECT category, reason FROM rejection_reports"
+    ).fetchall()
+    assert len(rej) == 1
+    assert rej[0]["category"] == "invalid_enum"
+    assert "重复" in rej[0]["reason"]
+
+
+def test_1745_empty_targets_bad_recon_settle_advances(game):
+    """#1745 A1：无在途拨帑 + dossier_reconciliations → 逐项拒收，settle 推进，不 abort。
+
+    真回路：settle_with_delta 注入含坏引用的 delta；账本无在途目标。
+    验收：月份推进、拒收四字段落库、不落假 recon 行、不抛 SettlementAbort。
+    """
+    import json
+
+    from ming_sim.applier import Provenance
+    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    turn_before = int(state.turn)
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    db.conn.commit()
+    assert db.list_monthly_grant_reconciliation_targets() == []
+
+    bad_item = {"dossier_id": 99999, "arrived_amount": 10, "note": "内帑济辽对账"}
+    try:
+        settle_with_delta(
+            state, db,
+            {
+                "dossier_reconciliations": [bad_item],
+                # 同 atomic 好项：空 list 段亦可——证明整月不因坏 recon abort
+            },
+            before_turn=turn_before,
+            content=content,
+            narrative="十一月邸报",
+            source=Provenance.player_decree,
+        )
+    except SettlementAbort:
+        pytest.fail("无目标对账提案不得整月 SettlementAbort")
+
+    assert int(state.turn) == turn_before + 1
+    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
+    ).fetchone()["n"] == 0
+    rows = list(db.conn.execute(
+        "SELECT section, reason, category, source, item_json "
+        "FROM rejection_reports WHERE section='dossier_reconciliations'"
+    ).fetchall())
+    assert len(rows) == 1
+    assert rows[0]["category"] == "missing_ref"
+    assert rows[0]["source"] == Provenance.player_decree.value
+    assert "非在途" in rows[0]["reason"] or "无在途" in rows[0]["reason"] or "99999" in rows[0]["reason"]
+    item = json.loads(rows[0]["item_json"])
+    assert item["dossier_id"] == 99999
+    assert item["arrived_amount"] == 10
+
+
+def test_1745_mixed_good_and_bad_recon_same_atomic(game):
+    """#1745 B1：好项落库 + 坏项拒收同 atomic；月份推进。"""
+    from ming_sim.applier import Provenance
+    from ming_sim.exceptions import SettlementAbort
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    good = _in_transit_grant(db, state, text="陕西赈银", target_id="shaanxi")
+    turn_before = int(state.turn)
+    state.turn_phase = TurnPhase.SETTLING.value
+    db.save_state(state)
+    db.conn.commit()
+
+    try:
+        settle_with_delta(
+            state, db,
+            {"dossier_reconciliations": [
+                {"dossier_id": good, "arrived_amount": 16},
+                {"dossier_id": 88888, "arrived_amount": 5},
+            ]},
+            before_turn=turn_before,
+            content=content,
+            narrative="mixed",
+            source=Provenance.player_decree,
+        )
+    except SettlementAbort:
+        pytest.fail("混合好/坏对账不得整月 abort")
+
+    assert int(state.turn) == turn_before + 1
+    row = db.list_dossier_reconciliations(good)[-1]
+    assert row["arrived_amount"] == 16
+    rej = list(db.conn.execute(
+        "SELECT category FROM rejection_reports "
+        "WHERE section='dossier_reconciliations'"
+    ).fetchall())
+    assert len(rej) == 1 and rej[0]["category"] == "missing_ref"
+
+
+def test_1745_closed_grant_recon_is_missing_ref_not_new_row(game):
+    """#1745 B2 合流 A1：已结清目标的提案 → missing_ref，不得新写对账行。"""
+    from ming_sim.applier import Provenance, RejectionCollector
+
+    db, state, _content = game
+    gid = _in_transit_grant(db, state)
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='closed', execution_outcome='fulfilled' "
+        "WHERE id=?",
+        (gid,),
+    )
+    db.conn.commit()
+    assert db.list_monthly_grant_reconciliation_targets() == []
+    collector = RejectionCollector()
+    reports = db.record_monthly_grant_reconciliations(
+        state.turn,
+        [{"dossier_id": gid, "arrived_amount": 16}],
+        rejection_collector=collector, source=Provenance.player_decree,
+    )
+    collector.flush_to_db(db)
+    assert reports == []
     assert db.list_dossier_reconciliations(gid) == []
+    rej = db.conn.execute(
+        "SELECT category FROM rejection_reports"
+    ).fetchone()
+    assert rej["category"] == "missing_ref"

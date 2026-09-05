@@ -2754,8 +2754,10 @@ def _settle_after_extract_body(
         state, extracted.get("faction_denunciations"), commit=False,
     )
     # #567：在途拨帑月度机械对账（被护侧真源）；与 #566 进展分轨，不扩 0058。
+    # #1745：无目标/坏引用提案逐项拒收进 collector，好项同 atomic 落库（0015-D7）。
     db.record_monthly_grant_reconciliations(
         before_turn, extracted.get("dossier_reconciliations"),
+        rejection_collector=collector, source=source,
     )
     # 对账落账后：loss>0 ∧ 本 turn 稽核在场 → 空子暴露。
     db.record_monthly_loophole_exposures_from_reconciliations(

@@ -861,7 +861,7 @@ def clamp_grant_arrival_amount(
 ) -> int:
     """P2：软判提案 → 代码只 clamp 到护行口径界内。
 
-    提案须已由调用方解析为 int；非法量字段不得落入此函数（fail-loud 在 record）。
+    提案须已由调用方解析为 int；非法量字段在 record 侧逐项拒收，不入本函数。
     合法无提案中位默认仅经 record_monthly_grant_reconciliations 内联路径。
     """
     lo, hi = grant_arrival_bounds(int(ordered_amount), escorted=escorted)
@@ -13119,40 +13119,75 @@ class GameDB:
         return snapshots
 
     def record_monthly_grant_reconciliations(
-        self, turn: int, generated: object = None,
+        self, turn: int, generated: object = None, *,
+        rejection_collector=None,
+        source: object = None,
     ) -> List[Dict[str, object]]:
         """月度节拍：逐路软判实抵 → clamp → 落被护侧对账记录。
 
         无提案时用护行口径中位（无护行亦可机械落账，供 S10 结案合并）。
         不写 0058 进展、不二次扣库、不改原 economy_move。
+
+        #1745 / ADR 0015-D7：可拆项坏引用（无目标/已结清/已撤回/形坏）逐项拒收，
+        好项与未提案目标的中位落账仍在同一 atomic；整段非 list 仍 fail-loud。
         """
+        from ming_sim.applier import Provenance, RejectedItem
+
         targets = {
             int(item["dossier_id"]): item
             for item in self.list_monthly_grant_reconciliation_targets()
         }
-        if not targets:
-            if generated in (None, []):
-                return []
-            raise ValueError("无在途拨帑却收到对账提案")
-
-        supplied: Dict[int, Tuple[object, str]] = {}
         if generated is None:
             generated = []
+        if not targets and generated in (None, []):
+            return []
         if not isinstance(generated, list):
             raise ValueError("对账提案须为列表")
+
+        prov = (
+            source if isinstance(source, Provenance)
+            else Provenance(source) if source is not None
+            else Provenance.unknown
+        )
+
+        def _reject(raw_item: object, reason: str, category: str) -> None:
+            if rejection_collector is None:
+                return
+            # ADR 0015 F1：RejectedItem.item 恒 dict；非 dict 包装 raw_value。
+            if isinstance(raw_item, dict):
+                payload = dict(raw_item)
+            else:
+                payload = {"raw_value": raw_item}
+            rejection_collector.record(
+                "dossier_reconciliations",
+                RejectedItem(
+                    item=payload, reason=reason, category=category, source=prov,
+                ),
+                int(turn),
+            )
+
+        supplied: Dict[int, Tuple[object, str]] = {}
         for item in generated:
             if not isinstance(item, dict):
-                raise ValueError("对账提案格式无效")
+                _reject(item, "对账提案格式无效", "invalid_shape")
+                continue
             try:
                 dossier_id = strict_int(item.get("dossier_id", 0))
                 if dossier_id <= 0:
                     raise ValueError("not positive")
-            except (TypeError, ValueError) as exc:
-                raise ValueError("对账提案案卷编号无效") from exc
+            except (TypeError, ValueError):
+                _reject(item, "对账提案案卷编号无效", "invalid_enum")
+                continue
             if dossier_id not in targets:
-                raise ValueError(f"对账提案指向非在途拨帑案卷：{dossier_id}")
+                _reject(
+                    item,
+                    f"对账提案指向非在途拨帑案卷：{dossier_id}",
+                    "missing_ref",
+                )
+                continue
             if dossier_id in supplied:
-                raise ValueError("对账提案存在重复案卷")
+                _reject(item, "对账提案存在重复案卷", "invalid_enum")
+                continue
             if "arrived_amount" in item:
                 raw_amount = item.get("arrived_amount")
                 amount_label = "实抵"
@@ -13160,17 +13195,23 @@ class GameDB:
                 raw_amount = item.get("loss_amount")
                 amount_label = "折损"
             else:
-                raise ValueError("对账提案须含 arrived_amount 或 loss_amount")
+                _reject(item, "对账提案须含 arrived_amount 或 loss_amount", "missing_field")
+                continue
             try:
                 amount = strict_int(raw_amount)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"对账{amount_label}值无效") from exc
+            except (TypeError, ValueError):
+                _reject(item, f"对账{amount_label}值无效", "invalid_enum")
+                continue
             if amount_label == "实抵":
                 proposed = amount
             else:
                 proposed = int(targets[dossier_id]["ordered_amount"]) - amount
             note = str(item.get("note") or "").strip()
             supplied[dossier_id] = (proposed, note)
+
+        # 无在途目标：坏提案已逐项拒收，不落假对账行（#1745 A1）。
+        if not targets:
+            return []
 
         reports: List[Dict[str, object]] = []
         for dossier_id, target in targets.items():
