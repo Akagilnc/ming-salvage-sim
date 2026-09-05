@@ -1,0 +1,31 @@
+        minister_name,
+        ^^^^^^^^^^^^^^
+    ...<4 lines>...
+        ),
+        ^^
+    )
+    ^
+  File "/workspace/Ming_LLM/web_app.py", line 1672, in _start_chat_turn
+    _night_id, chat_turn_id = attach_chat_turn_to_night(
+                              ~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.db,
+        ^^^^^^^^
+    ...<5 lines>...
+        route=route,
+        ^^^^^^^^^^^^
+    )
+    ^
+  File "/workspace/Ming_LLM/ming_sim/audience_night.py", line 2961, in attach_chat_turn_to_night
+    night = ensure_open_night_for_audience(
+        db, state, time_of_day=time_of_day, location=location, body=open_body,
+    )
+  File "/workspace/Ming_LLM/ming_sim/audience_night.py", line 1756, in ensure_open_night_for_audience
+    return open_night(db, state, time_of_day=time_of_day, location=location, body=body)
+  File "/workspace/Ming_LLM/ming_sim/audience_night.py", line 967, in open_night
+    cur = db.conn.execute(
+        """
+    ...<12 lines>...
+        ),
+    )
+sqlite3.OperationalError: attempt to write a readonly database
+INFO:     127.0.0.1:38098 - "POST /api/ministers/%E9%BB%84%E7%AB%8B%E6%9E%81/chat/stream HTTP/1.1" 200 OK
