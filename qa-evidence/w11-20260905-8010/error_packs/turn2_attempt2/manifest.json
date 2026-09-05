@@ -1,0 +1,12 @@
+{
+  "db_path": "/Users/akagilnc/WorkSpace/Ming_LLM/data/ming_sim_1788591381068174000.db",
+  "turn": 2,
+  "year": 1627,
+  "period": 11,
+  "version": "0.53.0.0",
+  "attempt": 2,
+  "exception_type": "ValueError",
+  "exception_message": "无在途拨帑却收到对账提案",
+  "timestamp": "2026-09-05T07:21:14.468605+00:00",
+  "ready_payload_digest": "ec384e8cdac5594e32b7553ce8b51e06b61e939108598a4104547604482e49e6"
+}

@@ -1,0 +1,66 @@
+{
+  "metric_delta": {},
+  "economy_moves": [],
+  "faction_delta": {},
+  "class_delta": {},
+  "population_transfers": [],
+  "surcharge_decrees": [],
+  "region_delta": {},
+  "army_delta": {},
+  "new_armies": [],
+  "power_updates": {},
+  "bandit_absorptions": [],
+  "world_advance": {},
+  "issue_advances": [
+    {
+      "issue_id": 2,
+      "delta_bar": 15,
+      "stage_text": "边饷暂济，旧欠仍未补过半，军心暂稳",
+      "narrative": "本月国库拨关宁军八十七万两，实到宁锦约八十二万两，边军暂免断饷之急，但旧欠仍逾三十万两。"
+    }
+  ],
+  "new_issues": [],
+  "事件结局": {},
+  "cancels": [],
+  "close_issues": [],
+  "fiscal_changes": [],
+  "fiscal_creates": [],
+  "fiscal_removes": [],
+  "office_changes": [],
+  "appointments": [],
+  "character_status_changes": [],
+  "character_power_changes": [],
+  "人物变更": [],
+  "secret_order_updates": [],
+  "covert_exec_selections": [],
+  "dossier_executions": [
+    {
+      "dossier_id": 1,
+      "outcome": "degraded",
+      "note": "户部已开办清核，但太仓实数与亏空尚未核定；边饷虽拨八十七万两，实到约八十二万两。"
+    },
+    {
+      "dossier_id": 16,
+      "outcome": "fulfilled",
+      "note": "毕自严已奉旨主办户部钱粮清核与边饷拨解，清册及责任追究正在办理。"
+    },
+    {
+      "dossier_id": 20,
+      "outcome": "fulfilled",
+      "note": "内帑三十万两已足额拨付关宁军。"
+    }
+  ],
+  "dossier_participants": [],
+  "secret_dossier_participants": [],
+  "dossier_reconciliations": [
+    {
+      "dossier_id": 20,
+      "arrived_amount": 82
+    }
+  ],
+  "faction_denunciations": [],
+  "authority_changes": [],
+  "dossier_progress_reports": [],
+  "emperor_fate": null,
+  "relation_edge_events": []
+}

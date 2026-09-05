@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "/Users/akagilnc/WorkSpace/Ming_LLM/ming_sim/decree.py", line 2554, in settle_with_delta
+    full_report = _settle_after_extract_body(
+        state, db, extracted,
+    ...<10 lines>...
+        attendant_message=attendant_message,
+    )
+  File "/Users/akagilnc/WorkSpace/Ming_LLM/ming_sim/decree.py", line 2757, in _settle_after_extract_body
+    db.record_monthly_grant_reconciliations(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        before_turn, extracted.get("dossier_reconciliations"),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/akagilnc/WorkSpace/Ming_LLM/ming_sim/db.py", line 13136, in record_monthly_grant_reconciliations
+    raise ValueError("无在途拨帑却收到对账提案")
+ValueError: 无在途拨帑却收到对账提案

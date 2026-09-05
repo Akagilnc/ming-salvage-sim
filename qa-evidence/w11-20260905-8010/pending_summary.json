@@ -1,0 +1,27 @@
+{
+  "actions": [
+    {
+      "id": 1,
+      "turn": 1,
+      "kind": "directive",
+      "action": "拟旨",
+      "minister_name": "毕自严",
+      "status": "pending",
+      "target_kind": "policy",
+      "dossier_action_type": "policy",
+      "title_or_target": "清核太仓出纳、暂缓非急工役、优先拨发辽东边饷"
+    },
+    {
+      "id": 2,
+      "turn": 1,
+      "kind": "directive",
+      "action": "拟旨",
+      "minister_name": "毕自严",
+      "status": "pending",
+      "target_kind": "issue",
+      "dossier_action_type": "assignment",
+      "title_or_target": "户部亏空日甚，太仓入不敷出。卿可据实奏对，并拟一道旨：清核太仓出纳、暂缓非急工役"
+    }
+  ],
+  "count": 2
+}
