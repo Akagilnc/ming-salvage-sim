@@ -79,8 +79,18 @@ def region_aliases(region: Region) -> List[str]:
     return unique
 
 
+def _strip_controlled_namespace(text: str, namespace: str) -> str:
+    """Strip only the extractor's exact namespace wrappers, never prose."""
+    if text.startswith("@"):
+        return text[1:]
+    prefix = f"{namespace}."
+    if text.startswith(prefix):
+        return text[len(prefix):]
+    return text
+
+
 def canonical_region_id_exact(
-    raw: object, regions: Dict[str, Region],
+    raw: object, regions: Optional[Dict[str, Region]] = None,
 ) -> Optional[str]:
     """location 写缝专用：仅 compact 精确等值（id/name/region_aliases）。
 
@@ -92,10 +102,14 @@ def canonical_region_id_exact(
     text = str(raw).strip()
     if not text:
         return ""
+    text = _strip_controlled_namespace(text, "region")
+    special = resolve_special_region_alias(text)
+    if special is not None:
+        return special
     key = compact_name(text)
     if not key:
         return ""
-    for region in regions.values():
+    for region in (regions or {}).values():
         candidates = [region.id, region.name, *region_aliases(region)]
         for alias in candidates:
             if compact_name(alias) == key:
@@ -188,6 +202,7 @@ def canonical_army_id_exact(
     text = str(raw).strip()
     if not text:
         return ""
+    text = _strip_controlled_namespace(text, "army")
     key = compact_name(text)
     if not key:
         return ""

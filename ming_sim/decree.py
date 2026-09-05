@@ -104,6 +104,16 @@ from ming_sim.token_stats import tlog
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
 
+# #1725：月末结算 SSE stage 名唯一权威（顺序即进度刻度）。六名冻结，emit 只引用本表。
+SETTLEMENT_STAGE_LABELS = (
+    "固定月度财政入账",
+    "回顾近来朝局",
+    "推演月末邸报",
+    "数值推演结算",
+    "落库与事项推进",
+    "记起居注",
+)
+
 # 结算 payload 工具（注入文案常量 / 决策块解析 / 密令分组承载 / 已裁决策正文 / 玩家可见
 # 呈现脱敏）已抽到 ming_sim.settlement_payload（#91 coordinator 拆分第一刀，纯搬家、行为保持）。
 # 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
@@ -1279,7 +1289,7 @@ def resolve_directives(
     relevant_memories: List[Dict] = []
     secret_orders_for_sim: Dict[str, list] = {}  # try 外初始化：检索失败也不能让后续 NameError
     try:
-        _emit("stage", "回顾近来朝局")
+        _emit("stage", SETTLEMENT_STAGE_LABELS[1])
         # state.turn 此刻仍是本回合（尚未 next_period），章节记忆存的是 turn-1 及更早的已结算回合。
         relevant_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
         tlog(f"[memory/chapters] inject={len(relevant_memories)} upto_turn={state.turn}")
@@ -1304,7 +1314,7 @@ def resolve_directives(
 
     # 2) 推演 agent: 写邸报
     tlog("结算 2/4 推演 agent（月末邸报）")
-    _emit("stage", "推演月末邸报")
+    _emit("stage", SETTLEMENT_STAGE_LABELS[2])
     previous_narrative = db.previous_turn_summary(state) or ""
     # #668：transit_arrivals 只读 pending_resolve_context 占位键（首跑与 settling 恢复同一真源；不重跑 tick）。
     durable_arrivals: List[Dict[str, object]] = []
@@ -1813,7 +1823,7 @@ def _settle_after_narrative(
 
     # 3) 结算 agent: 读邸报抽 JSON
     tlog("结算 3/4 结算 agent（抽 JSON）")
-    _emit("stage", "数值推演结算")
+    _emit("stage", SETTLEMENT_STAGE_LABELS[3])
     # simulator_payload 的 decree_text 已在 phase1 收敛为本批可执行诏文；extractor
     # 必须复用同一授权输入，不能重新接回包含封驳案卷的原始聚合文本。
     executable_decree_text = str(simulator_payload.get("decree_text") or "")
@@ -2294,7 +2304,7 @@ def pre_settle(
                 )
             tlog("结算 1/4 固定月度财政 tick")
             if on_stage is not None:
-                on_stage("固定月度财政入账")
+                on_stage(SETTLEMENT_STAGE_LABELS[0])
             # 落账副作用；明细不再进 simulator payload（欠饷哗变走前置事件/issue）
             apply_fixed_period_flows(db, state)
             # 0095/#668 在途倒数 tick：remaining -= 1.0*factor，≤0 引擎抵达。
@@ -2725,7 +2735,7 @@ def _settle_after_extract_body(
     抽成独立函数只为让 settle_with_delta 的 try/atomic/except 块清爽；不单独对外。
     """
     tlog("结算 4/4 落库 + inertia/ongoing")
-    _stage("落库与事项推进")
+    _stage(SETTLEMENT_STAGE_LABELS[4])
     # Persist private monthly reports before applying disclosure updates from
     # the same extraction, so the one authorized promotion event can project
     # the complete canonical history.  The enclosing atomic transaction keeps
@@ -2912,7 +2922,7 @@ def _settle_after_extract_body(
         start_relation_brew()
 
     # 章节记忆：注入回调（真实流程= LLM 浓缩落 event_memories；driver= None 跳过）。失败不抛断。
-    _stage("记起居注")
+    _stage(SETTLEMENT_STAGE_LABELS[5])
     if chapter_recorder is not None:
         try:
             chapter_recorder(db, state, decree_text, narrative, applied)

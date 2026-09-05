@@ -795,10 +795,6 @@ class WebGame:
             except OSError:
                 logger.exception("failed to remove hot replace backup %s", backup_path)
 
-    def reset_game(self) -> None:
-        """全清主 DB；失败时恢复替换前的数据库与 runtime。"""
-        self._replace_database(lambda: _delete_sqlite_db_files_or_raise(self.db_path))
-
     def load_save(self, name: str) -> None:
         """从存档热替换主 DB；失败时恢复替换前的数据库与 runtime。"""
         safe = self._safe_save_name(name)
@@ -3525,6 +3521,11 @@ class WebGame:
         def worker() -> None:
             nonlocal pending_ticket
             payload: Optional[Dict[str, Any]] = None
+            # #1727：court_break 预领屏障；异常出口也须 complete，禁 has_open_barrier 永真。
+            close_barrier_ticket: Optional[WriteTicket] = None
+            # #1353 r12：payload 已成 ⇒ done 必先于 error（后处理失败回话已可见）。
+            # #1727 把尾随 spawn/屏障领票挪到 done 前，spawn 抛错时须由出口补 done。
+            reply_done_emitted = False
             try:
                 try:
                     # P5：唯一不依赖回话输出的独立调用 = CLI 动作意图分类（只读皇帝消息）。
@@ -3550,10 +3551,9 @@ class WebGame:
                         explicit_secret_order=explicit_secret_order,
                     )
 
-                    # P5：先 done（回话可见），再读心∥高亮∥抽取补挂，最后 end——玩家无「为后处理黑屏」。
-                    ev_queue.put({"type": "done", "payload": payload or {}})
                     answer = str((payload or {}).get("answer") or "")
                     message_id = int((payload or {}).get("minister_message_id") or 0)
+                    court_action = str((payload or {}).get("court_action") or "")
                     # #1353：三腿统一经 _spawn_pending_write_thread（claim→try callee→finally 归还）；
                     # seal/claim 拒绝 → 不起线程、零 LLM 零写。整轮票在 spawn 后空放行。
                     turn_key = ("turn", int(chat_turn_id)) if chat_turn_id else None
@@ -3562,6 +3562,8 @@ class WebGame:
                     mind_thread: Optional[threading.Thread] = None
                     highlight_box: List[str] = []
                     mind_box: List[Optional[Dict[str, Any]]] = []
+                    # #1727：court_break 预领屏障票——须在尾随领票之后、done 之前，
+                    # 使 has_open_barrier 对玩家写入口立刻可见；尾随 seq 更低仍可写。
 
                     if chat_turn_id and answer:
                         extraction_thread = self._spawn_extraction_trail(
@@ -3619,6 +3621,18 @@ class WebGame:
                         self._complete_pending_write(pending_ticket)
                         pending_ticket = None
 
+                    if court_action == "court_break":
+                        # 无尾随时也须放行整轮票，再领屏障（禁自等待）。
+                        if pending_ticket is not None:
+                            self._complete_pending_write(pending_ticket)
+                            pending_ticket = None
+                        close_barrier_ticket = self._runtime_write_queue().claim_barrier()
+
+                    # P5：先 done（回话可见），再 join 尾随 / 收夜 / end——玩家无「为后处理黑屏」。
+                    # #1727：court_break 时 done 前已领屏障，召对写入口不再全活。
+                    ev_queue.put({"type": "done", "payload": payload or {}})
+                    reply_done_emitted = True
+
                     if mind_thread is not None:
                         mind_thread.join()
                     mind_payload = mind_box[0] if mind_box else None
@@ -3643,11 +3657,15 @@ class WebGame:
 
                     # #526/#1353：尾随票已清后收夜。整轮票已 complete 时 ticketed gate 会
                     # TicketCancelled——收夜短写改走裸 runtime write_gate（腿已终态，无越屏障窗）。
+                    # #1727：预领屏障票交给 close 复用（barrier），禁再领第二张。
                     close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
                     if close_after is not None:
+                        # barrier_ticket 由 close.barrier / 早退 complete；
+                        # worker finally 再幂等 complete 一次兜底。
                         close_after(
-                            (payload or {}).get("court_action") or "",
+                            court_action,
                             write_gate=bare_write_gate,
+                            barrier_ticket=close_barrier_ticket,
                         )
 
                     ev_queue.put({"type": "end"})
@@ -3655,9 +3673,13 @@ class WebGame:
                     # #1353 r12/r13：worker 单一异常出口——payload / 后处理 / 收夜任一失败
                     # 皆 error→end；禁逐点补丁，禁只走 finally 致消费者永阻。
                     # payload 未成（回话失败）才 fail 本轮；后处理失败回话已可见。
+                    # #1727：done 前尾随/屏障步失败时，此处补 done，保「回话已可见」再 error。
                     # ADR 0005 / #1408：清理二次失败 logger.exception 记 traceback 不宽吞；
                     # abandon / 终态写分 try；清理异常不覆盖原始 error、不阻断 error→end。
                     # Scene drain stays outside write_gate (C9/T1/T10).
+                    if payload is not None and not reply_done_emitted:
+                        ev_queue.put({"type": "done", "payload": payload or {}})
+                        reply_done_emitted = True
                     if payload is None:
                         try:
                             if chat_turn_id:
@@ -3689,6 +3711,9 @@ class WebGame:
                         })
                     ev_queue.put({"type": "end"})
             finally:
+                if close_barrier_ticket is not None:
+                    self._runtime_write_queue().complete(close_barrier_ticket)
+                    close_barrier_ticket = None
                 self._complete_pending_write(pending_ticket)
 
         thread = threading.Thread(target=worker, daemon=True)
@@ -3931,6 +3956,21 @@ def _refuse_settling_or_busy_write_phase(game) -> None:
         if phase == TurnPhase.AWAITING_DECISION.value:
             raise HTTPException(status_code=409, detail="等待批红，请待批红完成后再操作。")
         raise HTTPException(status_code=409, detail="月末结算进行中，请待结算完成后再操作。")
+
+
+def _refuse_if_open_night_barrier(game) -> None:
+    """#1727：court_break 预领屏障开启期间拒玩家召对写入口。
+
+    复用 #1353 has_open_barrier 唯一真源；只挂在召对写入口，不改
+    `_serialized_web_write` 本体（favorites 等非召对写不属本拒）。
+    """
+    if not hasattr(game, "_runtime_write_queue"):
+        return
+    if game._runtime_write_queue().has_open_barrier():
+        raise HTTPException(
+            status_code=409,
+            detail="本夜收夜中，暂不能召对。",
+        )
 
 
 def _try_acquire_serialized_web_write_gate(game):
@@ -4232,6 +4272,42 @@ def _get_main_db_path() -> str:
     return user_data_path("ming_sim.db")
 
 
+def _archive_drained_db_file(old_db_path: str) -> None:
+    """把已排空关闭的主库文件移入 saves/（#396 / #1732 唯一归档实现）。
+
+    调用方须保证旧连接已关；本函数不碰 session。文件不存在则静默返回。
+    """
+    if not old_db_path or not os.path.exists(old_db_path):
+        return
+    saves_dir = user_data_path("saves")
+    os.makedirs(saves_dir, exist_ok=True)
+    target = os.path.join(saves_dir, f"drained_{time.time_ns()}.db")
+    moved = False
+    try:
+        shutil.move(old_db_path, target)
+        moved = True
+    except Exception:
+        pass
+    if not moved:
+        return
+    wal_path = old_db_path + "-wal"
+    if os.path.exists(wal_path):
+        try:
+            shutil.move(wal_path, target + "-wal")
+        except Exception:
+            try:
+                shutil.move(target, old_db_path)
+            except Exception:
+                pass
+            return
+    shm_path = old_db_path + "-shm"
+    if os.path.exists(shm_path):
+        try:
+            shutil.move(shm_path, target + "-shm")
+        except Exception:
+            pass
+
+
 def _drain_and_close_session(game, archive_db: bool = False) -> None:
     """等在途后台写入（召对 worker / 结算 worker）排空后再关连接。
 
@@ -4264,39 +4340,16 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
     if close_failed:
         return
     if archive_db:
-        old_db_path = getattr(game, "db_path", "")
-        if old_db_path and os.path.exists(old_db_path):
-            saves_dir = user_data_path("saves")
-            os.makedirs(saves_dir, exist_ok=True)
-            target = os.path.join(saves_dir, f"drained_{time.time_ns()}.db")
-            moved = False
-            try:
-                shutil.move(old_db_path, target)
-                moved = True
-            except Exception:
-                pass
-            if moved:
-                wal_path = old_db_path + "-wal"
-                if os.path.exists(wal_path):
-                    try:
-                        shutil.move(wal_path, target + "-wal")
-                    except Exception:
-                        try:
-                            shutil.move(target, old_db_path)
-                        except Exception:
-                            pass
-                        return
-                shm_path = old_db_path + "-shm"
-                if os.path.exists(shm_path):
-                    try:
-                        shutil.move(shm_path, target + "-shm")
-                    except Exception:
-                        pass
+        _archive_drained_db_file(getattr(game, "db_path", "") or "")
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
 # #1195：菜单生命周期世代。continue worker 发布 web_game 前对号；失配则丢弃白建局。
 _menu_generation: int = 0
+# #1732 T1：exit_to_menu 的 detach 完成信号。new_game 在 old_game is None 时须等此信号
+# 再归档旧主库，避免与仍写旧库的 detach 双移/抢文件（#396 readonly 约束）。
+_menu_exit_detach_lock = threading.Lock()
+_menu_exit_detach_done: Optional[threading.Event] = None
 
 
 app = FastAPI(title="Ming Salvage MVP Web")
@@ -4536,7 +4589,11 @@ async def api_menu_new_game() -> Dict[str, Any]:
     旧 session 的后台召对队列在 daemon 线程里续跑写入、排空 write_gate 后再关连接（detach）。
     先把旧库 park 旁路再 fresh=True 建新库——不在旧 worker 仍写旧连接时 os.remove 底层文件；
     排空后关旧连接并把旁路库归档为存档，玩家可再次进入看到迟到的后台回奏；
-    #382 通用并发模型（Windows file-lock 等）不在本轮 scope。"""
+    #382 通用并发模型（Windows file-lock 等）不在本轮 scope。
+
+    #1732 T1：经 exit_to_menu 后 web_game 已是 None，仍须把旧主库归档进 saves/
+    （裁定二前提「旧局自动归档为存档」）。exit 本身不搬库；归档只在旧连接排空后、
+    由本端点承接同一 _archive_drained_db_file 权威实现。"""
     global web_game, _menu_generation
     _menu_generation += 1
     old_game = web_game
@@ -4546,6 +4603,7 @@ async def api_menu_new_game() -> Dict[str, Any]:
     # #396: 不能在旧后台 worker 仍写旧库时删/重命名旧库文件（SQLite 会报 readonly database）。
     # 改为把主库路径切换到新文件，旧 worker 安全续写旧库；排空关连接后旧库归档为存档。
     snapshot = _snapshot_main_db_path_config()
+    prev_db_path = _get_main_db_path()
     new_db_path = user_data_path(f"ming_sim_{time.time_ns()}.db")
     try:
         # 同步覆写 env + active_db.txt → 新局落新路径，重启也继续新路径。
@@ -4568,6 +4626,18 @@ async def api_menu_new_game() -> Dict[str, Any]:
             args=(old_game, True),
             daemon=True,
         ).start()
+    else:
+        # #1732 T1：退菜单后 / 无活 session 时仍归档旧主库。先等 exit detach 关连接，
+        # 再走同一归档实现——不与仍写旧库的 detach 双移。
+        def _archive_prev_after_exit_detach() -> None:
+            with _menu_exit_detach_lock:
+                done = _menu_exit_detach_done
+            if done is not None:
+                done.wait()
+            if prev_db_path and prev_db_path != new_db_path:
+                _archive_drained_db_file(prev_db_path)
+
+        threading.Thread(target=_archive_prev_after_exit_detach, daemon=True).start()
     return steam_events.with_events(
         {"state": web_game.state_payload()},
         [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
@@ -4664,14 +4734,27 @@ async def api_menu_exit() -> Dict[str, Any]:
     """退回菜单：关 session 但不删 DB。
 
     #396：界面立刻退（web_game=None + 响应返回），后台召对 worker 继续跑完、写进档；
-    session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。"""
-    global web_game, _menu_generation
+    session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。
+
+    #1732 T1：本端点不搬主库文件——「继续上局」须照常可用；归档由后续 new_game 承接。
+    """
+    global web_game, _menu_generation, _menu_exit_detach_done
     _menu_generation += 1
     if web_game is not None:
         old_game = web_game
         web_game = None  # 界面立刻退
-        # detach：等 write_gate 排空后再关连接（#396）
-        threading.Thread(target=_drain_and_close_session, args=(old_game,), daemon=True).start()
+        done = threading.Event()
+        with _menu_exit_detach_lock:
+            _menu_exit_detach_done = done
+
+        def _detach_exit() -> None:
+            try:
+                _drain_and_close_session(old_game)
+            finally:
+                done.set()
+
+        # detach：等 write_gate 排空后再关连接（#396）；不归档（#1732 T1）
+        threading.Thread(target=_detach_exit, daemon=True).start()
     return {"ok": True}
 
 
@@ -4961,6 +5044,8 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
     先原子条件 DELETE(以删成功为真源,免 check-then-act 竞态,pr-loop sourcery),
     失败再查行分流 404/409。"""
     game = get_game()
+    # #1727：收夜屏障窗内拒撤回 pending（与 undo/secret_order 同族召对写入口）。
+    _refuse_if_open_night_barrier(game)
     with _serialized_web_write(game):
         if game.db.withdraw_pending_action(int(action_id), int(game.state.turn)):
             return {"withdrawn": action_id, "actions": _player_visible_pending_actions(
@@ -4977,6 +5062,8 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
 async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
     """重试本回合失败的密令下达，用已存 pending_actions payload 重新落库。"""
     game = get_game()
+    # #1727：收夜屏障窗内拒 retry pending（与 withdraw/undo 同族）。
+    _refuse_if_open_night_barrier(game)
     minister_name = ""
     with _serialized_web_write(game):
         try:
@@ -5206,6 +5293,9 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     if "deadline_months" in provided_fields and request.deadline_months is not None:
         lines.append(f"期限：{int(request.deadline_months)}月")
 
+    # #1727：端点侧补屏障拒——持闸兼容路 gate_already_held 会跳过 _chat_core 内检查。
+    _refuse_if_open_night_barrier(game)
+
     def _create_with_gate() -> Dict[str, Any]:
         with _serialized_web_write(game):
             return game._chat_with_write_gate_held(minister_name, "\n".join(lines))
@@ -5236,6 +5326,8 @@ async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
     # pre_settle 原子窗口，且 undo_chat_turn 直写共享连接 → 与其它写端点一致走 _write_gate
     # （cmr Gate2 r3 Finding1）。门内若相位门拒，HTTPException 经 finally 释放锁后正常上抛。
     game = get_game()
+    # #1727：收夜屏障窗内拒撤回本轮——禁 cancel_key 抽空屏障 wait_prior 所等尾随票。
+    _refuse_if_open_night_barrier(game)
     with _serialized_web_write(game):
         return game.undo_last_chat(minister_name)
 
@@ -5853,19 +5945,6 @@ async def api_load_save(name: str) -> Dict[str, Any]:
     game = get_game()
     _run_hot_replace(game, lambda: game.load_save(name), failure_label="载入存档失败")
     return {"state": get_game().state_payload()}
-
-
-@app.post("/api/game/reset")
-async def api_reset_game() -> Dict[str, Any]:
-    """清空主 DB 重开新局。存档目录保留。"""
-    # reset_game 关连接 + 删 sqlite 文件 + 重建——同 load_save，正持锁的 worker 会崩在关连接上。
-    # 非阻塞抢 _write_gate：忙时 409（cmr Gate2 r5；强制中断在途属 #382）。
-    game = get_game()
-    _run_hot_replace(game, lambda: game.reset_game(), failure_label="重开新局失败")
-    return steam_events.with_events(
-        {"state": get_game().state_payload()},
-        [steam_events.add_stat(steam_events.STAT_RUNS_STARTED)],
-    )
 
 
 @app.get("/api/llm/config")

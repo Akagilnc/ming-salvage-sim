@@ -2,7 +2,15 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LLMConfigInfo } from "../types";
-import { LLMConfigTab, mergePersistedSaveSnapshot } from "./gameMenu";
+import {
+  ExitToMenuTab,
+  GameMenuModal,
+  LLMConfigTab,
+  LoadTab,
+  SavesList,
+  ShutdownTab,
+  mergePersistedSaveSnapshot,
+} from "./gameMenu";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -715,6 +723,144 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     });
 
     expect(strength?.disabled).toBe(false);
+    cleanup();
+  });
+});
+
+describe("#1732 GameMenu · 就地消解", () => {
+  it("不再提供「重开新局」页签", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ saves: [] }),
+    } as Response);
+    const { cleanup } = render(
+      <GameMenuModal onClose={() => {}} onAfterLoad={() => {}} onExitToMenu={() => {}} />
+    );
+    await act(async () => {});
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("重开新局");
+    expect(text).toContain("回到主菜单");
+    cleanup();
+  });
+
+  it("回到主菜单：面板直通，不调 window.confirm", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    const onExit = vi.fn(async () => {});
+    const { cleanup } = render(<ExitToMenuTab onExit={onExit} />);
+    const btn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("回到主菜单")
+    );
+    expect(btn).toBeTruthy();
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(onExit).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it("退出游戏：面板直通，不调 window.confirm", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    global.fetch = vi.fn().mockResolvedValue({ ok: true } as Response);
+    const { cleanup } = render(<ShutdownTab />);
+    const btn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("退出游戏")
+    );
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledWith("/api/menu/shutdown", { method: "POST" });
+    cleanup();
+  });
+
+  it("加载存档：取消就地确认零请求；确认后 POST load", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (String(url) === "/api/saves" && !init?.method) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ saves: [{ name: "slot_a", mtime: 1, size: 2048 }] }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+    const onAfterLoad = vi.fn();
+    const { cleanup } = render(<LoadTab onAfterLoad={onAfterLoad} />);
+    await act(async () => {});
+
+    const loadBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").trim() === "加载" || (b.textContent || "").includes("加载")
+    );
+    expect(loadBtn).toBeTruthy();
+    await act(async () => {
+      loadBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const panel = document.querySelector('[aria-label="确认加载 slot_a"]');
+    expect(panel).not.toBeNull();
+    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    await act(async () => {
+      cancel!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(calls.some((c) => String(c.url).includes("/load"))).toBe(false);
+
+    await act(async () => {
+      loadBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const panel2 = document.querySelector('[aria-label="确认加载 slot_a"]');
+    const yes = Array.from(panel2!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("加载")
+    );
+    await act(async () => {
+      yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(calls.some((c) => String(c.url).includes("/api/saves/slot_a/load") && c.init?.method === "POST")).toBe(true);
+    expect(onAfterLoad).toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("删除存档：行下展开；取消零请求；确认后 DELETE", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+    const onRefresh = vi.fn();
+    const { cleanup } = render(
+      <SavesList saves={[{ name: "keep", mtime: 1, size: 1024 }]} onRefresh={onRefresh} />
+    );
+    const del = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("删")
+    );
+    await act(async () => {
+      del!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const panel = document.querySelector('[aria-label="确认删除 keep"]');
+    expect(panel).not.toBeNull();
+    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    await act(async () => {
+      cancel!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(calls.some((c) => c.init?.method === "DELETE")).toBe(false);
+
+    await act(async () => {
+      del!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const yes = Array.from(document.querySelector('[aria-label="确认删除 keep"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("删除")
+    );
+    await act(async () => {
+      yes!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(calls.some((c) => String(c.url).includes("/api/saves/keep") && c.init?.method === "DELETE")).toBe(true);
+    expect(onRefresh).toHaveBeenCalled();
     cleanup();
   });
 });
