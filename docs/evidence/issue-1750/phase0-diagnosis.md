@@ -150,19 +150,20 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 
 ## 3. 阶段 0 红灯位置
 
-文件：`tests/test_settlement_extractor_transport_1750.py`  
-入口：沿 #1468 `tracer_client` 真 HTTP（复用 fixture，无平行 transport_tracer_client）；transport 替身在模块 `agent.run`。  
-标记：仅自愈与自愈期 0148 为 `xfail(strict, 待 #1465)`；**不改生产**使灯绿。
+文件：`tests/test_settlement_extractor_transport_1750.py`
+入口：沿 #1468 `tracer_client` 真 HTTP（复用 fixture，无平行 transport_tracer_client）；transport 替身在模块 `agent.run`。
+标记：自愈、终失败上游 status/预算、自愈期 0148 为 `xfail(strict, 待 #1465)`；**不改生产**使灯绿。
 
 | 项 | 期望 | 现行预期色 | 证明力口径 |
 |------|------|------------|------------|
-| 自愈 | 一腿预算内可重试 → transport calls≥2、成功 fingerprint 落账、月+1 | 红（无 #1465 预算） | calls=agent.run 次数；≠ manifest.attempt |
-| 终失败 | 持续失败 → 保月 + recovery + exception_type + 不泄栈 | **绿基线** | transport_attempts 与 pack_attempt 分列；不锁中文措辞 |
+| 自愈 | 一腿预算内可重试 → transport calls≥2、metrics 民心指纹落账、月+1 | 红（无 #1465 预算） | calls=agent.run；落账断 GET metrics |
+| 终失败绿基线 | 持续失败 → 保月 + recovery + exception_type + 不泄栈 | **绿** | transport 与 pack_attempt 分列；不锁中文措辞 |
+| 终失败上游/预算 | transport_attempts≥3 耗尽预算；玩家面 status_code + code=llm_run_error | **红**（pending） | 既有 `_llm_error_detail` 键；不新造 pack schema |
 | 恢复 (a1) | settling ready=0 → issue/stream 重跑 sim/extract、pre_settle=0、包保留 | **绿**（行为）；clear 缺口可核 | clear_calls 现行 0，见 §2.5 |
 | 恢复 (a2) | 批红后失败 → 只重抽、不重跑 simulator、月+1、包保留 | **绿** | 与 (a1) 分案 |
 | 恢复 (b) D3 | ready 重放不重跑 LLM | 既有 1620 绿 | 本片不重复 |
 | 0148 终失败后 | api_state 月初快照 | **绿**（并入终失败案） | settlement_display + metrics |
-| 0148 自愈窗 | 失败后重试窗内仍月初快照 | 红（随自愈） | 采样在 fail 返回后，不在 _finish 成功后回看冒充 |
+| 0148 自愈窗 | 再 attempt 持有中仍月初快照 | 红（随自愈） | 双 Event：fail gate + retry gate；禁 sleep |}
 
 ---
 
