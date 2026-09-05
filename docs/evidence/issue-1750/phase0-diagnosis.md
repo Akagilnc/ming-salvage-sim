@@ -151,7 +151,7 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 ## 3. 阶段 0 红灯位置
 
 文件：`tests/test_settlement_extractor_transport_1750.py`
-入口：沿 #1468 `tracer_client` 真 HTTP（复用 fixture，无平行 transport_tracer_client）；transport 替身在模块 `agent.run`。
+入口：沿 #1468 `tracer_client` 真 HTTP（复用 fixture，无平行 transport_tracer_client）；transport 替身在模块 `agent.run`——失败抛既有 `LLMUnavailable(status_code=…, code=llm_run_error)`，不把上游码写入 content。
 标记：自愈、终失败上游 status/预算 为 `xfail(strict, 待 #1465)`（两条）；**不改生产**使灯绿。
 0148 自愈期/跨刷新真跑取证：**不**在阶段 0 写真实并发永久测试；由本票**阶段 1 在 #1465 落地后**承接。阶段 0 仅保留已取得的终失败 `api_state` 月初快照证据（并入终失败绿基线）。
 
@@ -159,7 +159,7 @@ pack 身份以 manifest 的 `turn` / `period` / `db_path` / `attempt` 为准，�
 |------|------|------------|------------|
 | 自愈 | 同腿（internal）预算内失败一次后恢复 → calls≥2、该腿民心指纹落账、月+1 | 红（无 #1465 预算） | 失败腿=效果腿；calls=agent.run；落账断 GET metrics |
 | 终失败绿基线 | 持续失败 → 保月 + recovery + exception_type + 结构化不泄栈 | **绿** | transport 与 pack_attempt 分列；不锁中文/Traceback 子串 |
-| 终失败上游/预算 | transport_attempts≥3；玩家面 status_code==注入上游码 + code=llm_run_error | **红**（pending） | 既有 `_llm_error_detail` 键；status 须等于可核 typed 注入，不能仅非空；不新造 pack schema |
+| 终失败上游/预算 | transport_attempts≥3；玩家面 status_code==LLMUnavailable.status_code + code=llm_run_error | **红**（pending） | 探针经 agent.run 抛 `LLMUnavailable(status_code=429, code=llm_run_error)`（exceptions.py 既有契约）；断言保真该 typed 字段，不从 content/散文提取；既有 `_llm_error_detail` 键；不新造 pack schema |
 | 恢复 (a1) | settling ready=0 → issue/stream 重跑 sim/extract、pre_settle=0、包保留 | **绿**（行为） | clear 义务未结，见 §2.5；测试不断 clear 次数 |
 | 恢复 (a2) | 批红后失败 → 只重抽、不重跑 simulator、月+1、包保留 | **绿** | 与 (a1) 分案 |
 | 恢复 (b) D3 | ready 重放不重跑 LLM | 既有 1620 绿 | 本片不重复 |
