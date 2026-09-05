@@ -1,0 +1,3 @@
+campaign a941fa06a2fa
+db data-8013/ming_sim_1788600739021297874.db
+isolation: MING_SIM_USER_DATA_DIR=data-8013
