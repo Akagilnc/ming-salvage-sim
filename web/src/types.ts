@@ -183,6 +183,16 @@ export type Issue = {
   effect_on_fail: Record<string, number>;
 };
 
+/** #1726 奏疏收件箱条目（进度奏报 / 派系检举） */
+export type Memorial = {
+  key: string;
+  kind: "progress" | "denunciation";
+  turn: number;
+  author_name: string;
+  memorial_text: string;
+  unread: boolean;
+};
+
 export type LegacyEffect = {
   国库?: number;
   内库?: number;
@@ -382,6 +392,10 @@ export type GameState = {
   /** #1356：邸报报文自身年月标签（与 previous_summary 同源）；报头直显，禁用 turn.reign_period_label 混充 */
   previous_reign_period_label?: string;
   issues: Issue[];
+  /** #1726 奏疏收件箱（进度奏报 + 派系检举）；与 issues 局势脱钩 */
+  memorials?: Memorial[];
+  /** #1726 未读奏报数；与 memorials[].unread 同源 */
+  unread_memorial_count?: number;
   legacies: Legacy[];
   closed_this_turn: ClosedIssue[];
   budget: Budget;

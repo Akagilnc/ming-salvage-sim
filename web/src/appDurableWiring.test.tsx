@@ -707,7 +707,12 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await tick();
     await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes(minister.name)));
     await act(async () => { await vi.waitFor(() => expect(findButton(host, "撤回本轮")).toBeTruthy()); });
+    // #1732 B：撤回就地确认条，确认后才 POST undo
     await click(findButton(host, "撤回本轮"));
+    await act(async () => {
+      await vi.waitFor(() => expect(findButton(host, "继续撤回")).toBeTruthy());
+    });
+    await click(findButton(host, "继续撤回"));
     await act(async () => {
       await vi.waitFor(() => expect(stateCall).toBeGreaterThanOrEqual(3));
     });
@@ -1256,6 +1261,11 @@ const settlementBaseState = (phase: string, extra: Record<string, unknown> = {})
   metrics: { 民心: SNAP_MINXIN, 皇威: SNAP_HUANGWEI, 国库: SNAP_TREASURY, 内库: SNAP_INNER },
   previous_summary: "",
   issues: [{ id: 9, kind: "situation", title: MIDCOURSE_ISSUE, status: "open", progress: 77, fail_condition: "" }],
+  // #1726：奏疏与局势脱钩；默认空收件箱（具体用例可覆盖）
+  memorials: [] as Array<{
+    key: string; kind: string; turn: number; author_name: string; memorial_text: string; unread: boolean;
+  }>,
+  unread_memorial_count: 0,
   legacies: [{
     id: 1, name: SNAP_LEGACY, narrative_hint: "",
     modifiers: {}, effect_text: "民心+1", remaining_months: 3, clear_condition: "",
@@ -1894,7 +1904,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(haremCard?.disabled).toBe(true);
     await closeOpenOverlay(host);
 
-    // memorials：只读可达；内容闸吃 situation——核账期零半程泄漏（#1236 正向断言）
+    // memorials：只读可达；与局势脱钩——核账期仍可读收件箱，不得泄漏半程议题（#1726）
     await click(cmdByCaption(host, "奏疏"));
     await tick();
     await act(async () => {
@@ -1903,7 +1913,9 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
     expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(memorialsDialog.querySelector(".situation-list")).toBeNull();
-    expect(memorialsDialog.textContent).toContain(SETTLEMENT_CLOSED_REASON);
+    expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
+    expect(memorialsDialog.textContent).toContain("本月无疏");
+    expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
     expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
     await closeOpenOverlay(host);
 
@@ -1929,13 +1941,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     await closeOpenOverlay(host);
 
-    // menu：#1702 B 确认门控 + 409 可见且同一行恢复重试（不锁确认文案措辞）。
-    const confirmCalls: boolean[] = [];
-    let confirmNext = false;
-    vi.stubGlobal("confirm", () => {
-      confirmCalls.push(confirmNext);
-      return confirmNext;
-    });
+    // menu：#1702/#1732 B 就地确认门控 + 409 可见且同一行恢复重试（不锁确认文案措辞）。
     await click(byAria(host, "游戏菜单"));
     await tick();
     await act(async () => {
@@ -1946,15 +1952,24 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector(".saves-row .menu-btn.primary")).not.toBeNull());
     });
     const loadButton = host.querySelector(".saves-row .menu-btn.primary") as HTMLButtonElement;
-    // confirm false → 零 /load POST
-    confirmNext = false;
+    // 展开后取消 → 零 /load POST
     await click(loadButton);
     await tick();
-    expect(confirmCalls.length).toBeGreaterThanOrEqual(1);
+    const loadConfirm = host.querySelector('[aria-label="确认加载 auto_begin"]');
+    expect(loadConfirm).not.toBeNull();
+    const cancelLoad = Array.from(loadConfirm!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    await click(cancelLoad as HTMLButtonElement);
+    await tick();
     expect(loadRequests).toEqual([]);
-    // confirm true → POST；409 可见；同行重试第二次 POST
-    confirmNext = true;
+    // 确认 → POST；409 可见；同行重试第二次 POST
     await click(loadButton);
+    await tick();
+    const yesLoad = Array.from(host.querySelector('[aria-label="确认加载 auto_begin"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("加载")
+    );
+    await click(yesLoad as HTMLButtonElement);
     expect(loadRequests).toEqual([{ path: "/api/saves/auto_begin/load", method: "POST" }]);
     expect(loadButton.disabled).toBe(true);
     await act(async () => {
@@ -1970,6 +1985,11 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     expect(loadButton.disabled).toBe(false);
     await click(loadButton);
+    await tick();
+    const yesLoadAgain = Array.from(host.querySelector('[aria-label="确认加载 auto_begin"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("加载")
+    );
+    await click(yesLoadAgain as HTMLButtonElement);
     await act(async () => {
       await vi.waitFor(() => expect(loadRequests).toHaveLength(2));
     });
@@ -2114,12 +2134,44 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
   });
 
-  it("#1285 非核账：奏疏模态呈 situation 议题列表（同 settlementBaseState 工厂）", async () => {
+  it("#1726 非核账：奏疏模态呈真实奏疏正文，不借局势议题", async () => {
+    const MEMORIAL_BODY = "臣工办理进度，库藏尚可。";
     stubSettlementFetch({
       ...settlementBaseState("player"),
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
       previous_summary: "",
       pending_decisions: [],
+      memorials: [{
+        key: "progress:11",
+        kind: "progress",
+        turn: 5,
+        author_name: "杨嗣昌",
+        memorial_text: MEMORIAL_BODY,
+        unread: true,
+      }],
+      unread_memorial_count: 1,
+    });
+    // 点开即已读：后端回执
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const prevImpl = fetchMock.getMockImplementation() as
+      ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/memorials/read") && init?.method === "POST") {
+        return new Response(JSON.stringify({
+          memorials: [{
+            key: "progress:11",
+            kind: "progress",
+            turn: 5,
+            author_name: "杨嗣昌",
+            memorial_text: MEMORIAL_BODY,
+            unread: false,
+          }],
+          unread_memorial_count: 0,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (prevImpl) return prevImpl(input, init);
+      return new Response("{}", { status: 404 });
     });
     const host = await mountApp();
     await click(cmdByCaption(host, "奏疏"));
@@ -2128,9 +2180,102 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
     });
     const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
-    expect(memorialsDialog.querySelector(".situation-panel")).not.toBeNull();
-    expect(memorialsDialog.textContent).toContain(MIDCOURSE_ISSUE);
+    expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
+    expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(memorialsDialog.textContent).toContain("杨嗣昌");
+    expect(memorialsDialog.querySelector("pre.memorial-text")?.textContent).toBe(MEMORIAL_BODY);
     expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
+    expect(memorialsDialog.textContent).not.toContain("progress:11");
+    expect(
+      fetchMock.mock.calls.some(([url, init]) =>
+        String(url).includes("/api/memorials/read") && (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(true);
+  });
+
+  it("#1726 核账展示：点开奏疏不发 POST /api/memorials/read", async () => {
+    const MEMORIAL_BODY = "核账期仍可读，但不得点开即已读。";
+    stubSettlementFetch({
+      ...settlementBaseState("settling"),
+      memorials: [{
+        key: "progress:11",
+        kind: "progress",
+        turn: 5,
+        author_name: "杨嗣昌",
+        memorial_text: MEMORIAL_BODY,
+        unread: true,
+      }],
+      unread_memorial_count: 1,
+    });
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const host = await mountApp();
+    await click(cmdByCaption(host, "奏疏"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
+    });
+    expect(
+      fetchMock.mock.calls.some(([url, init]) =>
+        String(url).includes("/api/memorials/read") && (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  // #1726 F2：真实 App 挂载面锚定 gen-before-guards——关面板后迟到已读回执不得覆写 applied state。
+  it("#1726 关奏疏面板后，迟到已读回执不得覆写未读数", async () => {
+    const MEMORIAL_BODY = "迟到回执不得把未读覆写成已读。";
+    const unreadMemorial = {
+      key: "progress:11",
+      kind: "progress",
+      turn: 5,
+      author_name: "杨嗣昌",
+      memorial_text: MEMORIAL_BODY,
+      unread: true,
+    };
+    stubSettlementFetch({
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      memorials: [unreadMemorial],
+      unread_memorial_count: 1,
+    });
+    let resolveRead!: (response: Response) => void;
+    const pendingRead = new Promise<Response>((resolve) => { resolveRead = resolve; });
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const prevImpl = fetchMock.getMockImplementation() as
+      ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/memorials/read") && init?.method === "POST") {
+        return pendingRead;
+      }
+      if (prevImpl) return prevImpl(input, init);
+      return new Response("{}", { status: 404 });
+    });
+    const host = await mountApp();
+    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
+    await click(cmdByCaption(host, "奏疏"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
+    });
+    expect(
+      fetchMock.mock.calls.some(([url, init]) =>
+        String(url).includes("/api/memorials/read") && (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(true);
+    await closeOpenOverlay(host);
+    await act(async () => {
+      resolveRead(new Response(JSON.stringify({
+        memorials: [{ ...unreadMemorial, unread: false }],
+        unread_memorial_count: 0,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      await pendingRead;
+    });
+    await tick();
+    // 关面板后 gen 已 bump；迟到回执不得把 HUD 未读数覆写成 0。
+    expect(cmdByCaption(host, "奏疏")?.getAttribute("aria-label")).toBe("奏疏：1 件待览");
   });
 
   it("#1342 朝堂抽屉开着时点拟诏：关抽屉并开拟诏台", async () => {
@@ -2222,15 +2367,13 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
   });
 
-  it("#1560 failed-only：取消确认零请求；确认后 POST advance", async () => {
+  it("#1560/#1732 failed-only：取消就地确认零请求；确认后 POST advance", async () => {
     const paths: string[] = [];
     const reload = vi.fn();
     Object.defineProperty(window, "location", {
       configurable: true,
       value: { ...window.location, reload },
     });
-    const confirm = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirm);
     const failedOnly = {
       ...settlementBaseState("player"),
       directives: [],
@@ -2272,11 +2415,24 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
     const settlePostsBefore = paths.filter((p) => p.startsWith("POST /api/decree/")).length;
     await click(footer);
-    expect(confirm).toHaveBeenCalledTimes(1);
+    // #1732 B：页脚展开就地确认，取消零请求
+    const confirmPanel = host.querySelector('[aria-label="退朝确认"]');
+    expect(confirmPanel).not.toBeNull();
+    const cancelBtn = Array.from(confirmPanel!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消")
+    );
+    expect(cancelBtn).toBeTruthy();
+    await click(cancelBtn as HTMLButtonElement);
     expect(paths.filter((p) => p.startsWith("POST /api/decree/")).length).toBe(settlePostsBefore);
+    expect(host.querySelector('[aria-label="退朝确认"]')).toBeNull();
 
-    confirm.mockReturnValue(true);
-    await click(footer);
+    const footerAgain = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    await click(footerAgain);
+    const confirmAgain = host.querySelector('[aria-label="退朝确认"]');
+    const yesBtn = Array.from(confirmAgain!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("退朝结束本月")
+    );
+    await click(yesBtn as HTMLButtonElement);
     await act(async () => {
       await vi.waitFor(() => expect(paths.some((p) => p === "POST /api/decree/advance_without_edict")).toBe(true));
     });

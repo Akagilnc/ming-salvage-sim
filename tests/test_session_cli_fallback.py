@@ -536,7 +536,7 @@ def test_propose_directive_tool_arguments_stages_draft(game):
                 tools=[SimpleNamespace(
                     tool_name="propose_directive",
                     result="",
-                    arguments={"decree_text": "着户部清核辽饷。"},
+                    arguments={"decree_text": "着户部清核辽饷。", "mode": "midzhi"},
                 )],
             )
 
@@ -823,7 +823,7 @@ def test_midzhi_confirmation_updates_selected_dossier_mode(game, kind):
         SimpleNamespace(name=minister, office_type="兵部"),
         player_message="中旨直发，准了。", answer="臣领旨。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允", "mode": "midzhi"},
         confirm_target_ids={pending_id},
     )
 
@@ -873,7 +873,7 @@ def test_confirmation_preserves_invalid_payload_for_terminal_failure_owner(
         SimpleNamespace(name=minister, office_type="兵部"),
         player_message="中旨直发，准了。", answer="臣领旨。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允", "mode": "midzhi"},
         confirm_target_ids={pending_id},
     )
 
@@ -910,7 +910,7 @@ def test_night_approved_midzhi_confirmation_keeps_mode_through_close(game):
         SimpleNamespace(name=minister, office_type="兵部"),
         player_message="中旨直发，准了。", answer="臣领旨。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允", "mode": "midzhi"},
         confirm_target_ids={pending_id},
     )
     audience_night.close_night(db, state, night_id=night["id"], content=content)
@@ -1171,6 +1171,7 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
         "action": "任命",
         "faction": "阉党",
         "reason": "吏部举荐",
+        "mode": "midzhi",
     }, ensure_ascii=False)
 
     class Agent:
@@ -1235,6 +1236,125 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
     promulgate_proposed_appointments(db, state, content)
 
     assert content.characters[appointee].faction == "阉党"
+
+
+def _propose_appointment_tool(character, db, state):
+    """取出 propose_appointment 真工具（吏部才挂；测试临时切换 office_type）。"""
+    from ming_sim.models import CourtContext
+    from ming_sim.tools import build_minister_tools
+
+    original = character.office_type
+    character.office_type = "吏部"
+    try:
+        tools = {
+            fn.__name__: fn
+            for fn in build_minister_tools(character, CourtContext(state=state, db=db))
+        }
+        return tools["propose_appointment"]
+    finally:
+        character.office_type = original
+
+
+@pytest.mark.parametrize(
+    ("tool_mode", "expected"),
+    [("midzhi", "midzhi"), (None, "ordinary"), ("ordinary", "ordinary")],
+)
+def test_propose_appointment_tool_mode_contract(game, tool_mode, expected):
+    """#1731 类B：propose_appointment 省略 mode=沉默→ordinary；显式 midzhi 保留。"""
+    db, state, content = game
+    minister = "毕自严"
+    appointee = f"工具候选模式{expected}{tool_mode}"
+    character = content.characters[minister]
+    propose = _propose_appointment_tool(character, db, state)
+    kwargs = {"name": appointee, "office": "户部尚书", "faction": "中立", "reason": "试"}
+    if tool_mode is not None:
+        kwargs["mode"] = tool_mode
+    marker = propose(**kwargs)
+    assert marker.startswith("__pending_appointment__")
+    body = json.loads(marker.removeprefix("__pending_appointment__"))
+    if tool_mode is None:
+        assert "mode" not in body
+    else:
+        assert body["mode"] == expected
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    pending_id = sess._stage_appointment_candidate(
+        json.dumps(body, ensure_ascii=False), character,
+    )
+    assert pending_id
+    staged = json.loads(
+        next(p for p in db.list_pending_actions(state.turn) if p["id"] == pending_id)[
+            "payload_json"
+        ]
+    )
+    assert staged["mode"] == expected
+
+
+@pytest.mark.parametrize(
+    ("appointee", "seed_modes", "continue_mode", "expected_id_relation", "expected_modes"),
+    [
+        # 沉默续拟：同一 id，保留 midzhi
+        ("续拟沉默", ("midzhi",), None, "same", ("midzhi",)),
+        # 显式 ordinary：同一 id，原地降级
+        ("续拟降级", ("midzhi",), "ordinary", "same", ("ordinary",)),
+        # 多命中：不 INSERT，原行不动（人名须 ≤20，session 截断）
+        ("续拟双命中", ("ordinary", "midzhi"), "ordinary", "zero", ("ordinary", "midzhi")),
+    ],
+)
+def test_propose_appointment_continue_draft_same_direction(
+    game, appointee, seed_modes, continue_mode, expected_id_relation, expected_modes,
+):
+    """#1731 工具续拟：同向命中合并/多命中禁插（单一入口，覆盖沉默·降级·多命中）。"""
+    db, state, content = game
+    minister = "毕自严"
+    office = "户部尚书"
+    character = content.characters[minister]
+    seed_ids = []
+    for mode in seed_modes:
+        seed_ids.append(db.stage_pending_action(
+            state.turn, kind="office", action="任命",
+            minister_name=minister, target_id=None,
+            payload={
+                "name": appointee, "office": office,
+                "appointer": minister, "mode": mode,
+            },
+        ))
+    body = {"name": appointee, "office": office, "reason": "续拟"}
+    if continue_mode is not None:
+        body["mode"] = continue_mode
+    elif expected_id_relation == "same":
+        # 沉默：走真工具省略 mode
+        propose = _propose_appointment_tool(character, db, state)
+        marker = propose(name=appointee, office=office, reason="续拟")
+        body = json.loads(marker.removeprefix("__pending_appointment__"))
+        assert "mode" not in body
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    continued_id = sess._stage_appointment_candidate(
+        json.dumps(body, ensure_ascii=False), character,
+    )
+    rows = [
+        {"id": int(p["id"]), "mode": json.loads(p["payload_json"]).get("mode")}
+        for p in db.list_pending_actions(state.turn)
+        if p["kind"] == "office"
+        and json.loads(p["payload_json"]).get("name") == appointee
+        and json.loads(p["payload_json"]).get("office") == office
+    ]
+    if expected_id_relation == "same":
+        assert continued_id == seed_ids[0]
+        assert rows == [{"id": seed_ids[0], "mode": expected_modes[0]}]
+    else:
+        assert continued_id == 0
+        assert [r["id"] for r in rows] == seed_ids
+        assert [r["mode"] for r in rows] == list(expected_modes)
 
 
 def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monkeypatch):

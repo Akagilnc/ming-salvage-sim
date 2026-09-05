@@ -287,8 +287,7 @@ export function useChatActions({
 
   const undoLastChat = async (targetMinisterName: string) => {
     if (busy || !canUndoLastChat) return;
-    const ok = window.confirm("将撤回最近一轮召对及其政务影响，是否继续？");
-    if (!ok) return;
+    // #1732 B：确认门控移到 ChatModal 就地条；此处直接执行。
     const initiatingPanelName = selectedMinisterRef.current;
     setBusy("撤回召对");
     setError("");

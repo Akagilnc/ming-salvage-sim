@@ -11,7 +11,17 @@ import { BudgetHover, CommandSlot, HUD_BG, HUD_SLOTS, LegacyBar } from "./hud";
 import { GrandMap } from "./map";
 import { SituationPanel } from "./situation";
 import { scoreTone } from "../format";
-import type { GameState, MapNode, ModalName } from "../types";
+import type { GameState, MapNode, Memorial, ModalName } from "../types";
+
+/** #1740 / #1726：未读奏报数唯一规则——优先 numeric unread_memorial_count，否则 filter unread。 */
+export function resolveUnreadMemorialCount(state: {
+  unread_memorial_count?: number;
+  memorials?: Memorial[];
+}): number {
+  return typeof state.unread_memorial_count === "number"
+    ? state.unread_memorial_count
+    : (state.memorials || []).filter((m) => m.unread).length;
+}
 
 // 主界面 HUD：整图底图 + 地图/局势/顶栏五匾/右侧部院导航/底部五命令，全部按坑位绝对定位。
 export function GameHud({
@@ -24,6 +34,7 @@ export function GameHud({
   activeDrawerKey,
   navHandlers,
   secretOrderActiveCount,
+  unreadMemorialCount,
   onOpenModal,
   onClosedFaceAttempt,
   edictOpen = false,
@@ -38,6 +49,8 @@ export function GameHud({
   activeDrawerKey: string;
   navHandlers: Record<string, () => void>;
   secretOrderActiveCount: number;
+  /** 未读奏报数（由主数据流 resolveUnreadMemorialCount 算一次传入）。 */
+  unreadMemorialCount: number;
   onOpenModal: (modal: ModalName) => void;
   /** 关闭组入口被点时的戏内提示（可选）。 */
   onClosedFaceAttempt?: (reason: string) => void;
@@ -76,6 +89,10 @@ export function GameHud({
   const showIssueQuad = showSituation || showClosedIssues;
   const mapSelectable = isFaceReachable("node_intel", settlementDisplay);
   const showWangSlip = wangSettlementSlipVisible(settlementDisplay);
+  // #1726：奏疏 badge/sub = 未读奏报数（与 issues 局势脱钩）；核账期 memorials 只读仍计未读。
+  // 计数规则在 resolveUnreadMemorialCount；此处只保留可达性门控。
+  const memorialsReachable = isFaceReachable("memorials", settlementDisplay);
+  const unreadMemorials = memorialsReachable ? unreadMemorialCount : 0;
 
   return (
     <div className="hud2-stage" ref={stageRef}>
@@ -192,10 +209,10 @@ export function GameHud({
       })}
 
       {/* 底部 5 命令物件（扣图填进木牌） */}
-      {/* 奏疏 badge/sub 同源 situation 谓词：核账期零半程件数，禁平行计数源 */}
+      {/* #1726 奏疏 badge/sub = 未读奏报数（与局势 issues 脱钩） */}
       {/* #1458：台开时安全区整条开洞——其余命令 blocked，只放行拟诏收起 */}
-      <CommandSlot slotKey="奏疏" img="奏疏" badge={showSituation ? state.issues.length : 0}
-        caption="奏疏" sub={showSituation ? `${state.issues.length} 件待览` : "0 件待览"}
+      <CommandSlot slotKey="奏疏" img="奏疏" badge={unreadMemorials}
+        caption="奏疏" sub={`${unreadMemorials} 件待览`}
         blocked={edictOpen}
         onClick={() => gatedModal("memorials", "state")} />
       <CommandSlot slotKey="邸报" img="邸报"

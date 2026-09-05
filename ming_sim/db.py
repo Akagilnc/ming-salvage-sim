@@ -13689,6 +13689,84 @@ class GameDB:
             })
         return out
 
+    # ── #1726 奏疏收件箱（玩家面）──────────────────────────────────────
+    # 两类：dossier_reported_progress（案卷进度）+ faction_denunciations（派系检举）。
+    # 密令私轨不入此面（密令面板另管）。已读键绑具体奏报行，不绑案卷。
+
+    MEMORIAL_READS_KV_KEY = "memorial_reads"
+    MEMORIAL_AUTHOR_FALLBACK = "某臣"
+
+    def _memorial_read_keys(self) -> Set[str]:
+        raw = self.kv_get(self.MEMORIAL_READS_KV_KEY)
+        if not raw:
+            return set()
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return set()
+        if not isinstance(data, list):
+            return set()
+        return {str(item) for item in data if str(item or "").strip()}
+
+    def mark_memorials_read(self, keys: Iterable[str]) -> None:
+        """标记奏报已读；键=progress:{id}|denunciation:{id}，随存档（kv_store）持久化。"""
+        incoming = {str(k).strip() for k in keys if str(k or "").strip()}
+        if not incoming:
+            return
+        merged = sorted(self._memorial_read_keys() | incoming)
+        self.kv_set(self.MEMORIAL_READS_KV_KEY, json.dumps(merged, ensure_ascii=False))
+
+    def list_player_memorials(self) -> List[Dict[str, object]]:
+        """玩家奏疏收件箱：进度奏报 + 派系检举，含未读位；不夹带引擎结构化字段。"""
+        from ming_sim.participant_roster import resolve_dossier_owner_name
+
+        read_keys = self._memorial_read_keys()
+        out: List[Dict[str, object]] = []
+
+        progress_rows = self.conn.execute(
+            """
+            SELECT id, turn, memorial_text, dossier_id
+            FROM dossier_reported_progress
+            ORDER BY turn DESC, id DESC
+            """
+        ).fetchall()
+        # 承办人按案卷解析；同案卷多次奏报共用归属缓存。
+        owner_cache: Dict[int, str] = {}
+        for row in progress_rows:
+            did = int(row["dossier_id"])
+            if did not in owner_cache:
+                dossier = self.get_decree_dossier(did)
+                name = resolve_dossier_owner_name(dossier or {}) if dossier else ""
+                owner_cache[did] = str(name or "").strip() or self.MEMORIAL_AUTHOR_FALLBACK
+            key = f"progress:{int(row['id'])}"
+            out.append({
+                "key": key,
+                "kind": "progress",
+                "turn": int(row["turn"]),
+                "author_name": owner_cache[did],
+                "memorial_text": str(row["memorial_text"] or ""),
+                "unread": key not in read_keys,
+            })
+
+        for row in self.list_faction_denunciations():
+            key = f"denunciation:{int(row['id'])}"
+            out.append({
+                "key": key,
+                "kind": "denunciation",
+                "turn": int(row["turn"]),
+                "author_name": str(row.get("accuser_name") or "").strip()
+                or self.MEMORIAL_AUTHOR_FALLBACK,
+                "memorial_text": str(row.get("memorial_text") or ""),
+                "unread": key not in read_keys,
+            })
+
+        out.sort(key=lambda item: (int(item["turn"]), str(item["key"])), reverse=True)
+        return out
+
+    def unread_memorial_count(self) -> int:
+        """未读奏报数（进度 + 检举）。"""
+        return sum(1 for row in self.list_player_memorials() if row.get("unread"))
+
     def build_faction_denunciation_facts(self) -> Dict[str, object]:
         """#627 供事实：派系恩怨/分叉/处境/个性——注入既有叙事 LLM 步。
 
@@ -17891,13 +17969,17 @@ class GameDB:
         """显式拟旨（前缀「拟旨如下：」/ tool propose_directive）落候选的**单一 seam**（#502 L2，
         CLI 非流式 + web streaming 共用，杜绝双路径漂移）。显式拟旨每次都是**新拟独立一道**：
         该大臣已有 ≥1 道 pending directive 时 INSERT 新候选（不 upsert 压扁前一道）；无候选时
-        走 upsert（首道 INSERT，行为与旧路等价）。返回候选行 id。"""
+        走 upsert（首道 INSERT，行为与旧路等价）。返回候选行 id。
+
+        mode 只接 typed token（midzhi/ordinary/中旨直发/普通）或 None（#1731）：
+        来源为路径内分类器 typed 判断；无 typed 判断时传 None，新旨回退 ordinary。
+        玩家散文不得入此槽。"""
         from ming_sim.cli_backend import resolve_directive_mode
 
         payload = {
             "text": text,
             "actor": minister_name,
-            "mode": resolve_directive_mode(mode, text),
+            "mode": resolve_directive_mode(extracted=mode),
         }
         existing = [
             p for p in self.list_pending_actions(int(turn), minister_name=minister_name)

@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GameHud } from "./gameHud";
+import { GameHud, resolveUnreadMemorialCount } from "./gameHud";
 import { SettlementLock } from "./settlementLock";
 import { MinisterCardList, AppointmentDrawer } from "./drawers";
 import {
@@ -87,11 +87,12 @@ function minister(name = "周延儒"): Minister {
 
 describe("#1236 GameHud face gates eat settlement_display", () => {
   it("核账期：王承恩递话条出现；关闭组导航 aria-disabled；密令角标清零；半程局势藏、上月已结只读可达", () => {
+    const state = makeState(true);
     const host = mount(
       <GameHud
         stageRef={() => {}}
         ready={true}
-        state={makeState(true)}
+        state={state}
         mapNodes={[]}
         mapSelectedId=""
         onSelectMapNode={() => {}}
@@ -101,6 +102,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
           building: () => {}, economy: () => {}, appointment: () => {},
         }}
         secretOrderActiveCount={3}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
       />,
     );
@@ -143,11 +145,12 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
   });
 
   it("非核账：递话条隐藏；关闭组恢复可达；角标恢复", () => {
+    const state = makeState(false);
     const host = mount(
       <GameHud
         stageRef={() => {}}
         ready={true}
-        state={makeState(false)}
+        state={state}
         mapNodes={[]}
         mapSelectedId=""
         onSelectMapNode={() => {}}
@@ -157,6 +160,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
           building: () => {}, economy: () => {}, appointment: () => {},
         }}
         secretOrderActiveCount={3}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
       />,
     );
@@ -172,11 +176,12 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
 
   it("关闭组点击触发戏内理由回调", () => {
     const attempts: string[] = [];
+    const state = makeState(true);
     const host = mount(
       <GameHud
         stageRef={() => {}}
         ready={true}
-        state={makeState(true)}
+        state={state}
         mapNodes={[]}
         mapSelectedId=""
         onSelectMapNode={() => {}}
@@ -186,6 +191,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
           building: () => {}, economy: () => {}, appointment: () => {},
         }}
         secretOrderActiveCount={0}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
         onClosedFaceAttempt={(r) => attempts.push(r)}
       />,
@@ -197,11 +203,12 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
 
   it("#1323 awaiting_decision：递话/角标文案为有本待批；锁面机制仍关", () => {
     const attempts: string[] = [];
+    const state = makeState(true, {}, "awaiting_decision");
     const host = mount(
       <GameHud
         stageRef={() => {}}
         ready={true}
-        state={makeState(true, {}, "awaiting_decision")}
+        state={state}
         mapNodes={[]}
         mapSelectedId=""
         onSelectMapNode={() => {}}
@@ -211,6 +218,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
           building: () => {}, economy: () => {}, appointment: () => {},
         }}
         secretOrderActiveCount={0}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
         onClosedFaceAttempt={(r) => attempts.push(r)}
       />,
@@ -328,18 +336,26 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     const opened: string[] = [];
     const navCalls: string[] = [];
     const closed: string[] = [];
+    const state = opts.state ?? makeState(false, {
+      // 局势仍可有 3 条，但奏疏计数须与之脱钩（#1726）
+      issues: [
+        { id: 1, kind: "situation", title: "户部亏空", status: "open", progress: 10, fail_condition: "" } as never,
+        { id: 2, kind: "situation", title: "辽东索饷", status: "open", progress: 10, fail_condition: "" } as never,
+        { id: 3, kind: "situation", title: "陕西流寇起", status: "open", progress: 10, fail_condition: "" } as never,
+      ],
+      memorials: [
+        { key: "progress:1", kind: "progress", turn: 1, author_name: "杨嗣昌", memorial_text: "拨银进度一", unread: true },
+        { key: "progress:2", kind: "progress", turn: 1, author_name: "杨嗣昌", memorial_text: "拨银进度二", unread: true },
+        { key: "denunciation:1", kind: "denunciation", turn: 1, author_name: "某给事", memorial_text: "检举正文", unread: true },
+      ],
+      unread_memorial_count: 3,
+      events: [],
+    });
     const host = mount(
       <GameHud
         stageRef={() => {}}
         ready={true}
-        state={opts.state ?? makeState(false, {
-          issues: [
-            { id: 1, kind: "situation", title: "户部亏空", status: "open", progress: 10, fail_condition: "" } as never,
-            { id: 2, kind: "situation", title: "辽东索饷", status: "open", progress: 10, fail_condition: "" } as never,
-            { id: 3, kind: "situation", title: "陕西流寇起", status: "open", progress: 10, fail_condition: "" } as never,
-          ],
-          events: [],
-        })}
+        state={state}
         mapNodes={[]}
         mapSelectedId=""
         onSelectMapNode={() => {}}
@@ -354,6 +370,7 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
           appointment: () => navCalls.push("appointment"),
         }}
         secretOrderActiveCount={0}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
         edictOpen={opts.edictOpen}
         onCloseEdict={() => {
           closed.push("edict");
@@ -399,18 +416,24 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     expect(navCalls).toEqual(["court"]);
   });
 
-  it("#1285 奏疏 badge/副文接 issues；木牌 gatedModal face=memorials 打开 state 槽", () => {
+  it("#1726 奏疏 badge/副文接未读奏报数；与局势 issues 脱钩；木牌打开 state 槽", () => {
     const { host, opened } = mountHud();
     const memorial = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
       (b.getAttribute("aria-label") || "").startsWith("奏疏"),
     );
     expect(memorial).toBeTruthy();
     expect(memorial?.textContent).toMatch(/3\s*件待览/);
-    // badge 挂在木牌按钮上（events=[] 时仍应显示 issues 数；禁平行 badge 源）
     const badge = host.querySelector(".hud2-cmd-badge");
     expect(badge?.textContent).toBe("3");
+    // 零未读时不得借 issues 条数充数
+    const { host: hostZero } = mountHud({
+      state: makeState(false, { issues: makeState(false).issues, memorials: [], unread_memorial_count: 0 }),
+    });
+    const zeroCap = Array.from(hostZero.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("奏疏"),
+    );
+    expect(zeroCap?.textContent).toMatch(/0\s*件待览/);
     act(() => { memorial?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    // ModalName 仍用 state 槽承载奏疏面（main 以 memorials 面键门控）
     expect(opened).toEqual(["state"]);
   });
 
@@ -476,5 +499,45 @@ describe("#1236 SettlementLock 装饰层自身契约", () => {
     expect(decor).not.toBeNull();
     expect(decor?.getAttribute("aria-modal")).toBeNull();
     expect(decor?.getAttribute("role")).toBe("status");
+  });
+});
+
+describe("#1725 SettlementLock 中心进度呈现", () => {
+  it("六阶 stage 驱动 typed progressbar（current/total），阶段名可见", () => {
+    const host = mount(
+      <SettlementLock stage="推演月末邸报" thinking="" narrative="" />,
+    );
+    const decor = host.querySelector("[data-testid=settlement-lock-decor]");
+    expect(decor).not.toBeNull();
+    expect(decor?.textContent || "").toContain("推演月末邸报");
+
+    const bar = host.querySelector("[data-testid=settlement-wait-progress]");
+    expect(bar).not.toBeNull();
+    expect(bar?.getAttribute("role")).toBe("progressbar");
+    expect(bar?.getAttribute("aria-valuenow")).toBe("3");
+    expect(bar?.getAttribute("aria-valuemax")).toBe("6");
+    expect(bar?.getAttribute("aria-valuemin")).toBe("0");
+    // 玩家侧不见内部枚举／字段名
+    expect(decor?.textContent || "").not.toMatch(/SETTLEMENT_WAIT|stageIndex|progress_current/);
+  });
+
+  it("空 stage 无流式仍呈档房摘录 chrome，无 progressbar", () => {
+    const host = mount(
+      <SettlementLock stage="" thinking="" narrative="" />,
+    );
+    const decor = host.querySelector("[data-testid=settlement-lock-decor]");
+    expect(decor).not.toBeNull();
+    expect(decor?.textContent || "").toContain("档房摘录正在呈递。");
+    expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
+  });
+
+  it("非冻结六阶标签不伪造进度刻度", () => {
+    const host = mount(
+      <SettlementLock stage="圣意亲裁，续推时局" thinking="" narrative="" />,
+    );
+    expect(host.querySelector("[data-testid=settlement-wait-progress]")).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")?.textContent || "").toContain(
+      "圣意亲裁，续推时局",
+    );
   });
 });
