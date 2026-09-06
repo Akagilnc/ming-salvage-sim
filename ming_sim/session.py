@@ -3125,11 +3125,15 @@ class GameSession:
     ) -> None:
         """#1769 结算路 B：产物错 draft 把失败事实与原产物告诉 LLM 重交 payload。
 
-        票面不授权补交次数；此处对每道失败旨各重交一次。LLM/投影失败视为该旨耗尽，
-        不中止整月（耗尽终态=原旨留到下月）。真 ensure 代码故障不经此路。
+        票面不授权补交次数；此处对每道失败旨各重交一次。产物错 ValueError 视为该旨
+        耗尽（原旨留到下月）；其它异常走错误包 + SettlementAbort（0005/0008）。
+        独立失败旨并行调 LLM（P5，复用 ThreadPoolExecutor；DB 写仍串行）。
         """
         from ming_sim.cli_backend import resubmit_draft_admission_payload
+        from ming_sim.error_pack import settlement_abort_message, write_error_pack
+        from ming_sim.exceptions import SettlementAbort
 
+        jobs: List[Dict[str, object]] = []
         for item in rejections or []:
             try:
                 did = int(item.get("directive_id"))
@@ -3137,39 +3141,94 @@ class GameSession:
                 continue
             if self.db.get_dossier_for_directive(did) is not None:
                 continue
-            row = self.db.conn.execute(
-                "SELECT id, text, status, dossier_payload_json FROM turn_directives "
-                "WHERE id=? AND status='draft'",
-                (did,),
-            ).fetchone()
-            if row is None:
+            row = self.db.get_directive(did)
+            if row is None or str(row["status"] or "") != "draft":
                 continue
             try:
                 bad_payload = self.db.read_directive_dossier_payload(row)
             except ValueError:
                 continue
-            reason = str(item.get("reason") or "")
+            jobs.append({
+                "directive_id": did,
+                "text": str(row["text"] or ""),
+                "bad_payload": bad_payload,
+                "reason": str(item.get("reason") or ""),
+                "existing_mode": bad_payload.get("mode"),
+            })
+        if not jobs:
+            return
+
+        llm_config = getattr(self, "llm_config", None)
+        content = getattr(self, "content", None)
+
+        def _llm_one(job: Dict[str, object]) -> Tuple[Dict[str, object], Optional[Dict[str, object]], Optional[BaseException]]:
             try:
-                new_payload = resubmit_draft_admission_payload(
-                    str(row["text"] or ""),
-                    bad_payload=bad_payload,
-                    failure_reason=reason,
-                    llm_config=getattr(self, "llm_config", None),
+                payload = resubmit_draft_admission_payload(
+                    str(job["text"]),
+                    bad_payload=job["bad_payload"],  # type: ignore[arg-type]
+                    failure_reason=str(job["reason"] or ""),
+                    llm_config=llm_config,
                     db=self.db,
-                    content=getattr(self, "content", None),
-                    existing_mode=bad_payload.get("mode"),
+                    content=content,
+                    existing_mode=job.get("existing_mode"),
                 )
+                return job, payload, None
+            except BaseException as exc:  # noqa: BLE001 — 分类在汇合处
+                return job, None, exc
+
+        # P5：批内独立失败旨并行 LLM；单条不建 pool。
+        if len(jobs) > 1:
+            workers = len(jobs)
+            with ThreadPoolExecutor(
+                max_workers=workers, thread_name_prefix="draft-admission-resubmit",
+            ) as pool:
+                outcomes = list(pool.map(_llm_one, jobs))
+        else:
+            outcomes = [_llm_one(jobs[0])]
+
+        # DB 相串行：产物 ValueError 耗尽该旨；其它异常错误包中止整月。
+        for job, new_payload, exc in outcomes:
+            did = int(job["directive_id"])
+            if exc is not None:
+                if isinstance(exc, ValueError):
+                    logger.warning(
+                        "[1769] draft#%s admission resubmit product exhaust: %s",
+                        did, exc,
+                    )
+                    continue
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="directive_admission_resubmit",
+                    error_pack_path=pack_path,
+                ) from exc
+            assert new_payload is not None
+            try:
                 self.db.update_directive_text(
                     did,
-                    str(row["text"] or ""),
+                    str(job["text"] or ""),
                     dossier_payload=new_payload,
                     replace_payload=True,
                 )
-            except Exception as exc:
-                # 补交侧失败 = 该旨耗尽，保留原 draft 与既有拒因；不挡月份。
+            except ValueError as write_exc:
                 logger.warning(
-                    "[1769] draft#%s admission resubmit exhausted: %s", did, exc,
+                    "[1769] draft#%s admission resubmit product exhaust: %s",
+                    did, write_exc,
                 )
+            except Exception as write_exc:
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=write_exc,
+                    extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="directive_admission_resubmit",
+                    error_pack_path=pack_path,
+                ) from write_exc
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None,
@@ -3294,7 +3353,10 @@ class GameSession:
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
         # #1769：产物错 → 告诉 LLM 失败事实与原产物后重交；耗尽保持 draft、月照过
         # （替代 #1591「产物错即整月不推进 + 引擎串透传」；真故障仍 SettlementAbort）。
-        dossier_rejections = self.db.ensure_dossiers_for_draft_directives(self.state)
+        # 首轮 ensure 只探测产物错供补交，不落 rejection（拒只在耗尽终态落痕）。
+        dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
+            self.state, record_rejections=False,
+        )
         if dossier_rejections:
             self._resubmit_draft_admission_failures(dossier_rejections)
             dossier_rejections = self.db.ensure_dossiers_for_draft_directives(self.state)

@@ -1075,6 +1075,29 @@ def _record_settlement_narrative_sources(
     )
 
 
+def draft_directives_llm_feed(
+    directives: Sequence[Any],
+    *,
+    current_turn: int,
+) -> List[Dict[str, object]]:
+    """#1769 拟诏/下月开桌输入侧供料：跨月未成案 draft 标「上月未入档」。
+
+    不新建通知通道（owner 御批复用既有召对 A 路）；只把结构化事实交给 LLM。
+    """
+    feed: List[Dict[str, object]] = []
+    cur = int(current_turn)
+    for row in directives or []:
+        item: Dict[str, object] = {"text": str(row["text"] or "")}
+        try:
+            src_turn = int(row["turn"])
+        except (TypeError, ValueError, KeyError):
+            src_turn = cur
+        if src_turn < cur:
+            item["admission_status"] = "上月未入档"
+        feed.append(item)
+    return feed
+
+
 def write_decree_with_agno(
     llm_config: LLMConfig,
     agno_db: SqliteDb,
@@ -1098,12 +1121,7 @@ def write_decree_with_agno(
             closed_evidence = []
     payload = {
         "turn": {"year": state.year, "period": state.period, "turn": state.turn},
-        "directives": [
-            {
-                "text": row["text"],
-            }
-            for row in directives
-        ],
+        "directives": draft_directives_llm_feed(directives, current_turn=int(state.turn)),
         "closed_secret_orders": closed_evidence,
         "instruction": "合并成一份正式诏书正文。closed_secret_orders 是已办结密令查得的实证，"
                        "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
