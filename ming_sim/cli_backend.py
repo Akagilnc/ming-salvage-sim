@@ -1989,6 +1989,7 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
     """把既有 canonical 地区/科目词表与结算时点直接教授抽取器；不建立第二映射。
 
     #1769：欠科目词表进输入侧结构契约（ADR0143/P6）；不在引擎侧改写 LLM 输出。
+    科目闭集唯一真源 = pay_order.DUE_SUBJECTS / ARREARS_SUBJECTS。
     """
     from ming_sim.pay_order import ARREARS_SUBJECTS, DUE_SUBJECTS
 
@@ -2009,26 +2010,16 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
                 f"当前结算时点：turn={int(state['turn'])}，"
                 f"{int(state['year'])}年{int(state['period'])}月。\n"
             )
-    subject_contract = (
-        f"due_priority 科目∈{'/'.join(DUE_SUBJECTS)}；"
-        f"arrears_priority 欠科目∈{'/'.join(ARREARS_SUBJECTS)}"
-        f"（须完整欠科目名，禁把裸「军饷」当欠科目）；"
-        f"due_haircut_bp 科目∈{'/'.join(DUE_SUBJECTS)}。\n"
-    )
-    if not lines and not timing:
-        # 无地区/时点时仍给出科目词表（手工拟旨常见）。
-        return (
-            "【pay_order_override 接地事实】\n"
-            + subject_contract
-            + "priority 数字越小越先；默认军饷/官俸/宗禄/赈济=10/20/30/40，"
-              "并列按该默认次序稳定排列。相对期限只填 duration_months=N，"
-              "不要自行计算 until_turn；该动作 entries 必须非空。\n"
-        )
+    head = "【pay_order_override 接地事实】"
+    if lines:
+        head += "地区只能直接使用下列 canonical id，禁别名/自造：\n" + "、".join(lines) + "\n"
+    else:
+        head += "\n"
     return (
-        "【pay_order_override 接地事实】地区只能直接使用下列 canonical id，禁别名/自造：\n"
-        + ("、".join(lines) + "\n" if lines else "")
-        + timing
-        + subject_contract
+        head + timing
+        + f"due_priority 科目∈{'/'.join(DUE_SUBJECTS)}；"
+          f"arrears_priority 欠科目∈{'/'.join(ARREARS_SUBJECTS)}；"
+          f"due_haircut_bp 科目∈{'/'.join(DUE_SUBJECTS)}。\n"
         + "priority 数字越小越先；默认军饷/官俸/宗禄/赈济=10/20/30/40，"
           "并列按该默认次序稳定排列。相对期限只填 duration_months=N，"
           "不要自行计算 until_turn；该动作 entries 必须非空。\n"
@@ -2696,6 +2687,9 @@ def extract_draft_intent(
     ).strip()
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
         bool(_existing_draft_text) or bool(_candidates))
+    from ming_sim.pay_order import ARREARS_SUBJECTS, DUE_SUBJECTS
+    _due_subjects = "|".join(DUE_SUBJECTS)
+    _arrears_subjects = "|".join(ARREARS_SUBJECTS)
     intent_schema_line = (
         '  "拟旨意图": "无|拟旨",\n'
         '  "动作类型": "policy|approve_reject|assignment|'
@@ -2705,9 +2699,10 @@ def extract_draft_intent(
         'pay_order_override",\n'
         '  "entries": [],              // 仅 pay_order_override：偿还序/折发调整清单，\n'
         '                             // 形如 [{"key":"due_haircut_bp_宗禄","value":5000,"duration_months":3}]；\n'
-        '                             // key∈due_priority_<科目=军饷|官俸|宗禄|赈济>[@省]|'
-        'arrears_priority_<欠科目=军饷欠|官俸欠|宗禄欠>[@省]|'
-        'due_haircut_bp_<科目>[@省][#province|#central]；haircut 值=万分数(0,10000]；非该动作留 []\n'
+        f'                             // key∈due_priority_<科目={_due_subjects}>[@省]|'
+        f'arrears_priority_<欠科目={_arrears_subjects}>[@省]|'
+        'due_haircut_bp_<科目>[@省][#province|#central]；'
+        'haircut 值=万分数(0,10000]；非该动作留 []\n'
         + grant_fields_prompt
         + '  "目标类型": "",\n'
         '  "目标ID": "",\n'
@@ -3059,10 +3054,11 @@ def build_draft_admission_resubmit_feedback(
     failure_reason: str,
     bad_payload: Mapping[str, Any],
     decree_text: str = "",
-    content: Any = None,
-    db: Any = None,
 ) -> str:
-    """#1769 成案拒收补交回喂：告诉 LLM 失败事实与原产物（0150 D5-b），不由代码写话。"""
+    """#1769 成案拒收补交回喂：只告诉 LLM 失败事实与原产物（0150 D5-b）。
+
+    结构契约/科目词表已由 extract_draft_intent 主 prompt 注入，不在 correction 再写一份。
+    """
     payload_json = json.dumps(dict(bad_payload or {}), ensure_ascii=False, sort_keys=True)
     reason = str(failure_reason or "").strip() or "（未给出具体拒因）"
     text = str(decree_text or "").strip()
@@ -3073,12 +3069,6 @@ def build_draft_admission_resubmit_feedback(
     ]
     if text:
         parts.append(f"原旨正文（不得改写）：{text}\n")
-    facts = _pay_order_grounding_facts(content, db)
-    if facts:
-        parts.append(facts)
-    from ming_sim.structured_decree import structured_decree_prompt_contract
-    parts.append(structured_decree_prompt_contract())
-    parts.append("\n")
     return "".join(parts)
 
 
@@ -3188,8 +3178,6 @@ def resubmit_draft_admission_payload(
         failure_reason=failure_reason,
         bad_payload=bad_payload,
         decree_text=text,
-        content=content,
-        db=db,
     )
     prompt = f"请据此拟旨，并从以下已成旨文抽取结构，不得改写：\n{text}"
     captured = extract_draft_intent_with_roster_heal(
