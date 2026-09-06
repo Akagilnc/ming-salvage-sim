@@ -58,6 +58,14 @@ const cmdByCaption = (host: HTMLElement, caption: string) =>
 const edictCommand = (host: HTMLElement) => cmdByCaption(host, "拟诏");
 const findButton = (host: HTMLElement, text: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes(text));
+/** #1764：有名 section/region——可访问名来自 aria-labelledby → 可见 h3 铬字。 */
+const findNamedZone = (host: HTMLElement, name: string): HTMLElement | null =>
+  Array.from(host.querySelectorAll("section")).find((section) => {
+    const labelledBy = section.getAttribute("aria-labelledby");
+    if (!labelledBy) return false;
+    const label = section.ownerDocument.getElementById(labelledBy);
+    return (label?.textContent || "").trim() === name;
+  }) ?? null;
 
 // #671：根因——createRoot 后只清 innerHTML 不 unmount，孤儿树 effect/定时器串测致全套件时序 flake。
 const mountedRoots: Array<{ root: Root; host: HTMLElement }> = [];
@@ -2501,9 +2509,9 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     const failed = host.querySelector('[data-directive-phase="failed"]');
     expect(failed?.querySelector('[data-role="local-error"]')?.textContent).toBe("structured-fail-token");
-    // 失败可感知：aria-invalid + 关联原始错误；不锁状态措辞。
+    // 失败可感知：原始 role=alert + describedby 关联；非 busy、非 aria-invalid（API 失败≠输入校验）。
     expect(failed?.getAttribute("aria-busy")).not.toBe("true");
-    expect(failed?.getAttribute("aria-invalid")).toBe("true");
+    expect(failed?.getAttribute("aria-invalid")).not.toBe("true");
     const failErr = failed?.querySelector('[data-role="local-error"][role="alert"]');
     expect(failErr?.getAttribute("id")).toBeTruthy();
     expect(failed?.getAttribute("aria-describedby") || "").toContain(failErr!.getAttribute("id")!);
@@ -2640,8 +2648,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => {
         const card = host.querySelector('[data-directive-id="9"]');
         expect(card?.getAttribute("data-directive-phase")).toBe("failed");
-        expect(card?.getAttribute("aria-invalid")).toBe("true");
-        expect(card?.querySelector('[data-role="local-error"]')?.textContent).toBe("save-fail-token");
+        expect(card?.getAttribute("aria-invalid")).not.toBe("true");
+        expect(card?.querySelector('[data-role="local-error"][role="alert"]')?.textContent).toBe("save-fail-token");
       });
     });
     const editAfterSaveFail = host.querySelector<HTMLTextAreaElement>(".directive-edit textarea");
@@ -2736,7 +2744,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="failed"]')).not.toBeNull());
     });
     const localFailed = host.querySelector('[data-directive-phase="failed"]');
-    expect(localFailed?.getAttribute("aria-invalid")).toBe("true");
+    expect(localFailed?.getAttribute("aria-invalid")).not.toBe("true");
     expect(localFailed?.querySelector('[data-role="local-error"][role="alert"]')?.textContent).toBe("local-fail-blocks-not");
     // 本地失败卡在桌，deskCount>0，但恢复入口仍以失败谓词可达
     const processBtn = Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes("处理"));
@@ -2983,7 +2991,11 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     stubSettlementFetch({
       ...settlementBaseState("player"),
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
-      directives: [],
+      // 同时有草案 + 成案：一次断言两区铬字名与归属不混。
+      directives: [{
+        id: 9, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "",
+        text: "草稿边饷", source: "手动新增", status: "draft", notes: "", authority: "",
+      }],
       cased_directives: [{
         id: 42, dossier_id: 7, text: "着户部核边饷",
         source: "大臣拟旨", actor: "毕自严", notes: "", dossier_status: "proposed",
@@ -3004,14 +3016,23 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(card?.getAttribute("data-directive-id")).toBe("42");
     expect(card?.getAttribute("data-source")).toBe("大臣拟旨");
     expect(card?.getAttribute("data-actor")).toBe("毕自严");
-    // 成案只读：无改删控件；非 busy/invalid；正文可被 aria-describedby 关联——不靠色/空 chip/data-* alone。
+    // 两区可访问名（可见 h3 铬字经 labelledby）+ 卡归属；不以 describedby/chip/tagName 作成案判据。
+    const draftZone = findNamedZone(host, "草稿");
+    const issuedZone = findNamedZone(host, "已发的旨意");
+    expect(draftZone).not.toBeNull();
+    expect(issuedZone).not.toBeNull();
+    expect(issuedZone!.contains(card!)).toBe(true);
+    expect(draftZone!.contains(card!)).toBe(false);
+    const draftCard = host.querySelector('[data-directive-phase="draft"][data-directive-id="9"]');
+    expect(draftCard).not.toBeNull();
+    expect(draftZone!.contains(draftCard!)).toBe(true);
+    expect(issuedZone!.contains(draftCard!)).toBe(false);
+    // 已发只读：无改删；非 busy/invalid；无卡级 alert；正文原文在；footer 可点（hasCased）。
     expect(card?.querySelector(".directive-tools")).toBeNull();
     expect(card?.getAttribute("aria-busy")).not.toBe("true");
     expect(card?.getAttribute("aria-invalid")).not.toBe("true");
-    const casedDesc = card?.getAttribute("aria-describedby") || "";
-    expect(casedDesc.length).toBeGreaterThan(0);
-    expect(host.querySelector(`#${casedDesc.split(" ")[0]}`)?.textContent || "").toContain("着户部核边饷");
-    expect(card?.querySelector('[data-role="phase-chip"]')?.getAttribute("aria-hidden")).toBe("true");
+    expect(card?.querySelector('[role="alert"]')).toBeNull();
+    expect(card?.textContent || "").toContain("着户部核边饷");
     const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
     expect(footer?.disabled).toBe(false);
   });

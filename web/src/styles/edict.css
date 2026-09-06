@@ -73,10 +73,26 @@
 .directive-list {
   display: grid;
   align-content: start;
-  gap: 9px;
+  gap: 12px;
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
+}
+
+/* #1764：草稿 / 已发的旨意 两区（可见栏名 + labelledby region） */
+.edict-zone-draft,
+.edict-zone-issued {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+}
+.edict-zone-draft > h3,
+.edict-zone-issued > h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  letter-spacing: 0.06em;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  color: #5a4020;
 }
 
 /* 笺纸卡：淡黄、左侧装订暗纹 */
@@ -136,11 +152,6 @@
   color: #8a5a12;
   background: rgba(183, 133, 44, 0.16);
   border-color: rgba(183, 133, 44, 0.4);
-}
-.directive-phase-chip[data-phase="cased"] {
-  color: #2f5a2c;
-  background: rgba(61, 107, 58, 0.14);
-  border-color: rgba(61, 107, 58, 0.35);
 }
 .directive-phase-chip[data-phase="failed"] {
   color: #82291f;
