@@ -6874,7 +6874,20 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                 ev_queue.put(("__error__", payload))
         except Exception as e:  # noqa: BLE001
             # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
-            message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
+            # #1465 ②：SettlementAbort 若 cause 为 LLMUnavailable，合并 _llm_error_detail
+            # typed 键（status_code/code/transport_attempts）——保真 #1750 上游码，不改 abort 文案。
+            if isinstance(e, LLMUnavailable):
+                message: Any = _llm_error_detail(e)
+            elif isinstance(e, SettlementAbort) and isinstance(e.__cause__, LLMUnavailable):
+                detail = _llm_error_detail(e.__cause__)
+                message = {
+                    **detail,
+                    "message": str(e),
+                    "error_pack_path": getattr(e, "error_pack_path", None) or "",
+                    "stage": getattr(e, "stage", "") or "",
+                }
+            else:
+                message = str(e)
             ev_queue.put((
                 "__error__",
                 {"message": message, "pending_action_failures": failure_snapshot}
