@@ -417,13 +417,12 @@ class _CliProcessOutcome:
     stderr: str = ""
 
 
-def _cli_idle_seconds(idle_timeout_seconds: Optional[float] = None) -> float:
-    """CLI 子进程静默预算：显式入参优先，否则取 transport 策略 idle（单真源）。
+def _cli_idle_seconds() -> float:
+    """CLI 子进程静默预算：只认 transport 策略 idle（与召对同一权威）。
 
-    这是「多久没有新字节才判死」，**不是** attempt 总墙钟：持续出字就一直读。
+    ADR 0001 的 cli_timeout_seconds 槽位仍保留，但不得接到空转轴（旧 300s 墙钟数
+    不是 idle）。这是「多久没有新字节才判死」，不是 attempt 总墙钟。
     """
-    if idle_timeout_seconds:
-        return float(idle_timeout_seconds)
     from ming_sim.llm_transport import resolve_transport_policy
 
     return float(resolve_transport_policy().idle_timeout_seconds)
@@ -448,7 +447,6 @@ def _iter_cli_process_lines(
     stdin_text: Optional[str] = None,
     env: Optional[Dict[str, str]] = None,
     cwd: Optional[str] = None,
-    idle_timeout_seconds: Optional[float] = None,
     clock: Optional[Callable[[], float]] = None,
     outcome: Optional[_CliProcessOutcome] = None,
 ) -> Iterator[str]:
@@ -456,6 +454,7 @@ def _iter_cli_process_lines(
 
     - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）
       并 kill 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
+    - idle 只认 transport 策略（`_cli_idle_seconds`），不接 cli_timeout_seconds。
     - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
     - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
@@ -464,7 +463,7 @@ def _iter_cli_process_lines(
     from ming_sim.llm_transport import TransportPolicy, check_idle_budget
 
     policy = TransportPolicy(
-        idle_timeout_seconds=_cli_idle_seconds(idle_timeout_seconds),
+        idle_timeout_seconds=_cli_idle_seconds(),
     )
     tick = clock or _cli_process_clock
     result = outcome if outcome is not None else _CliProcessOutcome()
@@ -717,7 +716,7 @@ def _iter_cli_runner_text(
     - agy auth race → llm_connection_error（可重试；已知瞬断实证）
     - 未知非零退出 → RuntimeError（确定性失败，一次不重试；禁从 stderr 散文抠状态）
 
-    timeout：本次子进程的静默预算（idle），缺省取 transport 策略；不是总墙钟。
+    静默预算只认 transport 策略 idle，不吃 timeout/cli_timeout_seconds（槽位保留、不接空转轴）。
     """
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
@@ -733,7 +732,7 @@ def _iter_cli_runner_text(
     final_text = ""
     for line in _iter_cli_process_lines(
         cmd, stdin_text=stdin_text, env=env,
-        idle_timeout_seconds=timeout, clock=clock, outcome=outcome,
+        clock=clock, outcome=outcome,
     ):
         if json_events:
             stripped = line.strip()
@@ -962,11 +961,11 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
     def _one_call() -> str:
         if parts is None:
             return _run_backend(prompt)[0]
-        runner, model, timeout, reasoning_strength = parts
+        runner, model, _slot_timeout, reasoning_strength = parts
+        del _slot_timeout  # ADR 0001 槽保留；空转不接 cli_timeout_seconds
         return _dispatch_cli_runner(
             runner, prompt,
             model=model or None,
-            timeout=timeout,
             reasoning_strength=reasoning_strength or None,
         )[0]
 
