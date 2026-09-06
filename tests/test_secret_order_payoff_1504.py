@@ -2083,28 +2083,6 @@ def _secret_landing_backend(raw_for_extract):
     return backend
 
 
-def _pending_action_replay_routes():
-    """已注册的 pending-action 重放路由（应为空：重放入口已删）。"""
-    import web_app
-
-    return [
-        str(getattr(route, "path", ""))
-        for route in web_app.app.routes
-        if str(getattr(route, "path", "")).startswith("/api/pending_actions")
-        and str(getattr(route, "path", "")).endswith("/retry")
-    ]
-
-
-def _assert_no_payload_replay_endpoint(client):
-    """重放旧 payload 的 HTTP 入口既未注册，也不会有任何请求被它受理。
-
-    具体状态码随 SPA 静态挂载与否在 404/405 间浮动——只钉「不受理」，不钉码。
-    """
-    assert _pending_action_replay_routes() == [], "重放路由须已删除"
-    replay = client.post("/api/pending_actions/1/retry")
-    assert replay.status_code >= 400, replay.text
-
-
 def _secret_landing_rejection_items(db):
     rows = db.conn.execute(
         "SELECT category, item_json FROM rejection_reports WHERE section=?",
@@ -2116,13 +2094,67 @@ def _secret_landing_rejection_items(db):
     ]
 
 
+def test_http_retry_landable_failed_pending_does_not_commit_secret_order(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
+    """#1765 ②验收4：旧重放在 failed+可落库 payload 上会写成密令；现实 Web POST retry 不落库。
+
+    状态=已暂存 failed 且 payload 可落库（装回 retry_failed_pending_action 会 committed+secret_order）。
+    入口=POST /api/pending_actions/{id}/retry。不锁状态码、不扫路由表。
+    """
+    from fastapi.testclient import TestClient
+
+    import web_app
+    from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK
+
+    game, name, _stream, wait_pending_writes = _web_secret_landing_client(
+        tmp_path, monkeypatch, _secret_landing_backend(lambda: ""),
+    )
+    client = TestClient(web_app.app)
+    try:
+        pending_id = game.db.stage_pending_action(
+            game.state.turn, kind="secret_order", action="新建",
+            minister_name=name, target_id=None,
+            payload={
+                "title": "暗查辽饷",
+                "content": "密查辽饷去向",
+                "assignee": name,
+                "tags": ["辽饷"],
+                "deadline_months": 0,
+                "covert_task": LIAO_PAY_COVERT_TASK,
+            },
+        )
+        game.db.conn.execute(
+            "UPDATE pending_actions SET status='failed' WHERE id=?",
+            (pending_id,),
+        )
+        game.db.conn.commit()
+        assert game.db.list_secret_orders() == []
+
+        resp = client.post(f"/api/pending_actions/{pending_id}/retry")
+        wait_pending_writes(game)
+
+        assert game.db.list_secret_orders() == []
+        ctype = (resp.headers.get("content-type") or "").split(";")[0].strip()
+        if ctype == "application/json":
+            body = resp.json()
+            retry = body.get("retry") if isinstance(body, dict) else None
+            assert not (isinstance(retry, dict) and retry.get("committed"))
+        failed = game.db.list_pending_actions(game.state.turn, status="failed")
+        assert any(int(row["id"]) == int(pending_id) for row in failed)
+    finally:
+        wait_pending_writes(game)
+        if game.session:
+            game.session.close()
+
+
 @pytest.mark.parametrize(
     "kind", ["non_json", "missing_anchor", "empty_contract"],
 )
 def test_http_chat_stream_secret_landing_recovery_entry_never_replays_payload(
     tmp_path, monkeypatch, _offline_scene_beat_generator, kind,
 ):
-    """#1765 ②验收4：落不了库 → 原地恢复入口=继续本夜召对，且无坏 payload 重放入口。
+    """#1765 ②验收4：落不了库 → 继续本夜召对恢复；compose 供料 + 重开读回。
 
     三种来源（非 JSON / 缺锚 / 空合同）参数化为同一行为，不按种类分测试。
     """
@@ -2149,13 +2181,6 @@ def test_http_chat_stream_secret_landing_recovery_entry_never_replays_payload(
             for c in recovery_calls
         ), "恢复入口须把皇帝原话/缺口/原产出实际喂进后续 LLM 输入"
         wait_pending_writes(game)
-
-        # 重放坏 payload 的入口已不存在：既无 DB 重放法，也无 HTTP 重放路由。
-        assert not hasattr(game.db, "retry_failed_pending_action"), (
-            "payload 重放法须随入口一并删除"
-        )
-        assert not hasattr(game.db, "retire_chat_turn_for_pending_action_retry")
-        _assert_no_payload_replay_endpoint(client)
 
         # 重开页面读回：真实 reload HTTP 与 stream done 结构一致。
         history_resp = client.get(f"/api/ministers/{name}/chat")
@@ -2200,7 +2225,7 @@ def test_http_chat_stream_secret_landing_recovery_entry_never_replays_payload(
 def test_http_chat_stream_secret_landing_undo_round_leaves_nothing_to_resurrect(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """#1765 ②验收4：撤回本轮后不复活——无密令、无候选、无重放入口（0038）。"""
+    """#1765 ②验收4：撤回本轮后不复活——无密令、无候选、该轮回禀不再读回（0038）。"""
     from fastapi.testclient import TestClient
 
     import web_app
@@ -2239,8 +2264,6 @@ def test_http_chat_stream_secret_landing_undo_round_leaves_nothing_to_resurrect(
             row for row in game.db.list_pending_actions(game.state.turn)
             if row.get("kind") == "secret_order"
         ] == []
-        # 撤回后没有任何「重放旧 payload」的活路可用来复活这道密令。
-        _assert_no_payload_replay_endpoint(client)
         assert (client.get("/api/secret_orders").json() or {}).get("orders") == []
         # 失败事实仍留痕（0005 与 0038 不冲突：撤的是效果，不是诊断账）。
         assert _secret_landing_rejection_items(game.db)

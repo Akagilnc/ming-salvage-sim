@@ -32,7 +32,7 @@ import ming_sim.issues as issues
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle, reload_state_from_db, settle_with_delta
 from ming_sim.registry import MinisterRegistry
-from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
+from ming_sim.session import GameSession, TurnPhase
 from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK, create_test_secret_order, promulgate_proposed_appointments
 from tests.conftest import covering_monthly_extract
 
@@ -1582,19 +1582,6 @@ def test_pending_action_failures_endpoint_lists_all_failed_secret_orders(game, m
     failures = out["pending_action_failures"]
     assert [failure["id"] for failure in failures] == [pending_id]
     assert failures[0]["minister_name"] == "离席大臣"
-
-
-@pytest.mark.parametrize(
-    ("kind", "noun"), [("secret_order", "密令"), ("office", "任免")],
-)
-def test_pending_failure_payload_never_promises_payload_replay(kind, noun):
-    """#1765 ②：坏 payload 重放入口已删，系统层文案不得再承诺「重试」。"""
-    failure = _pending_action_failure_payload(
-        {"id": 1, "kind": kind, "action": "新建", "minister_name": "毕自严"})
-
-    assert f"{noun}未能正式落库" in failure["message"]
-    assert "重试" not in failure["message"]
-    assert "retryable" not in failure
 
 
 def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
