@@ -488,6 +488,17 @@ def _stage_new_secret_order(
     )
 
 
+def minister_speaker_role(minister_name: str, character: Any = None) -> str:
+    """Single assembly for recovery speaker_role (name + office)."""
+    office = str(getattr(character, "office", "") or "").strip() if character is not None else ""
+    office_type = (
+        str(getattr(character, "office_type", "") or "").strip()
+        if character is not None else ""
+    )
+    bits = [p for p in (str(minister_name or "").strip(), office or office_type) if p]
+    return "，".join(bits)
+
+
 def land_or_recover_new_secret_order(
     *,
     db: Any,
@@ -499,13 +510,13 @@ def land_or_recover_new_secret_order(
     llm_config: Any,
     out: Dict[str, Any],
     dossier_candidates: Optional[List[Dict[str, Any]]] = None,
+    character: Any = None,
     speaker_role: str = "",
 ) -> None:
     """#1765：已识别密令新建的统一落库。
 
     能落 → 暂存进确认闸。
-    抽取产物/合同缺口 → 把失败事实交 LLM 揣摩补全（复用首抽完整确定性输入）；
-    补全能落则进确认闸；揣摩后仍不能落则以本职请示皇帝。
+    抽取产物/合同缺口 → 失败事实交 LLM 揣摩：能补全则进确认闸，否则本职请示。
     程序/transport 真因不进戏内揣摩：耐久留痕后返回（0005/0046）。
     """
     from ming_sim.cli_backend import (
@@ -521,19 +532,27 @@ def land_or_recover_new_secret_order(
     extract_command = str(so.pop("_extract_command", "") or player_message)
     force_default_assignee = bool(so.pop("_force_default_assignee", False))
     extract_reply = str(so.pop("_extract_reply", "") or minister_reply)
+    role = str(speaker_role or "").strip() or minister_speaker_role(
+        minister_name, character,
+    )
 
     if secret_order_can_land(so):
         _stage_new_secret_order(db, turn, minister_name, so, out)
         return
 
-    # Transport/call failure is system identity (typed flag), not product gap.
-    if so.get("extract_transport_error"):
+    def _transport_stop(item: Dict[str, Any]) -> bool:
+        if not item.get("extract_transport_error"):
+            return False
         _record_secret_landing_rejection(
-            db, turn, so,
+            db, turn, item,
             minister_name=minister_name,
             player_message=player_message,
         )
         out["pending_action_id"] = 0
+        return True
+
+    # Transport/call failure is system identity (typed flag), not product gap.
+    if _transport_stop(so):
         return
 
     gaps = secret_order_landing_gaps(so)
@@ -543,7 +562,7 @@ def land_or_recover_new_secret_order(
         prior_output=_prior_output_for_secret_feedback(so),
         contract_error=str(so.get("contract_error") or ""),
     )
-    # 揣摩补全：同一抽取接缝；call 失败响亮上抛，不洗成 extract_failed 再进 compose。
+    # 揣摩补全：复用首抽完整确定性输入；同一抽取接缝（无吞/抛双态开关）。
     healed = _extract_secret_order(
         extract_command,
         extract_reply,
@@ -552,8 +571,9 @@ def land_or_recover_new_secret_order(
         force_default_assignee=force_default_assignee,
         dossier_candidates=dossier_candidates,
         correction_feedback=feedback,
-        raise_on_transport_error=True,
     )
+    if _transport_stop(healed if isinstance(healed, dict) else {}):
+        return
     if secret_order_can_land(healed):
         _stage_new_secret_order(db, turn, minister_name, healed, out)
         return
@@ -572,7 +592,7 @@ def land_or_recover_new_secret_order(
     report = compose_secret_order_landing_recovery(
         final_gaps,
         speaker_name=minister_name,
-        speaker_role=speaker_role,
+        speaker_role=role,
         emperor_words=player_message,
         prior_output=_prior_output_for_secret_feedback(final if final else so),
         contract_error=contract_error,
@@ -1048,9 +1068,6 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         secret = dict(bundle.get("secret") or {})
         # #1765：classifier 与显式前缀共用 land_or_recover（产物缺口→揣摩/追问）。
         ctx.conversation_intent_handled = True
-        office = str(getattr(ctx.character, "office", "") or "").strip()
-        office_type = str(getattr(ctx.character, "office_type", "") or "").strip()
-        role_bits = [p for p in (minister_name, office or office_type) if p]
         land_or_recover_new_secret_order(
             db=session.db,
             turn=int(session.state.turn),
@@ -1063,7 +1080,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             dossier_candidates=session.db.list_referenceable_dossiers(
                 minister_name, session.state.turn,
             ),
-            speaker_role="，".join(role_bits),
+            character=ctx.character,
         )
         return
 
