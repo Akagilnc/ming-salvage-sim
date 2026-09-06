@@ -32,11 +32,16 @@ ScriptItem = Union[str, Callable[[], Optional[str]], SilentUntilKilled]
 
 
 class _FakeStdin:
-    def __init__(self) -> None:
+    """stdin 管道替身；`error` 注入写失败（子进程根本没拿到 prompt 的真实形状）。"""
+
+    def __init__(self, error: Optional[BaseException] = None) -> None:
         self.written: List[str] = []
         self.closed = False
+        self.error = error
 
     def write(self, text: str) -> int:
+        if self.error is not None:
+            raise self.error
         self.written.append(str(text))
         return len(str(text))
 
@@ -93,12 +98,13 @@ class FakeCliProcess:
         stderr_script: Sequence[ScriptItem] = (),
         returncode: int = 0,
         popen_kwargs: Optional[Dict[str, Any]] = None,
+        stdin_error: Optional[BaseException] = None,
     ) -> None:
         self.cmd = list(cmd or [])
         self.popen_kwargs = dict(popen_kwargs or {})
         self.killed = threading.Event()
         self.terminated = False
-        self.stdin = _FakeStdin()
+        self.stdin = _FakeStdin(stdin_error)
         self.stdout = _ScriptedStream(stdout_script, self.killed)
         self.stderr = _ScriptedStream(stderr_script, self.killed)
         self._exit_code = int(returncode)
@@ -150,6 +156,7 @@ class FakeCliRunnerScript:
                 stderr_script=spec.get("stderr", ()),
                 returncode=int(spec.get("returncode", 0)),
                 popen_kwargs=kwargs,
+                stdin_error=spec.get("stdin_error"),
             )
             self.processes.append(proc)
             self.commands.append(list(cmd))

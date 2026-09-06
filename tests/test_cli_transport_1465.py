@@ -90,6 +90,8 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     """②三次瞬断耗尽 → 系统层终失败呈现、夜不封、可重发。
 
     注入 = agy auth race（已知瞬断实证）；耗尽后换出文脚本重发即成。
+    同一条测另钉：机器文本（`Authentication required`）一个字都不得进 delta ——
+    终失败只以系统层人话呈现（票面「系统层人话报错」/ ADR 0046 否决失败戏内化）。
     """
     from ming_sim import audience_night as an
 
@@ -115,6 +117,14 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
         "retryable_fail", "retryable_fail", "terminal_fail",
     ], attempts
     assert script.calls == 3
+    # 机器文本不得以大臣口吻落到玩家眼前：delta 通道零机文（含重试起手的 replace）
+    deltas = "".join(
+        str(payload.get("content") or "") for name, payload in events if name == "delta"
+    )
+    assert "Authentication required" not in deltas, deltas
+    assert deltas.strip() == "", deltas
+    # 诊断串仍在系统层（provider_message），供复盘
+    assert "Authentication required" in str(detail.get("provider_message") or ""), detail
     # 夜不封：终失败不封夜，玩家可再召
     assert night_closed["n"] == 0
     assert an.get_open_night(db) is not None
@@ -148,6 +158,32 @@ def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, tmp_path, 
     attempts = detail.get("transport_attempts") or []
     assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
     assert script.calls == 1
+
+
+def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
+    monkeypatch, tmp_path, game,
+):
+    """prompt 没写进 stdin = IO 错，须响亮确定性失败一次，不洗成空输出瞬断重试。
+
+    ADR 0005：代码/IO 侧的错必须响亮；宽吞会让「子进程压根没被问」冒充
+    llm_empty_output，白烧三次子进程还给玩家一个假瞬断。
+    """
+    _pin_transport_policy(monkeypatch, tmp_path)
+    script = install_fake_cli_runner(monkeypatch, [{
+        "stdout": (), "returncode": 0,
+        "stdin_error": BrokenPipeError("stdin 已关闭"),
+    }])
+    web_game, minister = _cli_web_game(game)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error", events
+    detail = events[-1][1]
+    attempts = detail.get("transport_attempts") or []
+    assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
+    assert script.calls == 1
+    assert "stdin" in str(detail.get("provider_message") or ""), detail
 
 
 def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, game):
