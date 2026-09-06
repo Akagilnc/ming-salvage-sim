@@ -21,7 +21,7 @@ import { ClosedIssuesModal } from "./components/closedIssues";
 import { EdictModal } from "./components/edictModal";
 import { EndingModal } from "./components/endingModal";
 import { HistoryModal } from "./components/historyModal";
-import { PendingFailureRecoveryPanel } from "./components/pendingFailureRecovery";
+import { PendingFailureNoticePanel } from "./components/pendingFailureNotice";
 import { ReportModal } from "./components/reportModal";
 import { SecretOrdersModal } from "./components/secretOrders";
 import { SettlementLock } from "./components/settlementLock";
@@ -159,7 +159,6 @@ export function App() {
     sendChat,
     undoLastChat,
     retryInterruptedReply,
-    retryPendingAction,
     openFailureRecovery,
     surfacePendingActionFailures,
   } = useChatActions({
@@ -703,7 +702,6 @@ export function App() {
             onInput={setInput}
             onIntent={setComposerIntent}
             onSend={sendChat}
-            onRetryFailure={retryPendingAction}
             onRetryReply={retryInterruptedReply}
             onUndo={undoLastChat}
             onHint={setComposerHint}
@@ -717,12 +715,10 @@ export function App() {
       ) : null}
 
       {chatOpen && !activeMinister && failureRecoveryMode && chatFailures.length ? (
-        <FullscreenModal title="政务失败恢复" subtitle="承办人暂不可召见" bgClass="modal-bg-chat" onClose={() => setActiveModal("none")}>
-          <PendingFailureRecoveryPanel
+        <FullscreenModal title="未落库的政务" subtitle="承办人不可召见" bgClass="modal-bg-chat" onClose={() => setActiveModal("none")}>
+          <PendingFailureNoticePanel
             failures={chatFailures}
-            busy={busy}
             error={error}
-            onRetryFailure={retryPendingAction}
           />
         </FullscreenModal>
       ) : null}

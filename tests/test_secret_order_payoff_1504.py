@@ -1828,13 +1828,25 @@ def _web_secret_landing_client(tmp_path, monkeypatch, backend_fn):
     return game, name, _stream, wait_pending_writes
 
 
-def _secret_landing_bad_raw(*, with_edges: bool = False) -> str:
+def _secret_landing_bad_raw(*, with_edges: bool = False, kind: str = "empty_contract") -> str:
     """Shared unlandable extract product for A-path Web cases (C7)."""
-    body = json.dumps({
-        "标题": "", "内容": "", "承办人": "", "期限月数": 0,
-        "标签": [], "差务": "", "价值轴": [], "方向": 1,
-        "交付单位": "", "交付目标": 0,
-    }, ensure_ascii=False)
+    if kind == "non_json":
+        body = "臣以为此事宜密查关宁，容臣细细察访再回奏。"
+    elif kind == "missing_anchor":
+        body = json.dumps({
+            "标题": "", "内容": "", "承办人": "", "期限月数": 3,
+            "标签": ["关宁"], "差务": "核发辽饷", "价值轴": ["实务事功"],
+            "方向": 1, "交付单位": "万两", "交付目标": 1, "效果符号": 1,
+            "钱粮用途": "辽饷", "钱粮类别": "密令差务", "钱粮账户": "内库",
+        }, ensure_ascii=False)
+    elif kind == "empty_contract":
+        body = json.dumps({
+            "标题": "", "内容": "", "承办人": "", "期限月数": 0,
+            "标签": [], "差务": "", "价值轴": [], "方向": 1,
+            "交付单位": "", "交付目标": 0,
+        }, ensure_ascii=False)
+    else:
+        raise AssertionError(f"unknown unlandable kind: {kind}")
     if with_edges:
         return f"\n  {body}  \n"
     return body
@@ -1850,31 +1862,59 @@ def _secret_landing_good_raw(name: str, body: str) -> str:
     }, ensure_ascii=False)
 
 
-def test_http_chat_stream_secret_landing_recovery_player_readback(
-    tmp_path, monkeypatch, _offline_scene_beat_generator,
-):
-    """#1765 A跨轮①：Web 召对 SSE 首次坏产物 → 大臣回禀与结构化读回、无候选。"""
-    backend_tags = set()
-    recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
-    # Web raw 行为：首尾空白无损落在结构化 extract_raw（C7 M4）。
-    bad = _secret_landing_bad_raw(with_edges=True)
-    message = "你替朕下一道密令，暗查关宁诸将虚冒兵额。"
-
+def _secret_landing_backend(raw_for_extract, *, tags=None):
+    """Web 召对后端桩：分类为密令新建；抽取产物由调用方给。"""
     def backend(prompt, _config=None, *, tag=""):
-        backend_tags.add(tag)
+        if tags is not None:
+            tags.add(tag)
         if tag == "action_intent":
             return json.dumps(
                 {"kind": "secret", "secret_action": "新建"}, ensure_ascii=False,
             ), 1
         if tag == "secret_extract":
-            return bad, 1
-        if tag == "secret_order_landing_recovery":
-            return "任意生成回禀", 1
+            raw = raw_for_extract() if callable(raw_for_extract) else raw_for_extract
+            return raw, 1
         return "任意生成回禀", 1
+    return backend
+
+
+def _secret_landing_rejection_items(db):
+    rows = db.conn.execute(
+        "SELECT category, item_json FROM rejection_reports WHERE section=?",
+        ("audience_secret_order",),
+    ).fetchall()
+    return [
+        json.loads(row["item_json"])
+        for row in rows if row["category"] == "secret_landing"
+    ]
+
+
+@pytest.mark.parametrize(
+    "kind", ["non_json", "missing_anchor", "empty_contract"],
+)
+def test_http_chat_stream_secret_landing_recovery_player_readback(
+    tmp_path, monkeypatch, _offline_scene_beat_generator, kind,
+):
+    """#1765 A跨轮①：Web 召对 SSE 首次坏产物 → 大臣回禀与结构化读回、无候选。
+
+    非 JSON / 缺锚 / 空合同参数化为同一行为。#1765 ②：重开 GET 读回与 stream done 一致。
+    """
+    from fastapi.testclient import TestClient
+
+    import web_app
+
+    backend_tags = set()
+    recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
+    # empty_contract 保留 C7 M4：首尾空白无损落在结构化 extract_raw。
+    bad = _secret_landing_bad_raw(
+        kind=kind, with_edges=(kind == "empty_contract"),
+    )
+    message = "你替朕下一道密令，暗查关宁诸将虚冒兵额。"
 
     game, name, stream, wait_pending_writes = _web_secret_landing_client(
-        tmp_path, monkeypatch, backend,
+        tmp_path, monkeypatch, _secret_landing_backend(bad, tags=backend_tags),
     )
+    client = TestClient(web_app.app)
     try:
         pending_before = [row["id"] for row in game.db.list_pending_actions(game.state.turn)]
         done = stream(message)
@@ -1896,7 +1936,27 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
         assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
         assert game.db.list_secret_orders() == []
         snap = recovery.get("extract_snapshot") or {}
-        assert snap.get("extract_raw") == bad, "extract_raw 须完整原串（含首尾空白）"
+        assert snap.get("extract_raw") == bad, "extract_raw 须完整原串"
+        wait_pending_writes(game)
+
+        history_resp = client.get(f"/api/ministers/{name}/chat")
+        assert history_resp.status_code == 200, history_resp.text
+        reload_payload = history_resp.json()
+        reload_minister = [
+            h for h in (reload_payload.get("history") or [])
+            if h.get("role") == "minister"
+        ]
+        assert reload_minister, "重开后须读回大臣回禀"
+        assert any(
+            recovery["report"] in str(h.get("content") or "") for h in reload_minister
+        ), "读回的大臣回话须与 stream done 的 report 同一份"
+        assert reload_payload.get("pending_action_failures") == []
+        pending_resp = client.get("/api/pending_actions")
+        assert pending_resp.status_code == 200, pending_resp.text
+        assert (pending_resp.json() or {}).get("actions") == []
+        orders_resp = client.get("/api/secret_orders")
+        assert orders_resp.status_code == 200, orders_resp.text
+        assert (orders_resp.json() or {}).get("orders") == []
     finally:
         wait_pending_writes(game)
         if game.session:
@@ -1996,19 +2056,8 @@ def test_http_chat_stream_secret_landing_a_path_abandon_no_default(
     """
     bad = _secret_landing_bad_raw()
 
-    def backend(prompt, _config=None, *, tag=""):
-        if tag == "action_intent":
-            return json.dumps(
-                {"kind": "secret", "secret_action": "新建"}, ensure_ascii=False,
-            ), 1
-        if tag == "secret_extract":
-            return bad, 1
-        if tag == "secret_order_landing_recovery":
-            return "任意生成回禀", 1
-        return "任意生成回禀", 1
-
     game, name, stream, wait_pending_writes = _web_secret_landing_client(
-        tmp_path, monkeypatch, backend,
+        tmp_path, monkeypatch, _secret_landing_backend(bad),
     )
     # _web_secret_landing_client already stubs outer seams; keep settlement path live.
     try:
@@ -2041,6 +2090,127 @@ def test_http_chat_stream_secret_landing_a_path_abandon_no_default(
         assert game.db.list_pending_actions(game.state.turn) == []
         if hasattr(game.db, "list_failed_secret_order_actions"):
             assert game.db.list_failed_secret_order_actions() == []
+        # #1765 ②验收5：过回合维持既有丢弃不阻塞；失败诊断照旧留痕（0005）。
+        assert _secret_landing_rejection_items(game.db), "过回合后终失败诊断须仍在库"
+    finally:
+        wait_pending_writes(game)
+        if game.session:
+            game.session.close()
+
+
+def test_http_retry_landable_failed_pending_does_not_commit_secret_order(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
+    """#1765 ②验收4：同形 payload 经活提交路真落得成密令；Web POST retry 落不成、行仍 failed。
+
+    前提先用活的 commit_pending_actions 钉死（旧重放正是在这种 payload 上会写成密令），
+    否则「没落库」只是空断言。入口=POST /api/pending_actions/{id}/retry；不锁状态码、不扫路由表。
+    """
+    from fastapi.testclient import TestClient
+
+    import web_app
+    from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK
+
+    game, name, _stream, wait_pending_writes = _web_secret_landing_client(
+        tmp_path, monkeypatch, _secret_landing_backend(lambda: ""),
+    )
+    client = TestClient(web_app.app)
+
+    def _stage(title: str) -> int:
+        return game.db.stage_pending_action(
+            game.state.turn, kind="secret_order", action="新建",
+            minister_name=name, target_id=None,
+            payload={
+                "title": title,
+                "content": "密查辽饷去向",
+                "assignee": name,
+                "tags": ["辽饷"],
+                "deadline_months": 0,
+                "covert_task": LIAO_PAY_COVERT_TASK,
+            },
+        )
+
+    def _titles() -> list:
+        return [str(order.get("title") or "") for order in game.db.list_secret_orders()]
+
+    try:
+        # 前提：同形 payload 走活的提交路真能落成密令（旧重放即靠这条落库）
+        landable_id = _stage("暗查辽饷")
+        game.db.commit_pending_actions(game.state, action_ids=[landable_id])
+        wait_pending_writes(game)
+        assert "暗查辽饷" in _titles(), (
+            "前提不成立：该 payload 经活提交路都落不成密令，下面的断言是空断言"
+        )
+
+        # 同形 payload 的 failed 行：只有重放才可能把它落成密令
+        failed_id = _stage("暗查蓟镇")
+        game.db.conn.execute(
+            "UPDATE pending_actions SET status=\'failed\' WHERE id=?",
+            (failed_id,),
+        )
+        game.db.conn.commit()
+        assert "暗查蓟镇" not in _titles()
+
+        resp = client.post(f"/api/pending_actions/{failed_id}/retry")
+        wait_pending_writes(game)
+
+        assert "暗查蓟镇" not in _titles(), "Web POST retry 不得把 failed 暂存落成密令"
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+        retry = body.get("retry") if isinstance(body, dict) else None
+        assert not (isinstance(retry, dict) and retry.get("committed")), resp.text
+        failed = game.db.list_pending_actions(game.state.turn, status="failed")
+        assert any(int(row["id"]) == int(failed_id) for row in failed)
+    finally:
+        wait_pending_writes(game)
+        if game.session:
+            game.session.close()
+
+
+def test_http_chat_stream_secret_landing_undo_round_leaves_nothing_to_resurrect(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
+    """#1765 ②验收4：撤回本轮后不复活——无密令、无候选、该轮回禀不再读回（0038）。"""
+    from fastapi.testclient import TestClient
+
+    import web_app
+
+    game, name, stream, wait_pending_writes = _web_secret_landing_client(
+        tmp_path, monkeypatch, _secret_landing_backend(_secret_landing_bad_raw()),
+    )
+    client = TestClient(web_app.app)
+    try:
+        done = stream("你替朕下一道密令，暗查关宁诸将虚冒兵额。")
+        report = (done.get("secret_order_landing_recovery") or {}).get("report")
+        assert report
+        wait_pending_writes(game)
+
+        report = (done.get("secret_order_landing_recovery") or {})["report"]
+        before = client.get(f"/api/ministers/{name}/chat").json()
+        assert any(
+            report in str(h.get("content") or "")
+            for h in (before.get("history") or [])
+        ), "撤回前这一轮回禀须真在记录里（否则下面的断言是空断言）"
+
+        undo = client.post(f"/api/ministers/{name}/chat/undo")
+        assert undo.status_code == 200, undo.text
+        wait_pending_writes(game)
+
+        after = client.get(f"/api/ministers/{name}/chat").json()
+        assert not any(
+            report in str(h.get("content") or "")
+            for h in (after.get("history") or [])
+        ), "撤回本轮后该轮回禀不再读回"
+        assert game.db.list_secret_orders() == []
+        assert [
+            row for row in game.db.list_pending_actions(game.state.turn)
+            if row.get("kind") == "secret_order"
+        ] == []
+        assert (client.get("/api/secret_orders").json() or {}).get("orders") == []
+        # 失败事实仍留痕（0005 与 0038 不冲突：撤的是效果，不是诊断账）。
+        assert _secret_landing_rejection_items(game.db)
     finally:
         wait_pending_writes(game)
         if game.session:
