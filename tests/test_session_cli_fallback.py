@@ -1893,9 +1893,9 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
 
 
 def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game, monkeypatch):
-    """#354 + #1765：抽取失败仍保留御旨上下文事实；落不了库走大臣 recovery。
+    """#354 + #1765：抽取失败 → 落不了库走大臣 recovery；0142 不合成散文题名。
 
-    不再按 extract_failed 三分暂存残缺；0142 不合成散文题名；未成案。
+    路由只认 tag（不锁 compose 模板句）；皇帝本轮原话进入 recovery 输入。
     """
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
@@ -1903,18 +1903,18 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。")
     db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
     recovery_prompts = []
+    player_message = "密令如下：可，照办，三月内回奏"
 
     def api_route(prompt, llm_config=None, tag=""):
-        text = str(prompt)
-        if tag == "secret_order_landing_recovery" or "落不了库" in text or "揣摩圣意" in text:
-            recovery_prompts.append(text)
+        if tag == "secret_order_landing_recovery":
+            recovery_prompts.append(str(prompt))
             return "任意生成回禀", 1
         raise RuntimeError("backend unavailable")
 
     monkeypatch.setattr(cb, "_run_api_for_config", api_route)
     res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
         SimpleNamespace(name=minister, office_type="司礼监"),
-        "密令如下：可，照办，三月内回奏",
+        player_message,
         "臣领命。",
         has_directive=False,
         secret_order_id=None,
@@ -1924,14 +1924,12 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     assert recovery.get("report")
     assert recovery.get("landing_gaps")
     snapshot = recovery.get("extract_snapshot") or {}
-    # 反馈/追问供料含皇帝原话或上下文任务；不要求残缺暂存
-    fed = "\n".join(recovery_prompts) + str(snapshot.get("content") or "")
-    assert "督办陕西赈灾" in fed or "三月内回奏" in fed or "密令如下" in fed
-    assert recovery_prompts, "recovery compose 须经 API 通道"
+    assert recovery_prompts, "recovery compose 须经 API 通道 tag"
+    assert any(player_message in p or "三月内回奏" in p for p in recovery_prompts)
     assert int(res.get("pending_action_id") or 0) == 0
     assert res.get("secret_order_id") in (None, 0)
     assert db.list_secret_orders() == []
-    assert not str(snapshot.get("title") or "").strip()  # 0142 不合成
+    assert not str(snapshot.get("title") or "").strip()
 
 
 def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game, monkeypatch):
