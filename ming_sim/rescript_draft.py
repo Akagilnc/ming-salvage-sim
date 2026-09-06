@@ -34,7 +34,7 @@ from ming_sim.assets import strip_json_fence
 from ming_sim.llm_model import llm_unavailable_from_error
 from ming_sim.db import GameDB
 from ming_sim.decree_vocabulary import (
-    RESCRIPT_ROUTABLE_ACTION_TYPES,
+    DOSSIER_ACTION_TYPES,
     TARGET_KINDS,
     _DRAFT_CAPABILITY_KEYS,
     derive_draft_capability,
@@ -179,7 +179,8 @@ _LAYER_A_PRESENT_KEYS = (
 # 生成侧军饷类别；层 A 等值映射到内部 grant_action=协饷（禁同义词/散文）。
 _GRANT_KIND_ARMY_PAY = "army_pay"
 
-# 七类 action-conditional 必填/互斥/枚举/条件必填（纯 shape，无 DB grounding）。
+# 逐类 action-conditional 必填/互斥/枚举/条件必填（纯 shape，无 DB grounding）。
+# #1778：本表只对列出的类型加形状检查，不是准入闭集——未列出的库级类型照常受理。
 # assignment 的 category|assignee 任一已由 structured_decree 组合闸承载；
 # grant_kind↔grant_action 互斥与金额 shape 仍走下方 grant 专缝（同 shape 暴露）。
 # optional_keys 仅供 renderer 列类相关可填键；validator 不因 optional 放宽必填。
@@ -236,7 +237,7 @@ _LAYER_A_ACTION_CONDITIONAL: Dict[str, Dict[str, object]] = {
         "optional_keys": ("name", "deadline_months"),
     },
 }
-assert frozenset(_LAYER_A_ACTION_CONDITIONAL) == RESCRIPT_ROUTABLE_ACTION_TYPES
+assert frozenset(_LAYER_A_ACTION_CONDITIONAL) <= DOSSIER_ACTION_TYPES
 
 # 层 A 允许键 = C.3 必填/须在 + C.4 闭集 + draft_capability（服务端覆盖，LLM 自带不准）
 # grant_kind：生成侧 machine discriminator（#1620）；层 A 映射后不落库。
@@ -284,9 +285,9 @@ def _layer_a_resolve_enum_in(rule: Mapping[str, object]) -> Dict[str, frozenset]
 
 
 def _layer_a_action_conditional_view() -> Dict[str, Dict[str, object]]:
-    """七类条件契约的 typed 视图（shape/normalize/renderer 共用）。"""
+    """逐类条件契约的 typed 视图（shape/normalize/renderer 共用）。"""
     out: Dict[str, Dict[str, object]] = {}
-    for action in sorted(RESCRIPT_ROUTABLE_ACTION_TYPES):
+    for action in sorted(_LAYER_A_ACTION_CONDITIONAL):
         rule = _LAYER_A_ACTION_CONDITIONAL[action]
         entry: Dict[str, object] = {
             "required_nonempty": tuple(rule.get("required_nonempty") or ()),
@@ -322,12 +323,13 @@ def layer_a_option_shape() -> Dict[str, object]:
     """层 A option 受理契约 typed 单源（required/present/action-conditional）。
 
     与 normalize_rescript_layer_a_option / rescript_layer_a_prompt_contract 共用；
-    action_conditional 承载七类必填/互斥/枚举/条件必填，禁止入口平行手抄。
+    action_conditional 承载逐类必填/互斥/枚举/条件必填，禁止入口平行手抄。
+    #1778：action_types＝库级全集（ADR 0040 形状检查），不是七类准入闭集。
     """
     return {
         "required_keys": _LAYER_A_REQUIRED_KEYS,
         "present_keys": _LAYER_A_PRESENT_KEYS,
-        "action_types": tuple(sorted(RESCRIPT_ROUTABLE_ACTION_TYPES)),
+        "action_types": tuple(sorted(DOSSIER_ACTION_TYPES)),
         "action_conditional": _layer_a_action_conditional_view(),
         "grant_kind_army_pay": _GRANT_KIND_ARMY_PAY,
         "server_only_keys": ("draft_capability",),
@@ -422,7 +424,7 @@ def _enforce_layer_a_action_conditional(
     shape: Mapping[str, object],
     facts_out: Dict[str, Dict[str, object]],
 ) -> None:
-    """按 shape.action_conditional 强制七类必填/互斥/枚举（写回 out）。
+    """按 shape.action_conditional 强制逐类必填/互斥/枚举（写回 out）。
 
     字段契约失败（缺或错）写入唯一事实集合；不填占位值。
     """
@@ -803,7 +805,7 @@ def normalize_rescript_layer_a_option(
             continue
         out[key_s] = value
 
-    # 七类 action-conditional（与 shape/renderer 同真源；先于组合闸）
+    # 逐类 action-conditional（与 shape/renderer 同真源；先于组合闸）
     if action_type:
         _enforce_layer_a_action_conditional(
             out, raw, shape=shape, facts_out=facts,

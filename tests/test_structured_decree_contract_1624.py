@@ -131,9 +131,8 @@ def test_shared_validate_rejects_region_id_and_category_holes():
 
     class1 原洞 = 非 region + national 夹带 region_id（旧闸只拒 scope==none）；
     class2 原洞 = 非 assignment 非空非法类别（旧闸闭集只罩 assignment）；
-    class3 = 票拟七类动作 + national（NATIONAL_FANOUT 白名单外）必败；
     action_alias_conflict = action_type 与 dossier_action_type 双非空且不同。
-    不经月末 is None（票拟七类无 policy；军令空承办另有降级面）。
+    #1778：动作×national 白名单已取消，national 只受 8×3 矩阵约束。
     """
     with pytest.raises(StructuredDecreeCombinationError):
         assemble_structured_decree({
@@ -142,14 +141,6 @@ def test_shared_validate_rejects_region_id_and_category_holes():
             "target_id": "x",
             "locality_scope": "national",
             "region_id": "shaanxi",
-        })
-    with pytest.raises(StructuredDecreeCombinationError):
-        assemble_structured_decree({
-            "action_type": "assignment",
-            "target_kind": "policy",
-            "target_id": "x",
-            "locality_scope": "national",
-            "transaction_category": "督赈",
         })
     with pytest.raises(StructuredDecreeCombinationError):
         assemble_structured_decree({

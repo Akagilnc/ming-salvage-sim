@@ -1547,18 +1547,19 @@ def test_657_prewrite_failure_zero_db_writes(game):
 def test_657_abi_mapper_matrix_a1_a12(game):
     """A1–A12：map 正/负 + 判后 follow/midzhi→apply 链（补 A5/A6/A11）。"""
     from ming_sim import rescript_actions as ra
+    import ming_sim.decree_vocabulary as dv
     from ming_sim.decree_vocabulary import (
         DOSSIER_ACTION_TYPES,
         RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
-        RESCRIPT_ROUTABLE_ACTION_TYPES,
     )
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     db, state, content = game
 
-    # A12 闭集
-    assert RESCRIPT_ROUTABLE_ACTION_TYPES < DOSSIER_ACTION_TYPES
+    # A12 闭集（#1778 后出为准：七类 routable 取消，choice 值域＝库级全集）
+    assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES < DOSSIER_ACTION_TYPES
     assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
+    assert not hasattr(dv, "RESCRIPT_ROUTABLE_ACTION_TYPES")
     cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)").fetchall()}
     assert "rescript_origin" not in cols
 
