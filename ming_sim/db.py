@@ -9731,6 +9731,27 @@ class GameDB:
             return 0
         return len(self._agno_merged_runs(session_id))
 
+    def truncate_chat_turn_agno_runs(self, chat_turn_id: int) -> None:
+        """截回本轮起点的 Agno 历史（transport 重试 per-attempt）。
+
+        复用 fail/undo/reconcile 同一 `_truncate_agno_runs_in_tx` 接缝；
+        不改 chat_turn 状态、不碰游戏账/回话（≠ fail_chat_turn）。
+        """
+        if not chat_turn_id:
+            return
+        row = self.conn.execute(
+            "SELECT * FROM chat_turns WHERE id = ?",
+            (int(chat_turn_id),),
+        ).fetchone()
+        if row is None:
+            return
+        turn_row = self._row_dict(row)
+        with self.conn:
+            self._truncate_agno_runs_in_tx(
+                str(turn_row.get("agno_session_id") or ""),
+                int(turn_row.get("agno_runs_before") or 0),
+            )
+
     def _decode_agno_runs(self, raw: Any) -> Tuple[List[Any], bool]:
         if raw in (None, ""):
             return [], False

@@ -118,11 +118,18 @@ def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
 
 
 def _transport_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
-    """#1465 transport 段：与 api/cli 平级；缺省填默认，旧档无段不炸。"""
+    """#1465 transport 段：与 api/cli 平级；缺省填默认，旧档无段不炸。
+
+    数值有效域：须 > 0（次数/超时/空转）；非正数回落 typed 默认。
+    此为 transport 数值唯一解析权威（llm_transport 禁第二 clamp）。
+    """
     out: Dict[str, object] = {}
     for k in _TRANSPORT_RUNTIME_FIELDS:
         caster, default = _TRANSPORT_NUMERIC_FIELDS[k]
-        out[k] = _slot_number(data.get(k), caster, default)
+        value = _slot_number(data.get(k), caster, default)
+        if not (isinstance(value, (int, float)) and value > 0):
+            value = default
+        out[k] = value
     return out
 
 

@@ -2586,11 +2586,24 @@ class WebGame:
             )
 
         def _is_activity(event: Any) -> bool:
-            # 空转活动：RunContent 有正文，或带 reasoning 增量（活动 ≠ 已呈现正文）
+            # 空转活动：RunContent 有正文、reasoning 增量、或工具生命周期（活动 ≠ 已呈现正文）
             if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
                 return True
             rdelta = getattr(event, "reasoning_content", None)
-            return isinstance(rdelta, str) and bool(rdelta)
+            if isinstance(rdelta, str) and bool(rdelta):
+                return True
+            # 工具调用在跑也是活动（长工具不得被判空转，否则整轮重试并重跑工具）
+            ev_type = type(event).__name__
+            if ev_type in ("ToolCallStartedEvent", "ToolCallCompletedEvent"):
+                return True
+            event_name = str(getattr(event, "event", "") or "")
+            if event_name in ("ToolCallStarted", "ToolCallCompleted"):
+                return True
+            if getattr(event, "tool", None) is not None and ev_type not in (
+                "RunOutput", "RunCompletedEvent", "RunContent",
+            ):
+                return True
+            return False
 
         def _on_event(event: Any) -> None:
             content = getattr(event, "content", None)
@@ -2635,14 +2648,26 @@ class WebGame:
 
         stream_attempt_n = {"n": 0}
 
+        def _reset_agent_session_cache() -> None:
+            # 截断 DB 历史后清 Agno 进程内 session 缓存，避免失败 attempt 的 runs 回灌。
+            cached = getattr(agent, "_cached_session", None)
+            if cached is not None:
+                agent._cached_session = None
+            if getattr(agent, "_cached_session_db", None) is not None:
+                agent._cached_session_db = None
+
         def _start_stream():
-            # 每 attempt 清空半局部状态（重试不得沿用上一 attempt 的 chunks/run_output）
+            # 每 attempt 清空半局部呈现态（chunks/run_output）；
+            # 不重置 exit_started：流中已落账退场是史实（0036），重试须与之相容。
             chunks.clear()
             run_output_box.clear()
-            exit_started_during_stream["v"] = False
             # #1465 半流呈现选项 1：重试开始时替换未完成的临时回话（仅呈现；不回滚落账）
             if stream_attempt_n["n"] > 0:
                 emit_delta("", replace=True)
+                # fo2Og：失败 attempt 的 Agno runs 截回本轮起点，不调用 fail_chat_turn。
+                if chat_turn_id and hasattr(self.db, "truncate_chat_turn_agno_runs"):
+                    self.db.truncate_chat_turn_agno_runs(int(chat_turn_id))
+                _reset_agent_session_cache()
             stream_attempt_n["n"] += 1
             return agent.run(
                 agent_prompt, stream=True, stream_events=True, yield_run_output=True,
@@ -2664,12 +2689,17 @@ class WebGame:
         else:
             # CLI 通道：保留单次流，不套 transport 次数/空转（切片③）
             stream = _start_stream()
-            for event in stream:
-                err = _map_error(event)
-                if err is not None:
-                    raise err
-                _on_event(event)
-            answer, run_output = _after_stream()
+            try:
+                for event in stream:
+                    err = _map_error(event)
+                    if err is not None:
+                        raise err
+                    _on_event(event)
+                answer, run_output = _after_stream()
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
             transport_attempts_box = []
 
         # #542：action/tool 解释（exit 若流中未启则幂等补登），write_gate 外统一 join，
@@ -2678,6 +2708,10 @@ class WebGame:
             minister_name, text, character, answer, run_output,
             action_intent_future, chat_turn_id, explicit_secret_order,
         )
+        # 动作/结果相容：流中已启退场而终 attempt 工具账未带 dismiss 时，结构结果仍须对齐史实。
+        # 不延后 dismiss、不加次数例外（fo2Oe 处方驳回；按事实修）。
+        if exit_started_during_stream["v"] and not interpreted.get("court_action"):
+            interpreted["court_action"] = "dismiss"
         scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with cm:
