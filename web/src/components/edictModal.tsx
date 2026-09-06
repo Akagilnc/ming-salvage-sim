@@ -15,12 +15,16 @@ function isMinisterSourced(source: string): boolean {
   return (source || "").trim() === "大臣拟旨";
 }
 
-/** 非文本 phase 辨识：data-phase + 图标；不写固定状态词。 */
+/**
+ * 视觉 phase 装饰。状态可感知性不靠本 chip / data-* / 固定词表：
+ * 忙碌=卡根 aria-busy；失败=aria-invalid + 原始错误 role=alert；
+ * 成案只读=无改删控件（原生只读结构）。
+ */
 function PhaseChip({ phase }: { phase: string }) {
   return (
-    <span className="directive-phase-chip" data-role="phase-chip" data-phase={phase}>
-      {phase === "inflight" ? <Loader2 size={12} className="spin" aria-hidden /> : null}
-      {phase === "failed" ? <X size={12} aria-hidden /> : null}
+    <span className="directive-phase-chip" data-role="phase-chip" data-phase={phase} aria-hidden="true">
+      {phase === "inflight" ? <Loader2 size={12} className="spin" /> : null}
+      {phase === "failed" ? <X size={12} /> : null}
     </span>
   );
 }
@@ -38,6 +42,21 @@ function cardClassName(opts: {
   if (opts.request) parts.push(`local-${opts.request.phase}`);
   else if (opts.phase === "inflight" || opts.phase === "failed") parts.push(`local-${opts.phase}`);
   return parts.join(" ");
+}
+
+/** 卡级 ARIA 状态 + 关联正文/原始错误；不写状态词、不解析散文。 */
+function cardStateA11y(
+  phase: string,
+  bodyId: string,
+  error?: { id: string; message?: string },
+): React.HTMLAttributes<HTMLDivElement> {
+  const described = [bodyId];
+  if (phase === "failed" && error?.message) described.push(error.id);
+  return {
+    "aria-busy": phase === "inflight" ? true : undefined,
+    "aria-invalid": phase === "failed" ? true : undefined,
+    "aria-describedby": described.join(" "),
+  };
 }
 
 export function EdictModal({
@@ -125,16 +144,16 @@ export function EdictModal({
       ? () => setConfirmAdvance(true)
       : undefined;
 
-  const renderBody = (text: string, notes?: string) => (
+  const renderBody = (text: string, bodyId: string, notes?: string) => (
     <>
-      <p>{text}</p>
+      <p id={bodyId}>{text}</p>
       {notes ? <small>{notes}</small> : null}
     </>
   );
 
-  const renderFailNote = (message?: string) =>
+  const renderFailNote = (message: string | undefined, errorId: string) =>
     message ? (
-      <small className="local-fail-note" data-role="local-error" role="alert">{message}</small>
+      <small id={errorId} className="local-fail-note" data-role="local-error" role="alert">{message}</small>
     ) : null;
 
   // 御案：未成案候选（可改删）⊕ 已成案只读投影（0048 无准驳）⊕ 本地 create 在飞/失败。
@@ -150,6 +169,9 @@ export function EdictModal({
               const minister = isMinisterSourced(directive.source);
               const editing = editingDirectiveId === directive.id;
               const inflight = req?.phase === "inflight";
+              const bodyId = `edict-body-${directive.id}`;
+              const errorId = `edict-err-${directive.id}`;
+              const failMsg = req?.phase === "failed" ? req.error : undefined;
               return (
                 <div
                   className={cardClassName({ phase, minister, request: req })}
@@ -159,6 +181,7 @@ export function EdictModal({
                   data-source={directive.source || ""}
                   data-actor={directive.actor || ""}
                   data-request-op={req?.op || ""}
+                  {...cardStateA11y(phase, bodyId, { id: errorId, message: failMsg })}
                 >
                   <div className="directive-head">
                     <b>#{directive.id}</b>
@@ -169,6 +192,7 @@ export function EdictModal({
                   {editing && !inflight ? (
                     <div className="directive-edit">
                       <textarea
+                        id={bodyId}
                         value={editingDirectiveText}
                         onChange={(event) => onEditingTextChange(event.target.value)}
                       />
@@ -181,11 +205,11 @@ export function EdictModal({
                         >
                           <Check size={15} />
                         </button>
+                        {/* 纯本地取消：只清编辑态，不发请求，不吃 requestLocked。 */}
                         <button
                           className="icon-button"
                           onClick={onCancelEdit}
                           aria-label="取消修改"
-                          disabled={requestLocked}
                         >
                           <X size={15} />
                         </button>
@@ -193,8 +217,12 @@ export function EdictModal({
                     </div>
                   ) : (
                     <>
-                      {renderBody(req?.op === "save" && req.text ? req.text : directive.text, directive.notes)}
-                      {renderFailNote(req?.phase === "failed" ? req.error : undefined)}
+                      {renderBody(
+                        req?.op === "save" && req.text ? req.text : directive.text,
+                        bodyId,
+                        directive.notes,
+                      )}
+                      {renderFailNote(failMsg, errorId)}
                       {!inflight ? (
                         <div className="directive-tools">
                           <button onClick={() => onStartEdit(directive)} disabled={requestLocked}>
@@ -207,13 +235,14 @@ export function EdictModal({
                       ) : null}
                     </>
                   )}
-                  {editing && !inflight ? renderFailNote(req?.phase === "failed" ? req.error : undefined) : null}
+                  {editing && !inflight ? renderFailNote(failMsg, errorId) : null}
                 </div>
               );
             })}
 
             {casedDirectives.map((cased) => {
               const minister = isMinisterSourced(cased.source);
+              const bodyId = `edict-body-cased-${cased.id}`;
               return (
                 <div
                   className={cardClassName({ phase: "cased", minister })}
@@ -224,6 +253,7 @@ export function EdictModal({
                   data-dossier-status={cased.dossier_status}
                   data-source={cased.source || ""}
                   data-actor={cased.actor || ""}
+                  {...cardStateA11y("cased", bodyId)}
                 >
                   <div className="directive-head">
                     <b>#{cased.id}</b>
@@ -232,27 +262,33 @@ export function EdictModal({
                   <div className="directive-head secondary">
                     <span data-role="source-label">{sourceLabel(cased.source, cased.actor)}</span>
                   </div>
-                  {renderBody(cased.text, cased.notes)}
-                  {/* 0048：已成案只读，无改删准驳。 */}
+                  {renderBody(cased.text, bodyId, cased.notes)}
+                  {/* 0048：已成案只读，无改删准驳——只读由缺突变控件表达，不写固定状态词。 */}
                 </div>
               );
             })}
 
-            {createLocals.map((local) => (
-              <div
-                className={cardClassName({ phase: local.phase })}
-                key={local.localKey}
-                data-directive-phase={local.phase}
-                data-local-key={local.localKey}
-              >
-                <div className="directive-head">
-                  <b data-role="local-mark" />
-                  <PhaseChip phase={local.phase} />
+            {createLocals.map((local) => {
+              const bodyId = `edict-body-local-${local.localKey}`;
+              const errorId = `edict-err-local-${local.localKey}`;
+              const failMsg = local.phase === "failed" ? local.error : undefined;
+              return (
+                <div
+                  className={cardClassName({ phase: local.phase })}
+                  key={local.localKey}
+                  data-directive-phase={local.phase}
+                  data-local-key={local.localKey}
+                  {...cardStateA11y(local.phase, bodyId, { id: errorId, message: failMsg })}
+                >
+                  <div className="directive-head">
+                    <b data-role="local-mark" />
+                    <PhaseChip phase={local.phase} />
+                  </div>
+                  {renderBody(local.text, bodyId)}
+                  {renderFailNote(failMsg, errorId)}
                 </div>
-                {renderBody(local.text)}
-                {renderFailNote(local.phase === "failed" ? local.error : undefined)}
-              </div>
-            ))}
+              );
+            })}
 
             {showFailureRecoveryEntry && (
               <div className="empty-note failed-secret-note">
@@ -290,7 +326,8 @@ export function EdictModal({
               本月无可颁诏草案，仍有失败密令未处理。确认不经盖玺颁诏、直接退朝结束本月？
             </div>
             <div className="edict-footer-confirm-actions">
-              <button type="button" className="seal-btn-compose" disabled={requestLocked} onClick={() => setConfirmAdvance(false)}>
+              {/* 纯本地取消：只收起确认条，不发请求，不吃 requestLocked。 */}
+              <button type="button" className="seal-btn-compose" onClick={() => setConfirmAdvance(false)}>
                 取消
               </button>
               <button type="button" className="seal-btn-issue" disabled={requestLocked} onClick={onAdvanceWithoutEdict}>
