@@ -70,6 +70,7 @@ from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_transport import (
     bind_transport_sdk_budget,
     empty_output_failure,
+    is_stream_activity_event,
     resolve_transport_policy,
     run_error_event_failure,
     run_transport_stream,
@@ -2621,18 +2622,6 @@ class WebGame:
                 exhausted=False,
             )
 
-        def _is_activity(event: Any) -> bool:
-            # 空转活动：RunContent 有正文、reasoning 增量、工具生命周期（活动 ≠ 已呈现正文）
-            # 工具类名与 agents.run_agent_stream_text 同权威；长工具存活靠 transport 活动先刷新。
-            if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
-                return True
-            rdelta = getattr(event, "reasoning_content", None)
-            if isinstance(rdelta, str) and bool(rdelta):
-                return True
-            return type(event).__name__ in (
-                "ToolCallStartedEvent", "ToolCallCompletedEvent",
-            )
-
         def _on_event(event: Any) -> None:
             content = getattr(event, "content", None)
             event_name = getattr(event, "event", "")
@@ -2700,7 +2689,7 @@ class WebGame:
                 (answer, run_output), transport_attempts_box = run_transport_stream(
                     _start_stream,
                     on_event=_on_event,
-                    is_activity_event=_is_activity,
+                    is_activity_event=is_stream_activity_event,
                     map_error_event=_map_error,
                     after_stream=_after_stream,
                     policy=policy,

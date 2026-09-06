@@ -26,6 +26,7 @@ from ming_sim.llm_model import create_chat_model, extract_agent_text
 from ming_sim.llm_transport import (
     bind_transport_sdk_budget,
     empty_output_failure,
+    is_stream_activity_event,
     resolve_transport_policy,
     run_error_event_failure,
     run_transport_stream,
@@ -120,29 +121,6 @@ def _agent_run_input(
     return payload
 
 
-def _is_transport_activity_event(event: Any) -> bool:
-    """空转活动信号（≠ 已呈现正文；chunk 只喂计时器）。
-
-    与 web_app._chat_stream_payload 活动判据同构：RunContent 正文、reasoning 增量、
-    工具生命周期、终包本身。不据此禁止重试。
-    """
-    name = type(event).__name__
-    if name in ("RunOutput", "RunCompletedEvent"):
-        return True
-    if name in ("ToolCallStartedEvent", "ToolCallCompletedEvent"):
-        return True
-    if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
-        return True
-    rdelta = getattr(event, "reasoning_content", None)
-    if isinstance(rdelta, str) and rdelta:
-        return True
-    # 无 event 属性的 content 增量（测试替身 / 旧事件形）
-    if name not in ("RunErrorEvent",) and isinstance(getattr(event, "content", None), str):
-        if getattr(event, "content", None):
-            return True
-    return False
-
-
 def run_agent_text(
     agent: Agent,
     prompt: str,
@@ -219,7 +197,7 @@ def run_agent_text(
             text, _attempts = run_transport_stream(
                 _start_stream,
                 on_event=_on_event,
-                is_activity_event=_is_transport_activity_event,
+                is_activity_event=is_stream_activity_event,
                 map_error_event=_map_error,
                 after_stream=_after_stream,
                 policy=policy,

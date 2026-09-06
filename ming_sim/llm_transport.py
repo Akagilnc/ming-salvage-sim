@@ -282,6 +282,27 @@ def run_error_event_failure(content: object = None) -> ClassifiedFailure:
     )
 
 
+def is_stream_activity_event(event: Any) -> bool:
+    """空转活动唯一权威（召对 web 流 / run_agent_text 同用；禁平行分叉）。
+
+    活动：RunContent 有正文、reasoning 增量、工具生命周期、终包到达。
+    终包计入活动：本 attempt 已完成产出，不得在 RunOutput/RunCompleted 边界空转误杀。
+    活动 ≠ 已呈现正文；不据此禁止重试。
+    """
+    name = type(event).__name__
+    if name in ("RunOutput", "RunCompletedEvent"):
+        return True
+    if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
+        return True
+    rdelta = getattr(event, "reasoning_content", None)
+    if isinstance(rdelta, str) and bool(rdelta):
+        return True
+    return name in (
+        "ToolCallStartedEvent",
+        "ToolCallCompletedEvent",
+    )
+
+
 def check_idle_budget(
     *,
     last_activity_at: float,
