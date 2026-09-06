@@ -2,7 +2,7 @@ import React from "react";
 import { Check, Edit3, Loader2, Trash2, X } from "lucide-react";
 import type { CasedDirective, Directive, GameState, LocalDirectiveItem } from "../types";
 
-/** #1764：呈现层对 source/actor 结构化字段特征化（P7：不写死模板句）。 */
+/** #1764：source/actor 结构化字段直接并列（P7/0142；非角色台词模板）。 */
 function sourceLabel(source: string, actor: string): string {
   const src = (source || "").trim();
   const who = (actor || "").trim();
@@ -10,23 +10,34 @@ function sourceLabel(source: string, actor: string): string {
   return who || src;
 }
 
-function isMinisterSourced(source: string, actor: string): boolean {
-  const src = (source || "").trim();
-  if (actor && actor.trim()) return true;
-  // 既有 source 取值域特征：大臣拟旨 / chat 等；不锁展示措辞。
-  return src.includes("大臣") || src === "chat" || src.startsWith("legacy");
+/** 权威 source 写入值（session/db）；不猜测 chat/legacy/子串。 */
+function isMinisterSourced(source: string): boolean {
+  return (source || "").trim() === "大臣拟旨";
 }
 
-/** 结构化 phase / dossier_status → 短特征词（测试只咬 data-phase，不锁措辞）。 */
-function phaseFeature(phase: string, dossierStatus?: string): string {
-  if (phase === "inflight") return "拟稿中";
-  if (phase === "failed") return "未收下";
-  if (phase === "cased") {
-    const st = (dossierStatus || "").trim();
-    if (st === "proposed" || !st) return "已成案·待盖玺";
-    return st;
-  }
-  return phase;
+/** 非文本 phase 辨识：data-phase + 图标；不写固定状态词。 */
+function PhaseChip({ phase }: { phase: string }) {
+  return (
+    <span className="directive-phase-chip" data-role="phase-chip" data-phase={phase}>
+      {phase === "inflight" ? <Loader2 size={12} className="spin" aria-hidden /> : null}
+      {phase === "failed" ? <X size={12} aria-hidden /> : null}
+    </span>
+  );
+}
+
+type CardRequest = LocalDirectiveItem | undefined;
+
+function cardClassName(opts: {
+  phase: string;
+  minister?: boolean;
+  request?: CardRequest;
+}): string {
+  const parts = ["directive-item"];
+  if (opts.phase === "cased") parts.push("cased");
+  if (opts.minister) parts.push("minister-sourced");
+  if (opts.request) parts.push(`local-${opts.request.phase}`);
+  else if (opts.phase === "inflight" || opts.phase === "failed") parts.push(`local-${opts.phase}`);
+  return parts.join(" ");
 }
 
 export function EdictModal({
@@ -77,7 +88,14 @@ export function EdictModal({
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
   const draftDirectives = state.directives;
   const casedDirectives: CasedDirective[] = state.cased_directives ?? [];
-  const deskCount = draftDirectives.length + casedDirectives.length + localDirectives.length;
+  // save/delete 绑在既有草案卡，不另占席；仅 create 会话卡计入桌面条数。
+  const createLocals = localDirectives.filter((item) => item.directiveId == null);
+  const requestByDirectiveId = new Map(
+    localDirectives
+      .filter((item) => item.directiveId != null)
+      .map((item) => [item.directiveId as number, item]),
+  );
+  const deskCount = draftDirectives.length + casedDirectives.length + createLocals.length;
   const hasDrafts = draftDirectives.length > 0;
   const hasCased = casedDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
@@ -89,6 +107,9 @@ export function EdictModal({
   const hasSettleWork =
     hasDrafts || hasCased || hasPendingConversationalDraft || hasNonEdictPendingActions || hasPendingSecretOrders;
   const failedOnly = !hasSettleWork && hasFailedSecretOrders;
+  // 请求按钮禁重复点击：全局 busy 或任一卡在飞。
+  const requestLocked =
+    !!busy || localDirectives.some((item) => item.phase === "inflight");
   // #1732 B：failed-only 页脚就地条，补退朝语义；取消零请求。
   const [confirmAdvance, setConfirmAdvance] = React.useState(false);
   React.useEffect(() => {
@@ -100,7 +121,19 @@ export function EdictModal({
       ? () => setConfirmAdvance(true)
       : undefined;
 
-  // 御案：未成案候选（可改删）⊕ 已成案只读投影（0048 无准驳）⊕ 本地在飞/失败。
+  const renderBody = (text: string, notes?: string) => (
+    <>
+      <p>{text}</p>
+      {notes ? <small>{notes}</small> : null}
+    </>
+  );
+
+  const renderFailNote = (message?: string) =>
+    message ? (
+      <small className="local-fail-note" data-role="local-error" role="alert">{message}</small>
+    ) : null;
+
+  // 御案：未成案候选（可改删）⊕ 已成案只读投影（0048 无准驳）⊕ 本地 create 在飞/失败。
   return (
     <div className="edict-stage edict-stage-desk">
       <div className="desk-columns">
@@ -108,47 +141,78 @@ export function EdictModal({
           <h2>本月指令{deskCount ? ` · ${deskCount} 道` : ""}</h2>
           <div className="directive-list">
             {draftDirectives.map((directive) => {
-              const minister = isMinisterSourced(directive.source, directive.actor);
+              const req = requestByDirectiveId.get(directive.id);
+              const phase = req?.phase ?? "draft";
+              const minister = isMinisterSourced(directive.source);
+              const editing = editingDirectiveId === directive.id;
+              const inflight = req?.phase === "inflight";
               return (
                 <div
-                  className={`directive-item${minister ? " minister-sourced" : ""}`}
+                  className={cardClassName({ phase, minister, request: req })}
                   key={`draft-${directive.id}`}
-                  data-directive-phase="draft"
+                  data-directive-phase={phase === "draft" ? "draft" : phase}
                   data-directive-id={directive.id}
                   data-source={directive.source || ""}
                   data-actor={directive.actor || ""}
+                  data-request-op={req?.op || ""}
                 >
                   <div className="directive-head">
                     <b>#{directive.id}</b>
-                    <span data-role="source-label">{sourceLabel(directive.source, directive.actor)}</span>
+                    {req ? <PhaseChip phase={req.phase} /> : (
+                      <span data-role="source-label">{sourceLabel(directive.source, directive.actor)}</span>
+                    )}
                   </div>
-                  {editingDirectiveId === directive.id ? (
+                  {editing && !inflight ? (
                     <div className="directive-edit">
-                      <textarea value={editingDirectiveText} onChange={(event) => onEditingTextChange(event.target.value)} />
+                      <textarea
+                        value={editingDirectiveText}
+                        onChange={(event) => onEditingTextChange(event.target.value)}
+                      />
                       <div>
-                        <button className="icon-button" onClick={() => onSaveDirective(directive)} aria-label="保存草案" disabled={!!busy}><Check size={15} /></button>
-                        <button className="icon-button" onClick={onCancelEdit} aria-label="取消修改" disabled={!!busy}><X size={15} /></button>
+                        <button
+                          className="icon-button"
+                          onClick={() => onSaveDirective(directive)}
+                          aria-label="保存草案"
+                          disabled={requestLocked}
+                        >
+                          <Check size={15} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          onClick={onCancelEdit}
+                          aria-label="取消修改"
+                          disabled={requestLocked}
+                        >
+                          <X size={15} />
+                        </button>
                       </div>
                     </div>
                   ) : (
                     <>
-                      <p>{directive.text}</p>
-                      {directive.notes ? <small>{directive.notes}</small> : null}
-                      <div className="directive-tools">
-                        <button onClick={() => onStartEdit(directive)} disabled={!!busy}><Edit3 size={14} />改</button>
-                        <button onClick={() => onDeleteDirective(directive.id)} disabled={!!busy}><Trash2 size={14} />删</button>
-                      </div>
+                      {renderBody(req?.op === "save" && req.text ? req.text : directive.text, directive.notes)}
+                      {renderFailNote(req?.phase === "failed" ? req.error : undefined)}
+                      {!inflight ? (
+                        <div className="directive-tools">
+                          <button onClick={() => onStartEdit(directive)} disabled={requestLocked}>
+                            <Edit3 size={14} />改
+                          </button>
+                          <button onClick={() => onDeleteDirective(directive.id)} disabled={requestLocked}>
+                            <Trash2 size={14} />删
+                          </button>
+                        </div>
+                      ) : null}
                     </>
                   )}
+                  {editing && !inflight ? renderFailNote(req?.phase === "failed" ? req.error : undefined) : null}
                 </div>
               );
             })}
 
             {casedDirectives.map((cased) => {
-              const minister = isMinisterSourced(cased.source, cased.actor);
+              const minister = isMinisterSourced(cased.source);
               return (
                 <div
-                  className={`directive-item cased${minister ? " minister-sourced" : ""}`}
+                  className={cardClassName({ phase: "cased", minister })}
                   key={`cased-${cased.id}`}
                   data-directive-phase="cased"
                   data-directive-id={cased.id}
@@ -159,48 +223,36 @@ export function EdictModal({
                 >
                   <div className="directive-head">
                     <b>#{cased.id}</b>
-                    <span className="directive-phase-chip" data-role="phase-chip" data-phase="cased">
-                      {phaseFeature("cased", cased.dossier_status)}
-                    </span>
+                    <PhaseChip phase="cased" />
                   </div>
                   <div className="directive-head secondary">
                     <span data-role="source-label">{sourceLabel(cased.source, cased.actor)}</span>
                   </div>
-                  <p>{cased.text}</p>
-                  {cased.notes ? <small>{cased.notes}</small> : null}
+                  {renderBody(cased.text, cased.notes)}
                   {/* 0048：已成案只读，无改删准驳。 */}
                 </div>
               );
             })}
 
-            {localDirectives.map((local) => (
+            {createLocals.map((local) => (
               <div
-                className={`directive-item local-${local.phase}`}
+                className={cardClassName({ phase: local.phase })}
                 key={local.localKey}
                 data-directive-phase={local.phase}
                 data-local-key={local.localKey}
               >
                 <div className="directive-head">
                   <b data-role="local-mark" />
-                  <span
-                    className="directive-phase-chip"
-                    data-role="phase-chip"
-                    data-phase={local.phase}
-                  >
-                    {local.phase === "inflight" ? <Loader2 size={12} className="spin" /> : null}
-                    {phaseFeature(local.phase)}
-                  </span>
+                  <PhaseChip phase={local.phase} />
                 </div>
-                <p>{local.text}</p>
-                {local.phase === "failed" && local.error ? (
-                  <small className="local-fail-note" data-role="local-error" role="alert">{local.error}</small>
-                ) : null}
+                {renderBody(local.text)}
+                {renderFailNote(local.phase === "failed" ? local.error : undefined)}
               </div>
             ))}
 
             {!deskCount && !hasPendingConversationalDraft && hasFailedSecretOrders && (
               <div className="empty-note failed-secret-note">
-                <button type="button" onClick={onOpenFailureRecovery} disabled={!!busy}>处理</button>
+                <button type="button" onClick={onOpenFailureRecovery} disabled={requestLocked}>处理</button>
               </div>
             )}
           </div>
@@ -212,12 +264,14 @@ export function EdictModal({
             value={directiveText}
             onChange={(event) => onDirectiveTextChange(event.target.value)}
             placeholder="例如：命户部核拨关宁、山海关、蓟镇辽饷一百五十二万两..."
-            disabled={!!busy}
           />
-          <button className="desk-add-btn" onClick={onCreateDirective} disabled={!!busy || !directiveText.trim()}>
+          <button
+            className="desk-add-btn"
+            onClick={onCreateDirective}
+            disabled={requestLocked || !directiveText.trim()}
+          >
             <Edit3 size={14} />新增草案
           </button>
-          {/* #1764：去掉 compose 全局 busy-line；按钮 disabled 即禁写互斥。 */}
         </section>
       </div>
 
@@ -232,10 +286,10 @@ export function EdictModal({
               本月无可颁诏草案，仍有失败密令未处理。确认不经盖玺颁诏、直接退朝结束本月？
             </div>
             <div className="edict-footer-confirm-actions">
-              <button type="button" className="seal-btn-compose" disabled={!!busy} onClick={() => setConfirmAdvance(false)}>
+              <button type="button" className="seal-btn-compose" disabled={requestLocked} onClick={() => setConfirmAdvance(false)}>
                 取消
               </button>
-              <button type="button" className="seal-btn-issue" disabled={!!busy} onClick={onAdvanceWithoutEdict}>
+              <button type="button" className="seal-btn-issue" disabled={requestLocked} onClick={onAdvanceWithoutEdict}>
                 退朝结束本月
               </button>
             </div>
@@ -244,7 +298,7 @@ export function EdictModal({
           <button
             className={hasSettleWork || failedOnly ? "seal-btn-issue" : "seal-btn-compose"}
             onClick={onFooterClick}
-            disabled={!!busy || (!hasSettleWork && !failedOnly)}
+            disabled={requestLocked || (!hasSettleWork && !failedOnly)}
           >
             {hasSettleWork ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
           </button>

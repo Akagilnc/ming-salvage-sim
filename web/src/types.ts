@@ -173,12 +173,17 @@ export type CasedDirective = {
   dossier_status: string; // proposed …
 };
 
-/** #1764：本地在飞/失败项（仅会话态，非持久真源）。 */
+/** #1764：本地在飞/失败项（仅会话态，非持久真源）。
+ * create：无 directiveId，自渲染为会话卡。
+ * save/delete：directiveId 绑定所属草案卡的进行态/失败真因。
+ */
 export type LocalDirectiveItem = {
   localKey: string;
   text: string;
   phase: "inflight" | "failed";
   error?: string;
+  directiveId?: number;
+  op?: "create" | "save" | "delete";
 };
 
 export type Issue = {

@@ -1272,20 +1272,17 @@ class WebGame:
         """#1764 御案只读投影：已成案·待盖玺（0051 proposed）。
 
         读 list_dossiered_draft_directives + dossier status；不改 list_directives 过滤，
-        不另立事实源。同 directive fan-out 多行案卷只投影一条。过月后 draft 迁出则桌空。
+        不另立事实源。上游 SELECT td.* + EXISTS 按主键逐行返回，无需 seen 去重。
+        过月后 draft 迁出则桌空。
         """
-        seen: set[int] = set()
         out: List[Dict[str, Any]] = []
         for row in self.db.list_dossiered_draft_directives(self.state):
             dir_id = int(row["id"])
-            if dir_id in seen:
-                continue
             dossier = self.db.get_dossier_for_directive(dir_id)
             if dossier is None:
                 continue
             if str(dossier.get("status") or "") != "proposed":
                 continue
-            seen.add(dir_id)
             out.append({
                 "id": dir_id,
                 "dossier_id": int(dossier["id"]),
