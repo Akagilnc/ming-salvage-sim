@@ -462,7 +462,6 @@ _NO_INTENT_REWRITE = {
 }
 
 
-
 def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     admission_game, monkeypatch,
 ):
@@ -496,8 +495,6 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     assert kept.get("target_id") != "manual-directive"
     assert game.db.get_dossier_for_directive(did) is None
     assert len(_rejection_rows(game, did)) == 1
-
-
 
 
 def test_pending_product_error_enters_resubmit_seam_not_softlock(
@@ -545,3 +542,58 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     assert len(_rejection_rows(game, did)) == 1
 
 
+def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
+    admission_game, monkeypatch,
+):
+    """类3：耗尽零成案 → source=system_simulation；不发 STAT_DECREES_ISSUED；陈旧 last_decree 不进 resolve。"""
+    game = admission_game
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
+    client = TestClient(web_app.app)
+    turn = int(game.state.turn)
+
+    _post_directive(client, _DECREE_TEXT)
+    wait_pending_writes(game)
+    did = _latest_directive_id(game)
+
+    # 陈旧拟诏稿：旧行为会把它当本月已颁送入 resolve（player_decree + Steam 误计）
+    stale = "陈旧拟诏稿·不得视为本月已颁·#1769"
+    game.session.last_decree = stale
+    game.session._decree_draft_fingerprint = ((did, "stale"),)
+
+    resolve_calls: list[dict] = []
+    real_resolve = session_mod.resolve_directives
+
+    def spy_resolve(*args, **kwargs):
+        resolve_calls.append({
+            "source": kwargs.get("source"),
+            "decree_text": args[5] if len(args) > 5 else kwargs.get("decree_text"),
+            "directives_len": len(args[4]) if len(args) > 4 else len(kwargs.get("directives") or ()),
+        })
+        return real_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(session_mod, "resolve_directives", spy_resolve)
+
+    body = _post_issue_stream(
+        client, expected_turn=turn, step="1769 zero-exhaust system_simulation",
+    )
+    assert _turn_of(_get_state(client)) == turn + 1
+    assert str(game.db.get_directive(did)["status"]) == "draft"
+    assert game.db.get_dossier_for_directive(did) is None
+
+    assert resolve_calls, "须进入 resolve_directives"
+    call = resolve_calls[0]
+    from ming_sim.applier import Provenance
+    assert call["source"] == Provenance.system_simulation
+    assert call["directives_len"] == 0
+    assert not (call["decree_text"] or "").strip()
+    assert (game.session.last_decree or "") != stale
+
+    steam = body.get("steam_events") or []
+    assert not any(
+        isinstance(e, dict) and e.get("name") == "STAT_DECREES_ISSUED"
+        for e in steam
+    ), f"零成案不得计已颁: {steam!r}"
+    assert any(
+        isinstance(e, dict) and e.get("name") == "STAT_TURNS_PLAYED"
+        for e in steam
+    )
