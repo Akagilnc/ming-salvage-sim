@@ -113,6 +113,7 @@ class _TransportAgent:
         error_then_ok_times: int = 0,
         always_error: bool = False,
         idle_fail_first: bool = False,
+        empty_terminal_first: bool = False,
         long_activity_span: float = 0.0,
         clock: dict | None = None,
         clock_lock: threading.Lock | None = None,
@@ -122,6 +123,7 @@ class _TransportAgent:
         self.error_then_ok_times = int(error_then_ok_times)
         self.always_error = bool(always_error)
         self.idle_fail_first = bool(idle_fail_first)
+        self.empty_terminal_first = bool(empty_terminal_first)
         self.long_activity_span = float(long_activity_span)
         self.clock = clock
         self.clock_lock = clock_lock or threading.Lock()
@@ -154,6 +156,11 @@ class _TransportAgent:
             yield RunContent("")  # 非活动
             self._bump_clock(self.idle_timeout + 0.1)
             yield RunContent("")  # 触发 idle check
+            return
+        # 空终包：有活动 chunk，终包 content="" → empty_output_failure 可重试
+        if self.empty_terminal_first and n == 1:
+            yield RunContent("…")
+            yield RunOutput("")
             return
         if self.long_activity_span > 0 and self.clock is not None:
             steps = 4
@@ -694,5 +701,41 @@ def test_extractor_stream_idle_retry_and_long_activity_past_old_wall(
     assert after.get("settlement_recovery") is None
     assert _budget_has_fp(after), (
         f"stream terminal delta must book on GET budget; "
+        f"budget={(after.get('budget') or {}).get('国库')!r}"
+    )
+
+
+# ── #1465 ②：空终包 → 空输出可重试 ─────────────────────────────────────────
+
+
+def test_extractor_empty_terminal_retries(tracer_client, monkeypatch):
+    """终包 content=\"\" 走 empty_output_failure → transport 重试；既有替身不新夹具。
+
+    internal 首 attempt 空终包，次 attempt 成功终包；calls>=2 + fingerprint 落账。
+    """
+    client = tracer_client
+    turn0, game = _new_game_with_directive(client)
+
+    agents = {
+        m: _TransportAgent(m, empty_terminal_first=(m == "internal"))
+        for m in EXTRACTION_MODULES
+    }
+    _wire_real_extract_path(monkeypatch, agents)
+
+    resp = _issue_stream(client, expected_turn=turn0, step="empty-terminal")
+    event, data = _terminal_sse(resp)
+    _finish_to_done(client, event, data, step="empty-terminal")
+
+    assert agents["internal"].calls >= 2, (
+        f"empty terminal must retry internal; calls={agents['internal'].calls} "
+        f"terminal={event!r} data={data!r}"
+    )
+
+    _wait_pending_writes(game)
+    after = _get_state(client)
+    assert _turn_of(after) == turn0 + 1
+    assert after.get("settlement_recovery") is None
+    assert _budget_has_fp(after), (
+        f"empty-terminal retry success must book fingerprint; "
         f"budget={(after.get('budget') or {}).get('国库')!r}"
     )
