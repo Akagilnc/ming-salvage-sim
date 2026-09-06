@@ -23,11 +23,10 @@ from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
 from ming_sim.llm_model import create_chat_model, extract_agent_text
 from ming_sim.llm_transport import (
-    check_attempt_budgets,
     empty_output_failure,
     resolve_transport_policy,
     run_error_event_failure,
-    run_with_transport,
+    run_transport_stream,
     transport_failure_unavailable,
 )
 from ming_sim.models import GameState, LLMConfig, reign_period_label
@@ -148,133 +147,153 @@ def run_agent_stream_text(
 
     on_thinking(chunk): 每次思考片段到达时回调（可选）。
     on_text(chunk): 每次正文增量到达时回调（可选）。
-    #1465：RunErrorEvent / 瞬断走统一 transport 分类与 attempt 预算。
+    #1465：流循环/分类/预算唯一权威 = run_transport_stream。
     """
     tlog(f"[{tag}] 开始流式推演（首字到达前可能等几秒）")
+    # 不支持 stream 的 agno：单次退回普通 run（不走 transport 流循环）
+    try:
+        probe = agent.run(prompt, stream=True, stream_events=True)
+    except TypeError:
+        tlog(f"[{tag}] 当前 agno 不支持 stream，退回普通 run")
+        text = extract_agent_text(agent.run(prompt))
+        if on_text:
+            on_text(text)
+        return text
+
     policy = resolve_transport_policy(transport_policy)
     clock = transport_clock or time.monotonic
-    emitted_output = {"n": 0}
+    state: Dict[str, Any] = {
+        "pieces": [],
+        "final_output": None,
+        "last_print": clock(),
+        "chunk_buf": [],
+        "chars_since_flush": 0,
+        "reasoning_buf": [],
+        "reasoning_chars_since_flush": 0,
+        "reasoning_last_print": clock(),
+        "reasoning_streamed_chars": 0,
+        "tool_calls": 0,
+        "stream": probe,
+        "first": True,
+    }
 
-    def _one_attempt() -> str:
-        pieces: List[str] = []
-        final_output = None
-        last_print = clock()
-        chunk_buf: List[str] = []
-        chars_since_flush = 0
-        attempt_started_at = clock()
-        last_output_at = attempt_started_at
-        try:
+    def _start_stream():
+        if state["first"]:
+            state["first"] = False
+            stream = state["stream"]
+        else:
             stream = agent.run(prompt, stream=True, stream_events=True)
-        except TypeError:
-            tlog(f"[{tag}] 当前 agno 不支持 stream，退回普通 run")
-            text = extract_agent_text(agent.run(prompt))
+        state["pieces"] = []
+        state["final_output"] = None
+        state["last_print"] = clock()
+        state["chunk_buf"] = []
+        state["chars_since_flush"] = 0
+        state["reasoning_buf"] = []
+        state["reasoning_chars_since_flush"] = 0
+        state["reasoning_last_print"] = clock()
+        state["reasoning_streamed_chars"] = 0
+        state["tool_calls"] = 0
+        return stream
+
+    def _map_error(event: Any):
+        if type(event).__name__ != "RunErrorEvent":
+            return None
+        return transport_failure_unavailable(
+            run_error_event_failure(getattr(event, "content", None)),
+            attempts=1,
+            exhausted=False,
+        )
+
+    def _is_output(event: Any) -> bool:
+        delta = getattr(event, "content", None)
+        rdelta = getattr(event, "reasoning_content", None)
+        return (isinstance(delta, str) and bool(delta)) or (
+            isinstance(rdelta, str) and bool(rdelta)
+        )
+
+    def _on_event(event: Any) -> None:
+        ev_type = type(event).__name__
+        if ev_type == "ToolCallStartedEvent":
+            tool = getattr(event, "tool", None)
+            tname = getattr(tool, "tool_name", "?") if tool else "?"
+            targs = getattr(tool, "tool_args", {}) if tool else {}
+            state["tool_calls"] += 1
+            tlog(f"[{tag}/工具] 调用 {tname}({targs})")
+            if on_thinking:
+                on_thinking(f"\n〔查阅 {tname} {targs}〕\n")
+            return
+        if ev_type == "ToolCallCompletedEvent":
+            tool_res = getattr(event, "tool", None)
+            tres = str(getattr(tool_res, "result", "") or "")[:200] if tool_res else ""
+            if tres:
+                tlog(f"[{tag}/工具结果] {tres!r}")
+            return
+        rdelta = getattr(event, "reasoning_content", None)
+        if isinstance(rdelta, str) and rdelta:
+            state["reasoning_buf"].append(rdelta)
+            state["reasoning_chars_since_flush"] += len(rdelta)
+            now = clock()
+            if state["reasoning_chars_since_flush"] >= 120 or (
+                now - state["reasoning_last_print"]
+            ) >= 1.5:
+                merged = "".join(state["reasoning_buf"])
+                tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
+                if on_thinking and state["reasoning_streamed_chars"] < _THINKING_STREAM_CHAR_LIMIT:
+                    remaining = _THINKING_STREAM_CHAR_LIMIT - state["reasoning_streamed_chars"]
+                    chunk = merged[:remaining]
+                    if chunk:
+                        on_thinking(chunk)
+                        state["reasoning_streamed_chars"] += len(chunk)
+                    if state["reasoning_streamed_chars"] >= _THINKING_STREAM_CHAR_LIMIT:
+                        on_thinking("\n〔思考已截断，继续推演中〕\n")
+                state["reasoning_buf"].clear()
+                state["reasoning_chars_since_flush"] = 0
+                state["reasoning_last_print"] = now
+        is_terminal = (
+            (hasattr(event, "is_final") and getattr(event, "is_final", False))
+            or ev_type in ("RunOutput", "RunCompletedEvent")
+        )
+        if is_terminal:
+            state["final_output"] = event
+            return
+        delta = getattr(event, "content", None)
+        if isinstance(delta, str) and delta:
+            state["pieces"].append(delta)
+            state["chunk_buf"].append(delta)
+            state["chars_since_flush"] += len(delta)
             if on_text:
-                on_text(text)
-                emitted_output["n"] += 1
-            return text
+                on_text(delta)
+            now = clock()
+            if state["chars_since_flush"] >= 80 or (now - state["last_print"]) >= 1.0:
+                merged = "".join(state["chunk_buf"]).replace("\n", " ⏎ ")
+                tlog(f"[{tag}] …{merged[-160:]}")
+                state["chunk_buf"].clear()
+                state["chars_since_flush"] = 0
+                state["last_print"] = now
 
-        reasoning_buf: List[str] = []
-        reasoning_chars_since_flush = 0
-        reasoning_last_print = clock()
-        reasoning_streamed_chars = 0
-        tool_calls = 0
-        for event in stream:
-            check_attempt_budgets(
-                attempt_started_at=attempt_started_at,
-                last_output_at=last_output_at,
-                policy=policy,
-                clock=clock,
-            )
-            ev_type = type(event).__name__
-            # 工具调用事件：记日志 + 把「正在查 X」作为思考片段推给前端
-            if ev_type == "ToolCallStartedEvent":
-                tool = getattr(event, "tool", None)
-                tname = getattr(tool, "tool_name", "?") if tool else "?"
-                targs = getattr(tool, "tool_args", {}) if tool else {}
-                tool_calls += 1
-                tlog(f"[{tag}/工具] 调用 {tname}({targs})")
-                if on_thinking:
-                    on_thinking(f"\n〔查阅 {tname} {targs}〕\n")
-                continue
-            if ev_type == "ToolCallCompletedEvent":
-                tool_res = getattr(event, "tool", None)
-                tres = str(getattr(tool_res, "result", "") or "")[:200] if tool_res else ""
-                if tres:
-                    tlog(f"[{tag}/工具结果] {tres!r}")
-                continue
-            rdelta = getattr(event, "reasoning_content", None)
-            if isinstance(rdelta, str) and rdelta:
-                reasoning_buf.append(rdelta)
-                reasoning_chars_since_flush += len(rdelta)
-                last_output_at = clock()
-                now = last_output_at
-                if reasoning_chars_since_flush >= 120 or (now - reasoning_last_print) >= 1.5:
-                    merged = "".join(reasoning_buf)
-                    tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-                    if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
-                        remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
-                        chunk = merged[:remaining]
-                        if chunk:
-                            on_thinking(chunk)
-                            reasoning_streamed_chars += len(chunk)
-                        if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
-                            on_thinking("\n〔思考已截断，继续推演中〕\n")
-                    reasoning_buf.clear()
-                    reasoning_chars_since_flush = 0
-                    reasoning_last_print = now
-            is_terminal = (
-                (hasattr(event, "is_final") and getattr(event, "is_final", False))
-                or ev_type in ("RunOutput", "RunCompletedEvent")
-            )
-            if ev_type == "RunErrorEvent":
-                failure = run_error_event_failure(getattr(event, "content", None))
-                raise transport_failure_unavailable(
-                    failure, attempts=1, exhausted=False,
-                )
-            if is_terminal:
-                final_output = event
-                continue
-            delta = getattr(event, "content", None)
-            if isinstance(delta, str) and delta:
-                pieces.append(delta)
-                chunk_buf.append(delta)
-                chars_since_flush += len(delta)
-                last_output_at = clock()
-                emitted_output["n"] += 1
-                if on_text:
-                    on_text(delta)
-                now = last_output_at
-                if chars_since_flush >= 80 or (now - last_print) >= 1.0:
-                    merged = "".join(chunk_buf).replace("\n", " ⏎ ")
-                    tlog(f"[{tag}] …{merged[-160:]}")
-                    chunk_buf.clear()
-                    chars_since_flush = 0
-                    last_print = now
-
-        if reasoning_buf:
-            merged = "".join(reasoning_buf)
+    def _after_stream() -> str:
+        if state["reasoning_buf"]:
+            merged = "".join(state["reasoning_buf"])
             tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-            if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
-                remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
+            if on_thinking and state["reasoning_streamed_chars"] < _THINKING_STREAM_CHAR_LIMIT:
+                remaining = _THINKING_STREAM_CHAR_LIMIT - state["reasoning_streamed_chars"]
                 chunk = merged[:remaining]
                 if chunk:
                     on_thinking(chunk)
-                    reasoning_streamed_chars += len(chunk)
-                if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
+                    state["reasoning_streamed_chars"] += len(chunk)
+                if state["reasoning_streamed_chars"] >= _THINKING_STREAM_CHAR_LIMIT:
                     on_thinking("\n〔思考已截断，继续推演中〕\n")
-        if chunk_buf:
-            merged = "".join(chunk_buf).replace("\n", " ⏎ ")
+        if state["chunk_buf"]:
+            merged = "".join(state["chunk_buf"]).replace("\n", " ⏎ ")
             tlog(f"[{tag}] …{merged[-160:]}")
-
-        # #671：流式拼合原文不 strip；仅用临时副本判空。
-        streamed = "".join(pieces)
+        streamed = "".join(state["pieces"])
+        final_output = state["final_output"]
         if streamed.strip():
             text = streamed
             fail_if_llm_error(text, "LLM 调用")
         elif final_output is not None:
             text = extract_agent_text(final_output)
             if not text.strip():
-                # 空输出 → transport 可重试（#1465）；契约 abort 留给耗尽后语义
                 raise transport_failure_unavailable(
                     empty_output_failure(), attempts=1, exhausted=False,
                 )
@@ -282,8 +301,7 @@ def run_agent_stream_text(
             raise transport_failure_unavailable(
                 empty_output_failure(), attempts=1, exhausted=False,
             )
-        tlog(f"[{tag}] 完成，{len(text)} 字，工具调用 {tool_calls} 次")
-        # 流式 openai response 无 .usage，monkeypatch 抓不到；从终结事件 metrics 补记 token。
+        tlog(f"[{tag}] 完成，{len(text)} 字，工具调用 {state['tool_calls']} 次")
         _dump_llm_messages(final_output, tag, agent=agent)
         if final_output is not None:
             metrics = getattr(final_output, "metrics", None)
@@ -291,11 +309,14 @@ def run_agent_stream_text(
             record_stream_metrics(str(model_id), metrics, caller_tag=tag)
         return text
 
-    text, _attempts = run_with_transport(
-        _one_attempt,
+    text, _attempts = run_transport_stream(
+        _start_stream,
+        on_event=_on_event,
+        is_output_event=_is_output,
+        map_error_event=_map_error,
+        after_stream=_after_stream,
         policy=policy,
         clock=clock,
-        output_emitted=lambda: emitted_output["n"] > 0,
     )
     return text
 

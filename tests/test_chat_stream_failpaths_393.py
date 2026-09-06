@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 import web_app
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-from ming_sim.llm_transport import TransportPolicy, default_transport_policy
+from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
 
 
@@ -952,13 +952,22 @@ def test_chat_stream_typed_429_preserved(monkeypatch):
     _assert_write_path_free(runtime)
 
 
-def test_chat_stream_config_max_attempts_override(monkeypatch):
-    """#1465 ①：配置改次数后行为随之变（max_attempts=1 → 瞬断一次即终失败）。"""
-    policy = TransportPolicy(
-        max_attempts=1,
-        attempt_timeout_seconds=30.0,
-        idle_timeout_seconds=30.0,
-    )
+def test_chat_stream_config_max_attempts_override(monkeypatch, tmp_path):
+    """#1465 ①：runtime transport 改次数 → 真实召对入口行为随之变
+    （max_attempts=1 → 瞬断一次即终失败；不注入 TransportPolicy 参数）。"""
+    from ming_sim import llm_config as llm_config_mod
+
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        "transport": {
+            "max_attempts": 1,
+            "attempt_timeout_seconds": 30,
+            "idle_timeout_seconds": 30,
+        },
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
 
     def _conn_err(_n):
         return LLMUnavailable(
@@ -969,33 +978,40 @@ def test_chat_stream_config_max_attempts_override(monkeypatch):
 
     agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
     runtime, minister = _stream_runtime_for_agent(agent)
+    # llm_config 无 transport_* 字段 → resolve 读 runtime 文件
+    runtime.session.llm_config = SimpleNamespace(channel="api")
     monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
-    # 经 _chat_stream_payload 注入 policy（与 runtime transport 段同形）
-    with pytest.raises(LLMUnavailable) as ei:
-        runtime._chat_stream_payload(
-            minister,
-            "边饷如何？",
-            chat_turn_id=7,
-            before_snapshot={},
-            accepted_turn=1,
-            emit_delta=lambda _d: None,
-            transport_policy=policy,
-        )
-    assert agent.calls == 1
-    assert ei.value.code == "llm_connection_error"
-    assert len(ei.value.transport_attempts or []) == 1
-
-
-def test_chat_stream_attempt_timeout_budget_independent(monkeypatch):
-    """#1465 ①：每 attempt 独立整份超时——前一 attempt 用满后下一 attempt 仍得整份
-    （受控推进时钟，不跑真墙钟）。"""
-    policy = TransportPolicy(
-        max_attempts=2,
-        attempt_timeout_seconds=10.0,
-        idle_timeout_seconds=100.0,
+    response = TestClient(web_app.app).post(
+        f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"},
     )
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert agent.calls == 1, f"runtime max_attempts=1 must not retry; calls={agent.calls}"
+    assert detail.get("code") == "llm_connection_error"
+    assert len(detail.get("transport_attempts") or []) == 1
+    _assert_write_path_free(runtime)
+
+
+def test_chat_stream_attempt_timeout_budget_independent(monkeypatch, tmp_path):
+    """#1465 ①：真实召对入口 + 受控时钟——前一 attempt 用满超时后下一 attempt 仍得整份。"""
+    from ming_sim import llm_config as llm_config_mod
+
+    attempt_timeout = 10.0
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        "transport": {
+            "max_attempts": 2,
+            "attempt_timeout_seconds": attempt_timeout,
+            "idle_timeout_seconds": 100.0,
+        },
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
+
     clock = {"t": 0.0}
     burns = {"n": 0}
 
@@ -1003,16 +1019,16 @@ def test_chat_stream_attempt_timeout_budget_independent(monkeypatch):
         def run(self, *_a, **_k):
             burns["n"] += 1
             if burns["n"] == 1:
-                # 首事件边界：时钟仍在窗内；推进到超时后下一 check 判死
-                yield RunContent("")  # 无输出不算 emitted；随后推进时钟
-                clock["t"] += policy.attempt_timeout_seconds + 0.1
-                yield RunContent("")  # 触发 check → attempt timeout
+                # 首事件边界在窗内；推进时钟后下一事件 check 判死本 attempt
+                yield RunContent("")
+                clock["t"] += attempt_timeout + 0.1
+                yield RunContent("")
             yield RunContent("臣复奏。")
             yield RunCompletedEvent()
 
     agent = _TimeoutThenOk()
     runtime, minister = _stream_runtime_for_agent(agent)
-    runtime.session.llm_config = policy  # resolve_transport_policy 认 TransportPolicy
+    runtime.session.llm_config = SimpleNamespace(channel="api")
     runtime._chat_stream_interpret_tools = (  # type: ignore[method-assign]
         lambda *a, **k: {
             "answer": "臣复奏。",
@@ -1029,25 +1045,25 @@ def test_chat_stream_attempt_timeout_budget_independent(monkeypatch):
             "decree_validation_failure": None,
         }
     )
-
-    # 直接走 _chat_stream_payload 以注入 clock（HTTP 层不透传 clock）
     monkeypatch.setattr(web_app, "atomic", lambda _db: contextlib.nullcontext())
-    deltas: list[str] = []
-    payload = runtime._chat_stream_payload(
-        minister,
-        "边饷如何？",
-        chat_turn_id=7,
-        before_snapshot={},
-        accepted_turn=1,
-        emit_delta=deltas.append,
-        transport_policy=policy,
-        transport_clock=lambda: clock["t"],
+    # 真实入口走 time.monotonic；受控推进不跑真墙钟
+    monkeypatch.setattr(web_app.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    response = TestClient(web_app.app).post(
+        f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"},
     )
-    assert "复奏" in str(payload.get("answer") or "")
-    attempts = payload.get("transport_attempts") or []
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    types = [e[0] for e in events]
+    assert "done" in types, events
+    done = next(e[1] for e in events if e[0] == "done")
+    assert "复奏" in str(done.get("answer") or "")
+    attempts = done.get("transport_attempts") or []
     assert len(attempts) == 2, attempts
     assert attempts[0]["outcome"] == "retryable_fail"
     assert attempts[0]["code"] == "llm_timeout"
     assert attempts[1]["outcome"] == "ok"
-    # 第二 attempt 开始时若预算收缩，会立刻超时；能 ok 即证整份独立
     assert burns["n"] == 2
+    _assert_write_path_free(runtime)
