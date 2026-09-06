@@ -1012,7 +1012,10 @@ def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, tmp_path, 
     agent = _IdleThenNearFullOk()
     web_game, minister = _transport_web_game(game, agent)
     web_game.session.llm_config = SimpleNamespace(channel="api")
-    monkeypatch.setattr(transport_mod.time, "monotonic", lambda: clock["t"])
+    # 只替换 transport 模块内的取时名，不改全局 time.monotonic（进程内 ASGI/线程共享时钟）
+    monkeypatch.setattr(
+        transport_mod, "time", SimpleNamespace(monotonic=lambda: clock["t"]),
+    )
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text

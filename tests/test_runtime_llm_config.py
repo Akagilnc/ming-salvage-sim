@@ -534,3 +534,47 @@ def test_runtime_llm_transport_slot_defaults_and_preserve(tmp_path, monkeypatch)
     saved2 = json.loads(path.read_text(encoding="utf-8"))
     assert saved2["api"]["model"] == "m2"
     assert saved2["transport"]["max_attempts"] == 5
+
+
+def test_runtime_llm_transport_nonpositive_falls_back_to_defaults(tmp_path, monkeypatch):
+    """#1465 fo2Nb：transport 非正数（0/负）回落 typed 默认，不进空 range/即死预算。"""
+    from ming_sim.llm_transport import transport_policy_from_mapping
+    from ming_sim.models import (
+        TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
+        TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS,
+        TRANSPORT_DEFAULT_MAX_ATTEMPTS,
+    )
+
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        "transport": {
+            "max_attempts": 0,
+            "attempt_timeout_seconds": -1,
+            "idle_timeout_seconds": 0,
+        },
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+    out = llm_config.load_runtime_llm()
+    assert out["transport"]["max_attempts"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
+    assert out["transport"]["attempt_timeout_seconds"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
+    assert out["transport"]["idle_timeout_seconds"] == TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS
+    policy = transport_policy_from_mapping(out)
+    assert policy.max_attempts == TRANSPORT_DEFAULT_MAX_ATTEMPTS
+    assert policy.attempt_timeout_seconds == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
+    assert policy.idle_timeout_seconds == TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS
+    # 保存路径同样经单权威：显式 0 不得落盘为 0
+    llm_config.save_runtime_llm(
+        base_url="https://x/v1",
+        model="m",
+        api_key="sk-x",
+        channel="api",
+        transport_max_attempts=0,
+        transport_attempt_timeout_seconds=0.0,
+        transport_idle_timeout_seconds=-5.0,
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["transport"]["max_attempts"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
+    assert saved["transport"]["attempt_timeout_seconds"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
+    assert saved["transport"]["idle_timeout_seconds"] == TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS

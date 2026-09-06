@@ -411,18 +411,27 @@ def run_transport_stream(
         # 每次 attempt 完整空转预算
         last_activity_at = tick()
         stream = start_stream()
-        for event in stream:
-            check_idle_budget(
-                last_activity_at=last_activity_at,
-                policy=pol,
-                clock=tick,
-            )
-            err = map_error_event(event)
-            if err is not None:
-                raise err
-            if is_activity_event(event):
-                last_activity_at = tick()
-            on_event(event)
-        return after_stream()
+        try:
+            for event in stream:
+                err = map_error_event(event)
+                if err is not None:
+                    raise err
+                # 活动事件先刷新再跳过空转闸：工具长跑后的 Completed 本身即进度
+                # （局部只把 tool 标成活动仍会在 check 先于 refresh 时误杀）。
+                if is_activity_event(event):
+                    last_activity_at = tick()
+                else:
+                    check_idle_budget(
+                        last_activity_at=last_activity_at,
+                        policy=pol,
+                        clock=tick,
+                    )
+                on_event(event)
+            return after_stream()
+        finally:
+            # agent.run 生成器持有底层 HTTP 流；异常退出须 close，否则连接滞留。
+            close = getattr(stream, "close", None)
+            if callable(close):
+                close()
 
     return run_with_transport(_one_attempt, policy=pol)
