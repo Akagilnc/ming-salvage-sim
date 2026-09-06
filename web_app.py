@@ -2586,24 +2586,16 @@ class WebGame:
             )
 
         def _is_activity(event: Any) -> bool:
-            # 空转活动：RunContent 有正文、reasoning 增量、或工具生命周期（活动 ≠ 已呈现正文）
+            # 空转活动：RunContent 有正文、reasoning 增量、工具生命周期（活动 ≠ 已呈现正文）
+            # 工具类名与 agents.run_agent_stream_text 同权威；长工具存活靠 transport 活动先刷新。
             if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
                 return True
             rdelta = getattr(event, "reasoning_content", None)
             if isinstance(rdelta, str) and bool(rdelta):
                 return True
-            # 工具调用在跑也是活动（长工具不得被判空转，否则整轮重试并重跑工具）
-            ev_type = type(event).__name__
-            if ev_type in ("ToolCallStartedEvent", "ToolCallCompletedEvent"):
-                return True
-            event_name = str(getattr(event, "event", "") or "")
-            if event_name in ("ToolCallStarted", "ToolCallCompleted"):
-                return True
-            if getattr(event, "tool", None) is not None and ev_type not in (
-                "RunOutput", "RunCompletedEvent", "RunContent",
-            ):
-                return True
-            return False
+            return type(event).__name__ in (
+                "ToolCallStartedEvent", "ToolCallCompletedEvent",
+            )
 
         def _on_event(event: Any) -> None:
             content = getattr(event, "content", None)
@@ -2648,14 +2640,6 @@ class WebGame:
 
         stream_attempt_n = {"n": 0}
 
-        def _reset_agent_session_cache() -> None:
-            # 截断 DB 历史后清 Agno 进程内 session 缓存，避免失败 attempt 的 runs 回灌。
-            cached = getattr(agent, "_cached_session", None)
-            if cached is not None:
-                agent._cached_session = None
-            if getattr(agent, "_cached_session_db", None) is not None:
-                agent._cached_session_db = None
-
         def _start_stream():
             # 每 attempt 清空半局部呈现态（chunks/run_output）；
             # 不重置 exit_started：流中已落账退场是史实（0036），重试须与之相容。
@@ -2665,9 +2649,8 @@ class WebGame:
             if stream_attempt_n["n"] > 0:
                 emit_delta("", replace=True)
                 # fo2Og：失败 attempt 的 Agno runs 截回本轮起点，不调用 fail_chat_turn。
-                if chat_turn_id and hasattr(self.db, "truncate_chat_turn_agno_runs"):
+                if chat_turn_id:
                     self.db.truncate_chat_turn_agno_runs(int(chat_turn_id))
-                _reset_agent_session_cache()
             stream_attempt_n["n"] += 1
             return agent.run(
                 agent_prompt, stream=True, stream_events=True, yield_run_output=True,
