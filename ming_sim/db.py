@@ -18537,6 +18537,7 @@ class GameDB:
             "classification": "valid",
             "id": -int(pa["id"]),
             "text": text,
+            "turn": int(pa["turn"]),
             "status": "pending",
             "source": "pending_action",
             "actor": actor,
