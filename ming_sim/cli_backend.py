@@ -1355,6 +1355,43 @@ def _draft_intent_character_roster_facts(content: Any) -> str:
     )
 
 
+def _draft_intent_army_grounding_facts(content: Any) -> str:
+    """#1774：把军队身份别名（matching.army_identity_aliases 单源）编成抽取接地事实块。
+
+    与 _draft_intent_character_roster_facts / _pay_order_grounding_facts 同族：
+    结构化事实注入（ADR 0142），机面 canonical id 供料合法（ADR 0143）。
+    抽取器据此把皇帝的自然说法（「解赴关宁军前」）归一到 @guanning，
+    协饷写缝仍走既有 canonical_army_id_exact 精确等值——本块不放宽解析、
+    不新增模糊匹配/子串升格，也不把驻地/战区/将领混进身份别名（matching 同规）。
+    """
+    armies = getattr(content, "armies", None) if content is not None else None
+    if not armies:
+        return ""
+    from ming_sim.matching import army_identity_aliases
+
+    lines: List[str] = []
+    for key, army in armies.items():
+        army_id = str(getattr(army, "id", None) or key or "").strip()
+        if not army_id:
+            continue
+        name = str(getattr(army, "name", None) or army_id).strip()
+        aliases = [
+            alias for alias in army_identity_aliases(army)
+            if alias not in (army_id, name)
+        ]
+        head = f"{name}（别名：{'、'.join(aliases)}）" if aliases else name
+        lines.append(f"{head}=@{army_id}")
+    if not lines:
+        return ""
+    return (
+        "【军队接地事实】协饷旨意的「目标」只填下列 canonical id"
+        "（形如 @guanning）；皇帝行文中的军名、别名、军前/所部等说法，"
+        "按语义归到所属军的 canonical id；表中无对应之军才留空。\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 # #1274 QA V-1：参与人校验失败有界纠错重试（owner 2026-08-20 三连拍板）。
 # 宪法：查无此人不告诉皇帝、底下人偷偷划掉=篡改圣旨，绝对禁止。
 # 自愈只许修 LLM 自己的抄写错（修完仍是皇帝说的那个人）；真不在册→戏内回禀。
@@ -2575,6 +2612,7 @@ def extract_draft_intent(
 
     correction_feedback（#1274 V-1）：校验失败回喂的纠错指令；非空时 LLM 挂死响亮上抛。"""
     roster_facts = _draft_intent_character_roster_facts(content)
+    army_facts = _draft_intent_army_grounding_facts(content)
     correction_block = str(correction_feedback or "").strip()
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
@@ -2626,6 +2664,7 @@ def extract_draft_intent(
             + "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             + correction_block
             + roster_facts
+            + army_facts
             + pay_order_facts
             + stalled_push_facts
             + "御笔强推逐道只填目标案卷ID；普通非拨帑旨用共同契约字段，拨帑旨只用 ACTION_CLUSTERS 字段。两种形状不得并存。\n"
@@ -2856,6 +2895,7 @@ def extract_draft_intent(
         "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
         + roster_facts
+        + army_facts
         + pay_order_facts
         + stalled_push_facts
         + draft_context
