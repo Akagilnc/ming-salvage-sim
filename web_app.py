@@ -6530,6 +6530,7 @@ def api_advance_without_edict(
     # （消费工人终态，不按 elapsed 伪造 409）。用同步 def 交给 FastAPI threadpool，
     # 绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
     game = get_game()
+    was_ended = bool(game.state.ended)
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
@@ -6546,17 +6547,21 @@ def api_advance_without_edict(
                 # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
                 # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
                 settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
-                if settlement_result is None or not settlement_result.awaiting:
+                # #1769：was_ended/last_decree 须在 end_turn/refresh 之前取样
+                # （refresh→begin_turn 会清 last_decree）。awaiting 不计 steam。
+                decree = game.session.last_decree
+                awaiting = bool(
+                    settlement_result is not None and settlement_result.awaiting
+                )
+                if not awaiting:
                     game.session.end_turn()
                     game.refresh_turn()
                 # §2.2：end_turn/refresh 后、return 前直查并立即赋 holder（失败进原异常链）。
                 failure_snapshot = _new_secret_order_failure_payloads_for_turn(
                     game, turn_before, failed_before)
-                return {
+                payload = {
                     "state": game.state_payload(),
-                    "awaiting_decision": bool(
-                        settlement_result is not None and settlement_result.awaiting
-                    ),
+                    "awaiting_decision": awaiting,
                     "decisions": (
                         settlement_result.decisions
                         if settlement_result is not None and settlement_result.awaiting
@@ -6564,6 +6569,15 @@ def api_advance_without_edict(
                     ),
                     "pending_action_failures": failure_snapshot,
                 }
+                if awaiting:
+                    return payload
+                # 真空退朝 last_decree 空 → 不发 STAT_DECREES_ISSUED；仅非空才计已颁。
+                return steam_events.with_events(
+                    payload,
+                    _settlement_steam_events(
+                        game, decree=decree or "", was_ended=was_ended,
+                    ),
+                )
             except HTTPException:
                 raise
             except Exception as body_exc:
