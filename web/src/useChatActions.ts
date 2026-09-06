@@ -236,7 +236,7 @@ export function useChatActions({
         }
       },
       // #1764：end = 抽取成案/收夜等尾随已 join 的提交完成缝；再读权威 durable（含 cased_directives）。
-      // 不延迟 done；不新建轮询/总线。观察者离面无 end 时，重入拟诏经 openEdict→loadState。
+      // 不延迟 done；不新建轮询/总线。观察者离面无 end 时，重入拟诏经公共 openModal(edict)→loadState。
       onEnd: () => {
         void refreshDurableProjection({ secretOrders: true });
       },
