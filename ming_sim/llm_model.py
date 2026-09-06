@@ -77,19 +77,32 @@ def _extract_provider_error(error: Exception) -> tuple[str, str, int | None]:
 
 
 def llm_unavailable_from_error(error: Exception, stage: str = "LLM 连通性检查") -> LLMUnavailable:
-    """OpenAI 异常 → typed LLMUnavailable。分类权威 = llm_transport.classify_transport_failure。"""
+    """OpenAI 异常 → typed LLMUnavailable。code/retryable/status 唯一权威 = classify_transport_failure。
+
+    _extract_provider_error 只补 provider 原文与壳上缺失的 status；不平行重写分类。
+    """
     from ming_sim.llm_transport import classify_transport_failure
 
-    # 先抽 provider 原文（response.json 内层），再交给统一分类定 code/retryable/status
-    _provider_code, provider_message, status_code = _extract_provider_error(error)
-    # 若异常自身无 status_code 属性但 body 里有，补到 APIStatusError 等价路径：
-    # classify 认 API* 类型；对已是 LLMUnavailable 的直接分类。
+    _provider_code, provider_message, extracted_status = _extract_provider_error(error)
+    # 壳异常带 body status 但不是 APIStatusError：先贴 status 再分类，避免平行补码
+    if (
+        extracted_status is not None
+        and not isinstance(error, (APIStatusError, APITimeoutError, APIConnectionError, LLMUnavailable))
+        and getattr(error, "status_code", None) is None
+    ):
+        try:
+            error.status_code = extracted_status  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — 只读壳：分类仍走类型路径
+            pass
     failure = classify_transport_failure(error)
-    # status：classify 优先；否则 _extract 补洞（非 API* 但带 response 的壳）
-    resolved_status = failure.status_code if failure.status_code is not None else status_code
+    # 若仍无 status（classify 未认），用 extract 补洞但不改 code 权威（除非仍是笼统 llm_error）
+    resolved_status = (
+        failure.status_code if failure.status_code is not None else extracted_status
+    )
     resolved_code = failure.code
-    if resolved_code == "llm_error" and status_code is not None:
-        resolved_code = f"llm_http_{status_code}"
+    if resolved_code == "llm_error" and resolved_status is not None:
+        # 唯一补码入口：无 typed 类但有 HTTP status → 走 http 码（与 classify 同规则）
+        resolved_code = f"llm_http_{resolved_status}"
     pmsg = provider_message or failure.provider_message
     return LLMUnavailable(
         f"{stage}失败：{pmsg}",
@@ -158,19 +171,16 @@ def create_chat_model(
             if thinking_type not in {"adaptive", "disabled"}:
                 thinking_type = "adaptive"
         extra_body = {"thinking": {"type": thinking_type}, "reasoning_split": True}
-    # #1465：API 通道 SDK timeout = transport 每 attempt 整份超时（与事件界 check 同权威）；
-    # 不再另用 llm_config.timeout_seconds 作第二墙钟。CLI 仍用 cli_timeout_seconds。
-    from ming_sim.llm_transport import resolve_transport_policy
-
-    transport_policy = resolve_transport_policy(llm_config)
+    # #1465：未迁移调用保留原 timeout_seconds / SDK max_retries=1。
+    # 已迁移召对流在接缝用 bind_transport_sdk_budget 临时覆盖（idle + max_retries=0）。
+    # 禁止在 create_chat_model 全局套 transport，否则 extractor/非流/CLI 默认行为被改。
     kwargs: Dict[str, object] = {
         "id": llm_config.model,
         "api_key": llm_config.api_key,
         "base_url": llm_config.base_url,
         "temperature": temperature,
-        "timeout": transport_policy.attempt_timeout_seconds,
-        # #1465：SDK 层重试关闭——attempt 预算归 llm_transport 单真源，禁双重点数。
-        "max_retries": 0,
+        "timeout": llm_config.timeout_seconds,
+        "max_retries": 1,
         "role_map": {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"},
         "extra_body": extra_body,
     }

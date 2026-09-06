@@ -68,6 +68,7 @@ from ming_sim.llm_config import (
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_transport import (
+    bind_transport_sdk_budget,
     empty_output_failure,
     resolve_transport_policy,
     run_error_event_failure,
@@ -2549,9 +2550,6 @@ class WebGame:
         write_gate: Optional[threading.Lock] = None,
         action_intent_future: Optional[Future] = None,
         explicit_secret_order: bool = False,
-        *,
-        transport_policy=None,
-        transport_clock=None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         agent = self.session.registry.get(character)
@@ -2568,13 +2566,11 @@ class WebGame:
         stream_secret_route = bool(explicit_secret_order) or (text or "").strip().startswith(
             _STREAM_SECRET_PREFIXES
         )
-        # #1465：API transport 统一重试/超时/分类；流循环唯一权威 = run_transport_stream。
-        policy = resolve_transport_policy(
-            transport_policy
-            if transport_policy is not None
-            else getattr(self.session, "llm_config", None)
-        )
-        clock = transport_clock or time.monotonic
+        # #1465 切片①：仅真实 API 召对接缝接线 transport；CLI 通道不套入。
+        llm_cfg = getattr(self.session, "llm_config", None)
+        channel = (getattr(llm_cfg, "channel", "") or "").strip().lower()
+        use_transport = channel != "cli"
+        policy = resolve_transport_policy(llm_cfg) if use_transport else None
         chunks: List[str] = []
         run_output_box: List[Any] = []
         exit_started_during_stream = {"v": False}
@@ -2589,11 +2585,12 @@ class WebGame:
                 exhausted=False,
             )
 
-        def _is_output(event: Any) -> bool:
-            return bool(
-                getattr(event, "event", "") == "RunContent"
-                and getattr(event, "content", None)
-            )
+        def _is_activity(event: Any) -> bool:
+            # 空转活动：RunContent 有正文，或带 reasoning 增量（活动 ≠ 已呈现正文）
+            if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
+                return True
+            rdelta = getattr(event, "reasoning_content", None)
+            return isinstance(rdelta, str) and bool(rdelta)
 
         def _on_event(event: Any) -> None:
             content = getattr(event, "content", None)
@@ -2636,8 +2633,8 @@ class WebGame:
                 )
             return answer, run_output
 
-        # 每 attempt 清空半局部状态（重试不得沿用上一 attempt 的 chunks/run_output）
         def _start_stream():
+            # 每 attempt 清空半局部状态（重试不得沿用上一 attempt 的 chunks/run_output）
             chunks.clear()
             run_output_box.clear()
             exit_started_during_stream["v"] = False
@@ -2645,15 +2642,28 @@ class WebGame:
                 agent_prompt, stream=True, stream_events=True, yield_run_output=True,
             )
 
-        (answer, run_output), transport_attempts_box = run_transport_stream(
-            _start_stream,
-            on_event=_on_event,
-            is_output_event=_is_output,
-            map_error_event=_map_error,
-            after_stream=_after_stream,
-            policy=policy,
-            clock=clock,
-        )
+        if use_transport:
+            assert policy is not None
+            # SDK 静默超时/禁双重点数仅本接缝临时覆盖；事件界只做空转。
+            with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+                (answer, run_output), transport_attempts_box = run_transport_stream(
+                    _start_stream,
+                    on_event=_on_event,
+                    is_activity_event=_is_activity,
+                    map_error_event=_map_error,
+                    after_stream=_after_stream,
+                    policy=policy,
+                )
+        else:
+            # CLI 通道：保留单次流，不套 transport 次数/空转（切片③）
+            stream = _start_stream()
+            for event in stream:
+                err = _map_error(event)
+                if err is not None:
+                    raise err
+                _on_event(event)
+            answer, run_output = _after_stream()
+            transport_attempts_box = []
 
         # #542：action/tool 解释（exit 若流中未启则幂等补登），write_gate 外统一 join，
         # 短事务原子持久化 reply + 本轮全部 scene。join 不得早于 start_exit。
@@ -2685,7 +2695,8 @@ class WebGame:
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         # #1465：attempts 账可回指（结构化；非 prose）
-        payload["transport_attempts"] = transport_attempts_public(transport_attempts_box)
+        if transport_attempts_box:
+            payload["transport_attempts"] = transport_attempts_public(transport_attempts_box)
         return payload
 
     def _chat_stream_interpret_tools(
