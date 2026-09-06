@@ -3422,13 +3422,14 @@ class GameSession:
             dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
                 self.state, record_rejections=is_last,
             )
-        directives = list(self.db.list_dossiered_draft_directives(self.state))
+        dossiered_directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
         # colliding with durable turn_directives ids.
         pending_directives = self.db.preview_pending_directives(
             self.state, content=getattr(self, "content", None),
         )
+        directives = list(dossiered_directives)
         directives.extend(pending_directives)
         if pending_directives and recovered_source is None and (decree or "").strip():
             # The supplied decree predates these durable candidates; regenerate from
@@ -3443,6 +3444,12 @@ class GameSession:
         # #1769 耗尽：产物错 draft 留到下月；不得把引擎拒因串透传给皇帝，不得挡月份。
         # 真拒因已在 rejection_reports 留痕（#1591 保留面）。
         product_exhaust = bool(dossier_rejections)
+        # #1769 零成案耗尽与退朝无旨同形：不把 last_decree/显式 decree 当本月已颁。
+        # 混合好旨（dossiered 非空）仍走 player_decree、仍计已颁。
+        if product_exhaust and not dossiered_directives:
+            decree = ""
+            self.last_decree = ""
+            self._decree_draft_fingerprint = ()
         if not directives and not settlement_due and not pending_action_due:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
