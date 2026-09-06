@@ -609,7 +609,6 @@ export type PendingActionFailure = {
   kind: string;
   action: string;
   minister_name?: string;
-  retryable?: boolean;
   message: string;
 };
 

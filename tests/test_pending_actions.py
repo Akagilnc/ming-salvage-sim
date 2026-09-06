@@ -32,7 +32,7 @@ import ming_sim.issues as issues
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle, reload_state_from_db, settle_with_delta
 from ming_sim.registry import MinisterRegistry
-from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
+from ming_sim.session import GameSession, TurnPhase
 from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK, create_test_secret_order, promulgate_proposed_appointments
 from tests.conftest import covering_monthly_extract
 
@@ -818,7 +818,6 @@ def test_web_advance_without_edict_returns_failed_secret_order_payload(game, mon
 
     failures = out.get("pending_action_failures")
     assert failures and failures[0]["id"] == pending_id
-    assert failures[0]["retryable"] is True
 
 
 def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatch):
@@ -1468,121 +1467,7 @@ def test_dialogue_affirm_secret_order_landing_failure_is_reported(game, monkeypa
 
     failures = out.get("pending_action_failures")
     assert failures and failures[0]["id"] == pending_id
-    assert failures[0]["retryable"] is True
     assert "密令" in failures[0]["message"]
-    failed = db.list_pending_actions(state.turn, status="failed")
-    assert len(failed) == 1 and failed[0]["id"] == pending_id
-
-
-def test_retry_failed_secret_order_reuses_stored_payload(game):
-    """重试失败密令用 pending_actions 里已存 payload 落库,不需要重跑召对/抽取。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": ["辽饷"], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-
-    result = db.retry_failed_pending_action(state, pending_id)
-
-    assert result["committed"] is True
-    assert db.list_pending_actions(state.turn, status="failed") == []
-    row = db.conn.execute(
-        "SELECT minister_name, title, content, tags FROM secret_orders ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    assert row["minister_name"] == name
-    assert row["title"] == "暗查辽饷"
-    assert row["content"] == "密查辽饷去向"
-    assert json.loads(row["tags"]) == ["辽饷"]
-
-
-def test_retry_failed_secret_order_rejects_settlement_recovery_phase(game):
-    """pre_settle 后的恢复窗口不能手动 retry，避免绕出结算事务保护。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": ["辽饷"], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-    state.turn_phase = TurnPhase.SETTLING.value
-
-    with pytest.raises(ValueError, match="结算"):
-        db.retry_failed_pending_action(state, pending_id)
-
-    assert db.list_secret_orders() == []
-    failed = db.list_pending_actions(state.turn, status="failed")
-    assert len(failed) == 1 and failed[0]["id"] == pending_id
-
-
-def test_retry_failed_secret_order_status_failure_rolls_back_created_order(game, monkeypatch):
-    """retry 的 durable 创建与 failed 行状态转换必须同事务，避免失败后重复创建。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={
-            "title": "暗查辽饷",
-            "content": "密查辽饷侵冒。",
-            "assignee": name,
-            "tags": ["辽饷"],
-            "deadline_months": 0,
-            "covert_task": LIAO_PAY_COVERT_TASK,
-        },
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-    original_execute = db.conn.execute
-
-    def fail_status_update(sql, *args, **kwargs):
-        params = args[0] if args else ()
-        if "UPDATE pending_actions SET status=?" in str(sql) and params and params[0] == "committed":
-            raise RuntimeError("status update failed")
-        return original_execute(sql, *args, **kwargs)
-
-    monkeypatch.setattr(db.conn, "execute", fail_status_update)
-
-    with pytest.raises(RuntimeError):
-        db.retry_failed_pending_action(state, pending_id)
-
-    assert db.list_secret_orders() == []
-
-
-def test_retry_failed_secret_order_apply_exception_rolls_back_side_effects(game, monkeypatch):
-    """retry 中 _apply_pending_action 半途写入后抛错时，写入必须回滚，只保留 failed 状态。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={
-            "title": "暗查辽饷",
-            "content": "密查辽饷侵冒。",
-            "assignee": name,
-            "tags": ["辽饷"],
-            "deadline_months": 0,
-            "covert_task": LIAO_PAY_COVERT_TASK,
-        },
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-
-    def partial_apply(_state, _pa, _payload, **_kwargs):
-        create_test_secret_order(db, state, name, "半写密令", "不应留下。", [], deadline_months=0)
-        raise RuntimeError("apply failed after durable write")
-
-    monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
-
-    result = db.retry_failed_pending_action(state, pending_id)
-
-    assert result["committed"] is False
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM secret_orders WHERE title='半写密令'"
-    ).fetchone()[0] == 0
     failed = db.list_pending_actions(state.turn, status="failed")
     assert len(failed) == 1 and failed[0]["id"] == pending_id
 
@@ -1612,40 +1497,6 @@ def test_commit_pending_action_false_rolls_back_side_effects(game, monkeypatch):
     applied = db.commit_pending_actions(state)
 
     assert applied == []
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM secret_orders WHERE title='半写密令'"
-    ).fetchone()[0] == 0
-    failed = db.list_pending_actions(state.turn, status="failed")
-    assert len(failed) == 1 and failed[0]["id"] == pending_id
-
-
-def test_retry_failed_secret_order_false_rolls_back_side_effects(game, monkeypatch):
-    """retry 中 _apply_pending_action 半途写入后返回 False，也必须回滚半写入。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={
-            "title": "暗查辽饷",
-            "content": "密查辽饷侵冒。",
-            "assignee": name,
-            "tags": ["辽饷"],
-            "deadline_months": 0,
-            "covert_task": LIAO_PAY_COVERT_TASK,
-        },
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-
-    def partial_apply(_state, _pa, _payload, **_kwargs):
-        create_test_secret_order(db, state, name, "半写密令", "不应留下。", [], deadline_months=0)
-        return False
-
-    monkeypatch.setattr(db, "_apply_pending_action", partial_apply)
-
-    result = db.retry_failed_pending_action(state, pending_id)
-
-    assert result["committed"] is False
     assert db.conn.execute(
         "SELECT COUNT(*) FROM secret_orders WHERE title='半写密令'"
     ).fetchone()[0] == 0
@@ -1710,195 +1561,6 @@ def test_drop_pending_actions_for_minister_does_not_commit_outer_transaction(gam
     assert row is not None and row["status"] == "pending"
 
 
-def test_retry_api_retire_failure_rolls_back_created_order(game, monkeypatch):
-    """API retry 成功写密令但退休原确认轮失败时，应整体回滚，避免 undo 复活 failed row。"""
-    import asyncio
-    import web_app
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={
-            "title": "暗查辽饷",
-            "content": "密查辽饷侵冒。",
-            "assignee": name,
-            "tags": ["辽饷"],
-            "deadline_months": 0,
-            "covert_task": LIAO_PAY_COVERT_TASK,
-        },
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-    stub = types.SimpleNamespace(
-        db=db,
-        state=state,
-        session=types.SimpleNamespace(content=content, registry=None),
-        can_undo_last_chat=lambda _minister: False,
-    )
-    monkeypatch.setattr(web_app, "web_game", stub)
-    monkeypatch.setattr(
-        db,
-        "retire_chat_turn_for_pending_action_retry",
-        lambda _action_id: (_ for _ in ()).throw(RuntimeError("retire failed")),
-    )
-
-    with pytest.raises(RuntimeError):
-        asyncio.run(web_app.api_retry_pending_action(pending_id))
-
-    assert db.list_secret_orders() == []
-    failed = db.list_pending_actions(state.turn, status="failed")
-    assert len(failed) == 1 and failed[0]["id"] == pending_id
-
-
-def test_retry_failed_secret_order_refresh_failure_does_not_duplicate(game):
-    """密令已写入 DB 后 registry 刷新失败,不得留下 failed 入口导致再次重试重复建令。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-
-    class BrokenRegistry:
-        def refresh(self, _name):
-            raise RuntimeError("refresh failed after durable write")
-
-    result = db.retry_failed_pending_action(state, pending_id, registry=BrokenRegistry())
-
-    assert result["committed"] is True
-    assert db.list_pending_actions(state.turn, status="failed") == []
-    rows = db.conn.execute(
-        "SELECT title, content FROM secret_orders WHERE title='暗查辽饷'"
-    ).fetchall()
-    assert len(rows) == 1
-    assert rows[0]["content"] == "密查辽饷去向"
-
-
-def test_retry_failed_secret_order_retires_confirmation_chat_undo(game):
-    """失败密令重试成功后,原应允召对不得再按旧快照撤回出脏状态。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
-    )
-
-    chat_turn_id = db.create_chat_turn(state, name, "sess-retry-undo", 0)
-    user_message_id = db.append_chat_message(name, state.turn, "user", "准")
-    minister_message_id = db.append_chat_message(name, state.turn, "minister", "臣即密办。")
-    db.update_chat_turn_messages(chat_turn_id, user_message_id, minister_message_id)
-    before = db.capture_chat_rollback_snapshot()
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-    db.record_chat_turn_rollback_diffs(chat_turn_id, before, db.capture_chat_rollback_snapshot())
-    assert db.can_undo_last_chat_turn(name, state.turn)
-
-    result = db.retry_failed_pending_action(state, pending_id)
-    retired_id = db.retire_chat_turn_for_pending_action_retry(pending_id)
-
-    assert result["committed"] is True
-    assert retired_id == chat_turn_id
-    assert not db.can_undo_last_chat_turn(name, state.turn)
-    with pytest.raises(ValueError, match="撤回|不可撤回"):
-        db.undo_chat_turn(chat_turn_id)
-    assert len(db.list_secret_orders()) == 1
-    assert db.list_pending_actions(state.turn, status="failed") == []
-
-
-def test_retry_failed_secret_order_retires_creation_and_confirmation_chat_undo(game):
-    """密令跨两轮暂存/应允失败后重试成功,两轮撤回快照都不得再可用。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-
-    create_turn_id = db.create_chat_turn(state, name, "sess-retry-create", 0)
-    db.update_chat_turn_messages(
-        create_turn_id,
-        db.append_chat_message(name, state.turn, "user", "拟一道密令"),
-        db.append_chat_message(name, state.turn, "minister", "臣请密办。"),
-    )
-    before_create = db.capture_chat_rollback_snapshot()
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
-    )
-    db.record_chat_turn_rollback_diffs(create_turn_id, before_create, db.capture_chat_rollback_snapshot())
-
-    confirm_turn_id = db.create_chat_turn(state, name, "sess-retry-confirm", 0)
-    db.update_chat_turn_messages(
-        confirm_turn_id,
-        db.append_chat_message(name, state.turn, "user", "准"),
-        db.append_chat_message(name, state.turn, "minister", "臣即密办。"),
-    )
-    before_confirm = db.capture_chat_rollback_snapshot()
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-    db.record_chat_turn_rollback_diffs(confirm_turn_id, before_confirm, db.capture_chat_rollback_snapshot())
-    assert db.can_undo_last_chat_turn(name, state.turn)
-
-    result = db.retry_failed_pending_action(state, pending_id)
-    db.retire_chat_turn_for_pending_action_retry(pending_id)
-
-    assert result["committed"] is True
-    assert db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (confirm_turn_id,)).fetchone()["status"] == "failed"
-    assert db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (create_turn_id,)).fetchone()["status"] == "failed"
-    assert not db.can_undo_last_chat_turn(name, state.turn)
-    with pytest.raises(ValueError, match="撤回|不可撤回"):
-        db.undo_chat_turn(create_turn_id)
-    assert len(db.list_secret_orders()) == 1
-
-
-def test_retry_pending_action_endpoint_returns_fresh_undo_state(game, monkeypatch):
-    """重试成功会 retire 原确认召对,端点须返回刷新后的撤回可用性给前端。"""
-    import asyncio
-    import web_app
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
-    )
-    chat_turn_id = db.create_chat_turn(state, name, "sess-retry-api", 0)
-    db.update_chat_turn_messages(
-        chat_turn_id,
-        db.append_chat_message(name, state.turn, "user", "准"),
-        db.append_chat_message(name, state.turn, "minister", "臣即密办。"),
-    )
-    before = db.capture_chat_rollback_snapshot()
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-    db.record_chat_turn_rollback_diffs(chat_turn_id, before, db.capture_chat_rollback_snapshot())
-    assert db.can_undo_last_chat_turn(name, state.turn)
-
-    game_obj = types.SimpleNamespace(
-        db=db,
-        state=state,
-        session=types.SimpleNamespace(content=content, registry=None),
-        can_undo_last_chat=lambda minister_name: db.can_undo_last_chat_turn(minister_name, state.turn),
-        pending_action_failures_for=lambda minister_name: [
-            action for action in db.list_pending_actions(
-                state.turn, status="failed", minister_name=minister_name)
-            if action["kind"] == "secret_order"
-        ],
-    )
-    monkeypatch.setattr(web_app, "get_game", lambda: game_obj)
-
-    out = asyncio.run(web_app.api_retry_pending_action(pending_id))
-
-    assert out["retry"]["committed"] is True
-    assert out["can_undo_last_chat"] is False
-    assert out["pending_action_failures"] == []
-
-
 def test_pending_action_failures_endpoint_lists_all_failed_secret_orders(game, monkeypatch):
     import asyncio
     import types
@@ -1920,30 +1582,6 @@ def test_pending_action_failures_endpoint_lists_all_failed_secret_orders(game, m
     failures = out["pending_action_failures"]
     assert [failure["id"] for failure in failures] == [pending_id]
     assert failures[0]["minister_name"] == "离席大臣"
-
-
-def test_non_secret_pending_failure_payload_does_not_promise_retry():
-    """非密令失败没有重试端点/按钮,提示不得承诺「请重试」。"""
-    failure = _pending_action_failure_payload(
-        {"id": 1, "kind": "office", "action": "任命"})
-
-    assert "任免未能正式落库" in failure["message"]
-    assert failure["retryable"] is False
-    assert "重试" not in failure["message"]
-
-
-def test_settling_secret_failure_payload_is_not_retryable(game):
-    """settling/awaiting 阶段写闸关闭，failure payload 不应承诺立即 retry。"""
-    _db, state, _content = game
-    state.turn_phase = "settling"
-    failure = _pending_action_failure_payload(
-        {"id": 1, "kind": "secret_order", "action": "新建", "minister_name": "毕自严"},
-        state,
-    )
-
-    assert failure["retryable"] is False
-    assert "请重试" not in failure["message"]
-    assert "稍后" in failure["message"]
 
 
 def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
@@ -1998,7 +1636,7 @@ def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game, mon
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game, monkeypatch):
-    """#415/#1560: 结束回合过程中 commit 新产生的 failure 仍跨月可见、可重试（清旧在 commit 前）。"""
+    """#415/#1560: 结束回合过程中 commit 新产生的 failure 仍跨月可见（清旧在 commit 前）。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     old_turn = state.turn
@@ -2015,8 +1653,6 @@ def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game
         payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
                  "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
     )
-    original_create = db.create_secret_order
-
     def _poison(*args, **kwargs):
         raise RuntimeError("AUDIT_INJECTED_DURABLE_WRITE_FAILURE")
 
@@ -2033,38 +1669,6 @@ def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game
     payload = web_app.WebGame.pending_action_failures_for(
         types.SimpleNamespace(db=db), name)
     assert payload and payload[0]["id"] == pending_id
-
-    monkeypatch.setattr(db, "create_secret_order", original_create)
-    retry = db.retry_failed_pending_action(state, pending_id)
-
-    assert retry["committed"] is True
-    assert db.list_failed_secret_order_actions(name) == []
-    assert db.list_secret_orders(status="active")[-1]["title"] == "暗查辽饷"
-
-
-def test_retry_failed_secret_order_preserves_original_issue_turn(game):
-    """旧回合 failed 密令重试时，签发 turn/due_turn 仍按原 pending 回合计算。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    old_turn = state.turn
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 3, "covert_task": LIAO_PAY_COVERT_TASK},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-    state.next_period()
-    db.save_state(state)
-
-    retry = db.retry_failed_pending_action(state, pending_id)
-
-    assert retry["committed"] is True
-    row = db.conn.execute(
-        "SELECT turn_issued, due_turn FROM secret_orders WHERE title='暗查辽饷' ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    assert row["turn_issued"] == old_turn
-    assert row["due_turn"] == old_turn + 3
 
 
 def test_successful_secret_order_confirmation_stays_quiet(game, monkeypatch):

@@ -1807,16 +1807,19 @@ class WebGame:
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
     def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
-        """该召对对象仍可由玩家处理的失败密令动作。"""
+        """该召对对象未能落库的密令动作（只报事实：重放入口已删，此处无处置动作）。"""
         return [
-            _pending_action_failure_payload(action, getattr(self, "state", None))
+            _pending_action_failure_payload(action)
             for action in self.db.list_failed_secret_order_actions(minister_name)
         ]
 
     def pending_action_failures(self) -> List[Dict[str, Any]]:
-        """所有仍可由玩家处理的失败密令动作，不依赖承办人当前是否可召见。"""
+        """所有未能落库的密令动作，不依赖承办人当前是否可召见；
+
+        只报事实，不承诺处置——承办人可召见时玩家在召对里当场再说，
+        不可召见时本回合结束即随既有边界丢弃（#1765 ②）。"""
         return [
-            _pending_action_failure_payload(action, getattr(self, "state", None))
+            _pending_action_failure_payload(action)
             for action in self.db.list_failed_secret_order_actions()
         ]
 
@@ -6075,7 +6078,7 @@ def _new_secret_order_failure_payloads_for_turn(
     if db is None or not hasattr(db, "list_pending_actions"):
         return []
     return [
-        _pending_action_failure_payload(action, game.state)
+        _pending_action_failure_payload(action)
         for action in db.list_pending_actions(int(turn), status="failed")
         if action.get("kind") == "secret_order" and int(action.get("id") or 0) not in before_ids
     ]
@@ -6149,48 +6152,6 @@ async def api_withdraw_pending_action(action_id: int) -> Dict[str, Any]:
     if row is None:
         raise HTTPException(status_code=404, detail="该待确认动作不存在。")
     raise HTTPException(status_code=409, detail="该动作已落库或非本回合，无法撤回。")
-
-
-@app.post("/api/pending_actions/{action_id}/retry")
-async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
-    """重试本回合失败的密令下达，用已存 pending_actions payload 重新落库。"""
-    game = get_game()
-    # #1727：收夜屏障窗内拒 retry pending（与 withdraw/undo 同族）。
-    _refuse_if_open_night_barrier(game)
-    minister_name = ""
-    with _serialized_web_write(game):
-        try:
-            row = game.db.conn.execute(
-                "SELECT minister_name FROM pending_actions WHERE id=?",
-                (int(action_id),),
-            ).fetchone()
-            if row is not None:
-                minister_name = str(row["minister_name"] or "")
-            with atomic(game.db):
-                result = game.db.retry_failed_pending_action(
-                    game.state, int(action_id),
-                    content=getattr(game.session, "content", None),
-                    registry=getattr(game.session, "registry", None),
-                )
-                if result.get("committed"):
-                    game.db.retire_chat_turn_for_pending_action_retry(int(action_id))
-            # #1749：响应投影在 gate 内快照，禁门后读退休连接。
-            return {
-                "retry": result,
-                "actions": _player_visible_pending_actions(
-                    game.db.list_pending_actions(int(game.state.turn))),
-                "secret_orders": game.db.list_secret_orders(),
-                "can_undo_last_chat": (
-                    game.can_undo_last_chat(minister_name) if minister_name else False
-                ),
-                "pending_action_failures": (
-                    game.pending_action_failures_for(minister_name) if minister_name else []
-                ),
-            }
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @app.get("/api/history/turns")

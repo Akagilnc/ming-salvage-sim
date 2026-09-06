@@ -11,7 +11,6 @@ import re
 import threading
 from typing import List, Optional
 
-from ming_sim.applier import atomic
 from ming_sim.constants import (
     COURT_BREAK_COMMANDS,
     EXIT_COMMANDS,
@@ -23,7 +22,6 @@ from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
 from ming_sim.session import (
-    FRONT_HALF_DONE_PHASES,
     GameSession,
     TurnPhase,
     _is_summonable_court_minister,
@@ -45,33 +43,6 @@ _STATUS_LABEL = {
 # 皇帝当场对拟旨草稿的回应
 _CONFIRM_WORDS = {"", "可", "准", "准奏", "yes", "y", "确认", "入档"}
 _REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
-
-
-def _retry_failed_pending_action(session: GameSession, action_id: int) -> None:
-    """Retry a failed secret-order pending action from the CLI audience loop."""
-    if getattr(session.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
-        print("上月结算未完成，暂不能重试密令；请先到诏书界面输入 issue 续跑结算。\n")
-        return
-    try:
-        with atomic(session.db):
-            result = session.db.retry_failed_pending_action(
-                session.state,
-                int(action_id),
-                content=getattr(session, "content", None),
-                registry=getattr(session, "registry", None),
-            )
-            if result.get("committed"):
-                session.db.retire_chat_turn_for_pending_action_retry(int(action_id))
-    except KeyError as exc:
-        print(f"未找到可重试的密令：{exc}\n")
-        return
-    except ValueError as exc:
-        print(f"此密令暂不能重试：{exc}\n")
-        return
-    if result.get("committed"):
-        print(f"密令 #{int(action_id)} 已重试落库。\n")
-    else:
-        print(f"密令 #{int(action_id)} 重试仍未落库；可稍后再试，不阻断继续召对。\n")
 
 
 def _failed_secret_order_ids(session: GameSession, turn: int) -> set[int]:
@@ -98,7 +69,7 @@ def _new_secret_order_failure_payloads(
         action_id = int(action.get("id") or 0)
         if action_id in before_ids:
             continue
-        failures.append(_pending_action_failure_payload(action, session.state))
+        failures.append(_pending_action_failure_payload(action))
     return failures
 
 
@@ -111,10 +82,7 @@ def _print_pending_action_failures(failures: List[dict]) -> None:
         except (TypeError, ValueError):
             failure_id = None
         suffix = f" #{failure_id}" if failure_id is not None else ""
-        print(f"【密令落库失败{suffix}】{wrap(message)}")
-        if failure.get("retryable"):
-            command = f"retry {failure_id}" if failure_id is not None else "retry <id>"
-            print(f"可输入 {command} 重试；本次失败不会阻断继续召对。\n")
+        print(f"【密令落库失败{suffix}】{wrap(message)}\n")
 
 
 def _print_header(session: GameSession) -> None:
@@ -356,11 +324,6 @@ def _handle_court_command(
         from ming_sim.audience_night import stay_attend_in_audience
         stay_attend_in_audience(session.db, current.name)
         print(f"{current.name}留下听着，殿侧侍立。\n")
-        return "handled"
-
-    retry_m = re.fullmatch(r"(?:retry|重试|重试密令)\s*#?(\d+)", raw, re.I)
-    if retry_m:
-        _retry_failed_pending_action(session, int(retry_m.group(1)))
         return "handled"
 
     # 技能卡查看

@@ -1163,15 +1163,14 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.querySelector(".hud2-stage")).toBeNull();  // 已退出游戏视图
   });
 
-  // #1499：main.tsx 政务失败恢复调用点——经拟诏「处理」真链触发，不得日后误传 hideTitle。
-  it("#1499 经真实 App 拟诏处理入口触发政务失败恢复：标题可见且非 bare 布局", async () => {
+  // #1499：main.tsx 未落库政务告知调用点——经拟诏「处理」真链触发，不得日后误传 hideTitle。
+  it("#1499 经真实 App 拟诏处理入口触发未落库政务告知：标题可见且非 bare 布局", async () => {
     const failure = {
       id: 42,
       kind: "secret_order",
       action: "落库",
       message: "密令未能正式落库",
-      retryable: true,
-      // 无 minister_name → selectedMinister 空 → activeMinister null → 走 recovery 分支
+      // 无 minister_name → selectedMinister 空 → activeMinister null → 走只读告知分支
     };
     try {
       vi.stubGlobal("fetch", vi.fn(async (url: string) => {
@@ -1204,12 +1203,12 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
 
       await act(async () => {
         await vi.waitFor(() => {
-          expect(host.querySelector('[role="dialog"][aria-label="政务失败恢复"]')).not.toBeNull();
+          expect(host.querySelector('[role="dialog"][aria-label="未落库的政务"]')).not.toBeNull();
         });
       });
-      const dialog = host.querySelector('[role="dialog"][aria-label="政务失败恢复"]') as HTMLElement;
+      const dialog = host.querySelector('[role="dialog"][aria-label="未落库的政务"]') as HTMLElement;
       // 可见标题（main 未传 hideTitle）
-      expect(dialog.querySelector(".modal-title h1")?.textContent).toContain("政务失败恢复");
+      expect(dialog.querySelector(".modal-title h1")?.textContent).toContain("未落库的政务");
       const modal = dialog.querySelector(".fullscreen-modal.modal-bg-chat");
       expect(modal).not.toBeNull();
       expect(modal!.classList.contains("modal-layout-bare")).toBe(false);
@@ -2686,7 +2685,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
         return jsonResp({
           pending_action_failures: [{
             id: 42, kind: "secret_order", action: "落库",
-            message: "密令未能正式落库", retryable: true,
+            message: "密令未能正式落库",
           }],
         });
       }
@@ -2756,7 +2755,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(processBtn);
     await act(async () => {
       await vi.waitFor(() => {
-        expect(host.querySelector('[role="dialog"][aria-label="政务失败恢复"]')).not.toBeNull();
+        expect(host.querySelector('[role="dialog"][aria-label="未落库的政务"]')).not.toBeNull();
       });
     });
   });

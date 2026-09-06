@@ -344,109 +344,6 @@ describe("召对陈旧守卫 — 离开实时观察/错误分支（sendChat catc
   });
 });
 
-/** Mirrors retryPendingAction: global secret-order/state refresh always applies,
- * but minister-panel writes (failure list / undo state / error) must be guarded. */
-function RetryGuardFixture({
-  getResult,
-  recoveryMode = false,
-}: {
-  getResult: () => Promise<{ committed: boolean; failures: string; canUndo: boolean }>;
-  recoveryMode?: boolean;
-}) {
-  const [selected, setSelected] = React.useState("甲");
-  const selectedRef = React.useRef("甲");
-  React.useEffect(() => {
-    selectedRef.current = selected;
-  }, [selected]);
-  const [globalApplied, setGlobalApplied] = React.useState(0);
-  const [panel, setPanel] = React.useState("");
-  const [undo, setUndo] = React.useState(true);
-  const [error, setError] = React.useState("");
-  const retry = async (targetMinister: string) => {
-    try {
-      const result = await getResult();
-      if (!result.committed) {
-        if (selectedRef.current === targetMinister) setError("仍未能正式落库");
-        return;
-      }
-      setGlobalApplied((n) => n + 1);
-      const staleTarget = selectedRef.current !== targetMinister;
-      if (recoveryMode || !staleTarget) setPanel(result.failures);
-      if (staleTarget) return;
-      setUndo(result.canUndo);
-    } catch {
-      if (selectedRef.current === targetMinister) setError("retry failed");
-    }
-  };
-  return (
-    <div>
-      <div data-testid="global">{globalApplied}</div>
-      <div data-testid="panel">{panel}</div>
-      <div data-testid="undo">{String(undo)}</div>
-      <div data-testid="error">{error}</div>
-      <button data-testid="retry" onClick={() => retry(selected)}>
-        重试
-      </button>
-      <button data-testid="switch" onClick={() => setSelected("乙")}>
-        切换至乙
-      </button>
-    </div>
-  );
-}
-
-describe("召对陈旧守卫 — 密令失败重试响应", () => {
-  it("切到乙后甲的重试响应不写入乙面板，但全局刷新照常", async () => {
-    let resolve!: (v: { committed: boolean; failures: string; canUndo: boolean }) => void;
-    const pending = new Promise<{ committed: boolean; failures: string; canUndo: boolean }>((r) => {
-      resolve = r;
-    });
-    const host = render(<RetryGuardFixture getResult={() => pending} />);
-    act(() => (host.querySelector("[data-testid=retry]") as HTMLButtonElement).click());
-    act(() => (host.querySelector("[data-testid=switch]") as HTMLButtonElement).click());
-    await act(async () => {
-      resolve({ committed: true, failures: "甲的失败列表", canUndo: false });
-      await pending;
-    });
-    expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
-    expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("");
-    expect(host.querySelector("[data-testid=undo]")?.textContent).toBe("true");
-    expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
-  });
-
-  it("恢复模式下跨大臣重试仍刷新全局失败列表", async () => {
-    let resolve!: (v: { committed: boolean; failures: string; canUndo: boolean }) => void;
-    const pending = new Promise<{ committed: boolean; failures: string; canUndo: boolean }>((r) => {
-      resolve = r;
-    });
-    const host = render(<RetryGuardFixture getResult={() => pending} recoveryMode />);
-    act(() => (host.querySelector("[data-testid=retry]") as HTMLButtonElement).click());
-    act(() => (host.querySelector("[data-testid=switch]") as HTMLButtonElement).click());
-    await act(async () => {
-      resolve({ committed: true, failures: "跨臣刷新后的失败列表", canUndo: false });
-      await pending;
-    });
-    expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
-    expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("跨臣刷新后的失败列表");
-    expect(host.querySelector("[data-testid=undo]")?.textContent).toBe("true");
-  });
-
-  it("未切人时重试响应正常刷新失败列表和撤回状态", async () => {
-    let resolve!: (v: { committed: boolean; failures: string; canUndo: boolean }) => void;
-    const pending = new Promise<{ committed: boolean; failures: string; canUndo: boolean }>((r) => {
-      resolve = r;
-    });
-    const host = render(<RetryGuardFixture getResult={() => pending} />);
-    act(() => (host.querySelector("[data-testid=retry]") as HTMLButtonElement).click());
-    await act(async () => {
-      resolve({ committed: true, failures: "甲的失败列表", canUndo: false });
-      await pending;
-    });
-    expect(host.querySelector("[data-testid=global]")?.textContent).toBe("1");
-    expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("甲的失败列表");
-    expect(host.querySelector("[data-testid=undo]")?.textContent).toBe("false");
-  });
-});
-
 function DecisionsFailureFixture({
   outcome,
 }: {
@@ -530,8 +427,8 @@ function SurfaceFailuresFixture({ loadState }: { loadState: () => Promise<void> 
   );
 }
 
-describe("失败恢复入口 — 无承办人", () => {
-  it("没有 minister_name 的失败也会打开全局恢复面板", async () => {
+describe("未落库政务告知 — 无承办人", () => {
+  it("没有 minister_name 的失败也会打开全局失败告知面板", async () => {
     const host = render(<SurfaceFailuresFixture loadState={() => Promise.resolve()} />);
 
     await act(async () => {
@@ -575,7 +472,7 @@ describe("召对陈旧守卫 — 广范围（undoLastChat 全局生效、面板�
     expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("甲：已撤回");
   });
 
-  it("撤回响应必须刷新失败列表，不能隐藏仍可重试的旧密令失败", async () => {
+  it("撤回响应必须刷新失败列表，不能隐藏仍未落库的旧密令失败", async () => {
     let resolve!: (v: { notice: string; failures?: string[] }) => void;
     const pending = new Promise<{ notice: string; failures?: string[] }>((r) => (resolve = r));
     const host = render(<UndoGuardFixture getResult={() => pending} />);

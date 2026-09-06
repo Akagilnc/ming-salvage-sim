@@ -117,7 +117,7 @@ describe("#1480 / #1499 hideTitle 单行 1fr 不误伤有标题栏 modal-bg-chat
     expect(bare.length).toBeGreaterThan(0);
     expect(bareOk).toBe(true);
 
-    // 有标题栏路径（起居注 / 政务失败恢复）：不得对裸 .modal-bg-chat.fullscreen-modal 写单行 1fr，
+    // 有标题栏路径（起居注 / 未落库的政务）：不得对裸 .modal-bg-chat.fullscreen-modal 写单行 1fr，
     // 否则可见标题被塞进唯一显式行、正文落隐式 auto 行遭 overflow:hidden 裁切。
     const unscoped = [...styles.matchAll(/[^{.]*\.modal-bg-chat\.fullscreen-modal\s*\{[^}]*\}/g)]
       .map((m) => m[0])
