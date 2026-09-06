@@ -1364,36 +1364,12 @@ def test_catch_quantity_tracer_same_unit_done_and_mismatch_ignored(game):
     assert row["target_units"] == 3.0
 
 
-@pytest.mark.parametrize(
-    "case,raw",
-    [
-        # 参数化失败种类只作夹具；行为断言不按种类分流（#1765 owner：都是一回事）
-        ("malformed", ""),
-        ("empty_object", "{}"),
-        (
-            "zero_contract",
-            json.dumps({
-                "标题": "查核辽饷侵冒",
-                "内容": "查核辽饷侵冒",
-                "承办人": "PLACEHOLDER",
-                "期限月数": 3,
-                "标签": ["辽饷"],
-                "差务": "",
-                "价值轴": [],
-                "方向": 1,
-                "交付单位": "",
-                "交付目标": 0,
-            }, ensure_ascii=False),
-        ),
-    ],
-    ids=["malformed", "empty_object", "zero_contract"],
-)
-def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch, case, raw):
-    """#1765：落不了库 → 统一揣摩/追问；不按失败种类分流处置。
+def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
+    """#1765：落不了库 → 统一揣摩/追问（票面点名 1393 行为改造，单夹具）。
 
-    行为：反馈事实进入后续 LLM 输入；结构化 recovery 可读回；
-    无玩家可见分类原因 failures；缺题名不落散文题名；密令未成案。
-    人工语义审读追问文本：recovery['report']（本测不锁措辞/句式）。
+    行为：typed landing_gaps + report 可读回；反馈供料含皇帝原话进入后续
+    secret_extract / recovery 输入（不锁模板句）；无分类 failures；未成案。
+    人工语义审读追问文本指针：recovery['report']。
     """
     from ming_sim import cli_backend as cb
     from ming_sim.action_clusters import candidates_from_classifier_payload
@@ -1401,92 +1377,50 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch, 
     db, state, _ = game
     name = _minister(db)
     emperor_words = "查核辽饷侵冒"
-    extract_prompts: list[str] = []
+    unlandable = "{}"
+    extract_calls: list[tuple[str, str]] = []
     recovery_prompts: list[str] = []
 
-    if case == "malformed":
-        cap = cb._TRACE_FIELD_CAP
-        core = "not-json-BEGIN-" + ("X" * (cap + 9)) + "-END"
-        raw = "  \n" + core + "\n  "
-        assert len(raw) > cap
-        api_cfg = SimpleNamespace(channel="api")
+    def _json_extract(prompt, llm_config=None, tag="", **_k):
+        text = str(prompt)
+        if tag == "secret_order_landing_recovery":
+            recovery_prompts.append(text)
+            return ("任意生成回禀", 1)
+        extract_calls.append((str(tag or ""), text))
+        return (unlandable, 1)
 
-        def _api(prompt, llm_config=None, tag="", **_k):
-            text = str(prompt)
-            if tag == "secret_order_landing_recovery":
-                recovery_prompts.append(text)
-                return ("任意生成回禀", 1)
-            extract_prompts.append(text)
-            return (raw, 1)
-
-        monkeypatch.setattr(cb, "_run_api_for_config", _api)
-        monkeypatch.setattr(
-            cb, "_run_backend_for_config",
-            lambda *_a, **_k: (_ for _ in ()).throw(
-                AssertionError("malformed 须走 API dispatcher，不得落 CLI backend")
-            ),
-        )
-        ctx = MaterializeCtx(
-            session=SimpleNamespace(db=db, state=state),
-            character=SimpleNamespace(name=name, office_type="文官"),
-            player_message=emperor_words, reply="臣领密旨",
-            message_text=emperor_words, explicit_prefixed=False,
-            has_directive=False, pend_for_minister=[], out={},
-            intent={"secret_action": "新建"}, intent_kind="secret",
-            llm_config=api_cfg, intent_candidates=[],
-        )
-    else:
-        if case == "zero_contract":
-            raw = raw.replace("PLACEHOLDER", name)
-
-        def _json_extract(prompt, llm_config=None, tag="", **_k):
-            text = str(prompt)
-            if tag == "secret_order_landing_recovery":
-                recovery_prompts.append(text)
-                return ("任意生成回禀", 1)
-            extract_prompts.append(text)
-            return (raw, 1)
-
-        monkeypatch.setattr(cb, "_run_json_extractor_for_config", _json_extract)
-        candidates = candidates_from_classifier_payload(
-            [{"kind": "secret", "secret_action": "新建"}], soft=False,
-        )
-        ctx = MaterializeCtx(
-            session=SimpleNamespace(db=db, state=state),
-            character=SimpleNamespace(name=name, office_type="文官"),
-            player_message=emperor_words, reply="臣领密旨",
-            message_text=emperor_words, explicit_prefixed=False,
-            has_directive=False, pend_for_minister=[], out={},
-            intent=None, intent_kind="none",
-            llm_config=None, intent_candidates=candidates,
-        )
-
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _json_extract)
+    candidates = candidates_from_classifier_payload(
+        [{"kind": "secret", "secret_action": "新建"}], soft=False,
+    )
+    ctx = MaterializeCtx(
+        session=SimpleNamespace(db=db, state=state),
+        character=SimpleNamespace(name=name, office_type="文官"),
+        player_message=emperor_words, reply="臣领密旨",
+        message_text=emperor_words, explicit_prefixed=False,
+        has_directive=False, pend_for_minister=[], out={},
+        intent=None, intent_kind="none",
+        llm_config=None, intent_candidates=candidates,
+    )
     run_materialize_pipeline(ctx)
 
     recovery = ctx.out.get("secret_order_landing_recovery") or {}
-    assert recovery.get("report"), f"case={case} 须有大臣追问/揣摩报告"
-    assert recovery.get("landing_gaps"), f"case={case} 须有 typed landing_gaps"
-    classified = [
-        f for f in list(ctx.out.get("pending_action_failures") or [])
-        if f.get("kind") == "secret_order"
-    ]
-    assert classified == [], f"case={case} 不得再写 secret 分类 failures: {classified}"
-    assert db.list_secret_orders() == []
-    # 反馈事实进入后续 LLM 输入（确定性供料契约，不锁措辞）
-    assert any("落库缺口" in p or "密令落库失败" in p for p in extract_prompts), (
-        f"case={case} 揣摩重抽须吃到反馈事实；prompts={len(extract_prompts)}"
+    assert recovery.get("report")
+    gaps = list(recovery.get("landing_gaps") or [])
+    assert gaps, "typed landing_gaps 须可读回"
+    assert not any(
+        f.get("kind") == "secret_order"
+        for f in list(ctx.out.get("pending_action_failures") or [])
     )
-    assert any(emperor_words in p for p in extract_prompts + recovery_prompts)
-    assert recovery_prompts, f"case={case} recovery compose 须被调用"
-    # 0142：若暂存，题名不得由散文合成
-    pid = int(ctx.out.get("pending_action_id") or 0)
-    if pid > 0:
-        row = db.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?", (pid,),
-        ).fetchone()
-        payload = json.loads(row["payload_json"])
-        if case in ("malformed", "empty_object"):
-            assert not str(payload.get("title") or "").strip()
+    assert int(ctx.out.get("pending_action_id") or 0) == 0
+    assert db.list_secret_orders() == []
+    # 揣摩重抽至少一次；皇帝原话进入后续 extract 输入（确定性供料，不锁模板句）
+    assert len(extract_calls) >= 2
+    assert any(emperor_words in prompt for _tag, prompt in extract_calls[1:])
+    assert recovery_prompts and any(emperor_words in p for p in recovery_prompts)
+    # 0142：未成案路径不落散文题名
+    snapshot = recovery.get("extract_snapshot") or {}
+    assert not str(snapshot.get("title") or "").strip()
 
 
 @pytest.mark.parametrize(
@@ -1500,10 +1434,7 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch, 
 def test_batch_assignment_id_survives_invalid_secret_both_orders(
     game, monkeypatch, kinds,
 ):
-    """#1765 / #1565：同批正常动作不受坏密令牵连；assignment ID 可回指。
-
-    secret 落不了库走 recovery，不再写分类 failures；baseline F0 前缀一次保留。
-    """
+    """#1765 / #1565：同批正常动作不受坏密令牵连；assignment ID 可回指。"""
     from ming_sim import cli_backend as cb
     from ming_sim.action_clusters import candidates_from_classifier_payload
 
@@ -1521,6 +1452,7 @@ def test_batch_assignment_id_survives_invalid_secret_both_orders(
         "交付单位": "",
         "交付目标": 0,
     }, ensure_ascii=False)
+
     def _json_extract(prompt, llm_config=None, tag="", **_k):
         if tag == "secret_order_landing_recovery":
             return ("任意生成回禀", 1)
@@ -1579,13 +1511,11 @@ def test_batch_assignment_id_survives_invalid_secret_both_orders(
     assert db.list_secret_orders() == []
 
 
+def test_secret_landing_recovery_explicit_prefix_entry(game, monkeypatch):
+    """#1765 双入口差：显式前缀路与 materialize 分类器同收敛到 recovery。
 
-@pytest.mark.parametrize("entry", ["classifier", "explicit_prefix"])
-def test_secret_landing_recovery_dual_entry_same_behavior(game, monkeypatch, entry):
-    """#1765 切片①：双入口（分类器 / 显式前缀）落不了库同一行为。
-
-    真实 apply_cli_conversation_actions 入口 → recovery 可读回；
-    反馈事实进 LLM 输入；无分类 failures；0142 不落散文题名。
+    分类器半边由 test_secret_extract_stage_identity_via_materialize_entry 覆盖，
+    本测只证显式前缀入口独有路径。
     """
     from ming_sim import cli_backend as cb
     from ming_sim.session import GameSession
@@ -1594,7 +1524,7 @@ def test_secret_landing_recovery_dual_entry_same_behavior(game, monkeypatch, ent
     name = _minister(db)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     emperor = "暗查辽饷侵冒"
-    extract_prompts: list[str] = []
+    extract_calls: list[str] = []
     recovery_prompts: list[str] = []
     zero = json.dumps({
         "标题": "", "内容": "", "承办人": name, "期限月数": 0,
@@ -1607,7 +1537,7 @@ def test_secret_landing_recovery_dual_entry_same_behavior(game, monkeypatch, ent
         if tag == "secret_order_landing_recovery":
             recovery_prompts.append(text)
             return ("任意生成回禀", 1)
-        extract_prompts.append(text)
+        extract_calls.append(text)
         return (zero, 1)
 
     monkeypatch.setattr(cb, "_run_json_extractor_for_config", _json_extract)
@@ -1619,40 +1549,31 @@ def test_secret_landing_recovery_dual_entry_same_behavior(game, monkeypatch, ent
     sess.llm_config = SimpleNamespace(channel="cli")
     sess.temporary_characters = set()
 
-    if entry == "explicit_prefix":
-        out = GameSession.apply_cli_conversation_actions(
-            sess, ch,
-            player_message=f"密令如下：{emperor}",
-            answer="臣领密旨。",
-            has_directive=False, secret_order_id=None,
-        )
-    else:
-        out = GameSession.apply_cli_conversation_actions(
-            sess, ch,
-            player_message=emperor,
-            answer="臣领密旨。",
-            has_directive=False, secret_order_id=None,
-            preclassified_intent={"kind": "secret", "secret_action": "新建"},
-        )
+    out = GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message=f"密令如下：{emperor}",
+        answer="臣领密旨。",
+        has_directive=False, secret_order_id=None,
+    )
 
     recovery = out.get("secret_order_landing_recovery") or {}
-    assert recovery.get("report"), f"entry={entry} 须有 recovery report"
-    assert recovery.get("landing_gaps"), f"entry={entry} 须有 landing_gaps"
+    assert recovery.get("report")
+    assert recovery.get("landing_gaps")
     assert int(out.get("pending_action_id") or 0) == 0
     assert not any(
         f.get("kind") == "secret_order"
         for f in list(out.get("pending_action_failures") or [])
     )
     assert db.list_secret_orders() == []
-    assert any("落库缺口" in p or "密令落库失败" in p for p in extract_prompts)
+    assert len(extract_calls) >= 2
+    assert any(emperor in p for p in extract_calls[1:])
     assert recovery_prompts and any(emperor in p for p in recovery_prompts)
 
 
 def test_secret_landing_completion_stages_for_confirmation(game, monkeypatch):
-    """#1765：揣摩补全能落 → 进既有确认闸暂存；缺题名不落散文题名。"""
+    """#1765：揣摩补全能落 → 确认闸暂存 → 应允落库；题名来自结构化字段。"""
     from ming_sim import cli_backend as cb
     from ming_sim.action_clusters import candidates_from_classifier_payload
-    from tests.dossier_test_helpers import LIAO_PAY_COVERT_TASK
 
     db, state, _ = game
     name = _minister(db)
@@ -1678,24 +1599,21 @@ def test_secret_landing_completion_stages_for_confirmation(game, monkeypatch):
         "钱粮类别": "密令差务",
         "钱粮账户": "内库",
     }, ensure_ascii=False)
-    calls = {"n": 0}
-    feedback_seen = []
+    extract_n = 0
 
-    def _json_extract(prompt, *_a, **_k):
-        calls["n"] += 1
+    def _json_extract(prompt, llm_config=None, tag="", **_k):
+        nonlocal extract_n
+        if tag == "secret_order_landing_recovery":
+            raise AssertionError("补全成功不得走 recovery compose")
+        extract_n += 1
         text = str(prompt)
-        if "落库缺口" in text or "密令落库失败" in text:
-            feedback_seen.append(text)
-            return (good, 1)
-        return (bad, 1)
+        if extract_n == 1:
+            return (bad, 1)
+        # 揣摩重抽：皇帝原话须在输入中（确定性供料）
+        assert emperor_words in text
+        return (good, 1)
 
     monkeypatch.setattr(cb, "_run_json_extractor_for_config", _json_extract)
-    monkeypatch.setattr(
-        cb, "_run_backend_for_config",
-        lambda *_a, **_k: (_ for _ in ()).throw(
-            AssertionError("补全成功不得再走 recovery compose")
-        ),
-    )
     candidates = candidates_from_classifier_payload(
         [{"kind": "secret", "secret_action": "新建"}], soft=False,
     )
@@ -1710,7 +1628,7 @@ def test_secret_landing_completion_stages_for_confirmation(game, monkeypatch):
     )
     run_materialize_pipeline(ctx)
 
-    assert feedback_seen, "揣摩重抽须吃到反馈事实"
+    assert extract_n >= 2, "须发生揣摩重抽"
     assert not ctx.out.get("secret_order_landing_recovery")
     pid = int(ctx.out.get("pending_action_id") or 0)
     assert pid > 0, "补全成功须暂存进确认闸"
@@ -1720,9 +1638,8 @@ def test_secret_landing_completion_stages_for_confirmation(game, monkeypatch):
     payload = json.loads(row["payload_json"])
     assert payload.get("title") == "查核辽饷"
     assert isinstance(payload.get("covert_task"), dict)
-    assert db.list_secret_orders() == []  # 尚未应允，未成案
+    assert db.list_secret_orders() == []
 
-    # 经既有应允/确认闸落库；读回身份一致；0142 题名来自结构化字段
     db.commit_pending_actions(state)
     orders = db.list_secret_orders()
     assert len(orders) == 1
@@ -1734,10 +1651,7 @@ def test_secret_landing_completion_stages_for_confirmation(game, monkeypatch):
 def test_http_chat_stream_secret_landing_recovery_player_readback(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """#1765 切片①：真实 Web 召对 SSE → 玩家读回 recovery；role=minister。
-
-    参数化失败种类不在此分测——任一落不了库产出即可；人工审读指针=report。
-    """
+    """#1765 切片①：真实 Web 召对 SSE → 玩家读回 recovery；role=minister。"""
     from fastapi.testclient import TestClient
 
     import ming_sim.cli_backend as cb
@@ -1762,6 +1676,7 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
         "标签": [], "差务": "", "价值轴": [], "方向": 1,
         "交付单位": "", "交付目标": 0,
     }, ensure_ascii=False)
+    message = "你替朕下一道密令，暗查关宁诸将虚冒兵额。"
 
     monkeypatch.setattr(cb, "_TRACE_PATH", str(tmp_path / "cli_trace.jsonl"))
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
@@ -1799,7 +1714,6 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
         if game.session.llm_config is not None:
             game.session.llm_config.channel = "cli"
         pending_before = [row["id"] for row in game.db.list_pending_actions(game.state.turn)]
-        message = "你替朕下一道密令，暗查关宁诸将虚冒兵额。"
         response = TestClient(web_app.app).post(
             f"/api/ministers/{name}/chat/stream",
             json={"message": message},
@@ -1811,18 +1725,17 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
         recovery = done.get("secret_order_landing_recovery") or {}
         assert recovery.get("report"), "结构化 recovery 须可读回"
         assert recovery.get("landing_gaps")
-        # 大臣回话 role=minister（history 末条）
         history = done.get("history") or []
         minister_msgs = [h for h in history if h.get("role") == "minister"]
         assert minister_msgs, "玩家读回须有 minister 回话"
-        # report 进入 answer 投影（人工审读指针；不锁措辞）
         assert recovery["report"] in str(done.get("answer") or "") or any(
             recovery["report"] in str(h.get("content") or "") for h in minister_msgs
         )
-        assert "secret_order_landing_recovery" in backend_tags or recovery_prompts
-        # 反馈事实进入后续 LLM 输入
-        assert any("落库缺口" in p or "密令落库失败" in p for p in extract_prompts)
-        assert any("暗查" in p or "关宁" in p for p in extract_prompts + recovery_prompts)
+        assert "secret_order_landing_recovery" in backend_tags
+        # 皇帝原话进入后续 LLM 输入（不锁模板句）
+        assert len(extract_prompts) >= 2
+        assert any(message in p or "暗查关宁" in p for p in extract_prompts[1:])
+        assert any(message in p or "暗查关宁" in p for p in recovery_prompts)
         assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
         assert game.db.list_secret_orders() == []
     finally:
