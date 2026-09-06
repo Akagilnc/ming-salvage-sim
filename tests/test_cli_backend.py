@@ -660,22 +660,18 @@ def test_run_backend_dispatch(monkeypatch, env, attr, out):
 
 # ── secret extract keep family ──
 
-def test_secret_extract_backend_error_falls_back(monkeypatch):
-    """extractor 失败：content 兜底御旨；reply 不入拼装（#1274 K1）。"""
+def test_secret_extract_backend_error_raises_system_failure(monkeypatch):
+    """#1765 C1：密令 extractor transport 失败响亮上抛 LLMUnavailable（0005/0046），不得吞回兜底。"""
+    from ming_sim.exceptions import LLMUnavailable
+
     monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    reply = "臣领密旨，暗查辽东军饷虚冒事。"
-    acts = cb.resolve_minister_actions(
-        reply, "密令如下：查辽东军饷", default_assignee="王在晋",
-    )
-    so = acts["secret_order"]
-    assert so is not None
-    assert "查辽东军饷" in so["content"]
-    # reply 实质补充未进 extractor → 不得散文并入 content
-    assert "暗查辽东军饷虚冒事" not in so["content"]
-    assert reply not in so["content"]
-    assert so["assignee"] == "王在晋"
-    assert so["deadline_months"] == 0
+    with pytest.raises(LLMUnavailable):
+        cb.resolve_minister_actions(
+            "臣领密旨，暗查辽东军饷虚冒事。",
+            "密令如下：查辽东军饷",
+            default_assignee="王在晋",
+        )
 
 
 # ── runner argv / error contracts (subprocess mocked) ──
