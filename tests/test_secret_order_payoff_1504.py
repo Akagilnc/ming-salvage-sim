@@ -1418,16 +1418,20 @@ def _feed_has_emperor_and_gap(
 def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
     """#1765：classifier 入口落不了库 → typed recovery；原产物+源轮进诊断与后续 LLM 输入。
 
-    原非 JSON 案的首尾空白无损义务迁入本 raw 行为案：结构化 extract_raw/耐久记录
-    须等于完整原串（含首尾空白），不扫生成回话。
+    base 原案 raw 义务迁入：首尾空白 + 超 _TRACE_FIELD_CAP 不截断；结构化
+    extract_raw/耐久记录须等于完整原串，不扫生成回话。
     """
+    from ming_sim import cli_backend as cb
     from ming_sim.action_clusters import candidates_from_classifier_payload
 
     db, state, _ = game
     name = _minister(db)
     emperor_words = "查核辽饷侵冒"
-    # 非 JSON + 首尾空白：诊断 raw 须完整保留（C7 M4：strip 即红）。
-    unlandable = "\n  此非JSON密令产出：缺标题与合同  \n"
+    # base 义务：首尾空白 + 超 _TRACE_FIELD_CAP；strip/cap 截断均须红。
+    cap = cb._TRACE_FIELD_CAP
+    core = "此非JSON密令产出：缺标题与合同-BEGIN-" + ("X" * (cap + 9)) + "-END"
+    unlandable = "\n  " + core + "  \n"
+    assert len(unlandable) > cap
     recovery_feeds: list[str] = []
     source_turn = 1765
 
@@ -1469,8 +1473,9 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
     ), "recovery 输入须含皇帝原话、真实缺口标签与原产物 substance"
     snap = recovery.get("extract_snapshot") or {}
     assert not str(snap.get("title") or "").strip()
-    # 完整原串含首尾空白——不得只做包含断言
+    # 完整原串：含首尾空白且超 cap，不得截断到 _TRACE_FIELD_CAP
     assert snap.get("extract_raw") == unlandable
+    assert len(str(snap.get("extract_raw") or "")) > cap
     assert int(snap.get("source_chat_turn_id") or 0) == source_turn
     rows = db.conn.execute(
         "SELECT category, item_json FROM rejection_reports WHERE section=?",
@@ -1480,9 +1485,10 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
     items = [json.loads(r["item_json"]) for r in rows]
     assert any(
         it.get("extract_raw") == unlandable
+        and len(str(it.get("extract_raw") or "")) > cap
         and int(it.get("source_chat_turn_id") or 0) == source_turn
         for it in items
-    ), "拒收记录须带完整原产物（含空白）与源 chat_turn"
+    ), "拒收记录须带完整原产物（含空白、超 cap 不截断）与源 chat_turn"
 
 
 @pytest.mark.parametrize(
