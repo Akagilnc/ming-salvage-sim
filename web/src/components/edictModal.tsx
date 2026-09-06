@@ -194,9 +194,9 @@ export function EdictModal({
                     >
                       <div className="directive-head">
                         <b>#{directive.id}</b>
-                        {req ? <PhaseChip phase={req.phase} /> : (
-                          <span data-role="source-label">{sourceLabel(directive.source, directive.actor)}</span>
-                        )}
+                        {/* 来源头与 phase chip 并列：save/delete 在飞或失败时来源仍可辨，不与 req 互斥。 */}
+                        <span data-role="source-label">{sourceLabel(directive.source, directive.actor)}</span>
+                        {req ? <PhaseChip phase={req.phase} /> : null}
                       </div>
                       {editing && !inflight ? (
                         <div className="directive-edit">
