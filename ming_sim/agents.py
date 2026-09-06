@@ -143,7 +143,9 @@ def run_agent_stream_text(
     on_text(chunk): 每次正文增量到达时回调（可选）。
 
     #1465 切片①：公共流不套入 transport 重试闭环（仅真实 API 召对接缝接线）。
-    RunErrorEvent 走系统层 typed 出口（与 web 同构造权威）；不沿用 TypeError=不支持流式归因。
+    对不接受 stream= 的替身/后端保持原非流调用形态（未迁移边界）；
+    仅拦截「unexpected keyword … stream」签名拒绝，其它 TypeError 原样上浮（0005）。
+    RunErrorEvent 走系统层 typed 出口（与 web 同构造权威）。
     """
     tlog(f"[{tag}] 开始流式推演（首字到达前可能等几秒）")
     pieces: List[str] = []
@@ -151,7 +153,20 @@ def run_agent_stream_text(
     last_print = time.monotonic()
     chunk_buf: List[str] = []
     chars_since_flush = 0
-    stream = agent.run(prompt, stream=True, stream_events=True)
+    try:
+        stream = agent.run(prompt, stream=True, stream_events=True)
+    except TypeError as err:
+        # 只认调用签名拒收 stream/stream_events；内部逻辑 TypeError 不洗成兼容回退。
+        msg = str(err)
+        if "unexpected keyword argument" not in msg or (
+            "stream" not in msg and "stream_events" not in msg
+        ):
+            raise
+        tlog(f"[{tag}] 当前 run 不接受 stream=，退回普通 run")
+        text = extract_agent_text(agent.run(prompt))
+        if on_text:
+            on_text(text)
+        return text
 
     reasoning_buf: List[str] = []
     reasoning_chars_since_flush = 0

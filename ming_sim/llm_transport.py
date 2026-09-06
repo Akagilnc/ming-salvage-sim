@@ -4,11 +4,12 @@
 流式 attempt 循环、可重试分类、系统层终失败出口均只此一处。
 切片①仅接线真实 API 召对流；CLI runner / 公共流 / 非流式由后续切片迁移。
 
-超时所有权（切片①诊断结论）：
-- 事件迭代阻塞（等下一 chunk）由既有 SDK/httpx read timeout 控制，不可用事件边界检查冒充静默可中止。
-- 事件边界只做空转判死（距上次活动超时）；不设 attempt 总墙钟（宪法 #9）。
-- 每次 attempt 重新取得完整空转预算。
-- SDK timeout/max_retries 仅在已迁移召对接缝按 policy 覆盖；create_chat_model 默认保留未迁移调用原行为。
+超时所有权（切片①）：
+- SDK 阻塞（等下一 chunk / httpx read）：bind_transport_sdk_budget 把 model.timeout
+  临时设为 attempt_timeout_seconds；事件界 check_idle_budget 不能中止该阻塞。
+- 事件边界空转：距上次活动 ≥ idle_timeout_seconds → TransportIdleTimeout（可重试）。
+- 不设 attempt 总墙钟（宪法 #9）；每次 attempt 重新取得完整空转预算。
+- create_chat_model 默认保留未迁移 timeout_seconds / max_retries=1；仅召对接缝临时覆盖。
 """
 
 from __future__ import annotations
@@ -35,8 +36,9 @@ class TransportPolicy:
     """统一 transport 预算。字段全部来自配置默认或 runtime 覆盖。"""
 
     max_attempts: int = TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    # attempt_timeout_seconds：非流式/SDK 读超时预算（与 idle 同默认；流式空转用 idle）。
+    # SDK/httpx read 阻塞预算（bind_transport_sdk_budget → model.timeout）。
     attempt_timeout_seconds: float = TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
+    # 事件界空转预算（check_idle_budget）；与 SDK 阻塞轴分家，不得混用。
     idle_timeout_seconds: float = TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS
 
 
@@ -99,26 +101,15 @@ def transport_policy_from_mapping(data: object) -> TransportPolicy:
 
 
 def resolve_transport_policy(source: object = None) -> TransportPolicy:
-    """解析策略：显式 policy/mapping/带字段对象 → runtime_llm.json transport 段 → 默认。
+    """解析策略：TransportPolicy / mapping → runtime_llm.json transport 段 → 默认。
 
-    load_runtime_llm 自身已对缺/坏档回空 dict（不宽吞未知异常）；此处不再 except Exception。
+    不认 getattr 对象旁路（无执行消费者；配置经 runtime 文件或显式 mapping 进入）。
+    load_runtime_llm 自身已对缺/坏档回空 dict；此处不再 except Exception。
     """
     if isinstance(source, TransportPolicy):
         return source
     if isinstance(source, dict):
         return transport_policy_from_mapping(source)
-    if source is not None:
-        max_a = getattr(source, "transport_max_attempts", None)
-        att = getattr(source, "transport_attempt_timeout_seconds", None)
-        idle = getattr(source, "transport_idle_timeout_seconds", None)
-        if any(v is not None for v in (max_a, att, idle)):
-            return transport_policy_from_mapping(
-                {
-                    "max_attempts": max_a,
-                    "attempt_timeout_seconds": att,
-                    "idle_timeout_seconds": idle,
-                }
-            )
     from ming_sim.llm_config import load_runtime_llm
 
     runtime = load_runtime_llm()
@@ -297,7 +288,8 @@ def check_idle_budget(
     """事件边界空转检查；超限抛 TransportIdleTimeout（可重试）。
 
     不检查 attempt 总墙钟。事件迭代阻塞期间的静默由 SDK read timeout 控制
-    （见 bind_transport_sdk_budget），本函数不能也不冒充可中止该阻塞。
+    （bind_transport_sdk_budget → model.timeout = attempt_timeout_seconds），
+    本函数只在已拿到下一 event 的边界上运行，不能中止该阻塞。
     """
     now = (clock or time.monotonic)()
     if now - last_activity_at >= policy.idle_timeout_seconds:
@@ -308,7 +300,7 @@ def check_idle_budget(
 def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterator[None]:
     """仅在已迁移 API 召对接缝临时覆盖 SDK timeout/max_retries。
 
-    - timeout → idle 预算：流式 read 静默由 SDK 承接（与事件界空转同量级）
+    - timeout → attempt_timeout_seconds：SDK/httpx read 阻塞唯一接缝
     - max_retries → 0：attempt 计数归本模块，禁 SDK 双重点数
     退出后恢复原值并丢弃缓存 client，避免污染未迁移的同 model 非流路径。
     """
@@ -321,7 +313,7 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
     had_async = hasattr(model, "async_client")
     try:
         if hasattr(model, "timeout"):
-            model.timeout = policy.idle_timeout_seconds
+            model.timeout = policy.attempt_timeout_seconds
         if hasattr(model, "max_retries"):
             model.max_retries = 0
         # 丢缓存 client，使临时 timeout/retries 生效

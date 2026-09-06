@@ -2644,7 +2644,8 @@ class WebGame:
 
         if use_transport:
             assert policy is not None
-            # SDK 静默超时/禁双重点数仅本接缝临时覆盖；事件界只做空转。
+            # SDK 阻塞超时 = bind_transport_sdk_budget(model.timeout←attempt_timeout)；
+            # 事件界只做 idle 空转，不能中止 SDK read 阻塞。
             with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
                 (answer, run_output), transport_attempts_box = run_transport_stream(
                     _start_stream,
