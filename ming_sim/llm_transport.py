@@ -17,8 +17,10 @@ CLI runner / 召对半流呈现 / 外层截断点由后续切片迁移。
 
 from __future__ import annotations
 
+import inspect
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Iterator, List, Optional, TypeVar
 
@@ -32,6 +34,14 @@ from ming_sim.models import (
 )
 
 R = TypeVar("R")
+
+# 提供方 typed status 经 model 调用捕获，不从 RunErrorEvent.content 散文抠（ADR 0142）。
+_typed_provider_status: ContextVar[Optional[int]] = ContextVar(
+    "ming_sim_transport_typed_status", default=None,
+)
+_CAPTURE_STATUS_METHODS = (
+    "invoke", "invoke_stream", "response", "response_stream",
+)
 
 
 @dataclass(frozen=True)
@@ -132,6 +142,46 @@ def _coerce_status(status: object) -> Optional[int]:
         return int(status)
     except (TypeError, ValueError):
         return None
+
+
+def _remember_typed_status(error: BaseException) -> None:
+    status = _coerce_status(getattr(error, "status_code", None))
+    if status is not None:
+        _typed_provider_status.set(status)
+
+
+def _capture_status_wrapper(method: Callable) -> Callable:
+    def wrapped(*args: Any, **kwargs: Any):
+        try:
+            result = method(*args, **kwargs)
+        except Exception as error:
+            _remember_typed_status(error)
+            raise
+        if not inspect.isgenerator(result):
+            return result
+
+        def captured():
+            try:
+                yield from result
+            except Exception as error:
+                _remember_typed_status(error)
+                raise
+
+        return captured()
+
+    return wrapped
+
+
+def _typed_status_from_run_error_event(event: Any) -> Optional[int]:
+    status = _coerce_status(getattr(event, "status_code", None))
+    if status is not None:
+        return status
+    extra = getattr(event, "additional_data", None)
+    if isinstance(extra, dict):
+        status = _coerce_status(extra.get("status_code"))
+        if status is not None:
+            return status
+    return _typed_provider_status.get()
 
 
 def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
@@ -270,13 +320,24 @@ def empty_output_failure() -> ClassifiedFailure:
     )
 
 
-def run_error_event_failure(content: object = None) -> ClassifiedFailure:
+def run_error_event_failure(
+    content: object = None, status_code: object = None,
+) -> ClassifiedFailure:
     """RunErrorEvent → 分类唯一构造。无 typed status 时不洗成瞬断（#1452）。"""
     pmsg = str(content or "").strip() or "stream error"
+    status_i = _coerce_status(status_code)
+    if status_i is None:
+        return ClassifiedFailure(
+            retryable=False,
+            code="llm_stream_error",
+            status_code=None,
+            provider_message=pmsg,
+            message=f"LLM 流式调用失败：{pmsg}",
+        )
     return ClassifiedFailure(
-        retryable=False,
-        code="llm_stream_error",
-        status_code=None,
+        retryable=_status_retryable(status_i),
+        code=f"llm_http_{status_i}",
+        status_code=status_i,
         provider_message=pmsg,
         message=f"LLM 流式调用失败：{pmsg}",
     )
@@ -286,12 +347,17 @@ def map_run_error_event(event: Any) -> Optional[BaseException]:
     """RunErrorEvent → LLMUnavailable 单真源（agents/web 三处同权威；#12/#14）。
 
     非 RunErrorEvent 返回 None。分类语义 = run_error_event_failure；
-    系统层出口 = transport_failure_unavailable。不改分类、不加护栏。
+    系统层出口 = transport_failure_unavailable。typed status 只认事件字段或
+    提供方层捕获的 status_code，不解析 content 散文。
     """
     if type(event).__name__ != "RunErrorEvent":
         return None
+    status = _typed_status_from_run_error_event(event)
+    _typed_provider_status.set(None)
     return transport_failure_unavailable(
-        run_error_event_failure(getattr(event, "content", None)),
+        run_error_event_failure(
+            getattr(event, "content", None), status_code=status,
+        ),
         attempts=1,
         exhausted=False,
     )
@@ -337,10 +403,12 @@ def check_idle_budget(
 
 @contextmanager
 def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterator[None]:
-    """仅在已迁移 API 召对接缝临时覆盖 SDK timeout/max_retries。
+    """仅在已迁移 API 召对接缝临时覆盖 SDK timeout/max_retries，并捕获 typed status。
 
     - timeout → attempt_timeout_seconds：SDK/httpx read 阻塞唯一接缝
     - max_retries → 0：attempt 计数归本模块，禁 SDK 双重点数
+    - 提供方异常上的 status_code 写入本 attempt 的 ContextVar，供 RunErrorEvent 映射
+      （不解析 content 散文）
     退出后恢复原值并丢弃缓存 client，避免污染未迁移的同 model 非流路径。
     """
     if model is None:
@@ -350,6 +418,7 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
     prev_retries = getattr(model, "max_retries", None)
     had_client = hasattr(model, "client")
     had_async = hasattr(model, "async_client")
+    prev_methods: dict[str, Any] = {}
     try:
         if hasattr(model, "timeout"):
             model.timeout = policy.attempt_timeout_seconds
@@ -360,8 +429,15 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
             model.client = None
         if had_async:
             model.async_client = None
+        for name in _CAPTURE_STATUS_METHODS:
+            method = getattr(model, name, None)
+            if callable(method):
+                prev_methods[name] = method
+                setattr(model, name, _capture_status_wrapper(method))
         yield
     finally:
+        for name, method in prev_methods.items():
+            setattr(model, name, method)
         if hasattr(model, "timeout"):
             model.timeout = prev_timeout
         if hasattr(model, "max_retries"):
@@ -447,7 +523,8 @@ def run_transport_stream(
     tick = clock or time.monotonic
 
     def _one_attempt() -> R:
-        # 每次 attempt 完整空转预算
+        # 每次 attempt 完整空转预算；清空上一 attempt 的 typed status，禁串洗。
+        _typed_provider_status.set(None)
         last_activity_at = tick()
         stream = start_stream()
         try:
