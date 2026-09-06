@@ -466,8 +466,6 @@ def _prior_output_for_secret_feedback(secret: Dict[str, Any]) -> str:
     raw = secret.get("extract_raw")
     if isinstance(raw, str) and raw.strip():
         return raw
-    if raw is not None and not isinstance(raw, str):
-        return str(raw)
     snapshot = {
         "title": secret.get("title") or "",
         "content": secret.get("content") or "",
@@ -538,23 +536,17 @@ def land_or_recover_new_secret_order(
     minister_name: str,
     secret: Dict[str, Any],
     player_message: str,
-    minister_reply: str,
     llm_config: Any,
     out: Dict[str, Any],
-    dossier_candidates: Optional[List[Dict[str, Any]]] = None,
     character: Any = None,
-    speaker_role: str = "",
     chat_turn_id: int = 0,
 ) -> None:
     """#1765：已识别密令新建的统一落库。
 
     能落 → 暂存进确认闸。
-    抽取产物/合同缺口 → 失败事实交大臣揣摩/请示（既有 compose 接缝；不定机器重抽次数）。
+    抽取产物/合同缺口 → 失败事实交大臣揣摩/请示（既有 compose 接缝）。
     程序/transport 真异常不进入本函数：由抽取接缝响亮上抛（0005/0046）。
     """
-    # minister_reply / dossier_candidates retained for call-site stability; first extract
-    # already stamped provenance on secret when a later rewrite path is reintroduced.
-    _ = (minister_reply, dossier_candidates)
     from ming_sim.cli_backend import (
         compose_secret_order_landing_recovery,
         secret_order_can_land,
@@ -564,11 +556,7 @@ def land_or_recover_new_secret_order(
     so = dict(secret or {})
     # Provenance from first extract: recovery feed reuses full command (#354 / C3).
     extract_command = str(so.pop("_extract_command", "") or player_message)
-    so.pop("_force_default_assignee", None)
-    so.pop("_extract_reply", None)
-    role = str(speaker_role or "").strip() or minister_speaker_role(
-        minister_name, character, db=db,
-    )
+    role = minister_speaker_role(minister_name, character, db=db)
 
     if secret_order_can_land(so):
         _stage_new_secret_order(db, turn, minister_name, so, out)
@@ -1074,12 +1062,8 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             minister_name=minister_name,
             secret=secret,
             player_message=ctx.player_message,
-            minister_reply=ctx.reply,
             llm_config=ctx.llm_config,
             out=ctx.out,
-            dossier_candidates=session.db.list_referenceable_dossiers(
-                minister_name, session.state.turn,
-            ),
             character=ctx.character,
             chat_turn_id=int(ctx.chat_turn_id or 0),
         )

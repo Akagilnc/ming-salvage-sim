@@ -3935,18 +3935,14 @@ def _extract_secret_order(
     llm_config: Any = None,
     force_default_assignee: bool = False,
     dossier_candidates: Optional[List[Dict[str, Any]]] = None,
-    correction_feedback: str = "",
 ) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
     与月末 extractor 同款可靠。
 
-    correction_feedback（#1765）：落库缺口事实回喂，供揣摩补全。
     call/transport 失败 → 既有系统失败接缝（cli_runner_unavailable / LLMUnavailable）响亮上抛（0005/0046）。
     """
-    correction_block = str(correction_feedback or "").strip()
     prompt = (
-        (correction_block + "\n" if correction_block else "")
-        + "你是一个严谨的信息抽取器，不是大臣，不要扮演、不要写圣旨。\n"
+        "你是一个严谨的信息抽取器，不是大臣，不要扮演、不要写圣旨。\n"
         "下面是皇帝下达的一道密令交代，以及承命大臣的回话。请抽出这道密令的结构化字段，"
         "只输出一个 JSON 对象，不要 markdown 代码围栏、不要 JSON 以外任何字：\n"
         "{\n"
@@ -4144,15 +4140,13 @@ def _extract_secret_order(
         result["covert_task"] = covert_task
     if contract_error:
         result["contract_error"] = contract_error
-    # 首抽输入装配 provenance：反馈/恢复复用，不靠散文重猜（#354 / C3）。
+    # 首抽 command provenance：恢复供料复用，不靠散文重猜（#354 / C3）。
     result["_extract_command"] = player_command
-    result["_force_default_assignee"] = bool(force_default_assignee)
-    result["_extract_reply"] = minister_reply
     if extract_failed:
         result["extract_failed"] = True
     # 原产物保留：合法 JSON 坏合同与 parse 失败均供后续反馈/诊断（#1765 C3/C4）。
-    if raw:
-        result["extract_raw"] = raw if isinstance(raw, str) else str(raw)
+    if isinstance(raw, str) and raw:
+        result["extract_raw"] = raw
     return result
 
 def resolve_minister_actions(
