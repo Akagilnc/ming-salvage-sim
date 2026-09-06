@@ -20003,11 +20003,15 @@ class GameDB:
         )
 
     def confirm_directive(self, directive_id: int, state: GameState) -> None:
-        """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。"""
-        from ming_sim.applier import RejectionCollector
-        collector = RejectionCollector()
+        """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。
+
+        #1769：只翻状态。成案/补交/耗尽唯一批缝 =
+        ensure_dossiers_for_draft_directives + _resubmit_draft_admission_failures；
+        禁止在 confirm 内 ensure、标 rejected 或另建重试。产物错 pending 入 draft
+        后走 B 路；真代码故障仍由批缝 SettlementAbort（0005/0008）。
+        """
         with atomic(self):
-            changed = self.conn.execute(
+            self.conn.execute(
                 """
                 UPDATE turn_directives
                 SET status = 'draft', updated_at = CURRENT_TIMESTAMP
@@ -20016,27 +20020,11 @@ class GameDB:
                 (directive_id,),
             )
             row = self.conn.execute(
-                "SELECT id,status,text,dossier_payload_json FROM turn_directives WHERE id=?",
+                "SELECT id FROM turn_directives WHERE id=?",
                 (int(directive_id),),
             ).fetchone()
             if row is None:
                 raise KeyError(f"旨稿不存在：{directive_id}")
-            if int(changed.rowcount or 0) > 0:
-                dossier_ids = self._ensure_directive_dossier(
-                    state, int(directive_id), str(row["text"]),
-                    self.read_directive_dossier_payload(row), commit=False,
-                    rejection_collector=collector,
-                )
-                if not dossier_ids:
-                    self.conn.execute(
-                        "UPDATE turn_directives SET status='rejected', "
-                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (int(directive_id),),
-                    )
-            collector.flush_to_db(self)
-        from ming_sim.applier import mirror_rejections_after_commit
-        from ming_sim.error_pack import rejections_jsonl_path
-        mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
     def ensure_dossiers_for_draft_directives(
         self, state: GameState, *,
