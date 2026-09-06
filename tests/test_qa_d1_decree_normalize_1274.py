@@ -3,12 +3,11 @@
 1) #1391 泛称闭集（大臣）capture 零 409；「不存在之人甲」仍 409
 2) #1331/#1339 起居注 involved_people 投影滤非人；默认时辰非「此时」
 3) #1341/#1338 PATCH /api/decree 零调用方已拆，OpenAPI/实现一致
-4) #1327 空载短路；#1465 切片③：外层 30s 总罩已删——长抽取仍成真草案
+4) #1327 空载短路；#1465 切片③：外层 30s 总罩已删
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import types
 
@@ -188,13 +187,21 @@ def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
     assert calls == []
 
 
-def test_long_extract_escalate_report_not_budget_starved(game, monkeypatch):
-    """#1465 切片③ commit B：长抽取后的通政司回禀不再被「剩余预算」饿死。
+def test_web_create_directive_long_extract_not_starved_by_old_30s_cover(
+    game, monkeypatch,
+):
+    """#1465 切片③：拟旨入口跨过旧 30s 罩仍得到正确产物。
 
-    旧外层总罩会按 30s 算剩余预算：注入时钟推过 30s 后 remaining=0，回禀零 LLM
-    直接抛 typed LLMUnavailable。罩删后回禀照常产文，玩家拿到戏内回禀（ValueError）。
+    真实入口 POST /api/directives。抽取把注入时钟推过 30s 后仍须走通政司回禀
+    （409 + 戏内产文），不得被旧罩 remaining=0 饿成 LLMUnavailable/400，也不得
+    落 special_decree 草案。确定性、无线程、不跑真墙钟。旧逻辑变异：罩按
+    monotonic 扣 remaining，回禀零 LLM → 400。
     """
+    from fastapi.testclient import TestClient
+
     import ming_sim.cli_backend as cli_backend
+    import web_app
+    from ming_sim.session import GameSession
 
     db, state, content = game
     text = "着不存在之人甲核清太仓"
@@ -209,7 +216,6 @@ def test_long_extract_escalate_report_not_budget_starved(game, monkeypatch):
         calls.append(tag)
         if tag == "participant_escalate_report":
             return (report_text, 1)
-        # 抽取本身很长：把注入时钟推过旧 30s 罩
         clock["t"] += 120.0
         return (
             json.dumps({
@@ -221,50 +227,6 @@ def test_long_extract_escalate_report_not_budget_starved(game, monkeypatch):
         )
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    with pytest.raises(ValueError) as ei:
-        cli_backend.capture_manual_directive_payload(
-            text, None, db=db, content=content,
-        )
-    assert report_text in str(ei.value)
-    assert "participant_escalate_report" in calls
-    assert len(db.list_directives(state) or []) == 0
-
-
-def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypatch):
-    """#1465 切片③ commit B：拟旨抽取跨过旧 30s 总罩仍成**真草案**。
-
-    真实拟旨入口 POST /api/directives。受控 hold 把抽取拖成长调用，并把注入时钟推过
-    旧 30s；旧外层总罩会在此截断成 special_decree fallback，现须原样等到真产物，
-    读回 pending 草案与案卷字段。无 sleep、无真墙钟。
-    """
-    import threading
-
-    import ming_sim.cli_backend as cli_backend
-    import web_app
-    from ming_sim.session import GameSession
-    from tests.wait_utils import wait_until
-
-    db, state, content = game
-    text = "着户部核太仓实存，边饷京营优先发放。"
-
-    release = threading.Event()
-    extractor_entered = threading.Event()
-    clock = {"t": 1000.0}
-    monkeypatch.setattr(
-        cli_backend, "time", types.SimpleNamespace(monotonic=lambda: clock["t"]),
-    )
-
-    def slow_extract(*_a, **_k):
-        extractor_entered.set()
-        # 长抽取：注入时钟跨过旧 30s 罩，且直到测试释放才产出
-        clock["t"] += 120.0
-        release.wait()
-        return {
-            "draft_action": "拟旨", "dossier_action_type": "policy",
-            "target_kind": "issue", "target_id": "x",
-        }
-
-    monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
 
     session = GameSession.__new__(GameSession)
     session.db = db
@@ -280,46 +242,13 @@ def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypa
     )
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
 
-    result_box: list[dict] = []
-    error_box: list[BaseException] = []
-    api_done = threading.Event()
-
-    def _run_api() -> None:
-        try:
-            result_box.append(asyncio.run(web_app.api_create_directive(
-                web_app.DirectiveRequest(text=text, notes="朝堂QA拟诏"),
-            )))
-        except BaseException as exc:  # noqa: BLE001
-            error_box.append(exc)
-        finally:
-            api_done.set()
-
-    worker = threading.Thread(target=_run_api, name="qa-d1-long-extract")
-    worker.start()
-    try:
-        extractor_entered.wait()
-        # 抽取仍在跑：无外层罩自行截断成 fallback 落库
-        wait_until(lambda: clock["t"] >= 1120.0)
-        assert not api_done.is_set()
-        assert db.list_directives(state) == [] or all(
-            r["text"] != text for r in db.list_directives(state)
-        )
-        release.set()
-        api_done.wait()
-        assert not error_box, error_box
-        result = result_box[0]
-        assert result["directive"]["id"] > 0
-        assert result["directive"]["text"] == text
-        rows = [r for r in db.list_directives(state) if r["text"] == text]
-        assert rows, db.list_directives(state)
-        # 案卷字段读回：真草案（非 special_decree fallback）
-        payload = json.loads(rows[0]["dossier_payload_json"] or "{}")
-        assert payload.get("dossier_action_type") == "policy", payload
-        assert payload.get("target_id") == "x", payload
-        assert not cli_backend._is_manual_special_decree_fallback(payload), payload
-    finally:
-        release.set()
-        worker.join()
+    response = TestClient(web_app.app).post(
+        "/api/directives", json={"text": text, "notes": ""},
+    )
+    assert response.status_code == 409, response.text
+    assert report_text in str(response.json().get("detail"))
+    assert "participant_escalate_report" in calls
+    assert len(db.list_directives(state) or []) == 0
 
 
 def test_normal_capture_path_unchanged(game, monkeypatch):

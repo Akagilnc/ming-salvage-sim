@@ -1631,7 +1631,8 @@ def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
     assert text == f"{runner}-ok" and n == 1
     assert seen["args"][0] == "P"
     assert seen["args"][1] == "mdl-x"
-    assert seen["args"][2] == 12.0
+    # cli_timeout_seconds 槽保留但不接到 idle/子进程 timeout
+    assert seen["args"][2] is None
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
