@@ -1893,22 +1893,25 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
 
 
 def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game, monkeypatch):
-    """#354: mixed confirmation still stages the edict plus supplement when extract fails.
+    """#354 + #1765：抽取失败仍保留御旨上下文事实；落不了库走大臣 recovery。
 
-    #1565：缺结构化标题不合成散文题名；content 仍须暂存；commit 标 failed。
-    成案恢复走既有带显式标题的密令入口（670 production chat / retry 复用完整 payload），
-    不另建 stage_pending 平行夹具。本测只证暂存+commit 失败接缝。
+    不再按 extract_failed 三分暂存残缺；0142 不合成散文题名；未成案。
     """
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "魏忠贤"
     db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。")
     db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
+    recovery_prompts = []
 
-    def fail_extract(*_args, **_kwargs):
+    def api_route(prompt, llm_config=None, tag=""):
+        text = str(prompt)
+        if tag == "secret_order_landing_recovery" or "落不了库" in text or "揣摩圣意" in text:
+            recovery_prompts.append(text)
+            return "任意生成回禀", 1
         raise RuntimeError("backend unavailable")
 
-    monkeypatch.setattr(cb, "_run_api_for_config", fail_extract)
+    monkeypatch.setattr(cb, "_run_api_for_config", api_route)
     res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
         SimpleNamespace(name=minister, office_type="司礼监"),
         "密令如下：可，照办，三月内回奏",
@@ -1917,25 +1920,18 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
         secret_order_id=None,
     )
 
-    assert res["pending_action_id"] > 0
-    assert res["secret_order_id"] is None
-    row = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (res["pending_action_id"],),
-    ).fetchone()
-    payload = json.loads(row["payload_json"])
-    assert "督办陕西赈灾" in payload["content"]
-    assert "三月内回奏" in payload["content"]
-    assert "covert_task" not in payload
-    # 0142：不合成散文题名；空 title 由 commit 拒收
-    assert not str(payload.get("title") or "").strip()
-    db.commit_pending_actions(state)
+    recovery = res.get("secret_order_landing_recovery") or {}
+    assert recovery.get("report")
+    assert recovery.get("landing_gaps")
+    snapshot = recovery.get("extract_snapshot") or {}
+    # 反馈/追问供料含皇帝原话或上下文任务；不要求残缺暂存
+    fed = "\n".join(recovery_prompts) + str(snapshot.get("content") or "")
+    assert "督办陕西赈灾" in fed or "三月内回奏" in fed or "密令如下" in fed
+    assert recovery_prompts, "recovery compose 须经 API 通道"
+    assert int(res.get("pending_action_id") or 0) == 0
+    assert res.get("secret_order_id") in (None, 0)
     assert db.list_secret_orders() == []
-    pending = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?",
-        (res["pending_action_id"],),
-    ).fetchone()
-    assert pending["status"] == "failed"
+    assert not str(snapshot.get("title") or "").strip()  # 0142 不合成
 
 
 def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game, monkeypatch):

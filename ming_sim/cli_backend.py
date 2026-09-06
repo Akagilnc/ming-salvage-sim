@@ -1815,7 +1815,8 @@ def _compose_inworld_fact_report(
         raise cli_runner_unavailable(TimeoutError(f"{tag} 无剩余预算"), backend=tag)
 
     def _produce() -> str:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag=tag)
+        # Channel-aware：API 走 _run_api；CLI 走 backend（与 extractor 咽喉同口径）。
+        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag=tag)
         text = str(raw or "")
         # strip 只判空；原文不改写（generated prose is never rewritten）。
         if text.strip():
@@ -1874,9 +1875,14 @@ def compose_decree_validation_recovery(
     failed_fields: Optional[List[str]] = None,
     *,
     speaker_name: str = "",
+    emperor_words: str = "",
+    prior_output: str = "",
     llm_config: Any = None,
 ) -> str:
-    """Turn typed decree rejection facts into a player-facing retry cue via the LLM."""
+    """Turn typed decree rejection facts into a player-facing retry cue via the LLM.
+
+    #1765：可接皇帝原话与原产出；零形式约束（禁句数/句式硬限，ADR 0033）。
+    """
     field_groups = {
         "银两数目": {"amount"},
         "款项来源": {"account"},
@@ -1894,11 +1900,114 @@ def compose_decree_validation_recovery(
     prompt = (
         f"你是大臣{str(speaker_name or '').strip()}。一份拟旨在记录前校验未通过，"
         f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
-        "补充或改说所需信息后重拟。只输出一两句回禀正文，不要标题、JSON、字段名、"
-        "内部编号或系统术语。"
+        "补充或改说所需信息后重拟。不要标题、JSON、字段名、内部编号或系统术语。"
     )
+    emperor = str(emperor_words or "").strip()
+    if emperor:
+        prompt += f"\n【皇帝原话】{emperor}"
+    prior = str(prior_output or "").strip()
+    if prior:
+        prompt += f"\n【原产出】{prior}"
     return _compose_inworld_fact_report(
         prompt, llm_config=llm_config, tag="decree_validation_recovery",
+    )
+
+
+# #1765：密令落库缺口的 typed 标签（机面事实；不进玩家分类文案）。
+_SECRET_LANDING_GAP_LABELS = {
+    "title": "结构化标题",
+    "content": "密令正文",
+    "covert_task": "差务合同",
+    "extract": "抽取结果",
+}
+
+
+def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
+    """Typed gaps that block a new secret order from landing. Empty ⇒ can land."""
+    so = secret if isinstance(secret, dict) else {}
+    gaps: List[str] = []
+    if bool(so.get("extract_failed")):
+        gaps.append("extract")
+    if not str(so.get("title") or "").strip():
+        gaps.append("title")
+    if not str(so.get("content") or "").strip():
+        gaps.append("content")
+    frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
+    if frozen is None:
+        gaps.append("covert_task")
+    return gaps
+
+
+def secret_order_can_land(secret: Optional[Dict[str, Any]]) -> bool:
+    """True when extract result has title + content + frozen contract and no extract_failed."""
+    return not secret_order_landing_gaps(secret)
+
+
+def build_secret_order_landing_feedback(
+    landing_gaps: Optional[List[str]] = None,
+    *,
+    emperor_words: str = "",
+    prior_output: str = "",
+    contract_error: str = "",
+) -> str:
+    """Deterministic 揣摩 feedback facts for one secret re-extract (#1765 / #1746)."""
+    gaps = [str(g).strip() for g in (landing_gaps or []) if str(g).strip()]
+    labels = [
+        _SECRET_LANDING_GAP_LABELS.get(g, g) for g in gaps
+    ] or ["密令结构化要件"]
+    feature = "、".join(labels)
+    parts = [
+        "【密令落库失败，请按结构化契约补全后重抽】",
+        f"落库缺口：{feature}",
+    ]
+    err = str(contract_error or "").strip()
+    if err:
+        parts.append(f"诊断：{err}")
+    emperor = str(emperor_words or "").strip()
+    if emperor:
+        parts.append(f"【皇帝原话】{emperor}")
+    prior = str(prior_output or "").strip()
+    if prior:
+        parts.append(f"【原抽取产出】{prior}")
+    parts.append(
+        "只输出一个完整密令 JSON 对象；题名必须来自结构化「标题」字段，"
+        "不得从散文截取合成；差务合同字段须可冻结合法 covert_task。"
+    )
+    return "\n".join(parts) + "\n"
+
+
+def compose_secret_order_landing_recovery(
+    landing_gaps: Optional[List[str]] = None,
+    *,
+    speaker_name: str = "",
+    emperor_words: str = "",
+    prior_output: str = "",
+    contract_error: str = "",
+    llm_config: Any = None,
+) -> str:
+    """#1765：落不了库时大臣以本职揣摩/追问；接皇帝原话与原产出；零形式约束。"""
+    gaps = [str(g).strip() for g in (landing_gaps or []) if str(g).strip()]
+    labels = [
+        _SECRET_LANDING_GAP_LABELS.get(g, g) for g in gaps
+    ] or ["密令结构化要件"]
+    feature = "、".join(labels)
+    err = str(contract_error or "").strip()
+    err_clause = f"（诊断：{err}）" if err else ""
+    prompt = (
+        f"你是大臣{str(speaker_name or '').strip()}。皇帝刚下的密令意图已受理，"
+        f"但还落不了库，缺：{feature}{err_clause}。"
+        f"以本职揣摩圣意：能从皇帝原话与既有交代补全的，陈述你理解的密令要点请皇帝确认；"
+        f"揣摩不出的，以本职口吻当场请示皇帝所需。"
+        f"不要标题、JSON、字段名、内部编号或系统术语。"
+    )
+    emperor = str(emperor_words or "").strip()
+    if emperor:
+        prompt += f"\n【皇帝原话】{emperor}"
+    prior = str(prior_output or "").strip()
+    if prior:
+        prompt += f"\n【原抽取产出】{prior}"
+    return _compose_inworld_fact_report(
+        prompt, llm_config=llm_config, tag="secret_order_landing_recovery",
     )
 
 
@@ -3827,11 +3936,17 @@ def _extract_secret_order(
     llm_config: Any = None,
     force_default_assignee: bool = False,
     dossier_candidates: Optional[List[Dict[str, Any]]] = None,
+    correction_feedback: str = "",
 ) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
-    与月末 extractor 同款可靠。失败则退回合理默认。"""
+    与月末 extractor 同款可靠。失败则退回合理默认。
+
+    correction_feedback（#1765）：落库缺口事实回喂；一次揣摩重抽，不定次数循环。
+    """
+    correction_block = str(correction_feedback or "").strip()
     prompt = (
-        "你是一个严谨的信息抽取器，不是大臣，不要扮演、不要写圣旨。\n"
+        (correction_block + "\n" if correction_block else "")
+        + "你是一个严谨的信息抽取器，不是大臣，不要扮演、不要写圣旨。\n"
         "下面是皇帝下达的一道密令交代，以及承命大臣的回话。请抽出这道密令的结构化字段，"
         "只输出一个 JSON 对象，不要 markdown 代码围栏、不要 JSON 以外任何字：\n"
         "{\n"
