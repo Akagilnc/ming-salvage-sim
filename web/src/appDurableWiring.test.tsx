@@ -2423,6 +2423,107 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
   });
 
+  // #1764：真实 App 入口——提交即在飞卡；成功落草案；成案只读投影；无 compose busy-line。
+  // 断言 data-directive-phase 等结构化键，不锁 chip 措辞。
+  it("#1764 新增草案：在飞卡绑定原文 → 成功落草案；无 busy-line", async () => {
+    let releaseCreate!: (value: Response) => void;
+    const createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
+    let createPosts = 0;
+    const base = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      directives: [] as unknown[],
+      cased_directives: [] as unknown[],
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+      previous_summary: "",
+      pending_decisions: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
+      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") {
+        createPosts += 1;
+        return createGate;
+      }
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
+    expect(ta).not.toBeNull();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(ta!, "解太仓备用");
+      ta!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "新增草案"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
+    });
+    const inflight = host.querySelector('[data-directive-phase="inflight"]');
+    expect(inflight?.textContent || "").toContain("解太仓备用");
+    expect(host.querySelector(".busy-line")).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>(".desk-add-btn")?.disabled).toBe(true);
+    expect(createPosts).toBe(1);
+
+    await act(async () => {
+      releaseCreate(jsonResp({
+        directives: [{
+          id: 9, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "",
+          text: "解太仓备用", source: "手动新增", status: "draft", notes: "", authority: "",
+        }],
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[data-directive-phase="draft"][data-directive-id="9"]')).not.toBeNull();
+      });
+    });
+    expect(host.querySelector('[data-directive-phase="inflight"]')).toBeNull();
+    expect(host.querySelector(".busy-line")).toBeNull();
+  });
+
+  it("#1764 成案只读投影：state.cased_directives 以 phase=cased 留桌且无改删", async () => {
+    stubSettlementFetch({
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      directives: [],
+      cased_directives: [{
+        id: 42, dossier_id: 7, text: "着户部核边饷",
+        source: "大臣拟旨", actor: "毕自严", notes: "", dossier_status: "proposed",
+      }],
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+      previous_summary: "",
+      pending_decisions: [],
+    });
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="cased"]')).not.toBeNull());
+    });
+    const card = host.querySelector('[data-directive-phase="cased"]');
+    expect(card?.getAttribute("data-directive-id")).toBe("42");
+    expect(card?.getAttribute("data-source")).toBe("大臣拟旨");
+    expect(card?.getAttribute("data-actor")).toBe("毕自严");
+    expect(card?.querySelector(".directive-tools")).toBeNull();
+    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footer?.disabled).toBe(false);
+  });
+
   it("#1560 pending-only 拟诏主钮走 issue/stream 单轨", async () => {
     const paths: string[] = [];
     const reload = vi.fn();

@@ -939,4 +939,14 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
     edit, delete, state = asyncio.run(scenario())
     assert edit.status_code == 404
     assert delete.status_code == 409
-    assert directive_id not in {row["id"] for row in state.json()["directives"]}
+    body = state.json()
+    # 候选列表仍滤掉已成案（list_directives 语义不变）
+    assert directive_id not in {row["id"] for row in body["directives"]}
+    # #1764：已成案·待盖玺只读投影（0051 proposed）；不另立事实源
+    cased = body.get("cased_directives") or []
+    match = next((row for row in cased if int(row["id"]) == int(directive_id)), None)
+    assert match is not None
+    assert int(match["dossier_id"]) > 0
+    assert match["dossier_status"] == "proposed"
+    assert match["source"] == "手动新增"
+    assert "着户部核边饷" in str(match["text"])

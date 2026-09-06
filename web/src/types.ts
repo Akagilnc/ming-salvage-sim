@@ -162,6 +162,25 @@ export type Directive = {
   authority: string;
 };
 
+/** #1764：已成案·待盖玺只读投影（0051 案卷；非 list_directives 候选）。 */
+export type CasedDirective = {
+  id: number; // directive_id，桌面绑定键
+  dossier_id: number;
+  text: string;
+  source: string;
+  actor: string;
+  notes: string;
+  dossier_status: string; // proposed …
+};
+
+/** #1764：本地在飞/失败项（仅会话态，非持久真源）。 */
+export type LocalDirectiveItem = {
+  localKey: string;
+  text: string;
+  phase: "inflight" | "failed";
+  error?: string;
+};
+
 export type Issue = {
   id: number;
   kind: "situation" | "initiative";
@@ -413,6 +432,8 @@ export type GameState = {
   consorts: Minister[];
   talent_pool?: Minister[];  // 在野人才池：可起复的罢居/致仕前臣（offstage，#120）
   directives: Directive[];
+  /** #1764：已成案·待盖玺只读投影；过月后空；不改 list_directives 过滤。 */
+  cased_directives?: CasedDirective[];
   pending_count: number;
   pending_directive_count?: number;  // 对话式拟旨暂存数（pending_actions kind=directive）
   pending_secret_order_count?: number;  // #1376：staged 密令候选数（确认闸门仍在；投影可见）

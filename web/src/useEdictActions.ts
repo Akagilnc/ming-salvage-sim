@@ -1,10 +1,11 @@
 import React from "react";
 import { api } from "./api";
-import type { Directive, GameState } from "./types";
+import type { Directive, GameState, LocalDirectiveItem } from "./types";
 
 // 诏书台动作群：草案登记/编辑/存改/删除/核定/驳回。
 // #1341：裸 PATCH /api/decree 与 /api/decree/write 前端死码已删；改稿只走 /api/directives。
 // 全部共享 busy/error 写入与 latest-wins 代次推进（beginDurableMutation 防旧 done 覆盖）。
+// #1764：create 在飞项为本地会话态——提交即绑卡；失败回填到卡；刷新后消失。
 export function useEdictActions({
   setBusy,
   setError,
@@ -19,11 +20,21 @@ export function useEdictActions({
   const [directiveText, setDirectiveText] = React.useState("");
   const [editingDirectiveId, setEditingDirectiveId] = React.useState<number | null>(null);
   const [editingDirectiveText, setEditingDirectiveText] = React.useState("");
+  const [localDirectives, setLocalDirectives] = React.useState<LocalDirectiveItem[]>([]);
+  const localSeq = React.useRef(0);
 
   const createDirective = async () => {
     if (!directiveText.trim()) return;
     // #1300：无反馈时延的呈现补丁——同步 LLM 抽取仍在请求路径内（禁先登记后异步），
-    // 仅把 busy 文案改成可读分段，让长等待不「干等无字」。
+    // busy 只作禁写互斥；#1764 主反馈改绑在飞卡，compose 不再挂 busy-line。
+    const text = directiveText.trim();
+    localSeq.current += 1;
+    const localKey = `local-${localSeq.current}`;
+    setLocalDirectives((prev) => [
+      ...prev.filter((item) => item.phase !== "failed"),
+      { localKey, text, phase: "inflight" },
+    ]);
+    setDirectiveText("");
     setBusy("旨意结构抽取中…");
     setError("");
     const stageTimer = window.setTimeout(() => {
@@ -33,14 +44,24 @@ export function useEdictActions({
       const data = await api<{ directives: Directive[] }>("/api/directives", {
         method: "POST",
         body: JSON.stringify({
-          text: directiveText.trim(),
+          text,
         }),
       });
-      setDirectiveText("");
+      setLocalDirectives((prev) => prev.filter((item) => item.localKey !== localKey));
       beginDurableMutation();  // 应用本变更响应前推进代次，作废在飞旧刷新（防旧 done 覆盖）
       setState((current) => (current ? { ...current, directives: data.directives } : current));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setLocalDirectives((prev) =>
+        prev.map((item) =>
+          item.localKey === localKey
+            ? { ...item, phase: "failed", error: message }
+            : item,
+        ),
+      );
+      // 失败回填 compose，便于同一「新增草案」加速器再点（0047；非新流程）。
+      setDirectiveText(text);
+      setError(message);
     } finally {
       window.clearTimeout(stageTimer);
       setBusy("");
@@ -132,6 +153,7 @@ export function useEdictActions({
     editingDirectiveId,
     editingDirectiveText,
     setEditingDirectiveText,
+    localDirectives,
     createDirective,
     startEditDirective,
     cancelEditDirective,
