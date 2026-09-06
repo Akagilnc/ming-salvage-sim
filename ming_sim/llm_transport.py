@@ -2,14 +2,17 @@
 
 策略（次数、空转超时）只在此处与 runtime 配置区定义；
 流式 attempt 循环、可重试分类、系统层终失败出口均只此一处。
-切片①仅接线真实 API 召对流；CLI runner / 公共流 / 非流式由后续切片迁移。
+切片①：真实 API 召对流；切片②：run_agent_text（extractor/sanitizer 等）可观察流。
+CLI runner / 召对半流呈现 / 外层截断点由后续切片迁移。
 
-超时所有权（切片①）：
+超时所有权：
 - SDK 阻塞（等下一 chunk / httpx read）：bind_transport_sdk_budget 把 model.timeout
   临时设为 attempt_timeout_seconds；事件界 check_idle_budget 不能中止该阻塞。
 - 事件边界空转：距上次活动 ≥ idle_timeout_seconds → TransportIdleTimeout（可重试）。
 - 不设 attempt 总墙钟（宪法 #9）；每次 attempt 重新取得完整空转预算。
-- create_chat_model 默认保留未迁移 timeout_seconds / max_retries=1；仅召对接缝临时覆盖。
+- create_chat_model 默认保留未迁移 timeout_seconds / max_retries=1；
+  已迁移接缝（召对流、run_agent_text）临时覆盖。
+- 非流死角（run 未声明 stream）：每 attempt 硬超时 = attempt_timeout_seconds。
 """
 
 from __future__ import annotations
@@ -276,6 +279,42 @@ def run_error_event_failure(content: object = None) -> ClassifiedFailure:
         status_code=None,
         provider_message=pmsg,
         message=f"LLM 流式调用失败：{pmsg}",
+    )
+
+
+def map_run_error_event(event: Any) -> Optional[BaseException]:
+    """RunErrorEvent → LLMUnavailable 单真源（agents/web 三处同权威；#12/#14）。
+
+    非 RunErrorEvent 返回 None。分类语义 = run_error_event_failure；
+    系统层出口 = transport_failure_unavailable。不改分类、不加护栏。
+    """
+    if type(event).__name__ != "RunErrorEvent":
+        return None
+    return transport_failure_unavailable(
+        run_error_event_failure(getattr(event, "content", None)),
+        attempts=1,
+        exhausted=False,
+    )
+
+
+def is_stream_activity_event(event: Any) -> bool:
+    """空转活动唯一权威（召对 web 流 / run_agent_text 同用；禁平行分叉）。
+
+    活动：RunContent 有正文、reasoning 增量、工具生命周期、终包到达。
+    终包计入活动：本 attempt 已完成产出，不得在 RunOutput/RunCompleted 边界空转误杀。
+    活动 ≠ 已呈现正文；不据此禁止重试。
+    """
+    name = type(event).__name__
+    if name in ("RunOutput", "RunCompletedEvent"):
+        return True
+    if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
+        return True
+    rdelta = getattr(event, "reasoning_content", None)
+    if isinstance(rdelta, str) and bool(rdelta):
+        return True
+    return name in (
+        "ToolCallStartedEvent",
+        "ToolCallCompletedEvent",
     )
 
 

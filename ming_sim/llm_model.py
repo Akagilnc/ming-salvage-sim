@@ -152,10 +152,10 @@ def create_chat_model(
             if thinking_type not in {"adaptive", "disabled"}:
                 thinking_type = "adaptive"
         extra_body = {"thinking": {"type": thinking_type}, "reasoning_split": True}
-    # #1465：未迁移调用保留原 timeout_seconds / SDK max_retries=1。
-    # 已迁移召对流在接缝用 bind_transport_sdk_budget 临时覆盖
+    # #1465：create_chat_model 默认仍 timeout_seconds / max_retries=1。
+    # 已迁移接缝（召对流、run_agent_text）用 bind_transport_sdk_budget 临时覆盖
     # （timeout←attempt_timeout + max_retries=0）。
-    # 禁止在 create_chat_model 全局套 transport，否则 extractor/非流/CLI 默认行为被改。
+    # 禁止在 create_chat_model 全局套 transport（CLI runner 等未迁移路径）。
     kwargs: Dict[str, object] = {
         "id": llm_config.model,
         "api_key": llm_config.api_key,
