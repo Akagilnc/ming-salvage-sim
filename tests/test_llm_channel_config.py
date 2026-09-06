@@ -334,18 +334,17 @@ def test_minimax_reasoning_strength_overrides_stale_thinking_level(monkeypatch):
 def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch):
     captured = {}
 
-    class Proc:
-        stdout = "臣领旨。"
-        stderr = ""
-        returncode = 0
+    from tests.cli_process_doubles import FakeCliProcess
 
-    def fake_run(cmd, **kwargs):
-        captured["cmd"] = cmd
-        return Proc()
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return FakeCliProcess(cmd, stdout_script=("臣领旨。\n",), returncode=0,
+                              popen_kwargs=kwargs)
 
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cli_backend.subprocess, "run", fake_run)
+    monkeypatch.setattr(cli_backend, "_resolve_cli_bin", lambda name, configured: f"/fake/{name}")
+    monkeypatch.setattr(cli_backend.subprocess, "Popen", fake_popen)
     cfg = LLMConfig(
         api_key="sk-test",
         base_url="https://api.example.com/v1",

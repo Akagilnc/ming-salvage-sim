@@ -121,18 +121,6 @@ def _agent_run_input(
     return payload
 
 
-def _agent_model_is_cli(agent: object) -> bool:
-    """与召对 use_transport=channel!=\"cli\" 同门：CliChat 即 CLI 通道。
-
-    本片可观察流+transport 仅 API；CLI 恢复非流 agent.run，留给切片③。
-    死角：CLI JSON invoke_stream 无中途事件、等③——不得把不可观察通道假装可观察。
-    """
-    model = getattr(agent, "model", None)
-    if model is None:
-        return False
-    return type(model).__name__ == "CliChat"
-
-
 def _history_backed_truncate_anchor(
     agent: object,
     game_db: Any,
@@ -198,9 +186,8 @@ def run_agent_text(
 
     API 可确证支持流式 → stream=True/stream_events=True/yield_run_output=True + transport
     空转预算；不支持 → 非流死角 + 每 attempt 硬超时（attempt_timeout_seconds 进配置）。
-    CLI（CliChat）：不套本片可观察流+transport，非流 agent.run（切片③）；
-    死角清单：CLI JSON invoke_stream 无中途事件、等③。禁平行 idle、禁把 CLI
-    subprocess 超时改成 attempt_timeout 整段墙钟（#9）。
+    CLI（CliChat）：切片③已同门——runner 增量读 stdout 出中途 ModelResponse，
+    子进程静默由 runner 侧 idle 判死（无总墙钟，#9），次数仍只在 transport。
     未知异常保真上浮（0005）；不沿用 TypeError 文本归因。
 
     prior_messages：可选的既有 user/assistant 轮次（Message 或 {role,content}）。
@@ -217,15 +204,6 @@ def run_agent_text(
     """
     t0 = time.monotonic()
     run_input = _agent_run_input(prompt, prior_messages)
-
-    # 与召对同门：CLI 不套本片 transport（切片③）
-    if _agent_model_is_cli(agent):
-        tlog(f"[{tag}] 开始非流式推演（CLI 通道，transport 留给切片③）")
-        output = agent.run(run_input)
-        _dump_llm_messages(output, tag, agent=agent)
-        text = extract_agent_text(output)
-        tlog(f"[{tag}] 完成，{len(text)} 字，用时 {time.monotonic() - t0:.1f}s")
-        return text
 
     tlog(f"[{tag}] 开始推演（transport 可观察）")
     policy = resolve_transport_policy()

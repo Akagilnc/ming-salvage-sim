@@ -2647,11 +2647,10 @@ class WebGame:
         stream_secret_route = bool(explicit_secret_order) or (text or "").strip().startswith(
             _STREAM_SECRET_PREFIXES
         )
-        # #1465 切片①：仅真实 API 召对接缝接线 transport；CLI 通道不套入。
+        # #1465 切片③：API / CLI 同一 transport（次数、空转、分类、终失败同一权威）。
+        # 槽位仍平级（ADR 0001）：transport 是调用策略，不是第三通道。
         llm_cfg = getattr(self.session, "llm_config", None)
-        channel = (getattr(llm_cfg, "channel", "") or "").strip().lower()
-        use_transport = channel != "cli"
-        policy = resolve_transport_policy(llm_cfg) if use_transport else None
+        policy = resolve_transport_policy(llm_cfg)
         chunks: List[str] = []
         run_output_box: List[Any] = []
         exit_started_during_stream = {"v": False}
@@ -2715,34 +2714,19 @@ class WebGame:
                 agent_prompt, stream=True, stream_events=True, yield_run_output=True,
             )
 
-        if use_transport:
-            assert policy is not None
-            # SDK 阻塞超时 = bind_transport_sdk_budget(model.timeout←attempt_timeout)；
-            # 事件界只做 idle 空转，不能中止 SDK read 阻塞。
-            with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
-                (answer, run_output), transport_attempts_box = run_transport_stream(
-                    _start_stream,
-                    on_event=_on_event,
-                    is_activity_event=is_stream_activity_event,
-                    map_error_event=map_run_error_event,
-                    after_stream=_after_stream,
-                    policy=policy,
-                )
-        else:
-            # CLI 通道：保留单次流，不套 transport 次数/空转（切片③）
-            stream = _start_stream()
-            try:
-                for event in stream:
-                    err = map_run_error_event(event)
-                    if err is not None:
-                        raise err
-                    _on_event(event)
-                answer, run_output = _after_stream()
-            finally:
-                close = getattr(stream, "close", None)
-                if callable(close):
-                    close()
-            transport_attempts_box = []
+        # SDK 阻塞超时 = bind_transport_sdk_budget(model.timeout←attempt_timeout)；
+        # 事件界只做 idle 空转，不能中止 SDK read 阻塞。
+        # CLI 通道同门：子进程静默由 runner 增量读判死（无总墙钟），
+        # typed 瞬断经 model 调用边界记忆还原分类。
+        with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+            (answer, run_output), transport_attempts_box = run_transport_stream(
+                _start_stream,
+                on_event=_on_event,
+                is_activity_event=is_stream_activity_event,
+                map_error_event=map_run_error_event,
+                after_stream=_after_stream,
+                policy=policy,
+            )
 
         # #542：action/tool 解释（exit 若流中未启则幂等补登），write_gate 外统一 join，
         # 短事务原子持久化 reply + 本轮全部 scene。join 不得早于 start_exit。
