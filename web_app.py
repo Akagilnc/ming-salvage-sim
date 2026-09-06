@@ -447,6 +447,50 @@ def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
     return detail
 
 
+def _settlement_sse_error_data(
+    exc: BaseException,
+    failure_snapshot: Optional[List[Dict[str, Any]]] = None,
+) -> Any:
+    """结算 SSE 终失败 payload 单真源（issue/stream 与 resolve_decisions/stream）。
+
+    #1465 ②：message 保持人话标量；status_code/code/transport_attempts 在 SSE 外层；
+    pending_action_failures 语义不动；不改 abort 文案与 error_pack。
+    覆盖 LLMUnavailable 与 SettlementAbort.__cause__ is LLMUnavailable。
+    禁平行第二套序列化——typed 键仍走 _llm_error_detail。
+    """
+    payload: Optional[Dict[str, Any]] = None
+    if isinstance(exc, LLMUnavailable):
+        detail = _llm_error_detail(exc)
+        payload = {
+            "message": detail["message"],
+            "code": detail.get("code"),
+            "provider_message": detail.get("provider_message"),
+            "status_code": detail.get("status_code"),
+        }
+        if "transport_attempts" in detail:
+            payload["transport_attempts"] = detail["transport_attempts"]
+    elif isinstance(exc, SettlementAbort) and isinstance(exc.__cause__, LLMUnavailable):
+        detail = _llm_error_detail(exc.__cause__)
+        payload = {
+            "message": str(exc),  # abort 文案不动
+            "code": detail.get("code"),
+            "provider_message": detail.get("provider_message"),
+            "status_code": detail.get("status_code"),
+            "error_pack_path": getattr(exc, "error_pack_path", None) or "",
+            "stage": getattr(exc, "stage", "") or "",
+        }
+        if "transport_attempts" in detail:
+            payload["transport_attempts"] = detail["transport_attempts"]
+    if payload is None:
+        # 非 LLM 终失败：保持既有「无 snapshot → 标量；有 snapshot → {message, failures}」
+        if failure_snapshot:
+            return {"message": str(exc), "pending_action_failures": failure_snapshot}
+        return str(exc)
+    if failure_snapshot:
+        payload["pending_action_failures"] = failure_snapshot
+    return payload
+
+
 def _runtime_float(value: object, default: float) -> float:
     try:
         return float(value) if value not in (None, "") else default
@@ -6853,24 +6897,10 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                 ev_queue.put(("__error__", payload))
         except Exception as e:  # noqa: BLE001
             # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
-            # #1465 ②：SettlementAbort 若 cause 为 LLMUnavailable，合并 _llm_error_detail
-            # typed 键（status_code/code/transport_attempts）——保真 #1750 上游码，不改 abort 文案。
-            if isinstance(e, LLMUnavailable):
-                message: Any = _llm_error_detail(e)
-            elif isinstance(e, SettlementAbort) and isinstance(e.__cause__, LLMUnavailable):
-                detail = _llm_error_detail(e.__cause__)
-                message = {
-                    **detail,
-                    "message": str(e),
-                    "error_pack_path": getattr(e, "error_pack_path", None) or "",
-                    "stage": getattr(e, "stage", "") or "",
-                }
-            else:
-                message = str(e)
+            # #1465 ②：message 标量 + typed 键外层；与 resolve_decisions/stream 同真源。
             ev_queue.put((
                 "__error__",
-                {"message": message, "pending_action_failures": failure_snapshot}
-                if failure_snapshot else message,
+                _settlement_sse_error_data(e, failure_snapshot),
             ))
 
     async def generate() -> AsyncIterator[str]:
@@ -6990,12 +7020,11 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                 if failure_snapshot else str(e),
             ))
         except Exception as e:  # noqa: BLE001
-            # §5.4：无独立 HTTP/AudienceNight 分表；通用 SSE + 非空 holder 附载。
-            message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
+            # §5.4：无独立 HTTP/AudienceNight 分表；与 issue/stream 同真源。
+            # #1465 ②：SettlementAbort.__cause__ LLMUnavailable 亦外层保真 typed 键。
             ev_queue.put((
                 "__error__",
-                {"message": message, "pending_action_failures": failure_snapshot}
-                if failure_snapshot else message,
+                _settlement_sse_error_data(e, failure_snapshot),
             ))
 
     async def generate() -> AsyncIterator[str]:
