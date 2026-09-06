@@ -405,7 +405,12 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
     worker = threading.Thread(target=_run_call)
     worker.start()
     try:
-        at_short_hold.wait()
+        # 全局 #13：worker 早死不得让主线程无界挂死；等到 short-hold 或 worker 已退出。
+        while worker.is_alive() and not at_short_hold.is_set():
+            worker.join(0.05)
+        assert at_short_hold.is_set(), (
+            f"worker exited before short-hold handshake; result={result!r}"
+        )
         assert game._write_gate.acquire(blocking=False), "gate should be free at admit→short-hold window"
         gate_held_by_peer.set()
         worker.join()
@@ -415,6 +420,7 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
         assert exc.status_code == 409
         assert game.db.writes == []
     finally:
+        gate_held_by_peer.set()  # 解 worker 侧 wait，避免 finally 再挂
         if game._write_gate.locked():
             game._write_gate.release()
         worker.join()

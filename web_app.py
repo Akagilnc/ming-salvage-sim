@@ -6530,7 +6530,6 @@ def api_advance_without_edict(
     # （消费工人终态，不按 elapsed 伪造 409）。用同步 def 交给 FastAPI threadpool，
     # 绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
     game = get_game()
-    was_ended = bool(game.state.ended)
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
@@ -6543,11 +6542,14 @@ def api_advance_without_edict(
             try:
                 # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
                 _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
+                # #1769：was_ended 在相位/写闸守卫之后、结算副作用之前取样——
+                # 守卫路径不得读 ended（守门夹具无此字段）；语义仍是 end_turn/refresh 前快照。
+                was_ended = bool(game.state.ended)
                 # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
                 # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
                 # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
                 settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
-                # #1769：was_ended/last_decree 须在 end_turn/refresh 之前取样
+                # #1769：last_decree 须在 end_turn/refresh 之前取样
                 # （refresh→begin_turn 会清 last_decree）。awaiting 不计 steam。
                 decree = game.session.last_decree
                 awaiting = bool(
