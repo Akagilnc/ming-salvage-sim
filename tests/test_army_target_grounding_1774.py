@@ -194,57 +194,35 @@ def test_audience_and_manual_share_xiexang_admission(game, monkeypatch, target, 
         db.conn.commit()
 
     # ── 手拟：capture 真缝（与 POST /api/directives 同 capture）──
+    # capture 在 extract try 之外直接上抛 DecreeMaterializationValidationError；
+    # 只咬入口外部可见 typed failed_fields，不回放内部 require 补拒因。
+    from ming_sim.action_materialize import DecreeMaterializationValidationError
+
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (raw, 1),
     )
-    manual = {"landed": False, "target_id": None, "failed_fields": frozenset(), "has_report": False}
     try:
         payload = _real_capture(MANUAL_TEXT, None, db=db, content=content, capture_timeout_s=0)
-        if (
-            payload.get("dossier_action_type") == "grant_allocation"
-            and payload.get("grant_action") == "协饷"
-            and payload.get("target_id")
-        ):
-            manual = {
-                "landed": True,
-                "target_id": payload.get("target_id"),
-                "failed_fields": frozenset(),
-                "has_report": False,
-            }
-    except Exception as exc:
-        # capture 把 DecreeMaterializationValidationError 透为 ValueError；
-        # 取 typed failed_fields（若有）——与召对 decree_validation_failure 同权威。
-        fields = getattr(exc, "failed_fields", None)
-        if fields is None and getattr(exc, "__cause__", None) is not None:
-            fields = getattr(exc.__cause__, "failed_fields", None)
+    except DecreeMaterializationValidationError as exc:
         manual = {
             "landed": False,
             "target_id": None,
-            "failed_fields": frozenset(str(f) for f in (fields or ())),
+            "failed_fields": frozenset(str(f) for f in exc.failed_fields),
             "has_report": False,
         }
-        # 手拟 HTTP 层无 failed_fields 时，从消息仍不得抠散文；用 require 再取一次 typed。
-        if not manual["failed_fields"]:
-            from ming_sim.action_materialize import (
-                DecreeMaterializationValidationError,
-                require_materializable_xiexang_payload,
-            )
-            try:
-                require_materializable_xiexang_payload(
-                    db,
-                    text=MANUAL_TEXT,
-                    amount=canned.get("金额") or canned.get("amount"),
-                    account=str(canned.get("账户") or canned.get("account") or ""),
-                    purpose=str(canned.get("用途") or canned.get("purpose") or ""),
-                    target_kind=str(canned.get("目标类型") or canned.get("target_kind") or ""),
-                    target_id=str(
-                        canned.get("目标") or canned.get("目标ID") or canned.get("target_id") or ""
-                    ),
-                    cadence=str(canned.get("拨付节奏") or canned.get("cadence") or ""),
-                )
-            except DecreeMaterializationValidationError as typed:
-                manual["failed_fields"] = frozenset(str(f) for f in typed.failed_fields)
+    else:
+        landed = (
+            payload.get("dossier_action_type") == "grant_allocation"
+            and payload.get("grant_action") == "协饷"
+            and bool(payload.get("target_id"))
+        )
+        manual = {
+            "landed": landed,
+            "target_id": payload.get("target_id") if landed else None,
+            "failed_fields": frozenset(),
+            "has_report": False,
+        }
 
     # 共同准入语义：可物化、规范化 target_id、typed 拒因
     assert audience["landed"] == expect["landed"] == manual["landed"]
