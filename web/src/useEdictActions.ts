@@ -25,8 +25,7 @@ export function useEdictActions({
 
   const createDirective = async () => {
     if (!directiveText.trim()) return;
-    // #1300：无反馈时延的呈现补丁——同步 LLM 抽取仍在请求路径内（禁先登记后异步），
-    // busy 只作禁写互斥；#1764 主反馈改绑在飞卡，compose 不再挂 busy-line。
+    // #1764：主反馈绑在飞卡；busy 仅真值禁写互斥（compose 无 busy 呈现面，不分段文案）。
     const text = directiveText.trim();
     localSeq.current += 1;
     const localKey = `local-${localSeq.current}`;
@@ -35,11 +34,8 @@ export function useEdictActions({
       { localKey, text, phase: "inflight" },
     ]);
     setDirectiveText("");
-    setBusy("旨意结构抽取中…");
+    setBusy("1");
     setError("");
-    const stageTimer = window.setTimeout(() => {
-      setBusy("登记诏书草案…");
-    }, 2500);
     try {
       const data = await api<{ directives: Directive[] }>("/api/directives", {
         method: "POST",
@@ -63,7 +59,6 @@ export function useEdictActions({
       setDirectiveText(text);
       setError(message);
     } finally {
-      window.clearTimeout(stageTimer);
       setBusy("");
     }
   };
@@ -80,12 +75,9 @@ export function useEdictActions({
 
   const saveDirective = async (directive: Directive) => {
     if (!editingDirectiveText.trim()) return;
-    // #1300：修改草案同样走同步旨意抽取，呈现分段 busy。
-    setBusy("旨意结构抽取中…");
+    // busy 仅禁写互斥真值；edict 无 busy 呈现面。
+    setBusy("1");
     setError("");
-    const stageTimer = window.setTimeout(() => {
-      setBusy("修改草案…");
-    }, 2500);
     try {
       const data = await api<{ directives: Directive[] }>(`/api/directives/${directive.id}`, {
         method: "PATCH",
@@ -97,7 +89,6 @@ export function useEdictActions({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      window.clearTimeout(stageTimer);
       setBusy("");
     }
   };

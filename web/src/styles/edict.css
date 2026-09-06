@@ -458,7 +458,6 @@
   font-size: 0.9rem;
 }
 
-.busy-line,
 .error-line {
   display: flex;
   align-items: center;
@@ -466,18 +465,6 @@
   min-height: 34px;
   padding: 7px 9px;
   border-radius: 6px;
-}
-
-.busy-line {
-  color: #704c1e;
-  background: rgba(183, 133, 44, 0.14);
-}
-
-.busy-line svg {
-  animation: spin 900ms linear infinite;
-}
-
-.error-line {
   color: #82291f;
   background: rgba(185, 73, 55, 0.12);
 }
