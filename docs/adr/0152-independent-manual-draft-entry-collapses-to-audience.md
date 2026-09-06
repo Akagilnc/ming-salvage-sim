@@ -34,13 +34,18 @@ owner 直接原话（2026-09-06，唯一授权来源；冻结 `c-manual-draft-is
 
 **不在本决定之内**：取消拟诏台「草稿」区、把拟诏台改成「只剩已发」——owner 原话未拍；#1764 两区（草稿与已发分开、已发覆水难收）不支持取消草稿区。若需取消须另上呈。
 
-## Consequences / 法源边界（全部保持，本决定不出修正案）
+## Consequences / 法源边界
+
+**later-wins 修正**
+
+- **[0093](0093-rescript-loop-triage-draft-six-actions.md)**（#1772 / 2026-09-06 御批）：御笔强推＝批红页上对无人站台案卷的**一个选择**（皇帝亲担）——选了，案卷即 `backed`、照常颁布；不经手拟、不经召对。**替代** 0093「站台闭环现成轨口径」中「无人站台后的御笔强推走现有自由下旨通道（typed `target_dossier_id`）」一句；**保持**「复用原案卷追加御笔手敕并把状态改为 `backed`，不另建第二案卷」；0070 批红 `decision_key` 不变。另旨·中旨仍为皇帝独担御笔；日常直接下旨走召对「拟旨：…」（决定 2）。
+
+**保持（本决定对其余法源不出修正案）**
 
 - **[0047](0047-buttons-are-command-accelerators-composer-contract.md)** 保持：口令加速器同一语义管线；宣召执行者是王承恩这个职位、缺位常在员额顶替；前缀钮密令＋拟旨；任免自然语言；转入诏书草案钮废除。删独立手拟入口**不改**召对前缀钮集；原文无「拟诏台御笔自拟契约」。「召王承恩」加速器如采用，属原则实例，不必修正 0047。
 - **[0048](0048-month-end-rescript-as-real-document-page-no-desk-workbench.md)** 保持：一桩一疏真文书页；有选择的 DECISION 进批红；废御案逐条准驳；应允前对话润色／不准、应允后撤回成命；文书视觉语言只用于批红页。原文无保留手拟文本框或草稿区条款——删文本框不构成推翻其拟诏台契约。
 - **[0049](0049-close-night-commit-is-approval-no-month-end-decree-review.md)** 保持：夜域已应允；收夜提交即准旨；未表态项结束回合默认同意；收夜封窗；月末无颁诏复审。落桌 ≠ 隐藏 pending 须提前变成可改删草案；**不增加**盖玺确认条件。
 - **[0051](0051-decree-ledger-is-night-commit-record-no-second-split.md)** 保持：案卷唯一身份；收夜或结束回合默认同意成案；已应允不入案卷枚举；召对逐旨粒度；四态／判决组合态；载荷继承、效果溯源；留中同 id；密令双轴。不因删入口重切已应允旨意、另立桌面真源、或把旧 draft 改名为准旨。
-- **[0093](0093-rescript-loop-triage-draft-six-actions.md)** 保持：另旨·中旨为皇帝独担御笔；六动作与自由下旨能力的制度分工不废。**自由下旨入口收束后，强推如何继续可达**：无人站台后的御笔强推**不再**依赖拟诏台独立手拟口；经批红页「另旨·中旨」以 typed `target_dossier_id` 复用**原案卷**追加御笔手敕、把廷议态推到 `backed`——不取消强推、不另建第二案卷、不另造第二按钮。日常「你找世界」的直接下旨改走召对「拟旨：…」（决定 2），与强推的案卷锚定路径分立。
 - **[0070](0070-ledger-endorsement-entries-cosign-backing-imperial-hand.md)** 保持：会签／当面站台／御笔手敕分立；召对来源 `source_chat_turn_id`；批红／御笔来源 `decision_key`，互斥。收束后：召对拟旨继续 `source_chat_turn_id`；另旨·中旨／强推继续 `decision_key`。历史御笔 provenance **不漂移**——不删历史御笔来源、不伪造聊天轮；受影响的原「自由下旨」引用改认另旨·中旨／`decision_key` 轴，不另立 provenance 形。
 - **[0006](0006-stage-chat-actions-and-commit-at-decree.md)** 保持：被召者含太监；对话确认、拒绝丢暂存、不回默认同意；提交时点以后出 0038／0049 为准。
 - **[0028](0028-audience-secret-order-capture-and-action-classification.md)** 保持：显式分类／上下文取材／no-op·暂存对冲；2026-07-23 结构信号分界；2026-08-28 拟旨 typed 成案修订。复用现行拟旨路由及抽取，**不另造**王承恩分类器。
