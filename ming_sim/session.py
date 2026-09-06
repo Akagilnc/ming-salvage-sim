@@ -3120,6 +3120,56 @@ class GameSession:
     # #1341/#1338：set_decree 已删——裸设总诏正文绕过逐道草案结构化，违 P1；
     # Web PATCH /api/decree 同步拆除。改稿只走 add_directive / update_directive。
 
+    def _resubmit_draft_admission_failures(
+        self, rejections: List[Dict[str, object]],
+    ) -> None:
+        """#1769 结算路 B：产物错 draft 把失败事实与原产物告诉 LLM 重交 payload。
+
+        票面不授权补交次数；此处对每道失败旨各重交一次。LLM/投影失败视为该旨耗尽，
+        不中止整月（耗尽终态=原旨留到下月）。真 ensure 代码故障不经此路。
+        """
+        from ming_sim.cli_backend import resubmit_draft_admission_payload
+
+        for item in rejections or []:
+            try:
+                did = int(item.get("directive_id"))
+            except (TypeError, ValueError):
+                continue
+            if self.db.get_dossier_for_directive(did) is not None:
+                continue
+            row = self.db.conn.execute(
+                "SELECT id, text, status, dossier_payload_json FROM turn_directives "
+                "WHERE id=? AND status='draft'",
+                (did,),
+            ).fetchone()
+            if row is None:
+                continue
+            try:
+                bad_payload = self.db.read_directive_dossier_payload(row)
+            except ValueError:
+                continue
+            reason = str(item.get("reason") or "")
+            try:
+                new_payload = resubmit_draft_admission_payload(
+                    str(row["text"] or ""),
+                    bad_payload=bad_payload,
+                    failure_reason=reason,
+                    llm_config=getattr(self, "llm_config", None),
+                    db=self.db,
+                    content=getattr(self, "content", None),
+                    existing_mode=bad_payload.get("mode"),
+                )
+                self.db.replace_undossiered_directive_payload(
+                    did,
+                    text=str(row["text"] or ""),
+                    dossier_payload=new_payload,
+                )
+            except Exception as exc:
+                # 补交侧失败 = 该旨耗尽，保留原 draft 与既有拒因；不挡月份。
+                logger.warning(
+                    "[1769] draft#%s admission resubmit exhausted: %s", did, exc,
+                )
+
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None,
                      *, allow_empty_decree: bool = False) -> ResolveResult:
@@ -3241,7 +3291,12 @@ class GameSession:
             self.db.confirm_directive(int(pending["id"]), self.state)
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
+        # #1769：产物错 → 告诉 LLM 失败事实与原产物后重交；耗尽保持 draft、月照过
+        # （替代 #1591「产物错即整月不推进 + 引擎串透传」；真故障仍 SettlementAbort）。
         dossier_rejections = self.db.ensure_dossiers_for_draft_directives(self.state)
+        if dossier_rejections:
+            self._resubmit_draft_admission_failures(dossier_rejections)
+            dossier_rejections = self.db.ensure_dossiers_for_draft_directives(self.state)
         directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
@@ -3260,18 +3315,18 @@ class GameSession:
         # Pending non-directive actions (secret orders etc.) enter resolve_directives
         # so pre_settle owns materialization with the rest of the settlement spine.
         pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
-        if not directives and dossier_rejections:
-            # #1591：草案的真实成案拒因优先于无关 pending 动作或既有结算工作。
-            # recovery/allow-empty 只豁免真正的无旨月，不得洗掉已存在的坏草案。
-            raise ValueError(dossier_rejections[-1])
+        # #1769 耗尽：产物错 draft 留到下月；不得把引擎拒因串透传给皇帝，不得挡月份。
+        # 真拒因已在 rejection_reports 留痕（#1591 保留面）。
+        product_exhaust = bool(dossier_rejections)
         if not directives and not settlement_due and not pending_action_due:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
                     and (self.last_decree or "").strip()):
                 directives = [{"text": self.last_decree}]
-            elif allow_empty_decree or recovered_source is not None:
+            elif allow_empty_decree or recovered_source is not None or product_exhaust:
                 # #1274：无旨月 / 结算中恢复 — decrees=[] 走完整链，不拒。
+                # #1769：补交耗尽仍无成案旨 — 月照过，draft 跨月保留。
                 pass
             else:
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
@@ -3296,10 +3351,15 @@ class GameSession:
         # 恢复 fallthrough 把存档真源穿透传入（#146 cmr r2）；正常颁诏 recovered_source is None
         # → 省略 source 参数走默认 player_decree（行为不变）。
         # #1274 退朝无旨：allow_empty_decree + 无草案 → system_simulation（世界自演变静默）。
+        # #1769 补交耗尽无成案旨：同走 system_simulation，月照过。
         resolve_kwargs = {}
         if recovered_source is not None:
             resolve_kwargs["source"] = recovered_source
-        elif allow_empty_decree and not directives and not (decree_text or "").strip():
+        elif (
+            (allow_empty_decree or product_exhaust)
+            and not directives
+            and not (decree_text or "").strip()
+        ):
             resolve_kwargs["source"] = Provenance.system_simulation
         result = resolve_directives(
             self.state, self.db, self.agno_db, self.llm_config,

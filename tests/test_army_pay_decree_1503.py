@@ -795,11 +795,12 @@ def test_xiexang_amount_rejects_non_json_integer(amount):
 def test_manual_directive_admission_real_http_tracer_1591(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """#1591 真实入口 tracer：同一 WebGame/TestClient 内证两支外部行为。
+    """#1591/#1769 真实入口 tracer：同一 WebGame/TestClient 内证外部行为。
 
     ① `POST /api/directives` 手工拟旨 account=太仓 经 capture 透传五字段后 canonical 为国库。
-    ② 同入口 account 非法，且有无关非旨 pending action 并存时，
-    `POST /api/decree/issue` 外部响应须是真实 admission 拒因，不得被掩盖为「至少一条草案」。
+    ②–③ 非法 cadence/account/地域在写入前 409，相关表零写。
+    ④ #1769 替代旧 #1591 整月阻断：既存非法草案在 issue/stream 边界拒因留痕、
+    draft 留到下月、月份照常推进；确定性诊断不透传引擎拒因串。
 
     stub 仅 LLM payload 产出边界（拟旨抽取/结算外层）；不 mock
     ensure_dossiers_for_draft_directives / list_dossiered_draft_directives /
@@ -1033,7 +1034,9 @@ def test_manual_directive_admission_real_http_tracer_1591(
         assert int(game.state.metrics.get("国库") or 0) == treasury_before
         assert float(_army_row(game.db)["arrears"]) == pytest.approx(arrears_now)
 
-        # ── ④ #1591：既存非法草案在 issue 边界转发真实 admission 拒因 ──
+        # ── ④ #1769 替代 #1591：既存非法草案产物错 → 拒因留痕、draft 留到下月、月照过。
+        # 删除旧断言「HTTP 400 + message==引擎拒因 + 拒案不得推进」——票面明确替换
+        # 「产物错即整月不推进 + 引擎串透传」；保留真实拒因留痕、不误报无草案。
         directive_id = game.db.add_directive(
             game.state, None, "准从藩库见银拨关宁军饷十五万两即发。",
             "player", status="draft", dossier_payload={
@@ -1049,24 +1052,29 @@ def test_manual_directive_admission_real_http_tracer_1591(
         )
         assert game.db.list_pending_actions(turn2), "无关非旨 pending action 应在场"
 
-        issue = client.post("/api/decree/issue", json={"expected_turn": turn2})
-        assert issue.status_code == 400, issue.text
-        detail = issue.json().get("detail")
-        message = detail.get("message") if isinstance(detail, dict) else detail
-        # 同次 admission 拒因真源：ledger 按 turn+section+directive_id 定位唯一记录，
-        # HTTP message 与 ledger.reason 只做不透明值相等，不锁具体措辞（#13）。
+        # 补交侧无可用好产物（capture 队列已耗尽）→ 耗尽路：月推进、draft 保留。
+        body = _post_issue_stream(
+            client, expected_turn=turn2, step="1769 replace-1591 exhaust",
+        )
+        after = _get_state(client)
+        assert _turn_of(after) == turn2 + 1, after.get("turn")
+        row = game.db.conn.execute(
+            "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+        ).fetchone()
+        assert row["status"] == "draft"
+        assert game.db.get_dossier_for_directive(directive_id) is None
         rejection_rows = game.db.conn.execute(
             "SELECT reason, category, source FROM rejection_reports "
-            "WHERE turn = ? AND section = 'directive_locality' "
+            "WHERE section = 'directive_locality' "
             "AND json_extract(item_json, '$.directive_id') = ?",
-            (turn2, directive_id),
+            (directive_id,),
         ).fetchall()
-        assert len(rejection_rows) == 1, [dict(row) for row in rejection_rows]
-        rejection_row = rejection_rows[0]
-        assert rejection_row["category"] == "locality_fanout_failed", dict(rejection_row)
-        assert rejection_row["source"] == "player_decree", dict(rejection_row)
-        assert message == rejection_row["reason"], (message, rejection_row["reason"])
-        assert int(game.state.turn) == turn2, "拒案不得推进回合"
+        assert rejection_rows, [dict(r) for r in rejection_rows]
+        assert any(r["category"] == "locality_fanout_failed" for r in rejection_rows)
+        assert any(r["source"] == "player_decree" for r in rejection_rows)
+        # 确定性诊断出口不把 admission 引擎串透传给皇帝（SSE done 载荷）。
+        blob = json.dumps(body, ensure_ascii=False)
+        assert rejection_rows[0]["reason"] not in blob
     finally:
         try:
             game.session.close()

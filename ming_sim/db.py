@@ -20030,48 +20030,117 @@ class GameDB:
         from ming_sim.error_pack import rejections_jsonl_path
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
-    def ensure_dossiers_for_draft_directives(self, state: GameState) -> List[str]:
+    def ensure_dossiers_for_draft_directives(
+        self, state: GameState,
+    ) -> List[Dict[str, object]]:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。
 
-        #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨失败记 rejection、保持 draft，不波及他旨。
+        #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨产物错记 rejection、保持 draft，不波及他旨。
+        #1769：产物错（ValueError，含 PayOrderKeyError）逐项留痕；真代码故障不得洗成
+        locality_fanout_failed——回滚后写错误包并 SettlementAbort（0005/0008 D1/D6）。
+        返回 [{directive_id, reason}, ...] 供结算路补交；成功旨不入列表。
         """
         from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+        from ming_sim.error_pack import (
+            rejections_jsonl_path,
+            settlement_abort_message,
+            write_error_pack,
+        )
+        from ming_sim.exceptions import SettlementAbort
+
         collector = RejectionCollector()
-        rejection_reasons: List[str] = []
-        with atomic(self):
-            for row in self.list_directives(state, statuses=("draft",)):
-                did = int(row["id"])
-                sp = f"ensure_directive_{did}"
-                self.conn.execute(f"SAVEPOINT {sp}")
-                try:
-                    self._ensure_directive_dossier(
-                        state, did, str(row["text"]),
-                        self.read_directive_dossier_payload(row), commit=False,
-                        rejection_collector=collector,
-                    )
-                except Exception as exc:
-                    self.conn.execute(f"ROLLBACK TO {sp}")
-                    rejection_reasons.append(str(exc))
-                    # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
-                    collector.record(
-                        "directive_locality",
-                        RejectedItem(
-                            item={"directive_id": did},
-                            reason=str(exc),
-                            category="locality_fanout_failed",
-                            source=Provenance.player_decree,
-                        ),
-                        int(state.turn),
-                    )
-                    tlog(f"[ensure_dossiers] 旨#{did} 成案失败：{exc}")
-                    # 坏旨保持 draft，次边界重试；消费边界只读取已有案卷的 draft。
-                finally:
-                    self.conn.execute(f"RELEASE {sp}")
-            collector.flush_to_db(self)
+        rejection_rows: List[Dict[str, object]] = []
+        code_fault: BaseException | None = None
+        try:
+            with atomic(self):
+                for row in self.list_directives(state, statuses=("draft",)):
+                    did = int(row["id"])
+                    # 已有案卷：幂等跳过（补交重跑 ensure 时不重复建）
+                    if self.get_dossier_for_directive(did) is not None:
+                        continue
+                    sp = f"ensure_directive_{did}"
+                    self.conn.execute(f"SAVEPOINT {sp}")
+                    try:
+                        self._ensure_directive_dossier(
+                            state, did, str(row["text"]),
+                            self.read_directive_dossier_payload(row), commit=False,
+                            rejection_collector=collector,
+                        )
+                    except ValueError as exc:
+                        # 产物/契约错：逐项隔离留痕，保持 draft（#1769 补交/耗尽入口）
+                        self.conn.execute(f"ROLLBACK TO {sp}")
+                        reason = str(exc)
+                        rejection_rows.append({"directive_id": did, "reason": reason})
+                        # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
+                        collector.record(
+                            "directive_locality",
+                            RejectedItem(
+                                item={"directive_id": did},
+                                reason=reason,
+                                category="locality_fanout_failed",
+                                source=Provenance.player_decree,
+                            ),
+                            int(state.turn),
+                        )
+                        tlog(f"[ensure_dossiers] 旨#{did} 成案产物错：{exc}")
+                    except Exception as exc:
+                        # 真代码故障：不得当产物错洗白后继续（0005）
+                        self.conn.execute(f"ROLLBACK TO {sp}")
+                        code_fault = exc
+                        tlog(f"[ensure_dossiers] 旨#{did} 成案代码故障：{exc}")
+                        raise
+                    finally:
+                        self.conn.execute(f"RELEASE {sp}")
+                collector.flush_to_db(self)
+        except Exception as exc:
+            if code_fault is None:
+                code_fault = exc
+            # atomic 已回滚；错误包须在事务外写（write_error_pack 约束）
+            pack_path = write_error_pack(
+                self, state, exc=code_fault, extracted=None, resolve_ctx=None,
+            )
+            raise SettlementAbort(
+                settlement_abort_message(pack_path),
+                turn=int(state.turn),
+                stage="directive_ensure",
+                error_pack_path=pack_path,
+            ) from code_fault
         from ming_sim.applier import mirror_rejections_after_commit
-        from ming_sim.error_pack import rejections_jsonl_path
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
-        return rejection_reasons
+        return rejection_rows
+
+    def replace_undossiered_directive_payload(
+        self,
+        directive_id: int,
+        *,
+        text: str,
+        dossier_payload: Dict[str, object],
+    ) -> None:
+        """#1769 结算补交：整份替换未成案 draft 的结构化载荷（禁 merge 残留旧 entries）。"""
+        if self.get_dossier_for_directive(int(directive_id)) is not None:
+            raise ValueError("已成案旨意不得编辑")
+        row = self.conn.execute(
+            "SELECT id FROM turn_directives WHERE id=? AND status='draft'",
+            (int(directive_id),),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"可补交 draft 不存在：{directive_id}")
+        payload = dict(dossier_payload or {})
+        if not directive_payload_admits_structured_write(payload):
+            raise ValueError("补交载荷须提供完整结构化动作与目标")
+        with atomic(self):
+            self.conn.execute(
+                """
+                UPDATE turn_directives
+                SET text=?, dossier_payload_json=?, updated_at=CURRENT_TIMESTAMP
+                WHERE id=? AND status='draft'
+                """,
+                (
+                    str(text or ""),
+                    json.dumps(payload, ensure_ascii=False),
+                    int(directive_id),
+                ),
+            )
 
     def reject_directive(self, directive_id: int) -> None:
         """皇帝驳回大臣拟旨：pending → rejected。"""
