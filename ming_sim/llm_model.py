@@ -9,8 +9,6 @@ from typing import Dict, Optional
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from openai import APIConnectionError, APIStatusError, APITimeoutError
-
 from ming_sim.exceptions import DependencyMismatch, LLMUnavailable
 from ming_sim.llm_config import (
     CLI_BACKEND_PLACEHOLDER,
@@ -77,38 +75,21 @@ def _extract_provider_error(error: Exception) -> tuple[str, str, int | None]:
 
 
 def llm_unavailable_from_error(error: Exception, stage: str = "LLM 连通性检查") -> LLMUnavailable:
-    """OpenAI 异常 → typed LLMUnavailable。code/retryable/status 唯一权威 = classify_transport_failure。
+    """OpenAI 异常 → typed LLMUnavailable。
 
-    _extract_provider_error 只补 provider 原文与壳上缺失的 status；不平行重写分类。
+    code/retryable/status 唯一权威 = classify_transport_failure（单权威，无平行补码）。
+    _extract_provider_error 只丰富 provider 原文，不改分类、不突变入参、不宽吞。
     """
     from ming_sim.llm_transport import classify_transport_failure
 
-    _provider_code, provider_message, extracted_status = _extract_provider_error(error)
-    # 壳异常带 body status 但不是 APIStatusError：先贴 status 再分类，避免平行补码
-    if (
-        extracted_status is not None
-        and not isinstance(error, (APIStatusError, APITimeoutError, APIConnectionError, LLMUnavailable))
-        and getattr(error, "status_code", None) is None
-    ):
-        try:
-            error.status_code = extracted_status  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 — 只读壳：分类仍走类型路径
-            pass
+    _provider_code, provider_message, _extracted_status = _extract_provider_error(error)
     failure = classify_transport_failure(error)
-    # 若仍无 status（classify 未认），用 extract 补洞但不改 code 权威（除非仍是笼统 llm_error）
-    resolved_status = (
-        failure.status_code if failure.status_code is not None else extracted_status
-    )
-    resolved_code = failure.code
-    if resolved_code == "llm_error" and resolved_status is not None:
-        # 唯一补码入口：无 typed 类但有 HTTP status → 走 http 码（与 classify 同规则）
-        resolved_code = f"llm_http_{resolved_status}"
     pmsg = provider_message or failure.provider_message
     return LLMUnavailable(
         f"{stage}失败：{pmsg}",
-        code=resolved_code,
+        code=failure.code,
         provider_message=pmsg,
-        status_code=resolved_status,
+        status_code=failure.status_code,
     )
 
 
@@ -172,7 +153,8 @@ def create_chat_model(
                 thinking_type = "adaptive"
         extra_body = {"thinking": {"type": thinking_type}, "reasoning_split": True}
     # #1465：未迁移调用保留原 timeout_seconds / SDK max_retries=1。
-    # 已迁移召对流在接缝用 bind_transport_sdk_budget 临时覆盖（idle + max_retries=0）。
+    # 已迁移召对流在接缝用 bind_transport_sdk_budget 临时覆盖
+    # （timeout←attempt_timeout + max_retries=0）。
     # 禁止在 create_chat_model 全局套 transport，否则 extractor/非流/CLI 默认行为被改。
     kwargs: Dict[str, object] = {
         "id": llm_config.model,
