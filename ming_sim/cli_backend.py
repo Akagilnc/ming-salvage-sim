@@ -963,19 +963,36 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
         })
 
 
-def _run_api_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
-    """Run a small extraction prompt through the configured API model."""
+def _run_api_for_config(
+    prompt: str,
+    llm_config: Any = None,
+    tag: str = "",
+    *,
+    force_json_output: bool = True,
+    temperature: float = 0,
+    instructions: Optional[List[str]] = None,
+) -> Tuple[str, int]:
+    """API 通道小调用。JSON 抽取默认 force_json；玩家产文传 force_json_output=False（0033）。"""
     from agno.agent import Agent
     from ming_sim.llm_model import create_chat_model, extract_agent_text
 
+    if instructions is None:
+        instructions = (
+            ["只输出符合要求的 JSON/文本，不要 markdown 代码围栏。"]
+            if force_json_output
+            else []
+        )
+    kind = "extractor" if force_json_output else "prose"
     agent = Agent(
-        name=f"API抽取器-{tag or 'generic'}",
-        id=f"api-extractor-{tag or 'generic'}",
-        session_id=f"api-extractor-{tag or 'generic'}",
+        name=f"API{kind}-{tag or 'generic'}",
+        id=f"api-{kind}-{tag or 'generic'}",
+        session_id=f"api-{kind}-{tag or 'generic'}",
         model=create_chat_model(
-            llm_config, temperature=0, force_json_output=True,
+            llm_config,
+            temperature=temperature,
+            force_json_output=force_json_output,
         ),
-        instructions=["只输出符合要求的 JSON/文本，不要 markdown 代码围栏。"],
+        instructions=list(instructions),
         markdown=False,
     )
     return extract_agent_text(agent.run(prompt)), 1
@@ -1800,28 +1817,6 @@ def build_participant_correction_feedback(
     return block
 
 
-def _run_player_prose_for_config(
-    prompt: str, llm_config: Any = None, tag: str = "",
-) -> Tuple[str, int]:
-    """Player-lane free prose (0033/P7): never force_json_output or JSON format指令."""
-    if _llm_channel(llm_config) == "api":
-        from agno.agent import Agent
-        from ming_sim.llm_model import create_chat_model, extract_agent_text
-
-        agent = Agent(
-            name=f"API产文-{tag or 'prose'}",
-            id=f"api-prose-{tag or 'prose'}",
-            session_id=f"api-prose-{tag or 'prose'}",
-            model=create_chat_model(
-                llm_config, temperature=0.7, force_json_output=False,
-            ),
-            instructions=["以本职口吻直接回禀正文。不要标题、不要 JSON、不要 markdown 围栏。"],
-            markdown=False,
-        )
-        return extract_agent_text(agent.run(prompt)), 1
-    return _run_backend_for_config(prompt, llm_config, tag=tag)
-
-
 def _compose_inworld_fact_report(
     prompt: str,
     *,
@@ -1837,8 +1832,14 @@ def _compose_inworld_fact_report(
         raise cli_runner_unavailable(TimeoutError(f"{tag} 无剩余预算"), backend=tag)
 
     def _produce() -> str:
-        # Prose channel: API must not inherit JSON-extractor force_json_output (0033).
-        raw, _ = _run_player_prose_for_config(prompt, llm_config, tag=tag)
+        # 玩家产文：复用 API/CLI 既有接缝；API 关 force_json（0033），不另开平行函数。
+        if _llm_channel(llm_config) == "api":
+            raw, _ = _run_api_for_config(
+                prompt, llm_config, tag=tag,
+                force_json_output=False, temperature=0.7, instructions=[],
+            )
+        else:
+            raw, _ = _run_backend_for_config(prompt, llm_config, tag=tag)
         text = str(raw or "")
         # strip 只判空；原文不改写（generated prose is never rewritten）。
         if text.strip():
@@ -3966,14 +3967,12 @@ def _extract_secret_order(
     force_default_assignee: bool = False,
     dossier_candidates: Optional[List[Dict[str, Any]]] = None,
     correction_feedback: str = "",
-    raise_on_transport_error: bool = False,
 ) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
     与月末 extractor 同款可靠。
 
     correction_feedback（#1765）：落库缺口事实回喂，供揣摩补全。
-    raise_on_transport_error：揣摩重抽路上 call/transport 失败响亮上抛（0005），
-    不洗成 extract_failed 再进戏内 compose。
+    call/transport 失败 → typed extract_transport_error（不进戏内 compose；0005/0046）。
     """
     correction_block = str(correction_feedback or "").strip()
     prompt = (
@@ -4034,13 +4033,7 @@ def _extract_secret_order(
     try:
         raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:
-        if raise_on_transport_error:
-            from ming_sim.exceptions import LLMUnavailable
-            from ming_sim.llm_model import cli_runner_unavailable
-            if isinstance(exc, LLMUnavailable):
-                raise
-            raise cli_runner_unavailable(exc, backend="secret_extract") from exc
-        # 首抽：保留旨意装配兜底，标 transport typed 旗；不进戏内揣摩（land_or_recover 分流）。
+        # 保留旨意装配兜底；transport typed 旗由 land_or_recover 隔离，不进戏内 compose。
         _log(f"密令提取失败：{exc}")
         extract_failed = True
         extract_transport_error = True

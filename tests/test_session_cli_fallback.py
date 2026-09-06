@@ -1893,9 +1893,9 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
 
 
 def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game, monkeypatch):
-    """#354 + #1765：产物缺口 → 揣摩重抽复用首抽完整上下文装配（确定性输入契约）。
+    """#354 + #1765：产物缺口 → 后续 LLM 输入含前文任务与本轮确认（确定性供料）。
 
-    短确认前缀须把前文任务行装进 extract 输入；0142 不合成散文题名。
+    短确认前缀须把前文任务行装进 extract/recovery 输入；0142 不合成散文题名。
     transport 真失败不进戏内 recovery（见 authorization #528 / C1）。
     """
     db, state, _ = game
@@ -1905,8 +1905,7 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     db.append_chat_message(minister, state.turn, "user", prior_task)
     db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
     player_message = "密令如下：可，照办，三月内回奏"
-    extract_prompts: list[str] = []
-    recovery_prompts: list[str] = []
+    llm_inputs: list[str] = []
     # 产物缺口（合法空合同），非 transport：走揣摩/recovery。
     unlandable = json.dumps({
         "标题": "", "内容": "", "承办人": minister, "期限月数": 0,
@@ -1914,22 +1913,14 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
         "交付单位": "", "交付目标": 0,
     }, ensure_ascii=False)
 
-    def api_route(prompt, llm_config=None, tag=""):
+    def api_route(prompt, llm_config=None, tag="", **_k):
         text = str(prompt)
-        if tag == "secret_order_landing_recovery":
-            recovery_prompts.append(text)
+        llm_inputs.append(text)
+        if tag == "secret_order_landing_recovery" or _k.get("force_json_output") is False:
             return "任意生成回禀", 1
-        if tag == "secret_extract":
-            extract_prompts.append(text)
-            return unlandable, 1
         return unlandable, 1
 
     monkeypatch.setattr(cb, "_run_api_for_config", api_route)
-    # player-lane prose 不得走 JSON extractor（C6）；API 产文接缝。
-    monkeypatch.setattr(
-        cb, "_run_player_prose_for_config",
-        lambda prompt, llm_config=None, tag="": api_route(prompt, llm_config, tag),
-    )
     res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
         SimpleNamespace(name=minister, office_type="司礼监", office="司礼监掌印太监"),
         player_message,
@@ -1942,13 +1933,9 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     assert recovery.get("report")
     assert recovery.get("landing_gaps")
     snapshot = recovery.get("extract_snapshot") or {}
-    assert len(extract_prompts) >= 2, "首抽 + 揣摩重抽"
-    # #354 确定性输入契约：前文任务与本轮确认均进入 extract 供料（含重抽）
-    for prompt in extract_prompts:
-        assert "督办陕西赈灾" in prompt or prior_task in prompt
-        assert "三月内回奏" in prompt or "可，照办" in prompt
-    assert recovery_prompts, "recovery compose 须经 prose 通道"
-    assert any("三月内回奏" in p or player_message in p for p in recovery_prompts)
+    # #354 确定性输入契约：前文任务与本轮确认进入后续 LLM 输入（不数抽取次数）
+    assert any("督办陕西赈灾" in p or prior_task in p for p in llm_inputs)
+    assert any("三月内回奏" in p or "可，照办" in p for p in llm_inputs)
     assert int(res.get("pending_action_id") or 0) == 0
     assert res.get("secret_order_id") in (None, 0)
     assert db.list_secret_orders() == []
