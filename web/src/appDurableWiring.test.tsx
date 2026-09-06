@@ -2747,10 +2747,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   });
 
   // #1764 成案 tracer 共享夹具：召对流 + 可切换的 state 权威投影（在线 end / 离面重入同形）。
+  // 两个读取来源须隔离：在线 end 投影应用失败不得由稍后木牌重取补救；离面案只证木牌重入。
   const mount1764AudienceCasedTracer = async () => {
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const encoder = new TextEncoder();
     let stateGets = 0;
+    let stateReadsSealed = false;
     let casedDirectives: unknown[] = [];
     const minister = {
       name: "毕自严", office: "户部尚书", office_type: "户部", faction: "",
@@ -2780,6 +2782,13 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) {
         stateGets += 1;
+        // 封口后拒绝后续 state 读：木牌 openModal→loadState 不得补救已错过的 end 投影。
+        if (stateReadsSealed) {
+          return new Response(JSON.stringify({ detail: "sealed state read" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         return jsonResp({ ...baseState, cased_directives: casedDirectives });
       }
       if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
@@ -2814,7 +2823,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(streamController).toBeTruthy());
     });
 
-    // done 早到 GET：权威仍无成案
+    // done 早到 GET：权威仍无成案（输入阶段同步，非结果证明）
     await act(async () => {
       streamController.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({
         history: [], suggestions: [], directives: [], pending_count: 0,
@@ -2831,6 +2840,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       encoder,
       get streamController() { return streamController; },
       get stateGets() { return stateGets; },
+      /** 封口后续 /api/game/state：仅用于隔离 end 投影与木牌重取，本身不是成功判据。 */
+      sealStateReads: () => { stateReadsSealed = true; },
       publishCased: () => { casedDirectives = [casedRow]; },
       expectCasedCard: async () => {
         await act(async () => {
@@ -2851,11 +2862,14 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       t.streamController.enqueue(t.encoder.encode("event: end\ndata: {}\n\n"));
       t.streamController.close();
     });
+    // 输入阶段同步：等 onEnd 的 state 读落地后再封口；同步不得冒充结果证明
     await act(async () => {
       await vi.waitFor(() => expect(t.stateGets).toBeGreaterThan(getsAfterDone));
     });
+    await tick();
+    t.sealStateReads();
 
-    // 关召对 → 底部木牌开拟诏（公共 openModal 接缝）
+    // 关召对 → 木牌开拟诏：封口后 loadState 失败不得补救；成案须已由 onEnd 投影落入
     await click(t.host.querySelector('[aria-label="关闭弹窗"]'));
     await tick();
     await click(edictCommand(t.host));
@@ -2864,18 +2878,14 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
 
   it("#1764 离面后已提交：底部木牌重入读权威 cased（不依赖 end）", async () => {
     const t = await mount1764AudienceCasedTracer();
-    const getsAfterDone = t.stateGets;
 
     // 观察者离面：关召对，不发 end；后台成案随后可经 state 口返回
     await click(t.host.querySelector('[aria-label="关闭弹窗"]'));
     await tick();
     t.publishCased();
 
-    // 真实重入入口 = 底部拟诏木牌 → 共享 openModal → loadState
+    // 真实重入入口 = 底部拟诏木牌 → 共享 openModal → loadState；结果只认结构化成案卡
     await click(edictCommand(t.host));
-    await act(async () => {
-      await vi.waitFor(() => expect(t.stateGets).toBeGreaterThan(getsAfterDone));
-    });
     await t.expectCasedCard();
   });
 
