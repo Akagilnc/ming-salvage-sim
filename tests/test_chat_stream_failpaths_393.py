@@ -4,10 +4,12 @@
 #1185: observe public fail/error events + serial write-path availability (drain /
 _serialized_web_write), not private _write_gate.locked() / _pending_writes_count pins.
 
-#1452: 非流式 chat/decree LLMUnavailable → 非 500 结构化；流式 RunErrorEvent → 戏内单源 SSE。
+#1452: 非流式 chat/decree LLMUnavailable → 非 500 结构化；流式 RunErrorEvent → 结构化 SSE。
+#1465: 召对 API transport 统一重试（attempt 预算/分类/系统层终失败/独立超时）。
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 from types import SimpleNamespace
@@ -18,6 +20,7 @@ from fastapi.testclient import TestClient
 import web_app
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+from ming_sim.llm_transport import TransportPolicy, default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
 
 
@@ -672,19 +675,105 @@ class RunErrorEvent:
         self.event = "RunError"
 
 
+class RunContent:
+    event = "RunContent"
+
+    def __init__(self, content: str):
+        self.content = content
+
+
+class RunCompletedEvent:
+    content = None
+    tools = []
+    status = "COMPLETED"
+
+
 class _RunErrorAgent:
     def run(self, *_a, **_k):
         yield RunErrorEvent("Unknown model error")
 
 
-def test_chat_stream_run_error_event_sse_diegetic_via_web_entry(monkeypatch):
-    """#1452 B：真实 web 流入口——RunErrorEvent → SSE code=llm_stream_error，
-    message=戏内单源，provider_message 有原文；不是「流式回复为空」。"""
-    db = _WorkerPathDB()
+class _CountingFailAgent:
+    """按序失败 N 次（typed），其后成功吐回话。calls = transport attempt 次数。"""
+
+    def __init__(self, *, fail_times: int, error_factory):
+        self.fail_times = int(fail_times)
+        self.error_factory = error_factory
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def run(self, *_a, **_k):
+        with self._lock:
+            self.calls += 1
+            n = self.calls
+        if n <= self.fail_times:
+            raise self.error_factory(n)
+        yield RunContent("臣")
+        yield RunContent("已核辽饷。")
+        yield RunCompletedEvent()
+
+
+def _stream_runtime_for_agent(agent, db=None):
+    """#1465：召对流入口 runtime + 成功落库最小桩（不扩平行家族）。"""
+    db = db or _WorkerPathDB()
+    # 成功路径需要 fail_chat_turn 不崩
+    if not hasattr(db, "_ok_fail"):
+        real_fail = getattr(db, "fail_chat_turn", None)
+
+        def _ok_fail(chat_turn_id):
+            if not hasattr(db, "failed_turns"):
+                db.failed_turns = []
+            db.failed_turns.append(int(chat_turn_id))
+
+        db.fail_chat_turn = _ok_fail if real_fail is None or type(db).__name__ == "_WorkerPathDB" else real_fail
+        if type(db).__name__ == "_WorkerPathDB":
+            db.fail_chat_turn = _ok_fail
+            db.persist_minister_reply = lambda *a, **k: 11
+            db.append_chat_message = lambda *a, **k: 1
+            db.kv_get = lambda *_a, **_k: ""
+            db.list_pending_actions = lambda *a, **k: []
+
     runtime, minister = _base_runtime(db)
-    runtime.session.registry = SimpleNamespace(get=lambda _c: _RunErrorAgent())
-    runtime.session._character = lambda name: minister_double(minister)
+    character = minister_double(minister)
+    runtime.session.registry = SimpleNamespace(get=lambda _c: agent)
+    runtime.session._character = lambda name: character
     runtime.session._start_cli_action_intent = lambda *_a, **_k: None
+    runtime.session._finish_cli_action_intent = lambda *_a, **_k: None
+    runtime.session.join_chat_turn_scene = lambda *_a, **_k: []
+    runtime.session.persist_chat_turn_scene = lambda *_a, **_k: None
+    runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None
+    runtime.session.pending_count = lambda: 0
+    runtime.session.llm_config = SimpleNamespace(channel="api")
+    runtime.session.close_night_after_chat_if_needed = None
+    runtime.session.db = db
+    runtime.chat_history = {minister: []}
+    runtime.directive_rows = lambda: []
+    runtime.directive_payload = lambda row: row
+    runtime.suggestions_for = lambda _c: []
+    runtime.can_undo_last_chat = lambda _n: False
+    runtime.pending_directive_count = lambda: 0
+    runtime.chat_projection = lambda _n: []
+    runtime._record_chat_rollback_items = lambda *a, **k: None
+    runtime._dispatch_relation_judge = lambda *_a, **_k: None
+    runtime._spawn_extraction_trail = lambda *_a, **_k: None
+    runtime._spawn_pending_write_thread = lambda *_a, **_k: None
+    return runtime, minister
+
+
+def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch):
+    """#1452 B / #1465：真实 web 流入口——无 typed status 的 RunErrorEvent
+    → 一次不重试、系统层终失败（非戏内「通传未达」）、provider_message 保真。"""
+    agent = _RunErrorAgent()
+    runtime, minister = _stream_runtime_for_agent(agent)
+    # 记录 agent.run 调用次数：确定性失败不得重试
+    calls = {"n": 0}
+    real_run = agent.run
+
+    def _count_run(*a, **k):
+        calls["n"] += 1
+        return real_run(*a, **k)
+
+    agent.run = _count_run  # type: ignore[method-assign]
 
     monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
@@ -699,8 +788,266 @@ def test_chat_stream_run_error_event_sse_diegetic_via_web_entry(monkeypatch):
     assert events[-1][0] == "error"
     detail = events[-1][1]
     assert detail.get("code") == "llm_stream_error"
-    assert detail.get("message") == CLI_RUNNER_PLAYER_MESSAGE
+    # #1465 / P7 / ADR 0046：系统层人话，禁用固定戏内话术
+    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+    assert CLI_RUNNER_PLAYER_MESSAGE not in str(detail.get("message") or "")
     assert "Unknown model error" in str(detail.get("provider_message") or "")
     assert "流式回复为空" not in str(detail.get("message") or "")
-    assert "流式回复为空" not in response.text
+    assert calls["n"] == 1, f"deterministic stream error must not retry; calls={calls}"
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == 1
+    assert attempts[0].get("outcome") == "terminal_fail"
     _assert_write_path_free(runtime)
+
+
+def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch):
+    """#1465 ①：两次瞬断后第三次成功 → 玩家收到回话且 3 attempts 可回指。"""
+    def _conn_err(_n):
+        return LLMUnavailable(
+            "连接失败",
+            code="llm_connection_error",
+            provider_message="connection reset",
+        )
+
+    agent = _CountingFailAgent(fail_times=2, error_factory=_conn_err)
+    runtime, minister = _stream_runtime_for_agent(agent)
+    # 成功路径：_chat_stream_payload 经真实 interpret；最小桩避开 DB 深依赖
+    runtime._chat_stream_interpret_tools = (  # type: ignore[method-assign]
+        lambda *a, **k: {
+            "answer": "臣已核辽饷。",
+            "court_action": "",
+            "next_minister": "",
+            "proposed": None,
+            "appointed": "",
+            "registered": "",
+            "displaced": "",
+            "secret_order_id": 0,
+            "pending_action_id": 0,
+            "pending_action_failures": [],
+            "directive_ambiguous": None,
+            "decree_validation_failure": None,
+        }
+    )
+    monkeypatch.setattr(web_app, "atomic", lambda _db: contextlib.nullcontext())
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    response = TestClient(web_app.app).post(
+        f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"},
+    )
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    types = [e[0] for e in events]
+    assert "done" in types, events
+    done = next(e[1] for e in events if e[0] == "done")
+    assert "辽饷" in str(done.get("answer") or "")
+    assert agent.calls == 3, f"expect 3 attempts; got {agent.calls}"
+    attempts = done.get("transport_attempts") or []
+    assert len(attempts) == 3, attempts
+    assert [a.get("outcome") for a in attempts] == [
+        "retryable_fail", "retryable_fail", "ok",
+    ]
+    _assert_write_path_free(runtime)
+
+
+def test_chat_stream_three_transient_exhausted_system_fail(monkeypatch):
+    """#1465 ①：三次瞬断耗尽 → 系统层终失败、夜不封、可重发（写路径释放）。"""
+    def _conn_err(_n):
+        return LLMUnavailable(
+            "连接失败",
+            code="llm_connection_error",
+            provider_message="connection reset",
+        )
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
+    runtime, minister = _stream_runtime_for_agent(agent)
+    night_closed = {"n": 0}
+
+    def _close(*_a, **_k):
+        night_closed["n"] += 1
+
+    runtime.session.close_night_after_chat_if_needed = _close
+
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    response = TestClient(web_app.app).post(
+        f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"},
+    )
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert detail.get("code") == "llm_connection_error"
+    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+    assert CLI_RUNNER_PLAYER_MESSAGE not in str(detail.get("message") or "")
+    assert agent.calls == default_transport_policy().max_attempts
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == default_transport_policy().max_attempts
+    assert all(a.get("outcome") == "terminal_fail" or a.get("outcome") == "retryable_fail"
+               for a in attempts)
+    assert attempts[-1].get("outcome") == "terminal_fail"
+    assert night_closed["n"] == 0, "终失败不得封夜"
+    _assert_write_path_free(runtime)
+
+
+def test_chat_stream_deterministic_4xx_no_retry(monkeypatch):
+    """#1465 ①：确定性 4xx → 一次不重试、系统层人话。"""
+    def _four_xx(_n):
+        return LLMUnavailable(
+            "参数错误",
+            code="llm_http_400",
+            provider_message="top_p not supported",
+            status_code=400,
+        )
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_four_xx)
+    runtime, minister = _stream_runtime_for_agent(agent)
+
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    response = TestClient(web_app.app).post(
+        f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"},
+    )
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert detail.get("status_code") == 400
+    assert detail.get("code") == "llm_http_400"
+    assert agent.calls == 1
+    assert len(detail.get("transport_attempts") or []) == 1
+    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+    _assert_write_path_free(runtime)
+
+
+def test_chat_stream_typed_429_preserved(monkeypatch):
+    """#1465 ① / #1750 §3：typed 429/status_code 经统一层原样保真（不从散文猜）。"""
+    # 耗尽预算后终失败仍保真 status_code（默认 3 attempts 全 429）
+    def _rate_limit(_n):
+        return LLMUnavailable(
+            "限流",
+            code="llm_run_error",
+            provider_message="model_concurrency_rate_limit_exceeded",
+            status_code=429,
+        )
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_rate_limit)
+    runtime, minister = _stream_runtime_for_agent(agent)
+
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    response = TestClient(web_app.app).post(
+        f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"},
+    )
+    events = _parse_sse(response.text)
+    detail = events[-1][1]
+    assert detail.get("status_code") == 429
+    assert detail.get("code") == "llm_run_error"
+    assert agent.calls == default_transport_policy().max_attempts
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) >= 3
+    assert all(a.get("status_code") == 429 for a in attempts)
+    _assert_write_path_free(runtime)
+
+
+def test_chat_stream_config_max_attempts_override(monkeypatch):
+    """#1465 ①：配置改次数后行为随之变（max_attempts=1 → 瞬断一次即终失败）。"""
+    policy = TransportPolicy(
+        max_attempts=1,
+        attempt_timeout_seconds=30.0,
+        idle_timeout_seconds=30.0,
+    )
+
+    def _conn_err(_n):
+        return LLMUnavailable(
+            "连接失败",
+            code="llm_connection_error",
+            provider_message="connection reset",
+        )
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
+    runtime, minister = _stream_runtime_for_agent(agent)
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    # 经 _chat_stream_payload 注入 policy（与 runtime transport 段同形）
+    with pytest.raises(LLMUnavailable) as ei:
+        runtime._chat_stream_payload(
+            minister,
+            "边饷如何？",
+            chat_turn_id=7,
+            before_snapshot={},
+            accepted_turn=1,
+            emit_delta=lambda _d: None,
+            transport_policy=policy,
+        )
+    assert agent.calls == 1
+    assert ei.value.code == "llm_connection_error"
+    assert len(ei.value.transport_attempts or []) == 1
+
+
+def test_chat_stream_attempt_timeout_budget_independent(monkeypatch):
+    """#1465 ①：每 attempt 独立整份超时——前一 attempt 用满后下一 attempt 仍得整份
+    （受控推进时钟，不跑真墙钟）。"""
+    policy = TransportPolicy(
+        max_attempts=2,
+        attempt_timeout_seconds=10.0,
+        idle_timeout_seconds=100.0,
+    )
+    clock = {"t": 0.0}
+    burns = {"n": 0}
+
+    class _TimeoutThenOk:
+        def run(self, *_a, **_k):
+            burns["n"] += 1
+            if burns["n"] == 1:
+                # 首事件边界：时钟仍在窗内；推进到超时后下一 check 判死
+                yield RunContent("")  # 无输出不算 emitted；随后推进时钟
+                clock["t"] += policy.attempt_timeout_seconds + 0.1
+                yield RunContent("")  # 触发 check → attempt timeout
+            yield RunContent("臣复奏。")
+            yield RunCompletedEvent()
+
+    agent = _TimeoutThenOk()
+    runtime, minister = _stream_runtime_for_agent(agent)
+    runtime.session.llm_config = policy  # resolve_transport_policy 认 TransportPolicy
+    runtime._chat_stream_interpret_tools = (  # type: ignore[method-assign]
+        lambda *a, **k: {
+            "answer": "臣复奏。",
+            "court_action": "",
+            "next_minister": "",
+            "proposed": None,
+            "appointed": "",
+            "registered": "",
+            "displaced": "",
+            "secret_order_id": 0,
+            "pending_action_id": 0,
+            "pending_action_failures": [],
+            "directive_ambiguous": None,
+            "decree_validation_failure": None,
+        }
+    )
+
+    # 直接走 _chat_stream_payload 以注入 clock（HTTP 层不透传 clock）
+    monkeypatch.setattr(web_app, "atomic", lambda _db: contextlib.nullcontext())
+    deltas: list[str] = []
+    payload = runtime._chat_stream_payload(
+        minister,
+        "边饷如何？",
+        chat_turn_id=7,
+        before_snapshot={},
+        accepted_turn=1,
+        emit_delta=deltas.append,
+        transport_policy=policy,
+        transport_clock=lambda: clock["t"],
+    )
+    assert "复奏" in str(payload.get("answer") or "")
+    attempts = payload.get("transport_attempts") or []
+    assert len(attempts) == 2, attempts
+    assert attempts[0]["outcome"] == "retryable_fail"
+    assert attempts[0]["code"] == "llm_timeout"
+    assert attempts[1]["outcome"] == "ok"
+    # 第二 attempt 开始时若预算收缩，会立刻超时；能 ok 即证整份独立
+    assert burns["n"] == 2
