@@ -187,9 +187,13 @@ def _write_decree_capture_payloads(monkeypatch, game) -> list[dict]:
 
 
 def test_draft_admission_resubmit_success_advances_month(admission_game, monkeypatch):
-    """补交路：坏产物 → 可成案 → 月推进；投影承重=二次模型返回，非偿还序偷换。"""
+    """补交路：原抽坏 → 第一次重写仍坏 → 第二次重写成案 → 月推进。
+
+    投影承重=第二次重写模型返回，非偿还序偷换。总计 3（原抽+重写2）。
+    """
     game = admission_game
-    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _GOOD_XIEANG])
+    # 原抽 + 重写1 仍坏；重写2 才成案（owner：总计 3）
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _GOOD_XIEANG])
     resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
@@ -208,8 +212,8 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     _post_issue_stream(client, expected_turn=turn, step="1769 resubmit")
     assert _turn_of(_get_state(client)) == turn + 1
 
-    # 补交入参：失败事实 + 原产物（结构化字段，不扫 prompt）
-    assert len(resubmit_calls) == 1
+    # 两次 LLM 重写；入参含失败事实 + 原产物（结构化字段，不扫 prompt）
+    assert len(resubmit_calls) == 2
     assert resubmit_calls[0]["failure_reason"]
     assert resubmit_calls[0]["bad_payload"].get("dossier_action_type") == "pay_order_override"
     assert any(
@@ -217,12 +221,14 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
         for e in (resubmit_calls[0]["bad_payload"].get("entries") or [])
     )
     assert resubmit_calls[0]["decree_text"] == _DECREE_TEXT
+    assert resubmit_calls[1]["failure_reason"]
+    assert resubmit_calls[1]["decree_text"] == _DECREE_TEXT
 
     dossier = game.db.get_dossier_for_directive(draft_id)
     assert dossier is not None
     assert dossier["action_type"] == "grant_allocation"
     projected = json.loads(dossier["payload_json"])
-    # 原始二次返回（模型边界 _GOOD_XIEANG）vs 投影承重
+    # 第二次重写返回（模型边界 _GOOD_XIEANG）vs 投影承重
     assert projected.get("grant_action") == _GOOD_XIEANG["恩赏拨帑"] == "协饷"
     assert projected.get("amount") == _GOOD_XIEANG["金额"] == 15
     assert projected.get("account") == _GOOD_XIEANG["账户"] == "国库"
@@ -237,9 +243,11 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
 
 
 def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkeypatch):
-    """耗尽路：draft 留到下月、月推进、拒因留痕、拟诏供料含上月未入档、刷新身份一致。"""
+    """耗尽路：原抽+重写2 共 3 次仍坏 → draft 留到下月、月推进、拒因留痕。"""
     game = admission_game
-    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER])
+    # 原抽 + 两次重写皆坏（总计 3）；变异把重写预算改回 1 时本案须红（calls==2）
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
+    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -250,6 +258,7 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
 
     body = _post_issue_stream(client, expected_turn=turn, step="1769 exhaust")
     assert _turn_of(_get_state(client)) == turn + 1
+    assert len(resubmit_calls) == 2
     row = game.db.get_directive(did)
     assert row is not None and str(row["status"]) == "draft"
     assert game.db.get_dossier_for_directive(did) is None
@@ -299,9 +308,11 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
 
 
 def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypatch):
-    """混合：好旨成案、坏旨 draft 留、月推进。"""
+    """混合：好旨成案、坏旨原抽+重写2 仍坏 → draft 留、月推进。"""
     game = admission_game
-    _queue_backend(monkeypatch, [_GOOD_XIEANG, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
+    _queue_backend(monkeypatch, [
+        _GOOD_XIEANG, _BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER,
+    ])
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 

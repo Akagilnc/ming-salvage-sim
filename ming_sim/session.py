@@ -63,6 +63,9 @@ logger = logging.getLogger(__name__)
 
 AUTO_SAVE_PREFIX = "auto_"
 AUTO_SAVE_KEEP_TURNS = 3  # 每个 campaign 保留最近 N 个 turn 的全部自动存档（每 turn 含 begin + preresolve）
+# #1769 成案补交：原抽 + LLM 重写 N 次 = 总计 N+1（owner：N=2 → 总计 3，与召对「第一次不叫重试」同形状）。
+# 与 DRAFT_PARTICIPANT_HEAL_RETRIES（组合/名册内部 heal）独立；内部 heal 不冒充成案补交次数。
+DRAFT_ADMISSION_RESUBMIT_REWRITES = 2
 _CLI_ACTION_INTENT_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cli-action-intent")
 
 
@@ -3125,8 +3128,10 @@ class GameSession:
     ) -> None:
         """#1769 结算路 B：产物错 draft 把失败事实与原产物告诉 LLM 重交 payload。
 
-        票面不授权补交次数；此处对每道失败旨各重交一次。产物错 ValueError 视为该旨
-        耗尽（原旨留到下月）；其它异常走错误包 + SettlementAbort（0005/0008）。
+        单轮批处理：对当前失败旨各重写一次；外层 resolve_turn 按
+        DRAFT_ADMISSION_RESUBMIT_REWRITES 循环本方法（原抽 + 重写 2 = 总计 3）。
+        与组合/名册 heal_retries 独立。产物错 ValueError 视为本轮该旨仍失败；
+        其它异常走错误包 + SettlementAbort（0005/0008）。
         独立失败旨并行调 LLM（P5，复用 ThreadPoolExecutor；DB 写仍串行）。
         """
         from ming_sim.cli_backend import resubmit_draft_admission_payload
@@ -3357,13 +3362,19 @@ class GameSession:
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
         # #1769：产物错 → 告诉 LLM 失败事实与原产物后重交；耗尽保持 draft、月照过
         # （替代 #1591「产物错即整月不推进 + 引擎串透传」；真故障仍 SettlementAbort）。
-        # 首轮 ensure 只探测产物错供补交，不落 rejection（拒只在耗尽终态落痕）。
+        # 成案补交边界 = 原抽 + 重写 DRAFT_ADMISSION_RESUBMIT_REWRITES 次（总计 3）；
+        # 与组合/名册 heal_retries 独立。首轮/中间 ensure 只探测，拒只在末轮耗尽落痕。
         dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
             self.state, record_rejections=False,
         )
-        if dossier_rejections:
+        for rewrite_i in range(DRAFT_ADMISSION_RESUBMIT_REWRITES):
+            if not dossier_rejections:
+                break
             self._resubmit_draft_admission_failures(dossier_rejections)
-            dossier_rejections = self.db.ensure_dossiers_for_draft_directives(self.state)
+            is_last = rewrite_i == DRAFT_ADMISSION_RESUBMIT_REWRITES - 1
+            dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
+                self.state, record_rejections=is_last,
+            )
         directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without

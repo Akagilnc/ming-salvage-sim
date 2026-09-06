@@ -3178,8 +3178,9 @@ def resubmit_draft_admission_payload(
 ) -> Dict[str, object]:
     """#1769 结算路 B：把成案失败事实与原产物告诉 LLM，重交结构化 payload。
 
-    票面不授权补交次数具体数字；本函数单次重交。调用方负责有界循环与耗尽终态。
-    不在引擎侧改写 LLM 输出（0142）；输入侧供料见 _pay_order_grounding_facts。
+    本函数单次重写；外层（session）按 DRAFT_ADMISSION_RESUBMIT_REWRITES 循环
+    （原抽 + 重写 2 = 总计 3）。与 extract 内 heal_retries（组合/名册）独立——
+    内部 heal 不冒充成案补交次数。不在引擎侧改写 LLM 输出（0142）。
     """
     text = str(decree_text or "").strip()
     if not text:
