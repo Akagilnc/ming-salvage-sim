@@ -182,7 +182,16 @@ def run_agent_text(
                 )
             output = terminal_box[0]
             _dump_llm_messages(output, tag, agent=agent)
-            return extract_agent_text(output)
+            # 与 web_app._after_stream 同权威：终包 content 为 None/"" → 空输出可重试。
+            # 禁 strip（#671）；extract_agent_text 已将 None 归一为 ""。
+            text = extract_agent_text(output)
+            if not text:
+                raise transport_failure_unavailable(
+                    empty_output_failure(),
+                    attempts=1,
+                    exhausted=False,
+                )
+            return text
 
         def _start_stream() -> Any:
             terminal_box.clear()
