@@ -1384,18 +1384,17 @@ def test_657_s1_schema_columns_and_no_banned_fields(game):
     assert idx_sql and "origin_ref" in idx_sql[0] and "origin_ref != ''" in idx_sql[0].replace('"', "")
 
 
-def test_657_s1_rescript_closed_sets_subset_of_dossier(game):
-    """A12 前置：双闭集 ⊂ DOSSIER_ACTION_TYPES，且 DOSSIER 不是七值。"""
+def test_657_s1_rescript_emitted_set_subset_of_dossier(game):
+    """A12 前置（#1778 后）：只剩 emitted 闭集 ⊂ DOSSIER；七类 routable 已整体取消。"""
+    import ming_sim.decree_vocabulary as dv
     from ming_sim.decree_vocabulary import (
         DOSSIER_ACTION_TYPES,
         RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
-        RESCRIPT_ROUTABLE_ACTION_TYPES,
     )
-    assert RESCRIPT_ROUTABLE_ACTION_TYPES <= DOSSIER_ACTION_TYPES
     assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
     assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
-    assert "dismiss_assignment" not in RESCRIPT_ROUTABLE_ACTION_TYPES
-    assert len(DOSSIER_ACTION_TYPES) > len(RESCRIPT_ROUTABLE_ACTION_TYPES)
+    assert not hasattr(dv, "RESCRIPT_ROUTABLE_ACTION_TYPES")
+    assert not hasattr(dv, "NATIONAL_FANOUT_ACTION_TYPES")
     _ = game  # fixture keeps DB init path green
 
 
@@ -1502,10 +1501,20 @@ def test_657_s1_option_shape_stamps_draft_capability():
     # 缺必填键 → 拒
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option({"label": "x", "hint": "y"})
+    # #1778：库级全集内的类型（policy 等）照常受理，无七类闭集
+    policy_opt = normalize_rescript_layer_a_option({
+        **raw,
+        "action_type": "policy",
+        "target_kind": "policy",
+        "target_id": "清丈全国田亩",
+        "locality_scope": "national",
+        "region_id": "",
+    })
+    assert policy_opt["action_type"] == "policy"
+    assert policy_opt["draft_capability"]
+    # 库级全集之外仍 fail-loud（ADR 0040 形状检查）
     with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({
-            **raw, "action_type": "policy",  # 非七类 routable
-        })
+        normalize_rescript_layer_a_option({**raw, "action_type": "修仙"})
 
 
 def _army_pay_grant_option(**extra) -> dict:

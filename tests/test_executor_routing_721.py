@@ -518,12 +518,9 @@ def test_restore_malformed_durable_json_fails_loud(env, column, bad):
         db.get_decree_dossier(dossier_id)
 
 
-def test_national_fanout_reuses_central_bi_ziyan(env):
-    """#654 R2：national 未点将真实 seed → 15×毕自严；单省空链不回退。"""
-    from ming_sim.execution_pressure import ming_province_ids
-
+def test_national_policy_is_one_dossier_without_province_routing(env):
+    """#1778 决定 4：全国政令一份案卷、region_id 空；无省级子行、无中央回退链。"""
     db, state, _ = env
-    provinces = ming_province_ids(db.conn)
     payload = {
         "target_kind": "policy",
         "target_id": "清丈天下田亩",
@@ -539,18 +536,14 @@ def test_national_fanout_reuses_central_bi_ziyan(env):
         payload=payload,
         commit=True,
     )
-    assert len(ids) == 15
-    leads = []
-    for did in ids:
-        row = db.get_decree_dossier(did)
-        own = [e["character_id"] for e in row["participant_roster"] if e.get("tier") == "主办"]
-        assert own == ["毕自严"]
-        leads.append(own[0])
-    assert leads == ["毕自严"] * 15
+    assert len(ids) == 1
+    row = db.get_decree_dossier(ids[0])
+    assert row["region_id"] == ""
 
+    # 单省差务未点将、无本地对口 → 空链（钉无通用 region fallback）
     single = resolve_lead_executors(
         db.conn,
-        action_type="policy",
+        action_type="assignment",
         payload={
             "transaction_category": "清丈",
             "locality_scope": "single",

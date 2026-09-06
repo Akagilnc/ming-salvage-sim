@@ -8,7 +8,7 @@
 未命中映射 ≠ 无人可承：fail-loud 产结构化 rejection 供观测补条目，不落怠办。
 
 签名不接自由文本、无 LLM、判官零指认；同一旨意+同一官职档案 → 同一主办。
-#654：national fan-out 子行经 region_id 接缝解析该省对口在任主官。
+#1778 决定 4：全国政令不再拆省子行；region_id 只由 region 目标（单省）给出。
 """
 
 from __future__ import annotations
@@ -168,19 +168,12 @@ def resolve_lead_executors(
     leads 有序去重；signal.code='idle_start'＝怠办起步（缺位链穷尽或任免无
     被任命者），rejection 非 None＝映射未命中 fail-loud（两者互斥、不同时落）。
 
-    region_id 非空时：national fan-out 白名单动作若原 coverage 为空则升 multi_month；
-    职司在任者按 characters.location 过滤到该省。空 region_id 保持中央职司现状。
+    region_id 非空（单省差务）时职司在任者按 characters.location 过滤到该省；
+    空 region_id 保持中央职司现状。
     """
     canonical_payload = payload or {}
-    action = str(action_type or "").strip()
     rid = str(region_id or "").strip()
     coverage = classify_execution_coverage(action_type, canonical_payload)
-    # #654：national 子行（region_id 非空）上 policy/special_decree 进入 multi_month；
-    # 无 region_id 的京内 policy 仍 excluded（test_excluded_action_stops_before_duty_routing）。
-    if coverage is None and rid:
-        from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES
-        if action in NATIONAL_FANOUT_ACTION_TYPES:
-            coverage = "multi_month"
     if coverage is None:
         return {
             "coverage": None, "route": "excluded", "office_type": "", "leads": [],
@@ -260,17 +253,6 @@ def resolve_lead_executors(
             },
         }
     holder, step = _downgrade_chain(conn, office_type, region_id=rid)
-    # #654 R2：仅 national 省域空链 → 复用同一中央降档链（允许多省同一主官）。
-    # 单省 / 非 national 不回退，避免通用 region fallback。
-    if not holder and rid:
-        from ming_sim.execution_pressure import normalize_locality_scope
-
-        try:
-            scope = normalize_locality_scope(canonical_payload.get("locality_scope"))
-        except ValueError:
-            scope = ""
-        if scope == "national":
-            holder, step = _downgrade_chain(conn, office_type, region_id="")
     if holder:
         return {
             "coverage": coverage,

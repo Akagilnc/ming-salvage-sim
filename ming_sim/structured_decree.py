@@ -130,7 +130,7 @@ def structured_decree_prompt_contract() -> str:
 
     运输键（中/英）均经 transport_keys_to_canonical 归一；本块只写闭集与语义一次。
     target×locality 可接受面由 TARGET_KIND_LOCALITY_SCOPES 投影（与 assert 同真源）；
-    national 动作限制同属该投影，不扩票拟七类 action、不手抄第二份矩阵。
+    不手抄第二份矩阵。
     """
     cats = "|".join(sorted(_transaction_categories()))
     kinds = "|".join(sorted(TARGET_KINDS))
@@ -238,7 +238,6 @@ def validate_structured_decree_combination(
     if target_kind:
         try:
             scope = assert_target_locality_matrix(
-                action_type=action or "policy",
                 target_kind=target_kind,
                 locality_scope=payload.get("locality_scope"),
             )
@@ -313,7 +312,6 @@ def validate_structured_decree_combination(
         try:
             resolve_dossier_region_ids(
                 conn,
-                action_type=action or "policy",
                 payload={
                     "target_kind": target_kind,
                     "target_id": target_id,

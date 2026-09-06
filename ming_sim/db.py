@@ -14601,8 +14601,8 @@ class GameDB:
     ) -> int:
         """在成案点落一条独立案卷；幂等键只使用真实 (>0) 来源 id。
 
-        #654：int ABI 给非 directive 消费者，直落单行内核；不经 locality oracle /
-        national fan-out。属地浓度与 fan-out 只来自 r5 三路 create_decree_dossiers。
+        #654：int ABI 给非 directive 消费者，直落单行内核；不经 locality oracle。
+        属地行只来自 r5 三路 create_decree_dossiers 的 region 目标解析。
         """
         return self._create_decree_dossier_row(
             state,
@@ -14652,8 +14652,9 @@ class GameDB:
     ) -> List[int]:
         """#654 批量成案 ABI：Plan → Validate-all → Write-once。
 
-        national fan-out → N 行；与 create_decree_dossier 共享单行内核。
-        任一省路由/校验失败 → 整旨零行；复合键按 (source, region_id) 逐项查补。
+        #1778 决定 4：全国政令也是一份案卷，不按省拆——oracle 只对 region 目标
+        给出属地行，其余（含 national）单行 region_id=''；与 create_decree_dossier
+        共享单行内核。路由/校验失败 → 整旨零行；复合键按 (source, region_id) 查补。
         """
         from ming_sim.execution_pressure import resolve_dossier_region_ids
         from ming_sim.executor_routing import resolve_lead_executors
@@ -14685,7 +14686,6 @@ class GameDB:
                 oracle_payload["target_kind"] = "character"
             region_ids = resolve_dossier_region_ids(
                 self.conn,
-                action_type=str(action_type or "").strip(),
                 payload=oracle_payload,
                 regions_content=regions_content,
             )

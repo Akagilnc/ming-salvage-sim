@@ -31,8 +31,8 @@ from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.credit_events import KIND_BETRAY, write_credit_event
 from ming_sim.decree import atomic_and_reload
 from ming_sim.decree_vocabulary import (
+    DOSSIER_ACTION_TYPES,
     RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
-    RESCRIPT_ROUTABLE_ACTION_TYPES,
     TARGET_KINDS,
     derive_draft_capability,
     dossier_action_policy,
@@ -506,8 +506,9 @@ def validate_all(
         if action == "midzhi":
             # 字段从 choice 显式
             at = str(req.get("action_type") or "").strip()
-            if at not in RESCRIPT_ROUTABLE_ACTION_TYPES:
-                raise ValueError(f"midzhi.action_type 非七类 routable：{at!r}")
+            # #1778：值域＝库级全集（ADR 0040 形状检查），无七类准入闭集
+            if at not in DOSSIER_ACTION_TYPES:
+                raise ValueError(f"midzhi.action_type 非库级全集：{at!r}")
             batch.items.append(ValidatedItem(
                 decision_key=key, kind=kind,
                 source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
@@ -641,15 +642,17 @@ def map_rescript_option_or_choice(
     content: Any = None,
     state: Any = None,
 ) -> Dict[str, object]:
-    """七类 mapper（C.2–C.7）：option/choice → 预 normalize payload。
+    """逐类 mapper（C.2–C.7）：option/choice → 预 normalize payload。
 
     类特定显式闸在 normalize 前完成；返回的 payload 供
     ``db._normalize_directive_dossier_payload`` 唯一结构边界使用。
+    #1778：受理值域＝库级全集；无类特定分支的类型按原类型直落一份案卷。
     """
     src = dict(fields)
     action_type = str(src.get("action_type") or "").strip()
-    if action_type not in RESCRIPT_ROUTABLE_ACTION_TYPES:
-        raise ValueError(f"action_type 非七类 routable：{action_type!r}")
+    if action_type not in DOSSIER_ACTION_TYPES:
+        raise ValueError(f"action_type 非库级全集：{action_type!r}")
+    incoming_action_type = action_type
 
     target_kind = str(src.get("target_kind") or "").strip()
     target_id = str(src.get("target_id") or "").strip()
@@ -938,8 +941,14 @@ def map_rescript_option_or_choice(
 
     # C.5 name sync for character-ish
     emitted = str(payload.get("dossier_action_type") or action_type)
-    if emitted not in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES:
-        raise ValueError(f"emitted action_type 非闭集：{emitted!r}")
+    # #1778 决定 1「批了必须成案」：未改写的类型按原类型成案（值域＝库级全集）；
+    # emitted 闭集只管映射终点（罢免→dismiss_assignment），不再当准入闸。
+    allowed_emitted = (
+        DOSSIER_ACTION_TYPES if emitted == incoming_action_type
+        else RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
+    )
+    if emitted not in allowed_emitted:
+        raise ValueError(f"emitted action_type 非法：{emitted!r}")
     if emitted in {"appointment", "dismiss_assignment", "punishment"} or (
         emitted == "grant_allocation"
         and str(payload.get("grant_action") or "") in {"赏赉", "发内帑", "加衔", "荫叙"}

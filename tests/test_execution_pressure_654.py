@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES, TARGET_KINDS
+from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.distance import DistanceMatrix
 from ming_sim.execution_pressure import (
     ABSENT,
@@ -22,7 +22,6 @@ from ming_sim.execution_pressure import (
     build_execution_two_axis_surface,
     distance_semantic_band,
     fold_distance_band,
-    ming_province_ids,
     normalize_locality_scope,
     resolve_dossier_region_ids,
 )
@@ -41,10 +40,6 @@ def _matrix():
 
 
 # ── 词表 / scope 归一 ──────────────────────────────────────────────
-
-
-def test_national_fanout_whitelist_subset():
-    assert NATIONAL_FANOUT_ACTION_TYPES == frozenset({"policy", "special_decree"})
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -121,7 +116,6 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
     assert qa_shape["locality_scope"] == "none"
     assert resolve_dossier_region_ids(
         None,
-        action_type="authorization",
         payload=qa_shape,
     ) == [""]
 
@@ -193,18 +187,11 @@ def test_distance_d6_missing_matrix_node_fail_loud():
 # ── locality oracle 组合矩阵 ───────────────────────────────────────
 
 
-def test_ming_province_set_is_fifteen(env):
-    db, _, _ = env
-    ids = ming_province_ids(db.conn)
-    assert len(ids) == 15
-    assert "shaanxi" in ids and "beizhili" in ids
-
-
-def test_national_policy_fanout_returns_all_provinces(env):
+def test_national_policy_is_one_dossier_not_per_province(env):
+    """#1778 决定 4：全国政令也是一份案卷，region_id 空——不按省拆。"""
     db, _, content = env
     regions = resolve_dossier_region_ids(
         db.conn,
-        action_type="policy",
         payload={
             "target_kind": "policy",
             "target_id": "清丈田亩",
@@ -212,14 +199,13 @@ def test_national_policy_fanout_returns_all_provinces(env):
         },
         regions_content=content.regions,
     )
-    assert regions == ming_province_ids(db.conn)
+    assert regions == [""]
 
 
 def test_special_decree_without_national_is_single_empty(env):
     db, _, content = env
     regions = resolve_dossier_region_ids(
         db.conn,
-        action_type="special_decree",
         payload={
             "target_kind": "policy",
             "target_id": "manual-directive",
@@ -234,7 +220,6 @@ def test_region_single_by_id(env):
     db, _, content = env
     assert resolve_dossier_region_ids(
         db.conn,
-        action_type="policy",
         payload={
             "target_kind": "region",
             "target_id": "shaanxi",
@@ -249,7 +234,6 @@ def test_region_outside_province_set_yields_empty_locality(env):
     # 辽东边镇不入省集合
     assert resolve_dossier_region_ids(
         db.conn,
-        action_type="policy",
         payload={
             "target_kind": "region",
             "target_id": "liaodong",
@@ -259,20 +243,18 @@ def test_region_outside_province_set_yields_empty_locality(env):
     ) == [""]
 
 
-@pytest.mark.parametrize("payload,action", [
-    ({"target_kind": "region", "target_id": "shaanxi", "locality_scope": "national"}, "policy"),
-    ({"target_kind": "region", "target_id": "shaanxi", "locality_scope": "none"}, "policy"),
-    ({"target_kind": "policy", "target_id": "x", "locality_scope": "single"}, "policy"),
-    ({"target_kind": "character", "target_id": "袁崇焕", "locality_scope": "national"}, "policy"),
-    ({"target_kind": "policy", "target_id": "x", "locality_scope": "national"}, "assignment"),
-    ({"target_kind": "unknown", "target_id": "x", "locality_scope": "none"}, "policy"),
+@pytest.mark.parametrize("payload", [
+    {"target_kind": "region", "target_id": "shaanxi", "locality_scope": "national"},
+    {"target_kind": "region", "target_id": "shaanxi", "locality_scope": "none"},
+    {"target_kind": "policy", "target_id": "x", "locality_scope": "single"},
+    {"target_kind": "character", "target_id": "袁崇焕", "locality_scope": "national"},
+    {"target_kind": "unknown", "target_id": "x", "locality_scope": "none"},
 ])
-def test_oracle_contradictions_fail_loud(env, payload, action):
+def test_oracle_contradictions_fail_loud(env, payload):
     db, _, content = env
     with pytest.raises(ValueError):
         resolve_dossier_region_ids(
-            db.conn, action_type=action, payload=payload,
-            regions_content=content.regions,
+            db.conn, payload=payload, regions_content=content.regions,
         )
 
 
@@ -281,7 +263,6 @@ def test_region_zero_hit_fail_loud(env):
     with pytest.raises(ValueError):
         resolve_dossier_region_ids(
             db.conn,
-            action_type="policy",
             payload={
                 "target_kind": "region",
                 "target_id": "不存在的行省xyz",
@@ -314,9 +295,9 @@ def test_region_id_column_and_composite_indexes(env):
     assert "idx_decree_dossiers_secret_order" in idx
 
 
-def test_national_fanout_creates_n_rows_idempotent(env):
+def test_national_creates_one_row_idempotent(env):
+    """#1778 决定 4：全国政令成一份案卷（region_id 空），重交不增行。"""
     db, state, content = env
-    provinces = ming_province_ids(db.conn)
     # 点将路径：assignee 落主办
     payload = {
         "target_kind": "policy",
@@ -356,11 +337,11 @@ def test_national_fanout_creates_n_rows_idempotent(env):
         payload=payload,
         commit=True,
     )
-    assert len(ids) == len(provinces)
+    assert len(ids) == 1
     rows = db.list_dossiers_for_directive(directive_id)
-    assert len(rows) == len(provinces)
-    assert [r["region_id"] for r in rows] == provinces
-    # 点将：N 行同名主办，且 executor_* 与首名主办同步（#654 named-lead 断根）
+    assert len(rows) == 1
+    assert [r["region_id"] for r in rows] == [""]
+    # 点将：主办与 executor_* 同步（#654 named-lead 断根）
     for r in rows:
         leads = [
             e["character_id"] for e in r["participant_roster"] if e.get("tier") == "主办"
@@ -381,7 +362,7 @@ def test_national_fanout_creates_n_rows_idempotent(env):
         commit=True,
     )
     assert ids2 == ids
-    assert len(db.list_dossiers_for_directive(directive_id)) == len(provinces)
+    assert len(db.list_dossiers_for_directive(directive_id)) == 1
 
 
 def test_named_lead_bulk_single_region_syncs_executor(env):
@@ -764,114 +745,14 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     return int(cur.lastrowid)
 
 
-def test_unnamed_national_fanout_fifteen_bi_ziyan_leads(env):
-    """R2：真实 seed 未点将 national → 15 子案主办字面均为「毕自严」。"""
-    db, state, _ = env
-    provinces = ming_province_ids(db.conn)
-    payload = {
-        "target_kind": "policy",
-        "target_id": "清丈天下田亩",
-        "locality_scope": "national",
-        "dossier_action_type": "policy",
-        "transaction_category": "清丈",
-    }
-    did = _insert_directive(db, state, text="清丈天下田亩", payload=payload)
-    ids = db.create_decree_dossiers(
-        state,
-        action_type="policy",
-        decree_text="清丈天下田亩",
-        target_kind="policy",
-        target_id="清丈天下田亩",
-        directive_id=did,
-        payload=payload,
-        commit=True,
-    )
-    assert len(ids) == 15
-    rows = db.list_dossiers_for_directive(did)
-    assert [r["region_id"] for r in rows] == provinces
-    leads = []
-    for r in rows:
-        own = [e["character_id"] for e in r["participant_roster"] if e.get("tier") == "主办"]
-        assert len(own) == 1
-        leads.append(own[0])
-    assert leads == ["毕自严"] * 15
-    # 辅证：中央空 rid 职司链首位（assignment 有 multi_month coverage）
-    from ming_sim.executor_routing import resolve_lead_executors
-    central = resolve_lead_executors(
-        db.conn,
-        action_type="assignment",
-        payload={"transaction_category": "清丈"},
-        region_id="",
-    )
-    assert central["leads"] == ["毕自严"]
-
-
-def test_partial_replay_fills_missing_regions_only(env):
-    """partial replay：先插真子集 → bulk 补齐全集；每 (directive, region) 恰一行、id 稳定。"""
-    db, state, _ = env
-    provinces = ming_province_ids(db.conn)
-    payload = {
-        "target_kind": "policy",
-        "target_id": "清丈天下田亩",
-        "locality_scope": "national",
-        "dossier_action_type": "policy",
-        "transaction_category": "清丈",
-        "assignee_id": "毕自严",
-    }
-    did = _insert_directive(db, state, text="清丈天下田亩", payload=payload)
-    # 先只落期望集真子集（前 3 省）
-    subset = provinces[:3]
-    kept = {}
-    for rid in subset:
-        row_id = db._create_decree_dossier_row(
-            state,
-            action_type="policy",
-            decree_text="清丈天下田亩",
-            target_kind="policy",
-            target_id="清丈天下田亩",
-            directive_id=did,
-            payload=payload,
-            participants=[{
-                "character_id": "毕自严", "tier": "主办",
-                "role": "", "delegator_id": None,
-            }],
-            region_id=rid,
-            _skip_lead_route=True,
-            commit=False,
-        )
-        kept[rid] = int(row_id)
-    db.conn.commit()
-    assert len(db.list_dossiers_for_directive(did)) == 3
-
-    ids = db.create_decree_dossiers(
-        state,
-        action_type="policy",
-        decree_text="清丈天下田亩",
-        target_kind="policy",
-        target_id="清丈天下田亩",
-        directive_id=did,
-        payload=payload,
-        commit=True,
-    )
-    rows = db.list_dossiers_for_directive(did)
-    assert len(rows) == len(provinces)
-    assert len(ids) == len(provinces)
-    by_region = {r["region_id"]: r for r in rows}
-    for rid, old_id in kept.items():
-        assert by_region[rid]["id"] == old_id  # id 稳定
-    # 复合键唯一
-    pairs = [(r["region_id"], r["id"]) for r in rows]
-    assert len({p[0] for p in pairs}) == len(provinces)
-
-
 def test_validate_all_unmapped_zero_rows_before_insert(env):
-    """任一省映射失败 → 首个 INSERT 前整旨零行。"""
+    """路由映射失败 → 首个 INSERT 前整旨零行。"""
     db, state, _ = env
     payload = {
         "target_kind": "policy",
         "target_id": "清丈天下田亩",
         "locality_scope": "national",
-        "dossier_action_type": "policy",
+        "dossier_action_type": "assignment",
         "transaction_category": "修仙",  # 未映射
         "assignee_id": "",  # 显式未点将，走 duty 表
     }
@@ -882,7 +763,7 @@ def test_validate_all_unmapped_zero_rows_before_insert(env):
     collector = RejectionCollector()
     ids = db.create_decree_dossiers(
         state,
-        action_type="policy",
+        action_type="assignment",
         decree_text="清丈天下田亩",
         target_kind="policy",
         target_id="清丈天下田亩",
@@ -917,7 +798,7 @@ def test_path2_pending_unmapped_stays_draft_on_ensure_batch(env):
         "target_kind": "policy",
         "target_id": "清丈天下田亩",
         "locality_scope": "national",
-        "dossier_action_type": "policy",
+        "dossier_action_type": "assignment",
         "transaction_category": "修仙",
         "mode": "ordinary",
     }
@@ -1000,7 +881,7 @@ def test_path1_conversational_draft_unmapped_marks_failed(env):
         "target_kind": "policy",
         "target_id": "清丈天下田亩",
         "locality_scope": "national",
-        "dossier_action_type": "policy",
+        "dossier_action_type": "assignment",
         "transaction_category": "修仙",
         "mode": "ordinary",
         "_canonical_pending_directive": True,
@@ -1043,175 +924,53 @@ def test_path1_conversational_draft_unmapped_marks_failed(env):
     ).fetchone()["n"] == 0
 
 
-def test_national_vs_per_province_two_axis_equivalence(env):
-    """R2：(a) national 未点将 → 15×毕自严；(b) 单省未点将无本地对口 → 空链怠办；
-    两侧均点将后再比两轴等价。"""
-    db, state, _ = env
-    provinces = ming_province_ids(db.conn)
-    from ming_sim.executor_routing import resolve_lead_executors
-
-    # (a) national 未点将
-    payload_n = {
-        "target_kind": "policy",
-        "target_id": "清丈-A",
-        "locality_scope": "national",
-        "dossier_action_type": "policy",
-        "transaction_category": "清丈",
-    }
-    did_n = _insert_directive(db, state, text="清丈-A", payload=payload_n)
-    ids_n = db.create_decree_dossiers(
-        state, action_type="policy", decree_text="清丈-A",
-        target_kind="policy", target_id="清丈-A",
-        directive_id=did_n, payload=payload_n, commit=True,
-    )
-    assert len(ids_n) == 15
-    leads_n = []
-    for r in db.list_dossiers_for_directive(did_n):
-        own = [e["character_id"] for e in r["participant_roster"] if e.get("tier") == "主办"]
-        assert own == ["毕自严"]
-        leads_n.append(own[0])
-    assert leads_n == ["毕自严"] * 15
-
-    # (b) 单省未点将、无本地对口 → 空链/怠办（钉无通用 fallback）
-    payload_s = {
-        "target_kind": "region",
-        "target_id": "shaanxi",
-        "locality_scope": "single",
-        "dossier_action_type": "policy",
-        "transaction_category": "清丈",
-    }
-    single = resolve_lead_executors(
-        db.conn, action_type="policy", payload=payload_s, region_id="shaanxi",
-    )
-    assert single["leads"] == []
-    assert (single.get("signal") or {}).get("reason") == "vacancy_chain_exhausted"
-
-    # 两侧均合法点将后再比两轴
-    def _leads_surface(directive_ids):
-        for did in directive_ids:
-            for row in db.list_dossiers_for_directive(did):
-                db.conn.execute(
-                    "UPDATE decree_dossiers SET status='executing' WHERE id=?",
-                    (int(row["id"]),),
-                )
-        db.conn.commit()
-        surface = build_execution_two_axis_surface(
-            db, state.turn, transit_semantics=[],
-        )
-        out = {}
-        for block in surface["provinces"]:
-            rid = block["region_id"]
-            if rid == "":
-                continue
-            out[rid] = {
-                "province_open_count": block["province_open_count"],
-                "owners": sorted(
-                    (
-                        o["owner_name"],
-                        o["owner_open_count"],
-                        o["distance_semantic_band"],
-                    )
-                    for o in block["owners"]
-                ),
-            }
-        return out
-
-    db.conn.execute("UPDATE decree_dossiers SET status='closed'")
-    db.conn.commit()
-
-    payload_n2 = {
-        "target_kind": "policy",
-        "target_id": "清丈-B",
-        "locality_scope": "national",
-        "dossier_action_type": "policy",
-        "transaction_category": "清丈",
-        "assignee_id": "毕自严",
-    }
-    did_n2 = _insert_directive(db, state, text="清丈-B", payload=payload_n2)
-    db.create_decree_dossiers(
-        state, action_type="policy", decree_text="清丈-B",
-        target_kind="policy", target_id="清丈-B",
-        directive_id=did_n2, payload=payload_n2, commit=True,
-    )
-    surface_a = _leads_surface([did_n2])
-
-    db.conn.execute("UPDATE decree_dossiers SET status='closed'")
-    db.conn.commit()
-
-    dids = []
-    for rid in provinces:
-        payload_sp = {
-            "target_kind": "region",
-            "target_id": rid,
-            "locality_scope": "single",
-            "dossier_action_type": "policy",
-            "transaction_category": "清丈",
-            "assignee_id": "毕自严",
-        }
-        did = _insert_directive(db, state, text=f"清丈-{rid}", payload=payload_sp)
-        db.create_decree_dossiers(
-            state, action_type="policy", decree_text=f"清丈-{rid}",
-            target_kind="region", target_id=rid,
-            directive_id=did, payload=payload_sp, commit=True,
-        )
-        dids.append(did)
-    surface_b = _leads_surface(dids)
-
-    assert set(surface_a) == set(surface_b) == set(provinces)
-    for rid in provinces:
-        assert surface_a[rid]["province_open_count"] == surface_b[rid]["province_open_count"] == 1
-        assert surface_a[rid]["owners"] == surface_b[rid]["owners"]
-
-
 # ── 8×3 locality 矩阵（参数化）──────────────────────────────────
 
 
 @pytest.mark.parametrize(
-    "target_kind,scope,action,expect",
+    "target_kind,scope,expect",
     [
-        # policy/issue/account × national → N（白名单动作）
-        ("policy", "national", "policy", "N"),
-        ("issue", "national", "policy", "N"),
-        ("account", "national", "special_decree", "N"),
+        # policy/issue/account × national → 单行 ''（#1778：不按省拆，无动作白名单）
+        ("policy", "national", "empty"),
+        ("issue", "national", "empty"),
+        ("account", "national", "empty"),
         # policy/issue/account × single → fail
-        ("policy", "single", "policy", "fail"),
-        ("issue", "single", "policy", "fail"),
+        ("policy", "single", "fail"),
+        ("issue", "single", "fail"),
         # policy/issue/account × none → ''
-        ("policy", "none", "policy", "empty"),
-        ("issue", "none", "special_decree", "empty"),
-        ("account", "none", "policy", "empty"),
+        ("policy", "none", "empty"),
+        ("issue", "none", "empty"),
+        ("account", "none", "empty"),
         # character/office/army × national → fail
-        ("character", "national", "policy", "fail"),
-        ("office", "national", "policy", "fail"),
-        ("army", "national", "policy", "fail"),
+        ("character", "national", "fail"),
+        ("office", "national", "fail"),
+        ("army", "national", "fail"),
         # character/office/army × single → fail
-        ("character", "single", "policy", "fail"),
-        ("office", "single", "policy", "fail"),
-        ("army", "single", "policy", "fail"),
+        ("character", "single", "fail"),
+        ("office", "single", "fail"),
+        ("army", "single", "fail"),
         # character/office/army × none → ''
-        ("character", "none", "policy", "empty"),
-        ("office", "none", "policy", "empty"),
-        ("army", "none", "policy", "empty"),
+        ("character", "none", "empty"),
+        ("office", "none", "empty"),
+        ("army", "none", "empty"),
         # region × national/none → fail；single → R1
-        ("region", "national", "policy", "fail"),
-        ("region", "none", "policy", "fail"),
-        ("region", "single", "policy", "R1"),
+        ("region", "national", "fail"),
+        ("region", "none", "fail"),
+        ("region", "single", "R1"),
         # dossier 三格：仅 none → 单行 ''；single/national fail-loud
-        ("dossier", "none", "revoke_decree", "empty"),
-        ("dossier", "single", "revoke_decree", "fail"),
-        ("dossier", "national", "revoke_decree", "fail"),
-        ("dossier", None, "revoke_decree", "empty"),
+        ("dossier", "none", "empty"),
+        ("dossier", "single", "fail"),
+        ("dossier", "national", "fail"),
+        ("dossier", None, "empty"),
         # 缺省 scope（normalize → none）
-        ("policy", None, "policy", "empty"),
-        ("region", None, "policy", "fail"),
+        ("policy", None, "empty"),
+        ("region", None, "fail"),
         # unknown
-        ("unknown", "none", "policy", "fail"),
-        ("policy", "全省", "policy", "fail"),
-        # national 动作不在白名单
-        ("policy", "national", "assignment", "fail"),
+        ("unknown", "none", "fail"),
+        ("policy", "全省", "fail"),
     ],
 )
-def test_locality_matrix_8x3_and_unknown(env, target_kind, scope, action, expect):
+def test_locality_matrix_8x3_and_unknown(env, target_kind, scope, expect):
     db, _, content = env
     payload = {"target_kind": target_kind, "target_id": "shaanxi" if target_kind == "region" else "x"}
     if scope is not None:
@@ -1219,17 +978,13 @@ def test_locality_matrix_8x3_and_unknown(env, target_kind, scope, action, expect
     if expect == "fail":
         with pytest.raises(ValueError):
             resolve_dossier_region_ids(
-                db.conn, action_type=action, payload=payload,
-                regions_content=content.regions,
+                db.conn, payload=payload, regions_content=content.regions,
             )
         return
     regions = resolve_dossier_region_ids(
-        db.conn, action_type=action, payload=payload,
-        regions_content=content.regions,
+        db.conn, payload=payload, regions_content=content.regions,
     )
-    if expect == "N":
-        assert regions == ming_province_ids(db.conn)
-    elif expect == "empty":
+    if expect == "empty":
         assert regions == [""]
     elif expect == "R1":
         assert regions == ["shaanxi"]
@@ -1621,28 +1376,24 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
     # 4) dossier 三格 + unknown 拒绝（与矩阵同契约）
     assert resolve_dossier_region_ids(
         db.conn,
-        action_type="revoke_decree",
         payload={"target_kind": "dossier", "target_id": str(target_id),
                  "locality_scope": "none"},
     ) == [""]
     with pytest.raises(ValueError):
         resolve_dossier_region_ids(
             db.conn,
-            action_type="revoke_decree",
             payload={"target_kind": "dossier", "target_id": str(target_id),
                      "locality_scope": "single"},
         )
     with pytest.raises(ValueError):
         resolve_dossier_region_ids(
             db.conn,
-            action_type="revoke_decree",
             payload={"target_kind": "dossier", "target_id": str(target_id),
                      "locality_scope": "national"},
         )
     with pytest.raises(ValueError):
         resolve_dossier_region_ids(
             db.conn,
-            action_type="policy",
             payload={"target_kind": "not_a_kind", "target_id": "x",
                      "locality_scope": "none"},
         )
