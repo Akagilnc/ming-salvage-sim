@@ -2,14 +2,17 @@
 
 策略（次数、空转超时）只在此处与 runtime 配置区定义；
 流式 attempt 循环、可重试分类、系统层终失败出口均只此一处。
-切片①仅接线真实 API 召对流；CLI runner / 公共流 / 非流式由后续切片迁移。
+切片①：真实 API 召对流；切片②：run_agent_text（extractor/sanitizer 等）可观察流。
+CLI runner / 召对半流呈现 / 外层截断点由后续切片迁移。
 
-超时所有权（切片①）：
+超时所有权：
 - SDK 阻塞（等下一 chunk / httpx read）：bind_transport_sdk_budget 把 model.timeout
   临时设为 attempt_timeout_seconds；事件界 check_idle_budget 不能中止该阻塞。
 - 事件边界空转：距上次活动 ≥ idle_timeout_seconds → TransportIdleTimeout（可重试）。
 - 不设 attempt 总墙钟（宪法 #9）；每次 attempt 重新取得完整空转预算。
-- create_chat_model 默认保留未迁移 timeout_seconds / max_retries=1；仅召对接缝临时覆盖。
+- create_chat_model 默认保留未迁移 timeout_seconds / max_retries=1；
+  已迁移接缝（召对流、run_agent_text）临时覆盖。
+- 非流死角（run 未声明 stream）：每 attempt 硬超时 = attempt_timeout_seconds。
 """
 
 from __future__ import annotations
