@@ -162,9 +162,14 @@ def _record_decree_validation_failures(
         [failure["candidate"] for failure in diagnostic_failures],
         ensure_ascii=False,
     )
+    # C6：复用 minister_speaker_role 档料，不在 compose 内复制人物/党派材料。
+    role = minister_speaker_role(
+        ctx.character.name, ctx.character, db=ctx.session.db,
+    )
     report = compose_decree_validation_recovery(
         sorted(failed_fields),
         speaker_name=ctx.character.name,
+        speaker_role=role,
         emperor_words=ctx.player_message,
         prior_output=prior_output,
         llm_config=ctx.llm_config,
@@ -335,10 +340,15 @@ def _draft_heal_or_escalate(
     try:
         return extract_draft_intent_with_roster_heal(**kwargs)
     except UnknownParticipantEscalate as exc:
+        # C6：minister 回禀复用 minister_speaker_role 档料，不只装「大臣+姓名」。
+        role = minister_speaker_role(
+            ctx.character.name, ctx.character, db=ctx.session.db,
+        )
         report = compose_unknown_participant_inworld_report(
             exc.names,
             voice="minister",
             speaker_name=ctx.character.name,
+            speaker_role=role,
             llm_config=ctx.llm_config,
         )
         # batch_state is the sole store; handlers project into out when consuming.

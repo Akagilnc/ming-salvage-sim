@@ -1866,6 +1866,7 @@ def compose_unknown_participant_inworld_report(
     *,
     voice: str = "tongzheng",
     speaker_name: str = "",
+    speaker_role: str = "",
     llm_config: Any = None,
     timeout_s: float | None = None,
 ) -> str:
@@ -1874,10 +1875,14 @@ def compose_unknown_participant_inworld_report(
     timeout_s：有界等待（capture 剩余预算）；None=不另加罩。
     剩余预算≤0、超时或产文失败 → typed LLMUnavailable（#1299/#1310/#1452
     失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
+    speaker_role：大臣口吻时接 minister_speaker_role 客观档料（0033）；不在此复制档料。
     """
     cleaned = _normalize_unknown_participant_names(names)
-    if voice == "minister" and str(speaker_name or "").strip():
-        role = f"大臣{str(speaker_name).strip()}"
+    if voice == "minister":
+        role = str(speaker_role or "").strip()
+        if not role:
+            name = str(speaker_name or "").strip()
+            role = f"大臣{name}" if name else "大臣"
     else:
         role = "通政使司官"
     fact = unknown_participant_fact(cleaned)
@@ -1897,6 +1902,7 @@ def compose_decree_validation_recovery(
     failed_fields: Optional[List[str]] = None,
     *,
     speaker_name: str = "",
+    speaker_role: str = "",
     emperor_words: str = "",
     prior_output: str = "",
     llm_config: Any = None,
@@ -1904,6 +1910,7 @@ def compose_decree_validation_recovery(
     """Turn typed decree rejection facts into a player-facing retry cue via the LLM.
 
     #1765：接皇帝原话与原产出；零形式约束（禁句数/句式硬限，ADR 0033）。
+    speaker_role：接 minister_speaker_role 客观档料；不在此复制人物/党派材料。
     """
     field_groups = {
         "银两数目": {"amount"},
@@ -1919,9 +1926,12 @@ def compose_decree_validation_recovery(
     failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
     features = [label for label, keys in field_groups.items() if failed & keys]
     feature = "、".join(features) if features else "旨意所指对象或必需内容"
-    who = str(speaker_name or "").strip() or "大臣"
+    role = str(speaker_role or "").strip()
+    if not role:
+        name = str(speaker_name or "").strip()
+        role = name or "大臣"
     prompt = (
-        f"你是{who}。一份拟旨在记录前校验未通过，"
+        f"你是{role}。一份拟旨在记录前校验未通过，"
         f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
         "补充或改说所需信息后重拟。"
     )
@@ -3996,7 +4006,7 @@ def _extract_secret_order(
     try:
         raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:
-        # 程序/transport 真异常：不标 typed 旗后正常返回；走既有系统失败接缝（0005/0046）。
+        # 程序/transport 真异常：响亮上抛（0005/0046）；不标 typed 旗、不正常返回。
         from ming_sim.exceptions import LLMUnavailable
         from ming_sim.llm_model import cli_runner_unavailable
 
@@ -4009,8 +4019,8 @@ def _extract_secret_order(
         # executor here guarantees cleanup even if any later normalization raises.
         if confirmation_pool is not None:
             confirmation_pool.shutdown(wait=True)
-    # 解析失败（None）与合法空对象 {} 分流：前者保留 extract_failed 身份，
-    # 后者仍走下游零契约路径（#1504）；不得 or {} 合流洗成成功空抽取。
+    # 解析失败（None）与合法空对象 {}：保留各自身份供 gaps/诊断，但下游统一走
+    # land_or_recover（能落暂存 / 不能落 compose recovery）；不得 or {} 合流洗成成功空抽取。
     parsed = _loads_lenient(raw)
     if parsed is None:
         if not extract_failed:
@@ -4036,7 +4046,7 @@ def _extract_secret_order(
         extractor_content=_content_llm,
     )
     # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。
-    # 缺标题由下游 stage 接缝（pending_action_failures / contract_error）可见可恢复，不在此合成。
+    # 缺标题由下游 land_or_recover 统一 recovery 可见可恢复，不在此合成。
     title = str(obj.get("标题") or "").strip()
     # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
     # extractor 散文反推）。
