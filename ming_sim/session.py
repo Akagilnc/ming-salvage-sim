@@ -1976,7 +1976,24 @@ class GameSession:
         if recap:
             augmented = recap + "\n\n" + augmented
         # 未明发草案不属于公开层；参与者/知情圈须通过持久见闻事件投影进入提示。
-        # 这里不能直接读取 registry 的全局草案列表，否则未参与大臣会越过排除边界获知密事。
+        # 这里不能直接读取本回合的全局草案列表，否则未参与大臣会越过排除边界获知密事。
+        # #1769 例外且仅此一项：**跨月**未入档旨稿（turn<本回合、仍 draft、无案卷）
+        # ——它上月已随颁诏发出、只是没能落档，不是尚在御案上的密事；owner 御批的终态
+        # 是「原旨留到下月、大臣开桌提醒」，追问渠道复用召对 A 路（不新建通知/队列/
+        # 持久状态）。呈现由 LLM 自己长（P7），此处只供事实。
+        carryover = [
+            row for row in self.db.list_directives(self.state, statuses=("draft",))
+            if int(row["turn"]) < int(self.state.turn)
+            and self.db.get_dossier_for_directive(int(row["id"])) is None
+        ]
+        if carryover:
+            lines = ["【陛下前月已发、尚未入档的旨稿（如有关联，可奏请陛下明示如何处置；"
+                     "勿向陛下念内部编号）】"]
+            lines += [
+                f"#{int(row['id'])} {str(row['text'] or '')}（尚未入档）"
+                for row in carryover
+            ]
+            augmented = "\n".join(lines) + "\n\n" + augmented
         return augmented
 
     def apply_cli_conversation_actions(
