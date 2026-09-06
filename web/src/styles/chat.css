@@ -306,8 +306,6 @@ select {
 
 .primary-action,
 .desk-add-btn,
-.seal-btn-ghost,
-.seal-btn-save,
 .directive-tools button {
   display: inline-flex;
   align-items: center;
