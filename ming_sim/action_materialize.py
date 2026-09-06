@@ -110,6 +110,16 @@ def _materializable_draft_xiexang(
     return promoted
 
 
+def _flush_rejection_collector(db: Any, collector: Any) -> None:
+    """Commit rejection rows then mirror; shared by decree/secret landing diagnostics."""
+    from ming_sim.applier import atomic, mirror_rejections_after_commit
+    from ming_sim.error_pack import rejections_jsonl_path
+
+    with atomic(db):
+        collector.flush_to_db(db)
+        mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
+
+
 def _record_decree_validation_failures(
     ctx: MaterializeCtx,
     out: Dict[str, Any],
@@ -117,8 +127,7 @@ def _record_decree_validation_failures(
 ) -> None:
     """Persist every engine rejection, then generate a player-lane recovery report."""
     from ming_sim.applier import (
-        Provenance, RejectedItem, RejectionCollector, atomic,
-        mirror_rejections_after_commit,
+        Provenance, RejectedItem, RejectionCollector,
     )
     from ming_sim.cli_backend import compose_decree_validation_recovery
 
@@ -147,26 +156,68 @@ def _record_decree_validation_failures(
             ),
             int(ctx.session.state.turn),
         )
-    # The existing rejection owner controls flush, transaction outcome, and
-    # post-commit mirror.  Recovery generation stays outside its write window.
-    from ming_sim.error_pack import rejections_jsonl_path
-
-    with atomic(ctx.session.db):
-        collector.flush_to_db(ctx.session.db)
-        mirror_rejections_after_commit(
-            ctx.session.db, collector, rejections_jsonl_path,
-        )
-    # Recovery is downstream of the committed engine facts: backend failure
-    # cannot erase the validation causes, and no write transaction spans LLM I/O.
+    # Recovery generation stays outside the rejection write window (0005).
+    _flush_rejection_collector(ctx.session.db, collector)
+    prior_output = json.dumps(
+        [failure["candidate"] for failure in diagnostic_failures],
+        ensure_ascii=False,
+    )
     report = compose_decree_validation_recovery(
         sorted(failed_fields),
         speaker_name=ctx.character.name,
+        emperor_words=ctx.player_message,
+        prior_output=prior_output,
         llm_config=ctx.llm_config,
     )
     out["decree_validation_failure"] = {
         "failed_fields": sorted(failed_fields),
         "report": report,
     }
+
+
+def _record_secret_landing_rejection(
+    db: Any,
+    turn: int,
+    secret: Dict[str, Any],
+    *,
+    minister_name: str,
+    player_message: str,
+) -> None:
+    """Durable diagnostic for a secret that cannot land (0005); before recovery I/O."""
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+
+    so = secret if isinstance(secret, dict) else {}
+    item = {
+        "kind": "secret_order",
+        "action": "新建",
+        "minister_name": minister_name,
+        "player_message": player_message,
+        "title": str(so.get("title") or ""),
+        "content": str(so.get("content") or ""),
+        "contract_error": str(so.get("contract_error") or ""),
+        "extract_failed": bool(so.get("extract_failed")),
+        "extract_transport_error": bool(so.get("extract_transport_error")),
+        "has_covert_task": isinstance(so.get("covert_task"), dict),
+    }
+    if "extract_raw" in so:
+        item["extract_raw"] = so["extract_raw"]
+    category = (
+        "secret_transport"
+        if so.get("extract_transport_error")
+        else "secret_landing"
+    )
+    collector = RejectionCollector()
+    collector.record(
+        "audience_secret_order",
+        RejectedItem(
+            item=item,
+            reason=str(so.get("contract_error") or "密令落不了库"),
+            category=category,
+            source=Provenance.secret_order,
+        ),
+        int(turn),
+    )
+    _flush_rejection_collector(db, collector)
 
 
 def _rejection_item_for_exc(
@@ -388,16 +439,10 @@ def _secret_extract_admitted(ctx: MaterializeCtx) -> bool:
 def _secret_order_pending_payload(
     secret: Dict[str, Any], minister_name: str,
 ) -> Dict[str, Any]:
-    """Build pending payload from extract result. Typed fields only; no prose title."""
+    """Build can-land pending payload. Typed fields only; no prose title (0142)."""
     title = str(secret.get("title") or "").strip()
     content_text = str(secret.get("content") or "").strip()
     frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
-    contract_error = str(secret.get("contract_error") or "").strip()
-    # Retain diagnostic facts (0005); never synthesize missing title from prose (0142).
-    if not title:
-        contract_error = contract_error or "密令缺少结构化标题"
-    if frozen is None:
-        contract_error = contract_error or "密令抽取未能冻结合同"
     payload: Dict[str, Any] = {
         "title": title,
         "content": content_text,
@@ -410,12 +455,6 @@ def _secret_order_pending_payload(
     }
     if frozen is not None:
         payload["covert_task"] = frozen
-    if contract_error:
-        payload["contract_error"] = contract_error
-    if secret.get("extract_failed"):
-        payload["extract_failed"] = True
-    if "extract_raw" in secret:
-        payload["extract_raw"] = secret["extract_raw"]
     return payload
 
 
@@ -424,8 +463,6 @@ def _prior_output_for_secret_feedback(secret: Dict[str, Any]) -> str:
     raw = secret.get("extract_raw")
     if isinstance(raw, str) and raw.strip():
         return raw
-    if raw is not None and not isinstance(raw, str):
-        return str(raw)
     snapshot = {
         "title": secret.get("title") or "",
         "content": secret.get("content") or "",
@@ -434,6 +471,21 @@ def _prior_output_for_secret_feedback(secret: Dict[str, Any]) -> str:
         "has_covert_task": isinstance(secret.get("covert_task"), dict),
     }
     return json.dumps(snapshot, ensure_ascii=False)
+
+
+def _stage_new_secret_order(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    secret: Dict[str, Any],
+    out: Dict[str, Any],
+) -> None:
+    """Single write point for can-land secret_order 新建 pending."""
+    out["pending_action_id"] = db.stage_pending_action(
+        turn, kind="secret_order", action="新建",
+        minister_name=minister_name, target_id=None,
+        payload=_secret_order_pending_payload(secret, minister_name),
+    )
 
 
 def land_or_recover_new_secret_order(
@@ -447,12 +499,14 @@ def land_or_recover_new_secret_order(
     llm_config: Any,
     out: Dict[str, Any],
     dossier_candidates: Optional[List[Dict[str, Any]]] = None,
+    speaker_role: str = "",
 ) -> None:
     """#1765：已识别密令新建的统一落库。
 
-    能落 → 暂存进确认闸；不能落 → 一次带反馈揣摩重抽；仍不能 → 大臣追问报告。
-    删除旧三分流（extract_failed 暂存 / 零契约拒单 / 显式必暂存的处置分叉）。
-    保留 typed 题名/正文/合同供料与暂存写入本身；不写玩家可见分类原因文案。
+    能落 → 暂存进确认闸。
+    抽取产物/合同缺口 → 把失败事实交 LLM 揣摩补全（复用首抽完整确定性输入）；
+    补全能落则进确认闸；揣摩后仍不能落则以本职请示皇帝。
+    程序/transport 真因不进戏内揣摩：耐久留痕后返回（0005/0046）。
     """
     from ming_sim.cli_backend import (
         _extract_secret_order,
@@ -463,41 +517,54 @@ def land_or_recover_new_secret_order(
     )
 
     so = dict(secret or {})
-    gaps = secret_order_landing_gaps(so)
-    if not gaps:
-        out["pending_action_id"] = db.stage_pending_action(
-            turn, kind="secret_order", action="新建",
-            minister_name=minister_name, target_id=None,
-            payload=_secret_order_pending_payload(so, minister_name),
-        )
+    # Provenance stamped by first _extract_secret_order (C3: 重抽复用首抽输入).
+    extract_command = str(so.pop("_extract_command", "") or player_message)
+    force_default_assignee = bool(so.pop("_force_default_assignee", False))
+    extract_reply = str(so.pop("_extract_reply", "") or minister_reply)
+
+    if secret_order_can_land(so):
+        _stage_new_secret_order(db, turn, minister_name, so, out)
         return
 
-    # One 揣摩 re-extract with deterministic landing facts (no fixed retry budget).
+    # Transport/call failure is system identity (typed flag), not product gap.
+    if so.get("extract_transport_error"):
+        _record_secret_landing_rejection(
+            db, turn, so,
+            minister_name=minister_name,
+            player_message=player_message,
+        )
+        out["pending_action_id"] = 0
+        return
+
+    gaps = secret_order_landing_gaps(so)
     feedback = build_secret_order_landing_feedback(
         gaps,
         emperor_words=player_message,
         prior_output=_prior_output_for_secret_feedback(so),
         contract_error=str(so.get("contract_error") or ""),
     )
+    # 揣摩补全：同一抽取接缝；call 失败响亮上抛，不洗成 extract_failed 再进 compose。
     healed = _extract_secret_order(
-        player_message,
-        minister_reply,
+        extract_command,
+        extract_reply,
         minister_name,
         llm_config,
-        force_default_assignee=False,
+        force_default_assignee=force_default_assignee,
         dossier_candidates=dossier_candidates,
         correction_feedback=feedback,
+        raise_on_transport_error=True,
     )
     if secret_order_can_land(healed):
-        out["pending_action_id"] = db.stage_pending_action(
-            turn, kind="secret_order", action="新建",
-            minister_name=minister_name, target_id=None,
-            payload=_secret_order_pending_payload(healed, minister_name),
-        )
+        _stage_new_secret_order(db, turn, minister_name, healed, out)
         return
 
-    # Still can't land → minister in-character recovery (player-facing).
     final = healed if isinstance(healed, dict) else so
+    # Diagnostic before recovery I/O — compose/LLM failure must not erase facts (C4).
+    _record_secret_landing_rejection(
+        db, turn, final,
+        minister_name=minister_name,
+        player_message=player_message,
+    )
     final_gaps = secret_order_landing_gaps(final) or gaps
     contract_error = str(
         (final or {}).get("contract_error") or so.get("contract_error") or ""
@@ -505,25 +572,30 @@ def land_or_recover_new_secret_order(
     report = compose_secret_order_landing_recovery(
         final_gaps,
         speaker_name=minister_name,
+        speaker_role=speaker_role,
         emperor_words=player_message,
         prior_output=_prior_output_for_secret_feedback(final if final else so),
         contract_error=contract_error,
         llm_config=llm_config,
     )
+    snap_src = final if final else so
+    extract_snapshot: Dict[str, Any] = {
+        "title": str(snap_src.get("title") or ""),
+        "content": str(snap_src.get("content") or ""),
+        "extract_failed": bool(snap_src.get("extract_failed")),
+        "has_covert_task": isinstance(snap_src.get("covert_task"), dict),
+        "contract_error": contract_error,
+    }
+    if "extract_raw" in snap_src:
+        extract_snapshot["extract_raw"] = snap_src["extract_raw"]
+    elif "extract_raw" in so:
+        extract_snapshot["extract_raw"] = so["extract_raw"]
     out["secret_order_landing_recovery"] = {
         "landing_gaps": list(final_gaps),
         "contract_error": contract_error,
         "report": report,
-        # Retain typed extract snapshot for diagnostics / slice-② recovery entry.
-        "extract_snapshot": {
-            "title": str((final or so).get("title") or ""),
-            "content": str((final or so).get("content") or ""),
-            "extract_failed": bool((final or so).get("extract_failed")),
-            "has_covert_task": isinstance((final or so).get("covert_task"), dict),
-        },
+        "extract_snapshot": extract_snapshot,
     }
-    # 落不了库不暂存残缺候选：避免坏项盖住同批成功 ID，也不把未完成密令送进确认闸。
-    # 暂存写入能力仍由 can-land 路径与 _secret_order_pending_payload 保留。
     out["pending_action_id"] = 0
 
 
@@ -974,8 +1046,11 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         else:
             bundle = _secret_extract_bundle(ctx, prefer_new=True)
         secret = dict(bundle.get("secret") or {})
-        # #1765：classifier 与显式前缀共用 land_or_recover（落不了库→揣摩/追问，无三分流）。
+        # #1765：classifier 与显式前缀共用 land_or_recover（产物缺口→揣摩/追问）。
         ctx.conversation_intent_handled = True
+        office = str(getattr(ctx.character, "office", "") or "").strip()
+        office_type = str(getattr(ctx.character, "office_type", "") or "").strip()
+        role_bits = [p for p in (minister_name, office or office_type) if p]
         land_or_recover_new_secret_order(
             db=session.db,
             turn=int(session.state.turn),
@@ -988,6 +1063,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             dossier_candidates=session.db.list_referenceable_dossiers(
                 minister_name, session.state.turn,
             ),
+            speaker_role="，".join(role_bits),
         )
         return
 
