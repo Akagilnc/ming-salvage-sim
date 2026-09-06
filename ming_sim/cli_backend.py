@@ -1384,7 +1384,7 @@ def _draft_intent_army_grounding_facts(content: Any) -> str:
     if not lines:
         return ""
     return (
-        "【军队接地事实】以军队为目标的旨意（协饷/军令等），「目标」只填下列 canonical id"
+        "【军队接地事实】协饷旨意的「目标」只填下列 canonical id"
         "（形如 @guanning）；皇帝行文中的军名、别名、军前/所部等说法，"
         "按语义归到所属军的 canonical id；表中无对应之军才留空。\n"
         + "\n".join(lines)
