@@ -362,9 +362,6 @@
     grid-template-columns: 1fr;
     overflow-y: auto;
   }
-  .decree-scroll {
-    width: 100%;
-  }
 }
 
 @media (max-width: 820px) {
@@ -484,8 +481,7 @@
     grid-template-columns: 1fr;
   }
 
-  .desk-footer,
-  .edict-review-bar {
+  .desk-footer {
     flex-wrap: wrap;
     justify-content: center;
   }
