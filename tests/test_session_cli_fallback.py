@@ -1933,8 +1933,8 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     assert recovery.get("report")
     assert recovery.get("landing_gaps")
     snapshot = recovery.get("extract_snapshot") or {}
-    # #354：带反馈的后续输入仍含前文任务 + 本轮确认 + 缺口事实（不数次数）
-    gap_marks = ("落库缺口", "密令落库失败", "【原抽取产出】", "【原产出】",
+    # #354：compose 供料仍含前文任务 + 本轮确认 + 现行缺口事实（不数次数、不锁已删标记）
+    gap_marks = ("【原抽取产出】", "【皇帝原话】",
                  "结构化标题", "差务合同", "抽取结果", "密令正文")
     assert any(
         ("督办陕西赈灾" in p or prior_task in p)

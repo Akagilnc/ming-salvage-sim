@@ -2371,12 +2371,8 @@ class GameSession:
                 minister_name=minister_name,
                 secret=acts["secret_order"],
                 player_message=player_message,
-                minister_reply=reply,
                 llm_config=llm_config,
                 out=out,
-                dossier_candidates=self.db.list_referenceable_dossiers(
-                    minister_name, self.state.turn,
-                ),
                 character=character,
                 chat_turn_id=active_chat_turn_id,
             )

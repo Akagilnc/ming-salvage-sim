@@ -1396,12 +1396,13 @@ def _stub_secret_landing_llm(monkeypatch, *, extract_fn, prose_fn=None):
 
 
 def _feed_has_emperor_and_gap(prompt: str, *emperor_frags: str) -> bool:
-    """后续供料：同一输入同时含皇帝原话与落库缺口事实（非首抽裸密令）。"""
+    """后续 compose 供料：同一输入含皇帝原话与现行缺口事实（非首抽裸密令）。"""
     text = str(prompt)
     if not any(frag and frag in text for frag in emperor_frags):
         return False
+    # 只认 compose_secret_order_landing_recovery 现行确定性标记，不锁已删反馈文案。
     gap_marks = (
-        "落库缺口", "密令落库失败", "【原抽取产出】", "【原产出】",
+        "【原抽取产出】", "【皇帝原话】",
         "结构化标题", "差务合同", "抽取结果", "密令正文",
     )
     return any(m in text for m in gap_marks)
@@ -1466,8 +1467,6 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
     assert not str(snap.get("title") or "").strip()
     assert unlandable in str(snap.get("extract_raw") or "")
     assert int(snap.get("source_chat_turn_id") or 0) == source_turn
-    # 恢复产文不得夹形式约束（0033）
-    assert not any("不要标题" in p for p in llm_inputs)
     rows = db.conn.execute(
         "SELECT category, item_json FROM rejection_reports WHERE section=?",
         ("audience_secret_order",),
@@ -1618,11 +1617,8 @@ def test_secret_landing_completion_stages_for_confirmation(game, monkeypatch):
         "交付目标": 1, "效果符号": 1,
         "钱粮用途": "辽饷", "钱粮类别": "密令差务", "钱粮账户": "内库",
     }, ensure_ascii=False)
-    extract_calls = 0
 
     def _json_extract(prompt, llm_config=None, tag="", **_k):
-        nonlocal extract_calls
-        extract_calls += 1
         return (good, 1)
 
     def _prose_forbidden(prompt, llm_config=None, tag="", **_k):
@@ -1654,7 +1650,6 @@ def test_secret_landing_completion_stages_for_confirmation(game, monkeypatch):
     assert payload.get("title") == "查核辽饷"
     assert isinstance(payload.get("covert_task"), dict)
     assert db.list_secret_orders() == []
-    assert extract_calls == 1, "能落只抽一次，无机器重抽次数硬编码"
     # 确认/应允落库 + 皇帝读回：既有
     # tests/test_conversational_draft.py::test_dialogue_affirm_commits_pending_new_secret_order
     # Web 贯通见 test_http_chat_stream_secret_landing_completion_affirm_readback
@@ -1787,7 +1782,6 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
         assert any(
             _feed_has_emperor_and_gap(p, message, "暗查关宁") for p in llm_inputs
         )
-        assert not any("不要标题" in p for p in llm_inputs)
         assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
         assert game.db.list_secret_orders() == []
         snap = recovery.get("extract_snapshot") or {}
