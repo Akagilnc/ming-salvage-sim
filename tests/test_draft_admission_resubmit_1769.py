@@ -498,3 +498,50 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     assert len(_rejection_rows(game, did)) == 1
 
 
+
+
+def test_pending_product_error_enters_resubmit_seam_not_softlock(
+    admission_game, monkeypatch,
+):
+    """类2：pending 坏载荷 → confirm 只翻 draft → B 路补交/耗尽，不整月 400、不 rejected。"""
+    game = admission_game
+    # pending 已带结构化坏载荷（召对核定前）；issue 时 confirm 翻 draft 后走 ensure+resubmit。
+    # 模型供料只服务补交重写（原抽已在 payload 里）。
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER])
+    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    client = TestClient(web_app.app)
+    turn = int(game.state.turn)
+
+    from ming_sim.cli_backend import project_draft_extract_to_directive_payload
+    bad_payload = project_draft_extract_to_directive_payload(
+        {
+            "draft_action": "拟旨",
+            "dossier_action_type": "pay_order_override",
+            "target_kind": "army",
+            "target_id": "guanning",
+            "mode": "ordinary",
+            "entries": [{"key": "arrears_priority_军饷", "value": 1}],
+            "assignee": "郭允厚",
+        },
+        decree_text=_DECREE_TEXT,
+    )
+    did = game.db.add_directive(
+        game.state, None, _DECREE_TEXT, source="minister",
+        actor="郭允厚", status="pending", dossier_payload=bad_payload,
+    )
+    assert str(game.db.get_directive(did)["status"]) == "pending"
+
+    body = _post_issue_stream(
+        client, expected_turn=turn, step="1769 pending product-error",
+    )
+    assert body.get("_event") in (None, "done", "")
+    assert _turn_of(_get_state(client)) == turn + 1
+    assert len(resubmit_calls) == 2
+
+    row = game.db.get_directive(did)
+    assert row is not None
+    assert str(row["status"]) == "draft"  # 不得 rejected / 不得卡 pending
+    assert game.db.get_dossier_for_directive(did) is None
+    assert len(_rejection_rows(game, did)) == 1
+
+
