@@ -913,41 +913,6 @@ def _dispatch_cli_runner(
     raise RuntimeError(f"未知 CLI backend：{runner}")
 
 
-def _iter_codex_stream_chunks(
-    prompt: str,
-    *,
-    model: Optional[str] = None,
-    timeout: Optional[float] = None,
-    reasoning_strength: Optional[str] = None,
-) -> Iterator[str]:
-    """Run `codex exec --json` and yield agent_message_delta events as they arrive."""
-    yield from _iter_cli_runner_text(
-        "codex", prompt, model=model, timeout=timeout,
-        reasoning_strength=reasoning_strength, json_events=True,
-    )
-
-
-def _run_codex_stream(
-    prompt: str,
-    *,
-    model: Optional[str] = None,
-    timeout: Optional[float] = None,
-    reasoning_strength: Optional[str] = None,
-    on_text: Optional[Callable[[str], None]] = None,
-) -> Tuple[str, int]:
-    pieces: List[str] = []
-    for delta in _iter_codex_stream_chunks(
-        prompt, model=model, timeout=timeout, reasoning_strength=reasoning_strength
-    ):
-        pieces.append(delta)
-        if on_text:
-            on_text(delta)
-    text = "".join(pieces).strip()
-    if not text:
-        raise RuntimeError("codex 流式调用失败：输出为空")
-    return text, 1
-
-
 def _run_backend(prompt: str) -> Tuple[str, int]:
     """按 MING_SIM_LLM_BACKEND 分派到对应 CLI（enrich/secret 等非 CliChat 路径用）。
     未设或非法 → agy（沿用原默认）。"""
