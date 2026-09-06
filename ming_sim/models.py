@@ -352,6 +352,10 @@ CLI_DEFAULT_TIMEOUT_SECONDS = 300.0  # CLI 子进程默认超时（秒），与 
 MINISTER_CHAT_CLI_TIMEOUT_SECONDS = 90.0  # 实时召对大臣回话专用短超时（#353），与月末结算 300s 解耦
 VALID_CHANNELS = frozenset({"api", "cli"})  # 合法执行通道集合，新增通道只改这里
 API_DEFAULT_TIMEOUT_SECONDS = 180.0  # API 请求默认超时（秒）单一真源（#58）
+# #1465 transport 统一策略默认值（单真源；次数/超时/空转进 runtime 可覆盖，代码零硬编码）
+TRANSPORT_DEFAULT_MAX_ATTEMPTS = 3  # 总计 3 attempts（初试 1 + 重试 2；第一次不叫重试）
+TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 30.0  # 每 attempt 独立整份超时（owner：每次 30 秒）
+TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS = 30.0  # 空转：距上次输出静默阈值（票面不定数值，与 attempt 同量级）
 
 
 @dataclass

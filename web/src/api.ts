@@ -91,6 +91,8 @@ export type StreamChatOptions = {
   onDone?: (payload: ChatResponse) => void;
   /** 服务端 end 表示回话尾随写入均已 join、公共卷轴可安全重读。 */
   onEnd?: () => void;
+  /** #1465：transport 重试开始——清空本轮未完成的临时回话呈现（delta.replace）。 */
+  onStreamReset?: () => void;
 };
 
 export const streamChat = async (
@@ -139,7 +141,14 @@ export const streamChat = async (
           chat_turn_id: Number(payload.chat_turn_id || 0),
         });
       } else if (parsed.event === "delta") {
-        onDelta(String(payload.content || ""));
+        // replace：复用既有 delta 事件；先重置临时正文，再按需接后续 content
+        if (payload.replace) {
+          options.onStreamReset?.();
+        }
+        const content = String(payload.content || "");
+        if (content) {
+          onDelta(content);
+        }
       } else if (parsed.event === "done") {
         // 回话先可见：不结束流，等 end；兼容旧服务端（仅 done 无 end）则缓存后继续
         donePayload = payload as ChatResponse;
