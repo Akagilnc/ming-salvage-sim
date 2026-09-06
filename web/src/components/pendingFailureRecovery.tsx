@@ -2,14 +2,10 @@ import type { PendingActionFailure } from "../types";
 
 export function PendingFailureRecoveryPanel({
   failures,
-  busy,
   error,
-  onRetryFailure,
 }: {
   failures: PendingActionFailure[];
-  busy: string;
   error: string;
-  onRetryFailure: (failure: PendingActionFailure) => void;
 }) {
   return (
     <div className="failure-recovery-panel">
@@ -22,11 +18,6 @@ export function PendingFailureRecoveryPanel({
             ) : null}
             <span>{failure.message}</span>
           </div>
-          {failure.retryable ? (
-            <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
-              重试
-            </button>
-          ) : null}
         </div>
       ))}
     </div>

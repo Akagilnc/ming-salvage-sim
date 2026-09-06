@@ -14,17 +14,3 @@ export function mergePendingActionFailures(
   }
   return Array.from(byId.values());
 }
-
-export function refreshRetriedPendingActionFailures(
-  current: PendingActionFailure[],
-  retriedFailureId: number,
-  targetMinisterName: string | undefined,
-  incoming: PendingActionFailure[],
-): PendingActionFailure[] {
-  const kept = current.filter((item) => {
-    if (item.id === retriedFailureId) return false;
-    if (!targetMinisterName) return true;
-    return !(item.kind === "secret_order" && item.minister_name === targetMinisterName);
-  });
-  return mergePendingActionFailures(kept, incoming);
-}

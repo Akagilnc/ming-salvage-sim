@@ -41,7 +41,6 @@ export function ChatModal({
   onInput,
   onIntent,
   onSend,
-  onRetryFailure,
   onRetryReply,
   onUndo,
   onHint,
@@ -82,7 +81,6 @@ export function ChatModal({
   onInput: (value: string) => void;
   onIntent?: (intent: "secret_order" | undefined) => void;
   onSend: (ministerName: string, text?: string) => void;
-  onRetryFailure: (failure: PendingActionFailure) => void;
   onRetryReply?: (ministerName: string) => void;
   onUndo: (ministerName: string) => void;
   onHint: (value: string) => void;
@@ -351,11 +349,6 @@ export function ChatModal({
           {chatFailures.map((failure) => (
             <div className="chat-system-note danger chat-failure-note" role="alert" key={failure.id}>
               <span>{failure.minister_name && failure.minister_name !== minister.name ? `${failure.minister_name}：` : ""}{failure.message}</span>
-              {failure.kind === "secret_order" && failure.retryable && (
-                <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
-                  重试
-                </button>
-              )}
             </div>
           ))}
           {error && <div className="chat-system-note danger" role="alert">{error}</div>}

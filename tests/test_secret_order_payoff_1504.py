@@ -2041,6 +2041,209 @@ def test_http_chat_stream_secret_landing_a_path_abandon_no_default(
         assert game.db.list_pending_actions(game.state.turn) == []
         if hasattr(game.db, "list_failed_secret_order_actions"):
             assert game.db.list_failed_secret_order_actions() == []
+        # #1765 ②验收5：过回合维持既有丢弃不阻塞；失败诊断照旧留痕（0005）。
+        assert _secret_landing_rejection_items(game.db), "过回合后终失败诊断须仍在库"
+    finally:
+        wait_pending_writes(game)
+        if game.session:
+            game.session.close()
+
+
+def _unlandable_extract_raw(kind: str, name: str) -> str:
+    """非 JSON / 缺锚 / 空合同 —— 同一件事「落不了库」的三个来源，不分流处置。"""
+    if kind == "non_json":
+        return "臣以为此事宜密查关宁，容臣细细察访再回奏。"
+    if kind == "missing_anchor":
+        return json.dumps({
+            "标题": "", "内容": "", "承办人": name, "期限月数": 3,
+            "标签": ["关宁"], "差务": "核发辽饷", "价值轴": ["实务事功"],
+            "方向": 1, "交付单位": "万两", "交付目标": 1, "效果符号": 1,
+            "钱粮用途": "辽饷", "钱粮类别": "密令差务", "钱粮账户": "内库",
+        }, ensure_ascii=False)
+    if kind == "empty_contract":
+        return json.dumps({
+            "标题": "暗查关宁", "内容": "暗查关宁诸将虚冒兵额。",
+            "承办人": name, "期限月数": 3, "标签": ["关宁"],
+            "差务": "", "价值轴": [], "方向": 1,
+            "交付单位": "", "交付目标": 0,
+        }, ensure_ascii=False)
+    raise AssertionError(f"unknown unlandable kind: {kind}")
+
+
+def _secret_landing_backend(raw_for_extract):
+    """Web 召对后端桩：分类为密令新建，抽取产物由调用方按轮次给。"""
+    def backend(prompt, _config=None, *, tag=""):
+        if tag == "action_intent":
+            return json.dumps(
+                {"kind": "secret", "secret_action": "新建"}, ensure_ascii=False,
+            ), 1
+        if tag == "secret_extract":
+            return raw_for_extract(), 1
+        return "任意生成回禀", 1
+    return backend
+
+
+def _pending_action_replay_routes():
+    """已注册的 pending-action 重放路由（应为空：重放入口已删）。"""
+    import web_app
+
+    return [
+        str(getattr(route, "path", ""))
+        for route in web_app.app.routes
+        if str(getattr(route, "path", "")).startswith("/api/pending_actions")
+        and str(getattr(route, "path", "")).endswith("/retry")
+    ]
+
+
+def _assert_no_payload_replay_endpoint(client):
+    """重放旧 payload 的 HTTP 入口既未注册，也不会有任何请求被它受理。
+
+    具体状态码随 SPA 静态挂载与否在 404/405 间浮动——只钉「不受理」，不钉码。
+    """
+    assert _pending_action_replay_routes() == [], "重放路由须已删除"
+    replay = client.post("/api/pending_actions/1/retry")
+    assert replay.status_code >= 400, replay.text
+
+
+def _secret_landing_rejection_items(db):
+    rows = db.conn.execute(
+        "SELECT category, item_json FROM rejection_reports WHERE section=?",
+        ("audience_secret_order",),
+    ).fetchall()
+    return [
+        json.loads(row["item_json"])
+        for row in rows if row["category"] == "secret_landing"
+    ]
+
+
+@pytest.mark.parametrize(
+    "kind", ["non_json", "missing_anchor", "empty_contract"],
+)
+def test_http_chat_stream_secret_landing_recovery_entry_never_replays_payload(
+    tmp_path, monkeypatch, _offline_scene_beat_generator, kind,
+):
+    """#1765 ②验收4：落不了库 → 原地恢复入口=继续本夜召对，且无坏 payload 重放入口。
+
+    三种来源（非 JSON / 缺锚 / 空合同）参数化为同一行为，不按种类分测试。
+    """
+    from fastapi.testclient import TestClient
+
+    import web_app
+
+    recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
+    message = "你替朕下一道密令，暗查关宁诸将虚冒兵额。"
+    holder = {"raw": ""}
+
+    game, name, stream, wait_pending_writes = _web_secret_landing_client(
+        tmp_path, monkeypatch, _secret_landing_backend(lambda: holder["raw"]),
+    )
+    holder["raw"] = _unlandable_extract_raw(kind, name)
+    client = TestClient(web_app.app)
+    try:
+        done = stream(message)
+        recovery = done.get("secret_order_landing_recovery") or {}
+        assert recovery.get("report") and recovery.get("landing_gaps")
+        assert int(done.get("pending_action_id") or 0) == 0
+        assert any(
+            _recovery_compose_fed(c, message, "暗查关宁", prior_raw=holder["raw"])
+            for c in recovery_calls
+        ), "恢复入口须把皇帝原话/缺口/原产出实际喂进后续 LLM 输入"
+        wait_pending_writes(game)
+
+        # 重放坏 payload 的入口已不存在：既无 DB 重放法，也无 HTTP 重放路由。
+        assert not hasattr(game.db, "retry_failed_pending_action"), (
+            "payload 重放法须随入口一并删除"
+        )
+        assert not hasattr(game.db, "retire_chat_turn_for_pending_action_retry")
+        _assert_no_payload_replay_endpoint(client)
+
+        # 重开页面读回：真实 reload HTTP 与 stream done 结构一致。
+        history_resp = client.get(f"/api/ministers/{name}/chat")
+        assert history_resp.status_code == 200, history_resp.text
+        reload_payload = history_resp.json()
+        minister_msgs = [
+            h for h in (reload_payload.get("history") or [])
+            if h.get("role") == "minister"
+        ]
+        assert minister_msgs, "重开后须读回大臣回禀"
+        assert any(
+            recovery["report"] in str(h.get("content") or "") for h in minister_msgs
+        ), "读回的大臣回话须与 stream done 的 report 同一份"
+        assert reload_payload.get("pending_action_failures") == []
+        pending_resp = client.get("/api/pending_actions")
+        assert pending_resp.status_code == 200, pending_resp.text
+        assert (pending_resp.json() or {}).get("actions") == []
+        orders_resp = client.get("/api/secret_orders")
+        assert orders_resp.status_code == 200, orders_resp.text
+        assert (orders_resp.json() or {}).get("orders") == []
+        assert game.db.list_secret_orders() == []
+        assert game.db.list_pending_actions(game.state.turn) == []
+
+        # 终失败诊断留痕（0005）：坏产物原样在库，不因删重放而消失。
+        items = _secret_landing_rejection_items(game.db)
+        assert items, "落不了库的事实须留痕"
+        assert any(it.get("extract_raw") == holder["raw"] for it in items)
+
+        # 原地恢复入口可执行：同一夜继续召对即再抽取 → 真实候选，不重放旧 payload。
+        holder["raw"] = _secret_landing_good_raw(name, "暗查关宁诸将虚冒兵额，三月内回奏。")
+        done2 = stream("标题暗查关宁，三月回奏，差务核发辽饷。")
+        assert int(done2.get("pending_action_id") or 0) > 0, done2
+        assert not done2.get("secret_order_landing_recovery")
+        wait_pending_writes(game)
+        assert _secret_landing_rejection_items(game.db), "恢复成功后失败留痕仍在"
+    finally:
+        wait_pending_writes(game)
+        if game.session:
+            game.session.close()
+
+
+def test_http_chat_stream_secret_landing_undo_round_leaves_nothing_to_resurrect(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
+    """#1765 ②验收4：撤回本轮后不复活——无密令、无候选、无重放入口（0038）。"""
+    from fastapi.testclient import TestClient
+
+    import web_app
+
+    _spy_secret_landing_recovery_compose(monkeypatch)
+    holder = {"raw": ""}
+    game, name, stream, wait_pending_writes = _web_secret_landing_client(
+        tmp_path, monkeypatch, _secret_landing_backend(lambda: holder["raw"]),
+    )
+    holder["raw"] = _secret_landing_bad_raw()
+    client = TestClient(web_app.app)
+    try:
+        done = stream("你替朕下一道密令，暗查关宁诸将虚冒兵额。")
+        assert (done.get("secret_order_landing_recovery") or {}).get("report")
+        assert int(done.get("pending_action_id") or 0) == 0
+        wait_pending_writes(game)
+
+        report = (done.get("secret_order_landing_recovery") or {})["report"]
+        before = client.get(f"/api/ministers/{name}/chat").json()
+        assert any(
+            report in str(h.get("content") or "")
+            for h in (before.get("history") or [])
+        ), "撤回前这一轮回禀须真在记录里（否则下面的断言是空断言）"
+
+        undo = client.post(f"/api/ministers/{name}/chat/undo")
+        assert undo.status_code == 200, undo.text
+        wait_pending_writes(game)
+
+        after = client.get(f"/api/ministers/{name}/chat").json()
+        assert not any(
+            report in str(h.get("content") or "")
+            for h in (after.get("history") or [])
+        ), "撤回本轮后该轮回禀不再读回"
+        assert game.db.list_secret_orders() == []
+        assert [
+            row for row in game.db.list_pending_actions(game.state.turn)
+            if row.get("kind") == "secret_order"
+        ] == []
+        # 撤回后没有任何「重放旧 payload」的活路可用来复活这道密令。
+        _assert_no_payload_replay_endpoint(client)
+        assert (client.get("/api/secret_orders").json() or {}).get("orders") == []
+        # 失败事实仍留痕（0005 与 0038 不冲突：撤的是效果，不是诊断账）。
+        assert _secret_landing_rejection_items(game.db)
     finally:
         wait_pending_writes(game)
         if game.session:

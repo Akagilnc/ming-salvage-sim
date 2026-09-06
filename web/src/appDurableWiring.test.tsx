@@ -1170,7 +1170,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       kind: "secret_order",
       action: "落库",
       message: "密令未能正式落库",
-      retryable: true,
       // 无 minister_name → selectedMinister 空 → activeMinister null → 走 recovery 分支
     };
     try {
@@ -2686,7 +2685,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
         return jsonResp({
           pending_action_failures: [{
             id: 42, kind: "secret_order", action: "落库",
-            message: "密令未能正式落库", retryable: true,
+            message: "密令未能正式落库",
           }],
         });
       }
