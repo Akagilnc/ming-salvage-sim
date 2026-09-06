@@ -382,7 +382,7 @@ export function useChatActions({
       const data = await api<{ pending_action_failures?: PendingActionFailure[] }>("/api/pending_actions/failures");
       const failures = data.pending_action_failures || [];
       if (!(await surfacePendingActionFailures(failures))) {
-        setError("暂无可处理的密令失败。");
+        setError("暂无未落库的密令。");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

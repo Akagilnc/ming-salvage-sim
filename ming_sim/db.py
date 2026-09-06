@@ -21619,7 +21619,7 @@ class GameDB:
     def _secret_origin_message_protection(self) -> Dict[int, bool]:
         """Canonical release-ban map for oral-decree chat-turn messages.
 
-        Pending and retryable-failed secret actions retain the stage-time pin
+        Pending and failed secret actions retain the stage-time pin
         until they are committed or explicitly dropped.  The brief takes over
         that pin once classification succeeds.  A
         completed ``chat_turns`` row is the structural provenance for the full
@@ -21627,7 +21627,7 @@ class GameDB:
         bloodline.  Release must never project either side into shared tracks.
 
         ``True`` means a durable brief owns the bloodline; ``False`` means a
-        pending/retry pin still owns it.  This distinction is load-bearing for
+        pending/failed stage pin still owns it.  This distinction is load-bearing for
         replies bound to a chat turn after classification: release is the first
         seam that can see and park those durable descendants as ``withheld``.
         """

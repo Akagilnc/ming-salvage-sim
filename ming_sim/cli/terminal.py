@@ -11,7 +11,6 @@ import re
 import threading
 from typing import List, Optional
 
-from ming_sim.applier import atomic
 from ming_sim.constants import (
     COURT_BREAK_COMMANDS,
     EXIT_COMMANDS,
