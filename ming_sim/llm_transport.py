@@ -35,12 +35,11 @@ from ming_sim.models import (
 
 R = TypeVar("R")
 
-# 提供方 typed status 经 model 调用捕获，不从 RunErrorEvent.content 散文抠（ADR 0142）。
+# 提供方 HTTP typed status 经流式 model 调用捕获，不从 RunErrorEvent.content 散文抠
+# （ADR 0142）。只认 openai.APIStatusError 的 status_code；SDK 包装层的默认 status
+# （agno ModelProviderError=502 / AgnoError=500）不是提供方 HTTP 事实。
 _typed_provider_status: ContextVar[Optional[int]] = ContextVar(
     "ming_sim_transport_typed_status", default=None,
-)
-_CAPTURE_STATUS_METHODS = (
-    "invoke", "invoke_stream", "response", "response_stream",
 )
 
 
@@ -145,9 +144,20 @@ def _coerce_status(status: object) -> Optional[int]:
 
 
 def _remember_typed_status(error: BaseException) -> None:
-    status = _coerce_status(getattr(error, "status_code", None))
-    if status is not None:
-        _typed_provider_status.set(status)
+    """沿 __cause__ 链找提供方 HTTP 状态（openai.APIStatusError），含 error 自身。
+
+    只记忆真实 HTTP 响应状态：包装层默认 status（ModelProviderError 502 等）不认，
+    否则无 HTTP 状态的失败会被回退洗成可重试 5xx（#1780）。不走 __context__：
+    只有 `raise ... from provider_error` 的显式因果才是提供方状态的凭据。
+    """
+    cause: Optional[BaseException] = error
+    while cause is not None:
+        if isinstance(cause, APIStatusError):
+            status = _coerce_status(getattr(cause, "status_code", None))
+            if status is not None:
+                _typed_provider_status.set(status)
+            return
+        cause = cause.__cause__
 
 
 def _capture_status_wrapper(method: Callable) -> Callable:
@@ -407,9 +417,10 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
 
     - timeout → attempt_timeout_seconds：SDK/httpx read 阻塞唯一接缝
     - max_retries → 0：attempt 计数归本模块，禁 SDK 双重点数
-    - 提供方异常上的 status_code 写入本 attempt 的 ContextVar，供 RunErrorEvent 映射
-      （不解析 content 散文）
-    退出后恢复原值并丢弃缓存 client，避免污染未迁移的同 model 非流路径。
+    - 只包 invoke_stream（召对流唯一消费的 model 调用）：提供方 HTTP typed status
+      写入本 attempt 的 ContextVar，供 RunErrorEvent 映射（不解析 content 散文）
+    退出后恢复原值、清空 typed status 并丢弃缓存 client，
+    避免污染未迁移的同 model 非流路径。
     """
     if model is None:
         yield
@@ -418,7 +429,7 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
     prev_retries = getattr(model, "max_retries", None)
     had_client = hasattr(model, "client")
     had_async = hasattr(model, "async_client")
-    prev_methods: dict[str, Any] = {}
+    prev_invoke_stream: Optional[Callable] = None
     try:
         if hasattr(model, "timeout"):
             model.timeout = policy.attempt_timeout_seconds
@@ -429,15 +440,14 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
             model.client = None
         if had_async:
             model.async_client = None
-        for name in _CAPTURE_STATUS_METHODS:
-            method = getattr(model, name, None)
-            if callable(method):
-                prev_methods[name] = method
-                setattr(model, name, _capture_status_wrapper(method))
+        invoke_stream = getattr(model, "invoke_stream", None)
+        if callable(invoke_stream):
+            prev_invoke_stream = invoke_stream
+            model.invoke_stream = _capture_status_wrapper(invoke_stream)
         yield
     finally:
-        for name, method in prev_methods.items():
-            setattr(model, name, method)
+        if prev_invoke_stream is not None:
+            model.invoke_stream = prev_invoke_stream
         if hasattr(model, "timeout"):
             model.timeout = prev_timeout
         if hasattr(model, "max_retries"):
@@ -447,6 +457,8 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
             model.client = None
         if had_async:
             model.async_client = None
+        # 绑定退出即弃本次捕获，禁跨接缝残留（#1780）
+        _typed_provider_status.set(None)
 
 
 def run_with_transport(
