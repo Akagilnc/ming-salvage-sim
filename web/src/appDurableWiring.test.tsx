@@ -2471,7 +2471,14 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
     });
-    expect(host.querySelector('[data-directive-phase="inflight"]')?.textContent || "").toContain("解太仓备用");
+    const inflightCard = host.querySelector('[data-directive-phase="inflight"]');
+    expect(inflightCard?.textContent || "").toContain("解太仓备用");
+    // 忙碌可感知：卡根 aria-busy，不靠隐藏图标/色/data-*  alone。
+    expect(inflightCard?.getAttribute("aria-busy")).toBe("true");
+    expect(inflightCard?.getAttribute("aria-invalid")).not.toBe("true");
+    const inflightBodyId = inflightCard?.getAttribute("aria-describedby") || "";
+    expect(inflightBodyId.length).toBeGreaterThan(0);
+    expect(host.querySelector(`#${inflightBodyId.split(" ")[0]}`)?.textContent || "").toContain("解太仓备用");
     // 请求按钮禁点；compose textarea 不冻结（玩家可另写，失败回填不覆写）。
     expect(host.querySelector<HTMLButtonElement>(".desk-add-btn")?.disabled).toBe(true);
     expect(host.querySelector<HTMLTextAreaElement>(".desk-compose textarea")?.disabled).toBe(false);
@@ -2494,6 +2501,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     const failed = host.querySelector('[data-directive-phase="failed"]');
     expect(failed?.querySelector('[data-role="local-error"]')?.textContent).toBe("structured-fail-token");
+    // 失败可感知：aria-invalid + 关联原始错误；不锁状态措辞。
+    expect(failed?.getAttribute("aria-busy")).not.toBe("true");
+    expect(failed?.getAttribute("aria-invalid")).toBe("true");
+    const failErr = failed?.querySelector('[data-role="local-error"][role="alert"]');
+    expect(failErr?.getAttribute("id")).toBeTruthy();
+    expect(failed?.getAttribute("aria-describedby") || "").toContain(failErr!.getAttribute("id")!);
     const taAfterFail = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
     expect(taAfterFail?.value).toBe("等待期间另拟");
     expect(host.querySelector<HTMLButtonElement>(".desk-add-btn")?.disabled).toBe(false);
@@ -2523,6 +2536,55 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     expect(host.querySelector('[data-directive-phase="inflight"]')).toBeNull();
     expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
+
+    // 编辑已有草案后提交另一道：取消修改为纯本地，不吃 requestLocked；在飞 create 继续且不新增请求。
+    const draftBeforeEdit = host.querySelector('[data-directive-phase="draft"][data-directive-id="9"]');
+    expect(draftBeforeEdit).not.toBeNull();
+    const startEditBtn = Array.from(draftBeforeEdit!.querySelectorAll("button")).find((b) => (b.textContent || "").includes("改"));
+    expect(startEditBtn).toBeTruthy();
+    await click(startEditBtn as HTMLButtonElement);
+    expect(host.querySelector(".directive-edit")).not.toBeNull();
+    let releaseOtherCreate!: (value: Response) => void;
+    const otherCreateGate = new Promise<Response>((resolve) => { releaseOtherCreate = resolve; });
+    const postsBeforeOther = createPosts;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
+      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") {
+        createPosts += 1;
+        return otherCreateGate;
+      }
+      return jsonResp({});
+    }));
+    await fillCompose("并行另一道");
+    await click(findButton(host, "新增草案"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
+    });
+    expect(createPosts).toBe(postsBeforeOther + 1);
+    const cancelEditBtn = host.querySelector<HTMLButtonElement>('button[aria-label="取消修改"]');
+    expect(cancelEditBtn).not.toBeNull();
+    expect(cancelEditBtn!.disabled).toBe(false);
+    await click(cancelEditBtn!);
+    expect(host.querySelector(".directive-edit")).toBeNull();
+    expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull();
+    expect(createPosts).toBe(postsBeforeOther + 1);
+    await act(async () => {
+      releaseOtherCreate({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: async () => ({ detail: { message: "other-create-fail" } }),
+      } as unknown as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-local-key][data-directive-phase="failed"]')).not.toBeNull());
+    });
 
     // save：PATCH 在飞绑所属草案卡；拒绝 → 卡 failed + 恢复编辑内容
     let releaseSave!: (value: Response) => void;
@@ -2560,6 +2622,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
         const card = host.querySelector('[data-directive-id="9"]');
         expect(card?.getAttribute("data-directive-phase")).toBe("inflight");
         expect(card?.getAttribute("data-request-op")).toBe("save");
+        expect(card?.getAttribute("aria-busy")).toBe("true");
       });
     });
     expect(savePatches).toBe(1);
@@ -2577,6 +2640,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => {
         const card = host.querySelector('[data-directive-id="9"]');
         expect(card?.getAttribute("data-directive-phase")).toBe("failed");
+        expect(card?.getAttribute("aria-invalid")).toBe("true");
         expect(card?.querySelector('[data-role="local-error"]')?.textContent).toBe("save-fail-token");
       });
     });
@@ -2624,6 +2688,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     // 打开时即有失败密令 → 处理入口可见
     expect(Array.from(host.querySelectorAll("button")).some((b) => (b.textContent || "").includes("处理"))).toBe(true);
 
+    // failed-only 退朝确认打开后提交草案：页脚取消为纯本地，不吃 requestLocked。
+    const footerOpen = host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footerOpen).not.toBeNull();
+    await click(footerOpen!);
+    expect(host.querySelector('[aria-label="退朝确认"]')).not.toBeNull();
+
     const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
     expect(ta).not.toBeNull();
     await act(async () => {
@@ -2635,6 +2705,23 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
     });
+    expect(host.querySelector('[data-directive-phase="inflight"]')?.getAttribute("aria-busy")).toBe("true");
+    const confirmWhileInflight = host.querySelector('[aria-label="退朝确认"]');
+    expect(confirmWhileInflight).not.toBeNull();
+    const footerCancel = Array.from(confirmWhileInflight!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("取消"),
+    ) as HTMLButtonElement | undefined;
+    expect(footerCancel).toBeTruthy();
+    expect(footerCancel!.disabled).toBe(false);
+    // 真正发请求的确认钮仍应锁定；取消只清确认态。
+    const advanceBtn = Array.from(confirmWhileInflight!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("退朝结束本月"),
+    ) as HTMLButtonElement | undefined;
+    expect(advanceBtn?.disabled).toBe(true);
+    await click(footerCancel!);
+    expect(host.querySelector('[aria-label="退朝确认"]')).toBeNull();
+    expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull();
+
     await act(async () => {
       releaseCreate({
         ok: false,
@@ -2648,6 +2735,9 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="failed"]')).not.toBeNull());
     });
+    const localFailed = host.querySelector('[data-directive-phase="failed"]');
+    expect(localFailed?.getAttribute("aria-invalid")).toBe("true");
+    expect(localFailed?.querySelector('[data-role="local-error"][role="alert"]')?.textContent).toBe("local-fail-blocks-not");
     // 本地失败卡在桌，deskCount>0，但恢复入口仍以失败谓词可达
     const processBtn = Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes("处理"));
     expect(processBtn).toBeTruthy();
@@ -2914,7 +3004,14 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(card?.getAttribute("data-directive-id")).toBe("42");
     expect(card?.getAttribute("data-source")).toBe("大臣拟旨");
     expect(card?.getAttribute("data-actor")).toBe("毕自严");
+    // 成案只读：无改删控件；非 busy/invalid；正文可被 aria-describedby 关联——不靠色/空 chip/data-* alone。
     expect(card?.querySelector(".directive-tools")).toBeNull();
+    expect(card?.getAttribute("aria-busy")).not.toBe("true");
+    expect(card?.getAttribute("aria-invalid")).not.toBe("true");
+    const casedDesc = card?.getAttribute("aria-describedby") || "";
+    expect(casedDesc.length).toBeGreaterThan(0);
+    expect(host.querySelector(`#${casedDesc.split(" ")[0]}`)?.textContent || "").toContain("着户部核边饷");
+    expect(card?.querySelector('[data-role="phase-chip"]')?.getAttribute("aria-hidden")).toBe("true");
     const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
     expect(footer?.disabled).toBe(false);
   });
