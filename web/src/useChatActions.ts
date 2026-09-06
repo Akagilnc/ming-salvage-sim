@@ -212,7 +212,8 @@ export function useChatActions({
           pending_count: data.pending_count ?? current.pending_count,
           pending_directive_count: data.pending_directive_count ?? current.pending_directive_count,
         } : current));
-        // 重取型刷新（state + 密令列表）经唯一协调器：撤回/相邻轮等任一新刷新都会作废本次旧响应。
+        // done 即重取：回话可见后的即时持久后果；成案等尾随落账以 onEnd 再读为准（#1764）。
+        // 经唯一协调器 latest-wins：end/撤回等新刷新会作废本次早到响应。
         void refreshDurableProjection({ secretOrders: true });
         // 面板态：仅当前大臣面板未切走才落。
         if (selectedMinisterRef.current !== initiatingPanelName) return;
@@ -233,6 +234,11 @@ export function useChatActions({
         if (data.court_action === "dismiss") {
           clearPendingText();
         }
+      },
+      // #1764：end = 抽取成案/收夜等尾随已 join 的提交完成缝；再读权威 durable（含 cased_directives）。
+      // 不延迟 done；不新建轮询/总线。观察者离面无 end 时，重入拟诏经 openEdict→loadState。
+      onEnd: () => {
+        void refreshDurableProjection({ secretOrders: true });
       },
       // 观察者离开实时流：召对在后台续跑，重开经历史重入。
       onLeave: () => {

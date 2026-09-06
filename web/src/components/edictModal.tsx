@@ -95,6 +95,7 @@ export function EdictModal({
       .filter((item) => item.directiveId != null)
       .map((item) => [item.directiveId as number, item]),
   );
+  // deskCount 仅呈现条数（含本地 create 卡）；动作/恢复门控不得依赖它（#1764）。
   const deskCount = draftDirectives.length + casedDirectives.length + createLocals.length;
   const hasDrafts = draftDirectives.length > 0;
   const hasCased = casedDirectives.length > 0;
@@ -107,6 +108,9 @@ export function EdictModal({
   const hasSettleWork =
     hasDrafts || hasCased || hasPendingConversationalDraft || hasNonEdictPendingActions || hasPendingSecretOrders;
   const failedOnly = !hasSettleWork && hasFailedSecretOrders;
+  // 恢复入口：持久桌空 + 失败密令。本地失败 create 卡不挡（非 settle 工作谓词）。
+  const showFailureRecoveryEntry =
+    !hasDrafts && !hasCased && !hasPendingConversationalDraft && hasFailedSecretOrders;
   // 请求按钮禁重复点击：全局 busy 或任一卡在飞。
   const requestLocked =
     !!busy || localDirectives.some((item) => item.phase === "inflight");
@@ -250,7 +254,7 @@ export function EdictModal({
               </div>
             ))}
 
-            {!deskCount && !hasPendingConversationalDraft && hasFailedSecretOrders && (
+            {showFailureRecoveryEntry && (
               <div className="empty-note failed-secret-note">
                 <button type="button" onClick={onOpenFailureRecovery} disabled={requestLocked}>处理</button>
               </div>
