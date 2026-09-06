@@ -2101,10 +2101,10 @@ def test_http_chat_stream_secret_landing_a_path_abandon_no_default(
 def test_http_retry_landable_failed_pending_does_not_commit_secret_order(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """#1765 ②验收4：旧重放在 failed+可落库 payload 上会写成密令；现实 Web POST retry 不落库。
+    """#1765 ②验收4：同形 payload 经活提交路真落得成密令；Web POST retry 落不成、行仍 failed。
 
-    状态=已暂存 failed 且 payload 可落库（装回 retry_failed_pending_action 会 committed+secret_order）。
-    入口=POST /api/pending_actions/{id}/retry。不锁状态码、不扫路由表。
+    前提先用活的 commit_pending_actions 钉死（旧重放正是在这种 payload 上会写成密令），
+    否则「没落库」只是空断言。入口=POST /api/pending_actions/{id}/retry；不锁状态码、不扫路由表。
     """
     from fastapi.testclient import TestClient
 
@@ -2115,12 +2115,13 @@ def test_http_retry_landable_failed_pending_does_not_commit_secret_order(
         tmp_path, monkeypatch, _secret_landing_backend(lambda: ""),
     )
     client = TestClient(web_app.app)
-    try:
-        pending_id = game.db.stage_pending_action(
+
+    def _stage(title: str) -> int:
+        return game.db.stage_pending_action(
             game.state.turn, kind="secret_order", action="新建",
             minister_name=name, target_id=None,
             payload={
-                "title": "暗查辽饷",
+                "title": title,
                 "content": "密查辽饷去向",
                 "assignee": name,
                 "tags": ["辽饷"],
@@ -2128,24 +2129,40 @@ def test_http_retry_landable_failed_pending_does_not_commit_secret_order(
                 "covert_task": LIAO_PAY_COVERT_TASK,
             },
         )
+
+    def _titles() -> list:
+        return [str(order.get("title") or "") for order in game.db.list_secret_orders()]
+
+    try:
+        # 前提：同形 payload 走活的提交路真能落成密令（旧重放即靠这条落库）
+        landable_id = _stage("暗查辽饷")
+        game.db.commit_pending_actions(game.state, action_ids=[landable_id])
+        wait_pending_writes(game)
+        assert "暗查辽饷" in _titles(), (
+            "前提不成立：该 payload 经活提交路都落不成密令，下面的断言是空断言"
+        )
+
+        # 同形 payload 的 failed 行：只有重放才可能把它落成密令
+        failed_id = _stage("暗查蓟镇")
         game.db.conn.execute(
-            "UPDATE pending_actions SET status='failed' WHERE id=?",
-            (pending_id,),
+            "UPDATE pending_actions SET status=\'failed\' WHERE id=?",
+            (failed_id,),
         )
         game.db.conn.commit()
-        assert game.db.list_secret_orders() == []
+        assert "暗查蓟镇" not in _titles()
 
-        resp = client.post(f"/api/pending_actions/{pending_id}/retry")
+        resp = client.post(f"/api/pending_actions/{failed_id}/retry")
         wait_pending_writes(game)
 
-        assert game.db.list_secret_orders() == []
-        ctype = (resp.headers.get("content-type") or "").split(";")[0].strip()
-        if ctype == "application/json":
+        assert "暗查蓟镇" not in _titles(), "Web POST retry 不得把 failed 暂存落成密令"
+        try:
             body = resp.json()
-            retry = body.get("retry") if isinstance(body, dict) else None
-            assert not (isinstance(retry, dict) and retry.get("committed"))
+        except ValueError:
+            body = None
+        retry = body.get("retry") if isinstance(body, dict) else None
+        assert not (isinstance(retry, dict) and retry.get("committed")), resp.text
         failed = game.db.list_pending_actions(game.state.turn, status="failed")
-        assert any(int(row["id"]) == int(pending_id) for row in failed)
+        assert any(int(row["id"]) == int(failed_id) for row in failed)
     finally:
         wait_pending_writes(game)
         if game.session:
