@@ -963,19 +963,36 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
         })
 
 
-def _run_api_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
-    """Run a small extraction prompt through the configured API model."""
+def _run_api_for_config(
+    prompt: str,
+    llm_config: Any = None,
+    tag: str = "",
+    *,
+    force_json_output: bool = True,
+    temperature: float = 0,
+    instructions: Optional[List[str]] = None,
+) -> Tuple[str, int]:
+    """API 通道小调用。JSON 抽取默认 force_json；玩家产文传 force_json_output=False（0033）。"""
     from agno.agent import Agent
     from ming_sim.llm_model import create_chat_model, extract_agent_text
 
+    if instructions is None:
+        instructions = (
+            ["只输出符合要求的 JSON/文本，不要 markdown 代码围栏。"]
+            if force_json_output
+            else []
+        )
+    kind = "extractor" if force_json_output else "prose"
     agent = Agent(
-        name=f"API抽取器-{tag or 'generic'}",
-        id=f"api-extractor-{tag or 'generic'}",
-        session_id=f"api-extractor-{tag or 'generic'}",
+        name=f"API{kind}-{tag or 'generic'}",
+        id=f"api-{kind}-{tag or 'generic'}",
+        session_id=f"api-{kind}-{tag or 'generic'}",
         model=create_chat_model(
-            llm_config, temperature=0, force_json_output=True,
+            llm_config,
+            temperature=temperature,
+            force_json_output=force_json_output,
         ),
-        instructions=["只输出符合要求的 JSON/文本，不要 markdown 代码围栏。"],
+        instructions=list(instructions),
         markdown=False,
     )
     return extract_agent_text(agent.run(prompt)), 1
@@ -1815,7 +1832,14 @@ def _compose_inworld_fact_report(
         raise cli_runner_unavailable(TimeoutError(f"{tag} 无剩余预算"), backend=tag)
 
     def _produce() -> str:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag=tag)
+        # 玩家产文：复用 API/CLI 既有接缝；API 关 force_json（0033），不另开平行函数。
+        if _llm_channel(llm_config) == "api":
+            raw, _ = _run_api_for_config(
+                prompt, llm_config, tag=tag,
+                force_json_output=False, temperature=0.7, instructions=[],
+            )
+        else:
+            raw, _ = _run_backend_for_config(prompt, llm_config, tag=tag)
         text = str(raw or "")
         # strip 只判空；原文不改写（generated prose is never rewritten）。
         if text.strip():
@@ -1842,6 +1866,7 @@ def compose_unknown_participant_inworld_report(
     *,
     voice: str = "tongzheng",
     speaker_name: str = "",
+    speaker_role: str = "",
     llm_config: Any = None,
     timeout_s: float | None = None,
 ) -> str:
@@ -1850,16 +1875,19 @@ def compose_unknown_participant_inworld_report(
     timeout_s：有界等待（capture 剩余预算）；None=不另加罩。
     剩余预算≤0、超时或产文失败 → typed LLMUnavailable（#1299/#1310/#1452
     失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
+    speaker_role：大臣口吻时接 minister_speaker_role 客观档料（0033）；不在此复制档料。
     """
     cleaned = _normalize_unknown_participant_names(names)
-    if voice == "minister" and str(speaker_name or "").strip():
-        role = f"大臣{str(speaker_name).strip()}"
+    if voice == "minister":
+        role = str(speaker_role or "").strip()
+        if not role:
+            name = str(speaker_name or "").strip()
+            role = f"大臣{name}" if name else "大臣"
     else:
         role = "通政使司官"
     fact = unknown_participant_fact(cleaned)
     prompt = (
-        f"你是{role}。根据下列事实，以本职口吻向皇帝回禀（一两句即可）。"
-        f"只输出回禀正文，不要标题、不要系统术语、不要 JSON。\n"
+        f"你是{role}。根据下列事实，以本职口吻向皇帝回禀。\n"
         f"事实：{fact}\n"
     )
     return _compose_inworld_fact_report(
@@ -1874,9 +1902,16 @@ def compose_decree_validation_recovery(
     failed_fields: Optional[List[str]] = None,
     *,
     speaker_name: str = "",
+    speaker_role: str = "",
+    emperor_words: str = "",
+    prior_output: str = "",
     llm_config: Any = None,
 ) -> str:
-    """Turn typed decree rejection facts into a player-facing retry cue via the LLM."""
+    """Turn typed decree rejection facts into a player-facing retry cue via the LLM.
+
+    #1765：接皇帝原话与原产出；零形式约束（禁句数/句式硬限，ADR 0033）。
+    speaker_role：接 minister_speaker_role 客观档料；不在此复制人物/党派材料。
+    """
     field_groups = {
         "银两数目": {"amount"},
         "款项来源": {"account"},
@@ -1891,14 +1926,97 @@ def compose_decree_validation_recovery(
     failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
     features = [label for label, keys in field_groups.items() if failed & keys]
     feature = "、".join(features) if features else "旨意所指对象或必需内容"
+    role = str(speaker_role or "").strip()
+    if not role:
+        name = str(speaker_name or "").strip()
+        role = name or "大臣"
     prompt = (
-        f"你是大臣{str(speaker_name or '').strip()}。一份拟旨在记录前校验未通过，"
+        f"你是{role}。一份拟旨在记录前校验未通过，"
         f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
-        "补充或改说所需信息后重拟。只输出一两句回禀正文，不要标题、JSON、字段名、"
-        "内部编号或系统术语。"
+        "补充或改说所需信息后重拟。"
     )
+    emperor = str(emperor_words or "").strip()
+    if emperor:
+        prompt += f"\n【皇帝原话】{emperor}"
+    prior = str(prior_output or "").strip()
+    if prior:
+        prompt += f"\n【原产出】{prior}"
     return _compose_inworld_fact_report(
         prompt, llm_config=llm_config, tag="decree_validation_recovery",
+    )
+
+
+# #1765：密令落库缺口的 typed 标签（机面事实；不进玩家分类文案）。
+_SECRET_LANDING_GAP_LABELS = {
+    "title": "结构化标题",
+    "content": "密令正文",
+    "covert_task": "差务合同",
+    "extract": "抽取结果",
+}
+
+
+def _secret_landing_gap_feature(landing_gaps: Optional[List[str]] = None) -> str:
+    """Shared gaps → human feature labels for feedback and recovery prompts."""
+    gaps = [str(g).strip() for g in (landing_gaps or []) if str(g).strip()]
+    labels = [
+        _SECRET_LANDING_GAP_LABELS.get(g, g) for g in gaps
+    ] or ["密令结构化要件"]
+    return "、".join(labels)
+
+
+def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
+    """Typed gaps that block a new secret order from landing. Empty ⇒ can land."""
+    so = secret if isinstance(secret, dict) else {}
+    gaps: List[str] = []
+    if bool(so.get("extract_failed")):
+        gaps.append("extract")
+    if not str(so.get("title") or "").strip():
+        gaps.append("title")
+    if not str(so.get("content") or "").strip():
+        gaps.append("content")
+    frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
+    if frozen is None:
+        gaps.append("covert_task")
+    return gaps
+
+
+def secret_order_can_land(secret: Optional[Dict[str, Any]]) -> bool:
+    """True when extract result has title + content + frozen contract and no extract_failed."""
+    return not secret_order_landing_gaps(secret)
+
+
+def compose_secret_order_landing_recovery(
+    landing_gaps: Optional[List[str]] = None,
+    *,
+    speaker_name: str = "",
+    speaker_role: str = "",
+    emperor_words: str = "",
+    prior_output: str = "",
+    contract_error: str = "",
+    llm_config: Any = None,
+) -> str:
+    """#1765：落不了库时大臣以本职揣摩/追问；角色特征化、零形式约束（0033）。"""
+    feature = _secret_landing_gap_feature(landing_gaps)
+    err = str(contract_error or "").strip()
+    err_clause = f"（诊断：{err}）" if err else ""
+    role = str(speaker_role or "").strip()
+    if not role:
+        name = str(speaker_name or "").strip()
+        role = f"大臣{name}" if name else "大臣"
+    prompt = (
+        f"你是{role}。皇帝刚下的密令意图已受理，"
+        f"但还落不了库，缺：{feature}{err_clause}。"
+        f"以本职揣摩圣意：能从皇帝原话与既有交代补全的，陈述你理解的密令要点请皇帝确认；"
+        f"揣摩不出的，以本职口吻当场请示皇帝所需。"
+    )
+    emperor = str(emperor_words or "").strip()
+    if emperor:
+        prompt += f"\n【皇帝原话】{emperor}"
+    prior = str(prior_output or "").strip()
+    if prior:
+        prompt += f"\n【原抽取产出】{prior}"
+    return _compose_inworld_fact_report(
+        prompt, llm_config=llm_config, tag="secret_order_landing_recovery",
     )
 
 
@@ -3829,7 +3947,10 @@ def _extract_secret_order(
     dossier_candidates: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
-    与月末 extractor 同款可靠。失败则退回合理默认。"""
+    与月末 extractor 同款可靠。
+
+    call/transport 失败 → 既有系统失败接缝（cli_runner_unavailable / LLMUnavailable）响亮上抛（0005/0046）。
+    """
     prompt = (
         "你是一个严谨的信息抽取器，不是大臣，不要扮演、不要写圣旨。\n"
         "下面是皇帝下达的一道密令交代，以及承命大臣的回话。请抽出这道密令的结构化字段，"
@@ -3881,22 +4002,25 @@ def _extract_secret_order(
         confirmation_future = confirmation_pool.submit(
             confirm_dossier_links, minister_reply, dossier_candidates, broad_proposals, llm_config)
     extract_failed = False
-    # 真因身份：调用异常 ≠ 解析失败；二者均设 extract_failed，但原因分立，
-    # 不得把解析失败冒标成提供方异常，也不得被下游缺标题洗成契约错。
     extract_failure_reason = ""
     try:
         raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
-    except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
+    except Exception as exc:
+        # 程序/transport 真异常：响亮上抛（0005/0046）；不标 typed 旗、不正常返回。
+        from ming_sim.exceptions import LLMUnavailable
+        from ming_sim.llm_model import cli_runner_unavailable
+
         _log(f"密令提取失败：{exc}")
-        extract_failed = True
-        extract_failure_reason = f"密令抽取调用失败：{exc}"
+        if isinstance(exc, LLMUnavailable):
+            raise
+        raise cli_runner_unavailable(exc, backend="secret_extract") from exc
     finally:
         # The confirmation future remains readable after shutdown.  Owning the
         # executor here guarantees cleanup even if any later normalization raises.
         if confirmation_pool is not None:
             confirmation_pool.shutdown(wait=True)
-    # 解析失败（None）与合法空对象 {} 分流：前者保留 extract_failed 身份，
-    # 后者仍走下游零契约路径（#1504）；不得 or {} 合流洗成成功空抽取。
+    # 解析失败（None）与合法空对象 {}：保留各自身份供 gaps/诊断，但下游统一走
+    # land_or_recover（能落暂存 / 不能落 compose recovery）；不得 or {} 合流洗成成功空抽取。
     parsed = _loads_lenient(raw)
     if parsed is None:
         if not extract_failed:
@@ -3922,7 +4046,7 @@ def _extract_secret_order(
         extractor_content=_content_llm,
     )
     # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。
-    # 缺标题由下游 stage 接缝（pending_action_failures / contract_error）可见可恢复，不在此合成。
+    # 缺标题由下游 land_or_recover 统一 recovery 可见可恢复，不在此合成。
     title = str(obj.get("标题") or "").strip()
     # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
     # extractor 散文反推）。
@@ -4026,16 +4150,13 @@ def _extract_secret_order(
         result["covert_task"] = covert_task
     if contract_error:
         result["contract_error"] = contract_error
-    # extract_failed 标记供下游分流：
-    # - session 显式前缀路（#504/#354）：一律暂存；异常时靠此标记+content 保留旨意+补充。
-    # - materialize 意图路（#1504）：成功抽取但契约为零 → 无此标记，走 pending_action_failures。
-    # 真因经 contract_error 入 pending payload；原始响应经 extract_raw 无损入 payload
-    # （CLI 咽喉 _trace 另有展示截断，不复用到结果字段；API 路无完整 trace 指针）。
+    # 首抽 command provenance：恢复供料复用，不靠散文重猜（#354 / C3）。
+    result["_extract_command"] = player_command
     if extract_failed:
         result["extract_failed"] = True
-        # 无损承接：不截断、不 strip；空串不发键。
-        if raw:
-            result["extract_raw"] = raw if isinstance(raw, str) else str(raw)
+    # 原产物保留：合法 JSON 坏合同与 parse 失败均供后续反馈/诊断（#1765 C3/C4）。
+    if isinstance(raw, str) and raw:
+        result["extract_raw"] = raw
     return result
 
 def resolve_minister_actions(
@@ -4046,7 +4167,7 @@ def resolve_minister_actions(
     """玩家上一句带拟旨/密令前缀时生成候选。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
     - 密令（#397/#1274 K1）：经 _extract_secret_order 结构化装配 content=御旨+extractor
-      「内容」（reply 不入拼装）；helper 不抛错，提取失败时兜底仍保留御旨。
+      「内容」（reply 不入拼装）；产物缺口由上游 land_or_recover 处置；call 失败响亮上抛。
     返回 {decree_text, secret_order}。"""
     out: Dict[str, Any] = {"decree_text": None, "secret_order": None}
     reply = (minister_reply or "").strip()

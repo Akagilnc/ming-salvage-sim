@@ -110,6 +110,16 @@ def _materializable_draft_xiexang(
     return promoted
 
 
+def _flush_rejection_collector(db: Any, collector: Any) -> None:
+    """Commit rejection rows then mirror; shared by decree/secret landing diagnostics."""
+    from ming_sim.applier import atomic, mirror_rejections_after_commit
+    from ming_sim.error_pack import rejections_jsonl_path
+
+    with atomic(db):
+        collector.flush_to_db(db)
+        mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
+
+
 def _record_decree_validation_failures(
     ctx: MaterializeCtx,
     out: Dict[str, Any],
@@ -117,8 +127,7 @@ def _record_decree_validation_failures(
 ) -> None:
     """Persist every engine rejection, then generate a player-lane recovery report."""
     from ming_sim.applier import (
-        Provenance, RejectedItem, RejectionCollector, atomic,
-        mirror_rejections_after_commit,
+        Provenance, RejectedItem, RejectionCollector,
     )
     from ming_sim.cli_backend import compose_decree_validation_recovery
 
@@ -147,26 +156,76 @@ def _record_decree_validation_failures(
             ),
             int(ctx.session.state.turn),
         )
-    # The existing rejection owner controls flush, transaction outcome, and
-    # post-commit mirror.  Recovery generation stays outside its write window.
-    from ming_sim.error_pack import rejections_jsonl_path
-
-    with atomic(ctx.session.db):
-        collector.flush_to_db(ctx.session.db)
-        mirror_rejections_after_commit(
-            ctx.session.db, collector, rejections_jsonl_path,
-        )
-    # Recovery is downstream of the committed engine facts: backend failure
-    # cannot erase the validation causes, and no write transaction spans LLM I/O.
+    # Recovery generation stays outside the rejection write window (0005).
+    _flush_rejection_collector(ctx.session.db, collector)
+    prior_output = json.dumps(
+        [failure["candidate"] for failure in diagnostic_failures],
+        ensure_ascii=False,
+    )
+    # C6：复用 minister_speaker_role 档料，不在 compose 内复制人物/党派材料。
+    role = minister_speaker_role(
+        ctx.character.name, ctx.character, db=ctx.session.db,
+    )
     report = compose_decree_validation_recovery(
         sorted(failed_fields),
         speaker_name=ctx.character.name,
+        speaker_role=role,
+        emperor_words=ctx.player_message,
+        prior_output=prior_output,
         llm_config=ctx.llm_config,
     )
     out["decree_validation_failure"] = {
         "failed_fields": sorted(failed_fields),
         "report": report,
     }
+
+
+def _record_secret_landing_rejection(
+    db: Any,
+    turn: int,
+    secret: Dict[str, Any],
+    *,
+    minister_name: str,
+    player_message: str,
+    chat_turn_id: int = 0,
+) -> None:
+    """Durable diagnostic for a secret that cannot land (0005); before recovery I/O."""
+    from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+
+    so = secret if isinstance(secret, dict) else {}
+    item: Dict[str, Any] = {
+        "kind": "secret_order",
+        "action": "新建",
+        "minister_name": minister_name,
+        "player_message": player_message,
+        "title": str(so.get("title") or ""),
+        "content": str(so.get("content") or ""),
+        "contract_error": str(so.get("contract_error") or ""),
+        "extract_failed": bool(so.get("extract_failed")),
+        "has_covert_task": isinstance(so.get("covert_task"), dict),
+        "assignee": so.get("assignee") or minister_name,
+        "deadline_months": so.get("deadline_months", 0),
+        "tags": list(so.get("tags") or []),
+    }
+    if isinstance(so.get("covert_task"), dict):
+        item["covert_task"] = so["covert_task"]
+    if "extract_raw" in so:
+        item["extract_raw"] = so["extract_raw"]
+    source_turn = int(chat_turn_id or 0)
+    if source_turn > 0:
+        item["source_chat_turn_id"] = source_turn
+    collector = RejectionCollector()
+    collector.record(
+        "audience_secret_order",
+        RejectedItem(
+            item=item,
+            reason=str(so.get("contract_error") or "密令落不了库"),
+            category="secret_landing",
+            source=Provenance.secret_order,
+        ),
+        int(turn),
+    )
+    _flush_rejection_collector(db, collector)
 
 
 def _rejection_item_for_exc(
@@ -281,10 +340,15 @@ def _draft_heal_or_escalate(
     try:
         return extract_draft_intent_with_roster_heal(**kwargs)
     except UnknownParticipantEscalate as exc:
+        # C6：minister 回禀复用 minister_speaker_role 档料，不只装「大臣+姓名」。
+        role = minister_speaker_role(
+            ctx.character.name, ctx.character, db=ctx.session.db,
+        )
         report = compose_unknown_participant_inworld_report(
             exc.names,
             voice="minister",
             speaker_name=ctx.character.name,
+            speaker_role=role,
             llm_config=ctx.llm_config,
         )
         # batch_state is the sole store; handlers project into out when consuming.
@@ -383,6 +447,238 @@ def _secret_extract_admitted(ctx: MaterializeCtx) -> bool:
         or ctx.out.get("secret_order_id")
         or ctx.explicit_prefixed
     )
+
+
+def _secret_order_pending_payload(
+    secret: Dict[str, Any], minister_name: str,
+) -> Dict[str, Any]:
+    """Build can-land pending payload. Typed fields only; no prose title (0142)."""
+    title = str(secret.get("title") or "").strip()
+    content_text = str(secret.get("content") or "").strip()
+    frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
+    payload: Dict[str, Any] = {
+        "title": title,
+        "content": content_text,
+        "assignee": secret.get("assignee") or minister_name,
+        "tags": secret.get("tags") or [],
+        "deadline_months": secret.get("deadline_months", 0),
+        "excluded_names": secret.get("excluded_names") or [],
+        "excluded_offices": secret.get("excluded_offices") or [],
+        "dossier_links": secret.get("dossier_links") or [],
+    }
+    if frozen is not None:
+        payload["covert_task"] = frozen
+    return payload
+
+
+def _prior_output_for_secret_feedback(secret: Dict[str, Any]) -> str:
+    """Prefer raw extract text; else typed snapshot of original product fields."""
+    raw = secret.get("extract_raw")
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    snapshot = {
+        "title": secret.get("title") or "",
+        "content": secret.get("content") or "",
+        "contract_error": secret.get("contract_error") or "",
+        "extract_failed": bool(secret.get("extract_failed")),
+        "assignee": secret.get("assignee") or "",
+        "deadline_months": secret.get("deadline_months", 0),
+        "tags": list(secret.get("tags") or []),
+        "has_covert_task": isinstance(secret.get("covert_task"), dict),
+    }
+    if isinstance(secret.get("covert_task"), dict):
+        snapshot["covert_task"] = secret["covert_task"]
+    return json.dumps(snapshot, ensure_ascii=False)
+
+
+def _stage_new_secret_order(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    secret: Dict[str, Any],
+    out: Dict[str, Any],
+) -> None:
+    """Single write point for can-land secret_order 新建 pending."""
+    out["pending_action_id"] = db.stage_pending_action(
+        turn, kind="secret_order", action="新建",
+        minister_name=minister_name, target_id=None,
+        payload=_secret_order_pending_payload(secret, minister_name),
+    )
+
+
+def minister_speaker_role(
+    minister_name: str,
+    character: Any = None,
+    db: Any = None,
+) -> str:
+    """ADR 0033 objective characterization for recovery speaker (not name/office alone)."""
+    from ming_sim.context import faction_context_with_db, minister_dossier
+    from ming_sim.models import Character
+
+    ch = character
+    if not isinstance(ch, Character) and db is not None:
+        content = getattr(db, "content", None)
+        roster = getattr(content, "characters", None) if content is not None else None
+        if isinstance(roster, dict):
+            found = roster.get(str(minister_name or "").strip())
+            if isinstance(found, Character):
+                ch = found
+    if isinstance(ch, Character):
+        parts = [
+            f"{ch.name}，{ch.office}",
+            minister_dossier(ch),
+        ]
+        if db is not None:
+            parts.append(faction_context_with_db(ch, db))
+        return "\n".join(p for p in parts if str(p or "").strip())
+    office = str(getattr(ch, "office", "") or "").strip() if ch is not None else ""
+    office_type = (
+        str(getattr(ch, "office_type", "") or "").strip() if ch is not None else ""
+    )
+    bits = [p for p in (str(minister_name or "").strip(), office or office_type) if p]
+    return "，".join(bits) or "大臣"
+
+
+def _compose_secret_landing_recovery_projection(
+    *,
+    db: Any,
+    minister_name: str,
+    secret: Dict[str, Any],
+    player_message: str,
+    llm_config: Any,
+    character: Any = None,
+    chat_turn_id: int = 0,
+) -> Dict[str, Any]:
+    """Build typed recovery projection after durable diagnostic is already recorded.
+
+    Compose/LLM I/O lives here only. Callers preheat outside batch write T
+    (#1765 C1); batch path consumes prepared_recovery only.
+    """
+    from ming_sim.cli_backend import (
+        compose_secret_order_landing_recovery,
+        secret_order_landing_gaps,
+    )
+
+    so = dict(secret or {})
+    # Provenance from first extract: recovery feed reuses full command (#354 / C3).
+    extract_command = str(so.pop("_extract_command", "") or player_message)
+    gaps = secret_order_landing_gaps(so)
+    contract_error = str(so.get("contract_error") or "").strip()
+    role = minister_speaker_role(minister_name, character, db=db)
+    # emperor_words = first-extract command (前文+确认)，不是裸本轮短句。
+    report = compose_secret_order_landing_recovery(
+        gaps,
+        speaker_name=minister_name,
+        speaker_role=role,
+        emperor_words=extract_command,
+        prior_output=_prior_output_for_secret_feedback(so),
+        contract_error=contract_error,
+        llm_config=llm_config,
+    )
+    extract_snapshot: Dict[str, Any] = {
+        "title": str(so.get("title") or ""),
+        "content": str(so.get("content") or ""),
+        "extract_failed": bool(so.get("extract_failed")),
+        "has_covert_task": isinstance(so.get("covert_task"), dict),
+        "contract_error": contract_error,
+        "assignee": so.get("assignee") or minister_name,
+        "deadline_months": so.get("deadline_months", 0),
+        "tags": list(so.get("tags") or []),
+    }
+    if isinstance(so.get("covert_task"), dict):
+        extract_snapshot["covert_task"] = so["covert_task"]
+    if "extract_raw" in so:
+        extract_snapshot["extract_raw"] = so["extract_raw"]
+    source_turn = int(chat_turn_id or 0)
+    if source_turn > 0:
+        extract_snapshot["source_chat_turn_id"] = source_turn
+    return {
+        "landing_gaps": list(gaps),
+        "contract_error": contract_error,
+        "report": report,
+        "extract_snapshot": extract_snapshot,
+    }
+
+
+def _prepare_unlandable_secret_recovery(
+    *,
+    db: Any,
+    turn: int,
+    minister_name: str,
+    secret: Dict[str, Any],
+    player_message: str,
+    llm_config: Any,
+    character: Any = None,
+    chat_turn_id: int = 0,
+) -> Dict[str, Any]:
+    """Durable diagnostic first, then recovery compose. Both outside write T."""
+    so = dict(secret or {})
+    # Diagnostic before recovery I/O — compose/LLM failure must not erase facts.
+    _record_secret_landing_rejection(
+        db, turn, so,
+        minister_name=minister_name,
+        player_message=player_message,
+        chat_turn_id=chat_turn_id,
+    )
+    return _compose_secret_landing_recovery_projection(
+        db=db,
+        minister_name=minister_name,
+        secret=so,
+        player_message=player_message,
+        llm_config=llm_config,
+        character=character,
+        chat_turn_id=chat_turn_id,
+    )
+
+
+def land_or_recover_new_secret_order(
+    *,
+    db: Any,
+    turn: int,
+    minister_name: str,
+    secret: Dict[str, Any],
+    player_message: str,
+    llm_config: Any,
+    out: Dict[str, Any],
+    character: Any = None,
+    chat_turn_id: int = 0,
+    prepared_recovery: Optional[Dict[str, Any]] = None,
+) -> None:
+    """#1765：已识别密令新建的统一落库。
+
+    能落 → 暂存进确认闸。
+    抽取产物/合同缺口 → 失败事实交大臣揣摩/请示（既有 compose 接缝）。
+    批写路径只消费预热已准备的 recovery 投影，禁止事务内产文。
+    程序/transport 真异常不进入本函数：由抽取接缝响亮上抛（0005/0046）。
+    """
+    from ming_sim.cli_backend import secret_order_can_land
+
+    so = dict(secret or {})
+    # Keep command provenance on so for recovery feed; staging ignores unknown keys.
+    if "_extract_command" not in so:
+        so["_extract_command"] = player_message
+
+    if secret_order_can_land(so):
+        _stage_new_secret_order(db, turn, minister_name, so, out)
+        return
+
+    if prepared_recovery is not None:
+        # Batch write path: diagnostic + compose already finished outside T.
+        out["secret_order_landing_recovery"] = dict(prepared_recovery)
+        out["pending_action_id"] = 0
+        return
+
+    out["secret_order_landing_recovery"] = _prepare_unlandable_secret_recovery(
+        db=db,
+        turn=turn,
+        minister_name=minister_name,
+        secret=so,
+        player_message=player_message,
+        llm_config=llm_config,
+        character=character,
+        chat_turn_id=chat_turn_id,
+    )
+    out["pending_action_id"] = 0
 
 
 def _grant_allocation_attemptable(
@@ -573,7 +869,12 @@ def _preheat_batch_secret_extractions(
 
     同批多 mode 分槽（new / actions）一次收齐；写遍只消费对应槽，禁止
     单槽 prefer_new 互斥导致写遍 fallback 重抽。无消费者（准入失败）不预热。
+
+    新建密令若落不了库：在写事务前完成耐久诊断 + 回禀 compose，投影进
+    batch_state；写遍只合并投影，事务内零产文（#1765 C1）。
     """
+    from ming_sim.cli_backend import secret_order_can_land
+
     need_new, need_actions = _secret_mode_needs(candidate_records)
     if not (need_new or need_actions):
         return
@@ -585,6 +886,21 @@ def _preheat_batch_secret_extractions(
     slots: Dict[str, Any] = {}
     if need_new:
         slots["new"] = _secret_extract_bundle(ctx, prefer_new=True)
+        secret = dict((slots["new"] or {}).get("secret") or {})
+        if not secret_order_can_land(secret):
+            # Diagnose + compose outside write T; commit facts before recovery I/O.
+            ctx.batch_state["secret_landing_recovery"] = (
+                _prepare_unlandable_secret_recovery(
+                    db=ctx.session.db,
+                    turn=int(ctx.session.state.turn),
+                    minister_name=ctx.character.name,
+                    secret=secret,
+                    player_message=ctx.player_message,
+                    llm_config=ctx.llm_config,
+                    character=ctx.character,
+                    chat_turn_id=int(ctx.chat_turn_id or 0),
+                )
+            )
     if need_actions:
         slots["actions"] = _secret_extract_bundle(ctx, prefer_new=False)
     # Key presence marks batch write path: handler must not re-extract.
@@ -832,64 +1148,25 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         else:
             bundle = _secret_extract_bundle(ctx, prefer_new=True)
         secret = dict(bundle.get("secret") or {})
-        frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
-        # 本路=classifier 意图 secret/新建（#1504 零契约拒暂存权威位）。
-        # 显式前缀路在 session._stage_secret_order_candidate（#504 必暂存 / #354 异常暂存），不并入本闸。
-        # #1565/0142：题名只认抽取器结构化「标题」，禁散文合成。
-        # 抽取异常 → extract_failed + content 仍暂存；成功抽取但无 title/frozen → pending_action_failures。
-        title = str(secret.get("title") or "").strip()
-        content_text = str(secret.get("content") or "").strip()
-        contract_error = str(secret.get("contract_error") or "").strip()
-        extract_failed = bool(secret.get("extract_failed"))
-        if not title:
-            contract_error = contract_error or "密令缺少结构化标题"
-        if frozen is None:
-            contract_error = contract_error or "密令抽取未能冻结合同"
-        allow_incomplete_stage = extract_failed and bool(content_text)
-        if not content_text or (
-            not allow_incomplete_stage and (not title or frozen is None)
-        ):
-            reason = contract_error or (
-                "密令缺少结构化标题" if not title else "密令抽取未能冻结合同"
-            )
-            failures = list(ctx.out.get("pending_action_failures") or [])
-            failures.append({
-                "kind": "secret_order",
-                "action": "新建",
-                "minister_name": minister_name,
-                "retryable": True,
-                "message": f"密令未能正式落库：{reason}",
-            })
-            ctx.out["pending_action_failures"] = failures
-            ctx.out["pending_action_id"] = 0
-            ctx.conversation_intent_handled = True
-            return
+        # #1765：classifier 与显式前缀共用 land_or_recover（产物缺口→揣摩/追问）。
+        # 批写路径只消费预热 recovery，禁止 atomic 内 compose。
         ctx.conversation_intent_handled = True
-        payload = {
-            "title": title,
-            "content": content_text,
-            "assignee": secret.get("assignee") or minister_name,
-            "tags": secret.get("tags") or [],
-            "deadline_months": secret.get("deadline_months", 0),
-            "excluded_names": secret.get("excluded_names") or [],
-            "excluded_offices": secret.get("excluded_offices") or [],
-            "dossier_links": secret.get("dossier_links") or [],
-        }
-        if frozen is not None:
-            payload["covert_task"] = frozen
-        if contract_error:
-            payload["contract_error"] = contract_error
-        if extract_failed:
-            payload["extract_failed"] = True
-        if "extract_raw" in secret:
-            payload["extract_raw"] = secret["extract_raw"]
-        ctx.out["pending_action_id"] = session.db.stage_pending_action(
-            session.state.turn,
-            kind="secret_order",
-            action="新建",
+        prepared = None
+        if in_batch:
+            raw_prepared = ctx.batch_state.get("secret_landing_recovery")
+            if isinstance(raw_prepared, dict):
+                prepared = raw_prepared
+        land_or_recover_new_secret_order(
+            db=session.db,
+            turn=int(session.state.turn),
             minister_name=minister_name,
-            target_id=None,
-            payload=payload,
+            secret=secret,
+            player_message=ctx.player_message,
+            llm_config=ctx.llm_config,
+            out=ctx.out,
+            character=ctx.character,
+            chat_turn_id=int(ctx.chat_turn_id or 0),
+            prepared_recovery=prepared,
         )
         return
 
