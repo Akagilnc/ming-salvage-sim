@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
+import ming_sim.cli_backend as cb
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
     ActionCandidateShapeError,
@@ -76,6 +77,7 @@ def _stage_referral(
 
 
 def _close_night_dossier(db, state, content, pending_id):
+    """单元接缝：单条 pending → 案卷。验收全链见 520 close_night 入口。"""
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     return next(
         d for d in db.list_decree_dossiers()
@@ -150,32 +152,62 @@ def test_referral_and_assignment_kinds_are_mutually_exclusive():
 # ── 锚例：交部议 ──────────────────────────────────────────────────────
 
 
-def test_jiaobuyi_lands_initiative_only_after_promulgation(game):
+def test_jiaobuyi_lands_initiative_only_after_promulgation(game, monkeypatch):
     """「交部议」：夜内零案卷零 initiative；收夜仅案卷；顺颁后 initiative。
 
     end_turn=turn+deadline_months；participants=机关列表（≥1）；零个人 owner。
+    #1565：缺 title+target_id → validation 恢复；缺 title 时题名取 target_id。
     """
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda _p, _c=None, *, tag="": ("臣请陛下明示下议题名后重拟。", 1),
+    )
     db, state, content = game
     actor = _minister(db)
     before = len(_active_initiatives(db))
     bodies = ["吏部", "户部"]
+    reply = "臣请交吏户二部会商。请陛下定夺准驳。"
 
-    ctx = _stage_referral(
-        db, state.turn,
-        title="清核边饷",
-        target_id="qinghe-bianxiang",
-        responsible_bodies=bodies,
-        deadline_months=6,
-        actor=actor,
-        message="此事交部议，着吏户二部会商清核边饷，限六月回报。",
-        reply="臣请交吏户二部会商。请陛下定夺准驳。",
+    # 缺锚：已识别 referral 不得静默丢单
+    bare = candidates_from_classifier_payload({
+        "kind": "referral",
+        "title": "",
+        "target_id": "",
+        "deadline_months": 6,
+        "responsible_bodies": json.dumps(bodies, ensure_ascii=False),
+    }, soft=False)
+    ctx_bare = _ctx(
+        db, actor, bare, state.turn,
+        message="此事交部议。", reply=reply,
     )
+    run_materialize_pipeline(ctx_bare)
+    assert not ctx_bare.out.get("pending_action_id")
+    failure = ctx_bare.out.get("decree_validation_failure") or {}
+    assert "title" in set(failure.get("failed_fields") or [])
+    assert failure.get("report")
+
+    # 题名锚=target_id（无分类 title）；其后收夜/顺颁沿既有入口
+    anchored = candidates_from_classifier_payload({
+        "kind": "referral",
+        "title": "",
+        "target_id": "清核边饷",
+        "deadline_months": 6,
+        "responsible_bodies": json.dumps(bodies, ensure_ascii=False),
+    }, soft=False)
+    ctx = _ctx(
+        db, actor, anchored, state.turn,
+        message="此事交部议，着吏户二部会商清核边饷，限六月回报。",
+        reply=reply,
+    )
+    run_materialize_pipeline(ctx)
     pending_id = ctx.out.get("pending_action_id")
     assert pending_id
     pending = _pending_payload(db, pending_id)
     assert pending["dossier_action_type"] == "referral"
     assert pending["end_turn"] == state.turn + 6
     assert pending["responsible_bodies"] == bodies
+    assert pending.get("title") == "清核边饷"
+    assert pending.get("text") == reply
     # 下议零个人 owner
     assert not str(pending.get("assignee") or pending.get("assignee_id") or "").strip()
     assert len(_active_initiatives(db)) == before, "物化前不得创建 initiative"
@@ -197,6 +229,11 @@ def test_jiaobuyi_lands_initiative_only_after_promulgation(game):
     assert len(issues) == before + 1
     row = next(r for r in issues if r["origin_ref"] == f"dossier:{dossier['id']}")
     assert row["kind"] == "initiative"
+    assert row["title"] == "清核边饷"
+    d_payload = json.loads(dossier["payload_json"] or "{}")
+    assert row["stage_text"] == d_payload.get("text")
+    assert row["origin_kind"] == "decree"
+    assert int(dossier["pending_action_id"] or 0) == int(pending_id)
     assert int(row["end_turn"]) == state.turn + 6
     participants = json.loads(row["participants"])
     assert participants == bodies

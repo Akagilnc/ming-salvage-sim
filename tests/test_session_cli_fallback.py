@@ -1893,7 +1893,12 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
 
 
 def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game, monkeypatch):
-    """#354: mixed confirmation still stages the edict plus supplement when extract fails."""
+    """#354: mixed confirmation still stages the edict plus supplement when extract fails.
+
+    #1565：缺结构化标题不合成散文题名；content 仍须暂存；commit 标 failed。
+    成案恢复走既有带显式标题的密令入口（670 production chat / retry 复用完整 payload），
+    不另建 stage_pending 平行夹具。本测只证暂存+commit 失败接缝。
+    """
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "魏忠贤"
@@ -1922,6 +1927,8 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     assert "督办陕西赈灾" in payload["content"]
     assert "三月内回奏" in payload["content"]
     assert "covert_task" not in payload
+    # 0142：不合成散文题名；空 title 由 commit 拒收
+    assert not str(payload.get("title") or "").strip()
     db.commit_pending_actions(state)
     assert db.list_secret_orders() == []
     pending = db.conn.execute(

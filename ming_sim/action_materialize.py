@@ -738,8 +738,48 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             )
             return
 
+        # 批候选各自从 baseline 复制完整 out 再写；顺序 update 会用后项 0/空 failures
+        # 抹掉先项成功 ID 与独立失败。与 session.coalesce_pending_action_id 同规：
+        # 非零 ID 不被 0 覆盖；各候选相对 baseline 新追加的 failures 累计。
+        # 键存在性按 baseline/候选键并集：无结果不发键（#651）；显式零/空键保留（#1504）。
+        # 不得以值真假 pop（值假 ≠ 键缺）。
+        from ming_sim.session import coalesce_pending_action_id
+
+        baseline_failure_count = len(baseline_out.get("pending_action_failures") or [])
+        _PENDING_MERGE_KEYS = ("pending_action_id", "pending_action_failures")
         for merged in out_merges:
-            ctx.out.update(merged)
+            has_prior_id = "pending_action_id" in ctx.out
+            has_cand_id = "pending_action_id" in merged
+            prior_id = (
+                int(ctx.out.get("pending_action_id") or 0) if has_prior_id else 0
+            )
+            staged_id = (
+                int(merged.get("pending_action_id") or 0) if has_cand_id else 0
+            )
+            has_prior_failures = "pending_action_failures" in ctx.out
+            has_cand_failures = "pending_action_failures" in merged
+            prior_failures = (
+                list(ctx.out.get("pending_action_failures") or [])
+                if has_prior_failures else []
+            )
+            if has_cand_failures:
+                cand_failures = list(merged.get("pending_action_failures") or [])
+                added_failures = cand_failures[baseline_failure_count:]
+            else:
+                added_failures = []
+            ctx.out.update(
+                {k: v for k, v in merged.items() if k not in _PENDING_MERGE_KEYS}
+            )
+            if has_prior_id or has_cand_id:
+                ctx.out["pending_action_id"] = coalesce_pending_action_id(
+                    prior_id, staged_id,
+                )
+            else:
+                ctx.out.pop("pending_action_id", None)
+            if has_prior_failures or has_cand_failures:
+                ctx.out["pending_action_failures"] = prior_failures + added_failures
+            else:
+                ctx.out.pop("pending_action_failures", None)
         if draft_staged_any:
             ctx.draft_staged = True
 
@@ -793,8 +833,25 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             bundle = _secret_extract_bundle(ctx, prefer_new=True)
         secret = dict(bundle.get("secret") or {})
         frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
+        # 本路=classifier 意图 secret/新建（#1504 零契约拒暂存权威位）。
+        # 显式前缀路在 session._stage_secret_order_candidate（#504 必暂存 / #354 异常暂存），不并入本闸。
+        # #1565/0142：题名只认抽取器结构化「标题」，禁散文合成。
+        # 抽取异常 → extract_failed + content 仍暂存；成功抽取但无 title/frozen → pending_action_failures。
+        title = str(secret.get("title") or "").strip()
+        content_text = str(secret.get("content") or "").strip()
+        contract_error = str(secret.get("contract_error") or "").strip()
+        extract_failed = bool(secret.get("extract_failed"))
+        if not title:
+            contract_error = contract_error or "密令缺少结构化标题"
         if frozen is None:
-            reason = str(secret.get("contract_error") or "密令抽取未能冻结合同").strip()
+            contract_error = contract_error or "密令抽取未能冻结合同"
+        allow_incomplete_stage = extract_failed and bool(content_text)
+        if not content_text or (
+            not allow_incomplete_stage and (not title or frozen is None)
+        ):
+            reason = contract_error or (
+                "密令缺少结构化标题" if not title else "密令抽取未能冻结合同"
+            )
             failures = list(ctx.out.get("pending_action_failures") or [])
             failures.append({
                 "kind": "secret_order",
@@ -808,23 +865,31 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             ctx.conversation_intent_handled = True
             return
         ctx.conversation_intent_handled = True
+        payload = {
+            "title": title,
+            "content": content_text,
+            "assignee": secret.get("assignee") or minister_name,
+            "tags": secret.get("tags") or [],
+            "deadline_months": secret.get("deadline_months", 0),
+            "excluded_names": secret.get("excluded_names") or [],
+            "excluded_offices": secret.get("excluded_offices") or [],
+            "dossier_links": secret.get("dossier_links") or [],
+        }
+        if frozen is not None:
+            payload["covert_task"] = frozen
+        if contract_error:
+            payload["contract_error"] = contract_error
+        if extract_failed:
+            payload["extract_failed"] = True
+        if "extract_raw" in secret:
+            payload["extract_raw"] = secret["extract_raw"]
         ctx.out["pending_action_id"] = session.db.stage_pending_action(
             session.state.turn,
             kind="secret_order",
             action="新建",
             minister_name=minister_name,
             target_id=None,
-            payload={
-                "title": secret["title"],
-                "content": secret["content"],
-                "assignee": secret.get("assignee") or minister_name,
-                "tags": secret.get("tags") or [],
-                "deadline_months": secret.get("deadline_months", 0),
-                "excluded_names": secret.get("excluded_names") or [],
-                "excluded_offices": secret.get("excluded_offices") or [],
-                "dossier_links": secret.get("dossier_links") or [],
-                "covert_task": frozen,
-            },
+            payload=payload,
         )
         return
 
@@ -2474,7 +2539,6 @@ def stage_assignment_candidate(
     text: str,
     title: str = "",
     target_id: str = "",
-    emperor_text: object = None,
     extracted_mode: object = None,
     commitment_kind: object = None,
     stop_condition: object = None,
@@ -2484,6 +2548,7 @@ def stage_assignment_candidate(
     stages: object = None,
     target_candidate: object = None,
     transaction_category: object = "",
+    source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared assignment candidate write (#520 / #502).
@@ -2492,19 +2557,23 @@ def stage_assignment_candidate(
     target_candidate id updates the named pending assignment (cross-round
     reinforce / ADR 0038 before-image).
     owner 单一来源 = 当前召对大臣（minister_name）；不接受分类器改派。
+    #1565/0142：题名=显式 title|结构化 target_id 锚；正文唯一真源=payload.text；
+    禁散文截题、禁空正文借题名伪造成功、禁缺锚静默丢单。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
     body = str(text or "").strip()
     if not body:
-        return 0
-    # 标题须调用方给当轮锚；禁止缺 title 时吃多轮 body 前 40（前轮头）
-    matter_title = str(title or "").strip()
+        raise DecreeMaterializationValidationError(
+            "交办旨意缺少正文", failed_fields=("text",),
+        )
+    # 题名只认结构化锚；不得从正文/皇帝散文截取
+    matter_title = str(title or "").strip() or str(target_id or "").strip()
     if not matter_title:
-        # 最后兜底：当轮皇帝句，仍不用跨轮 body 头
-        matter_title = str(emperor_text or "").strip()[:40]
-    if not matter_title:
-        return 0
+        raise DecreeMaterializationValidationError(
+            "交办旨意缺少结构化题名（title 或 target_id）",
+            failed_fields=("title",),
+        )
     matter_id = str(target_id or "").strip() or matter_title
     owner = str(minister_name or "").strip()
     if not owner:
@@ -2541,6 +2610,7 @@ def stage_assignment_candidate(
 
     mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
+        # text = 旨意正文唯一真源（供 decree_text 与 initiative stage_text）
         "text": body,
         "actor": minister_name,
         "dossier_action_type": "assignment",
@@ -2549,6 +2619,12 @@ def stage_assignment_candidate(
         "title": matter_title,
         "mode": mode,
     }
+    try:
+        origin_cid = int(source_chat_turn_id or 0)
+    except (TypeError, ValueError):
+        origin_cid = 0
+    if origin_cid > 0:
+        staged["source_chat_turn_id"] = origin_cid
     category = str(transaction_category or "").strip()
     if category:
         staged["transaction_category"] = category
@@ -2606,6 +2682,7 @@ def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
     不得仅取 ctx.reply or ctx.player_message；recent_context 与分类器同源。
     当轮句按整行锚接入，禁止 substring 判断把短句吞进前轮长文。
     recent_context 空时仍须同时保留皇帝任务描述与大臣领命回话（首轮交办）。
+    本链是正文真源供料，不是题名解析来源。
     """
     recent = str(ctx.recent_context or "").strip()
     reply = str(ctx.reply or "").strip()
@@ -2625,6 +2702,8 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
 
     #1503：显式拟旨前缀若带真实 assignment 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
     意图粒度由分类/候选归一表达；本 handler 按候选契约单轨记账，不从 title 有无猜独立性。
+    #1565/0142：题名=分类 title|target_id 结构化锚；正文=_assignment_dossier_text 上下文链；
+    禁 player_message 散文截断当 title；缺锚走既有 DecreeMaterializationValidationError 恢复接缝。
     """
     if (
         ctx.intent_kind != "assignment"
@@ -2636,12 +2715,8 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
     intent = ctx.intent or {}
     title = str(intent.get("title") or "").strip()
     target_id = str(intent.get("target_id") or "").strip()
-    # 标题来源：分类 title → 当轮皇帝句；不得在缺 title 时吃跨轮 body 头
-    if not title:
-        title = str(ctx.player_message or "").strip()[:40]
     body = _assignment_dossier_text(ctx)
-    if not title and not target_id and not body:
-        return
+    # #1565：已识别 assignment 不得三空静默早退；缺正文/题名交 stage validation 恢复接缝。
     pending_id = stage_assignment_candidate(
         ctx.session.db,
         ctx.session.state.turn,
@@ -2649,7 +2724,6 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
         text=body,
         title=title,
         target_id=target_id,
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         commitment_kind=intent.get("commitment_kind"),
         stop_condition=intent.get("stop_condition"),
@@ -2659,6 +2733,7 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
         stages=intent.get("stages"),
         target_candidate=intent.get("target_candidate"),
         transaction_category=intent.get("transaction_category"),
+        source_chat_turn_id=ctx.chat_turn_id,
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
@@ -3447,9 +3522,9 @@ def stage_referral_candidate(
     target_id: str = "",
     deadline_months: object = 0,
     responsible_bodies: object = None,
-    emperor_text: object = None,
     extracted_mode: object = None,
     target_candidate: object = None,
+    source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared referral candidate write (#524 / #502).
@@ -3457,17 +3532,22 @@ def stage_referral_candidate(
     下议只承 deadline_months(1–36) 与非空机关/职司 responsible_bodies；
     落 end_turn=turn+N 与 payload.responsible_bodies。禁个人 owner/assignee。
     initiative 按 ADR 0055 判后创建。
+    #1565/0142：题名=显式 title|结构化 target_id 锚；正文唯一真源=payload.text；
+    禁散文截题、禁空正文借题名伪造成功、禁缺锚静默丢单。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
     body = str(text or "").strip()
     if not body:
-        return 0
-    matter_title = str(title or "").strip()
+        raise DecreeMaterializationValidationError(
+            "下议旨意缺少正文", failed_fields=("text",),
+        )
+    matter_title = str(title or "").strip() or str(target_id or "").strip()
     if not matter_title:
-        matter_title = str(emperor_text or "").strip()[:40]
-    if not matter_title:
-        return 0
+        raise DecreeMaterializationValidationError(
+            "下议旨意缺少结构化题名（title 或 target_id）",
+            failed_fields=("title",),
+        )
     matter_id = str(target_id or "").strip() or matter_title
 
     try:
@@ -3531,6 +3611,12 @@ def stage_referral_candidate(
         "responsible_bodies": bodies,
         "mode": mode,
     }
+    try:
+        origin_cid = int(source_chat_turn_id or 0)
+    except (TypeError, ValueError):
+        origin_cid = 0
+    if origin_cid > 0:
+        staged["source_chat_turn_id"] = origin_cid
     # 禁个人 owner：显式不写 assignee/assignee_id
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
@@ -3538,7 +3624,11 @@ def stage_referral_candidate(
 
 
 def _materialize_referral(ctx: MaterializeCtx) -> None:
-    """暂存下议案卷；initiative 按 ADR 0055 判决后落。"""
+    """暂存下议案卷；initiative 按 ADR 0055 判决后落。
+
+    #1565/0142：题名=title|target_id 结构化锚；正文=reply 或 player_message 任务供料；
+    禁 player_message 散文截断当 title；缺锚走既有 validation 恢复接缝。
+    """
     if (
         ctx.intent_kind != "referral"
         or ctx.explicit_prefixed
@@ -3550,13 +3640,8 @@ def _materialize_referral(ctx: MaterializeCtx) -> None:
     intent = ctx.intent or {}
     title = str(intent.get("title") or "").strip()
     target_id = str(intent.get("target_id") or "").strip()
-    if not title:
-        title = str(ctx.player_message or "").strip()[:40]
     body = str(ctx.reply or ctx.player_message or "").strip()
-    if not body and not title and not target_id:
-        return
-    if not body:
-        body = title or target_id
+    # #1565：已识别 referral 不得三空静默早退；缺正文/题名交 stage validation 恢复接缝。
     pending_id = stage_referral_candidate(
         ctx.session.db,
         ctx.session.state.turn,
@@ -3566,9 +3651,9 @@ def _materialize_referral(ctx: MaterializeCtx) -> None:
         target_id=target_id,
         deadline_months=intent.get("deadline_months"),
         responsible_bodies=intent.get("responsible_bodies"),
-        emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         target_candidate=intent.get("target_candidate"),
+        source_chat_turn_id=ctx.chat_turn_id,
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:

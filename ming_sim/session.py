@@ -2355,10 +2355,22 @@ class GameSession:
                 mode=(intent or {}).get("mode"),
             )
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
+            # 显式密令前缀路（#504/#354）：候选必须暂存，不在此以缺 title/frozen 拒单。
+            # #1565/0142：题名只认抽取器结构化「标题」，禁散文截取合成（空 title 原样落库）。
+            # #354：抽取异常仍暂存旨意+补充；缺 title/covert_task 由 commit 标 failed，走 retry。
+            # #1504 零契约拒暂存只在 materialize 意图路（classifier secret/新建），不并入本前缀路。
+            title = str(so.get("title") or "").strip()
+            content_text = str(so.get("content") or "").strip()
+            frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
+            contract_error = str(so.get("contract_error") or "").strip()
+            if not title:
+                contract_error = contract_error or "密令缺少结构化标题"
+            if frozen is None:
+                contract_error = contract_error or "密令抽取未能冻结合同"
             assignee = so.get("assignee") or minister_name
             payload = {
-                "title": so["title"],
-                "content": so["content"],
+                "title": title,
+                "content": content_text,
                 "assignee": assignee,
                 "tags": so.get("tags") or [],
                 "deadline_months": so.get("deadline_months", 0),
@@ -2368,9 +2380,14 @@ class GameSession:
                 # minister's confirmation; carry that immutable set to commit.
                 "dossier_links": so.get("dossier_links") or [],
             }
-            frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
             if frozen is not None:
                 payload["covert_task"] = frozen
+            if contract_error:
+                payload["contract_error"] = contract_error
+            if so.get("extract_failed"):
+                payload["extract_failed"] = True
+            if "extract_raw" in so:
+                payload["extract_raw"] = so["extract_raw"]
             return self.db.stage_pending_action(
                 self.state.turn, kind="secret_order", action="新建",
                 minister_name=minister_name, target_id=None,
