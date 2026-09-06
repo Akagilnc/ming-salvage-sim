@@ -289,10 +289,30 @@ def test_public_sword_grant_uses_尚方剑密授_privilege(game):
 # ── 负例 ──────────────────────────────────────────────────────────────
 
 
-def test_secret_order_does_not_stage_authorization_candidate(game):
-    """密授负例：单说密令授尚方宝剑 → 零本片委任候选。"""
+def test_secret_order_does_not_stage_authorization_candidate(game, monkeypatch):
+    """密授负例：单说密令授尚方宝剑 → 零本片委任候选。
+
+    #1765 C1：缺 CLI 不再吞回；本负例只证不落 authorization，故最小 extract 桩
+    表达密令产物，不依赖本机 agy。
+    """
+    import json
+
+    import ming_sim.cli_backend as cb
+
     db, state, content = game
     holder = _minister(db)
+
+    def _backend(prompt, llm_config=None, tag=""):
+        if tag == "secret_order_landing_recovery":
+            return "任意生成回禀", 1
+        return json.dumps({
+            "标题": "密授尚方", "内容": "朕密令授你尚方宝剑，但不到关键不得善用",
+            "承办人": holder, "期限月数": 0, "标签": [],
+            "差务": "", "价值轴": [], "方向": 1,
+            "交付单位": "", "交付目标": 0,
+        }, ensure_ascii=False), 1
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
     # 密令 kind 不得落 authorization 生产项
     ctx = _stage(
         db, state.turn,
