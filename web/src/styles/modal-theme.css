@@ -47,7 +47,7 @@
   border-radius: 6px;
 }
 
-/* 诏书台：恢复笺纸卡 / 朱批待定框 / 明黄卷轴质感（通配透明的例外） */
+/* 诏书台：恢复笺纸卡质感（通配透明的例外） */
 .modal-bg-edict .directive-item {
   background:
     linear-gradient(90deg, rgba(120, 86, 42, 0.10), transparent 22px),
@@ -56,25 +56,6 @@
 }
 .modal-bg-edict .error-line {
   background: rgba(185, 73, 55, 0.12);
-}
-.modal-bg-edict .directive-item.pending {
-  background:
-    linear-gradient(95deg, rgba(176, 58, 40, 0.12), transparent 55%),
-    rgba(252, 244, 222, 0.86);
-}
-.modal-bg-edict .pending-directives {
-  background:
-    linear-gradient(180deg, rgba(176, 58, 40, 0.10), rgba(176, 58, 40, 0.04));
-}
-.modal-bg-edict .decree-scroll-paper {
-  background:
-    repeating-linear-gradient(90deg, rgba(150, 36, 28, 0.05) 0 1px, transparent 1px 34px),
-    linear-gradient(180deg, #f6e6b0, #f0d894);
-  box-shadow: inset 0 0 40px rgba(150, 90, 20, 0.18);
-}
-.modal-bg-edict .decree-scroll-knob {
-  background: linear-gradient(180deg, #6e4a22, #3f2a12);
-  box-shadow: 0 2px 6px rgba(40, 24, 8, 0.4);
 }
 
 
@@ -237,11 +218,9 @@
   color: #ffe4b0;
 }
 
-/* 改/删/新增/存改/返工：墨字宣纸底 */
+/* 改/删/新增：墨字宣纸底 */
 .modal-bg-edict .directive-tools button,
-.modal-bg-edict .desk-add-btn,
-.modal-bg-edict .seal-btn-ghost,
-.modal-bg-edict .seal-btn-save {
+.modal-bg-edict .desk-add-btn {
   color: #2a1c0e;
   background: rgba(252, 247, 232, 0.92);
   border: 1px solid rgba(120, 86, 42, 0.4);
@@ -249,30 +228,8 @@
 }
 
 .modal-bg-edict .directive-tools button:hover,
-.modal-bg-edict .desk-add-btn:hover,
-.modal-bg-edict .seal-btn-ghost:hover,
-.modal-bg-edict .seal-btn-save:hover {
+.modal-bg-edict .desk-add-btn:hover {
   background: rgba(255, 240, 210, 0.96);
-}
-
-/* 朱批·准：朱砂红实底 */
-.modal-bg-edict .directive-tools .vermilion-yes {
-  background: linear-gradient(180deg, #c0432f, #8a261b);
-  color: #ffe9d8;
-  border-color: rgba(150, 36, 28, 0.6);
-}
-.modal-bg-edict .directive-tools .vermilion-yes:hover {
-  background: linear-gradient(180deg, #d24c36, #9a2c1f);
-}
-
-/* 朱批·驳：朱砂红描边 */
-.modal-bg-edict .directive-tools .vermilion-no {
-  background: rgba(252, 244, 236, 0.9);
-  color: #9a2c1f;
-  border: 1px solid rgba(150, 36, 28, 0.7);
-}
-.modal-bg-edict .directive-tools .vermilion-no:hover {
-  background: rgba(176, 58, 40, 0.14);
 }
 
 /* 拟诏 / 盖玺颁布：玉玺红大钮 */
@@ -290,8 +247,6 @@
 
 .modal-bg-edict .directive-tools button:disabled,
 .modal-bg-edict .desk-add-btn:disabled,
-.modal-bg-edict .seal-btn-ghost:disabled,
-.modal-bg-edict .seal-btn-save:disabled,
 .modal-bg-edict .seal-btn-compose:disabled,
 .modal-bg-edict .seal-btn-issue:disabled {
   opacity: 0.5;
