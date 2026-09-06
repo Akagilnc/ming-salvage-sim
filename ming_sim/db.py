@@ -20047,8 +20047,12 @@ class GameDB:
         #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨产物错记 rejection、保持 draft，不波及他旨。
         #1769：产物错（ValueError，含 PayOrderKeyError）逐项留痕；真代码故障不得洗成
         locality_fanout_failed——回滚后写错误包并 SettlementAbort（0005/0008 D1/D6）。
-        record_rejections=False：仅探测产物错供补交，不落 rejection_reports
-        （拒只在耗尽/终态后落痕，避免补交成功仍残留首轮拒收）。
+        未成案的两条形状同一终态：① 抛 ValueError 的产物/契约错；② 段内 record 后
+        不抛、只返回零案卷的 collector-only 拒收（如 duty_route_unmapped）。二者
+        都保持 draft、都进返回列表供补交、都在终态落痕——漏掉②则该旨既补不了交
+        也永不留痕（r2 CI 红根因）。
+        record_rejections=False：仅探测供补交，不落 rejection_reports（拒只在
+        耗尽/终态后落痕，避免补交成功仍残留首轮拒收）。
         返回 [{directive_id, reason}, ...] 供结算路补交；成功旨不入列表。
         """
         from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
@@ -20071,12 +20075,29 @@ class GameDB:
                         continue
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
+                    recorded_before = len(collector.pending())
                     try:
-                        self._ensure_directive_dossier(
+                        dossier_ids = self._ensure_directive_dossier(
                             state, did, str(row["text"]),
                             self.read_directive_dossier_payload(row), commit=False,
                             rejection_collector=collector,
                         )
+                        if not dossier_ids:
+                            # collector-only 拒收（段内 record 后不抛，如
+                            # duty_route_unmapped）：与产物错同一终态——整旨零行、
+                            # 保持 draft、拒因进补交反馈。丢了它 = 该旨既补不了交
+                            # 也永不留痕（#1769 r2）。
+                            self.conn.execute(f"ROLLBACK TO {sp}")
+                            new_records = collector.pending()[recorded_before:]
+                            reason = "；".join(
+                                str(item.get("reason") or "") for item in new_records
+                            ).strip("；")
+                            if not reason:
+                                reason = "成案被拒，未产出案卷"
+                            rejection_rows.append(
+                                {"directive_id": did, "reason": reason},
+                            )
+                            tlog(f"[ensure_dossiers] 旨#{did} 成案拒收：{reason}")
                     except ValueError as exc:
                         # 产物/契约错：逐项隔离留痕，保持 draft（#1769 补交/耗尽入口）
                         self.conn.execute(f"ROLLBACK TO {sp}")

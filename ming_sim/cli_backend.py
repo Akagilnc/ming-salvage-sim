@@ -1993,8 +1993,8 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
     """
     from ming_sim.pay_order import (
         ARREARS_SUBJECTS,
+        DEFAULT_DUE_PRIORITY,
         DUE_SUBJECTS,
-        format_subject_closed_set,
     )
 
     regions = getattr(content, "regions", None) if content is not None else None
@@ -2019,14 +2019,18 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
         head += "地区只能直接使用下列 canonical id，禁别名/自造：\n" + "、".join(lines) + "\n"
     else:
         head += "\n"
-    due_set = format_subject_closed_set(DUE_SUBJECTS, sep="/")
-    arrears_set = format_subject_closed_set(ARREARS_SUBJECTS, sep="/")
+    due_set = "/".join(DUE_SUBJECTS)
+    arrears_set = "/".join(ARREARS_SUBJECTS)
+    default_due = (
+        "/".join(DEFAULT_DUE_PRIORITY)
+        + "=" + "/".join(str(DEFAULT_DUE_PRIORITY[s]) for s in DEFAULT_DUE_PRIORITY)
+    )
     return (
         head + timing
         + f"due_priority 科目∈{due_set}；"
           f"arrears_priority 欠科目∈{arrears_set}；"
           f"due_haircut_bp 科目∈{due_set}。\n"
-        + "priority 数字越小越先；默认军饷/官俸/宗禄/赈济=10/20/30/40，"
+        + f"priority 数字越小越先；默认{default_due}，"
           "并列按该默认次序稳定排列。相对期限只填 duration_months=N，"
           "不要自行计算 until_turn；该动作 entries 必须非空。\n"
     )
@@ -2693,13 +2697,6 @@ def extract_draft_intent(
     ).strip()
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
         bool(_existing_draft_text) or bool(_candidates))
-    from ming_sim.pay_order import (
-        ARREARS_SUBJECTS,
-        DUE_SUBJECTS,
-        format_subject_closed_set,
-    )
-    _due_subjects = format_subject_closed_set(DUE_SUBJECTS, sep="|")
-    _arrears_subjects = format_subject_closed_set(ARREARS_SUBJECTS, sep="|")
     intent_schema_line = (
         '  "拟旨意图": "无|拟旨",\n'
         '  "动作类型": "policy|approve_reject|assignment|'
@@ -2709,8 +2706,10 @@ def extract_draft_intent(
         'pay_order_override",\n'
         '  "entries": [],              // 仅 pay_order_override：偿还序/折发调整清单，\n'
         '                             // 形如 [{"key":"due_haircut_bp_宗禄","value":5000,"duration_months":3}]；\n'
-        f'                             // key∈due_priority_<科目={_due_subjects}>[@省]|'
-        f'arrears_priority_<欠科目={_arrears_subjects}>[@省]|'
+        # 科目闭集展开只在 _pay_order_grounding_facts（同一 prompt 内）一处供料；
+        # 此处只给键形状，不再展开第二份（全局 14 DRY）。
+        '                             // key∈due_priority_<科目>[@省]|'
+        'arrears_priority_<欠科目>[@省]|'
         'due_haircut_bp_<科目>[@省][#province|#central]；'
         'haircut 值=万分数(0,10000]；非该动作留 []\n'
         + grant_fields_prompt
@@ -3191,14 +3190,20 @@ def resubmit_draft_admission_payload(
         decree_text=text,
     )
     prompt = f"请据此拟旨，并从以下已成旨文抽取结构，不得改写：\n{text}"
-    captured = extract_draft_intent_with_roster_heal(
-        prompt,
-        text,
-        llm_config=llm_config,
-        db=db,
-        content=content,
-        initial_correction=feedback,
-    )
+    try:
+        captured = extract_draft_intent_with_roster_heal(
+            prompt,
+            text,
+            llm_config=llm_config,
+            db=db,
+            content=content,
+            initial_correction=feedback,
+        )
+    except UnknownParticipantEscalate as exc:
+        # 已识别的名册产物错：与 capture_manual_directive_payload 同一归一
+        # ——产物错走本票 B 路预算/留存，不得升成整月 SettlementAbort 连带好旨。
+        # 结算路无召对现场，不另作戏内回禀；只把不在册事实当失败事实回喂下一次重写。
+        raise ValueError(exc.fact) from exc
     return project_draft_extract_to_directive_payload(
         captured,
         decree_text=text,

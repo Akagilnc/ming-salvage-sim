@@ -36,11 +36,6 @@ ARREARS_SUBJECTS = ("军饷欠", "官俸欠", "宗禄欠")
 DEFAULT_DUE_PRIORITY = {"军饷": 10, "官俸": 20, "宗禄": 30, "赈济": 40}
 DEFAULT_ARREARS_PRIORITY = {"军饷欠": 10, "官俸欠": 20, "宗禄欠": 30}
 
-
-def format_subject_closed_set(subjects: Tuple[str, ...], *, sep: str) -> str:
-    """科目闭集渲染唯一出口（#1769）：prompt/schema 两缝共用，禁各自 join。"""
-    return sep.join(subjects)
-
 DUE_PRIORITY_FAMILY = "due_priority_"
 ARREARS_PRIORITY_FAMILY = "arrears_priority_"
 HAIRCUT_FAMILY = "due_haircut_bp_"

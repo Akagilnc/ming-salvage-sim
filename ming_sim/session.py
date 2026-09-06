@@ -3125,7 +3125,8 @@ class GameSession:
 
     def _resubmit_draft_admission_failures(
         self, rejections: List[Dict[str, object]],
-    ) -> None:
+        carry_over: Optional[Dict[int, Dict[str, object]]] = None,
+    ) -> Dict[int, Dict[str, object]]:
         """#1769 结算路 B：产物错 draft 把失败事实与原产物告诉 LLM 重交 payload。
 
         单轮批处理：对当前失败旨各重写一次；外层 resolve_turn 按
@@ -3133,11 +3134,16 @@ class GameSession:
         与组合/名册 heal_retries 独立。产物错 ValueError 视为本轮该旨仍失败；
         其它异常走错误包 + SettlementAbort（0005/0008）。
         独立失败旨并行调 LLM（P5，复用 ThreadPoolExecutor；DB 写仍串行）。
+
+        carry_over（上一轮返回值）：写回被拒时 DB 里仍是旧载荷，光按 DB 重问 =
+        拿旧拒因问第二遍。故把**本次**产物与**本次**写回失败事实带到下一次重写；
+        返回值即下一轮的 carry_over（写回成功的旨不入内，改按 ensure 新拒因走）。
         """
         from ming_sim.cli_backend import resubmit_draft_admission_payload
         from ming_sim.error_pack import settlement_abort_message, write_error_pack
         from ming_sim.exceptions import SettlementAbort
 
+        carried = dict(carry_over or {})
         jobs: List[Dict[str, object]] = []
         for item in rejections or []:
             try:
@@ -3153,15 +3159,21 @@ class GameSession:
                 bad_payload = self.db.read_directive_dossier_payload(row)
             except ValueError:
                 continue
+            reason = str(item.get("reason") or "")
+            prior = carried.get(did)
+            if prior is not None:
+                # 上一轮写回被拒：DB 仍是旧载荷，须以上一轮产物 + 写回拒因回喂。
+                bad_payload = dict(prior.get("bad_payload") or bad_payload)
+                reason = str(prior.get("reason") or reason)
             jobs.append({
                 "directive_id": did,
                 "text": str(row["text"] or ""),
                 "bad_payload": bad_payload,
-                "reason": str(item.get("reason") or ""),
+                "reason": reason,
                 "existing_mode": bad_payload.get("mode"),
             })
         if not jobs:
-            return
+            return {}
 
         llm_config = getattr(self, "llm_config", None)
         content = getattr(self, "content", None)
@@ -3196,6 +3208,7 @@ class GameSession:
             outcomes = [_llm_one(jobs[0])]
 
         # DB 相串行：产物 ValueError 耗尽该旨；其它异常错误包中止整月。
+        next_carry: Dict[int, Dict[str, object]] = {}
         for job, new_payload, exc in outcomes:
             did = int(job["directive_id"])
             if exc is not None:
@@ -3223,10 +3236,16 @@ class GameSession:
                     replace_payload=True,
                 )
             except ValueError as write_exc:
+                # 写回被拒也是产物错：本次产物 + 本次写回拒因带进下一次重写，
+                # 否则下一轮只能拿 DB 里的旧载荷/旧拒因重问同一遍。
                 logger.warning(
-                    "[1769] draft#%s admission resubmit product exhaust: %s",
+                    "[1769] draft#%s admission resubmit write-back rejected: %s",
                     did, write_exc,
                 )
+                next_carry[did] = {
+                    "bad_payload": dict(new_payload),
+                    "reason": str(write_exc),
+                }
             except Exception as write_exc:
                 pack_path = write_error_pack(
                     self.db, self.state, exc=write_exc,
@@ -3238,6 +3257,7 @@ class GameSession:
                     stage="directive_admission_resubmit",
                     error_pack_path=pack_path,
                 ) from write_exc
+        return next_carry
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None,
@@ -3367,10 +3387,13 @@ class GameSession:
         dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
             self.state, record_rejections=False,
         )
+        resubmit_carry: Dict[int, Dict[str, object]] = {}
         for rewrite_i in range(DRAFT_ADMISSION_RESUBMIT_REWRITES):
             if not dossier_rejections:
                 break
-            self._resubmit_draft_admission_failures(dossier_rejections)
+            resubmit_carry = self._resubmit_draft_admission_failures(
+                dossier_rejections, resubmit_carry,
+            )
             is_last = rewrite_i == DRAFT_ADMISSION_RESUBMIT_REWRITES - 1
             dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
                 self.state, record_rejections=is_last,
