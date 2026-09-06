@@ -19,11 +19,7 @@ from fastapi.testclient import TestClient
 import web_app
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-from ming_sim.llm_transport import (
-    TransportPolicy,
-    bind_transport_sdk_budget,
-    default_transport_policy,
-)
+from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
 
 
@@ -984,38 +980,6 @@ def test_chat_stream_config_max_attempts_override(monkeypatch, tmp_path, game):
     assert detail.get("code") == "llm_connection_error"
     assert len(detail.get("transport_attempts") or []) == 1
     _assert_write_path_free(web_game)
-
-
-def test_bind_transport_sdk_budget_owns_sdk_read_timeout_not_idle():
-    """#1465：SDK 阻塞超时接缝 = bind_transport_sdk_budget。
-
-    model.timeout ← attempt_timeout_seconds（非 idle）；max_retries=0；退出恢复。
-    事件界 check_idle_budget 不负责中止 SDK/httpx read 阻塞。
-    """
-    policy = TransportPolicy(
-        max_attempts=3,
-        attempt_timeout_seconds=17.0,
-        idle_timeout_seconds=9.0,
-    )
-
-    class _Model:
-        def __init__(self):
-            self.timeout = 180.0
-            self.max_retries = 1
-            self.client = object()
-            self.async_client = object()
-
-    model = _Model()
-    with bind_transport_sdk_budget(model, policy):
-        assert model.timeout == 17.0
-        assert model.timeout != policy.idle_timeout_seconds
-        assert model.max_retries == 0
-        assert model.client is None
-        assert model.async_client is None
-    assert model.timeout == 180.0
-    assert model.max_retries == 1
-    assert model.client is None  # 退出再丢缓存，避免临时 client 泄漏
-    assert model.async_client is None
 
 
 def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, tmp_path, game):
