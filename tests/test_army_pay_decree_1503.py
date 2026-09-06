@@ -1269,7 +1269,6 @@ def _real_chat_session(db, state, content, monkeypatch, *, scripted, agent_tools
     sess.content = content
     sess.registry = SimpleNamespace(
         get=lambda _character: FakeAgent(),
-        build_draft_line=lambda: "无",
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}

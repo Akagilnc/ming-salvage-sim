@@ -4569,8 +4569,6 @@ def _658_session(db, state, content, *, agent=None):
             def get(self, _character):
                 return agent
 
-            def build_draft_line(self):
-                return "无"
 
         sess.registry = _Registry()
     return sess

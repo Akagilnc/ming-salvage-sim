@@ -1405,8 +1405,6 @@ def test_976_production_session_tool_path_progress_not_shared(game):
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
     sess = GameSession.__new__(GameSession)
     sess.db = db

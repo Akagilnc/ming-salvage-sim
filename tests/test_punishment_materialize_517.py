@@ -157,7 +157,7 @@ def test_active_impeachment_disposition_flows_from_player_tool_to_dossier(game, 
             )])
 
     sess = _directive_session(db, state, content)
-    sess.registry = SimpleNamespace(get=lambda _character: Agent(), build_draft_line=lambda: "无")
+    sess.registry = SimpleNamespace(get=lambda _character: Agent())
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
     sess._audience_prompt_for_message = lambda message: message
@@ -933,8 +933,6 @@ def test_api_tool_args_deliver_punishment_fields_through_chat(game):
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
     sess = GameSession.__new__(GameSession)
     sess.db = db

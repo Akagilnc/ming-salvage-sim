@@ -856,7 +856,6 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
     sess.temporary_characters = {}
     sess.registry = SimpleNamespace(
         get=lambda _character: _Agent(),
-        build_draft_line=lambda: "无",
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess._retrieve_memories_for_message = lambda text: text
@@ -964,7 +963,6 @@ def test_session_register_unlisted_summon_after_uses_admission(game, monkeypatch
         sess.temporary_characters = {}
         sess.registry = SimpleNamespace(
             get=lambda _character: _Agent(),
-            build_draft_line=lambda: "无",
             register=lambda _ch: None,
         )
         sess.llm_config = SimpleNamespace(channel="api")
@@ -2580,7 +2578,6 @@ def test_tool_summon_binds_origin_chat_turn_id_and_undo_deletes(game, monkeypatc
     sess.temporary_characters = {}
     sess.registry = SimpleNamespace(
         get=lambda _character: _Agent(),
-        build_draft_line=lambda: "无",
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess._retrieve_memories_for_message = lambda text: text
