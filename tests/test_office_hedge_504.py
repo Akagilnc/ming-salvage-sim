@@ -179,10 +179,15 @@ def test_secret_prefix_turn_runs_no_appointment_classifier(game, monkeypatch):
     monkeypatch.setattr(cb, "extract_draft_intent", _forbidden)
 
     # 密令轮的轻 LLM 字段提取（decision 2 允许）走 _run_backend_for_config，喂固定 JSON。
+    # #1765 gate：夹具须含冻结合同必需结构字段（效果符号等）；行为断言一字不改。
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps({
                             "标题": "密查关宁军饷", "内容": "着人密查关宁军饷截留。",
-                            "承办人": minister.name, "期限月数": 0, "差务": "核发辽饷", "价值轴": ["实务事功"], "方向": 1, "交付单位": "万两", "交付目标": 1, "钱粮用途": "辽饷", "钱粮类别": "军饷", "钱粮账户": "国库", "标签": ["关宁"],
+                            "承办人": minister.name, "期限月数": 0, "差务": "核发辽饷",
+                            "价值轴": ["实务事功"], "方向": 1, "交付单位": "万两",
+                            "交付目标": 1, "效果符号": 1,
+                            "钱粮用途": "辽饷", "钱粮类别": "军饷", "钱粮账户": "国库",
+                            "标签": ["关宁"],
                         }, ensure_ascii=False), 1))
 
     sess = _session(db, state, content)

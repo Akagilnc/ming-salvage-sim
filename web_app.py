@@ -1905,6 +1905,7 @@ class WebGame:
         accepted_turn: Optional[int] = None,
         directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None,
         decree_validation_failure: Optional[Dict[str, Any]] = None,
+        secret_order_landing_recovery: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         # Durable chat_turn message ids first, then memory history.  Publishing
@@ -1958,6 +1959,8 @@ class WebGame:
             # #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问；无则 None。
             "directive_confirmation_ambiguous": directive_confirmation_ambiguous or None,
             "decree_validation_failure": decree_validation_failure or None,
+            # #1765：密令落不了库的大臣揣摩/追问（landing_gaps + report）。
+            "secret_order_landing_recovery": secret_order_landing_recovery or None,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
@@ -2261,6 +2264,8 @@ class WebGame:
                             result, "directive_confirmation_ambiguous", None),
                         decree_validation_failure=getattr(
                             result, "decree_validation_failure", None),
+                        secret_order_landing_recovery=getattr(
+                            result, "secret_order_landing_recovery", None),
                     )
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 answer_text = str(getattr(result, "answer", "") or "")
@@ -2434,6 +2439,8 @@ class WebGame:
                             result, "directive_confirmation_ambiguous", None),
                         decree_validation_failure=getattr(
                             result, "decree_validation_failure", None),
+                        secret_order_landing_recovery=getattr(
+                            result, "secret_order_landing_recovery", None),
                     )
                     # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
@@ -2716,6 +2723,8 @@ class WebGame:
                     accepted_turn=accepted_turn,
                     directive_confirmation_ambiguous=interpreted["directive_ambiguous"],
                     decree_validation_failure=interpreted["decree_validation_failure"],
+                    secret_order_landing_recovery=interpreted.get(
+                        "secret_order_landing_recovery"),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         # #1465：attempts 账可回指（结构化；非 prose）
@@ -3096,6 +3105,7 @@ class WebGame:
             "pending_action_failures": pending_action_failures,
             "directive_ambiguous": directive_ambiguous,
             "decree_validation_failure": res.get("decree_validation_failure"),
+            "secret_order_landing_recovery": res.get("secret_order_landing_recovery"),
         }
 
     def _dispatch_relation_judge(self, chat_turn_id: Any) -> Optional[threading.Thread]:

@@ -1893,49 +1893,68 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
 
 
 def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game, monkeypatch):
-    """#354: mixed confirmation still stages the edict plus supplement when extract fails.
+    """#354 + #1765：产物缺口 → 后续 LLM 输入含前文任务与本轮确认（确定性供料）。
 
-    #1565：缺结构化标题不合成散文题名；content 仍须暂存；commit 标 failed。
-    成案恢复走既有带显式标题的密令入口（670 production chat / retry 复用完整 payload），
-    不另建 stage_pending 平行夹具。本测只证暂存+commit 失败接缝。
+    短确认前缀须把前文任务行装进 extract/recovery 输入；0142 不合成散文题名。
+    transport 真失败不进戏内 recovery（见 authorization #528 / C1）。
     """
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "魏忠贤"
-    db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。")
+    prior_task = "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。"
+    db.append_chat_message(minister, state.turn, "user", prior_task)
     db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
+    player_message = "密令如下：可，照办，三月内回奏"
+    # 结构化 compose 供料观察（透传原实现）；不锁表头/中文标签。
+    from tests.test_secret_order_payoff_1504 import (
+        _recovery_compose_fed,
+        _spy_secret_landing_recovery_compose,
+    )
+    recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
+    # 产物缺口（合法空合同），非 transport：走揣摩/recovery。
+    unlandable = json.dumps({
+        "标题": "", "内容": "", "承办人": minister, "期限月数": 0,
+        "标签": [], "差务": "", "价值轴": [], "方向": 1,
+        "交付单位": "", "交付目标": 0,
+    }, ensure_ascii=False)
 
-    def fail_extract(*_args, **_kwargs):
-        raise RuntimeError("backend unavailable")
+    def api_route(prompt, llm_config=None, tag="", **_k):
+        if tag == "secret_order_landing_recovery":
+            return "任意生成回禀", 1
+        if _k.get("force_json_output") is False:
+            return "任意生成回禀", 1
+        return unlandable, 1
 
-    monkeypatch.setattr(cb, "_run_api_for_config", fail_extract)
+    monkeypatch.setattr(cb, "_run_api_for_config", api_route)
     res = _session(db, state, llm_config=SimpleNamespace(channel="api")).apply_cli_conversation_actions(
-        SimpleNamespace(name=minister, office_type="司礼监"),
-        "密令如下：可，照办，三月内回奏",
+        SimpleNamespace(name=minister, office_type="司礼监", office="司礼监掌印太监"),
+        player_message,
         "臣领命。",
         has_directive=False,
         secret_order_id=None,
     )
 
-    assert res["pending_action_id"] > 0
-    assert res["secret_order_id"] is None
-    row = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (res["pending_action_id"],),
-    ).fetchone()
-    payload = json.loads(row["payload_json"])
-    assert "督办陕西赈灾" in payload["content"]
-    assert "三月内回奏" in payload["content"]
-    assert "covert_task" not in payload
-    # 0142：不合成散文题名；空 title 由 commit 拒收
-    assert not str(payload.get("title") or "").strip()
-    db.commit_pending_actions(state)
+    recovery = res.get("secret_order_landing_recovery") or {}
+    assert recovery.get("report")
+    assert recovery.get("landing_gaps")
+    snapshot = recovery.get("extract_snapshot") or {}
+    # #354/#1765：compose kwargs 须含前文任务 + 本轮确认 + 真实缺口 + 原产物。
+    assert recovery_calls, "须有 compose_secret_order_landing_recovery 调用"
+    assert any(
+        (
+            ("督办陕西赈灾" in str(c.get("emperor_words") or "")
+             or prior_task in str(c.get("emperor_words") or ""))
+            and ("三月内回奏" in str(c.get("emperor_words") or "")
+                 or "可，照办" in str(c.get("emperor_words") or ""))
+            and _recovery_compose_fed(c, prior_raw=unlandable)
+        )
+        for c in recovery_calls
+    ), "recovery 输入须同时含前文任务、本轮确认、真实缺口与完整原产物"
+    assert int(res.get("pending_action_id") or 0) == 0
+    assert res.get("secret_order_id") in (None, 0)
     assert db.list_secret_orders() == []
-    pending = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?",
-        (res["pending_action_id"],),
-    ).fetchone()
-    assert pending["status"] == "failed"
+    assert not str(snapshot.get("title") or "").strip()
+    assert unlandable in str(snapshot.get("extract_raw") or "")
 
 
 def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game, monkeypatch):
