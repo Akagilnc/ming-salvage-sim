@@ -17,8 +17,8 @@ function isMinisterSourced(source: string): boolean {
 
 /**
  * 视觉 phase 装饰。状态可感知性不靠本 chip / data-* / 固定词表：
- * 忙碌=卡根 aria-busy；失败=aria-invalid + 原始错误 role=alert；
- * 成案只读=无改删控件（原生只读结构）。
+ * 忙碌=卡根 aria-busy；失败=卡内原始 role=alert + describedby 关联；
+ * 草稿 vs 已发 = 两区铬字分区（「草稿」/「已发的旨意」）+ 卡归属 + 已发只读无改删。
  */
 function PhaseChip({ phase }: { phase: string }) {
   return (
@@ -44,7 +44,7 @@ function cardClassName(opts: {
   return parts.join(" ");
 }
 
-/** 卡级 ARIA 状态 + 关联正文/原始错误；不写状态词、不解析散文。 */
+/** 卡级 ARIA：忙碌=aria-busy；失败=后代 role=alert + describedby 原始错误；不成 invalid。 */
 function cardStateA11y(
   phase: string,
   bodyId: string,
@@ -54,7 +54,6 @@ function cardStateA11y(
   if (phase === "failed" && error?.message) described.push(error.id);
   return {
     "aria-busy": phase === "inflight" ? true : undefined,
-    "aria-invalid": phase === "failed" ? true : undefined,
     "aria-describedby": described.join(" "),
   };
 }
@@ -156,145 +155,159 @@ export function EdictModal({
       <small id={errorId} className="local-fail-note" data-role="local-error" role="alert">{message}</small>
     ) : null;
 
-  // 御案：未成案候选（可改删）⊕ 已成案只读投影（0048 无准驳）⊕ 本地 create 在飞/失败。
+  // 御案两区：草稿（可改删 + 本地 create + 失败密令恢复）/ 已发的旨意（成案只读，0048 无准驳）。
+  // 空区不渲；恢复入口挂草稿区侧，draft 数组为零仍可出区（failed-only 契约）。
+  const showDraftZone =
+    draftDirectives.length > 0 || createLocals.length > 0 || showFailureRecoveryEntry;
+  const showIssuedZone = casedDirectives.length > 0;
+  const draftHeadingId = "edict-zone-draft-title";
+  const issuedHeadingId = "edict-zone-issued-title";
+
   return (
     <div className="edict-stage edict-stage-desk">
       <div className="desk-columns">
         <section className="desk-pane desk-memorials">
           <h2>本月指令{deskCount ? ` · ${deskCount} 道` : ""}</h2>
           <div className="directive-list">
-            {draftDirectives.map((directive) => {
-              const req = requestByDirectiveId.get(directive.id);
-              const phase = req?.phase ?? "draft";
-              const minister = isMinisterSourced(directive.source);
-              const editing = editingDirectiveId === directive.id;
-              const inflight = req?.phase === "inflight";
-              const bodyId = `edict-body-${directive.id}`;
-              const errorId = `edict-err-${directive.id}`;
-              const failMsg = req?.phase === "failed" ? req.error : undefined;
-              return (
-                <div
-                  className={cardClassName({ phase, minister, request: req })}
-                  key={`draft-${directive.id}`}
-                  data-directive-phase={phase === "draft" ? "draft" : phase}
-                  data-directive-id={directive.id}
-                  data-source={directive.source || ""}
-                  data-actor={directive.actor || ""}
-                  data-request-op={req?.op || ""}
-                  {...cardStateA11y(phase, bodyId, { id: errorId, message: failMsg })}
-                >
-                  <div className="directive-head">
-                    <b>#{directive.id}</b>
-                    {req ? <PhaseChip phase={req.phase} /> : (
-                      <span data-role="source-label">{sourceLabel(directive.source, directive.actor)}</span>
-                    )}
-                  </div>
-                  {editing && !inflight ? (
-                    <div className="directive-edit">
-                      <textarea
-                        id={bodyId}
-                        value={editingDirectiveText}
-                        onChange={(event) => onEditingTextChange(event.target.value)}
-                      />
-                      <div>
-                        <button
-                          className="icon-button"
-                          onClick={() => onSaveDirective(directive)}
-                          aria-label="保存草案"
-                          disabled={requestLocked}
-                        >
-                          <Check size={15} />
-                        </button>
-                        {/* 纯本地取消：只清编辑态，不发请求，不吃 requestLocked。 */}
-                        <button
-                          className="icon-button"
-                          onClick={onCancelEdit}
-                          aria-label="取消修改"
-                        >
-                          <X size={15} />
-                        </button>
+            {showDraftZone ? (
+              <section className="edict-zone-draft" aria-labelledby={draftHeadingId}>
+                <h3 id={draftHeadingId}>草稿</h3>
+                {draftDirectives.map((directive) => {
+                  const req = requestByDirectiveId.get(directive.id);
+                  const phase = req?.phase ?? "draft";
+                  const minister = isMinisterSourced(directive.source);
+                  const editing = editingDirectiveId === directive.id;
+                  const inflight = req?.phase === "inflight";
+                  const bodyId = `edict-body-${directive.id}`;
+                  const errorId = `edict-err-${directive.id}`;
+                  const failMsg = req?.phase === "failed" ? req.error : undefined;
+                  return (
+                    <div
+                      className={cardClassName({ phase, minister, request: req })}
+                      key={`draft-${directive.id}`}
+                      data-directive-phase={phase === "draft" ? "draft" : phase}
+                      data-directive-id={directive.id}
+                      data-source={directive.source || ""}
+                      data-actor={directive.actor || ""}
+                      data-request-op={req?.op || ""}
+                      {...cardStateA11y(phase, bodyId, { id: errorId, message: failMsg })}
+                    >
+                      <div className="directive-head">
+                        <b>#{directive.id}</b>
+                        {req ? <PhaseChip phase={req.phase} /> : (
+                          <span data-role="source-label">{sourceLabel(directive.source, directive.actor)}</span>
+                        )}
                       </div>
-                    </div>
-                  ) : (
-                    <>
-                      {renderBody(
-                        req?.op === "save" && req.text ? req.text : directive.text,
-                        bodyId,
-                        directive.notes,
-                      )}
-                      {renderFailNote(failMsg, errorId)}
-                      {!inflight ? (
-                        <div className="directive-tools">
-                          <button onClick={() => onStartEdit(directive)} disabled={requestLocked}>
-                            <Edit3 size={14} />改
-                          </button>
-                          <button onClick={() => onDeleteDirective(directive.id)} disabled={requestLocked}>
-                            <Trash2 size={14} />删
-                          </button>
+                      {editing && !inflight ? (
+                        <div className="directive-edit">
+                          <textarea
+                            id={bodyId}
+                            value={editingDirectiveText}
+                            onChange={(event) => onEditingTextChange(event.target.value)}
+                          />
+                          <div>
+                            <button
+                              className="icon-button"
+                              onClick={() => onSaveDirective(directive)}
+                              aria-label="保存草案"
+                              disabled={requestLocked}
+                            >
+                              <Check size={15} />
+                            </button>
+                            {/* 纯本地取消：只清编辑态，不发请求，不吃 requestLocked。 */}
+                            <button
+                              className="icon-button"
+                              onClick={onCancelEdit}
+                              aria-label="取消修改"
+                            >
+                              <X size={15} />
+                            </button>
+                          </div>
                         </div>
-                      ) : null}
-                    </>
-                  )}
-                  {editing && !inflight ? renderFailNote(failMsg, errorId) : null}
-                </div>
-              );
-            })}
+                      ) : (
+                        <>
+                          {renderBody(
+                            req?.op === "save" && req.text ? req.text : directive.text,
+                            bodyId,
+                            directive.notes,
+                          )}
+                          {renderFailNote(failMsg, errorId)}
+                          {!inflight ? (
+                            <div className="directive-tools">
+                              <button onClick={() => onStartEdit(directive)} disabled={requestLocked}>
+                                <Edit3 size={14} />改
+                              </button>
+                              <button onClick={() => onDeleteDirective(directive.id)} disabled={requestLocked}>
+                                <Trash2 size={14} />删
+                              </button>
+                            </div>
+                          ) : null}
+                        </>
+                      )}
+                      {editing && !inflight ? renderFailNote(failMsg, errorId) : null}
+                    </div>
+                  );
+                })}
 
-            {casedDirectives.map((cased) => {
-              const minister = isMinisterSourced(cased.source);
-              const bodyId = `edict-body-cased-${cased.id}`;
-              return (
-                <div
-                  className={cardClassName({ phase: "cased", minister })}
-                  key={`cased-${cased.id}`}
-                  data-directive-phase="cased"
-                  data-directive-id={cased.id}
-                  data-dossier-id={cased.dossier_id}
-                  data-dossier-status={cased.dossier_status}
-                  data-source={cased.source || ""}
-                  data-actor={cased.actor || ""}
-                  {...cardStateA11y("cased", bodyId)}
-                >
-                  <div className="directive-head">
-                    <b>#{cased.id}</b>
-                    <PhaseChip phase="cased" />
-                  </div>
-                  <div className="directive-head secondary">
-                    <span data-role="source-label">{sourceLabel(cased.source, cased.actor)}</span>
-                  </div>
-                  {renderBody(cased.text, bodyId, cased.notes)}
-                  {/* 0048：已成案只读，无改删准驳——只读由缺突变控件表达，不写固定状态词。 */}
-                </div>
-              );
-            })}
+                {createLocals.map((local) => {
+                  const bodyId = `edict-body-local-${local.localKey}`;
+                  const errorId = `edict-err-local-${local.localKey}`;
+                  const failMsg = local.phase === "failed" ? local.error : undefined;
+                  return (
+                    <div
+                      className={cardClassName({ phase: local.phase })}
+                      key={local.localKey}
+                      data-directive-phase={local.phase}
+                      data-local-key={local.localKey}
+                      {...cardStateA11y(local.phase, bodyId, { id: errorId, message: failMsg })}
+                    >
+                      <div className="directive-head">
+                        <b data-role="local-mark" />
+                        <PhaseChip phase={local.phase} />
+                      </div>
+                      {renderBody(local.text, bodyId)}
+                      {renderFailNote(failMsg, errorId)}
+                    </div>
+                  );
+                })}
 
-            {createLocals.map((local) => {
-              const bodyId = `edict-body-local-${local.localKey}`;
-              const errorId = `edict-err-local-${local.localKey}`;
-              const failMsg = local.phase === "failed" ? local.error : undefined;
-              return (
-                <div
-                  className={cardClassName({ phase: local.phase })}
-                  key={local.localKey}
-                  data-directive-phase={local.phase}
-                  data-local-key={local.localKey}
-                  {...cardStateA11y(local.phase, bodyId, { id: errorId, message: failMsg })}
-                >
-                  <div className="directive-head">
-                    <b data-role="local-mark" />
-                    <PhaseChip phase={local.phase} />
+                {showFailureRecoveryEntry ? (
+                  <div className="empty-note failed-secret-note">
+                    <button type="button" onClick={onOpenFailureRecovery} disabled={requestLocked}>处理</button>
                   </div>
-                  {renderBody(local.text, bodyId)}
-                  {renderFailNote(failMsg, errorId)}
-                </div>
-              );
-            })}
+                ) : null}
+              </section>
+            ) : null}
 
-            {showFailureRecoveryEntry && (
-              <div className="empty-note failed-secret-note">
-                <button type="button" onClick={onOpenFailureRecovery} disabled={requestLocked}>处理</button>
-              </div>
-            )}
+            {showIssuedZone ? (
+              <section className="edict-zone-issued" aria-labelledby={issuedHeadingId}>
+                <h3 id={issuedHeadingId}>已发的旨意</h3>
+                {casedDirectives.map((cased) => {
+                  const minister = isMinisterSourced(cased.source);
+                  const bodyId = `edict-body-cased-${cased.id}`;
+                  return (
+                    <div
+                      className={cardClassName({ phase: "cased", minister })}
+                      key={`cased-${cased.id}`}
+                      data-directive-phase="cased"
+                      data-directive-id={cased.id}
+                      data-dossier-id={cased.dossier_id}
+                      data-dossier-status={cased.dossier_status}
+                      data-source={cased.source || ""}
+                      data-actor={cased.actor || ""}
+                      {...cardStateA11y("cased", bodyId)}
+                    >
+                      <div className="directive-head">
+                        <b>#{cased.id}</b>
+                        <span data-role="source-label">{sourceLabel(cased.source, cased.actor)}</span>
+                      </div>
+                      {renderBody(cased.text, bodyId, cased.notes)}
+                      {/* 0048：已发区只读，无改删准驳；身份由所在区铬字表达，不写固定状态词、不渲空 chip。 */}
+                    </div>
+                  );
+                })}
+              </section>
+            ) : null}
           </div>
         </section>
 
