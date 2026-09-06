@@ -1991,7 +1991,11 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
     #1769：欠科目词表进输入侧结构契约（ADR0143/P6）；不在引擎侧改写 LLM 输出。
     科目闭集唯一真源 = pay_order.DUE_SUBJECTS / ARREARS_SUBJECTS。
     """
-    from ming_sim.pay_order import ARREARS_SUBJECTS, DUE_SUBJECTS
+    from ming_sim.pay_order import (
+        ARREARS_SUBJECTS,
+        DUE_SUBJECTS,
+        format_subject_closed_set,
+    )
 
     regions = getattr(content, "regions", None) if content is not None else None
     lines = []
@@ -2015,11 +2019,13 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
         head += "地区只能直接使用下列 canonical id，禁别名/自造：\n" + "、".join(lines) + "\n"
     else:
         head += "\n"
+    due_set = format_subject_closed_set(DUE_SUBJECTS, sep="/")
+    arrears_set = format_subject_closed_set(ARREARS_SUBJECTS, sep="/")
     return (
         head + timing
-        + f"due_priority 科目∈{'/'.join(DUE_SUBJECTS)}；"
-          f"arrears_priority 欠科目∈{'/'.join(ARREARS_SUBJECTS)}；"
-          f"due_haircut_bp 科目∈{'/'.join(DUE_SUBJECTS)}。\n"
+        + f"due_priority 科目∈{due_set}；"
+          f"arrears_priority 欠科目∈{arrears_set}；"
+          f"due_haircut_bp 科目∈{due_set}。\n"
         + "priority 数字越小越先；默认军饷/官俸/宗禄/赈济=10/20/30/40，"
           "并列按该默认次序稳定排列。相对期限只填 duration_months=N，"
           "不要自行计算 until_turn；该动作 entries 必须非空。\n"
@@ -2687,9 +2693,13 @@ def extract_draft_intent(
     ).strip()
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
         bool(_existing_draft_text) or bool(_candidates))
-    from ming_sim.pay_order import ARREARS_SUBJECTS, DUE_SUBJECTS
-    _due_subjects = "|".join(DUE_SUBJECTS)
-    _arrears_subjects = "|".join(ARREARS_SUBJECTS)
+    from ming_sim.pay_order import (
+        ARREARS_SUBJECTS,
+        DUE_SUBJECTS,
+        format_subject_closed_set,
+    )
+    _due_subjects = format_subject_closed_set(DUE_SUBJECTS, sep="|")
+    _arrears_subjects = format_subject_closed_set(ARREARS_SUBJECTS, sep="|")
     intent_schema_line = (
         '  "拟旨意图": "无|拟旨",\n'
         '  "动作类型": "policy|approve_reject|assignment|'

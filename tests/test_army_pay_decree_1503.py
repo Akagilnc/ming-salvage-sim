@@ -891,6 +891,25 @@ def test_manual_directive_admission_real_http_tracer_1591(
             "目标案卷ID": None,
             "entries": [],
         },
+        {
+            # #1769 ④ 补交仍返回坏账户产物 → 耗尽留 draft（非队列空/代码故障）
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "恩赏拨帑": "协饷",
+            "用途": "补饷",
+            "目标类型": "army",
+            "目标": "guanning",
+            "颁布方式": "ordinary",
+            "金额": 15,
+            "账户": "藩库",
+            "执行面": "immediate",
+            "承办人": "",
+            "参与人": [],
+            "施行范围": "无",
+            "期限月数": None,
+            "目标案卷ID": None,
+            "entries": [],
+        },
     ]
 
     def fake_backend(*_a, **_k):

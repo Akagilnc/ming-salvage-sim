@@ -19975,6 +19975,14 @@ class GameDB:
             (state.turn, state.turn, *statuses),
         ).fetchall()
 
+    def get_directive(self, directive_id: int) -> Optional[sqlite3.Row]:
+        """按 id 读单条 turn_directives（#1769 补交读口；禁 session 手写 SELECT）。"""
+        return self.conn.execute(
+            "SELECT id, text, status, turn, dossier_payload_json "
+            "FROM turn_directives WHERE id=?",
+            (int(directive_id),),
+        ).fetchone()
+
     @staticmethod
     def _decode_directive_dossier_payload(
         raw: object, *, directive_id: Optional[int] = None,
@@ -20031,13 +20039,16 @@ class GameDB:
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
 
     def ensure_dossiers_for_draft_directives(
-        self, state: GameState,
+        self, state: GameState, *,
+        record_rejections: bool = True,
     ) -> List[Dict[str, object]]:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。
 
         #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨产物错记 rejection、保持 draft，不波及他旨。
         #1769：产物错（ValueError，含 PayOrderKeyError）逐项留痕；真代码故障不得洗成
         locality_fanout_failed——回滚后写错误包并 SettlementAbort（0005/0008 D1/D6）。
+        record_rejections=False：仅探测产物错供补交，不落 rejection_reports
+        （拒只在耗尽/终态后落痕，避免补交成功仍残留首轮拒收）。
         返回 [{directive_id, reason}, ...] 供结算路补交；成功旨不入列表。
         """
         from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
@@ -20072,16 +20083,17 @@ class GameDB:
                         reason = str(exc)
                         rejection_rows.append({"directive_id": did, "reason": reason})
                         # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
-                        collector.record(
-                            "directive_locality",
-                            RejectedItem(
-                                item={"directive_id": did},
-                                reason=reason,
-                                category="locality_fanout_failed",
-                                source=Provenance.player_decree,
-                            ),
-                            int(state.turn),
-                        )
+                        if record_rejections:
+                            collector.record(
+                                "directive_locality",
+                                RejectedItem(
+                                    item={"directive_id": did},
+                                    reason=reason,
+                                    category="locality_fanout_failed",
+                                    source=Provenance.player_decree,
+                                ),
+                                int(state.turn),
+                            )
                         tlog(f"[ensure_dossiers] 旨#{did} 成案产物错：{exc}")
                     except Exception as exc:
                         # 真代码故障：不得当产物错洗白后继续（0005）
@@ -20091,7 +20103,8 @@ class GameDB:
                         raise
                     finally:
                         self.conn.execute(f"RELEASE {sp}")
-                collector.flush_to_db(self)
+                if record_rejections:
+                    collector.flush_to_db(self)
         except Exception as exc:
             if code_fault is None:
                 code_fault = exc
@@ -20105,8 +20118,9 @@ class GameDB:
                 stage="directive_ensure",
                 error_pack_path=pack_path,
             ) from code_fault
-        from ming_sim.applier import mirror_rejections_after_commit
-        mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
+        if record_rejections:
+            from ming_sim.applier import mirror_rejections_after_commit
+            mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return rejection_rows
 
     def reject_directive(self, directive_id: int) -> None:
