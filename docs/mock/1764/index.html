@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>#1764 拟诏台呈现提案 · mock</title>
+<style>
+  :root {
+    font-family: "Songti SC", "STSong", "Noto Serif SC", "SimSun", serif;
+    font-size: 15px;
+    line-height: 1.55;
+    color: #f3e6c4;
+    --gold: #d2a34a;
+    --muted: #b8a878;
+    --ink: #2e1b0a;
+    --paper: #faf2db;
+    --paper-edge: rgba(120, 86, 42, 0.22);
+    --cinnabar: #a8321f;
+    --busy: #704c1e;
+    --ok: #3d6b3a;
+    --fail: #82291f;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #14100a; }
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse at 50% 8%, rgba(213, 187, 115, 0.12), transparent 42%),
+      linear-gradient(160deg, #2a2218 0%, #14100a 52%, #0e0c09 100%);
+  }
+  a { color: #f0d58a; }
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.86em;
+    color: #f0d58a;
+    font-weight: 600;
+  }
+  .page { max-width: 1180px; margin: 0 auto; padding: 28px 18px 80px; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid rgba(226, 180, 86, 0.45); color: #f0d58a;
+    font-size: 0.72rem; letter-spacing: 0.14em; margin-bottom: 10px;
+  }
+  h1 { margin: 0 0 8px; color: #f5dfad; font-size: 1.45rem; letter-spacing: 0.05em; }
+  .lead { margin: 0 0 10px; color: var(--muted); font-size: 0.95rem; max-width: 58em; font-weight: 500; }
+  .note {
+    margin: 0 0 22px; padding: 10px 14px; border-radius: 6px;
+    border: 1px solid rgba(226, 180, 86, 0.28);
+    background: rgba(255, 235, 180, 0.05);
+    color: #d8c9a0; font-size: 0.86rem; font-weight: 500;
+  }
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
+  .toc a {
+    color: #f3e6c4; text-decoration: none; font-size: 0.82rem;
+    padding: 7px 12px; border-radius: 6px;
+    border: 1px solid rgba(226, 180, 86, 0.35);
+    background: rgba(255, 235, 180, 0.06);
+  }
+  .toc a:hover { border-color: rgba(240, 200, 100, 0.7); }
+
+  .scene {
+    margin-bottom: 42px; padding-bottom: 32px;
+    border-bottom: 1px solid rgba(226, 180, 86, 0.18);
+  }
+  .scene > h2 {
+    margin: 0 0 6px; color: #f5dfad; font-size: 1.18rem; letter-spacing: 0.06em;
+  }
+  .q {
+    margin: 0 0 14px; color: #c9b48a; font-size: 0.9rem; font-weight: 500;
+  }
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.75fr);
+    gap: 14px;
+  }
+  @media (max-width: 920px) {
+    .split { grid-template-columns: 1fr; }
+  }
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  @media (max-width: 920px) {
+    .compare { grid-template-columns: 1fr; }
+  }
+
+  /* —— 拟诏台仿真壳 —— */
+  .desk-shell {
+    border: 1px solid rgba(226, 180, 86, 0.32);
+    border-radius: 8px;
+    overflow: hidden;
+    background:
+      linear-gradient(180deg, rgba(48, 36, 22, 0.95), rgba(28, 22, 14, 0.98));
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+  }
+  .desk-chrome {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(226, 180, 86, 0.22);
+    background: rgba(20, 14, 8, 0.55);
+    color: #e8d4a0; font-size: 0.82rem; letter-spacing: 0.08em;
+  }
+  .desk-chrome .tag {
+    font-size: 0.72rem; color: var(--muted); letter-spacing: 0.04em;
+  }
+  .desk-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(200px, 0.85fr);
+    gap: 12px;
+    padding: 14px;
+    min-height: 320px;
+  }
+  @media (max-width: 720px) {
+    .desk-body { grid-template-columns: 1fr; }
+  }
+  .pane h3 {
+    margin: 0 0 8px; font-size: 0.95rem; letter-spacing: 0.08em; color: #f0d58a;
+  }
+  .list { display: grid; gap: 8px; align-content: start; }
+
+  .card {
+    position: relative;
+    display: grid; gap: 5px;
+    padding: 10px 12px 10px 13px;
+    border: 1px solid var(--paper-edge);
+    border-radius: 3px;
+    background:
+      linear-gradient(90deg, rgba(120, 86, 42, 0.10), transparent 22px),
+      rgba(250, 242, 219, 0.92);
+    color: var(--ink);
+    box-shadow: 0 1px 3px rgba(60, 40, 16, 0.12);
+  }
+  .card .head {
+    display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+    font-size: 0.82rem;
+  }
+  .card .head b { color: #8a5a1e; }
+  .card .head .src { color: #6a5a40; }
+  .card p {
+    margin: 0; line-height: 1.5; font-size: 0.92rem;
+  }
+  .card .tools {
+    display: flex; gap: 6px; margin-top: 2px;
+  }
+  .card .tools span {
+    display: inline-flex; align-items: center;
+    min-height: 26px; padding: 2px 9px;
+    border: 1px solid rgba(120, 86, 42, 0.28);
+    border-radius: 3px; font-size: 0.78rem; color: #5a4020;
+    background: rgba(255,255,255,0.35);
+  }
+  .card.ghost {
+    opacity: 0.55;
+    border-style: dashed;
+  }
+  .card.inflight {
+    border-color: rgba(183, 133, 44, 0.55);
+    box-shadow: 0 0 0 1px rgba(183, 133, 44, 0.25), 0 1px 3px rgba(60, 40, 16, 0.12);
+  }
+  .card.cased {
+    border-color: rgba(61, 107, 58, 0.45);
+    border-left: 3px solid rgba(61, 107, 58, 0.75);
+    background:
+      linear-gradient(90deg, rgba(61, 107, 58, 0.10), transparent 28px),
+      rgba(250, 242, 219, 0.92);
+  }
+  .card.minister {
+    border-left: 3px solid rgba(170, 50, 36, 0.75);
+    background:
+      linear-gradient(95deg, rgba(176, 58, 40, 0.10), transparent 55%),
+      rgba(252, 244, 222, 0.92);
+  }
+  .card.fail {
+    border-color: rgba(185, 73, 55, 0.55);
+    border-left: 3px solid rgba(185, 73, 55, 0.8);
+  }
+  .card.readonly-tools .tools span {
+    opacity: 0.35;
+    text-decoration: line-through;
+  }
+
+  .state-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px; border-radius: 999px;
+    font-size: 0.72rem; letter-spacing: 0.06em;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .state-chip .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: currentColor;
+  }
+  .state-chip.inflight {
+    color: #8a5a12;
+    background: rgba(183, 133, 44, 0.18);
+    border-color: rgba(183, 133, 44, 0.4);
+  }
+  .state-chip.inflight .dot { animation: pulse 1.2s ease-in-out infinite; }
+  .state-chip.draft {
+    color: #5a4020;
+    background: rgba(120, 86, 42, 0.12);
+    border-color: rgba(120, 86, 42, 0.28);
+  }
+  .state-chip.cased {
+    color: #2f5a2c;
+    background: rgba(61, 107, 58, 0.14);
+    border-color: rgba(61, 107, 58, 0.35);
+  }
+  .state-chip.promulgated {
+    color: #7a2018;
+    background: rgba(168, 50, 31, 0.12);
+    border-color: rgba(168, 50, 31, 0.35);
+  }
+  .state-chip.fail {
+    color: #82291f;
+    background: rgba(185, 73, 55, 0.14);
+    border-color: rgba(185, 73, 55, 0.4);
+  }
+  .state-chip.gone {
+    color: #5a5a5a;
+    background: rgba(100, 100, 100, 0.1);
+    border-color: rgba(100, 100, 100, 0.25);
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .compose {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .compose .ta {
+    flex: 1; min-height: 110px;
+    padding: 10px 12px;
+    border-radius: 3px;
+    border: 1px solid rgba(226, 180, 86, 0.25);
+    background: rgba(250, 242, 219, 0.88);
+    color: var(--ink); font-family: inherit; font-size: 0.9rem;
+  }
+  .compose .ta.empty { color: #8a7a60; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    align-self: flex-start;
+    padding: 7px 16px; border-radius: 3px;
+    border: 1px solid rgba(226, 180, 86, 0.45);
+    background: rgba(210, 163, 74, 0.18);
+    color: #f0d58a; font-family: inherit; font-size: 0.88rem;
+  }
+  .btn.disabled { opacity: 0.45; }
+  .busy-line {
+    display: flex; align-items: center; gap: 7px;
+    min-height: 30px; padding: 6px 8px; border-radius: 6px;
+    color: #e8c878; background: rgba(183, 133, 44, 0.14);
+    font-size: 0.82rem;
+  }
+  .busy-line .spin {
+    width: 12px; height: 12px; border: 2px solid rgba(232, 200, 120, 0.35);
+    border-top-color: #e8c878; border-radius: 50%;
+    animation: spin 900ms linear infinite;
+  }
+  .desk-foot {
+    display: flex; justify-content: flex-end; align-items: center;
+    gap: 10px; padding: 10px 14px;
+    border-top: 1px solid rgba(226, 180, 86, 0.18);
+  }
+  .seal {
+    padding: 10px 28px; border-radius: 4px;
+    border: 1px solid rgba(168, 50, 31, 0.55);
+    background: linear-gradient(180deg, rgba(168, 50, 31, 0.55), rgba(110, 30, 20, 0.7));
+    color: #fff3d0; font-family: inherit; font-size: 0.95rem;
+    letter-spacing: 0.14em; font-weight: 700;
+  }
+  .seal.disabled { opacity: 0.4; }
+  .trail {
+    margin: 0 14px 12px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    border: 1px dashed rgba(61, 107, 58, 0.45);
+    background: rgba(61, 107, 58, 0.08);
+    color: #c8dfc0; font-size: 0.82rem;
+  }
+  .empty-note {
+    padding: 18px 12px; text-align: center;
+    color: #8a7a60; font-size: 0.88rem;
+    border: 1px dashed rgba(120, 86, 42, 0.3);
+    border-radius: 3px;
+    background: rgba(250, 242, 219, 0.35);
+  }
+
+  /* 旁注 */
+  .aside {
+    padding: 12px 14px; border-radius: 8px;
+    border: 1px solid rgba(226, 180, 86, 0.28);
+    background: rgba(255, 235, 180, 0.05);
+    color: #d8c9a0; font-size: 0.86rem; font-weight: 500;
+  }
+  .aside h4 {
+    margin: 0 0 8px; color: #f0d58a; font-size: 0.88rem; letter-spacing: 0.08em;
+  }
+  .aside ul { margin: 0; padding-left: 1.15em; }
+  .aside li { margin-bottom: 6px; }
+  .aside .warn { color: #e8a090; }
+  .callout {
+    display: inline-block; margin-top: 6px; padding: 2px 8px;
+    border-radius: 4px; font-size: 0.72rem; letter-spacing: 0.06em;
+    background: rgba(158, 52, 41, 0.25); color: #ffd0c0;
+    border: 1px solid rgba(255, 120, 90, 0.35);
+  }
+  .pin {
+    position: absolute; right: -6px; top: -10px;
+    background: #c0432f; color: #fff8e8;
+    font-size: 0.68rem; font-weight: 800; letter-spacing: 0.08em;
+    padding: 3px 8px; border-radius: 4px;
+    border: 1px solid rgba(255, 220, 160, 0.55);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    white-space: nowrap;
+  }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0;
+  }
+  .case-label {
+    margin: 0 0 8px; color: #f0d58a; font-size: 0.85rem; letter-spacing: 0.1em;
+  }
+  .matrix {
+    width: 100%; border-collapse: collapse; font-size: 0.84rem;
+    color: #e8dcc0;
+  }
+  .matrix th, .matrix td {
+    border: 1px solid rgba(226, 180, 86, 0.25);
+    padding: 8px 10px; text-align: left; vertical-align: top;
+    font-weight: 500;
+  }
+  .matrix th {
+    background: rgba(255, 235, 180, 0.08); color: #f0d58a; letter-spacing: 0.06em;
+  }
+  .matrix td.ok { color: #a8d0a0; }
+  .matrix td.no { color: #e8a090; }
+  .footer-meta {
+    margin-top: 24px; color: var(--muted); font-size: 0.8rem; font-weight: 500;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="badge">MOCK · 提案展示 · 非生产</div>
+  <h1>#1764 拟诏台：提交后辨明「收下了 / 去哪了」</h1>
+  <p class="lead">
+    已授权目标只到体验层：提交一道旨之后，皇帝能在拟诏台辨明这道旨是否已收下、现在去了哪。
+    留桌 / 离桌 / 状态字样均为<strong>待审方案</strong>。本页五画面按票面五个审读问题展开；
+    状态 chip 为呈现层特征化示意（P7：生产不写死模板句）；不给数值（P4）；不加确认弹窗/新按钮层级（0047）。
+  </p>
+  <p class="note">
+    数据只读既有接缝：<code>turn_directives</code>（候选）+ <code>decree_dossiers</code> 诏令账（0051 成案后）+
+    本地在飞（请求未返回，非持久）。不另立事实源。详见 <a href="./PROPOSAL.md">PROPOSAL.md</a>。
+  </p>
+
+  <nav class="toc">
+    <a href="#s1">① 进行态 · 绑在这道旨</a>
+    <a href="#s2">② 成案去向 · 0048 边界</a>
+    <a href="#s3">③ 大臣替拟 · 来源可辨</a>
+    <a href="#s4">④ 盖玺/过月 · 两案对比</a>
+    <a href="#s5">⑤ 刷新/过月中/失败</a>
+  </nav>
+
+  <!-- ═══════════════ ① ═══════════════ -->
+  <section class="scene" id="s1">
+    <h2>① 点「新增草案」后 · 这道旨本身的进行态</h2>
+    <p class="q">审读问题：提交后「拟稿中」如何反馈到<strong>这道旨本身</strong>（而非仅全局 busy 行）？</p>
+    <div class="split">
+      <div class="desk-shell">
+        <div class="desk-chrome">
+          <span>拟诏台 · 御案</span>
+          <span class="tag">本地在飞 · 尚未成案</span>
+        </div>
+        <div class="desk-body">
+          <div class="pane">
+            <h3>本月指令</h3>
+            <div class="list">
+              <div class="card">
+                <div class="head">
+                  <b>既有草案</b>
+                  <span class="src">手动新增</span>
+                </div>
+                <p>命户部核拨关宁辽饷。</p>
+                <div class="tools"><span>改</span><span>删</span></div>
+              </div>
+              <div class="card inflight">
+                <span class="pin">← 绑在这道</span>
+                <div class="head">
+                  <b>刚提交</b>
+                  <span class="state-chip inflight"><span class="dot"></span>进行中</span>
+                </div>
+                <p>解太仓备用。</p>
+                <div class="legend">
+                  <span class="state-chip inflight"><span class="dot"></span>特征：未落库 · 请求在飞</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="pane compose">
+            <h3>御笔自拟</h3>
+            <div class="ta empty">（文已送出，框空）</div>
+            <div class="btn disabled">新增草案</div>
+            <div class="busy-line"><span class="spin"></span>全局 busy 可保留作禁写，但不再是唯一信号</div>
+          </div>
+        </div>
+        <div class="desk-foot">
+          <div class="seal disabled">盖玺颁诏过月 →</div>
+        </div>
+      </div>
+      <aside class="aside">
+        <h4>提案要点</h4>
+        <ul>
+          <li>点击后<strong>立即</strong>在左侧列表插入一条乐观卡，文案取提交原文。</li>
+          <li>进行态 chip 绑在该卡，不靠全局 busy 行当主反馈。</li>
+          <li>全局 busy 仍可禁「新增/改/删/盖玺」，职责降为互斥锁呈现。</li>
+          <li>请求未完成 = 仅本地；刷新应消失（见⑤），不冒充已落事实。</li>
+        </ul>
+        <p class="callout">对照现状：只有 compose 区 busy-line</p>
+        <h4>数据来源</h4>
+        <ul>
+          <li>本地会话态（POST <code>/api/directives</code> 在飞）</li>
+          <li>尚无 <code>turn_directives</code> 行</li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ② ═══════════════ -->
+  <section class="scene" id="s2">
+    <h2>② 成案后去向 · 不重建逐条改删准驳工作台</h2>
+    <p class="q">审读问题：成案后如何告知去向，且遵守 0048（御案不是月末准驳工作台）？</p>
+    <div class="compare">
+      <div>
+        <p class="case-label">案甲 · 成案后留桌（只读去向条）</p>
+        <div class="desk-shell">
+          <div class="desk-chrome">
+            <span>拟诏台 · 御案</span>
+            <span class="tag">案甲提案</span>
+          </div>
+          <div class="desk-body">
+            <div class="pane">
+              <h3>本月指令</h3>
+              <div class="list">
+                <div class="card">
+                  <div class="head">
+                    <b>未成案候选</b>
+                    <span class="state-chip draft">草案</span>
+                  </div>
+                  <p>命户部核拨关宁辽饷。</p>
+                  <div class="tools"><span>改</span><span>删</span></div>
+                </div>
+                <div class="card cased readonly-tools">
+                  <span class="pin">去向可见</span>
+                  <div class="head">
+                    <b>已入诏令账</b>
+                    <span class="state-chip cased">待颁</span>
+                  </div>
+                  <p>解太仓备用。</p>
+                  <div class="tools"><span>改</span><span>删</span></div>
+                  <div class="legend">
+                    <span class="state-chip cased">特征：已有 dossier · 只读 · 无准驳钮</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="pane compose">
+              <h3>御笔自拟</h3>
+              <div class="ta empty">继续拟下道…</div>
+              <div class="btn">新增草案</div>
+            </div>
+          </div>
+          <div class="desk-foot">
+            <div class="seal">盖玺颁诏过月 →</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p class="case-label">案乙 · 成案后离桌（收据条，不留卡）</p>
+        <div class="desk-shell">
+          <div class="desk-chrome">
+            <span>拟诏台 · 御案</span>
+            <span class="tag">案乙提案</span>
+          </div>
+          <div class="trail">本月已成案若干 · 待盖玺入判（只读诏令账投影，非工作台）</div>
+          <div class="desk-body">
+            <div class="pane">
+              <h3>本月指令</h3>
+              <div class="list">
+                <div class="card">
+                  <div class="head">
+                    <b>未成案候选</b>
+                    <span class="state-chip draft">草案</span>
+                  </div>
+                  <p>命户部核拨关宁辽饷。</p>
+                  <div class="tools"><span>改</span><span>删</span></div>
+                </div>
+                <!-- 解太仓 已离桌 -->
+              </div>
+            </div>
+            <div class="pane compose">
+              <h3>御笔自拟</h3>
+              <div class="ta empty">继续拟下道…</div>
+              <div class="btn">新增草案</div>
+            </div>
+          </div>
+          <div class="desk-foot">
+            <div class="seal">盖玺颁诏过月 →</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="aside" style="margin-top:12px">
+      <h4>0048 边界（两案共通）</h4>
+      <ul>
+        <li><strong>不</strong>在成案卡上放准 / 驳 / 改 / 删（改删仅限尚未成案的 <code>draft</code> 候选）。</li>
+        <li>成案事实来自 <code>decree_dossiers</code>（0051），桌面只投影「已收下 → 待颁/已颁…」，不另立第二账。</li>
+        <li>案甲：卡留桌但工具区失效/隐藏，chip 说去向；案乙：卡离桌，顶一条只读收据，避免「0 道草案」空桌误读。</li>
+        <li class="warn">待 owner 拍：甲留桌 vs 乙离桌（或甲乙折中：刚成案短暂留桌再收折进收据）。</li>
+      </ul>
+      <h4>数据来源</h4>
+      <ul>
+        <li>未成案：<code>list_directives</code> → <code>pending</code>/<code>draft</code> 且无 dossier</li>
+        <li>已成案：既有 <code>get_dossier_for_directive</code> / 诏令账 status（proposed 等）</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ③ ═══════════════ -->
+  <section class="scene" id="s3">
+    <h2>③ 大臣替拟 · 来源可辨</h2>
+    <p class="q">审读问题：大臣替拟的旨如何与御笔自拟区分来源？</p>
+    <div class="split">
+      <div class="desk-shell">
+        <div class="desk-chrome">
+          <span>拟诏台 · 御案</span>
+          <span class="tag">source + actor 既有字段</span>
+        </div>
+        <div class="desk-body">
+          <div class="pane">
+            <h3>本月指令</h3>
+            <div class="list">
+              <div class="card">
+                <div class="head">
+                  <b>御笔</b>
+                  <span class="src">手动新增</span>
+                </div>
+                <p>解太仓备用。</p>
+                <div class="tools"><span>改</span><span>删</span></div>
+              </div>
+              <div class="card minister">
+                <span class="pin">来源可辨</span>
+                <div class="head">
+                  <b>毕自严 户部尚书</b>
+                  <span class="state-chip draft">大臣拟</span>
+                </div>
+                <p>请拨关宁月饷，以固边圉。</p>
+                <div class="legend">
+                  <span class="state-chip draft">source=大臣拟旨 · actor 具名</span>
+                </div>
+                <div class="tools"><span>改</span><span>删</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="pane compose">
+            <h3>御笔自拟</h3>
+            <div class="ta empty">例如：命户部…</div>
+            <div class="btn">新增草案</div>
+          </div>
+        </div>
+        <div class="desk-foot">
+          <div class="seal">盖玺颁诏过月 →</div>
+        </div>
+      </div>
+      <aside class="aside">
+        <h4>提案要点</h4>
+        <ul>
+          <li>不新造字段：复用 <code>Directive.source</code>、<code>Directive.actor</code>（session 已读）。</li>
+          <li>呈现：大臣卡左边朱线 + 具名；御笔卡保持「手动新增」弱标记。</li>
+          <li>若走 pending 核定路径，仍用既有 confirm/reject 接缝——本票不扩准驳工作台语义；mock 仅强调来源辨识。</li>
+          <li>P7：不写「此乃某臣所拟」固定句；chip/名头由结构化字段特征化。</li>
+        </ul>
+        <h4>数据来源</h4>
+        <ul>
+          <li><code>source</code>：手动新增 / 大臣拟旨 / …</li>
+          <li><code>actor</code>：拟旨大臣名（可空）</li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ④ ═══════════════ -->
+  <section class="scene" id="s4">
+    <h2>④ 盖玺 / 过月后 · 桌面如何反映真实结果</h2>
+    <p class="q">审读问题：盖玺或过月后，桌面是否离桌？如何与诏令账一致？（两案对比，待审）</p>
+    <div class="compare">
+      <div>
+        <p class="case-label">案甲续 · 盖玺后卡升级为「已颁」再随过月清桌</p>
+        <div class="desk-shell">
+          <div class="desk-chrome">
+            <span>拟诏台 · 御案</span>
+            <span class="tag">盖玺返回瞬间</span>
+          </div>
+          <div class="desk-body">
+            <div class="pane">
+              <h3>本月指令</h3>
+              <div class="list">
+                <div class="card cased readonly-tools">
+                  <div class="head">
+                    <b>解太仓备用</b>
+                    <span class="state-chip promulgated">已颁</span>
+                  </div>
+                  <p>解太仓备用。</p>
+                  <div class="legend">
+                    <span class="state-chip promulgated">dossier=promulgated · 只读</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="pane compose">
+              <h3>御笔自拟</h3>
+              <div class="ta empty">（过月动画/核账中另见⑤）</div>
+              <div class="btn disabled">新增草案</div>
+            </div>
+          </div>
+          <div class="desk-foot">
+            <div class="seal disabled">盖玺颁诏过月 →</div>
+          </div>
+        </div>
+        <div class="aside" style="margin-top:8px">
+          <ul>
+            <li>盖玺成功：chip 从「待颁」→「已颁」（读 dossier status）。</li>
+            <li>过月完成：桌清空；史册/邸报承接，不在拟诏台留工作台。</li>
+          </ul>
+        </div>
+      </div>
+      <div>
+        <p class="case-label">案乙续 · 盖玺即离桌，只留「已交付核账」痕迹</p>
+        <div class="desk-shell">
+          <div class="desk-chrome">
+            <span>拟诏台 · 御案</span>
+            <span class="tag">盖玺后空候选</span>
+          </div>
+          <div class="trail">本月准旨已交付核账 · 详阅史册／邸报（只读）</div>
+          <div class="desk-body">
+            <div class="pane">
+              <h3>本月指令</h3>
+              <div class="empty-note">无待成案草案</div>
+            </div>
+            <div class="pane compose">
+              <h3>御笔自拟</h3>
+              <div class="ta empty">（核账期拟诏台面门 = closed，见⑤）</div>
+              <div class="btn disabled">新增草案</div>
+            </div>
+          </div>
+          <div class="desk-foot">
+            <div class="seal disabled">盖玺颁诏过月 →</div>
+          </div>
+        </div>
+        <div class="aside" style="margin-top:8px">
+          <ul>
+            <li>盖玺后候选与成案卡均离桌——避免空「0 道」无解释。</li>
+            <li>收据条指向既有史册/邸报，不新开准驳台。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="aside" style="margin-top:12px">
+      <h4>法源约束</h4>
+      <ul>
+        <li>0049：收夜/结束回合提交语义不动；本票只呈现结果。</li>
+        <li>0055：颁布闸与效果跟随判决——桌面 chip 只镜像，不改闸。</li>
+        <li>0048：过月后不把拟诏台变成批红工作台；批红仍走真文书页。</li>
+        <li class="warn">待 owner 拍：盖玺后短留「已颁」卡（甲）vs 立即离桌+收据（乙）。</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ⑤ ═══════════════ -->
+  <section class="scene" id="s5">
+    <h2>⑤ 刷新 · 过月中 · 失败/恢复 · 与持久事实一致</h2>
+    <p class="q">审读问题：四种情形桌面是否只展示持久相位<strong>准许</strong>的事实？（0148 / 0149）</p>
+
+    <table class="matrix">
+      <thead>
+        <tr>
+          <th>情形</th>
+          <th>真源</th>
+          <th>拟诏台应见</th>
+          <th>不得见</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>请求未完成（在飞）</td>
+          <td>仅本地</td>
+          <td class="ok">进行中卡（①）；刷新后消失</td>
+          <td class="no">写成「已成案」；刷新后假残留</td>
+        </tr>
+        <tr>
+          <td>已持久成案</td>
+          <td>dossier / 0051</td>
+          <td class="ok">按过审甲/乙投影去向</td>
+          <td class="no">仍当可改删草案</td>
+        </tr>
+        <tr>
+          <td>过月中（核账期）</td>
+          <td><code>settlement_display</code> + 月初快照（0148）</td>
+          <td class="ok">拟诏台面门 closed；核账叙事／王承恩条；在飞续跑不逼再点（0149）</td>
+          <td class="no">引擎半程状态；假「已颁完」；半改的 directive 列表</td>
+        </tr>
+        <tr>
+          <td>失败 / 恢复</td>
+          <td>API error + 持久行</td>
+          <td class="ok">该卡失败 chip；可再提交；无假成功</td>
+          <td class="no">busy 消了但卡仍「已收下」；失败当成功</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="compare" style="margin-top:14px">
+      <div>
+        <p class="case-label">失败绑在卡上（非只靠底栏 error-line）</p>
+        <div class="desk-shell">
+          <div class="desk-chrome">
+            <span>拟诏台 · 御案</span>
+            <span class="tag">POST 失败</span>
+          </div>
+          <div class="desk-body">
+            <div class="pane">
+              <h3>本月指令</h3>
+              <div class="list">
+                <div class="card fail">
+                  <span class="pin">失败可见</span>
+                  <div class="head">
+                    <b>解太仓备用</b>
+                    <span class="state-chip fail">未收下</span>
+                  </div>
+                  <p>解太仓备用。</p>
+                  <div class="legend">
+                    <span class="state-chip fail">特征：请求失败 · 无库行</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="pane compose">
+              <h3>御笔自拟</h3>
+              <div class="ta">解太仓备用。</div>
+              <div class="btn">新增草案</div>
+            </div>
+          </div>
+          <div class="desk-foot">
+            <div class="seal disabled">盖玺颁诏过月 →</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p class="case-label">过月中 · 拟诏台不重开半程桌</p>
+        <div class="desk-shell">
+          <div class="desk-chrome">
+            <span>年月标 · 核账</span>
+            <span class="tag">settlement_display=true</span>
+          </div>
+          <div class="desk-body" style="grid-template-columns:1fr">
+            <div class="pane">
+              <div class="empty-note" style="color:#c9b48a;border-color:rgba(226,180,86,0.35);background:rgba(20,14,8,0.4)">
+                档房正在核账，此簿暂不呈御前。<br />
+                <span style="font-size:0.8rem;opacity:0.85">（既有 SETTLEMENT_CLOSED_REASON 特征化出口；0148 月初快照 + 核账叙事）</span>
+              </div>
+              <div class="legend" style="margin-top:10px;color:#d8c9a0">
+                <span class="state-chip gone">面门 closed · 不露半程 directive</span>
+              </div>
+            </div>
+          </div>
+          <div class="desk-foot">
+            <div class="btn disabled" style="margin-left:auto">不逼再点盖玺（0149 在飞续跑）</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="aside" style="margin-top:12px">
+      <h4>一致性原则（提案）</h4>
+      <ul>
+        <li>本地进行态 ⊆ 未确认；与 <code>beginDurableMutation</code> latest-wins 同族，不写库。</li>
+        <li>刷新 = 重拉 state：只还原 DB/投影准许字段；乐观卡不复活。</li>
+        <li>过月中服从 0148/0149 既有门控（<code>edict: closed</code>），本票不新开写口。</li>
+        <li>失败：卡级 chip + 既有 error-line 可并存；清除假成功路径。</li>
+      </ul>
+    </div>
+  </section>
+
+  <p class="footer-meta">
+    #1764 mock 闸 · 分支 fix/issue-1764-w · 提案非施工 · 状态用词均为特征化示意（P7）·
+    对照说明见 <a href="./PROPOSAL.md">PROPOSAL.md</a>
+  </p>
+</div>
+</body>
+</html>
