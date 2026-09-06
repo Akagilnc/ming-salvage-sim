@@ -325,18 +325,8 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     audience_input = game.session._audience_prompt_for_message("卿有何事？", minister)
     assert str(row["text"] or "") in audience_input
     assert str(did) in audience_input
-    # 本月新拟、尚未跨月的草案不得因此漏进召对输入（密事边界不变）
-    fresh = int(game.db.add_directive(
-        game.state, None, "着兵部查点京营。", "player-decree-test",
-        dossier_payload={
-            "dossier_action_type": "policy", "target_kind": "issue",
-            "target_id": "jingying-check", "locality_scope": "none",
-        },
-    ))
-    assert "着兵部查点京营。" not in game.session._audience_prompt_for_message(
-        "卿有何事？", minister,
-    )
-    game.db.delete_directive(fresh)
+    # 反向（本回合新拟草案不得越界）归其契约本家：
+    # test_audience_background.py::test_audience_prompt_does_not_expose_unissued_draft_...
 
     # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
     payloads = _write_decree_capture_payloads(monkeypatch, game)

@@ -199,8 +199,6 @@ def _tool_registry(tools):
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
     return Registry()
 
