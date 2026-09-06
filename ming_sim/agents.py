@@ -135,13 +135,17 @@ def _agent_model_is_cli(agent: object) -> bool:
 
 def _history_backed_truncate_anchor(
     agent: object,
+    game_db: Any,
 ) -> Optional[tuple[Any, str, int]]:
-    """history-backed + GameDB 句柄 → (game_db, session_id, keep_count)；否则不截。
+    """history-backed + 调用方显式 GameDB → (game_db, session_id, keep_count)；否则不截。
 
     命中面=颁布判官（db+cache_session+add_history_to_context）；截缝唯一权威=
     GameDB.truncate_agno_session_runs → _truncate_agno_runs_in_tx（与召对同缝）。
-    无 _ming_game_db 不另造 get_runs/delete_runs 退路。
+    GameDB 由调用方经 run_agent_text(game_db=) 显式交来（入参契约），
+    不往 agent 实例挂私有句柄；未交 game_db 不另造 get_runs/delete_runs 退路。
     """
+    if game_db is None:
+        return None
     if not (
         getattr(agent, "add_history_to_context", False)
         and getattr(agent, "cache_session", False)
@@ -151,8 +155,7 @@ def _history_backed_truncate_anchor(
     session_id = str(getattr(agent, "session_id", "") or "")
     if not session_id:
         return None
-    game_db = getattr(agent, "_ming_game_db", None)
-    if game_db is None or not hasattr(game_db, "truncate_agno_session_runs"):
+    if not hasattr(game_db, "truncate_agno_session_runs"):
         return None
     if not hasattr(game_db, "agno_runs_length"):
         return None
@@ -181,6 +184,7 @@ def run_agent_text(
     tag: str,
     *,
     prior_messages: Optional[Sequence[Any]] = None,
+    game_db: Any = None,
 ) -> str:
     """跑 agent，返回 SDK 终包完整 content（严格 JSON 真源；非 chunk 拼接）。
 
@@ -206,8 +210,10 @@ def run_agent_text(
     半流：本入口无玩家 delta 呈现（extractor/sanitizer 等）；召对 _chat_stream_payload
     半流呈现属切片④，本函数不改其呈现。
 
+    game_db：可选 GameDB，仅 history-backed 调用方（颁布判官）交来。
     history-backed（db+cache_session+add_history_to_context）：空终包 completed run 经
     cleanup_and_store 落库后，transport 再试前截回本 call 起点（同形召对 truncate）。
+    未交 game_db 即不截（本入口多数调用无历史，不受影响）。
     """
     t0 = time.monotonic()
     run_input = _agent_run_input(prompt, prior_messages)
@@ -225,7 +231,7 @@ def run_agent_text(
     policy = resolve_transport_policy()
     model = getattr(agent, "model", None)
 
-    hist_anchor = _history_backed_truncate_anchor(agent)
+    hist_anchor = _history_backed_truncate_anchor(agent, game_db)
     attempt_n = {"n": 0}
 
     def _before_attempt() -> None:
