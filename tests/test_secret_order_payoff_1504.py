@@ -1416,35 +1416,28 @@ def _feed_has_emperor_and_gap(
 
 
 def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
-    """#1765：classifier 入口落不了库 → typed recovery；原产物+源轮进诊断与后续 LLM 输入。"""
+    """#1765：classifier 入口落不了库 → typed recovery；原产物+源轮进诊断与后续 LLM 输入。
+
+    原非 JSON 案的首尾空白无损义务迁入本 raw 行为案：结构化 extract_raw/耐久记录
+    须等于完整原串（含首尾空白），不扫生成回话。
+    """
     from ming_sim.action_clusters import candidates_from_classifier_payload
 
     db, state, _ = game
     name = _minister(db)
     emperor_words = "查核辽饷侵冒"
-    # 合法 JSON 坏合同：原产物须保留（C3/C4），不得只留摘要。
-    unlandable = json.dumps({
-        "标题": "",
-        "内容": emperor_words,
-        "承办人": name,
-        "期限月数": 0,
-        "标签": ["辽饷"],
-        "差务": "",
-        "价值轴": [],
-        "方向": 1,
-        "交付单位": "",
-        "交付目标": 0,
-        "效果符号": 1,
-    }, ensure_ascii=False)
-    llm_inputs: list[str] = []
+    # 非 JSON + 首尾空白：诊断 raw 须完整保留（C7 M4：strip 即红）。
+    unlandable = "\n  此非JSON密令产出：缺标题与合同  \n"
+    recovery_feeds: list[str] = []
     source_turn = 1765
 
     def _json_extract(prompt, llm_config=None, tag="", **_k):
-        llm_inputs.append(str(prompt))
         return (unlandable, 1)
 
     def _prose(prompt, llm_config=None, tag="", **_k):
-        llm_inputs.append(str(prompt))
+        # 供料只认 typed 调用身份，不靠生成措辞设闸（M3）。
+        if tag == "secret_order_landing_recovery":
+            recovery_feeds.append(str(prompt))
         return ("任意生成回禀", 1)
 
     _stub_secret_landing_llm(monkeypatch, extract_fn=_json_extract, prose_fn=_prose)
@@ -1468,14 +1461,16 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
     assert list(recovery.get("landing_gaps") or []), "typed landing_gaps 须可读回"
     assert int(ctx.out.get("pending_action_id") or 0) == 0
     assert db.list_secret_orders() == []
-    # 后续 compose 供料：皇帝上下文 + 真实缺口 + 完整原产物（非表头冒充）
+    # 后续 compose 供料：typed tag 定位；substance 在 prompt（compose 可 strip 空白供 LLM）
+    assert recovery_feeds, "须有 typed secret_order_landing_recovery 调用"
     assert any(
-        _feed_has_emperor_and_gap(p, emperor_words, prior_raw=unlandable)
-        for p in llm_inputs
-    ), "recovery 输入须含皇帝原话、真实缺口标签与完整原产物"
+        _feed_has_emperor_and_gap(p, emperor_words, prior_raw=unlandable.strip())
+        for p in recovery_feeds
+    ), "recovery 输入须含皇帝原话、真实缺口标签与原产物 substance"
     snap = recovery.get("extract_snapshot") or {}
     assert not str(snap.get("title") or "").strip()
-    assert unlandable in str(snap.get("extract_raw") or "")
+    # 完整原串含首尾空白——不得只做包含断言
+    assert snap.get("extract_raw") == unlandable
     assert int(snap.get("source_chat_turn_id") or 0) == source_turn
     rows = db.conn.execute(
         "SELECT category, item_json FROM rejection_reports WHERE section=?",
@@ -1484,10 +1479,10 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
     assert rows and any(r["category"] == "secret_landing" for r in rows)
     items = [json.loads(r["item_json"]) for r in rows]
     assert any(
-        unlandable in str(it.get("extract_raw") or "")
+        it.get("extract_raw") == unlandable
         and int(it.get("source_chat_turn_id") or 0) == source_turn
         for it in items
-    ), "拒收记录须带原产物与源 chat_turn"
+    ), "拒收记录须带完整原产物（含空白）与源 chat_turn"
 
 
 @pytest.mark.parametrize(
@@ -1572,7 +1567,7 @@ def test_secret_landing_recovery_explicit_prefix_entry(game, monkeypatch):
     name = _minister(db)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     emperor = "暗查辽饷侵冒"
-    llm_inputs: list[str] = []
+    recovery_feeds: list[str] = []
     zero = json.dumps({
         "标题": "", "内容": "", "承办人": name, "期限月数": 0,
         "标签": [], "差务": "", "价值轴": [], "方向": 1,
@@ -1580,11 +1575,11 @@ def test_secret_landing_recovery_explicit_prefix_entry(game, monkeypatch):
     }, ensure_ascii=False)
 
     def _json_extract(prompt, llm_config=None, tag="", **_k):
-        llm_inputs.append(str(prompt))
         return (zero, 1)
 
     def _prose(prompt, llm_config=None, tag="", **_k):
-        llm_inputs.append(str(prompt))
+        if tag == "secret_order_landing_recovery":
+            recovery_feeds.append(str(prompt))
         return ("任意生成回禀", 1)
 
     _stub_secret_landing_llm(monkeypatch, extract_fn=_json_extract, prose_fn=_prose)
@@ -1607,52 +1602,10 @@ def test_secret_landing_recovery_explicit_prefix_entry(game, monkeypatch):
     assert recovery.get("report") and recovery.get("landing_gaps")
     assert int(out.get("pending_action_id") or 0) == 0
     assert db.list_secret_orders() == []
+    assert recovery_feeds, "须有 typed secret_order_landing_recovery 调用"
     assert any(
-        _feed_has_emperor_and_gap(p, emperor, prior_raw=zero) for p in llm_inputs
+        _feed_has_emperor_and_gap(p, emperor, prior_raw=zero) for p in recovery_feeds
     ), "显式前缀 recovery 输入须含皇帝原话、真实缺口与原产物"
-
-
-def test_secret_extract_non_json_raw_preserved_for_recovery(game, monkeypatch):
-    """#1765 C7：合法非 JSON 原产物无损进入 recovery 供料与诊断（旧分流案义务迁移）。"""
-    from ming_sim.action_clusters import candidates_from_classifier_payload
-
-    db, state, _ = game
-    name = _minister(db)
-    emperor_words = "暗查关宁军饷"
-    prior_raw = "此非JSON密令产出：缺标题与合同"
-    llm_inputs: list[str] = []
-
-    def _json_extract(prompt, llm_config=None, tag="", **_k):
-        llm_inputs.append(str(prompt))
-        return (prior_raw, 1)
-
-    def _prose(prompt, llm_config=None, tag="", **_k):
-        llm_inputs.append(str(prompt))
-        return ("任意生成回禀", 1)
-
-    _stub_secret_landing_llm(monkeypatch, extract_fn=_json_extract, prose_fn=_prose)
-    candidates = candidates_from_classifier_payload(
-        [{"kind": "secret", "secret_action": "新建"}], soft=False,
-    )
-    ctx = MaterializeCtx(
-        session=SimpleNamespace(db=db, state=state),
-        character=SimpleNamespace(name=name, office_type="文官"),
-        player_message=emperor_words, reply="臣领密旨",
-        message_text=emperor_words, explicit_prefixed=False,
-        has_directive=False, pend_for_minister=[], out={},
-        intent=None, intent_kind="none",
-        llm_config=None, intent_candidates=candidates,
-    )
-    run_materialize_pipeline(ctx)
-
-    recovery = ctx.out.get("secret_order_landing_recovery") or {}
-    assert recovery.get("report") and recovery.get("landing_gaps")
-    snap = recovery.get("extract_snapshot") or {}
-    assert prior_raw in str(snap.get("extract_raw") or "")
-    assert any(
-        _feed_has_emperor_and_gap(p, emperor_words, prior_raw=prior_raw)
-        for p in llm_inputs
-    )
 
 
 def test_secret_extract_transport_error_raises_system_failure(game, monkeypatch):
@@ -1737,30 +1690,49 @@ def _web_secret_landing_client(tmp_path, monkeypatch, backend_fn):
     return game, name, _stream, wait_pending_writes
 
 
-def test_http_chat_stream_secret_landing_recovery_player_readback(
-    tmp_path, monkeypatch, _offline_scene_beat_generator,
-):
-    """#1765 切片①：Web 召对 SSE → recovery 玩家读回；role=minister。"""
-    backend_tags = set()
-    llm_inputs: list[str] = []
-    zero = json.dumps({
+def _secret_landing_bad_raw(*, with_edges: bool = False) -> str:
+    """Shared unlandable extract product for A-path Web cases (C7)."""
+    body = json.dumps({
         "标题": "", "内容": "", "承办人": "", "期限月数": 0,
         "标签": [], "差务": "", "价值轴": [], "方向": 1,
         "交付单位": "", "交付目标": 0,
     }, ensure_ascii=False)
+    if with_edges:
+        return f"\n  {body}  \n"
+    return body
+
+
+def _secret_landing_good_raw(name: str, body: str) -> str:
+    return json.dumps({
+        "标题": "暗查关宁", "内容": body, "承办人": name,
+        "期限月数": 3, "标签": ["关宁"], "差务": "核发辽饷",
+        "价值轴": ["实务事功"], "方向": 1, "交付单位": "万两",
+        "交付目标": 1, "效果符号": 1,
+        "钱粮用途": "辽饷", "钱粮类别": "密令差务", "钱粮账户": "内库",
+    }, ensure_ascii=False)
+
+
+def test_http_chat_stream_secret_landing_recovery_player_readback(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
+    """#1765 A跨轮①：Web 召对 SSE 首次坏产物 → 大臣回禀与结构化读回、无候选。"""
+    backend_tags = set()
+    recovery_feeds: list[str] = []
+    # Web raw 行为：首尾空白无损落在结构化 extract_raw（C7 M4）。
+    bad = _secret_landing_bad_raw(with_edges=True)
     message = "你替朕下一道密令，暗查关宁诸将虚冒兵额。"
 
     def backend(prompt, _config=None, *, tag=""):
         backend_tags.add(tag)
         text = str(prompt)
-        llm_inputs.append(text)
         if tag == "action_intent":
             return json.dumps(
                 {"kind": "secret", "secret_action": "新建"}, ensure_ascii=False,
             ), 1
         if tag == "secret_extract":
-            return zero, 1
+            return bad, 1
         if tag == "secret_order_landing_recovery":
+            recovery_feeds.append(text)
             return "任意生成回禀", 1
         return "任意生成回禀", 1
 
@@ -1772,6 +1744,7 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
         done = stream(message)
         recovery = done.get("secret_order_landing_recovery") or {}
         assert recovery.get("report") and recovery.get("landing_gaps")
+        assert int(done.get("pending_action_id") or 0) == 0
         history = done.get("history") or []
         minister_msgs = [h for h in history if h.get("role") == "minister"]
         assert minister_msgs, "玩家读回须有 minister 回话"
@@ -1779,54 +1752,56 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
             recovery["report"] in str(h.get("content") or "") for h in minister_msgs
         )
         assert "secret_order_landing_recovery" in backend_tags
+        assert recovery_feeds, "须有 typed secret_order_landing_recovery 调用"
         assert any(
-            _feed_has_emperor_and_gap(p, message, "暗查关宁", prior_raw=zero)
-            for p in llm_inputs
-        ), "Web recovery 后续输入须含皇帝原话、真实缺口与原产物"
+            _feed_has_emperor_and_gap(
+                p, message, "暗查关宁", prior_raw=bad.strip(),
+            )
+            for p in recovery_feeds
+        ), "Web recovery 后续输入须含皇帝原话、真实缺口与原产物 substance"
         assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
-        # 失败路径：玩家密令读接口（game.db）无落库；history 有 minister ≠ 密令身份
         assert game.db.list_secret_orders() == []
         snap = recovery.get("extract_snapshot") or {}
-        assert zero in str(snap.get("extract_raw") or "") or snap.get("extract_raw") == zero
+        assert snap.get("extract_raw") == bad, "extract_raw 须完整原串（含首尾空白）"
     finally:
         wait_pending_writes(game)
         if game.session:
             game.session.close()
 
 
-def test_http_chat_stream_secret_landing_completion_affirm_readback(
+def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """#1765 C7：Web 能落 → 既有应允 → 皇帝身份读回（同一召对主干）。"""
+    """#1765 A跨轮：坏产物→回禀无候选→下一轮再说→成功候选→应允→/api/secret_orders。
+
+    Owner 御批 A：召对能问现场就问；不暂存候选，皇帝再说一轮才有候选。
+    """
     import ming_sim.cli_backend as cb
 
     good_body = "暗查关宁诸将虚冒兵额，三月内回奏。"
+    bad = _secret_landing_bad_raw()
     good = None  # filled after minister name known
-    llm_inputs: list[str] = []
+    extract_n = {"n": 0}
+    recovery_feeds: list[str] = []
 
     def backend(prompt, _config=None, *, tag=""):
-        text = str(prompt)
-        llm_inputs.append(text)
         if tag == "action_intent":
             return json.dumps(
                 {"kind": "secret", "secret_action": "新建"}, ensure_ascii=False,
             ), 1
         if tag == "secret_extract":
-            return good, 1
+            extract_n["n"] += 1
+            # 首次坏产物；玩家下一轮再说后才给成功结构化产物
+            return (bad if extract_n["n"] == 1 else good), 1
         if tag == "secret_order_landing_recovery":
-            raise AssertionError("能落不得走 recovery compose")
+            recovery_feeds.append(str(prompt))
+            return "任意生成回禀", 1
         return "任意生成回禀", 1
 
     game, name, stream, wait_pending_writes = _web_secret_landing_client(
         tmp_path, monkeypatch, backend,
     )
-    good = json.dumps({
-        "标题": "暗查关宁", "内容": good_body, "承办人": name,
-        "期限月数": 3, "标签": ["关宁"], "差务": "核发辽饷",
-        "价值轴": ["实务事功"], "方向": 1, "交付单位": "万两",
-        "交付目标": 1, "效果符号": 1,
-        "钱粮用途": "辽饷", "钱粮类别": "密令差务", "钱粮账户": "内库",
-    }, ensure_ascii=False)
+    good = _secret_landing_good_raw(name, good_body)
     monkeypatch.setattr(
         cb, "extract_confirmation_intent",
         lambda player_message, *a, **k: (
@@ -1834,16 +1809,37 @@ def test_http_chat_stream_secret_landing_completion_affirm_readback(
         ),
     )
     try:
+        # 1) 首次坏产物 → 大臣回禀、无候选
         done1 = stream("你替朕下一道密令，暗查关宁诸将虚冒兵额。")
-        pid = int(done1.get("pending_action_id") or 0)
-        assert pid > 0, done1
-        assert not done1.get("secret_order_landing_recovery")
+        recovery = done1.get("secret_order_landing_recovery") or {}
+        assert recovery.get("report") and recovery.get("landing_gaps")
+        assert int(done1.get("pending_action_id") or 0) == 0
+        assert recovery_feeds, "须有 typed recovery 调用"
+        assert any(
+            _feed_has_emperor_and_gap(
+                p, "暗查关宁", prior_raw=bad,
+            )
+            for p in recovery_feeds
+        )
         wait_pending_writes(game)
         assert game.db.list_secret_orders() == []
+        assert game.db.list_pending_actions(game.state.turn) == []
 
-        done2 = stream("准，就照此密行")
+        # 2) 玩家下一轮再说 → 模型边界成功结构化产物 → 真实候选
+        done2 = stream("标题暗查关宁，三月回奏，差务核发辽饷。")
+        pid = int(done2.get("pending_action_id") or 0)
+        assert pid > 0, done2
+        assert not done2.get("secret_order_landing_recovery")
         wait_pending_writes(game)
-        # 密令身份/内容只认玩家读接口真源（/api/secret_orders → game.db），不靠 history 角色凑。
+        assert game.db.list_secret_orders() == []
+        row = game.db.conn.execute(
+            "SELECT kind, status FROM pending_actions WHERE id=?", (pid,),
+        ).fetchone()
+        assert row is not None and row["kind"] == "secret_order"
+
+        # 3) 既有应允 → /api/secret_orders 身份内容一致
+        stream("准，就照此密行")
+        wait_pending_writes(game)
         from fastapi.testclient import TestClient
         import web_app
         api = TestClient(web_app.app).get("/api/secret_orders")
@@ -1854,7 +1850,66 @@ def test_http_chat_stream_secret_landing_completion_affirm_readback(
         assert orders[0]["minister_name"] == name
         assert good_body in str(orders[0].get("content") or "")
         assert game.db.list_pending_actions(game.state.turn) == []
-        # 同轮失败→揣摩→结构化补全候选 依赖 C1 owner 分叉，本片不证；见判牒 escalate。
+    finally:
+        wait_pending_writes(game)
+        if game.session:
+            game.session.close()
+
+
+def test_http_chat_stream_secret_landing_a_path_abandon_no_default(
+    tmp_path, monkeypatch, _offline_scene_beat_generator,
+):
+    """#1765 A跨轮边界：同一失败起点后不再回复而退朝——不阻塞、本道无候选、无默认落库。
+
+    不得用旧 failed 行清理案冒充；①新增交互边界，非②范围豁免。
+    """
+    bad = _secret_landing_bad_raw()
+
+    def backend(prompt, _config=None, *, tag=""):
+        if tag == "action_intent":
+            return json.dumps(
+                {"kind": "secret", "secret_action": "新建"}, ensure_ascii=False,
+            ), 1
+        if tag == "secret_extract":
+            return bad, 1
+        if tag == "secret_order_landing_recovery":
+            return "任意生成回禀", 1
+        return "任意生成回禀", 1
+
+    game, name, stream, wait_pending_writes = _web_secret_landing_client(
+        tmp_path, monkeypatch, backend,
+    )
+    # _web_secret_landing_client already stubs outer seams; keep settlement path live.
+    try:
+        done = stream("你替朕下一道密令，暗查关宁诸将虚冒兵额。")
+        recovery = done.get("secret_order_landing_recovery") or {}
+        assert recovery.get("report")
+        assert int(done.get("pending_action_id") or 0) == 0
+        wait_pending_writes(game)
+        assert game.db.list_secret_orders() == []
+        assert game.db.list_pending_actions(game.state.turn) == []
+
+        turn_before = int(game.state.turn)
+        # 真实退朝入口：session.advance_without_decree（与 Web 退朝同源）
+        result = game.session.advance_without_decree(inflight_wait_s=0.0)
+        if result is None or not getattr(result, "awaiting", False):
+            game.session.end_turn()
+            if hasattr(game, "refresh_turn"):
+                game.refresh_turn()
+
+        assert int(game.state.turn) == turn_before + 1, (
+            f"退朝须推进回合，got turn={game.state.turn} from {turn_before}"
+        )
+        # 本道密令无候选、无默认落库
+        assert game.db.list_secret_orders() == []
+        secret_pending = [
+            r for r in game.db.list_pending_actions(turn_before)
+            if r.get("kind") == "secret_order"
+        ]
+        assert secret_pending == []
+        assert game.db.list_pending_actions(game.state.turn) == []
+        if hasattr(game.db, "list_failed_secret_order_actions"):
+            assert game.db.list_failed_secret_order_actions() == []
     finally:
         wait_pending_writes(game)
         if game.session:
