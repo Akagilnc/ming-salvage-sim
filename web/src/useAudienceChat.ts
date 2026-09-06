@@ -16,6 +16,8 @@ import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Min
  *   旧流读心仍按归属轮定位插入——绝不因新 send 作废 token 而永久丢失。
  * - 持久后果（草案/密令/换人/退下/loadState 等）：done 载荷到手即由 App 幂等消费（不按 token
  *   门控），不拖到 SSE end——读心可延后 end 达 120s，期间起新轮不得吞掉已完成的旧轮后果。
+ * - 提交完成投影（成案等尾随落账）：SSE end 表示抽取/收夜等已 join，App 经 onEnd 再读权威
+ *   durable state；不延迟 done 回话呈现。观察者离面无 end 时，重入拟诏等面经既有 loadState 接缝。
  */
 
 export type AudienceHistoryData = {
@@ -38,6 +40,8 @@ export type AudienceHistoryData = {
 export type SendChatCallbacks = {
   /** 回话 done：done 载荷到手即消费持久后果 + 面板态（App 自行区分全局/面板归属）。 */
   onDone?: (data: ChatResponse) => void;
+  /** 流 end：尾随写（抽取成案/收夜等）已 join，权威持久投影可重读。不按 token 门控。 */
+  onEnd?: () => void;
   /** 观察者离开实时流（AbortError） */
   onLeave?: () => void;
   /** 失败（非 Abort） */
@@ -221,7 +225,11 @@ export function useAudienceChat(
                 });
               }
             },
-            onEnd: onScrollSettled,
+            onEnd: () => {
+              // 尾随落账后：卷轴再失效一次；提交完成缝交给 App 重读 durable（成案等）。
+              onScrollSettled?.();
+              cb.onEnd?.();
+            },
           },
         );
       } catch (err) {

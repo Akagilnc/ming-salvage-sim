@@ -187,19 +187,21 @@ export function App() {
     currentNightId,
   });
 
-  // 诏书台动作群（useEdictActions.ts）：草案/诏文的全部 busy 动作与代次推进。
+  // 诏书台动作群（useEdictActions.ts）：草案 create/save/delete 与本地会话态归属。
   const {
     directiveText,
     editingDirectiveId,
     editingDirectiveText,
     setDirectiveText,
     setEditingDirectiveText,
+    localDirectives,
+    resetLocalEdictState,
     createDirective,
     startEditDirective,
     cancelEditDirective,
     saveDirective,
     deleteDirective,
-  } = useEdictActions({ setBusy, setError, setState, beginDurableMutation });
+  } = useEdictActions({ setError, setState, beginDurableMutation });
 
   // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/failed-only 退朝/HITL 决策点续裁/失败重拉。
   // hook 必须在 menu/loading 早退之前调用。
@@ -259,21 +261,25 @@ export function App() {
   }, [refreshMenuStatus, loadState]);
 
   const enterGameAfterMenu = React.useCallback(async () => {
+    // #1764：新局归属——清本地拟诏会话态，防上一局失败卡/编辑/compose 残留。
+    resetLocalEdictState();
     setUndoneChatIdentity(null);
     setAppView("game");
     await loadState();
-  }, [loadState]);
+  }, [loadState, resetLocalEdictState]);
 
   const exitToMenu = React.useCallback(async () => {
     // #499：清空 state 前推进持久投影代次，作废在飞的旧 done 刷新——否则迟到刷新会在退菜单后
     // 把陈旧 state 回填、再入局时短暂渲染。清态本身也是一次持久投影变更，纳入代次归属。
     beginDurableMutation();
+    // #1764：离局即推进本地拟诏归属代次并清零，迟到 create/save/delete 回执不得写回。
+    resetLocalEdictState();
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
     setUndoneChatIdentity(null);
     setAppView("menu");
     await refreshMenuStatus();
-  }, [refreshMenuStatus, beginDurableMutation]);
+  }, [refreshMenuStatus, beginDurableMutation, resetLocalEdictState]);
 
   React.useEffect(() => {
     if (!state) return;
@@ -396,7 +402,12 @@ export function App() {
     closeAllDrawers();
     setMapIntelOpen(false);
     setActiveModal(modal);
-  }, [closeAllDrawers]);
+    // #1764：拟诏打开公共接缝——木牌与起复同路读权威 durable（含 cased_directives）。
+    // 覆盖 done 早到 GET 后后台成案、及观察者离面无 end 的重入；不延迟 done、不另建旁接线。
+    if (modal === "edict") {
+      void loadState().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    }
+  }, [closeAllDrawers, loadState]);
 
   // #1726：点开奏疏面板即已读（绑具体奏报 key，不绑案卷）；失败不挡阅读。
   const memorialMarkGenRef = React.useRef(0);
@@ -734,6 +745,7 @@ export function App() {
             report={report}
             busy={busy}
             error={error}
+            localDirectives={localDirectives}
             onDirectiveTextChange={setDirectiveText}
             onEditingTextChange={setEditingDirectiveText}
             onCreateDirective={createDirective}
