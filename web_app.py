@@ -71,8 +71,8 @@ from ming_sim.llm_transport import (
     bind_transport_sdk_budget,
     empty_output_failure,
     is_stream_activity_event,
+    map_run_error_event,
     resolve_transport_policy,
-    run_error_event_failure,
     run_transport_stream,
     transport_attempts_public,
     transport_failure_unavailable,
@@ -2612,16 +2612,6 @@ class WebGame:
         run_output_box: List[Any] = []
         exit_started_during_stream = {"v": False}
 
-        def _map_error(event: Any):
-            if type(event).__name__ != "RunErrorEvent":
-                return None
-            # #1452/#1465：无 typed status 的 stream error 不洗成瞬断
-            return transport_failure_unavailable(
-                run_error_event_failure(getattr(event, "content", None)),
-                attempts=1,
-                exhausted=False,
-            )
-
         def _on_event(event: Any) -> None:
             content = getattr(event, "content", None)
             event_name = getattr(event, "event", "")
@@ -2690,7 +2680,7 @@ class WebGame:
                     _start_stream,
                     on_event=_on_event,
                     is_activity_event=is_stream_activity_event,
-                    map_error_event=_map_error,
+                    map_error_event=map_run_error_event,
                     after_stream=_after_stream,
                     policy=policy,
                 )
@@ -2699,7 +2689,7 @@ class WebGame:
             stream = _start_stream()
             try:
                 for event in stream:
-                    err = _map_error(event)
+                    err = map_run_error_event(event)
                     if err is not None:
                         raise err
                     _on_event(event)

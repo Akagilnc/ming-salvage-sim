@@ -27,8 +27,8 @@ from ming_sim.llm_transport import (
     bind_transport_sdk_budget,
     empty_output_failure,
     is_stream_activity_event,
+    map_run_error_event,
     resolve_transport_policy,
-    run_error_event_failure,
     run_transport_stream,
     run_with_transport,
     transport_failure_unavailable,
@@ -158,15 +158,6 @@ def run_agent_text(
     if _agent_run_accepts_stream(agent):
         terminal_box: List[Any] = []
 
-        def _map_error(event: Any) -> Optional[BaseException]:
-            if type(event).__name__ != "RunErrorEvent":
-                return None
-            return transport_failure_unavailable(
-                run_error_event_failure(getattr(event, "content", None)),
-                attempts=1,
-                exhausted=False,
-            )
-
         def _on_event(event: Any) -> None:
             # chunk 不拼终文；仅收终包
             if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
@@ -207,7 +198,7 @@ def run_agent_text(
                 _start_stream,
                 on_event=_on_event,
                 is_activity_event=is_stream_activity_event,
-                map_error_event=_map_error,
+                map_error_event=map_run_error_event,
                 after_stream=_after_stream,
                 policy=policy,
             )
@@ -322,13 +313,9 @@ def run_agent_stream_text(
             (hasattr(event, "is_final") and getattr(event, "is_final", False))
             or ev_type in ("RunOutput", "RunCompletedEvent")
         )
-        if ev_type == "RunErrorEvent":
-            # 系统层 typed；不走戏内固定话术（P7/0046）。构造权威 = run_error_event_failure。
-            raise transport_failure_unavailable(
-                run_error_event_failure(getattr(event, "content", None)),
-                attempts=1,
-                exhausted=False,
-            )
+        err = map_run_error_event(event)
+        if err is not None:
+            raise err
         if is_terminal:
             final_output = event
             continue

@@ -282,6 +282,21 @@ def run_error_event_failure(content: object = None) -> ClassifiedFailure:
     )
 
 
+def map_run_error_event(event: Any) -> Optional[BaseException]:
+    """RunErrorEvent → LLMUnavailable 单真源（agents/web 三处同权威；#12/#14）。
+
+    非 RunErrorEvent 返回 None。分类语义 = run_error_event_failure；
+    系统层出口 = transport_failure_unavailable。不改分类、不加护栏。
+    """
+    if type(event).__name__ != "RunErrorEvent":
+        return None
+    return transport_failure_unavailable(
+        run_error_event_failure(getattr(event, "content", None)),
+        attempts=1,
+        exhausted=False,
+    )
+
+
 def is_stream_activity_event(event: Any) -> bool:
     """空转活动唯一权威（召对 web 流 / run_agent_text 同用；禁平行分叉）。
 
