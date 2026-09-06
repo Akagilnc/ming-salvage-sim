@@ -194,6 +194,7 @@ export function App() {
     editingDirectiveText,
     setDirectiveText,
     setEditingDirectiveText,
+    localDirectives,
     createDirective,
     startEditDirective,
     cancelEditDirective,
@@ -734,6 +735,7 @@ export function App() {
             report={report}
             busy={busy}
             error={error}
+            localDirectives={localDirectives}
             onDirectiveTextChange={setDirectiveText}
             onEditingTextChange={setEditingDirectiveText}
             onCreateDirective={createDirective}

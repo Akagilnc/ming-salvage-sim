@@ -1268,6 +1268,35 @@ class WebGame:
             if int(row["id"]) in visible_ids
         ]
 
+    def cased_directive_payloads(self) -> List[Dict[str, Any]]:
+        """#1764 御案只读投影：已成案·待盖玺（0051 proposed）。
+
+        读 list_dossiered_draft_directives + dossier status；不改 list_directives 过滤，
+        不另立事实源。同 directive fan-out 多行案卷只投影一条。过月后 draft 迁出则桌空。
+        """
+        seen: set[int] = set()
+        out: List[Dict[str, Any]] = []
+        for row in self.db.list_dossiered_draft_directives(self.state):
+            dir_id = int(row["id"])
+            if dir_id in seen:
+                continue
+            dossier = self.db.get_dossier_for_directive(dir_id)
+            if dossier is None:
+                continue
+            if str(dossier.get("status") or "") != "proposed":
+                continue
+            seen.add(dir_id)
+            out.append({
+                "id": dir_id,
+                "dossier_id": int(dossier["id"]),
+                "text": str(row["text"] or dossier.get("decree_text") or ""),
+                "source": str(row["source"] or ""),
+                "actor": str(row["actor"] or ""),
+                "notes": str(row["notes"] or ""),
+                "dossier_status": str(dossier["status"]),
+            })
+        return out
+
     def pending_directive_count(
         self, pending_actions: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
@@ -1560,6 +1589,7 @@ class WebGame:
 
     def state_payload(self) -> Dict[str, Any]:
         directives = [self.directive_payload(row) for row in self.directive_rows()]
+        cased_directives = self.cased_directive_payloads()
         pending_actions = self.db.list_pending_actions(int(self.state.turn))
         visible_non_directive_pending = [
             a for a in pending_actions
@@ -1659,6 +1689,8 @@ class WebGame:
                 if in_talent_pool(c, self.db, self.state.year, self.state.period)
             ],
             "directives": directives,
+            # #1764：已成案·待盖玺只读投影（0051）；不改 list_directives 过滤语义。
+            "cased_directives": cased_directives,
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(pending_actions),
             # #1376：staged 密令候选如实入投影计数（可见性）。
