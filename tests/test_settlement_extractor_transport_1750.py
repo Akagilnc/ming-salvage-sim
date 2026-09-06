@@ -397,6 +397,7 @@ def _drive_terminal_extractor_fail(client, monkeypatch, *, step: str) -> dict:
         "recovery": recovery,
         "manifest": manifest,
         "transport_attempts": transport_attempts,
+        "sse_data": data,
         "surfaces": _player_error_surfaces(data, recovery),
     }
 
@@ -469,11 +470,10 @@ def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     assert any(s.get("code") == "llm_run_error" for s in surfaces), (
         f"exception category code not preserved as llm_run_error: {surfaces!r}"
     )
-    # issue/stream 终包：message 必须是标量（禁 dict 嵌套进 setError）
-    outer = next((s for s in surfaces if isinstance(s.get("message"), str)), None)
-    assert outer is not None, f"SSE message must be scalar string; surfaces={surfaces!r}"
-    assert isinstance(outer.get("message"), str) and outer["message"].strip()
-    assert not isinstance(outer.get("message"), dict)
+    # issue/stream 终包直咬 SSE data（与 a2 同尺；不经 surfaces 展平）
+    outer = scene["sse_data"]
+    assert isinstance(outer, dict), outer
+    assert isinstance(outer.get("message"), str) and str(outer["message"]).strip(), outer
     assert outer.get("status_code") == _UPSTREAM_STATUS_CODE, outer
     assert outer.get("code") == "llm_run_error", outer
 
