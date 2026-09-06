@@ -1502,7 +1502,10 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
 def test_batch_assignment_id_survives_invalid_secret_both_orders(
     game, monkeypatch, kinds,
 ):
-    """#1765 / #1565：同批正常动作不受坏密令牵连；assignment ID 可回指。"""
+    """#1765 / #1565：同批正常动作不受坏密令牵连；assignment ID 可回指。
+
+    C1：compose 时无本批悬挂写事务；正常 compose 下同批合法动作与恢复投影完整。
+    """
     from ming_sim.action_clusters import candidates_from_classifier_payload
 
     db, state, _ = game
@@ -1512,10 +1515,20 @@ def test_batch_assignment_id_survives_invalid_secret_both_orders(
         "标签": [], "差务": "", "价值轴": [], "方向": 1,
         "交付单位": "", "交付目标": 0,
     }, ensure_ascii=False)
+    source_turn = 17650
+    compose_tx_flags: list[bool] = []
+
+    def _prose(prompt, llm_config=None, tag="", **_k):
+        if tag == "secret_order_landing_recovery":
+            compose_tx_flags.append(
+                bool(getattr(db.conn, "_commit_suspended", False))
+            )
+        return ("任意生成回禀", 1)
 
     _stub_secret_landing_llm(
         monkeypatch,
         extract_fn=lambda prompt, llm_config=None, tag="", **_k: (canned, 1),
+        prose_fn=_prose,
     )
 
     by_kind = {
@@ -1546,6 +1559,7 @@ def test_batch_assignment_id_survives_invalid_secret_both_orders(
         intent_kind="none",
         llm_config=None,
         intent_candidates=candidates,
+        chat_turn_id=source_turn,
     )
     run_materialize_pipeline(ctx)
 
@@ -1558,11 +1572,95 @@ def test_batch_assignment_id_survives_invalid_secret_both_orders(
     staged = json.loads(row["payload_json"])
     assert staged.get("dossier_action_type") == "assignment"
     assert staged.get("title") == "清核太仓"
-    assert (ctx.out.get("secret_order_landing_recovery") or {}).get("report")
+    recovery = ctx.out.get("secret_order_landing_recovery") or {}
+    assert recovery.get("report")
+    assert compose_tx_flags, "须实际进入 secret_order_landing_recovery compose"
+    assert compose_tx_flags == [False], (
+        f"compose 时不得悬挂本批写事务，got {compose_tx_flags}"
+    )
+    snap = recovery.get("extract_snapshot") or {}
+    assert int(snap.get("source_chat_turn_id") or 0) == source_turn
+    rows = db.conn.execute(
+        "SELECT category FROM rejection_reports WHERE section=?",
+        ("audience_secret_order",),
+    ).fetchall()
+    assert rows and any(r["category"] == "secret_landing" for r in rows)
     fails = list(ctx.out.get("pending_action_failures") or [])
     assert fails[:1] == F0
     assert not any(f.get("kind") == "secret_order" for f in fails)
     assert db.list_secret_orders() == []
+
+
+def test_batch_compose_exception_keeps_secret_landing_diagnostic(game, monkeypatch):
+    """#1765 C1：compose/transport 异常不抹除已记录的密令失败事实。"""
+    from ming_sim.action_clusters import candidates_from_classifier_payload
+
+    db, state, _ = game
+    name = _minister(db)
+    canned = json.dumps({
+        "标题": "", "内容": "", "承办人": name, "期限月数": 0,
+        "标签": [], "差务": "", "价值轴": [], "方向": 1,
+        "交付单位": "", "交付目标": 0,
+    }, ensure_ascii=False)
+    source_turn = 17651
+
+    def _boom(prompt, llm_config=None, tag="", **_k):
+        if tag == "secret_order_landing_recovery":
+            raise RuntimeError("transport boom during recovery compose")
+        return ("任意生成回禀", 1)
+
+    _stub_secret_landing_llm(
+        monkeypatch,
+        extract_fn=lambda prompt, llm_config=None, tag="", **_k: (canned, 1),
+        prose_fn=_boom,
+    )
+    candidates = candidates_from_classifier_payload(
+        [
+            {
+                "kind": "assignment",
+                "title": "清核太仓",
+                "target_id": "qinghe-taicang",
+                "commitment_kind": "无",
+            },
+            {"kind": "secret", "secret_action": "新建"},
+        ],
+        soft=False,
+    )
+    ctx = MaterializeCtx(
+        session=SimpleNamespace(db=db, state=state),
+        character=SimpleNamespace(name=name, office_type="文官"),
+        player_message="清核太仓，并密查辽饷。",
+        reply="臣请分办。",
+        message_text="清核太仓，并密查辽饷。",
+        explicit_prefixed=False,
+        has_directive=False,
+        pend_for_minister=[],
+        out={},
+        intent=None,
+        intent_kind="none",
+        llm_config=None,
+        intent_candidates=candidates,
+        chat_turn_id=source_turn,
+    )
+    from ming_sim.exceptions import LLMUnavailable
+
+    # Transport 真失败响亮上抛（包装为 LLMUnavailable），不得改成戏内错误。
+    with pytest.raises(LLMUnavailable):
+        run_materialize_pipeline(ctx)
+
+    rows = db.conn.execute(
+        "SELECT category, item_json FROM rejection_reports WHERE section=?",
+        ("audience_secret_order",),
+    ).fetchall()
+    assert rows and any(r["category"] == "secret_landing" for r in rows)
+    items = [json.loads(r["item_json"]) for r in rows]
+    assert any(
+        int(it.get("source_chat_turn_id") or 0) == source_turn for it in items
+    ), "compose 失败后源轮诊断须仍在库"
+    # Preheat 在写事务前失败：兄弟动作不得半提交。
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM pending_actions",
+    ).fetchone()["n"] == 0
 
 
 def test_secret_landing_recovery_explicit_prefix_entry(game, monkeypatch):

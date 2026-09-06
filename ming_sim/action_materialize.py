@@ -539,48 +539,43 @@ def minister_speaker_role(
     return "，".join(bits) or "大臣"
 
 
-def land_or_recover_new_secret_order(
+def _write_tx_suspended(db: Any) -> bool:
+    """True when db.conn is inside an outer atomic write transaction."""
+    conn = getattr(db, "conn", None)
+    return bool(getattr(conn, "_commit_suspended", False))
+
+
+def _compose_secret_landing_recovery_projection(
     *,
     db: Any,
-    turn: int,
     minister_name: str,
     secret: Dict[str, Any],
     player_message: str,
     llm_config: Any,
-    out: Dict[str, Any],
     character: Any = None,
     chat_turn_id: int = 0,
-) -> None:
-    """#1765：已识别密令新建的统一落库。
+) -> Dict[str, Any]:
+    """Build typed recovery projection after durable diagnostic is already recorded.
 
-    能落 → 暂存进确认闸。
-    抽取产物/合同缺口 → 失败事实交大臣揣摩/请示（既有 compose 接缝）。
-    程序/transport 真异常不进入本函数：由抽取接缝响亮上抛（0005/0046）。
+    Compose/LLM I/O lives here only. Callers must not invoke this inside a
+    suspended batch write transaction (#1765 C1).
     """
     from ming_sim.cli_backend import (
         compose_secret_order_landing_recovery,
-        secret_order_can_land,
         secret_order_landing_gaps,
     )
+
+    if _write_tx_suspended(db):
+        raise RuntimeError(
+            "secret landing recovery compose must not run inside batch write T"
+        )
 
     so = dict(secret or {})
     # Provenance from first extract: recovery feed reuses full command (#354 / C3).
     extract_command = str(so.pop("_extract_command", "") or player_message)
-    role = minister_speaker_role(minister_name, character, db=db)
-
-    if secret_order_can_land(so):
-        _stage_new_secret_order(db, turn, minister_name, so, out)
-        return
-
     gaps = secret_order_landing_gaps(so)
     contract_error = str(so.get("contract_error") or "").strip()
-    # Diagnostic before recovery I/O — compose/LLM failure must not erase facts (C4).
-    _record_secret_landing_rejection(
-        db, turn, so,
-        minister_name=minister_name,
-        player_message=player_message,
-        chat_turn_id=chat_turn_id,
-    )
+    role = minister_speaker_role(minister_name, character, db=db)
     # emperor_words = first-extract command (前文+确认)，不是裸本轮短句。
     report = compose_secret_order_landing_recovery(
         gaps,
@@ -608,12 +603,97 @@ def land_or_recover_new_secret_order(
     source_turn = int(chat_turn_id or 0)
     if source_turn > 0:
         extract_snapshot["source_chat_turn_id"] = source_turn
-    out["secret_order_landing_recovery"] = {
+    return {
         "landing_gaps": list(gaps),
         "contract_error": contract_error,
         "report": report,
         "extract_snapshot": extract_snapshot,
     }
+
+
+def _prepare_unlandable_secret_recovery(
+    *,
+    db: Any,
+    turn: int,
+    minister_name: str,
+    secret: Dict[str, Any],
+    player_message: str,
+    llm_config: Any,
+    character: Any = None,
+    chat_turn_id: int = 0,
+) -> Dict[str, Any]:
+    """Durable diagnostic first, then recovery compose. Both outside write T."""
+    so = dict(secret or {})
+    # Diagnostic before recovery I/O — compose/LLM failure must not erase facts.
+    _record_secret_landing_rejection(
+        db, turn, so,
+        minister_name=minister_name,
+        player_message=player_message,
+        chat_turn_id=chat_turn_id,
+    )
+    return _compose_secret_landing_recovery_projection(
+        db=db,
+        minister_name=minister_name,
+        secret=so,
+        player_message=player_message,
+        llm_config=llm_config,
+        character=character,
+        chat_turn_id=chat_turn_id,
+    )
+
+
+def land_or_recover_new_secret_order(
+    *,
+    db: Any,
+    turn: int,
+    minister_name: str,
+    secret: Dict[str, Any],
+    player_message: str,
+    llm_config: Any,
+    out: Dict[str, Any],
+    character: Any = None,
+    chat_turn_id: int = 0,
+    prepared_recovery: Optional[Dict[str, Any]] = None,
+) -> None:
+    """#1765：已识别密令新建的统一落库。
+
+    能落 → 暂存进确认闸。
+    抽取产物/合同缺口 → 失败事实交大臣揣摩/请示（既有 compose 接缝）。
+    批写路径只消费预热已准备的 recovery 投影，禁止事务内产文。
+    程序/transport 真异常不进入本函数：由抽取接缝响亮上抛（0005/0046）。
+    """
+    from ming_sim.cli_backend import secret_order_can_land
+
+    so = dict(secret or {})
+    # Keep command provenance on so for recovery feed; staging ignores unknown keys.
+    if "_extract_command" not in so:
+        so["_extract_command"] = player_message
+
+    if secret_order_can_land(so):
+        _stage_new_secret_order(db, turn, minister_name, so, out)
+        return
+
+    if prepared_recovery is not None:
+        # Batch write path: diagnostic + compose already finished outside T.
+        out["secret_order_landing_recovery"] = dict(prepared_recovery)
+        out["pending_action_id"] = 0
+        return
+
+    if _write_tx_suspended(db):
+        raise RuntimeError(
+            "unlandable secret landing recovery was not preheated before batch write T"
+        )
+
+    out["secret_order_landing_recovery"] = _prepare_unlandable_secret_recovery(
+        db=db,
+        turn=turn,
+        minister_name=minister_name,
+        secret=so,
+        player_message=player_message,
+        llm_config=llm_config,
+        character=character,
+        chat_turn_id=chat_turn_id,
+    )
     out["pending_action_id"] = 0
 
 
@@ -805,7 +885,12 @@ def _preheat_batch_secret_extractions(
 
     同批多 mode 分槽（new / actions）一次收齐；写遍只消费对应槽，禁止
     单槽 prefer_new 互斥导致写遍 fallback 重抽。无消费者（准入失败）不预热。
+
+    新建密令若落不了库：在写事务前完成耐久诊断 + 回禀 compose，投影进
+    batch_state；写遍只合并投影，事务内零产文（#1765 C1）。
     """
+    from ming_sim.cli_backend import secret_order_can_land
+
     need_new, need_actions = _secret_mode_needs(candidate_records)
     if not (need_new or need_actions):
         return
@@ -817,6 +902,21 @@ def _preheat_batch_secret_extractions(
     slots: Dict[str, Any] = {}
     if need_new:
         slots["new"] = _secret_extract_bundle(ctx, prefer_new=True)
+        secret = dict((slots["new"] or {}).get("secret") or {})
+        if not secret_order_can_land(secret):
+            # Diagnose + compose outside write T; commit facts before recovery I/O.
+            ctx.batch_state["secret_landing_recovery"] = (
+                _prepare_unlandable_secret_recovery(
+                    db=ctx.session.db,
+                    turn=int(ctx.session.state.turn),
+                    minister_name=ctx.character.name,
+                    secret=secret,
+                    player_message=ctx.player_message,
+                    llm_config=ctx.llm_config,
+                    character=ctx.character,
+                    chat_turn_id=int(ctx.chat_turn_id or 0),
+                )
+            )
     if need_actions:
         slots["actions"] = _secret_extract_bundle(ctx, prefer_new=False)
     # Key presence marks batch write path: handler must not re-extract.
@@ -1065,7 +1165,13 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             bundle = _secret_extract_bundle(ctx, prefer_new=True)
         secret = dict(bundle.get("secret") or {})
         # #1765：classifier 与显式前缀共用 land_or_recover（产物缺口→揣摩/追问）。
+        # 批写路径只消费预热 recovery，禁止 atomic 内 compose。
         ctx.conversation_intent_handled = True
+        prepared = None
+        if in_batch:
+            raw_prepared = ctx.batch_state.get("secret_landing_recovery")
+            if isinstance(raw_prepared, dict):
+                prepared = raw_prepared
         land_or_recover_new_secret_order(
             db=session.db,
             turn=int(session.state.turn),
@@ -1076,6 +1182,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             out=ctx.out,
             character=ctx.character,
             chat_turn_id=int(ctx.chat_turn_id or 0),
+            prepared_recovery=prepared,
         )
         return
 
