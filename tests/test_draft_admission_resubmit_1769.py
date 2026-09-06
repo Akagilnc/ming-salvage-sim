@@ -4,10 +4,16 @@
 下月供料经 session.write_decree → write_decree_with_agno 真实投影。
 断言 SSE 终态与 turn_directives / rejection_reports / dossier 结构化字段。
 
-人工审读指针（验收 4，不锁 LLM 措辞）：
+本文件只断言结构化事实（供料入参 / 案卷字段 / DB 终态 / 错误包 manifest），
+不扫 LLM 自由文本——回禀措辞由 LLM 自己长（P7 / ADR 0142）。
+
+人工审读指针（验收 2 与 4，不锁 LLM 措辞）：
   - issue #1769 真实局证据：qa-1765-run3（driver.out / net-016-SSE /
-    cli_trace_16204.jsonl / m-1627-10-t1-issue-error.png）
-  - issue 评论链与票面冻结 t-1769-v3；回禀是否键名透传由人工核对该局。
+    cli_trace_16204.jsonl / m-1627-10-t1-issue-error.png）；真实局 #3 为跨月留存局。
+  - 验收 4：回禀是否把 override 键名/键族语法透传给皇帝，由人工核对该局。
+  - 验收 2 的「下次召对大臣可就此追问」：本文件只证供料到位（召对组装输入含原旨
+    与「尚未入档」事实）；大臣实际怎么开口追问，人工对着上述真实局与
+    docs/AUDIENCE_NORTH_STAR.md 审读。
 """
 
 from __future__ import annotations
@@ -309,6 +315,28 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     listed = game.db.list_directives(game.state, statuses=("draft",))
     assert any(int(r["id"]) == did for r in listed)
     assert source_turn < int(game.state.turn)
+
+    # 下月召对真实供料（验收 2「下次召对大臣可就此追问」，复用 A 路、无新通知）：
+    # 大臣本月奏对的组装输入里带该旨原文与「尚未入档」事实，回禀措辞由 LLM 自己长。
+    minister = next(
+        c for c in game.session.content.characters.values()
+        if c.office_type not in ("后宫",)
+    )
+    audience_input = game.session._audience_prompt_for_message("卿有何事？", minister)
+    assert str(row["text"] or "") in audience_input
+    assert str(did) in audience_input
+    # 本月新拟、尚未跨月的草案不得因此漏进召对输入（密事边界不变）
+    fresh = int(game.db.add_directive(
+        game.state, None, "着兵部查点京营。", "player-decree-test",
+        dossier_payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "jingying-check", "locality_scope": "none",
+        },
+    ))
+    assert "着兵部查点京营。" not in game.session._audience_prompt_for_message(
+        "卿有何事？", minister,
+    )
+    game.db.delete_directive(fresh)
 
     # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
     payloads = _write_decree_capture_payloads(monkeypatch, game)
