@@ -691,6 +691,15 @@ class RunCompletedEvent:
     status = "COMPLETED"
 
 
+class ToolCallCompletedEvent:
+    """agno 同名事件替身：type(event).__name__ == 'ToolCallCompletedEvent'。"""
+
+    def __init__(self, tool):
+        self.tool = tool
+        self.event = "ToolCallCompleted"
+        self.content = None
+
+
 class _RunErrorAgent:
     def run(self, *_a, **_k):
         yield RunErrorEvent("Unknown model error")
@@ -768,7 +777,10 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
 
 
 def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game):
-    """#1465 ①：两次瞬断后第三次成功 → 真 interpret/atomic 落库 + 3 attempts 可回指。"""
+    """#1465 ①：两次瞬断后第三次成功 → 真 interpret/atomic 落库 + 3 attempts 可回指。
+
+    同案：每重试 attempt 经既有 Agno 截断接缝（不等 fail_chat_turn）。
+    """
     def _conn_err(_n):
         return LLMUnavailable(
             "连接失败",
@@ -779,6 +791,14 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
     agent = _CountingFailAgent(fail_times=2, error_factory=_conn_err)
     web_game, minister = _transport_web_game(game, agent)
     db = web_game.db
+    trunc_calls = {"n": 0}
+    real_trunc = db.truncate_chat_turn_agno_runs
+
+    def _count_trunc(chat_turn_id):
+        trunc_calls["n"] += 1
+        return real_trunc(chat_turn_id)
+
+    db.truncate_chat_turn_agno_runs = _count_trunc  # type: ignore[method-assign]
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -803,6 +823,8 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
     assert row is not None
     assert int(row["minister_message_id"] or 0) > 0
     assert str(row["status"]) != "failed"
+    # attempt2/3 各截一次（初试不截）
+    assert trunc_calls["n"] == 2, trunc_calls
 
 
 def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, game):
@@ -1037,9 +1059,12 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
 
     事件序列：content delta → replace delta → content delta → done。
     按客户端规则重放后，临时正文 = done.answer（不叠旧半句）。不锁措辞。
+
+    同案动作/结果相容：首 attempt 流中 dismiss 落账后瞬断，终 attempt 无 dismiss 工具
+    → done.court_action 仍为 dismiss（不延后退场、不加次数例外）。
     """
 
-    class _PartialThenOk:
+    class _PartialDismissThenOk:
         def __init__(self):
             self.calls = 0
 
@@ -1047,15 +1072,22 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
             self.calls += 1
             if self.calls == 1:
                 yield RunContent("旧半句")
+                tool = SimpleNamespace(
+                    tool_name="dismiss_minister",
+                    result="__dismiss__",
+                    tool_args={},
+                )
+                yield ToolCallCompletedEvent(tool)
                 raise LLMUnavailable(
                     "连接失败",
                     code="llm_connection_error",
                     provider_message="connection reset",
                 )
+            # 终 attempt 工具账无 dismiss——结构结果须仍对齐已落账退场
             yield RunContent("新整段")
             yield RunCompletedEvent()
 
-    agent = _PartialThenOk()
+    agent = _PartialDismissThenOk()
     web_game, minister = _transport_web_game(game, agent)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
@@ -1066,6 +1098,7 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
     assert agent.calls == 2
     attempts = done.get("transport_attempts") or []
     assert [a.get("outcome") for a in attempts] == ["retryable_fail", "ok"]
+    assert done.get("court_action") == "dismiss", done
 
     # 呈现结构：delta 序列含 replace，且位于首段 content 与后续 content 之间
     delta_seq = [
