@@ -1373,7 +1373,6 @@ def _stub_secret_landing_llm(monkeypatch, *, extract_fn, prose_fn=None):
         prose_fn = lambda prompt, llm_config=None, tag="", **_k: ("任意生成回禀", 1)
 
     def _api(prompt, llm_config=None, tag="", **_k):
-        # prose path: force_json_output=False; extract path not used under this stub
         if _k.get("force_json_output") is False or tag in {
             "secret_order_landing_recovery", "decree_validation_recovery",
             "participant_escalate_report",
@@ -1382,18 +1381,34 @@ def _stub_secret_landing_llm(monkeypatch, *, extract_fn, prose_fn=None):
         return extract_fn(prompt, llm_config=llm_config, tag=tag)
 
     monkeypatch.setattr(cb, "_run_api_for_config", _api)
-    monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": prose_fn(
-                            prompt, llm_config=llm_config, tag=tag)
-                        if tag in {
-                            "secret_order_landing_recovery",
-                            "decree_validation_recovery",
-                            "participant_escalate_report",
-                        } else extract_fn(prompt, llm_config=llm_config, tag=tag))
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda prompt, llm_config=None, tag="": (
+            prose_fn(prompt, llm_config=llm_config, tag=tag)
+            if tag in {
+                "secret_order_landing_recovery",
+                "decree_validation_recovery",
+                "participant_escalate_report",
+            }
+            else extract_fn(prompt, llm_config=llm_config, tag=tag)
+        ),
+    )
+
+
+def _feed_has_emperor_and_gap(prompt: str, *emperor_frags: str) -> bool:
+    """后续供料：同一输入同时含皇帝原话与落库缺口事实（非首抽裸密令）。"""
+    text = str(prompt)
+    if not any(frag and frag in text for frag in emperor_frags):
+        return False
+    gap_marks = (
+        "落库缺口", "密令落库失败", "【原抽取产出】", "【原产出】",
+        "结构化标题", "差务合同", "抽取结果", "密令正文",
+    )
+    return any(m in text for m in gap_marks)
 
 
 def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
-    """#1765：classifier 入口落不了库 → typed recovery；皇帝原话进后续 LLM 输入。"""
+    """#1765：classifier 入口落不了库 → typed recovery；失败事实进后续 LLM 输入。"""
     from ming_sim.action_clusters import candidates_from_classifier_payload
 
     db, state, _ = game
@@ -1430,8 +1445,8 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
     assert list(recovery.get("landing_gaps") or []), "typed landing_gaps 须可读回"
     assert int(ctx.out.get("pending_action_id") or 0) == 0
     assert db.list_secret_orders() == []
-    # 供料契约：皇帝原话进入后续 LLM 输入（不数抽取次数）
-    assert any(emperor_words in p for p in llm_inputs)
+    # 后续供料：同一输入含皇帝原话 + 缺口事实（首抽裸密令不满足）
+    assert any(_feed_has_emperor_and_gap(p, emperor_words) for p in llm_inputs)
     assert not str((recovery.get("extract_snapshot") or {}).get("title") or "").strip()
     rows = db.conn.execute(
         "SELECT category FROM rejection_reports WHERE section=?",
@@ -1557,7 +1572,7 @@ def test_secret_landing_recovery_explicit_prefix_entry(game, monkeypatch):
     assert recovery.get("report") and recovery.get("landing_gaps")
     assert int(out.get("pending_action_id") or 0) == 0
     assert db.list_secret_orders() == []
-    assert any(emperor in p for p in llm_inputs)
+    assert any(_feed_has_emperor_and_gap(p, emperor) for p in llm_inputs)
 
 
 def test_secret_landing_completion_stages_for_confirmation(game, monkeypatch):
@@ -1579,14 +1594,13 @@ def test_secret_landing_completion_stages_for_confirmation(game, monkeypatch):
         "交付目标": 1, "效果符号": 1,
         "钱粮用途": "辽饷", "钱粮类别": "密令差务", "钱粮账户": "内库",
     }, ensure_ascii=False)
-    phase = {"n": 0}
+    feedback_inputs: list[str] = []
 
     def _json_extract(prompt, llm_config=None, tag="", **_k):
-        phase["n"] += 1
-        # 供料：带反馈的后续输入须含皇帝原话（不锁次数）
         text = str(prompt)
         if "落库缺口" in text or "密令落库失败" in text:
-            assert emperor_words in text
+            feedback_inputs.append(text)
+            assert emperor_words in text  # 带反馈的 extract 仍含皇帝原话
             return (good, 1)
         return (bad, 1)
 
@@ -1619,6 +1633,7 @@ def test_secret_landing_completion_stages_for_confirmation(game, monkeypatch):
     assert payload.get("title") == "查核辽饷"
     assert isinstance(payload.get("covert_task"), dict)
     assert db.list_secret_orders() == []
+    assert feedback_inputs, "补全路径须有带缺口事实的后续 extract 供料"
     # 确认/应允落库 + 皇帝读回：既有
     # tests/test_conversational_draft.py::test_dialogue_affirm_commits_pending_new_secret_order
 
@@ -1704,7 +1719,9 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
             recovery["report"] in str(h.get("content") or "") for h in minister_msgs
         )
         assert "secret_order_landing_recovery" in backend_tags
-        assert any(message in p or "暗查关宁" in p for p in llm_inputs)
+        assert any(
+            _feed_has_emperor_and_gap(p, message, "暗查关宁") for p in llm_inputs
+        )
         assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
         assert game.db.list_secret_orders() == []
     finally:

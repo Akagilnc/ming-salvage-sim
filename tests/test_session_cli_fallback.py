@@ -1933,9 +1933,15 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     assert recovery.get("report")
     assert recovery.get("landing_gaps")
     snapshot = recovery.get("extract_snapshot") or {}
-    # #354 确定性输入契约：前文任务与本轮确认进入后续 LLM 输入（不数抽取次数）
-    assert any("督办陕西赈灾" in p or prior_task in p for p in llm_inputs)
-    assert any("三月内回奏" in p or "可，照办" in p for p in llm_inputs)
+    # #354：带反馈的后续输入仍含前文任务 + 本轮确认 + 缺口事实（不数次数）
+    gap_marks = ("落库缺口", "密令落库失败", "【原抽取产出】", "【原产出】",
+                 "结构化标题", "差务合同", "抽取结果", "密令正文")
+    assert any(
+        ("督办陕西赈灾" in p or prior_task in p)
+        and ("三月内回奏" in p or "可，照办" in p)
+        and any(m in p for m in gap_marks)
+        for p in llm_inputs
+    ), "带反馈的后续 LLM 输入须同时含前文任务、本轮确认与缺口事实"
     assert int(res.get("pending_action_id") or 0) == 0
     assert res.get("secret_order_id") in (None, 0)
     assert db.list_secret_orders() == []
