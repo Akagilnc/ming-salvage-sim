@@ -375,9 +375,12 @@ def _directive_payload(category):
     }
 
 
-def test_confirm_directive_consumes_routing_rejection(env, monkeypatch, tmp_path):
+def test_pending_routing_rejection_lands_on_ensure_batch_seam(
+    env, monkeypatch, tmp_path,
+):
+    """#1769：confirm 只翻 draft；路由拒收落 ensure 批缝（坏旨 draft 留、好旨成案）。"""
     db, state, _ = env
-    mirror = tmp_path / "confirm.jsonl"
+    mirror = tmp_path / "ensure-routing.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
     bad = db.add_directive(
         state, None, "修仙", "test", status="pending",
@@ -390,11 +393,34 @@ def test_confirm_directive_consumes_routing_rejection(env, monkeypatch, tmp_path
 
     db.confirm_directive(bad, state)
     db.confirm_directive(good, state)
+    # confirm 只翻状态，不成案、不标 rejected
+    assert db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (bad,),
+    ).fetchone()[0] == "draft"
+    assert db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (good,),
+    ).fetchone()[0] == "draft"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,),
+    ).fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,),
+    ).fetchone()[0] == 0
 
-    assert db.conn.execute("SELECT status FROM turn_directives WHERE id=?", (bad,)).fetchone()[0] == "rejected"
-    assert db.conn.execute("SELECT status FROM turn_directives WHERE id=?", (good,)).fetchone()[0] == "draft"
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,)).fetchone()[0] == 0
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,)).fetchone()[0] == 1
+    rejections = db.ensure_dossiers_for_draft_directives(state)
+    assert {int(r["directive_id"]) for r in rejections} == {bad}
+    assert db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (bad,),
+    ).fetchone()[0] == "draft"  # 产物错保持 draft，不踢出批缝
+    assert db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (good,),
+    ).fetchone()[0] == "draft"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (bad,),
+    ).fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,),
+    ).fetchone()[0] == 1
     assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
     assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "duty_route_unmapped"
 
@@ -427,30 +453,29 @@ def test_rolled_back_collector_reuse_does_not_mirror_orphan(env, monkeypatch, tm
     assert db.conn._runtime_rollback_callbacks == []
 
 
-@pytest.mark.parametrize("owner", ["confirm", "batch"])
 def test_directive_routing_rejection_rolls_back_with_outer_owner(
-    env, monkeypatch, tmp_path, owner,
+    env, monkeypatch, tmp_path,
 ):
+    """ensure 批缝外层 atomic 回滚：无 dossier、无 rejection 落痕。
+
+    #1769：confirm 不再 ensure/routing，空壳 confirm 回滚参数已删。
+    """
     db, state, _ = env
-    mirror = tmp_path / f"{owner}-rollback.jsonl"
+    mirror = tmp_path / "batch-rollback.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
-    status = "pending" if owner == "confirm" else "draft"
     directive_id = db.add_directive(
-        state, None, "修仙", "test", status=status,
+        state, None, "修仙", "test", status="draft",
         dossier_payload=_directive_payload("修仙"),
     )
 
     with pytest.raises(RuntimeError, match="force outer rollback"):
         with atomic(db):
-            if owner == "confirm":
-                db.confirm_directive(directive_id, state)
-            else:
-                db.ensure_dossiers_for_draft_directives(state)
+            db.ensure_dossiers_for_draft_directives(state)
             raise RuntimeError("force outer rollback")
 
     assert db.conn.execute(
         "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
-    ).fetchone()[0] == status
+    ).fetchone()[0] == "draft"
     assert db.conn.execute(
         "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (directive_id,),
     ).fetchone()[0] == 0

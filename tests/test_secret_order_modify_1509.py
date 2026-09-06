@@ -448,8 +448,6 @@ def _chat_shell(db, state, content, *, channel="cli"):
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
         def refresh(self, _name):
             return None

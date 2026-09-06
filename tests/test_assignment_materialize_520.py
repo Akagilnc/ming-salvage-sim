@@ -1368,7 +1368,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
     sess.content = content
     sess.registry = SimpleNamespace(
         get=lambda character: agent,
-        build_draft_line=lambda: "无",
         session_ids={},
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")

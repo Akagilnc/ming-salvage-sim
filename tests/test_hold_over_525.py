@@ -127,8 +127,6 @@ def test_negated_hold_over_phrase_approves_not_held_over(game, monkeypatch):
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
     # 玩家可调用的真实会话入口：GameSession.chat（不得直调 apply_cli_conversation_actions）
     sess = GameSession.__new__(GameSession)

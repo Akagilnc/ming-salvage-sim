@@ -63,6 +63,9 @@ logger = logging.getLogger(__name__)
 
 AUTO_SAVE_PREFIX = "auto_"
 AUTO_SAVE_KEEP_TURNS = 3  # 每个 campaign 保留最近 N 个 turn 的全部自动存档（每 turn 含 begin + preresolve）
+# #1769 成案补交：原抽 + LLM 重写 N 次 = 总计 N+1（owner：N=2 → 总计 3，与召对「第一次不叫重试」同形状）。
+# 与 DRAFT_PARTICIPANT_HEAL_RETRIES（组合/名册内部 heal）独立；内部 heal 不冒充成案补交次数。
+DRAFT_ADMISSION_RESUBMIT_REWRITES = 2
 _CLI_ACTION_INTENT_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cli-action-intent")
 
 
@@ -1975,7 +1978,24 @@ class GameSession:
         if recap:
             augmented = recap + "\n\n" + augmented
         # 未明发草案不属于公开层；参与者/知情圈须通过持久见闻事件投影进入提示。
-        # 这里不能直接读取 registry 的全局草案列表，否则未参与大臣会越过排除边界获知密事。
+        # 这里不能直接读取本回合的全局草案列表，否则未参与大臣会越过排除边界获知密事。
+        # #1769 例外且仅此一项：**跨月**未入档旨稿（turn<本回合、仍 draft、无案卷）
+        # ——它上月已随颁诏发出、只是没能落档，不是尚在御案上的密事；owner 御批的终态
+        # 是「原旨留到下月、大臣开桌提醒」，追问渠道复用召对 A 路（不新建通知/队列/
+        # 持久状态）。呈现由 LLM 自己长（P7），此处只供事实。
+        carryover = [
+            row for row in self.db.list_directives(self.state, statuses=("draft",))
+            if int(row["turn"]) < int(self.state.turn)
+            and self.db.get_dossier_for_directive(int(row["id"])) is None
+        ]
+        if carryover:
+            lines = ["【陛下前月已发、尚未入档的旨稿（如有关联，可奏请陛下明示如何处置；"
+                     "勿向陛下念内部编号）】"]
+            lines += [
+                f"#{int(row['id'])} {str(row['text'] or '')}（尚未入档）"
+                for row in carryover
+            ]
+            augmented = "\n".join(lines) + "\n\n" + augmented
         return augmented
 
     def apply_cli_conversation_actions(
@@ -3101,6 +3121,149 @@ class GameSession:
     # #1341/#1338：set_decree 已删——裸设总诏正文绕过逐道草案结构化，违 P1；
     # Web PATCH /api/decree 同步拆除。改稿只走 add_directive / update_directive。
 
+    def _resubmit_draft_admission_failures(
+        self, rejections: List[Dict[str, object]],
+        carry_over: Optional[Dict[int, Dict[str, object]]] = None,
+    ) -> Dict[int, Dict[str, object]]:
+        """#1769 结算路 B：产物错 draft 把失败事实与原产物告诉 LLM 重交 payload。
+
+        单轮批处理：对当前失败旨各重写一次；外层 resolve_turn 按
+        DRAFT_ADMISSION_RESUBMIT_REWRITES 循环本方法（原抽 + 重写 2 = 总计 3）。
+        与组合/名册 heal_retries 独立。产物错 ValueError 视为本轮该旨仍失败；
+        其它异常走错误包 + SettlementAbort（0005/0008）。
+        独立失败旨并行调 LLM（P5，复用 ThreadPoolExecutor；DB 写仍串行）。
+
+        carry_over（上一轮返回值）：写回被拒时 DB 里仍是旧载荷，光按 DB 重问 =
+        拿旧拒因问第二遍。故把**本次**产物与**本次**写回失败事实带到下一次重写；
+        返回值即下一轮的 carry_over（写回成功的旨不入内，改按 ensure 新拒因走）。
+        """
+        from ming_sim.cli_backend import resubmit_draft_admission_payload
+        from ming_sim.error_pack import settlement_abort_message, write_error_pack
+        from ming_sim.exceptions import SettlementAbort
+
+        carried = dict(carry_over or {})
+        jobs: List[Dict[str, object]] = []
+        for item in rejections or []:
+            try:
+                did = int(item.get("directive_id"))
+            except (TypeError, ValueError):
+                continue
+            if self.db.get_dossier_for_directive(did) is not None:
+                continue
+            row = self.db.get_directive(did)
+            if row is None or str(row["status"] or "") != "draft":
+                continue
+            try:
+                bad_payload = self.db.read_directive_dossier_payload(row)
+            except ValueError:
+                continue
+            reason = str(item.get("reason") or "")
+            prior = carried.get(did)
+            if prior is not None:
+                # 上一轮写回被拒：DB 仍是旧载荷，须以上一轮产物 + 写回拒因回喂。
+                bad_payload = dict(prior.get("bad_payload") or bad_payload)
+                reason = str(prior.get("reason") or reason)
+            jobs.append({
+                "directive_id": did,
+                "text": str(row["text"] or ""),
+                "bad_payload": bad_payload,
+                "reason": reason,
+                "existing_mode": bad_payload.get("mode"),
+            })
+        if not jobs:
+            return {}
+
+        llm_config = getattr(self, "llm_config", None)
+        content = getattr(self, "content", None)
+
+        def _llm_one(
+            job: Dict[str, object],
+        ) -> Tuple[Dict[str, object], Optional[Dict[str, object]], Optional[Exception]]:
+            try:
+                payload = resubmit_draft_admission_payload(
+                    str(job["text"]),
+                    bad_payload=job["bad_payload"],  # type: ignore[arg-type]
+                    failure_reason=str(job["reason"] or ""),
+                    llm_config=llm_config,
+                    db=self.db,
+                    content=content,
+                    existing_mode=job.get("existing_mode"),
+                )
+                return job, payload, None
+            except Exception as exc:
+                # 与 ensure / relation_brew 同形：只收 Exception；KeyboardInterrupt/
+                # SystemExit 不得洗成 SettlementAbort。
+                return job, None, exc
+
+        # P5：批内独立失败旨并行 LLM；单条不建 pool。
+        if len(jobs) > 1:
+            workers = len(jobs)
+            with ThreadPoolExecutor(
+                max_workers=workers, thread_name_prefix="draft-admission-resubmit",
+            ) as pool:
+                outcomes = list(pool.map(_llm_one, jobs))
+        else:
+            outcomes = [_llm_one(jobs[0])]
+
+        # DB 相串行：产物 ValueError 耗尽该旨；其它异常错误包中止整月。
+        next_carry: Dict[int, Dict[str, object]] = {}
+        for job, new_payload, exc in outcomes:
+            did = int(job["directive_id"])
+            if exc is not None:
+                if isinstance(exc, ValueError):
+                    # 本轮重写自身的产物错（含名册 escalate 归一）：DB 载荷未动，
+                    # 光靠下一轮 ensure 重探只会拿回旧拒因——把本轮失败事实带过去，
+                    # 否则同一句话问三遍（0150-D5-b：告诉 LLM 事实）。
+                    logger.warning(
+                        "[1769] draft#%s admission resubmit product exhaust: %s",
+                        did, exc,
+                    )
+                    next_carry[did] = {
+                        "bad_payload": dict(job["bad_payload"]),  # type: ignore[arg-type]
+                        "reason": str(exc),
+                    }
+                    continue
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="directive_admission_resubmit",
+                    error_pack_path=pack_path,
+                ) from exc
+            assert new_payload is not None
+            try:
+                self.db.update_directive_text(
+                    did,
+                    str(job["text"] or ""),
+                    dossier_payload=new_payload,
+                    replace_payload=True,
+                )
+            except ValueError as write_exc:
+                # 写回被拒也是产物错：本次产物 + 本次写回拒因带进下一次重写，
+                # 否则下一轮只能拿 DB 里的旧载荷/旧拒因重问同一遍。
+                logger.warning(
+                    "[1769] draft#%s admission resubmit write-back rejected: %s",
+                    did, write_exc,
+                )
+                next_carry[did] = {
+                    "bad_payload": dict(new_payload),
+                    "reason": str(write_exc),
+                }
+            except Exception as write_exc:
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=write_exc,
+                    extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="directive_admission_resubmit",
+                    error_pack_path=pack_path,
+                ) from write_exc
+        return next_carry
+
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None,
                      *, allow_empty_decree: bool = False) -> ResolveResult:
@@ -3222,14 +3385,32 @@ class GameSession:
             self.db.confirm_directive(int(pending["id"]), self.state)
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
-        dossier_rejections = self.db.ensure_dossiers_for_draft_directives(self.state)
-        directives = list(self.db.list_dossiered_draft_directives(self.state))
+        # #1769：产物错 → 告诉 LLM 失败事实与原产物后重交；耗尽保持 draft、月照过
+        # （替代 #1591「产物错即整月不推进 + 引擎串透传」；真故障仍 SettlementAbort）。
+        # 成案补交边界 = 原抽 + 重写 DRAFT_ADMISSION_RESUBMIT_REWRITES 次（总计 3）；
+        # 与组合/名册 heal_retries 独立。首轮/中间 ensure 只探测，拒只在末轮耗尽落痕。
+        dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
+            self.state, record_rejections=False,
+        )
+        resubmit_carry: Dict[int, Dict[str, object]] = {}
+        for rewrite_i in range(DRAFT_ADMISSION_RESUBMIT_REWRITES):
+            if not dossier_rejections:
+                break
+            resubmit_carry = self._resubmit_draft_admission_failures(
+                dossier_rejections, resubmit_carry,
+            )
+            is_last = rewrite_i == DRAFT_ADMISSION_RESUBMIT_REWRITES - 1
+            dossier_rejections = self.db.ensure_dossiers_for_draft_directives(
+                self.state, record_rejections=is_last,
+            )
+        dossiered_directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
         # Negative preview ids participate in stale-decree fingerprinting without
         # colliding with durable turn_directives ids.
         pending_directives = self.db.preview_pending_directives(
             self.state, content=getattr(self, "content", None),
         )
+        directives = list(dossiered_directives)
         directives.extend(pending_directives)
         if pending_directives and recovered_source is None and (decree or "").strip():
             # The supplied decree predates these durable candidates; regenerate from
@@ -3241,18 +3422,24 @@ class GameSession:
         # Pending non-directive actions (secret orders etc.) enter resolve_directives
         # so pre_settle owns materialization with the rest of the settlement spine.
         pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
-        if not directives and dossier_rejections:
-            # #1591：草案的真实成案拒因优先于无关 pending 动作或既有结算工作。
-            # recovery/allow-empty 只豁免真正的无旨月，不得洗掉已存在的坏草案。
-            raise ValueError(dossier_rejections[-1])
+        # #1769 耗尽：产物错 draft 留到下月；不得把引擎拒因串透传给皇帝，不得挡月份。
+        # 真拒因已在 rejection_reports 留痕（#1591 保留面）。
+        product_exhaust = bool(dossier_rejections)
+        # #1769 零成案耗尽与退朝无旨同形：不把 last_decree/显式 decree 当本月已颁。
+        # 混合好旨（dossiered 非空）仍走 player_decree、仍计已颁。
+        if product_exhaust and not dossiered_directives:
+            decree = ""
+            self.last_decree = ""
+            self._decree_draft_fingerprint = ()
         if not directives and not settlement_due and not pending_action_due:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
                     and (self.last_decree or "").strip()):
                 directives = [{"text": self.last_decree}]
-            elif allow_empty_decree or recovered_source is not None:
+            elif allow_empty_decree or recovered_source is not None or product_exhaust:
                 # #1274：无旨月 / 结算中恢复 — decrees=[] 走完整链，不拒。
+                # #1769：补交耗尽仍无成案旨 — 月照过，draft 跨月保留。
                 pass
             else:
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
@@ -3277,10 +3464,15 @@ class GameSession:
         # 恢复 fallthrough 把存档真源穿透传入（#146 cmr r2）；正常颁诏 recovered_source is None
         # → 省略 source 参数走默认 player_decree（行为不变）。
         # #1274 退朝无旨：allow_empty_decree + 无草案 → system_simulation（世界自演变静默）。
+        # #1769 补交耗尽无成案旨：同走 system_simulation，月照过。
         resolve_kwargs = {}
         if recovered_source is not None:
             resolve_kwargs["source"] = recovered_source
-        elif allow_empty_decree and not directives and not (decree_text or "").strip():
+        elif (
+            (allow_empty_decree or product_exhaust)
+            and not directives
+            and not (decree_text or "").strip()
+        ):
             resolve_kwargs["source"] = Provenance.system_simulation
         result = resolve_directives(
             self.state, self.db, self.agno_db, self.llm_config,

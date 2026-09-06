@@ -545,8 +545,6 @@ def test_api_tool_propose_directive_stages_pacification_with_admission(game):
         def get(self, _character):
             return self._agent
 
-        def build_draft_line(self):
-            return "无"
 
     def _api_session(agent):
         sess = GameSession.__new__(GameSession)
@@ -789,8 +787,6 @@ def test_api_tool_pacification_failure_diagnostic_reaches_chat_and_web_stream(ga
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -935,8 +931,6 @@ def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(ga
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
     def _bind(sess):
         sess.db = db

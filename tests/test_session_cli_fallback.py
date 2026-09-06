@@ -475,8 +475,6 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -544,8 +542,6 @@ def test_propose_directive_tool_arguments_stages_draft(game):
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -1139,8 +1135,6 @@ def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -1185,8 +1179,6 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
         def register(self, _character):
             return None
@@ -1397,8 +1389,6 @@ def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monk
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
         def refresh(self, _name):
             return None
@@ -1458,8 +1448,6 @@ def test_secret_prefix_ignores_mismatched_directive_tool_output(game, monkeypatc
         def get(self, _character):
             return Agent()
 
-        def build_draft_line(self):
-            return "无"
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -2399,7 +2387,6 @@ def test_chat_starts_cli_action_classification_before_reply_finishes(read_game, 
 
     registry = SimpleNamespace(
         get=lambda character: FakeAgent(),
-        build_draft_line=lambda: "无",
     )
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -2445,7 +2432,6 @@ def test_api_chat_never_calls_cli_classifier(game, monkeypatch):
     sess.content = content
     sess.registry = SimpleNamespace(
         get=lambda _character: FakeAgent(),
-        build_draft_line=lambda: "无",
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = {}
