@@ -614,21 +614,6 @@ class MinisterRegistry:
             session_id=self.session_ids[character.name],
         )
 
-    def build_draft_line(self) -> str:
-        """实时查本回合已核定草案，供需要展示草案列表的调用方使用。"""
-        draft_rows = [
-            row for row in self.context.db.list_directives(
-                self.context.state, statuses=("draft",),
-            )
-            if self.context.db.get_dossier_for_directive(int(row["id"])) is None
-        ]
-        if not draft_rows:
-            return "无"
-        return "；".join(
-            f"#{r['id']} {r['text'][:40]}{'…' if len(r['text']) > 40 else ''}"
-            for r in draft_rows
-        )
-
     def get(self, character: Character) -> Agent:
         """懒加载：首次召见某大臣才建其 Agent（含查 DB 拼 memory_brief），之后本回合复用缓存。"""
         agent = self.agents.get(character.name)

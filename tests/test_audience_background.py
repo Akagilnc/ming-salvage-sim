@@ -463,14 +463,21 @@ def test_chat_stream_uses_session_augmented_audience_prompt(game):
 
 
 def test_audience_prompt_does_not_expose_unissued_draft_to_uninvolved_minister(game):
-    """未明发草案不应绕过见闻投影，注入未参与大臣的召对提示。"""
+    """本回合未明发草案不应绕过见闻投影，注入未参与大臣的召对提示。
+
+    #1769 只放行**跨月**未入档旨稿（上月已随颁诏发出、仅未落档）；本回合刚拟、
+    还在御案上的草案仍是密事，不得越过排除边界。
+    """
     db, state, content = game
     minister = next(iter(content.characters.values()))
-    session = SimpleNamespace(
-        db=db,
-        state=state,
-        registry=SimpleNamespace(build_draft_line=lambda: "#1 着户部清核辽饷。"),
+    db.add_directive(
+        state, None, "着户部清核辽饷。", "player-decree-test",
+        dossier_payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "liaoxiang-audit", "locality_scope": "none",
+        },
     )
+    session = SimpleNamespace(db=db, state=state)
 
     prompt = GameSession._audience_prompt_for_message(
         session, "辽饷近况如何？", minister

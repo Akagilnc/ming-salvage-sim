@@ -1115,17 +1115,22 @@ def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, mon
 
     def _advance(**_kwargs):
         calls.append("resolve")
+        # 真 GameSession.resolve_turn 在返回前把生成稿落回 last_decree；
+        # 替身照抄该顺序，端点才能在 end_turn/refresh 前取到本月成案旨。
+        session.last_decree = "诏曰：着户部清核辽饷。"
         return types.SimpleNamespace(awaiting=False, decisions=[])
 
+    session = types.SimpleNamespace(
+        registry=None,
+        last_decree="",          # 真 GameSession 初始/清月态
+        advance_without_decree=_advance,
+        end_turn=lambda: calls.append("end_turn"),
+    )
     stub = types.SimpleNamespace(
         db=db,
         state=state,
         content=content,
-        session=types.SimpleNamespace(
-            registry=None,
-            advance_without_decree=_advance,
-            end_turn=lambda: calls.append("end_turn"),
-        ),
+        session=session,
         refresh_turn=lambda: calls.append("refresh"),
         state_payload=lambda: {"turn": {"turn": state.turn}},
         directive_rows=lambda: db.list_directives(state, statuses=("pending", "draft")),
@@ -1137,6 +1142,14 @@ def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, mon
     assert out["awaiting_decision"] is False
     assert calls == ["resolve", "end_turn", "refresh"]
     assert state.turn == 1
+    # 有成案旨的退朝月与真空退朝相反：须计已颁（真空面钉在
+    # tests/test_draft_admission_resubmit_1769.py 的 vacuum steam 测）。
+    names = [
+        e.get("name") for e in (out.get("steam_events") or [])
+        if isinstance(e, dict)
+    ]
+    assert "STAT_DECREES_ISSUED" in names, f"有旨退朝须计已颁: {out!r}"
+    assert "STAT_TURNS_PLAYED" in names, f"退朝须计过月: {out!r}"
 
 
 def test_consort_cultivate_stages_and_commits(game, monkeypatch):

@@ -342,11 +342,13 @@ def _choices_from_decisions(decisions: list) -> list[dict]:
 
 def _post_issue_stream(
     client: TestClient, *, expected_turn: int, step: str,
+    allow_error: bool = False,
 ) -> dict:
     """玩家真入口：POST /api/decree/issue/stream，消费 SSE 到终态。
 
     返回归一化 body：done → payload；decisions → payload + awaiting_decision=True。
-    event:error 且 status_code=409 → 死锁断言红；其它 error 亦红。
+    event:error 且 status_code=409 → 死锁断言红；其它 error 默认亦红。
+    allow_error=True（#1769 真故障钉）：error 终态返回 payload 并标 _event='error'。
     """
     resp = client.post(
         "/api/decree/issue/stream",
@@ -369,6 +371,9 @@ def _post_issue_stream(
         assert status != 409, (
             f"{step}: 409 deadlock on issue/stream; body={resp.text}"
         )
+        if allow_error:
+            payload = dict(data) if isinstance(data, dict) else {"message": data}
+            return {**payload, "_event": "error"}
         raise AssertionError(f"{step}: stream error event: {data!r}; sse={resp.text!r}")
     if ev == "decisions":
         assert isinstance(data, dict), f"{step}: decisions payload not dict: {data!r}"

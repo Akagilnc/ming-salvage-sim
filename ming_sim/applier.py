@@ -11,7 +11,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, List
+from typing import Any, Callable, Iterator, List, Tuple
 
 
 def sanitize_sqlite_text(value: Any) -> Any:
@@ -368,6 +368,14 @@ class RejectionCollector:
             for row in self._flushed:
                 fh.write(safe_json_dumps(row, ensure_ascii=False) + "\n")
         self._flushed.clear()
+
+    def pending(self) -> Tuple[dict, ...]:
+        """未 flush 的缓冲行只读快照。
+
+        #1769：段内 record 后未抛异常的拒收（如 duty_route_unmapped）是本 collector
+        的唯一真源；成案 owner 据此把该项纳入补交反馈与终态留痕，不另建拒收表。
+        """
+        return tuple(self._buffer)
 
     def reset(self) -> None:
         """丢弃缓冲与待镜像快照（回滚路径：DB 行已随事务回滚，内存同步清场）。"""

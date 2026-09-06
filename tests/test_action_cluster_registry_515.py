@@ -664,7 +664,6 @@ def test_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):
     sess.content = content
     sess.registry = SimpleNamespace(
         get=lambda character: FakeAgent(),
-        build_draft_line=lambda: "无",
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
     sess.temporary_characters = {}
@@ -779,7 +778,6 @@ def test_real_chat_bidirectional_barrier_parallel_required(
     sess.content = content
     sess.registry = SimpleNamespace(
         get=lambda character: FakeAgent(),
-        build_draft_line=lambda: "无",
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}
@@ -884,7 +882,7 @@ def test_real_chat_poisoned_classifier_zero_writes(
     sess.db = db
     sess.state = state
     sess.content = content
-    sess.registry = SimpleNamespace(get=lambda c: FakeAgent(), build_draft_line=lambda: "无")
+    sess.registry = SimpleNamespace(get=lambda c: FakeAgent())
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}
     sess._retrieve_memories_for_message = lambda message: message
@@ -909,7 +907,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
     sess.content = content
     sess.registry = SimpleNamespace(
         get=lambda character: agent,
-        build_draft_line=lambda: "无",
         session_ids={},
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")

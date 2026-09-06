@@ -237,7 +237,7 @@ def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
 
     sess = GameSession.__new__(GameSession)
     sess.db, sess.state, sess.content = db, state, content
-    sess.registry = SimpleNamespace(get=lambda _character: Agent(), build_draft_line=lambda: "无")
+    sess.registry = SimpleNamespace(get=lambda _character: Agent())
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
     sess._audience_prompt_for_message = lambda message, *_args, **_kwargs: message

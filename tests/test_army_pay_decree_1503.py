@@ -795,11 +795,12 @@ def test_xiexang_amount_rejects_non_json_integer(amount):
 def test_manual_directive_admission_real_http_tracer_1591(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """#1591 真实入口 tracer：同一 WebGame/TestClient 内证两支外部行为。
+    """#1591/#1769 真实入口 tracer：同一 WebGame/TestClient 内证外部行为。
 
     ① `POST /api/directives` 手工拟旨 account=太仓 经 capture 透传五字段后 canonical 为国库。
-    ② 同入口 account 非法，且有无关非旨 pending action 并存时，
-    `POST /api/decree/issue` 外部响应须是真实 admission 拒因，不得被掩盖为「至少一条草案」。
+    ②–③ 非法 cadence/account/地域在写入前 409，相关表零写。
+    ④ #1769 替代旧 #1591 整月阻断：既存非法草案在 issue/stream 边界拒因留痕、
+    draft 留到下月、月份照常推进；确定性诊断不透传引擎拒因串。
 
     stub 仅 LLM payload 产出边界（拟旨抽取/结算外层）；不 mock
     ensure_dossiers_for_draft_directives / list_dossiered_draft_directives /
@@ -882,6 +883,44 @@ def test_manual_directive_admission_real_http_tracer_1591(
             "颁布方式": "ordinary",
             "金额": 15,
             "账户": "国库",
+            "执行面": "immediate",
+            "承办人": "",
+            "参与人": [],
+            "施行范围": "无",
+            "期限月数": None,
+            "目标案卷ID": None,
+            "entries": [],
+        },
+        {
+            # #1769 ④ 第一次重写仍坏账户 → 继续第二次重写
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "恩赏拨帑": "协饷",
+            "用途": "补饷",
+            "目标类型": "army",
+            "目标": "guanning",
+            "颁布方式": "ordinary",
+            "金额": 15,
+            "账户": "藩库",
+            "执行面": "immediate",
+            "承办人": "",
+            "参与人": [],
+            "施行范围": "无",
+            "期限月数": None,
+            "目标案卷ID": None,
+            "entries": [],
+        },
+        {
+            # #1769 ④ 第二次重写仍坏 → 耗尽留 draft（总计 3=原抽+重写2）
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "恩赏拨帑": "协饷",
+            "用途": "补饷",
+            "目标类型": "army",
+            "目标": "guanning",
+            "颁布方式": "ordinary",
+            "金额": 15,
+            "账户": "藩库",
             "执行面": "immediate",
             "承办人": "",
             "参与人": [],
@@ -1033,7 +1072,10 @@ def test_manual_directive_admission_real_http_tracer_1591(
         assert int(game.state.metrics.get("国库") or 0) == treasury_before
         assert float(_army_row(game.db)["arrears"]) == pytest.approx(arrears_now)
 
-        # ── ④ #1591：既存非法草案在 issue 边界转发真实 admission 拒因 ──
+        # ── ④ #1769 替代 #1591「产物错即整月不推进」：既存非法草案 → 月照过。
+        # 票面完整耗尽（第二次仍坏产物、下月 list、诊断不透传）见
+        # tests/test_draft_admission_resubmit_1769.py；此处只改旧整月阻断契约所需最小断言。
+        # 删除旧断言：HTTP 400 + message==引擎拒因 + 拒案不得推进回合。
         directive_id = game.db.add_directive(
             game.state, None, "准从藩库见银拨关宁军饷十五万两即发。",
             "player", status="draft", dossier_payload={
@@ -1049,24 +1091,22 @@ def test_manual_directive_admission_real_http_tracer_1591(
         )
         assert game.db.list_pending_actions(turn2), "无关非旨 pending action 应在场"
 
-        issue = client.post("/api/decree/issue", json={"expected_turn": turn2})
-        assert issue.status_code == 400, issue.text
-        detail = issue.json().get("detail")
-        message = detail.get("message") if isinstance(detail, dict) else detail
-        # 同次 admission 拒因真源：ledger 按 turn+section+directive_id 定位唯一记录，
-        # HTTP message 与 ledger.reason 只做不透明值相等，不锁具体措辞（#13）。
+        _post_issue_stream(client, expected_turn=turn2, step="1769 replace-1591 month")
+        after = _get_state(client)
+        assert _turn_of(after) == turn2 + 1, after.get("turn")
+        assert game.db.conn.execute(
+            "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
+        ).fetchone()["status"] == "draft"
+        # 真实拒因留痕、不误报无草案（#1591 保留面）
         rejection_rows = game.db.conn.execute(
-            "SELECT reason, category, source FROM rejection_reports "
-            "WHERE turn = ? AND section = 'directive_locality' "
+            "SELECT category, source FROM rejection_reports "
+            "WHERE section = 'directive_locality' "
             "AND json_extract(item_json, '$.directive_id') = ?",
-            (turn2, directive_id),
+            (directive_id,),
         ).fetchall()
-        assert len(rejection_rows) == 1, [dict(row) for row in rejection_rows]
-        rejection_row = rejection_rows[0]
-        assert rejection_row["category"] == "locality_fanout_failed", dict(rejection_row)
-        assert rejection_row["source"] == "player_decree", dict(rejection_row)
-        assert message == rejection_row["reason"], (message, rejection_row["reason"])
-        assert int(game.state.turn) == turn2, "拒案不得推进回合"
+        assert rejection_rows
+        assert any(r["category"] == "locality_fanout_failed" for r in rejection_rows)
+        assert any(r["source"] == "player_decree" for r in rejection_rows)
     finally:
         try:
             game.session.close()
@@ -1229,7 +1269,6 @@ def _real_chat_session(db, state, content, monkeypatch, *, scripted, agent_tools
     sess.content = content
     sess.registry = SimpleNamespace(
         get=lambda _character: FakeAgent(),
-        build_draft_line=lambda: "无",
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}

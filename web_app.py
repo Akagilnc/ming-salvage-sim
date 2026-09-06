@@ -6581,21 +6581,28 @@ def api_advance_without_edict(
             try:
                 # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
                 _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
+                # #1769：was_ended 在相位/写闸守卫之后、结算副作用之前取样——
+                # 守卫路径不得读 ended（守门夹具无此字段）；语义仍是 end_turn/refresh 前快照。
+                was_ended = bool(game.state.ended)
                 # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
                 # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
                 # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
                 settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
-                if settlement_result is None or not settlement_result.awaiting:
+                # #1769：last_decree 须在 end_turn/refresh 之前取样
+                # （refresh→begin_turn 会清 last_decree）。awaiting 不计 steam。
+                decree = game.session.last_decree
+                awaiting = bool(
+                    settlement_result is not None and settlement_result.awaiting
+                )
+                if not awaiting:
                     game.session.end_turn()
                     game.refresh_turn()
                 # §2.2：end_turn/refresh 后、return 前直查并立即赋 holder（失败进原异常链）。
                 failure_snapshot = _new_secret_order_failure_payloads_for_turn(
                     game, turn_before, failed_before)
-                return {
+                payload = {
                     "state": game.state_payload(),
-                    "awaiting_decision": bool(
-                        settlement_result is not None and settlement_result.awaiting
-                    ),
+                    "awaiting_decision": awaiting,
                     "decisions": (
                         settlement_result.decisions
                         if settlement_result is not None and settlement_result.awaiting
@@ -6603,6 +6610,15 @@ def api_advance_without_edict(
                     ),
                     "pending_action_failures": failure_snapshot,
                 }
+                if awaiting:
+                    return payload
+                # 真空退朝 last_decree 空 → 不发 STAT_DECREES_ISSUED；仅非空才计已颁。
+                return steam_events.with_events(
+                    payload,
+                    _settlement_steam_events(
+                        game, decree=decree or "", was_ended=was_ended,
+                    ),
+                )
             except HTTPException:
                 raise
             except Exception as body_exc:
@@ -6678,6 +6694,26 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
         )
 
 
+def _settlement_steam_events(
+    game, *,
+    decree: str = "",
+    was_ended: bool = False,
+) -> List[Dict[str, Any]]:
+    """过月 steam 计数。#1769：仅确有成案旨时发 STAT_DECREES_ISSUED
+    （零成案耗尽与退朝无旨同形，不计已颁；混合好旨 decree 非空仍计）。"""
+    events: List[Dict[str, Any]] = [
+        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+        steam_events.set_stat(
+            steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn),
+        ),
+    ]
+    if (decree or "").strip():
+        events.insert(0, steam_events.add_stat(steam_events.STAT_DECREES_ISSUED))
+    if not was_ended and game.state.ended:
+        events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+    return events
+
+
 @app.post("/api/decree/issue")
 def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
     """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。
@@ -6716,14 +6752,9 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
                 report = result.report
                 game.session.end_turn()
                 game.refresh_turn()
-                events = [
-                    steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                    steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                    steam_events.set_stat(
-                        steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-                ]
-                if not was_ended and game.state.ended:
-                    events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                events = _settlement_steam_events(
+                    game, decree=decree or "", was_ended=was_ended,
+                )
                 return steam_events.with_events(_settlement_player_payload(
                     decree=decree,
                     report=report,
@@ -6824,15 +6855,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                         report = result.report
                         game.session.end_turn()
                         game.refresh_turn()
-                        events = [
-                            steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                            steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                            steam_events.set_stat(
-                                steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-                        ]
-                        if not was_ended and game.state.ended:
-                            events.append(
-                                steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                        events = _settlement_steam_events(
+                            game, decree=decree or "", was_ended=was_ended,
+                        )
                         terminal = ("__done__", _settlement_player_payload(
                             decree=decree,
                             report=report,
@@ -6964,16 +6989,9 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                         )
                         game.session.end_turn()
                         game.refresh_turn()
-                    events = [
-                        steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                        steam_events.set_stat(
-                            steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn),
-                        ),
-                    ]
-                    if not was_ended and game.state.ended:
-                        events.append(
-                            steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                    events = _settlement_steam_events(
+                        game, decree=decree or "", was_ended=was_ended,
+                    )
                     terminal = ("__done__", _settlement_player_payload(
                         decree=decree,
                         report=report,

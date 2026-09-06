@@ -55,7 +55,6 @@ def _session(db, state, content, *, reply="臣领旨。", tools=None):
     sess.content = content
     sess.registry = SimpleNamespace(
         get=lambda _c: FakeAgent(),
-        build_draft_line=lambda: "无",
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = set()
