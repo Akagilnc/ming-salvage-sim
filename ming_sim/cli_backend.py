@@ -1986,7 +1986,12 @@ def _apply_validated_roster_to_extract_result(
 
 
 def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
-    """把既有 canonical 地区与结算时点直接教授抽取器；不建立第二映射。"""
+    """把既有 canonical 地区/科目词表与结算时点直接教授抽取器；不建立第二映射。
+
+    #1769：欠科目词表进输入侧结构契约（ADR0143/P6）；不在引擎侧改写 LLM 输出。
+    """
+    from ming_sim.pay_order import ARREARS_SUBJECTS, DUE_SUBJECTS
+
     regions = getattr(content, "regions", None) if content is not None else None
     lines = []
     for key, region in (regions or {}).items():
@@ -2004,11 +2009,26 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
                 f"当前结算时点：turn={int(state['turn'])}，"
                 f"{int(state['year'])}年{int(state['period'])}月。\n"
             )
+    subject_contract = (
+        f"due_priority 科目∈{'/'.join(DUE_SUBJECTS)}；"
+        f"arrears_priority 欠科目∈{'/'.join(ARREARS_SUBJECTS)}"
+        f"（须完整欠科目名，禁把裸「军饷」当欠科目）；"
+        f"due_haircut_bp 科目∈{'/'.join(DUE_SUBJECTS)}。\n"
+    )
     if not lines and not timing:
-        return ""
+        # 无地区/时点时仍给出科目词表（手工拟旨常见）。
+        return (
+            "【pay_order_override 接地事实】\n"
+            + subject_contract
+            + "priority 数字越小越先；默认军饷/官俸/宗禄/赈济=10/20/30/40，"
+              "并列按该默认次序稳定排列。相对期限只填 duration_months=N，"
+              "不要自行计算 until_turn；该动作 entries 必须非空。\n"
+        )
     return (
         "【pay_order_override 接地事实】地区只能直接使用下列 canonical id，禁别名/自造：\n"
-        + "、".join(lines) + "\n" + timing
+        + ("、".join(lines) + "\n" if lines else "")
+        + timing
+        + subject_contract
         + "priority 数字越小越先；默认军饷/官俸/宗禄/赈济=10/20/30/40，"
           "并列按该默认次序稳定排列。相对期限只填 duration_months=N，"
           "不要自行计算 until_turn；该动作 entries 必须非空。\n"
@@ -2184,6 +2204,7 @@ def extract_draft_intent_with_roster_heal(
     db: Any = None,
     content: Any = None,
     heal_retries: int = DRAFT_PARTICIPANT_HEAL_RETRIES,
+    initial_correction: str = "",
     **extract_kwargs: Any,
 ) -> Dict[str, Any]:
     """extract → 共同契约组合校验 + 名册校验；失败有界纠错重抽（P5 只走失败路）。
@@ -2196,9 +2217,10 @@ def extract_draft_intent_with_roster_heal(
     raise UnknownParticipantEscalate（调用方戏内回禀，不落草案）。
     db/content 缺一则只抽不校验名册（与旧 extract 同）；组合校验在 extract 内已做。
     LLM 在纠错路上挂死 → 原样上抛。
+    initial_correction（#1769）：成案拒收补交时把失败事实与原产物作为首轮回喂。
     """
     retries = max(0, int(heal_retries))
-    correction = ""
+    correction = str(initial_correction or "")
     pending_unknown: List[str] = []
     prior_ids_at_fail: List[str] = []
     # 首抽权威快照：首次校验失败后冻结，后续失败不得覆写 baseline/闸基线。
@@ -2683,7 +2705,8 @@ def extract_draft_intent(
         'pay_order_override",\n'
         '  "entries": [],              // 仅 pay_order_override：偿还序/折发调整清单，\n'
         '                             // 形如 [{"key":"due_haircut_bp_宗禄","value":5000,"duration_months":3}]；\n'
-        '                             // key∈due_priority_<科目>[@省]|arrears_priority_<欠科目>[@省]|'
+        '                             // key∈due_priority_<科目=军饷|官俸|宗禄|赈济>[@省]|'
+        'arrears_priority_<欠科目=军饷欠|官俸欠|宗禄欠>[@省]|'
         'due_haircut_bp_<科目>[@省][#province|#central]；haircut 值=万分数(0,10000]；非该动作留 []\n'
         + grant_fields_prompt
         + '  "目标类型": "",\n'
@@ -3021,12 +3044,59 @@ def capture_manual_directive_payload(
         _log(f"手工拟诏 capture 有界降级 special_decree：{exc}")
         return _manual_special_decree_payload(fallback_mode)
 
+    # heal 已 normalize+validate；投影与 #1769 补交共用同一 helper（禁双路径漂移）。
+    return project_draft_extract_to_directive_payload(
+        captured,
+        decree_text=directive_text,
+        existing_mode=existing_mode,
+        db=db,
+        content=content,
+    )
+
+
+def build_draft_admission_resubmit_feedback(
+    *,
+    failure_reason: str,
+    bad_payload: Mapping[str, Any],
+    decree_text: str = "",
+    content: Any = None,
+    db: Any = None,
+) -> str:
+    """#1769 成案拒收补交回喂：告诉 LLM 失败事实与原产物（0150 D5-b），不由代码写话。"""
+    payload_json = json.dumps(dict(bad_payload or {}), ensure_ascii=False, sort_keys=True)
+    reason = str(failure_reason or "").strip() or "（未给出具体拒因）"
+    text = str(decree_text or "").strip()
+    parts = [
+        "【成案校验失败，请按失败事实与原产物整份重交结构化字段（勿改旨文正文）】\n",
+        f"失败事实：{reason}\n",
+        f"原产物：{payload_json}\n",
+    ]
+    if text:
+        parts.append(f"原旨正文（不得改写）：{text}\n")
+    facts = _pay_order_grounding_facts(content, db)
+    if facts:
+        parts.append(facts)
+    from ming_sim.structured_decree import structured_decree_prompt_contract
+    parts.append(structured_decree_prompt_contract())
+    parts.append("\n")
+    return "".join(parts)
+
+
+def project_draft_extract_to_directive_payload(
+    captured: Mapping[str, Any],
+    *,
+    decree_text: str = "",
+    existing_mode: object = None,
+    db: Any = None,
+    content: Any = None,
+) -> Dict[str, object]:
+    """把 extract_draft_intent 结果投影为 turn_directives.dossier_payload（与手工 capture 同形）。"""
     declared_mode = resolve_directive_mode(
         extracted=captured.get("mode"), existing=existing_mode,
     )
     if captured.get("draft_action") != "拟旨":
         return _manual_special_decree_payload(declared_mode)
-    payload = {
+    payload: Dict[str, object] = {
         "dossier_action_type": captured.get("dossier_action_type"),
         "target_kind": captured.get("target_kind"),
         "target_id": captured.get("target_id"),
@@ -3035,17 +3105,12 @@ def capture_manual_directive_payload(
     for field in (
         "amount", "account", "execution_surface", "assignee",
         "deadline_months", "participant_roster", "locality_scope", "entries",
-        # #658：自由下旨御笔强推 stalled 廷议
         "target_dossier_id",
         "grant_action", "purpose", "cadence",
-        # #1624 共同契约
         "region_id", "transaction_category",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
-    # heal 已 normalize+validate；无 db/content 时保持抽取原样（旧调用兼容）。
-    # #1620：有 db 时协饷在承重落库前 canonicalize army id（关宁军→guanning）；
-    # 复用 require_materializable_xiexang_payload，禁 apply 侧名称 fallback。
     if (
         payload.get("dossier_action_type") == "grant_allocation"
         and payload.get("grant_action") == "协饷"
@@ -3061,28 +3126,24 @@ def capture_manual_directive_payload(
         if db is not None:
             from ming_sim.action_materialize import require_materializable_xiexang_payload
             material = require_materializable_xiexang_payload(
-                db, text=directive_text, **xiexang_kwargs,
+                db, text=str(decree_text or ""), **xiexang_kwargs,
             )
             payload.update({k: v for k, v in material.items() if k != "text"})
         else:
             from ming_sim.action_materialize import require_explicit_xiexang_fields
             payload.update(require_explicit_xiexang_fields(**xiexang_kwargs))
     if payload.get("dossier_action_type") == "dismiss_assignment":
-        # Manual CLI/Web directives bypass pending office actions, so preserve
-        # the same structured materialization fields at this capture seam.
         payload["name"] = str(payload.get("target_id") or "").strip()
         payload["_office_action"] = "罢免"
-    # #658：互斥权威——纯强推 / 普通 triad；并存响亮拒绝，禁静默吞旨
     from ming_sim.db import (
         classify_directive_structured_kind,
         imperial_push_target_dossier_id,
     )
-    # #1624：普通 triad 落库前共同契约组装+组合校验（不按 target_kind 覆盖 locality）
     try:
-        _pre_kind = classify_directive_structured_kind(payload)
+        pre_kind = classify_directive_structured_kind(payload)
     except ValueError:
-        _pre_kind = "ordinary"
-    if _pre_kind not in {"push", "empty"} and payload.get("target_kind") not in (None, ""):
+        pre_kind = "ordinary"
+    if pre_kind not in {"push", "empty"} and payload.get("target_kind") not in (None, ""):
         regions_content = getattr(content, "regions", None) if content is not None else None
         conn = getattr(db, "conn", None) if db is not None else None
         assembled = assemble_structured_decree(
@@ -3103,6 +3164,49 @@ def capture_manual_directive_payload(
     if kind == "empty":
         return _manual_special_decree_payload(declared_mode)
     return payload
+
+
+def resubmit_draft_admission_payload(
+    decree_text: str,
+    *,
+    bad_payload: Mapping[str, Any],
+    failure_reason: str,
+    llm_config: Any = None,
+    db: Any = None,
+    content: Any = None,
+    existing_mode: object = None,
+) -> Dict[str, object]:
+    """#1769 结算路 B：把成案失败事实与原产物告诉 LLM，重交结构化 payload。
+
+    票面不授权补交次数具体数字；本函数单次重交。调用方负责有界循环与耗尽终态。
+    不在引擎侧改写 LLM 输出（0142）；输入侧供料见 _pay_order_grounding_facts。
+    """
+    text = str(decree_text or "").strip()
+    if not text:
+        raise ValueError("补交缺旨文正文")
+    feedback = build_draft_admission_resubmit_feedback(
+        failure_reason=failure_reason,
+        bad_payload=bad_payload,
+        decree_text=text,
+        content=content,
+        db=db,
+    )
+    prompt = f"请据此拟旨，并从以下已成旨文抽取结构，不得改写：\n{text}"
+    captured = extract_draft_intent_with_roster_heal(
+        prompt,
+        text,
+        llm_config=llm_config,
+        db=db,
+        content=content,
+        initial_correction=feedback,
+    )
+    return project_draft_extract_to_directive_payload(
+        captured,
+        decree_text=text,
+        existing_mode=existing_mode or (bad_payload or {}).get("mode"),
+        db=db,
+        content=content,
+    )
 
 
 # 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，
