@@ -2262,8 +2262,11 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     failed_batch = ra.validate_all(failed_rows, failed_choices)
     dossiers_before = db.list_decree_dossiers()
     decisions_before = db.list_pending_decisions(int(state.turn))
+    # Business fiscal columns only: load_state→sync_economy_accounts restamps
+    # updated_at on reload (bookkeeping, not rollback 同源恢复 promise).
     accounts_before = db.conn.execute(
-        "SELECT * FROM economy_accounts ORDER BY account"
+        "SELECT account, metric_key, balance, note "
+        "FROM economy_accounts ORDER BY account"
     ).fetchall()
     ledger_before = db.conn.execute("SELECT * FROM economy_ledger ORDER BY id").fetchall()
     verdicts_before = db.get_pending_promulgation_verdicts(state.turn)
@@ -2293,7 +2296,8 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     assert db.list_decree_dossiers() == dossiers_before
     assert db.list_pending_decisions(int(state.turn)) == decisions_before
     assert db.conn.execute(
-        "SELECT * FROM economy_accounts ORDER BY account"
+        "SELECT account, metric_key, balance, note "
+        "FROM economy_accounts ORDER BY account"
     ).fetchall() == accounts_before
     assert db.conn.execute(
         "SELECT * FROM economy_ledger ORDER BY id"
