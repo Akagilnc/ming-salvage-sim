@@ -3213,10 +3213,17 @@ class GameSession:
             did = int(job["directive_id"])
             if exc is not None:
                 if isinstance(exc, ValueError):
+                    # 本轮重写自身的产物错（含名册 escalate 归一）：DB 载荷未动，
+                    # 光靠下一轮 ensure 重探只会拿回旧拒因——把本轮失败事实带过去，
+                    # 否则同一句话问三遍（0150-D5-b：告诉 LLM 事实）。
                     logger.warning(
                         "[1769] draft#%s admission resubmit product exhaust: %s",
                         did, exc,
                     )
+                    next_carry[did] = {
+                        "bad_payload": dict(job["bad_payload"]),  # type: ignore[arg-type]
+                        "reason": str(exc),
+                    }
                     continue
                 pack_path = write_error_pack(
                     self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,

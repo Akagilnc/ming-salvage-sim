@@ -83,6 +83,17 @@ _GOOD_XIEANG = {
 }
 
 
+# 名册产物错同形：结构合法但点名朝中查无此人 → heal 耗尽 → UnknownParticipantEscalate
+_UNKNOWN_NAME = "张三丰"
+_BAD_UNKNOWN_PARTICIPANT = {
+    **_GOOD_XIEANG,
+    "参与人": [
+        {"character_id": _UNKNOWN_NAME, "tier": "协办", "role": "转运",
+         "delegator_id": None},
+    ],
+}
+
+
 @pytest.fixture
 def admission_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """共享 WebGame + 真 capture；模型边界由各测 _queue_backend 喂。"""
@@ -111,12 +122,16 @@ def admission_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
 
 def _queue_backend(monkeypatch, captures: list) -> None:
+    """模型边界供料：按序返回，队尾之后一直重复最后一条。
+
+    队列枯竭**不得**抛异常——那是测试自造的替代故障，会顶替被测的真故障
+    （错误包/中止案由此在宽吞变异下仍误绿）。供料永不断，故障只能来自被测对象。
+    """
     queue = list(captures)
+    assert queue, "模型供料不得为空"
 
     def fake_backend(prompt, *_a, **_k):
-        if not queue:
-            raise RuntimeError("draft_intent backend queue exhausted")
-        item = queue.pop(0)
+        item = queue.pop(0) if len(queue) > 1 else queue[0]
         return json.dumps(item, ensure_ascii=False), {}
 
     monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
@@ -142,6 +157,23 @@ def _spy_resubmit_kwargs(monkeypatch) -> list[dict]:
 
     monkeypatch.setattr(cb, "resubmit_draft_admission_payload", wrapper)
     return calls
+
+
+_ENSURE_FAULT_MARK = "simulated ensure code fault #1769"
+_RESUBMIT_FAULT_MARK = "simulated resubmit code fault #1769"
+
+
+def _assert_error_pack_from(game, turn: int, marker: str) -> None:
+    """错误包须来自被测的真故障本身——不认「有个包就行」。"""
+    pack = latest_error_pack_for_turn(game.db.path, turn)
+    assert pack, "须出错误包"
+    assert Path(pack).is_dir()
+    manifest = json.loads(
+        (Path(pack) / "manifest.json").read_text(encoding="utf-8"),
+    )
+    assert manifest["exception_type"] == "RuntimeError"
+    assert manifest["exception_message"] == marker
+    assert marker in (Path(pack) / "traceback.txt").read_text(encoding="utf-8")
 
 
 def _post_directive(client, text: str) -> None:
@@ -237,6 +269,9 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     assert projected.get("target_id") == "guanning"
     assert projected.get("dossier_action_type", dossier["action_type"]) != "pay_order_override"
     assert projected.get("entries") in (None, [], ())
+    # 颁布格等既有承重载荷字段同样按第二次重写返回投影，不得在补交路上漂移
+    assert projected.get("mode") == _GOOD_XIEANG["颁布方式"] == "ordinary"
+    assert dossier["executor_id"] == _GOOD_XIEANG["承办人"] == "郭允厚"
     assert not _rejection_rows(game, draft_id)
     row = game.db.get_directive(draft_id)
     assert row is not None and str(row["status"]) == "issued"
@@ -308,11 +343,18 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
 
 
 def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypatch):
-    """混合：好旨成案、坏旨原抽+重写2 仍坏 → draft 留、月推进。"""
+    """混合：好旨成案、坏旨补交耗尽 → draft 留、月推进，坏旨不连带好旨。
+
+    坏旨两次重写都点名朝中查无此人 → cli_backend 已识别的名册产物错
+    （UnknownParticipantEscalate）。它是产物错，走本票 B 路预算/留存：不得升成
+    整月 SettlementAbort。第二次重写须听见第一次重写自己的失败事实，
+    而不是拿 DB 里的旧拒因再问一遍。
+    """
     game = admission_game
     _queue_backend(monkeypatch, [
-        _GOOD_XIEANG, _BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER,
+        _GOOD_XIEANG, _BAD_PAY_ORDER, _BAD_UNKNOWN_PARTICIPANT,
     ])
+    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -332,10 +374,19 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     assert str(game.db.get_directive(bad_id)["status"]) == "draft"
     assert len(_rejection_rows(game, bad_id)) == 1
     assert not _rejection_rows(game, good_id)
+    # 名册产物错未被当成系统故障：无错误包、月已推进（上方断言）
+    assert not latest_error_pack_for_turn(game.db.path, turn)
+    # 首轮拒因来自原产物；第二次重写听见的是第一次重写自己的失败事实
+    assert len(resubmit_calls) == 2
+    assert _UNKNOWN_NAME not in resubmit_calls[0]["failure_reason"]
+    assert _UNKNOWN_NAME in resubmit_calls[1]["failure_reason"]
 
 
 def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monkeypatch):
-    """真代码故障（ensure）：SSE error + 错误包目录存在 + 月份不推进。"""
+    """真代码故障（ensure）：SSE error + 错误包记真故障 + 月份不推进。
+
+    模型供料不断（枯竭不抛），故中止只能来自 boom；ensure 宽吞变异下本案必红。
+    """
     game = admission_game
     _queue_backend(monkeypatch, [_GOOD_XIEANG])
     client = TestClient(web_app.app)
@@ -345,7 +396,7 @@ def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monke
     wait_pending_writes(game)
 
     def boom(*_a, **_k):
-        raise RuntimeError("simulated ensure code fault #1769")
+        raise RuntimeError(_ENSURE_FAULT_MARK)
 
     monkeypatch.setattr(game.db, "_ensure_directive_dossier", boom)
     body = _post_issue_stream(
@@ -353,9 +404,7 @@ def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monke
     )
     assert body.get("_event") == "error"
     assert int(game.state.turn) == turn
-    pack = latest_error_pack_for_turn(game.db.path, turn)
-    assert pack, "须出错误包"
-    assert Path(pack).is_dir()
+    _assert_error_pack_from(game, turn, _ENSURE_FAULT_MARK)
 
 
 def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
@@ -371,7 +420,7 @@ def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
     wait_pending_writes(game)
 
     def boom(*_a, **_k):
-        raise RuntimeError("simulated ensure code fault #1769")
+        raise RuntimeError(_RESUBMIT_FAULT_MARK)
 
     monkeypatch.setattr(cb, "resubmit_draft_admission_payload", boom)
     body = _post_issue_stream(
@@ -380,6 +429,4 @@ def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
     )
     assert body.get("_event") == "error"
     assert int(game.state.turn) == turn
-    pack = latest_error_pack_for_turn(game.db.path, turn)
-    assert pack, "须出错误包"
-    assert Path(pack).is_dir()
+    _assert_error_pack_from(game, turn, _RESUBMIT_FAULT_MARK)
