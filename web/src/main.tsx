@@ -159,7 +159,6 @@ export function App() {
     sendChat,
     undoLastChat,
     retryInterruptedReply,
-    retryPendingAction,
     openFailureRecovery,
     surfacePendingActionFailures,
   } = useChatActions({
@@ -703,7 +702,6 @@ export function App() {
             onInput={setInput}
             onIntent={setComposerIntent}
             onSend={sendChat}
-            onRetryFailure={retryPendingAction}
             onRetryReply={retryInterruptedReply}
             onUndo={undoLastChat}
             onHint={setComposerHint}
@@ -720,9 +718,7 @@ export function App() {
         <FullscreenModal title="政务失败恢复" subtitle="承办人暂不可召见" bgClass="modal-bg-chat" onClose={() => setActiveModal("none")}>
           <PendingFailureRecoveryPanel
             failures={chatFailures}
-            busy={busy}
             error={error}
-            onRetryFailure={retryPendingAction}
           />
         </FullscreenModal>
       ) : null}

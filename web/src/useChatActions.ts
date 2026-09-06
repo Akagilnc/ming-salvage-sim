@@ -1,6 +1,6 @@
 import React from "react";
 import { api } from "./api";
-import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
+import { mergePendingActionFailures } from "./chatFailures";
 import type { AudienceHistoryData, SendChatCallbacks } from "./useAudienceChat";
 import type {
   ChatIdentity,
@@ -375,58 +375,6 @@ export function useChatActions({
     }
   };
 
-  const retryPendingAction = async (failure: PendingActionFailure) => {
-    if (busy) return;
-    const targetMinisterName = failure.minister_name || activeMinister?.name || selectedMinisterRef.current;
-    setBusy("重试密令下达");
-    setError("");
-    try {
-      const data = await api<{
-        retry: { committed: boolean };
-        secret_orders: SecretOrder[];
-        can_undo_last_chat?: boolean;
-        pending_action_failures?: PendingActionFailure[];
-      }>(
-        `/api/pending_actions/${failure.id}/retry`,
-        { method: "POST" },
-      );
-      if (!data.retry?.committed) {
-        if (selectedMinisterRef.current === targetMinisterName) {
-          setError("密令仍未能正式落库，请稍后再试。");
-        }
-        return;
-      }
-      setSecretOrders(data.secret_orders || []);
-      await loadState();
-      const staleTarget = selectedMinisterRef.current !== targetMinisterName;
-      const canRefreshFailureList = failureRecoveryMode || !staleTarget;
-      if (data.pending_action_failures) {
-        if (canRefreshFailureList) {
-          setChatFailures((items) => refreshRetriedPendingActionFailures(
-            items,
-            failure.id,
-            targetMinisterName,
-            data.pending_action_failures || [],
-          ));
-        }
-      } else {
-        if (canRefreshFailureList) {
-          setChatFailures((items) => items.filter((item) => item.id !== failure.id));
-        }
-      }
-      if (staleTarget) return;
-      if (typeof data.can_undo_last_chat === "boolean") {
-        setCanUndoLastChat(data.can_undo_last_chat);
-      }
-    } catch (err) {
-      if (selectedMinisterRef.current === targetMinisterName) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    } finally {
-      setBusy("");
-    }
-  };
-
   const openFailureRecovery = async () => {
     setBusy("读取失败密令");
     setError("");
@@ -461,7 +409,6 @@ export function useChatActions({
     sendChat,
     undoLastChat,
     retryInterruptedReply,
-    retryPendingAction,
     openFailureRecovery,
     surfacePendingActionFailures,
   };

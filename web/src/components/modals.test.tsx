@@ -56,7 +56,6 @@ function renderModal(props: {
   streamingMinisterMessage?: string;
   onCancel?: () => void;
   chatFailures?: PendingActionFailure[];
-  onRetryFailure?: (failure: PendingActionFailure) => void;
   replyRetry?: { chat_turn_id: number; question: string } | null;
   onRetryReply?: (ministerName: string) => void;
   pendingUserMessage?: string;
@@ -130,7 +129,6 @@ function renderModal(props: {
         onInput={(value) => setInput(value)}
         onIntent={props.onIntent}
         onSend={props.onSend ?? (() => {})}
-        onRetryFailure={props.onRetryFailure ?? (() => {})}
         onRetryReply={props.onRetryReply}
         onUndo={props.onUndo ?? (() => {})}
         onHint={() => {}}
@@ -551,43 +549,22 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(textarea.placeholder.length).toBeGreaterThan(5);
   });
 
-  it("shows secret-order landing failure with retry action", () => {
+  it("surfaces secret-order landing failure without any payload-replay control", () => {
     const failure: PendingActionFailure = {
       id: 7,
       kind: "secret_order",
       action: "新建",
-      retryable: true,
-      message: "密令未能正式落库，请重试；若暂不处理，也不会阻断继续召对。",
+      message: "密令未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。",
     };
-    const retry = vi.fn();
 
     renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
       chatFailures: [failure],
-      onRetryFailure: retry,
     });
 
     expect(document.querySelector(".chat-failure-note")?.textContent).toContain("密令未能正式落库");
-    const button = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "重试");
-    expect(button).toBeTruthy();
-    act(() => button?.click());
-    expect(retry).toHaveBeenCalledWith(failure);
-  });
-
-  it("does not show retry action for unsupported failure kinds", () => {
-    renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      chatFailures: [{
-        id: 8,
-        kind: "office",
-        action: "任命",
-        message: "任免未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。",
-      }],
-    });
-
-    expect(document.querySelector(".chat-failure-note")?.textContent).toContain("任免未能正式落库");
+    // #1765 ②：原地恢复=继续召对本身，不给重放旧 payload 的按钮。
     const button = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "重试");
     expect(button).toBeUndefined();
   });

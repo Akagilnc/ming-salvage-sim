@@ -78,7 +78,7 @@ function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = fals
         streamingMinisterMessage={hook.streamingMinisterMessage}
         suggestions={[]} chatNotice="" chatFailures={[]} canUndoLastChat={false}
         composerHint="" input="" busy={busy} error="" secretOrders={[]}
-        onInput={() => {}} onSend={() => {}} onRetryFailure={() => {}} onUndo={() => {}}
+        onInput={() => {}} onSend={() => {}} onUndo={() => {}}
         onHint={() => {}} onFavorite={() => {}} onClose={() => {}} onCancel={() => {}}
       />
     );
