@@ -491,3 +491,46 @@ def test_load_llm_config_api_mode_clears_placeholder(monkeypatch):
 
     with _pytest.raises(SystemExit):
         llm_config.load_llm_config(base_url="https://api.x/v1", model="m", api_key="cli-backend")
+
+
+def test_runtime_llm_transport_slot_defaults_and_preserve(tmp_path, monkeypatch):
+    """#1465：transport 与 api/cli 平级；旧档无段填默认；保存通道时保留 transport。"""
+    from ming_sim.models import (
+        TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
+        TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS,
+        TRANSPORT_DEFAULT_MAX_ATTEMPTS,
+    )
+
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+    out = llm_config.load_runtime_llm()
+    assert out["transport"]["max_attempts"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
+    assert out["transport"]["attempt_timeout_seconds"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
+    assert out["transport"]["idle_timeout_seconds"] == TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS
+
+    llm_config.save_runtime_llm(
+        base_url="https://x/v1",
+        model="m",
+        api_key="sk-x",
+        channel="api",
+        transport_max_attempts=5,
+        transport_attempt_timeout_seconds=12.5,
+        transport_idle_timeout_seconds=9.0,
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["transport"] == {
+        "max_attempts": 5,
+        "attempt_timeout_seconds": 12.5,
+        "idle_timeout_seconds": 9.0,
+    }
+    # 再存 API 不显式传 transport → 保留既有段（ADR 0001 平级不擦）
+    llm_config.save_runtime_llm(
+        base_url="https://x/v1", model="m2", api_key="sk-y", channel="api",
+    )
+    saved2 = json.loads(path.read_text(encoding="utf-8"))
+    assert saved2["api"]["model"] == "m2"
+    assert saved2["transport"]["max_attempts"] == 5

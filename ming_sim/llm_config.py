@@ -14,6 +14,9 @@ from ming_sim.models import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     VALID_CHANNELS,
     API_DEFAULT_TIMEOUT_SECONDS,
+    TRANSPORT_DEFAULT_MAX_ATTEMPTS,
+    TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
+    TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS,
 )
 from ming_sim.paths import user_data_path
 
@@ -32,6 +35,12 @@ _API_RUNTIME_FIELDS = (
     "reasoning_strength",
 )
 _CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds", "reasoning_strength")
+# #1465：transport 统一策略与 API/CLI 槽平级（ADR 0001 槽位契约不动）
+_TRANSPORT_RUNTIME_FIELDS = (
+    "max_attempts",
+    "attempt_timeout_seconds",
+    "idle_timeout_seconds",
+)
 
 # CLI 通道在内存里用这个占位符填 LLMConfig.api_key（脱 key 运行），它绝不是真实 key。
 CLI_BACKEND_PLACEHOLDER = "cli-backend"
@@ -66,6 +75,11 @@ def _slot_text(data: Dict[str, object], key: str) -> str:
 # 未知键（含旧档残留）由 _api_runtime_slot 只读白名单字段，自然忽略。
 _API_NUMERIC_FIELDS = {
     "timeout_seconds": (float, API_DEFAULT_TIMEOUT_SECONDS),
+}
+_TRANSPORT_NUMERIC_FIELDS = {
+    "max_attempts": (int, TRANSPORT_DEFAULT_MAX_ATTEMPTS),
+    "attempt_timeout_seconds": (float, TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS),
+    "idle_timeout_seconds": (float, TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS),
 }
 
 
@@ -103,6 +117,15 @@ def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
     }
 
 
+def _transport_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
+    """#1465 transport 段：与 api/cli 平级；缺省填默认，旧档无段不炸。"""
+    out: Dict[str, object] = {}
+    for k in _TRANSPORT_RUNTIME_FIELDS:
+        caster, default = _TRANSPORT_NUMERIC_FIELDS[k]
+        out[k] = _slot_number(data.get(k), caster, default)
+    return out
+
+
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     channel = str(data.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
@@ -112,9 +135,13 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
         channel = "api" if is_real_api_key(data.get("api_key")) else ""
     api_raw = data.get("api")
     cli_raw = data.get("cli")
+    transport_raw = data.get("transport")
     api_source = api_raw if isinstance(api_raw, dict) else data
     api = _api_runtime_slot(api_source)
     cli = _cli_runtime_slot(cli_raw if isinstance(cli_raw, dict) else {})
+    transport = _transport_runtime_slot(
+        transport_raw if isinstance(transport_raw, dict) else {}
+    )
     migrated_api_strength = (
         normalize_reasoning_strength(api.get("reasoning_strength"))
         or normalize_reasoning_strength(data.get("reasoning_strength") if channel != "cli" else "")
@@ -128,6 +155,7 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
         "channel": channel,
         "api": api,
         "cli": cli,
+        "transport": transport,
     }
     # Transitional API aliases keep existing callers working while the UI/API
     # slices move to explicit slots. Keep these even when CLI is active.
@@ -359,6 +387,9 @@ def save_runtime_llm(
     cli_timeout_seconds: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
     api_reasoning_strength: Optional[str] = None,
+    transport_max_attempts: Optional[int] = None,
+    transport_attempt_timeout_seconds: Optional[float] = None,
+    transport_idle_timeout_seconds: Optional[float] = None,
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
@@ -368,6 +399,9 @@ def save_runtime_llm(
     existing = load_runtime_llm()
     existing_api = existing.get("api") if isinstance(existing.get("api"), dict) else {}
     existing_cli = existing.get("cli") if isinstance(existing.get("cli"), dict) else {}
+    existing_transport = (
+        existing.get("transport") if isinstance(existing.get("transport"), dict) else {}
+    )
     api_inputs = (
         base_url,
         model,
@@ -430,11 +464,21 @@ def save_runtime_llm(
         cli_strength = normalize_reasoning_strength(existing_cli.get("reasoning_strength", ""))
     if cli_strength:
         cli_payload["reasoning_strength"] = cli_strength
+    # #1465：transport 段与通道保存正交——显式传入覆盖，否则保留既存/默认（ADR 0001 平级）。
+    transport_src = dict(existing_transport)
+    if transport_max_attempts is not None:
+        transport_src["max_attempts"] = transport_max_attempts
+    if transport_attempt_timeout_seconds is not None:
+        transport_src["attempt_timeout_seconds"] = transport_attempt_timeout_seconds
+    if transport_idle_timeout_seconds is not None:
+        transport_src["idle_timeout_seconds"] = transport_idle_timeout_seconds
+    transport_payload = _transport_runtime_slot(transport_src)
     payload = {
         "channel": active_channel,
         "reasoning_strength": strength,
         "api": api_payload,
         "cli": cli_payload,
+        "transport": transport_payload,
     }
     with open(RUNTIME_LLM_PATH, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
