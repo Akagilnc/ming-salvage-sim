@@ -2985,6 +2985,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     // 真实重入入口 = 底部拟诏木牌 → 共享 openModal → loadState；结果只认结构化成案卡
     await click(edictCommand(t.host));
     await t.expectCasedCard();
+    // 成案独占（directives=[]）：footer 可点独立证明 hasCased；混合夹具不能代证。
+    expect(t.host.querySelector('[data-directive-phase="draft"]')).toBeNull();
+    const footer = t.host.querySelector<HTMLButtonElement>(".desk-footer button");
+    expect(footer?.disabled).toBe(false);
   });
 
   it("#1764 成案只读投影：state.cased_directives 以 phase=cased 留桌且无改删", async () => {
@@ -3027,14 +3031,13 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(draftCard).not.toBeNull();
     expect(draftZone!.contains(draftCard!)).toBe(true);
     expect(issuedZone!.contains(draftCard!)).toBe(false);
-    // 已发只读：无改删；非 busy/invalid；无卡级 alert；正文原文在；footer 可点（hasCased）。
+    // 已发只读：无改删；非 busy/invalid；无卡级 alert；正文原文在。
+    // footer 可用性由成案独占 tracer（离面重入）独立证明 hasCased，本混合夹具不代证。
     expect(card?.querySelector(".directive-tools")).toBeNull();
     expect(card?.getAttribute("aria-busy")).not.toBe("true");
     expect(card?.getAttribute("aria-invalid")).not.toBe("true");
     expect(card?.querySelector('[role="alert"]')).toBeNull();
     expect(card?.textContent || "").toContain("着户部核边饷");
-    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
-    expect(footer?.disabled).toBe(false);
   });
 
   it("#1560 pending-only 拟诏主钮走 issue/stream 单轨", async () => {

@@ -164,9 +164,6 @@
 .directive-item .local-fail-note {
   color: #82291f;
 }
-.directive-head.secondary {
-  justify-content: flex-start;
-}
 
 .directive-head {
   display: flex;
