@@ -725,6 +725,43 @@ class _CountingFailAgent:
         yield RunCompletedEvent()
 
 
+class _FailLeavingAgnoRunAgent:
+    """#1465 fo2Og：失败 attempt 留下确定性 Agno run 残迹，并记录每 attempt 读回的 run_id 序列。
+
+    残迹写入与 truncate 同一 GameDB Agno 域（非私有缓存旁路）；成功 attempt 不另写 run。
+    """
+
+    def __init__(self, db, session_id: str, *, fail_times: int, error_factory):
+        self.db = db
+        self.session_id = str(session_id)
+        self.fail_times = int(fail_times)
+        self.error_factory = error_factory
+        self.calls = 0
+        self.history_at_attempt_start: list[list[str]] = []
+
+    def run(self, *_a, **_k):
+        self.calls += 1
+        n = self.calls
+        # 本 attempt 启动时持久读回（_start_stream 已先 truncate）
+        self.history_at_attempt_start.append(
+            [str(r.get("run_id")) for r in self.db._agno_merged_runs(self.session_id)]
+        )
+        if n <= self.fail_times:
+            from tests.test_audience_restore_505 import _insert_agno_table_run
+
+            rid = f"fail-attempt-{n}"
+            _insert_agno_table_run(
+                self.db,
+                self.session_id,
+                rid,
+                run_index=self.db.agno_runs_length(self.session_id),
+            )
+            raise self.error_factory(n)
+        yield RunContent("臣")
+        yield RunContent("已核辽饷。")
+        yield RunCompletedEvent()
+
+
 def _transport_web_game(game, agent):
     """复用 audience_background 真实召对装配（真 DB / atomic / interpret）。"""
     from tests.test_audience_background import _web_game
@@ -779,8 +816,11 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
 def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game):
     """#1465 ①：两次瞬断后第三次成功 → 真 interpret/atomic 落库 + 3 attempts 可回指。
 
-    同案：每重试 attempt 经既有 Agno 截断接缝（不等 fail_chat_turn）。
+    同案 fo2Og：失败 attempt 写入确定性 Agno run；重试读回/持久史保留前轮、排除失败
+    attempt，且不改游戏账（≠ fail_chat_turn 整轮回滚）。
     """
+    from tests.test_audience_restore_505 import _seed_agno_v3_runs
+
     def _conn_err(_n):
         return LLMUnavailable(
             "连接失败",
@@ -788,17 +828,26 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
             provider_message="connection reset",
         )
 
-    agent = _CountingFailAgent(fail_times=2, error_factory=_conn_err)
+    db, _state, _content = game
+    minister = "毕自严"
+    session_id = "minister-retry-hist"
+    # 前轮 Agno 史：本轮起点 keep_count=1；失败 attempt 残迹须截掉、前轮须保留
+    _seed_agno_v3_runs(db, session_id, run_count=1)
+    prior_ids = [f"run-{session_id}-0"]
+    assert [str(r.get("run_id")) for r in db._agno_merged_runs(session_id)] == prior_ids
+
+    agent = _FailLeavingAgnoRunAgent(
+        db, session_id, fail_times=2, error_factory=_conn_err,
+    )
     web_game, minister = _transport_web_game(game, agent)
-    db = web_game.db
-    trunc_calls = {"n": 0}
-    real_trunc = db.truncate_chat_turn_agno_runs
+    web_game.session.registry.session_ids[minister] = session_id
 
-    def _count_trunc(chat_turn_id):
-        trunc_calls["n"] += 1
-        return real_trunc(chat_turn_id)
-
-    db.truncate_chat_turn_agno_runs = _count_trunc  # type: ignore[method-assign]
+    # 游戏账基线（截史不得动问话/回话账）
+    user_msgs_before = int(
+        db.conn.execute(
+            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='user'",
+        ).fetchone()["c"]
+    )
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -817,14 +866,38 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
     chat_turn_id = int(done.get("chat_turn_id") or 0)
     assert chat_turn_id > 0
     row = db.conn.execute(
-        "SELECT status, minister_message_id FROM chat_turns WHERE id=?",
+        "SELECT status, minister_message_id, agno_session_id, agno_runs_before "
+        "FROM chat_turns WHERE id=?",
         (chat_turn_id,),
     ).fetchone()
     assert row is not None
     assert int(row["minister_message_id"] or 0) > 0
     assert str(row["status"]) != "failed"
-    # attempt2/3 各截一次（初试不截）
-    assert trunc_calls["n"] == 2, trunc_calls
+    assert str(row["agno_session_id"] or "") == session_id
+    assert int(row["agno_runs_before"] or 0) == 1
+
+    # 重试实际读回：每 attempt 启动时只见前轮，不见失败 attempt 残迹
+    assert agent.history_at_attempt_start == [prior_ids, prior_ids, prior_ids], (
+        agent.history_at_attempt_start
+    )
+    # 持久读回：终态仍只保留前轮（失败 run 已截；成功 attempt 未另写）
+    final_ids = [str(r.get("run_id")) for r in db._agno_merged_runs(session_id)]
+    assert final_ids == prior_ids, final_ids
+    assert all(not rid.startswith("fail-attempt-") for rid in final_ids)
+
+    # 游戏账未因截史回滚：问话增加、回话在、轮未 fail
+    user_msgs_after = int(
+        db.conn.execute(
+            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='user'",
+        ).fetchone()["c"]
+    )
+    assert user_msgs_after == user_msgs_before + 1
+    minister_msgs = int(
+        db.conn.execute(
+            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='minister'",
+        ).fetchone()["c"]
+    )
+    assert minister_msgs >= 1
 
 
 def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, game):
