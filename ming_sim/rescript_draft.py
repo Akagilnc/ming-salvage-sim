@@ -34,7 +34,8 @@ from ming_sim.assets import strip_json_fence
 from ming_sim.llm_model import llm_unavailable_from_error
 from ming_sim.db import GameDB
 from ming_sim.decree_vocabulary import (
-    RESCRIPT_ROUTABLE_ACTION_TYPES,
+    DOSSIER_ACTION_TYPES,
+    PARTICIPANT_ROSTER_KEY,
     TARGET_KINDS,
     _DRAFT_CAPABILITY_KEYS,
     derive_draft_capability,
@@ -42,6 +43,7 @@ from ming_sim.decree_vocabulary import (
 from ming_sim.error_pack import error_packs_root
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.models import GameState, reign_period_label
+from ming_sim.participant_roster import PARTICIPANT_LEAD_TIER, PARTICIPANT_TIERS
 from ming_sim.structured_decree import StructuredDecreeCombinationError
 from ming_sim.token_stats import tlog
 
@@ -176,10 +178,22 @@ _LAYER_A_PRESENT_KEYS = (
 )
 # locality 三值/别名唯一真源 = execution_pressure.normalize_locality_scope（#1624 删平行）
 
+# #1778 决定 3：参与名单是 typed 结构化列表键（不进上面两组 str 键）。
+# 机械三档与条目形状唯一真源＝GameDB._normalize_participant_roster（ADR 0053）；
+# 生成批次必须写、且至少一名主办（主办可多人），否则＝票没拟完 → 既有补交回路。
+_LAYER_A_ROSTER_SHAPE: Dict[str, object] = {
+    "type": "list",
+    "min_items": 1,
+    "item_keys": ("character_id", "tier", "role", "delegator_id"),
+    "tiers": PARTICIPANT_TIERS,
+    "require_tier": PARTICIPANT_LEAD_TIER,
+}
+
 # 生成侧军饷类别；层 A 等值映射到内部 grant_action=协饷（禁同义词/散文）。
 _GRANT_KIND_ARMY_PAY = "army_pay"
 
-# 七类 action-conditional 必填/互斥/枚举/条件必填（纯 shape，无 DB grounding）。
+# 逐类 action-conditional 必填/互斥/枚举/条件必填（纯 shape，无 DB grounding）。
+# #1778：本表只对列出的类型加形状检查，不是准入闭集——未列出的库级类型照常受理。
 # assignment 的 category|assignee 任一已由 structured_decree 组合闸承载；
 # grant_kind↔grant_action 互斥与金额 shape 仍走下方 grant 专缝（同 shape 暴露）。
 # optional_keys 仅供 renderer 列类相关可填键；validator 不因 optional 放宽必填。
@@ -236,7 +250,7 @@ _LAYER_A_ACTION_CONDITIONAL: Dict[str, Dict[str, object]] = {
         "optional_keys": ("name", "deadline_months"),
     },
 }
-assert frozenset(_LAYER_A_ACTION_CONDITIONAL) == RESCRIPT_ROUTABLE_ACTION_TYPES
+assert frozenset(_LAYER_A_ACTION_CONDITIONAL) <= DOSSIER_ACTION_TYPES
 
 # 层 A 允许键 = C.3 必填/须在 + C.4 闭集 + draft_capability（服务端覆盖，LLM 自带不准）
 # grant_kind：生成侧 machine discriminator（#1620）；层 A 映射后不落库。
@@ -244,7 +258,7 @@ _LAYER_A_ALLOWED_KEYS = frozenset(
     list(_LAYER_A_REQUIRED_KEYS)
     + list(_LAYER_A_PRESENT_KEYS)
     + [key for key, _default in _DRAFT_CAPABILITY_KEYS]
-    + ["draft_capability", "grant_kind"]
+    + [PARTICIPANT_ROSTER_KEY, "draft_capability", "grant_kind"]
 )
 
 # capability 闭集中的 str 透传键 / int 键（唯一派生；禁 normalize 再手抄一份）
@@ -284,9 +298,9 @@ def _layer_a_resolve_enum_in(rule: Mapping[str, object]) -> Dict[str, frozenset]
 
 
 def _layer_a_action_conditional_view() -> Dict[str, Dict[str, object]]:
-    """七类条件契约的 typed 视图（shape/normalize/renderer 共用）。"""
+    """逐类条件契约的 typed 视图（shape/normalize/renderer 共用）。"""
     out: Dict[str, Dict[str, object]] = {}
-    for action in sorted(RESCRIPT_ROUTABLE_ACTION_TYPES):
+    for action in sorted(_LAYER_A_ACTION_CONDITIONAL):
         rule = _LAYER_A_ACTION_CONDITIONAL[action]
         entry: Dict[str, object] = {
             "required_nonempty": tuple(rule.get("required_nonempty") or ()),
@@ -322,12 +336,15 @@ def layer_a_option_shape() -> Dict[str, object]:
     """层 A option 受理契约 typed 单源（required/present/action-conditional）。
 
     与 normalize_rescript_layer_a_option / rescript_layer_a_prompt_contract 共用；
-    action_conditional 承载七类必填/互斥/枚举/条件必填，禁止入口平行手抄。
+    action_conditional 承载逐类必填/互斥/枚举/条件必填，禁止入口平行手抄。
+    #1778：action_types＝库级全集（ADR 0040 形状检查），不是七类准入闭集；
+    structured_keys 承载参与名单（ADR 0053 三档），生成批次必写。
     """
     return {
         "required_keys": _LAYER_A_REQUIRED_KEYS,
         "present_keys": _LAYER_A_PRESENT_KEYS,
-        "action_types": tuple(sorted(RESCRIPT_ROUTABLE_ACTION_TYPES)),
+        "structured_keys": {PARTICIPANT_ROSTER_KEY: dict(_LAYER_A_ROSTER_SHAPE)},
+        "action_types": tuple(sorted(DOSSIER_ACTION_TYPES)),
         "action_conditional": _layer_a_action_conditional_view(),
         "grant_kind_army_pay": _GRANT_KIND_ARMY_PAY,
         "server_only_keys": ("draft_capability",),
@@ -398,6 +415,8 @@ def rescript_layer_a_prompt_contract() -> str:
     shape = layer_a_option_shape()
     required = "/".join(str(k) for k in shape["required_keys"])  # type: ignore[arg-type]
     present = "/".join(str(k) for k in shape["present_keys"])  # type: ignore[arg-type]
+    roster_shape = shape["structured_keys"][PARTICIPANT_ROSTER_KEY]  # type: ignore[index]
+    roster_tiers = "|".join(str(t) for t in roster_shape["tiers"])  # type: ignore[index]
     actions = "|".join(str(a) for a in shape["action_types"])  # type: ignore[arg-type]
     grant_kind = str(shape["grant_kind_army_pay"])
     server_only = "/".join(str(k) for k in shape["server_only_keys"])  # type: ignore[arg-type]
@@ -407,6 +426,11 @@ def rescript_layer_a_prompt_contract() -> str:
         f"每项 options[] 必填非空 {required}；"
         f"action_type∈{actions}；"
         f"{present} 三键必须输出（值可空串）；"
+        f"{PARTICIPANT_ROSTER_KEY} 写这道旨的参与名单，每项 "
+        f"{{character_id: 朝堂名册上的大臣本名, tier∈{roster_tiers}, "
+        f"role: 职分文字（可空串）, delegator_id: 委派人本名（无则 null）}}；"
+        f"{roster_shape['require_tier']} 至少一人、也可数人合力；"  # type: ignore[index]
+        "旨里点了谁就照写谁，未点名的由你按人物与局势荐入名单；"
         + conditional
         + f"grant_allocation 军饷用 grant_kind={grant_kind}"
         f"（禁直写 grant_action=协饷；kind 与 grant_action 不得并存）；"
@@ -422,7 +446,7 @@ def _enforce_layer_a_action_conditional(
     shape: Mapping[str, object],
     facts_out: Dict[str, Dict[str, object]],
 ) -> None:
-    """按 shape.action_conditional 强制七类必填/互斥/枚举（写回 out）。
+    """按 shape.action_conditional 强制逐类必填/互斥/枚举（写回 out）。
 
     字段契约失败（缺或错）写入唯一事实集合；不填占位值。
     """
@@ -642,6 +666,17 @@ def normalize_stop_condition(raw: object) -> str:
     )
 
 
+def _normalize_layer_a_participant_roster(value: object) -> List[Dict[str, object]]:
+    """票拟参与名单归一：形状真源＝GameDB._normalize_participant_roster（ADR 0053）。
+
+    只判条目形状与机械档；名单上的人是否在名册里由落库缝
+    `_validate_participant_roster_references` 响亮把关（决定 3：只核人存在）。
+    """
+    if not isinstance(value, list):
+        raise ValueError("participant_roster 须为 list")
+    return GameDB._normalize_participant_roster(value, strict_structured=True)
+
+
 def normalize_rescript_layer_a_option(
     raw: object,
     *,
@@ -803,7 +838,30 @@ def normalize_rescript_layer_a_option(
             continue
         out[key_s] = value
 
-    # 七类 action-conditional（与 shape/renderer 同真源；先于组合闸）
+    # #1778 决定 3：参与名单 typed 结构化键。生成批次必写且须有主办——
+    # 没写＝票没拟完，与其余字段共走同一补交回路（失败事实只带 typed 期望形状）。
+    roster_expected = shape["structured_keys"][PARTICIPANT_ROSTER_KEY]  # type: ignore[index]
+    roster_raw = raw.get(PARTICIPANT_ROSTER_KEY)
+    if roster_raw is not None:
+        try:
+            roster = _normalize_layer_a_participant_roster(roster_raw)
+        except ValueError:
+            _fail(PARTICIPANT_ROSTER_KEY, current=roster_raw, expected=roster_expected)
+        else:
+            has_lead = any(
+                item.get("tier") == PARTICIPANT_LEAD_TIER for item in roster
+            )
+            if generation_admission and not has_lead:
+                _fail(
+                    PARTICIPANT_ROSTER_KEY,
+                    current=roster_raw, expected=roster_expected,
+                )
+            else:
+                out[PARTICIPANT_ROSTER_KEY] = roster
+    elif generation_admission:
+        _fail(PARTICIPANT_ROSTER_KEY, current=None, expected=roster_expected)
+
+    # 逐类 action-conditional（与 shape/renderer 同真源；先于组合闸）
     if action_type:
         _enforce_layer_a_action_conditional(
             out, raw, shape=shape, facts_out=facts,

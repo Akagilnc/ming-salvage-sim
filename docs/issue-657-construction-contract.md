@@ -147,16 +147,15 @@ else:
 
 ---
 
-## §C 七类 ABI 终局
+## §C 票拟/中旨 ABI 终局（**后出为准 → #1778**：原「七类」闭集已取消）
 
-### C.1 双闭集
+### C.1 闭集
+
+> **后出为准 → #1778**：`RESCRIPT_ROUTABLE_ACTION_TYPES` 七类闭集及其各处闸已整体取消
+> （owner 2026-09-06「1」）；choice/option.`action_type` 值域＝库级全集
+> `DOSSIER_ACTION_TYPES`（ADR 0040 形状检查仍在）。emitted 闭集不动。
 
 ```
-RESCRIPT_ROUTABLE_ACTION_TYPES = frozenset({
-  "assignment", "military_order", "grant_allocation",
-  "appointment", "punishment", "authorization", "pacification",
-})
-
 RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES = frozenset({
   "assignment", "military_order", "grant_allocation", "appointment",
   "dismiss_assignment",  # 罢免支
@@ -164,13 +163,12 @@ RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES = frozenset({
 })
 
 # 库级全集 —— 禁止写成 DOSSIER_ACTION_TYPES = 七值
-RESCRIPT_ROUTABLE_ACTION_TYPES ⊂ DOSSIER_ACTION_TYPES
 RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES ⊂ DOSSIER_ACTION_TYPES
 ```
 
 | 规则 | 口径 |
 |---|---|
-| choice/option.`action_type` | ∈ **七类** routable（罢免在 choice 上仍用 `appointment` + `appoint_action=罢免`） |
+| choice/option.`action_type` | ∈ **库级全集** `DOSSIER_ACTION_TYPES`（#1778 后出为准；罢免在 choice 上仍用 `appointment` + `appoint_action=罢免`） |
 | create/apply 落库 `action_type` | ∈ **emitted**；任命→`appointment`；罢免→`dismiss_assignment` |
 | 实现落点 | `ming_sim/decree_vocabulary.py`（或紧邻单真源模块） |
 
@@ -191,7 +189,7 @@ follow_draft / midzhi 领域写前（首写前）:
 
 - **禁止** 引用 `_normalize_decree_dossier_payload`（仓内不存在）
 - **禁止** 绕过 normalize 直接 `create_decree_dossiers`
-- locality：`execution_pressure.resolve_dossier_region_ids` / `normalize_locality_scope`（8×3 矩阵；oracle 权威）
+- locality：`execution_pressure.resolve_dossier_region_ids` / `normalize_locality_scope`（8×3 矩阵；oracle 权威）。**后出为准 → #1778**：national 与 none 同为单行 `region_id=''`，不返回省列表
 
 ### C.3 公共 option 键（层 A · 缺一 shape 失败）
 
@@ -250,7 +248,7 @@ summon_target   # 仅 summon 行；差务 option 固定 ""
 |---|---|---|
 | `transaction_category` | 执行期 | `{钱粮,清丈,督赈,缉拿,缉捕,河工}` |
 | 主办合法 A | 可选 | 显式 canonical assignee → named lead |
-| 主办合法 B | 可选 | **仅**合法 category、**无**显式 assignee → duty route（`resolve_lead_executors`）；**不得**因缺 assignee 拒 |
+| 主办合法 B | — | **后出为准 → #1778 决定 3**：duty route 兜底已删。无显式 assignee 时主办来自票拟里的 `participant_roster`（ADR 0053 三档，主办可多人）；名单也缺＝票没拟完，走 option 补交回路，代码不配人 |
 | `target_kind`/`target_id` | 始终 | ∈ TARGET_KINDS / 非空 |
 | `title` | 可选 | str≤80 |
 | `commitment_kind` | 可选 | `{无,until_stop}` 默认 `无` |
@@ -383,7 +381,7 @@ payload["holder_id"] = payload["assignee_id"] = payload["name"] = canonical
 | **删除** | `decree_dossiers.rescript_origin` 列；`UNIQUE(rescript_origin,region_id)`；create 按该键查补；对应测试 |
 | **主幂等** | C1：同事务 choice＋完整 fan-out＋CAS；已 decided 精确匹配→跳过；不匹配→拒 |
 | **fan-out** | create Plan→Validate-all→Write-once；既有 `(source,region_id)` 查补 |
-| **验收** | ③ 后 crash / 同 body 重交 → **不增** dossier；每 region 恰一行 |
+| **验收** | ③ 后 crash / 同 body 重交 → **不增** dossier；每 region 恰一行（**后出为准 → #1778**：national 不拆省，「恰一行」＝全旨一行） |
 | **可选 provenance** | payload 普通字段可写 decision_key；**不得**第二幂等真源/加列索引 |
 
 #### 中旨 D+（本契约唯一完整位；ADR／GH 只 later-wins 指针，不复述整套）
@@ -409,7 +407,7 @@ payload["holder_id"] = payload["assignee_id"] = payload["name"] = canonical
 
 | ID | 动作 | 首写前正 | 首写前负 | 判后 |
 |---|---|---|---|---|
-| A1 | assignment | 最小合法+绝对 end_turn；**duty 无 assignee** | category 与主办均缺；until_stop 无 stop | initiative 绝对 end_turn+承办人 |
+| A1 | assignment | 最小合法+绝对 end_turn；**无 assignee 时主办来自票拟 roster**（后出为准 → #1778） | category 与主办均缺；until_stop 无 stop | initiative 绝对 end_turn+承办人 |
 | A2 | military_order | army+due 或 station | 非 army/假军/无 due 无 station | 调驻+限期 |
 | A3 | grant honorific | 无 amount | 缺 name/target | honorific 效果 |
 | A4 | grant 金钱 | amount；缺 account→国库；发内帑→内库 | 缺 amount；显式非法 account | 扣库/科目 |
@@ -420,7 +418,7 @@ payload["holder_id"] = payload["assignee_id"] = payload["name"] = canonical
 | A9 | punishment×2 | 普通/罚俸+amount | 非法 action/罚俸无 amount | 两支判后 |
 | A10 | authorization | 缺 privilege→便宜行事；**name-only 全链** | 非法 privilege；四键皆空；缺 scope | authority_changes |
 | A11 | pacification | 合法内乱 leader | 非 leader | 易主终局 |
-| A12 | 闭集/幂等/capability | choice∈七类 routable；罢免 emitted dismiss；capability 扰动变键 | 无 DOSSIER=七值；无 rescript_origin 列；同 capability 两套 payload | 同 body 重交不增行 |
+| A12 | 闭集/幂等/capability | choice∈`DOSSIER_ACTION_TYPES`（**后出为准 → #1778**，原「七类 routable」作废）；罢免 emitted dismiss；capability 扰动变键 | 无 DOSSIER=七值；无 rescript_origin 列；同 capability 两套 payload | 同 body 重交不增行 |
 
 ---
 
@@ -744,7 +742,7 @@ generator 失败：该 target 零成功消费；空垫位不可投影；**不得
 
 ### E.3 ABI 契约矩阵（A1–A12）
 
-- [ ] **A1 assignment**：首写前正＝最小合法+绝对 end_turn 且 **duty 无 assignee** 可过；负＝category 与主办均缺、until_stop 无 stop；判后＝initiative 绝对 end_turn+承办人（至少覆盖 duty route B）
+- [ ] **A1 assignment**：首写前正＝最小合法+绝对 end_turn 且 **无 assignee 时票拟 roster 主办**可过（后出为准 → #1778：duty route B 已删，不再要求覆盖它）；负＝category 与主办均缺、until_stop 无 stop；判后＝initiative 绝对 end_turn+承办人
 - [ ] **A2 military_order**：正＝army+due 或 station；负＝非 army/假军/无 due 无 station；判后＝调驻+限期各≥1
 - [ ] **A3 grant honorific**：正＝无 amount 的加衔/荫叙；负＝缺 name/target；判后＝honorific 效果
 - [ ] **A4 grant 金钱**：正＝amount；缺 account→国库；发内帑→内库；负＝缺 amount、显式非法 account；判后＝扣库/科目
@@ -755,7 +753,7 @@ generator 失败：该 target 零成功消费；空垫位不可投影；**不得
 - [ ] **A9 punishment×2**：正＝普通处置 / 罚俸+正 amount；负＝非法 action、罚俸无 amount 或 amount≤0；判后＝两支人物/钱粮效果
 - [ ] **A10 authorization**：正＝缺 privilege→便宜行事、**name-only 全链** mapper→normalize→create→apply；负＝非法 privilege、四键皆空、缺 scope；判后＝`authority_changes`≥1
 - [ ] **A11 pacification**：正＝合法内乱 leader；负＝非 leader；判后＝易主归明终局
-- [ ] **A12 闭集/幂等/capability**：正＝choice∈七类 routable、罢免 emitted dismiss、capability 扰动变键；负＝无 `DOSSIER_ACTION_TYPES=七值`、无 `rescript_origin` 列、同 capability 不得两套 payload；判后＝同 body 重交不增 dossier 行
+- [ ] **A12 闭集/幂等/capability**（**后出为准 → #1778**：七类 routable 项作废，改咬 choice∈`DOSSIER_ACTION_TYPES`）：正＝choice∈库级全集、罢免 emitted dismiss、capability 扰动变键；负＝无 `DOSSIER_ACTION_TYPES=七值`、无 `rescript_origin` 列、同 capability 不得两套 payload；判后＝同 body 重交不增 dossier 行
 
 ### E.4 召见行为（S1–S15）
 
@@ -820,7 +818,7 @@ committed_rescript_batch / 批 choices 副本；整批 drain / 整批零账；su
 
 ## §G OOS
 
-御笔手敕/M12/扩 RESCRIPT routable 至全 DOSSIER/改 ADR 0036·0037 本文/改 #505 有问话语义/due_review·urge/持久批红窗/dossier 第二幂等索引/实现 coding 轮（另开，严格按本契约）。
+御笔手敕/M12/扩 RESCRIPT routable 至全 DOSSIER（**已由 #1778 落地**）/改 ADR 0036·0037 本文/改 #505 有问话语义/due_review·urge/持久批红窗/dossier 第二幂等索引/实现 coding 轮（另开，严格按本契约）。
 
 ---
 

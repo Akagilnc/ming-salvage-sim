@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ming_sim.decree_vocabulary import NATIONAL_FANOUT_ACTION_TYPES, TARGET_KINDS
+from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.distance import DistanceMatrix
 from ming_sim.matching import match_region_id_from_text
 from ming_sim.paths import bundled_path
@@ -28,7 +28,7 @@ _SCOPE_ALIASES = {
 }
 
 # #654 r4-B / #1624：target_kind → 可接受 locality_scope 闭集（8×3 scope 轴唯一 typed 真源）。
-# assert_target_locality_matrix 与 prompt 投影共引；national 另受 NATIONAL_FANOUT_ACTION_TYPES。
+# assert_target_locality_matrix 与 prompt 投影共引（#1778：national 无动作白名单）。
 # 禁 prompt/入口手抄第二份可接受面。
 TARGET_KIND_LOCALITY_SCOPES: Dict[str, frozenset[str]] = {
     "region": frozenset({"single"}),
@@ -122,15 +122,6 @@ def distance_semantic_band(
     return fold_distance_band(m.travel_time(loc, rid))  # D5 / D6
 
 
-def ming_province_ids(conn) -> List[str]:
-    rows = conn.execute(
-        "SELECT id FROM regions "
-        "WHERE kind IN ('两京','布政司') AND controlled_by='ming' "
-        "ORDER BY id",
-    ).fetchall()
-    return [str(r["id"]) for r in rows]
-
-
 def _resolve_single_region_id(
     conn,
     target_id: str,
@@ -210,28 +201,23 @@ def project_target_locality_matrix_prompt() -> str:
             parts.append(f"{kinds}仅{only}")
         else:
             parts.append(f"{kinds}∈{'|'.join(sorted(scopes))}")
-    national_actions = "|".join(sorted(NATIONAL_FANOUT_ACTION_TYPES))
     return (
-        "target_kind×locality_scope 可接受面（"
-        + "；".join(parts)
-        + f"；national 仅 action_type∈{national_actions}）"
+        "target_kind×locality_scope 可接受面（" + "；".join(parts) + "）"
     )
 
 
 def assert_target_locality_matrix(
     *,
-    action_type: object,
     target_kind: object,
     locality_scope: object,
 ) -> str:
     """#654 / #1624：target_kind × locality_scope 8×3 矩阵唯一实现（无 DB）。
 
-    可接受面真源 = TARGET_KIND_LOCALITY_SCOPES；national 另咬 NATIONAL_FANOUT_ACTION_TYPES。
+    可接受面真源 = TARGET_KIND_LOCALITY_SCOPES（#1778：national 不再另咬动作白名单）。
     resolve_dossier_region_ids 与 structured_decree 组合闸共引本函数——禁止平行第二份矩阵。
     失败带 TargetLocalityMatrixError.failed_fields（逐不变式可修边界）。
     """
     kind = str(target_kind or "").strip()
-    action = str(action_type or "").strip()
     kinds_expected = sorted(TARGET_KINDS)
 
     def _fact(
@@ -309,40 +295,24 @@ def assert_target_locality_matrix(
             field_failures=(scope_fact, kind_fact),
         )
 
-    if scope == "national" and action not in NATIONAL_FANOUT_ACTION_TYPES:
-        _matrix_fail(
-            f"national fan-out 动作不在白名单：{action!r}",
-            field_failures=(
-                _fact(
-                    "locality_scope", current=scope, expected=scope_allowed,
-                ),
-                _fact(
-                    "action_type",
-                    current=action,
-                    expected=sorted(NATIONAL_FANOUT_ACTION_TYPES),
-                ),
-            ),
-        )
     return scope
 
 
 def resolve_dossier_region_ids(
     conn,
     *,
-    action_type: str,
     payload: Mapping[str, object],
     regions_content: Optional[Mapping[str, Any]] = None,
 ) -> List[str]:
     """属地三分 oracle → 本案应落的 region_id 列表（确定序）。
 
     组合校验先于 region 解析（r4-B）。返回 [''] 表示非属地单行。
-    region 缺省 / none / national 一律 fail-loud（无兼容暗升或空串降级）。
+    #1778 决定 4：全国政令也是一份案卷、一张名单——national 与 none 同为单行 ''，
+    不按省拆；各省忙闲/阻力只作执行判官的事实输入（0092 两轴）。
     """
-    action = str(action_type or "").strip()
     target_kind = str(payload.get("target_kind") or "").strip()
     target_id = str(payload.get("target_id") or "").strip()
-    scope = assert_target_locality_matrix(
-        action_type=action,
+    assert_target_locality_matrix(
         target_kind=target_kind,
         locality_scope=payload.get("locality_scope"),
     )
@@ -352,16 +322,7 @@ def resolve_dossier_region_ids(
             conn, target_id, regions_content=regions_content,
         )]
 
-    if target_kind == "dossier":
-        return [""]
-
-    if scope == "national":
-        provinces = ming_province_ids(conn)
-        if not provinces:
-            raise ValueError("全国 fan-out 省集合为空")
-        return provinces
-
-    # scope == none：policy/issue/account/character/office/army → 单行 ''
+    # national / none：单行 ''（region 目标以外一律不落属地行）
     return [""]
 
 

@@ -42,6 +42,7 @@ from ming_sim.models import (
 )
 from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
 from ming_sim.participant_roster import (
+    PARTICIPANT_TIERS,
     participant_roster_names,
     project_execution_liability_parties,
 )
@@ -14595,14 +14596,13 @@ class GameDB:
         extension: Optional[Dict[str, object]] = None,
         participants: Optional[Iterable[object]] = None,
         commit: bool = True,
-        rejection_collector=None,
         _issued_secret_order: bool = False,
         region_id: str = "",
     ) -> int:
         """在成案点落一条独立案卷；幂等键只使用真实 (>0) 来源 id。
 
-        #654：int ABI 给非 directive 消费者，直落单行内核；不经 locality oracle /
-        national fan-out。属地浓度与 fan-out 只来自 r5 三路 create_decree_dossiers。
+        #654：int ABI 给非 directive 消费者，直落单行内核；不经 locality oracle。
+        属地行只来自 r5 三路 create_decree_dossiers 的 region 目标解析。
         """
         return self._create_decree_dossier_row(
             state,
@@ -14622,7 +14622,6 @@ class GameDB:
             extension=extension,
             participants=participants,
             commit=commit,
-            rejection_collector=rejection_collector,
             _issued_secret_order=_issued_secret_order,
             region_id=str(region_id or ""),
         )
@@ -14647,13 +14646,13 @@ class GameDB:
         extension: Optional[Dict[str, object]] = None,
         participants: Optional[Iterable[object]] = None,
         commit: bool = True,
-        rejection_collector=None,
         _issued_secret_order: bool = False,
     ) -> List[int]:
         """#654 批量成案 ABI：Plan → Validate-all → Write-once。
 
-        national fan-out → N 行；与 create_decree_dossier 共享单行内核。
-        任一省路由/校验失败 → 整旨零行；复合键按 (source, region_id) 逐项查补。
+        #1778 决定 4：全国政令也是一份案卷，不按省拆——oracle 只对 region 目标
+        给出属地行，其余（含 national）单行 region_id=''；与 create_decree_dossier
+        共享单行内核。路由/校验失败 → 整旨零行；复合键按 (source, region_id) 查补。
         """
         from ming_sim.execution_pressure import resolve_dossier_region_ids
         from ming_sim.executor_routing import resolve_lead_executors
@@ -14685,7 +14684,6 @@ class GameDB:
                 oracle_payload["target_kind"] = "character"
             region_ids = resolve_dossier_region_ids(
                 self.conn,
-                action_type=str(action_type or "").strip(),
                 payload=oracle_payload,
                 regions_content=regions_content,
             )
@@ -14766,19 +14764,17 @@ class GameDB:
                 row_executor_kind = "character"
                 row_executor_id = str(named_leads[0])
                 route: Dict[str, object] = {
-                    "coverage": None, "route": "named", "office_type": "",
-                    "leads": list(named_leads), "downgrade_step": "",
-                    "signal": None, "rejection": None,
+                    "coverage": None, "route": "named",
+                    "leads": list(named_leads), "signal": None,
                 }
             else:
-                # 逐省真实 0117 路由（region_id 接缝；policy national 升 multi_month）
+                # 0117 ① 任免执行主体＝被任命者本人；其余无点将即空 leads。
+                # #1778 决定 3：代码不按职司表配人（那条兜底已随本票删除）。
                 route = resolve_lead_executors(
-                    self.conn,
                     action_type=action_type,
                     target_id=str(target_id or row_payload.get("target_id") or ""),
                     payload=row_payload,
                     participant_roster=row_participants,
-                    region_id=str(rid or ""),
                 )
                 for lead in route.get("leads") or []:
                     row_participants.append({
@@ -14801,39 +14797,7 @@ class GameDB:
                 "extension": row_extension,
             })
 
-        # ② 全量验证：任一省 rejection → 整旨零行（首个 INSERT 前）
-        rejected_entry = next(
-            (p for p in plan if (p.get("route") or {}).get("rejection") is not None),
-            None,
-        )
-        if rejected_entry is not None:
-            from ming_sim.applier import Provenance, RejectedItem
-            # 0150-D2 / #1745：无 owns_rejection_collector 自建；拒收归属外层 collector。
-            if rejection_collector is None:
-                from ming_sim.applier import RejectionCollectorRequired
-                raise RejectionCollectorRequired(
-                    "executor_routing 拒收须由外层 RejectionCollector 归属"
-                )
-            rid = str(rejected_entry.get("region_id") or "")
-            rejection_collector.record(
-                "executor_routing",
-                RejectedItem(
-                    item={
-                        "action_type": str(action_type),
-                        "region_id": rid,
-                        "transaction_category": str(
-                            payload_map.get("transaction_category") or ""
-                        ).strip(),
-                    },
-                    reason="事务类别未命中承办职司映射",
-                    category="duty_route_unmapped",
-                    source=Provenance.player_decree,
-                ),
-                int(state.turn),
-            )
-            return []
-
-        # 校验名单引用（写库前）；失败上抛由三路成案点各自终态处理
+        # ② 全量验证：校验名单引用（写库前）；失败上抛由三路成案点各自终态处理
         for entry in plan:
             roster = self._normalize_participant_roster(
                 entry["participants"], strict_structured=True,
@@ -14890,16 +14854,10 @@ class GameDB:
                 extension=entry.get("extension") or None,  # type: ignore[arg-type]
                 participants=entry["participants"],  # type: ignore[arg-type]
                 commit=False,
-                rejection_collector=rejection_collector,
                 _issued_secret_order=_issued_secret_order,
                 region_id=rid,
                 _skip_lead_route=True,
             )
-            if did == 0:
-                # 内核仍拒绝：整旨不得残留部分行
-                if existing_by_region or new_ids_by_region:
-                    raise ValueError("案卷成案被承办路由拒绝，整旨零行")
-                return []
             new_ids_by_region[rid] = int(did)
 
         self._commit_dossier_write(commit)
@@ -14947,7 +14905,6 @@ class GameDB:
         extension: Optional[Dict[str, object]] = None,
         participants: Optional[Iterable[object]] = None,
         commit: bool = True,
-        rejection_collector=None,
         _issued_secret_order: bool = False,
         region_id: str = "",
         _skip_lead_route: bool = False,
@@ -15109,14 +15066,13 @@ class GameDB:
         from ming_sim.executor_routing import resolve_lead_executors
         if _skip_lead_route:
             route = {
-                "coverage": None, "route": "pre_resolved", "office_type": "",
-                "leads": [], "downgrade_step": "", "signal": None, "rejection": None,
+                "coverage": None, "route": "pre_resolved",
+                "leads": [], "signal": None,
             }
         else:
             route = resolve_lead_executors(
-                self.conn, action_type=action, target_id=canonical_target_id,
+                action_type=action, target_id=canonical_target_id,
                 payload=canonical_payload, participant_roster=roster,
-                region_id=region_id,
             )
         existing_leads = {
             str(item.get("character_id") or "").strip()
@@ -15142,34 +15098,6 @@ class GameDB:
         self._validate_participant_roster_references(roster)
         self._validate_dossier_delegations(roster)
 
-        if route["rejection"] is not None:
-            from ming_sim.applier import Provenance, RejectedItem
-            # 0150-D2 / #1745：无 owns_rejection_collector 自建；拒收归属外层 collector。
-            # Admission rejection：不落案卷；flush/commit/mirror 由外层 owner 负责。
-            if rejection_collector is None:
-                from ming_sim.applier import RejectionCollectorRequired
-                raise RejectionCollectorRequired(
-                    "executor_routing 拒收须由外层 RejectionCollector 归属"
-                )
-            rejection_collector.record(
-                "executor_routing",
-                RejectedItem(
-                    item={
-                        "action_type": action,
-                        "transaction_category": str(
-                            canonical_payload.get("transaction_category") or ""
-                        ).strip(),
-                        "target_kind": canonical_target_kind,
-                        "target_id": canonical_target_id,
-                    },
-                    reason="事务类别未命中承办职司映射",
-                    category="duty_route_unmapped",
-                    source=Provenance.player_decree,
-                ),
-                int(state.turn),
-            )
-            self._commit_dossier_write(commit)
-            return 0
         durable_extension = dict(extension or {})
         signal = route.get("signal")
         if signal is not None:
@@ -18961,7 +18889,6 @@ class GameDB:
                 payload=staged_payload,
                 status="proposed",
                 commit=False,
-                rejection_collector=rejection_collector,
             )
             return dossier_id != 0
         if pa["kind"] == "secret_order":
@@ -19966,7 +19893,6 @@ class GameDB:
             payload=structured,
             due_turn=int(structured.get("due_turn") or 0),
             commit=commit,
-            rejection_collector=rejection_collector,
         )
 
     def list_directives(
@@ -20047,7 +19973,7 @@ class GameDB:
         #1769：产物错（ValueError，含 PayOrderKeyError）逐项留痕；真代码故障不得洗成
         locality_fanout_failed——回滚后写错误包并 SettlementAbort（0005/0008 D1/D6）。
         未成案的两条形状同一终态：① 抛 ValueError 的产物/契约错；② 段内 record 后
-        不抛、只返回零案卷的 collector-only 拒收（如 duty_route_unmapped）。二者
+        不抛、只返回零案卷的 collector-only 拒收。二者
         都保持 draft、都进返回列表供补交、都在终态落痕——漏掉②则该旨既补不了交
         也永不留痕（r2 CI 红根因）。
         record_rejections=False：仅探测供补交，不落 rejection_reports（拒只在
@@ -20082,10 +20008,9 @@ class GameDB:
                             rejection_collector=collector,
                         )
                         if not dossier_ids:
-                            # collector-only 拒收（段内 record 后不抛，如
-                            # duty_route_unmapped）：与产物错同一终态——整旨零行、
-                            # 保持 draft、拒因进补交反馈。丢了它 = 该旨既补不了交
-                            # 也永不留痕（#1769 r2）。
+                            # collector-only 拒收（段内 record 后不抛）：与产物错
+                            # 同一终态——整旨零行、保持 draft、拒因进补交反馈。
+                            # 丢了它 = 该旨既补不了交也永不留痕（#1769 r2）。
                             self.conn.execute(f"ROLLBACK TO {sp}")
                             new_records = collector.pending()[recorded_before:]
                             reason = "；".join(
@@ -21394,7 +21319,7 @@ class GameDB:
                 character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
             if not character_id:
                 continue
-            if tier not in {"主办", "协办", "知情"}:
+            if tier not in PARTICIPANT_TIERS:
                 raise ValueError(f"参与人机械档非法：{tier}")
             item = {"character_id": character_id, "tier": tier, "role": role,
                     "delegator_id": delegator or None}

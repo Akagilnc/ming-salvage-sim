@@ -602,6 +602,20 @@ def test_ordinary_event_with_hallucinated_capability_submits(
 # #657 片2：C1 ＋ 五动作领域写（rescript_actions 模块级）
 # ---------------------------------------------------------------------------
 
+# #1778 决定 3：票拟自带参与名单（ADR 0053 三档，主办可多人）；代码不配人。
+_ROSTER_LEAD = "毕自严"
+_ROSTER = [
+    {"character_id": _ROSTER_LEAD, "tier": "主办", "role": "总核", "delegator_id": None},
+]
+
+
+def _roster(*names, tier="主办"):
+    return [
+        {"character_id": n, "tier": tier, "role": "", "delegator_id": None}
+        for n in names
+    ]
+
+
 def _layer_a_option(**overrides):
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     base = {
@@ -616,6 +630,7 @@ def _layer_a_option(**overrides):
         "transaction_category": "督赈",
         "title": "陕西赈济",
         "deadline_months": 3,
+        "participant_roster": [dict(item) for item in _ROSTER],
     }
     base.update(overrides)
     return normalize_rescript_layer_a_option(base)
@@ -969,9 +984,9 @@ def test_657_five_actions_domain_writes(game):
     ).fetchall()
     assert edges, "hold 须写辜负信用事件"
 
-    # --- follow_draft (assignment duty route) ---
+    # --- follow_draft (assignment，主办来自票拟名单；#1778 决定 3) ---
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
-    opt = _layer_a_option(assignee_name="")  # duty route B
+    opt = _layer_a_option(assignee_name="")
     urgent, _ = _plant_urgent_desk(db, state, options=[opt, _layer_a_option(label="备", hint="b")])
     key = urgent["decision_key"]
     before = len(db.list_decree_dossiers())
@@ -1428,6 +1443,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
         "transaction_category": "督赈", "deadline_months": 2,
+        "participant_roster": _roster(_ROSTER_LEAD),
     })
     desk = _657_plant_awaiting_web(web_game, drafts=[{
         "title": "改票急务", "context": "c",
@@ -1547,18 +1563,19 @@ def test_657_prewrite_failure_zero_db_writes(game):
 def test_657_abi_mapper_matrix_a1_a12(game):
     """A1–A12：map 正/负 + 判后 follow/midzhi→apply 链（补 A5/A6/A11）。"""
     from ming_sim import rescript_actions as ra
+    import ming_sim.decree_vocabulary as dv
     from ming_sim.decree_vocabulary import (
         DOSSIER_ACTION_TYPES,
         RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
-        RESCRIPT_ROUTABLE_ACTION_TYPES,
     )
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     db, state, content = game
 
-    # A12 闭集
-    assert RESCRIPT_ROUTABLE_ACTION_TYPES < DOSSIER_ACTION_TYPES
+    # A12 闭集（#1778 后出为准：七类 routable 取消，choice 值域＝库级全集）
+    assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES < DOSSIER_ACTION_TYPES
     assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
+    assert not hasattr(dv, "RESCRIPT_ROUTABLE_ACTION_TYPES")
     cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)").fetchall()}
     assert "rescript_origin" not in cols
 
@@ -1627,21 +1644,17 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             )
         return created
 
-    # A1 assignment duty route B：无显式 assignee + 合法 category + deadline→绝对 end_turn
-    # 省域 single 职司链需本省在任；seed 户部 location 以便 duty 命中主办
-    db.conn.execute(
-        "UPDATE characters SET location='shaanxi' "
-        "WHERE status='active' AND power_id='ming' AND office_type='户部'"
-    )
-    db.conn.commit()
+    # A1 assignment（后出为准 → #1778 决定 3）：无显式 assignee 时主办来自票拟名单；
+    # 合法 category + deadline→绝对 end_turn 不变。
     p = ra.map_rescript_option_or_choice({
         "action_type": "assignment", "label": "责成督赈", "hint": "h",
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
         "transaction_category": "督赈", "deadline_months": 2,
-        "assignee_name": "",
+        "assignee_name": "", "participant_roster": _roster(_ROSTER_LEAD),
     }, db=db, content=content, state=state)
     assert p["end_turn"] == int(state.turn) + 2
+    assert p["participant_roster"] == _roster(_ROSTER_LEAD)
     # mapper 可选正：until_stop + 非空 str stop → payload 逐字相等
     stop_a1 = "军饷清完乃止"
     p_stop = ra.map_rescript_option_or_choice({
@@ -1649,7 +1662,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
         "transaction_category": "督赈", "deadline_months": 2,
-        "assignee_name": "",
+        "assignee_name": "", "participant_roster": _roster(_ROSTER_LEAD),
         "commitment_kind": "until_stop", "stop_condition": stop_a1,
     }, db=db, content=content, state=state)
     assert p_stop.get("stop_condition") == stop_a1
@@ -1659,7 +1672,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
         "transaction_category": "督赈", "deadline_months": 2,
-        "assignee_name": "",
+        "assignee_name": "", "participant_roster": _roster(_ROSTER_LEAD),
     }, title="A1急务")
     origin = f"dossier:{int(created['id'])}"
     init = db.conn.execute(
@@ -1671,10 +1684,10 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     assert str(init["origin_ref"]) == origin
     assert int(init["end_turn"]) == int(state.turn) + 2
     roster = created.get("participant_roster") or []
-    assert any(
-        isinstance(e, dict) and str(e.get("tier") or "") == "主办"
-        for e in roster
-    ), f"A1 roster 须有主办：{roster!r}"
+    assert [
+        str(e.get("character_id") or "") for e in roster
+        if isinstance(e, dict) and str(e.get("tier") or "") == "主办"
+    ] == [_ROSTER_LEAD], f"A1 主办须逐字来自票拟名单：{roster!r}"
     # 负例：category 与主办均缺；until_stop 无/空 stop
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({
@@ -2324,6 +2337,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
         "transaction_category": "督赈", "deadline_months": 2,
+        "participant_roster": _roster(_ROSTER_LEAD),
     })
     # #1590：同一真实入口 tracer 的 follow_draft 使用生成边界产出的 catalog 合法目标。
     import ming_sim.rescript_draft as draft_mod
@@ -2511,6 +2525,7 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
         "transaction_category": "",
         "station": "辽东 / 宁远锦州",
         "deadline_months": 1,
+        "participant_roster": _roster("祖大寿"),
     }
     generated_json = json.dumps({"items": [{
         "title": "宁锦急务", "context": "关宁待敕。",
@@ -3497,6 +3512,7 @@ def test_657_midzhi_verdict_no_party_satisfaction(game):
         "region_id": "shaanxi",
         "transaction_category": "督赈",
         "deadline_months": 1,
+        "participant_roster": _roster(_ROSTER_LEAD),
     }])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
     mid = next(d for d in db.list_decree_dossiers() if d.get("mode") == "midzhi")
@@ -4157,6 +4173,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
         "assignee_name": "",
         "transaction_category": "督赈",
         "deadline_months": 2,
+        "participant_roster": _roster(_ROSTER_LEAD),
     }
 
     def _ok_revise_text(*_a, **_k):
@@ -5320,16 +5337,16 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
         "ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror),
     )
     canned_full_settlement(monkeypatch)
-    # #1769：未成案 draft 进结算路补交环，模型边界须真有供料——喂回同一条不映射的
-    # 事务类别（LLM 没改对），补交耗尽后该旨仍留 draft、拒收在终态落痕。
+    # #1769：未成案 draft 进结算路补交环，模型边界须真有供料——喂回同一条缺 account
+    # 的拨帑（LLM 没改对），补交耗尽后该旨仍留 draft、拒收在终态落痕。
     import ming_sim.cli_backend as cb
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps({
-            "拟旨意图": "拟旨", "动作类型": "assignment",
-            "目标类型": "issue", "目标ID": "route-修仙",
-            "事务类别": "修仙", "颁布方式": "普通",
-            "施行范围": "无", "参与人": [], "entries": [],
+            "拟旨意图": "拟旨", "动作类型": "grant_allocation",
+            "目标类型": "issue", "目标ID": "route-缺账",
+            "颁布方式": "普通", "施行范围": "无",
+            "参与人": [], "entries": [],
         }, ensure_ascii=False), {}),
     )
     monkeypatch.setattr(
@@ -5341,12 +5358,12 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     original_year = int(state.year)
     original_period = int(state.period)
     bad = int(db.add_directive(
-        state, None, "修仙", "player-decree-test",
+        state, None, "缺账拨帑", "player-decree-test",
         dossier_payload={
-            "dossier_action_type": "assignment",
+            "dossier_action_type": "grant_allocation",
             "target_kind": "issue",
-            "target_id": "route-修仙",
-            "transaction_category": "修仙",
+            "target_id": "route-缺账",
+            "amount": 100,
         },
     ))
     good = int(db.add_directive(
@@ -5356,6 +5373,7 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
             "target_kind": "issue",
             "target_id": "route-清丈",
             "transaction_category": "清丈",
+            "participant_roster": _roster(_ROSTER_LEAD),
         },
     ))
 
@@ -5377,25 +5395,26 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
         "SELECT section,item_json,category,source FROM rejection_reports"
     ).fetchall()
     assert len(reports) == 1
-    assert reports[0]["section"] == "executor_routing"
-    assert reports[0]["category"] == "duty_route_unmapped"
+    assert reports[0]["section"] == "directive_locality"
+    assert reports[0]["category"] == "locality_fanout_failed"
     assert reports[0]["source"] == "player_decree"
-    assert json.loads(reports[0]["item_json"])["transaction_category"] == "修仙"
+    assert json.loads(reports[0]["item_json"])["directive_id"] == bad
     assert mirror.exists()
     mirror_lines = mirror.read_text(encoding="utf-8").splitlines()
     assert len(mirror_lines) == 1
     mirror_row = json.loads(mirror_lines[0])
-    assert mirror_row["section"] == "executor_routing"
-    assert mirror_row["category"] == "duty_route_unmapped"
+    assert mirror_row["section"] == "directive_locality"
+    assert mirror_row["category"] == "locality_fanout_failed"
     assert mirror_row["source"] == "player_decree"
-    assert json.loads(mirror_row["item_json"])["transaction_category"] == "修仙"
+    assert json.loads(mirror_row["item_json"])["directive_id"] == bad
 
     assert [d.id for d in session.list_directives()] == [bad]
-    session.update_directive(bad, "清丈重拟", dossier_payload={
-        "dossier_action_type": "assignment",
+    session.update_directive(bad, "补账重拟", dossier_payload={
+        "dossier_action_type": "grant_allocation",
         "target_kind": "issue",
-        "target_id": "route-清丈-retry",
-        "transaction_category": "清丈",
+        "target_id": "route-缺账-retry",
+        "amount": 100,
+        "account": "国库",
     })
     second = session.resolve_turn()
     assert second.awaiting is False
@@ -5650,3 +5669,308 @@ def test_658_endorsement_old_schema_migration_preserves_rows(tmp_path, content):
         assert int(after[old_id]["source_chat_turn_id"]) == chat
     finally:
         reopened.close()
+
+
+# ---------------------------------------------------------------------------
+# #1778：参与名单由拟票大臣写进票拟；成案钉进案卷；代码不配人
+# ---------------------------------------------------------------------------
+
+def _1778_raw_options():
+    """错误包 turn1 里被丢掉的两条（2:0/2:1）＋政令/非七类/单省，各带 0053 名单。"""
+    lead = _roster(_ROSTER_LEAD)
+    two_leads = _roster(_ROSTER_LEAD, "杨嗣昌") + _roster("陈新甲", tier="协办")
+    return {
+        # 2:0 assignment 交办（错误包原类型），全国
+        "assignment_national": {
+            "label": "责户部清理钱粮亏短", "hint": "所安者太仓",
+            "action_type": "assignment", "assignee_name": "",
+            "target_kind": "issue", "target_id": "太仓亏空",
+            "locality_scope": "national", "region_id": "",
+            "transaction_category": "钱粮", "deadline_months": 3,
+            "participant_roster": lead,
+        },
+        # 2:1 grant_allocation 拨帑（错误包原类型），全国
+        "grant_national": {
+            "label": "发内帑周转军国急用", "hint": "所解者急饷",
+            "action_type": "grant_allocation", "assignee_name": "",
+            "target_kind": "issue", "target_id": "太仓亏空",
+            "locality_scope": "national", "region_id": "",
+            "transaction_category": "",
+            "grant_action": "项目经费", "amount": 200, "account": "内库",
+            "participant_roster": lead,
+        },
+        # 验收 2：policy ∈ DOSSIER_ACTION_TYPES、∉ 旧七类；主办多人
+        "policy_national": {
+            "label": "清丈全国田亩", "hint": "所清者隐田",
+            "action_type": "policy", "assignee_name": "",
+            "target_kind": "policy", "target_id": "清丈天下田亩",
+            "locality_scope": "national", "region_id": "",
+            "transaction_category": "",
+            "participant_roster": two_leads,
+        },
+        # 验收 5：另一非七类类型 + locality none
+        "special_none": {
+            "label": "特旨慰谕九边", "hint": "所安者边军",
+            "action_type": "special_decree", "assignee_name": "",
+            "target_kind": "policy", "target_id": "慰谕九边",
+            "locality_scope": "none", "region_id": "",
+            "transaction_category": "",
+            "participant_roster": lead,
+        },
+        # 验收 4：点名省份仍是单省案卷
+        "assignment_single": {
+            "label": "拨赈陕西饥民", "hint": "所安者秦民",
+            "action_type": "assignment", "assignee_name": "",
+            "target_kind": "region", "target_id": "shaanxi",
+            "locality_scope": "single", "region_id": "shaanxi",
+            "transaction_category": "督赈", "deadline_months": 2,
+            "participant_roster": lead,
+        },
+    }
+
+
+def _1778_generate(monkeypatch, db, state, items):
+    """真实票拟生成入口（canned run_agent_text，无 live LLM）。"""
+    import ming_sim.rescript_draft as draft_mod
+    from ming_sim.rescript_draft import (
+        build_rescript_draft_payload,
+        generate_rescript_draft,
+    )
+    from ming_sim.simulation import build_simulator_payload
+
+    monkeypatch.setattr(
+        draft_mod, "run_agent_text",
+        lambda *a, **k: json.dumps({"items": items}, ensure_ascii=False),
+    )
+    return generate_rescript_draft(
+        object(),
+        build_rescript_draft_payload(
+            state, "邸报", build_simulator_payload(state, db, "", ""),
+            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
+        ),
+        int(state.turn),
+    )
+
+
+def _1778_roster_of(option):
+    return [
+        (str(e.get("character_id") or ""), str(e.get("tier") or ""))
+        for e in (option.get("participant_roster") or [])
+        if isinstance(e, dict)
+    ]
+
+
+def _1778_plant_and_follow(web_game, monkeypatch, drafts):
+    """落桌 → GET /api/game/state 看见票面名单 → 逐条 follow_draft 成案。
+
+    返回 {title: 新增案卷行}；断言留给调用方（外部结构化结果，不看散文）。
+    """
+    state, db = web_game.session.state, web_game.db
+    db.conn.execute("DELETE FROM pending_decisions")
+    db.conn.commit()
+    db.save_rescript_drafts(int(state.turn), drafts)
+    db.conn.commit()
+    db.save_resolve_context(
+        int(state.turn), "诏", "邸报",
+        {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+
+    async def _get_state():
+        async with _client() as client:
+            return await client.get("/api/game/state")
+
+    page = asyncio.run(_get_state())
+    assert page.status_code == 200, page.text
+    rows = {
+        str(row["title"]): row
+        for row in page.json().get("pending_decisions") or []
+        if row.get("kind") == "rescript_draft"
+    }
+    assert set(rows) == {str(d["title"]) for d in drafts}, sorted(rows)
+
+    choices = []
+    for draft in drafts:
+        row = rows[str(draft["title"])]
+        head = row["options"][0]
+        # 批红页上票面自带名单（皇帝批前看得见），非散文
+        assert _1778_roster_of(head), f"{draft['title']}：批红页缺参与名单 {head!r}"
+        choices.append({
+            "decision_key": row["decision_key"],
+            "action": "follow_draft",
+            "draft_capability": head["draft_capability"],
+            "label": head["label"],
+        })
+
+    before = {int(d["id"]) for d in db.list_decree_dossiers()}
+    resp = asyncio.run(_post_resolve(choices))
+    assert resp.status_code == 200, resp.text
+    assert "event: error" not in resp.text, resp.text
+    assert "event: done" in resp.text, resp.text
+    created = [
+        d for d in web_game.db.list_decree_dossiers()
+        if int(d["id"]) not in before
+    ]
+    return {str(d["decree_text"] or ""): d for d in created}
+
+
+def test_1778_drafted_roster_rides_to_pihong_and_nails_the_dossier(
+    web_game, monkeypatch, tmp_path,
+):
+    """#1778 验收 1–5 单条真实入口 tracer。
+
+    generate_rescript_draft（canned）→ 补交 → 落桌 → 批红页 API → follow_draft → 成案。
+    """
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    db, state = web_game.db, web_game.session.state
+    raw = _1778_raw_options()
+
+    # ── 验收 1/2/4/5：真实生成入口一次出全，不产生耗尽错误包 ─────────────
+    items = [
+        {"title": "太仓亏空", "context": "太仓见底，边饷催迫。",
+         "options": [raw["assignment_national"], raw["grant_national"]]},
+        {"title": "全国清丈", "context": "隐田日多，赋役不均。",
+         "options": [raw["policy_national"], raw["special_none"]]},
+        {"title": "陕西告饥", "context": "秦地赤旱，饥民待哺。",
+         "options": [raw["assignment_single"], {**raw["assignment_single"], "label": "备拟缓征"}]},
+    ]
+    drafts = _1778_generate(monkeypatch, db, state, items)
+    assert drafts is not None and len(drafts) == 3
+    pack_dir = tmp_path / "ud" / "error_packs" / "rescript_draft_degraded"
+    assert not pack_dir.exists(), "验收 1：不得产生耗尽错误包"
+    by_title = {str(d["title"]): d for d in drafts}
+    assert [str(o["label"]) for o in by_title["太仓亏空"]["options"]] == [
+        "责户部清理钱粮亏短", "发内帑周转军国急用",
+    ]
+    # 名单原样落在结构化字段上（不是散文），policy 支主办两人
+    assert _1778_roster_of(by_title["全国清丈"]["options"][0]) == [
+        (_ROSTER_LEAD, "主办"), ("杨嗣昌", "主办"), ("陈新甲", "协办"),
+    ]
+
+    # 第一轮：assignment 全国 / policy 全国 / assignment 单省
+    round_a = _1778_plant_and_follow(web_game, monkeypatch, [
+        {"title": "太仓亏空", "context": "c",
+         "options": by_title["太仓亏空"]["options"],
+         "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林"},
+        {"title": "全国清丈", "context": "c",
+         "options": by_title["全国清丈"]["options"],
+         "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林"},
+        {"title": "陕西告饥", "context": "c",
+         "options": by_title["陕西告饥"]["options"],
+         "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林"},
+    ])
+    assert set(round_a) == {"责户部清理钱粮亏短", "清丈全国田亩", "拨赈陕西饥民"}
+
+    # 验收 1：2:0 交办按原类型成一份案卷，主办＝票拟名单里的人
+    assignment = round_a["责户部清理钱粮亏短"]
+    assert assignment["action_type"] == "assignment"
+    assert assignment["region_id"] == ""
+    assert _1778_roster_of(assignment) == [(_ROSTER_LEAD, "主办")]
+
+    # 验收 2：policy（∉ 旧七类）+ national → 一份案卷、region_id 空、两名主办钉住
+    policy = round_a["清丈全国田亩"]
+    assert policy["action_type"] == "policy"
+    assert policy["region_id"] == ""
+    assert _1778_roster_of(policy) == [
+        (_ROSTER_LEAD, "主办"), ("杨嗣昌", "主办"), ("陈新甲", "协办"),
+    ]
+
+    # 验收 4：点名省份仍是单省案卷
+    single = round_a["拨赈陕西饥民"]
+    assert single["action_type"] == "assignment"
+    assert single["region_id"] == "shaanxi"
+
+    # 第二轮：2:1 拨帑 / special_decree（非七类、locality none）
+    def _first(option_list):
+        return [option_list[1], option_list[0]]
+
+    round_b = _1778_plant_and_follow(web_game, monkeypatch, [
+        {"title": "太仓亏空-拨帑", "context": "c",
+         "options": _first(by_title["太仓亏空"]["options"]),
+         "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林"},
+        {"title": "特旨慰谕", "context": "c",
+         "options": _first(by_title["全国清丈"]["options"]),
+         "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林"},
+    ])
+    assert set(round_b) == {"发内帑周转军国急用", "特旨慰谕九边"}
+    grant = round_b["发内帑周转军国急用"]
+    assert grant["action_type"] == "grant_allocation"
+    assert grant["region_id"] == ""
+    assert _1778_roster_of(grant) == [(_ROSTER_LEAD, "主办")]
+    special = round_b["特旨慰谕九边"]
+    assert special["action_type"] == "special_decree"
+    assert special["region_id"] == ""
+    assert _1778_roster_of(special) == [(_ROSTER_LEAD, "主办")]
+
+
+def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
+    web_game, monkeypatch, tmp_path,
+):
+    """验收 3：没写名单＝票没拟完 → 补交点名 participant_roster；耗尽只留错误包。"""
+    import ming_sim.rescript_draft as draft_mod
+    from ming_sim.rescript_draft import (
+        RESCRIPT_OPTION_FIELD_HEAL_RETRIES,
+        build_rescript_draft_payload,
+        generate_rescript_draft,
+    )
+    from ming_sim.simulation import build_simulator_payload
+
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    db, state = web_game.db, web_game.session.state
+    raw = _1778_raw_options()
+    naked = {k: v for k, v in raw["assignment_national"].items()
+             if k != "participant_roster"}
+    item = {
+        "title": "太仓亏空", "context": "太仓见底。",
+        "options": [naked, raw["grant_national"]],
+    }
+
+    heal_prompts: list[str] = []
+
+    def _never_heals(_agent, prompt, tag="", **_kw):
+        if tag == "rescript-draft-heal":
+            heal_prompts.append(prompt)
+        return json.dumps({"items": [item]}, ensure_ascii=False)
+
+    monkeypatch.setattr(draft_mod, "run_agent_text", _never_heals)
+    before = len(db.list_decree_dossiers())
+    drafts = generate_rescript_draft(
+        object(),
+        build_rescript_draft_payload(
+            state, "邸报", build_simulator_payload(state, db, "", ""),
+            {"name": "杨嗣昌", "office": "兵部尚书", "faction": "东林"},
+        ),
+        int(state.turn),
+    )
+
+    # 补交请求逐轮点名 typed 字段（机器只认键，不解析散文）
+    assert len(heal_prompts) == RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    body = json.loads(heal_prompts[0])
+    failure = body["failures"][0]
+    assert failure["heal_id"] == "0:0"
+    fields = {str(f["field"]) for f in failure["field_failures"]}
+    assert fields == {"participant_roster"}
+    expected = next(
+        f["expected"] for f in failure["field_failures"]
+        if f["field"] == "participant_roster"
+    )
+    assert expected["require_tier"] == "主办"
+    assert "主办" in expected["tiers"]
+
+    # 耗尽：只剔该 option，兄弟照出；错误包响亮留痕
+    assert drafts is not None and len(drafts) == 1
+    assert [str(o["label"]) for o in drafts[0]["options"]] == ["发内帑周转军国急用"]
+    note = json.loads(
+        (tmp_path / "ud" / "error_packs" / "rescript_draft_degraded" / "turn1.json")
+        .read_text(encoding="utf-8")
+    )
+    assert note["reason"] == "option_missing_fields_heal_exhausted"
+    dropped = note["dropped_options"]
+    assert [d["heal_id"] for d in dropped] == ["0:0"]
+    assert dropped[0]["missing_fields"] == ["participant_roster"]
+
+    # 不成案、不配人
+    assert len(db.list_decree_dossiers()) == before

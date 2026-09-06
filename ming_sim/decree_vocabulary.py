@@ -26,19 +26,15 @@ DOSSIER_ACTION_TYPES = frozenset({
 
 DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
 
-# #657 / ADR 0093 后半：批红急务可路由七类（choice/option.action_type）与落库 emitted 闭集。
-# 罢免在 choice 上仍用 appointment + appoint_action=罢免；emitted 为 dismiss_assignment。
-# 禁止把 DOSSIER_ACTION_TYPES 收成七值。
-RESCRIPT_ROUTABLE_ACTION_TYPES = frozenset({
-    "assignment", "military_order", "grant_allocation",
-    "appointment", "punishment", "authorization", "pacification",
-})
+# #1778 决定 2（owner「1」）：批红可路由七类闭集整体取消——票拟/中旨 action_type
+# 值域＝库级全集 DOSSIER_ACTION_TYPES（机器必须懂的形状检查仍在，ADR 0040）。
+# 本集只钉「原七类 → 落库类型」的映射终点：罢免在 choice 上仍用 appointment +
+# appoint_action=罢免，emitted 为 dismiss_assignment（#657 §C C.1）。
 RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES = frozenset({
     "assignment", "military_order", "grant_allocation", "appointment",
     "dismiss_assignment",  # 罢免支
     "punishment", "authorization", "pacification",
 })
-assert RESCRIPT_ROUTABLE_ACTION_TYPES <= DOSSIER_ACTION_TYPES
 assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
 
 # C.4 capability 派生闭集（全键 · 仅此表）。缺键按协议默认（""/0）参与派生。
@@ -74,11 +70,28 @@ _DRAFT_CAPABILITY_KEYS: tuple[tuple[str, Any], ...] = (
     ("summon_target", ""),
 )
 
+# #1778 决定 3：参与名单（ADR 0053 三档、主办可多人）是票拟的结构化载荷键——
+# 由拟票大臣写进 option，随落桌呈皇帝，成案时钉进案卷。形状真源＝
+# GameDB._normalize_participant_roster；此处只登记键名与 capability 派生方式。
+PARTICIPANT_ROSTER_KEY = "participant_roster"
+
+# C.4 capability 结构化键（非 str/int）：按 canonical JSON 参与派生，
+# 换人/换档同样变键（与上表同一闭集，禁另开第二份 capability 真源）。
+_DRAFT_CAPABILITY_JSON_KEYS: tuple[tuple[str, Any], ...] = (
+    (PARTICIPANT_ROSTER_KEY, []),
+)
+
 
 def derive_draft_capability(fields: Mapping[str, Any] | None) -> str:
     """#657 C.4：闭集键 canonical JSON + sha256 截断。同字段⇒同键；任一有效差变键。"""
     src = fields or {}
     canonical: dict[str, Any] = {}
+    for key, default in _DRAFT_CAPABILITY_JSON_KEYS:
+        raw = src.get(key, default)
+        canonical[key] = json.dumps(
+            default if raw is None else raw,
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
+        )
     for key, default in _DRAFT_CAPABILITY_KEYS:
         raw = src.get(key, default)
         if isinstance(default, int):
@@ -101,10 +114,6 @@ TARGET_KINDS = frozenset({
     "policy", "character", "office", "army", "region", "issue", "account",
     "dossier",
 })
-
-# Ming #654：属地 fan-out 资格动作白名单。闭合枚举、import 期 assert 子集关系。
-NATIONAL_FANOUT_ACTION_TYPES = frozenset({"policy", "special_decree"})
-assert NATIONAL_FANOUT_ACTION_TYPES <= DIRECTIVE_ACTION_TYPES
 
 # ADR 0055 / #560: the single policy source for dossier admission and effect
 # timing.  Consumers must not infer these properties from ad-hoc action sets.
