@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import re
@@ -21,7 +22,11 @@ from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.cli_backend import describe_effective_model
 from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
-from ming_sim.llm_model import create_chat_model, extract_agent_text, llm_stream_unavailable
+from ming_sim.llm_model import create_chat_model, extract_agent_text
+from ming_sim.llm_transport import (
+    run_error_event_failure,
+    transport_failure_unavailable,
+)
 from ming_sim.models import GameState, LLMConfig, reign_period_label
 from ming_sim.token_stats import record_stream_metrics, tlog
 
@@ -126,6 +131,28 @@ def run_agent_text(
     return text
 
 
+def _agent_run_accepts_stream(agent: object) -> bool:
+    """可确证的流式能力：显式属性或 run 签名声明 stream/stream_events/**kwargs。
+
+    不能 inspect 时不猜「不支持」——返回 True，走流式；未知 TypeError 响亮上浮（0005）。
+    不靠异常文本归因（票面研究项 / ADR 0142）。
+    """
+    explicit = getattr(agent, "supports_stream", None)
+    if explicit is not None:
+        return bool(explicit)
+    run = getattr(agent, "run", None)
+    if run is None:
+        return False
+    try:
+        sig = inspect.signature(run)
+    except (TypeError, ValueError):
+        return True
+    params = sig.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return True
+    return "stream" in params or "stream_events" in params
+
+
 def run_agent_stream_text(
     agent: Agent,
     prompt: str,
@@ -137,6 +164,10 @@ def run_agent_stream_text(
 
     on_thinking(chunk): 每次思考片段到达时回调（可选）。
     on_text(chunk): 每次正文增量到达时回调（可选）。
+
+    #1465 切片①：公共流不套入 transport 重试闭环（仅真实 API 召对接缝接线）。
+    仅对签名/显式属性确证不支持流式的替身走非流；未知 TypeError 响亮上浮（0005）。
+    RunErrorEvent 走系统层 typed 出口（与 web 同构造权威）。
     """
     tlog(f"[{tag}] 开始流式推演（首字到达前可能等几秒）")
     pieces: List[str] = []
@@ -144,14 +175,13 @@ def run_agent_stream_text(
     last_print = time.monotonic()
     chunk_buf: List[str] = []
     chars_since_flush = 0
-    try:
-        stream = agent.run(prompt, stream=True, stream_events=True)
-    except TypeError:
-        tlog(f"[{tag}] 当前 agno 不支持 stream，退回普通 run")
+    if not _agent_run_accepts_stream(agent):
+        tlog(f"[{tag}] run 未声明流式能力，走普通 run")
         text = extract_agent_text(agent.run(prompt))
         if on_text:
             on_text(text)
         return text
+    stream = agent.run(prompt, stream=True, stream_events=True)
 
     reasoning_buf: List[str] = []
     reasoning_chars_since_flush = 0
@@ -160,7 +190,6 @@ def run_agent_stream_text(
     tool_calls = 0
     for event in stream:
         ev_type = type(event).__name__
-        # 工具调用事件：记日志 + 把「正在查 X」作为思考片段推给前端
         if ev_type == "ToolCallStartedEvent":
             tool = getattr(event, "tool", None)
             tname = getattr(tool, "tool_name", "?") if tool else "?"
@@ -200,7 +229,12 @@ def run_agent_stream_text(
             or ev_type in ("RunOutput", "RunCompletedEvent")
         )
         if ev_type == "RunErrorEvent":
-            raise llm_stream_unavailable(getattr(event, "content", None))
+            # 系统层 typed；不走戏内固定话术（P7/0046）。构造权威 = run_error_event_failure。
+            raise transport_failure_unavailable(
+                run_error_event_failure(getattr(event, "content", None)),
+                attempts=1,
+                exhausted=False,
+            )
         if is_terminal:
             final_output = event
             continue
@@ -234,7 +268,6 @@ def run_agent_stream_text(
         merged = "".join(chunk_buf).replace("\n", " ⏎ ")
         tlog(f"[{tag}] …{merged[-160:]}")
 
-    # #671：流式拼合原文不 strip；仅用临时副本判空。
     streamed = "".join(pieces)
     if streamed.strip():
         text = streamed
@@ -246,7 +279,6 @@ def run_agent_stream_text(
     else:
         abort_llm_contract(tag, "流式无内容且无终结事件", "")
     tlog(f"[{tag}] 完成，{len(text)} 字，工具调用 {tool_calls} 次")
-    # 流式 openai response 无 .usage，monkeypatch 抓不到；从终结事件 metrics 补记 token。
     _dump_llm_messages(final_output, tag, agent=agent)
     if final_output is not None:
         metrics = getattr(final_output, "metrics", None)

@@ -4,7 +4,8 @@
 #1185: observe public fail/error events + serial write-path availability (drain /
 _serialized_web_write), not private _write_gate.locked() / _pending_writes_count pins.
 
-#1452: 非流式 chat/decree LLMUnavailable → 非 500 结构化；流式 RunErrorEvent → 戏内单源 SSE。
+#1452: 非流式 chat/decree LLMUnavailable → 非 500 结构化；流式 RunErrorEvent → 结构化 SSE。
+#1465: 召对 API transport 统一重试（attempt 预算/分类/系统层终失败/独立空转）。
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from fastapi.testclient import TestClient
 import web_app
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
 
 
@@ -664,6 +666,10 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
     assert detail["provider_message"] == provider
 
 
+# ── #1452 B / #1465：召对流真实入口 transport 验收 ───────────────────────────
+# 复用 tests/test_audience_background 的真实 game + WebGame 装配，不平行造第二套夹具。
+
+
 class RunErrorEvent:
     """agno 同名事件替身：type(event).__name__ == 'RunErrorEvent'。"""
 
@@ -672,26 +678,126 @@ class RunErrorEvent:
         self.event = "RunError"
 
 
+class RunContent:
+    event = "RunContent"
+
+    def __init__(self, content: str):
+        self.content = content
+
+
+class RunCompletedEvent:
+    content = None
+    tools = []
+    status = "COMPLETED"
+
+
+class ToolCallCompletedEvent:
+    """agno 同名事件替身：type(event).__name__ == 'ToolCallCompletedEvent'。"""
+
+    def __init__(self, tool):
+        self.tool = tool
+        self.event = "ToolCallCompleted"
+        self.content = None
+
+
 class _RunErrorAgent:
     def run(self, *_a, **_k):
         yield RunErrorEvent("Unknown model error")
 
 
-def test_chat_stream_run_error_event_sse_diegetic_via_web_entry(monkeypatch):
-    """#1452 B：真实 web 流入口——RunErrorEvent → SSE code=llm_stream_error，
-    message=戏内单源，provider_message 有原文；不是「流式回复为空」。"""
-    db = _WorkerPathDB()
-    runtime, minister = _base_runtime(db)
-    runtime.session.registry = SimpleNamespace(get=lambda _c: _RunErrorAgent())
-    runtime.session._character = lambda name: minister_double(minister)
-    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
+class _CountingFailAgent:
+    """按序失败 N 次（typed），其后成功吐回话。calls = transport attempt 次数。"""
 
+    def __init__(self, *, fail_times: int, error_factory):
+        self.fail_times = int(fail_times)
+        self.error_factory = error_factory
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def run(self, *_a, **_k):
+        with self._lock:
+            self.calls += 1
+            n = self.calls
+        if n <= self.fail_times:
+            raise self.error_factory(n)
+        yield RunContent("臣")
+        yield RunContent("已核辽饷。")
+        yield RunCompletedEvent()
+
+
+class _FailLeavingAgnoRunAgent:
+    """#1465 fo2Og：失败 attempt 留下确定性 Agno run 残迹，并记录每 attempt 读回的 run_id 序列。
+
+    残迹写入与 truncate 同一 GameDB Agno 域（非私有缓存旁路）；成功 attempt 不另写 run。
+    """
+
+    def __init__(self, db, session_id: str, *, fail_times: int, error_factory):
+        self.db = db
+        self.session_id = str(session_id)
+        self.fail_times = int(fail_times)
+        self.error_factory = error_factory
+        self.calls = 0
+        self.history_at_attempt_start: list[list[str]] = []
+
+    def run(self, *_a, **_k):
+        self.calls += 1
+        n = self.calls
+        # 本 attempt 启动时持久读回（_start_stream 已先 truncate）
+        self.history_at_attempt_start.append(
+            [str(r.get("run_id")) for r in self.db._agno_merged_runs(self.session_id)]
+        )
+        if n <= self.fail_times:
+            from tests.test_audience_restore_505 import _insert_agno_table_run
+
+            rid = f"fail-attempt-{n}"
+            _insert_agno_table_run(
+                self.db,
+                self.session_id,
+                rid,
+                run_index=self.db.agno_runs_length(self.session_id),
+            )
+            raise self.error_factory(n)
+        yield RunContent("臣")
+        yield RunContent("已核辽饷。")
+        yield RunCompletedEvent()
+
+
+def _transport_web_game(game, agent):
+    """复用 audience_background 真实召对装配（真 DB / atomic / interpret）。"""
+    from tests.test_audience_background import _web_game
+
+    db, state, content = game
+    web_game = _web_game(db, state, content, agent)
+    # 成功路径会 spawn 尾随；空操作避免额外 LLM/线程噪音
+    web_game._dispatch_relation_judge = lambda *_a, **_k: None  # type: ignore[method-assign]
+    web_game._spawn_extraction_trail = lambda *_a, **_k: None  # type: ignore[method-assign]
+    web_game._spawn_pending_write_thread = lambda *_a, **_k: None  # type: ignore[method-assign]
+    return web_game, "毕自严"
+
+
+def _post_chat_stream(monkeypatch, web_game, minister: str, message: str = "边饷如何？"):
     monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
-
-    response = TestClient(web_app.app).post(
-        f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"},
+    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+    return TestClient(web_app.app).post(
+        f"/api/ministers/{minister}/chat/stream", json={"message": message},
     )
+
+
+def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game):
+    """#1452 B / #1465：真实 web 流入口——无 typed status 的 RunErrorEvent
+    → 一次不重试、系统层 typed 终失败、provider_message 保真。"""
+    agent = _RunErrorAgent()
+    web_game, minister = _transport_web_game(game, agent)
+    calls = {"n": 0}
+    real_run = agent.run
+
+    def _count_run(*a, **k):
+        calls["n"] += 1
+        return real_run(*a, **k)
+
+    agent.run = _count_run  # type: ignore[method-assign]
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("text/event-stream")
     events = _parse_sse(response.text)
@@ -699,8 +805,404 @@ def test_chat_stream_run_error_event_sse_diegetic_via_web_entry(monkeypatch):
     assert events[-1][0] == "error"
     detail = events[-1][1]
     assert detail.get("code") == "llm_stream_error"
-    assert detail.get("message") == CLI_RUNNER_PLAYER_MESSAGE
+    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
     assert "Unknown model error" in str(detail.get("provider_message") or "")
-    assert "流式回复为空" not in str(detail.get("message") or "")
-    assert "流式回复为空" not in response.text
-    _assert_write_path_free(runtime)
+    assert calls["n"] == 1
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == 1
+    assert attempts[0].get("outcome") == "terminal_fail"
+
+
+def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game):
+    """#1465 ①：两次瞬断后第三次成功 → 真 interpret/atomic 落库 + 3 attempts 可回指。
+
+    同案 fo2Og：失败 attempt 写入确定性 Agno run；重试读回/持久史保留前轮、排除失败
+    attempt，且不改游戏账（≠ fail_chat_turn 整轮回滚）。
+    """
+    from tests.test_audience_restore_505 import _seed_agno_v3_runs
+
+    def _conn_err(_n):
+        return LLMUnavailable(
+            "连接失败",
+            code="llm_connection_error",
+            provider_message="connection reset",
+        )
+
+    db, _state, _content = game
+    minister = "毕自严"
+    session_id = "minister-retry-hist"
+    # 前轮 Agno 史：本轮起点 keep_count=1；失败 attempt 残迹须截掉、前轮须保留
+    _seed_agno_v3_runs(db, session_id, run_count=1)
+    prior_ids = [f"run-{session_id}-0"]
+    assert [str(r.get("run_id")) for r in db._agno_merged_runs(session_id)] == prior_ids
+
+    agent = _FailLeavingAgnoRunAgent(
+        db, session_id, fail_times=2, error_factory=_conn_err,
+    )
+    web_game, minister = _transport_web_game(game, agent)
+    web_game.session.registry.session_ids[minister] = session_id
+
+    # 游戏账基线（截史不得动问话/回话账）
+    user_msgs_before = int(
+        db.conn.execute(
+            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='user'",
+        ).fetchone()["c"]
+    )
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    types = [e[0] for e in events]
+    assert "done" in types, events
+    done = next(e[1] for e in events if e[0] == "done")
+    assert done.get("answer")
+    assert agent.calls == 3
+    attempts = done.get("transport_attempts") or []
+    assert [a.get("outcome") for a in attempts] == [
+        "retryable_fail", "retryable_fail", "ok",
+    ]
+    # 真写路径：大臣回话已落库
+    assert int(done.get("minister_message_id") or 0) > 0
+    chat_turn_id = int(done.get("chat_turn_id") or 0)
+    assert chat_turn_id > 0
+    row = db.conn.execute(
+        "SELECT status, minister_message_id, agno_session_id, agno_runs_before "
+        "FROM chat_turns WHERE id=?",
+        (chat_turn_id,),
+    ).fetchone()
+    assert row is not None
+    assert int(row["minister_message_id"] or 0) > 0
+    assert str(row["status"]) != "failed"
+    assert str(row["agno_session_id"] or "") == session_id
+    assert int(row["agno_runs_before"] or 0) == 1
+
+    # 重试实际读回：每 attempt 启动时只见前轮，不见失败 attempt 残迹
+    assert agent.history_at_attempt_start == [prior_ids, prior_ids, prior_ids], (
+        agent.history_at_attempt_start
+    )
+    # 持久读回：终态仍只保留前轮（失败 run 已截；成功 attempt 未另写）
+    final_ids = [str(r.get("run_id")) for r in db._agno_merged_runs(session_id)]
+    assert final_ids == prior_ids, final_ids
+    assert all(not rid.startswith("fail-attempt-") for rid in final_ids)
+
+    # 游戏账未因截史回滚：问话增加、回话在、轮未 fail
+    user_msgs_after = int(
+        db.conn.execute(
+            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='user'",
+        ).fetchone()["c"]
+    )
+    assert user_msgs_after == user_msgs_before + 1
+    minister_msgs = int(
+        db.conn.execute(
+            "SELECT COUNT(*) AS c FROM chat_messages WHERE role='minister'",
+        ).fetchone()["c"]
+    )
+    assert minister_msgs >= 1
+
+
+def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, game):
+    """#1465 ①：三次瞬断耗尽 → 系统层终失败、夜不封；随后可重发并读回夜/轮状态。"""
+    from ming_sim import audience_night as an
+
+    def _conn_err(_n):
+        return LLMUnavailable(
+            "连接失败",
+            code="llm_connection_error",
+            provider_message="connection reset",
+        )
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
+    web_game, minister = _transport_web_game(game, agent)
+    db = web_game.db
+    night_closed = {"n": 0}
+
+    def _close(*_a, **_k):
+        night_closed["n"] += 1
+
+    web_game.session.close_night_after_chat_if_needed = _close
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert detail.get("code") == "llm_connection_error"
+    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+    max_a = default_transport_policy().max_attempts
+    assert agent.calls == max_a
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == max_a
+    assert [a.get("outcome") for a in attempts[:-1]] == ["retryable_fail"] * (max_a - 1)
+    assert attempts[-1].get("outcome") == "terminal_fail"
+    assert night_closed["n"] == 0
+    failed_turn = int(detail.get("chat_turn_id") or 0)
+    assert failed_turn > 0
+    # 夜仍开（不因 transport 终失败封夜）
+    open_night = an.get_open_night(db)
+    assert open_night is not None
+    fail_row = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (failed_turn,),
+    ).fetchone()
+    assert fail_row is not None
+    assert str(fail_row["status"]) == "failed"
+
+    # 实际重发：换可成功 agent，同夜可再召并读回轮状态（重发成功即证写路径已释放）
+    ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
+    web_game.session.registry.agent = ok_agent
+    response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
+    events2 = _parse_sse(response2.text)
+    assert "done" in [e[0] for e in events2], events2
+    done2 = next(e[1] for e in events2 if e[0] == "done")
+    new_turn = int(done2.get("chat_turn_id") or 0)
+    assert new_turn > 0 and new_turn != failed_turn
+    assert int(done2.get("minister_message_id") or 0) > 0
+    assert an.get_open_night(db) is not None
+    ok_row = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (new_turn,),
+    ).fetchone()
+    assert ok_row is not None
+    assert str(ok_row["status"]) != "failed"
+
+
+def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
+    """#1465 ①：确定性 4xx → 一次不重试、typed status/code 保真。"""
+    def _four_xx(_n):
+        return LLMUnavailable(
+            "参数错误",
+            code="llm_http_400",
+            provider_message="top_p not supported",
+            status_code=400,
+        )
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_four_xx)
+    web_game, minister = _transport_web_game(game, agent)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert detail.get("status_code") == 400
+    assert detail.get("code") == "llm_http_400"
+    assert detail.get("provider_message") == "top_p not supported"
+    assert agent.calls == 1
+    assert len(detail.get("transport_attempts") or []) == 1
+    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+
+
+def test_chat_stream_typed_429_preserved(monkeypatch, game):
+    """#1465 ① / #1750 phase0 §3：typed 429 经统一层保真 status/code/原因/次数。
+
+    复用边界：本片验证召对 HTTP SSE 入口的 typed 字段透传（_llm_error_detail 键）。
+    extractor 结算入口与 tracer_client 属切片② / #1750；不在此声称 extractor xfail 转绿。
+    """
+    reason = "model_concurrency_rate_limit_exceeded"
+
+    def _rate_limit(_n):
+        return LLMUnavailable(
+            "限流",
+            code="llm_run_error",
+            provider_message=reason,
+            status_code=429,
+        )
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_rate_limit)
+    web_game, minister = _transport_web_game(game, agent)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    events = _parse_sse(response.text)
+    detail = events[-1][1]
+    max_a = default_transport_policy().max_attempts
+    assert detail.get("status_code") == 429
+    assert detail.get("code") == "llm_run_error"
+    assert detail.get("provider_message") == reason
+    assert agent.calls == max_a
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == max_a
+    assert [a.get("status_code") for a in attempts] == [429] * max_a
+    assert [a.get("outcome") for a in attempts[:-1]] == ["retryable_fail"] * (max_a - 1)
+    assert attempts[-1].get("outcome") == "terminal_fail"
+
+
+def test_chat_stream_config_max_attempts_override(monkeypatch, tmp_path, game):
+    """#1465 ①：runtime transport 改次数 → 真实召对入口行为随之变。"""
+    from ming_sim import llm_config as llm_config_mod
+
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        "transport": {
+            "max_attempts": 1,
+            "attempt_timeout_seconds": 30,
+            "idle_timeout_seconds": 30,
+        },
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
+
+    def _conn_err(_n):
+        return LLMUnavailable(
+            "连接失败",
+            code="llm_connection_error",
+            provider_message="connection reset",
+        )
+
+    agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
+    web_game, minister = _transport_web_game(game, agent)
+    web_game.session.llm_config = SimpleNamespace(channel="api")
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert agent.calls == 1
+    assert detail.get("code") == "llm_connection_error"
+    assert len(detail.get("transport_attempts") or []) == 1
+
+
+def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, tmp_path, game):
+    """#1465 ①：受控时钟——前一 attempt 空转判死后，下一 attempt 仍得接近完整空转预算。
+
+    证明点：attempt2 推进接近整份 idle 仍成功（不只是重置时刻立即成功）。
+    空转权威 = check_idle_budget（idle 轴）；SDK 阻塞轴 = attempt_timeout（本测不覆盖）。
+    不设 attempt 总墙钟。
+    """
+    import ming_sim.llm_transport as transport_mod
+    from ming_sim import llm_config as llm_config_mod
+
+    idle_timeout = 10.0
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        "transport": {
+            "max_attempts": 2,
+            "attempt_timeout_seconds": 100.0,
+            "idle_timeout_seconds": idle_timeout,
+        },
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
+
+    clock = {"t": 1000.0}
+    burns = {"n": 0}
+    attempt2_span = {"used": 0.0}
+
+    class _IdleThenNearFullOk:
+        def run(self, *_a, **_k):
+            burns["n"] += 1
+            if burns["n"] == 1:
+                # 非活动事件不刷新空转；推进超过 idle → 本 attempt 判死
+                yield RunContent("")
+                clock["t"] += idle_timeout + 0.1
+                yield RunContent("")
+                return
+            # attempt 2：推进接近完整预算仍保持活动刷新，最后成功
+            # 证明拿到接近整份预算（非重置瞬间成功）
+            started = clock["t"]
+            yield RunContent("臣")
+            clock["t"] += idle_timeout * 0.9
+            yield RunContent("复奏。")
+            attempt2_span["used"] = clock["t"] - started
+            yield RunCompletedEvent()
+
+    agent = _IdleThenNearFullOk()
+    web_game, minister = _transport_web_game(game, agent)
+    web_game.session.llm_config = SimpleNamespace(channel="api")
+    # 只替换 transport 模块内的取时名，不改全局 time.monotonic（进程内 ASGI/线程共享时钟）
+    monkeypatch.setattr(
+        transport_mod, "time", SimpleNamespace(monotonic=lambda: clock["t"]),
+    )
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert "done" in [e[0] for e in events], events
+    done = next(e[1] for e in events if e[0] == "done")
+    attempts = done.get("transport_attempts") or []
+    assert len(attempts) == 2, attempts
+    assert attempts[0]["outcome"] == "retryable_fail"
+    assert attempts[0]["code"] == "llm_idle_timeout"
+    assert attempts[1]["outcome"] == "ok"
+    assert burns["n"] == 2
+    assert attempt2_span["used"] >= idle_timeout * 0.8, attempt2_span
+    assert int(done.get("minister_message_id") or 0) > 0
+
+
+def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, game):
+    """#1465 半流选项 1：首 attempt 已出部分 delta 后瞬断 → 重试成功
+
+    事件序列：content delta → replace delta → content delta → done。
+    按客户端规则重放后，临时正文 = done.answer（不叠旧半句）。不锁措辞。
+
+    同案动作/结果相容：首 attempt 流中 dismiss 落账后瞬断，终 attempt 无 dismiss 工具
+    → done.court_action 仍为 dismiss（不延后退场、不加次数例外）。
+    """
+
+    class _PartialDismissThenOk:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, *_a, **_k):
+            self.calls += 1
+            if self.calls == 1:
+                yield RunContent("旧半句")
+                tool = SimpleNamespace(
+                    tool_name="dismiss_minister",
+                    result="__dismiss__",
+                    tool_args={},
+                )
+                yield ToolCallCompletedEvent(tool)
+                raise LLMUnavailable(
+                    "连接失败",
+                    code="llm_connection_error",
+                    provider_message="connection reset",
+                )
+            # 终 attempt 工具账无 dismiss——结构结果须仍对齐已落账退场
+            yield RunContent("新整段")
+            yield RunCompletedEvent()
+
+    agent = _PartialDismissThenOk()
+    web_game, minister = _transport_web_game(game, agent)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert "done" in [e[0] for e in events], events
+    done = next(e[1] for e in events if e[0] == "done")
+    assert agent.calls == 2
+    attempts = done.get("transport_attempts") or []
+    assert [a.get("outcome") for a in attempts] == ["retryable_fail", "ok"]
+    assert done.get("court_action") == "dismiss", done
+
+    # 呈现结构：delta 序列含 replace，且位于首段 content 与后续 content 之间
+    delta_seq = [
+        {
+            "replace": bool(data.get("replace")),
+            "has_content": bool(data.get("content")),
+        }
+        for name, data in events
+        if name == "delta"
+    ]
+    assert delta_seq, events
+    idx_first_content = next(
+        i for i, d in enumerate(delta_seq) if d["has_content"] and not d["replace"]
+    )
+    idx_replace = next(i for i, d in enumerate(delta_seq) if d["replace"])
+    idx_last_content = max(
+        i for i, d in enumerate(delta_seq) if d["has_content"] and not d["replace"]
+    )
+    assert idx_first_content < idx_replace < idx_last_content, delta_seq
+
+    # 客户端重放：replace 清空临时正文；最终临时正文须等于 done.answer（非叠加）
+    temp = ""
+    for name, data in events:
+        if name != "delta":
+            continue
+        if data.get("replace"):
+            temp = ""
+        content = str(data.get("content") or "")
+        if content:
+            temp += content
+    answer = str(done.get("answer") or "")
+    assert answer
+    assert temp == answer
+    assert int(done.get("minister_message_id") or 0) > 0

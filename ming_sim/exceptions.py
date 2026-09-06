@@ -27,12 +27,15 @@ class LLMUnavailable(Exception):
         code: str = "llm_unavailable",
         provider_message: str = "",
         status_code: int | None = None,
+        transport_attempts: list | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.provider_message = provider_message or message
         self.status_code = status_code
+        # #1465：结构化 attempt 账（可回指）；缺省 None＝未走统一 transport
+        self.transport_attempts = transport_attempts
 
 
 class PromulgationHealEvidence(NamedTuple):

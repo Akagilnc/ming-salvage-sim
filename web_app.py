@@ -66,7 +66,16 @@ from ming_sim.llm_config import (
     save_runtime_llm,
 )
 from ming_sim.agents import _dump_llm_messages
-from ming_sim.llm_model import extract_agent_text, llm_stream_unavailable, verify_llm_available
+from ming_sim.llm_model import extract_agent_text, verify_llm_available
+from ming_sim.llm_transport import (
+    bind_transport_sdk_budget,
+    empty_output_failure,
+    resolve_transport_policy,
+    run_error_event_failure,
+    run_transport_stream,
+    transport_attempts_public,
+    transport_failure_unavailable,
+)
 from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
@@ -424,12 +433,17 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
 
 def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
     message = f"{prefix}{exc.message if hasattr(exc, 'message') else str(exc)}"
-    return {
+    detail: Dict[str, Any] = {
         "code": getattr(exc, "code", "llm_error"),
         "message": message,
         "provider_message": getattr(exc, "provider_message", str(exc)),
         "status_code": getattr(exc, "status_code", None),
     }
+    # #1465：统一 transport 的 attempt 账（有则透传；无键＝未走统一层）
+    attempts = getattr(exc, "transport_attempts", None)
+    if attempts is not None:
+        detail["transport_attempts"] = attempts
+    return detail
 
 
 def _runtime_float(value: object, default: float) -> float:
@@ -2538,39 +2552,59 @@ class WebGame:
         explicit_secret_order: bool = False,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
-        chunks: List[str] = []
         agent = self.session.registry.get(character)
         # 动作意图分类只读皇帝消息，是唯一可与回话重叠的独立调用：由 worker 先于回话
         # 发出（跨越回话流式在飞），此处消费一次；不再在本轮内二次发起。
-        run_output = None
         # The session audience seam is per-character: passing only the message
         # makes a web-streamed question bypass that perspective.
         agent_prompt = _audience_prompt_for_web_chat(
             self.session, text, character, chat_turn_id,
         )
-        # LLM 流在无锁窗口跑（#498 AC10 可达熔断）
-        stream = agent.run(agent_prompt, stream=True, stream_events=True, yield_run_output=True)
         # #542：dismiss tool 事件一出现就 start_exit，与尚未结束的回话流重叠。
         # #1566：密令 route 跳过流中 early-exit（与 interpret/session.chat 同门）。
         from ming_sim.cli_backend import _SECRET_PREFIXES as _STREAM_SECRET_PREFIXES
         stream_secret_route = bool(explicit_secret_order) or (text or "").strip().startswith(
             _STREAM_SECRET_PREFIXES
         )
-        exit_started_during_stream = False
-        for event in stream:
+        # #1465 切片①：仅真实 API 召对接缝接线 transport；CLI 通道不套入。
+        llm_cfg = getattr(self.session, "llm_config", None)
+        channel = (getattr(llm_cfg, "channel", "") or "").strip().lower()
+        use_transport = channel != "cli"
+        policy = resolve_transport_policy(llm_cfg) if use_transport else None
+        chunks: List[str] = []
+        run_output_box: List[Any] = []
+        exit_started_during_stream = {"v": False}
+
+        def _map_error(event: Any):
+            if type(event).__name__ != "RunErrorEvent":
+                return None
+            # #1452/#1465：无 typed status 的 stream error 不洗成瞬断
+            return transport_failure_unavailable(
+                run_error_event_failure(getattr(event, "content", None)),
+                attempts=1,
+                exhausted=False,
+            )
+
+        def _is_activity(event: Any) -> bool:
+            # 空转活动：RunContent 有正文、reasoning 增量、工具生命周期（活动 ≠ 已呈现正文）
+            # 工具类名与 agents.run_agent_stream_text 同权威；长工具存活靠 transport 活动先刷新。
+            if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
+                return True
+            rdelta = getattr(event, "reasoning_content", None)
+            if isinstance(rdelta, str) and bool(rdelta):
+                return True
+            return type(event).__name__ in (
+                "ToolCallStartedEvent", "ToolCallCompletedEvent",
+            )
+
+        def _on_event(event: Any) -> None:
             content = getattr(event, "content", None)
             event_name = getattr(event, "event", "")
-            # #1452：provider 失败时 agno 发 RunErrorEvent（如 Unknown model error）；
-            # 不得静默吞成「流式回复为空」，与 agents.run_agent_stream_text 同闸。
-            if type(event).__name__ == "RunErrorEvent":
-                raise llm_stream_unavailable(content)
             if event_name == "RunContent" and content:
                 delta = str(content)
                 chunks.append(delta)
                 emit_delta(delta)
-            if not exit_started_during_stream and not stream_secret_route:
-                # agno ToolCallCompletedEvent.tool；终事件 RunOutput.tools 作兜底。
-                # 轻量 session 替身可能无此方法——缺则留给 interpret 旧缝/跳过。
+            if not exit_started_during_stream["v"] and not stream_secret_route:
                 start_exit = getattr(
                     self.session, "start_exit_scene_from_dismiss_tools", None,
                 )
@@ -2583,23 +2617,73 @@ class WebGame:
                     and start_exit is not None
                     and start_exit(character.name, int(chat_turn_id or 0), tools_now)
                 ):
-                    exit_started_during_stream = True
+                    exit_started_during_stream["v"] = True
             if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
-                run_output = event
-        # 流式跑完补 dump：流式 run_output(RunCompletedEvent)常无 .messages，
-        # 传 agent= 让 _dump_llm_messages 走 agent.get_last_run_output() fallback 取 system/user。
-        _dump_llm_messages(run_output, f"大臣对话/{minister_name}", agent=agent)
-        answer = "".join(chunks).strip()
-        # #1299/#1310：run_output.status=ERROR 时 extract 翻 typed（禁横幅当台词）；
-        # 有 chunks 也必须过 status 闸，不能只在空 answer 时才 extract。
-        if run_output is not None:
-            extracted = extract_agent_text(run_output)
+                run_output_box.clear()
+                run_output_box.append(event)
+
+        def _after_stream():
+            run_output = run_output_box[0] if run_output_box else None
+            _dump_llm_messages(run_output, f"大臣对话/{minister_name}", agent=agent)
+            answer = "".join(chunks).strip()
+            if run_output is not None:
+                extracted = extract_agent_text(run_output)
+                if not answer:
+                    answer = extracted
+            else:
+                fail_if_llm_error(answer, "LLM 调用")
             if not answer:
-                answer = extracted
+                raise transport_failure_unavailable(
+                    empty_output_failure(), attempts=1, exhausted=False,
+                )
+            return answer, run_output
+
+        stream_attempt_n = {"n": 0}
+
+        def _start_stream():
+            # 每 attempt 清空半局部呈现态（chunks/run_output）；
+            # 不重置 exit_started：流中已落账退场是史实（0036），重试须与之相容。
+            chunks.clear()
+            run_output_box.clear()
+            # #1465 半流呈现选项 1：重试开始时替换未完成的临时回话（仅呈现；不回滚落账）
+            if stream_attempt_n["n"] > 0:
+                emit_delta("", replace=True)
+                # fo2Og：失败 attempt 的 Agno runs 截回本轮起点，不调用 fail_chat_turn。
+                if chat_turn_id:
+                    self.db.truncate_chat_turn_agno_runs(int(chat_turn_id))
+            stream_attempt_n["n"] += 1
+            return agent.run(
+                agent_prompt, stream=True, stream_events=True, yield_run_output=True,
+            )
+
+        if use_transport:
+            assert policy is not None
+            # SDK 阻塞超时 = bind_transport_sdk_budget(model.timeout←attempt_timeout)；
+            # 事件界只做 idle 空转，不能中止 SDK read 阻塞。
+            with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+                (answer, run_output), transport_attempts_box = run_transport_stream(
+                    _start_stream,
+                    on_event=_on_event,
+                    is_activity_event=_is_activity,
+                    map_error_event=_map_error,
+                    after_stream=_after_stream,
+                    policy=policy,
+                )
         else:
-            fail_if_llm_error(answer, "LLM 调用")
-        if not answer:
-            raise LLMUnavailable("LLM 调用失败：流式回复为空。")
+            # CLI 通道：保留单次流，不套 transport 次数/空转（切片③）
+            stream = _start_stream()
+            try:
+                for event in stream:
+                    err = _map_error(event)
+                    if err is not None:
+                        raise err
+                    _on_event(event)
+                answer, run_output = _after_stream()
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
+            transport_attempts_box = []
 
         # #542：action/tool 解释（exit 若流中未启则幂等补登），write_gate 外统一 join，
         # 短事务原子持久化 reply + 本轮全部 scene。join 不得早于 start_exit。
@@ -2607,6 +2691,10 @@ class WebGame:
             minister_name, text, character, answer, run_output,
             action_intent_future, chat_turn_id, explicit_secret_order,
         )
+        # 动作/结果相容：流中已启退场而终 attempt 工具账未带 dismiss 时，结构结果仍须对齐史实。
+        # 不延后 dismiss、不加次数例外（fo2Oe 处方驳回；按事实修）。
+        if exit_started_during_stream["v"] and not interpreted.get("court_action"):
+            interpreted["court_action"] = "dismiss"
         scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with cm:
@@ -2630,6 +2718,9 @@ class WebGame:
                     decree_validation_failure=interpreted["decree_validation_failure"],
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+        # #1465：attempts 账可回指（结构化；非 prose）
+        if transport_attempts_box:
+            payload["transport_attempts"] = transport_attempts_public(transport_attempts_box)
         return payload
 
     def _chat_stream_interpret_tools(
@@ -3618,8 +3709,12 @@ class WebGame:
             yield {"type": "error", "message": str(error), **identity}
             return
 
-        def emit_delta(delta: str) -> None:
-            ev_queue.put({"type": "delta", "content": delta})
+        def emit_delta(delta: str, *, replace: bool = False) -> None:
+            # replace=True：复用既有 delta 事件形态，令客户端重置本轮临时正文后再接
+            item: Dict[str, Any] = {"type": "delta", "content": delta}
+            if replace:
+                item["replace"] = True
+            ev_queue.put(item)
 
         def worker() -> None:
             nonlocal pending_ticket
@@ -6291,7 +6386,10 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                     "chat_turn_id": item.get("chat_turn_id", 0),
                 })
             elif item_type == "delta":
-                yield sse_event("delta", {"content": item.get("content", "")})
+                delta_payload: Dict[str, Any] = {"content": item.get("content", "")}
+                if item.get("replace"):
+                    delta_payload["replace"] = True
+                yield sse_event("delta", delta_payload)
             elif item_type == "done":
                 # 回话先可见；流继续至 end，以便读心就绪后浮现（#499 / ADR 0046 递话）
                 yield sse_event("done", item.get("payload", {}))

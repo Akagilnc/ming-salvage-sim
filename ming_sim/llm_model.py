@@ -9,8 +9,6 @@ from typing import Dict, Optional
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from openai import APIConnectionError, APIStatusError, APITimeoutError
-
 from ming_sim.exceptions import DependencyMismatch, LLMUnavailable
 from ming_sim.llm_config import (
     CLI_BACKEND_PLACEHOLDER,
@@ -77,25 +75,27 @@ def _extract_provider_error(error: Exception) -> tuple[str, str, int | None]:
 
 
 def llm_unavailable_from_error(error: Exception, stage: str = "LLM 连通性检查") -> LLMUnavailable:
-    provider_code, provider_message, status_code = _extract_provider_error(error)
-    if isinstance(error, APITimeoutError):
-        code = "llm_timeout"
-    elif isinstance(error, APIConnectionError):
-        code = "llm_connection_error"
-    elif isinstance(error, APIStatusError):
-        code = f"llm_http_{status_code or 'error'}"
-    else:
-        code = "llm_error"
+    """OpenAI 异常 → typed LLMUnavailable。
+
+    code/retryable/status 唯一权威 = classify_transport_failure（单权威，无平行补码）。
+    _extract_provider_error 只丰富 provider 原文，不改分类、不突变入参、不宽吞。
+    """
+    from ming_sim.llm_transport import classify_transport_failure
+
+    _provider_code, provider_message, _extracted_status = _extract_provider_error(error)
+    failure = classify_transport_failure(error)
+    pmsg = provider_message or failure.provider_message
     return LLMUnavailable(
-        f"{stage}失败：{provider_message}",
-        code=code,
-        provider_message=provider_message,
-        status_code=status_code,
+        f"{stage}失败：{pmsg}",
+        code=failure.code,
+        provider_message=pmsg,
+        status_code=failure.status_code,
     )
 
 
 # #1299/#1310：CLI runner / agent run 失败时玩家可见文案——短、diegetic、可重试；
 # 机器横幅只进 provider_message，永不进 content 叙事通道。
+# API transport 终失败走 llm_transport.transport_failure_unavailable（系统层，#1465）。
 CLI_RUNNER_PLAYER_MESSAGE = "通传未达，请稍后再召。"
 
 
@@ -114,12 +114,6 @@ def cli_runner_unavailable(
         code=code,
         provider_message=provider or CLI_RUNNER_PLAYER_MESSAGE,
     )
-
-
-def llm_stream_unavailable(provider_message: object = "") -> LLMUnavailable:
-    """RunErrorEvent → typed；玩家 message 单源 CLI_RUNNER_PLAYER_MESSAGE。"""
-    p = str(provider_message or "").strip() or CLI_RUNNER_PLAYER_MESSAGE
-    return LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_stream_error", provider_message=p)
 
 
 def create_chat_model(
@@ -158,6 +152,10 @@ def create_chat_model(
             if thinking_type not in {"adaptive", "disabled"}:
                 thinking_type = "adaptive"
         extra_body = {"thinking": {"type": thinking_type}, "reasoning_split": True}
+    # #1465：未迁移调用保留原 timeout_seconds / SDK max_retries=1。
+    # 已迁移召对流在接缝用 bind_transport_sdk_budget 临时覆盖
+    # （timeout←attempt_timeout + max_retries=0）。
+    # 禁止在 create_chat_model 全局套 transport，否则 extractor/非流/CLI 默认行为被改。
     kwargs: Dict[str, object] = {
         "id": llm_config.model,
         "api_key": llm_config.api_key,
