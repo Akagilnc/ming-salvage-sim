@@ -385,6 +385,148 @@ def _secret_extract_admitted(ctx: MaterializeCtx) -> bool:
     )
 
 
+def _secret_order_pending_payload(
+    secret: Dict[str, Any], minister_name: str,
+) -> Dict[str, Any]:
+    """Build pending payload from extract result. Typed fields only; no prose title."""
+    title = str(secret.get("title") or "").strip()
+    content_text = str(secret.get("content") or "").strip()
+    frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
+    contract_error = str(secret.get("contract_error") or "").strip()
+    # Retain diagnostic facts (0005); never synthesize missing title from prose (0142).
+    if not title:
+        contract_error = contract_error or "密令缺少结构化标题"
+    if frozen is None:
+        contract_error = contract_error or "密令抽取未能冻结合同"
+    payload: Dict[str, Any] = {
+        "title": title,
+        "content": content_text,
+        "assignee": secret.get("assignee") or minister_name,
+        "tags": secret.get("tags") or [],
+        "deadline_months": secret.get("deadline_months", 0),
+        "excluded_names": secret.get("excluded_names") or [],
+        "excluded_offices": secret.get("excluded_offices") or [],
+        "dossier_links": secret.get("dossier_links") or [],
+    }
+    if frozen is not None:
+        payload["covert_task"] = frozen
+    if contract_error:
+        payload["contract_error"] = contract_error
+    if secret.get("extract_failed"):
+        payload["extract_failed"] = True
+    if "extract_raw" in secret:
+        payload["extract_raw"] = secret["extract_raw"]
+    return payload
+
+
+def _prior_output_for_secret_feedback(secret: Dict[str, Any]) -> str:
+    """Prefer raw extract text; else compact typed snapshot for 揣摩 feedback."""
+    raw = secret.get("extract_raw")
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    if raw is not None and not isinstance(raw, str):
+        return str(raw)
+    snapshot = {
+        "title": secret.get("title") or "",
+        "content": secret.get("content") or "",
+        "contract_error": secret.get("contract_error") or "",
+        "extract_failed": bool(secret.get("extract_failed")),
+        "has_covert_task": isinstance(secret.get("covert_task"), dict),
+    }
+    return json.dumps(snapshot, ensure_ascii=False)
+
+
+def land_or_recover_new_secret_order(
+    *,
+    db: Any,
+    turn: int,
+    minister_name: str,
+    secret: Dict[str, Any],
+    player_message: str,
+    minister_reply: str,
+    llm_config: Any,
+    out: Dict[str, Any],
+    dossier_candidates: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    """#1765：已识别密令新建的统一落库。
+
+    能落 → 暂存进确认闸；不能落 → 一次带反馈揣摩重抽；仍不能 → 大臣追问报告。
+    删除旧三分流（extract_failed 暂存 / 零契约拒单 / 显式必暂存的处置分叉）。
+    保留 typed 题名/正文/合同供料与暂存写入本身；不写玩家可见分类原因文案。
+    """
+    from ming_sim.cli_backend import (
+        _extract_secret_order,
+        build_secret_order_landing_feedback,
+        compose_secret_order_landing_recovery,
+        secret_order_can_land,
+        secret_order_landing_gaps,
+    )
+
+    so = dict(secret or {})
+    gaps = secret_order_landing_gaps(so)
+    if not gaps:
+        out["pending_action_id"] = db.stage_pending_action(
+            turn, kind="secret_order", action="新建",
+            minister_name=minister_name, target_id=None,
+            payload=_secret_order_pending_payload(so, minister_name),
+        )
+        return
+
+    # One 揣摩 re-extract with deterministic landing facts (no fixed retry budget).
+    feedback = build_secret_order_landing_feedback(
+        gaps,
+        emperor_words=player_message,
+        prior_output=_prior_output_for_secret_feedback(so),
+        contract_error=str(so.get("contract_error") or ""),
+    )
+    healed = _extract_secret_order(
+        player_message,
+        minister_reply,
+        minister_name,
+        llm_config,
+        force_default_assignee=False,
+        dossier_candidates=dossier_candidates,
+        correction_feedback=feedback,
+    )
+    if secret_order_can_land(healed):
+        out["pending_action_id"] = db.stage_pending_action(
+            turn, kind="secret_order", action="新建",
+            minister_name=minister_name, target_id=None,
+            payload=_secret_order_pending_payload(healed, minister_name),
+        )
+        return
+
+    # Still can't land → minister in-character recovery (player-facing).
+    final = healed if isinstance(healed, dict) else so
+    final_gaps = secret_order_landing_gaps(final) or gaps
+    contract_error = str(
+        (final or {}).get("contract_error") or so.get("contract_error") or ""
+    ).strip()
+    report = compose_secret_order_landing_recovery(
+        final_gaps,
+        speaker_name=minister_name,
+        emperor_words=player_message,
+        prior_output=_prior_output_for_secret_feedback(final if final else so),
+        contract_error=contract_error,
+        llm_config=llm_config,
+    )
+    out["secret_order_landing_recovery"] = {
+        "landing_gaps": list(final_gaps),
+        "contract_error": contract_error,
+        "report": report,
+        # Retain typed extract snapshot for diagnostics / slice-② recovery entry.
+        "extract_snapshot": {
+            "title": str((final or so).get("title") or ""),
+            "content": str((final or so).get("content") or ""),
+            "extract_failed": bool((final or so).get("extract_failed")),
+            "has_covert_task": isinstance((final or so).get("covert_task"), dict),
+        },
+    }
+    # 落不了库不暂存残缺候选：避免坏项盖住同批成功 ID，也不把未完成密令送进确认闸。
+    # 暂存写入能力仍由 can-land 路径与 _secret_order_pending_payload 保留。
+    out["pending_action_id"] = 0
+
+
 def _grant_allocation_attemptable(
     ctx: MaterializeCtx, intent: Dict[str, Any],
 ) -> bool:
@@ -832,64 +974,20 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         else:
             bundle = _secret_extract_bundle(ctx, prefer_new=True)
         secret = dict(bundle.get("secret") or {})
-        frozen = secret.get("covert_task") if isinstance(secret.get("covert_task"), dict) else None
-        # 本路=classifier 意图 secret/新建（#1504 零契约拒暂存权威位）。
-        # 显式前缀路在 session._stage_secret_order_candidate（#504 必暂存 / #354 异常暂存），不并入本闸。
-        # #1565/0142：题名只认抽取器结构化「标题」，禁散文合成。
-        # 抽取异常 → extract_failed + content 仍暂存；成功抽取但无 title/frozen → pending_action_failures。
-        title = str(secret.get("title") or "").strip()
-        content_text = str(secret.get("content") or "").strip()
-        contract_error = str(secret.get("contract_error") or "").strip()
-        extract_failed = bool(secret.get("extract_failed"))
-        if not title:
-            contract_error = contract_error or "密令缺少结构化标题"
-        if frozen is None:
-            contract_error = contract_error or "密令抽取未能冻结合同"
-        allow_incomplete_stage = extract_failed and bool(content_text)
-        if not content_text or (
-            not allow_incomplete_stage and (not title or frozen is None)
-        ):
-            reason = contract_error or (
-                "密令缺少结构化标题" if not title else "密令抽取未能冻结合同"
-            )
-            failures = list(ctx.out.get("pending_action_failures") or [])
-            failures.append({
-                "kind": "secret_order",
-                "action": "新建",
-                "minister_name": minister_name,
-                "retryable": True,
-                "message": f"密令未能正式落库：{reason}",
-            })
-            ctx.out["pending_action_failures"] = failures
-            ctx.out["pending_action_id"] = 0
-            ctx.conversation_intent_handled = True
-            return
+        # #1765：classifier 与显式前缀共用 land_or_recover（落不了库→揣摩/追问，无三分流）。
         ctx.conversation_intent_handled = True
-        payload = {
-            "title": title,
-            "content": content_text,
-            "assignee": secret.get("assignee") or minister_name,
-            "tags": secret.get("tags") or [],
-            "deadline_months": secret.get("deadline_months", 0),
-            "excluded_names": secret.get("excluded_names") or [],
-            "excluded_offices": secret.get("excluded_offices") or [],
-            "dossier_links": secret.get("dossier_links") or [],
-        }
-        if frozen is not None:
-            payload["covert_task"] = frozen
-        if contract_error:
-            payload["contract_error"] = contract_error
-        if extract_failed:
-            payload["extract_failed"] = True
-        if "extract_raw" in secret:
-            payload["extract_raw"] = secret["extract_raw"]
-        ctx.out["pending_action_id"] = session.db.stage_pending_action(
-            session.state.turn,
-            kind="secret_order",
-            action="新建",
+        land_or_recover_new_secret_order(
+            db=session.db,
+            turn=int(session.state.turn),
             minister_name=minister_name,
-            target_id=None,
-            payload=payload,
+            secret=secret,
+            player_message=ctx.player_message,
+            minister_reply=ctx.reply,
+            llm_config=ctx.llm_config,
+            out=ctx.out,
+            dossier_candidates=session.db.list_referenceable_dossiers(
+                minister_name, session.state.turn,
+            ),
         )
         return
 
