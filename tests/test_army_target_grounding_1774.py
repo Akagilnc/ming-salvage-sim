@@ -203,7 +203,7 @@ def test_audience_and_manual_share_xiexang_admission(game, monkeypatch, target, 
         lambda *_a, **_k: (raw, 1),
     )
     try:
-        payload = _real_capture(MANUAL_TEXT, None, db=db, content=content, capture_timeout_s=0)
+        payload = _real_capture(MANUAL_TEXT, None, db=db, content=content)
     except DecreeMaterializationValidationError as exc:
         manual = {
             "landed": False,
