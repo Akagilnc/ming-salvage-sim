@@ -670,6 +670,9 @@ def llm_promulgation_verdicts(
         turn=int(state.turn),
     )
     judge = session.get_or_create()
+    # #1465 ②：history-backed transport 重试截 run 走 GameDB.truncate_agno_session_runs
+    # （与召对 truncate_chat_turn_agno_runs 同接缝）；不新造历史机制。
+    setattr(judge, "_ming_game_db", db)
     if correction_feedback:
         # 同会话续接：history 应已有首轮；仍附首抽快照（draft 骨架），
         # 使补交输入可独立核验含全案卷身份。
