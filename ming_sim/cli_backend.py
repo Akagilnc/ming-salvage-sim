@@ -18,7 +18,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import queue
 from concurrent.futures import ThreadPoolExecutor
 import re
 import shutil
@@ -76,8 +78,6 @@ DRAFT_ACTION_TYPES = DIRECTIVE_ACTION_TYPES - {"acting_appointment"}
 _AGY_CWD = os.path.join(tempfile.gettempdir(), "ming_agy_sandbox")
 os.makedirs(_AGY_CWD, exist_ok=True)
 
-# agy 单次调用上限（秒）。extractor payload 大 + 自治 agent 启动慢，给足。
-_AGY_TIMEOUT = int(os.environ.get("MING_SIM_AGY_TIMEOUT", "300"))
 _AGY_BIN = os.environ.get("MING_SIM_AGY_BIN", "agy")
 # CODEX_DEFAULT_MODEL / CLAUDE_DEFAULT_MODEL 现 import 自 models（见上，#60）。
 _CODEX_BIN = os.environ.get("MING_SIM_CODEX_BIN", "codex")
@@ -334,6 +334,9 @@ _TRACE_LOCK = threading.Lock()      # 护 _seq 自增 + _trace 写盘 + _trace_a
 _BIN_CACHE_LOCK = threading.Lock()  # 护 _BIN_CACHE 解析+写入（首解只一次，余者命中缓存）
 
 
+logger = logging.getLogger(__name__)
+
+
 def _log(msg: str) -> None:
     if _VERBOSE:
         print(f"[cli_backend] {msg}", flush=True)
@@ -397,82 +400,164 @@ def _warm_keychain() -> None:
         pass
 
 
-def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
-    """调 agy -p --sandbox，warm + retry。返回 (纯文本, 实际尝试次数)。"""
-    run_timeout = timeout or _AGY_TIMEOUT
-    last = ""
-    for attempt in range(1, 5):  # 初试 1 + 最多 retry 3 = 4
-        _warm_keychain()
-        try:
-            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-            # 安全审计(Sourcery):list-form argv、无 shell=True → 不经 shell 解析,无注入面。prompt 走 stdin。
-            proc = subprocess.run(
-                [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"],
-                input=prompt, capture_output=True, text=True, timeout=run_timeout,
-                cwd=_AGY_CWD,
-            )
-        except subprocess.TimeoutExpired:
-            last = "agy timeout"
-            _log(f"attempt {attempt}: timeout")
-            continue
-        out = (proc.stdout or "") + (proc.stderr or "")
-        out = out.strip()
-        if "Authentication required" in out or "authentication timed out" in out:
-            last = out
-            _log(f"attempt {attempt}: auth race，重试")
-            continue
-        # 非零退出 / 空输出当失败 attempt：不把错误 stderr 当角色回话落库（CMR F2）。
-        if proc.returncode != 0 or not out:
-            last = f"退出码 {proc.returncode}，输出空或异常：{out[:120]}"
-            _log(f"attempt {attempt}: rc={proc.returncode} empty/err，重试")
-            continue
-        _log(f"attempt {attempt}: ok（{len(out)} chars）")
-        return out, attempt
-    raise RuntimeError(f"agy 调用失败（warm+retry×4 仍不成）：{last[:200]}")
+# CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
+_CLI_POLL_SECONDS = 0.05
 
+
+def _cli_process_clock() -> float:
+    """CLI 增量读循环的取时点（受控推进用；生产恒 time.monotonic）。"""
+    return time.monotonic()
+
+
+# agy headless auth 是已知 race（见 wiki）：stdout/stderr 出现这些串即瞬断，可重试。
+_AGY_AUTH_MARKERS = ("Authentication required", "authentication timed out")
+
+
+@dataclass
+class _CliProcessOutcome:
+    """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。"""
+
+    returncode: Optional[int] = None
+    stderr: str = ""
+    stdin_error: Optional[BaseException] = None
+
+
+def _cli_idle_seconds() -> float:
+    """CLI 子进程静默预算：只认 transport 策略 idle（与召对同一权威）。
+
+    ADR 0001 的 cli_timeout_seconds 槽位仍保留，但不得接到空转轴（旧 300s 墙钟数
+    不是 idle）。这是「多久没有新字节才判死」，不是 attempt 总墙钟。
+    """
+    from ming_sim.llm_transport import resolve_transport_policy
+
+    return float(resolve_transport_policy().idle_timeout_seconds)
+
+
+def _terminate_cli_process(proc: Any) -> None:
+    """收尾子进程：已退时 terminate 是 no-op；否则 terminate→kill 兜底，防泄漏。"""
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+
+
+def _iter_cli_process_lines(
+    cmd: List[str],
+    *,
+    stdin_text: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+    cwd: Optional[str] = None,
+    clock: Optional[Callable[[], float]] = None,
+    outcome: Optional[_CliProcessOutcome] = None,
+) -> Iterator[str]:
+    """CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。
+
+    - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）
+      并 kill 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
+    - idle 只认 transport 策略（`_cli_idle_seconds`），不接 cli_timeout_seconds。
+    - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀。
+    - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
+    - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
+    所有 runner 共用本读法；禁各自复制一套 idle 循环。clock 可注入（受控推进）。
+    """
+    from ming_sim.llm_transport import TransportPolicy, check_idle_budget
+
+    policy = TransportPolicy(
+        idle_timeout_seconds=_cli_idle_seconds(),
+    )
+    tick = clock or _cli_process_clock
+    result = outcome if outcome is not None else _CliProcessOutcome()
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+    # 安全审计(Sourcery):list-form argv、无 shell=True → 不经 shell 解析,无注入面。
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE if stdin_text is not None else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd or _AGY_CWD,
+        env=env,
+    )
+    chunks: "queue.Queue[Tuple[str, Optional[str]]]" = queue.Queue()
+    stderr_parts: List[str] = []
+    workers: List[threading.Thread] = []
+
+    def _pump(stream: Any, kind: str) -> None:
+        try:
+            for line in stream:
+                chunks.put((kind, str(line)))
+        except (OSError, ValueError) as exc:
+            # 判死 kill 后管道会在读中途关掉（ValueError: closed file / OSError），
+            # 是收尾正常形状；只窄捕获这一类并留痕，其余错原样上抛（ADR 0005）。
+            logger.debug("CLI %s 管道读中断（子进程已收尾）：%s", kind, exc)
+        finally:
+            # 哨兵必发：否则读循环等不到 EOF，会把收尾误当静默。
+            chunks.put((kind, None))
+
+    def _feed_stdin() -> None:
+        try:
+            proc.stdin.write(stdin_text)
+            proc.stdin.close()
+        except (OSError, ValueError) as exc:
+            # 写失败 = 子进程根本没拿到 prompt。记事实 + 留痕，交读循环终结时响亮
+            # 报确定性失败；绝不静默，否则空 stdout 被洗成 llm_empty_output 重试
+            # （ADR 0005：代码/IO 的错必须响亮，不得伪装成数据瞬断）。
+            result.stdin_error = exc
+            logger.warning("CLI stdin 写入失败（prompt 未送达子进程）：%s", exc)
+
+    open_streams = 0
+    for stream, kind in ((proc.stdout, "out"), (proc.stderr, "err")):
+        if stream is None:
+            continue
+        open_streams += 1
+        worker = threading.Thread(target=_pump, args=(stream, kind), daemon=True)
+        worker.start()
+        workers.append(worker)
+    if stdin_text is not None and proc.stdin is not None:
+        feeder = threading.Thread(target=_feed_stdin, daemon=True)
+        feeder.start()
+        workers.append(feeder)
+
+    last_activity = tick()
+    try:
+        while open_streams > 0:
+            try:
+                kind, line = chunks.get(timeout=_CLI_POLL_SECONDS)
+            except queue.Empty:
+                check_idle_budget(
+                    last_activity_at=last_activity, policy=policy, clock=tick,
+                )
+                continue
+            if line is None:
+                open_streams -= 1
+                continue
+            last_activity = tick()
+            if kind == "err":
+                stderr_parts.append(line)
+                continue
+            yield line
+        # 管道已 EOF 但进程未退：静默同样计入 idle 预算，仍无总墙钟。
+        while proc.poll() is None:
+            check_idle_budget(
+                last_activity_at=last_activity, policy=policy, clock=tick,
+            )
+            time.sleep(_CLI_POLL_SECONDS)
+    finally:
+        _terminate_cli_process(proc)
+        for worker in workers:
+            worker.join(timeout=5)
+        result.stderr = "".join(stderr_parts)
+        result.returncode = proc.poll()
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     if reasoning_strength is None:
         return (os.environ.get("MING_SIM_CODEX_REASONING") or "").strip()
     return _CODEX_REASONING_BY_STRENGTH.get(str(reasoning_strength or "").strip().lower(), "")
-
-
-def _run_codex(
-    prompt: str,
-    model: Optional[str] = None,
-    timeout: Optional[float] = None,
-    reasoning_strength: Optional[str] = None,
-) -> Tuple[str, int]:
-    """调 codex exec -（stdin pipe，绝不 positional）。返回 (文本, 尝试次数=1)。
-
-    实测三坑（见 docs/LLM_BACKEND_BENCH.md §9）：
-    - `--skip-git-repo-check`：cwd 是非 git 沙箱目录，不加则秒报 "Not inside a trusted directory"。
-    - `--ephemeral`：不落盘 session，否则并发多调撞共享 session 状态（rollout thread not found）丢空输出。
-    - 干净最终回话在 **stdout**，诊断/日志在 stderr —— 只取 stdout，绝不合并（合并会把
-      "OpenAI Codex v…/tokens used" 等日志混进角色回话）。stdout 空时兜底从合并流剥壳。
-    reasoning：默认不强加，尊重用户 ~/.codex/config.toml；设 MING_SIM_CODEX_REASONING 才传 -c。"""
-    cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
-    reasoning = _codex_reasoning_effort(reasoning_strength)
-    if reasoning:
-        cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
-    cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
-    try:
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-        # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
-        proc = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True, timeout=timeout or _AGY_TIMEOUT,
-            cwd=_AGY_CWD,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("codex 调用超时") from exc
-    out = (proc.stdout or "").strip()
-    if not out:  # 兜底：干净段在合并流 "OpenAI Codex v" 之前
-        combined = (proc.stdout or "") + (proc.stderr or "")
-        out = combined.split("OpenAI Codex v")[0].strip()
-    # 非零退出 / 最终空输出 → 抛错，不静默当空回复落库（CMR F2）。
-    if proc.returncode != 0 or not out:
-        raise RuntimeError(f"codex 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
-    return out, 1
 
 
 def _codex_cmd(
@@ -535,73 +620,147 @@ def _codex_final_text(obj: object) -> str:
     return ""
 
 
-def _iter_codex_stream_chunks(
+def _grok_effort(reasoning_strength: Optional[str]) -> Optional[str]:
+    strength = str(reasoning_strength or "").strip().lower()
+    return _GROK_EFFORT_BY_STRENGTH.get(strength)
+
+
+def _pi_thinking(reasoning_strength: Optional[str]) -> Optional[str]:
+    strength = str(reasoning_strength or "").strip().lower()
+    return _PI_THINKING_BY_STRENGTH.get(strength)
+
+
+def _cli_runner_command(
+    runner: str,
+    prompt: str,
+    *,
+    model: Optional[str] = None,
+    reasoning_strength: Optional[str] = None,
+    json_events: bool = False,
+) -> Tuple[List[str], Optional[str], Optional[Dict[str, str]]]:
+    """runner → (argv, stdin 文本, env)。各 runner 调用约定单真源；执行读法共用 helper。
+
+    实测约定（docs/LLM_BACKEND_BENCH.md §9 / #1256 / #1274-qa-y1）：
+    - agy：`-p --sandbox`，prompt 走 stdin；调用前先暖 keychain（auth race）。
+    - codex：`exec -` 必须 stdin pipe（绝不 positional）；`--skip-git-repo-check`
+      （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
+    - claude：`-p --output-format text`，prompt 走 stdin；thinking 预算走 env。
+    - cursor / kimi / grok / pi：prompt 走参数（无 stdin 约定），干净答案在 stdout。
+    """
+    if runner == "agy":
+        return [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"], prompt, None
+    if runner == "codex":
+        cmd = _codex_cmd(
+            model, json_events=json_events, reasoning_strength=reasoning_strength,
+        )
+        return cmd, prompt, None
+    if runner == "claude":
+        cmd = [
+            _resolve_cli_bin("claude", _CLAUDE_BIN), "-p",
+            "--model", (model or _CLAUDE_MODEL),
+            "--output-format", "text", "--disallowed-tools", *_CLAUDE_DISALLOWED,
+        ]
+        env = None
+        if reasoning_strength is not None:
+            env = dict(os.environ)
+            tokens = _CLAUDE_THINKING_TOKENS_BY_STRENGTH.get(
+                str(reasoning_strength or "").strip().lower()
+            )
+            if tokens:
+                env["MAX_THINKING_TOKENS"] = tokens
+            else:
+                env.pop("MAX_THINKING_TOKENS", None)
+        return cmd, prompt, env
+    if runner == "cursor":
+        cmd = [
+            _resolve_cli_bin("cursor", _CURSOR_BIN),
+            "-p", "--output-format", "text", "--trust",
+        ]
+        if model:
+            cmd.extend(["--model", model])
+        cmd.append(prompt)
+        return cmd, None, None
+    if runner == "kimi":
+        # -p 单用：本机 kimi 0.36.1 实测与 --yolo/--auto 组合会被 parse 拒收。
+        cmd = [_resolve_cli_bin("kimi", _KIMI_BIN), "-p", prompt,
+               "--output-format", "text"]
+        if model:
+            cmd.extend(["-m", model])
+        return cmd, None, None
+    if runner == "grok":
+        cmd = [_resolve_cli_bin("grok", _GROK_BIN), "-p", prompt,
+               "--output-format", "plain"]
+        if model:
+            cmd.extend(["-m", model])
+        effort = _grok_effort(reasoning_strength)
+        if effort:
+            cmd.extend(["--effort", effort])
+        return cmd, None, None
+    if runner == "pi":
+        # --no-tools：游戏/玩家文本不可注入驱动内置 read/bash/edit/write（#1456）。
+        cmd = [_resolve_cli_bin("pi", _PI_BIN), "-p", "--mode", "text", "--no-tools"]
+        if model:
+            cmd.extend(["--model", model])
+        thinking = _pi_thinking(reasoning_strength)
+        if thinking is not None:
+            cmd.extend(["--thinking", thinking])
+        cmd.append(prompt)
+        return cmd, None, None
+    raise RuntimeError(f"未知 CLI backend：{runner}")
+
+
+def _iter_cli_runner_text(
+    runner: str,
     prompt: str,
     *,
     model: Optional[str] = None,
     timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
+    json_events: bool = False,
+    clock: Optional[Callable[[], float]] = None,
 ) -> Iterator[str]:
-    """Run `codex exec --json` and yield agent_message_delta events as they arrive."""
-    cmd = _codex_cmd(model, json_events=True, reasoning_strength=reasoning_strength)
-    run_timeout = timeout or _AGY_TIMEOUT
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=_AGY_CWD,
-        )
-    except OSError as exc:
-        raise RuntimeError(f"codex 流式调用启动失败：{exc}") from exc
+    """跑一次 runner 子进程，产出该次 attempt 的文本。**一次子进程 = 一次 attempt**。
 
-    assert proc.stdout is not None
-    if proc.stdin is not None:
-        proc.stdin.write(prompt)
-        proc.stdin.close()
+    **活动信号与 content 解耦**：新字节刷新空转时刻是 `_iter_cli_process_lines`
+    的事（读到就刷新，跨多久都不杀）；本函数只在该次 attempt 判活之后才把文本交
+    出去。故纯文本 runner（agy/claude/pi）**不逐行外抛 stdout**——那会把
+    `Authentication required` 一类机器文本当大臣正文送进 delta，而失败分类要等
+    子进程排干才跑，玩家已经看见了。终失败按票面走系统层人话（ADR 0046 否决失败
+    戏内化）。codex `--json` 是结构化事件流（`_codex_event_text` 认字段、不读散
+    文，ADR 0142），可照旧边到边出。
 
+    次数只在 llm_transport（run_with_transport / run_transport_stream）；此处禁
+    私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
+    - 静默超阈值 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
+    - 空输出 → llm_empty_output（可重试）
+    - agy auth race → llm_connection_error（可重试；已知瞬断实证）
+    - stdin 未送达 / 未知非零退出 → RuntimeError（确定性失败，一次不重试；禁从
+      stderr 散文抠状态）
+
+    静默预算只认 transport 策略 idle，不吃 timeout/cli_timeout_seconds（槽位保留、不接空转轴）。
+    """
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
+
+    if runner == "agy":
+        _warm_keychain()  # 操作步骤（缓解 headless auth race），不是重试策略
+    cmd, stdin_text, env = _cli_runner_command(
+        runner, prompt, model=model, reasoning_strength=reasoning_strength,
+        json_events=json_events,
+    )
+    outcome = _CliProcessOutcome()
     pieces: List[str] = []
     final_text = ""
-    stderr = ""
-    timed_out = False
-    # stderr 必须并发抽干（cmr Gate2 F-F）：stdout/stderr 同一阻塞管道模型——codex 往 stderr
-    # 写满 OS pipe 缓冲（~64KB）就会卡在写 stderr，stdout 随之断流，下面的 `for raw_line in
-    # proc.stdout` 拿不到 EOF 永久阻塞，最后被 watchdog 误杀成「超时」。开 daemon 线程持续读
-    # stderr，stdout 循环结束后 join 取诊断文本（不能等读完 stdout 再 read stderr）。
-    stderr_parts: List[str] = []
-
-    def _drain_stderr() -> None:
-        if proc.stderr is not None:
-            try:
-                stderr_parts.append(proc.stderr.read())
-            except Exception:
-                pass
-
-    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
-    stderr_thread.start()
-    # 看门狗：流式读取阻塞在 `for raw_line in proc.stdout` 上，下面的 proc.wait(timeout) 要等读
-    # 循环结束才执行——若 codex 卡死且不关 stdout，读循环会无限阻塞、那个 timeout 形同虚设
-    # (codex correctness)。定时器在 run_timeout 到点 kill 进程，使阻塞读拿到 EOF 退出循环。
-    def _kill_on_timeout() -> None:
-        nonlocal timed_out
-        timed_out = True
-        try:
-            proc.kill()
-        except Exception:
-            pass
-
-    watchdog = threading.Timer(run_timeout, _kill_on_timeout)
-    watchdog.daemon = True
-    watchdog.start()
-    try:
-        for raw_line in proc.stdout:
-            line = raw_line.strip()
-            if not line:
+    for line in _iter_cli_process_lines(
+        cmd, stdin_text=stdin_text, env=env,
+        clock=clock, outcome=outcome,
+    ):
+        if json_events:
+            stripped = line.strip()
+            if not stripped:
                 continue
             try:
-                obj = json.loads(line)
+                obj = json.loads(stripped)
             except json.JSONDecodeError:
                 continue
             delta = _codex_event_text(obj)
@@ -612,55 +771,80 @@ def _iter_codex_stream_chunks(
             maybe_final = _codex_final_text(obj)
             if maybe_final:
                 final_text = maybe_final
-        proc.wait(timeout=run_timeout)
-    except subprocess.TimeoutExpired as exc:
-        proc.kill()
-        raise RuntimeError("codex 流式调用超时") from exc
-    finally:
-        watchdog.cancel()
-        # consumer 提前弃用（break/异常/GeneratorExit）时底层 codex 子进程仍在跑 → 泄漏。
-        # terminate+wait 兜底（正常路径 proc 已退，terminate 对已退进程是 no-op）（#399 cmr R1 coderabbit Major）。
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except Exception:
-            try:
-                proc.kill()
-                proc.wait(timeout=5)
-            except Exception:
-                pass
-        # 进程已退/被 kill → stderr 关闭 → drain 线程读到 EOF 结束；取其抽到的诊断文本。
-        stderr_thread.join(timeout=2)
-        stderr = "".join(stderr_parts)
+            continue
+        # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
+        pieces.append(line)
 
-    if timed_out:
-        raise RuntimeError(f"codex 流式调用超时（>{run_timeout:.0f}s 未完成，已 kill）")
-    text = "".join(pieces).strip() or final_text.strip()
-    if proc.returncode != 0 or not text:
-        raise RuntimeError(f"codex 流式调用失败（退出码 {proc.returncode}）：{(stderr or '')[:200]}")
-    if not pieces and final_text.strip():
+    returncode = int(outcome.returncode or 0)
+    stderr = outcome.stderr or ""
+    stdout_text = "".join(pieces)
+    if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
+        raise LLMUnavailable(
+            "LLM 连接失败。",
+            code="llm_connection_error",
+            provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
+        )
+    text = stdout_text.strip() or final_text.strip()
+    if runner == "codex" and not json_events and not text:
+        # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
+        text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
+    # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
+    # 不得让随之而来的空 stdout 洗成 llm_empty_output 重试（ADR 0005）。
+    if outcome.stdin_error is not None and not text:
+        raise RuntimeError(
+            f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
+        ) from outcome.stdin_error
+    # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
+    if returncode != 0:
+        raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
+    if not text:
+        raise transport_failure_unavailable(
+            empty_output_failure(), attempts=1, exhausted=False,
+        )
+    # 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
+    if not json_events:
+        yield text
+    elif not pieces and final_text.strip():
         yield final_text.strip()
 
 
-def _run_codex_stream(
+def _run_cli_runner(
+    runner: str,
     prompt: str,
     *,
     model: Optional[str] = None,
     timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
-    on_text: Optional[Callable[[str], None]] = None,
 ) -> Tuple[str, int]:
-    pieces: List[str] = []
-    for delta in _iter_codex_stream_chunks(
-        prompt, model=model, timeout=timeout, reasoning_strength=reasoning_strength
-    ):
-        pieces.append(delta)
-        if on_text:
-            on_text(delta)
-    text = "".join(pieces).strip()
-    if not text:
-        raise RuntimeError("codex 流式调用失败：输出为空")
-    return text, 1
+    """非流路径：读完整文再返回（内部仍增量读，只是不对外 yield）。
+
+    返回 (文本, 1)：一次子进程 = 一次 attempt，次数账归 llm_transport。
+    """
+    text = "".join(
+        _iter_cli_runner_text(
+            runner, prompt, model=model, timeout=timeout,
+            reasoning_strength=reasoning_strength,
+        )
+    )
+    return text.strip(), 1
+
+
+def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
+    """调 agy -p --sandbox 一次（warm keychain 仍做；重试归 transport）。"""
+    return _run_cli_runner("agy", prompt, timeout=timeout)
+
+
+def _run_codex(
+    prompt: str,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
+) -> Tuple[str, int]:
+    """调 codex exec - 一次；干净最终回话在 stdout（不合并 stderr 日志）。"""
+    return _run_cli_runner(
+        "codex", prompt, model=model, timeout=timeout,
+        reasoning_strength=reasoning_strength,
+    )
 
 
 def _run_claude(
@@ -669,66 +853,21 @@ def _run_claude(
     timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Tuple[str, int]:
-    """调 claude -p（独立进程，stdin pipe）。返回 (纯文本, 1)。
-    与 codex 不同：claude -p 干净最终回话在 **stdout**，日志/诊断在 stderr，
-    故只取 stdout、不合并 stderr（合并会把日志混进角色回话）。
-    未配置 reasoning_strength 时继承父进程 env；配置后显式设置 MAX_THINKING_TOKENS。"""
-    cmd = [_resolve_cli_bin("claude", _CLAUDE_BIN), "-p", "--model", (model or _CLAUDE_MODEL),
-           "--output-format", "text", "--disallowed-tools", *_CLAUDE_DISALLOWED]
-    env = None
-    if reasoning_strength is not None:
-        env = dict(os.environ)
-        strength = str(reasoning_strength or "").strip().lower()
-        tokens = _CLAUDE_THINKING_TOKENS_BY_STRENGTH.get(strength)
-        if tokens:
-            env["MAX_THINKING_TOKENS"] = tokens
-        else:
-            env.pop("MAX_THINKING_TOKENS", None)
-    try:
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-        # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
-        proc = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True,
-            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD, env=env,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("claude 调用超时") from exc
-    out = (proc.stdout or "").strip()
-    # 非零退出 / 空输出 → 抛错，不静默当空回复落库（CMR F2）。
-    if proc.returncode != 0 or not out:
-        raise RuntimeError(f"claude 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
-    return out, 1
+    """调 claude -p 一次；干净回话在 stdout，thinking 预算经 env 显式设置。"""
+    return _run_cli_runner(
+        "claude", prompt, model=model, timeout=timeout,
+        reasoning_strength=reasoning_strength,
+    )
 
 
 def _run_cursor(
     prompt: str,
     model: Optional[str] = None,
     timeout: Optional[float] = None,
-    reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名与其它 runner 对齐；cursor 无 effort 档
+    reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；cursor 无 effort 档
 ) -> Tuple[str, int]:
-    """调 cursor-agent -p --output-format text（#1256）。
-    模型 --model 透传；--trust 免非交互 workspace 信任闸；干净输出在 stdout。
-    prompt 走 positional（CLI 无 stdin 约定）。"""
-    cmd = [
-        _resolve_cli_bin("cursor", _CURSOR_BIN),
-        "-p", "--output-format", "text", "--trust",
-    ]
-    if model:
-        cmd.extend(["--model", model])
-    cmd.append(prompt)
-    try:
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-        # 安全审计:list-form argv、无 shell=True;runner allowlist、model 独立 argv、prompt 为末位 positional。
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("cursor 调用超时") from exc
-    out = (proc.stdout or "").strip()
-    if proc.returncode != 0 or not out:
-        raise RuntimeError(f"cursor 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
-    return out, 1
+    """调 cursor-agent -p 一次（#1256）。"""
+    return _run_cli_runner("cursor", prompt, model=model, timeout=timeout)
 
 
 def _run_kimi(
@@ -737,31 +876,8 @@ def _run_kimi(
     timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；kimi -p 无 effort 档
 ) -> Tuple[str, int]:
-    """调 kimi -p（#1256）。
-    纪律：-p 单用，禁与 --yolo/--auto 组合（本机 kimi 0.36.1 实测 parse 拒收）；
-    干净答案在 stdout，版本/thinking/resume 噪声在 stderr——只取 stdout。
-    prompt 走 -p 参数（非 stdin）。"""
-    cmd = [_resolve_cli_bin("kimi", _KIMI_BIN), "-p", prompt, "--output-format", "text"]
-    if model:
-        cmd.extend(["-m", model])
-    try:
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-        # 安全审计:list-form argv、无 shell=True;runner allowlist、model 独立 argv、prompt 为 -p 值。
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("kimi 调用超时") from exc
-    out = (proc.stdout or "").strip()
-    if proc.returncode != 0 or not out:
-        raise RuntimeError(f"kimi 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
-    return out, 1
-
-
-def _grok_effort(reasoning_strength: Optional[str]) -> Optional[str]:
-    strength = str(reasoning_strength or "").strip().lower()
-    return _GROK_EFFORT_BY_STRENGTH.get(strength)
+    """调 kimi -p 一次（#1256）。"""
+    return _run_cli_runner("kimi", prompt, model=model, timeout=timeout)
 
 
 def _run_grok(
@@ -770,37 +886,11 @@ def _run_grok(
     timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Tuple[str, int]:
-    """调 Grok Build CLI（#1256 / bench §十二 grok-4.5 腿）。
-    -p/--single 单轮；--output-format plain；-m 透传；--effort 仅 low/med/high。
-    prompt 走 -p 参数。"""
-    cmd = [
-        _resolve_cli_bin("grok", _GROK_BIN),
-        "-p", prompt,
-        "--output-format", "plain",
-    ]
-    if model:
-        cmd.extend(["-m", model])
-    effort = _grok_effort(reasoning_strength)
-    if effort:
-        cmd.extend(["--effort", effort])
-    try:
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-        # 安全审计:list-form argv、无 shell=True;runner allowlist、model/effort 独立 argv、prompt 为 -p 值。
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("grok 调用超时") from exc
-    out = (proc.stdout or "").strip()
-    if proc.returncode != 0 or not out:
-        raise RuntimeError(f"grok 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
-    return out, 1
-
-
-def _pi_thinking(reasoning_strength: Optional[str]) -> Optional[str]:
-    strength = str(reasoning_strength or "").strip().lower()
-    return _PI_THINKING_BY_STRENGTH.get(strength)
+    """调 Grok Build CLI 一次（#1256；--effort 仅 low/med/high）。"""
+    return _run_cli_runner(
+        "grok", prompt, model=model, timeout=timeout,
+        reasoning_strength=reasoning_strength,
+    )
 
 
 def _run_pi(
@@ -809,59 +899,51 @@ def _run_pi(
     timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Tuple[str, int]:
-    """调本机 pi CLI 一次性非交互出文（#1274-qa-y1；#1256 漏补）。
+    """调本机 pi CLI 一次性非交互出文（#1274-qa-y1）。"""
+    return _run_cli_runner(
+        "pi", prompt, model=model, timeout=timeout,
+        reasoning_strength=reasoning_strength,
+    )
 
-    实测旗标（pi --help / 0.84.1）：
-    - `-p/--print` 非交互 process-and-exit；
-    - `--mode text` 默认纯文（显式钉死，避 json/rpc）；
-    - `--no-tools` 关内置 read/bash/edit/write（#1456：游戏/玩家文本不可注入驱动工具）；
-    - `--model` 支持 provider/id 与可选 `:<thinking>` 后缀；
-    - `--thinking` 独立档 off/minimal/low/medium/high/xhigh/max——抽象 off/low/medium/high 直传；
-    - 干净答案在 stdout，诊断在 stderr——只取 stdout；
-    - prompt 走 positional（与 cursor 同形；非 stdin）。
-    """
-    cmd = [
-        _resolve_cli_bin("pi", _PI_BIN),
-        "-p", "--mode", "text", "--no-tools",
-    ]
-    if model:
-        cmd.extend(["--model", model])
-    thinking = _pi_thinking(reasoning_strength)
-    if thinking is not None:
-        cmd.extend(["--thinking", thinking])
-    cmd.append(prompt)
-    try:
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-        # 安全审计:list-form argv、无 shell=True;runner allowlist、model/thinking 独立 argv、prompt 为末位 positional。
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("pi 调用超时") from exc
-    out = (proc.stdout or "").strip()
-    if proc.returncode != 0 or not out:
-        raise RuntimeError(f"pi 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
-    return out, 1
+
+def _dispatch_cli_runner(
+    runner: str,
+    prompt: str,
+    *,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
+) -> Tuple[str, int]:
+    """runner 名 → 该 runner 的单次调用入口。全仓唯一一处 runner 分派链
+    （env 分派 / config 分派 / CliChat 分派共用，禁再复制第二份）。"""
+    if runner == "codex":
+        return _run_codex(prompt, model=model, timeout=timeout,
+                          reasoning_strength=reasoning_strength)
+    if runner == "claude":
+        return _run_claude(prompt, model=model, timeout=timeout,
+                           reasoning_strength=reasoning_strength)
+    if runner == "cursor":
+        return _run_cursor(prompt, model=model, timeout=timeout,
+                           reasoning_strength=reasoning_strength)
+    if runner == "kimi":
+        return _run_kimi(prompt, model=model, timeout=timeout,
+                         reasoning_strength=reasoning_strength)
+    if runner == "grok":
+        return _run_grok(prompt, model=model, timeout=timeout,
+                         reasoning_strength=reasoning_strength)
+    if runner == "pi":
+        return _run_pi(prompt, model=model, timeout=timeout,
+                       reasoning_strength=reasoning_strength)
+    if runner == "agy":
+        # agy 忽略 --model（走自身 ladder），不给它挂不被消费的 model。
+        return _run_agy(prompt, timeout=timeout)
+    raise RuntimeError(f"未知 CLI backend：{runner}")
 
 
 def _run_backend(prompt: str) -> Tuple[str, int]:
     """按 MING_SIM_LLM_BACKEND 分派到对应 CLI（enrich/secret 等非 CliChat 路径用）。
     未设或非法 → agy（沿用原默认）。"""
-    b = cli_backend_from_env()
-    if b == "codex":
-        return _run_codex(prompt)
-    if b == "claude":
-        return _run_claude(prompt)
-    if b == "cursor":
-        return _run_cursor(prompt)
-    if b == "kimi":
-        return _run_kimi(prompt)
-    if b == "grok":
-        return _run_grok(prompt)
-    if b == "pi":
-        return _run_pi(prompt)
-    return _run_agy(prompt)
+    return _dispatch_cli_runner(cli_backend_from_env() or "agy", prompt)
 
 
 def _llm_channel(llm_config: Any = None) -> str:
@@ -891,62 +973,35 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
     直接编程路径（职官分类/各 extractor/国策补全/连通性 verify）的唯一咽喉：
     每次调用 try/finally 写一条 trace，谁调都记，不靠各调用方自觉手写。
     （agno 游戏路径走 CliChat.invoke 自有 trace，与此咽喉不重叠。）
-    tag 空时退回 _infer_tag(prompt)。"""
+    tag 空时退回 _infer_tag(prompt)。
+
+    #1465 切片③：本入口是结算/拟旨等非 Agent CLI extractor 的**次数入口**——
+    在此包一次 run_with_transport，operation 调单次子进程；runner 内禁私有重试。"""
+    from ming_sim.llm_transport import resolve_transport_policy, run_with_transport
+
     if _llm_channel(llm_config) == "api":
         raise RuntimeError("显式 API channel 未启用本地 CLI backend")
     parts = _cli_config_parts(llm_config)
     model_id = (parts[1] if parts else "") or _backend_label(llm_config)
     t0 = time.monotonic()
     text, attempts, error = "", 0, None
-    try:
+
+    def _one_call() -> str:
         if parts is None:
-            text, attempts = _run_backend(prompt)
-        else:
-            runner, model, timeout, reasoning_strength = parts
-            if runner == "codex":
-                text, attempts = _run_codex(
-                    prompt,
-                    model=model or None,
-                    timeout=timeout,
-                    reasoning_strength=reasoning_strength or None,
-                )
-            elif runner == "claude":
-                text, attempts = _run_claude(
-                    prompt,
-                    model=model or None,
-                    timeout=timeout,
-                    reasoning_strength=reasoning_strength or None,
-                )
-            elif runner == "cursor":
-                text, attempts = _run_cursor(
-                    prompt,
-                    model=model or None,
-                    timeout=timeout,
-                    reasoning_strength=reasoning_strength or None,
-                )
-            elif runner == "kimi":
-                text, attempts = _run_kimi(
-                    prompt,
-                    model=model or None,
-                    timeout=timeout,
-                    reasoning_strength=reasoning_strength or None,
-                )
-            elif runner == "grok":
-                text, attempts = _run_grok(
-                    prompt,
-                    model=model or None,
-                    timeout=timeout,
-                    reasoning_strength=reasoning_strength or None,
-                )
-            elif runner == "pi":
-                text, attempts = _run_pi(
-                    prompt,
-                    model=model or None,
-                    timeout=timeout,
-                    reasoning_strength=reasoning_strength or None,
-                )
-            else:
-                text, attempts = _run_agy(prompt, timeout=timeout)
+            return _run_backend(prompt)[0]
+        runner, model, _slot_timeout, reasoning_strength = parts
+        del _slot_timeout  # ADR 0001 槽保留；空转不接 cli_timeout_seconds
+        return _dispatch_cli_runner(
+            runner, prompt,
+            model=model or None,
+            reasoning_strength=reasoning_strength or None,
+        )[0]
+
+    try:
+        text, attempt_records = run_with_transport(
+            _one_call, policy=resolve_transport_policy(),
+        )
+        attempts = len(attempt_records)
         return text, attempts
     except Exception as exc:
         error = str(exc)
@@ -1859,14 +1914,14 @@ def _compose_inworld_fact_report(
     *,
     llm_config: Any,
     tag: str,
-    timeout_s: float | None = None,
 ) -> str:
-    """Shared player-lane fact-to-prose call; generated prose is never rewritten."""
+    """Shared player-lane fact-to-prose call; generated prose is never rewritten.
+
+    #1465 切片③：随手工拟诏 30s 总罩一并删除「剩余预算」墙钟——产文失败仍 typed
+    上抛（#1299/#1310 单源），但不再被外层墙截断。
+    """
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_model import cli_runner_unavailable
-
-    if timeout_s is not None and float(timeout_s) <= 0:
-        raise cli_runner_unavailable(TimeoutError(f"{tag} 无剩余预算"), backend=tag)
 
     def _produce() -> str:
         # 玩家产文：复用 API/CLI 既有接缝；API 关 force_json（0033），不另开平行函数。
@@ -1884,13 +1939,7 @@ def _compose_inworld_fact_report(
         raise cli_runner_unavailable(RuntimeError(f"{tag} 空响"), backend=tag)
 
     try:
-        if timeout_s is None:
-            return _produce()
-        pool = ThreadPoolExecutor(max_workers=1)
-        try:
-            return pool.submit(_produce).result(timeout=float(timeout_s))
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
+        return _produce()
     except LLMUnavailable:
         raise
     except Exception as exc:
@@ -1905,12 +1954,10 @@ def compose_unknown_participant_inworld_report(
     speaker_name: str = "",
     speaker_role: str = "",
     llm_config: Any = None,
-    timeout_s: float | None = None,
 ) -> str:
     """P7：把查无此人事实喂给 LLM，产大臣/通政司口吻回禀；禁模板当台词。
 
-    timeout_s：有界等待（capture 剩余预算）；None=不另加罩。
-    剩余预算≤0、超时或产文失败 → typed LLMUnavailable（#1299/#1310/#1452
+    产文失败 → typed LLMUnavailable（#1299/#1310/#1452
     失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
     speaker_role：大臣口吻时接 minister_speaker_role 客观档料（0033）；不在此复制档料。
     """
@@ -1931,7 +1978,6 @@ def compose_unknown_participant_inworld_report(
         prompt,
         llm_config=llm_config,
         tag="participant_escalate_report",
-        timeout_s=timeout_s,
     )
 
 
@@ -3102,11 +3148,6 @@ def extract_draft_intent(
     return _finalize_extract_with_combo(cand_result, needs_combo=needs_combo)
 
 
-# 手工拟诏 capture 总罩（#1327 / #1274 V-1 owner 2026-08-20）：
-# 30s 罩住整段 extract+自愈重试；到点仅 special_decree 原文照落（零改参与人=不算篡改）。
-MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 30.0
-
-
 
 # 八值 target_kind 真源在 decree_vocabulary.TARGET_KINDS（#654 / owner A 禁双定义）
 from ming_sim.decree_vocabulary import TARGET_KINDS as _VALID_DRAFT_TARGET_KINDS
@@ -3151,14 +3192,14 @@ def _is_manual_special_decree_fallback(payload: Mapping[str, Any]) -> bool:
 def capture_manual_directive_payload(
     text: str, llm_config: Any = None, *, existing_mode: object = None,
     db: Any = None, content: Any = None,
-    capture_timeout_s: float | None = None,
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。
 
-    #1327 / #1274 V-1：空载零 LLM 直落 special_decree；非空载 LLM 有界等待（默认 30s
-    总罩，自愈重试计入罩内）。超时/挂死 → special_decree 原文照落（不改参与人）。
+    #1327 / #1274 V-1：空载零 LLM 直落 special_decree。
+    #1465 切片③：外层 30s 总罩已删——长抽取不再被墙钟截断成 special_decree
+    fallback（宪法 #9）；次数/空转由 transport 在 runner 侧收口。
     真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）；
-    回禀产文超时/失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
+    回禀产文失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
     """
     directive_text = str(text or "").strip()
     fallback_mode = resolve_directive_mode(existing=existing_mode)
@@ -3166,11 +3207,6 @@ def capture_manual_directive_payload(
     if not directive_text:
         return _manual_special_decree_payload(fallback_mode)
 
-    timeout_s = (
-        MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S
-        if capture_timeout_s is None
-        else float(capture_timeout_s)
-    )
     prompt = (
         f"请据此拟旨，并从以下已成旨文抽取结构，不得改写：\n{directive_text}"
     )
@@ -3182,38 +3218,24 @@ def capture_manual_directive_payload(
             db=db, content=content,
         )
 
-    # 有界等待：超时不堵死 HTTP/CLI；后台线程不 join（shutdown wait=False）。
-    # 总罩含自愈 + escalate 回禀；回禀只拿剩余预算，超时/失败 → LLMUnavailable。
     captured: Dict[str, Any]
-    t0 = time.monotonic()
     try:
-        if timeout_s <= 0:
-            captured = _run_extract()
-        else:
-            pool = ThreadPoolExecutor(max_workers=1)
-            try:
-                fut = pool.submit(_run_extract)
-                captured = fut.result(timeout=timeout_s)
-            finally:
-                pool.shutdown(wait=False, cancel_futures=True)
+        captured = _run_extract()
     except UnknownParticipantEscalate as exc:
         # 真不在册：通政司戏内回禀；禁吞 special_decree、禁除名照落。
-        remaining: float | None = None
-        if timeout_s > 0:
-            remaining = max(0.0, float(timeout_s) - (time.monotonic() - t0))
         report = compose_unknown_participant_inworld_report(
             exc.names,
             voice="tongzheng",
             llm_config=llm_config,
-            timeout_s=remaining,
         )
         raise ValueError(report) from exc
     except ValueError:
         # 其它业务 ValueError 原样上抛；禁吞成 special_decree。
         raise
     except Exception as exc:
-        # 超时 / 纠错路上 LLM 挂死 → special_decree 原文照落（零改参与人）。
-        _log(f"手工拟诏 capture 有界降级 special_decree：{exc}")
+        # 纠错路上 LLM 终失败（transport 已尽次数）→ special_decree 原文照落
+        # （零改参与人）。此处只接 transport 已判终的失败，不再自设墙钟。
+        _log(f"手工拟诏 capture 降级 special_decree：{exc}")
         return _manual_special_decree_payload(fallback_mode)
 
     # heal 已 normalize+validate；投影与 #1769 补交共用同一 helper（禁双路径漂移）。
@@ -4481,24 +4503,16 @@ class CliChat(OpenAIChat):
     reasoning_strength: str = ""
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
-        model_id = str(getattr(self, "id", "") or "")
-        timeout = getattr(self, "timeout", None)
-        reasoning_strength = str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None
-        if self.backend == "codex":
-            return _run_codex(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
-        if self.backend == "claude":
-            return _run_claude(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
-        if self.backend == "cursor":
-            return _run_cursor(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
-        if self.backend == "kimi":
-            return _run_kimi(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
-        if self.backend == "grok":
-            return _run_grok(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
-        if self.backend == "pi":
-            return _run_pi(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
-        if self.backend == "agy":
-            return _run_agy(prompt, timeout=timeout)
-        raise RuntimeError(f"未知 CLI backend：{self.backend}")
+        """一次子进程。空转预算归 transport 策略：不把 model.timeout（召对 90 /
+        结算 300 槽位）当子进程墙钟——ADR 0001 槽位保留，但不再 SIGKILL 出字进程。"""
+        return _dispatch_cli_runner(
+            self.backend,
+            prompt,
+            model=str(getattr(self, "id", "") or ""),
+            reasoning_strength=(
+                str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None
+            ),
+        )
 
     def invoke(  # type: ignore[override]
         self,
@@ -4531,8 +4545,11 @@ class CliChat(OpenAIChat):
             # 错误串不得进 content 当叙事（agno 吞 Exception 会把 str(e) 塞 content）。
             from ming_sim.exceptions import LLMUnavailable
             from ming_sim.llm_model import cli_runner_unavailable
+            from ming_sim.llm_transport import TransportIdleTimeout
             error = str(exc)
-            if isinstance(exc, LLMUnavailable):
+            # 已 typed 的可重试瞬断（空转/空输出/连接）原样上浮：套成
+            # llm_cli_* 会让 transport 把瞬断误判成确定性失败，一次即终。
+            if isinstance(exc, (LLMUnavailable, TransportIdleTimeout)):
                 raise
             raise cli_runner_unavailable(exc, backend=self.backend) from exc
         finally:
@@ -4582,7 +4599,9 @@ class CliChat(OpenAIChat):
         run_response: Any = None,
         compress_tool_results: bool = False,
     ):
-        if self.backend != "codex" or response_format is not None:
+        if response_format is not None:
+            # 结构化产出的解析权威在 invoke（_parse_provider_response 吃 response_format）；
+            # 流式只累文本，不在此复制一份结构解析。
             yield self.invoke(
                 messages, assistant_message, response_format=response_format,
                 tools=tools, tool_choice=tool_choice, run_response=run_response,
@@ -4592,11 +4611,15 @@ class CliChat(OpenAIChat):
         prompt = _cli_prompt(messages, response_format, tools)
         held = ""
         try:
-            stream = _iter_codex_stream_chunks(
+            # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
+            # 本处只搬 `_iter_cli_runner_text` 已判活的文本 —— 机器横幅不进 delta。
+            # codex 走结构化 --json 事件流边到边出；纯文本 runner 判活后一次交全。
+            stream = _iter_cli_runner_text(
+                self.backend,
                 prompt,
                 model=str(getattr(self, "id", "") or ""),
-                timeout=getattr(self, "timeout", None),
                 reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+                json_events=(self.backend == "codex"),
             )
             for delta in stream:
                 ready, held = _cli_stream_safe_prefix(held + str(delta))
@@ -4604,9 +4627,11 @@ class CliChat(OpenAIChat):
                     yield ModelResponse(role="assistant", content=ready)
         except Exception as exc:
             # #1299/#1310：流式 runner 失败同翻 typed，禁机器横幅进 delta/content。
+            # #1465：已 typed 的可重试瞬断原样上浮（同 invoke）。
             from ming_sim.exceptions import LLMUnavailable
             from ming_sim.llm_model import cli_runner_unavailable
-            if isinstance(exc, LLMUnavailable):
+            from ming_sim.llm_transport import TransportIdleTimeout
+            if isinstance(exc, (LLMUnavailable, TransportIdleTimeout)):
                 raise
             raise cli_runner_unavailable(exc, backend=self.backend) from exc
         text, tool_calls = _cli_recommendation_call(held, tools)

@@ -2656,7 +2656,7 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
     s = _session(db, state, registry=registry)
     who = "测试承办官F3"
 
-    def fake_agy(prompt):
+    def fake_agy(prompt, **kw):
         # extractor「内容」只给任务本体（不夹答奏）——结构化契约
         if "改查甲" in prompt or "臣领旨二" in prompt:
             content = "改查甲"

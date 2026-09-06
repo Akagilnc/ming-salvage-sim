@@ -5,11 +5,13 @@ decoupled from settlement's long timeout (issue #353).
 only time out when the forwarded timeout is short (≤ cap); missing/long values
 succeed immediately — production that stops forwarding the short timeout goes red.
 No sleep, real network, or real LLM.
+
+#1465 切片③：CLI 侧该槽位仍按 90 封顶（ADR 0001 槽位保留），但**不再当子进程总墙钟**
+——不得再拿它 SIGKILL 正在出字的 CLI；CLI 空转预算归 transport 策略。API 侧不变。
 """
 
 from __future__ import annotations
 
-import subprocess
 from contextlib import ExitStack, contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -20,7 +22,6 @@ from agno.models.openai import OpenAIChat
 from agno.exceptions import ModelProviderError
 
 from ming_sim.cli_backend import CliChat
-from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import CLI_DEFAULT_TIMEOUT_SECONDS, MINISTER_CHAT_CLI_TIMEOUT_SECONDS, LLMConfig
 from ming_sim.registry import create_minister_agent
 import ming_sim.cli_backend as cli_backend
@@ -110,47 +111,22 @@ def _invoke_minister_model(model) -> None:
     )
 
 
-class _FakeCliProcess:
-    """Boundary stand-in: wait(timeout) times out only on short forwarded timeout."""
+def _install_cli_process_boundary(monkeypatch) -> dict:
+    """CLI 子进程边界替身（生产 Popen + 增量读）；记录 Popen kwargs 供墙钟断言。"""
+    from tests.cli_process_doubles import FakeCliProcess
 
-    def __init__(self, cmd=None, *args, **kwargs):
-        self.args = cmd
-        self.returncode = None
+    captured: dict = {}
 
-    def communicate(self, input=None, timeout=None):
-        self.wait(timeout=timeout)
-        self.returncode = 0
-        return ("大臣回话", "")
+    def fake_popen(cmd, **kw):
+        captured["cmd"] = list(cmd)
+        captured["kw"] = kw
+        return FakeCliProcess(cmd, stdout_script=("大臣回话\n",), returncode=0,
+                              popen_kwargs=kw)
 
-    def wait(self, timeout=None):
-        if timeout is not None and float(timeout) <= MINISTER_CHAT_CLI_TIMEOUT_SECONDS:
-            raise subprocess.TimeoutExpired(cmd=self.args or "codex", timeout=timeout)
-        self.returncode = 0
-        return 0
-
-    def poll(self):
-        return self.returncode
-
-    def kill(self):
-        self.returncode = -9
-
-    def terminate(self):
-        self.returncode = -15
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-def _install_cli_timeout_boundary(monkeypatch) -> None:
-    monkeypatch.setattr(
-        cli_backend.subprocess,
-        "Popen",
-        lambda cmd, *a, **k: _FakeCliProcess(cmd),
-    )
+    monkeypatch.setattr(cli_backend.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cli_backend, "_resolve_cli_bin", lambda name, configured: f"/fake/{name}")
     monkeypatch.setattr(cli_backend, "_trace", lambda rec: None)
+    return captured
 
 
 def _short_timeout_values(timeout_ext) -> list[float]:
@@ -202,19 +178,23 @@ def _bind_api_timeout_transport(model) -> None:
     model.client = None
 
 
-def test_minister_agent_cli_timeout_capped(monkeypatch):
-    """CLI minister invoke fails on short timeout even when cfg carries settlement 300s."""
-    _install_cli_timeout_boundary(monkeypatch)
+def test_minister_agent_cli_timeout_slot_capped_and_not_a_subprocess_wall(monkeypatch):
+    """召对 CLI 槽位仍按 90 封顶（#353 / ADR 0001），且不再下发成子进程墙钟（#1465）。
+
+    观察面 = 公共 model.timeout（封顶事实）+ Popen 实参（无 timeout 墙）+ 出字即成案。
+    """
+    captured = _install_cli_process_boundary(monkeypatch)
     ctx = _make_context()
     cfg = _cfg_settlement_timeout(channel="cli")
     with _minister_agent_construction(ctx):
         agent = create_minister_agent(_make_character(), cfg, ctx, ctx.db)
 
     assert isinstance(agent.model, CliChat)
-    # #1299/#1310：runner 超时翻 typed LLMUnavailable；机器「超时」在 provider_message。
-    with pytest.raises(LLMUnavailable) as ei:
-        _invoke_minister_model(agent.model)
-    assert "超时" in (ei.value.provider_message or "")
+    # 槽位仍封顶（结算 300 → 召对 90）
+    assert float(agent.model.timeout) == MINISTER_CHAT_CLI_TIMEOUT_SECONDS
+    # 出字的子进程照常成案：短槽位不再 SIGKILL 它
+    _invoke_minister_model(agent.model)
+    assert "timeout" not in captured["kw"]
     assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS
     assert cfg.timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS
 
@@ -239,7 +219,7 @@ def test_minister_agent_api_timeout_capped(monkeypatch):
 
 def test_minister_agent_does_not_mutate_original_llm_config(monkeypatch):
     """create_minister_agent must not modify the caller's LLMConfig (no side-effects)."""
-    _install_cli_timeout_boundary(monkeypatch)
+    _install_cli_process_boundary(monkeypatch)
     original_cli = CLI_DEFAULT_TIMEOUT_SECONDS
     original_api = CLI_DEFAULT_TIMEOUT_SECONDS
     cfg = LLMConfig(
@@ -258,8 +238,6 @@ def test_minister_agent_does_not_mutate_original_llm_config(monkeypatch):
 
     assert cfg.cli_timeout_seconds == original_cli
     assert cfg.timeout_seconds == original_api
-    with pytest.raises(LLMUnavailable) as ei:
-        _invoke_minister_model(agent.model)
-    assert "超时" in (ei.value.provider_message or "")
+    _invoke_minister_model(agent.model)
     assert cfg.cli_timeout_seconds == original_cli
     assert cfg.timeout_seconds == original_api
