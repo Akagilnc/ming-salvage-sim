@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 from concurrent.futures import ThreadPoolExecutor
@@ -333,6 +334,9 @@ _TRACE_LOCK = threading.Lock()      # 护 _seq 自增 + _trace 写盘 + _trace_a
 _BIN_CACHE_LOCK = threading.Lock()  # 护 _BIN_CACHE 解析+写入（首解只一次，余者命中缓存）
 
 
+logger = logging.getLogger(__name__)
+
+
 def _log(msg: str) -> None:
     if _VERBOSE:
         print(f"[cli_backend] {msg}", flush=True)
@@ -411,10 +415,11 @@ _AGY_AUTH_MARKERS = ("Authentication required", "authentication timed out")
 
 @dataclass
 class _CliProcessOutcome:
-    """子进程收尾事实（退出码 / stderr 诊断），由增量读循环回填。"""
+    """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。"""
 
     returncode: Optional[int] = None
     stderr: str = ""
+    stdin_error: Optional[BaseException] = None
 
 
 def _cli_idle_seconds() -> float:
@@ -486,17 +491,24 @@ def _iter_cli_process_lines(
         try:
             for line in stream:
                 chunks.put((kind, str(line)))
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            # 判死 kill 后管道会在读中途关掉（ValueError: closed file / OSError），
+            # 是收尾正常形状；只窄捕获这一类并留痕，其余错原样上抛（ADR 0005）。
+            logger.debug("CLI %s 管道读中断（子进程已收尾）：%s", kind, exc)
         finally:
+            # 哨兵必发：否则读循环等不到 EOF，会把收尾误当静默。
             chunks.put((kind, None))
 
     def _feed_stdin() -> None:
         try:
             proc.stdin.write(stdin_text)
             proc.stdin.close()
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            # 写失败 = 子进程根本没拿到 prompt。记事实 + 留痕，交读循环终结时响亮
+            # 报确定性失败；绝不静默，否则空 stdout 被洗成 llm_empty_output 重试
+            # （ADR 0005：代码/IO 的错必须响亮，不得伪装成数据瞬断）。
+            result.stdin_error = exc
+            logger.warning("CLI stdin 写入失败（prompt 未送达子进程）：%s", exc)
 
     open_streams = 0
     for stream, kind in ((proc.stdout, "out"), (proc.stderr, "err")):
@@ -707,14 +719,23 @@ def _iter_cli_runner_text(
     json_events: bool = False,
     clock: Optional[Callable[[], float]] = None,
 ) -> Iterator[str]:
-    """跑一次 runner 子进程，按新字节增量 yield 文本。**一次子进程 = 一次 attempt**。
+    """跑一次 runner 子进程，产出该次 attempt 的文本。**一次子进程 = 一次 attempt**。
+
+    **活动信号与 content 解耦**：新字节刷新空转时刻是 `_iter_cli_process_lines`
+    的事（读到就刷新，跨多久都不杀）；本函数只在该次 attempt 判活之后才把文本交
+    出去。故纯文本 runner（agy/claude/pi）**不逐行外抛 stdout**——那会把
+    `Authentication required` 一类机器文本当大臣正文送进 delta，而失败分类要等
+    子进程排干才跑，玩家已经看见了。终失败按票面走系统层人话（ADR 0046 否决失败
+    戏内化）。codex `--json` 是结构化事件流（`_codex_event_text` 认字段、不读散
+    文，ADR 0142），可照旧边到边出。
 
     次数只在 llm_transport（run_with_transport / run_transport_stream）；此处禁
     私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
     - 静默超阈值 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
     - 空输出 → llm_empty_output（可重试）
     - agy auth race → llm_connection_error（可重试；已知瞬断实证）
-    - 未知非零退出 → RuntimeError（确定性失败，一次不重试；禁从 stderr 散文抠状态）
+    - stdin 未送达 / 未知非零退出 → RuntimeError（确定性失败，一次不重试；禁从
+      stderr 散文抠状态）
 
     静默预算只认 transport 策略 idle，不吃 timeout/cli_timeout_seconds（槽位保留、不接空转轴）。
     """
@@ -751,8 +772,8 @@ def _iter_cli_runner_text(
             if maybe_final:
                 final_text = maybe_final
             continue
+        # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
         pieces.append(line)
-        yield line
 
     returncode = int(outcome.returncode or 0)
     stderr = outcome.stderr or ""
@@ -767,8 +788,12 @@ def _iter_cli_runner_text(
     if runner == "codex" and not json_events and not text:
         # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
         text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
-        if text:
-            yield text
+    # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
+    # 不得让随之而来的空 stdout 洗成 llm_empty_output 重试（ADR 0005）。
+    if outcome.stdin_error is not None and not text:
+        raise RuntimeError(
+            f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
+        ) from outcome.stdin_error
     # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
     if returncode != 0:
         raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
@@ -776,7 +801,10 @@ def _iter_cli_runner_text(
         raise transport_failure_unavailable(
             empty_output_failure(), attempts=1, exhausted=False,
         )
-    if json_events and not pieces and final_text.strip():
+    # 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
+    if not json_events:
+        yield text
+    elif not pieces and final_text.strip():
         yield final_text.strip()
 
 
@@ -4583,9 +4611,9 @@ class CliChat(OpenAIChat):
         prompt = _cli_prompt(messages, response_format, tools)
         held = ""
         try:
-            # #1465 切片③：**所有 runner** 在 stdout 新字节到达时出 ModelResponse，
-            # 否则外层 run_transport_stream 会把「正在出字、agno 还没事件」的 CLI
-            # 当空转误杀。codex 走 --json 事件流，其余 runner 走纯文本增量。
+            # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
+            # 本处只搬 `_iter_cli_runner_text` 已判活的文本 —— 机器横幅不进 delta。
+            # codex 走结构化 --json 事件流边到边出；纯文本 runner 判活后一次交全。
             stream = _iter_cli_runner_text(
                 self.backend,
                 prompt,
