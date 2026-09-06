@@ -344,7 +344,7 @@ def test_resolve_directives_tolerates_r6_shaped_promulgated_noise(game, monkeypa
 
     monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
 
-    def canned(_agent, prompt, tag):
+    def canned(_agent, prompt, tag, **_k):
         ctx = json.loads(prompt)
         context_holder["band"] = ctx["imperial_authority_band"]
         # Mirror r6 rejection_reports item_json shape (attempt12 dossier 3/4).
@@ -870,7 +870,7 @@ def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, 
     calls = []
 
     monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
-    def canned(_agent, prompt, tag):
+    def canned(_agent, prompt, tag, **_k):
         calls.append((json.loads(prompt), tag))
         return json.dumps({"verdicts": [
             {"dossier_id": first, "decision": "promulgated"},
@@ -1039,7 +1039,7 @@ def test_reviewed_and_palace_exempt_dossiers_close_in_one_default_batch(game, mo
     admitted = {}
     monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
 
-    def judge(_agent, prompt, tag):
+    def judge(_agent, prompt, tag, **_k):
         context = json.loads(prompt)
         calls.append((context, tag))
         admitted.update({row["decree_text"]: row["id"] for row in context["dossiers"]})
@@ -1223,7 +1223,7 @@ def test_judge_gate_examples_and_simulator_rejection_narrative_boundary(game, mo
     seen_payload = {}
 
     monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
-    def gate_examples(_agent, prompt, tag):
+    def gate_examples(_agent, prompt, tag, **_k):
         assert tag == "promulgation-judge"
         context = json.loads(prompt)
         band = context["imperial_authority_band"]

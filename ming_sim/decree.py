@@ -670,16 +670,16 @@ def llm_promulgation_verdicts(
         turn=int(state.turn),
     )
     judge = session.get_or_create()
-    # #1465 ②：history-backed transport 重试截 run 走 GameDB.truncate_agno_session_runs
-    # （与召对 truncate_chat_turn_agno_runs 同接缝）；不新造历史机制。
-    setattr(judge, "_ming_game_db", db)
     if correction_feedback:
         # 同会话续接：history 应已有首轮；仍附首抽快照（draft 骨架），
         # 使补交输入可独立核验含全案卷身份。
         prompt = f"{correction_feedback}\n{context_json}"
     else:
         prompt = context_json
-    raw = run_agent_text(judge, prompt, tag="promulgation-judge")
+    # #1465 ②：history-backed transport 重试截 run 走 GameDB.truncate_agno_session_runs
+    # （与召对 truncate_chat_turn_agno_runs 同接缝）；不新造历史机制。
+    # GameDB 经入参契约显式交给 run_agent_text，不挂 agent 私有属性。
+    raw = run_agent_text(judge, prompt, tag="promulgation-judge", game_db=db)
     parsed = parse_agent_json(raw, "颁布判官")
     return _require_promulgation_verdict_list(
         parsed.get("verdicts"), raw_value=parsed,

@@ -87,6 +87,7 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
     真实入口 = run_agent_text；命中面 = 颁布判官同款 flags（db+cache_session+
     add_history_to_context）。替身 run 模拟 agno cleanup_and_store 落空 run。
     截缝 = GameDB.truncate_agno_session_runs（与召对同 _truncate_agno_runs_in_tx）。
+    GameDB 经 run_agent_text(game_db=) 入参交来（同生产调用契约），不挂 agent 属性。
     """
     monkeypatch.setattr(agents_mod, "_dump_llm_messages", lambda *_a, **_k: None)
     path = str(tmp_path / "hist.db")
@@ -120,7 +121,6 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
         def __init__(self) -> None:
             self.session_id = session_id
             self.db = agno_db
-            self._ming_game_db = game_db
 
         def run(self, *_a, **_k):
             self.calls += 1
@@ -148,7 +148,9 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
             yield RunOutput(good)
 
     agent = _HistoryBackedEmptyThenGood()
-    text = agents_mod.run_agent_text(agent, "payload", tag="promulgation-judge")
+    text = agents_mod.run_agent_text(
+        agent, "payload", tag="promulgation-judge", game_db=game_db,
+    )
     assert text == good
     assert agent.calls >= 2
     # 终态：prior + 成功 = 2；空 completed 不得残留
