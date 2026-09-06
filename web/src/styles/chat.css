@@ -376,7 +376,7 @@ select {
   background: rgba(255, 255, 255, 0.95);
 }
 
-.failure-recovery-panel {
+.failure-notice-panel {
   width: min(760px, 92vw);
   margin: 0 auto;
   padding: 24px;
@@ -385,7 +385,7 @@ select {
   gap: 12px;
 }
 
-.failure-recovery-item {
+.failure-notice-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -398,18 +398,9 @@ select {
   line-height: 1.55;
 }
 
-.failure-recovery-minister {
+.failure-notice-minister {
   margin-right: 8px;
   font-weight: 700;
-}
-
-.failure-recovery-item button {
-  flex: 0 0 auto;
-  padding: 7px 13px;
-  border-radius: 6px;
-  border: 1px solid rgba(130, 41, 31, 0.38);
-  color: #7c251d;
-  background: rgba(255, 255, 255, 0.82);
 }
 
 .failed-secret-note {

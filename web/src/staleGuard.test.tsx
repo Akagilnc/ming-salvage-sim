@@ -427,8 +427,8 @@ function SurfaceFailuresFixture({ loadState }: { loadState: () => Promise<void> 
   );
 }
 
-describe("失败恢复入口 — 无承办人", () => {
-  it("没有 minister_name 的失败也会打开全局恢复面板", async () => {
+describe("未落库政务告知 — 无承办人", () => {
+  it("没有 minister_name 的失败也会打开全局失败告知面板", async () => {
     const host = render(<SurfaceFailuresFixture loadState={() => Promise.resolve()} />);
 
     await act(async () => {
@@ -472,7 +472,7 @@ describe("召对陈旧守卫 — 广范围（undoLastChat 全局生效、面板�
     expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("甲：已撤回");
   });
 
-  it("撤回响应必须刷新失败列表，不能隐藏仍可重试的旧密令失败", async () => {
+  it("撤回响应必须刷新失败列表，不能隐藏仍未落库的旧密令失败", async () => {
     let resolve!: (v: { notice: string; failures?: string[] }) => void;
     const pending = new Promise<{ notice: string; failures?: string[] }>((r) => (resolve = r));
     const host = render(<UndoGuardFixture getResult={() => pending} />);

@@ -1807,14 +1807,17 @@ class WebGame:
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
     def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
-        """该召对对象仍可由玩家处理的失败密令动作。"""
+        """该召对对象未能落库的密令动作（只报事实：重放入口已删，此处无处置动作）。"""
         return [
             _pending_action_failure_payload(action)
             for action in self.db.list_failed_secret_order_actions(minister_name)
         ]
 
     def pending_action_failures(self) -> List[Dict[str, Any]]:
-        """所有仍可由玩家处理的失败密令动作，不依赖承办人当前是否可召见。"""
+        """所有未能落库的密令动作，不依赖承办人当前是否可召见；
+
+        只报事实，不承诺处置——承办人可召见时玩家在召对里当场再说，
+        不可召见时本回合结束即随既有边界丢弃（#1765 ②）。"""
         return [
             _pending_action_failure_payload(action)
             for action in self.db.list_failed_secret_order_actions()
