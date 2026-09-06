@@ -32,6 +32,7 @@ from ming_sim.credit_events import KIND_BETRAY, write_credit_event
 from ming_sim.decree import atomic_and_reload
 from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES,
+    PARTICIPANT_ROSTER_KEY,
     RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
     TARGET_KINDS,
     derive_draft_capability,
@@ -148,6 +149,9 @@ def canonical_choice(raw: object) -> Dict[str, object]:
                 out[key] = int(raw[key])  # type: ignore[arg-type]
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"choice.{key} 非法：{raw[key]!r}") from exc
+    # #1778 决定 3：参与名单是结构化列表，原样保留（str() 会把它压成字面量）
+    if isinstance(raw.get(PARTICIPANT_ROSTER_KEY), list):
+        out[PARTICIPANT_ROSTER_KEY] = raw[PARTICIPANT_ROSTER_KEY]
     # dossier 批红能力对原样保留
     if "dossier_decision" in raw and raw["dossier_decision"] is not None:
         out["dossier_decision"] = str(raw["dossier_decision"])
@@ -690,6 +694,11 @@ def map_rescript_option_or_choice(
     if assignee_name:
         payload["assignee_id"] = assignee_name
         payload["assignee_name"] = assignee_name
+    # #1778 决定 3/5：拟票大臣写的参与名单原样随载荷走到成案点钉进案卷；
+    # 归一/存在性由 create_decree_dossiers 的 0053 单一校验口负责，此处不重判。
+    roster = src.get(PARTICIPANT_ROSTER_KEY)
+    if isinstance(roster, list) and roster:
+        payload[PARTICIPANT_ROSTER_KEY] = roster
 
     current_turn = int(getattr(state, "turn", 0) or 0)
 
@@ -981,7 +990,6 @@ def _create_from_mapped(
     *,
     status: str,
     mode: str,
-    rejection_collector=None,
 ) -> List[int]:
     payload = dict(mapped)
     decree_text = str(payload.pop("_decree_text", "") or "")
@@ -1014,7 +1022,6 @@ def _create_from_mapped(
         status=status,
         due_turn=due_turn,
         commit=False,
-        rejection_collector=rejection_collector,
     ))
 
 
@@ -1105,7 +1112,6 @@ def _apply_deliberate(
     prewrite: PrewriteResults,
     *,
     content: Any = None,
-    rejection_collector=None,
 ) -> None:
     """#658 廷议 dossier-first：唯一 durable 主体＝proposed 案卷。
 
@@ -1146,7 +1152,6 @@ def _apply_deliberate(
         payload=payload,
         status="proposed",
         commit=False,
-        rejection_collector=rejection_collector,
     ))
     for name in supporters:
         db.add_dossier_endorsement(
@@ -1310,11 +1315,9 @@ def apply_rescript_batch(
     任一条失败 → 回滚（含 choice）。禁 save/clear 触碰 rescript_draft。
     禁任何 resolve_context 键承载本批 choices。
     """
-    from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
-    from ming_sim.error_pack import rejections_jsonl_path
-
+    # #1778 决定 3：本批成案缝已无拒收产源（职司兜底连同 duty_route_unmapped 已删）；
+    # 契约/名单错一律 ValueError 穿透 atomic 整批回滚（§B.1），不再另挂空 collector。
     result = ApplyResult()
-    collector = RejectionCollector()
     with atomic_and_reload(db, state, content=content):
         for item in batch.items:
             if item.already_applied:
@@ -1338,8 +1341,7 @@ def apply_rescript_batch(
                     )
                     created = _create_from_mapped(
                         db, state, content, mapped, status="proposed", mode="ordinary",
-                        rejection_collector=collector,
-                    )
+                        )
                     if not created:
                         raise ValueError(
                             f"decision grant 成案零行：{item.decision_key}"
@@ -1395,7 +1397,6 @@ def apply_rescript_batch(
                 )
                 created = _create_from_mapped(
                     db, state, content, mapped, status="proposed", mode="ordinary",
-                    rejection_collector=collector,
                 )
                 if not created:
                     raise ValueError(
@@ -1414,7 +1415,6 @@ def apply_rescript_batch(
                 )
                 created = _create_from_mapped(
                     db, state, content, mapped, status="proposed", mode="midzhi",
-                    rejection_collector=collector,
                 )
                 if not created:
                     raise ValueError(
@@ -1427,7 +1427,6 @@ def apply_rescript_batch(
             if action == "deliberate":
                 _apply_deliberate(
                     db, state, item, prewrite, content=content,
-                    rejection_collector=collector,
                 )
                 _cas_decided(db, item)
                 result.applied_keys.append(item.decision_key)
@@ -1450,8 +1449,6 @@ def apply_rescript_batch(
                 continue
 
             raise ValueError(f"未知动作：{action}")
-        collector.flush_to_db(db)
-    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return result
 
 

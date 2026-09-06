@@ -745,51 +745,36 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     return int(cur.lastrowid)
 
 
-def test_validate_all_unmapped_zero_rows_before_insert(env):
-    """路由映射失败 → 首个 INSERT 前整旨零行。"""
+def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
+    """Validate-all：名单上的人不在名册 → 首个 INSERT 前整旨零行（#1778 决定 3）。"""
     db, state, _ = env
     payload = {
         "target_kind": "policy",
         "target_id": "清丈天下田亩",
         "locality_scope": "national",
         "dossier_action_type": "assignment",
-        "transaction_category": "修仙",  # 未映射
-        "assignee_id": "",  # 显式未点将，走 duty 表
+        "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
     }
-    from ming_sim.applier import RejectionCollector
-
     did = _insert_directive(db, state, text="清丈天下田亩", payload=payload)
     before = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
-    collector = RejectionCollector()
-    ids = db.create_decree_dossiers(
-        state,
-        action_type="assignment",
-        decree_text="清丈天下田亩",
-        target_kind="policy",
-        target_id="清丈天下田亩",
-        directive_id=did,
-        payload=payload,
-        commit=True,
-        rejection_collector=collector,
-    )
-    assert ids == []
+    with pytest.raises(ValueError, match="查无此人"):
+        db.create_decree_dossiers(
+            state,
+            action_type="assignment",
+            decree_text="清丈天下田亩",
+            target_kind="policy",
+            target_id="清丈天下田亩",
+            directive_id=did,
+            payload=payload,
+            commit=True,
+        )
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
     assert db.list_dossiers_for_directive(did) == []
-    # 调用方提交边界：flush 不自提交；commit 后独立连接验落库。
-    collector.flush_to_db(db)
-    db.conn.commit()
-    other = sqlite3.connect(db.path)
-    try:
-        assert other.execute(
-            "SELECT COUNT(*) FROM rejection_reports WHERE section='executor_routing'",
-        ).fetchone()[0] == 1
-    finally:
-        other.close()
 
 
-def test_path2_pending_unmapped_stays_draft_on_ensure_batch(env):
-    """路 2（#1769）：pending→confirm 只翻 draft；ensure 批缝映射失败 → 零行 + 保持 draft。
+def test_path2_pending_bad_roster_stays_draft_on_ensure_batch(env):
+    """路 2（#1769）：pending→confirm 只翻 draft；ensure 批缝产物错 → 零行 + 保持 draft。
 
     旧合同 confirm 内 ensure 并标 rejected 已废；产物错不踢出批缝。
     """
@@ -799,7 +784,7 @@ def test_path2_pending_unmapped_stays_draft_on_ensure_batch(env):
         "target_id": "清丈天下田亩",
         "locality_scope": "national",
         "dossier_action_type": "assignment",
-        "transaction_category": "修仙",
+        "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
         "mode": "ordinary",
     }
     did = _insert_directive(
@@ -872,7 +857,7 @@ def test_path3_locality_fail_keeps_draft_no_text_in_rejection(env):
     assert "甲甲" not in raw
 
 
-def test_path1_conversational_draft_unmapped_marks_failed(env):
+def test_path1_conversational_draft_bad_roster_marks_failed(env):
     """路 1 _commit_conversational_draft：成案零行 → pending failed、无案卷。"""
     db, state, _ = env
     payload = {
@@ -882,7 +867,7 @@ def test_path1_conversational_draft_unmapped_marks_failed(env):
         "target_id": "清丈天下田亩",
         "locality_scope": "national",
         "dossier_action_type": "assignment",
-        "transaction_category": "修仙",
+        "participant_roster": [{"character_id": "查无此人", "tier": "主办"}],
         "mode": "ordinary",
         "_canonical_pending_directive": True,
         "_directive_status": "draft",

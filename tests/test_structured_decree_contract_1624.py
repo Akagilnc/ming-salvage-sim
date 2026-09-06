@@ -13,6 +13,12 @@ from ming_sim.structured_decree import (
 )
 from tests.test_month_loop_tracer_1468 import _post_issue_stream, tracer_client  # noqa: F401
 
+# #1778 决定 3：拟票大臣把参与名单写进票拟（主办可多人）；代码不按职司表配人。
+_OWNER_ROSTER = [
+    {"character_id": "毕自严", "tier": "主办", "role": "总核赈务", "delegator_id": None},
+    {"character_id": "陈新甲", "tier": "协办", "role": "", "delegator_id": None},
+]
+
 _OWNER_OPTION = {
     "label": "着户部继续核查陕西赈务，按月具报。",
     "hint": "督赈",
@@ -24,6 +30,7 @@ _OWNER_OPTION = {
     "assignee_name": "",
     "transaction_category": "督赈",
     "deadline_months": 2,
+    "participant_roster": [dict(item) for item in _OWNER_ROSTER],
 }
 
 
@@ -40,39 +47,28 @@ def _owner_manual_backend_json() -> str:
         "承办人": "",
         "颁布方式": "普通",
         "执行面": "immediate",
-        "参与人": [],
+        "参与人": [dict(item) for item in _OWNER_ROSTER],
     }, ensure_ascii=False)
 
 
-def _assert_hubu_duty_leads(db, dossier: dict) -> None:
-    """外部可见：未点将督赈案卷的主办须为户部在任（职司路由结果）。"""
+def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
+    """#1778 决定 3/5：主办＝旨意自带名单里的主办，逐字钉进案卷（不是职司表推出的人）。"""
     roster = dossier.get("participant_roster") or []
-    leads = [
-        str(e.get("character_id") or "").strip()
+    tiers = {
+        (str(e.get("character_id") or "").strip(), str(e.get("tier") or "").strip())
         for e in roster
-        if isinstance(e, dict) and str(e.get("tier") or "") == "主办"
-    ]
-    leads = [name for name in leads if name]
-    assert leads, f"expected duty-route 主办, roster={roster!r} signal={dossier.get('execution_signal')!r}"
-    for name in leads:
-        row = db.conn.execute(
-            "SELECT office_type FROM characters WHERE name=?", (name,),
-        ).fetchone()
-        assert row is not None, f"主办未建档：{name!r}"
-        assert str(row["office_type"] or "") == "户部", (
-            f"主办 {name!r} office_type={row['office_type']!r}，期望户部"
-        )
-    signal = dossier.get("execution_signal") or {}
-    if signal.get("chain") not in (None, ""):
-        assert signal["chain"] == "户部"
-
-
-def _seed_hubu_in_shaanxi(db) -> None:
-    db.conn.execute(
-        "UPDATE characters SET location='shaanxi' "
-        "WHERE status='active' AND power_id='ming' AND office_type='户部'"
-    )
-    db.conn.commit()
+        if isinstance(e, dict)
+    }
+    expected = {
+        (str(item["character_id"]), str(item["tier"])) for item in _OWNER_ROSTER
+    }
+    assert expected <= tiers, f"roster={roster!r}"
+    leads = sorted(name for name, tier in tiers if tier == "主办" and name)
+    assert leads == ["毕自严"], f"名单外不得由代码补主办：{roster!r}"
+    for name, _tier in tiers:
+        assert db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (name,),
+        ).fetchone() is not None, f"参与人未建档：{name!r}"
 
 
 def _month_end_ctx() -> dict:
@@ -106,6 +102,7 @@ def _army_single_bad_item() -> dict:
                 "amount": 300,
                 "account": "国库",
                 "purpose": "补饷",
+                "participant_roster": [dict(item) for item in _OWNER_ROSTER],
             },
             {
                 **_OWNER_OPTION,
@@ -286,13 +283,12 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
     assert dropped and dropped[0].get("heal_id") == "0:0"
 
 
-def test_rescript_follow_draft_routes_hubu(game):
-    """真实批红 follow_draft：Owner 例未点将 → 主办为户部在任。"""
+def test_rescript_follow_draft_nails_drafted_roster(game):
+    """真实批红 follow_draft：Owner 例未点将 → 主办来自票拟名单，成案钉进案卷。"""
     import ming_sim.rescript_actions as ra
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     db, state, content = game
-    _seed_hubu_in_shaanxi(db)
 
     opt = normalize_rescript_layer_a_option(dict(_OWNER_OPTION))
     alt = normalize_rescript_layer_a_option({
@@ -329,11 +325,11 @@ def test_rescript_follow_draft_routes_hubu(game):
     assert payload.get("locality_scope") == "single"
     assert payload.get("transaction_category") == "督赈"
     assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
-    _assert_hubu_duty_leads(db, created)
+    _assert_drafted_roster_nailed(db, created)
 
 
 def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
-    """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 户部主办。"""
+    """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 大臣所拟名单。"""
     import ming_sim.cli_backend as cli_backend
     import web_app
 
@@ -341,7 +337,6 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     assert new.status_code == 200
     game = web_app.web_game
     assert game is not None
-    _seed_hubu_in_shaanxi(game.db)
 
     def backend(*_a, **_k):
         return _owner_manual_backend_json(), 1
@@ -373,7 +368,7 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
     # assignment 不得跨动作透传执行面（#1624）；与 multi-aim military 同契：字段缺失或空。
     assert str(payload.get("execution_surface") or "").strip() == ""
-    _assert_hubu_duty_leads(game.db, matched[0])
+    _assert_drafted_roster_nailed(game.db, matched[0])
 
 
 def test_normalize_rescript_layer_a_option_contract():

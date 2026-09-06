@@ -29,6 +29,10 @@ from ming_sim.rescript_draft import (
 _CANNED = '{"economy_moves": [], "new_armies": [], "new_issues": [], "secret_order_updates": []}'
 
 
+# #1778 决定 3：生成批次的票拟必带参与名单（ADR 0053 三档，至少一名主办）。
+_ROSTER = [{"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None}]
+
+
 def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
     """#657 生产层 A option 夹具（validate/generate 路径必用）。"""
     base = {
@@ -41,6 +45,7 @@ def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
         "region_id": "shaanxi",
         "assignee_name": "",
         "transaction_category": "督赈",
+        "participant_roster": [dict(item) for item in _ROSTER],
     }
     base.update(kw)
     return base
@@ -1532,6 +1537,7 @@ def _army_pay_grant_option(**extra) -> dict:
         "amount": 300,
         "account": "国库",
         "purpose": "补饷",
+        "participant_roster": [dict(item) for item in _ROSTER],
     }
     opt.update(extra)
     return opt

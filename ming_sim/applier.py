@@ -372,7 +372,7 @@ class RejectionCollector:
     def pending(self) -> Tuple[dict, ...]:
         """未 flush 的缓冲行只读快照。
 
-        #1769：段内 record 后未抛异常的拒收（如 duty_route_unmapped）是本 collector
+        #1769：段内 record 后未抛异常的拒收是本 collector
         的唯一真源；成案 owner 据此把该项纳入补交反馈与终态留痕，不另建拒收表。
         """
         return tuple(self._buffer)
