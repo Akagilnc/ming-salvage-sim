@@ -3159,10 +3159,11 @@ class GameSession:
                     content=getattr(self, "content", None),
                     existing_mode=bad_payload.get("mode"),
                 )
-                self.db.replace_undossiered_directive_payload(
+                self.db.update_directive_text(
                     did,
-                    text=str(row["text"] or ""),
+                    str(row["text"] or ""),
                     dossier_payload=new_payload,
+                    replace_payload=True,
                 )
             except Exception as exc:
                 # 补交侧失败 = 该旨耗尽，保留原 draft 与既有拒因；不挡月份。

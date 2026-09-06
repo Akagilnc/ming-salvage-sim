@@ -20109,39 +20109,6 @@ class GameDB:
         mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return rejection_rows
 
-    def replace_undossiered_directive_payload(
-        self,
-        directive_id: int,
-        *,
-        text: str,
-        dossier_payload: Dict[str, object],
-    ) -> None:
-        """#1769 结算补交：整份替换未成案 draft 的结构化载荷（禁 merge 残留旧 entries）。"""
-        if self.get_dossier_for_directive(int(directive_id)) is not None:
-            raise ValueError("已成案旨意不得编辑")
-        row = self.conn.execute(
-            "SELECT id FROM turn_directives WHERE id=? AND status='draft'",
-            (int(directive_id),),
-        ).fetchone()
-        if row is None:
-            raise ValueError(f"可补交 draft 不存在：{directive_id}")
-        payload = dict(dossier_payload or {})
-        if not directive_payload_admits_structured_write(payload):
-            raise ValueError("补交载荷须提供完整结构化动作与目标")
-        with atomic(self):
-            self.conn.execute(
-                """
-                UPDATE turn_directives
-                SET text=?, dossier_payload_json=?, updated_at=CURRENT_TIMESTAMP
-                WHERE id=? AND status='draft'
-                """,
-                (
-                    str(text or ""),
-                    json.dumps(payload, ensure_ascii=False),
-                    int(directive_id),
-                ),
-            )
-
     def reject_directive(self, directive_id: int) -> None:
         """皇帝驳回大臣拟旨：pending → rejected。"""
         self.conn.execute(
@@ -20165,7 +20132,13 @@ class GameDB:
     def update_directive_text(
         self, directive_id: int, text: str, *,
         dossier_payload: Optional[Dict[str, object]] = None,
+        replace_payload: bool = False,
     ) -> None:
+        """改草 draft 正文/载荷。
+
+        replace_payload=True（#1769 结算补交）：整份采用新 payload，不经 merge——
+        避免 pay_order entries 等旧键残留到新动作类型上。默认 False 保持改草合并语义。
+        """
         if self.get_dossier_for_directive(directive_id) is not None:
             raise ValueError("已成案旨意不得编辑")
         row = self.conn.execute(
@@ -20173,9 +20146,13 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise ValueError("旨意不存在")
-        payload = self._merge_directive_payload(
-            row["dossier_payload_json"], dict(dossier_payload or {})
-        )
+        incoming = dict(dossier_payload or {})
+        if replace_payload:
+            payload = incoming
+        else:
+            payload = self._merge_directive_payload(
+                row["dossier_payload_json"], incoming,
+            )
         if not directive_payload_admits_structured_write(payload):
             raise ValueError("旨意编辑须提供完整结构化动作与目标")
         with atomic(self):

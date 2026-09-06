@@ -1034,9 +1034,10 @@ def test_manual_directive_admission_real_http_tracer_1591(
         assert int(game.state.metrics.get("国库") or 0) == treasury_before
         assert float(_army_row(game.db)["arrears"]) == pytest.approx(arrears_now)
 
-        # ── ④ #1769 替代 #1591：既存非法草案产物错 → 拒因留痕、draft 留到下月、月照过。
-        # 删除旧断言「HTTP 400 + message==引擎拒因 + 拒案不得推进」——票面明确替换
-        # 「产物错即整月不推进 + 引擎串透传」；保留真实拒因留痕、不误报无草案。
+        # ── ④ #1769 替代 #1591「产物错即整月不推进」：既存非法草案 → 月照过。
+        # 票面完整耗尽（第二次仍坏产物、下月 list、诊断不透传）见
+        # tests/test_draft_admission_resubmit_1769.py；此处只改旧整月阻断契约所需最小断言。
+        # 删除旧断言：HTTP 400 + message==引擎拒因 + 拒案不得推进回合。
         directive_id = game.db.add_directive(
             game.state, None, "准从藩库见银拨关宁军饷十五万两即发。",
             "player", status="draft", dossier_payload={
@@ -1052,29 +1053,22 @@ def test_manual_directive_admission_real_http_tracer_1591(
         )
         assert game.db.list_pending_actions(turn2), "无关非旨 pending action 应在场"
 
-        # 补交侧无可用好产物（capture 队列已耗尽）→ 耗尽路：月推进、draft 保留。
-        body = _post_issue_stream(
-            client, expected_turn=turn2, step="1769 replace-1591 exhaust",
-        )
+        _post_issue_stream(client, expected_turn=turn2, step="1769 replace-1591 month")
         after = _get_state(client)
         assert _turn_of(after) == turn2 + 1, after.get("turn")
-        row = game.db.conn.execute(
+        assert game.db.conn.execute(
             "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
-        ).fetchone()
-        assert row["status"] == "draft"
-        assert game.db.get_dossier_for_directive(directive_id) is None
+        ).fetchone()["status"] == "draft"
+        # 真实拒因留痕、不误报无草案（#1591 保留面）
         rejection_rows = game.db.conn.execute(
-            "SELECT reason, category, source FROM rejection_reports "
+            "SELECT category, source FROM rejection_reports "
             "WHERE section = 'directive_locality' "
             "AND json_extract(item_json, '$.directive_id') = ?",
             (directive_id,),
         ).fetchall()
-        assert rejection_rows, [dict(r) for r in rejection_rows]
+        assert rejection_rows
         assert any(r["category"] == "locality_fanout_failed" for r in rejection_rows)
         assert any(r["source"] == "player_decree" for r in rejection_rows)
-        # 确定性诊断出口不把 admission 引擎串透传给皇帝（SSE done 载荷）。
-        blob = json.dumps(body, ensure_ascii=False)
-        assert rejection_rows[0]["reason"] not in blob
     finally:
         try:
             game.session.close()
