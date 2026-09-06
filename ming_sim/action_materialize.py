@@ -2993,10 +2993,11 @@ def stage_assignment_candidate(
     category = str(transaction_category or "").strip()
     if category:
         staged["transaction_category"] = category
-    else:
-        # Legacy unclassified assignments retain their explicit audience owner;
-        # classified production actions route by the canonical duty table.
-        staged["assignee"] = owner
+    # #1778 决定 3：职司表兜底已删——本函数 docstring 的「owner 单一来源＝当前召对
+    # 大臣」对分类过的交办同样成立。原先只有未分类交办才写 assignee，理由是
+    # 「classified production actions route by the canonical duty table」；那条路
+    # 没了，carve-out 随之删除，否则分类过的交办成案即无主办。
+    staged["assignee"] = owner
     # 承诺形状保留：until_stop 正常携带；缺 marker 的毒字段也不得在 stage 洗掉，
     # 交既有 initiative 校验在判后接缝拒收（#520 commitment-poison-shape-preservation）。
     kind_raw = str(commitment_kind or "").strip()

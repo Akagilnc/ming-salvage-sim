@@ -70,11 +70,28 @@ _DRAFT_CAPABILITY_KEYS: tuple[tuple[str, Any], ...] = (
     ("summon_target", ""),
 )
 
+# #1778 决定 3：参与名单（ADR 0053 三档、主办可多人）是票拟的结构化载荷键——
+# 由拟票大臣写进 option，随落桌呈皇帝，成案时钉进案卷。形状真源＝
+# GameDB._normalize_participant_roster；此处只登记键名与 capability 派生方式。
+PARTICIPANT_ROSTER_KEY = "participant_roster"
+
+# C.4 capability 结构化键（非 str/int）：按 canonical JSON 参与派生，
+# 换人/换档同样变键（与上表同一闭集，禁另开第二份 capability 真源）。
+_DRAFT_CAPABILITY_JSON_KEYS: tuple[tuple[str, Any], ...] = (
+    (PARTICIPANT_ROSTER_KEY, []),
+)
+
 
 def derive_draft_capability(fields: Mapping[str, Any] | None) -> str:
     """#657 C.4：闭集键 canonical JSON + sha256 截断。同字段⇒同键；任一有效差变键。"""
     src = fields or {}
     canonical: dict[str, Any] = {}
+    for key, default in _DRAFT_CAPABILITY_JSON_KEYS:
+        raw = src.get(key, default)
+        canonical[key] = json.dumps(
+            default if raw is None else raw,
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
+        )
     for key, default in _DRAFT_CAPABILITY_KEYS:
         raw = src.get(key, default)
         if isinstance(default, int):

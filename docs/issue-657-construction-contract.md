@@ -248,7 +248,7 @@ summon_target   # 仅 summon 行；差务 option 固定 ""
 |---|---|---|
 | `transaction_category` | 执行期 | `{钱粮,清丈,督赈,缉拿,缉捕,河工}` |
 | 主办合法 A | 可选 | 显式 canonical assignee → named lead |
-| 主办合法 B | 可选 | **仅**合法 category、**无**显式 assignee → duty route（`resolve_lead_executors`）；**不得**因缺 assignee 拒 |
+| 主办合法 B | — | **后出为准 → #1778 决定 3**：duty route 兜底已删。无显式 assignee 时主办来自票拟里的 `participant_roster`（ADR 0053 三档，主办可多人）；名单也缺＝票没拟完，走 option 补交回路，代码不配人 |
 | `target_kind`/`target_id` | 始终 | ∈ TARGET_KINDS / 非空 |
 | `title` | 可选 | str≤80 |
 | `commitment_kind` | 可选 | `{无,until_stop}` 默认 `无` |
@@ -407,7 +407,7 @@ payload["holder_id"] = payload["assignee_id"] = payload["name"] = canonical
 
 | ID | 动作 | 首写前正 | 首写前负 | 判后 |
 |---|---|---|---|---|
-| A1 | assignment | 最小合法+绝对 end_turn；**duty 无 assignee** | category 与主办均缺；until_stop 无 stop | initiative 绝对 end_turn+承办人 |
+| A1 | assignment | 最小合法+绝对 end_turn；**无 assignee 时主办来自票拟 roster**（后出为准 → #1778） | category 与主办均缺；until_stop 无 stop | initiative 绝对 end_turn+承办人 |
 | A2 | military_order | army+due 或 station | 非 army/假军/无 due 无 station | 调驻+限期 |
 | A3 | grant honorific | 无 amount | 缺 name/target | honorific 效果 |
 | A4 | grant 金钱 | amount；缺 account→国库；发内帑→内库 | 缺 amount；显式非法 account | 扣库/科目 |
@@ -742,7 +742,7 @@ generator 失败：该 target 零成功消费；空垫位不可投影；**不得
 
 ### E.3 ABI 契约矩阵（A1–A12）
 
-- [ ] **A1 assignment**：首写前正＝最小合法+绝对 end_turn 且 **duty 无 assignee** 可过；负＝category 与主办均缺、until_stop 无 stop；判后＝initiative 绝对 end_turn+承办人（至少覆盖 duty route B）
+- [ ] **A1 assignment**：首写前正＝最小合法+绝对 end_turn 且 **无 assignee 时票拟 roster 主办**可过（后出为准 → #1778：duty route B 已删，不再要求覆盖它）；负＝category 与主办均缺、until_stop 无 stop；判后＝initiative 绝对 end_turn+承办人
 - [ ] **A2 military_order**：正＝army+due 或 station；负＝非 army/假军/无 due 无 station；判后＝调驻+限期各≥1
 - [ ] **A3 grant honorific**：正＝无 amount 的加衔/荫叙；负＝缺 name/target；判后＝honorific 效果
 - [ ] **A4 grant 金钱**：正＝amount；缺 account→国库；发内帑→内库；负＝缺 amount、显式非法 account；判后＝扣库/科目
