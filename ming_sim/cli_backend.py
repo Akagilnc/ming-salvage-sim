@@ -1922,14 +1922,14 @@ def _compose_inworld_fact_report(
     *,
     llm_config: Any,
     tag: str,
-    timeout_s: float | None = None,
 ) -> str:
-    """Shared player-lane fact-to-prose call; generated prose is never rewritten."""
+    """Shared player-lane fact-to-prose call; generated prose is never rewritten.
+
+    #1465 切片③：随手工拟诏 30s 总罩一并删除「剩余预算」墙钟——产文失败仍 typed
+    上抛（#1299/#1310 单源），但不再被外层墙截断。
+    """
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_model import cli_runner_unavailable
-
-    if timeout_s is not None and float(timeout_s) <= 0:
-        raise cli_runner_unavailable(TimeoutError(f"{tag} 无剩余预算"), backend=tag)
 
     def _produce() -> str:
         # 玩家产文：复用 API/CLI 既有接缝；API 关 force_json（0033），不另开平行函数。
@@ -1947,13 +1947,7 @@ def _compose_inworld_fact_report(
         raise cli_runner_unavailable(RuntimeError(f"{tag} 空响"), backend=tag)
 
     try:
-        if timeout_s is None:
-            return _produce()
-        pool = ThreadPoolExecutor(max_workers=1)
-        try:
-            return pool.submit(_produce).result(timeout=float(timeout_s))
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
+        return _produce()
     except LLMUnavailable:
         raise
     except Exception as exc:
@@ -1968,12 +1962,10 @@ def compose_unknown_participant_inworld_report(
     speaker_name: str = "",
     speaker_role: str = "",
     llm_config: Any = None,
-    timeout_s: float | None = None,
 ) -> str:
     """P7：把查无此人事实喂给 LLM，产大臣/通政司口吻回禀；禁模板当台词。
 
-    timeout_s：有界等待（capture 剩余预算）；None=不另加罩。
-    剩余预算≤0、超时或产文失败 → typed LLMUnavailable（#1299/#1310/#1452
+    产文失败 → typed LLMUnavailable（#1299/#1310/#1452
     失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
     speaker_role：大臣口吻时接 minister_speaker_role 客观档料（0033）；不在此复制档料。
     """
@@ -1994,7 +1986,6 @@ def compose_unknown_participant_inworld_report(
         prompt,
         llm_config=llm_config,
         tag="participant_escalate_report",
-        timeout_s=timeout_s,
     )
 
 
@@ -3165,11 +3156,6 @@ def extract_draft_intent(
     return _finalize_extract_with_combo(cand_result, needs_combo=needs_combo)
 
 
-# 手工拟诏 capture 总罩（#1327 / #1274 V-1 owner 2026-08-20）：
-# 30s 罩住整段 extract+自愈重试；到点仅 special_decree 原文照落（零改参与人=不算篡改）。
-MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 30.0
-
-
 
 # 八值 target_kind 真源在 decree_vocabulary.TARGET_KINDS（#654 / owner A 禁双定义）
 from ming_sim.decree_vocabulary import TARGET_KINDS as _VALID_DRAFT_TARGET_KINDS
@@ -3214,14 +3200,14 @@ def _is_manual_special_decree_fallback(payload: Mapping[str, Any]) -> bool:
 def capture_manual_directive_payload(
     text: str, llm_config: Any = None, *, existing_mode: object = None,
     db: Any = None, content: Any = None,
-    capture_timeout_s: float | None = None,
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。
 
-    #1327 / #1274 V-1：空载零 LLM 直落 special_decree；非空载 LLM 有界等待（默认 30s
-    总罩，自愈重试计入罩内）。超时/挂死 → special_decree 原文照落（不改参与人）。
+    #1327 / #1274 V-1：空载零 LLM 直落 special_decree。
+    #1465 切片③：外层 30s 总罩已删——长抽取不再被墙钟截断成 special_decree
+    fallback（宪法 #9）；次数/空转由 transport 在 runner 侧收口。
     真不在册耗尽 → 通政司戏内回禀 ValueError（不落草案、不除名）；
-    回禀产文超时/失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
+    回禀产文失败 → typed LLMUnavailable（禁固定戏内模板当台词）。
     """
     directive_text = str(text or "").strip()
     fallback_mode = resolve_directive_mode(existing=existing_mode)
@@ -3229,11 +3215,6 @@ def capture_manual_directive_payload(
     if not directive_text:
         return _manual_special_decree_payload(fallback_mode)
 
-    timeout_s = (
-        MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S
-        if capture_timeout_s is None
-        else float(capture_timeout_s)
-    )
     prompt = (
         f"请据此拟旨，并从以下已成旨文抽取结构，不得改写：\n{directive_text}"
     )
@@ -3245,38 +3226,24 @@ def capture_manual_directive_payload(
             db=db, content=content,
         )
 
-    # 有界等待：超时不堵死 HTTP/CLI；后台线程不 join（shutdown wait=False）。
-    # 总罩含自愈 + escalate 回禀；回禀只拿剩余预算，超时/失败 → LLMUnavailable。
     captured: Dict[str, Any]
-    t0 = time.monotonic()
     try:
-        if timeout_s <= 0:
-            captured = _run_extract()
-        else:
-            pool = ThreadPoolExecutor(max_workers=1)
-            try:
-                fut = pool.submit(_run_extract)
-                captured = fut.result(timeout=timeout_s)
-            finally:
-                pool.shutdown(wait=False, cancel_futures=True)
+        captured = _run_extract()
     except UnknownParticipantEscalate as exc:
         # 真不在册：通政司戏内回禀；禁吞 special_decree、禁除名照落。
-        remaining: float | None = None
-        if timeout_s > 0:
-            remaining = max(0.0, float(timeout_s) - (time.monotonic() - t0))
         report = compose_unknown_participant_inworld_report(
             exc.names,
             voice="tongzheng",
             llm_config=llm_config,
-            timeout_s=remaining,
         )
         raise ValueError(report) from exc
     except ValueError:
         # 其它业务 ValueError 原样上抛；禁吞成 special_decree。
         raise
     except Exception as exc:
-        # 超时 / 纠错路上 LLM 挂死 → special_decree 原文照落（零改参与人）。
-        _log(f"手工拟诏 capture 有界降级 special_decree：{exc}")
+        # 纠错路上 LLM 终失败（transport 已尽次数）→ special_decree 原文照落
+        # （零改参与人）。此处只接 transport 已判终的失败，不再自设墙钟。
+        _log(f"手工拟诏 capture 降级 special_decree：{exc}")
         return _manual_special_decree_payload(fallback_mode)
 
     # heal 已 normalize+validate；投影与 #1769 补交共用同一 helper（禁双路径漂移）。

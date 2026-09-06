@@ -395,13 +395,6 @@ def test_capture_llm_hang_on_retry_not_swallowed_as_participant_409(game, monkey
     assert calls["n"] == 2
 
 
-def test_capture_timeout_constant_is_30():
-    """Q1：总罩 30 秒。"""
-    import ming_sim.cli_backend as cli_backend
-
-    assert cli_backend.MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S == 30.0
-
-
 def test_capture_delegator_truncation_heals(game, monkeypatch):
     """委派人截断「毕自」→纠错「毕自严」须自愈，不得因键空间漏 delegator 误 escalate。"""
     import ming_sim.cli_backend as cli_backend
@@ -576,8 +569,12 @@ def test_capture_correction_drops_prior_valid_delegator_escalates(game, monkeypa
     assert any(_CORRECTION_MARK in p for p in calls)
 
 
-def test_capture_escalate_report_timeout_raises_llm_unavailable(game, monkeypatch):
-    """回禀路径超时 → typed LLMUnavailable（#1452 单源），不落固定戏内文案。"""
+def test_capture_escalate_report_failure_raises_llm_unavailable(game, monkeypatch):
+    """回禀产文失败 → typed LLMUnavailable（#1452 单源），不落固定戏内文案。
+
+    #1465 切片③：旧「剩余预算耗尽」墙钟已随 30s 总罩删除；失败来源改为回禀调用
+    本身终失败（transport 已判终），契约（typed + 零草案落库）不变。
+    """
     import ming_sim.cli_backend as cli_backend
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
@@ -587,47 +584,19 @@ def test_capture_escalate_report_timeout_raises_llm_unavailable(game, monkeypatc
 
     def backend(prompt, *_a, tag="", **_k):
         if tag == "participant_escalate_report":
-            time.sleep(1.5)
-            return ("慢回禀不该露脸", 1)
+            raise RuntimeError("escalate 回禀后端终失败")
         return (
             json.dumps(_ok_payload(person="不存在之人甲"), ensure_ascii=False),
             1,
         )
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    # 极短总罩：extract 立刻 escalate 后回禀几乎无剩余预算 → LLMUnavailable
     with pytest.raises(LLMUnavailable) as ei:
         cli_backend.capture_manual_directive_payload(
-            text, None, db=db, content=content, capture_timeout_s=0.2,
+            text, None, db=db, content=content,
         )
     assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
     assert len(db.list_directives(state) or []) == 0
-
-
-def test_compose_escalate_report_timeout_s_zero_raises_llm_unavailable():
-    """timeout_s≤0 → typed LLMUnavailable，零 LLM、零固定戏内文案。"""
-    import ming_sim.cli_backend as cli_backend
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-
-    calls = {"n": 0}
-
-    def boom(*_a, **_k):
-        calls["n"] += 1
-        raise AssertionError("timeout_s≤0 不得调后端")
-
-    # 不依赖 monkeypatch fixture：直接临时替换
-    real = cli_backend._run_backend_for_config
-    cli_backend._run_backend_for_config = boom  # type: ignore[assignment]
-    try:
-        with pytest.raises(LLMUnavailable) as ei:
-            cli_backend.compose_unknown_participant_inworld_report(
-                ["不存在之人甲"], timeout_s=0.0,
-            )
-    finally:
-        cli_backend._run_backend_for_config = real  # type: ignore[assignment]
-    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
-    assert calls["n"] == 0
 
 
 # ── 召对 materialize 路 ─────────────────────────────────────────────
