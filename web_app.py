@@ -68,11 +68,10 @@ from ming_sim.llm_config import (
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_transport import (
-    check_attempt_budgets,
     empty_output_failure,
     resolve_transport_policy,
     run_error_event_failure,
-    run_with_transport,
+    run_transport_stream,
     transport_attempts_public,
     transport_failure_unavailable,
 )
@@ -2569,71 +2568,62 @@ class WebGame:
         stream_secret_route = bool(explicit_secret_order) or (text or "").strip().startswith(
             _STREAM_SECRET_PREFIXES
         )
-        # #1465：API transport 统一重试/超时/分类；策略单真源，SDK max_retries=0。
+        # #1465：API transport 统一重试/超时/分类；流循环唯一权威 = run_transport_stream。
         policy = resolve_transport_policy(
             transport_policy
             if transport_policy is not None
             else getattr(self.session, "llm_config", None)
         )
         clock = transport_clock or time.monotonic
-        emitted_output = {"n": 0}
+        chunks: List[str] = []
+        run_output_box: List[Any] = []
+        exit_started_during_stream = {"v": False}
 
-        def _one_attempt():
-            chunks: List[str] = []
-            run_output = None
-            exit_started_during_stream = False
-            attempt_started_at = clock()
-            last_output_at = attempt_started_at
-            # LLM 流在无锁窗口跑（#498 AC10 可达熔断）
-            stream = agent.run(
-                agent_prompt, stream=True, stream_events=True, yield_run_output=True,
+        def _map_error(event: Any):
+            if type(event).__name__ != "RunErrorEvent":
+                return None
+            # #1452/#1465：无 typed status 的 stream error 不洗成瞬断
+            return transport_failure_unavailable(
+                run_error_event_failure(getattr(event, "content", None)),
+                attempts=1,
+                exhausted=False,
             )
-            for event in stream:
-                check_attempt_budgets(
-                    attempt_started_at=attempt_started_at,
-                    last_output_at=last_output_at,
-                    policy=policy,
-                    clock=clock,
+
+        def _is_output(event: Any) -> bool:
+            return bool(
+                getattr(event, "event", "") == "RunContent"
+                and getattr(event, "content", None)
+            )
+
+        def _on_event(event: Any) -> None:
+            content = getattr(event, "content", None)
+            event_name = getattr(event, "event", "")
+            if event_name == "RunContent" and content:
+                delta = str(content)
+                chunks.append(delta)
+                emit_delta(delta)
+            if not exit_started_during_stream["v"] and not stream_secret_route:
+                start_exit = getattr(
+                    self.session, "start_exit_scene_from_dismiss_tools", None,
                 )
-                content = getattr(event, "content", None)
-                event_name = getattr(event, "event", "")
-                # #1452：provider 失败时 agno 发 RunErrorEvent；不得静默吞成空回复。
-                # #1465：经统一分类——无 typed status 的 stream error 不洗成瞬断。
-                if type(event).__name__ == "RunErrorEvent":
-                    failure = run_error_event_failure(content)
-                    raise transport_failure_unavailable(
-                        failure, attempts=1, exhausted=False,
-                    )
-                if event_name == "RunContent" and content:
-                    delta = str(content)
-                    chunks.append(delta)
-                    last_output_at = clock()
-                    emitted_output["n"] += 1
-                    emit_delta(delta)
-                if not exit_started_during_stream and not stream_secret_route:
-                    # agno ToolCallCompletedEvent.tool；终事件 RunOutput.tools 作兜底。
-                    # 轻量 session 替身可能无此方法——缺则留给 interpret 旧缝/跳过。
-                    start_exit = getattr(
-                        self.session, "start_exit_scene_from_dismiss_tools", None,
-                    )
-                    tool = getattr(event, "tool", None)
-                    tools_now: List[Any] = [tool] if tool is not None else []
-                    if not tools_now and type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
-                        tools_now = list(getattr(event, "tools", None) or [])
-                    if (
-                        tools_now
-                        and start_exit is not None
-                        and start_exit(character.name, int(chat_turn_id or 0), tools_now)
-                    ):
-                        exit_started_during_stream = True
-                if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
-                    run_output = event
-            # 流式跑完补 dump：流式 run_output(RunCompletedEvent)常无 .messages，
-            # 传 agent= 让 _dump_llm_messages 走 agent.get_last_run_output() fallback 取 system/user。
+                tool = getattr(event, "tool", None)
+                tools_now: List[Any] = [tool] if tool is not None else []
+                if not tools_now and type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
+                    tools_now = list(getattr(event, "tools", None) or [])
+                if (
+                    tools_now
+                    and start_exit is not None
+                    and start_exit(character.name, int(chat_turn_id or 0), tools_now)
+                ):
+                    exit_started_during_stream["v"] = True
+            if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
+                run_output_box.clear()
+                run_output_box.append(event)
+
+        def _after_stream():
+            run_output = run_output_box[0] if run_output_box else None
             _dump_llm_messages(run_output, f"大臣对话/{minister_name}", agent=agent)
             answer = "".join(chunks).strip()
-            # #1299/#1310：run_output.status=ERROR 时 extract 翻 typed（禁横幅当台词）；
-            # 有 chunks 也必须过 status 闸，不能只在空 answer 时才 extract。
             if run_output is not None:
                 extracted = extract_agent_text(run_output)
                 if not answer:
@@ -2646,11 +2636,23 @@ class WebGame:
                 )
             return answer, run_output
 
-        (answer, run_output), transport_attempts_box = run_with_transport(
-            _one_attempt,
+        # 每 attempt 清空半局部状态（重试不得沿用上一 attempt 的 chunks/run_output）
+        def _start_stream():
+            chunks.clear()
+            run_output_box.clear()
+            exit_started_during_stream["v"] = False
+            return agent.run(
+                agent_prompt, stream=True, stream_events=True, yield_run_output=True,
+            )
+
+        (answer, run_output), transport_attempts_box = run_transport_stream(
+            _start_stream,
+            on_event=_on_event,
+            is_output_event=_is_output,
+            map_error_event=_map_error,
+            after_stream=_after_stream,
             policy=policy,
             clock=clock,
-            output_emitted=lambda: emitted_output["n"] > 0,
         )
 
         # #542：action/tool 解释（exit 若流中未启则幂等补登），write_gate 外统一 join，

@@ -1,7 +1,7 @@
 """#1465 LLM transport 重试/超时/分类单真源。
 
 策略（次数、每 attempt 整份超时、空转超时）只在此处与 runtime 配置区定义；
-调用方不得再硬编码 attempt 次数或 SDK max_retries。
+流式 attempt 循环、可重试分类、系统层终失败出口均只此一处。
 CLI runner 与外层截断点由切片③迁移；本模块 API 流入口先用。
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Iterator, List, Optional, TypeVar
+from typing import Any, Callable, Iterable, List, Optional, TypeVar
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
@@ -20,7 +20,6 @@ from ming_sim.models import (
     TRANSPORT_DEFAULT_MAX_ATTEMPTS,
 )
 
-T = TypeVar("T")
 R = TypeVar("R")
 
 
@@ -65,49 +64,33 @@ def default_transport_policy() -> TransportPolicy:
     return TransportPolicy()
 
 
-def _positive_int(value: object, default: int) -> int:
-    try:
-        n = int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
-    return n if n > 0 else default
-
-
-def _positive_float(value: object, default: float) -> float:
-    try:
-        n = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
-    return n if n > 0 else default
+def transport_attempts_public(attempts: List[TransportAttempt]) -> List[dict]:
+    """结构化 attempts 投影（机器可回指；不锁文案）。"""
+    return [
+        {
+            "index": a.index,
+            "outcome": a.outcome,
+            "code": a.code,
+            "status_code": a.status_code,
+        }
+        for a in attempts
+    ]
 
 
 def transport_policy_from_mapping(data: object) -> TransportPolicy:
-    """从 runtime 映射（transport 段或扁平键）归一策略；坏值回落默认。"""
-    base = default_transport_policy()
+    """从 runtime 映射归一策略。数值解析单权威 = llm_config._transport_runtime_slot。"""
+    from ming_sim.llm_config import transport_runtime_slot
+
     if not isinstance(data, dict):
-        return base
+        return default_transport_policy()
     src = data.get("transport") if isinstance(data.get("transport"), dict) else data
     if not isinstance(src, dict):
-        return base
+        return default_transport_policy()
+    slot = transport_runtime_slot(src)
     return TransportPolicy(
-        max_attempts=_positive_int(
-            src.get("max_attempts", src.get("transport_max_attempts")),
-            base.max_attempts,
-        ),
-        attempt_timeout_seconds=_positive_float(
-            src.get(
-                "attempt_timeout_seconds",
-                src.get("transport_attempt_timeout_seconds"),
-            ),
-            base.attempt_timeout_seconds,
-        ),
-        idle_timeout_seconds=_positive_float(
-            src.get(
-                "idle_timeout_seconds",
-                src.get("transport_idle_timeout_seconds"),
-            ),
-            base.idle_timeout_seconds,
-        ),
+        max_attempts=int(slot["max_attempts"]),
+        attempt_timeout_seconds=float(slot["attempt_timeout_seconds"]),
+        idle_timeout_seconds=float(slot["idle_timeout_seconds"]),
     )
 
 
@@ -118,15 +101,17 @@ def resolve_transport_policy(source: object = None) -> TransportPolicy:
     if isinstance(source, dict):
         return transport_policy_from_mapping(source)
     if source is not None:
+        # 仅当对象显式带 transport_* 字段时视为覆盖；否则落到 runtime 文件
         max_a = getattr(source, "transport_max_attempts", None)
         att = getattr(source, "transport_attempt_timeout_seconds", None)
         idle = getattr(source, "transport_idle_timeout_seconds", None)
         if any(v is not None for v in (max_a, att, idle)):
-            base = default_transport_policy()
-            return TransportPolicy(
-                max_attempts=_positive_int(max_a, base.max_attempts),
-                attempt_timeout_seconds=_positive_float(att, base.attempt_timeout_seconds),
-                idle_timeout_seconds=_positive_float(idle, base.idle_timeout_seconds),
+            return transport_policy_from_mapping(
+                {
+                    "max_attempts": max_a,
+                    "attempt_timeout_seconds": att,
+                    "idle_timeout_seconds": idle,
+                }
             )
     try:
         from ming_sim.llm_config import load_runtime_llm
@@ -145,6 +130,9 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
     可重试：瞬断/空转/5xx/408/429/空输出。
     不可重试：确定性 4xx（#1452 Unknown model 等带 4xx status）。
     未知（无 status 的笼统 stream/run error）→ 不洗成瞬断，立即上浮。
+
+    本函数是 APITimeout/Connection/Status → code/retryable 的唯一权威
+    （llm_unavailable_from_error 委派于此）。
     """
     if isinstance(error, TransportIdleTimeout):
         return ClassifiedFailure(
@@ -268,7 +256,10 @@ def transport_failure_unavailable(
 ) -> LLMUnavailable:
     """系统层终失败呈现（P7 / ADR 0046）：不用固定戏内话术。"""
     if exhausted and attempts > 1:
-        message = f"LLM 调用失败（已尝试 {attempts} 次）：{failure.provider_message or failure.message}"
+        message = (
+            f"LLM 调用失败（已尝试 {attempts} 次）："
+            f"{failure.provider_message or failure.message}"
+        )
     else:
         message = failure.message or f"LLM 调用失败：{failure.provider_message}"
     return LLMUnavailable(
@@ -304,6 +295,27 @@ def run_error_event_failure(content: object = None) -> ClassifiedFailure:
     )
 
 
+def check_attempt_budgets(
+    *,
+    attempt_started_at: float,
+    last_output_at: float,
+    policy: TransportPolicy,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """在事件边界检查空转/整份超时；超限抛 Transport*Timeout（可重试）。
+
+    SDK 层 timeout 亦绑 policy.attempt_timeout_seconds（create_chat_model），
+    无事件挂死由 SDK 墙钟承接；本检查覆盖有事件推进的受控时钟与空转。
+    """
+    now = clock()
+    if now - last_output_at >= policy.idle_timeout_seconds:
+        raise TransportIdleTimeout(f"idle > {policy.idle_timeout_seconds}s")
+    if now - attempt_started_at >= policy.attempt_timeout_seconds:
+        raise TransportAttemptTimeout(
+            f"attempt wall > {policy.attempt_timeout_seconds}s"
+        )
+
+
 def run_with_transport(
     operation: Callable[[], R],
     *,
@@ -315,6 +327,7 @@ def run_with_transport(
 
     output_emitted：若已向玩家发出可见输出，失败后不再重试（半流不另造缓冲规则）。
     """
+    del clock  # 预算检查在 operation 内用同一 clock；此处仅保留签名对称
     pol = policy or default_transport_policy()
     attempts: List[TransportAttempt] = []
     last: Optional[ClassifiedFailure] = None
@@ -323,19 +336,13 @@ def run_with_transport(
     for index in range(1, max_attempts + 1):
         try:
             result = operation()
-            attempts.append(
-                TransportAttempt(index=index, outcome="ok", code="ok")
-            )
+            attempts.append(TransportAttempt(index=index, outcome="ok", code="ok"))
             return result, attempts
         except Exception as error:  # noqa: BLE001 — 分类后按契约重试或上浮
             failure = classify_transport_failure(error)
             last = failure
             emitted = bool(output_emitted and output_emitted())
-            will_retry = (
-                failure.retryable
-                and not emitted
-                and index < max_attempts
-            )
+            will_retry = failure.retryable and not emitted and index < max_attempts
             attempts.append(
                 TransportAttempt(
                     index=index,
@@ -357,7 +364,6 @@ def run_with_transport(
                 attempt_records=attempts,
             ) from error
 
-    # 理论不可达：循环必 return 或 raise
     assert last is not None
     raise transport_failure_unavailable(
         last,
@@ -367,49 +373,24 @@ def run_with_transport(
     )
 
 
-def check_attempt_budgets(
+def run_transport_stream(
+    start_stream: Callable[[], Iterable[Any]],
     *,
-    attempt_started_at: float,
-    last_output_at: float,
-    policy: TransportPolicy,
-    clock: Callable[[], float] = time.monotonic,
-    enforce_attempt_wall: bool = True,
-) -> None:
-    """在事件边界检查空转/整份超时；超限抛 Transport*Timeout（可重试）。"""
-    now = clock()
-    if now - last_output_at >= policy.idle_timeout_seconds:
-        raise TransportIdleTimeout(
-            f"idle > {policy.idle_timeout_seconds}s"
-        )
-    if enforce_attempt_wall and (
-        now - attempt_started_at >= policy.attempt_timeout_seconds
-    ):
-        raise TransportAttemptTimeout(
-            f"attempt wall > {policy.attempt_timeout_seconds}s"
-        )
-
-
-def iter_stream_with_transport(
-    start_stream: Callable[[], Iterable[T]],
-    *,
+    on_event: Callable[[Any], None],
+    is_output_event: Callable[[Any], bool],
+    map_error_event: Callable[[Any], Optional[BaseException]],
+    after_stream: Callable[[], R],
     policy: Optional[TransportPolicy] = None,
     clock: Callable[[], float] = time.monotonic,
-    is_output: Callable[[T], bool],
-    map_error_event: Callable[[T], Optional[BaseException]],
-    on_event: Callable[[T], None],
-    enforce_attempt_wall: bool = True,
-) -> List[TransportAttempt]:
-    """流式 attempt 循环：成功时 on_event 已按序吃完终局流；返回 attempts 账。
+) -> tuple[R, List[TransportAttempt]]:
+    """流式 attempt 循环唯一权威：预算检查 + 分类重试 + 半流不重试。
 
-    map_error_event：事件若代表失败，返回要抛的异常（或 Classified 可识别的异常）。
-    is_output：事件是否算「有输出」（重置 idle 计时）。
-    半流：on_event 一旦被调用后本 attempt 失败 → 不重试。
+    召对 web 与 agents.run_agent_stream_text 共用本函数，禁止各自手写循环。
     """
     pol = policy or default_transport_policy()
+    emitted = {"n": 0}
 
-    emitted_flags = {"n": 0}
-
-    def _operation() -> None:
+    def _one_attempt() -> R:
         attempt_started_at = clock()
         last_output_at = attempt_started_at
         stream = start_stream()
@@ -419,33 +400,19 @@ def iter_stream_with_transport(
                 last_output_at=last_output_at,
                 policy=pol,
                 clock=clock,
-                enforce_attempt_wall=enforce_attempt_wall,
             )
             err = map_error_event(event)
             if err is not None:
                 raise err
-            if is_output(event):
+            if is_output_event(event):
                 last_output_at = clock()
-                # 半流：仅玩家可见输出计入；无输出的失败仍可重试
-                emitted_flags["n"] += 1
+                emitted["n"] += 1
             on_event(event)
+        return after_stream()
 
     return run_with_transport(
-        _operation,
+        _one_attempt,
         policy=pol,
         clock=clock,
-        output_emitted=lambda: emitted_flags["n"] > 0,
-    )[1]
-
-
-def transport_attempts_public(attempts: List[TransportAttempt]) -> List[dict]:
-    """结构化 attempts 投影（机器可回指；不锁文案）。"""
-    return [
-        {
-            "index": a.index,
-            "outcome": a.outcome,
-            "code": a.code,
-            "status_code": a.status_code,
-        }
-        for a in attempts
-    ]
+        output_emitted=lambda: emitted["n"] > 0,
+    )

@@ -126,6 +126,11 @@ def _transport_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
     return out
 
 
+def transport_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
+    """#1465 transport 数值解析唯一公开入口（llm_transport 委派，禁平行 _positive_*）。"""
+    return _transport_runtime_slot(data)
+
+
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     channel = str(data.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:

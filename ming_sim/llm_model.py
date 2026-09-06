@@ -77,25 +77,31 @@ def _extract_provider_error(error: Exception) -> tuple[str, str, int | None]:
 
 
 def llm_unavailable_from_error(error: Exception, stage: str = "LLM 连通性检查") -> LLMUnavailable:
-    provider_code, provider_message, status_code = _extract_provider_error(error)
-    if isinstance(error, APITimeoutError):
-        code = "llm_timeout"
-    elif isinstance(error, APIConnectionError):
-        code = "llm_connection_error"
-    elif isinstance(error, APIStatusError):
-        code = f"llm_http_{status_code or 'error'}"
-    else:
-        code = "llm_error"
+    """OpenAI 异常 → typed LLMUnavailable。分类权威 = llm_transport.classify_transport_failure。"""
+    from ming_sim.llm_transport import classify_transport_failure
+
+    # 先抽 provider 原文（response.json 内层），再交给统一分类定 code/retryable/status
+    _provider_code, provider_message, status_code = _extract_provider_error(error)
+    # 若异常自身无 status_code 属性但 body 里有，补到 APIStatusError 等价路径：
+    # classify 认 API* 类型；对已是 LLMUnavailable 的直接分类。
+    failure = classify_transport_failure(error)
+    # status：classify 优先；否则 _extract 补洞（非 API* 但带 response 的壳）
+    resolved_status = failure.status_code if failure.status_code is not None else status_code
+    resolved_code = failure.code
+    if resolved_code == "llm_error" and status_code is not None:
+        resolved_code = f"llm_http_{status_code}"
+    pmsg = provider_message or failure.provider_message
     return LLMUnavailable(
-        f"{stage}失败：{provider_message}",
-        code=code,
-        provider_message=provider_message,
-        status_code=status_code,
+        f"{stage}失败：{pmsg}",
+        code=resolved_code,
+        provider_message=pmsg,
+        status_code=resolved_status,
     )
 
 
 # #1299/#1310：CLI runner / agent run 失败时玩家可见文案——短、diegetic、可重试；
 # 机器横幅只进 provider_message，永不进 content 叙事通道。
+# API transport 终失败走 llm_transport.transport_failure_unavailable（系统层，#1465）。
 CLI_RUNNER_PLAYER_MESSAGE = "通传未达，请稍后再召。"
 
 
@@ -114,12 +120,6 @@ def cli_runner_unavailable(
         code=code,
         provider_message=provider or CLI_RUNNER_PLAYER_MESSAGE,
     )
-
-
-def llm_stream_unavailable(provider_message: object = "") -> LLMUnavailable:
-    """RunErrorEvent → typed；玩家 message 单源 CLI_RUNNER_PLAYER_MESSAGE。"""
-    p = str(provider_message or "").strip() or CLI_RUNNER_PLAYER_MESSAGE
-    return LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_stream_error", provider_message=p)
 
 
 def create_chat_model(
@@ -158,12 +158,17 @@ def create_chat_model(
             if thinking_type not in {"adaptive", "disabled"}:
                 thinking_type = "adaptive"
         extra_body = {"thinking": {"type": thinking_type}, "reasoning_split": True}
+    # #1465：API 通道 SDK timeout = transport 每 attempt 整份超时（与事件界 check 同权威）；
+    # 不再另用 llm_config.timeout_seconds 作第二墙钟。CLI 仍用 cli_timeout_seconds。
+    from ming_sim.llm_transport import resolve_transport_policy
+
+    transport_policy = resolve_transport_policy(llm_config)
     kwargs: Dict[str, object] = {
         "id": llm_config.model,
         "api_key": llm_config.api_key,
         "base_url": llm_config.base_url,
         "temperature": temperature,
-        "timeout": llm_config.timeout_seconds,
+        "timeout": transport_policy.attempt_timeout_seconds,
         # #1465：SDK 层重试关闭——attempt 预算归 llm_transport 单真源，禁双重点数。
         "max_retries": 0,
         "role_map": {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"},
