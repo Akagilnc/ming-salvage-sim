@@ -7,8 +7,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
-
 import ming_sim.agents as agents_mod
 from ming_sim.db import GameDB
 from ming_sim.llm_model import create_agno_db
@@ -123,11 +121,6 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
             self.session_id = session_id
             self.db = agno_db
             self._ming_game_db = game_db
-            self._cached_session = SimpleNamespace(
-                session_id=session_id,
-                runs=[SimpleNamespace(run_id=prior_id, status="COMPLETED")],
-            )
-            self._cached_session_db = agno_db
 
         def run(self, *_a, **_k):
             self.calls += 1
@@ -138,19 +131,15 @@ def test_run_agent_text_history_backed_drops_empty_completed_before_retry(
                 _insert_completed_run(
                     game_db, session_id, empty_id, run_index=1, content="",
                 )
-                self._cached_session.runs.append(
-                    SimpleNamespace(run_id=empty_id, status="COMPLETED"),
-                )
                 assert game_db.agno_runs_length(session_id) == 2
                 yield RunContent("…")
                 yield RunOutput("")
                 return
-            # 再试前须已截回 keep_count=1；否则空 run 仍在 history
+            # 再试前须已截回 keep_count=1（外部可见：agno_runs_length / run_id）
             assert game_db.agno_runs_length(session_id) == 1, (
                 f"empty completed run must be truncated before retry; "
                 f"len={game_db.agno_runs_length(session_id)}"
             )
-            assert self._cached_session is None, "cache_session must invalidate on truncate"
             ok_id = "run-ok"
             _insert_completed_run(
                 game_db, session_id, ok_id, run_index=1, content=good,

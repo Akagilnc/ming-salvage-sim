@@ -133,76 +133,46 @@ def _agent_model_is_cli(agent: object) -> bool:
     return type(model).__name__ == "CliChat"
 
 
-def _is_history_backed_agent(agent: object) -> bool:
-    """db + cache_session + add_history_to_context + session_id（颁布判官命中面）。"""
-    return bool(
+def _history_backed_truncate_anchor(
+    agent: object,
+) -> Optional[tuple[Any, str, int]]:
+    """history-backed + GameDB 句柄 → (game_db, session_id, keep_count)；否则不截。
+
+    命中面=颁布判官（db+cache_session+add_history_to_context）；截缝唯一权威=
+    GameDB.truncate_agno_session_runs → _truncate_agno_runs_in_tx（与召对同缝）。
+    无 _ming_game_db 不另造 get_runs/delete_runs 退路。
+    """
+    if not (
         getattr(agent, "add_history_to_context", False)
         and getattr(agent, "cache_session", False)
         and getattr(agent, "db", None) is not None
-        and str(getattr(agent, "session_id", "") or "")
-    )
-
-
-def _history_backed_runs_keep_count(agent: object) -> int:
-    """当前 session 已落 Agno runs 数（本 call 起点；重试截回此值）。
-
-    优先 GameDB.agno_runs_length（与召对 truncate 同 merge 权威）；无 game_db
-    句柄时退 agent.db.get_runs（同 agno_runs 表，颁布判官生产路径）。
-    """
+    ):
+        return None
     session_id = str(getattr(agent, "session_id", "") or "")
     if not session_id:
-        return 0
+        return None
     game_db = getattr(agent, "_ming_game_db", None)
-    if game_db is not None and hasattr(game_db, "agno_runs_length"):
-        return int(game_db.agno_runs_length(session_id))
-    db = getattr(agent, "db", None)
-    get_runs = getattr(db, "get_runs", None)
-    if not callable(get_runs):
-        return 0
-    result = get_runs(session_id=session_id, deserialize=False)
-    if isinstance(result, tuple):
-        return int(result[1] or 0)
-    return len(result or [])
+    if game_db is None or not hasattr(game_db, "truncate_agno_session_runs"):
+        return None
+    if not hasattr(game_db, "agno_runs_length"):
+        return None
+    keep = int(game_db.agno_runs_length(session_id))
+    return game_db, session_id, keep
 
 
-def _truncate_history_backed_agent_runs(agent: object, keep_count: int) -> None:
+def _truncate_history_backed_agent_runs(
+    agent: object, game_db: Any, session_id: str, keep_count: int,
+) -> None:
     """transport 再试前丢掉本 attempt 已落的 completed 空 run。
 
-    同形召对 ``truncate_chat_turn_agno_runs``：
-    - 有 GameDB 句柄 → ``truncate_agno_session_runs`` → ``_truncate_agno_runs_in_tx``
-    - 否则经 agent.db（SqliteDb）delete_runs + legacy blob scrub（同表同形，不新造机制）
-    不回滚游戏落账；cache_session 须失效，否则内存仍持空 completed run。
+    只调 GameDB.truncate_agno_session_runs（召对 truncate_chat_turn_agno_runs 同缝）；
+    不回滚游戏落账。cache_session 置空使下一 attempt 从已截 DB 重载，非第二套历史算法。
     """
-    session_id = str(getattr(agent, "session_id", "") or "")
-    if not session_id:
-        return
-    keep = max(0, int(keep_count))
-    game_db = getattr(agent, "_ming_game_db", None)
-    if game_db is not None and hasattr(game_db, "truncate_agno_session_runs"):
-        game_db.truncate_agno_session_runs(session_id, keep)
-    else:
-        db = getattr(agent, "db", None)
-        get_runs = getattr(db, "get_runs", None)
-        delete_runs = getattr(db, "delete_runs", None)
-        if callable(get_runs) and callable(delete_runs):
-            result = get_runs(session_id=session_id, deserialize=False)
-            if isinstance(result, tuple):
-                rows, total = result[0], int(result[1] or 0)
-            else:
-                rows, total = list(result or []), len(result or [])
-            if total > keep:
-                drop_ids = [
-                    str(r.get("run_id"))
-                    for r in list(rows)[keep:]
-                    if isinstance(r, dict) and r.get("run_id") is not None
-                ]
-                if drop_ids:
-                    delete_runs(drop_ids)
-    if getattr(agent, "cache_session", False):
-        if hasattr(agent, "_cached_session"):
-            agent._cached_session = None
-        if hasattr(agent, "_cached_session_db"):
-            agent._cached_session_db = None
+    game_db.truncate_agno_session_runs(session_id, max(0, int(keep_count)))
+    if hasattr(agent, "_cached_session"):
+        agent._cached_session = None
+    if hasattr(agent, "_cached_session_db"):
+        agent._cached_session_db = None
 
 
 def run_agent_text(
@@ -255,14 +225,16 @@ def run_agent_text(
     policy = resolve_transport_policy()
     model = getattr(agent, "model", None)
 
-    history_backed = _is_history_backed_agent(agent)
-    runs_before = _history_backed_runs_keep_count(agent) if history_backed else None
+    hist_anchor = _history_backed_truncate_anchor(agent)
     attempt_n = {"n": 0}
 
     def _before_attempt() -> None:
         # 同形 web_app._start_stream：再试前截掉本 call 已落的空 completed run
-        if runs_before is not None and attempt_n["n"] > 0:
-            _truncate_history_backed_agent_runs(agent, runs_before)
+        if hist_anchor is not None and attempt_n["n"] > 0:
+            game_db, session_id, keep_count = hist_anchor
+            _truncate_history_backed_agent_runs(
+                agent, game_db, session_id, keep_count,
+            )
         attempt_n["n"] += 1
 
     if _agent_run_accepts_stream(agent):
@@ -315,19 +287,12 @@ def run_agent_text(
             )
     else:
         # 死角：run 未声明流式能力 → 每 attempt 硬超时（SDK read = attempt_timeout）
+        # 空终包可重试权威在流式 _after_stream；死角不平行复制。
         def _one_attempt() -> str:
             _before_attempt()
             output = agent.run(run_input)
             _dump_llm_messages(output, tag, agent=agent)
-            text = extract_agent_text(output)
-            if not text and history_backed:
-                # 空终包与流式同权威：可重试（非 history 死角保持既有 extract 原样返回）
-                raise transport_failure_unavailable(
-                    empty_output_failure(),
-                    attempts=1,
-                    exhausted=False,
-                )
-            return text
+            return extract_agent_text(output)
 
         with bind_transport_sdk_budget(model, policy):
             text, _attempts = run_with_transport(_one_attempt, policy=policy)
