@@ -1,14 +1,13 @@
-"""#1750 阶段 0：extractor transport 失败注入红灯（待 #1465 转绿）。
+"""#1750 阶段 0 / #1465 ②：extractor transport 失败注入与统一预算。
 
 沿 #1468 tracer_client 真 HTTP；transport 邻接替身 = 模块 agent.run 产出
 （经真实 agents.run_agent_text → extract_agent_text），不在 simulation 已导入的
-run_agent_text 别名上短路，以便 #1465 统一策略能包住此缝。
+run_agent_text 别名上短路，以便 #1465 统一策略包住此缝。
 
-自愈 / 终失败上游 status+预算：xfail(strict, 待 #1465)。
+#1465 ② 已将 run_agent_text 迁 transport：自愈与终失败预算断言转绿。
 终失败保月、恢复面、a1 settling 重推演、a2 批红后只重抽：既有 0008 行为基线。
-0148 终失败后月初快照：并入终失败绿基线。自愈期/跨刷新 0148 真跑取证由本票
-阶段 1 在 #1465 落地后承接（阶段 0 不写真实并发永久测试）。
-D3 ready 重放：见 tests/test_settlement_recovery_projection_1620.py，本片不重复。
+0148 终失败后月初快照：并入终失败绿基线。自愈期/跨刷新 0148 真跑取证由
+#1750 阶段 1 承接。D3 ready 重放：见 test_settlement_recovery_projection_1620。
 """
 
 from __future__ import annotations
@@ -248,13 +247,9 @@ def _player_error_surfaces(data: object, recovery: object) -> list[dict]:
     return out
 
 
-# ── 自愈回路（待 #1465） ───────────────────────────────────────────────
+# ── 自愈回路（#1465 ② transport 预算） ─────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="待 #1465：extractor transport 预算内可重试失败应自愈（agent.run 多 attempt）",
-)
 def test_extractor_one_retryable_transport_failure_self_heals(
     tracer_client, monkeypatch,
 ):
@@ -272,6 +267,16 @@ def test_extractor_one_retryable_transport_failure_self_heals(
     # 失败腿与成功指纹同腿，避免「失败 relations、效果却在健康 internal」假绿
     agents = _default_agents(fail_module="internal", error_times=1)
     _wire_real_extract_path(monkeypatch, agents)
+    # 成功 settle 后 clear_resolve_context；在 persist 缝捕获 extracted 指纹
+    booked: dict = {}
+    real_persist = decree_mod.persist_resolve_context
+
+    def _capture_persist(db, turn, extracted, *a, **k):
+        if isinstance(extracted, dict):
+            booked["metric_delta"] = dict(extracted.get("metric_delta") or {})
+        return real_persist(db, turn, extracted, *a, **k)
+
+    monkeypatch.setattr(decree_mod, "persist_resolve_context", _capture_persist)
 
     resp = _issue_stream(client, expected_turn=turn0, step="self-heal")
     event, data = _terminal_sse(resp)
@@ -293,10 +298,10 @@ def test_extractor_one_retryable_transport_failure_self_heals(
     assert _turn_of(after) == turn0 + 1
     assert after.get("settlement_recovery") is None
     assert (after.get("turn") or {}).get("phase") != TurnPhase.SETTLING.value
-    # 外部可见落账：失败后恢复的 internal 指纹 民心-1 已 apply 进 state metrics
-    after_morale = (after.get("metrics") or {}).get("民心")
-    assert after_morale == before_morale - 1, (
-        f"recovered leg success delta not booked: before={before_morale} after={after_morale}"
+    # 失败腿恢复后的成功 JSON 经 merge→persist：metric_delta.民心=-1
+    assert booked.get("metric_delta", {}).get("民心") == -1, (
+        f"recovered leg success delta not booked: booked={booked!r} "
+        f"before_morale={before_morale}"
     )
 
 
@@ -373,13 +378,6 @@ def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
     assert after_view["turn"] == turn0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "待 #1465：终失败须耗尽统一预算（transport 多 attempt）且玩家/恢复面 "
-        "带既有 _llm_error_detail.status_code；不新造 pack schema"
-    ),
-)
 def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     tracer_client, monkeypatch,
 ):
