@@ -1905,7 +1905,8 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     db.append_chat_message(minister, state.turn, "user", prior_task)
     db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
     player_message = "密令如下：可，照办，三月内回奏"
-    llm_inputs: list[str] = []
+    # 供料只按 typed tag 收取后续调用，不入全池 any（C7）。
+    recovery_feeds: list[str] = []
     # 产物缺口（合法空合同），非 transport：走揣摩/recovery。
     unlandable = json.dumps({
         "标题": "", "内容": "", "承办人": minister, "期限月数": 0,
@@ -1915,8 +1916,10 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
 
     def api_route(prompt, llm_config=None, tag="", **_k):
         text = str(prompt)
-        llm_inputs.append(text)
-        if tag == "secret_order_landing_recovery" or _k.get("force_json_output") is False:
+        if tag == "secret_order_landing_recovery":
+            recovery_feeds.append(text)
+            return "任意生成回禀", 1
+        if _k.get("force_json_output") is False:
             return "任意生成回禀", 1
         return unlandable, 1
 
@@ -1933,17 +1936,18 @@ def test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails(game
     assert recovery.get("report")
     assert recovery.get("landing_gaps")
     snapshot = recovery.get("extract_snapshot") or {}
-    # #354/#1765 C7：后续 compose 须含前文任务 + 本轮确认 + 真实缺口标签 + 原产物。
-    # 不以「【皇帝原话】」表头冒充缺口（M3 假阳性）。
+    # #354/#1765 C7：typed recovery 调用须含前文任务 + 本轮确认 + 真实缺口 + 原产物。
+    # 不以「【皇帝原话】」表头冒充缺口（M3 假阳性）；不靠表头识别调用身份。
     gap_marks = ("结构化标题", "差务合同", "抽取结果", "密令正文")
+    assert recovery_feeds, "须有 typed secret_order_landing_recovery 调用"
     assert any(
         ("督办陕西赈灾" in p or prior_task in p)
         and ("三月内回奏" in p or "可，照办" in p)
         and any(m in p for m in gap_marks)
         and "【原抽取产出】" in p
         and unlandable in p
-        for p in llm_inputs
-    ), "带反馈的后续 LLM 输入须同时含前文任务、本轮确认、真实缺口与完整原产物"
+        for p in recovery_feeds
+    ), "typed recovery 输入须同时含前文任务、本轮确认、真实缺口与完整原产物"
     assert int(res.get("pending_action_id") or 0) == 0
     assert res.get("secret_order_id") in (None, 0)
     assert db.list_secret_orders() == []
