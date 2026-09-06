@@ -5,7 +5,7 @@ import type { Directive, GameState, LocalDirectiveItem } from "./types";
 // 诏书台动作群：草案登记/编辑/存改/删除/核定/驳回。
 // #1341：裸 PATCH /api/decree 与 /api/decree/write 前端死码已删；改稿只走 /api/directives。
 // 全部共享 busy/error 写入与 latest-wins 代次推进（beginDurableMutation 防旧 done 覆盖）。
-// #1764：create 在飞项为本地会话态——提交即绑卡；失败回填到卡；刷新后消失。
+// #1764：create/save/delete 进行态与失败真因绑所属卡；busy 只作禁点互斥，不承载呈现文案。
 export function useEdictActions({
   setBusy,
   setError,
@@ -23,18 +23,36 @@ export function useEdictActions({
   const [localDirectives, setLocalDirectives] = React.useState<LocalDirectiveItem[]>([]);
   const localSeq = React.useRef(0);
 
+  const beginCardRequest = (item: LocalDirectiveItem) => {
+    setLocalDirectives((prev) => [
+      ...prev.filter((row) => {
+        if (item.directiveId != null) return row.directiveId !== item.directiveId;
+        return row.phase !== "failed" || row.directiveId != null;
+      }),
+      item,
+    ]);
+  };
+
+  const clearCardRequest = (localKey: string) => {
+    setLocalDirectives((prev) => prev.filter((item) => item.localKey !== localKey));
+  };
+
+  const failCardRequest = (localKey: string, message: string) => {
+    setLocalDirectives((prev) =>
+      prev.map((item) =>
+        item.localKey === localKey ? { ...item, phase: "failed", error: message } : item,
+      ),
+    );
+  };
+
   const createDirective = async () => {
     if (!directiveText.trim()) return;
-    // #1764：主反馈绑在飞卡；busy 仅真值禁写互斥（compose 无 busy 呈现面，不分段文案）。
     const text = directiveText.trim();
     localSeq.current += 1;
     const localKey = `local-${localSeq.current}`;
-    setLocalDirectives((prev) => [
-      ...prev.filter((item) => item.phase !== "failed"),
-      { localKey, text, phase: "inflight" },
-    ]);
+    beginCardRequest({ localKey, text, phase: "inflight", op: "create" });
+    // 清空 compose；失败时仅在玩家未另写时回填，不覆写等待期间新内容。
     setDirectiveText("");
-    setBusy("1");
     setError("");
     try {
       const data = await api<{ directives: Directive[] }>("/api/directives", {
@@ -43,27 +61,19 @@ export function useEdictActions({
           text,
         }),
       });
-      setLocalDirectives((prev) => prev.filter((item) => item.localKey !== localKey));
-      beginDurableMutation();  // 应用本变更响应前推进代次，作废在飞旧刷新（防旧 done 覆盖）
+      clearCardRequest(localKey);
+      beginDurableMutation(); // 应用本变更响应前推进代次，作废在飞旧刷新（防旧 done 覆盖）
       setState((current) => (current ? { ...current, directives: data.directives } : current));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setLocalDirectives((prev) =>
-        prev.map((item) =>
-          item.localKey === localKey
-            ? { ...item, phase: "failed", error: message }
-            : item,
-        ),
-      );
-      // 失败回填 compose，便于同一「新增草案」加速器再点（0047；非新流程）。
-      setDirectiveText(text);
+      failCardRequest(localKey, message);
+      setDirectiveText((current) => (current.trim() === "" ? text : current));
       setError(message);
-    } finally {
-      setBusy("");
     }
   };
 
   const startEditDirective = (directive: Directive) => {
+    setLocalDirectives((prev) => prev.filter((item) => item.directiveId !== directive.id));
     setEditingDirectiveId(directive.id);
     setEditingDirectiveText(directive.text);
   };
@@ -75,38 +85,57 @@ export function useEdictActions({
 
   const saveDirective = async (directive: Directive) => {
     if (!editingDirectiveText.trim()) return;
-    // busy 仅禁写互斥真值；edict 无 busy 呈现面。
-    setBusy("1");
+    const text = editingDirectiveText.trim();
+    const localKey = `save-${directive.id}-${++localSeq.current}`;
+    beginCardRequest({
+      localKey,
+      text,
+      phase: "inflight",
+      directiveId: directive.id,
+      op: "save",
+    });
+    cancelEditDirective();
     setError("");
     try {
       const data = await api<{ directives: Directive[] }>(`/api/directives/${directive.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ text: editingDirectiveText.trim() }),
+        body: JSON.stringify({ text }),
       });
+      clearCardRequest(localKey);
       beginDurableMutation();
       setState((current) => (current ? { ...current, directives: data.directives } : current));
-      cancelEditDirective();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
+      const message = err instanceof Error ? err.message : String(err);
+      failCardRequest(localKey, message);
+      // 失败恢复内容绑本卡：回到编辑，写入本次提交快照（不另造草稿系统）。
+      setEditingDirectiveId(directive.id);
+      setEditingDirectiveText(text);
+      setError(message);
     }
   };
 
   const deleteDirective = async (directiveId: number) => {
-    setBusy("删除草案");
+    const localKey = `del-${directiveId}-${++localSeq.current}`;
+    beginCardRequest({
+      localKey,
+      text: "",
+      phase: "inflight",
+      directiveId,
+      op: "delete",
+    });
     setError("");
     try {
       const data = await api<{ directives: Directive[] }>(`/api/directives/${directiveId}`, { method: "DELETE" });
+      clearCardRequest(localKey);
       beginDurableMutation();
       setState((current) => (current ? { ...current, directives: data.directives } : current));
       if (editingDirectiveId === directiveId) {
         cancelEditDirective();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
+      const message = err instanceof Error ? err.message : String(err);
+      failCardRequest(localKey, message);
+      setError(message);
     }
   };
 

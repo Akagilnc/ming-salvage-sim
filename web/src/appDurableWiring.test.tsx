@@ -2472,11 +2472,13 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
     });
     expect(host.querySelector('[data-directive-phase="inflight"]')?.textContent || "").toContain("解太仓备用");
-    expect(host.querySelector(".busy-line")).toBeNull();
+    // 请求按钮禁点；compose textarea 不冻结（玩家可另写，失败回填不覆写）。
     expect(host.querySelector<HTMLButtonElement>(".desk-add-btn")?.disabled).toBe(true);
+    expect(host.querySelector<HTMLTextAreaElement>(".desk-compose textarea")?.disabled).toBe(false);
     expect(createPosts).toBe(1);
 
-    // 失败路径：POST reject → 卡 phase=failed + compose 回填
+    // 等待期间玩家另写：失败回填不得覆写新内容
+    await fillCompose("等待期间另拟");
     await act(async () => {
       releaseCreate({
         ok: false,
@@ -2493,10 +2495,11 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const failed = host.querySelector('[data-directive-phase="failed"]');
     expect(failed?.querySelector('[data-role="local-error"]')?.textContent).toBe("structured-fail-token");
     const taAfterFail = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
-    expect(taAfterFail?.value).toBe("解太仓备用");
+    expect(taAfterFail?.value).toBe("等待期间另拟");
     expect(host.querySelector<HTMLButtonElement>(".desk-add-btn")?.disabled).toBe(false);
 
-    // 可再提交：新 gate 成功落草案
+    // 可再提交：compose 改回原快照后成功落草案
+    await fillCompose("解太仓备用");
     createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
     await click(findButton(host, "新增草案"));
     await act(async () => {
@@ -2520,6 +2523,65 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     expect(host.querySelector('[data-directive-phase="inflight"]')).toBeNull();
     expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
+
+    // save：PATCH 在飞绑所属草案卡；拒绝 → 卡 failed + 恢复编辑内容
+    let releaseSave!: (value: Response) => void;
+    let saveGate = new Promise<Response>((resolve) => { releaseSave = resolve; });
+    let savePatches = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
+      if (u.pathname.match(/\/api\/directives\/\d+$/) && init?.method === "PATCH") {
+        savePatches += 1;
+        return saveGate;
+      }
+      return jsonResp({});
+    }));
+    const draftCard = host.querySelector('[data-directive-phase="draft"][data-directive-id="9"]');
+    expect(draftCard).not.toBeNull();
+    const editBtn = Array.from(draftCard!.querySelectorAll("button")).find((b) => (b.textContent || "").includes("改"));
+    expect(editBtn).toBeTruthy();
+    await click(editBtn as HTMLButtonElement);
+    const editArea = host.querySelector<HTMLTextAreaElement>(".directive-edit textarea");
+    expect(editArea).not.toBeNull();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(editArea!, "改稿边饷");
+      editArea!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const saveBtn = host.querySelector<HTMLButtonElement>('button[aria-label="保存草案"]');
+    expect(saveBtn).not.toBeNull();
+    await click(saveBtn!);
+    await act(async () => {
+      await vi.waitFor(() => {
+        const card = host.querySelector('[data-directive-id="9"]');
+        expect(card?.getAttribute("data-directive-phase")).toBe("inflight");
+        expect(card?.getAttribute("data-request-op")).toBe("save");
+      });
+    });
+    expect(savePatches).toBe(1);
+    await act(async () => {
+      releaseSave({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: async () => ({ detail: { message: "save-fail-token" } }),
+      } as unknown as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        const card = host.querySelector('[data-directive-id="9"]');
+        expect(card?.getAttribute("data-directive-phase")).toBe("failed");
+        expect(card?.querySelector('[data-role="local-error"]')?.textContent).toBe("save-fail-token");
+      });
+    });
+    const editAfterSaveFail = host.querySelector<HTMLTextAreaElement>(".directive-edit textarea");
+    expect(editAfterSaveFail?.value).toBe("改稿边饷");
   });
 
   it("#1764 成案只读投影：state.cased_directives 以 phase=cased 留桌且无改删", async () => {
