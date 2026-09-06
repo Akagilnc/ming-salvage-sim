@@ -182,12 +182,13 @@ def _record_secret_landing_rejection(
     *,
     minister_name: str,
     player_message: str,
+    chat_turn_id: int = 0,
 ) -> None:
     """Durable diagnostic for a secret that cannot land (0005); before recovery I/O."""
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
     so = secret if isinstance(secret, dict) else {}
-    item = {
+    item: Dict[str, Any] = {
         "kind": "secret_order",
         "action": "新建",
         "minister_name": minister_name,
@@ -196,23 +197,25 @@ def _record_secret_landing_rejection(
         "content": str(so.get("content") or ""),
         "contract_error": str(so.get("contract_error") or ""),
         "extract_failed": bool(so.get("extract_failed")),
-        "extract_transport_error": bool(so.get("extract_transport_error")),
         "has_covert_task": isinstance(so.get("covert_task"), dict),
+        "assignee": so.get("assignee") or minister_name,
+        "deadline_months": so.get("deadline_months", 0),
+        "tags": list(so.get("tags") or []),
     }
+    if isinstance(so.get("covert_task"), dict):
+        item["covert_task"] = so["covert_task"]
     if "extract_raw" in so:
         item["extract_raw"] = so["extract_raw"]
-    category = (
-        "secret_transport"
-        if so.get("extract_transport_error")
-        else "secret_landing"
-    )
+    source_turn = int(chat_turn_id or 0)
+    if source_turn > 0:
+        item["source_chat_turn_id"] = source_turn
     collector = RejectionCollector()
     collector.record(
         "audience_secret_order",
         RejectedItem(
             item=item,
             reason=str(so.get("contract_error") or "密令落不了库"),
-            category=category,
+            category="secret_landing",
             source=Provenance.secret_order,
         ),
         int(turn),
@@ -459,17 +462,24 @@ def _secret_order_pending_payload(
 
 
 def _prior_output_for_secret_feedback(secret: Dict[str, Any]) -> str:
-    """Prefer raw extract text; else compact typed snapshot for 揣摩 feedback."""
+    """Prefer raw extract text; else typed snapshot of original product fields."""
     raw = secret.get("extract_raw")
     if isinstance(raw, str) and raw.strip():
         return raw
+    if raw is not None and not isinstance(raw, str):
+        return str(raw)
     snapshot = {
         "title": secret.get("title") or "",
         "content": secret.get("content") or "",
         "contract_error": secret.get("contract_error") or "",
         "extract_failed": bool(secret.get("extract_failed")),
+        "assignee": secret.get("assignee") or "",
+        "deadline_months": secret.get("deadline_months", 0),
+        "tags": list(secret.get("tags") or []),
         "has_covert_task": isinstance(secret.get("covert_task"), dict),
     }
+    if isinstance(secret.get("covert_task"), dict):
+        snapshot["covert_task"] = secret["covert_task"]
     return json.dumps(snapshot, ensure_ascii=False)
 
 
@@ -488,15 +498,37 @@ def _stage_new_secret_order(
     )
 
 
-def minister_speaker_role(minister_name: str, character: Any = None) -> str:
-    """Single assembly for recovery speaker_role (name + office)."""
-    office = str(getattr(character, "office", "") or "").strip() if character is not None else ""
+def minister_speaker_role(
+    minister_name: str,
+    character: Any = None,
+    db: Any = None,
+) -> str:
+    """ADR 0033 objective characterization for recovery speaker (not name/office alone)."""
+    from ming_sim.context import faction_context_with_db, minister_dossier
+    from ming_sim.models import Character
+
+    ch = character
+    if not isinstance(ch, Character) and db is not None:
+        content = getattr(db, "content", None)
+        roster = getattr(content, "characters", None) if content is not None else None
+        if isinstance(roster, dict):
+            found = roster.get(str(minister_name or "").strip())
+            if isinstance(found, Character):
+                ch = found
+    if isinstance(ch, Character):
+        parts = [
+            f"{ch.name}，{ch.office}",
+            minister_dossier(ch),
+        ]
+        if db is not None:
+            parts.append(faction_context_with_db(ch, db))
+        return "\n".join(p for p in parts if str(p or "").strip())
+    office = str(getattr(ch, "office", "") or "").strip() if ch is not None else ""
     office_type = (
-        str(getattr(character, "office_type", "") or "").strip()
-        if character is not None else ""
+        str(getattr(ch, "office_type", "") or "").strip() if ch is not None else ""
     )
     bits = [p for p in (str(minister_name or "").strip(), office or office_type) if p]
-    return "，".join(bits)
+    return "，".join(bits) or "大臣"
 
 
 def land_or_recover_new_secret_order(
@@ -512,106 +544,74 @@ def land_or_recover_new_secret_order(
     dossier_candidates: Optional[List[Dict[str, Any]]] = None,
     character: Any = None,
     speaker_role: str = "",
+    chat_turn_id: int = 0,
 ) -> None:
     """#1765：已识别密令新建的统一落库。
 
     能落 → 暂存进确认闸。
-    抽取产物/合同缺口 → 失败事实交 LLM 揣摩：能补全则进确认闸，否则本职请示。
-    程序/transport 真因不进戏内揣摩：耐久留痕后返回（0005/0046）。
+    抽取产物/合同缺口 → 失败事实交大臣揣摩/请示（既有 compose 接缝；不定机器重抽次数）。
+    程序/transport 真异常不进入本函数：由抽取接缝响亮上抛（0005/0046）。
     """
+    # minister_reply / dossier_candidates retained for call-site stability; first extract
+    # already stamped provenance on secret when a later rewrite path is reintroduced.
+    _ = (minister_reply, dossier_candidates)
     from ming_sim.cli_backend import (
-        _extract_secret_order,
-        build_secret_order_landing_feedback,
         compose_secret_order_landing_recovery,
         secret_order_can_land,
         secret_order_landing_gaps,
     )
 
     so = dict(secret or {})
-    # Provenance stamped by first _extract_secret_order (C3: 重抽复用首抽输入).
+    # Provenance from first extract: recovery feed reuses full command (#354 / C3).
     extract_command = str(so.pop("_extract_command", "") or player_message)
-    force_default_assignee = bool(so.pop("_force_default_assignee", False))
-    extract_reply = str(so.pop("_extract_reply", "") or minister_reply)
+    so.pop("_force_default_assignee", None)
+    so.pop("_extract_reply", None)
     role = str(speaker_role or "").strip() or minister_speaker_role(
-        minister_name, character,
+        minister_name, character, db=db,
     )
 
     if secret_order_can_land(so):
         _stage_new_secret_order(db, turn, minister_name, so, out)
         return
 
-    def _transport_stop(item: Dict[str, Any]) -> bool:
-        if not item.get("extract_transport_error"):
-            return False
-        _record_secret_landing_rejection(
-            db, turn, item,
-            minister_name=minister_name,
-            player_message=player_message,
-        )
-        out["pending_action_id"] = 0
-        return True
-
-    # Transport/call failure is system identity (typed flag), not product gap.
-    if _transport_stop(so):
-        return
-
     gaps = secret_order_landing_gaps(so)
-    feedback = build_secret_order_landing_feedback(
-        gaps,
-        emperor_words=player_message,
-        prior_output=_prior_output_for_secret_feedback(so),
-        contract_error=str(so.get("contract_error") or ""),
-    )
-    # 揣摩补全：复用首抽完整确定性输入；同一抽取接缝（无吞/抛双态开关）。
-    healed = _extract_secret_order(
-        extract_command,
-        extract_reply,
-        minister_name,
-        llm_config,
-        force_default_assignee=force_default_assignee,
-        dossier_candidates=dossier_candidates,
-        correction_feedback=feedback,
-    )
-    if _transport_stop(healed if isinstance(healed, dict) else {}):
-        return
-    if secret_order_can_land(healed):
-        _stage_new_secret_order(db, turn, minister_name, healed, out)
-        return
-
-    final = healed if isinstance(healed, dict) else so
+    contract_error = str(so.get("contract_error") or "").strip()
     # Diagnostic before recovery I/O — compose/LLM failure must not erase facts (C4).
     _record_secret_landing_rejection(
-        db, turn, final,
+        db, turn, so,
         minister_name=minister_name,
         player_message=player_message,
+        chat_turn_id=chat_turn_id,
     )
-    final_gaps = secret_order_landing_gaps(final) or gaps
-    contract_error = str(
-        (final or {}).get("contract_error") or so.get("contract_error") or ""
-    ).strip()
+    # emperor_words = first-extract command (前文+确认)，不是裸本轮短句。
     report = compose_secret_order_landing_recovery(
-        final_gaps,
+        gaps,
         speaker_name=minister_name,
         speaker_role=role,
-        emperor_words=player_message,
-        prior_output=_prior_output_for_secret_feedback(final if final else so),
+        emperor_words=extract_command,
+        prior_output=_prior_output_for_secret_feedback(so),
         contract_error=contract_error,
         llm_config=llm_config,
     )
-    snap_src = final if final else so
     extract_snapshot: Dict[str, Any] = {
-        "title": str(snap_src.get("title") or ""),
-        "content": str(snap_src.get("content") or ""),
-        "extract_failed": bool(snap_src.get("extract_failed")),
-        "has_covert_task": isinstance(snap_src.get("covert_task"), dict),
+        "title": str(so.get("title") or ""),
+        "content": str(so.get("content") or ""),
+        "extract_failed": bool(so.get("extract_failed")),
+        "has_covert_task": isinstance(so.get("covert_task"), dict),
         "contract_error": contract_error,
+        "assignee": so.get("assignee") or minister_name,
+        "deadline_months": so.get("deadline_months", 0),
+        "tags": list(so.get("tags") or []),
     }
-    if "extract_raw" in snap_src:
-        extract_snapshot["extract_raw"] = snap_src["extract_raw"]
-    elif "extract_raw" in so:
+    if isinstance(so.get("covert_task"), dict):
+        extract_snapshot["covert_task"] = so["covert_task"]
+    if "extract_raw" in so:
         extract_snapshot["extract_raw"] = so["extract_raw"]
+    source_turn = int(chat_turn_id or 0)
+    if source_turn > 0:
+        extract_snapshot["source_chat_turn_id"] = source_turn
     out["secret_order_landing_recovery"] = {
-        "landing_gaps": list(final_gaps),
+        "landing_gaps": list(gaps),
         "contract_error": contract_error,
         "report": report,
         "extract_snapshot": extract_snapshot,
@@ -1081,6 +1081,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
                 minister_name, session.state.turn,
             ),
             character=ctx.character,
+            chat_turn_id=int(ctx.chat_turn_id or 0),
         )
         return
 

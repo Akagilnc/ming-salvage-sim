@@ -2356,6 +2356,12 @@ class GameSession:
                 self.state.turn, minister_name, acts["decree_text"],
                 mode=(intent or {}).get("mode"),
             )
+        # #568：点策 origin / #1765 密令诊断源轮——chat_turn_id 由 session.chat/web/CLI
+        # 写入 _active_chat_turn_id 作用域，apply 签名不增参。
+        try:
+            active_chat_turn_id = int(getattr(self, "_active_chat_turn_id", 0) or 0)
+        except (TypeError, ValueError):
+            active_chat_turn_id = 0
         if not out["secret_order_id"] and acts["secret_order"]:
             # #1765：显式前缀与 classifier 共用统一落库（产物缺口→揣摩/追问）。
             from ming_sim.action_materialize import land_or_recover_new_secret_order
@@ -2372,6 +2378,7 @@ class GameSession:
                     minister_name, self.state.turn,
                 ),
                 character=character,
+                chat_turn_id=active_chat_turn_id,
             )
 
         # #515：登记表驱动物化——handler 挂在 ACTION_CLUSTERS 行上；pipeline 只读表。
@@ -2381,12 +2388,6 @@ class GameSession:
         recent_context = _recent_audience_context_for_secret_order(
             getattr(self, "db", None), minister_name, int(self.state.turn), message_text,
         )
-        # #568：点策 origin 排除当前轮——chat_turn_id 由 session.chat/web/CLI 写入
-        # _active_chat_turn_id 作用域，apply 签名不增参。
-        try:
-            active_chat_turn_id = int(getattr(self, "_active_chat_turn_id", 0) or 0)
-        except (TypeError, ValueError):
-            active_chat_turn_id = 0
         mat_ctx = MaterializeCtx(
             session=self,
             character=character,
