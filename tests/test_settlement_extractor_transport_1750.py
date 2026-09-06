@@ -450,6 +450,7 @@ def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     - 预算：#1465 默认重试 2 → transport_attempts >= 3
     - status_code 须等于 agent.run 所抛 LLMUnavailable.status_code（_UPSTREAM_STATUS_CODE）
     - code 保真 llm_run_error（既有 typed 键；非从错误散文提取）
+    - #1465 ② SSE 形状：message 人话标量；typed 键在外层（FE setError 吃 string）
     保月/manifest 绿契约由 test_…_keeps_month_and_recovery_panel 承接，本条不重复。
     """
     scene = _drive_terminal_extractor_fail(
@@ -468,6 +469,13 @@ def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     assert any(s.get("code") == "llm_run_error" for s in surfaces), (
         f"exception category code not preserved as llm_run_error: {surfaces!r}"
     )
+    # issue/stream 终包：message 必须是标量（禁 dict 嵌套进 setError）
+    outer = next((s for s in surfaces if isinstance(s.get("message"), str)), None)
+    assert outer is not None, f"SSE message must be scalar string; surfaces={surfaces!r}"
+    assert isinstance(outer.get("message"), str) and outer["message"].strip()
+    assert not isinstance(outer.get("message"), dict)
+    assert outer.get("status_code") == _UPSTREAM_STATUS_CODE, outer
+    assert outer.get("code") == "llm_run_error", outer
 
 
 # ── 恢复 (a1) settling 未 ready：重新推演入口 = issue/stream ───────────
@@ -587,6 +595,11 @@ def test_a2_hitl_phase2_extract_fail_reuses_narrative_only_reextracts(
     assert choices_resp.status_code == 200, choices_resp.text
     ev_fail, data_fail = _terminal_sse(choices_resp)
     assert ev_fail == "error", (ev_fail, data_fail)
+    # #1465 ② resolve_decisions/stream：message 标量 + typed 键外层（HITL 月不丢）
+    assert isinstance(data_fail, dict), data_fail
+    assert isinstance(data_fail.get("message"), str) and str(data_fail["message"]).strip(), data_fail
+    assert data_fail.get("status_code") == _UPSTREAM_STATUS_CODE, data_fail
+    assert data_fail.get("code") == "llm_run_error", data_fail
     _wait_pending_writes(game)
 
     mid_state = _get_state(client)
