@@ -1,14 +1,13 @@
-"""#1750 阶段 0：extractor transport 失败注入红灯（待 #1465 转绿）。
+"""#1750 阶段 0 / #1465 ②：extractor transport 失败注入与统一预算。
 
 沿 #1468 tracer_client 真 HTTP；transport 邻接替身 = 模块 agent.run 产出
 （经真实 agents.run_agent_text → extract_agent_text），不在 simulation 已导入的
-run_agent_text 别名上短路，以便 #1465 统一策略能包住此缝。
+run_agent_text 别名上短路，以便 #1465 统一策略包住此缝。
 
-自愈 / 终失败上游 status+预算：xfail(strict, 待 #1465)。
+#1465 ② 已将 run_agent_text 迁 transport：自愈与终失败预算断言转绿。
 终失败保月、恢复面、a1 settling 重推演、a2 批红后只重抽：既有 0008 行为基线。
-0148 终失败后月初快照：并入终失败绿基线。自愈期/跨刷新 0148 真跑取证由本票
-阶段 1 在 #1465 落地后承接（阶段 0 不写真实并发永久测试）。
-D3 ready 重放：见 tests/test_settlement_recovery_projection_1620.py，本片不重复。
+0148 终失败后月初快照：并入终失败绿基线。自愈期/跨刷新 0148 真跑取证由
+#1750 阶段 1 承接。D3 ready 重放：见 test_settlement_recovery_projection_1620。
 """
 
 from __future__ import annotations
@@ -41,13 +40,19 @@ from tests.test_month_loop_tracer_1468 import (
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 
 
-# 成功腿带可观察 fingerprint（internal.国势变化.民心），证明成功产出进了落账，
-# 不是「重试后丢产出再空 delta 放行」。合法稀疏 delta 仍允许；此处只给本片探针指纹。
+# 成功腿 fingerprint：internal 钱粮收支唯一 category，经 apply → economy_ledger →
+# GET state budget.国库.movements 可见（非 persist 形参间谍；终态 metrics 叠其它系统）。
+_FP_CATEGORY = "fp1465-transport"
+_FP_DELTA = -1
 _SUCCESS_MODULE_JSON = {
     "internal": (
-        '{"国势变化": {"民心": -1}, "钱粮收支": [], "财政制度变化": [], '
-        '"新立月度收支": [], "裁撤月度收支": [], "派系变化": [], '
-        '"阶级变化": {}, "地区变化": {}}'
+        '{"国势变化": {}, "钱粮收支": [{"account": "国库", "delta": '
+        + str(_FP_DELTA)
+        + ', "category": "'
+        + _FP_CATEGORY
+        + '", "reason": "transport-booked", "origin_ref": "盘面自发"}], '
+        '"财政制度变化": [], "新立月度收支": [], "裁撤月度收支": [], '
+        '"派系变化": [], "阶级变化": {}, "地区变化": {}}'
     ),
     "military_external": '{"军队变化": {}, "建军": [], "势力变化": {}, "外交态度": {}}',
     "issues": (
@@ -74,13 +79,31 @@ _DECISION_NARRATIVE = (
 _UPSTREAM_STATUS_CODE = 429
 
 
-class _TransportAgent:
-    """模块 agent.run 替身：可按序抛 typed LLMUnavailable 或返回成功正文。
+class RunContent:
+    """agno 同名替身：type.__name__=='RunContent'；event+正文 = 空转活动。"""
 
-    失败走既有异常契约（code=llm_run_error + status_code），不把上游码塞进 content
-    冒充 typed。仍经真实 run_agent_text（agent.run 上抛即传播）；#1465 若在
-    agent.run/transport 外包重试，本对象的 calls 即 transport/attempt 次数
-    （≠ error pack 写包序号）。
+    event = "RunContent"
+
+    def __init__(self, content: str):
+        self.content = content
+
+
+class RunOutput:
+    """agno 同名替身：type.__name__=='RunOutput'；yield_run_output 终包完整 content。"""
+
+    def __init__(self, content: str):
+        self.content = content
+        self.status = "COMPLETED"
+        self.messages = None
+
+
+class _TransportAgent:
+    """模块 agent.run 替身：可观察流路径（stream=True/**kwargs），咬生产 run_agent_text。
+
+    失败走既有异常契约（code=llm_run_error + status_code）。calls = transport attempt 次数
+    （≠ error pack 写包序号）。成功终包 content = 模块 JSON；chunk 只作活动信号。
+
+    idle_fail_first / long_activity_span：受控 clock 推进（#1465 ② 空转/跨旧 180s）。
     """
 
     def __init__(
@@ -89,14 +112,32 @@ class _TransportAgent:
         *,
         error_then_ok_times: int = 0,
         always_error: bool = False,
+        idle_fail_first: bool = False,
+        empty_terminal_first: bool = False,
+        long_activity_span: float = 0.0,
+        clock: dict | None = None,
+        clock_lock: threading.Lock | None = None,
+        idle_timeout: float = 10.0,
     ):
         self.module = module
         self.error_then_ok_times = int(error_then_ok_times)
         self.always_error = bool(always_error)
+        self.idle_fail_first = bool(idle_fail_first)
+        self.empty_terminal_first = bool(empty_terminal_first)
+        self.long_activity_span = float(long_activity_span)
+        self.clock = clock
+        self.clock_lock = clock_lock or threading.Lock()
+        self.idle_timeout = float(idle_timeout)
         self.calls = 0
         self._lock = threading.Lock()
 
-    def run(self, _prompt):
+    def _bump_clock(self, dt: float) -> None:
+        if self.clock is None:
+            return
+        with self.clock_lock:
+            self.clock["t"] += float(dt)
+
+    def run(self, _prompt, stream=False, stream_events=False, yield_run_output=False, **_k):
         with self._lock:
             self.calls += 1
             n = self.calls
@@ -107,10 +148,29 @@ class _TransportAgent:
                 provider_message="model_concurrency_rate_limit_exceeded",
                 status_code=_UPSTREAM_STATUS_CODE,
             )
-        return SimpleNamespace(
-            content=_SUCCESS_MODULE_JSON[self.module],
-            status="COMPLETED",
-        )
+        body = _SUCCESS_MODULE_JSON[self.module]
+        if not stream:
+            return SimpleNamespace(content=body, status="COMPLETED")
+        # 可观察流：与生产 agent.run(stream=True, stream_events=True, yield_run_output=True) 同形
+        if self.idle_fail_first and n == 1 and self.clock is not None:
+            yield RunContent("")  # 非活动
+            self._bump_clock(self.idle_timeout + 0.1)
+            yield RunContent("")  # 触发 idle check
+            return
+        # 空终包：有活动 chunk，终包 content="" → empty_output_failure 可重试
+        if self.empty_terminal_first and n == 1:
+            yield RunContent("…")
+            yield RunOutput("")
+            return
+        if self.long_activity_span > 0 and self.clock is not None:
+            steps = 4
+            step = self.long_activity_span / steps
+            for i in range(steps):
+                yield RunContent(f"…{i}")  # 活动刷新空转
+                self._bump_clock(step)
+        else:
+            yield RunContent("…")
+        yield RunOutput(body)
 
 
 def _wire_real_extract_path(
@@ -229,6 +289,19 @@ def _month_open_view(state: dict) -> dict:
     }
 
 
+def _budget_has_fp(state: dict) -> bool:
+    """GET state 可见：budget.国库.movements 含 fingerprint 钱粮条。"""
+    budget = state.get("budget") or {}
+    treasury = budget.get("国库") or {}
+    movements = treasury.get("movements") or []
+    return any(
+        str(m.get("category") or "") == _FP_CATEGORY
+        and int(m.get("delta") or 0) == _FP_DELTA
+        for m in movements
+        if isinstance(m, dict)
+    )
+
+
 def _pack_manifest(recovery: dict) -> dict:
     pack_path = recovery.get("error_pack_path") or ""
     assert pack_path, recovery
@@ -248,21 +321,17 @@ def _player_error_surfaces(data: object, recovery: object) -> list[dict]:
     return out
 
 
-# ── 自愈回路（待 #1465） ───────────────────────────────────────────────
+# ── 自愈回路（#1465 ② transport 预算） ─────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="待 #1465：extractor transport 预算内可重试失败应自愈（agent.run 多 attempt）",
-)
 def test_extractor_one_retryable_transport_failure_self_heals(
     tracer_client, monkeypatch,
 ):
     """同一腿首次 typed transport 失败后恢复：该腿合法非空成功效果须落账，月+1、无失败面。
 
     证明力：
-    - 失败腿 = internal（带 民心 -1 指纹）；run.calls>=2 = 同腿 transport 重试
-    - 恢复后 GET metrics 民心 -1 = 失败腿成功产出进了落账（排除「丢恢复产出」）
+    - 失败腿 = internal（可观察流）；run.calls>=2 = 同腿 transport 重试
+    - 恢复后 GET budget.国库.movements 含 fp category = 失败腿成功终包进了落账
     """
     client = tracer_client
     turn0, game = _new_game_with_directive(client)
@@ -277,7 +346,7 @@ def test_extractor_one_retryable_transport_failure_self_heals(
     event, data = _terminal_sse(resp)
 
     transport_attempts = agents["internal"].calls
-    # 红灯真源：无 #1465 时 calls 停在 1；有预算自愈后须 ≥2
+    # 红灯真源：无 #1465 时 calls 停在 1；有预算自愈后须 ≥2（可观察流 attempt）
     assert transport_attempts >= 2, (
         f"self-heal must retry internal agent.run; transport_attempts={transport_attempts} "
         f"terminal={event!r} data={data!r}"
@@ -293,10 +362,10 @@ def test_extractor_one_retryable_transport_failure_self_heals(
     assert _turn_of(after) == turn0 + 1
     assert after.get("settlement_recovery") is None
     assert (after.get("turn") or {}).get("phase") != TurnPhase.SETTLING.value
-    # 外部可见落账：失败后恢复的 internal 指纹 民心-1 已 apply 进 state metrics
-    after_morale = (after.get("metrics") or {}).get("民心")
-    assert after_morale == before_morale - 1, (
-        f"recovered leg success delta not booked: before={before_morale} after={after_morale}"
+    # GET 可见落账：失败腿恢复后的 fingerprint 钱粮条进 budget.国库.movements
+    assert _budget_has_fp(after), (
+        f"recovered leg success delta not booked on GET budget; "
+        f"before_morale={before_morale} budget={(after.get('budget') or {}).get('国库')!r}"
     )
 
 
@@ -328,6 +397,7 @@ def _drive_terminal_extractor_fail(client, monkeypatch, *, step: str) -> dict:
         "recovery": recovery,
         "manifest": manifest,
         "transport_attempts": transport_attempts,
+        "sse_data": data,
         "surfaces": _player_error_surfaces(data, recovery),
     }
 
@@ -373,13 +443,6 @@ def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
     assert after_view["turn"] == turn0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "待 #1465：终失败须耗尽统一预算（transport 多 attempt）且玩家/恢复面 "
-        "带既有 _llm_error_detail.status_code；不新造 pack schema"
-    ),
-)
 def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     tracer_client, monkeypatch,
 ):
@@ -388,6 +451,7 @@ def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     - 预算：#1465 默认重试 2 → transport_attempts >= 3
     - status_code 须等于 agent.run 所抛 LLMUnavailable.status_code（_UPSTREAM_STATUS_CODE）
     - code 保真 llm_run_error（既有 typed 键；非从错误散文提取）
+    - #1465 ② SSE 形状：message 人话标量；typed 键在外层（FE setError 吃 string）
     保月/manifest 绿契约由 test_…_keeps_month_and_recovery_panel 承接，本条不重复。
     """
     scene = _drive_terminal_extractor_fail(
@@ -406,6 +470,12 @@ def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
     assert any(s.get("code") == "llm_run_error" for s in surfaces), (
         f"exception category code not preserved as llm_run_error: {surfaces!r}"
     )
+    # issue/stream 终包直咬 SSE data（与 a2 同尺；不经 surfaces 展平）
+    outer = scene["sse_data"]
+    assert isinstance(outer, dict), outer
+    assert isinstance(outer.get("message"), str) and str(outer["message"]).strip(), outer
+    assert outer.get("status_code") == _UPSTREAM_STATUS_CODE, outer
+    assert outer.get("code") == "llm_run_error", outer
 
 
 # ── 恢复 (a1) settling 未 ready：重新推演入口 = issue/stream ───────────
@@ -525,6 +595,11 @@ def test_a2_hitl_phase2_extract_fail_reuses_narrative_only_reextracts(
     assert choices_resp.status_code == 200, choices_resp.text
     ev_fail, data_fail = _terminal_sse(choices_resp)
     assert ev_fail == "error", (ev_fail, data_fail)
+    # #1465 ② resolve_decisions/stream：message 标量 + typed 键外层（HITL 月不丢）
+    assert isinstance(data_fail, dict), data_fail
+    assert isinstance(data_fail.get("message"), str) and str(data_fail["message"]).strip(), data_fail
+    assert data_fail.get("status_code") == _UPSTREAM_STATUS_CODE, data_fail
+    assert data_fail.get("code") == "llm_run_error", data_fail
     _wait_pending_writes(game)
 
     mid_state = _get_state(client)
@@ -566,3 +641,114 @@ def test_a2_hitl_phase2_extract_fail_reuses_narrative_only_reextracts(
     assert after.get("settlement_recovery") is None
     assert Path(pack_path).is_dir()
     assert (Path(pack_path) / "manifest.json").read_text(encoding="utf-8") == pack_manifest_before
+
+
+# ── #1465 ②：可观察流空转重试 + 跨旧 180s 硬墙 ─────────────────────────────
+
+
+def test_extractor_stream_idle_retry_and_long_activity_past_old_wall(
+    tracer_client, monkeypatch, tmp_path,
+):
+    """extractor 真实结算入口（生产 parallel 不关）+ 可观察流：
+
+    1. relations 首 attempt 空转判死 → 重试成功（calls>=2）
+    2. internal 持续活动总跨度 > 旧 API 180s 硬墙 → 不被杀
+    3. GET budget.国库.movements 含 fingerprint（终包 content ≡ 落库）
+    受控时钟；不跑真墙钟。仅 idle/long 腿碰 clock，其它腿瞬时成功，保留 parallel=True。
+    """
+    import ming_sim.llm_config as llm_config_mod
+    import ming_sim.llm_transport as transport_mod
+    from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS
+
+    client = tracer_client
+    turn0, game = _new_game_with_directive(client)
+
+    idle_timeout = 10.0
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        "transport": {
+            "max_attempts": 3,
+            "attempt_timeout_seconds": 100.0,
+            "idle_timeout_seconds": idle_timeout,
+        },
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
+
+    clock = {"t": 1000.0}
+    clock_lock = threading.Lock()
+    monkeypatch.setattr(
+        transport_mod, "time", SimpleNamespace(monotonic=lambda: clock["t"]),
+    )
+
+    long_span = API_DEFAULT_TIMEOUT_SECONDS + 40.0
+    assert long_span > API_DEFAULT_TIMEOUT_SECONDS
+
+    agents = {
+        m: _TransportAgent(
+            m,
+            idle_fail_first=(m == "relations"),
+            long_activity_span=(long_span if m == "internal" else 0.0),
+            clock=clock,
+            clock_lock=clock_lock,
+            idle_timeout=idle_timeout,
+        )
+        for m in EXTRACTION_MODULES
+    }
+    _wire_real_extract_path(monkeypatch, agents)
+
+    resp = _issue_stream(client, expected_turn=turn0, step="idle-long")
+    event, data = _terminal_sse(resp)
+    _finish_to_done(client, event, data, step="idle-long")
+
+    assert agents["relations"].calls >= 2, (
+        f"idle kill must retry relations; calls={agents['relations'].calls} "
+        f"terminal={event!r} data={data!r}"
+    )
+    assert agents["internal"].calls >= 1
+
+    _wait_pending_writes(game)
+    after = _get_state(client)
+    assert _turn_of(after) == turn0 + 1
+    assert after.get("settlement_recovery") is None
+    assert _budget_has_fp(after), (
+        f"stream terminal delta must book on GET budget; "
+        f"budget={(after.get('budget') or {}).get('国库')!r}"
+    )
+
+
+# ── #1465 ②：空终包 → 空输出可重试 ─────────────────────────────────────────
+
+
+def test_extractor_empty_terminal_retries(tracer_client, monkeypatch):
+    """终包 content=\"\" 走 empty_output_failure → transport 重试；既有替身不新夹具。
+
+    internal 首 attempt 空终包，次 attempt 成功终包；calls>=2 + fingerprint 落账。
+    """
+    client = tracer_client
+    turn0, game = _new_game_with_directive(client)
+
+    agents = {
+        m: _TransportAgent(m, empty_terminal_first=(m == "internal"))
+        for m in EXTRACTION_MODULES
+    }
+    _wire_real_extract_path(monkeypatch, agents)
+
+    resp = _issue_stream(client, expected_turn=turn0, step="empty-terminal")
+    event, data = _terminal_sse(resp)
+    _finish_to_done(client, event, data, step="empty-terminal")
+
+    assert agents["internal"].calls >= 2, (
+        f"empty terminal must retry internal; calls={agents['internal'].calls} "
+        f"terminal={event!r} data={data!r}"
+    )
+
+    _wait_pending_writes(game)
+    after = _get_state(client)
+    assert _turn_of(after) == turn0 + 1
+    assert after.get("settlement_recovery") is None
+    assert _budget_has_fp(after), (
+        f"empty-terminal retry success must book fingerprint; "
+        f"budget={(after.get('budget') or {}).get('国库')!r}"
+    )

@@ -24,7 +24,13 @@ from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
 from ming_sim.llm_model import create_chat_model, extract_agent_text
 from ming_sim.llm_transport import (
-    run_error_event_failure,
+    bind_transport_sdk_budget,
+    empty_output_failure,
+    is_stream_activity_event,
+    map_run_error_event,
+    resolve_transport_policy,
+    run_transport_stream,
+    run_with_transport,
     transport_failure_unavailable,
 )
 from ming_sim.models import GameState, LLMConfig, reign_period_label
@@ -92,41 +98,211 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
         tlog(f"[{tag}] dump 写盘失败：{e}")
 
 
+def _agent_run_input(
+    prompt: str,
+    prior_messages: Optional[Sequence[Any]] = None,
+) -> Any:
+    """组装 agent.run 入参（plain prompt 或 prior Message 列表）。"""
+    if not prior_messages:
+        return prompt
+    from agno.models.message import Message
+
+    payload: list[Any] = []
+    for item in prior_messages:
+        if isinstance(item, Message):
+            payload.append(item)
+        elif isinstance(item, dict) and "role" in item:
+            payload.append(Message.model_validate(item))
+        else:
+            raise TypeError(
+                f"prior_messages 项须为 Message 或 role-dict，得 {type(item).__name__}"
+            )
+    payload.append(Message(role="user", content=prompt))
+    return payload
+
+
+def _agent_model_is_cli(agent: object) -> bool:
+    """与召对 use_transport=channel!=\"cli\" 同门：CliChat 即 CLI 通道。
+
+    本片可观察流+transport 仅 API；CLI 恢复非流 agent.run，留给切片③。
+    死角：CLI JSON invoke_stream 无中途事件、等③——不得把不可观察通道假装可观察。
+    """
+    model = getattr(agent, "model", None)
+    if model is None:
+        return False
+    return type(model).__name__ == "CliChat"
+
+
+def _history_backed_truncate_anchor(
+    agent: object,
+    game_db: Any,
+) -> Optional[tuple[Any, str, int]]:
+    """history-backed + 调用方显式 GameDB → (game_db, session_id, keep_count)；否则不截。
+
+    命中面=颁布判官（db+cache_session+add_history_to_context）；截缝唯一权威=
+    GameDB.truncate_agno_session_runs → _truncate_agno_runs_in_tx（与召对同缝）。
+    GameDB 由调用方经 run_agent_text(game_db=) 显式交来（入参契约），
+    不往 agent 实例挂私有句柄；未交 game_db 不另造 get_runs/delete_runs 退路。
+    """
+    if game_db is None:
+        return None
+    if not (
+        getattr(agent, "add_history_to_context", False)
+        and getattr(agent, "cache_session", False)
+        and getattr(agent, "db", None) is not None
+    ):
+        return None
+    session_id = str(getattr(agent, "session_id", "") or "")
+    if not session_id:
+        return None
+    if not hasattr(game_db, "truncate_agno_session_runs"):
+        return None
+    if not hasattr(game_db, "agno_runs_length"):
+        return None
+    keep = int(game_db.agno_runs_length(session_id))
+    return game_db, session_id, keep
+
+
+def _truncate_history_backed_agent_runs(
+    agent: object, game_db: Any, session_id: str, keep_count: int,
+) -> None:
+    """transport 再试前丢掉本 attempt 已落的 completed 空 run。
+
+    只调 GameDB.truncate_agno_session_runs（召对 truncate_chat_turn_agno_runs 同缝）；
+    不回滚游戏落账。cache_session 置空使下一 attempt 从已截 DB 重载，非第二套历史算法。
+    """
+    game_db.truncate_agno_session_runs(session_id, max(0, int(keep_count)))
+    if hasattr(agent, "_cached_session"):
+        agent._cached_session = None
+    if hasattr(agent, "_cached_session_db"):
+        agent._cached_session_db = None
+
+
 def run_agent_text(
     agent: Agent,
     prompt: str,
     tag: str,
     *,
     prior_messages: Optional[Sequence[Any]] = None,
+    game_db: Any = None,
 ) -> str:
-    """非流式跑 agent，返回最终完整文本。
-    extractor/sanitizer 这类要严格 JSON 的场合用——避免流式 buffer 把 LLM 偶发重发段累加成畸形。
+    """跑 agent，返回 SDK 终包完整 content（严格 JSON 真源；非 chunk 拼接）。
+
+    #1465 ② 研究项成立：agno stream 终包 content ≡ 非流式 RunOutput.content。
+    证据（agno 3.0.5，工作树 .venv 同源 Ming_LLM/.venv）：
+    - 流式累加 run_response.content：agent/_response.py:1409-1410
+    - 非流式赋值 run_response.content：agent/_response.py:965
+    - RunCompletedEvent.content ← run_response.content：utils/events.py:145
+    - yield_run_output=True 吐同一 run_response：agent/_run.py:1145-1146
+    故 chunk 只喂空转计时器；终文取 RunOutput/RunCompletedEvent，经 extract_agent_text。
+
+    API 可确证支持流式 → stream=True/stream_events=True/yield_run_output=True + transport
+    空转预算；不支持 → 非流死角 + 每 attempt 硬超时（attempt_timeout_seconds 进配置）。
+    CLI（CliChat）：不套本片可观察流+transport，非流 agent.run（切片③）；
+    死角清单：CLI JSON invoke_stream 无中途事件、等③。禁平行 idle、禁把 CLI
+    subprocess 超时改成 attempt_timeout 整段墙钟（#9）。
+    未知异常保真上浮（0005）；不沿用 TypeError 文本归因。
 
     prior_messages：可选的既有 user/assistant 轮次（Message 或 {role,content}）。
     票拟缺字段补交链用它在同一次 generate 调用内续接真实对话上下文；
     不写库、不启其它角色 history（#1746 局部装配）。
-    """
-    tlog(f"[{tag}] 开始非流式推演（等待完整响应）")
-    t0 = time.monotonic()
-    if prior_messages:
-        from agno.models.message import Message
 
-        payload: list[Any] = []
-        for item in prior_messages:
-            if isinstance(item, Message):
-                payload.append(item)
-            elif isinstance(item, dict) and "role" in item:
-                payload.append(Message.model_validate(item))
-            else:
-                raise TypeError(
-                    f"prior_messages 项须为 Message 或 role-dict，得 {type(item).__name__}"
+    半流：本入口无玩家 delta 呈现（extractor/sanitizer 等）；召对 _chat_stream_payload
+    半流呈现属切片④，本函数不改其呈现。
+
+    game_db：可选 GameDB，仅 history-backed 调用方（颁布判官）交来。
+    history-backed（db+cache_session+add_history_to_context）：空终包 completed run 经
+    cleanup_and_store 落库后，transport 再试前截回本 call 起点（同形召对 truncate）。
+    未交 game_db 即不截（本入口多数调用无历史，不受影响）。
+    """
+    t0 = time.monotonic()
+    run_input = _agent_run_input(prompt, prior_messages)
+
+    # 与召对同门：CLI 不套本片 transport（切片③）
+    if _agent_model_is_cli(agent):
+        tlog(f"[{tag}] 开始非流式推演（CLI 通道，transport 留给切片③）")
+        output = agent.run(run_input)
+        _dump_llm_messages(output, tag, agent=agent)
+        text = extract_agent_text(output)
+        tlog(f"[{tag}] 完成，{len(text)} 字，用时 {time.monotonic() - t0:.1f}s")
+        return text
+
+    tlog(f"[{tag}] 开始推演（transport 可观察）")
+    policy = resolve_transport_policy()
+    model = getattr(agent, "model", None)
+
+    hist_anchor = _history_backed_truncate_anchor(agent, game_db)
+    attempt_n = {"n": 0}
+
+    def _before_attempt() -> None:
+        # 同形 web_app._start_stream：再试前截掉本 call 已落的空 completed run
+        if hist_anchor is not None and attempt_n["n"] > 0:
+            game_db, session_id, keep_count = hist_anchor
+            _truncate_history_backed_agent_runs(
+                agent, game_db, session_id, keep_count,
+            )
+        attempt_n["n"] += 1
+
+    if _agent_run_accepts_stream(agent):
+        terminal_box: List[Any] = []
+
+        def _on_event(event: Any) -> None:
+            # chunk 不拼终文；仅收终包
+            if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
+                terminal_box.clear()
+                terminal_box.append(event)
+
+        def _after_stream() -> str:
+            if not terminal_box:
+                raise transport_failure_unavailable(
+                    empty_output_failure(),
+                    attempts=1,
+                    exhausted=False,
                 )
-        payload.append(Message(role="user", content=prompt))
-        output = agent.run(payload)
+            output = terminal_box[0]
+            _dump_llm_messages(output, tag, agent=agent)
+            # 与 web_app._after_stream 同权威：终包 content 为 None/"" → 空输出可重试。
+            # 禁 strip（#671）；extract_agent_text 已将 None 归一为 ""。
+            text = extract_agent_text(output)
+            if not text:
+                raise transport_failure_unavailable(
+                    empty_output_failure(),
+                    attempts=1,
+                    exhausted=False,
+                )
+            return text
+
+        def _start_stream() -> Any:
+            terminal_box.clear()
+            _before_attempt()
+            return agent.run(
+                run_input,
+                stream=True,
+                stream_events=True,
+                yield_run_output=True,
+            )
+
+        with bind_transport_sdk_budget(model, policy):
+            text, _attempts = run_transport_stream(
+                _start_stream,
+                on_event=_on_event,
+                is_activity_event=is_stream_activity_event,
+                map_error_event=map_run_error_event,
+                after_stream=_after_stream,
+                policy=policy,
+            )
     else:
-        output = agent.run(prompt)
-    _dump_llm_messages(output, tag, agent=agent)
-    text = extract_agent_text(output)
+        # 死角：run 未声明流式能力 → 每 attempt 硬超时（SDK read = attempt_timeout）
+        # 空终包可重试权威在流式 _after_stream；死角不平行复制。
+        def _one_attempt() -> str:
+            _before_attempt()
+            output = agent.run(run_input)
+            _dump_llm_messages(output, tag, agent=agent)
+            return extract_agent_text(output)
+
+        with bind_transport_sdk_budget(model, policy):
+            text, _attempts = run_with_transport(_one_attempt, policy=policy)
+
     tlog(f"[{tag}] 完成，{len(text)} 字，用时 {time.monotonic() - t0:.1f}s")
     return text
 
@@ -228,13 +404,9 @@ def run_agent_stream_text(
             (hasattr(event, "is_final") and getattr(event, "is_final", False))
             or ev_type in ("RunOutput", "RunCompletedEvent")
         )
-        if ev_type == "RunErrorEvent":
-            # 系统层 typed；不走戏内固定话术（P7/0046）。构造权威 = run_error_event_failure。
-            raise transport_failure_unavailable(
-                run_error_event_failure(getattr(event, "content", None)),
-                attempts=1,
-                exhausted=False,
-            )
+        err = map_run_error_event(event)
+        if err is not None:
+            raise err
         if is_terminal:
             final_output = event
             continue

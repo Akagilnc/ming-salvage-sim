@@ -70,8 +70,9 @@ from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_transport import (
     bind_transport_sdk_budget,
     empty_output_failure,
+    is_stream_activity_event,
+    map_run_error_event,
     resolve_transport_policy,
-    run_error_event_failure,
     run_transport_stream,
     transport_attempts_public,
     transport_failure_unavailable,
@@ -444,6 +445,50 @@ def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
     if attempts is not None:
         detail["transport_attempts"] = attempts
     return detail
+
+
+def _settlement_sse_error_data(
+    exc: BaseException,
+    failure_snapshot: Optional[List[Dict[str, Any]]] = None,
+) -> Any:
+    """结算 SSE 终失败 payload 单真源（issue/stream 与 resolve_decisions/stream）。
+
+    #1465 ②：message 保持人话标量；status_code/code/transport_attempts 在 SSE 外层；
+    pending_action_failures 语义不动；不改 abort 文案与 error_pack。
+    覆盖 LLMUnavailable 与 SettlementAbort.__cause__ is LLMUnavailable。
+    禁平行第二套序列化——typed 键仍走 _llm_error_detail。
+    """
+    payload: Optional[Dict[str, Any]] = None
+    if isinstance(exc, LLMUnavailable):
+        detail = _llm_error_detail(exc)
+        payload = {
+            "message": detail["message"],
+            "code": detail.get("code"),
+            "provider_message": detail.get("provider_message"),
+            "status_code": detail.get("status_code"),
+        }
+        if "transport_attempts" in detail:
+            payload["transport_attempts"] = detail["transport_attempts"]
+    elif isinstance(exc, SettlementAbort) and isinstance(exc.__cause__, LLMUnavailable):
+        detail = _llm_error_detail(exc.__cause__)
+        payload = {
+            "message": str(exc),  # abort 文案不动
+            "code": detail.get("code"),
+            "provider_message": detail.get("provider_message"),
+            "status_code": detail.get("status_code"),
+            "error_pack_path": getattr(exc, "error_pack_path", None) or "",
+            "stage": getattr(exc, "stage", "") or "",
+        }
+        if "transport_attempts" in detail:
+            payload["transport_attempts"] = detail["transport_attempts"]
+    if payload is None:
+        # 非 LLM 终失败：保持既有「无 snapshot → 标量；有 snapshot → {message, failures}」
+        if failure_snapshot:
+            return {"message": str(exc), "pending_action_failures": failure_snapshot}
+        return str(exc)
+    if failure_snapshot:
+        payload["pending_action_failures"] = failure_snapshot
+    return payload
 
 
 def _runtime_float(value: object, default: float) -> float:
@@ -2611,28 +2656,6 @@ class WebGame:
         run_output_box: List[Any] = []
         exit_started_during_stream = {"v": False}
 
-        def _map_error(event: Any):
-            if type(event).__name__ != "RunErrorEvent":
-                return None
-            # #1452/#1465：无 typed status 的 stream error 不洗成瞬断
-            return transport_failure_unavailable(
-                run_error_event_failure(getattr(event, "content", None)),
-                attempts=1,
-                exhausted=False,
-            )
-
-        def _is_activity(event: Any) -> bool:
-            # 空转活动：RunContent 有正文、reasoning 增量、工具生命周期（活动 ≠ 已呈现正文）
-            # 工具类名与 agents.run_agent_stream_text 同权威；长工具存活靠 transport 活动先刷新。
-            if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
-                return True
-            rdelta = getattr(event, "reasoning_content", None)
-            if isinstance(rdelta, str) and bool(rdelta):
-                return True
-            return type(event).__name__ in (
-                "ToolCallStartedEvent", "ToolCallCompletedEvent",
-            )
-
         def _on_event(event: Any) -> None:
             content = getattr(event, "content", None)
             event_name = getattr(event, "event", "")
@@ -2700,8 +2723,8 @@ class WebGame:
                 (answer, run_output), transport_attempts_box = run_transport_stream(
                     _start_stream,
                     on_event=_on_event,
-                    is_activity_event=_is_activity,
-                    map_error_event=_map_error,
+                    is_activity_event=is_stream_activity_event,
+                    map_error_event=map_run_error_event,
                     after_stream=_after_stream,
                     policy=policy,
                 )
@@ -2710,7 +2733,7 @@ class WebGame:
             stream = _start_stream()
             try:
                 for event in stream:
-                    err = _map_error(event)
+                    err = map_run_error_event(event)
                     if err is not None:
                         raise err
                     _on_event(event)
@@ -6899,11 +6922,10 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                 ev_queue.put(("__error__", payload))
         except Exception as e:  # noqa: BLE001
             # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
-            message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
+            # #1465 ②：message 标量 + typed 键外层；与 resolve_decisions/stream 同真源。
             ev_queue.put((
                 "__error__",
-                {"message": message, "pending_action_failures": failure_snapshot}
-                if failure_snapshot else message,
+                _settlement_sse_error_data(e, failure_snapshot),
             ))
 
     async def generate() -> AsyncIterator[str]:
@@ -7016,12 +7038,11 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                 if failure_snapshot else str(e),
             ))
         except Exception as e:  # noqa: BLE001
-            # §5.4：无独立 HTTP/AudienceNight 分表；通用 SSE + 非空 holder 附载。
-            message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
+            # §5.4：无独立 HTTP/AudienceNight 分表；与 issue/stream 同真源。
+            # #1465 ②：SettlementAbort.__cause__ LLMUnavailable 亦外层保真 typed 键。
             ev_queue.put((
                 "__error__",
-                {"message": message, "pending_action_failures": failure_snapshot}
-                if failure_snapshot else message,
+                _settlement_sse_error_data(e, failure_snapshot),
             ))
 
     async def generate() -> AsyncIterator[str]:
