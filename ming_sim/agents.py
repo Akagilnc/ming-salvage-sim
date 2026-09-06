@@ -24,7 +24,12 @@ from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
 from ming_sim.llm_model import create_chat_model, extract_agent_text
 from ming_sim.llm_transport import (
+    bind_transport_sdk_budget,
+    empty_output_failure,
+    resolve_transport_policy,
     run_error_event_failure,
+    run_transport_stream,
+    run_with_transport,
     transport_failure_unavailable,
 )
 from ming_sim.models import GameState, LLMConfig, reign_period_label
@@ -92,6 +97,52 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
         tlog(f"[{tag}] dump 写盘失败：{e}")
 
 
+def _agent_run_input(
+    prompt: str,
+    prior_messages: Optional[Sequence[Any]] = None,
+) -> Any:
+    """组装 agent.run 入参（plain prompt 或 prior Message 列表）。"""
+    if not prior_messages:
+        return prompt
+    from agno.models.message import Message
+
+    payload: list[Any] = []
+    for item in prior_messages:
+        if isinstance(item, Message):
+            payload.append(item)
+        elif isinstance(item, dict) and "role" in item:
+            payload.append(Message.model_validate(item))
+        else:
+            raise TypeError(
+                f"prior_messages 项须为 Message 或 role-dict，得 {type(item).__name__}"
+            )
+    payload.append(Message(role="user", content=prompt))
+    return payload
+
+
+def _is_transport_activity_event(event: Any) -> bool:
+    """空转活动信号（≠ 已呈现正文；chunk 只喂计时器）。
+
+    与 web_app._chat_stream_payload 活动判据同构：RunContent 正文、reasoning 增量、
+    工具生命周期、终包本身。不据此禁止重试。
+    """
+    name = type(event).__name__
+    if name in ("RunOutput", "RunCompletedEvent"):
+        return True
+    if name in ("ToolCallStartedEvent", "ToolCallCompletedEvent"):
+        return True
+    if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
+        return True
+    rdelta = getattr(event, "reasoning_content", None)
+    if isinstance(rdelta, str) and rdelta:
+        return True
+    # 无 event 属性的 content 增量（测试替身 / 旧事件形）
+    if name not in ("RunErrorEvent",) and isinstance(getattr(event, "content", None), str):
+        if getattr(event, "content", None):
+            return True
+    return False
+
+
 def run_agent_text(
     agent: Agent,
     prompt: str,
@@ -99,34 +150,90 @@ def run_agent_text(
     *,
     prior_messages: Optional[Sequence[Any]] = None,
 ) -> str:
-    """非流式跑 agent，返回最终完整文本。
-    extractor/sanitizer 这类要严格 JSON 的场合用——避免流式 buffer 把 LLM 偶发重发段累加成畸形。
+    """跑 agent，返回 SDK 终包完整 content（严格 JSON 真源；非 chunk 拼接）。
+
+    #1465 ② 研究项成立：agno stream 终包 content ≡ 非流式 RunOutput.content。
+    证据（agno 3.0.5，工作树 .venv 同源 Ming_LLM/.venv）：
+    - 流式累加 run_response.content：agent/_response.py:1409-1410
+    - 非流式赋值 run_response.content：agent/_response.py:965
+    - RunCompletedEvent.content ← run_response.content：utils/events.py:145
+    - yield_run_output=True 吐同一 run_response：agent/_run.py:1145-1146
+    故 chunk 只喂空转计时器；终文取 RunOutput/RunCompletedEvent，经 extract_agent_text。
+
+    可确证支持流式 → stream=True/stream_events=True/yield_run_output=True + transport
+    空转预算；不支持 → 非流死角 + 每 attempt 硬超时（attempt_timeout_seconds 进配置）。
+    未知异常保真上浮（0005）；不沿用 TypeError 文本归因。
 
     prior_messages：可选的既有 user/assistant 轮次（Message 或 {role,content}）。
     票拟缺字段补交链用它在同一次 generate 调用内续接真实对话上下文；
     不写库、不启其它角色 history（#1746 局部装配）。
-    """
-    tlog(f"[{tag}] 开始非流式推演（等待完整响应）")
-    t0 = time.monotonic()
-    if prior_messages:
-        from agno.models.message import Message
 
-        payload: list[Any] = []
-        for item in prior_messages:
-            if isinstance(item, Message):
-                payload.append(item)
-            elif isinstance(item, dict) and "role" in item:
-                payload.append(Message.model_validate(item))
-            else:
-                raise TypeError(
-                    f"prior_messages 项须为 Message 或 role-dict，得 {type(item).__name__}"
+    半流：本入口无玩家 delta 呈现（extractor/sanitizer 等）；召对 _chat_stream_payload
+    半流呈现属切片④，本函数不改其呈现。
+    """
+    tlog(f"[{tag}] 开始推演（transport 可观察）")
+    t0 = time.monotonic()
+    run_input = _agent_run_input(prompt, prior_messages)
+    policy = resolve_transport_policy()
+    model = getattr(agent, "model", None)
+
+    if _agent_run_accepts_stream(agent):
+        terminal_box: List[Any] = []
+
+        def _map_error(event: Any) -> Optional[BaseException]:
+            if type(event).__name__ != "RunErrorEvent":
+                return None
+            return transport_failure_unavailable(
+                run_error_event_failure(getattr(event, "content", None)),
+                attempts=1,
+                exhausted=False,
+            )
+
+        def _on_event(event: Any) -> None:
+            # chunk 不拼终文；仅收终包
+            if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
+                terminal_box.clear()
+                terminal_box.append(event)
+
+        def _after_stream() -> str:
+            if not terminal_box:
+                raise transport_failure_unavailable(
+                    empty_output_failure(),
+                    attempts=1,
+                    exhausted=False,
                 )
-        payload.append(Message(role="user", content=prompt))
-        output = agent.run(payload)
+            output = terminal_box[0]
+            _dump_llm_messages(output, tag, agent=agent)
+            return extract_agent_text(output)
+
+        def _start_stream() -> Any:
+            terminal_box.clear()
+            return agent.run(
+                run_input,
+                stream=True,
+                stream_events=True,
+                yield_run_output=True,
+            )
+
+        with bind_transport_sdk_budget(model, policy):
+            text, _attempts = run_transport_stream(
+                _start_stream,
+                on_event=_on_event,
+                is_activity_event=_is_transport_activity_event,
+                map_error_event=_map_error,
+                after_stream=_after_stream,
+                policy=policy,
+            )
     else:
-        output = agent.run(prompt)
-    _dump_llm_messages(output, tag, agent=agent)
-    text = extract_agent_text(output)
+        # 死角：run 未声明流式能力 → 每 attempt 硬超时（SDK read = attempt_timeout）
+        def _one_attempt() -> str:
+            output = agent.run(run_input)
+            _dump_llm_messages(output, tag, agent=agent)
+            return extract_agent_text(output)
+
+        with bind_transport_sdk_budget(model, policy):
+            text, _attempts = run_with_transport(_one_attempt, policy=policy)
+
     tlog(f"[{tag}] 完成，{len(text)} 字，用时 {time.monotonic() - t0:.1f}s")
     return text
 
