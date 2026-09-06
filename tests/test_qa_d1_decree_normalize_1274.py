@@ -187,15 +187,13 @@ def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
     assert calls == []
 
 
-def test_web_create_directive_long_extract_not_starved_by_old_30s_cover(
-    game, monkeypatch,
-):
-    """#1465 切片③：拟旨入口跨过旧 30s 罩仍得到正确产物。
+def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypatch):
+    """#1465 切片③：拟旨 capture 跨旧 30s 罩仍成案（真实入口 → 读回 pending 案卷）。
 
-    真实入口 POST /api/directives。抽取把注入时钟推过 30s 后仍须走通政司回禀
-    （409 + 戏内产文），不得被旧罩 remaining=0 饿成 LLMUnavailable/400，也不得
-    落 special_decree 草案。确定性、无线程、不跑真墙钟。旧逻辑变异：罩按
-    monotonic 扣 remaining，回禀零 LLM → 400。
+    真实入口 POST /api/directives；抽取把注入时钟推过 120s（旧外层 30s 总罩下
+    remaining 会扣穿 → 抽取被饿死、落 special_decree 或 LLMUnavailable）。罩既已
+    删，长抽取仍须落**真**草案：结构字段照 LLM 结果走，且读回 pending/案卷可见。
+    确定性、无线程、不跑真墙钟。
     """
     from fastapi.testclient import TestClient
 
@@ -204,24 +202,21 @@ def test_web_create_directive_long_extract_not_starved_by_old_30s_cover(
     from ming_sim.session import GameSession
 
     db, state, content = game
-    text = "着不存在之人甲核清太仓"
+    text = "着毕自严核清太仓实存"
     clock = {"t": 1000.0}
     monkeypatch.setattr(
         cli_backend, "time", types.SimpleNamespace(monotonic=lambda: clock["t"]),
     )
-    report_text = "通政司启：朝中查无「不存在之人甲」，乞陛下明示。"
     calls: list[str] = []
 
     def backend(prompt, *_a, tag="", **_k):
         calls.append(tag)
-        if tag == "participant_escalate_report":
-            return (report_text, 1)
-        clock["t"] += 120.0
+        clock["t"] += 120.0  # 单次抽取就跨过旧 30s 总罩
         return (
             json.dumps({
                 "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-                "目标ID": "x",
-                "参与人": [{"character_id": "不存在之人甲", "tier": "主办"}],
+                "目标ID": "treasury-audit",
+                "参与人": [{"character_id": "毕自严", "tier": "主办"}],
             }, ensure_ascii=False),
             1,
         )
@@ -245,10 +240,23 @@ def test_web_create_directive_long_extract_not_starved_by_old_30s_cover(
     response = TestClient(web_app.app).post(
         "/api/directives", json={"text": text, "notes": ""},
     )
-    assert response.status_code == 409, response.text
-    assert report_text in str(response.json().get("detail"))
-    assert "participant_escalate_report" in calls
-    assert len(db.list_directives(state) or []) == 0
+    assert response.status_code == 200, response.text
+    assert clock["t"] - 1000.0 > 30.0, clock  # 确实跨过旧罩
+    body = response.json()
+    directive_id = int(body["directive"]["id"])
+    assert directive_id > 0
+    assert body["directive"]["text"] == text
+    # 读回 pending/案卷：入口回执与库内草案同一条，且案卷结构字段是 LLM 抽取结果，
+    # 不是罩饿死后的 special_decree 兜底。
+    assert directive_id in [int(item["id"]) for item in body["directives"]]
+    rows = db.list_directives(state, statuses=("pending", "draft"))
+    row = next(item for item in rows if int(item["id"]) == directive_id)
+    payload = db.read_directive_dossier_payload(row)
+    assert payload.get("dossier_action_type") == "policy"
+    assert payload.get("target_id") == "treasury-audit"
+    assert [str(i["character_id"]) for i in (payload.get("participant_roster") or [])] == [
+        "毕自严",
+    ]
 
 
 def test_normal_capture_path_unchanged(game, monkeypatch):
