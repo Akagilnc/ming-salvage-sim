@@ -584,7 +584,7 @@ def test_enrich_army_parsed_and_normalized(monkeypatch):
         },
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (canned, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
     out = cb.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军")
     armies = out["effect_on_resolve"]["new_armies"]
     assert armies[0]["id"] == "qinjun"
@@ -596,7 +596,7 @@ def test_enrich_building_region_floor(monkeypatch):
         "effect_on_resolve": {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (canned, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
     out = cb.enrich_initiative_effects("设格致局", "")
     assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
 
@@ -654,7 +654,7 @@ def test_run_backend_dispatch(monkeypatch, env, attr, out):
         monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     else:
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", env)
-    monkeypatch.setattr(cb, attr, lambda p: (out, 1))
+    monkeypatch.setattr(cb, attr, lambda p, **kw: (out, 1))
     assert cb._run_backend("x") == (out, 1)
 
 
@@ -682,17 +682,27 @@ class _P:
 
 
 def _capture_run(monkeypatch, proc=None):
+    """runner 子进程边界替身（生产已改 Popen + 增量读）；保留 argv/kwargs 观察面。"""
+    from tests.cli_process_doubles import FakeCliProcess
+
     captured = {}
     proc = proc or _P()
 
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
+    def fake_popen(cmd, **kw):
+        captured["cmd"] = list(cmd)
         captured["kw"] = kw
-        if callable(proc):
-            return proc(cmd, **kw)
-        return proc
+        spec = proc(cmd, **kw) if callable(proc) else proc
+        fake = FakeCliProcess(
+            cmd,
+            stdout_script=((spec.stdout,) if spec.stdout else ()),
+            stderr_script=((spec.stderr,) if spec.stderr else ()),
+            returncode=spec.returncode,
+            popen_kwargs=kw,
+        )
+        captured["proc"] = fake
+        return fake
 
-    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
     return captured
 
 
@@ -718,42 +728,21 @@ def test_run_codex_flags_and_stdout(monkeypatch):
 
 
 def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
-    captured = {}
+    """codex --json 只给终包（无 delta 事件）时，流式 runner 仍出完整终文。"""
+    from tests.cli_process_doubles import FakeCliRunnerScript
+
     final = "STREAM_FINAL_BODY"
-
-    class _Stdout:
-        def __iter__(self):
-            yield json.dumps({"type": "item.started", "item": {"type": "reasoning"}}) + "\n"
-            yield json.dumps(
+    script = FakeCliRunnerScript([{
+        "stdout": (
+            json.dumps({"type": "item.started", "item": {"type": "reasoning"}}) + "\n",
+            json.dumps(
                 {"type": "item.completed", "item": {"type": "agent_message", "text": final}}
-            ) + "\n"
-
-        def close(self):
-            pass
-
-    class _Proc:
-        class _Stdin:
-            def write(self, text):
-                captured["input"] = text
-
-            def close(self):
-                captured["stdin_closed"] = True
-
-        stdin = _Stdin()
-        stdout = _Stdout()
-        stderr = None
-        returncode = 0
-
-        def wait(self, timeout=None):
-            captured["timeout"] = timeout
-            self.returncode = 0
-            return ("", "")
-
-        def kill(self):
-            captured["killed"] = True
-
+            ) + "\n",
+        ),
+        "returncode": 0,
+    }])
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cb.subprocess, "Popen", lambda cmd, **kw: captured.update(cmd=cmd, cwd=kw.get("cwd")) or _Proc())
+    monkeypatch.setattr(cb.subprocess, "Popen", script.popen)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
 
     chunks = []
@@ -765,22 +754,27 @@ def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
     text = run_agent_stream_text(agent, "PROMPT_STREAM", "simulator", on_text=chunks.append)
     assert text == final
     assert chunks == [final]
-    assert "--json" in captured["cmd"] and captured["cmd"][-1] == "-"
-    assert "PROMPT_STREAM" in captured["input"]
+    cmd = script.commands[0]
+    assert "--json" in cmd and cmd[-1] == "-"
+    assert "PROMPT_STREAM" in "".join(script.processes[0].stdin.written)
 
 
 def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     seen = {}
 
-    def fake_chunks(prompt, *, model=None, timeout=None, reasoning_strength=None):
+    def fake_chunks(runner, prompt, *, model=None, timeout=None,
+                    reasoning_strength=None, json_events=False, clock=None):
+        seen["runner"] = runner
+        seen["json_events"] = json_events
         seen["reasoning_strength"] = reasoning_strength
         yield "STREAM_CHUNK"
 
-    monkeypatch.setattr(cb, "_iter_codex_stream_chunks", fake_chunks)
+    monkeypatch.setattr(cb, "_iter_cli_runner_text", fake_chunks)
     chat = cb.CliChat(id="gpt-test", backend="codex", reasoning_strength="low")
     chunks = list(chat.response_stream([Message(role="user", content="PROMPT")]))
     assert [c.content for c in chunks if c.content] == ["STREAM_CHUNK"]
     assert seen["reasoning_strength"] == "low"
+    assert seen["runner"] == "codex" and seen["json_events"] is True
 
 
 def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
@@ -850,46 +844,6 @@ def test_luna_shaped_stream_keeps_content_when_reasoning_deltas_interleave(monke
     assert any("辽饷" in t or "账" in t for t in thinks)
 
 
-def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
-    import threading as _t
-
-    killed = _t.Event()
-
-    class _HangStdout:
-        def __iter__(self):
-            killed.wait()
-            return iter(())
-
-        def close(self):
-            pass
-
-    class _Proc:
-        class _Stdin:
-            def write(self, text):
-                pass
-
-            def close(self):
-                pass
-
-        stdin = _Stdin()
-        stdout = _HangStdout()
-        stderr = None
-        returncode = 0
-
-        def wait(self, timeout=None):
-            return ("", "")
-
-        def kill(self):
-            killed.set()
-            self.returncode = -9
-
-    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: _Proc())
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    with pytest.raises(RuntimeError, match="超时"):
-        list(cb._iter_codex_stream_chunks("PROMPT", timeout=0.2))
-    assert killed.is_set()
-
-
 def test_codex_final_text_handles_item_completed_shape():
     assert cb._codex_final_text(
         {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}
@@ -901,19 +855,21 @@ def test_codex_final_text_handles_item_completed_shape():
 
 
 @pytest.mark.parametrize(
-    "runner,kwargs,model_flag,timeout",
+    "runner,kwargs,model_flag",
     [
-        ("_run_codex", {"model": "gpt-configured", "timeout": 123}, "gpt-configured", 123),
-        ("_run_claude", {"model": "claude-configured", "timeout": 234}, "claude-configured", 234),
+        ("_run_codex", {"model": "gpt-configured", "timeout": 123}, "gpt-configured"),
+        ("_run_claude", {"model": "claude-configured", "timeout": 234}, "claude-configured"),
     ],
 )
-def test_run_runner_accepts_config_model_and_timeout(monkeypatch, runner, kwargs, model_flag, timeout):
+def test_run_runner_accepts_config_model(monkeypatch, runner, kwargs, model_flag):
+    """#1465 切片③：cli_model 仍透传 --model；timeout 只是静默预算，不再当子进程总墙
+    （Popen 不吃 timeout kwarg；跨墙不杀由 test_cli_transport_1465 真入口证明）。"""
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
     out, n = getattr(cb, runner)("p", **kwargs)
     assert out == "STDOUT_BODY" and n == 1
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == model_flag
-    assert captured["kw"]["timeout"] == timeout
+    assert "timeout" not in captured["kw"]
 
 
 def test_run_codex_reasoning_env_optional(monkeypatch):
@@ -936,9 +892,9 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
 
 def test_run_codex_stdout_empty_fallback(monkeypatch):
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(
-        cb.subprocess, "run",
-        lambda cmd, **kw: _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
+    _capture_run(
+        monkeypatch,
+        _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
     )
     out, n = cb._run_codex("p")
     assert out == "STDOUT_BODY"
@@ -1102,18 +1058,11 @@ def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
 def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     cb._BIN_CACHE.clear()
     monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: resolved)
+    monkeypatch.setattr(cb, "_warm_keychain", lambda: None)
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    seen = {}
-
-    def fake_run(cmd, **kw):
-        if cmd and cmd[0] == "security":
-            return _P()
-        seen["cmd"] = cmd
-        return _P(stdout="STDOUT_BODY")
-
-    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
     getattr(cb, runner)("p")
-    assert seen["cmd"][0] == resolved
+    assert captured["cmd"][0] == resolved
 
 
 # ── extract_minister_actions ──
@@ -1356,9 +1305,10 @@ def test_clichat_call_cli_dispatch(monkeypatch):
     assert cb.CliChat(id="m-codex", backend="codex", timeout=111)._call_cli("p") == ("CODEX", 1)
     assert cb.CliChat(id="m-claude", backend="claude", timeout=222)._call_cli("p") == ("CLAUDE", 1)
     assert cb.CliChat(id="m-agy", backend="agy", timeout=333)._call_cli("p") == ("AGY", 1)
-    assert seen["codex"] == ("m-codex", 111)
-    assert seen["claude"] == ("m-claude", 222)
-    assert seen["agy"] == 333
+    # #1465 切片③：model.timeout 不再下发成子进程墙钟；空转预算归 transport 策略。
+    assert seen["codex"] == ("m-codex", None)
+    assert seen["claude"] == ("m-claude", None)
+    assert seen["agy"] is None
 
 
 def test_clichat_call_cli_unknown_backend_raises():
@@ -1366,76 +1316,63 @@ def test_clichat_call_cli_unknown_backend_raises():
         cb.CliChat(id="m", backend="bogus")._call_cli("p")
 
 
-# ── agy warm+retry / runner fail-loud ──
-
-class _Proc:
-    def __init__(self, stdout="", stderr=""):
-        self.stdout, self.stderr, self.returncode = stdout, stderr, 0
+# ── agy 单次调用 / runner 失败分类（重试归 transport，runner 内无私有循环）──
 
 
-def _agy_fake(script):
+def _agy_popen(monkeypatch, script):
+    """agy 子进程替身：script 为逐次调用的 (stdout, returncode)。"""
+    from tests.cli_process_doubles import FakeCliProcess
+
     state = {"agy": 0, "warm": 0}
 
-    def fake_run(cmd, **kw):
-        if cmd and cmd[0] == "security":
-            state["warm"] += 1
-            return _Proc()
-        i = state["agy"]
+    def fake_warm():
+        state["warm"] += 1
+
+    def fake_popen(cmd, **kw):
+        index = state["agy"]
         state["agy"] += 1
-        kind, text = script[min(i, len(script) - 1)]
-        if kind == "timeout":
-            raise cb.subprocess.TimeoutExpired(cmd, kw.get("timeout"))
-        if kind == "auth":
-            return _Proc(stdout=text or "Authentication required")
-        return _Proc(stdout=text)
+        text, rc = script[min(index, len(script) - 1)]
+        return FakeCliProcess(
+            cmd,
+            stdout_script=((text,) if text else ()),
+            returncode=rc,
+            popen_kwargs=kw,
+        )
 
-    return fake_run, state
+    monkeypatch.setattr(cb, "_warm_keychain", fake_warm)
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
+    return state
 
 
-def test_run_agy_success_first_attempt(monkeypatch):
-    fake, state = _agy_fake([("ok", "STDOUT_BODY")])
-    monkeypatch.setattr(cb.subprocess, "run", fake)
+def test_run_agy_success_single_subprocess(monkeypatch):
+    state = _agy_popen(monkeypatch, [("STDOUT_BODY", 0)])
     out, attempts = cb._run_agy("PROMPT")
     assert out == "STDOUT_BODY" and attempts == 1
-    assert state["warm"] >= 1
+    assert state["agy"] == 1
+    assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
 
 
-def test_run_agy_auth_race_then_success(monkeypatch):
-    fake, state = _agy_fake([
-        ("auth", "Authentication required"),
-        ("auth", "authentication timed out"),
-        ("ok", "STDOUT_BODY"),
-    ])
-    monkeypatch.setattr(cb.subprocess, "run", fake)
-    out, attempts = cb._run_agy("p")
-    assert out == "STDOUT_BODY" and attempts == 3
-    assert state["warm"] == 3
+@pytest.mark.parametrize(
+    "banner", ["Authentication required", "authentication timed out"],
+)
+def test_run_agy_auth_race_is_retryable_typed_without_private_loop(monkeypatch, banner):
+    """#1465 切片③：agy auth race 抛可重试 typed，**一次子进程**——
+    重试次数归 llm_transport，runner 内不得再自转 4 次。"""
+    from ming_sim.exceptions import LLMUnavailable
 
-
-def test_run_agy_all_timeout_raises(monkeypatch):
-    fake, _ = _agy_fake([("timeout", "")])
-    monkeypatch.setattr(cb.subprocess, "run", fake)
-    with pytest.raises(RuntimeError, match="warm\\+retry"):
+    state = _agy_popen(monkeypatch, [(banner, 0)])
+    with pytest.raises(LLMUnavailable) as ei:
         cb._run_agy("p")
+    assert ei.value.code == "llm_connection_error"
+    assert state["agy"] == 1
 
 
-def test_run_agy_all_auth_fail_raises(monkeypatch):
-    fake, state = _agy_fake([("auth", "Authentication required")])
-    monkeypatch.setattr(cb.subprocess, "run", fake)
+def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
+    """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
+    state = _agy_popen(monkeypatch, [("", 1)])
     with pytest.raises(RuntimeError):
         cb._run_agy("p")
-    assert state["agy"] == 4
-
-
-@pytest.mark.parametrize("runner", ["_run_codex", "_run_claude"])
-def test_run_runner_timeout_raises(monkeypatch, runner):
-    def boom(cmd, **kw):
-        raise cb.subprocess.TimeoutExpired(cmd, kw.get("timeout"))
-
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cb.subprocess, "run", boom)
-    with pytest.raises(RuntimeError, match="超时"):
-        getattr(cb, runner)("p")
+    assert state["agy"] == 1
 
 
 class _RcProc:
@@ -1447,31 +1384,25 @@ class _RcProc:
     "runner,proc",
     [
         ("_run_codex", lambda: _RcProc(stderr="error: auth failed", returncode=1)),
-        ("_run_codex", lambda: _RcProc(returncode=0)),  # empty output
         ("_run_claude", lambda: _RcProc(stderr="auth required", returncode=1)),
     ],
 )
-def test_run_runner_fail_loud_on_bad_exit_or_empty(monkeypatch, runner, proc):
+def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner, proc):
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cb.subprocess, "run", lambda cmd, **kw: proc())
+    _capture_run(monkeypatch, lambda cmd, **kw: proc())
     with pytest.raises(RuntimeError):
         getattr(cb, runner)("p")
 
 
-def test_run_agy_nonzero_exit_retries_then_raises(monkeypatch):
-    state = {"agy": 0, "warm": 0}
+def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
+    """rc=0 但零输出 = 可重试 typed 空输出（交 transport 再试），不是确定性失败。"""
+    from ming_sim.exceptions import LLMUnavailable
 
-    def fake(cmd, **kw):
-        if cmd and cmd[0] == "security":
-            state["warm"] += 1
-            return _RcProc()
-        state["agy"] += 1
-        return _RcProc(stderr="agy boom", returncode=1)
-
-    monkeypatch.setattr(cb.subprocess, "run", fake)
-    with pytest.raises(RuntimeError):
-        cb._run_agy("p")
-    assert state["agy"] == 4
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    _capture_run(monkeypatch, _P(stdout="", stderr="", returncode=0))
+    with pytest.raises(LLMUnavailable) as ei:
+        cb._run_codex("p")
+    assert ei.value.code == "llm_empty_output"
 
 
 # ── trace throat ──
@@ -1715,7 +1646,8 @@ def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
     monkeypatch.setattr(cb, f"_run_{runner}", fake)
     chat = cb.CliChat(id="mdl", backend=runner, timeout=99)
     assert chat._call_cli("p") == ("OK", 1)
-    assert seen["model"] == "mdl" and seen["timeout"] == 99
+    # cli_model 仍透传；model.timeout 不再当子进程墙钟（召对 idle 归 transport 策略）
+    assert seen["model"] == "mdl" and seen["timeout"] is None
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
@@ -1731,10 +1663,7 @@ def test_describe_effective_model_includes_new_runners(runner):
 
 @pytest.mark.parametrize("runner", ["_run_cursor", "_run_kimi", "_run_grok", "_run_pi"])
 def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
-    monkeypatch.setattr(
-        cb.subprocess, "run",
-        lambda cmd, **kw: _RcProc(stderr="auth failed", returncode=1),
-    )
+    _capture_run(monkeypatch, _RcProc(stderr="auth failed", returncode=1))
     with pytest.raises(RuntimeError):
         getattr(cb, runner)("p")
 
