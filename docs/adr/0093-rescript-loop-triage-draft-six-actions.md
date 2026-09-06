@@ -7,3 +7,7 @@ Status: Accepted（PR #663 merged 2026-07-07；决策：2026-07-07 #477 设计�
 ## 站台闭环现成轨口径（#658 / 2026-08-27）
 
 下部议·廷议以**案卷为唯一 durable 主体**（dossier-first）：`deliberate` 按 `decision_key` 建立/复用一条 `proposed` 案卷；typed 廷议状态唯一放 `payload_json.deliberation_state∈{backed,stalled}`；站台者落 ADR 0070 `当面站台` 背书（decision_key provenance）。无人站台＝`stalled` 并投影一条 `origin_ref=dossier:<id>` 惯性 issue；只有 `backed` 进入既有颁布判官。无人站台后的御笔强推走现有自由下旨通道（typed `target_dossier_id`），复用原案卷追加 `御笔手敕` 并把状态改为 `backed`，不另建第二案卷/第二按钮。删除 `rescript_deliberate:<decision_key>` 平行真源。
+
+## Later-wins（#1772 / 2026-09-06；[0152](0152-independent-manual-draft-entry-collapses-to-audience.md)）
+
+上节「无人站台后的御笔强推走现有自由下旨通道（typed `target_dossier_id`）」一句由 0152 替代：御笔强推＝批红页上对无人站台案卷的一个选择（皇帝亲担），选了即 `backed`、照常颁布；不经手拟、不经召对。同行其余保持（复用原案卷追加 `御笔手敕`、状态改 `backed`、不另建第二案卷）。本回注只替代该句。
