@@ -2584,6 +2584,271 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(editAfterSaveFail?.value).toBe("改稿边饷");
   });
 
+  it("#1764 本地失败 create 卡不挡失败密令「处理」入口", async () => {
+    let releaseCreate!: (value: Response) => void;
+    const createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
+    const base = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      directives: [] as unknown[],
+      cased_directives: [] as unknown[],
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 1,
+      previous_summary: "",
+      pending_decisions: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
+      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") return createGate;
+      if (u.pathname.endsWith("/api/pending_actions/failures")) {
+        return jsonResp({
+          pending_action_failures: [{
+            id: 42, kind: "secret_order", action: "落库",
+            message: "密令未能正式落库", retryable: true,
+          }],
+        });
+      }
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    // 打开时即有失败密令 → 处理入口可见
+    expect(Array.from(host.querySelectorAll("button")).some((b) => (b.textContent || "").includes("处理"))).toBe(true);
+
+    const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
+    expect(ta).not.toBeNull();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(ta!, "本地失败草案");
+      ta!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "新增草案"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
+    });
+    await act(async () => {
+      releaseCreate({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: async () => ({ detail: { message: "local-fail-blocks-not" } }),
+      } as unknown as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="failed"]')).not.toBeNull());
+    });
+    // 本地失败卡在桌，deskCount>0，但恢复入口仍以失败谓词可达
+    const processBtn = Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes("处理"));
+    expect(processBtn).toBeTruthy();
+    await click(processBtn);
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[role="dialog"][aria-label="政务失败恢复"]')).not.toBeNull();
+      });
+    });
+  });
+
+  it("#1764 退出主菜单清本地失败卡；再入局不残留", async () => {
+    vi.stubGlobal("confirm", () => true);
+    let releaseCreate!: (value: Response) => void;
+    const createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
+    const base = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      directives: [] as unknown[],
+      cased_directives: [] as unknown[],
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+      previous_summary: "",
+      pending_decisions: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(base);
+      if (u.pathname.endsWith("/api/directives") && init?.method === "POST") return createGate;
+      if (u.pathname.endsWith("/api/menu/exit_to_menu")) return jsonResp({});
+      if (u.pathname.endsWith("/api/menu/continue")) {
+        return sseResp("done", { state: { ok: true } });
+      }
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
+    expect(ta).not.toBeNull();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(ta!, "跨局残留草案");
+      ta!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "新增草案"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
+    });
+    await act(async () => {
+      releaseCreate({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: async () => ({ detail: { message: "cross-game-fail" } }),
+      } as unknown as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="failed"]')).not.toBeNull());
+    });
+
+    await click(host.querySelector('[aria-label="游戏菜单"]'));
+    await tick();
+    // 页签「回到主菜单」→ 面板内 primary 确认（与既有 exitToMenu 全链案同形）
+    await click(findButton(host, "回到主菜单"));
+    await tick();
+    await click(host.querySelector(".menu-btn.primary"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).toBeNull());
+    });
+    // 主菜单「继续」→ 再入局（onEnterGame → resetLocalEdictState）
+    const continueBtn = Array.from(host.querySelectorAll("button")).find(
+      (b) => (b.textContent || "").trim() === "继续",
+    );
+    expect(continueBtn).toBeTruthy();
+    await click(continueBtn);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).not.toBeNull());
+    });
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
+    expect(host.querySelector('[data-directive-phase="inflight"]')).toBeNull();
+    expect(host.querySelector('[data-local-key]')).toBeNull();
+  });
+
+  it("#1764 召对 end 后权威 cased 投影可达（done 早到 GET 不锁终态）", async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    let statePhase: "pre" | "done" | "end" = "pre";
+    let stateGets = 0;
+    const minister = {
+      name: "毕自严", office: "户部尚书", office_type: "户部", faction: "",
+      style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [],
+    };
+    const baseState = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      ministers: [minister],
+      directives: [] as unknown[],
+      cased_directives: [] as unknown[],
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      failed_secret_order_count: 0,
+      previous_summary: "",
+      pending_decisions: [],
+    };
+    const casedAfterEnd = [{
+      id: 42, dossier_id: 7, text: "着户部核边饷",
+      source: "大臣拟旨", actor: "毕自严", notes: "", dossier_status: "proposed",
+    }];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) {
+        stateGets += 1;
+        // done 阶段早到 GET：尚无成案；end 后 GET：权威成案。
+        if (statePhase === "end") {
+          return jsonResp({ ...baseState, cased_directives: casedAfterEnd });
+        }
+        return jsonResp({ ...baseState, cased_directives: [] });
+      }
+      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
+      if (u.pathname.endsWith("/api/ministers/%E6%AF%95%E8%87%AA%E4%B8%A5/chat/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      if (u.pathname.endsWith("/api/ministers/%E6%AF%95%E8%87%AA%E4%B8%A5/chat")) {
+        return jsonResp({
+          minister, history: [], suggestions: [], pending_action_failures: [],
+          pending_turn_ids: [], night_id: 1, can_undo_last_chat: false,
+        });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    await act(async () => { await vi.waitFor(() => expect(findButton(host, "毕自严")).toBeTruthy()); });
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await click(findButton(host, "毕自严"));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
+    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "核边饷。");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const getsBeforeSend = stateGets;
+    await click(findButton(host, "发送"));
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+    });
+
+    statePhase = "done";
+    await act(async () => {
+      streamController.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({
+        history: [], suggestions: [], directives: [], pending_count: 0,
+        pending_directive_count: 0, pending_action_failures: [],
+        can_undo_last_chat: true, night_id: 1,
+      })}\n\n`));
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(stateGets).toBeGreaterThan(getsBeforeSend));
+    });
+    const getsAfterDone = stateGets;
+
+    statePhase = "end";
+    await act(async () => {
+      streamController.enqueue(encoder.encode("event: end\ndata: {}\n\n"));
+      streamController.close();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(stateGets).toBeGreaterThan(getsAfterDone));
+    });
+
+    // 关召对 → 开拟诏：权威 cased 已在 end 刷新后的 state 中
+    await click(host.querySelector('[aria-label="关闭弹窗"]'));
+    await tick();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="cased"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[data-directive-phase="cased"]')?.getAttribute("data-directive-id")).toBe("42");
+  });
+
   it("#1764 成案只读投影：state.cased_directives 以 phase=cased 留桌且无改删", async () => {
     stubSettlementFetch({
       ...settlementBaseState("player"),
