@@ -402,7 +402,12 @@ export function App() {
     closeAllDrawers();
     setMapIntelOpen(false);
     setActiveModal(modal);
-  }, [closeAllDrawers]);
+    // #1764：拟诏打开公共接缝——木牌与起复同路读权威 durable（含 cased_directives）。
+    // 覆盖 done 早到 GET 后后台成案、及观察者离面无 end 的重入；不延迟 done、不另建旁接线。
+    if (modal === "edict") {
+      void loadState().catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    }
+  }, [closeAllDrawers, loadState]);
 
   // #1726：点开奏疏面板即已读（绑具体奏报 key，不绑案卷）；失败不挡阅读。
   const memorialMarkGenRef = React.useRef(0);
@@ -593,11 +598,7 @@ export function App() {
         onGroupChange={setMinisterGroup}
         onClose={() => setDrawerOpen(false)}
         onOpenChat={openChat}
-        onOpenEdict={() => {
-          // #1764：重入拟诏读权威 durable——覆盖召对 done 早到 GET、及观察者离面无 end 的缺口。
-          openModal("edict");
-          void loadState();
-        }}
+        onOpenEdict={() => openModal("edict")}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
       />

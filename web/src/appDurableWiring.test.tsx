@@ -2746,11 +2746,12 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.querySelector('[data-local-key]')).toBeNull();
   });
 
-  it("#1764 召对 end 后权威 cased 投影可达（done 早到 GET 不锁终态）", async () => {
+  // #1764 成案 tracer 共享夹具：召对流 + 可切换的 state 权威投影（在线 end / 离面重入同形）。
+  const mount1764AudienceCasedTracer = async () => {
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const encoder = new TextEncoder();
-    let statePhase: "pre" | "done" | "end" = "pre";
     let stateGets = 0;
+    let casedDirectives: unknown[] = [];
     const minister = {
       name: "毕自严", office: "户部尚书", office_type: "户部", faction: "",
       style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [],
@@ -2768,10 +2769,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       previous_summary: "",
       pending_decisions: [],
     };
-    const casedAfterEnd = [{
+    const casedRow = {
       id: 42, dossier_id: 7, text: "着户部核边饷",
       source: "大臣拟旨", actor: "毕自严", notes: "", dossier_status: "proposed",
-    }];
+    };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
@@ -2779,11 +2780,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) {
         stateGets += 1;
-        // done 阶段早到 GET：尚无成案；end 后 GET：权威成案。
-        if (statePhase === "end") {
-          return jsonResp({ ...baseState, cased_directives: casedAfterEnd });
-        }
-        return jsonResp({ ...baseState, cased_directives: [] });
+        return jsonResp({ ...baseState, cased_directives: casedDirectives });
       }
       if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
@@ -2817,7 +2814,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(streamController).toBeTruthy());
     });
 
-    statePhase = "done";
+    // done 早到 GET：权威仍无成案
     await act(async () => {
       streamController.enqueue(encoder.encode(`event: done\ndata: ${JSON.stringify({
         history: [], suggestions: [], directives: [], pending_count: 0,
@@ -2828,25 +2825,58 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(stateGets).toBeGreaterThan(getsBeforeSend));
     });
-    const getsAfterDone = stateGets;
 
-    statePhase = "end";
+    return {
+      host,
+      encoder,
+      get streamController() { return streamController; },
+      get stateGets() { return stateGets; },
+      publishCased: () => { casedDirectives = [casedRow]; },
+      expectCasedCard: async () => {
+        await act(async () => {
+          await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="cased"]')).not.toBeNull());
+        });
+        expect(host.querySelector('[data-directive-phase="cased"]')?.getAttribute("data-directive-id")).toBe("42");
+      },
+    };
+  };
+
+  it("#1764 召对 end 后权威 cased 投影可达（done 早到 GET 不锁终态）", async () => {
+    const t = await mount1764AudienceCasedTracer();
+    const getsAfterDone = t.stateGets;
+
+    // 在线观察：end = 尾随成案提交完成缝 → onEnd 刷新权威 durable
+    t.publishCased();
     await act(async () => {
-      streamController.enqueue(encoder.encode("event: end\ndata: {}\n\n"));
-      streamController.close();
+      t.streamController.enqueue(t.encoder.encode("event: end\ndata: {}\n\n"));
+      t.streamController.close();
     });
     await act(async () => {
-      await vi.waitFor(() => expect(stateGets).toBeGreaterThan(getsAfterDone));
+      await vi.waitFor(() => expect(t.stateGets).toBeGreaterThan(getsAfterDone));
     });
 
-    // 关召对 → 开拟诏：权威 cased 已在 end 刷新后的 state 中
-    await click(host.querySelector('[aria-label="关闭弹窗"]'));
+    // 关召对 → 底部木牌开拟诏（公共 openModal 接缝）
+    await click(t.host.querySelector('[aria-label="关闭弹窗"]'));
     await tick();
-    await click(edictCommand(host));
+    await click(edictCommand(t.host));
+    await t.expectCasedCard();
+  });
+
+  it("#1764 离面后已提交：底部木牌重入读权威 cased（不依赖 end）", async () => {
+    const t = await mount1764AudienceCasedTracer();
+    const getsAfterDone = t.stateGets;
+
+    // 观察者离面：关召对，不发 end；后台成案随后可经 state 口返回
+    await click(t.host.querySelector('[aria-label="关闭弹窗"]'));
+    await tick();
+    t.publishCased();
+
+    // 真实重入入口 = 底部拟诏木牌 → 共享 openModal → loadState
+    await click(edictCommand(t.host));
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="cased"]')).not.toBeNull());
+      await vi.waitFor(() => expect(t.stateGets).toBeGreaterThan(getsAfterDone));
     });
-    expect(host.querySelector('[data-directive-phase="cased"]')?.getAttribute("data-directive-id")).toBe("42");
+    await t.expectCasedCard();
   });
 
   it("#1764 成案只读投影：state.cased_directives 以 phase=cased 留桌且无改删", async () => {
