@@ -2631,6 +2631,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
         expect(card?.getAttribute("data-directive-phase")).toBe("inflight");
         expect(card?.getAttribute("data-request-op")).toBe("save");
         expect(card?.getAttribute("aria-busy")).toBe("true");
+        // #1764：save 在飞时来源头仍在呈现树（不与 PhaseChip 互斥；不锁来源措辞）。
+        expect(card?.querySelector('[data-role="source-label"]')).not.toBeNull();
       });
     });
     expect(savePatches).toBe(1);
@@ -2650,10 +2652,72 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
         expect(card?.getAttribute("data-directive-phase")).toBe("failed");
         expect(card?.getAttribute("aria-invalid")).not.toBe("true");
         expect(card?.querySelector('[data-role="local-error"][role="alert"]')?.textContent).toBe("save-fail-token");
+        // #1764：save 失败时来源头仍在呈现树。
+        expect(card?.querySelector('[data-role="source-label"]')).not.toBeNull();
       });
     });
     const editAfterSaveFail = host.querySelector<HTMLTextAreaElement>(".directive-edit textarea");
     expect(editAfterSaveFail?.value).toBe("改稿边饷");
+
+    // #1764：delete 在飞/失败同样保留来源头（与 save 同源头并列接缝）。
+    let releaseDelete!: (value: Response) => void;
+    const deleteGate = new Promise<Response>((resolve) => { releaseDelete = resolve; });
+    let deleteCalls = 0;
+    // 取消编辑回到非编辑分支，再走删除（覆盖编辑/非编辑两分支的来源头）。
+    const cancelAfterSaveFail = host.querySelector<HTMLButtonElement>('button[aria-label="取消修改"]');
+    expect(cancelAfterSaveFail).not.toBeNull();
+    await click(cancelAfterSaveFail!);
+    expect(host.querySelector(".directive-edit")).toBeNull();
+    const draftAfterCancel = host.querySelector('[data-directive-id="9"]');
+    expect(draftAfterCancel?.querySelector('[data-role="source-label"]')).not.toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp({
+        ...base,
+        directives: [{
+          id: 9, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "",
+          text: "解太仓备用", source: "手动新增", status: "draft", notes: "", authority: "",
+        }],
+      });
+      if (u.pathname.match(/\/api\/directives\/\d+$/) && init?.method === "DELETE") {
+        deleteCalls += 1;
+        return deleteGate;
+      }
+      return jsonResp({});
+    }));
+    const delBtn = Array.from(draftAfterCancel!.querySelectorAll("button")).find((b) => (b.textContent || "").includes("删"));
+    expect(delBtn).toBeTruthy();
+    await click(delBtn as HTMLButtonElement);
+    await act(async () => {
+      await vi.waitFor(() => {
+        const card = host.querySelector('[data-directive-id="9"]');
+        expect(card?.getAttribute("data-directive-phase")).toBe("inflight");
+        expect(card?.getAttribute("data-request-op")).toBe("delete");
+        expect(card?.querySelector('[data-role="source-label"]')).not.toBeNull();
+      });
+    });
+    expect(deleteCalls).toBe(1);
+    await act(async () => {
+      releaseDelete({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: async () => ({ detail: { message: "delete-fail-token" } }),
+      } as unknown as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        const card = host.querySelector('[data-directive-id="9"]');
+        expect(card?.getAttribute("data-directive-phase")).toBe("failed");
+        expect(card?.querySelector('[data-role="local-error"][role="alert"]')?.textContent).toBe("delete-fail-token");
+        expect(card?.querySelector('[data-role="source-label"]')).not.toBeNull();
+      });
+    });
   });
 
   it("#1764 本地失败 create 卡不挡失败密令「处理」入口", async () => {
