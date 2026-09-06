@@ -681,15 +681,91 @@ def land_or_recover_new_secret_order(
     out["pending_action_id"] = 0
 
 
+_BATCH_GRANT_IDENTITIES = "staged_grant_identities"
+
+
+def _grant_identity(db: Any, payload: Dict[str, Any]) -> Optional[tuple]:
+    """同一笔机械恩赏的身份：(grant_action, target_id, amount, account)。
+
+    原生 grant 候选与拟旨投影载荷落在同一身份上——协饷 target 先归一为 army id、
+    account 走 resolve_grant_account，否则「army.guanning/15/国库」两侧对不上。
+    非 grant 载荷 / 解析不了的目标返回 None（不夹带猜测，异常仍归各自 fail-loud）。
+    """
+    dossier_type = str(payload.get("dossier_action_type") or "").strip()
+    if dossier_type and dossier_type != "grant_allocation":
+        return None
+    grant_action = str(payload.get("grant_action") or "").strip()
+    if grant_action not in (GRANT_ACTIONS - {"无"}):
+        return None
+    target_id = str(payload.get("target_id") or "").strip()
+    if grant_action == "协饷":
+        try:
+            target_id = canonicalize_xiexang_army_target(db, target_id)
+        except DecreeMaterializationValidationError:
+            return None
+    try:
+        account = resolve_grant_account(
+            grant_action=grant_action, account=payload.get("account"),
+        )
+    except ValueError:
+        return None
+    amount = payload.get("amount")
+    try:
+        amount_key: Any = int(amount)
+    except (TypeError, ValueError):
+        amount_key = str(amount or "")
+    return (grant_action, target_id, amount_key, account)
+
+
+def _batch_grant_identities(ctx: MaterializeCtx) -> Dict[tuple, set]:
+    """本批已落案的恩赏身份 → 落它的通道集（batch_state 随 replace 在候选间共享）。"""
+    identities = ctx.batch_state.get(_BATCH_GRANT_IDENTITIES)
+    if identities is None:
+        identities = {}
+        ctx.batch_state[_BATCH_GRANT_IDENTITIES] = identities
+    return identities
+
+
+def _grant_identity_staged_by_sibling(
+    ctx: MaterializeCtx, payload: Dict[str, Any], *, origin: str,
+) -> bool:
+    """这笔恩赏是否已由本批的另一条通道落案。
+
+    只互斥跨通道（拟旨投影 ↔ 原生恩赏候选）：同一句话经两条通道再表达一次，
+    机械后果只该消费一次。同通道内两条独立数组项（#518 分拨/再拨）身份即便
+    相同也各自成案，不在此折叠。
+    """
+    identity = _grant_identity(ctx.session.db, payload)
+    if identity is None:
+        return False
+    origins = _batch_grant_identities(ctx).get(identity) or set()
+    return bool(origins - {origin})
+
+
+def _note_staged_grant_identity(
+    ctx: MaterializeCtx, payload: Dict[str, Any], *, origin: str,
+) -> None:
+    identity = _grant_identity(ctx.session.db, payload)
+    if identity is not None:
+        _batch_grant_identities(ctx).setdefault(identity, set()).add(origin)
+
+
 def _grant_allocation_attemptable(
     ctx: MaterializeCtx, intent: Dict[str, Any],
 ) -> bool:
-    """Pure: grant handler 是否会调用 stage。handler 与批预热投影共用，禁平行预测。"""
+    """Pure: grant handler 是否会调用 stage。handler 与批预热投影共用，禁平行预测。
+
+    #1777：同批拟旨通道已落同一身份的恩赏时不再 attempt——一句话里的一笔拨银
+    只消费一次。身份不同的独立拨给、以及同通道内的独立数组项（#518 另拨/再赏、
+    #519 赈灾）各自照落。
+    """
     if (
         ctx.draft_staged
         or ctx.out.get("pending_action_id")
         or ctx.conversation_intent_handled
     ):
+        return False
+    if _grant_identity_staged_by_sibling(ctx, intent, origin="grant"):
         return False
     grant_action = str(intent.get("grant_action") or "").strip()
     if grant_action not in (GRANT_ACTIONS - {"无"}):
@@ -1486,6 +1562,13 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             semantic_payload.setdefault("dossier_action_type", "special_decree")
             semantic_payload.setdefault("target_kind", "policy")
             semantic_payload.setdefault("target_id", ctx.player_message.strip())
+        if _grant_identity_staged_by_sibling(
+            ctx, semantic_payload, origin="draft",
+        ):
+            # #1777：同批恩赏候选已落这笔（同 grant_action/target/amount/account）。
+            # 拟旨通道已被本句占用，不再写第二份 grant 案卷、不再二次扣库。
+            ctx.draft_staged = True
+            return
         if ctx.candidate_kind_count > 1:
             ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
                 session.state.turn, minister_name,
@@ -1525,6 +1608,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 payload=semantic_payload,
             )
             ctx.out["pending_action_id"] = pid
+        _note_staged_grant_identity(ctx, semantic_payload, origin="draft")
         ctx.draft_staged = True
 
 
@@ -2644,7 +2728,10 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
 
     #1503：显式拟旨前缀若带 typed grant 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
     draft_staged / 已有 pending 仍互斥，避免与 generic special_decree 双写。
-    是否 attempt stage 的纯门闩见 _grant_allocation_attemptable（与批预热共用）。
+    #1777 批路径：每候选各自从 baseline 复制 out、draft_staged 重置为 False，兄弟
+    候选之间靠 batch_state 身份集互斥——同批同一笔恩赏只落一次，身份不同的独立
+    拨给仍各自成案。是否 attempt stage 的纯门闩见 _grant_allocation_attemptable
+    （与批预热投影共用）。
     """
     if ctx.intent_kind != "grant_allocation":
         return
@@ -2676,6 +2763,7 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
     )
     if pending_id:
         ctx.out["pending_action_id"] = pending_id
+        _note_staged_grant_identity(ctx, intent, origin="grant")
 
 
 def _parse_json_field(raw: object) -> Any:
