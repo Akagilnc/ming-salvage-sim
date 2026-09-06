@@ -539,12 +539,6 @@ def minister_speaker_role(
     return "，".join(bits) or "大臣"
 
 
-def _write_tx_suspended(db: Any) -> bool:
-    """True when db.conn is inside an outer atomic write transaction."""
-    conn = getattr(db, "conn", None)
-    return bool(getattr(conn, "_commit_suspended", False))
-
-
 def _compose_secret_landing_recovery_projection(
     *,
     db: Any,
@@ -557,18 +551,13 @@ def _compose_secret_landing_recovery_projection(
 ) -> Dict[str, Any]:
     """Build typed recovery projection after durable diagnostic is already recorded.
 
-    Compose/LLM I/O lives here only. Callers must not invoke this inside a
-    suspended batch write transaction (#1765 C1).
+    Compose/LLM I/O lives here only. Callers preheat outside batch write T
+    (#1765 C1); batch path consumes prepared_recovery only.
     """
     from ming_sim.cli_backend import (
         compose_secret_order_landing_recovery,
         secret_order_landing_gaps,
     )
-
-    if _write_tx_suspended(db):
-        raise RuntimeError(
-            "secret landing recovery compose must not run inside batch write T"
-        )
 
     so = dict(secret or {})
     # Provenance from first extract: recovery feed reuses full command (#354 / C3).
@@ -678,11 +667,6 @@ def land_or_recover_new_secret_order(
         out["secret_order_landing_recovery"] = dict(prepared_recovery)
         out["pending_action_id"] = 0
         return
-
-    if _write_tx_suspended(db):
-        raise RuntimeError(
-            "unlandable secret landing recovery was not preheated before batch write T"
-        )
 
     out["secret_order_landing_recovery"] = _prepare_unlandable_secret_recovery(
         db=db,

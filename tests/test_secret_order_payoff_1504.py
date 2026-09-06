@@ -1395,24 +1395,63 @@ def _stub_secret_landing_llm(monkeypatch, *, extract_fn, prose_fn=None):
     )
 
 
-def _feed_has_emperor_and_gap(
-    prompt: str, *emperor_frags: str, prior_raw: str = "",
-) -> bool:
-    """后续 recovery compose 供料：皇帝上下文 + 真实缺口标签 +（有则）原产物。
+def _spy_secret_landing_recovery_compose(monkeypatch):
+    """Observe structured kwargs of compose_secret_order_landing_recovery; pass-through."""
+    from ming_sim import cli_backend as cb
 
-    不以「【皇帝原话】」表头冒充缺口（M3：清空 gaps/prior 后仍绿即假阳性）。
-    首抽 schema 提示不含这些缺口标签与原产物标记。
+    calls: list[dict] = []
+    original = cb.compose_secret_order_landing_recovery
+
+    def _wrap(
+        landing_gaps=None,
+        *,
+        speaker_name="",
+        speaker_role="",
+        emperor_words="",
+        prior_output="",
+        contract_error="",
+        llm_config=None,
+    ):
+        calls.append({
+            "landing_gaps": list(landing_gaps or []),
+            "emperor_words": str(emperor_words or ""),
+            "prior_output": str(prior_output or ""),
+            "contract_error": str(contract_error or ""),
+        })
+        return original(
+            landing_gaps,
+            speaker_name=speaker_name,
+            speaker_role=speaker_role,
+            emperor_words=emperor_words,
+            prior_output=prior_output,
+            contract_error=contract_error,
+            llm_config=llm_config,
+        )
+
+    monkeypatch.setattr(cb, "compose_secret_order_landing_recovery", _wrap)
+    return calls
+
+
+def _recovery_compose_fed(
+    call: dict, *emperor_frags: str, prior_raw: str = "",
+) -> bool:
+    """Recovery compose received actual gaps, emperor context, and prior product.
+
+    Structured kwargs only — not prompt labels/headers (anchoring constitution).
+    Losing gaps/prior/context must fail; label/header reword must not.
     """
-    text = str(prompt)
-    if not any(frag and frag in text for frag in emperor_frags):
+    emperor = str(call.get("emperor_words") or "")
+    frags = [f for f in emperor_frags if f]
+    if frags and not any(f in emperor for f in frags):
         return False
-    # 真源：_SECRET_LANDING_GAP_LABELS 值；不含表头、不含空 gaps 默认「密令结构化要件」。
-    gap_marks = ("结构化标题", "差务合同", "抽取结果", "密令正文")
-    if not any(m in text for m in gap_marks):
+    gaps = [str(g).strip() for g in (call.get("landing_gaps") or []) if str(g).strip()]
+    if not gaps:
         return False
+    prior = str(call.get("prior_output") or "")
     if prior_raw:
-        return "【原抽取产出】" in text and prior_raw in text
-    return "【原抽取产出】" in text
+        needle = prior_raw if prior_raw in prior else prior_raw.strip()
+        return bool(needle) and needle in prior
+    return bool(prior.strip())
 
 
 def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
@@ -1432,16 +1471,13 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
     core = "此非JSON密令产出：缺标题与合同-BEGIN-" + ("X" * (cap + 9)) + "-END"
     unlandable = "\n  " + core + "  \n"
     assert len(unlandable) > cap
-    recovery_feeds: list[str] = []
     source_turn = 1765
+    recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
 
     def _json_extract(prompt, llm_config=None, tag="", **_k):
         return (unlandable, 1)
 
     def _prose(prompt, llm_config=None, tag="", **_k):
-        # 供料只认 typed 调用身份，不靠生成措辞设闸（M3）。
-        if tag == "secret_order_landing_recovery":
-            recovery_feeds.append(str(prompt))
         return ("任意生成回禀", 1)
 
     _stub_secret_landing_llm(monkeypatch, extract_fn=_json_extract, prose_fn=_prose)
@@ -1465,12 +1501,12 @@ def test_secret_extract_stage_identity_via_materialize_entry(game, monkeypatch):
     assert list(recovery.get("landing_gaps") or []), "typed landing_gaps 须可读回"
     assert int(ctx.out.get("pending_action_id") or 0) == 0
     assert db.list_secret_orders() == []
-    # 后续 compose 供料：typed tag 定位；substance 在 prompt（compose 可 strip 空白供 LLM）
-    assert recovery_feeds, "须有 typed secret_order_landing_recovery 调用"
+    # 结构化 compose 供料：实际缺口、皇帝上下文、原产物（不锁表头/标签）
+    assert recovery_calls, "须有 compose_secret_order_landing_recovery 调用"
     assert any(
-        _feed_has_emperor_and_gap(p, emperor_words, prior_raw=unlandable.strip())
-        for p in recovery_feeds
-    ), "recovery 输入须含皇帝原话、真实缺口标签与原产物 substance"
+        _recovery_compose_fed(c, emperor_words, prior_raw=unlandable)
+        for c in recovery_calls
+    ), "recovery 输入须含皇帝原话、真实缺口与原产物 substance"
     snap = recovery.get("extract_snapshot") or {}
     assert not str(snap.get("title") or "").strip()
     # 完整原串：含首尾空白且超 cap，不得截断到 _TRACE_FIELD_CAP
@@ -1671,7 +1707,7 @@ def test_secret_landing_recovery_explicit_prefix_entry(game, monkeypatch):
     name = _minister(db)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     emperor = "暗查辽饷侵冒"
-    recovery_feeds: list[str] = []
+    recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
     zero = json.dumps({
         "标题": "", "内容": "", "承办人": name, "期限月数": 0,
         "标签": [], "差务": "", "价值轴": [], "方向": 1,
@@ -1682,8 +1718,6 @@ def test_secret_landing_recovery_explicit_prefix_entry(game, monkeypatch):
         return (zero, 1)
 
     def _prose(prompt, llm_config=None, tag="", **_k):
-        if tag == "secret_order_landing_recovery":
-            recovery_feeds.append(str(prompt))
         return ("任意生成回禀", 1)
 
     _stub_secret_landing_llm(monkeypatch, extract_fn=_json_extract, prose_fn=_prose)
@@ -1706,9 +1740,9 @@ def test_secret_landing_recovery_explicit_prefix_entry(game, monkeypatch):
     assert recovery.get("report") and recovery.get("landing_gaps")
     assert int(out.get("pending_action_id") or 0) == 0
     assert db.list_secret_orders() == []
-    assert recovery_feeds, "须有 typed secret_order_landing_recovery 调用"
+    assert recovery_calls, "须有 compose_secret_order_landing_recovery 调用"
     assert any(
-        _feed_has_emperor_and_gap(p, emperor, prior_raw=zero) for p in recovery_feeds
+        _recovery_compose_fed(c, emperor, prior_raw=zero) for c in recovery_calls
     ), "显式前缀 recovery 输入须含皇帝原话、真实缺口与原产物"
 
 
@@ -1821,14 +1855,13 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
 ):
     """#1765 A跨轮①：Web 召对 SSE 首次坏产物 → 大臣回禀与结构化读回、无候选。"""
     backend_tags = set()
-    recovery_feeds: list[str] = []
+    recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
     # Web raw 行为：首尾空白无损落在结构化 extract_raw（C7 M4）。
     bad = _secret_landing_bad_raw(with_edges=True)
     message = "你替朕下一道密令，暗查关宁诸将虚冒兵额。"
 
     def backend(prompt, _config=None, *, tag=""):
         backend_tags.add(tag)
-        text = str(prompt)
         if tag == "action_intent":
             return json.dumps(
                 {"kind": "secret", "secret_action": "新建"}, ensure_ascii=False,
@@ -1836,7 +1869,6 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
         if tag == "secret_extract":
             return bad, 1
         if tag == "secret_order_landing_recovery":
-            recovery_feeds.append(text)
             return "任意生成回禀", 1
         return "任意生成回禀", 1
 
@@ -1856,12 +1888,10 @@ def test_http_chat_stream_secret_landing_recovery_player_readback(
             recovery["report"] in str(h.get("content") or "") for h in minister_msgs
         )
         assert "secret_order_landing_recovery" in backend_tags
-        assert recovery_feeds, "须有 typed secret_order_landing_recovery 调用"
+        assert recovery_calls, "须有 compose_secret_order_landing_recovery 调用"
         assert any(
-            _feed_has_emperor_and_gap(
-                p, message, "暗查关宁", prior_raw=bad.strip(),
-            )
-            for p in recovery_feeds
+            _recovery_compose_fed(c, message, "暗查关宁", prior_raw=bad)
+            for c in recovery_calls
         ), "Web recovery 后续输入须含皇帝原话、真实缺口与原产物 substance"
         assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
         assert game.db.list_secret_orders() == []
@@ -1886,7 +1916,7 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
     bad = _secret_landing_bad_raw()
     good = None  # filled after minister name known
     extract_n = {"n": 0}
-    recovery_feeds: list[str] = []
+    recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
 
     def backend(prompt, _config=None, *, tag=""):
         if tag == "action_intent":
@@ -1898,7 +1928,6 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
             # 首次坏产物；玩家下一轮再说后才给成功结构化产物
             return (bad if extract_n["n"] == 1 else good), 1
         if tag == "secret_order_landing_recovery":
-            recovery_feeds.append(str(prompt))
             return "任意生成回禀", 1
         return "任意生成回禀", 1
 
@@ -1918,12 +1947,10 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
         recovery = done1.get("secret_order_landing_recovery") or {}
         assert recovery.get("report") and recovery.get("landing_gaps")
         assert int(done1.get("pending_action_id") or 0) == 0
-        assert recovery_feeds, "须有 typed recovery 调用"
+        assert recovery_calls, "须有 compose_secret_order_landing_recovery 调用"
         assert any(
-            _feed_has_emperor_and_gap(
-                p, "暗查关宁", prior_raw=bad,
-            )
-            for p in recovery_feeds
+            _recovery_compose_fed(c, "暗查关宁", prior_raw=bad)
+            for c in recovery_calls
         )
         wait_pending_writes(game)
         assert game.db.list_secret_orders() == []
