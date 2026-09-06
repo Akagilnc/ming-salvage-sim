@@ -3161,7 +3161,9 @@ class GameSession:
         llm_config = getattr(self, "llm_config", None)
         content = getattr(self, "content", None)
 
-        def _llm_one(job: Dict[str, object]) -> Tuple[Dict[str, object], Optional[Dict[str, object]], Optional[BaseException]]:
+        def _llm_one(
+            job: Dict[str, object],
+        ) -> Tuple[Dict[str, object], Optional[Dict[str, object]], Optional[Exception]]:
             try:
                 payload = resubmit_draft_admission_payload(
                     str(job["text"]),
@@ -3173,7 +3175,9 @@ class GameSession:
                     existing_mode=job.get("existing_mode"),
                 )
                 return job, payload, None
-            except BaseException as exc:  # noqa: BLE001 — 分类在汇合处
+            except Exception as exc:
+                # 与 ensure / relation_brew 同形：只收 Exception；KeyboardInterrupt/
+                # SystemExit 不得洗成 SettlementAbort。
                 return job, None, exc
 
         # P5：批内独立失败旨并行 LLM；单条不建 pool。

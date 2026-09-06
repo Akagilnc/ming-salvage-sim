@@ -1,6 +1,7 @@
 """#1769 draft 成案拒收 → 结算路补交 / 耗尽留到下月。
 
-真实入口：POST /api/directives → POST /api/decree/issue/stream。
+真实入口：POST /api/directives → POST /api/decree/issue/stream；
+下月供料经 session.write_decree → write_decree_with_agno 真实投影。
 断言 SSE 终态与 turn_directives / rejection_reports / dossier 结构化字段。
 
 人工审读指针（验收 4，不锁 LLM 措辞）：
@@ -18,8 +19,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 import ming_sim.cli_backend as cb
+import ming_sim.decree as decree_mod
+import ming_sim.session as session_mod
 import web_app
-from ming_sim.decree import draft_directives_llm_feed
+from ming_sim.decree import write_decree_with_agno as _real_write_decree_with_agno
 from ming_sim.error_pack import latest_error_pack_for_turn
 from tests.test_army_pay_decree_1503 import _set_guanning_arrears
 from tests.test_month_loop_tracer_1468 import (
@@ -107,20 +110,38 @@ def admission_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
             pass
 
 
-def _queue_backend(monkeypatch, captures: list) -> list[dict]:
-    """返回每次 backend 调用的结构化 raw capture（非 prompt 文本扫描）。"""
+def _queue_backend(monkeypatch, captures: list) -> None:
     queue = list(captures)
-    seen: list[dict] = []
 
     def fake_backend(prompt, *_a, **_k):
         if not queue:
             raise RuntimeError("draft_intent backend queue exhausted")
         item = queue.pop(0)
-        seen.append(dict(item))
         return json.dumps(item, ensure_ascii=False), {}
 
     monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
-    return seen
+
+
+def _spy_resubmit_kwargs(monkeypatch) -> list[dict]:
+    """截获补交结构化入参（failure_reason / bad_payload），不扫 prompt 文本。"""
+    calls: list[dict] = []
+    real = cb.resubmit_draft_admission_payload
+
+    def wrapper(decree_text, *, bad_payload, failure_reason, **kwargs):
+        calls.append({
+            "failure_reason": str(failure_reason or ""),
+            "bad_payload": dict(bad_payload or {}),
+            "decree_text": str(decree_text or ""),
+        })
+        return real(
+            decree_text,
+            bad_payload=bad_payload,
+            failure_reason=failure_reason,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(cb, "resubmit_draft_admission_payload", wrapper)
+    return calls
 
 
 def _post_directive(client, text: str) -> None:
@@ -147,23 +168,29 @@ def _rejection_rows(game, directive_id: int):
     ).fetchall()
 
 
-def _bearing_fields(raw: dict) -> dict:
-    """承重比对：动作类型 / 金额 / 账户（及定额补饷关键字段）。"""
-    return {
-        "动作类型": raw.get("动作类型") or raw.get("dossier_action_type"),
-        "金额": raw.get("金额") if "金额" in raw else raw.get("amount"),
-        "账户": raw.get("账户") if "账户" in raw else raw.get("account"),
-        "恩赏拨帑": raw.get("恩赏拨帑") if "恩赏拨帑" in raw else raw.get("grant_action"),
-        "用途": raw.get("用途") if "用途" in raw else raw.get("purpose"),
-        "目标类型": raw.get("目标类型") if "目标类型" in raw else raw.get("target_kind"),
-        "目标ID": raw.get("目标ID") if "目标ID" in raw else raw.get("target_id"),
-    }
+def _write_decree_capture_payloads(monkeypatch, game) -> list[dict]:
+    """恢复真实 write_decree_with_agno；截 agent.run 入参 JSON（拟诏真实入口）。"""
+    captured: list[dict] = []
+
+    class _CapturingAgent:
+        def run(self, text):
+            captured.append(json.loads(text) if isinstance(text, str) else dict(text))
+            return type("RunOut", (), {"content": "奉天承运，诏曰：着户部清核辽饷。"})()
+
+    monkeypatch.setattr(session_mod, "write_decree_with_agno", _real_write_decree_with_agno)
+    monkeypatch.setattr(
+        decree_mod, "create_decree_writer_agent",
+        lambda *a, **k: _CapturingAgent(),
+    )
+    game.session.write_decree()
+    return captured
 
 
 def test_draft_admission_resubmit_success_advances_month(admission_game, monkeypatch):
-    """补交路：坏产物 → 可成案 → 月推进；原始返回与投影承重一致，非偿还序偷换。"""
+    """补交路：坏产物 → 可成案 → 月推进；投影承重=二次模型返回，非偿还序偷换。"""
     game = admission_game
-    seen = _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _GOOD_XIEANG])
+    _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _GOOD_XIEANG])
+    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -180,37 +207,37 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
 
     _post_issue_stream(client, expected_turn=turn, step="1769 resubmit")
     assert _turn_of(_get_state(client)) == turn + 1
-    # 首抽 + 补交各一次结构化 raw（不扫 prompt 自由文本）
-    assert len(seen) >= 2
-    assert seen[0].get("动作类型") == "pay_order_override"
-    assert seen[1].get("动作类型") == "grant_allocation"
-    assert seen[1].get("金额") == 15
-    assert seen[1].get("账户") == "国库"
+
+    # 补交入参：失败事实 + 原产物（结构化字段，不扫 prompt）
+    assert len(resubmit_calls) == 1
+    assert resubmit_calls[0]["failure_reason"]
+    assert resubmit_calls[0]["bad_payload"].get("dossier_action_type") == "pay_order_override"
+    assert any(
+        isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"
+        for e in (resubmit_calls[0]["bad_payload"].get("entries") or [])
+    )
+    assert resubmit_calls[0]["decree_text"] == _DECREE_TEXT
 
     dossier = game.db.get_dossier_for_directive(draft_id)
     assert dossier is not None
     assert dossier["action_type"] == "grant_allocation"
     projected = json.loads(dossier["payload_json"])
-    # 原始第二次返回 vs 投影：承重字段一致，不得偷换成偿还序
-    raw_bearing = _bearing_fields(seen[1])
-    proj_bearing = _bearing_fields(projected)
-    assert proj_bearing["动作类型"] == "grant_allocation"
-    assert proj_bearing["动作类型"] != "pay_order_override"
-    assert proj_bearing["金额"] == raw_bearing["金额"] == 15
-    assert proj_bearing["账户"] == raw_bearing["账户"] == "国库"
-    assert proj_bearing["恩赏拨帑"] == "协饷"
-    assert proj_bearing["用途"] == "补饷"
-    assert proj_bearing["目标类型"] == "army"
-    assert proj_bearing["目标ID"] == "guanning"
+    # 原始二次返回（模型边界 _GOOD_XIEANG）vs 投影承重
+    assert projected.get("grant_action") == _GOOD_XIEANG["恩赏拨帑"] == "协饷"
+    assert projected.get("amount") == _GOOD_XIEANG["金额"] == 15
+    assert projected.get("account") == _GOOD_XIEANG["账户"] == "国库"
+    assert projected.get("purpose") == _GOOD_XIEANG["用途"]
+    assert projected.get("target_kind") == "army"
+    assert projected.get("target_id") == "guanning"
+    assert projected.get("dossier_action_type", dossier["action_type"]) != "pay_order_override"
     assert projected.get("entries") in (None, [], ())
-    # 补交成功不得残留首轮拒收
     assert not _rejection_rows(game, draft_id)
     row = game.db.get_directive(draft_id)
     assert row is not None and str(row["status"]) == "issued"
 
 
 def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkeypatch):
-    """耗尽路：draft 留到下月、月推进、拒因留痕、供料含上月未入档、刷新身份一致。"""
+    """耗尽路：draft 留到下月、月推进、拒因留痕、拟诏供料含上月未入档、刷新身份一致。"""
     game = admission_game
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER])
     client = TestClient(web_app.app)
@@ -228,25 +255,27 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     assert game.db.get_dossier_for_directive(did) is None
 
     rows = _rejection_rows(game, did)
-    # 拒只在耗尽终态落一次，不双记首轮探测
     assert len(rows) == 1
     assert rows[0]["category"] == "locality_fanout_failed"
     assert rows[0]["source"] == "player_decree"
-    # 诊断出口：拒因 reason 不进 SSE done 结构化载荷
-    assert "reason" not in body or body.get("reason") in (None, "")
-    assert rows[0]["reason"] not in json.dumps(body, ensure_ascii=False)
+    # 诊断出口：SSE done 结构化载荷无 reason 字段（不扫自由文本）
+    assert body.get("reason") in (None, "")
+    assert body.get("_event") in (None, "done", "")
 
-    # 下月开桌该旨仍在 + 输入侧供料含「上月未入档」（不新建通知）
     listed = game.db.list_directives(game.state, statuses=("draft",))
     assert any(int(r["id"]) == did for r in listed)
     assert source_turn < int(game.state.turn)
-    feed = draft_directives_llm_feed(listed, current_turn=int(game.state.turn))
-    carry = next(
-        item for item, r in zip(feed, listed) if int(r["id"]) == did
-    )
-    assert carry.get("admission_status") == "上月未入档"
 
-    # 刷新/恢复：同库重开身份一致、无重复案卷效果
+    # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
+    payloads = _write_decree_capture_payloads(monkeypatch, game)
+    assert payloads
+    feed_item = next(
+        d for d in payloads[0]["directives"]
+        if str(d.get("text") or "") == str(row["text"] or "")
+    )
+    assert feed_item.get("admission_status") == "上月未入档"
+
+    # 刷新/恢复：同库重开身份一致、无重复案卷
     db_path = str(game.db.path)
     game.session.close()
     restored = web_app.WebGame(fresh=False, db_path=db_path)
@@ -262,15 +291,6 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
             d.get("directive_id") == did
             for d in restored.db.list_decree_dossiers()
         )
-        # 恢复后供料仍含上月未入档
-        r_listed = restored.db.list_directives(restored.state, statuses=("draft",))
-        r_feed = draft_directives_llm_feed(
-            r_listed, current_turn=int(restored.state.turn),
-        )
-        r_carry = next(
-            item for item, r in zip(r_feed, r_listed) if int(r["id"]) == did
-        )
-        assert r_carry.get("admission_status") == "上月未入档"
     finally:
         try:
             restored.session.close()
