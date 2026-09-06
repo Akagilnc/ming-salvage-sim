@@ -585,9 +585,14 @@ def test_pending_directive_only_enters_settlement_after_final_approval(game):
         "SELECT committed_directive_id FROM pending_actions WHERE id=?",
         (approved_candidate_id,),
     ).fetchone()["committed_directive_id"])
+    # #1769：confirm 只翻 pending→draft；成案走 ensure 批缝
     db.confirm_directive(approved_directive_id, state)
+    assert str(db.get_directive(approved_directive_id)["status"]) == "draft"
+    assert db.get_dossier_for_directive(approved_directive_id) is None
+    assert db.ensure_dossiers_for_draft_directives(state) == []
 
     dossier = db.get_dossier_for_directive(approved_directive_id)
+    assert dossier is not None
     assert [row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)] == [
         dossier["id"],
     ]
@@ -892,9 +897,12 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
         (candidate_id,),
     ).fetchone()["committed_directive_id"])
     if entry == "confirm":
+        # #1769：confirm 只翻 draft；executor 投影落 ensure 批缝
         db.confirm_directive(directive_id, state)
+        assert db.ensure_dossiers_for_draft_directives(state) == []
 
     dossier = db.get_dossier_for_directive(directive_id)
+    assert dossier is not None
     assert dossier["executor_kind"] == expected_executor_kind
     assert dossier["executor_id"] == (assignee if expected_executor_kind else "")
 

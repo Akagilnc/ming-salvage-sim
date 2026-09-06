@@ -907,8 +907,11 @@ def test_validate_all_unmapped_zero_rows_before_insert(env):
         other.close()
 
 
-def test_path2_confirm_directive_unmapped_rejects_zero_rows(env):
-    """路 2 confirm_directive：映射失败 → 零行 + rejected。"""
+def test_path2_pending_unmapped_stays_draft_on_ensure_batch(env):
+    """路 2（#1769）：pending→confirm 只翻 draft；ensure 批缝映射失败 → 零行 + 保持 draft。
+
+    旧合同 confirm 内 ensure 并标 rejected 已废；产物错不踢出批缝。
+    """
     db, state, _ = env
     payload = {
         "target_kind": "policy",
@@ -925,7 +928,15 @@ def test_path2_confirm_directive_unmapped_rejects_zero_rows(env):
     row = db.conn.execute(
         "SELECT status FROM turn_directives WHERE id=?", (did,),
     ).fetchone()
-    assert row["status"] == "rejected"
+    assert row["status"] == "draft"
+    assert db.list_dossiers_for_directive(did) == []
+
+    rejections = db.ensure_dossiers_for_draft_directives(state)
+    assert any(int(r["directive_id"]) == did for r in rejections)
+    row = db.conn.execute(
+        "SELECT status FROM turn_directives WHERE id=?", (did,),
+    ).fetchone()
+    assert row["status"] == "draft"
     assert db.list_dossiers_for_directive(did) == []
 
 
