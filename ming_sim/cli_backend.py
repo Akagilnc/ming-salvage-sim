@@ -2401,10 +2401,17 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
             ).fetchone()
             if issue is None:
                 continue
+            # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
+            # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
             title = str(
-                payload.get("title") or row.get("decree_text") or issue["title"] or ""
+                payload.get("title")
+                or payload.get("target_id")
+                or issue["title"]
+                or ""
             ).strip()
-            body = str(payload.get("body") or row.get("decree_text") or "").strip()
+            body = str(
+                payload.get("text") or row.get("decree_text") or ""
+            ).strip()
             # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
@@ -3873,16 +3880,33 @@ def _extract_secret_order(
         confirmation_pool = ThreadPoolExecutor(max_workers=1)
         confirmation_future = confirmation_pool.submit(
             confirm_dossier_links, minister_reply, dossier_candidates, broad_proposals, llm_config)
+    extract_failed = False
+    # 真因身份：调用异常 ≠ 解析失败；二者均设 extract_failed，但原因分立，
+    # 不得把解析失败冒标成提供方异常，也不得被下游缺标题洗成契约错。
+    extract_failure_reason = ""
     try:
         raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
         _log(f"密令提取失败：{exc}")
+        extract_failed = True
+        extract_failure_reason = f"密令抽取调用失败：{exc}"
     finally:
         # The confirmation future remains readable after shutdown.  Owning the
         # executor here guarantees cleanup even if any later normalization raises.
         if confirmation_pool is not None:
             confirmation_pool.shutdown(wait=True)
-    obj = _loads_lenient(raw) or {}
+    # 解析失败（None）与合法空对象 {} 分流：前者保留 extract_failed 身份，
+    # 后者仍走下游零契约路径（#1504）；不得 or {} 合流洗成成功空抽取。
+    parsed = _loads_lenient(raw)
+    if parsed is None:
+        if not extract_failed:
+            extract_failed = True
+            extract_failure_reason = "密令抽取结果无法解析"
+        elif not extract_failure_reason:
+            extract_failure_reason = "密令抽取结果无法解析"
+        obj = {}
+    else:
+        obj = parsed
     _content_llm = str(obj.get("内容") or "").strip()
     _assignee_llm = str(obj.get("承办人") or "").strip()
     # 上下文合成路径（force_default_assignee，#354 短确认从对话取正文）：player_command 是带
@@ -3897,9 +3921,9 @@ def _extract_secret_order(
         emperor_intent=_emperor_fallback,
         extractor_content=_content_llm,
     )
-    # No formal title hard-cap: keep the full extracted title; only synthesize a
-    # short fallback when the extractor omitted 标题 entirely.
-    title = str(obj.get("标题") or "").strip() or (content or player_command)[:14]
+    # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。
+    # 缺标题由下游 stage 接缝（pending_action_failures / contract_error）可见可恢复，不在此合成。
+    title = str(obj.get("标题") or "").strip()
     # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
     # extractor 散文反推）。
     assignee = default_assignee if force_default_assignee else _choose_assignee(
@@ -3989,6 +4013,11 @@ def _extract_secret_order(
         contract_error = str(exc)
     else:
         contract_error = ""
+    # 抽取失败真因优先于缺标题/缺合同——否则 malformed/异常被洗成「缺标题」。
+    if extract_failure_reason:
+        contract_error = extract_failure_reason
+    elif not title and not contract_error:
+        contract_error = "密令缺少结构化标题"
     result = {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
             "excluded_offices": excluded_offices, "dossier_links": dossier_links,
@@ -3997,6 +4026,16 @@ def _extract_secret_order(
         result["covert_task"] = covert_task
     if contract_error:
         result["contract_error"] = contract_error
+    # extract_failed 标记供下游分流：
+    # - session 显式前缀路（#504/#354）：一律暂存；异常时靠此标记+content 保留旨意+补充。
+    # - materialize 意图路（#1504）：成功抽取但契约为零 → 无此标记，走 pending_action_failures。
+    # 真因经 contract_error 入 pending payload；原始响应经 extract_raw 无损入 payload
+    # （CLI 咽喉 _trace 另有展示截断，不复用到结果字段；API 路无完整 trace 指针）。
+    if extract_failed:
+        result["extract_failed"] = True
+        # 无损承接：不截断、不 strip；空串不发键。
+        if raw:
+            result["extract_raw"] = raw if isinstance(raw, str) else str(raw)
     return result
 
 def resolve_minister_actions(

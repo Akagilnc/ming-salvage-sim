@@ -14925,6 +14925,10 @@ class GameDB:
         action = str(action_type or "").strip()
         text = str(decree_text or "").strip()
         normalized_payload = dict(payload or {})
+        # #1565：公开成案/旧入口只有 decree_text 时，正文无损承接到唯一正文槽 payload.text；
+        # 不回填为题名，不建平行 body 真源。
+        if not str(normalized_payload.get("text") or "").strip() and text:
+            normalized_payload["text"] = text
         canonical_assignee = str(normalized_payload.get("assignee_id") or "").strip()
         if not canonical_assignee:
             canonical_assignee = str(normalized_payload.get("assignee") or "").strip()
@@ -17309,6 +17313,24 @@ class GameDB:
             registry=None,
         )
 
+    @staticmethod
+    def _initiative_title_and_body(
+        payload: Dict[str, object], row,
+    ) -> tuple[str, str]:
+        """#1565/0142：initiative 题名/正文单一规则（assignment/referral 共用）。
+
+        题名只认结构化 title|target_id，不从 decree_text/正文/皇帝散文截取，
+        不生成「交办差事/下议事项」默认题名冒充来源身份。
+        正文唯一真源 payload.text；旧案卷无 text 时 decree_text 仅作正文承接，
+        不得回填题名，不得以题名/target_id 冒充正文。
+        真缺锚时 title 为空串——caller 复用既有 execution failed 接缝，保留案卷与正文。
+        """
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            title = str(payload.get("target_id") or "").strip()
+        body = str(payload.get("text") or row.get("decree_text") or "").strip()
+        return title, body
+
     def _apply_referral_verdict_effect(
         self, state, row, payload, dossier_id,
     ) -> bool:
@@ -17353,11 +17375,15 @@ class GameDB:
             )
             return False
 
-        title = str(
-            payload.get("title") or row.get("decree_text") or payload.get("text") or ""
-        ).strip()
+        title, stage_text = self._initiative_title_and_body(payload, row)
         if not title:
-            title = str(payload.get("target_id") or "下议事项").strip()
+            # 保留案卷与正文；缺结构化锚走既有 execution failed（可见可恢复）。
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed", "下议缺少结构化题名（title 或 target_id）",
+                state.turn, close=True, commit=False,
+            )
+            return False
 
         try:
             end_turn = int(payload.get("end_turn") or 0)
@@ -17379,7 +17405,7 @@ class GameDB:
             "origin_ref": origin_ref,
             "kind": "initiative",
             "title": title,
-            "stage_text": str(payload.get("text") or row.get("decree_text") or title),
+            "stage_text": stage_text,
             # 机关/职司名字符串列表 → issues.participants JSON
             "participants": bodies,
             "end_turn": end_turn,
@@ -17419,11 +17445,15 @@ class GameDB:
         if not owner:
             raise ValueError("交办案卷缺少主办")
 
-        title = str(
-            payload.get("title") or row.get("decree_text") or payload.get("text") or ""
-        ).strip()
+        title, stage_text = self._initiative_title_and_body(payload, row)
         if not title:
-            title = str(payload.get("target_id") or "交办差事").strip()
+            # 保留案卷与正文；缺结构化锚走既有 execution failed（可见可恢复）。
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed", "交办缺少结构化题名（title 或 target_id）",
+                state.turn, close=True, commit=False,
+            )
+            return False
 
         origin_ref = f"dossier:{int(dossier_id)}"
         commitment_kind = _normalize_commitment_kind(payload.get("commitment_kind"))
@@ -17438,7 +17468,7 @@ class GameDB:
             "origin_ref": origin_ref,
             "kind": "initiative",
             "title": title,
-            "stage_text": str(payload.get("text") or row.get("decree_text") or title),
+            "stage_text": stage_text,
             "participant_roster": [{"character_id": owner, "tier": "主办"}],
         }
         # 形状保留：承诺字段原样交给 apply_score_extraction。
@@ -17468,9 +17498,8 @@ class GameDB:
         from ming_sim.staged_commitment import capture_commitment_stages
         stages_norm = capture_commitment_stages(
             payload.get("stages") or payload.get("stages_json"),
-            narrative_text=str(
-                payload.get("text") or row.get("decree_text") or title or ""
-            ),
+            # #1565：叙事只取已归一正文（text/decree_text），不把题名当任务叙事。
+            narrative_text=stage_text,
             origin_turn=int(getattr(state, "turn", 0) or 0),
         )
         if stages_norm:
