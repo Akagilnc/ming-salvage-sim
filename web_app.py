@@ -2633,11 +2633,17 @@ class WebGame:
                 )
             return answer, run_output
 
+        stream_attempt_n = {"n": 0}
+
         def _start_stream():
             # 每 attempt 清空半局部状态（重试不得沿用上一 attempt 的 chunks/run_output）
             chunks.clear()
             run_output_box.clear()
             exit_started_during_stream["v"] = False
+            # #1465 半流呈现选项 1：重试开始时替换未完成的临时回话（仅呈现；不回滚落账）
+            if stream_attempt_n["n"] > 0:
+                emit_delta("", replace=True)
+            stream_attempt_n["n"] += 1
             return agent.run(
                 agent_prompt, stream=True, stream_events=True, yield_run_output=True,
             )
@@ -3686,8 +3692,12 @@ class WebGame:
             yield {"type": "error", "message": str(error), **identity}
             return
 
-        def emit_delta(delta: str) -> None:
-            ev_queue.put({"type": "delta", "content": delta})
+        def emit_delta(delta: str, *, replace: bool = False) -> None:
+            # replace=True：复用既有 delta 事件形态，令客户端重置本轮临时正文后再接
+            item: Dict[str, Any] = {"type": "delta", "content": delta}
+            if replace:
+                item["replace"] = True
+            ev_queue.put(item)
 
         def worker() -> None:
             nonlocal pending_ticket
@@ -6359,7 +6369,10 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                     "chat_turn_id": item.get("chat_turn_id", 0),
                 })
             elif item_type == "delta":
-                yield sse_event("delta", {"content": item.get("content", "")})
+                delta_payload: Dict[str, Any] = {"content": item.get("content", "")}
+                if item.get("replace"):
+                    delta_payload["replace"] = True
+                yield sse_event("delta", delta_payload)
             elif item_type == "done":
                 # 回话先可见；流继续至 end，以便读心就绪后浮现（#499 / ADR 0046 递话）
                 yield sse_event("done", item.get("payload", {}))

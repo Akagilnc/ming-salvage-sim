@@ -118,6 +118,41 @@ describe("streamChat typed error projection", () => {
   });
 });
 
+describe("#1465 streamChat halfstream replace resets temp body", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("delta.replace 触发 onStreamReset，后续 delta 不叠旧半句", async () => {
+    const body =
+      `event: delta\ndata: ${JSON.stringify({ content: "old-half" })}\n\n` +
+      `event: delta\ndata: ${JSON.stringify({ content: "", replace: true })}\n\n` +
+      `event: delta\ndata: ${JSON.stringify({ content: "new-full" })}\n\n` +
+      `event: done\ndata: ${JSON.stringify({ answer: "new-full", history: [] })}\n\n` +
+      `event: end\ndata: {}\n\n`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    })));
+
+    let temp = "";
+    let resets = 0;
+    const done = await streamChat("洪承畴", "传来。", (d) => {
+      temp += d;
+    }, {
+      onStreamReset: () => {
+        resets += 1;
+        temp = "";
+      },
+    });
+
+    expect(resets).toBe(1);
+    // 呈现结构：reset 后临时正文 = done.answer（不叠旧半句）；不锁措辞
+    expect(temp).toBe(String(done.answer || ""));
+    expect(temp.length).toBeGreaterThan(0);
+  });
+});
+
 describe("#670 streamChat 成功记召退出错误通道", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

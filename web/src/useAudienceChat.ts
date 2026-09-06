@@ -172,6 +172,10 @@ export function useAudienceChat(
           {
             signal: abort.signal,
             intent,
+            onStreamReset: () => {
+              // #1465 半流：重试开始替换未完成临时回话，不叠旧半句
+              if (ownsEphemeral() && panelMatches()) setStreamingMinisterMessage("");
+            },
             onAccepted: (identity) => {
               if (panelMatches()) {
                 setCurrentCampaignId(identity.campaign_id);

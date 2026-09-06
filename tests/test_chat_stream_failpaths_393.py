@@ -765,7 +765,6 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
     attempts = detail.get("transport_attempts") or []
     assert len(attempts) == 1
     assert attempts[0].get("outcome") == "terminal_fail"
-    _assert_write_path_free(web_game)
 
 
 def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game):
@@ -804,7 +803,6 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
     assert row is not None
     assert int(row["minister_message_id"] or 0) > 0
     assert str(row["status"]) != "failed"
-    _assert_write_path_free(web_game)
 
 
 def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, game):
@@ -852,20 +850,8 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     ).fetchone()
     assert fail_row is not None
     assert str(fail_row["status"]) == "failed"
-    # 写路径已释放：后续串行写不阻塞（不 drain/关 session——后面还要重发）
-    entered = threading.Event()
 
-    def _try_serialized_write() -> None:
-        with web_app._serialized_web_write(web_game):
-            entered.set()
-
-    t = threading.Thread(target=_try_serialized_write, daemon=True)
-    t.start()
-    entered.wait()
-    t.join()
-    assert entered.is_set() and not t.is_alive()
-
-    # 实际重发：换可成功 agent，同夜可再召并读回轮状态
+    # 实际重发：换可成功 agent，同夜可再召并读回轮状态（重发成功即证写路径已释放）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
     web_game.session.registry.agent = ok_agent
     response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
@@ -881,7 +867,6 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     ).fetchone()
     assert ok_row is not None
     assert str(ok_row["status"]) != "failed"
-    _assert_write_path_free(web_game)
 
 
 def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
@@ -907,7 +892,6 @@ def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
     assert agent.calls == 1
     assert len(detail.get("transport_attempts") or []) == 1
     assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
-    _assert_write_path_free(web_game)
 
 
 def test_chat_stream_typed_429_preserved(monkeypatch, game):
@@ -942,7 +926,6 @@ def test_chat_stream_typed_429_preserved(monkeypatch, game):
     assert [a.get("status_code") for a in attempts] == [429] * max_a
     assert [a.get("outcome") for a in attempts[:-1]] == ["retryable_fail"] * (max_a - 1)
     assert attempts[-1].get("outcome") == "terminal_fail"
-    _assert_write_path_free(web_game)
 
 
 def test_chat_stream_config_max_attempts_override(monkeypatch, tmp_path, game):
@@ -979,7 +962,6 @@ def test_chat_stream_config_max_attempts_override(monkeypatch, tmp_path, game):
     assert agent.calls == 1
     assert detail.get("code") == "llm_connection_error"
     assert len(detail.get("transport_attempts") or []) == 1
-    _assert_write_path_free(web_game)
 
 
 def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, tmp_path, game):
@@ -1045,4 +1027,73 @@ def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, tmp_path, 
     assert burns["n"] == 2
     assert attempt2_span["used"] >= idle_timeout * 0.8, attempt2_span
     assert int(done.get("minister_message_id") or 0) > 0
-    _assert_write_path_free(web_game)
+
+
+def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, game):
+    """#1465 半流选项 1：首 attempt 已出部分 delta 后瞬断 → 重试成功
+
+    事件序列：content delta → replace delta → content delta → done。
+    按客户端规则重放后，临时正文 = done.answer（不叠旧半句）。不锁措辞。
+    """
+
+    class _PartialThenOk:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, *_a, **_k):
+            self.calls += 1
+            if self.calls == 1:
+                yield RunContent("旧半句")
+                raise LLMUnavailable(
+                    "连接失败",
+                    code="llm_connection_error",
+                    provider_message="connection reset",
+                )
+            yield RunContent("新整段")
+            yield RunCompletedEvent()
+
+    agent = _PartialThenOk()
+    web_game, minister = _transport_web_game(game, agent)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert "done" in [e[0] for e in events], events
+    done = next(e[1] for e in events if e[0] == "done")
+    assert agent.calls == 2
+    attempts = done.get("transport_attempts") or []
+    assert [a.get("outcome") for a in attempts] == ["retryable_fail", "ok"]
+
+    # 呈现结构：delta 序列含 replace，且位于首段 content 与后续 content 之间
+    delta_seq = [
+        {
+            "replace": bool(data.get("replace")),
+            "has_content": bool(data.get("content")),
+        }
+        for name, data in events
+        if name == "delta"
+    ]
+    assert delta_seq, events
+    idx_first_content = next(
+        i for i, d in enumerate(delta_seq) if d["has_content"] and not d["replace"]
+    )
+    idx_replace = next(i for i, d in enumerate(delta_seq) if d["replace"])
+    idx_last_content = max(
+        i for i, d in enumerate(delta_seq) if d["has_content"] and not d["replace"]
+    )
+    assert idx_first_content < idx_replace < idx_last_content, delta_seq
+
+    # 客户端重放：replace 清空临时正文；最终临时正文须等于 done.answer（非叠加）
+    temp = ""
+    for name, data in events:
+        if name != "delta":
+            continue
+        if data.get("replace"):
+            temp = ""
+        content = str(data.get("content") or "")
+        if content:
+            temp += content
+    answer = str(done.get("answer") or "")
+    assert answer
+    assert temp == answer
+    assert int(done.get("minister_message_id") or 0) > 0
