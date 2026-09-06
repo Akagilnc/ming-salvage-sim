@@ -2357,8 +2357,11 @@ class GameSession:
                 mode=(intent or {}).get("mode"),
             )
         if not out["secret_order_id"] and acts["secret_order"]:
-            # #1765：显式前缀与 classifier 共用统一落库（揣摩/追问）；删旧必暂存三分叉。
+            # #1765：显式前缀与 classifier 共用统一落库（产物缺口→揣摩/追问）。
             from ming_sim.action_materialize import land_or_recover_new_secret_order
+            office = str(getattr(character, "office", "") or "").strip()
+            office_type = str(getattr(character, "office_type", "") or "").strip()
+            role_bits = [p for p in (minister_name, office or office_type) if p]
             land_or_recover_new_secret_order(
                 db=self.db,
                 turn=int(self.state.turn),
@@ -2371,6 +2374,7 @@ class GameSession:
                 dossier_candidates=self.db.list_referenceable_dossiers(
                     minister_name, self.state.turn,
                 ),
+                speaker_role="，".join(role_bits),
             )
 
         # #515：登记表驱动物化——handler 挂在 ACTION_CLUSTERS 行上；pipeline 只读表。
