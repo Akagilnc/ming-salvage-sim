@@ -6,6 +6,7 @@ _serialized_web_write), not private _write_gate.locked() / _pending_writes_count
 
 #1452: 非流式 chat/decree LLMUnavailable → 非 500 结构化；流式 RunErrorEvent → 结构化 SSE。
 #1465: 召对 API transport 统一重试（attempt 预算/分类/系统层终失败/独立空转）。
+#1780: 提供方 HTTP 5xx 经 ModelProviderError 事件界保真 status，召对流总计 3 attempts。
 """
 from __future__ import annotations
 
@@ -783,6 +784,39 @@ def _post_chat_stream(monkeypatch, web_game, minister: str, message: str = "边�
     )
 
 
+def _provider_http_error_agent(status: int | None, message: str, *, http_hits: dict):
+    """提供方层真链：OpenAIChat + MockTransport → agno ModelProviderError。
+
+    status=int：真 HTTP 响应 → openai APIStatusError → ModelProviderError 带该 status。
+    status=None：连接层直接断（无 HTTP 响应）→ openai APIConnectionError →
+    ModelProviderError 默认 status_code=502，即「有 status 外形但非提供方 HTTP typed」。
+    不在 agent.run 入口抛 LLMUnavailable（#1780 禁替身绿）。
+    """
+    import httpx
+    from agno.agent import Agent
+    from agno.models.openai import OpenAIChat
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        http_hits["n"] = int(http_hits.get("n") or 0) + 1
+        if status is None:
+            raise httpx.ConnectError(message, request=request)
+        return httpx.Response(
+            int(status),
+            json={"error": {"type": "error", "message": message}},
+            request=request,
+        )
+
+    model = OpenAIChat(
+        id="gpt-4",
+        api_key="sk-test",
+        base_url="https://example.invalid/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        max_retries=0,
+        timeout=5,
+    )
+    return Agent(model=model, markdown=False)
+
+
 def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game):
     """#1452 B / #1465：真实 web 流入口——无 typed status 的 RunErrorEvent
     → 一次不重试、系统层 typed 终失败、provider_message 保真。"""
@@ -964,17 +998,40 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     assert str(ok_row["status"]) != "failed"
 
 
-def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
-    """#1465 ①：确定性 4xx → 一次不重试、typed status/code 保真。"""
-    def _four_xx(_n):
-        return LLMUnavailable(
-            "参数错误",
-            code="llm_http_400",
-            provider_message="top_p not supported",
-            status_code=400,
-        )
+def test_chat_stream_provider_5xx_retries_status_preserved(monkeypatch, game):
+    """#1780：召对真实入口，提供方 HTTP 500 经 ModelProviderError 事件界保真。
 
-    agent = _CountingFailAgent(fail_times=99, error_factory=_four_xx)
+    耗尽后 SSE transport_attempts 3 条、status_code=500。禁止 agent.run 抛 LLMUnavailable。
+    """
+    http_hits = {"n": 0}
+    agent = _provider_http_error_agent(
+        500, "Internal server error", http_hits=http_hits,
+    )
+    web_game, minister = _transport_web_game(game, agent)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    max_a = default_transport_policy().max_attempts
+    assert max_a == 3
+    assert detail.get("status_code") == 500
+    assert detail.get("code") == "llm_http_500"
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == max_a
+    assert [a.get("status_code") for a in attempts] == [500] * max_a
+    assert [a.get("outcome") for a in attempts[:-1]] == ["retryable_fail"] * (max_a - 1)
+    assert attempts[-1].get("outcome") == "terminal_fail"
+    assert http_hits["n"] == max_a
+
+
+def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
+    """#1465 ① / #1780：确定性 4xx → 提供方层一次不重试、typed status 保真。"""
+    http_hits = {"n": 0}
+    agent = _provider_http_error_agent(
+        400, "top_p not supported", http_hits=http_hits,
+    )
     web_game, minister = _transport_web_game(game, agent)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
@@ -983,10 +1040,33 @@ def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
     detail = events[-1][1]
     assert detail.get("status_code") == 400
     assert detail.get("code") == "llm_http_400"
-    assert detail.get("provider_message") == "top_p not supported"
-    assert agent.calls == 1
+    assert http_hits["n"] == 1
     assert len(detail.get("transport_attempts") or []) == 1
     assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+
+
+def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, game):
+    """#1780：ModelProviderError 默认 502（无提供方 HTTP typed status）不得洗成 5xx。
+
+    连接层断 → 事件界无 typed status → 一次 terminal，不成 llm_http_502、不重试。
+    """
+    http_hits = {"n": 0}
+    agent = _provider_http_error_agent(
+        None, "connection refused", http_hits=http_hits,
+    )
+    web_game, minister = _transport_web_game(game, agent)
+
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error"
+    detail = events[-1][1]
+    assert detail.get("code") == "llm_stream_error"
+    assert detail.get("status_code") is None
+    assert http_hits["n"] == 1
+    attempts = detail.get("transport_attempts") or []
+    assert len(attempts) == 1
+    assert attempts[0].get("outcome") == "terminal_fail"
 
 
 def test_chat_stream_typed_429_preserved(monkeypatch, game):
