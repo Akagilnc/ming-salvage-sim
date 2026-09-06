@@ -2980,6 +2980,16 @@ def _manual_special_decree_payload(mode: str) -> Dict[str, object]:
     }
 
 
+def _is_manual_special_decree_fallback(payload: Mapping[str, Any]) -> bool:
+    """#1327/#1274 V-1 capture 空载/超时 fallback 同形；#1769 结算重写不得把它当成功拟旨。"""
+    return (
+        str(payload.get("dossier_action_type") or "").strip() == "special_decree"
+        and str(payload.get("target_kind") or "").strip() == "policy"
+        and str(payload.get("target_id") or "").strip() == "manual-directive"
+        and str(payload.get("locality_scope") or "").strip() == "none"
+    )
+
+
 def capture_manual_directive_payload(
     text: str, llm_config: Any = None, *, existing_mode: object = None,
     db: Any = None, content: Any = None,
@@ -3204,13 +3214,22 @@ def resubmit_draft_admission_payload(
         # ——产物错走本票 B 路预算/留存，不得升成整月 SettlementAbort 连带好旨。
         # 结算路无召对现场，不另作戏内回禀；只把不在册事实当失败事实回喂下一次重写。
         raise ValueError(exc.fact) from exc
-    return project_draft_extract_to_directive_payload(
+    # #1769 结算路 B：仅「仍为拟旨且非 capture 空载 fallback」才算本轮成功产物。
+    # extract 缺拟旨意图/垃圾 → draft_action=无；project 再映成 special_decree
+    # fallback——若 replace_payload 会毁掉原 pay_order/grant 并被二次 ensure 成案（P1）。
+    # capture 首次空载/超时 fallback 不经本函数，不动。
+    if captured.get("draft_action") != "拟旨":
+        raise ValueError("结算补交重写未返回拟旨意图")
+    payload = project_draft_extract_to_directive_payload(
         captured,
         decree_text=text,
         existing_mode=existing_mode or (bad_payload or {}).get("mode"),
         db=db,
         content=content,
     )
+    if _is_manual_special_decree_fallback(payload):
+        raise ValueError("结算补交重写落空载 special_decree fallback")
+    return payload
 
 
 # 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，

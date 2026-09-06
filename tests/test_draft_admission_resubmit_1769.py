@@ -448,3 +448,53 @@ def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
     assert body.get("_event") == "error"
     assert int(game.state.turn) == turn
     _assert_error_pack_from(game, turn, _RESUBMIT_FAULT_MARK)
+
+
+# ── 线上材料庭 r1 三类负向 / pending / 零成案耗尽 ──────────────────────────
+
+
+_NO_INTENT_REWRITE = {
+    # 缺「拟旨意图」或垃圾 → extract 映 draft_action=无 → project 曾落 special_decree
+    # fallback；结算路 B 不得 replace_payload 毁掉原 pay_order。
+    "动作类型": "special_decree",
+    "目标类型": "policy",
+    "目标ID": "manual-directive",
+}
+
+
+
+def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
+    admission_game, monkeypatch,
+):
+    """类1：原抽坏 pay_order → 重写无拟旨意图 → draft 仍原载荷、不得 issued special_decree。"""
+    game = admission_game
+    _queue_backend(monkeypatch, [
+        _BAD_PAY_ORDER, _NO_INTENT_REWRITE, _NO_INTENT_REWRITE,
+    ])
+    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    client = TestClient(web_app.app)
+    turn = int(game.state.turn)
+
+    _post_directive(client, _DECREE_TEXT)
+    wait_pending_writes(game)
+    did = _latest_directive_id(game)
+    first = game.db.read_directive_dossier_payload(game.db.get_directive(did))
+    assert first.get("dossier_action_type") == "pay_order_override"
+
+    _post_issue_stream(client, expected_turn=turn, step="1769 non-intent rewrite")
+    assert _turn_of(_get_state(client)) == turn + 1
+    assert len(resubmit_calls) == 2
+
+    row = game.db.get_directive(did)
+    assert row is not None and str(row["status"]) == "draft"
+    kept = game.db.read_directive_dossier_payload(row)
+    assert kept.get("dossier_action_type") == "pay_order_override"
+    assert any(
+        isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"
+        for e in (kept.get("entries") or [])
+    )
+    assert kept.get("target_id") != "manual-directive"
+    assert game.db.get_dossier_for_directive(did) is None
+    assert len(_rejection_rows(game, did)) == 1
+
+
