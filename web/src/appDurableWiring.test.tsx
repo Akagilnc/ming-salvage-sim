@@ -2423,11 +2423,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
   });
 
-  // #1764：真实 App 入口——提交即在飞卡；成功落草案；成案只读投影；无 compose busy-line。
-  // 断言 data-directive-phase 等结构化键，不锁 chip 措辞。
-  it("#1764 新增草案：在飞卡绑定原文 → 成功落草案；无 busy-line", async () => {
+  // #1764：真实 App 入口——在飞/成功/失败回填/成案只读；断言结构化 phase，不锁 chip 措辞。
+  it("#1764 新增草案：在飞卡 → 成功落草案；POST 拒绝 → 卡 failed + compose 回填可再提交", async () => {
     let releaseCreate!: (value: Response) => void;
-    const createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
+    let createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
     let createPosts = 0;
     const base = {
       ...settlementBaseState("player"),
@@ -2458,23 +2457,52 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
-    const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
-    expect(ta).not.toBeNull();
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-      setter.call(ta!, "解太仓备用");
-      ta!.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    const fillCompose = async (text: string) => {
+      const ta = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
+      expect(ta).not.toBeNull();
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+        setter.call(ta!, text);
+        ta!.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await fillCompose("解太仓备用");
     await click(findButton(host, "新增草案"));
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
     });
-    const inflight = host.querySelector('[data-directive-phase="inflight"]');
-    expect(inflight?.textContent || "").toContain("解太仓备用");
+    expect(host.querySelector('[data-directive-phase="inflight"]')?.textContent || "").toContain("解太仓备用");
     expect(host.querySelector(".busy-line")).toBeNull();
     expect(host.querySelector<HTMLButtonElement>(".desk-add-btn")?.disabled).toBe(true);
     expect(createPosts).toBe(1);
 
+    // 失败路径：POST reject → 卡 phase=failed + compose 回填
+    await act(async () => {
+      releaseCreate({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: async () => ({ detail: { message: "structured-fail-token" } }),
+      } as unknown as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="failed"]')).not.toBeNull());
+    });
+    const failed = host.querySelector('[data-directive-phase="failed"]');
+    expect(failed?.querySelector('[data-role="local-error"]')?.textContent).toBe("structured-fail-token");
+    const taAfterFail = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
+    expect(taAfterFail?.value).toBe("解太仓备用");
+    expect(host.querySelector<HTMLButtonElement>(".desk-add-btn")?.disabled).toBe(false);
+
+    // 可再提交：新 gate 成功落草案
+    createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
+    await click(findButton(host, "新增草案"));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-directive-phase="inflight"]')).not.toBeNull());
+    });
+    expect(createPosts).toBe(2);
     await act(async () => {
       releaseCreate(jsonResp({
         directives: [{
@@ -2491,7 +2519,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       });
     });
     expect(host.querySelector('[data-directive-phase="inflight"]')).toBeNull();
-    expect(host.querySelector(".busy-line")).toBeNull();
+    expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
   });
 
   it("#1764 成案只读投影：state.cased_directives 以 phase=cased 留桌且无改删", async () => {

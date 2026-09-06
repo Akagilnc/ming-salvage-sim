@@ -224,10 +224,6 @@ function renderEdictModal(props: {
   onAdvanceWithoutEdict?: () => void;
   onOpenFailureRecovery?: () => void;
   error?: string;
-  busy?: string;
-  directiveText?: string;
-  localDirectives?: import("../types").LocalDirectiveItem[];
-  onCreateDirective?: () => void;
 }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -236,17 +232,16 @@ function renderEdictModal(props: {
     root.render(
       <EdictModal
         state={props.state}
-        directiveText={props.directiveText ?? ""}
+        directiveText=""
         editingDirectiveId={null}
         editingDirectiveText=""
         decree=""
         report=""
-        busy={props.busy ?? ""}
+        busy=""
         error={props.error ?? ""}
-        localDirectives={props.localDirectives}
         onDirectiveTextChange={() => {}}
         onEditingTextChange={() => {}}
-        onCreateDirective={props.onCreateDirective ?? (() => {})}
+        onCreateDirective={() => {}}
         onStartEdit={() => {}}
         onCancelEdit={() => {}}
         onSaveDirective={() => {}}
@@ -337,69 +332,6 @@ describe("EdictModal — decree desk behavior", () => {
     );
     act(() => yes?.click());
     expect(onAdvance).toHaveBeenCalledTimes(1);
-  });
-
-  // #1764：在飞卡 / 成案只读 / 无 compose busy-line；断言结构化 phase，不锁 chip 措辞。
-  it("#1764 本地在飞项以 phase=inflight 绑文出现；compose 无 busy-line", () => {
-    const { host } = renderEdictModal({
-      state: baseGameState({ directives: [] }),
-      busy: "旨意结构抽取中…",
-      localDirectives: [{ localKey: "local-1", text: "解太仓备用", phase: "inflight" }],
-    });
-    const card = host.querySelector('[data-directive-phase="inflight"]');
-    expect(card).not.toBeNull();
-    expect(card?.textContent || "").toContain("解太仓备用");
-    expect(card?.querySelector('[data-role="phase-chip"]')?.getAttribute("data-phase")).toBe("inflight");
-    expect(host.querySelector(".busy-line")).toBeNull();
-    const addBtn = host.querySelector<HTMLButtonElement>(".desk-add-btn");
-    expect(addBtn?.disabled).toBe(true);
-  });
-
-  it("#1764 失败项 phase=failed 且错误落在该卡", () => {
-    const { host } = renderEdictModal({
-      state: baseGameState({ directives: [] }),
-      localDirectives: [{
-        localKey: "local-2",
-        text: "解太仓备用",
-        phase: "failed",
-        error: "structured-fail-token",
-      }],
-    });
-    const card = host.querySelector('[data-directive-phase="failed"]');
-    expect(card).not.toBeNull();
-    expect(card?.querySelector('[data-role="local-error"]')?.textContent).toBe("structured-fail-token");
-  });
-
-  it("#1764 已成案只读投影：phase=cased、无改删、来源可辨、盖玺可点", () => {
-    const onIssue = vi.fn();
-    const { host } = renderEdictModal({
-      state: baseGameState({
-        directives: [],
-        cased_directives: [{
-          id: 42,
-          dossier_id: 7,
-          text: "着户部核边饷",
-          source: "大臣拟旨",
-          actor: "毕自严",
-          notes: "",
-          dossier_status: "proposed",
-        }],
-      }),
-      onIssueDecree: onIssue,
-    });
-    const card = host.querySelector('[data-directive-phase="cased"]');
-    expect(card).not.toBeNull();
-    expect(card?.getAttribute("data-directive-id")).toBe("42");
-    expect(card?.getAttribute("data-dossier-id")).toBe("7");
-    expect(card?.getAttribute("data-dossier-status")).toBe("proposed");
-    expect(card?.getAttribute("data-source")).toBe("大臣拟旨");
-    expect(card?.getAttribute("data-actor")).toBe("毕自严");
-    expect(card?.classList.contains("minister-sourced")).toBe(true);
-    expect(card?.querySelector(".directive-tools")).toBeNull();
-    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
-    expect(footer?.disabled).toBe(false);
-    act(() => footer?.click());
-    expect(onIssue).toHaveBeenCalledTimes(1);
   });
 });
 
