@@ -5318,6 +5318,18 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
         "ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror),
     )
     canned_full_settlement(monkeypatch)
+    # #1769：未成案 draft 进结算路补交环，模型边界须真有供料——喂回同一条不映射的
+    # 事务类别（LLM 没改对），补交耗尽后该旨仍留 draft、拒收在终态落痕。
+    import ming_sim.cli_backend as cb
+    monkeypatch.setattr(
+        cb, "_run_backend_for_config",
+        lambda *_a, **_k: (json.dumps({
+            "拟旨意图": "拟旨", "动作类型": "assignment",
+            "目标类型": "issue", "目标ID": "route-修仙",
+            "事务类别": "修仙", "颁布方式": "普通",
+            "施行范围": "无", "参与人": [], "entries": [],
+        }, ensure_ascii=False), {}),
+    )
     monkeypatch.setattr(
         session_mod, "write_decree_with_agno",
         lambda *_a, **_k: "诏曰清丈。",
