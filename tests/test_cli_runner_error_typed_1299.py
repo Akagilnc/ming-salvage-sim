@@ -93,12 +93,21 @@ def test_clichat_normal_reply_still_returns(monkeypatch):
 
 
 def test_extract_agent_text_error_status_raises_typed_not_leaks_banner():
-    """agno 吞异常后 status=ERROR + content=横幅 → extract 抛 typed，不返回横幅。"""
+    """agno 吞异常后 status=ERROR + content=横幅 → extract 抛 typed，不返回横幅。
+
+    #1465 ④：系统层 code=llm_run_error、message != 戏内单源；机器横幅不进 message。
+    """
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
     run_output = SimpleNamespace(content=_RUNNER_BANNER, status="ERROR")
     with pytest.raises(LLMUnavailable) as ei:
         extract_agent_text(run_output)
+    assert ei.value.message
+    assert ei.value.message != CLI_RUNNER_PLAYER_MESSAGE
+    assert ei.value.code == "llm_run_error"
     _assert_no_machine_text(ei.value.message)
     _assert_no_machine_text(str(ei.value))
+    assert ei.value.provider_message  # 横幅诊断可回指
 
 
 def test_extract_agent_text_error_enum_status_raises():
@@ -152,14 +161,3 @@ def test_chat_answer_path_typed_failure_keeps_scroll_clean():
     assert persisted == []
 
 
-def test_llm_unavailable_player_message_is_diegetic_not_template_wall():
-    """呈现层可见文案：短、diegetic、可重试口吻；禁机器原文、禁模板化长文。"""
-    run_output = SimpleNamespace(content=_RUNNER_BANNER, status="ERROR")
-    with pytest.raises(LLMUnavailable) as ei:
-        extract_agent_text(run_output)
-    msg = ei.value.message
-    _assert_no_machine_text(msg)
-    # 短文：非堆砌长模板
-    assert len(msg) <= 40
-    # 可重试语义（稍候/再/重）
-    assert any(tok in msg for tok in ("稍", "再", "重", "未"))

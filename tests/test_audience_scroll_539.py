@@ -39,8 +39,10 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(gam
     persisted = an.get_open_night(db)
 
     assert response.headers["content-type"].startswith("text/event-stream")
+    # #1465 ④：回话未成终失败 — error 前无条件空 replace（清半句；即使本案零 content）
     assert events == [
         ("accepted", {"campaign_id": "", "night_id": int(persisted["id"]), "chat_turn_id": 1}),
+        ("delta", {"content": "", "replace": True}),
         ("error", {"message": "reply failed", "campaign_id": "", "night_id": int(persisted["id"]), "chat_turn_id": 1}),
     ]
     assert int(persisted["id"]) != old_night_id

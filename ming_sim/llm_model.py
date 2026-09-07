@@ -93,9 +93,10 @@ def llm_unavailable_from_error(error: Exception, stage: str = "LLM 连通性检�
     )
 
 
-# #1299/#1310：CLI runner / agent run 失败时玩家可见文案——短、diegetic、可重试；
+# #1299/#1310：CLI runner 自身失败（cli_runner_unavailable）与抽取欠账失败单源。
 # 机器横幅只进 provider_message，永不进 content 叙事通道。
-# API transport 终失败走 llm_transport.transport_failure_unavailable（系统层，#1465）。
+# 召对流 / extract_agent_text ERROR status / API transport 终失败一律走
+# llm_transport.transport_failure_unavailable（系统层，#1465 ④ / P7 / ADR 0046）。
 CLI_RUNNER_PLAYER_MESSAGE = "通传未达，请稍后再召。"
 
 
@@ -294,11 +295,22 @@ def extract_agent_text(run_output: object) -> str:
         text = str(content)
     # #1299/#1310：治本在缝——ERROR status 翻 typed，错误串永不得进 content 当叙事。
     # fail_if_llm_error 标记集只覆盖 API 认证错，不再是唯一护栏。
+    # #1465 ④ / P7 / ADR 0046：玩家可见走系统层人话，禁固定戏内话术；
+    # 机器横幅只进 provider_message（与 map_run_error_event 同权威）。
     if _run_output_status_is_error(run_output):
-        raise LLMUnavailable(
-            CLI_RUNNER_PLAYER_MESSAGE,
-            code="llm_run_error",
-            provider_message=text.strip() or "run status=ERROR",
+        from ming_sim.llm_transport import ClassifiedFailure, transport_failure_unavailable
+
+        pmsg = text.strip() or "run status=ERROR"
+        raise transport_failure_unavailable(
+            ClassifiedFailure(
+                retryable=False,
+                code="llm_run_error",
+                status_code=None,
+                provider_message=pmsg,
+                message="LLM 调用失败。",
+            ),
+            attempts=1,
+            exhausted=False,
         )
     fail_if_llm_error(text, "LLM 调用")
     return text
