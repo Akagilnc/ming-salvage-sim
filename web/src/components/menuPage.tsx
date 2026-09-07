@@ -7,6 +7,12 @@ import { consumeSettleStream } from "../settleStream";
 import type { CliModelChoices, CliRunnerChoice, MenuCampaign, MenuStatus, ReasoningStrengthChoice } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { CliModelField } from "./cliModelField";
+import {
+  DefaultHeadersField,
+  headersToRows,
+  rowsToHeaders,
+  type HeaderRow,
+} from "./defaultHeadersField";
 
 export function MenuPage({
   status,
@@ -201,6 +207,7 @@ export function ApiSettingsModal({
     cli_model_choices?: CliModelChoices;
     cli_runners?: CliRunnerChoice[];
     cli_timeout_seconds?: number;
+    default_headers?: Record<string, string>;
   };
   onClose: () => void;
   onSaved: () => Promise<void>;
@@ -230,6 +237,7 @@ export function ApiSettingsModal({
   );
   const [apiKey, setApiKey] = React.useState("");
   const [timeoutSeconds, setTimeoutSeconds] = React.useState(String(initial?.timeout_seconds || 180));
+  const [headerRows, setHeaderRows] = React.useState<HeaderRow[]>(() => headersToRows(initial?.default_headers));
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
   const reasoningChoices = initial?.reasoning_strengths || [
@@ -291,6 +299,7 @@ export function ApiSettingsModal({
           advanced_base_url: advancedBaseUrl.trim(),
           advanced_api_key: advancedApiKey.trim(),
           advanced_thinking_level: "",
+          ...(channel === "api" ? { default_headers: rowsToHeaders(headerRows) } : {}),
         }),
       });
       if (!response.ok) {
@@ -416,6 +425,7 @@ export function ApiSettingsModal({
           API Key
           <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={initial?.has_api_key ? "(已配置；如需更换请重新填写)" : "sk-..."} />
         </label>
+        <DefaultHeadersField rows={headerRows} onChange={setHeaderRows} variant="menu" />
           </>
         )}
         {err && <div className="menu-error">{err}</div>}

@@ -1069,3 +1069,86 @@ describe("#1732 MenuPage · 就地消解", () => {
     cleanup();
   });
 });
+
+describe("ApiSettingsModal default_headers table (#1794)", () => {
+  it("shows loaded headers and posts them with the same save action", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+    });
+    const onRefresh = vi.fn(async () => ({} as any));
+    const cleanup = render(
+      <MenuPage
+        status={{
+          has_api_key: true,
+          llm_ready: true,
+          has_running_game: false,
+          has_main_db: false,
+          saves: [],
+          campaigns: [],
+          llm: {
+            channel: "api",
+            base_url: "https://api.example.com/v1",
+            model: "gpt-4o-mini",
+            has_api_key: true,
+            timeout_seconds: 180,
+            thinking_level: "",
+            advanced_model: "",
+            advanced_base_url: "",
+            has_advanced_api_key: false,
+            advanced_thinking_level: "",
+            default_headers: {
+              "X-Session": "abc",
+              "User-Agent": "ming-qa/1.0",
+            },
+          },
+        }}
+        onRefresh={onRefresh}
+        onEnterGame={async () => {}}
+        error=""
+        setError={() => {}}
+      />
+    );
+
+    act(() => {
+      Array.from(document.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("模型后端")
+      )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const nameInputs = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头名"]')
+    );
+    expect(nameInputs.map((el) => el.value)).toEqual(["X-Session", "User-Agent"]);
+
+    const addBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("增行")
+    );
+    await act(async () => {
+      addBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const names = Array.from(document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头名"]'));
+    const values = Array.from(document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头值"]'));
+    act(() => {
+      changeInput(names[2]!, "X-Extra");
+      changeInput(values[2]!, "1");
+    });
+
+    const save = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent === "保存"
+    );
+    await act(async () => {
+      save!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const post = calls.find((call) => call.url === "/api/menu/llm");
+    expect(post).toBeTruthy();
+    expect(JSON.parse(String(post!.init!.body)).default_headers).toEqual({
+      "X-Session": "abc",
+      "User-Agent": "ming-qa/1.0",
+      "X-Extra": "1",
+    });
+    cleanup();
+  });
+});

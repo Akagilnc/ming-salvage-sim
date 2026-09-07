@@ -650,6 +650,137 @@ def test_menu_save_llm_validates_api_channel_over_backend_env(monkeypatch):
     assert saved[0][1]["channel"] == "api"
 
 
+def test_menu_save_llm_verify_carries_runtime_default_headers(monkeypatch):
+    """#1794：请求体未带头时，菜单保存 verify 仍装入档内头表（兼容旧客户端）。"""
+    headers = {"X-Session": "from-disk", "User-Agent": "ming-qa/1.0"}
+    seen = []
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "api",
+        "api": {
+            "base_url": "https://old.example.com/v1",
+            "model": "old-model",
+            "api_key": "sk-old",
+            "default_headers": headers,
+        },
+        "default_headers": headers,
+    })
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: seen.append(cfg))
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: None)
+
+    result = asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+        base_url="https://api.example.com",
+        model="gpt-api",
+        api_key="sk-test",
+    )))
+
+    assert result["ok"] is True
+    assert seen and seen[0].default_headers == headers
+
+
+def test_menu_save_llm_accepts_default_headers_from_request(monkeypatch):
+    """#1794 决定 5：设置页同一保存动作带头表；verify 与落盘用同一张。"""
+    headers = {"X-Session": "from-ui", "User-Agent": "ming-qa/1.0"}
+    seen = []
+    saved = []
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "api",
+        "api": {
+            "base_url": "https://old.example.com/v1",
+            "model": "old-model",
+            "api_key": "sk-old",
+            "default_headers": {"X-Old": "drop-me"},
+        },
+        "default_headers": {"X-Old": "drop-me"},
+    })
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: seen.append(cfg))
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: saved.append((args, kwargs)))
+
+    result = asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+        base_url="https://api.example.com",
+        model="gpt-api",
+        api_key="sk-test",
+        default_headers=headers,
+    )))
+
+    assert result["ok"] is True
+    assert seen and seen[0].default_headers == headers
+    assert saved and saved[0][1].get("default_headers") == headers
+    assert result["llm"]["default_headers"] == headers
+
+
+def test_menu_status_and_game_config_expose_default_headers(monkeypatch):
+    """#1794：设置页读回入口（menu/status、llm/config）露出 default_headers。"""
+    headers = {"X-Session": "read-me", "User-Agent": "ming-qa/1.0"}
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "api",
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "gpt-api",
+            "api_key": "sk-test",
+            "default_headers": headers,
+        },
+        "default_headers": headers,
+        "base_url": "https://api.example.com/v1",
+        "model": "gpt-api",
+        "api_key": "sk-test",
+    })
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-api",
+        channel="api",
+        default_headers=headers,
+    )
+    monkeypatch.setattr(web_app, "web_game", SimpleNamespace(
+        session=SimpleNamespace(llm_config=cfg),
+    ))
+
+    status = asyncio.run(web_app.api_menu_status())
+    assert status["llm"]["default_headers"] == headers
+
+    game_cfg = asyncio.run(web_app.api_get_llm_config())
+    assert game_cfg["default_headers"] == headers
+
+
+def test_api_set_llm_config_accepts_default_headers(monkeypatch):
+    """#1794：局内 /api/llm/config 真入口带头表传给 build 并回读。"""
+    built = {}
+
+    def fake_build(*a, **k):
+        built.update(k)
+        return LLMConfig(
+            api_key="sk-test",
+            base_url="https://api.example.com/v1",
+            model="gpt-api",
+            channel="api",
+            default_headers=k.get("default_headers") or {},
+        )
+
+    committed = []
+    game = SimpleNamespace(
+        build_llm_config=fake_build,
+        commit_llm_config=lambda c: committed.append(c) or c,
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+
+    result = asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(
+        base_url="https://api.example.com/v1",
+        model="gpt-api",
+        api_key="sk-test",
+        default_headers={"X-From-UI": "ok"},
+    )))
+    assert built.get("default_headers") == {"X-From-UI": "ok"}
+    assert result["default_headers"] == {"X-From-UI": "ok"}
+    assert committed and committed[0].default_headers == {"X-From-UI": "ok"}
+
+
 def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)

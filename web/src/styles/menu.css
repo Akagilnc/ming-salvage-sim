@@ -676,6 +676,22 @@
   font-size: 0.85rem;
   color: #d8c590;
 }
+/* #1794：附加请求头表——只覆盖行布局；视觉属性走既有 .menu-cli-field input / modal button。 */
+.menu-headers-field .menu-header-row {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+.menu-headers-field .menu-header-row input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.menu-modal .menu-headers-field .menu-header-row input {
+  width: auto;
+  margin-top: 0;
+}
+.menu-modal .menu-headers-field > button {
+  margin-top: 8px;
+}
 
 .menu-modal-actions {
   display: flex;
@@ -684,7 +700,8 @@
   margin-top: 16px;
 }
 
-.menu-modal-actions button {
+.menu-modal-actions button,
+.menu-modal .menu-headers-field button {
   padding: 8px 18px;
   border: 1px solid rgba(226, 180, 86, 0.4);
   border-radius: 6px;
