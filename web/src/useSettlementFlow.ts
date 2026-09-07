@@ -109,6 +109,7 @@ export function useSettlementFlow({
   });
 
   const issueDecree = async () => {
+    // #1796：busy 挂同会话装饰（收拟诏台 + SettlementLock + 切核账期面）；真源仍是 settlement_display。
     setBusy("月末结算");
     setSettleStage("");
     setSettleProgress(null);
@@ -132,6 +133,13 @@ export function useSettlementFlow({
       });
       if (cheatPayload) {
         setCheatDirective("");
+      }
+      // #1796 / ADR 0149：点即入核账期——流在飞时并行拉状态口，settlement_display/月初快照尽早叠影。
+      // 失败吞掉：流终态路径（decisions/error/done）仍会 loadState/reload；不升格 busy 为真源。
+      if (response.ok) {
+        void loadState().catch((err) => {
+          console.warn("[settlement] early display refresh failed", err);
+        });
       }
       const outcome = await consumeSettle(response);
       if (outcome.kind === "error") {
@@ -205,6 +213,12 @@ export function useSettlementFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ choices }),
       });
+      // #1796：与 issueDecree 同——流在飞并行刷新展示态。
+      if (response.ok) {
+        void loadState().catch((err) => {
+          console.warn("[settlement] early display refresh failed", err);
+        });
+      }
       const outcome = await consumeSettle(response);
       if (outcome.kind === "error") {
         // #1418 r2：同会话 phase2 失败后 loadState，使 settle-resume 续跑面可挂上。
@@ -245,8 +259,13 @@ export function useSettlementFlow({
 
   // #1560：failed-only 拟诏台确认后退朝；复用既有 /api/decree/advance_without_edict 接缝。
   // 真空仍禁用；draft/pending 走 issueDecree，不经此路。
+  // #1796：与盖玺同 busy 标——同会话立即收拟诏台 + 居中等待卡 + 切核账期面。
   const advanceWithoutEdict = async () => {
-    setBusy("退朝");
+    setBusy("月末结算");
+    setSettleStage("");
+    setSettleProgress(null);
+    setSettleThinking("");
+    setSettleNarrative("");
     setError("");
     // #1351 A1：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
     const expectedTurn = state?.turn?.turn;

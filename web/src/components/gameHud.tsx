@@ -39,6 +39,7 @@ export function GameHud({
   onClosedFaceAttempt,
   edictOpen = false,
   onCloseEdict,
+  sessionSettlementDecor = false,
 }: {
   stageRef: (el: HTMLDivElement | null) => void;
   ready: boolean;
@@ -57,10 +58,16 @@ export function GameHud({
   /** #1454：拟诏台已开时木牌降为收起语义（勿与盖玺主钮同文双路径）。 */
   edictOpen?: boolean;
   onCloseEdict?: () => void;
+  /**
+   * #1796：同会话装饰——点盖玺/退朝当下立刻切核账期面（0148 呈现）。
+   * 刷新路径 busy 为空，本旗必 false；持久/刷新真源仍只认 state.turn.settlement_display（#1236）。
+   */
+  sessionSettlementDecor?: boolean;
 }) {
-  // #1236：全部门控唯一谓词 = 状态口 settlement_display（禁 busy/phase 充真源）。
+  // #1236：持久门控唯一谓词 = 状态口 settlement_display（禁 busy/phase 充真源）。
+  // #1796：同会话装饰可 OR 切入核账期面；刷新零依赖本旗。
   // #1323：关闭理由/递话正文按 phase 分口吻——只改文案层，锁面谓词不动。
-  const settlementDisplay = isSettlementDisplay(state.turn);
+  const settlementDisplay = isSettlementDisplay(state.turn) || sessionSettlementDecor;
   const phase = state.turn.phase;
   const closedReason = settlementClosedReason(phase);
   const noticeClosed = () => onClosedFaceAttempt?.(closedReason);
@@ -151,7 +158,11 @@ export function GameHud({
         onClick={() => gatedModal("memorials", "state")}>
         <span className="hud2-block">
           <span className="hud2-lab">大明</span>
-          <span className="hud2-val">{yearMonthLabel(state.turn)}</span>
+          <span className="hud2-val">{yearMonthLabel({
+            ...state.turn,
+            // #1796：同会话 decor 切面时年月标亦进核账口吻；持久字段仍在 state.turn。
+            settlement_display: settlementDisplay,
+          })}</span>
         </span>
       </button>
       <div className="hud2-slot" style={HUD_SLOTS.顶栏.国库}>

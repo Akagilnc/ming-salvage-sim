@@ -502,6 +502,38 @@ describe("#1236 SettlementLock 装饰层自身契约", () => {
   });
 });
 
+describe("#1796 GameHud sessionSettlementDecor 同会话切核账期面", () => {
+  it("settlement_display=false 但 decor=true：递话条出现、半程局势藏；decor 不改持久真源字段", () => {
+    const state = makeState(false);
+    expect(state.turn.settlement_display).toBe(false);
+    const host = mount(
+      <GameHud
+        stageRef={() => {}}
+        ready={true}
+        state={state}
+        mapNodes={[]}
+        mapSelectedId=""
+        onSelectMapNode={() => {}}
+        activeDrawerKey=""
+        navHandlers={{
+          court: () => {}, harem: () => {}, army: () => {}, region: () => {},
+          building: () => {}, economy: () => {}, appointment: () => {},
+        }}
+        secretOrderActiveCount={0}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
+        onOpenModal={() => {}}
+        sessionSettlementDecor={true}
+      />,
+    );
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")?.textContent).toContain(WANG_SETTLEMENT_SLIP);
+    expect(host.textContent).toContain("· 核账");
+    expect(host.textContent).not.toContain("半程军饷议题");
+    expect(host.querySelector(".situation-list")).toBeNull();
+    // 传入的 state 真源字段未被组件改写
+    expect(state.turn.settlement_display).toBe(false);
+  });
+});
+
 describe("#1725 SettlementLock 中心进度呈现（组件面负向；贯通 happy-path 见 appDurableWiring）", () => {
   // Happy-path typed progress → progressbar is owned by App entry wiring test.
   // Keep only component-local negatives: no progress invents no bar.
