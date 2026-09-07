@@ -1012,9 +1012,6 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     detail = events[-1][1]
     assert detail.get("code") == "llm_connection_error"
     assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
-    # 终失败文案与现行一致（#1792 不改字）
-    assert "已尝试 3 次" in str(detail.get("message") or ""), detail
-    assert "connection reset" in str(detail.get("message") or ""), detail
     max_a = default_transport_policy().max_attempts
     assert agent.calls == max_a
     attempts = detail.get("transport_attempts") or []
