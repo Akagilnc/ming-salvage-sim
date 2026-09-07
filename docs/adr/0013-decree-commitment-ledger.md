@@ -26,7 +26,7 @@ Status: Accepted（2026-06-15；**务实版**——用户拍板：复用 issue �
 承诺 = 一条 `kind=initiative`、`origin_kind=decree`、`origin_ref` 指回诏书的 issue，完全复用 issue 既有机制：bar=履行/补齐进度、`ongoing_effects`=每月动作、status、报告「待办未解」已会列。**判据（用户务实拍板）**：圣旨跟踪理想该独立成线，但那改动太大；issue 已具进度/留痕/收尾/呈现/溯源，**先务实塞进 issue**。不新 kind、不新表。
 
 ### D2 最小 schema/参数改动
-- **cap 10→15**（`issues.py` `initiative_active >= 10` 那处）——承诺与国策共用名额，放宽免得承诺被名额挤掉（小改，不另设承诺专属池）。
+- **cap 10→15**（`issues.py` `initiative_active >= 10` 那处）——承诺与国策共用名额，放宽免得承诺被名额挤掉（小改，不另设承诺专属池）。**已由 #1790 废止（2026-09-07 owner 令）**
 - **`end_turn INTEGER DEFAULT 0`**（仅「连续 N 月/半年为限」硬时限用；立项 `end_turn = turn + N`，到期停账）。
 - **`stop_condition TEXT DEFAULT ''`**（「直到补齐」用；存 `_gate_passed` 的 **dict JSON `{寻址key: "比较式"}`、算符在 value**，同 `legacies.clear_gate`）。⚠️ **三处坑（线上三 bot concur）**：① 算符在 **value 不嵌进 key**——`{"army.<id>.arrears": "<=0"}`、多军 `{"army.guanning|jizhen.arrears.sum": "<=0"}`；写成扁平串 `army...<=0` 会解析失败→永不停。② key 须**带表前缀**（裸 `arrears` → `_eval_gate_key` 判 None→恒不过）。③ id 是**英文 slug**（`guanning`/`jizhen`/`xuan_da`… 非中文「关宁军/蓟镇」）。`_eval_gate_key` 按 `armies.id` 查、支持 id 列表 + sum/max/min/avg；创建端须把诏书「边军」映射到 `armies.id` 英文集合。
 - **收尾区分不另加列**：用既有 `resolution_summary`（叙事）+ `issue_advances.trigger_kind`（`expire` vs `cancel`）区分「到期收尾」与「玩家撤销」（R3-medium：避免与 `resolution_summary` 重叠造冗余列）。〔撤回上一版加的 `close_reason` 列。〕
@@ -64,7 +64,7 @@ Status: Accepted（2026-06-15；**务实版**——用户拍板：复用 issue �
 
 ### D9 承诺-issue 与普通 initiative 的差异（集中列，免逐个漏）
 承诺虽 `kind=initiative` 复用 issue 行，但语义与普通国策不同，须用一个**专门判别标记**让创建/补全/结案/扫描各路径识别「这是承诺」并走差异——⚠️ **`origin_kind=decree` 不够**（普通玩家国策也 `origin_kind=decree`，Gemini 线上）；用一个**专门 `commitment` 标记**（新加 bool 列、或复用某未用字段标位、或一个 `kind='commitment'` 子类——实现时定，但必须是承诺独占的标记）。**一次列全（线上反复抓「又漏 bypass 一处」，集中规则止它）**：
-- **cap**：initiative 上限 10→15（`issues.py:1060`）；同步改硬编码文案「已有十事在办…」（`issues.py:1061`）或改读常量（Gemini 线上）。
+- **cap**：initiative 上限 10→15（`issues.py:1060`）；同步改硬编码文案「已有十事在办…」（`issues.py:1061`）或改读常量（Gemini 线上）。**已由 #1790 废止（2026-09-07 owner 令）**
 - **inertia=0**：不给 `expected_months`（bar 不随 random inertia 自漂、不假性了结）。
 - **resolve-effect enrich 跳过**：`apply_issue_tracker_output` 对缺 `effect_on_resolve` 的 initiative 会兜底补效果——承诺（只该有 `ongoing_effects`）结案时被补全会附**无关民心/建筑/实体效果污染**（codex P2 线上）；承诺路径须跳过该 enrich。
 - **空 `stop_condition` 不跑 `_gate_passed`**（D6，否则空 gate 返 True 假性收尾）。

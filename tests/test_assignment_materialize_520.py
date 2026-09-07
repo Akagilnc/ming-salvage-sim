@@ -1393,20 +1393,20 @@ def test_beat10_accept_three_lands_three_independent_initiatives(game, monkeypat
 # ── cap 逐项 ──────────────────────────────────────────────────────────
 
 
-def test_cap15_per_item_reject_overflow_lands_rest(game):
-    """撞 cap=15：超出项拒+戏内回禀朝廷分身乏术，可落项照落。"""
+def test_assignment_lands_beyond_fifteen_active(game):
+    """#1790：已有 ≥15 件 initiative 时交办顺颁仍成案，双条都落。"""
     db, state, content = game
     actor = _active_ming(db, content)
-    for idx in range(14):
+    for idx in range(15):
         db.insert_issue(
             state, kind="initiative", title=f"既有国策{idx}",
             origin_kind="decree",
             effect_on_resolve={"metrics": {"民心": 1}},
         )
-    assert db.count_active_initiatives() == 14
+    assert db.count_active_initiatives() == 15
 
     d_ids = []
-    for title, tid in (("可落交办", "can-land"), ("超出交办", "overflow")):
+    for title, tid in (("第十六条交办", "land-a"), ("第十七条交办", "land-b")):
         ctx = _stage_assignment(
             db, state.turn, title=title, target_id=tid, assignee=actor.name,
         )
@@ -1417,23 +1417,19 @@ def test_cap15_per_item_reject_overflow_lands_rest(game):
         {"dossier_id": d_ids[1], "decision": "promulgated"},
     ], content=content)
 
-    assert db.count_active_initiatives() == 15
-    landed = [
-        r for r in _active_initiatives(db)
-        if r["origin_ref"] == f"dossier:{d_ids[0]}"
-    ]
-    assert len(landed) == 1
-    overflow = db.get_decree_dossier(d_ids[1])
-    # 超出项不得创建 initiative；执行失败留痕含戏内回禀
-    assert not any(r["origin_ref"] == f"dossier:{d_ids[1]}" for r in _active_initiatives(db))
-    exec_note = str(overflow.get("execution_note") or overflow.get("status") or "")
-    # 失败关闭或 note 含分身乏术
-    row = db.conn.execute(
-        "SELECT execution_outcome, execution_note, status FROM decree_dossiers WHERE id=?",
-        (d_ids[1],),
-    ).fetchone()
-    blob = " ".join(str(row[k] or "") for k in row.keys())
-    assert "分身乏术" in blob or "朝廷分身乏术" in blob
+    assert db.count_active_initiatives() == 17
+    for did in d_ids:
+        landed = [
+            r for r in _active_initiatives(db)
+            if r["origin_ref"] == f"dossier:{did}"
+        ]
+        assert len(landed) == 1, did
+        row = db.conn.execute(
+            "SELECT execution_outcome, execution_note, status FROM decree_dossiers WHERE id=?",
+            (did,),
+        ).fetchone()
+        blob = " ".join(str(row[k] or "") for k in row.keys())
+        assert "分身乏术" not in blob
 
 
 # ── 0038 跨轮强化撤回前像 ────────────────────────────────────────────

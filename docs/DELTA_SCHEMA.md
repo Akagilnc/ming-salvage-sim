@@ -266,8 +266,6 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 ⚠️ **kind 白名单**：落库时 `kind` 不在 `(situation, initiative)` 内会被拒。**第二次踩的坑**：`kind="reform"` 被拒（应改 `initiative`）。
 
-⚠️ **数量上限**：active `kind=initiative` 的 issue **总数不超过 15**，超过新立直接拒（"已有十五事在办，朝廷分身乏术"）。
-
 「每月 X 直到补齐」这类旨意承诺必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`stop_condition`，落库时会按承诺路径处理为 `inertia=0`、`cancellable="decree"`，并跳过普通国策的 resolve-effect 补全。多军合计可写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`，人物阈值可写 `{"character.毛文龙.loyalty":">=65"}`。
 
 「连续 N 月 / 半年为限」这类时限承诺也必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`end_turn`。立项公式是 `end_turn = turn + N`，且 `end_turn` 必须严格大于当前 turn；当前回合或过去回合会被拒收，避免立项即过期的持续承诺空壳。半年按 6 个回合计。若同时要求「直到补齐」，同时写 `stop_condition`；`stop_condition` 或 `end_turn` 谁先到谁停。时限到期由结算写 `issue_advances.trigger_kind="expire"` 并标 `dropped`，不要在 delta 里伪造成 `close_issues resolved/failed`，也不要给承诺补普通 resolve/fail 效果。
@@ -474,7 +472,6 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `new_issues[].origin_kind` | 不填 | **必填** `decree` 或 `event_pool` |
 | `new_issues[].kind` | 写 `reform` | 白名单 `situation` / `initiative`；改革/试点都用 `initiative` |
 | `new_issues[].title` | — | ≤60 字 |
-| `new_issues` 总数 | — | active `initiative` ≤15 |
 | `close_issues[].reason` | 填了 `result` 没填 `reason` | close_issues 要 **`reason`** 字段（不是 result），空则整条被跳过。注：若同时用 `issue_advances` 把 bar 推满（≥100），issue 会**自动 resolved**，不依赖 close_issues |
 | `power_updates` 字段 | 写 `{"stance":...}` 或 `{"satisfaction":...}` | **实际守门只收三个字段：`威望`(leverage) / `实力`(military_strength) / `经济`(supply——英文 canonical 是 supply,别名表把 经济 映到它;写 `economy` 不被认会拒)。** 连 `satisfaction` / `cohesion` / `stance` / `leader` / `agenda` 全被拒，逐项拒收留痕落 `rejection_reports`（不再 print WARN——v0.8.x PR2-S1;supply 一直在白名单内,旧坑表把它列进被拒名单是 doc 错误）。改外势态度文用 `world_advance`（≤40字）；改归附倾向只能动 leverage/military_strength/supply。本文档上方 `power_updates` 段已按运行时守门收敛。〔崇祯二年五、六月结算实测，turn 8/9〕|
 
