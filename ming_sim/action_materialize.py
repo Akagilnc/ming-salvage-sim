@@ -690,91 +690,19 @@ def land_or_recover_new_secret_order(
     out["pending_action_id"] = 0
 
 
-_BATCH_GRANT_IDENTITIES = "staged_grant_identities"
-
-
-def _grant_identity(db: Any, payload: Dict[str, Any]) -> Optional[tuple]:
-    """同一笔机械恩赏的身份：(grant_action, target_id, amount, account)。
-
-    原生 grant 候选与拟旨投影载荷落在同一身份上——协饷 target 先归一为 army id、
-    account 走 resolve_grant_account，否则「army.guanning/15/国库」两侧对不上。
-    非 grant 载荷 / 解析不了的目标返回 None（不夹带猜测，异常仍归各自 fail-loud）。
-    """
-    dossier_type = str(payload.get("dossier_action_type") or "").strip()
-    if dossier_type and dossier_type != "grant_allocation":
-        return None
-    grant_action = str(payload.get("grant_action") or "").strip()
-    if grant_action not in (GRANT_ACTIONS - {"无"}):
-        return None
-    target_id = str(payload.get("target_id") or "").strip()
-    if grant_action == "协饷":
-        try:
-            target_id = canonicalize_xiexang_army_target(db, target_id)
-        except DecreeMaterializationValidationError:
-            return None
-    try:
-        account = resolve_grant_account(
-            grant_action=grant_action, account=payload.get("account"),
-        )
-    except ValueError:
-        return None
-    amount = payload.get("amount")
-    try:
-        amount_key: Any = int(amount)
-    except (TypeError, ValueError):
-        amount_key = str(amount or "")
-    return (grant_action, target_id, amount_key, account)
-
-
-def _batch_grant_identities(ctx: MaterializeCtx) -> Dict[tuple, set]:
-    """本批已落案的恩赏身份 → 落它的通道集（batch_state 随 replace 在候选间共享）。"""
-    identities = ctx.batch_state.get(_BATCH_GRANT_IDENTITIES)
-    if identities is None:
-        identities = {}
-        ctx.batch_state[_BATCH_GRANT_IDENTITIES] = identities
-    return identities
-
-
-def _grant_identity_staged_by_sibling(
-    ctx: MaterializeCtx, payload: Dict[str, Any], *, origin: str,
-) -> bool:
-    """这笔恩赏是否已由本批的另一条通道落案。
-
-    只互斥跨通道（拟旨投影 ↔ 原生恩赏候选）：同一句话经两条通道再表达一次，
-    机械后果只该消费一次。同通道内两条独立数组项（#518 分拨/再拨）身份即便
-    相同也各自成案，不在此折叠。
-    """
-    identity = _grant_identity(ctx.session.db, payload)
-    if identity is None:
-        return False
-    origins = _batch_grant_identities(ctx).get(identity) or set()
-    return bool(origins - {origin})
-
-
-def _note_staged_grant_identity(
-    ctx: MaterializeCtx, payload: Dict[str, Any], *, origin: str,
-) -> None:
-    identity = _grant_identity(ctx.session.db, payload)
-    if identity is not None:
-        _batch_grant_identities(ctx).setdefault(identity, set()).add(origin)
-
-
 def _grant_allocation_attemptable(
     ctx: MaterializeCtx, intent: Dict[str, Any],
 ) -> bool:
     """Pure: grant handler 是否会调用 stage。handler 与批预热投影共用，禁平行预测。
 
-    #1777：同批拟旨通道已落同一身份的恩赏时不再 attempt——一句话里的一笔拨银
-    只消费一次。身份不同的独立拨给、以及同通道内的独立数组项（#518 另拨/再赏、
-    #519 赈灾）各自照落。
+    #1783：按几件事拆旨后同一事不再并列拟旨/拨帑/交办候选；身份钳随并列形态删除。
+    同通道内独立数组项（#518 另拨/再赏、#519 两件事）各自照落。
     """
     if (
         ctx.draft_staged
         or ctx.out.get("pending_action_id")
         or ctx.conversation_intent_handled
     ):
-        return False
-    if _grant_identity_staged_by_sibling(ctx, intent, origin="grant"):
         return False
     grant_action = str(intent.get("grant_action") or "").strip()
     if grant_action not in (GRANT_ACTIONS - {"无"}):
@@ -1574,13 +1502,6 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             semantic_payload.setdefault("dossier_action_type", "special_decree")
             semantic_payload.setdefault("target_kind", "policy")
             semantic_payload.setdefault("target_id", ctx.player_message.strip())
-        if _grant_identity_staged_by_sibling(
-            ctx, semantic_payload, origin="draft",
-        ):
-            # #1777：同批恩赏候选已落这笔（同 grant_action/target/amount/account）。
-            # 拟旨通道已被本句占用，不再写第二份 grant 案卷、不再二次扣库。
-            ctx.draft_staged = True
-            return
         if ctx.candidate_kind_count > 1:
             ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
                 session.state.turn, minister_name,
@@ -1620,7 +1541,6 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 payload=semantic_payload,
             )
             ctx.out["pending_action_id"] = pid
-        _note_staged_grant_identity(ctx, semantic_payload, origin="draft")
         ctx.draft_staged = True
 
 
@@ -2605,7 +2525,11 @@ def stage_grant_allocation_candidate(
     purpose: str = "",
     cadence: str = "",
     execution_surface: object = None,
+    end_turn: object = 0,
+    deadline_months: object = 0,
     target_candidate: object = None,
+    assignee: str = "",
+    participant_roster: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared grant candidate write: mode + explicit-target update only.
@@ -2730,6 +2654,28 @@ def stage_grant_allocation_candidate(
         staged["purpose"] = ""
         # #1624：普通 grant 原样转发字符串/空值；值域由 durable 独家验并对异常非空 fail-loud。
         staged["execution_surface"] = str(execution_surface or "").strip()
+    # #1783：同一事完成期限挂本案；日级不足一月由分类器填截止回合=turn+1。
+    # 期限单源＝due_turn（军令同款；禁 end_turn 双写）。
+    absolute_due = _assignment_absolute_end_turn(
+        int(turn), end_turn=end_turn, deadline_months=deadline_months,
+    )
+    if absolute_due > int(turn):
+        staged["due_turn"] = absolute_due
+        # 题名真源贯到 staged（0076 场面/判据可读）；优先用途/拨帑动作中文锚
+        if not str(staged.get("title") or "").strip():
+            label = purpose or action
+            if label:
+                staged["title"] = str(label).strip()
+    # #1783+#1778：承办人/名单来自分类器或后置抽取，挂本案；不把当前大臣填成主办。
+    lead = str(assignee or "").strip()
+    if lead:
+        staged["assignee"] = lead
+    if isinstance(participant_roster, list) and participant_roster:
+        staged["participant_roster"] = list(participant_roster)
+    elif lead:
+        staged["participant_roster"] = [{
+            "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
+        }]
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
@@ -2740,10 +2686,8 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
 
     #1503：显式拟旨前缀若带 typed grant 候选，仍走本单轨（不再因 explicit_prefixed 早退）。
     draft_staged / 已有 pending 仍互斥，避免与 generic special_decree 双写。
-    #1777 批路径：每候选各自从 baseline 复制 out、draft_staged 重置为 False，兄弟
-    候选之间靠 batch_state 身份集互斥——同批同一笔恩赏只落一次，身份不同的独立
-    拨给仍各自成案。是否 attempt stage 的纯门闩见 _grant_allocation_attemptable
-    （与批预热投影共用）。
+    #1783：一件事一案；期限（日级不足一月→下一回合）挂同一 grant 候选。
+    是否 attempt stage 的纯门闩见 _grant_allocation_attemptable（与批预热投影共用）。
     """
     if ctx.intent_kind != "grant_allocation":
         return
@@ -2752,6 +2696,16 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         return
     grant_action = str(intent.get("grant_action") or "").strip()
     target_kind, target_id = _grant_target(intent)
+    assignee = str(
+        intent.get("assignee")
+        or intent.get("assignee_id")
+        or intent.get("assignee_name")
+        or ""
+    ).strip()
+    # 非人物目标的拨帑：classifier 姓名＝承办人（#1783 一件事一案；加衔/荫叙姓名仍是受赏人）
+    if not assignee and target_kind not in {"character", "person"}:
+        assignee = str(intent.get("name") or "").strip()
+    roster = intent.get("participant_roster")
     pending_id = stage_grant_allocation_candidate(
         ctx.session.db,
         ctx.session.state.turn,
@@ -2770,12 +2724,15 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         cadence=_grant_cadence(intent),
         # #1624：classifier 已验 execution_surface 交 stage，禁在此静默丢弃。
         execution_surface=intent.get("execution_surface"),
+        end_turn=intent.get("end_turn"),
+        deadline_months=intent.get("deadline_months"),
         target_candidate=intent.get("target_candidate"),
+        assignee=assignee,
+        participant_roster=roster if isinstance(roster, list) else None,
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
         ctx.out["pending_action_id"] = pending_id
-        _note_staged_grant_identity(ctx, intent, origin="grant")
 
 
 def _parse_json_field(raw: object) -> Any:
@@ -4720,6 +4677,9 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "execution_surface", "执行面",
                     frozenset({"immediate", "in_transit"}), "",
                 ),
+                # #1783：同一事完成期限挂本候选；日级不足一月→截止回合=当前+1
+                FieldSpec("deadline_months", "期限月数", None, 0, as_int=True, int_hi=36),
+                FieldSpec("end_turn", "截止回合", None, 0, as_int=True),
                 # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
