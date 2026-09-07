@@ -387,7 +387,7 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
             cli_runner=cfg.cli_runner,
             cli_model=cfg.cli_model,
             cli_timeout_seconds=cfg.cli_timeout_seconds,
-            default_headers=dict(getattr(cfg, "default_headers", None) or {}),
+            default_headers=dict(cfg.default_headers or {}),
         )
     return cfg
 
