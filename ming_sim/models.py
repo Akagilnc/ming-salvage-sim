@@ -348,14 +348,17 @@ class ChatResult:
 # 改为从这里 re-export，保留既有 import 路径。
 CODEX_DEFAULT_MODEL = "gpt-5.5"
 CLAUDE_DEFAULT_MODEL = "claude-opus-4-8"
-CLI_DEFAULT_TIMEOUT_SECONDS = 300.0  # CLI 子进程默认超时（秒），与 API 的 timeout_seconds 区分
-MINISTER_CHAT_CLI_TIMEOUT_SECONDS = 90.0  # 实时召对大臣回话专用短超时（#353），与月末结算 300s 解耦
+# 设置页那一格（cli.timeout_seconds 槽）的默认值 = 静默判死阈值（秒）：距上次新内容
+# 这么久没有新动静，就判这次调用已死并重试。#1465 切片③ owner 2026-09-07 拍：这一格
+# 从「总超时/子进程墙钟」改接空转轴，CLI 与 API 同吃这一个权威（llm_transport 的
+# TransportPolicy.idle_timeout_seconds 由它兜底），默认 60 秒。
+CLI_DEFAULT_TIMEOUT_SECONDS = 60.0
 VALID_CHANNELS = frozenset({"api", "cli"})  # 合法执行通道集合，新增通道只改这里
 API_DEFAULT_TIMEOUT_SECONDS = 180.0  # API 请求默认超时（秒）单一真源（#58）
 # #1465 transport 统一策略默认值（单真源；次数/超时/空转进 runtime 可覆盖，代码零硬编码）
 TRANSPORT_DEFAULT_MAX_ATTEMPTS = 3  # 总计 3 attempts（初试 1 + 重试 2；第一次不叫重试）
 TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 30.0  # 每 attempt 独立整份超时（owner：每次 30 秒）
-TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS = 30.0  # 空转：距上次输出静默阈值（票面不定数值，与 attempt 同量级）
+# 空转阈值不在此另立默认：真源 = 设置页那一格（CLI_DEFAULT_TIMEOUT_SECONDS 兜底）。
 
 
 @dataclass
@@ -373,7 +376,7 @@ class LLMConfig:
     channel: str = ""  # ""=沿用旧 env 探针；api=OpenAI 兼容 API；cli=本地 CLI runner
     cli_runner: str = ""  # agy | codex | claude | cursor | kimi | grok | pi（名单真源=_CLI_BACKENDS）
     cli_model: str = ""  # CLI runner 的模型名/档位，由具体后端解释
-    cli_timeout_seconds: float = CLI_DEFAULT_TIMEOUT_SECONDS  # CLI 子进程超时，同模块常量直接引用
+    cli_timeout_seconds: float = CLI_DEFAULT_TIMEOUT_SECONDS  # 静默判死阈值（秒），设置页那一格；同模块常量直接引用
 
 
 @dataclass

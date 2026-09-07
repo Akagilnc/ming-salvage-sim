@@ -2650,11 +2650,10 @@ class WebGame:
         stream_secret_route = bool(explicit_secret_order) or (text or "").strip().startswith(
             _STREAM_SECRET_PREFIXES
         )
-        # #1465 切片①：仅真实 API 召对接缝接线 transport；CLI 通道不套入。
+        # #1465 切片③：API / CLI 同一 transport（次数、空转、分类、终失败同一权威）。
+        # 槽位仍平级（ADR 0001）：transport 是调用策略，不是第三通道。
         llm_cfg = getattr(self.session, "llm_config", None)
-        channel = (getattr(llm_cfg, "channel", "") or "").strip().lower()
-        use_transport = channel != "cli"
-        policy = resolve_transport_policy(llm_cfg) if use_transport else None
+        policy = resolve_transport_policy(llm_cfg)
         chunks: List[str] = []
         run_output_box: List[Any] = []
         exit_started_during_stream = {"v": False}
@@ -2718,34 +2717,19 @@ class WebGame:
                 agent_prompt, stream=True, stream_events=True, yield_run_output=True,
             )
 
-        if use_transport:
-            assert policy is not None
-            # SDK 阻塞超时 = bind_transport_sdk_budget(model.timeout←attempt_timeout)；
-            # 事件界只做 idle 空转，不能中止 SDK read 阻塞。
-            with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
-                (answer, run_output), transport_attempts_box = run_transport_stream(
-                    _start_stream,
-                    on_event=_on_event,
-                    is_activity_event=is_stream_activity_event,
-                    map_error_event=map_run_error_event,
-                    after_stream=_after_stream,
-                    policy=policy,
-                )
-        else:
-            # CLI 通道：保留单次流，不套 transport 次数/空转（切片③）
-            stream = _start_stream()
-            try:
-                for event in stream:
-                    err = map_run_error_event(event)
-                    if err is not None:
-                        raise err
-                    _on_event(event)
-                answer, run_output = _after_stream()
-            finally:
-                close = getattr(stream, "close", None)
-                if callable(close):
-                    close()
-            transport_attempts_box = []
+        # SDK 阻塞超时 = bind_transport_sdk_budget(model.timeout←attempt_timeout)；
+        # 事件界只做 idle 空转，不能中止 SDK read 阻塞。
+        # CLI 通道同门：子进程静默由 runner 增量读判死（无总墙钟），
+        # typed 瞬断经 model 调用边界记忆还原分类。
+        with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+            (answer, run_output), transport_attempts_box = run_transport_stream(
+                _start_stream,
+                on_event=_on_event,
+                is_activity_event=is_stream_activity_event,
+                map_error_event=map_run_error_event,
+                after_stream=_after_stream,
+                policy=policy,
+            )
 
         # #542：action/tool 解释（exit 若流中未启则幂等补登），write_gate 外统一 join，
         # 短事务原子持久化 reply + 本轮全部 scene。join 不得早于 start_exit。
@@ -5861,6 +5845,7 @@ class LlmSetupRequest(BaseModel):
     channel: str = "api"
     cli_runner: str = ""
     cli_model: str = ""
+    # 静默判死阈值（秒）：距上次新内容这么久没动静就判该次调用已死并重试（#1465 切片③）。
     cli_timeout_seconds: float = 0
 
 
@@ -5885,8 +5870,9 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         cli_timeout_seconds=cli_timeout,
     )
     try:
-        # CLI/API smoke 是阻塞子进程/网络调用(CLI 最长 cli_timeout_seconds),不能跑在
-        # asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。verify 只读不改盘面。
+        # CLI/API smoke 是阻塞子进程/网络调用(只要还在出字就一直跑,静默超 cli_timeout_seconds
+        # 才判死重试),不能跑在 asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。
+        # verify 只读不改盘面。
         await asyncio.get_running_loop().run_in_executor(
             None, _verify_llm_configs_or_raise, config
         )
@@ -5974,8 +5960,9 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         channel="api",
     )
     try:
-        # CLI/API smoke 是阻塞子进程/网络调用(CLI 最长 cli_timeout_seconds),不能跑在
-        # asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。verify 只读不改盘面。
+        # CLI/API smoke 是阻塞子进程/网络调用(只要还在出字就一直跑,静默超 cli_timeout_seconds
+        # 才判死重试),不能跑在 asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。
+        # verify 只读不改盘面。
         await asyncio.get_running_loop().run_in_executor(
             None, _verify_llm_configs_or_raise, config
         )
@@ -7043,7 +7030,8 @@ class LLMConfigRequest(BaseModel):
     advanced_api_key: str = "__keep__"
     advanced_thinking_level: str = "__keep__"
     # 通道感知（#51）：channel/cli_runner/cli_model 用 "__keep__" sentinel 表示「保留当前」;
-    # cli_timeout_seconds 是数值,沿用数值 sentinel 0（=不改,build 回落当前值），不走 "__keep__"。
+    # cli_timeout_seconds（静默判死阈值,秒）是数值,沿用数值 sentinel 0（=不改,build 回落当前值），
+    # 不走 "__keep__"。
     channel: str = "__keep__"
     cli_runner: str = "__keep__"
     cli_model: str = "__keep__"
