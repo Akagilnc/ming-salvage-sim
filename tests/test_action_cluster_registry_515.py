@@ -1314,6 +1314,12 @@ def test_draft_xiexang_promoted_plus_independent_titleless_assignment(game, monk
         "account": "太仓",
         "amount": 10000,
         "mode": "ordinary",
+        # #1778：交办后置抽取同缝须有主办
+        "assignee": minister.name,
+        "participant_roster": [{
+            "character_id": minister.name, "tier": "主办",
+            "role": "", "delegator_id": None,
+        }],
     })
     wg = _wire_web_game(
         db, state, content,

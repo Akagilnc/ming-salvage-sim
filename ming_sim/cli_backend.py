@@ -1519,6 +1519,15 @@ class UnknownParticipantEscalate(Exception):
         super().__init__(self.fact)
 
 
+class MissingExecutionLeadError(ValueError):
+    """#1778：召对交办后置抽取耗尽仍无承办人/主办——不成案，响亮失败。"""
+
+    failed_fields = ("assignee", "participant_roster")
+
+    def __init__(self, message: str = "交办旨意缺少承办人/参与名单主办") -> None:
+        super().__init__(message)
+
+
 def is_unknown_participant_ref_error(exc: BaseException) -> bool:
     """校验报「参与人物/委派人不存在」——可回喂 LLM 纠错的失败类。"""
     return bool(_PARTICIPANT_REF_MISSING_RE.search(str(exc) or ""))
@@ -2429,6 +2438,58 @@ def _revalidate_merged_combo_result(
             ) from exc
 
 
+def _extract_result_has_execution_lead(result: Mapping[str, Any]) -> bool:
+    """抽取结果是否已有执行主办：承办人键或 0053 主办档（delegator 空）。"""
+    items: List[Mapping[str, Any]] = [result]
+    drafts = result.get("drafts")
+    if isinstance(drafts, list):
+        items.extend(d for d in drafts if isinstance(d, dict))
+    for item in items:
+        assignee = str(
+            item.get("assignee")
+            or item.get("assignee_id")
+            or item.get("assignee_name")
+            or ""
+        ).strip()
+        if assignee:
+            return True
+        roster = item.get("participant_roster")
+        if not isinstance(roster, list):
+            continue
+        for entry in roster:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("tier") or "").strip() != "主办":
+                continue
+            name = str(entry.get("character_id") or "").strip()
+            if name and not str(entry.get("delegator_id") or "").strip():
+                return True
+    return False
+
+
+def _missing_execution_lead_feedback() -> str:
+    """#1778：缺承办人/主办的补交喂料（改输入，不改输出）。"""
+    return (
+        "【补交】本道旨缺承办人/参与名单主办。"
+        "须填「承办人」为规范人名，或「参与人」中至少一名 tier=主办 且 "
+        "character_id 为规范名、delegator_id 为空。不得留空；不得用机关名代替人名。\n"
+    )
+
+
+def _participant_fields_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
+    """从抽取原包收承办人/参与人——拟旨意图=无时仍可后置点将（#1778）。"""
+    out: Dict[str, Any] = {}
+    if "承办人" in obj or "assignee" in obj or "assignee_name" in obj:
+        out["assignee"] = str(
+            obj.get("承办人") or obj.get("assignee") or obj.get("assignee_name") or ""
+        ).strip()
+    if "参与人" in obj:
+        out["participant_roster"] = obj.get("参与人") if obj.get("参与人") is not None else []
+    elif "participant_roster" in obj:
+        out["participant_roster"] = obj.get("participant_roster")
+    return out
+
+
 def extract_draft_intent_with_roster_heal(
     player_message: Optional[str],
     minister_reply: str,
@@ -2438,6 +2499,7 @@ def extract_draft_intent_with_roster_heal(
     content: Any = None,
     heal_retries: int = DRAFT_PARTICIPANT_HEAL_RETRIES,
     initial_correction: str = "",
+    require_execution_lead: bool = False,
     **extract_kwargs: Any,
 ) -> Dict[str, Any]:
     """extract → 共同契约组合校验 + 名册校验；失败有界纠错重抽（P5 只走失败路）。
@@ -2451,6 +2513,8 @@ def extract_draft_intent_with_roster_heal(
     db/content 缺一则只抽不校验名册（与旧 extract 同）；组合校验在 extract 内已做。
     LLM 在纠错路上挂死 → 原样上抛。
     initial_correction（#1769）：成案拒收补交时把失败事实与原产物作为首轮回喂。
+    require_execution_lead（#1778）：召对交办后置抽取须有承办人/主办；缺则同缝补交，
+    耗尽 raise MissingExecutionLeadError（不成案）。
     """
     retries = max(0, int(heal_retries))
     correction = str(initial_correction or "")
@@ -2461,6 +2525,21 @@ def extract_draft_intent_with_roster_heal(
     baseline_from_combo = False
     baseline_failed_fields: frozenset = frozenset()
     baseline_draft_failures: Dict[int, frozenset] = {}
+    # 交办后置点将：拟旨意图=无时仍收承办人/名单键（#1778；不另造抽取器）。
+    if require_execution_lead:
+        extract_kwargs = {**extract_kwargs, "harvest_participants": True}
+
+    def _lead_gate(payload: Dict[str, Any], attempt: int) -> Optional[Dict[str, Any]]:
+        """有主办则返回 payload；缺则写 correction 并返回 None（调用方 continue）。"""
+        nonlocal correction
+        if not require_execution_lead or _extract_result_has_execution_lead(payload):
+            return payload
+        if attempt >= retries:
+            raise MissingExecutionLeadError()
+        correction = _missing_execution_lead_feedback()
+        _log(f"拟旨承办人补交重试 {attempt + 1}/{retries}")
+        return None
+
     for attempt in range(retries + 1):
         # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
         # 不得因 heal 多塞第 3 位置参把旧 mock 签名整族打爆。
@@ -2553,7 +2632,10 @@ def extract_draft_intent_with_roster_heal(
         if db is not None:
             result = _ground_relative_pay_order_deadlines(result, db)
         if db is None or content is None:
-            return result
+            done = _lead_gate(result, attempt)
+            if done is not None:
+                return done
+            continue
         has_roster_field = (
             ("participant_roster" in result and result.get("participant_roster") is not None)
             or any(
@@ -2565,7 +2647,10 @@ def extract_draft_intent_with_roster_heal(
             # 纠错路上抽掉参与人字段 = 除名企图 → 篡改，回禀
             if pending_unknown:
                 raise UnknownParticipantEscalate(pending_unknown)
-            return result
+            done = _lead_gate(result, attempt)
+            if done is not None:
+                return done
+            continue
         try:
             validated = _apply_validated_roster_to_extract_result(
                 result, db=db, content=content,
@@ -2626,8 +2711,13 @@ def extract_draft_intent_with_roster_heal(
             )
             if backfilled is None:
                 raise UnknownParticipantEscalate(pending_unknown)
-            return backfilled
-        return validated
+            done = _lead_gate(backfilled, attempt)
+            if done is not None:
+                return done
+            continue
+        done = _lead_gate(validated, attempt)
+        if done is not None:
+            return done
 
 
 def _stalled_deliberation_push_facts(db: Any) -> str:
@@ -2694,6 +2784,7 @@ def extract_draft_intent(
     correction_feedback: str = "",
     pay_order_facts: str = "",
     db: Any = None,
+    harvest_participants: bool = False,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
     失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
@@ -3020,8 +3111,14 @@ def extract_draft_intent(
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
     # #654 H：无意图立即短路，不跑 acting/动作类型/target_kind 校验。
+    # #1778：召对交办后置点将仍收承办人/名单（harvest_participants），不另造抽取器。
     if _action == "无":
-        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        empty: Dict[str, Any] = {
+            "draft_action": "无", "draft_text": "", "target_candidate": "",
+        }
+        if harvest_participants:
+            empty.update(_participant_fields_from_draft_obj(obj))
+        return empty
     # #658：御笔强推与普通 triad 互斥；并存响亮拒绝，禁止静默吞旨
     from ming_sim.db import (
         classify_directive_structured_kind,
