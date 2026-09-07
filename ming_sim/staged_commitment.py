@@ -364,11 +364,7 @@ def list_due_grant_report_dossiers_for_scan(
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
-        # 月供/加衔不走回报期限到期复核（与颁布闸同口径）
-        if str(payload.get("cadence") or "").strip() == "每月":
-            continue
-        if str(payload.get("grant_action") or "").strip() in {"加衔", "荫叙"}:
-            continue
+        # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         did = int(row["id"])
         due_turn = int(row["due_turn"] or 0)
         title = str(payload.get("title") or payload.get("purpose") or "").strip()
