@@ -108,13 +108,18 @@ export function useSettlementFlow({
     onNarrative: (chunk) => setSettleNarrative((prev) => prev + chunk),
   });
 
-  const issueDecree = async () => {
-    // #1796：busy 挂同会话装饰（收拟诏台 + SettlementLock + 切核账期面）；真源仍是 settlement_display。
+  // #1796：盖玺/退朝共用开场——busy 挂同会话装饰；stage/progress/thinking/narrative 清零。
+  // 真源仍是 settlement_display；submitDecisions 另有 HITL 续推文案，不经此路。
+  const beginSettlementWait = () => {
     setBusy("月末结算");
     setSettleStage("");
     setSettleProgress(null);
     setSettleThinking("");
     setSettleNarrative("");
+  };
+
+  const issueDecree = async () => {
+    beginSettlementWait();
     setError("");
     // #1277/#1351：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
     // 与 advanceWithoutEdict 同口径；禁前端防抖顶替服务端令牌。
@@ -248,11 +253,7 @@ export function useSettlementFlow({
   // 真空仍禁用；draft/pending 走 issueDecree，不经此路。
   // #1796：与盖玺同 busy 标——同会话立即收拟诏台 + 居中等待卡 + 切核账期面。
   const advanceWithoutEdict = async () => {
-    setBusy("月末结算");
-    setSettleStage("");
-    setSettleProgress(null);
-    setSettleThinking("");
-    setSettleNarrative("");
+    beginSettlementWait();
     setError("");
     // #1351 A1：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
     const expectedTurn = state?.turn?.turn;
