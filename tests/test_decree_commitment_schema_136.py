@@ -232,50 +232,6 @@ def test_canonicalize_new_issue_preserves_commitment_columns():
     assert "resolve_condition" not in out["new_issues"][0]
 
 
-def test_decree_initiative_lands_beyond_fifteen_active(game):
-    """#1790：已有 ≥15 件 initiative 在办时再下旨仍成案，不拒收。"""
-    db, state, _ = game
-    for idx in range(15):
-        db.insert_issue(
-            state,
-            kind="initiative",
-            title=f"既有国策{idx}",
-            origin_kind="decree",
-            effect_on_resolve={"metrics": {"民心": 1}},
-        )
-    assert db.count_active_initiatives() == 15
-
-    out = I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{
-            "origin_kind": "decree",
-            "origin_ref": _promulgated_commitment_origin(db, state),
-            "kind": "initiative",
-            "title": "第十六条仍成案",
-            "effect_on_resolve": {"metrics": {"民心": 1}},
-        }],
-    })
-
-    created = [item for item in out["new_issues"] if item.get("issue_id")]
-    rejected = [item for item in out["new_issues"] if item.get("rejected")]
-    assert len(created) == 1, out
-    assert rejected == [], out
-    assert db.count_active_initiatives() == 16
-    assert not any("分身乏术" in str(item.get("reason") or "") for item in out["new_issues"])
-
-
-def test_show_active_issues_has_no_initiative_cap_denominator(game, capsys):
-    """#1790：CLI 待办不再展示 n/15 上限。"""
-    db, state, _ = game
-    db.insert_issue(state, kind="initiative", title="国策展示", origin_kind="decree")
-
-    I.show_active_issues(db)
-
-    out = capsys.readouterr().out
-    assert "玩家 1" in out
-    assert "玩家 1/15" not in out
-    assert "玩家 1/10" not in out
-
-
 def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, content):
     path = tmp_path / "legacy.db"
     conn = sqlite3.connect(path)

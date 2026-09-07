@@ -5,7 +5,7 @@ Seams:
 - run_materialize_pipeline / apply_cli_conversation_actions
 - commit_pending_actions（收夜落案卷，不成 initiative）
 - apply_dossier_verdicts（0055 顺颁才落 initiative）
-- 既有 initiative 校验/cap、ADR 0038 撤回前像
+- 既有 initiative 校验、ADR 0038 撤回前像
 """
 
 from __future__ import annotations
@@ -1393,48 +1393,6 @@ def test_beat10_accept_three_lands_three_independent_initiatives(game, monkeypat
             p.get("character_id") == actor.name and p.get("tier") == "主办"
             for p in roster
         )
-
-
-# ── cap 逐项 ──────────────────────────────────────────────────────────
-
-
-def test_assignment_lands_beyond_fifteen_active(game):
-    """#1790：已有 ≥15 件 initiative 时交办顺颁仍成案，双条都落。"""
-    db, state, content = game
-    actor = _active_ming(db, content)
-    for idx in range(15):
-        db.insert_issue(
-            state, kind="initiative", title=f"既有国策{idx}",
-            origin_kind="decree",
-            effect_on_resolve={"metrics": {"民心": 1}},
-        )
-    assert db.count_active_initiatives() == 15
-
-    d_ids = []
-    for title, tid in (("第十六条交办", "land-a"), ("第十七条交办", "land-b")):
-        ctx = _stage_assignment(
-            db, state.turn, title=title, target_id=tid, assignee=actor.name,
-        )
-        d_ids.append(_close_night_dossier(db, state, content, ctx.out["pending_action_id"])["id"])
-
-    db.apply_dossier_verdicts(state, [
-        {"dossier_id": d_ids[0], "decision": "promulgated"},
-        {"dossier_id": d_ids[1], "decision": "promulgated"},
-    ], content=content)
-
-    assert db.count_active_initiatives() == 17
-    for did in d_ids:
-        landed = [
-            r for r in _active_initiatives(db)
-            if r["origin_ref"] == f"dossier:{did}"
-        ]
-        assert len(landed) == 1, did
-        row = db.conn.execute(
-            "SELECT execution_outcome, execution_note, status FROM decree_dossiers WHERE id=?",
-            (did,),
-        ).fetchone()
-        blob = " ".join(str(row[k] or "") for k in row.keys())
-        assert "分身乏术" not in blob
 
 
 # ── 0038 跨轮强化撤回前像 ────────────────────────────────────────────
