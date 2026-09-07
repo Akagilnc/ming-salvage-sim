@@ -137,14 +137,15 @@ def resolve_lead_executors(
     }
 
 
-def require_execution_lead_or_raise(
-    route: Mapping[str, object], *, has_canonical_lead: bool,
-) -> None:
-    """#1778 乙：multi_month + unassigned + 无点将 → 响亮不成案（bulk/单行共一闸）。"""
+def require_execution_lead_or_raise(route: Mapping[str, object]) -> None:
+    """#1778 乙：multi_month + unassigned → 响亮不成案（bulk/单行共一闸）。
+
+    unassigned 已由 resolve_lead_executors 用同一份 roster（主办且 delegator 空）判定；
+    不再另接 has_canonical_lead 参数。
+    """
     if (
         str(route.get("route") or "") == "unassigned"
         and not list(route.get("leads") or [])
-        and not has_canonical_lead
         and str(route.get("coverage") or "") == "multi_month"
     ):
         raise ValueError("案卷缺少主办（route=unassigned）")

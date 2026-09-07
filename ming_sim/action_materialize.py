@@ -3080,29 +3080,19 @@ def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
 
 
 def _assignment_leads_from_extract(extracted: Mapping[str, Any]) -> tuple[str, list]:
-    """从拟旨同缝抽取结果取承办人与名单（#1778 后置点将）。
+    """从拟旨同缝单条抽取结果投影承办人/名单（#1778）。
 
-    有无主办的唯一真源＝cli_backend._extract_result_has_execution_lead（扫顶层+全部 drafts）；
-    本函数只投影「第一条已有主办的条目」的 assignee/roster 写入候选，不另立判定。
+    assignment preheat 不传 draft_count，结果无 drafts；只读顶层键。
+    有无主办已由 extract require_execution_lead 判定，本函数不重判。
     """
-    from ming_sim.cli_backend import _extract_result_has_execution_lead
-
-    items: list[Mapping[str, Any]] = [extracted]
-    drafts = extracted.get("drafts")
-    if isinstance(drafts, list):
-        items.extend(d for d in drafts if isinstance(d, dict))
-    for item in items:
-        if not _extract_result_has_execution_lead(dict(item)):
-            continue
-        assignee = str(
-            item.get("assignee")
-            or item.get("assignee_id")
-            or item.get("assignee_name")
-            or ""
-        ).strip()
-        roster = item.get("participant_roster")
-        return assignee, list(roster) if isinstance(roster, list) else []
-    return "", []
+    assignee = str(
+        extracted.get("assignee")
+        or extracted.get("assignee_id")
+        or extracted.get("assignee_name")
+        or ""
+    ).strip()
+    roster = extracted.get("participant_roster")
+    return assignee, list(roster) if isinstance(roster, list) else []
 
 
 def _resolve_assignment_extract(ctx: MaterializeCtx) -> Dict[str, Any]:
