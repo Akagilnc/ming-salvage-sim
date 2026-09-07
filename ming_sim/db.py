@@ -1948,6 +1948,8 @@ class GameDB:
 
             -- #620 / ADR 0074：次回合召对待办（分段到期等）；结算内确定性写入、不停轮。
             -- #624 / ADR 0078：payload_json 引擎侧列（真伪底）；玩家投影路径不读。
+            -- #1783：commitment_ref 可为 0（案卷 due 直挂 todo，不另立 issue）；
+            -- 有承诺时仍写 issues.id。禁 FK 以免 0 被拒。
             CREATE TABLE IF NOT EXISTS next_audience_todos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 commitment_ref INTEGER NOT NULL,
@@ -1960,8 +1962,7 @@ class GameDB:
                 created_turn INTEGER NOT NULL DEFAULT 0,
                 payload_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(commitment_ref, stage_idx, entry_kind),
-                FOREIGN KEY(commitment_ref) REFERENCES issues(id)
+                UNIQUE(commitment_ref, stage_idx, entry_kind)
             );
             CREATE INDEX IF NOT EXISTS idx_next_audience_todos_status
                 ON next_audience_todos(status, due_turn);
@@ -2323,6 +2324,8 @@ class GameDB:
         # #624 / ADR 0078：next_audience_todos 引擎侧真伪底（方案 A）；老档迁移
         self.ensure_column(
             "next_audience_todos", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
+        # #1783：老档去掉 issues FK，允许 commitment_ref=0 的案卷 due todo
+        self._migrate_next_audience_todos_drop_issue_fk()
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -3339,6 +3342,61 @@ class GameDB:
         if commit:
             self.conn.commit()
         return base_key
+
+    def _migrate_next_audience_todos_drop_issue_fk(self) -> None:
+        """#1783：next_audience_todos 去 issues FK，允案卷 due 直挂 commitment_ref=0。"""
+        try:
+            fks = self.conn.execute(
+                "PRAGMA foreign_key_list(next_audience_todos)"
+            ).fetchall()
+        except Exception:
+            return
+        if not fks:
+            return
+        self.conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            self.conn.execute(
+                """
+                CREATE TABLE next_audience_todos__1783 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    commitment_ref INTEGER NOT NULL,
+                    stage_idx INTEGER NOT NULL,
+                    due_turn INTEGER NOT NULL,
+                    criterion_text TEXT NOT NULL DEFAULT '',
+                    origin_context TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    entry_kind TEXT NOT NULL DEFAULT 'staged_commitment',
+                    created_turn INTEGER NOT NULL DEFAULT 0,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(commitment_ref, stage_idx, entry_kind)
+                )
+                """
+            )
+            self.conn.execute(
+                """
+                INSERT INTO next_audience_todos__1783 (
+                    id, commitment_ref, stage_idx, due_turn, criterion_text,
+                    origin_context, status, entry_kind, created_turn,
+                    payload_json, created_at
+                )
+                SELECT id, commitment_ref, stage_idx, due_turn, criterion_text,
+                       origin_context, status, entry_kind, created_turn,
+                       payload_json, created_at
+                FROM next_audience_todos
+                """
+            )
+            self.conn.execute("DROP TABLE next_audience_todos")
+            self.conn.execute(
+                "ALTER TABLE next_audience_todos__1783 RENAME TO next_audience_todos"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_next_audience_todos_status "
+                "ON next_audience_todos(status, due_turn)"
+            )
+            self.conn.commit()
+        finally:
+            self.conn.execute("PRAGMA foreign_keys=ON")
 
     def ensure_column(self, table: str, column: str, definition: str) -> bool:
         """确保 table.column 存在。返回 True=本次新增了该列（真·一次性迁移），
@@ -16372,6 +16430,24 @@ class GameDB:
                     state, row, payload, dossier_id,
                     content=content, registry=None,
                 ) or set())
+            # #1783：仅 grant 回报期限未到 → 保持 executing；期限只挂原案卷，
+            # 不另立承诺事项/不占在办名额。到期由 write_due 扫案卷 due_turn → 0076。
+            # 其它类型终局路径不动。期限真源＝案卷列/payload.due_turn（军令同款单源）。
+            if str(row.get("action_type") or "") == "grant_allocation":
+                try:
+                    due_turn = int(row.get("due_turn") or 0)
+                except (TypeError, ValueError):
+                    due_turn = 0
+                if due_turn <= 0:
+                    try:
+                        due_turn = int(payload.get("due_turn") or 0)
+                    except (TypeError, ValueError):
+                        due_turn = 0
+                if due_turn > int(state.turn):
+                    self.transition_decree_dossier(
+                        dossier_id, "executing", commit=False,
+                    )
+                    return affected_people
             if policy["execution_surface"] in {"terminal", "immediate"}:
                 self.record_dossier_execution(
                     dossier_id, "fulfilled", "颁布即终局", state.turn,

@@ -462,6 +462,12 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         out["target_ids"] = obj.get("target_ids")
     elif "目标编号" in obj and obj.get("目标编号") is not None:
         out["target_ids"] = obj.get("目标编号")
+    # #1783+#1778：仅 grant 一件事一案可带承办人/名单过缝（assignment 承办人走后置抽取，
+    # 分类器 assignee 不得当改派入口——见 test_assignment_lead_from_extract_*）。
+    if kind == "grant_allocation":
+        for key in ("assignee", "assignee_id", "assignee_name", "participant_roster", "承办人"):
+            if key in obj and obj.get(key) not in (None, ""):
+                out[key if key != "承办人" else "assignee"] = obj.get(key)
     return out
 
 

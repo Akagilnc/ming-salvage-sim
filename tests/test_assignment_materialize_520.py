@@ -434,6 +434,11 @@ def test_classify_prompt_carries_turn_and_stop_condition_contract(monkeypatch, g
     assert f"当前回合={int(state.turn)}" in prompt or f"当前回合：{int(state.turn)}" in prompt
     assert "region" in prompt and "army" in prompt and "character" in prompt
     assert "stop_condition" in prompt or "停止条件" in prompt
+    # #1783：旧按动词并列病根句不得再出现（并入既有说明书契约测，不另立并行）
+    assert "拟旨与其任免/拨帑等机械载荷候选可按既有契约并存" not in prompt
+    assert "不得因拟旨前缀改判拟旨而省略拨款候选" not in prompt
+    assert "交办·责成表达与拟旨彼此独立" not in prompt
+    assert "日级期限无法换算为月数或回合，不填写期限月数或截止回合" not in prompt
 
 
 def test_classify_prompt_stop_condition_example_is_single_layer_json(monkeypatch, game):
