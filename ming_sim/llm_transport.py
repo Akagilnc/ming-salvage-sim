@@ -33,6 +33,7 @@ from ming_sim.models import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
     TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
     TRANSPORT_DEFAULT_MAX_ATTEMPTS,
+    TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
 )
 
 R = TypeVar("R")
@@ -59,6 +60,8 @@ class TransportPolicy:
     max_attempts: int = TRANSPORT_DEFAULT_MAX_ATTEMPTS
     # SDK/httpx read 阻塞预算（bind_transport_sdk_budget → model.timeout）。
     attempt_timeout_seconds: float = TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
+    # #1792：可重试失败 → 下一 attempt 起手前的固定间隔（秒）。不按失败种类区分。
+    retry_interval_seconds: float = TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
     # 事件界空转预算（check_idle_budget）；与 SDK 阻塞轴分家，不得混用。
     # 真源 = 设置页那一格（cli.timeout_seconds），此处只兜底其默认。
     idle_timeout_seconds: float = CLI_DEFAULT_TIMEOUT_SECONDS
@@ -125,6 +128,7 @@ def transport_policy_from_mapping(data: object) -> TransportPolicy:
     return TransportPolicy(
         max_attempts=int(slot["max_attempts"]),
         attempt_timeout_seconds=float(slot["attempt_timeout_seconds"]),
+        retry_interval_seconds=float(slot["retry_interval_seconds"]),
         idle_timeout_seconds=cli_idle_timeout_seconds(data),
     )
 
@@ -505,6 +509,16 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
         _typed_provider_failure.set(None)
 
 
+def _sleep_retry_interval(seconds: float) -> None:
+    """可重试失败后的 attempt 间隔等待（#1792）。
+
+    API / CLI / 流式均经 run_with_transport 唯一入口；禁第二处 sleep。
+    测试可 patch 本函数为推进受控时钟，不真等墙钟。
+    """
+    if seconds > 0:
+        time.sleep(seconds)
+
+
 def run_with_transport(
     operation: Callable[[], R],
     *,
@@ -514,6 +528,7 @@ def run_with_transport(
 
     半流：不设「任一输出后一律不重试」。已呈现正文的相容由既有落账/恢复接缝承担；
     不在此新增缓冲、去重或回滚立法。
+    可重试失败后、下一 attempt 起手前等待 retry_interval_seconds（#1792）。
     """
     pol = policy or default_transport_policy()
     attempts: List[TransportAttempt] = []
@@ -539,6 +554,7 @@ def run_with_transport(
                 )
             )
             if will_retry:
+                _sleep_retry_interval(pol.retry_interval_seconds)
                 continue
             # 非 transport 域的编程/未知异常原样上浮（0005 响亮；不改 message）
             if failure.code == "llm_error" and not isinstance(error, LLMUnavailable):
