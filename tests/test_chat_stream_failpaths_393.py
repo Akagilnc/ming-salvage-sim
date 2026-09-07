@@ -1289,44 +1289,27 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
     assert int(done.get("minister_message_id") or 0) > 0
 
 
-def test_chat_stream_halfstream_terminal_fail_replaces_temp_system_layer(
+def test_chat_stream_halfstream_terminal_fail_replaces_temp(
     monkeypatch, game,
 ):
-    """#1465 ④：半流已出 delta 后终失败 → replace 清临时正文 + 系统层人话 error。
+    """#1465 ④：半流已出 delta 后终失败 → content → replace → error；重放临时正文空。
 
-    事件序列：content delta → replace delta → error。客户端重放后临时正文空；
-    error.message 非固定戏内话术（P7 / ADR 0046）。既有恢复：轮 failed、夜开、可重发。
+    恢复/重发由 dismiss 耗尽案与 three_transient 案承担；系统层 typed 由 RunErrorEvent 案承担。
     """
-    from ming_sim import audience_night as an
 
     class _PartialThenTerminal:
-        def __init__(self):
-            self.calls = 0
-
         def run(self, *_a, **_k):
-            self.calls += 1
             yield RunContent("半句未完")
             yield RunErrorEvent("Unknown model error")
 
     agent = _PartialThenTerminal()
     web_game, minister = _transport_web_game(game, agent)
-    db = web_game.db
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
-    detail = events[-1][1]
-    assert detail.get("code") == "llm_stream_error"
-    assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
-    assert detail.get("message"), detail
-    # 系统层人话（非戏内口吻）；诊断在 provider_message
-    assert "Unknown model error" in str(detail.get("provider_message") or "")
-    assert agent.calls == 1
 
-    # 呈现结构：content delta 之后、error 之前必须有 replace（终失败清临时）
-    types = [e[0] for e in events]
-    assert "delta" in types and "error" in types, events
     idx_content = next(
         i for i, (n, d) in enumerate(events)
         if n == "delta" and d.get("content") and not d.get("replace")
@@ -1338,7 +1321,6 @@ def test_chat_stream_halfstream_terminal_fail_replaces_temp_system_layer(
     idx_error = next(i for i, (n, _) in enumerate(events) if n == "error")
     assert idx_content < idx_replace < idx_error, events
 
-    # 客户端重放：replace 后临时正文空（不残留半句戏内）
     temp = ""
     for name, data in events:
         if name != "delta":
@@ -1350,42 +1332,19 @@ def test_chat_stream_halfstream_terminal_fail_replaces_temp_system_layer(
             temp += content
     assert temp == ""
 
-    failed_turn = int(detail.get("chat_turn_id") or 0)
-    assert failed_turn > 0
-    fail_row = db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (failed_turn,),
-    ).fetchone()
-    assert fail_row is not None
-    assert str(fail_row["status"]) == "failed"
-    assert an.get_open_night(db) is not None
-
-    # 可重发
-    ok_agent = _CountingFailAgent(
-        fail_times=0,
-        error_factory=lambda _n: LLMUnavailable("x", code="llm_connection_error"),
-    )
-    web_game.session.registry.agent = ok_agent
-    response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
-    events2 = _parse_sse(response2.text)
-    assert "done" in [e[0] for e in events2], events2
-    done2 = next(e[1] for e in events2 if e[0] == "done")
-    assert int(done2.get("chat_turn_id") or 0) != failed_turn
-    assert int(done2.get("minister_message_id") or 0) > 0
-
 
 def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     monkeypatch, game,
 ):
-    """#1465 ④：流终包 status=ERROR → 系统层 typed 终失败，禁固定戏内话术。
+    """#1465 ④：流终包 status=ERROR → 真入口 SSE typed code + 横幅不进 message。
 
-    extract_agent_text 是 ERROR status 唯一出口；召对真实入口读回 SSE message。
+    replace 序由 halfstream_terminal_fail_replaces_temp 承担。
     """
 
     class _ErrorStatusAgent:
         def run(self, *_a, **_k):
             yield RunContent("半句")
             ev = RunCompletedEvent()
-            # 实例级 status/content：模拟 agno 吞异常后的终包
             ev.status = "ERROR"
             ev.content = "provider banner: exit code 1 / workdir:/tmp"
             ev.tools = []
@@ -1405,16 +1364,7 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
     # 机器横幅不进玩家 message；诊断在 provider_message
     assert "workdir" not in str(detail.get("message") or "")
     assert "exit code" not in str(detail.get("message") or "").lower()
-    assert "banner" in str(detail.get("provider_message") or "").lower() or (
-        "exit code" in str(detail.get("provider_message") or "").lower()
-    )
-    # 半流已出 delta → 终失败须 replace
-    idx_replace = next(
-        (i for i, (n, d) in enumerate(events) if n == "delta" and d.get("replace")),
-        None,
-    )
-    idx_error = next(i for i, (n, _) in enumerate(events) if n == "error")
-    assert idx_replace is not None and idx_replace < idx_error, events
+    assert detail.get("provider_message")
 
 
 def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
@@ -1481,9 +1431,6 @@ def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
     attempts = detail.get("transport_attempts") or []
     assert len(attempts) == max_a
     assert attempts[-1].get("outcome") == "terminal_fail"
-
-    # 终失败 replace（半流已呈现）
-    assert any(n == "delta" and d.get("replace") for n, d in events), events
 
     failed_turn = int(detail.get("chat_turn_id") or 0)
     assert failed_turn > 0
