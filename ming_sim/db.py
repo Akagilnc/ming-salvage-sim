@@ -16413,7 +16413,7 @@ class GameDB:
                     state, row, payload, dossier_id,
                 )
             elif row["action_type"] == "assignment":
-                # #520 / ADR 0055：交办机械效果=initiative，顺颁后落；cap 逐项软拒。
+                # #520 / ADR 0055：交办机械效果=initiative，顺颁后落。
                 if not self._apply_assignment_verdict_effect(
                     state, row, payload, dossier_id,
                 ):
@@ -17336,7 +17336,7 @@ class GameDB:
     ) -> bool:
         """#524：下议案卷顺颁后创建 initiative（机关 participants + end_turn）。
 
-        Returns False on soft-reject (cap 等)；True 时 caller 继续 executing 过渡。
+        Returns False on soft-reject；True 时 caller 继续 executing 过渡。
         禁个人 owner：participants 仅 responsible_bodies 机关/职司名。
         """
         from ming_sim.action_materialize import (
@@ -17430,7 +17430,7 @@ class GameDB:
     ) -> bool:
         """#520：交办案卷顺颁后创建 initiative（owner + 可选军令状承诺）。
 
-        Returns False when the item was soft-rejected (cap / invalid commitment
+        Returns False when the item was soft-rejected (invalid commitment
         shape) and terminal failure already recorded — caller must return early.
         Returns True when initiative landed and caller should continue to the
         shared executing/terminal transition.
@@ -17460,8 +17460,8 @@ class GameDB:
         if commitment_kind == "无":
             commitment_kind = ""
 
-        # cap / 「分身乏术」单一真源 = apply_score_extraction（issues.py）；
-        # 本接缝只组装 item 并消费逐项 rejected → 案卷执行失败。
+        # 本接缝组装 new_issues item，经 apply_score_extraction 落地；
+        # 逐项 rejected（毒形等）→ 案卷执行失败。#1790 废在办数量硬上限。
         # #520 只授权捕获与落库；不夹带民心等兑现效果（兑现归 #476）。
         ni: Dict[str, object] = {
             "origin_kind": "decree",
@@ -17515,7 +17515,7 @@ class GameDB:
         item = created[0] if created else {"rejected": True, "reason": "交办 initiative 未落"}
         if item.get("rejected"):
             reason = str(item.get("reason") or "交办 initiative 被拒")
-            # cap 文案保持戏内回禀；其它校验失败同样逐项软拒，不掀整批。
+            # 校验失败逐项软拒，不掀整批。
             self.transition_decree_dossier(dossier_id, "executing", commit=False)
             self.record_dossier_execution(
                 dossier_id, "failed", reason, state.turn, close=True, commit=False,

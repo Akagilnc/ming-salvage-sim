@@ -5,7 +5,7 @@ Seams:
 - run_materialize_pipeline / apply_cli_conversation_actions
 - commit_pending_actions（收夜落案卷，不成 initiative）
 - apply_dossier_verdicts（0055 顺颁才落 initiative）
-- 既有 initiative 校验/cap、ADR 0038 撤回前像
+- 既有 initiative 校验、ADR 0038 撤回前像
 """
 
 from __future__ import annotations
@@ -1393,52 +1393,6 @@ def test_beat10_accept_three_lands_three_independent_initiatives(game, monkeypat
             p.get("character_id") == actor.name and p.get("tier") == "主办"
             for p in roster
         )
-
-
-# ── cap 逐项 ──────────────────────────────────────────────────────────
-
-
-def test_cap15_per_item_reject_overflow_lands_rest(game):
-    """撞 cap=15：超出项拒+戏内回禀朝廷分身乏术，可落项照落。"""
-    db, state, content = game
-    actor = _active_ming(db, content)
-    for idx in range(14):
-        db.insert_issue(
-            state, kind="initiative", title=f"既有国策{idx}",
-            origin_kind="decree",
-            effect_on_resolve={"metrics": {"民心": 1}},
-        )
-    assert db.count_active_initiatives() == 14
-
-    d_ids = []
-    for title, tid in (("可落交办", "can-land"), ("超出交办", "overflow")):
-        ctx = _stage_assignment(
-            db, state.turn, title=title, target_id=tid, assignee=actor.name,
-        )
-        d_ids.append(_close_night_dossier(db, state, content, ctx.out["pending_action_id"])["id"])
-
-    db.apply_dossier_verdicts(state, [
-        {"dossier_id": d_ids[0], "decision": "promulgated"},
-        {"dossier_id": d_ids[1], "decision": "promulgated"},
-    ], content=content)
-
-    assert db.count_active_initiatives() == 15
-    landed = [
-        r for r in _active_initiatives(db)
-        if r["origin_ref"] == f"dossier:{d_ids[0]}"
-    ]
-    assert len(landed) == 1
-    overflow = db.get_decree_dossier(d_ids[1])
-    # 超出项不得创建 initiative；执行失败留痕含戏内回禀
-    assert not any(r["origin_ref"] == f"dossier:{d_ids[1]}" for r in _active_initiatives(db))
-    exec_note = str(overflow.get("execution_note") or overflow.get("status") or "")
-    # 失败关闭或 note 含分身乏术
-    row = db.conn.execute(
-        "SELECT execution_outcome, execution_note, status FROM decree_dossiers WHERE id=?",
-        (d_ids[1],),
-    ).fetchone()
-    blob = " ".join(str(row[k] or "") for k in row.keys())
-    assert "分身乏术" in blob or "朝廷分身乏术" in blob
 
 
 # ── 0038 跨轮强化撤回前像 ────────────────────────────────────────────

@@ -11,7 +11,10 @@ from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
     assemble_structured_decree,
 )
-from tests.test_month_loop_tracer_1468 import _post_issue_stream, tracer_client  # noqa: F401
+from tests.test_month_loop_tracer_1468 import (  # noqa: F401
+    _post_issue_stream,
+    tracer_client,
+)
 
 # #1778 决定 3：拟票大臣把参与名单写进票拟（主办可多人）；代码不按职司表配人。
 _OWNER_ROSTER = [
@@ -369,6 +372,105 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     # assignment 不得跨动作透传执行面（#1624）；与 multi-aim military 同契：字段缺失或空。
     assert str(payload.get("execution_surface") or "").strip() == ""
     _assert_drafted_roster_nailed(game.db, matched[0])
+
+
+def _two_axis_owner_and_province_open(db, *, owner_name: str, region_id: str):
+    """0092 两轴既有面：结构化 owner_open_count / province_open_count（不锁 TSV 措辞）。"""
+    from ming_sim.execution_pressure import build_execution_two_axis_surface
+
+    surface = build_execution_two_axis_surface(db, transit_semantics=[])
+    owner_open = 0
+    for block in surface.get("provinces") or []:
+        for own in block.get("owners") or []:
+            if str(own.get("owner_name") or "") == owner_name:
+                owner_open = int(own.get("owner_open_count") or 0)
+                break
+        if owner_open:
+            break
+    province_open = 0
+    for block in surface.get("provinces") or []:
+        if str(block.get("region_id") or "") == region_id:
+            province_open = int(block.get("province_open_count") or 0)
+            break
+    return owner_open, province_open
+
+
+def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
+    tracer_client, monkeypatch,
+):
+    """#1790 验收：≥15 件 initiative 在办时票拟再下一旨 → 第 16 成案、executing 差务、
+    turn+1 不中止；两轴该主办/属地在办数 +1。
+
+    入口＝既有票拟 /api/directives（#1624 seal 同形），非 apply 层 helper、非 1565 交办、
+    非 #1783 拨帑 tracer。填帽 insert_issue 直落；观察面 build_execution_two_axis_surface。
+    """
+    import ming_sim.cli_backend as cli_backend
+    import web_app
+
+    new = tracer_client.post("/api/menu/new_game")
+    assert new.status_code == 200, new.text
+    game = web_app.web_game
+    assert game is not None
+    db, state = game.db, game.state
+
+    owner_name = "毕自严"
+    region_id = "shaanxi"
+    for idx in range(15):
+        db.insert_issue(
+            state,
+            kind="initiative",
+            title=f"在办占位{idx}",
+            origin_kind="decree",
+            origin_ref=f"cap-fill:{idx}",
+            effect_on_resolve={"metrics": {"民心": 1}},
+        )
+    assert db.count_active_initiatives() >= 15
+    owner_before, province_before = _two_axis_owner_and_province_open(
+        db, owner_name=owner_name, region_id=region_id,
+    )
+
+    def backend(*_a, **_k):
+        return _owner_manual_backend_json(), 1
+
+    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    response = tracer_client.post(
+        "/api/directives",
+        json={"text": "着户部继续核查陕西赈务，按月具报。", "notes": ""},
+    )
+    assert response.status_code == 200, response.text
+
+    turn_before = int(state.turn)
+    body = _post_issue_stream(
+        tracer_client,
+        expected_turn=turn_before,
+        step="#1790 beyond-fifteen issue/stream",
+    )
+    assert not body.get("awaiting_decision"), body
+    assert int(game.state.turn) == turn_before + 1
+
+    assert db.count_active_initiatives() >= 16
+    matched = [
+        dict(d) for d in db.list_decree_dossiers()
+        if str(json.loads(d.get("payload_json") or "{}").get("target_id") or "")
+        == region_id
+        and str(json.loads(d.get("payload_json") or "{}").get("transaction_category") or "")
+        == "督赈"
+    ]
+    assert len(matched) == 1, matched
+    dossier = matched[0]
+    assert dossier["status"] == "executing", dossier
+    assert str(dossier.get("region_id") or "") == region_id, dossier
+    _assert_drafted_roster_nailed(db, dossier)
+
+    landed = db.find_active_issue_by_origin("decree", f"dossier:{dossier['id']}")
+    assert landed is not None and str(landed["kind"]) == "initiative", landed
+
+    owner_after, province_after = _two_axis_owner_and_province_open(
+        db, owner_name=owner_name, region_id=region_id,
+    )
+    assert owner_after == owner_before + 1, (owner_before, owner_after)
+    assert province_after == province_before + 1, (province_before, province_after)
 
 
 def test_normalize_rescript_layer_a_option_contract():
