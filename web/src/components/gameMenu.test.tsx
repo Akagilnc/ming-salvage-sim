@@ -88,7 +88,10 @@ afterEach(() => {
 
 describe("LLMConfigTab — channel-gated field rendering", () => {
   beforeEach(() => {
-    mockFetch(BASE_LLM_RESPONSE);
+    mockFetch({
+      ...BASE_LLM_RESPONSE,
+      default_headers: { "X-Session": "abc" },
+    });
   });
 
   it("shows API fields and hides CLI fields when channel=api (initial render)", async () => {
@@ -101,6 +104,8 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(text).toContain("推理强度");
     expect(text).not.toContain("CLI Runner");
     expect(text).not.toContain("静默判死");
+    // #1794：头表属 API 区——有请求头名输入即露表（不锁标题措辞）
+    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(1);
     cleanup();
   });
 
@@ -123,6 +128,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(text).toContain("CLI Runner");
     expect(text).toContain("静默判死");
     expect(text).not.toContain("Base URL");
+    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(0);
     cleanup();
   });
 
@@ -150,6 +156,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("Base URL");
     expect(text).not.toContain("CLI Runner");
+    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(1);
     cleanup();
   });
 
@@ -161,6 +168,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("CLI Runner");
     expect(text).not.toContain("Base URL");
+    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(0);
     cleanup();
   });
 
@@ -861,6 +869,95 @@ describe("#1732 GameMenu · 就地消解", () => {
     });
     expect(calls.some((c) => String(c.url).includes("/api/saves/keep") && c.init?.method === "DELETE")).toBe(true);
     expect(onRefresh).toHaveBeenCalled();
+    cleanup();
+  });
+});
+
+describe("LLMConfigTab — default_headers table (#1794)", () => {
+  it("loads existing headers, saves edits with the same action, and drops deleted rows", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (!init?.method || init.method === "GET") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ...BASE_LLM_RESPONSE,
+            default_headers: {
+              "X-Session": "abc",
+              "User-Agent": "ming-qa/1.0",
+            },
+          }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          ...BASE_LLM_RESPONSE,
+          default_headers: { "X-Session": "abc", "User-Agent": "ming-qa/1.0", "X-Extra": "1" },
+        }),
+      } as Response);
+    });
+
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const nameInputs = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头名"]')
+    );
+    const valueInputs = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头值"]')
+    );
+    expect(nameInputs.map((el) => el.value)).toEqual(["X-Session", "User-Agent"]);
+    expect(valueInputs.map((el) => el.value)).toEqual(["abc", "ming-qa/1.0"]);
+
+    const addBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("增行")
+    );
+    expect(addBtn).toBeTruthy();
+    await act(async () => {
+      addBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const namesAfterAdd = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头名"]')
+    );
+    const valuesAfterAdd = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头值"]')
+    );
+    act(() => {
+      changeInput(namesAfterAdd[2]!, "X-Extra");
+      changeInput(valuesAfterAdd[2]!, "1");
+    });
+
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    expect(post).toBeTruthy();
+    expect(JSON.parse(String(post!.init!.body)).default_headers).toEqual({
+      "X-Session": "abc",
+      "User-Agent": "ming-qa/1.0",
+      "X-Extra": "1",
+    });
+
+    // 删第二行后同一保存动作不再带该头
+    const deleteBtns = Array.from(document.querySelectorAll('button[aria-label="删除请求头行"]'));
+    expect(deleteBtns.length).toBeGreaterThanOrEqual(2);
+    await act(async () => {
+      deleteBtns[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    calls.length = 0;
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const post2 = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    expect(JSON.parse(String(post2!.init!.body)).default_headers).toEqual({
+      "X-Session": "abc",
+      "X-Extra": "1",
+    });
     cleanup();
   });
 });

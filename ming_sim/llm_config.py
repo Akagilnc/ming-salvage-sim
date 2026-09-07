@@ -33,6 +33,7 @@ _API_RUNTIME_FIELDS = (
     "advanced_api_key",
     "advanced_thinking_level",
     "reasoning_strength",
+    "default_headers",  # #1794：附加请求头表（名→值）；空表＝现状
 )
 # cli.timeout_seconds = 设置页那一格 = 静默判死阈值（#1465 切片③ owner 2026-09-07）。
 _CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds", "reasoning_strength")
@@ -66,6 +67,13 @@ def real_api_key_or_empty(value: object) -> str:
 def _slot_text(data: Dict[str, object], key: str) -> str:
     value = data.get(key, "")
     return "" if value is None else str(value)
+
+
+def _slot_header_table(value: object) -> Dict[str, str]:
+    """#1794 附加请求头表：名→值。非整表 dict 视为空表；不校验头名/值语义。"""
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): "" if v is None else str(v) for k, v in value.items()}
 
 
 # API slot 的数值字段保持 JSON 数值类型（int/float），让 preserve-save 与 fresh-save 产出
@@ -108,6 +116,8 @@ def _api_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
             out[k] = ""
         elif k == "reasoning_strength":
             out[k] = normalize_reasoning_strength(data.get(k))
+        elif k == "default_headers":
+            out[k] = _slot_header_table(data.get(k))
         else:
             out[k] = _slot_text(data, k)
     return out
@@ -383,6 +393,7 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
             cli_runner=cfg.cli_runner,
             cli_model=cfg.cli_model,
             cli_timeout_seconds=cfg.cli_timeout_seconds,
+            default_headers=dict(cfg.default_headers or {}),
         )
     return cfg
 
@@ -420,6 +431,7 @@ def save_runtime_llm(
     transport_max_attempts: Optional[int] = None,
     transport_attempt_timeout_seconds: Optional[float] = None,
     transport_retry_interval_seconds: Optional[float] = None,
+    default_headers: Optional[Dict[str, str]] = None,
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
@@ -443,6 +455,12 @@ def save_runtime_llm(
         advanced_thinking_level,
     )
     preserve_api = active_channel == "cli" and not any((value or "").strip() for value in api_inputs)
+    # #1794：头表未显式传入时保留既存（旧客户端省略字段不得擦掉）。
+    headers_payload = (
+        _slot_header_table(default_headers)
+        if default_headers is not None
+        else _slot_header_table(existing_api.get("default_headers"))
+    )
     api_payload = (
         _api_runtime_slot(existing_api)
         if preserve_api
@@ -456,6 +474,7 @@ def save_runtime_llm(
             "advanced_base_url": (advanced_base_url or "").strip(),
             "advanced_api_key": (advanced_api_key or "").strip(),
             "advanced_thinking_level": "",
+            "default_headers": headers_payload,
         }
     )
     cli_payload = {

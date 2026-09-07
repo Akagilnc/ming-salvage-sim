@@ -233,6 +233,104 @@ def test_create_chat_model_never_injects_max_tokens(monkeypatch):
         assert "max_tokens" not in kwargs
 
 
+def test_create_chat_model_passes_default_headers_at_transport_boundary(monkeypatch):
+    """#1794：配置附加头整张交给 OpenAIChat.default_headers 公开字段。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    headers = {
+        "X-Custom-Session": "sess-fixed-1",
+        "User-Agent": "ming-qa/1.0",
+    }
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+        default_headers=headers,
+    )
+
+    model = create_chat_model(cfg)
+
+    assert isinstance(model, OpenAIChat)
+    assert not isinstance(model, CliChat)
+    assert model.default_headers == headers
+
+
+def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
+    """#1794：空表＝现状——不向底层塞 default_headers。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    captured: list = []
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+    )
+
+    create_chat_model(cfg)
+
+    assert len(captured) == 1
+    assert "default_headers" not in captured[0]
+
+
+def test_minister_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game):
+    """#1794：召对/拟诏真实入口 → OpenAIChat 构造缝头表整张到达；不跑真实 LLM。"""
+    from ming_sim.agents import bind_content as agents_bind, create_rescript_draft_agent
+    from ming_sim.models import CourtContext
+    from ming_sim.registry import bind_content as registry_bind, create_minister_agent
+
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    db, state, content = game
+    agents_bind(content)
+    registry_bind(content)
+
+    headers = {
+        "X-Custom-Session": "sess-fixed-1",
+        "User-Agent": "ming-qa/1.0",
+    }
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+        default_headers=headers,
+    )
+
+    captured: list = []
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured.append(dict(kwargs))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
+
+    character = next(
+        c for c in content.characters.values()
+        if c.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(c.name)[0] == "active"
+    )
+    create_minister_agent(
+        character,
+        cfg,
+        CourtContext(state=state, db=db, previous_summary=""),
+        db,
+    )
+    assert captured, "召对入口须构造 OpenAIChat"
+    assert captured[-1].get("default_headers") == headers
+
+    before = len(captured)
+    create_rescript_draft_agent(cfg, db)
+    assert len(captured) == before + 1, "拟诏入口须再构造一次 OpenAIChat"
+    assert captured[-1].get("default_headers") == headers
+
+
 def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch):
     """#1452：luna/gpt-5 推理族拒 top_p（HTTP 400 空 assistant → agno Unknown model error）。
     召对 registry 固定传 top_p=0.9，工厂必须剥离，temperature 可保留。"""
