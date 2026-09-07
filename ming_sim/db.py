@@ -16355,7 +16355,7 @@ class GameDB:
                     state, row, payload, dossier_id,
                 )
             elif row["action_type"] == "assignment":
-                # #520 / ADR 0055：交办机械效果=initiative，顺颁后落；cap 逐项软拒。
+                # #520 / ADR 0055：交办机械效果=initiative，顺颁后落。
                 if not self._apply_assignment_verdict_effect(
                     state, row, payload, dossier_id,
                 ):
@@ -17384,8 +17384,8 @@ class GameDB:
         if commitment_kind == "无":
             commitment_kind = ""
 
-        # cap / 「分身乏术」单一真源 = apply_score_extraction（issues.py）；
-        # 本接缝只组装 item 并消费逐项 rejected → 案卷执行失败。
+        # 本接缝组装 new_issues item，经 apply_score_extraction 落地；
+        # 逐项 rejected（毒形等）→ 案卷执行失败。#1790 废在办数量硬上限。
         # #520 只授权捕获与落库；不夹带民心等兑现效果（兑现归 #476）。
         ni: Dict[str, object] = {
             "origin_kind": "decree",
