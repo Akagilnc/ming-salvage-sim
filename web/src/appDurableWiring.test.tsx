@@ -1537,6 +1537,155 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
   });
 
+  it("#1796 有草案点盖玺：拟诏台立即收起，核账期面 + 居中等待卡，灰钮不可见", async () => {
+    // 真实入口：开拟诏 → 盖玺 → busy 同会话装饰立即切面；流挂起期间断言外可见结果。
+    // settlement_display 持久真源不升格；流终态走 decisions 避免 reload。
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    const liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { streamController = controller; },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const seal = findButton(host, "盖玺颁诏过月");
+    expect(seal).toBeTruthy();
+    await click(seal);
+
+    // 立即：拟诏台收起；居中等待卡；灰盖玺钮不再可见。
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
+        expect(host.querySelector("[data-testid=settlement-lock-decor]")).not.toBeNull();
+      });
+    });
+    expect(findButton(host, "盖玺颁诏过月")).toBeFalsy();
+    // 核账期面（同会话 face）：王承恩递话 + 半程局势藏；#1725 兜底措辞/aria 刻度不重证
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull());
+    });
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+
+    // 收束：decisions → 必达 DecisionModal 仍可达（#1236；兼本票批红从新入口之证明）
+    await act(async () => {
+      await vi.waitFor(() => expect(streamController).toBeTruthy());
+      streamController.enqueue(encoder.encode(
+        `event: decisions\ndata: ${JSON.stringify({ decisions: [validDecision] })}\n\n`,
+      ));
+      streamController.close();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+  });
+
+  it("#1796 无草案退朝结束本月：同样切核账期面 + 居中卡", async () => {
+    let releaseAdvance!: (value: Response) => void;
+    const advanceGate = new Promise<Response>((resolve) => { releaseAdvance = resolve; });
+    let liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      directives: [],
+      // failed-only 路径：无草案但有失败密令，页脚走退朝确认
+      failed_secret_order_count: 1,
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/advance_without_edict") && init?.method === "POST") {
+        return advanceGate;
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    // failed-only：先点退朝打开确认，再确认退朝结束本月
+    const retreat = findButton(host, "退朝结束本月");
+    expect(retreat).toBeTruthy();
+    await click(retreat);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[aria-label="退朝确认"]')).not.toBeNull());
+    });
+    const confirm = Array.from(host.querySelector('[aria-label="退朝确认"]')!.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("退朝结束本月"),
+    );
+    expect(confirm).toBeTruthy();
+    await click(confirm);
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
+        expect(host.querySelector("[data-testid=settlement-lock-decor]")).not.toBeNull();
+      });
+    });
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
+
+    // 放行 advance：awaiting 停窗，busy 清后批红必达
+    liveState = settlementBaseState("awaiting_decision", {
+      pending_decisions: [validDecision],
+      previous_summary: "",
+    });
+    await act(async () => {
+      releaseAdvance(jsonResp({
+        state: liveState,
+        awaiting_decision: true,
+        decisions: [validDecision],
+        pending_action_failures: [],
+      }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
+  });
+
   it("awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在", async () => {
     stubSettlementFetch(settlementBaseState("awaiting_decision", {
       pending_decisions: [validDecision],

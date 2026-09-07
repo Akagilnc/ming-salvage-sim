@@ -376,16 +376,21 @@ export function App() {
 
   // #1236：关闭组面若仍挂着（刷新前已开），核账期强制收起，避免半程内容残留。
   // hooks 须在 early return 之前。关闭组成员固定，不经表查字面 true。
+  // #1796：settlementFace 单点 OR（持久 ∨ 同会话 busy）；抽屉收起吃 face，
+  // setActiveModal("none") 仍只吃持久 settlementDisplay——失败清 busy 后拟诏台可带回 error。
+  const sessionSettlingBusy = busy === "月末结算";
   const settlementDisplay = isSettlementDisplay(state?.turn);
+  const settlementFace = settlementDisplay || sessionSettlingBusy;
   React.useEffect(() => {
-    if (!settlementDisplay) return;
+    if (!settlementFace) return;
     setRegionDrawerOpen(false);
     setArmyDrawerOpen(false);
     setMapIntelOpen(false);
+    if (!settlementDisplay) return;
     if (activeModal === "secret_orders" || activeModal === "edict" || activeModal === "chat") {
       setActiveModal("none");
     }
-  }, [settlementDisplay, activeModal]);
+  }, [settlementFace, settlementDisplay, activeModal]);
 
   // #1342：hooks 须在 early return 之前。开底部命令模态时收起全部抽屉。
   const closeAllDrawers = React.useCallback(() => {
@@ -496,11 +501,11 @@ export function App() {
     }
   };
 
-  // #1236：核账门控唯一谓词 = 状态口 settlement_display。
-  // busy==="月末结算" 仅驱动同会话非权威装饰 SettlementLock，绝不充真源、不挡必达三面。
-  const sessionSettlingBusy = busy === "月末结算";
+  // #1236：核账门控唯一谓词 = 状态口 settlement_display（刷新/持久）。
+  // #1796：busy==="月末结算" = 同会话装饰——SettlementLock + 立即收拟诏/切核账期面；
+  // 绝不升格为刷新真源、不挡必达三面。settlementFace 仅同会话 OR。
   // 召对写入口属关闭组；名册抽屉仍只读可达。
-  const chatEntryEnabled = isFaceReachable("chat_entry", settlementDisplay);
+  const chatEntryEnabled = isFaceReachable("chat_entry", settlementFace);
 
   const activeDrawerKey =
     drawerOpen ? "court" :
@@ -552,9 +557,11 @@ export function App() {
   const ready = sz.w > 0 && sz.h > 0;
 
   // 关闭/只读模态：若 activeModal 被外路径设到不可达面，不渲染（逐 key 吃 isFaceReachable）。
-  const secretOrdersOpen = activeModal === "secret_orders" && isFaceReachable("secret_orders", settlementDisplay);
-  const edictOpen = activeModal === "edict" && isFaceReachable("edict", settlementDisplay);
-  const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementDisplay);
+  // #1796：关闭组吃 settlementFace（同会话 busy 亦收）；只读组仍只认持久 settlement_display。
+  const secretOrdersOpen = activeModal === "secret_orders" && isFaceReachable("secret_orders", settlementFace);
+  // #1796：点盖玺/退朝 → 拟诏台立即收起，不再原地锁钮盖小卡。
+  const edictOpen = activeModal === "edict" && isFaceReachable("edict", settlementFace);
+  const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementFace);
   const gazetteOpen = activeModal === "report" && isFaceReachable("gazette", settlementDisplay);
   // memorials 面键真源（#1285/#1726）；ModalName 仍用既有 "state" 槽承载奏疏收件箱。
   // 内容接 memorials 投影，与局势 issues 脱钩；核账期只读仍可达。
@@ -565,9 +572,9 @@ export function App() {
   // C：起居注入口单闸 = isFaceReachable(audience_archive)；不再经 gameHud.gatedModal 死枝。
   const audienceArchiveOpen = activeModal === "audience_archive" && isFaceReachable("audience_archive", settlementDisplay);
   const closedIssuesOpen = closedModal.length > 0 && isFaceReachable("closed_issues", settlementDisplay);
-  const mapIntelVisible = mapIntelOpen && selectedNode && isFaceReachable("node_intel", settlementDisplay);
-  const regionOpen = regionDrawerOpen && isFaceReachable("region", settlementDisplay);
-  const armyOpen = armyDrawerOpen && isFaceReachable("army", settlementDisplay);
+  const mapIntelVisible = mapIntelOpen && selectedNode && isFaceReachable("node_intel", settlementFace);
+  const regionOpen = regionDrawerOpen && isFaceReachable("region", settlementFace);
+  const armyOpen = armyDrawerOpen && isFaceReachable("army", settlementFace);
 
   return (
     <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>
@@ -586,6 +593,7 @@ export function App() {
         onClosedFaceAttempt={(reason) => setError(reason)}
         edictOpen={edictOpen}
         onCloseEdict={() => setActiveModal("none")}
+        settlementFace={settlementFace}
       />
 
       <CourtDrawer

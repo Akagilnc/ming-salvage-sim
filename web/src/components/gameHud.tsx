@@ -1,6 +1,5 @@
 import {
   isFaceReachable,
-  isSettlementDisplay,
   settlementClosedReason,
   settlementFaceAccess,
   wangSettlementSlipText,
@@ -39,6 +38,7 @@ export function GameHud({
   onClosedFaceAttempt,
   edictOpen = false,
   onCloseEdict,
+  settlementFace,
 }: {
   stageRef: (el: HTMLDivElement | null) => void;
   ready: boolean;
@@ -57,16 +57,19 @@ export function GameHud({
   /** #1454：拟诏台已开时木牌降为收起语义（勿与盖玺主钮同文双路径）。 */
   edictOpen?: boolean;
   onCloseEdict?: () => void;
+  /**
+   * 切面谓词——由 main 单点算定后传入（#1236 持久 settlement_display ∨ #1796 同会话 busy）。
+   * 组件内不重算 OR；yearMonthLabel 仍只认 state.turn 持久字段。
+   */
+  settlementFace: boolean;
 }) {
-  // #1236：全部门控唯一谓词 = 状态口 settlement_display（禁 busy/phase 充真源）。
-  // #1323：关闭理由/递话正文按 phase 分口吻——只改文案层，锁面谓词不动。
-  const settlementDisplay = isSettlementDisplay(state.turn);
+  // #1323：关闭理由/递话正文按 phase 分口吻——只改文案层，锁面谓词由 settlementFace 传入。
   const phase = state.turn.phase;
   const closedReason = settlementClosedReason(phase);
   const noticeClosed = () => onClosedFaceAttempt?.(closedReason);
 
   const gatedNav = (faceKey: "court_roster" | "appointment_roster" | "harem_roster" | "region" | "army" | "economy" | "building", navKey: string) => {
-    if (!isFaceReachable(faceKey, settlementDisplay)) {
+    if (!isFaceReachable(faceKey, settlementFace)) {
       noticeClosed();
       return;
     }
@@ -75,23 +78,23 @@ export function GameHud({
 
   // audience_archive 不走底部木牌：史册头起居注入口在 main 接 isFaceReachable 单闸。
   const gatedModal = (faceKey: "memorials" | "gazette" | "secret_orders" | "history" | "edict" | "menu", modal: ModalName) => {
-    if (!isFaceReachable(faceKey, settlementDisplay)) {
+    if (!isFaceReachable(faceKey, settlementFace)) {
       noticeClosed();
       return;
     }
     onOpenModal(modal);
   };
 
-  const secretBadge = isFaceReachable("secret_orders", settlementDisplay) ? secretOrderActiveCount : 0;
+  const secretBadge = isFaceReachable("secret_orders", settlementFace) ? secretOrderActiveCount : 0;
   // situation（关闭）与 closed_issues（只读）分 key：核账期藏半程议题，保留上月已结入口。
-  const showSituation = isFaceReachable("situation", settlementDisplay);
-  const showClosedIssues = isFaceReachable("closed_issues", settlementDisplay);
+  const showSituation = isFaceReachable("situation", settlementFace);
+  const showClosedIssues = isFaceReachable("closed_issues", settlementFace);
   const showIssueQuad = showSituation || showClosedIssues;
-  const mapSelectable = isFaceReachable("node_intel", settlementDisplay);
-  const showWangSlip = wangSettlementSlipVisible(settlementDisplay);
+  const mapSelectable = isFaceReachable("node_intel", settlementFace);
+  const showWangSlip = wangSettlementSlipVisible(settlementFace);
   // #1726：奏疏 badge/sub = 未读奏报数（与 issues 局势脱钩）；核账期 memorials 只读仍计未读。
   // 计数规则在 resolveUnreadMemorialCount；此处只保留可达性门控。
-  const memorialsReachable = isFaceReachable("memorials", settlementDisplay);
+  const memorialsReachable = isFaceReachable("memorials", settlementFace);
   const unreadMemorials = memorialsReachable ? unreadMemorialCount : 0;
 
   return (
@@ -135,8 +138,8 @@ export function GameHud({
           width: `${HUD_SLOTS.局势框.width}%`, height: `${HUD_SLOTS.局势框.height}%`,
         }}
           data-settlement-face={showSituation
-            ? settlementFaceAccess("situation", settlementDisplay)
-            : settlementFaceAccess("closed_issues", settlementDisplay)}
+            ? settlementFaceAccess("situation", settlementFace)
+            : settlementFaceAccess("closed_issues", settlementFace)}
         >
           <SituationPanel
             issues={showSituation ? state.issues : []}
@@ -175,7 +178,7 @@ export function GameHud({
       </div>
       {/* 顶栏帝国修正：只读保留 */}
       <div className="hud2-slot hud2-legacy-slot" style={HUD_SLOTS.顶栏.皇威}
-        data-settlement-face={settlementFaceAccess("legacies", settlementDisplay)}>
+        data-settlement-face={settlementFaceAccess("legacies", settlementFace)}>
         <LegacyBar legacies={state.legacies} />
       </div>
       <button className="hud2-menu-btn"
@@ -193,7 +196,7 @@ export function GameHud({
         ["工", "building", "building", "建筑列表", "工部"],
         ["后", "harem", "harem_roster", "后宫", "后宫"],
       ] as const).map(([label, navKey, faceKey, title, slotKey]) => {
-        const reachable = isFaceReachable(faceKey, settlementDisplay);
+        const reachable = isFaceReachable(faceKey, settlementFace);
         return (
           <button key={slotKey}
             className={`hud2-slot hud2-nav${activeDrawerKey === navKey ? " active" : ""}${reachable ? "" : " settlement-closed"}`}
@@ -201,7 +204,7 @@ export function GameHud({
             title={reachable ? title : closedReason}
             aria-label={title}
             aria-disabled={!reachable}
-            data-settlement-face={settlementFaceAccess(faceKey, settlementDisplay)}
+            data-settlement-face={settlementFaceAccess(faceKey, settlementFace)}
             onClick={() => gatedNav(faceKey, navKey)}>
             {label}
           </button>
@@ -221,19 +224,19 @@ export function GameHud({
         onClick={() => gatedModal("gazette", "report")} />
       <CommandSlot slotKey="密令" img="密令"
         badge={secretBadge}
-        caption="密令" sub={isFaceReachable("secret_orders", settlementDisplay) ? "进行中密令" : closedReason}
+        caption="密令" sub={isFaceReachable("secret_orders", settlementFace) ? "进行中密令" : closedReason}
         blocked={edictOpen}
         onClick={() => gatedModal("secret_orders", "secret_orders")} />
       <CommandSlot slotKey="史册" img="史册"
         caption="史册" sub="历代奏报/诏书"
         blocked={edictOpen}
         onClick={() => gatedModal("history", "history")} />
-      <CommandSlot slotKey="拟诏" img="拟诏" badge={isFaceReachable("edict", settlementDisplay) ? state.directives.length : 0}
+      <CommandSlot slotKey="拟诏" img="拟诏" badge={isFaceReachable("edict", settlementFace) ? state.directives.length : 0}
         className={edictOpen ? "edict-toggle-open" : undefined}
         caption={edictOpen ? "拟诏·收起" : "拟诏"}
         sub={edictOpen
           ? "收起拟诏台"
-          : (isFaceReachable("edict", settlementDisplay)
+          : (isFaceReachable("edict", settlementFace)
             ? `${state.directives.length} 道草案`
             : closedReason)}
         onClick={() => {
