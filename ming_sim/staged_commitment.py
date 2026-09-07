@@ -332,14 +332,75 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
     return due
 
 
+def list_due_grant_report_dossiers_for_scan(
+    db: Any, turn: int,
+) -> List[Dict[str, object]]:
+    """#1783：执行中拨帑案卷 due_turn 到期 → 0076 候选（不另立 issue）。
+
+    commitment_ref=0；stage_idx=dossier_id 作 UNIQUE 去重键；
+    payload 携带 dossier_id/origin_ref 供 due_review 桥接。
+    """
+    import json as _json
+
+    rows = db.conn.execute(
+        """
+        SELECT id, decree_text, payload_json, due_turn, execution_outcome, status
+        FROM decree_dossiers
+        WHERE status='executing'
+          AND action_type='grant_allocation'
+          AND due_turn > 0
+          AND due_turn <= ?
+        ORDER BY id
+        """,
+        (int(turn),),
+    ).fetchall()
+    due: List[Dict[str, object]] = []
+    for row in rows:
+        if str(row["execution_outcome"] or "").strip():
+            continue
+        try:
+            payload = _json.loads(str(row["payload_json"] or "{}"))
+        except (TypeError, ValueError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        # 月供/加衔不走回报期限到期复核（与颁布闸同口径）
+        if str(payload.get("cadence") or "").strip() == "每月":
+            continue
+        if str(payload.get("grant_action") or "").strip() in {"加衔", "荫叙"}:
+            continue
+        did = int(row["id"])
+        due_turn = int(row["due_turn"] or 0)
+        title = str(payload.get("title") or payload.get("purpose") or "").strip()
+        criterion = str(payload.get("ongoing_effects") or "").strip() or title or "依限奏报"
+        origin = str(row["decree_text"] or payload.get("text") or criterion).strip()
+        due.append({
+            "commitment_ref": 0,
+            "stage_idx": did,  # UNIQUE(commitment_ref, stage_idx, entry_kind)
+            "due_turn": due_turn,
+            "criterion_text": criterion[:120],
+            "origin_context": origin[:120],
+            "title": title or criterion[:40],
+            "origin_ref": f"dossier:{did}",
+            "payload_json": {
+                "dossier_id": did,
+                "origin_ref": f"dossier:{did}",
+                "grant_report_deadline": True,
+            },
+        })
+    return due
+
+
 def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = True) -> int:
     """结算内确定性写入次回合召对待办。返回新写入条数。
 
     待裁载体改道 next_audience_todos；不置 TurnPhase.AWAITING_DECISION，
     不写 <<DECISION>>，不停轮（0074/0076）。
+    #1783：并入拨帑案卷 due_turn 直挂（commitment_ref=0），不另立承诺事项。
     """
     turn = int(getattr(state, "turn", 0) or 0)
     due_stages = list_due_stages_for_scan(db, turn)
+    due_stages.extend(list_due_grant_report_dossiers_for_scan(db, turn))
     if not due_stages:
         return 0
     written = 0
@@ -353,6 +414,7 @@ def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = Tru
             status=TODO_STATUS_PENDING,
             entry_kind=ENTRY_KIND_STAGED,
             created_turn=turn,
+            payload_json=item.get("payload_json"),
             commit=False,
         )
         if created:

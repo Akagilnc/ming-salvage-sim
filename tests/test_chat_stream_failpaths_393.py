@@ -1111,10 +1111,10 @@ def test_chat_stream_config_max_attempts_override(monkeypatch, tmp_path, game):
     path.write_text(json.dumps({
         "channel": "api",
         "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        "cli": {"timeout_seconds": 30},
         "transport": {
             "max_attempts": 1,
             "attempt_timeout_seconds": 30,
-            "idle_timeout_seconds": 30,
         },
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
@@ -1151,13 +1151,14 @@ def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, tmp_path, 
 
     idle_timeout = 10.0
     path = tmp_path / "runtime_llm.json"
+    # 静默判死阈值 = 设置页那一格（cli.timeout_seconds）；API 通道同吃这一个权威
     path.write_text(json.dumps({
         "channel": "api",
         "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        "cli": {"timeout_seconds": idle_timeout},
         "transport": {
             "max_attempts": 2,
             "attempt_timeout_seconds": 100.0,
-            "idle_timeout_seconds": idle_timeout,
         },
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))

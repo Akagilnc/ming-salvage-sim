@@ -10,6 +10,11 @@ from __future__ import annotations
 import json
 from typing import Dict, List, Mapping
 
+# ADR 0053 机械三档闭集（唯一真源）：归一缝、票拟层 A shape 与 prompt 契约共引，
+# 禁第二份字面量。主办可多人（北极星实证：倪元璐＋黄道周合力清丈畿辅）。
+PARTICIPANT_TIERS = ("主办", "协办", "知情")
+PARTICIPANT_LEAD_TIER = "主办"
+
 # 卫/司 类机关整词（单字留作姓、整词才判机关）。词表单源：assignee-hint 子串与
 # 参与人裸机构 fullmatch 共用，防漂移。
 INSTITUTION_PARTICIPANT_TOKENS = (

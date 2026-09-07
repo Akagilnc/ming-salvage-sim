@@ -3,12 +3,11 @@
 1) #1391 泛称闭集（大臣）capture 零 409；「不存在之人甲」仍 409
 2) #1331/#1339 起居注 involved_people 投影滤非人；默认时辰非「此时」
 3) #1341/#1338 PATCH /api/decree 零调用方已拆，OpenAPI/实现一致
-4) #1327 空载短路 + 非空载有界超时降级 special_decree 草案照落
+4) #1327 空载短路；#1465 切片③：外层 30s 总罩已删
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import types
 
@@ -169,43 +168,6 @@ def test_patch_decree_route_removed_and_directives_remain():
 # ── 4) #1327 空载/有界 capture ─────────────────────────────────────
 
 
-def _install_cleanup_wait_recorder(
-    monkeypatch, cli_backend, wait_flags: list[bool], pools: list,
-):
-    """本文件唯一 cleanup shutdown(wait=) 记录夹具；两 timeout 案共用，不扩通用框架。
-
-    pools 收集 production 创建的 executor，供释放 hold 后 drain——
-    extract_draft_intent 返回后 heal 仍碰 db，fixture 拆库前必须 join pool 线程。
-    """
-    _BasePool = cli_backend.ThreadPoolExecutor
-
-    class _CleanupPool(_BasePool):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            pools.append(self)
-
-        def shutdown(self, wait=True, *, cancel_futures=False):
-            # 进入 cleanup 即记 wait，先于任何 join——wait=True 可被主线程断言红。
-            wait_flags.append(bool(wait))
-            return super().shutdown(wait=wait, cancel_futures=cancel_futures)
-
-    monkeypatch.setattr(cli_backend, "ThreadPoolExecutor", _CleanupPool)
-
-
-def _drain_capture_pools(pools: list) -> None:
-    """释放 hold 后收尽 production shutdown(wait=False) 留下的 pool 线程。
-
-    根因：extractor_finished 只覆盖 extract_draft_intent；其后
-    _ground_relative_pay_order_deadlines 仍用同一 db。fixture 先拆连接时
-    后台线程可 worker 级 segfault（CI xdist gw crash）。
-    走基类 shutdown(wait=True) 只 join，不改 wait_flags 记录。
-    """
-    from concurrent.futures import ThreadPoolExecutor as _RealPool
-
-    for pool in pools:
-        _RealPool.shutdown(pool, wait=True, cancel_futures=False)
-
-
 def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
     """空载：无可抽取正文 → 零 LLM、直落 special_decree。"""
     import ming_sim.cli_backend as cli_backend
@@ -225,134 +187,41 @@ def test_empty_text_capture_short_circuits_without_llm(monkeypatch):
     assert calls == []
 
 
-def test_capture_timeout_degrades_to_special_decree_and_lands(game, monkeypatch):
-    """非空载：LLM 慢/死时有界返回 special_decree，草案仍落库。
+def test_web_create_directive_long_extract_still_lands_real_draft(game, monkeypatch):
+    """#1465 切片③：拟旨 capture 跨旧 30s 罩仍成案（真实入口 → 读回 pending 案卷）。
 
-    等待图：capture 线程等 shutdown；extractor 等 allow_finish；主线程拥有释放。
-    cleanup 接缝进入时记录 wait（join 前）——wait=True 变异在此断言红并可 finally 释放收尾；
-    不靠外部杀进程。hold 证明返回时 extractor 未终态；无 sleep 观察窗、无 causal 复述。
+    真实入口 POST /api/directives；抽取把注入时钟推过 120s（旧外层 30s 总罩下
+    remaining 会扣穿 → 抽取被饿死、落 special_decree 或 LLMUnavailable）。罩既已
+    删，长抽取仍须落**真**草案：结构字段照 LLM 结果走，且读回 pending/案卷可见。
+    确定性、无线程、不跑真墙钟。
     """
-    import threading
-
-    import ming_sim.cli_backend as cli_backend
-    from ming_sim.session import GameSession
-    from tests.wait_utils import wait_until
-
-    db, state, content = game
-    text = "着户部核太仓实存，边饷京营优先发放。"
-
-    allow_finish = threading.Event()
-    extractor_entered = threading.Event()
-    extractor_finished = threading.Event()
-    # cleanup 接缝进入瞬间的 wait 旗（join 前）；晚观察不改值。
-    shutdown_wait_flags: list[bool] = []
-    capture_pools: list = []
-
-    def slow_extract(*_a, **_k):
-        extractor_entered.set()
-        try:
-            # 合法慢输入：受控 hold，触发生产 timeout；终态由测试释放。
-            allow_finish.wait()
-            return {"draft_action": "拟旨", "dossier_action_type": "policy",
-                    "target_kind": "issue", "target_id": "x"}
-        finally:
-            extractor_finished.set()
-
-    monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
-    _install_cleanup_wait_recorder(
-        monkeypatch, cli_backend, shutdown_wait_flags, capture_pools,
-    )
-
-    payload_box: list[dict] = []
-    error_box: list[BaseException] = []
-    capture_done = threading.Event()
-
-    def _run_capture() -> None:
-        try:
-            payload_box.append(
-                cli_backend.capture_manual_directive_payload(
-                    text, None, db=db, content=content, capture_timeout_s=0.3,
-                )
-            )
-        except BaseException as exc:  # noqa: BLE001
-            error_box.append(exc)
-        finally:
-            capture_done.set()
-
-    worker = threading.Thread(target=_run_capture, name="qa-d1-capture")
-    worker.start()
-    try:
-        extractor_entered.wait()
-        # shutdown 接缝已进入即可判 wait；不必等 capture 返回（打破互等）。
-        wait_until(lambda: len(shutdown_wait_flags) > 0)
-        assert shutdown_wait_flags == [False], (
-            "production cleanup must shutdown(wait=False); "
-            f"got {shutdown_wait_flags!r}"
-        )
-        capture_done.wait()
-        assert not error_box, error_box
-        payload = payload_box[0]
-        # 生产 capture_timeout_s 输入保留；旁侧 elapsed 墙钟证据删除。
-        assert payload["dossier_action_type"] == "special_decree"
-        # 仍持有释放屏障：capture 已返回且 extractor 未终态。
-        assert not allow_finish.is_set()
-        assert not extractor_finished.is_set()
-
-        session = GameSession.__new__(GameSession)
-        session.db = db
-        session.state = state
-        session.llm_config = None
-        session.content = content
-        dv = session.add_directive(text, dossier_payload=payload)
-        assert dv.id > 0
-        assert any(r["text"] == text for r in db.list_directives(state))
-
-        allow_finish.set()
-        _drain_capture_pools(capture_pools)
-    finally:
-        # 失败／变异路径也必须真正释放再 drain pool（heal 仍碰 db）。
-        allow_finish.set()
-        _drain_capture_pools(capture_pools)
-        worker.join()
-
-
-def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
-    """POST /api/directives：capture 挂起时仍经生产 timeout 返回且草案落库。
-
-    同 capture 案：cleanup 接缝记 wait；hold 区分 API 返回与 extractor 终态；
-    finally 可释放收尾。
-    """
-    import threading
+    from fastapi.testclient import TestClient
 
     import ming_sim.cli_backend as cli_backend
     import web_app
     from ming_sim.session import GameSession
-    from tests.wait_utils import wait_until
 
     db, state, content = game
-    text = "着户部核太仓实存，不得加派于民。"
-
-    allow_finish = threading.Event()
-    extractor_entered = threading.Event()
-    extractor_finished = threading.Event()
-    shutdown_wait_flags: list[bool] = []
-    capture_pools: list = []
-
-    def slow_extract(*_a, **_k):
-        extractor_entered.set()
-        try:
-            # 合法慢输入：受控 hold，触发生产 timeout；终态由测试释放。
-            allow_finish.wait()
-            return {"draft_action": "无"}
-        finally:
-            extractor_finished.set()
-
-    monkeypatch.setattr(cli_backend, "extract_draft_intent", slow_extract)
-    _install_cleanup_wait_recorder(
-        monkeypatch, cli_backend, shutdown_wait_flags, capture_pools,
+    text = "着毕自严核清太仓实存"
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(
+        cli_backend, "time", types.SimpleNamespace(monotonic=lambda: clock["t"]),
     )
-    # 压短默认有界，避免测时 20s
-    monkeypatch.setattr(cli_backend, "MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S", 0.3)
+    calls: list[str] = []
+
+    def backend(prompt, *_a, tag="", **_k):
+        calls.append(tag)
+        clock["t"] += 120.0  # 单次抽取就跨过旧 30s 总罩
+        return (
+            json.dumps({
+                "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
+                "目标ID": "treasury-audit",
+                "参与人": [{"character_id": "毕自严", "tier": "主办"}],
+            }, ensure_ascii=False),
+            1,
+        )
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
 
     session = GameSession.__new__(GameSession)
     session.db = db
@@ -368,45 +237,26 @@ def test_web_create_directive_bounded_when_capture_hangs(game, monkeypatch):
     )
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
 
-    result_box: list[dict] = []
-    error_box: list[BaseException] = []
-    api_done = threading.Event()
-
-    def _run_api() -> None:
-        try:
-            result_box.append(asyncio.run(web_app.api_create_directive(
-                web_app.DirectiveRequest(text=text, notes="朝堂QA拟诏"),
-            )))
-        except BaseException as exc:  # noqa: BLE001
-            error_box.append(exc)
-        finally:
-            api_done.set()
-
-    worker = threading.Thread(target=_run_api, name="qa-d1-api")
-    worker.start()
-    try:
-        extractor_entered.wait()
-        wait_until(lambda: len(shutdown_wait_flags) > 0)
-        assert shutdown_wait_flags == [False], (
-            "API cleanup must shutdown(wait=False); "
-            f"got {shutdown_wait_flags!r}"
-        )
-        api_done.wait()
-        assert not error_box, error_box
-        result = result_box[0]
-        # 生产 MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S 输入保留；旁侧 elapsed 删除。
-        assert result["directive"]["id"] > 0
-        assert result["directive"]["text"] == text
-        assert db.list_directives(state)
-        assert not allow_finish.is_set()
-        assert not extractor_finished.is_set()
-
-        allow_finish.set()
-        _drain_capture_pools(capture_pools)
-    finally:
-        allow_finish.set()
-        _drain_capture_pools(capture_pools)
-        worker.join()
+    response = TestClient(web_app.app).post(
+        "/api/directives", json={"text": text, "notes": ""},
+    )
+    assert response.status_code == 200, response.text
+    assert clock["t"] - 1000.0 > 30.0, clock  # 确实跨过旧罩
+    body = response.json()
+    directive_id = int(body["directive"]["id"])
+    assert directive_id > 0
+    assert body["directive"]["text"] == text
+    # 读回 pending/案卷：入口回执与库内草案同一条，且案卷结构字段是 LLM 抽取结果，
+    # 不是罩饿死后的 special_decree 兜底。
+    assert directive_id in [int(item["id"]) for item in body["directives"]]
+    rows = db.list_directives(state, statuses=("pending", "draft"))
+    row = next(item for item in rows if int(item["id"]) == directive_id)
+    payload = db.read_directive_dossier_payload(row)
+    assert payload.get("dossier_action_type") == "policy"
+    assert payload.get("target_id") == "treasury-audit"
+    assert [str(i["character_id"]) for i in (payload.get("participant_roster") or [])] == [
+        "毕自严",
+    ]
 
 
 def test_normal_capture_path_unchanged(game, monkeypatch):

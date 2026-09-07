@@ -45,7 +45,8 @@ def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
     assert isinstance(model, CliChat)
     assert model.backend == "codex"
     assert model.id == "gpt-5.5"
-    assert model.timeout == 240
+    # 静默判死阈值不下发成 SDK 阻塞字段：它只由 transport 策略读设置页那一格（#1465 切片③）
+    assert model.timeout != 240
     assert model.reasoning_strength == "high"
     # 空 CLI key 也能构造：占位符在构造时注入以满足 OpenAIChat 父类。
     assert model.api_key == "cli-backend"
@@ -334,18 +335,17 @@ def test_minimax_reasoning_strength_overrides_stale_thinking_level(monkeypatch):
 def test_legacy_backend_env_uses_runner_default_model_not_api_model(monkeypatch):
     captured = {}
 
-    class Proc:
-        stdout = "臣领旨。"
-        stderr = ""
-        returncode = 0
+    from tests.cli_process_doubles import FakeCliProcess
 
-    def fake_run(cmd, **kwargs):
-        captured["cmd"] = cmd
-        return Proc()
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return FakeCliProcess(cmd, stdout_script=("臣领旨。\n",), returncode=0,
+                              popen_kwargs=kwargs)
 
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cli_backend.subprocess, "run", fake_run)
+    monkeypatch.setattr(cli_backend, "_resolve_cli_bin", lambda name, configured: f"/fake/{name}")
+    monkeypatch.setattr(cli_backend.subprocess, "Popen", fake_popen)
     cfg = LLMConfig(
         api_key="sk-test",
         base_url="https://api.example.com/v1",
@@ -678,17 +678,17 @@ def test_config_constants_single_source_in_models():
 
 def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
     """codex R1 #2：legacy env CLI（MING_SIM_LLM_BACKEND 设）时 cli_timeout_seconds 必须用
-    CLI 默认（300），不沿用 API 的 timeout_seconds（180）——后者会被当 CLI 子进程超时上限。"""
+    CLI 槽默认（静默判死 60），不沿用 API 的 timeout_seconds（180）。"""
     from ming_sim.llm_config import load_llm_config, CLI_DEFAULT_TIMEOUT_SECONDS
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     cfg = load_llm_config(base_url="", model="m", api_key="", timeout_seconds=180.0)
     assert cfg.channel == "cli"
-    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 300.0
+    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
     assert cfg.cli_timeout_seconds != 180.0
 
 
 def test_web_runtime_cli_no_saved_timeout_uses_cli_default(monkeypatch):
-    """codex R1 #3：web env CLI 无 saved cli.timeout_seconds 时回落 CLI 默认（300），
+    """codex R1 #3：web env CLI 无 saved cli.timeout_seconds 时回落 CLI 槽默认（静默判死 60），
     不回落 API request timeout（180）。"""
     import web_app
     from ming_sim.llm_config import CLI_DEFAULT_TIMEOUT_SECONDS
@@ -700,7 +700,7 @@ def test_web_runtime_cli_no_saved_timeout_uses_cli_default(monkeypatch):
         advanced_api_key="", advanced_thinking_level="",
     )
     assert cfg.channel == "cli"
-    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 300.0
+    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
     assert cfg.cli_timeout_seconds != 180.0
 
 

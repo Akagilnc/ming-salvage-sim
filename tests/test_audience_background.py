@@ -667,7 +667,7 @@ def test_background_audience_recommendation_stages_candidate_snapshot(game, monk
         ],
         ["臣荐此人巡盐，请陛下裁夺。"],
     ))
-    monkeypatch.setattr(cb, "_iter_codex_stream_chunks", lambda *_args, **_kwargs: iter(next(calls)))
+    monkeypatch.setattr(cb, "_iter_cli_runner_text", lambda *_args, **_kwargs: iter(next(calls)))
     agent = Agent(
         name=minister_name,
         model=model,

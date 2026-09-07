@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import write_locality_scope_for_target_kind
@@ -329,9 +329,11 @@ def _draft_heal_or_escalate(
 ) -> Optional[Dict[str, Any]]:
     """自愈抽取；真不在册 → 戏内回禀、不落草案、不炸整轮。
 
-    唯一权威：batch preheat 与 draft handler 共用，禁平行闭包。
+    唯一权威：batch preheat 与 draft/assignment handler 共用，禁平行闭包。
+    #1778：require_execution_lead 缺主办耗尽 → DecreeMaterializationValidationError。
     """
     from ming_sim.cli_backend import (
+        MissingExecutionLeadError,
         UnknownParticipantEscalate,
         compose_unknown_participant_inworld_report,
         extract_draft_intent_with_roster_heal,
@@ -339,6 +341,13 @@ def _draft_heal_or_escalate(
 
     try:
         return extract_draft_intent_with_roster_heal(**kwargs)
+    except MissingExecutionLeadError as exc:
+        raise DecreeMaterializationValidationError(
+            str(exc),
+            failed_fields=tuple(getattr(exc, "failed_fields", ()) or (
+                "assignee", "participant_roster",
+            )),
+        ) from exc
     except UnknownParticipantEscalate as exc:
         # C6：minister 回禀复用 minister_speaker_role 档料，不只装「大臣+姓名」。
         role = minister_speaker_role(
@@ -983,11 +992,14 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             _record_decree_validation_failures(ctx, ctx.out, validation_failures)
             return
 
-        # Pass 1 LLM preheat (no T): draft/secret extractions land in batch_state.
+        # Pass 1 LLM preheat (no T): draft/secret/assignment extractions land in batch_state.
         _preheat_batch_draft_extractions(
             ctx, candidate_records, draft_total, validation_failures,
         )
         _preheat_batch_secret_extractions(ctx, candidate_records)
+        _preheat_batch_assignment_extractions(
+            ctx, candidate_records, validation_failures,
+        )
         if validation_failures:
             _record_decree_validation_failures(ctx, ctx.out, validation_failures)
             return
@@ -2516,6 +2528,8 @@ def stage_grant_allocation_candidate(
     end_turn: object = 0,
     deadline_months: object = 0,
     target_candidate: object = None,
+    assignee: str = "",
+    participant_roster: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Shared grant candidate write: mode + explicit-target update only.
@@ -2647,11 +2661,21 @@ def stage_grant_allocation_candidate(
     )
     if absolute_due > int(turn):
         staged["due_turn"] = absolute_due
-        # 题名真源贯到 staged：initiative 只认 title|target_id；优先用途/拨帑动作中文锚
+        # 题名真源贯到 staged（0076 场面/判据可读）；优先用途/拨帑动作中文锚
         if not str(staged.get("title") or "").strip():
             label = purpose or action
             if label:
                 staged["title"] = str(label).strip()
+    # #1783+#1778：承办人/名单来自分类器或后置抽取，挂本案；不把当前大臣填成主办。
+    lead = str(assignee or "").strip()
+    if lead:
+        staged["assignee"] = lead
+    if isinstance(participant_roster, list) and participant_roster:
+        staged["participant_roster"] = list(participant_roster)
+    elif lead:
+        staged["participant_roster"] = [{
+            "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
+        }]
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
@@ -2672,6 +2696,16 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         return
     grant_action = str(intent.get("grant_action") or "").strip()
     target_kind, target_id = _grant_target(intent)
+    assignee = str(
+        intent.get("assignee")
+        or intent.get("assignee_id")
+        or intent.get("assignee_name")
+        or ""
+    ).strip()
+    # 非人物目标的拨帑：classifier 姓名＝承办人（#1783 一件事一案；加衔/荫叙姓名仍是受赏人）
+    if not assignee and target_kind not in {"character", "person"}:
+        assignee = str(intent.get("name") or "").strip()
+    roster = intent.get("participant_roster")
     pending_id = stage_grant_allocation_candidate(
         ctx.session.db,
         ctx.session.state.turn,
@@ -2693,6 +2727,8 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         end_turn=intent.get("end_turn"),
         deadline_months=intent.get("deadline_months"),
         target_candidate=intent.get("target_candidate"),
+        assignee=assignee,
+        participant_roster=roster if isinstance(roster, list) else None,
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
@@ -2837,6 +2873,8 @@ def stage_assignment_candidate(
     text: str,
     title: str = "",
     target_id: str = "",
+    assignee: str = "",
+    participant_roster: object = None,
     extracted_mode: object = None,
     commitment_kind: object = None,
     stop_condition: object = None,
@@ -2854,7 +2892,8 @@ def stage_assignment_candidate(
     Independent matters each stage a new candidate; only a structured
     target_candidate id updates the named pending assignment (cross-round
     reinforce / ADR 0038 before-image).
-    owner 单一来源 = 当前召对大臣（minister_name）；不接受分类器改派。
+    #1778：承办人/名单来自大臣复述后置抽取（assignee / participant_roster），
+    代码不得把当前召对大臣填成 assignee；#520 r2 不设改派入口仍成立。
     #1565/0142：题名=显式 title|结构化 target_id 锚；正文唯一真源=payload.text；
     禁散文截题、禁空正文借题名伪造成功、禁缺锚静默丢单。
     """
@@ -2873,8 +2912,8 @@ def stage_assignment_candidate(
             failed_fields=("title",),
         )
     matter_id = str(target_id or "").strip() or matter_title
-    owner = str(minister_name or "").strip()
-    if not owner:
+    actor = str(minister_name or "").strip()
+    if not actor:
         return 0
 
     pending_rows = list(pend_for_minister or [])
@@ -2926,10 +2965,12 @@ def stage_assignment_candidate(
     category = str(transaction_category or "").strip()
     if category:
         staged["transaction_category"] = category
-    else:
-        # Legacy unclassified assignments retain their explicit audience owner;
-        # classified production actions route by the canonical duty table.
-        staged["assignee"] = owner
+    # #1778：承办人只来后置抽取；禁止代码填当前召对大臣。
+    lead = str(assignee or "").strip()
+    if lead:
+        staged["assignee"] = lead
+    if isinstance(participant_roster, list):
+        staged["participant_roster"] = list(participant_roster)
     # 承诺形状保留：until_stop 正常携带；缺 marker 的毒字段也不得在 stage 洗掉，
     # 交既有 initiative 校验在判后接缝拒收（#520 commitment-poison-shape-preservation）。
     kind_raw = str(commitment_kind or "").strip()
@@ -2995,6 +3036,89 @@ def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
     return "\n".join(chunks).strip()
 
 
+def _assignment_leads_from_extract(extracted: Mapping[str, Any]) -> tuple[str, list]:
+    """从拟旨同缝单条抽取结果投影承办人/名单（#1778）。
+
+    assignment preheat 不传 draft_count，结果无 drafts；只读顶层键。
+    有无主办已由 extract require_execution_lead 判定，本函数不重判。
+    """
+    assignee = str(
+        extracted.get("assignee")
+        or extracted.get("assignee_id")
+        or extracted.get("assignee_name")
+        or ""
+    ).strip()
+    roster = extracted.get("participant_roster")
+    return assignee, list(roster) if isinstance(roster, list) else []
+
+
+def _resolve_assignment_extract(ctx: MaterializeCtx) -> Dict[str, Any]:
+    """召对交办承办人：复用拟旨 extract_draft_intent_with_roster_heal 同缝。
+
+    batch preheat 写入 batch_state['assignment_extract']；单候选/非批路径当场抽。
+    """
+    cached = ctx.batch_state.get("assignment_extract")
+    if isinstance(cached, dict):
+        return dict(cached)
+    if "assignment_extract" in ctx.batch_state and cached is None:
+        # preheat 已 escalate；handler 投影回禀
+        _project_unknown_participant_escalate(ctx)
+        raise DecreeMaterializationValidationError(
+            "交办旨意缺少承办人/参与名单主办",
+            failed_fields=("assignee", "participant_roster"),
+        )
+    healed = _draft_heal_or_escalate(
+        ctx,
+        player_message=ctx.player_message,
+        minister_reply=ctx.reply,
+        llm_config=ctx.llm_config,
+        content=getattr(ctx.session, "content", None),
+        db=ctx.session.db,
+        require_execution_lead=True,
+    )
+    if healed is None:
+        _project_unknown_participant_escalate(ctx)
+        raise DecreeMaterializationValidationError(
+            "交办旨意缺少承办人/参与名单主办",
+            failed_fields=("assignee", "participant_roster"),
+        )
+    return dict(healed)
+
+
+def _preheat_batch_assignment_extractions(
+    ctx: MaterializeCtx,
+    candidate_records: list[tuple[Dict[str, Any], Dict[str, Any], str, int]],
+    validation_failures: list[tuple[dict[str, Any], BaseException]],
+) -> None:
+    """批路径：交办后置抽取在写事务外完成（与 draft preheat 同形）。"""
+    assignment_records = [
+        (candidate, original)
+        for candidate, original, original_kind, _idx in candidate_records
+        if str(candidate.get("kind") or "") == "assignment"
+        or str(original_kind or "") == "assignment"
+    ]
+    if not assignment_records:
+        return
+    # 同批多道交办共用一次大臣回话抽取（#12 不另造第二份抽取器）。
+    _candidate, original_candidate = assignment_records[0]
+    try:
+        healed = _draft_heal_or_escalate(
+            ctx,
+            player_message=ctx.player_message,
+            minister_reply=ctx.reply,
+            llm_config=ctx.llm_config,
+            content=getattr(ctx.session, "content", None),
+            db=ctx.session.db,
+            require_execution_lead=True,
+        )
+    except DecreeMaterializationValidationError as exc:
+        validation_failures.append(
+            (_rejection_item_for_exc(original_candidate, exc), exc),
+        )
+        return
+    ctx.batch_state["assignment_extract"] = healed
+
+
 def _materialize_assignment(ctx: MaterializeCtx) -> None:
     """暂存交办·责成案卷；initiative 按 ADR 0055 判决后落。
 
@@ -3002,6 +3126,7 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
     意图粒度由分类/候选归一表达；本 handler 按候选契约单轨记账，不从 title 有无猜独立性。
     #1565/0142：题名=分类 title|target_id 结构化锚；正文=_assignment_dossier_text 上下文链；
     禁 player_message 散文截断当 title；缺锚走既有 DecreeMaterializationValidationError 恢复接缝。
+    #1778：承办人/名单后置抽取（拟旨同缝），代码不配人。
     """
     if (
         ctx.intent_kind != "assignment"
@@ -3014,6 +3139,9 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
     title = str(intent.get("title") or "").strip()
     target_id = str(intent.get("target_id") or "").strip()
     body = _assignment_dossier_text(ctx)
+    # require_execution_lead 已在同缝判过主办；此处只投影名单键，不叠第二份判定。
+    extracted = _resolve_assignment_extract(ctx)
+    assignee, roster = _assignment_leads_from_extract(extracted)
     # #1565：已识别 assignment 不得三空静默早退；缺正文/题名交 stage validation 恢复接缝。
     pending_id = stage_assignment_candidate(
         ctx.session.db,
@@ -3022,6 +3150,8 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
         text=body,
         title=title,
         target_id=target_id,
+        assignee=assignee,
+        participant_roster=roster,
         extracted_mode=intent.get("mode"),
         commitment_kind=intent.get("commitment_kind"),
         stop_condition=intent.get("stop_condition"),
@@ -4481,7 +4611,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "transaction_category", "事务类别",
                     duty_route_categories(), "",
                 ),
-                # owner=当前召对大臣；不设 assignee/name 改派字段（#520 r2）
+                # #1778：承办人/名单来后置抽取，不经分类器改派入口（#520 r2 仍成立）
                 # 与 grant/pacification 共享 target_id：事项锚（跨轮强化身份）
                 FieldSpec("target_id", "目标", None, "", max_len=80),
                 FieldSpec(

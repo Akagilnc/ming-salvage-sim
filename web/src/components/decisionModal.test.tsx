@@ -610,6 +610,10 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
             name: "杨嗣昌",
             locality_scope: "none",
             office: "太子太保",
+            // #1778：C.4 名单须随中旨投影进 choice
+            participant_roster: [
+              { character_id: "毕自严", tier: "主办", role: "总核", delegator_id: null },
+            ],
           },
           { label: "备", hint: "h", draft_capability: "cap2" },
         ],
@@ -645,6 +649,9 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect(choice.name).toBe("杨嗣昌");
     expect(choice.office).toBe("太子太保");
     expect(choice.locality_scope).toBe("none");
+    expect(choice.participant_roster).toEqual([
+      { character_id: "毕自严", tier: "主办", role: "总核", delegator_id: null },
+    ]);
     cleanup();
   });
 });

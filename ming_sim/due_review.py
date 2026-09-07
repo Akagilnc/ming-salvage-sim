@@ -158,6 +158,22 @@ def resolve_due_review_branch(
     }
 
 
+def _todo_origin_ref(todo: Dict[str, object], meta_origin: str = "") -> str:
+    """#1783：案卷 due todo（commitment_ref=0）origin 在 payload；承诺 todo 仍读 issue。"""
+    payload = todo.get("payload_json") or {}
+    if isinstance(payload, dict):
+        raw = str(payload.get("origin_ref") or "").strip()
+        if raw:
+            return raw
+        did = payload.get("dossier_id")
+        try:
+            if int(did or 0) > 0:
+                return f"dossier:{int(did)}"
+        except (TypeError, ValueError):
+            pass
+    return str(meta_origin or "").strip()
+
+
 def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object]:
     """P5 输入闭集：todo 字段 + stages + list_dossier_progress + 实况；催办/监督缺源=空列表。"""
     from ming_sim.urge_lever import (
@@ -170,9 +186,16 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
 
     commitment_ref = int(todo["commitment_ref"])
     stage_idx = int(todo["stage_idx"])
-    meta = _issue_meta(db, commitment_ref)
+    meta = _issue_meta(db, commitment_ref) if commitment_ref > 0 else {
+        "id": 0, "title": "", "origin_ref": "", "stages": [], "stage_text": "",
+    }
+    # 案卷 due 直挂：title/criterion 已在 todo；无 issue 段表 → 末段
+    if commitment_ref <= 0 and not meta.get("title"):
+        meta = dict(meta)
+        meta["title"] = str(todo.get("criterion_text") or "")[:40]
     stages = meta["stages"]
-    branch = resolve_due_review_branch(db, meta["origin_ref"])
+    origin_ref = _todo_origin_ref(todo, str(meta.get("origin_ref") or ""))
+    branch = resolve_due_review_branch(db, origin_ref)
     progress_reports: List[Dict[str, object]] = []
     durable_effects: List[Dict[str, object]] = []
     # #625：监督三键空形以 supervision 导出常量为唯一真源。
@@ -231,7 +254,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         "criterion_text": str(todo.get("criterion_text") or ""),
         "origin_context": str(todo.get("origin_context") or ""),
         "title": str(meta.get("title") or ""),
-        "origin_ref": str(meta.get("origin_ref") or ""),
+        "origin_ref": origin_ref,
         "stages": stages,
         "mid_stage": not is_final_stage(stages, stage_idx),
         "branch": branch["branch"],
@@ -401,8 +424,13 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
         # 仅 staged 占接管窗（breach_plea / urge / unknown 均不占）
         if not is_due_review_entry_kind(todo.get("entry_kind")):
             continue
-        meta = _issue_meta(db, int(todo["commitment_ref"]))
-        _add_owned_dossier(owned, db, meta["origin_ref"])
+        cid = int(todo.get("commitment_ref") or 0)
+        if cid > 0:
+            meta = _issue_meta(db, cid)
+            origin = str(meta.get("origin_ref") or "")
+        else:
+            origin = _todo_origin_ref(todo)
+        _add_owned_dossier(owned, db, origin)
 
     # 非 pending（consumed/rolled）段键：到期扫描不再预占（仅 staged 键）
     finished_keys = {
@@ -411,7 +439,10 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
         if str(t.get("status") or "") != TODO_STATUS_PENDING
         and is_due_review_entry_kind(t.get("entry_kind"))
     }
-    for item in list_due_stages_for_scan(db, turn):
+    from ming_sim.staged_commitment import list_due_grant_report_dossiers_for_scan
+    scan_items = list(list_due_stages_for_scan(db, turn))
+    scan_items.extend(list_due_grant_report_dossiers_for_scan(db, turn))
+    for item in scan_items:
         key = (int(item["commitment_ref"]), int(item["stage_idx"]))
         if key in finished_keys:
             continue

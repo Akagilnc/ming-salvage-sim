@@ -668,10 +668,11 @@ def test_extractor_stream_idle_retry_and_long_activity_past_old_wall(
     path.write_text(json.dumps({
         "channel": "api",
         "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+        # 静默判死阈值 = 设置页那一格（cli.timeout_seconds），CLI 与 API 同权威
+        "cli": {"timeout_seconds": idle_timeout},
         "transport": {
             "max_attempts": 3,
             "attempt_timeout_seconds": 100.0,
-            "idle_timeout_seconds": idle_timeout,
         },
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
