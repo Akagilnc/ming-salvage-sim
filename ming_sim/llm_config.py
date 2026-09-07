@@ -16,6 +16,7 @@ from ming_sim.models import (
     API_DEFAULT_TIMEOUT_SECONDS,
     TRANSPORT_DEFAULT_MAX_ATTEMPTS,
     TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
+    TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
 )
 from ming_sim.paths import user_data_path
 
@@ -73,10 +74,15 @@ def _slot_text(data: Dict[str, object], key: str) -> str:
 _API_NUMERIC_FIELDS = {
     "timeout_seconds": (float, API_DEFAULT_TIMEOUT_SECONDS),
 }
-_TRANSPORT_RUNTIME_FIELDS = ("max_attempts", "attempt_timeout_seconds")
+_TRANSPORT_RUNTIME_FIELDS = (
+    "max_attempts",
+    "attempt_timeout_seconds",
+    "retry_interval_seconds",
+)
 _TRANSPORT_NUMERIC_FIELDS = {
     "max_attempts": (int, TRANSPORT_DEFAULT_MAX_ATTEMPTS),
     "attempt_timeout_seconds": (float, TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS),
+    "retry_interval_seconds": (float, TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS),
 }
 
 
@@ -413,6 +419,7 @@ def save_runtime_llm(
     api_reasoning_strength: Optional[str] = None,
     transport_max_attempts: Optional[int] = None,
     transport_attempt_timeout_seconds: Optional[float] = None,
+    transport_retry_interval_seconds: Optional[float] = None,
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
@@ -493,6 +500,8 @@ def save_runtime_llm(
         transport_src["max_attempts"] = transport_max_attempts
     if transport_attempt_timeout_seconds is not None:
         transport_src["attempt_timeout_seconds"] = transport_attempt_timeout_seconds
+    if transport_retry_interval_seconds is not None:
+        transport_src["retry_interval_seconds"] = transport_retry_interval_seconds
     transport_payload = _transport_runtime_slot(transport_src)
     payload = {
         "channel": active_channel,
