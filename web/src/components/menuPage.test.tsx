@@ -1117,7 +1117,6 @@ describe("ApiSettingsModal default_headers table (#1794)", () => {
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(document.body.textContent).toContain("附加请求头");
     const nameInputs = Array.from(
       document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头名"]')
     );

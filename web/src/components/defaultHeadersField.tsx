@@ -37,6 +37,8 @@ export function DefaultHeadersField({
   };
   const removeRow = (id: string) => onChange(rows.filter((row) => row.id !== id));
   const addRow = () => onChange([...rows, newHeaderRow()]);
+  const inputClass = variant === "game" ? "menu-input" : undefined;
+  const btnClass = variant === "game" ? "menu-btn" : undefined;
 
   return (
     <div className={variant === "menu" ? "menu-cli-field menu-headers-field" : "menu-field menu-headers-field"}>
@@ -44,7 +46,7 @@ export function DefaultHeadersField({
       {rows.map((row) => (
         <div className="menu-row menu-header-row" key={row.id}>
           <input
-            className={variant === "game" ? "menu-input" : undefined}
+            className={inputClass}
             aria-label="请求头名"
             value={row.name}
             onChange={(e) => updateRow(row.id, { name: e.target.value })}
@@ -52,38 +54,26 @@ export function DefaultHeadersField({
             autoComplete="off"
           />
           <input
-            className={variant === "game" ? "menu-input" : undefined}
+            className={inputClass}
             aria-label="请求头值"
             value={row.value}
             onChange={(e) => updateRow(row.id, { value: e.target.value })}
             placeholder="value"
             autoComplete="off"
           />
-          {variant === "game" ? (
-            <button
-              type="button"
-              className="menu-btn"
-              aria-label="删除请求头行"
-              onClick={() => removeRow(row.id)}
-            >
-              删
-            </button>
-          ) : (
-            <button type="button" aria-label="删除请求头行" onClick={() => removeRow(row.id)}>
-              删
-            </button>
-          )}
+          <button
+            type="button"
+            className={btnClass}
+            aria-label="删除请求头行"
+            onClick={() => removeRow(row.id)}
+          >
+            删
+          </button>
         </div>
       ))}
-      {variant === "game" ? (
-        <button type="button" className="menu-btn" onClick={addRow}>
-          增行
-        </button>
-      ) : (
-        <button type="button" className="menu-headers-add" onClick={addRow}>
-          增行
-        </button>
-      )}
+      <button type="button" className={btnClass} onClick={addRow}>
+        增行
+      </button>
     </div>
   );
 }
