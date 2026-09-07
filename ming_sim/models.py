@@ -358,6 +358,8 @@ API_DEFAULT_TIMEOUT_SECONDS = 180.0  # API 请求默认超时（秒）单一真�
 # #1465 transport 统一策略默认值（单真源；次数/超时/空转进 runtime 可覆盖，代码零硬编码）
 TRANSPORT_DEFAULT_MAX_ATTEMPTS = 3  # 总计 3 attempts（初试 1 + 重试 2；第一次不叫重试）
 TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 30.0  # 每 attempt 独立整份超时（owner：每次 30 秒）
+# #1792：可重试失败后、下一 attempt 起手前的固定间隔（秒）；不按失败种类区分、不退避倍增。
+TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS = 5.0
 # 空转阈值不在此另立默认：真源 = 设置页那一格（CLI_DEFAULT_TIMEOUT_SECONDS 兜底）。
 
 
