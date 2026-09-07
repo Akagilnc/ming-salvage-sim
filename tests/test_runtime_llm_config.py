@@ -117,6 +117,7 @@ def test_load_runtime_llm_migrates_flat_api_config(tmp_path, monkeypatch):
         "advanced_api_key": "sk-advanced",
         "advanced_thinking_level": "",
         "reasoning_strength": "high",
+        "default_headers": {},
     }
     assert runtime["reasoning_strength"] == "high"
     assert runtime["cli"]["runner"] == ""
@@ -577,3 +578,87 @@ def test_runtime_llm_transport_nonpositive_falls_back_to_defaults(tmp_path, monk
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["transport"]["max_attempts"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
     assert saved["transport"]["attempt_timeout_seconds"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
+
+
+def test_runtime_llm_default_headers_roundtrip_and_empty_is_status_quo(tmp_path, monkeypatch):
+    """#1794：API 槽附加请求头表经既有保存/加载路径原样保留；缺省/空表＝现状。"""
+    path = tmp_path / "runtime_llm.json"
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    headers = {
+        "X-Custom-Session": "sess-fixed-1",
+        "User-Agent": "ming-qa/1.0",
+    }
+    llm_config.save_runtime_llm(
+        "https://api.example.com/v1",
+        "gpt-test",
+        "sk-test",
+        channel="api",
+        default_headers=headers,
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["api"]["default_headers"] == headers
+
+    loaded = llm_config.load_runtime_llm()
+    assert loaded["api"]["default_headers"] == headers
+    assert loaded["default_headers"] == headers  # 顶层 API alias 与槽同值
+
+    # 未配置 → 空表
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {"base_url": "https://x/v1", "model": "m", "api_key": "sk-x"},
+    }, ensure_ascii=False), encoding="utf-8")
+    empty = llm_config.load_runtime_llm()
+    assert empty["api"]["default_headers"] == {}
+
+
+def test_runtime_llm_api_save_preserves_default_headers_when_omitted(tmp_path, monkeypatch):
+    """#1794：设置保存重写 API 槽但未带头表时须保留文件中的头（不改 UI 的并存后果）。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {
+            "base_url": "https://old.example.com/v1",
+            "model": "old",
+            "api_key": "sk-old",
+            "default_headers": {"X-Keep": "yes", "User-Agent": "ming-qa/1.0"},
+        },
+        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": 240},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    llm_config.save_runtime_llm(
+        "https://new.example.com/v1", "new-model", "sk-new", channel="api",
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["api"]["model"] == "new-model"
+    assert saved["api"]["default_headers"] == {"X-Keep": "yes", "User-Agent": "ming-qa/1.0"}
+    assert saved["cli"]["runner"] == "codex"  # ADR 0001：API 保存不擦 CLI
+
+
+def test_runtime_llm_cli_save_preserves_api_default_headers(tmp_path, monkeypatch):
+    """#1794 / ADR 0001：保存 CLI 槽保留 API 槽附加头。"""
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({
+        "channel": "api",
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "gpt-api",
+            "api_key": "sk-api",
+            "default_headers": {"X-Session": "keep-me"},
+        },
+        "cli": {"runner": "", "model": "", "timeout_seconds": ""},
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
+
+    llm_config.save_runtime_llm(
+        "", "", "",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["channel"] == "cli"
+    assert saved["api"]["default_headers"] == {"X-Session": "keep-me"}
+    assert saved["api"]["api_key"] == "sk-api"

@@ -167,6 +167,11 @@ def create_chat_model(
         "role_map": {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"},
         "extra_body": extra_body,
     }
+    # #1794：API 附加请求头表整张透传 default_headers；空表不塞键＝现状。
+    # 不解析、不校验、不按 base_url/模型分派、不内置任何 provider 专用头。
+    headers = getattr(llm_config, "default_headers", None) or {}
+    if headers:
+        kwargs["default_headers"] = dict(headers)
     # OpenAI 推理族（gpt-5*/o*）拒 top_p：luna 回 HTTP 400 空 assistant → agno
     # "Unknown model error" / 流式空回（#1452）。temperature 仍可传。
     if top_p is not None and not supports_openai_reasoning_effort(llm_config.model):

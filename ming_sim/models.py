@@ -377,6 +377,8 @@ class LLMConfig:
     cli_runner: str = ""  # agy | codex | claude | cursor | kimi | grok | pi（名单真源=_CLI_BACKENDS）
     cli_model: str = ""  # CLI runner 的模型名/档位，由具体后端解释
     cli_timeout_seconds: float = CLI_DEFAULT_TIMEOUT_SECONDS  # 静默判死阈值（秒），设置页那一格；同模块常量直接引用
+    # #1794：API 通道附加请求头表（名→值）；空表＝现状。只属 API 槽，原样透传 default_headers。
+    default_headers: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
