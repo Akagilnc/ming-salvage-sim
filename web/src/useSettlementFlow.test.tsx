@@ -427,8 +427,7 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
       await hookRef.current!.issueDecree();
     });
 
-    // #1796：流 ok 后并行 early loadState + decisions 终态 loadState，至少一次；不锁精确次数。
-    expect(loadState.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(loadState).toHaveBeenCalledTimes(1);
     expect(reload).not.toHaveBeenCalled();
 
     // 同会话不 reload：状态口投影驱动 HUD
