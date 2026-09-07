@@ -105,6 +105,7 @@ def test_http_audience_draft_plus_grant_debits_treasury_once_1777(
         return {"decision": "应允", "target_ids": [int(c["id"]) for c in candidates]}
 
     # 拟旨抽取器把诏书正文回填成 grant 载荷 —— 真实对局正是这一步造出第二份案卷。
+    # #1778 乙：同缝后置抽取交办承办人＝郭允厚（不是当前召对大臣）。
     def fake_draft_extract(**_kwargs):
         return {
             "draft_action": "拟旨",
@@ -119,6 +120,11 @@ def test_http_audience_draft_plus_grant_debits_treasury_once_1777(
             "purpose": "补饷",
             "cadence": "一次性",
             "mode": "ordinary",
+            "assignee": "郭允厚",
+            "participant_roster": [{
+                "character_id": "郭允厚", "tier": "主办",
+                "role": "户部尚书承办", "delegator_id": None,
+            }],
         }
 
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
@@ -133,12 +139,14 @@ def test_http_audience_draft_plus_grant_debits_treasury_once_1777(
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     try:
+        # 召对大臣刻意避开抽取所得承办人，钉「名单≠当前说话大臣」。
         name = next(
             getattr(ch, "name", key)
             for key, ch in game.content.characters.items()
             if getattr(ch, "office_type", "") == "户部"
             and getattr(ch, "power_id", "ming") == "ming"
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
+            and getattr(ch, "name", key) != "郭允厚"
         )
         game.session.registry.get = lambda _ch: _HubuAgent()
         if getattr(game.session, "llm_config", None) is not None:
@@ -212,6 +220,20 @@ def test_http_audience_draft_plus_grant_debits_treasury_once_1777(
         ]
         assert len(pay_logs) == 1, pay_logs
         assert float(pay_logs[0]["delta"]) == pytest.approx(-15)
+
+        # #1778 验收 6：交办案卷主办＝后置抽取的郭允厚，不是当前召对大臣。
+        assign_dossiers = [
+            d for d in game.db.list_decree_dossiers()
+            if d["action_type"] == "assignment"
+        ]
+        assert len(assign_dossiers) == 1, assign_dossiers
+        leads = [
+            e["character_id"]
+            for e in assign_dossiers[0]["participant_roster"]
+            if e.get("tier") == "主办"
+        ]
+        assert leads == ["郭允厚"], leads
+        assert name != "郭允厚" and name not in leads
     finally:
         try:
             game.db.close()

@@ -14776,6 +14776,14 @@ class GameDB:
                     payload=row_payload,
                     participant_roster=row_participants,
                 )
+                # #1778 乙：交办/军令（multi_month）unassigned 不得静默成案（0005）。
+                # strike 等其它覆盖域仍可空 leads（惩处目标≠执行主办，另票辖）。
+                if (
+                    str(route.get("route") or "") == "unassigned"
+                    and not list(route.get("leads") or [])
+                    and str(route.get("coverage") or "") == "multi_month"
+                ):
+                    raise ValueError("案卷缺少主办（route=unassigned）")
                 for lead in route.get("leads") or []:
                     row_participants.append({
                         "character_id": str(lead), "tier": "主办",
@@ -15078,6 +15086,15 @@ class GameDB:
             str(item.get("character_id") or "").strip()
             for item in roster if item.get("tier") == "主办"
         }
+        # #1778 乙：multi_month unassigned 且无主办不得静默成案（单行与 bulk 同闸）。
+        if (
+            not _skip_lead_route
+            and str(route.get("route") or "") == "unassigned"
+            and not list(route.get("leads") or [])
+            and not existing_leads
+            and str(route.get("coverage") or "") == "multi_month"
+        ):
+            raise ValueError("案卷缺少主办（route=unassigned）")
         for lead in route["leads"]:
             if lead in existing_leads:
                 continue
