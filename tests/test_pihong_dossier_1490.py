@@ -5773,9 +5773,69 @@ def _1778_roster_of(option):
     ]
 
 
-def _1778_plant_and_follow(web_game, monkeypatch, drafts):
-    """落桌 → GET /api/game/state 看见票面名单 → 逐条 follow_draft 成案。
+def _1778_web_midzhi_choice(row, option):
+    """choice 照 web decisionModal 中旨投影形状（含 C.4 participant_roster）。
 
+    与 follow_draft 不同：midzhi 字段来源＝choice 显式（§C.7），须自带名单。
+    """
+    def s(v, default=""):
+        if v is None or v == "":
+            return default
+        return str(v)
+
+    def n(v):
+        if v is None or v == "":
+            return None
+        try:
+            num = float(v) if not isinstance(v, bool) else None
+        except (TypeError, ValueError):
+            return None
+        if num is None or num != num:  # NaN
+            return None
+        return int(num) if num == int(num) else num
+
+    choice = {
+        "decision_key": row["decision_key"],
+        "action": "midzhi",
+        "label": str(option["label"]),
+        "hint": s(option.get("hint")),
+        "action_type": s(option.get("action_type"), "assignment"),
+        "assignee_name": s(option.get("assignee_name")),
+        "name": s(option.get("name")),
+        "target_kind": s(option.get("target_kind"), "region"),
+        "target_id": s(option.get("target_id")),
+        "transaction_category": s(option.get("transaction_category")),
+        "locality_scope": s(option.get("locality_scope"), "none"),
+        "region_id": s(option.get("region_id")),
+        "title": s(option.get("title")),
+        "commitment_kind": s(option.get("commitment_kind")),
+        "stop_condition": s(option.get("stop_condition")),
+        "end_turn": n(option.get("end_turn")),
+        "deadline_months": n(option.get("deadline_months")),
+        "station": s(option.get("station")),
+        "due_turn": n(option.get("due_turn")),
+        "office": s(option.get("office")),
+        "grant_action": s(option.get("grant_action")),
+        "account": s(option.get("account")),
+        "amount": n(option.get("amount")),
+        "cadence": s(option.get("cadence")),
+        "execution_surface": s(option.get("execution_surface")),
+        "appoint_action": s(option.get("appoint_action")),
+        "appointment_tenure": s(option.get("appointment_tenure")),
+        "punish_action": s(option.get("punish_action")),
+        "privilege": s(option.get("privilege")),
+        "summon_target": s(option.get("summon_target")),
+    }
+    roster = option.get("participant_roster")
+    if isinstance(roster, list) and roster:
+        choice["participant_roster"] = roster
+    return choice
+
+
+def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action="follow_draft"):
+    """落桌 → GET /api/game/state 看见票面名单 → 逐条 follow_draft/midzhi 成案。
+
+    desk_action="midzhi" 时 choice 照 web 中旨投影（含 participant_roster）。
     返回 {title: 新增案卷行}；断言留给调用方（外部结构化结果，不看散文）。
     """
     state, db = web_game.session.state, web_game.db
@@ -5810,12 +5870,15 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts):
         head = row["options"][0]
         # 批红页上票面自带名单（皇帝批前看得见），非散文
         assert _1778_roster_of(head), f"{draft['title']}：批红页缺参与名单 {head!r}"
-        choices.append({
-            "decision_key": row["decision_key"],
-            "action": "follow_draft",
-            "draft_capability": head["draft_capability"],
-            "label": head["label"],
-        })
+        if desk_action == "midzhi":
+            choices.append(_1778_web_midzhi_choice(row, head))
+        else:
+            choices.append({
+                "decision_key": row["decision_key"],
+                "action": "follow_draft",
+                "draft_capability": head["draft_capability"],
+                "label": head["label"],
+            })
 
     before = {int(d["id"]) for d in db.list_decree_dossiers()}
     resp = asyncio.run(_post_resolve(choices))
@@ -5917,6 +5980,20 @@ def test_1778_drafted_roster_rides_to_pihong_and_nails_the_dossier(
     assert special["action_type"] == "special_decree"
     assert special["region_id"] == ""
     assert _1778_roster_of(special) == [(_ROSTER_LEAD, "主办")]
+
+    # 中旨支：带名单 option 走「另旨·中旨」（choice 照 web 投影，含 participant_roster）
+    # 验收形＝责户部清理钱粮亏短；成案一份、名单钉住、mode=midzhi
+    round_midzhi = _1778_plant_and_follow(web_game, monkeypatch, [
+        {"title": "太仓亏空-中旨", "context": "c",
+         "options": by_title["太仓亏空"]["options"],
+         "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林"},
+    ], desk_action="midzhi")
+    assert set(round_midzhi) == {"责户部清理钱粮亏短"}
+    mid = round_midzhi["责户部清理钱粮亏短"]
+    assert mid["action_type"] == "assignment"
+    assert mid.get("mode") == "midzhi"
+    assert mid["region_id"] == ""
+    assert _1778_roster_of(mid) == [(_ROSTER_LEAD, "主办")]
 
 
 def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(

@@ -146,6 +146,10 @@ export function DecisionModal({
         const num = Number(v);
         return Number.isFinite(num) ? num : undefined;
       };
+      // #1778：C.4 participant_roster 与其它闭集键同形抄进 choice（§C.7 midzhi＝choice 显式）
+      const roster = Array.isArray(opt.participant_roster) && opt.participant_roster.length > 0
+        ? opt.participant_roster
+        : undefined;
       setPick({
         action,
         label: String(opt.label),
@@ -176,6 +180,7 @@ export function DecisionModal({
         punish_action: s((opt as { punish_action?: unknown }).punish_action) || "",
         privilege: s((opt as { privilege?: unknown }).privilege) || "",
         summon_target: s((opt as { summon_target?: unknown }).summon_target) || "",
+        ...(roster ? { participant_roster: roster } : {}),
       });
       return;
     }
