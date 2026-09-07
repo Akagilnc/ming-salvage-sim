@@ -1,0 +1,23 @@
+# rescript-draft dump attempt #3 (settle1)
+
+- dump chunk index: 17
+- system chars: 5273
+- user chars: 4183
+- assistant chars: 0
+- assistant body repr: ''
+
+## user (full request payload)
+
+```json
+{"turn": {"year": 1627, "period": 10, "turn": 1, "reign_period_label": "天启七年十月"}, "gazette": "《十月秋深赤羽飞》\n天启七年十月 月末奏章\n\n一、核户恤民\n皇上践祚之初，首降德音，命户部核查秋粮征收，务以恤民为念。户部尚书郭允厚遵旨具题，郎中杨嗣昌考较簿册，历查各省加耗、包揽、私派诸弊。据奏：北直隶近京诸县稍知敛戢；陕西、河南灾重州县，已准缓征本年秋粮；然江南财赋之地，士绅包揽如故，隐田漏税积重难返。杨嗣昌言部中但行文申饬，未敢尽核天下田亩，恐触士绅之怒。太仓支绌，蠲缓之令多，蠲缓之实少，诏意十成，实惠未必及三四成。\n\n二、太仓亏空\n户部尚书郭允厚具题：太仓存银日绌，辽饷、京营军饷、官俸、赈济轮番告急，挪借无门。本月起运、盐课、关税所入各有其数，然太仓亏空如故，月月相因。户部实拨边饷八十七万两，解至各镇止得八十二万，途耗五万，皆粮道驿递层层侵渔所致。京营积欠军饷二十二万两，河南、山西宗禄亦多拖欠。杨嗣昌清核账目，谓各省逋赋积欠甚巨，若得整顿得法，岁入可增；然此议一出，江南缙绅已有哗然之色。\n\n三、关中饥火\n陕西连岁大旱，赤地千里，西安常平仓储粟几罄。榆林边堡欠饷哗噪，墙垣坍颓。陕北驿卒奉裁，失所者多窜入山谷，与饥民合流。清涧、绥德之间，王嘉胤拥众三千余，与王二声势相通，昼伏夜出，攻掠堡寨。本月陕中饥民投附者日增，多系裁驿之卒与失耕之农；延安、绥德之间，流民十数万就食无所。陕西边军欠饷积至二十五万两，兵有饥色，剿抚两难。巡抚练国事、督粮参政洪承畴皆言非赈无以安民、非饷无以用兵，然太仓无银可拨。此患不弭，恐成燎原。\n\n四、辽东索饷\n祖大寿、赵率教交章请饷：关宁军欠饷五月有余，积欠不下六十万两，宁锦仓廪空虚，士卒鼓噪，几有脱巾之变。户部挪垫辽饷，杯水车薪。蓟镇欠饷十四万，宣大积欠三十万，东江亦欠十六万；通计京营、九边、东江诸军，欠饷约百八十万两，军心浮动遍于畿辅关外。宁远城坚炮利，红夷大炮在城，后金新汗皇太极虽整兵休马，未敢轻犯坚城；然闻其用降将佟养性督造火器，范文程等参预机要，又有西联蒙古之意。东江毛文龙所报兵额斩获，与登莱、朝鲜所闻颇不相符，虚冒之嫌未息。\n\n五、探子回报\n厂卫密报：一、魏忠贤掌东厂如故，田尔耕、许显纯用事，内外章奏多出其门；然新君即位，阉党中亦有自危者，暗中交结，观望上意。二、后金以佟养性专督铸炮，于辽沈搜括汉人工匠，仿红夷式样；皇太极又遣人至漠南，以联姻、赏赉诱察哈尔诸部。三、林丹汗威望日堕，鄂尔多斯、土默特诸部离心，有西迁避金之态；明边赏市若不能羁縻，恐宣大一线独当其冲。四、朝鲜丁卯之役后虽与后金结盟，然仍暗以米豆济皮岛，毛文龙所恃者此也。\n\n六、待办未解\n1. 户部亏空：太仓月月亏空，辽饷、官俸、宗禄、赈济轮番告急，核户之诏虽下，财源未见其增。\n2. 辽东索饷：关宁欠饷五月余，士卒鼓噪未息，兵变之危未解。\n3. 陕西流寇起：王嘉胤、王二啸聚清涧绥德，饥民投附渐众；边军欠饷，剿抚两难。\n\n七、诏书核销\n「核户户部秋粮征收，务求体恤民力」→ 受阻折损：户部虽已具题核查、申饬有司，然太仓支绌、考成催科如故；唯陕西、河南灾重州县准予缓征，江南及畿辅照征如旧，诏意十成，实到三四成。详见「一、核户恤民」。\n\n\n", "triage_actor": {"name": "黄立极", "office": "内阁首辅", "faction": "阉党"}, "active_issues": [{"issue_id": 2, "title": "辽东索饷", "状态": "祖大寿、赵率教交章请饷：关宁军欠饷已逾五月，宁锦防线缺粮，士卒鼓噪。", "进度": "略有起色"}, {"issue_id": 1, "title": "户部亏空", "状态": "郭允厚具题：太仓存银见绌，辽饷京营官俸赈济四项轮番告急，挪借难以为继。", "进度": "略有起色"}, {"issue_id": 3, "title": "陕西流寇起", "状态": "陕西巡按报：连岁亢旱，逃户成群，驿卒、饥民与盗匪渐混。王嘉胤、王二之徒已起。", "进度": "略有起色"}], "region_targets": [{"id": "amur_frontier", "name": "黑龙江北境", "kind": "外域"}, {"id": "beizhili", "name": "北直隶 / 京师", "kind": "两京"}, {"id": "dongjiang_area", "name": "东江 / 皮岛", "kind": "海岛战区"}, {"id": "fujian", "name": "福建", "kind": "布政司"}, {"id": "guangdong", "name": "广东", "kind": "布政司"}, {"id": "guangxi", "name": "广西", "kind": "布政司"}, {"id": "guizhou", "name": "贵州", "kind": "布政司"}, {"id": "henan", "name": "河南", "kind": "布政司"}, {"id": "huguang", "name": "湖广", "kind": "布政司"}, {"id": "japan", "name": "日本", "kind": "邻国"}, {"id": "jiangxi", "name": "江西", "kind": "布政司"}, {"id": "jianzhou", "name": "建州 / 赫图阿拉", "kind": "外域"}, {"id": "korea", "name": "朝鲜", "kind": "藩属"}, {"id": "liaodong", "name": "辽东 / 宁锦", "kind": "边镇"}, {"id": "mongol_chahar", "name": "察哈尔 / 漠南草原", "kind": "草原"}, {"id": "nanzhili", "name": "南直隶 / 南京", "kind": "两京"}, {"id": "nurgan", "name": "奴儿干 / 黑龙江诸部", "kind": "外域"}, {"id": "outer_mongolia", "name": "漠北诸部", "kind": "草原"}, {"id": "shaanxi", "name": "陕西", "kind": "布政司"}, {"id": "shandong", "name": "山东", "kind": "布政司"}, {"id": "shanxi", "name": "山西", "kind": "布政司"}, {"id": "shenyang_liaoyang", "name": "沈阳 / 辽阳", "kind": "外域"}, {"id": "sichuan", "name": "四川", "kind": "布政司"}, {"id": "southwest_frontier", "name": "安南 / 越南", "kind": "外域"}, {"id": "taiwan", "name": "台湾", "kind": "外域"}, {"id": "tibet", "name": "乌思藏 / 青海诸部", "kind": "外域"}, {"id": "western_regions", "name": "西域诸部", "kind": "外域"}, {"id": "yunnan", "name": "云南", "kind": "布政司"}, {"id": "zhejiang", "name": "浙江", "kind": "布政司"}], "army_targets": [{"id": "denglai", "name": "登莱兵与水师", "station": "山东 / 登莱"}, {"id": "dongjiang", "name": "东江镇", "station": "辽海 / 皮岛"}, {"id": "fujian_navy", "name": "福建水师", "station": "福建"}, {"id": "guangdong_navy", "name": "广东水师", "station": "广东"}, {"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"}, {"id": "jingying", "name": "京营", "station": "北直隶 / 京师"}, {"id": "jizhen", "name": "蓟镇兵", "station": "北直隶 / 蓟镇"}, {"id": "nanjing_garrison", "name": "南京守备军", "station": "南直隶 / 南京"}, {"id": "shaanxi_army", "name": "陕西边军", "station": "陕西"}, {"id": "shanhaiguan", "name": "山海关守军", "station": "北直隶 / 山海关"}, {"id": "southwest_tusi", "name": "西南土司兵", "station": "广西 / 云南 / 贵州"}, {"id": "xuan_da", "name": "宣大边军", "station": "山西 / 宣府大同"}], "grant_actions": ["加衔", "发内帑", "招抚屯田", "荫叙", "赈灾", "赏赉", "项目经费"], "grant_kinds": ["army_pay"], "target": {"min_items": 3, "max_items": 5}}
+```
+
+## assistant (model response as recorded in llm_dump)
+
+```
+(EMPTY STRING — 0 字)
+```
+
+## note
+llm_dump records the messages array after the call. Empty assistant (`0 字` / `''`) is what transport treated as empty output.
+System prompt omitted here (too large: 5273 chars); it is in the full dump file.
