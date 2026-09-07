@@ -233,6 +233,71 @@ def test_create_chat_model_never_injects_max_tokens(monkeypatch):
         assert "max_tokens" not in kwargs
 
 
+def test_create_chat_model_passes_default_headers_at_transport_boundary(monkeypatch):
+    """#1794：配置附加头整张交给 OpenAIChat.default_headers；transport 边界可见。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    headers = {
+        "X-Custom-Session": "sess-fixed-1",
+        "User-Agent": "ming-qa/1.0",
+    }
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+        default_headers=headers,
+    )
+
+    model = create_chat_model(cfg)
+
+    assert isinstance(model, OpenAIChat)
+    assert not isinstance(model, CliChat)
+    assert model.default_headers == headers
+    # transport 边界：进 OpenAI client 构造参数
+    client_params = model._get_client_params()
+    assert client_params.get("default_headers") == headers
+
+
+def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
+    """#1794：空表＝现状——不向底层塞 default_headers。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    captured: list = []
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+    )
+
+    create_chat_model(cfg)
+
+    assert len(captured) == 1
+    assert "default_headers" not in captured[0]
+
+
+def test_api_header_path_has_no_provider_special_names():
+    """#1794：附加头透传路径生产代码不得内置 provider 专名。"""
+    from pathlib import Path
+
+    roots = (
+        Path("ming_sim/llm_model.py"),
+        Path("ming_sim/llm_config.py"),
+        Path("ming_sim/models.py"),
+    )
+    banned = ("opencode", "x-opencode-session")
+    for path in roots:
+        text = path.read_text(encoding="utf-8").lower()
+        for token in banned:
+            assert token not in text, f"{path} must not contain {token!r}"
+
+
 def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch):
     """#1452：luna/gpt-5 推理族拒 top_p（HTTP 400 空 assistant → agno Unknown model error）。
     召对 registry 固定传 top_p=0.9，工厂必须剥离，temperature 可保留。"""

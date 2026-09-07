@@ -423,6 +423,7 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         cli_runner=config.cli_runner,
         cli_model=config.cli_model,
         cli_timeout_seconds=config.cli_timeout_seconds,
+        default_headers=dict(getattr(config, "default_headers", None) or {}),
     )
     try:
         verify_llm_available(advanced_config)
@@ -546,6 +547,14 @@ def _llm_config_from_runtime(
         # 占位符不当真 key：清空让下游空检查报「未配 API key」，
         # 而不是拿假 key 去探 OpenAI（误导性 412）。
         api_key = ""
+    # #1794：附加头只属 API 槽；从 runtime api 段（或顶层 alias）原样装入。
+    api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
+    raw_headers = api_slot.get("default_headers", runtime.get("default_headers"))
+    default_headers = (
+        {str(k): "" if v is None else str(v) for k, v in raw_headers.items()}
+        if isinstance(raw_headers, dict)
+        else {}
+    )
     return LLMConfig(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),
@@ -561,6 +570,7 @@ def _llm_config_from_runtime(
         cli_runner=cli_runner,
         cli_model=cli_model,
         cli_timeout_seconds=cli_timeout,
+        default_headers=default_headers,
     )
 
 
@@ -1076,6 +1086,8 @@ class WebGame:
         else:
             new_adv_key = advanced_api_key.strip()
         new_adv_thinking_level = ""
+        # #1794：设置 UI 不露头表，in-game 改配置须保留当前头（save 侧同口径）。
+        new_default_headers = dict(getattr(cur, "default_headers", None) or {})
         return LLMConfig(
             api_key=new_key,
             base_url=base,
@@ -1091,6 +1103,7 @@ class WebGame:
             cli_runner=new_cli_runner,
             cli_model=new_cli_model,
             cli_timeout_seconds=new_cli_timeout,
+            default_headers=new_default_headers,
         )
 
     def commit_llm_config(self, new_config: LLMConfig) -> LLMConfig:
