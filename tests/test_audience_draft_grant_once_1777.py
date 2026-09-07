@@ -284,15 +284,18 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             pass
 
 
-def test_timed_grant_under_initiative_cap_does_not_abort_1783(
+def test_timed_grant_deadline_on_dossier_does_not_abort_1783(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """已有 ≥15 件在办时，带期限拨帑仍成案、过月不中止（不再另立事项撞帽）。"""
+    """#1783+#1790：带期限拨帑期限只挂案卷、不另立事项、过月不中止。
+
+    无帽世界仍成立：去掉填帽前置（硬闸已废）；beyond_fifteen 成案由
+    test_decree_initiative_lands_beyond_fifteen_active 等另证，本测不重复。
+    """
     from fastapi.testclient import TestClient
 
     import ming_sim.cli_backend as cb
     import web_app
-    from ming_sim.issues import INITIATIVE_ACTIVE_CAP
     from tests.test_month_loop_tracer_1468 import (
         _get_state,
         _post_issue_stream,
@@ -356,17 +359,6 @@ def test_timed_grant_under_initiative_cap_does_not_abort_1783(
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     try:
-        # 填满在办硬帽（#1790 另票；本票只证拨帑期限不再另立事项撞它）
-        # 夹具同 test_assignment_materialize_520：insert_issue 直落，不经 score 抽取形。
-        cap = int(INITIATIVE_ACTIVE_CAP)
-        for i in range(cap):
-            game.db.insert_issue(
-                game.state, kind="initiative", title=f"在办占位{i}",
-                origin_kind="decree", origin_ref=f"cap-fill:{i}",
-                effect_on_resolve={"metrics": {"民心": 1}},
-            )
-        assert game.db.count_active_initiatives() >= cap
-
         name = next(
             getattr(ch, "name", key)
             for key, ch in game.content.characters.items()
@@ -400,12 +392,13 @@ def test_timed_grant_under_initiative_cap_does_not_abort_1783(
         wait_pending_writes(game)
 
         body = _post_issue_stream(
-            client, expected_turn=turn_before, step="1783 cap issue/stream",
+            client, expected_turn=turn_before, step="1783 timed-grant issue/stream",
         )
         assert not body.get("awaiting_decision"), body
         wait_pending_writes(game)
 
         after = _get_state(client)
+        # 过月不中止
         assert _turn_of(after) == turn_before + 1, after.get("turn")
 
         pay_dossiers = [
@@ -414,8 +407,9 @@ def test_timed_grant_under_initiative_cap_does_not_abort_1783(
             and d["target_id"] == "guanning"
         ]
         assert len(pay_dossiers) == 1, pay_dossiers
+        # 期限只挂案卷（due_turn=下一回合；钱已落、案卷 executing 不当夜终裁）
+        assert int(pay_dossiers[0].get("due_turn") or 0) == turn_before + 1, pay_dossiers[0]
         assert pay_dossiers[0]["status"] == "executing", pay_dossiers[0]
-        # 钱已落
         ledger = game.db.conn.execute(
             """
             SELECT delta FROM economy_ledger
