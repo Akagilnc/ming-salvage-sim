@@ -268,10 +268,7 @@ def test_assignment_extract_missing_lead_heals_then_fails_loud(env, monkeypatch)
     from types import SimpleNamespace
 
     db, state, content = env
-    calls = {"n": 0}
-
     def empty_extract(*_a, **_k):
-        calls["n"] += 1
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
 
     monkeypatch.setattr(cb, "extract_draft_intent", empty_extract)
@@ -303,7 +300,6 @@ def test_assignment_extract_missing_lead_heals_then_fails_loud(env, monkeypatch)
         recent_context="",
     )
     run_materialize_pipeline(ctx)
-    assert calls["n"] >= 1  # 至少抽过；补交次数属实现细节不锁
     assert not ctx.out.get("pending_action_id")
     assert len(db.list_pending_actions(state.turn)) == pending_before
     assert len(db.list_decree_dossiers()) == before

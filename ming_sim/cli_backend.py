@@ -2452,11 +2452,15 @@ def extract_draft_intent_with_roster_heal(
     if require_execution_lead:
         extract_kwargs = {**extract_kwargs, "harvest_participants": True}
 
-    def _return_or_retry_missing_lead(payload: Dict[str, Any], attempt: int) -> Optional[Dict[str, Any]]:
+    def _lead_gate(payload: Dict[str, Any], attempt: int) -> Optional[Dict[str, Any]]:
+        """有主办则返回 payload；缺则写 correction 并返回 None（调用方 continue）。"""
+        nonlocal correction
         if not require_execution_lead or _extract_result_has_execution_lead(payload):
             return payload
         if attempt >= retries:
             raise MissingExecutionLeadError()
+        correction = _missing_execution_lead_feedback()
+        _log(f"拟旨承办人补交重试 {attempt + 1}/{retries}")
         return None
 
     for attempt in range(retries + 1):
@@ -2551,11 +2555,9 @@ def extract_draft_intent_with_roster_heal(
         if db is not None:
             result = _ground_relative_pay_order_deadlines(result, db)
         if db is None or content is None:
-            done = _return_or_retry_missing_lead(result, attempt)
+            done = _lead_gate(result, attempt)
             if done is not None:
                 return done
-            correction = _missing_execution_lead_feedback()
-            _log(f"拟旨承办人补交重试 {attempt + 1}/{retries}")
             continue
         has_roster_field = (
             ("participant_roster" in result and result.get("participant_roster") is not None)
@@ -2568,11 +2570,9 @@ def extract_draft_intent_with_roster_heal(
             # 纠错路上抽掉参与人字段 = 除名企图 → 篡改，回禀
             if pending_unknown:
                 raise UnknownParticipantEscalate(pending_unknown)
-            done = _return_or_retry_missing_lead(result, attempt)
+            done = _lead_gate(result, attempt)
             if done is not None:
                 return done
-            correction = _missing_execution_lead_feedback()
-            _log(f"拟旨承办人补交重试 {attempt + 1}/{retries}")
             continue
         try:
             validated = _apply_validated_roster_to_extract_result(
@@ -2634,17 +2634,13 @@ def extract_draft_intent_with_roster_heal(
             )
             if backfilled is None:
                 raise UnknownParticipantEscalate(pending_unknown)
-            done = _return_or_retry_missing_lead(backfilled, attempt)
+            done = _lead_gate(backfilled, attempt)
             if done is not None:
                 return done
-            correction = _missing_execution_lead_feedback()
-            _log(f"拟旨承办人补交重试 {attempt + 1}/{retries}")
             continue
-        done = _return_or_retry_missing_lead(validated, attempt)
+        done = _lead_gate(validated, attempt)
         if done is not None:
             return done
-        correction = _missing_execution_lead_feedback()
-        _log(f"拟旨承办人补交重试 {attempt + 1}/{retries}")
 
 
 def _stalled_deliberation_push_facts(db: Any) -> str:

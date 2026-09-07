@@ -10,7 +10,6 @@ Seams:
 
 from __future__ import annotations
 
-from unittest import mock
 
 import json
 import threading
@@ -174,7 +173,7 @@ def _stage_assignment(
     db, turn, *, title, target_id=None, assignee=None,
     commitment_kind="无", stop_condition="", end_turn=0,
     ongoing_effects="", message=None, reply=None, target_candidate="",
-    actor=None, monkeypatch=None, content=None,
+    actor=None, content=None,
 ):
     actor = actor or db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
@@ -197,30 +196,18 @@ def _stage_assignment(
         payload["target_candidate"] = target_candidate
     candidate = candidates_from_classifier_payload(payload, soft=False)
     spoken = message or f"着{lead}办{title}。"
+    from unittest import mock
     ctx = _ctx(
         db, actor, candidate, turn,
         message=spoken,
         reply=reply or f"臣请奉行：{title}。请陛下定夺准驳。",
         content=content,
     )
-    # #1778：后置抽取同缝；无 monkeypatch 时仍用 mock 罩住 extract
-    patcher = (
-        monkeypatch.setattr
-        if monkeypatch is not None
-        else None
-    )
-    if monkeypatch is not None:
-        monkeypatch.setattr(
-            cb, "extract_draft_intent",
-            lambda *a, **k: _extract_lead_result(lead),
-        )
+    with mock.patch.object(
+        cb, "extract_draft_intent",
+        lambda *a, **k: _extract_lead_result(lead),
+    ):
         run_materialize_pipeline(ctx)
-    else:
-        with mock.patch.object(
-            cb, "extract_draft_intent",
-            lambda *a, **k: _extract_lead_result(lead),
-        ):
-            run_materialize_pipeline(ctx)
     return ctx
 
 

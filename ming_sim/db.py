@@ -14780,7 +14780,7 @@ class GameDB:
                     participant_roster=row_participants,
                 )
                 # #1778 乙：multi_month unassigned 不得静默成案（与单行共 require_*）。
-                require_execution_lead_or_raise(route, has_canonical_lead=False)
+                require_execution_lead_or_raise(route)
                 for lead in route.get("leads") or []:
                     row_participants.append({
                         "character_id": str(lead), "tier": "主办",
@@ -15086,19 +15086,8 @@ class GameDB:
             str(item.get("character_id") or "").strip()
             for item in roster if item.get("tier") == "主办"
         }
-        # 与 bulk named_leads 同口径：仅无委派主办才算点将。
-        canonical_leads = {
-            name for name in (
-                str(item.get("character_id") or "").strip()
-                for item in roster
-                if item.get("tier") == "主办"
-                and not str(item.get("delegator_id") or "").strip()
-            ) if name
-        }
         if not _skip_lead_route:
-            require_execution_lead_or_raise(
-                route, has_canonical_lead=bool(canonical_leads),
-            )
+            require_execution_lead_or_raise(route)
         for lead in route["leads"]:
             if lead in existing_leads:
                 continue
