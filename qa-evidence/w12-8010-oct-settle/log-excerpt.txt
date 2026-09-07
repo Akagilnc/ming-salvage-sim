@@ -1,0 +1,39 @@
+357:[14:38:14.843] [HITL] 检测到 2 个决策点，暂停等皇帝亲裁：['关宁欠饷何补', '陕饥剿抚之策']
+372:[14:43:04.419] [HITL] 圣意亲裁注入 extractor（62字）：2. 【陕饥剿抚之策】陛下御断：发内帑银十万两赈济陕饥，蠲延绥田赋（倾向：流民得食可望就抚，然陕西赈务积弊，银未必尽达饥民）
+374:[14:43:04.435] [rescript] HITL phase2 续跑：默认保留既有急务票拟行。
+376:[14:43:04.435] [extractor/internal] 使用模型 deepseek/deepseek-v4-flash-0731
+377:[14:43:04.436] [extractor/military_external] 使用模型 deepseek/deepseek-v4-flash-0731
+378:[14:43:04.436] [extractor/issues] 使用模型 deepseek/deepseek-v4-flash-0731
+379:[14:43:04.437] [extractor/personnel_secret] 使用模型 deepseek/deepseek-v4-flash-0731
+380:[14:43:04.437] [extractor/relations] 使用模型 deepseek/deepseek-v4-flash-0731
+381:[14:43:04.440] [extractor] 并发抽取 6 腿（wall-clock≈最慢单个）
+382:[14:43:04.440] [extractor/internal] user payload total=354 chars (~236 tok)
+383:[14:43:04.440] [extractor/internal] 开始推演（transport 可观察）
+384:[14:43:04.440] [extractor/military_external] user payload total=267 chars (~178 tok)
+385:[14:43:04.440] [extractor/military_external] 开始推演（transport 可观察）
+386:[14:43:04.444] [extractor/issues] user payload total=426 chars (~284 tok)
+387:[14:43:04.450] [extractor/personnel_secret] user payload total=329 chars (~219 tok)
+388:[14:43:04.451] [extractor/issues] 开始推演（transport 可观察）
+389:[14:43:04.453] [extractor/relations] user payload total=199 chars (~132 tok)
+390:[14:43:04.454] [rescript] user payload total=4183 chars (~2788 tok)
+391:[14:43:04.451] [extractor/personnel_secret] 开始推演（transport 可观察）
+392:[14:43:04.455] [rescript-draft] 开始推演（transport 可观察）
+393:[14:43:04.455] [extractor/relations] 开始推演（transport 可观察）
+394:[14:43:06.570] [extractor/personnel_secret] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+395:[14:43:06.570] [extractor/personnel_secret] 完成，153 字，用时 2.1s
+396:[14:43:08.109] [extractor/military_external] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+397:[14:43:10.478] [extractor/military_external] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+398:[14:43:10.479] [extractor/military_external] 完成，231 字，用时 6.0s
+399:[14:43:10.616] [extractor/internal] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+400:[14:43:11.504] [extractor/issues] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+401:[14:43:13.497] [extractor/internal] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+402:[14:43:16.855] [extractor/issues] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+403:[14:43:17.978] [rescript-draft] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+404:[14:43:18.585] [extractor/internal] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+405:[14:43:33.260] [rescript-draft] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+406:[14:43:35.253] [extractor/relations] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+407:[14:43:35.253] [extractor/relations] 完成，96 字，用时 30.8s
+408:[14:43:44.795] [rescript-draft] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+409:[14:43:44.795] [rescript] 票拟生成失败，本月视作无头版：LLM 调用失败（已尝试 3 次）：empty output
+410:[14:44:24.985] [extractor/issues] LLM messages 已 dump → scripts/runs/llm_dump_2517790.log
+411:[14:44:24.985] [extractor/issues] 完成，757 字，用时 80.5s
