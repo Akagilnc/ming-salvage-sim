@@ -5773,69 +5773,11 @@ def _1778_roster_of(option):
     ]
 
 
-def _1778_web_midzhi_choice(row, option):
-    """choice 照 web decisionModal 中旨投影形状（含 C.4 participant_roster）。
-
-    与 follow_draft 不同：midzhi 字段来源＝choice 显式（§C.7），须自带名单。
-    """
-    def s(v, default=""):
-        if v is None or v == "":
-            return default
-        return str(v)
-
-    def n(v):
-        if v is None or v == "":
-            return None
-        try:
-            num = float(v) if not isinstance(v, bool) else None
-        except (TypeError, ValueError):
-            return None
-        if num is None or num != num:  # NaN
-            return None
-        return int(num) if num == int(num) else num
-
-    choice = {
-        "decision_key": row["decision_key"],
-        "action": "midzhi",
-        "label": str(option["label"]),
-        "hint": s(option.get("hint")),
-        "action_type": s(option.get("action_type"), "assignment"),
-        "assignee_name": s(option.get("assignee_name")),
-        "name": s(option.get("name")),
-        "target_kind": s(option.get("target_kind"), "region"),
-        "target_id": s(option.get("target_id")),
-        "transaction_category": s(option.get("transaction_category")),
-        "locality_scope": s(option.get("locality_scope"), "none"),
-        "region_id": s(option.get("region_id")),
-        "title": s(option.get("title")),
-        "commitment_kind": s(option.get("commitment_kind")),
-        "stop_condition": s(option.get("stop_condition")),
-        "end_turn": n(option.get("end_turn")),
-        "deadline_months": n(option.get("deadline_months")),
-        "station": s(option.get("station")),
-        "due_turn": n(option.get("due_turn")),
-        "office": s(option.get("office")),
-        "grant_action": s(option.get("grant_action")),
-        "account": s(option.get("account")),
-        "amount": n(option.get("amount")),
-        "cadence": s(option.get("cadence")),
-        "execution_surface": s(option.get("execution_surface")),
-        "appoint_action": s(option.get("appoint_action")),
-        "appointment_tenure": s(option.get("appointment_tenure")),
-        "punish_action": s(option.get("punish_action")),
-        "privilege": s(option.get("privilege")),
-        "summon_target": s(option.get("summon_target")),
-    }
-    roster = option.get("participant_roster")
-    if isinstance(roster, list) and roster:
-        choice["participant_roster"] = roster
-    return choice
-
-
 def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action="follow_draft"):
     """落桌 → GET /api/game/state 看见票面名单 → 逐条 follow_draft/midzhi 成案。
 
-    desk_action="midzhi" 时 choice 照 web 中旨投影（含 participant_roster）。
+    desk_action="midzhi" 时用同文件既有 midzhi 短 dict 形，从 head 取本案 C.4 键
+    （必含 participant_roster）；不复刻 web 投影全键表。
     返回 {title: 新增案卷行}；断言留给调用方（外部结构化结果，不看散文）。
     """
     state, db = web_game.session.state, web_game.db
@@ -5871,7 +5813,21 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action="follow
         # 批红页上票面自带名单（皇帝批前看得见），非散文
         assert _1778_roster_of(head), f"{draft['title']}：批红页缺参与名单 {head!r}"
         if desk_action == "midzhi":
-            choices.append(_1778_web_midzhi_choice(row, head))
+            # 同文件既有 midzhi 短 dict 形（约 :1011/:2399）；本案所需 C.4 键自 head
+            choices.append({
+                "decision_key": row["decision_key"],
+                "action": "midzhi",
+                "label": head["label"],
+                "action_type": head["action_type"],
+                "assignee_name": head.get("assignee_name") or "",
+                "target_kind": head["target_kind"],
+                "target_id": head.get("target_id") or "",
+                "locality_scope": head["locality_scope"],
+                "region_id": head.get("region_id") or "",
+                "transaction_category": head.get("transaction_category") or "",
+                "deadline_months": head.get("deadline_months"),
+                "participant_roster": head["participant_roster"],
+            })
         else:
             choices.append({
                 "decision_key": row["decision_key"],
