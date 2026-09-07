@@ -87,13 +87,17 @@ def test_excluded_action_has_no_leads(env):
 
 
 def test_unnamed_assignment_gets_no_lead_from_code(env):
-    """#1778 决定 3：没点将、名单也没写 → 代码不配人（不查职司表、不降档）。"""
+    """#1778 决定 3/乙：没点将、名单也没写 → 代码不配人；成案缝 unassigned 响亮失败。"""
     result = resolve_lead_executors(
         action_type="assignment", payload={"transaction_category": "清丈"},
     )
     assert result["route"] == "unassigned"
     assert result["leads"] == []
     assert result["signal"] is None
+
+    db, state, _ = env
+    with pytest.raises(ValueError, match="缺少主办"):
+        _create(db, state, category="清丈", payload={"transaction_category": "清丈"})
 
 
 def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(env):
@@ -241,16 +245,86 @@ def test_unknown_appointee_normalizes_unrecognized_faction(env):
     assert person["faction"] == "中立"
 
 
-def test_real_assignment_stage_owner_is_the_summoned_minister(env):
-    """#1778 决定 3：职司表兜底删后，交办主办＝当前召对大臣（stage 的 owner 单一来源）。
+def test_assignment_extract_missing_lead_heals_then_fails_loud(env, monkeypatch):
+    """#1778 验收 6：后置抽取为空 → 同缝补交 → 耗尽不成案响亮（0005）。"""
+    import ming_sim.cli_backend as cb
+    from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+    from ming_sim.action_clusters import candidates_from_classifier_payload
+    from types import SimpleNamespace
 
-    原契约只对未分类交办写 assignee，分类过的交办让职司表配人；那条路已删，
-    carve-out 随之取消——事务类别仍照旧落库，只是不再决定谁承办。
+    db, state, content = env
+    calls = {"n": 0}
+
+    def empty_extract(*_a, **_k):
+        calls["n"] += 1
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+
+    monkeypatch.setattr(cb, "extract_draft_intent", empty_extract)
+    # 恢复文走 LLM；本条只钉不成案，不测戏内回禀措辞
+    monkeypatch.setattr(
+        cb, "compose_decree_validation_recovery",
+        lambda *a, **k: "交办缺承办人，请陛下明示人选。",
+    )
+    candidates = candidates_from_classifier_payload(
+        {"kind": "assignment", "title": "清丈", "target_id": "清丈田亩"},
+        soft=False,
+    )
+    before = len(db.list_decree_dossiers())
+    pending_before = len(db.list_pending_actions(state.turn))
+    ctx = MaterializeCtx(
+        session=SimpleNamespace(db=db, state=state, content=content),
+        character=SimpleNamespace(name="陈新甲", office_type="文官"),
+        player_message="着户部清丈天下田亩",
+        reply="臣领旨。",
+        message_text="着户部清丈天下田亩",
+        explicit_prefixed=False,
+        has_directive=False,
+        pend_for_minister=[],
+        out={},
+        intent=None,
+        intent_kind="none",
+        llm_config=None,
+        intent_candidates=candidates,
+        recent_context="",
+    )
+    run_materialize_pipeline(ctx)
+    # 补交次数 = 1 首抽 + DRAFT_PARTICIPANT_HEAL_RETRIES
+    assert calls["n"] == 1 + int(cb.DRAFT_PARTICIPANT_HEAL_RETRIES)
+    assert not ctx.out.get("pending_action_id")
+    assert len(db.list_pending_actions(state.turn)) == pending_before
+    assert len(db.list_decree_dossiers()) == before
+    failure = ctx.out.get("decree_validation_failure") or {}
+    assert "assignee" in set(failure.get("failed_fields") or []) or (
+        "participant_roster" in set(failure.get("failed_fields") or [])
+    )
+
+
+def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env):
+    """#1778 乙：交办主办＝后置抽取所得，不是当前召对大臣；无点将不成案。
+
+    代码路径不得把 minister_name 填成 assignee；事务类别仍照旧落库。
     """
     db, state, content = env
-    pending_id = stage_assignment_candidate(
+    # 无承办人：可暂存，收夜成案响亮失败
+    bare_id = stage_assignment_candidate(
         db, state.turn, "陈新甲", text="清丈天下田亩", title="清丈田亩",
         transaction_category="清丈",
+    )
+    bare_payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (bare_id,),
+    ).fetchone()["payload_json"])
+    assert "assignee" not in bare_payload
+    assert bare_payload.get("actor") == "陈新甲"
+    db.commit_pending_actions(state, content=content, action_ids=[bare_id])
+    assert db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (bare_id,),
+    ).fetchone() is None
+
+    # 抽取所得承办人 ≠ 召对大臣 → 成案名单钉抽取之人
+    pending_id = stage_assignment_candidate(
+        db, state.turn, "陈新甲", text="清丈天下田亩", title="清丈田亩-钉人",
+        transaction_category="清丈", assignee="毕自严",
+        participant_roster=[{"character_id": "毕自严", "tier": "主办"}],
     )
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     dossier = db.conn.execute(
@@ -261,7 +335,8 @@ def test_real_assignment_stage_owner_is_the_summoned_minister(env):
         item["character_id"] for item in db.get_decree_dossier(dossier["id"])["participant_roster"]
         if item["tier"] == "主办"
     ]
-    assert leads == ["陈新甲"]
+    assert leads == ["毕自严"]
+    assert "陈新甲" not in leads
 
 
 def test_real_punishment_stage_preserves_category(env):
@@ -296,6 +371,11 @@ def _directive_payload(category):
         "target_kind": "issue",
         "target_id": f"route-{category}",
         "transaction_category": category,
+        # #1778：好旨须自带主办，代码不配人
+        "assignee": "毕自严",
+        "participant_roster": [
+            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
+        ],
     }
 
 

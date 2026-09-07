@@ -1020,6 +1020,7 @@ def test_657_five_actions_domain_writes(game):
         "transaction_category": "督赈",
         "title": "中旨赈陕",
         "deadline_months": 2,
+        "participant_roster": _roster(_ROSTER_LEAD),
     }
     batch = ra.validate_all([urgent], [midzhi_choice])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
@@ -1211,12 +1212,20 @@ def _657_subprocess_resolve(
                              "action_type": "assignment", "target_kind": "region",
                              "target_id": "shaanxi", "locality_scope": "single",
                              "region_id": "shaanxi", "assignee_name": "",
-                             "transaction_category": "督赈", "deadline_months": 2},
+                             "transaction_category": "督赈", "deadline_months": 2,
+                             "participant_roster": [
+                                 {"character_id": "毕自严", "tier": "主办",
+                                  "role": "", "delegator_id": None},
+                             ]},
                             {"label": "新拟乙", "hint": "h2",
                              "action_type": "assignment", "target_kind": "region",
                              "target_id": "shaanxi", "locality_scope": "single",
                              "region_id": "shaanxi", "assignee_name": "杨嗣昌",
-                             "transaction_category": ""},
+                             "transaction_category": "",
+                             "participant_roster": [
+                                 {"character_id": "杨嗣昌", "tier": "主办",
+                                  "role": "", "delegator_id": None},
+                             ]},
                         ]
                 return ra.PrewriteResults(revise_by_key=out)
             ra.run_prewrite_llms = _fake_prewrite
@@ -2153,6 +2162,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
         "assignee_name": "", "transaction_category": "督赈", "deadline_months": 1,
+        "participant_roster": _roster(_ROSTER_LEAD),
     }
     opt = normalize_rescript_layer_a_option(opt_fields)
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
@@ -2392,6 +2402,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             "target_kind": "region", "target_id": "shaanxi",
             "locality_scope": "single", "region_id": "shaanxi",
             "transaction_category": "督赈", "deadline_months": 1,
+            "participant_roster": _roster(_ROSTER_LEAD),
         }),
         ("deliberate", {"action": "deliberate", "label": "下部议"}),
         ("return_revise", {"action": "return_revise", "label": "发回改票"}),
@@ -2587,6 +2598,7 @@ def test_657_mixed_batch_follow_plus_decision_and_no_context_copy(web_game, monk
         "target_kind": "region", "target_id": "shaanxi",
         "locality_scope": "single", "region_id": "shaanxi",
         "transaction_category": "督赈", "deadline_months": 2,
+        "participant_roster": _roster(_ROSTER_LEAD),
     })
     desk = _657_plant_awaiting_web(
         web_game,
@@ -3475,6 +3487,7 @@ def test_657_midzhi_persists_decision_key_and_llm_label(game):
         "region_id": "shaanxi",
         "transaction_category": "督赈",
         "deadline_months": 2,
+        "participant_roster": _roster(_ROSTER_LEAD),
     }
     batch = ra.validate_all([urgent], [choice])
     ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
