@@ -152,14 +152,22 @@ def test_chat_answer_path_typed_failure_keeps_scroll_clean():
     assert persisted == []
 
 
-def test_llm_unavailable_player_message_is_diegetic_not_template_wall():
-    """呈现层可见文案：短、diegetic、可重试口吻；禁机器原文、禁模板化长文。"""
+def test_llm_unavailable_player_message_is_system_layer_not_diegetic():
+    """#1465 ④ / P7 / ADR 0046：ERROR status 玩家文案走系统层，禁固定戏内话术。
+
+    机器横幅只进 provider_message；message 短、非戏内口吻、非长模板墙。
+    """
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
     run_output = SimpleNamespace(content=_RUNNER_BANNER, status="ERROR")
     with pytest.raises(LLMUnavailable) as ei:
         extract_agent_text(run_output)
     msg = ei.value.message
     _assert_no_machine_text(msg)
+    assert msg != CLI_RUNNER_PLAYER_MESSAGE
     # 短文：非堆砌长模板
     assert len(msg) <= 40
-    # 可重试语义（稍候/再/重）
-    assert any(tok in msg for tok in ("稍", "再", "重", "未"))
+    # 系统层人话（非戏内「通传」口吻）
+    assert "LLM" in msg or "调用" in msg or "失败" in msg
+    assert ei.value.code == "llm_run_error"
+    assert ei.value.provider_message  # 横幅诊断可回指
