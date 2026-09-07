@@ -88,14 +88,13 @@ afterEach(() => {
 
 describe("LLMConfigTab — channel-gated field rendering", () => {
   beforeEach(() => {
-    mockFetch(BASE_LLM_RESPONSE);
-  });
-
-  it("shows API fields and hides CLI fields when channel=api (initial render)", async () => {
     mockFetch({
       ...BASE_LLM_RESPONSE,
       default_headers: { "X-Session": "abc" },
     });
+  });
+
+  it("shows API fields and hides CLI fields when channel=api (initial render)", async () => {
     const { cleanup } = render(<LLMConfigTab />);
     // flush fetch + state updates
     await act(async () => {});
@@ -111,10 +110,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
   });
 
   it("shows CLI fields and hides API fields when channel is switched to cli", async () => {
-    mockFetch({
-      ...BASE_LLM_RESPONSE,
-      default_headers: { "X-Session": "abc" },
-    });
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
 
@@ -138,10 +133,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
   });
 
   it("restores API fields when channel is switched back to api", async () => {
-    mockFetch({
-      ...BASE_LLM_RESPONSE,
-      default_headers: { "X-Session": "abc" },
-    });
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
 
