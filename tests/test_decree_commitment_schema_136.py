@@ -232,43 +232,6 @@ def test_canonicalize_new_issue_preserves_commitment_columns():
     assert "resolve_condition" not in out["new_issues"][0]
 
 
-def test_decree_initiative_cap_allows_fifteen_active_issues(game):
-    db, state, _ = game
-    for idx in range(14):
-        db.insert_issue(
-            state,
-            kind="initiative",
-            title=f"既有国策{idx}",
-            origin_kind="decree",
-            effect_on_resolve={"metrics": {"民心": 1}},
-        )
-
-    out = I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{
-            "origin_kind": "decree",
-            "origin_ref": _promulgated_commitment_origin(db, state),
-            "kind": "initiative",
-            "title": "第十五条承诺地基",
-            "effect_on_resolve": {"metrics": {"民心": 1}},
-        }],
-    })
-
-    created = [item for item in out["new_issues"] if item.get("issue_id")]
-    assert len(created) == 1, out
-    assert db.count_active_initiatives() == 15
-
-
-def test_show_active_issues_uses_fifteen_initiative_cap(game, capsys):
-    db, state, _ = game
-    db.insert_issue(state, kind="initiative", title="国策展示", origin_kind="decree")
-
-    I.show_active_issues(db)
-
-    out = capsys.readouterr().out
-    assert "玩家 1/15" in out
-    assert "玩家 1/10" not in out
-
-
 def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, content):
     path = tmp_path / "legacy.db"
     conn = sqlite3.connect(path)
@@ -322,28 +285,3 @@ def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, co
         db.close()
 
 
-def test_decree_initiative_cap_rejects_sixteenth_with_updated_message(game):
-    db, state, _ = game
-    for idx in range(15):
-        db.insert_issue(
-            state,
-            kind="initiative",
-            title=f"既有国策{idx}",
-            origin_kind="decree",
-            effect_on_resolve={"metrics": {"民心": 1}},
-        )
-
-    out = I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{
-            "origin_kind": "decree",
-            "origin_ref": _promulgated_commitment_origin(db, state),
-            "kind": "initiative",
-            "title": "第十六条应拒",
-            "effect_on_resolve": {"metrics": {"民心": 1}},
-        }],
-    })
-
-    rejected = [item for item in out["new_issues"] if item.get("rejected")]
-    assert len(rejected) == 1, out
-    assert "十五事在办" in rejected[0]["reason"]
-    assert "十事在办" not in rejected[0]["reason"]

@@ -77,8 +77,6 @@ from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
 
-INITIATIVE_ACTIVE_CAP = 15
-INITIATIVE_ACTIVE_CAP_LABEL = "十五"
 COMMITMENT_KIND_UNTIL_STOP = "until_stop"
 _FISCAL_LEVY_TARGET_ABS_TOL = 1e-9
 
@@ -2894,7 +2892,7 @@ def show_active_issues(db: GameDB) -> None:
     state = db.load_state()
     initiatives = [i for i in issues if i["kind"] == "initiative"]
     situations = [i for i in issues if i["kind"] == "situation"][:12]
-    print(f"─── 待办事项 (系统 {len(situations)}/12  玩家 {len(initiatives)}/{INITIATIVE_ACTIVE_CAP}) ───")
+    print(f"─── 待办事项 (系统 {len(situations)}/12  玩家 {len(initiatives)}) ───")
 
     def _print_row(row, label: str) -> None:
         bar = _bar_ascii(int(row["bar_value"]))
@@ -5252,7 +5250,7 @@ def apply_issue_tracker_output(
 
     # 2) new_issues：接三种来源——decree、静态 event_pool，以及
     #    当前输入事实可重验的动态 impeachment_surge。其它来源一律拒。
-    initiative_active = db.count_active_initiatives()
+    # #1790：在办 initiative 数量硬上限已废——下旨一律落地，压力由执行判官两轴涌现。
     consumed_surge_candidates: set[tuple[str, str]] = set()
     for ni in tracker_output.get("new_issues", []) or []:
         if not isinstance(ni, dict):
@@ -5486,13 +5484,6 @@ def apply_issue_tracker_output(
                 "rejected": True, "category": "invalid_enum",
                 "reason": f"new_issue kind 非法 '{kind}'（须 situation/initiative）",
                 "item": ni, "title": title,
-            })
-            continue
-        if kind == "initiative" and initiative_active >= INITIATIVE_ACTIVE_CAP:
-            applied_new.append({
-                "title": title,
-                "rejected": True,
-                "reason": f"已有{INITIATIVE_ACTIVE_CAP_LABEL}事在办，朝廷分身乏术，难再添新工。",
             })
             continue
         # LLM 可能把效果字段给成非 dict（字符串/数组）；isinstance 守门归 {}，
@@ -5766,8 +5757,6 @@ def apply_issue_tracker_output(
             stages_json=stages_norm,
             commit=commit_now,
         )
-        if kind == "initiative":
-            initiative_active += 1
         applied_item = {"issue_id": issue_id, "kind": kind, "title": title, "rejected": False}
         if commitment_kind:
             applied_item["commitment_kind"] = commitment_kind
