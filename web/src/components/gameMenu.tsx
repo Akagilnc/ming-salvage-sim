@@ -328,8 +328,9 @@ export function SavesList({
   );
 }
 
-// CLI 子进程默认超时（秒），与后端 llm_config.CLI_DEFAULT_TIMEOUT_SECONDS 对齐（#55 跨语言）。
-const CLI_DEFAULT_TIMEOUT = 300;
+// 静默判死阈值默认（秒）：距上次新内容这么久没动静就判该次调用已死并重试。
+// 与后端 llm_config.CLI_DEFAULT_TIMEOUT_SECONDS 对齐（#55 跨语言）。
+const CLI_DEFAULT_TIMEOUT = 60;
 
 type LLMConfigSavePayload = Omit<LLMConfigInfo, "persisted"> & Partial<Pick<LLMConfigInfo, "persisted">>;
 
@@ -573,7 +574,12 @@ export function LLMConfigTab() {
             />
           </div>
           <label className="menu-field">
-            <span>CLI 超时（秒）</span>
+            <span>
+              静默判死（秒）{" "}
+              <small className="menu-hint">
+                （距上次新内容这么久没有动静，就判这次调用已死，自动重试）
+              </small>
+            </span>
             <input
               className="menu-input"
               type="number"
@@ -581,7 +587,7 @@ export function LLMConfigTab() {
               max={1800}
               value={cliTimeout}
               onChange={(e) => setCliTimeout(e.target.value)}
-              placeholder="300"
+              placeholder="60"
             />
           </label>
         </>

@@ -5842,6 +5842,7 @@ class LlmSetupRequest(BaseModel):
     channel: str = "api"
     cli_runner: str = ""
     cli_model: str = ""
+    # 静默判死阈值（秒）：距上次新内容这么久没动静就判该次调用已死并重试（#1465 切片③）。
     cli_timeout_seconds: float = 0
 
 
@@ -5866,8 +5867,9 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         cli_timeout_seconds=cli_timeout,
     )
     try:
-        # CLI/API smoke 是阻塞子进程/网络调用(CLI 最长 cli_timeout_seconds),不能跑在
-        # asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。verify 只读不改盘面。
+        # CLI/API smoke 是阻塞子进程/网络调用(只要还在出字就一直跑,静默超 cli_timeout_seconds
+        # 才判死重试),不能跑在 asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。
+        # verify 只读不改盘面。
         await asyncio.get_running_loop().run_in_executor(
             None, _verify_llm_configs_or_raise, config
         )
@@ -5955,8 +5957,9 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         channel="api",
     )
     try:
-        # CLI/API smoke 是阻塞子进程/网络调用(CLI 最长 cli_timeout_seconds),不能跑在
-        # asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。verify 只读不改盘面。
+        # CLI/API smoke 是阻塞子进程/网络调用(只要还在出字就一直跑,静默超 cli_timeout_seconds
+        # 才判死重试),不能跑在 asyncio event loop 上卡死并发请求 → offload 到线程池(P1/P2)。
+        # verify 只读不改盘面。
         await asyncio.get_running_loop().run_in_executor(
             None, _verify_llm_configs_or_raise, config
         )
@@ -7066,7 +7069,8 @@ class LLMConfigRequest(BaseModel):
     advanced_api_key: str = "__keep__"
     advanced_thinking_level: str = "__keep__"
     # 通道感知（#51）：channel/cli_runner/cli_model 用 "__keep__" sentinel 表示「保留当前」;
-    # cli_timeout_seconds 是数值,沿用数值 sentinel 0（=不改,build 回落当前值），不走 "__keep__"。
+    # cli_timeout_seconds（静默判死阈值,秒）是数值,沿用数值 sentinel 0（=不改,build 回落当前值），
+    # 不走 "__keep__"。
     channel: str = "__keep__"
     cli_runner: str = "__keep__"
     cli_model: str = "__keep__"

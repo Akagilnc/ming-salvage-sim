@@ -215,9 +215,8 @@ def create_chat_model(
             kwargs["id"] = cli_model_from_env(backend)
         else:
             kwargs["id"] = ""
-        cli_timeout = getattr(llm_config, "cli_timeout_seconds", None)
-        if cli_timeout:
-            kwargs["timeout"] = cli_timeout
+        # 静默判死阈值不下发成 model.timeout（SDK 阻塞轴）：CLI 通道的「等多久算死」
+        # 只由 transport 策略读设置页那一格（#1465 切片③），此处不留第二条权威路。
         # 占位符只在这一刻注入：满足 OpenAIChat 父类构造（非空 api_key），
         # CliChat 走 CLI 从不用它。LLMConfig.api_key 对 CLI 通道永远是空串，
         # 所以这个 magic-string 不流经任何 key 处理/上报路径。
