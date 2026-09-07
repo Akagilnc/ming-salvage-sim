@@ -1139,14 +1139,16 @@ def test_two_axis_tsv_transport_framing_three_text_entrances():
 
     tsv = _render_two_axis_tsv(provinces)
     physical = tsv.splitlines()
-    # 导语 + header + 灾×2 + 省盘×1 + 主办×1 = 6 物理行（无分裂残行；无 arrival_rows）
-    assert len(physical) == 6, physical
+    # 导语 + header + 灾×2 + 省盘×1 + 主办×1 + 闲省事实句 = 7 物理行
+    assert len(physical) == 7, physical
     assert physical[0].startswith("##")
     header = physical[1]
     assert len(header.split("\t")) == 20
     assert header.endswith("\t到差态")
+    # #1778 验收 7：末尾省级事实句（未成块省＝闲）
+    assert physical[-1] == "其余各省无在办差务"
 
-    data_lines = physical[2:]
+    data_lines = physical[2:-1]
     assert len(data_lines) == 4
     for ln in data_lines:
         cells = ln.split("\t")
@@ -1215,8 +1217,9 @@ def test_two_axis_tsv_transport_framing_three_text_entrances():
     ]
     cr_tsv = _render_two_axis_tsv(cr_provinces)
     cr_phys = cr_tsv.splitlines()
-    assert len(cr_phys) == 5  # 导语+header+灾+省+主办
-    for ln in cr_phys[2:]:
+    assert len(cr_phys) == 6  # 导语+header+灾+省+主办+闲省事实句
+    assert cr_phys[-1] == "其余各省无在办差务"
+    for ln in cr_phys[2:-1]:
         assert len(ln.split("\t")) == 20
         assert "\r" not in ln
     assert "\\r" in cr_tsv
@@ -1255,13 +1258,14 @@ def test_two_axis_tsv_escape_noop_on_clean_cells():
     ]
     tsv = _render_two_axis_tsv(provinces)
     lines = tsv.splitlines()
-    assert len(lines) == 5
+    assert len(lines) == 6
     # 标题在第 19 列；第 20 列到差态为空
     assert lines[2].split("\t")[18] == clean
     assert lines[2].split("\t")[19] == ""
     assert "毕自严" in lines[4]
     assert "东林" in lines[3]
-    # 无额外 escape 产物
+    assert lines[-1] == "其余各省无在办差务"
+    # 无额外 escape 产物（事实句本身无控制符）
     assert "\\t" not in tsv and "\\n" not in tsv and "\\r" not in tsv
 
 
