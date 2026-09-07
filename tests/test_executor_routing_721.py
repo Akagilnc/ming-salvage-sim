@@ -16,7 +16,6 @@ from ming_sim.db import atomic
 from ming_sim.decree import pre_settle
 from ming_sim.executor_routing import (
     classify_execution_coverage,
-    duty_route_office_type,
     resolve_lead_executors,
 )
 from ming_sim.participant_roster import resolve_dossier_owner_name
@@ -30,8 +29,7 @@ def env(game):
 
 
 def _create(db, state, *, action="assignment", category="清丈", payload=None,
-            target="validation", participants=None, commit=True,
-            rejection_collector=None):
+            target="validation", participants=None, commit=True):
     body = dict(payload or {})
     if category is not None:
         body["transaction_category"] = category
@@ -44,7 +42,6 @@ def _create(db, state, *, action="assignment", category="清丈", payload=None,
         payload=body,
         participants=participants,
         commit=commit,
-        rejection_collector=rejection_collector,
     )
 
 
@@ -72,27 +69,44 @@ def test_punishment_without_admitted_strike_subtype_is_excluded(payload):
     assert classify_execution_coverage("punishment", payload) is None
 
 
-def test_duty_route_table_golden():
-    assert duty_route_office_type("钱粮") == "户部"
-    assert duty_route_office_type("清丈") == "户部"
-    assert duty_route_office_type("缉拿") == "锦衣卫"
-    assert duty_route_office_type("缉捕") == "刑部"
-    assert duty_route_office_type("河工") == "工部"
-    assert duty_route_office_type("修仙") is None
+def test_transaction_category_vocabulary_still_comes_from_duty_routes():
+    """#1778 决定 3 只删「按类别配人」；事务类别词表真源仍是 offices.json duty_routes。"""
+    from ming_sim.executor_routing import duty_route_categories
+
+    cats = duty_route_categories()
+    assert {"钱粮", "清丈", "缉拿", "缉捕", "河工"} <= cats
+    assert "修仙" not in cats
 
 
-def test_excluded_action_stops_before_duty_routing(env):
-    db, _, _ = env
+def test_excluded_action_has_no_leads(env):
     result = resolve_lead_executors(
-        db.conn, action_type="policy", payload={"transaction_category": "修仙"},
+        action_type="policy", payload={"transaction_category": "修仙"},
     )
     assert result["route"] == "excluded"
-    assert result["rejection"] is None
+    assert result["leads"] == []
 
 
-def test_create_dossier_adds_lead_in_canonical_insert_and_restore(env):
+def test_unnamed_assignment_gets_no_lead_from_code(env):
+    """#1778 决定 3/乙：没点将、名单也没写 → 代码不配人；成案缝 unassigned 响亮失败。"""
+    result = resolve_lead_executors(
+        action_type="assignment", payload={"transaction_category": "清丈"},
+    )
+    assert result["route"] == "unassigned"
+    assert result["leads"] == []
+    assert result["signal"] is None
+
+    db, state, _ = env
+    with pytest.raises(ValueError, match="缺少主办"):
+        _create(db, state, category="清丈", payload={"transaction_category": "清丈"})
+
+
+def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(env):
+    """#1778 决定 3/5：主办来自旨意自带的名单，成案时钉进案卷、restore 有锚。"""
     db, state, content = env
-    dossier_id = _create(db, state, category="清丈")
+    dossier_id = _create(
+        db, state, category="清丈",
+        participants=[{"character_id": "毕自严", "tier": "主办"}],
+    )
     row = db.get_decree_dossier(dossier_id)
     assert [e["character_id"] for e in row["participant_roster"] if e["tier"] == "主办"] == ["毕自严"]
 
@@ -108,16 +122,31 @@ def test_create_dossier_adds_lead_in_canonical_insert_and_restore(env):
 
 
 def test_existing_delegated_lead_is_preserved_not_demoted(env):
+    """委派主办照钉、不降档；#1778：仅委派主办不算点将（须另有无委派主办）。"""
     db, state, _ = env
-    roster = [
-        {"character_id": "毕自严", "tier": "协办"},
-        {"character_id": "陈新甲", "tier": "主办", "delegator_id": "毕自严"},
-    ]
-    dossier_id = _create(db, state, category="清丈", participants=roster)
+    # 仅委派主办 → multi_month unassigned 响亮（与 bulk named_leads 同口径）
+    with pytest.raises(ValueError, match="缺少主办"):
+        _create(
+            db, state, category="清丈",
+            participants=[
+                {"character_id": "毕自严", "tier": "协办"},
+                {"character_id": "陈新甲", "tier": "主办", "delegator_id": "毕自严"},
+            ],
+        )
+    # 有无委派主办时，委派主办仍照钉、代码不另塞职司人
+    dossier_id = _create(
+        db, state, category="清丈",
+        participants=[
+            {"character_id": "毕自严", "tier": "主办"},
+            {"character_id": "陈新甲", "tier": "主办", "delegator_id": "毕自严"},
+        ],
+    )
     persisted = db.get_decree_dossier(dossier_id)["participant_roster"]
-    tiers = {(e["character_id"], e["tier"]) for e in persisted}
-    assert ("陈新甲", "主办") in tiers
-    assert ("毕自严", "主办") in tiers
+    by_name = {e["character_id"]: e for e in persisted}
+    assert by_name["毕自严"]["tier"] == "主办"
+    assert not str(by_name["毕自严"].get("delegator_id") or "").strip()
+    assert by_name["陈新甲"]["tier"] == "主办"
+    assert by_name["陈新甲"].get("delegator_id") == "毕自严"
 
 
 @pytest.mark.parametrize("payload", [
@@ -172,54 +201,6 @@ def test_canonical_owner_precedes_legacy_with_history_fallback():
         "participant_roster": [],
     }) == "旧承办"
     assert resolve_dossier_owner_name({"participant_roster": []}) == ""
-
-
-def test_acting_tenure_never_preempts_true_chief(env):
-    db, _, _ = env
-    rows = db.conn.execute(
-        "SELECT name FROM characters WHERE office_type='户部' AND status='active' ORDER BY name LIMIT 2"
-    ).fetchall()
-    assert len(rows) == 2
-    acting, chief = rows[0]["name"], rows[1]["name"]
-    db.conn.execute("UPDATE characters SET office='户部尚书' WHERE name IN (?,?)", (acting, chief))
-    db.conn.execute("UPDATE character_offices SET appointment_tenure='兼署' WHERE character_name=?", (acting,))
-    db.conn.execute("UPDATE character_offices SET appointment_tenure='真除' WHERE character_name=?", (chief,))
-    result = resolve_lead_executors(
-        db.conn, action_type="assignment", payload={"transaction_category": "清丈"},
-    )
-    assert result["leads"] == [chief]
-    assert result["downgrade_step"] == "主官"
-
-
-@pytest.mark.parametrize("tenure", ["署理", "兼署"])
-def test_acting_tenures_share_downgrade_band(env, tenure):
-    db, _, _ = env
-    holder = db.conn.execute(
-        "SELECT name FROM characters WHERE office_type='户部' AND status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"]
-    db.conn.execute("UPDATE characters SET status='dismissed' WHERE office_type='户部' AND name<>?", (holder,))
-    db.conn.execute("UPDATE characters SET office='户部尚书' WHERE name=?", (holder,))
-    db.conn.execute("UPDATE character_offices SET appointment_tenure=? WHERE character_name=?", (tenure, holder))
-    result = resolve_lead_executors(
-        db.conn, action_type="assignment", payload={"transaction_category": "清丈"},
-    )
-    assert result["leads"] == [holder]
-    assert result["downgrade_step"] == "署理降档"
-
-
-def test_idle_signal_persists_and_restores(env):
-    db, state, content = env
-    db.conn.execute("UPDATE characters SET status='dismissed' WHERE office_type='户部'")
-    dossier_id = _create(db, state, category="清丈")
-    assert db.get_decree_dossier(dossier_id)["execution_signal"]["code"] == "idle_start"
-    path = db.path
-    db.close()
-    from ming_sim.db import GameDB
-    restored = GameDB(path, content)
-    try:
-        assert restored.get_decree_dossier(dossier_id)["execution_signal"]["chain"] == "户部"
-    finally:
-        restored.close()
 
 
 def test_appointment_routes_to_appointee_at_creation(env):
@@ -279,11 +260,81 @@ def test_unknown_appointee_normalizes_unrecognized_faction(env):
     assert person["faction"] == "中立"
 
 
-def test_real_assignment_stage_preserves_category_without_speaker_as_assignee(env):
+def test_assignment_extract_missing_lead_heals_then_fails_loud(env, monkeypatch):
+    """#1778 验收 6：后置抽取为空 → 同缝补交 → 耗尽不成案响亮（0005）。"""
+    import ming_sim.cli_backend as cb
+    from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+    from ming_sim.action_clusters import candidates_from_classifier_payload
+    from types import SimpleNamespace
+
     db, state, content = env
-    pending_id = stage_assignment_candidate(
+    def empty_extract(*_a, **_k):
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+
+    monkeypatch.setattr(cb, "extract_draft_intent", empty_extract)
+    # 恢复文走 LLM；本条只钉不成案，不测戏内回禀措辞
+    monkeypatch.setattr(
+        cb, "compose_decree_validation_recovery",
+        lambda *a, **k: "交办缺承办人，请陛下明示人选。",
+    )
+    candidates = candidates_from_classifier_payload(
+        {"kind": "assignment", "title": "清丈", "target_id": "清丈田亩"},
+        soft=False,
+    )
+    before = len(db.list_decree_dossiers())
+    pending_before = len(db.list_pending_actions(state.turn))
+    ctx = MaterializeCtx(
+        session=SimpleNamespace(db=db, state=state, content=content),
+        character=SimpleNamespace(name="陈新甲", office_type="文官"),
+        player_message="着户部清丈天下田亩",
+        reply="臣领旨。",
+        message_text="着户部清丈天下田亩",
+        explicit_prefixed=False,
+        has_directive=False,
+        pend_for_minister=[],
+        out={},
+        intent=None,
+        intent_kind="none",
+        llm_config=None,
+        intent_candidates=candidates,
+        recent_context="",
+    )
+    run_materialize_pipeline(ctx)
+    assert not ctx.out.get("pending_action_id")
+    assert len(db.list_pending_actions(state.turn)) == pending_before
+    assert len(db.list_decree_dossiers()) == before
+    failure = ctx.out.get("decree_validation_failure") or {}
+    assert set(failure.get("failed_fields") or []) == {
+        "assignee", "participant_roster",
+    }
+
+
+def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env):
+    """#1778 乙：交办主办＝后置抽取所得，不是当前召对大臣；无点将不成案。
+
+    代码路径不得把 minister_name 填成 assignee；事务类别仍照旧落库。
+    """
+    db, state, content = env
+    # 无承办人：可暂存，收夜成案响亮失败
+    bare_id = stage_assignment_candidate(
         db, state.turn, "陈新甲", text="清丈天下田亩", title="清丈田亩",
         transaction_category="清丈",
+    )
+    bare_payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (bare_id,),
+    ).fetchone()["payload_json"])
+    assert "assignee" not in bare_payload
+    assert bare_payload.get("actor") == "陈新甲"
+    db.commit_pending_actions(state, content=content, action_ids=[bare_id])
+    assert db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (bare_id,),
+    ).fetchone() is None
+
+    # 抽取所得承办人 ≠ 召对大臣 → 成案名单钉抽取之人
+    pending_id = stage_assignment_candidate(
+        db, state.turn, "陈新甲", text="清丈天下田亩", title="清丈田亩-钉人",
+        transaction_category="清丈", assignee="毕自严",
+        participant_roster=[{"character_id": "毕自严", "tier": "主办"}],
     )
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
     dossier = db.conn.execute(
@@ -295,6 +346,7 @@ def test_real_assignment_stage_preserves_category_without_speaker_as_assignee(en
         if item["tier"] == "主办"
     ]
     assert leads == ["毕自严"]
+    assert "陈新甲" not in leads
 
 
 def test_real_punishment_stage_preserves_category(env):
@@ -310,21 +362,6 @@ def test_real_punishment_stage_preserves_category(env):
     assert payload["transaction_category"] == "缉拿"
 
 
-def test_pre_settle_owns_rejection_mirror(env, monkeypatch, tmp_path):
-    db, state, content = env
-    mirror = tmp_path / "pre-settle-rejections.jsonl"
-    monkeypatch.setattr("ming_sim.decree.rejections_jsonl_path", lambda: str(mirror))
-    stage_assignment_candidate(
-        db, state.turn, "陈新甲", text="修仙", title="修仙",
-        transaction_category="修仙",
-    )
-    pre_settle(state, db, content=content)
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE section='executor_routing'",
-    ).fetchone()[0] == 1
-    assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "duty_route_unmapped"
-
-
 def test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier(env):
     db, state, _ = env
     pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
@@ -338,40 +375,27 @@ def test_punishment_stage_rejects_unmapped_category_before_pending_or_dossier(en
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
 
 
-def test_unmapped_rejection_rolls_back_with_uncommitted_dossier(env):
-    """#1745：commit=False 须外层 collector；flush 后随 outer atomic 回滚无残留。"""
-    from ming_sim.applier import RejectionCollector
-
-    db, state, _ = env
-    collector = RejectionCollector()
-    try:
-        with atomic(db):
-            assert _create(
-                db, state, category="修仙", commit=False,
-                rejection_collector=collector,
-            ) == 0
-            collector.flush_to_db(db)
-            assert db.conn.execute(
-                "SELECT COUNT(*) FROM rejection_reports",
-            ).fetchone()[0] == 1
-            raise RuntimeError("force rollback")
-    except RuntimeError:
-        pass
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
-    table = db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
-    ).fetchone()
-    assert table is None or db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports"
-    ).fetchone()[0] == 0
-
-
 def _directive_payload(category):
     return {
         "dossier_action_type": "assignment",
         "target_kind": "issue",
         "target_id": f"route-{category}",
         "transaction_category": category,
+        # #1778：好旨须自带主办，代码不配人
+        "assignee": "毕自严",
+        "participant_roster": [
+            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
+        ],
+    }
+
+
+def _bad_directive_payload():
+    """产物错旨意（缺 target_id → 成案点 ValueError）；#1778 后 duty 拒收已无产源。"""
+    return {
+        "dossier_action_type": "assignment",
+        "target_kind": "issue",
+        "target_id": "",
+        "transaction_category": "清丈",
     }
 
 
@@ -383,8 +407,8 @@ def test_pending_routing_rejection_lands_on_ensure_batch_seam(
     mirror = tmp_path / "ensure-routing.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
     bad = db.add_directive(
-        state, None, "修仙", "test", status="pending",
-        dossier_payload=_directive_payload("修仙"),
+        state, None, "缺目标", "test", status="pending",
+        dossier_payload=_bad_directive_payload(),
     )
     good = db.add_directive(
         state, None, "清丈", "test", status="pending",
@@ -422,7 +446,7 @@ def test_pending_routing_rejection_lands_on_ensure_batch_seam(
         "SELECT COUNT(*) FROM decree_dossiers WHERE directive_id=?", (good,),
     ).fetchone()[0] == 1
     assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == 1
-    assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "duty_route_unmapped"
+    assert json.loads(mirror.read_text(encoding="utf-8"))["category"] == "locality_fanout_failed"
 
 
 def test_rolled_back_collector_reuse_does_not_mirror_orphan(env, monkeypatch, tmp_path):
@@ -432,7 +456,7 @@ def test_rolled_back_collector_reuse_does_not_mirror_orphan(env, monkeypatch, tm
     mirror = tmp_path / "collector-reuse.jsonl"
     collector = RejectionCollector()
     item = lambda marker: RejectedItem(
-        item={"marker": marker}, reason="test", category="duty_route_unmapped",
+        item={"marker": marker}, reason="test", category="locality_fanout_failed",
         source=Provenance.player_decree,
     )
     with pytest.raises(RuntimeError, match="rollback first"):
@@ -464,8 +488,8 @@ def test_directive_routing_rejection_rolls_back_with_outer_owner(
     mirror = tmp_path / "batch-rollback.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
     directive_id = db.add_directive(
-        state, None, "修仙", "test", status="draft",
-        dossier_payload=_directive_payload("修仙"),
+        state, None, "缺目标", "test", status="draft",
+        dossier_payload=_bad_directive_payload(),
     )
 
     with pytest.raises(RuntimeError, match="force outer rollback"):
@@ -488,22 +512,6 @@ def test_directive_routing_rejection_rolls_back_with_outer_owner(
     assert not mirror.exists()
 
 
-@pytest.mark.parametrize("action", ["assignment", "military_order"])
-def test_idle_promulgation_keeps_executing_without_pre_materialization(env, action):
-    db, state, content = env
-    db.conn.execute("UPDATE characters SET status='dismissed' WHERE office_type='户部'")
-    before_issues = db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
-    dossier_id = _create(
-        db, state, action=action, category="清丈",
-        payload={"title": "怠办测试", "target_id": "不存在军队", "station": "辽东"},
-    )
-    db.apply_dossier_promulgation(state, dossier_id, "promulgated", content=content)
-    dossier = db.get_decree_dossier(dossier_id)
-    assert dossier["status"] == "executing"
-    assert dossier.get("outcome") is None
-    assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before_issues
-
-
 @pytest.mark.parametrize("column,bad", [
     ("payload_json", "{"),
     ("participant_roster", "{"),
@@ -518,12 +526,9 @@ def test_restore_malformed_durable_json_fails_loud(env, column, bad):
         db.get_decree_dossier(dossier_id)
 
 
-def test_national_fanout_reuses_central_bi_ziyan(env):
-    """#654 R2：national 未点将真实 seed → 15×毕自严；单省空链不回退。"""
-    from ming_sim.execution_pressure import ming_province_ids
-
+def test_national_policy_is_one_dossier_without_province_routing(env):
+    """#1778 决定 4：全国政令一份案卷、region_id 空；无省级子行、无中央回退链。"""
     db, state, _ = env
-    provinces = ming_province_ids(db.conn)
     payload = {
         "target_kind": "policy",
         "target_id": "清丈天下田亩",
@@ -539,94 +544,19 @@ def test_national_fanout_reuses_central_bi_ziyan(env):
         payload=payload,
         commit=True,
     )
-    assert len(ids) == 15
-    leads = []
-    for did in ids:
-        row = db.get_decree_dossier(did)
-        own = [e["character_id"] for e in row["participant_roster"] if e.get("tier") == "主办"]
-        assert own == ["毕自严"]
-        leads.append(own[0])
-    assert leads == ["毕自严"] * 15
+    assert len(ids) == 1
+    row = db.get_decree_dossier(ids[0])
+    assert row["region_id"] == ""
 
+    # 单省差务未点将、名单也没写 → 空 leads（钉代码不配人、无省级/中央回退）
     single = resolve_lead_executors(
-        db.conn,
-        action_type="policy",
+        action_type="assignment",
         payload={
             "transaction_category": "清丈",
             "locality_scope": "single",
             "target_kind": "region",
             "target_id": "shaanxi",
         },
-        region_id="shaanxi",
     )
     assert single["leads"] == []
-    assert (single.get("signal") or {}).get("code") == "idle_start"
-
-
-def test_create_dossier_unmapped_without_collector_fails_loud_no_self_build(env):
-    """#1745 / 0150-D2：commit=True 亦不得自建 collector；无外层 owner → 响亮失败。"""
-    db, state, _ = env
-    before_reports = db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
-    ).fetchone()
-    before_n = 0
-    if before_reports is not None:
-        before_n = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
-    from ming_sim.applier import RejectionCollectorRequired
-    with pytest.raises(RejectionCollectorRequired):
-        _create(db, state, category="修仙", commit=True)
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
-    # 不得留下自建 flush 的拒收行
-    table = db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
-    ).fetchone()
-    if table is not None:
-        assert db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0] == before_n
-
-
-def test_create_dossier_unmapped_with_outer_collector_records_once(env, tmp_path):
-    """#1745：外层 collector 归属 → 一次 record，外层 flush/mirror。"""
-    from ming_sim.applier import RejectionCollector
-
-    db, state, _ = env
-    mirror = tmp_path / "outer-own.jsonl"
-    collector = RejectionCollector()
-    assert _create(
-        db, state, category="修仙", commit=True, rejection_collector=collector,
-    ) == 0
-    assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == 0
-    # 尚未 flush：外层负责
-    collector.flush_to_db(db)
-    db.conn.commit()
-    collector.mirror_to_jsonl(str(mirror))
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE section='executor_routing'",
-    ).fetchone()[0] == 1
-    assert mirror.exists()
-    assert "duty_route_unmapped" in mirror.read_text(encoding="utf-8")
-
-
-def test_commit_pending_unmapped_without_collector_fails_loud(env):
-    """#1745：真实入口 commit_pending_actions 无 collector + 路由拒收 → 响亮，不标 failed 无痕。"""
-    db, state, content = env
-    pending_id = stage_assignment_candidate(
-        db, state.turn, "陈新甲", text="修仙", title="修仙",
-        transaction_category="修仙",
-    )
-    assert pending_id > 0
-    from ming_sim.applier import RejectionCollectorRequired
-    with pytest.raises(RejectionCollectorRequired):
-        db.commit_pending_actions(
-            state, content=content, action_ids=[pending_id],
-        )
-    # pending 不得被吞成 failed 而无拒收行
-    status = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["status"]
-    assert status == "pending"
-    table = db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
-    ).fetchone()
-    assert table is None or db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports"
-    ).fetchone()[0] == 0
+    assert single["route"] == "unassigned"

@@ -16,7 +16,6 @@ from ming_sim.models import (
     API_DEFAULT_TIMEOUT_SECONDS,
     TRANSPORT_DEFAULT_MAX_ATTEMPTS,
     TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
-    TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS,
 )
 from ming_sim.paths import user_data_path
 
@@ -34,13 +33,11 @@ _API_RUNTIME_FIELDS = (
     "advanced_thinking_level",
     "reasoning_strength",
 )
+# cli.timeout_seconds = 设置页那一格 = 静默判死阈值（#1465 切片③ owner 2026-09-07）。
 _CLI_RUNTIME_FIELDS = ("runner", "model", "timeout_seconds", "reasoning_strength")
-# #1465：transport 统一策略与 API/CLI 槽平级（ADR 0001 槽位契约不动）
-_TRANSPORT_RUNTIME_FIELDS = (
-    "max_attempts",
-    "attempt_timeout_seconds",
-    "idle_timeout_seconds",
-)
+# #1465：transport 统一策略与 API/CLI 槽平级（ADR 0001 槽位契约不动）。空转阈值不在本段：
+# 它的真源是 CLI 槽的 timeout_seconds（设置页那一格），CLI 与 API 同吃，见
+# cli_idle_timeout_seconds。
 
 # CLI 通道在内存里用这个占位符填 LLMConfig.api_key（脱 key 运行），它绝不是真实 key。
 CLI_BACKEND_PLACEHOLDER = "cli-backend"
@@ -76,10 +73,10 @@ def _slot_text(data: Dict[str, object], key: str) -> str:
 _API_NUMERIC_FIELDS = {
     "timeout_seconds": (float, API_DEFAULT_TIMEOUT_SECONDS),
 }
+_TRANSPORT_RUNTIME_FIELDS = ("max_attempts", "attempt_timeout_seconds")
 _TRANSPORT_NUMERIC_FIELDS = {
     "max_attempts": (int, TRANSPORT_DEFAULT_MAX_ATTEMPTS),
     "attempt_timeout_seconds": (float, TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS),
-    "idle_timeout_seconds": (float, TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS),
 }
 
 
@@ -120,7 +117,7 @@ def _cli_runtime_slot(data: Dict[str, object]) -> Dict[str, str]:
 def _transport_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
     """#1465 transport 段：与 api/cli 平级；缺省填默认，旧档无段不炸。
 
-    数值有效域：须 > 0（次数/超时/空转）；非正数回落 typed 默认。
+    数值有效域：须 > 0（次数/超时）；非正数回落 typed 默认。
     此为 transport 数值唯一解析权威（llm_transport 禁第二 clamp）。
     """
     out: Dict[str, object] = {}
@@ -136,6 +133,21 @@ def _transport_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
 def transport_runtime_slot(data: Dict[str, object]) -> Dict[str, object]:
     """#1465 transport 数值解析唯一公开入口（llm_transport 委派，禁平行 _positive_*）。"""
     return _transport_runtime_slot(data)
+
+
+def cli_idle_timeout_seconds(data: Dict[str, object]) -> float:
+    """静默判死阈值（秒）解析唯一权威：设置页那一格 = runtime 档 cli.timeout_seconds。
+
+    「距上次新内容这么久没有新动静，就判这次调用已死并重试」——CLI 子进程与 API 流
+    共用这一个阈值（#1465 切片③ owner 2026-09-07 拍）。缺段 / 非数 / 非正数一律回落
+    CLI_DEFAULT_TIMEOUT_SECONDS；调用方禁第二处 clamp。
+    """
+    cli = data.get("cli") if isinstance(data, dict) else None
+    source = cli if isinstance(cli, dict) else {}
+    value = _slot_number(source.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS)
+    if not (isinstance(value, (int, float)) and value > 0):
+        value = CLI_DEFAULT_TIMEOUT_SECONDS
+    return float(value)
 
 
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
@@ -331,7 +343,7 @@ def load_llm_config(
         channel="cli" if cli_runner else "api",
         cli_runner=cli_runner or "",
         cli_model=cli_model_from_env(cli_runner or "", model),
-        # CLI 子进程超时用 CLI 默认，不沿用 API 的 timeout_seconds（codex R1 #2）。
+        # 静默判死阈值用 CLI 槽默认，不沿用 API 的 timeout_seconds（codex R1 #2）。
         cli_timeout_seconds=CLI_DEFAULT_TIMEOUT_SECONDS,
     )
 
@@ -401,7 +413,6 @@ def save_runtime_llm(
     api_reasoning_strength: Optional[str] = None,
     transport_max_attempts: Optional[int] = None,
     transport_attempt_timeout_seconds: Optional[float] = None,
-    transport_idle_timeout_seconds: Optional[float] = None,
 ) -> None:
     """写 data/runtime_llm.json。明文存盘——按用户选择。"""
     os.makedirs(os.path.dirname(RUNTIME_LLM_PATH), exist_ok=True)
@@ -482,8 +493,6 @@ def save_runtime_llm(
         transport_src["max_attempts"] = transport_max_attempts
     if transport_attempt_timeout_seconds is not None:
         transport_src["attempt_timeout_seconds"] = transport_attempt_timeout_seconds
-    if transport_idle_timeout_seconds is not None:
-        transport_src["idle_timeout_seconds"] = transport_idle_timeout_seconds
     transport_payload = _transport_runtime_slot(transport_src)
     payload = {
         "channel": active_channel,

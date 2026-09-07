@@ -9,6 +9,8 @@ CLI runner / 召对半流呈现 / 外层截断点由后续切片迁移。
 - SDK 阻塞（等下一 chunk / httpx read）：bind_transport_sdk_budget 把 model.timeout
   临时设为 attempt_timeout_seconds；事件界 check_idle_budget 不能中止该阻塞。
 - 事件边界空转：距上次活动 ≥ idle_timeout_seconds → TransportIdleTimeout（可重试）。
+  该阈值 = 设置页那一格（runtime 档 cli.timeout_seconds），CLI 与 API 同吃一个权威；
+  解析走 llm_config.cli_idle_timeout_seconds，本模块不另立默认、不第二次 clamp。
 - 不设 attempt 总墙钟（宪法 #9）；每次 attempt 重新取得完整空转预算。
 - create_chat_model 默认保留未迁移 timeout_seconds / max_retries=1；
   已迁移接缝（召对流、run_agent_text）临时覆盖。
@@ -28,8 +30,8 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import (
+    CLI_DEFAULT_TIMEOUT_SECONDS,
     TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
-    TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS,
     TRANSPORT_DEFAULT_MAX_ATTEMPTS,
 )
 
@@ -42,6 +44,13 @@ _typed_provider_status: ContextVar[Optional[int]] = ContextVar(
     "ming_sim_transport_typed_status", default=None,
 )
 
+# 提供方层抛出的 transport typed 失败（空转/空输出/瞬断/HTTP）。SDK 层把异常吞成
+# RunErrorEvent(content=str(e)) 后 typed 语义只剩散文；本 ContextVar 在 model 调用
+# 边界原样记住分类结果，供事件映射还原——不从 content 散文抠语义（ADR 0142）。
+_typed_provider_failure: ContextVar[Optional["ClassifiedFailure"]] = ContextVar(
+    "ming_sim_transport_typed_failure", default=None,
+)
+
 
 @dataclass(frozen=True)
 class TransportPolicy:
@@ -51,7 +60,8 @@ class TransportPolicy:
     # SDK/httpx read 阻塞预算（bind_transport_sdk_budget → model.timeout）。
     attempt_timeout_seconds: float = TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
     # 事件界空转预算（check_idle_budget）；与 SDK 阻塞轴分家，不得混用。
-    idle_timeout_seconds: float = TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS
+    # 真源 = 设置页那一格（cli.timeout_seconds），此处只兜底其默认。
+    idle_timeout_seconds: float = CLI_DEFAULT_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -96,8 +106,15 @@ def transport_attempts_public(attempts: List[TransportAttempt]) -> List[dict]:
 
 
 def transport_policy_from_mapping(data: object) -> TransportPolicy:
-    """从 runtime 映射归一策略。数值解析单权威 = llm_config._transport_runtime_slot。"""
-    from ming_sim.llm_config import transport_runtime_slot
+    """从 runtime 映射归一策略。数值解析单权威在 llm_config：
+
+    - 次数 / SDK 阻塞预算 → transport 段（transport_runtime_slot）
+    - 静默判死阈值 → 设置页那一格 cli.timeout_seconds（cli_idle_timeout_seconds）
+
+    只给 transport 段（无 cli 槽）时静默阈值取默认——设置页写过的值经整份 runtime
+    映射进来。
+    """
+    from ming_sim.llm_config import cli_idle_timeout_seconds, transport_runtime_slot
 
     if not isinstance(data, dict):
         return default_transport_policy()
@@ -108,7 +125,7 @@ def transport_policy_from_mapping(data: object) -> TransportPolicy:
     return TransportPolicy(
         max_attempts=int(slot["max_attempts"]),
         attempt_timeout_seconds=float(slot["attempt_timeout_seconds"]),
-        idle_timeout_seconds=float(slot["idle_timeout_seconds"]),
+        idle_timeout_seconds=cli_idle_timeout_seconds(data),
     )
 
 
@@ -160,12 +177,28 @@ def _remember_typed_status(error: BaseException) -> None:
         cause = cause.__cause__
 
 
+def _remember_typed_failure(error: BaseException) -> None:
+    """记住提供方层已 typed 的失败（HTTP status + 分类）。
+
+    只认本模块自己的 typed 异常（TransportIdleTimeout / LLMUnavailable）与 openai
+    typed 异常：SDK 之后可能把它们吞成散文 RunErrorEvent，届时按记忆还原分类。
+    未 typed 的异常不记，仍走 run_error_event_failure 的「无 status 不洗成瞬断」。
+    """
+    _remember_typed_status(error)
+    if isinstance(
+        error,
+        (TransportIdleTimeout, LLMUnavailable, APITimeoutError, APIConnectionError,
+         APIStatusError),
+    ):
+        _typed_provider_failure.set(classify_transport_failure(error))
+
+
 def _capture_status_wrapper(method: Callable) -> Callable:
     def wrapped(*args: Any, **kwargs: Any):
         try:
             result = method(*args, **kwargs)
         except Exception as error:
-            _remember_typed_status(error)
+            _remember_typed_failure(error)
             raise
         if not inspect.isgenerator(result):
             return result
@@ -174,7 +207,7 @@ def _capture_status_wrapper(method: Callable) -> Callable:
             try:
                 yield from result
             except Exception as error:
-                _remember_typed_status(error)
+                _remember_typed_failure(error)
                 raise
 
         return captured()
@@ -359,9 +392,19 @@ def map_run_error_event(event: Any) -> Optional[BaseException]:
     非 RunErrorEvent 返回 None。分类语义 = run_error_event_failure；
     系统层出口 = transport_failure_unavailable。typed status 只认事件字段或
     提供方层捕获的 status_code，不解析 content 散文。
+
+    提供方层已 typed 的失败（CLI 空转/空输出/瞬断等）由 _remember_typed_failure
+    在 model 调用边界记下：SDK 吞成散文事件后按记忆还原分类，禁在此重新猜语义。
     """
     if type(event).__name__ != "RunErrorEvent":
         return None
+    remembered = _typed_provider_failure.get()
+    if remembered is not None:
+        _typed_provider_failure.set(None)
+        _typed_provider_status.set(None)
+        return transport_failure_unavailable(
+            remembered, attempts=1, exhausted=False,
+        )
     status = _typed_status_from_run_error_event(event)
     _typed_provider_status.set(None)
     return transport_failure_unavailable(
@@ -459,6 +502,7 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
             model.async_client = None
         # 绑定退出即弃本次捕获，禁跨接缝残留（#1780）
         _typed_provider_status.set(None)
+        _typed_provider_failure.set(None)
 
 
 def run_with_transport(
@@ -535,8 +579,9 @@ def run_transport_stream(
     tick = clock or time.monotonic
 
     def _one_attempt() -> R:
-        # 每次 attempt 完整空转预算；清空上一 attempt 的 typed status，禁串洗。
+        # 每次 attempt 完整空转预算；清空上一 attempt 的 typed 记忆，禁串洗。
         _typed_provider_status.set(None)
+        _typed_provider_failure.set(None)
         last_activity_at = tick()
         stream = start_stream()
         try:
