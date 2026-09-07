@@ -1026,6 +1026,7 @@ class WebGame:
         cli_runner: Optional[str] = None,
         cli_model: Optional[str] = None,
         cli_timeout_seconds: float = 0,
+        default_headers: Optional[Dict[str, str]] = None,
     ) -> LLMConfig:
         """从 in-game 输入派生新 LLMConfig（纯函数,不 verify/不落盘/不改 session）。
         通道感知（#51）：显式 channel 优先;否则填了真实 API key=切 api;都没有=保留当前通道
@@ -1084,8 +1085,11 @@ class WebGame:
         else:
             new_adv_key = advanced_api_key.strip()
         new_adv_thinking_level = ""
-        # #1794：设置 UI 不露头表，in-game 改配置须保留当前头（save 侧同口径）。
-        new_default_headers = dict(cur.default_headers or {})
+        # #1794：显式传入（含空表）覆写；省略则保留当前头。
+        if default_headers is None:
+            new_default_headers = dict(cur.default_headers or {})
+        else:
+            new_default_headers = _slot_header_table(default_headers)
         return LLMConfig(
             api_key=new_key,
             base_url=base,
@@ -1159,6 +1163,7 @@ class WebGame:
                 cli_model=new_config.cli_model,
                 cli_timeout_seconds=new_config.cli_timeout_seconds,
                 reasoning_strength=new_config.reasoning_strength,
+                default_headers=dict(new_config.default_headers or {}),
             )
         self.session.llm_config = new_config
         # 重建 registry 让大臣 Agent 用新配置
@@ -5404,6 +5409,10 @@ async def api_menu_status() -> Dict[str, Any]:
             "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
             "has_advanced_api_key": _has_real_api_key(runtime.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
             "advanced_thinking_level": "",
+            # #1794：设置页读回附加请求头表（API 槽）。
+            "default_headers": _slot_header_table(
+                api_slot.get("default_headers", runtime.get("default_headers"))
+            ),
         },
     }
 
@@ -5861,6 +5870,8 @@ class LlmSetupRequest(BaseModel):
     cli_model: str = ""
     # 静默判死阈值（秒）：距上次新内容这么久没动静就判该次调用已死并重试（#1465 切片③）。
     cli_timeout_seconds: float = 0
+    # #1794：设置页附加请求头表；None=保留档内，{}=清空。
+    default_headers: Optional[Dict[str, str]] = None
 
 
 async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
@@ -5958,8 +5969,11 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     # advanced_api_key 留空：复用已存的（避免覆盖成空）。
     if advanced_model and not advanced_api_key:
         advanced_api_key = real_api_key_or_empty(existing.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
-    # #1794：verify 配置须装入档内头表（经同一归一缝）；设置 UI 不露此字段，请求体无头。
-    default_headers = _slot_header_table(existing.get("default_headers"))
+    # #1794：请求体显式带头表则用之（含空表清空）；省略则装入档内头表（旧客户端兼容）。
+    if request.default_headers is not None:
+        default_headers = _slot_header_table(request.default_headers)
+    else:
+        default_headers = _slot_header_table(existing.get("default_headers"))
     normalized_base_url = normalize_openai_base_url(base_url)
     config = LLMConfig(
         api_key=api_key,
@@ -6000,6 +6014,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         advanced_thinking_level,
         channel="api",
         reasoning_strength=reasoning_strength,
+        default_headers=default_headers,
     )
     return {
         "ok": True,
@@ -6014,6 +6029,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
             "has_advanced_api_key": _has_real_api_key(advanced_api_key),
             "advanced_thinking_level": "",
             "reasoning_strength": reasoning_strength,
+            "default_headers": default_headers,
         },
     }
 
@@ -7052,6 +7068,8 @@ class LLMConfigRequest(BaseModel):
     cli_runner: str = "__keep__"
     cli_model: str = "__keep__"
     cli_timeout_seconds: float = 0
+    # #1794：附加请求头表；None=保留当前，{}=清空。
+    default_headers: Optional[Dict[str, str]] = None
 
 
 @app.get("/api/consorts/candidates")
@@ -7166,6 +7184,8 @@ async def api_get_llm_config() -> Dict[str, Any]:
         # #1274 W1：CLI Runner 下拉单源（= _CLI_BACKENDS 有序），menuPage/gameMenu 共吃。
         "cli_runners": cli_runner_choices(),
         "cli_timeout_seconds": cfg.cli_timeout_seconds,
+        # #1794：设置页读回附加请求头表。
+        "default_headers": dict(cfg.default_headers or {}),
         "persisted": {
             "channel": saved.get("channel", ""),
             "base_url": saved.get("base_url", ""),
@@ -7183,6 +7203,9 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "cli_runner": str(saved_cli.get("runner") or ""),
             "cli_model": str(saved_cli.get("model") or ""),
             "cli_timeout_seconds": _runtime_float(saved_cli.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS),
+            "default_headers": _slot_header_table(
+                saved_api.get("default_headers", saved.get("default_headers"))
+            ),
         },
     }
 
@@ -7219,6 +7242,7 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
             cli_runner=cli_runner,
             cli_model=cli_model,
             cli_timeout_seconds=request.cli_timeout_seconds,
+            default_headers=request.default_headers,
         )
         await asyncio.get_running_loop().run_in_executor(None, _verify_llm_configs_or_raise, cfg)
         # commit 仍同步 on-loop（上方注释的刻意决定不变），但须走 _write_gate：commit_llm_config
@@ -7264,6 +7288,7 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         # #1274 W1：CLI Runner 下拉单源。
         "cli_runners": cli_runner_choices(),
         "cli_timeout_seconds": cfg.cli_timeout_seconds,
+        "default_headers": dict(cfg.default_headers or {}),
     }
 
 

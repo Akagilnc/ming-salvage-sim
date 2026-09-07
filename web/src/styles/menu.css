@@ -676,6 +676,41 @@
   font-size: 0.85rem;
   color: #d8c590;
 }
+/* #1794：附加请求头表——沿用 menu-row + 既有输入形，不新造视觉语言。 */
+.menu-headers-field .menu-header-row {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+.menu-headers-field .menu-header-row input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.menu-modal .menu-headers-field .menu-header-row input {
+  display: block;
+  width: auto;
+  margin-top: 0;
+  padding: 8px 10px;
+  background: rgba(255, 245, 215, 0.08);
+  border: 1px solid rgba(226, 180, 86, 0.35);
+  border-radius: 6px;
+  color: #f3e6c4;
+  font-size: 0.9rem;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.menu-modal .menu-headers-field .menu-header-row button,
+.menu-modal .menu-headers-add {
+  padding: 6px 12px;
+  border: 1px solid rgba(226, 180, 86, 0.4);
+  border-radius: 6px;
+  background: rgba(255, 235, 180, 0.06);
+  color: #f3e6c4;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.menu-modal .menu-headers-add {
+  margin-top: 8px;
+}
 
 .menu-modal-actions {
   display: flex;
