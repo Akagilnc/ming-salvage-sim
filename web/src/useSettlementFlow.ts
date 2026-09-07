@@ -134,13 +134,6 @@ export function useSettlementFlow({
       if (cheatPayload) {
         setCheatDirective("");
       }
-      // #1796 / ADR 0149：点即入核账期——流在飞时并行拉状态口，settlement_display/月初快照尽早叠影。
-      // 失败吞掉：流终态路径（decisions/error/done）仍会 loadState/reload；不升格 busy 为真源。
-      if (response.ok) {
-        void loadState().catch((err) => {
-          console.warn("[settlement] early display refresh failed", err);
-        });
-      }
       const outcome = await consumeSettle(response);
       if (outcome.kind === "error") {
         const errData = typeof outcome.data === "string" ? { message: outcome.data } : (outcome.data || {});
@@ -213,12 +206,6 @@ export function useSettlementFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ choices }),
       });
-      // #1796：与 issueDecree 同——流在飞并行刷新展示态。
-      if (response.ok) {
-        void loadState().catch((err) => {
-          console.warn("[settlement] early display refresh failed", err);
-        });
-      }
       const outcome = await consumeSettle(response);
       if (outcome.kind === "error") {
         // #1418 r2：同会话 phase2 失败后 loadState，使 settle-resume 续跑面可挂上。
