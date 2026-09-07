@@ -6,6 +6,12 @@ import { resolveReasoningSupported } from "../reasoningSupport";
 import type { LLMConfigInfo, SaveEntry } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { CliModelField } from "./cliModelField";
+import {
+  DefaultHeadersField,
+  headersToRows,
+  rowsToHeaders,
+  type HeaderRow,
+} from "./defaultHeadersField";
 
 export function GameMenuModal({
   onClose,
@@ -359,6 +365,7 @@ export function mergePersistedSaveSnapshot(
     cli_runner: savedCliSlot ? (data.cli_runner || current?.cli_runner) : current?.cli_runner,
     cli_model: savedCliSlot ? (data.cli_model ?? current?.cli_model) : current?.cli_model,
     cli_timeout_seconds: savedCliSlot ? (data.cli_timeout_seconds || current?.cli_timeout_seconds) : current?.cli_timeout_seconds,
+    default_headers: savedCliSlot ? current?.default_headers : (data.default_headers ?? current?.default_headers),
   };
 }
 
@@ -383,6 +390,7 @@ export function LLMConfigTab() {
   const [cliRunner, setCliRunner] = React.useState("agy");
   const [cliModel, setCliModel] = React.useState("");
   const [cliTimeout, setCliTimeout] = React.useState(String(CLI_DEFAULT_TIMEOUT));
+  const [headerRows, setHeaderRows] = React.useState<HeaderRow[]>([]);
   const [show, setShow] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState("");
@@ -444,6 +452,7 @@ export function LLMConfigTab() {
         setCliRunner(data.persisted?.cli_runner || (data.channel === "cli" ? data.cli_runner || "" : "") || "agy");
         setCliModel(data.persisted?.cli_model ?? (data.channel === "cli" ? data.cli_model || "" : ""));
         setCliTimeout(String(data.persisted?.cli_timeout_seconds || data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
+        setHeaderRows(headersToRows(data.default_headers));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
@@ -472,6 +481,7 @@ export function LLMConfigTab() {
           cli_runner: channel === "cli" ? cliRunner : "__keep__",
           cli_model: channel === "cli" ? cliModel : "__keep__",
           cli_timeout_seconds: channel === "cli" ? parseFloat(cliTimeout) || CLI_DEFAULT_TIMEOUT : 0,
+          ...(channel === "api" ? { default_headers: rowsToHeaders(headerRows) } : {}),
         }),
       });
       setInfo((cur) => ({
@@ -498,6 +508,9 @@ export function LLMConfigTab() {
       // 本地 cliModel 即用户刚提交且通过连通性校验的原值（raw），保留它即可——与加载端
       // 读 persisted.cli_model、menuPage 读 cli_model_saved 一致同走 raw（CMR R3 codex+gemini）。
       setCliTimeout(String(data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
+      if (data.channel !== "cli") {
+        setHeaderRows(headersToRows(data.default_headers));
+      }
       setApiKey("");
       setAdvancedApiKey("");
       setMsg("已生效并写入 data/runtime_llm.json。");
@@ -698,6 +711,7 @@ export function LLMConfigTab() {
               </button>
             </div>
           </div>
+          <DefaultHeadersField rows={headerRows} onChange={setHeaderRows} variant="game" />
         </>
       ) : null}
       <div className="menu-row">

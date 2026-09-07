@@ -448,7 +448,7 @@ def save_runtime_llm(
         advanced_thinking_level,
     )
     preserve_api = active_channel == "cli" and not any((value or "").strip() for value in api_inputs)
-    # #1794：头表未显式传入时保留既存（设置 UI 不露此字段，重写 API 槽不得擦掉）。
+    # #1794：头表未显式传入时保留既存（旧客户端省略字段不得擦掉）。
     headers_payload = (
         _slot_header_table(default_headers)
         if default_headers is not None

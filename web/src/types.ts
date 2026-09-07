@@ -565,6 +565,8 @@ export type LLMConfigInfo = {
   /** Backend runner dropdown from cli_backend.cli_runner_choices() (#1274 W1). */
   cli_runners?: CliRunnerChoice[];
   cli_timeout_seconds?: number;
+  /** #1794：API 通道附加请求头表（名→值）；空表＝现状。 */
+  default_headers?: Record<string, string>;
   persisted: {
     channel?: "api" | "cli";
     base_url: string;
@@ -582,6 +584,7 @@ export type LLMConfigInfo = {
     cli_runner?: string;
     cli_model?: string;
     cli_timeout_seconds?: number;
+    default_headers?: Record<string, string>;
   };
 };
 
@@ -751,6 +754,8 @@ export type MenuStatus = {
     reasoning_strengths?: ReasoningStrengthChoice[];
     /** Backend capability list from cli_backend.CLI_REASONING_STRENGTH_RUNNERS (#1271). */
     cli_reasoning_runners?: string[];
+    /** #1794：API 通道附加请求头表（名→值）；空表＝现状。 */
+    default_headers?: Record<string, string>;
   };
 };
 

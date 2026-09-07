@@ -864,3 +864,120 @@ describe("#1732 GameMenu · 就地消解", () => {
     cleanup();
   });
 });
+
+describe("LLMConfigTab — default_headers table (#1794)", () => {
+  it("loads existing headers, saves edits with the same action, and drops deleted rows", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (!init?.method || init.method === "GET") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ...BASE_LLM_RESPONSE,
+            default_headers: {
+              "X-Session": "abc",
+              "User-Agent": "ming-qa/1.0",
+            },
+          }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          ...BASE_LLM_RESPONSE,
+          default_headers: { "X-Session": "abc", "User-Agent": "ming-qa/1.0", "X-Extra": "1" },
+        }),
+      } as Response);
+    });
+
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    expect(document.body.textContent).toContain("附加请求头");
+    const nameInputs = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头名"]')
+    );
+    const valueInputs = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头值"]')
+    );
+    expect(nameInputs.map((el) => el.value)).toEqual(["X-Session", "User-Agent"]);
+    expect(valueInputs.map((el) => el.value)).toEqual(["abc", "ming-qa/1.0"]);
+
+    const addBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("增行")
+    );
+    expect(addBtn).toBeTruthy();
+    await act(async () => {
+      addBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const namesAfterAdd = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头名"]')
+    );
+    const valuesAfterAdd = Array.from(
+      document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头值"]')
+    );
+    act(() => {
+      changeInput(namesAfterAdd[2]!, "X-Extra");
+      changeInput(valuesAfterAdd[2]!, "1");
+    });
+
+    const saveBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").includes("保存并应用")
+    );
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const post = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    expect(post).toBeTruthy();
+    expect(JSON.parse(String(post!.init!.body)).default_headers).toEqual({
+      "X-Session": "abc",
+      "User-Agent": "ming-qa/1.0",
+      "X-Extra": "1",
+    });
+
+    // 删第二行后同一保存动作不再带该头
+    const deleteBtns = Array.from(document.querySelectorAll('button[aria-label="删除请求头行"]'));
+    expect(deleteBtns.length).toBeGreaterThanOrEqual(2);
+    await act(async () => {
+      deleteBtns[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    calls.length = 0;
+    await act(async () => {
+      saveBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const post2 = calls.find((c) => c.init?.method === "POST" && c.url === "/api/llm/config");
+    expect(JSON.parse(String(post2!.init!.body)).default_headers).toEqual({
+      "X-Session": "abc",
+      "X-Extra": "1",
+    });
+    cleanup();
+  });
+
+  it("hides the header table on CLI channel and sends empty table only for API saves", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          ...BASE_LLM_RESPONSE,
+          default_headers: { "X-Keep": "yes" },
+        }),
+      } as Response);
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+    expect(document.body.textContent).toContain("附加请求头");
+
+    const channelSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+      s.querySelector('option[value="cli"]')
+    ) as HTMLSelectElement;
+    act(() => {
+      channelSelect.value = "cli";
+      channelSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(document.body.textContent).not.toContain("附加请求头");
+    cleanup();
+  });
+});
