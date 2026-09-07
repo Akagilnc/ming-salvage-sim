@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import codecs
 import json
 import logging
 import os
@@ -480,18 +481,30 @@ def _iter_cli_process_lines(
         stdin=subprocess.PIPE if stdin_text is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
         cwd=cwd or _AGY_CWD,
         env=env,
     )
-    chunks: "queue.Queue[Tuple[str, Optional[str]]]" = queue.Queue()
+    chunks: "queue.Queue[Tuple[str, Optional[bytes]]]" = queue.Queue()
     stderr_parts: List[str] = []
     workers: List[threading.Thread] = []
 
+    def _read_chunk(stream: Any) -> bytes:
+        # read1：已到达的字节立刻交付，不要求凑成一行。无 read1 时退到 read。
+        read1 = getattr(stream, "read1", None)
+        raw = read1(4096) if callable(read1) else stream.read(4096)
+        if not raw:
+            return b""
+        if isinstance(raw, str):
+            return raw.encode("utf-8")
+        return bytes(raw)
+
     def _pump(stream: Any, kind: str) -> None:
         try:
-            for line in stream:
-                chunks.put((kind, str(line)))
+            while True:
+                chunk = _read_chunk(stream)
+                if not chunk:
+                    break
+                chunks.put((kind, chunk))
         except (OSError, ValueError) as exc:
             # 判死 kill 后管道会在读中途关掉（ValueError: closed file / OSError），
             # 是收尾正常形状；只窄捕获这一类并留痕，其余错原样上抛（ADR 0005）。
@@ -502,7 +515,10 @@ def _iter_cli_process_lines(
 
     def _feed_stdin() -> None:
         try:
-            proc.stdin.write(stdin_text)
+            payload: Any = stdin_text
+            if isinstance(payload, str):
+                payload = payload.encode("utf-8")
+            proc.stdin.write(payload)
             proc.stdin.close()
         except (OSError, ValueError) as exc:
             # 写失败 = 子进程根本没拿到 prompt。记事实 + 留痕，交读循环终结时响亮
@@ -525,23 +541,45 @@ def _iter_cli_process_lines(
         workers.append(feeder)
 
     last_activity = tick()
+    decoders = {
+        "out": codecs.getincrementaldecoder("utf-8")("replace"),
+        "err": codecs.getincrementaldecoder("utf-8")("replace"),
+    }
+    pending_out = ""
     try:
         while open_streams > 0:
             try:
-                kind, line = chunks.get(timeout=_CLI_POLL_SECONDS)
+                kind, chunk = chunks.get(timeout=_CLI_POLL_SECONDS)
             except queue.Empty:
                 check_idle_budget(
                     last_activity_at=last_activity, policy=policy, clock=tick,
                 )
                 continue
-            if line is None:
+            if chunk is None:
                 open_streams -= 1
+                tail = decoders[kind].decode(b"", final=True)
+                if kind == "err":
+                    if tail:
+                        stderr_parts.append(tail)
+                else:
+                    leftover = pending_out + tail
+                    pending_out = ""
+                    if leftover:
+                        yield leftover
                 continue
+            # 任意新字节即活动（票面「CLI stdout 新字节」）；不要求凑成一行。
             last_activity = tick()
+            text = decoders[kind].decode(chunk)
             if kind == "err":
-                stderr_parts.append(line)
+                stderr_parts.append(text)
                 continue
-            yield line
+            pending_out += text
+            while True:
+                nl = pending_out.find("\n")
+                if nl < 0:
+                    break
+                line, pending_out = pending_out[: nl + 1], pending_out[nl + 1 :]
+                yield line
         # 管道已 EOF 但进程未退：静默同样计入 idle 预算，仍无总墙钟。
         while proc.poll() is None:
             check_idle_budget(
@@ -766,7 +804,9 @@ def _iter_cli_runner_text(
             delta = _codex_event_text(obj)
             if delta:
                 pieces.append(delta)
-                yield delta
+                # 已确认 stdin 写失败则不再放产出；半流不回卷、不另造缓冲。
+                if outcome.stdin_error is None:
+                    yield delta
                 continue
             maybe_final = _codex_final_text(obj)
             if maybe_final:
@@ -778,6 +818,12 @@ def _iter_cli_runner_text(
     returncode = int(outcome.returncode or 0)
     stderr = outcome.stderr or ""
     stdout_text = "".join(pieces)
+    # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
+    # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
+    if outcome.stdin_error is not None:
+        raise RuntimeError(
+            f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
+        ) from outcome.stdin_error
     if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
         raise LLMUnavailable(
             "LLM 连接失败。",
@@ -788,12 +834,6 @@ def _iter_cli_runner_text(
     if runner == "codex" and not json_events and not text:
         # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
         text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
-    # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
-    # 不得让随之而来的空 stdout 洗成 llm_empty_output 重试（ADR 0005）。
-    if outcome.stdin_error is not None and not text:
-        raise RuntimeError(
-            f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
-        ) from outcome.stdin_error
     # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
     if returncode != 0:
         raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")

@@ -7,6 +7,7 @@ code / outcome / message_id / 夜未封 / 子进程调用次数。受控时钟�
 
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -169,17 +170,22 @@ def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, tmp_path, 
     assert script.calls == 1
 
 
+@pytest.mark.parametrize(
+    "stdout",
+    [(), (_OK_REPLY,)],
+    ids=["empty_stdout", "nonempty_stdout"],
+)
 def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
-    monkeypatch, tmp_path, game,
+    monkeypatch, tmp_path, game, stdout,
 ):
     """prompt 没写进 stdin = IO 错，须响亮确定性失败一次，不洗成空输出瞬断重试。
 
     ADR 0005：代码/IO 侧的错必须响亮；宽吞会让「子进程压根没被问」冒充
-    llm_empty_output，白烧三次子进程还给玩家一个假瞬断。
+    llm_empty_output，白烧三次子进程还给玩家一个假瞬断。有 stdout 字同样终止。
     """
     _pin_transport_policy(monkeypatch, tmp_path)
     script = install_fake_cli_runner(monkeypatch, [{
-        "stdout": (), "returncode": 0,
+        "stdout": stdout, "returncode": 0,
         "stdin_error": BrokenPipeError("stdin 已关闭"),
     }])
     web_game, minister = _cli_web_game(game)
@@ -229,7 +235,11 @@ def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, g
 def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
     monkeypatch, tmp_path, game,
 ):
-    """⑤静默超阈值判死并重试；每 attempt 独立整份 idle 预算（受控时钟）。"""
+    """⑤静默超阈值判死并重试；每 attempt 独立整份 idle 预算（受控时钟）。
+
+    对照：完全无字节超 idle 仍判死可重试；无换行字节持续到达（间隔 < idle、
+    累计 > idle）不算静默，不被杀。
+    """
     idle = 30.0
     _pin_transport_policy(monkeypatch, tmp_path, idle_timeout_seconds=idle)
     clock = {"t": 500.0}
@@ -237,19 +247,31 @@ def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
     attempt2_span = {"used": 0.0}
 
     def _advance_while_silent() -> None:
-        # 首 attempt 一行都不出：受控时钟持续推进 → 静默超预算判死
+        # 首 attempt 一个字节都不出：受控时钟持续推进 → 静默超预算判死
         clock["t"] += 5.0
 
-    def _second_attempt_near_full_budget():
-        # 第二 attempt 拿到完整预算：连续推进近整份 idle 仍不判死
-        started = clock["t"]
-        clock["t"] += idle * 0.9
-        attempt2_span["used"] = clock["t"] - started
-        return _OK_REPLY
+    def _advance_chunk(seconds: float, text: str):
+        pause = threading.Event()
+        def _hook():
+            # 受控时钟推进期间让主环有机会 Empty→check_idle；间隔 < idle。
+            end = clock["t"] + seconds
+            while clock["t"] < end:
+                clock["t"] = min(clock["t"] + 5.0, end)
+                pause.wait(0.01)
+            attempt2_span["used"] += seconds
+            return text
+        return _hook
+
+    # 无换行块间隔 0.4*idle < idle，累计 1.2*idle > idle：按新字节刷新，不得判死
+    no_nl_chunks = (
+        _advance_chunk(idle * 0.4, "臣已核"),
+        _advance_chunk(idle * 0.4, "辽饷，"),
+        _advance_chunk(idle * 0.4, "谨复奏。\n"),
+    )
 
     script = install_fake_cli_runner(monkeypatch, [
         {"stdout": (SilentUntilKilled(on_tick=_advance_while_silent),), "returncode": 0},
-        {"stdout": (_second_attempt_near_full_budget,), "returncode": 0},
+        {"stdout": no_nl_chunks, "returncode": 0},
     ])
     web_game, minister = _cli_web_game(game)
 
@@ -264,5 +286,5 @@ def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
     assert script.calls == 2
     # 首 attempt 的子进程确实被 kill（不留孤儿）
     assert script.processes[0].killed.is_set()
-    assert attempt2_span["used"] >= idle * 0.8, attempt2_span
+    assert attempt2_span["used"] > idle, attempt2_span
     assert int(done.get("minister_message_id") or 0) > 0
