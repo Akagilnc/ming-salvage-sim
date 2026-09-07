@@ -104,6 +104,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
         secretOrderActiveCount={3}
         unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
+        settlementFace={true}
       />,
     );
 
@@ -162,6 +163,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
         secretOrderActiveCount={3}
         unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
+        settlementFace={false}
       />,
     );
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
@@ -194,6 +196,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
         unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
         onClosedFaceAttempt={(r) => attempts.push(r)}
+        settlementFace={true}
       />,
     );
     const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表")!;
@@ -221,6 +224,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
         unreadMemorialCount={resolveUnreadMemorialCount(state)}
         onOpenModal={() => {}}
         onClosedFaceAttempt={(r) => attempts.push(r)}
+        settlementFace={true}
       />,
     );
     expect(host.querySelector("[data-testid=wang-settlement-slip]")?.textContent).toContain(WANG_AWAITING_SLIP);
@@ -380,6 +384,7 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
           opened.push(modal);
           opts.onOpenModal?.(modal);
         }}
+        settlementFace={Boolean(state.turn.settlement_display)}
       />,
     );
     return { host, opened, navCalls, closed };
@@ -499,6 +504,36 @@ describe("#1236 SettlementLock 装饰层自身契约", () => {
     expect(decor).not.toBeNull();
     expect(decor?.getAttribute("aria-modal")).toBeNull();
     expect(decor?.getAttribute("role")).toBe("status");
+  });
+});
+
+describe("#1796 GameHud settlementFace 同会话切核账期面", () => {
+  it("settlement_display=false 但 face=true：切面；state 真源不被改写", () => {
+    const state = makeState(false);
+    expect(state.turn.settlement_display).toBe(false);
+    const host = mount(
+      <GameHud
+        stageRef={() => {}}
+        ready={true}
+        state={state}
+        mapNodes={[]}
+        mapSelectedId=""
+        onSelectMapNode={() => {}}
+        activeDrawerKey=""
+        navHandlers={{
+          court: () => {}, harem: () => {}, army: () => {}, region: () => {},
+          building: () => {}, economy: () => {}, appointment: () => {},
+        }}
+        secretOrderActiveCount={0}
+        unreadMemorialCount={resolveUnreadMemorialCount(state)}
+        onOpenModal={() => {}}
+        settlementFace={true}
+      />,
+    );
+    // 差分：face 切入核账期面（递话条挂上）；#1236 既锁的文案/半程/·核账不复述
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
+    // 结构化：传入的 state 真源字段未被组件改写
+    expect(state.turn.settlement_display).toBe(false);
   });
 });
 
