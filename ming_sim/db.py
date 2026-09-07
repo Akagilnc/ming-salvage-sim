@@ -17477,11 +17477,11 @@ class GameDB:
             "commitment_kind": "until_stop",
             "stages": stages_norm,
         }
-        actor = str(
-            payload.get("actor") or payload.get("_minister_name") or ""
-        ).strip()
-        if actor:
-            ni["participant_roster"] = [{"character_id": actor, "tier": "主办"}]
+        # 主办权威＝resolve_dossier_owner_name；缺主办不写 roster、不配人（#1778 不触及）
+        from ming_sim.participant_roster import resolve_dossier_owner_name
+        owner = resolve_dossier_owner_name(row)
+        if owner:
+            ni["participant_roster"] = [{"character_id": owner, "tier": "主办"}]
         out = apply_score_extraction(
             self, state, {"new_issues": [ni]}, content=None,
         )
