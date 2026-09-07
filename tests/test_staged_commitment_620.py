@@ -95,9 +95,11 @@ def _active_ming(db, content):
     )
 
 
-def _materialize_ctx(db, character, candidates, turn, *, message, reply):
+def _materialize_ctx(db, character, candidates, turn, *, message, reply, content=None):
     return MaterializeCtx(
-        session=SimpleNamespace(db=db, state=SimpleNamespace(turn=turn)),
+        session=SimpleNamespace(
+            db=db, state=SimpleNamespace(turn=turn), content=content,
+        ),
         character=SimpleNamespace(name=character, office_type="文官"),
         player_message=message,
         reply=reply,
@@ -112,6 +114,20 @@ def _materialize_ctx(db, character, candidates, turn, *, message, reply):
         intent_candidates=candidates,
         recent_context="",
     )
+
+
+def _stub_assignment_extract_lead(monkeypatch, lead_name: str):
+    """#1778：交办后置抽取须有主办；本夹具只供 620 stages 捕获，名单用 lead。"""
+    import ming_sim.cli_backend as cb
+
+    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
+        "draft_action": "无", "draft_text": "", "target_candidate": "",
+        "assignee": lead_name,
+        "participant_roster": [{
+            "character_id": lead_name, "tier": "主办",
+            "role": "", "delegator_id": None,
+        }],
+    })
 
 
 # ── AC1：一条多段=单一承诺对象，各段独立可查 ─────────────────────────
@@ -157,20 +173,10 @@ def test_one_multi_stage_commitment_is_single_issue_object(game):
 
 def test_audience_materializer_captures_三年x_五年y_into_stages(game, monkeypatch):
     """召对生产路径：正文「三年X五年Y」经 stage_assignment_candidate 落段（非测专用 helper）。"""
-    import ming_sim.cli_backend as cb
-
     db, state, content = game
     actor = _active_ming(db, content)
     promise = "臣请立军令状：三年火器见眉目，五年新历成。请陛下定夺准驳。"
-    # #1778：交办后置抽取须有承办人；本条只钉 stages 捕获，名单用 actor。
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "无", "draft_text": "", "target_candidate": "",
-        "assignee": actor.name,
-        "participant_roster": [{
-            "character_id": actor.name, "tier": "主办",
-            "role": "", "delegator_id": None,
-        }],
-    })
+    _stub_assignment_extract_lead(monkeypatch, actor.name)
     # 分类器不给 stages——生产 capture 须从正文解析
     payload = {
         "kind": "assignment",
@@ -183,9 +189,8 @@ def test_audience_materializer_captures_三年x_五年y_into_stages(game, monkey
         db, actor.name, candidates, state.turn,
         message="准徐光启分段之诺。",
         reply=promise,
+        content=content,
     )
-    # content 挂上 session，名册校验能过
-    ctx.session.content = content
     run_materialize_pipeline(ctx)
     assert ctx.out.get("pending_action_id"), "须暂存交办候选"
     pending = json.loads(db.conn.execute(
@@ -207,19 +212,10 @@ def test_audience_entry_tolerates_classifier_bad_stages_falls_back_to_narrative(
 
     库层 capture/stages_to_json 显式喂入仍 ValueError（见 list_bad_shape 测）。
     """
-    import ming_sim.cli_backend as cb
-
     db, state, content = game
     actor = _active_ming(db, content)
     promise = "臣请立军令状：三年火器见眉目，五年新历成。请陛下定夺准驳。"
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "无", "draft_text": "", "target_candidate": "",
-        "assignee": actor.name,
-        "participant_roster": [{
-            "character_id": actor.name, "tier": "主办",
-            "role": "", "delegator_id": None,
-        }],
-    })
+    _stub_assignment_extract_lead(monkeypatch, actor.name)
     payload = {
         "kind": "assignment",
         "title": "徐光启火器历法之诺",
@@ -233,8 +229,8 @@ def test_audience_entry_tolerates_classifier_bad_stages_falls_back_to_narrative(
         db, actor.name, candidates, state.turn,
         message="准徐光启分段之诺。",
         reply=promise,
+        content=content,
     )
-    ctx.session.content = content
     run_materialize_pipeline(ctx)  # 不得 raise
     assert ctx.out.get("pending_action_id"), "坏形 stages 不得阻断交办暂存"
     pending = json.loads(db.conn.execute(
@@ -258,20 +254,11 @@ def test_audience_entry_structured_stages_without_year_promise_lands(game, monke
     正文无「三年X五年Y」字样——不得靠叙事年诺回落；证明 str(list)→repr
     运输洞已用 json.dumps 堵住（#620 r6 classifier-stages-string-transport）。
     """
-    import ming_sim.cli_backend as cb
-
     db, state, content = game
     actor = _active_ming(db, content)
     reply = "臣请立军令状，分阶段推进火器与历法，请陛下定夺准驳。"
     assert "三年" not in reply and "五年" not in reply
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "无", "draft_text": "", "target_candidate": "",
-        "assignee": actor.name,
-        "participant_roster": [{
-            "character_id": actor.name, "tier": "主办",
-            "role": "", "delegator_id": None,
-        }],
-    })
+    _stub_assignment_extract_lead(monkeypatch, actor.name)
     structured = [
         {
             "due_turn": int(state.turn) + 36,
@@ -300,8 +287,8 @@ def test_audience_entry_structured_stages_without_year_promise_lands(game, monke
         db, actor.name, candidates, state.turn,
         message="准徐光启分段之诺。",
         reply=reply,
+        content=content,
     )
-    ctx.session.content = content
     run_materialize_pipeline(ctx)
     assert ctx.out.get("pending_action_id"), "结构化 stages 须落交办候选"
     pending = json.loads(db.conn.execute(

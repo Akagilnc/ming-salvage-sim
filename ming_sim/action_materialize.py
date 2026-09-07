@@ -3080,33 +3080,29 @@ def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
 
 
 def _assignment_leads_from_extract(extracted: Mapping[str, Any]) -> tuple[str, list]:
-    """从拟旨同缝抽取结果取承办人与名单（#1778 后置点将）。"""
-    assignee = str(
-        extracted.get("assignee")
-        or extracted.get("assignee_id")
-        or extracted.get("assignee_name")
-        or ""
-    ).strip()
-    roster = extracted.get("participant_roster")
-    if not isinstance(roster, list):
-        roster = []
-    # 批抽时取首条有主办/承办人的 draft
-    if not assignee and not roster:
-        for draft in extracted.get("drafts") or []:
-            if not isinstance(draft, dict):
-                continue
-            assignee = str(
-                draft.get("assignee")
-                or draft.get("assignee_id")
-                or draft.get("assignee_name")
-                or ""
-            ).strip()
-            draft_roster = draft.get("participant_roster")
-            if isinstance(draft_roster, list) and draft_roster:
-                roster = list(draft_roster)
-            if assignee or roster:
-                break
-    return assignee, list(roster) if isinstance(roster, list) else []
+    """从拟旨同缝抽取结果取承办人与名单（#1778 后置点将）。
+
+    有无主办的唯一真源＝cli_backend._extract_result_has_execution_lead（扫顶层+全部 drafts）；
+    本函数只投影「第一条已有主办的条目」的 assignee/roster 写入候选，不另立判定。
+    """
+    from ming_sim.cli_backend import _extract_result_has_execution_lead
+
+    items: list[Mapping[str, Any]] = [extracted]
+    drafts = extracted.get("drafts")
+    if isinstance(drafts, list):
+        items.extend(d for d in drafts if isinstance(d, dict))
+    for item in items:
+        if not _extract_result_has_execution_lead(dict(item)):
+            continue
+        assignee = str(
+            item.get("assignee")
+            or item.get("assignee_id")
+            or item.get("assignee_name")
+            or ""
+        ).strip()
+        roster = item.get("participant_roster")
+        return assignee, list(roster) if isinstance(roster, list) else []
+    return "", []
 
 
 def _resolve_assignment_extract(ctx: MaterializeCtx) -> Dict[str, Any]:
@@ -3196,19 +3192,9 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
     title = str(intent.get("title") or "").strip()
     target_id = str(intent.get("target_id") or "").strip()
     body = _assignment_dossier_text(ctx)
+    # require_execution_lead 已在同缝判过主办；此处只投影名单键，不叠第二份判定。
     extracted = _resolve_assignment_extract(ctx)
     assignee, roster = _assignment_leads_from_extract(extracted)
-    if not assignee and not any(
-        isinstance(e, dict)
-        and str(e.get("tier") or "").strip() == "主办"
-        and str(e.get("character_id") or "").strip()
-        and not str(e.get("delegator_id") or "").strip()
-        for e in roster
-    ):
-        raise DecreeMaterializationValidationError(
-            "交办旨意缺少承办人/参与名单主办",
-            failed_fields=("assignee", "participant_roster"),
-        )
     # #1565：已识别 assignment 不得三空静默早退；缺正文/题名交 stage validation 恢复接缝。
     pending_id = stage_assignment_candidate(
         ctx.session.db,

@@ -14655,7 +14655,10 @@ class GameDB:
         共享单行内核。契约错抛 ValueError；复合键按 (source, region_id) 查补。
         """
         from ming_sim.execution_pressure import resolve_dossier_region_ids
-        from ming_sim.executor_routing import resolve_lead_executors
+        from ming_sim.executor_routing import (
+            require_execution_lead_or_raise,
+            resolve_lead_executors,
+        )
 
         payload_map = dict(payload or {})
         # target_* 以行级参数为准并入 payload，供 oracle 读取
@@ -14776,14 +14779,8 @@ class GameDB:
                     payload=row_payload,
                     participant_roster=row_participants,
                 )
-                # #1778 乙：交办/军令（multi_month）unassigned 不得静默成案（0005）。
-                # strike 等其它覆盖域仍可空 leads（惩处目标≠执行主办，另票辖）。
-                if (
-                    str(route.get("route") or "") == "unassigned"
-                    and not list(route.get("leads") or [])
-                    and str(route.get("coverage") or "") == "multi_month"
-                ):
-                    raise ValueError("案卷缺少主办（route=unassigned）")
+                # #1778 乙：multi_month unassigned 不得静默成案（与单行共 require_*）。
+                require_execution_lead_or_raise(route, has_canonical_lead=False)
                 for lead in route.get("leads") or []:
                     row_participants.append({
                         "character_id": str(lead), "tier": "主办",
@@ -15071,7 +15068,10 @@ class GameDB:
         # 最终仍由同一 INSERT 写一次；不存在成案后 JSON/UPDATE 平行写口。
         # #654 bulk 层已 Plan/Validate 并逐省 resolve，此处 _skip_lead_route 避免重复；
         # 单行直落路径仍走 resolver，并传 region_id 接缝。
-        from ming_sim.executor_routing import resolve_lead_executors
+        from ming_sim.executor_routing import (
+            require_execution_lead_or_raise,
+            resolve_lead_executors,
+        )
         if _skip_lead_route:
             route = {
                 "coverage": None, "route": "pre_resolved",
@@ -15086,15 +15086,19 @@ class GameDB:
             str(item.get("character_id") or "").strip()
             for item in roster if item.get("tier") == "主办"
         }
-        # #1778 乙：multi_month unassigned 且无主办不得静默成案（单行与 bulk 同闸）。
-        if (
-            not _skip_lead_route
-            and str(route.get("route") or "") == "unassigned"
-            and not list(route.get("leads") or [])
-            and not existing_leads
-            and str(route.get("coverage") or "") == "multi_month"
-        ):
-            raise ValueError("案卷缺少主办（route=unassigned）")
+        # 与 bulk named_leads 同口径：仅无委派主办才算点将。
+        canonical_leads = {
+            name for name in (
+                str(item.get("character_id") or "").strip()
+                for item in roster
+                if item.get("tier") == "主办"
+                and not str(item.get("delegator_id") or "").strip()
+            ) if name
+        }
+        if not _skip_lead_route:
+            require_execution_lead_or_raise(
+                route, has_canonical_lead=bool(canonical_leads),
+            )
         for lead in route["leads"]:
             if lead in existing_leads:
                 continue
