@@ -130,7 +130,7 @@ def structured_decree_prompt_contract() -> str:
 
     运输键（中/英）均经 transport_keys_to_canonical 归一；本块只写闭集与语义一次。
     target×locality 可接受面由 TARGET_KIND_LOCALITY_SCOPES 投影（与 assert 同真源）；
-    national 动作限制同属该投影，不扩票拟七类 action、不手抄第二份矩阵。
+    不手抄第二份矩阵。
     """
     cats = "|".join(sorted(_transaction_categories()))
     kinds = "|".join(sorted(TARGET_KINDS))
@@ -142,8 +142,9 @@ def structured_decree_prompt_contract() -> str:
         f"{matrix_face}；"
         "region_id/地区ID——仅 target_kind=region 时填且与 target_id 同，非 region 必须空；"
         f"transaction_category/事务类别∈{cats}|——非空须在闭集；"
-        "assignment 交办须填类别或点将；assignee_name/承办人仅点将填规范人名，"
-        "机关承办留空，由职司路由（如督赈→户部）得出，勿把机关名写入承办人。"
+        "assignment 交办须填类别或点将；assignee_name/承办人填规范人名（具体的人）；"
+        "每道旨都写参与名单（ADR 0053 三档：主办可数人、协办、知情）——"
+        "旨里点了谁就照写谁，未点名的由你按人物与局势荐人入名单。"
         "明指某省差务→target_kind=region、target_id=省 id、locality_scope=single、"
         "region_id=同省 id；不得用 office 等机关目标承载省务；"
         "禁止用目标类型回写施行范围掩盖错误目标。"
@@ -238,7 +239,6 @@ def validate_structured_decree_combination(
     if target_kind:
         try:
             scope = assert_target_locality_matrix(
-                action_type=action or "policy",
                 target_kind=target_kind,
                 locality_scope=payload.get("locality_scope"),
             )
@@ -313,7 +313,6 @@ def validate_structured_decree_combination(
         try:
             resolve_dossier_region_ids(
                 conn,
-                action_type=action or "policy",
                 payload={
                     "target_kind": target_kind,
                     "target_id": target_id,

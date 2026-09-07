@@ -32,6 +32,10 @@ def _ctx() -> dict:
     }
 
 
+# #1778 决定 3：生成批次的票拟必带参与名单（ADR 0053 三档，至少一名主办）。
+_ROSTER = [{"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None}]
+
+
 def _hold(**kw) -> dict:
     base = {
         "label": "缓议候报",
@@ -43,6 +47,7 @@ def _hold(**kw) -> dict:
         "region_id": "shaanxi",
         "assignee_name": "",
         "transaction_category": "督赈",
+        "participant_roster": [dict(i) for i in _ROSTER],
     }
     base.update(kw)
     return base
@@ -63,6 +68,7 @@ def _army_pay(**kw) -> dict:
         "amount": 300,
         "account": "国库",
         "purpose": "补饷",
+        "participant_roster": [dict(i) for i in _ROSTER],
     }
     base.update(kw)
     return base
@@ -96,6 +102,7 @@ def _punish(**kw) -> dict:
         "transaction_category": "",
         "punish_action": "罚俸",
         "amount": 1,
+        "participant_roster": [dict(i) for i in _ROSTER],
     }
     base.update(kw)
     return base

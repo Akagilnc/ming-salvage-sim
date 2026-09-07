@@ -341,6 +341,14 @@ export type DecisionChoice = {
   appointment_tenure?: string;
   punish_action?: string;
   privilege?: string;
+  /** #1778 决定 3 / C.4：票拟参与名单；中旨 choice 显式携带（§C.7） */
+  participant_roster?: Array<{
+    character_id?: string;
+    tier?: string;
+    role?: string;
+    delegator_id?: string | null;
+    [key: string]: unknown;
+  }>;
 };
 
 export type DecisionOption = {
@@ -376,6 +384,8 @@ export type DecisionOption = {
   punish_action?: string;
   privilege?: string;
   summon_target?: string;
+  /** #1778 决定 3 / C.4：票拟参与名单 */
+  participant_roster?: DecisionChoice["participant_roster"];
   [key: string]: unknown;
 };
 
