@@ -848,14 +848,26 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
 
 
 def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game):
-    """#1465 ①：两次瞬断后第三次成功 → 真 interpret/atomic 落库 + 3 attempts 可回指。
+    """#1465 ① / #1792：两次可重试失败（含一次 typed 429）后第三次成功
+    → 真 interpret/atomic 落库 + 3 attempts 可回指；
+    第二、三次起手各晚于前次失败 ≥ retry_interval（受控时钟，不真等）。
 
     同案 fo2Og：失败 attempt 写入确定性 Agno run；重试读回/持久史保留前轮、排除失败
     attempt，且不改游戏账（≠ fail_chat_turn 整轮回滚）。
     """
+    import ming_sim.llm_transport as transport_mod
+    from ming_sim.models import TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
     from tests.test_audience_restore_505 import _seed_agno_v3_runs
 
-    def _conn_err(_n):
+    def _mixed_retryable(n):
+        # attempt 1：瞬断；attempt 2：typed 429（#1792 验收含一次 typed 429）
+        if n == 2:
+            return LLMUnavailable(
+                "限流",
+                code="llm_run_error",
+                provider_message="model_concurrency_rate_limit_exceeded",
+                status_code=429,
+            )
         return LLMUnavailable(
             "连接失败",
             code="llm_connection_error",
@@ -870,9 +882,26 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
     prior_ids = [f"run-{session_id}-0"]
     assert [str(r.get("run_id")) for r in db._agno_merged_runs(session_id)] == prior_ids
 
+    clock = {"t": 1000.0}
+    attempt_starts: list[float] = []
+    waits: list[float] = []
+
+    def _wait(seconds: float) -> None:
+        waits.append(float(seconds))
+        clock["t"] += float(seconds)
+
+    monkeypatch.setattr(transport_mod, "_sleep_retry_interval", _wait)
+
     agent = _FailLeavingAgnoRunAgent(
-        db, session_id, fail_times=2, error_factory=_conn_err,
+        db, session_id, fail_times=2, error_factory=_mixed_retryable,
     )
+    real_run = agent.run
+
+    def _timed_run(*a, **k):
+        attempt_starts.append(clock["t"])
+        return real_run(*a, **k)
+
+    agent.run = _timed_run  # type: ignore[method-assign]
     web_game, minister = _transport_web_game(game, agent)
     web_game.session.registry.session_ids[minister] = session_id
 
@@ -895,6 +924,13 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
     assert [a.get("outcome") for a in attempts] == [
         "retryable_fail", "retryable_fail", "ok",
     ]
+    assert attempts[1].get("status_code") == 429
+    # #1792：两段固定间隔；第二、三次起手 ≥ 前次失败后的 interval
+    interval = TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
+    assert waits == [interval, interval], waits
+    assert len(attempt_starts) == 3, attempt_starts
+    assert attempt_starts[1] - attempt_starts[0] >= interval, attempt_starts
+    assert attempt_starts[2] - attempt_starts[1] >= interval, attempt_starts
     # 真写路径：大臣回话已落库
     assert int(done.get("minister_message_id") or 0) > 0
     chat_turn_id = int(done.get("chat_turn_id") or 0)
@@ -935,8 +971,12 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
 
 
 def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, game):
-    """#1465 ①：三次瞬断耗尽 → 系统层终失败、夜不封；随后可重发并读回夜/轮状态。"""
+    """#1465 ① / #1792：三次瞬断耗尽 → 系统层终失败文案与现行一致、夜不封；
+    总耗时含两段 retry_interval（受控时钟）；随后可重发并读回夜/轮状态。
+    """
+    import ming_sim.llm_transport as transport_mod
     from ming_sim import audience_night as an
+    from ming_sim.models import TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
 
     def _conn_err(_n):
         return LLMUnavailable(
@@ -944,6 +984,15 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
             code="llm_connection_error",
             provider_message="connection reset",
         )
+
+    clock = {"t": 2000.0}
+    waits: list[float] = []
+
+    def _wait(seconds: float) -> None:
+        waits.append(float(seconds))
+        clock["t"] += float(seconds)
+
+    monkeypatch.setattr(transport_mod, "_sleep_retry_interval", _wait)
 
     agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
     web_game, minister = _transport_web_game(game, agent)
@@ -955,6 +1004,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
 
     web_game.session.close_night_after_chat_if_needed = _close
 
+    t0 = clock["t"]
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
     events = _parse_sse(response.text)
@@ -968,6 +1018,9 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     assert len(attempts) == max_a
     assert [a.get("outcome") for a in attempts[:-1]] == ["retryable_fail"] * (max_a - 1)
     assert attempts[-1].get("outcome") == "terminal_fail"
+    interval = TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
+    assert waits == [interval, interval], waits
+    assert clock["t"] - t0 >= 2 * interval, (t0, clock["t"], waits)
     assert night_closed["n"] == 0
     failed_turn = int(detail.get("chat_turn_id") or 0)
     assert failed_turn > 0
@@ -1027,7 +1080,15 @@ def test_chat_stream_provider_5xx_retries_status_preserved(monkeypatch, game):
 
 
 def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
-    """#1465 ① / #1780：确定性 4xx → 提供方层一次不重试、typed status 保真。"""
+    """#1465 ① / #1780 / #1792：确定性 4xx → 提供方层一次不重试、无间隔等待、typed status 保真。"""
+    import ming_sim.llm_transport as transport_mod
+
+    waits: list[float] = []
+    monkeypatch.setattr(
+        transport_mod,
+        "_sleep_retry_interval",
+        lambda seconds: waits.append(float(seconds)),
+    )
     http_hits = {"n": 0}
     agent = _provider_http_error_agent(
         400, "top_p not supported", http_hits=http_hits,
@@ -1042,6 +1103,7 @@ def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
     assert detail.get("code") == "llm_http_400"
     assert http_hits["n"] == 1
     assert len(detail.get("transport_attempts") or []) == 1
+    assert waits == [], waits
     assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
 
 
