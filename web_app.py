@@ -548,11 +548,8 @@ def _llm_config_from_runtime(
         # 占位符不当真 key：清空让下游空检查报「未配 API key」，
         # 而不是拿假 key 去探 OpenAI（误导性 412）。
         api_key = ""
-    # #1794：附加头只属 API 槽；从 runtime api 段（或顶层 alias）经唯一归一缝装入。
-    api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
-    default_headers = _slot_header_table(
-        api_slot.get("default_headers", runtime.get("default_headers"))
-    )
+    # #1794：附加头只属 API 槽；load_runtime_llm 已归一并顶层 alias，扁平单读。
+    default_headers = dict(runtime.get("default_headers") or {})
     return LLMConfig(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),
@@ -5409,10 +5406,8 @@ async def api_menu_status() -> Dict[str, Any]:
             "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
             "has_advanced_api_key": _has_real_api_key(runtime.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
             "advanced_thinking_level": "",
-            # #1794：设置页读回附加请求头表（API 槽）。
-            "default_headers": _slot_header_table(
-                api_slot.get("default_headers", runtime.get("default_headers"))
-            ),
+            # #1794：设置页读回附加请求头表（API 槽）；归一后扁平单读。
+            "default_headers": dict(runtime.get("default_headers") or {}),
         },
     }
 
@@ -7203,9 +7198,8 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "cli_runner": str(saved_cli.get("runner") or ""),
             "cli_model": str(saved_cli.get("model") or ""),
             "cli_timeout_seconds": _runtime_float(saved_cli.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS),
-            "default_headers": _slot_header_table(
-                saved_api.get("default_headers", saved.get("default_headers"))
-            ),
+            # #1794：persisted 头表；load_runtime_llm 已归一，扁平单读。
+            "default_headers": dict(saved.get("default_headers") or {}),
         },
     }
 
