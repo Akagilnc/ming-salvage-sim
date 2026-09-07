@@ -762,7 +762,7 @@ def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
 def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     seen = {}
 
-    def fake_chunks(runner, prompt, *, model=None, timeout=None,
+    def fake_chunks(runner, prompt, *, model=None,
                     reasoning_strength=None, json_events=False, clock=None):
         seen["runner"] = runner
         seen["json_events"] = json_events
@@ -857,13 +857,13 @@ def test_codex_final_text_handles_item_completed_shape():
 @pytest.mark.parametrize(
     "runner,kwargs,model_flag",
     [
-        ("_run_codex", {"model": "gpt-configured", "timeout": 123}, "gpt-configured"),
-        ("_run_claude", {"model": "claude-configured", "timeout": 234}, "claude-configured"),
+        ("_run_codex", {"model": "gpt-configured"}, "gpt-configured"),
+        ("_run_claude", {"model": "claude-configured"}, "claude-configured"),
     ],
 )
 def test_run_runner_accepts_config_model(monkeypatch, runner, kwargs, model_flag):
-    """#1465 切片③：cli_model 仍透传 --model；timeout 只是静默预算，不再当子进程总墙
-    （Popen 不吃 timeout kwarg；跨墙不杀由 test_cli_transport_1465 真入口证明）。"""
+    """#1465 切片③：cli_model 仍透传 --model；子进程不吃任何超时墙
+    （Popen 无 timeout kwarg；跨墙不杀由 test_cli_transport_1465 真入口证明）。"""
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
     out, n = getattr(cb, runner)("p", **kwargs)
@@ -1287,16 +1287,16 @@ def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
 def test_clichat_call_cli_dispatch(monkeypatch):
     seen = {}
 
-    def fake_codex(p, model=None, timeout=None, **kwargs):
-        seen["codex"] = (model, timeout)
+    def fake_codex(p, model=None, **kwargs):
+        seen["codex"] = model
         return ("CODEX", 1)
 
-    def fake_claude(p, model=None, timeout=None, **kwargs):
-        seen["claude"] = (model, timeout)
+    def fake_claude(p, model=None, **kwargs):
+        seen["claude"] = model
         return ("CLAUDE", 1)
 
-    def fake_agy(p, timeout=None):
-        seen["agy"] = timeout
+    def fake_agy(p):
+        seen["agy"] = "called"
         return ("AGY", 1)
 
     monkeypatch.setattr(cb, "_run_codex", fake_codex)
@@ -1305,10 +1305,10 @@ def test_clichat_call_cli_dispatch(monkeypatch):
     assert cb.CliChat(id="m-codex", backend="codex", timeout=111)._call_cli("p") == ("CODEX", 1)
     assert cb.CliChat(id="m-claude", backend="claude", timeout=222)._call_cli("p") == ("CLAUDE", 1)
     assert cb.CliChat(id="m-agy", backend="agy", timeout=333)._call_cli("p") == ("AGY", 1)
-    # #1465 切片③：model.timeout 不再下发成子进程墙钟；空转预算归 transport 策略。
-    assert seen["codex"] == ("m-codex", None)
-    assert seen["claude"] == ("m-claude", None)
-    assert seen["agy"] is None
+    # #1465 切片③：model.timeout 不再下发给 runner；等多久算死归 transport 策略。
+    assert seen["codex"] == "m-codex"
+    assert seen["claude"] == "m-claude"
+    assert seen["agy"] == "called"
 
 
 def test_clichat_call_cli_unknown_backend_raises():
@@ -1437,7 +1437,7 @@ def test_run_backend_infers_trace_tag_from_prompt(monkeypatch, prompt, expect_ta
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     monkeypatch.setattr(
         cb, "_run_codex",
-        lambda prompt, model=None, timeout=None, **kwargs: ("ok", 1),
+        lambda prompt, model=None, **kwargs: ("ok", 1),
     )
     cb._run_backend_for_config(prompt, _cli_codex_cfg())  # no explicit tag
     assert len(recs) == 1
@@ -1447,7 +1447,7 @@ def test_run_backend_infers_trace_tag_from_prompt(monkeypatch, prompt, expect_ta
 def test_run_backend_for_config_traces_every_call(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, timeout=None, **kwargs: ("外臣", 1))
+    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, **kwargs: ("外臣", 1))
     out, attempts = cb._run_backend_for_config("判官名：后金汗", _cli_codex_cfg(), tag="office_infer")
     assert out == "外臣" and attempts == 1
     assert len(recs) == 1
@@ -1460,7 +1460,7 @@ def test_run_backend_for_config_traces_every_call(monkeypatch):
 def test_run_backend_for_config_passes_reasoning_strength_to_codex(monkeypatch):
     seen = {}
 
-    def fake_codex(prompt, model=None, timeout=None, reasoning_strength=None):
+    def fake_codex(prompt, model=None, reasoning_strength=None):
         seen["reasoning_strength"] = reasoning_strength
         return "外臣", 1
 
@@ -1478,7 +1478,7 @@ def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
 
-    def boom(prompt, model=None, timeout=None, **kwargs):
+    def boom(prompt, model=None, **kwargs):
         raise RuntimeError("codex 挂了")
 
     monkeypatch.setattr(cb, "_run_codex", boom)
@@ -1493,7 +1493,7 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
     dbmod._OFFICE_TYPE_LLM_CACHE.clear()
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, timeout=None, **kwargs: ("边镇", 1))
+    monkeypatch.setattr(cb, "_run_codex", lambda prompt, model=None, **kwargs: ("边镇", 1))
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
     assert got == "边镇"
@@ -1504,7 +1504,7 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, timeout=None: (canned, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (canned, 1))
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
     assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
@@ -1616,8 +1616,8 @@ def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
 
     seen = {}
 
-    def fake(prompt, model=None, timeout=None, reasoning_strength=None, **kw):
-        seen["args"] = (prompt, model, timeout, reasoning_strength)
+    def fake(prompt, model=None, reasoning_strength=None, **kw):
+        seen["args"] = (prompt, model, reasoning_strength)
         return (f"{runner}-ok", 1)
 
     monkeypatch.setattr(cb, f"_run_{runner}", fake)
@@ -1631,24 +1631,23 @@ def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
     assert text == f"{runner}-ok" and n == 1
     assert seen["args"][0] == "P"
     assert seen["args"][1] == "mdl-x"
-    # cli_timeout_seconds 槽保留但不接到 idle/子进程 timeout
-    assert seen["args"][2] is None
+    # 槽位（cli_timeout_seconds）是设置页的静默判死阈值，不逐调用透传给 runner
+    assert seen["args"][2] == "low"
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
 def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
     seen = {}
 
-    def fake(prompt, model=None, timeout=None, reasoning_strength=None, **kw):
+    def fake(prompt, model=None, reasoning_strength=None, **kw):
         seen["model"] = model
-        seen["timeout"] = timeout
         return ("OK", 1)
 
     monkeypatch.setattr(cb, f"_run_{runner}", fake)
     chat = cb.CliChat(id="mdl", backend=runner, timeout=99)
     assert chat._call_cli("p") == ("OK", 1)
-    # cli_model 仍透传；model.timeout 不再当子进程墙钟（召对 idle 归 transport 策略）
-    assert seen["model"] == "mdl" and seen["timeout"] is None
+    # cli_model 仍透传；model.timeout 不再下发给 runner（等多久算死归 transport 策略）
+    assert seen["model"] == "mdl"
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])

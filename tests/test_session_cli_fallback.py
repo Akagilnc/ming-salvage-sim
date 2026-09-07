@@ -2588,12 +2588,12 @@ def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatc
         "标签": ["辽饷"],
     }, ensure_ascii=False)
 
-    def fake_codex(prompt, model=None, timeout=None, **kwargs):
-        calls.append(("codex", model, timeout))
+    def fake_codex(prompt, model=None, **kwargs):
+        calls.append(("codex", model))
         return canned, 1
 
     monkeypatch.setattr(cb, "_run_codex", fake_codex)
-    monkeypatch.setattr(cb, "_run_agy", lambda p, timeout=None: (_ for _ in ()).throw(
+    monkeypatch.setattr(cb, "_run_agy", lambda p: (_ for _ in ()).throw(
         AssertionError("runtime codex 通道不应回落 agy")))
     result = _result()
     result.answer = "臣领密旨，可授李若琏暗查。"
@@ -2608,7 +2608,7 @@ def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatc
         "密令如下：查辽东军饷有无侵冒，三月内回奏")
 
     # 经配置 runner 合并润色（不再零 LLM）
-    assert calls == [("codex", "gpt-5.5", 240)]
+    assert calls == [("codex", "gpt-5.5")]
     row = _commit_staged_secret_order(db, state, result)
     assert "查辽东军饷" in row["content"]          # 御旨不丢
     assert "李若琏" in row["content"]              # extractor 内容保留
@@ -2631,7 +2631,7 @@ def test_secret_prefix_creates_order(game, monkeypatch):
         "交付目标": 1, "效果符号": 1, "地区": "henan", "地区字段": "registered_land", "地区目标值": "421",
         "标签": [],
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda p, timeout=None: (canned, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda p: (canned, 1))
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     result = _result()
     result.answer = "臣领密旨，可授李若琏暗查。"
@@ -2844,12 +2844,12 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
         "期限月数": 0,
     }, ensure_ascii=False)
 
-    def fake_codex(prompt, model=None, timeout=None, **kwargs):
-        calls.append(("codex", model, timeout))
+    def fake_codex(prompt, model=None, **kwargs):
+        calls.append(("codex", model))
         return canned, 1
 
-    def fake_agy(prompt, timeout=None):
-        calls.append(("agy", timeout))
+    def fake_agy(prompt):
+        calls.append(("agy",))
         raise RuntimeError("agy should not be used")
 
     monkeypatch.setattr(cb, "_run_codex", fake_codex)
@@ -2871,7 +2871,7 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
     )
 
     # 会话动作判定按配置 runner 分派，且密令动作命中后不再串行跑任免抽取。
-    assert calls == [("codex", "gpt-5.5", 240)]
+    assert calls == [("codex", "gpt-5.5")]
     # 动作闸门：暂存,颁诏 commit 才落库(不在召对当场直写)
     assert res["secret_order_id"] is None
     assert res.get("pending_action_id")

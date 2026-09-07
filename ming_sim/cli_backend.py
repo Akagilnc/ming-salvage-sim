@@ -423,10 +423,11 @@ class _CliProcessOutcome:
 
 
 def _cli_idle_seconds() -> float:
-    """CLI 子进程静默预算：只认 transport 策略 idle（与召对同一权威）。
+    """CLI 子进程静默预算：只认 transport 策略 idle（与召对、API 同一权威）。
 
-    ADR 0001 的 cli_timeout_seconds 槽位仍保留，但不得接到空转轴（旧 300s 墙钟数
-    不是 idle）。这是「多久没有新字节才判死」，不是 attempt 总墙钟。
+    该阈值来自设置页那一格（runtime 档 cli.timeout_seconds），经
+    resolve_transport_policy 解析（#1465 切片③ owner 2026-09-07）。它说的是「多久
+    没有新字节才判这次调用已死」，不是 attempt 总墙钟。
     """
     from ming_sim.llm_transport import resolve_transport_policy
 
@@ -459,7 +460,7 @@ def _iter_cli_process_lines(
 
     - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）
       并 kill 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
-    - idle 只认 transport 策略（`_cli_idle_seconds`），不接 cli_timeout_seconds。
+    - idle 只认 transport 策略（`_cli_idle_seconds`）= 设置页那一格的静默判死阈值。
     - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
     - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
@@ -714,7 +715,6 @@ def _iter_cli_runner_text(
     prompt: str,
     *,
     model: Optional[str] = None,
-    timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
     json_events: bool = False,
     clock: Optional[Callable[[], float]] = None,
@@ -737,7 +737,7 @@ def _iter_cli_runner_text(
     - stdin 未送达 / 未知非零退出 → RuntimeError（确定性失败，一次不重试；禁从
       stderr 散文抠状态）
 
-    静默预算只认 transport 策略 idle，不吃 timeout/cli_timeout_seconds（槽位保留、不接空转轴）。
+    静默预算只认 transport 策略 idle（= 设置页那一格的静默判死阈值，CLI 与 API 同权威）。
     """
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
@@ -813,7 +813,6 @@ def _run_cli_runner(
     prompt: str,
     *,
     model: Optional[str] = None,
-    timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Tuple[str, int]:
     """非流路径：读完整文再返回（内部仍增量读，只是不对外 yield）。
@@ -822,27 +821,26 @@ def _run_cli_runner(
     """
     text = "".join(
         _iter_cli_runner_text(
-            runner, prompt, model=model, timeout=timeout,
+            runner, prompt, model=model,
             reasoning_strength=reasoning_strength,
         )
     )
     return text.strip(), 1
 
 
-def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
+def _run_agy(prompt: str) -> Tuple[str, int]:
     """调 agy -p --sandbox 一次（warm keychain 仍做；重试归 transport）。"""
-    return _run_cli_runner("agy", prompt, timeout=timeout)
+    return _run_cli_runner("agy", prompt)
 
 
 def _run_codex(
     prompt: str,
     model: Optional[str] = None,
-    timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Tuple[str, int]:
     """调 codex exec - 一次；干净最终回话在 stdout（不合并 stderr 日志）。"""
     return _run_cli_runner(
-        "codex", prompt, model=model, timeout=timeout,
+        "codex", prompt, model=model,
         reasoning_strength=reasoning_strength,
     )
 
@@ -850,12 +848,11 @@ def _run_codex(
 def _run_claude(
     prompt: str,
     model: Optional[str] = None,
-    timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Tuple[str, int]:
     """调 claude -p 一次；干净回话在 stdout，thinking 预算经 env 显式设置。"""
     return _run_cli_runner(
-        "claude", prompt, model=model, timeout=timeout,
+        "claude", prompt, model=model,
         reasoning_strength=reasoning_strength,
     )
 
@@ -863,32 +860,29 @@ def _run_claude(
 def _run_cursor(
     prompt: str,
     model: Optional[str] = None,
-    timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；cursor 无 effort 档
 ) -> Tuple[str, int]:
     """调 cursor-agent -p 一次（#1256）。"""
-    return _run_cli_runner("cursor", prompt, model=model, timeout=timeout)
+    return _run_cli_runner("cursor", prompt, model=model)
 
 
 def _run_kimi(
     prompt: str,
     model: Optional[str] = None,
-    timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；kimi -p 无 effort 档
 ) -> Tuple[str, int]:
     """调 kimi -p 一次（#1256）。"""
-    return _run_cli_runner("kimi", prompt, model=model, timeout=timeout)
+    return _run_cli_runner("kimi", prompt, model=model)
 
 
 def _run_grok(
     prompt: str,
     model: Optional[str] = None,
-    timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Tuple[str, int]:
     """调 Grok Build CLI 一次（#1256；--effort 仅 low/med/high）。"""
     return _run_cli_runner(
-        "grok", prompt, model=model, timeout=timeout,
+        "grok", prompt, model=model,
         reasoning_strength=reasoning_strength,
     )
 
@@ -896,12 +890,11 @@ def _run_grok(
 def _run_pi(
     prompt: str,
     model: Optional[str] = None,
-    timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Tuple[str, int]:
     """调本机 pi CLI 一次性非交互出文（#1274-qa-y1）。"""
     return _run_cli_runner(
-        "pi", prompt, model=model, timeout=timeout,
+        "pi", prompt, model=model,
         reasoning_strength=reasoning_strength,
     )
 
@@ -911,32 +904,31 @@ def _dispatch_cli_runner(
     prompt: str,
     *,
     model: Optional[str] = None,
-    timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Tuple[str, int]:
     """runner 名 → 该 runner 的单次调用入口。全仓唯一一处 runner 分派链
     （env 分派 / config 分派 / CliChat 分派共用，禁再复制第二份）。"""
     if runner == "codex":
-        return _run_codex(prompt, model=model, timeout=timeout,
+        return _run_codex(prompt, model=model,
                           reasoning_strength=reasoning_strength)
     if runner == "claude":
-        return _run_claude(prompt, model=model, timeout=timeout,
+        return _run_claude(prompt, model=model,
                            reasoning_strength=reasoning_strength)
     if runner == "cursor":
-        return _run_cursor(prompt, model=model, timeout=timeout,
+        return _run_cursor(prompt, model=model,
                            reasoning_strength=reasoning_strength)
     if runner == "kimi":
-        return _run_kimi(prompt, model=model, timeout=timeout,
+        return _run_kimi(prompt, model=model,
                          reasoning_strength=reasoning_strength)
     if runner == "grok":
-        return _run_grok(prompt, model=model, timeout=timeout,
+        return _run_grok(prompt, model=model,
                          reasoning_strength=reasoning_strength)
     if runner == "pi":
-        return _run_pi(prompt, model=model, timeout=timeout,
+        return _run_pi(prompt, model=model,
                        reasoning_strength=reasoning_strength)
     if runner == "agy":
         # agy 忽略 --model（走自身 ladder），不给它挂不被消费的 model。
-        return _run_agy(prompt, timeout=timeout)
+        return _run_agy(prompt)
     raise RuntimeError(f"未知 CLI backend：{runner}")
 
 
@@ -950,7 +942,12 @@ def _llm_channel(llm_config: Any = None) -> str:
     return (getattr(llm_config, "channel", "") or "").strip().lower()
 
 
-def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Optional[float], str]]:
+def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, str]]:
+    """CLI 通道的分派要素：runner / model / 推理档。
+
+    不含超时：等多久算死是 transport 策略的事（设置页那一格的静默判死阈值，
+    `_cli_idle_seconds`），不再逐调用透传（#1465 切片③）。
+    """
     channel = _llm_channel(llm_config)
     if channel != "cli":
         return None
@@ -958,13 +955,8 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Option
     if runner not in _CLI_BACKENDS:
         raise RuntimeError(f"未知 CLI backend：{runner}")
     model = (getattr(llm_config, "cli_model", "") or "").strip()
-    raw_timeout = getattr(llm_config, "cli_timeout_seconds", None)
-    try:
-        timeout = float(raw_timeout) if raw_timeout else None
-    except (TypeError, ValueError):
-        timeout = None
     reasoning_strength = str(getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
-    return runner, model, timeout, reasoning_strength
+    return runner, model, reasoning_strength
 
 
 def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
@@ -989,8 +981,7 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
     def _one_call() -> str:
         if parts is None:
             return _run_backend(prompt)[0]
-        runner, model, _slot_timeout, reasoning_strength = parts
-        del _slot_timeout  # ADR 0001 槽保留；空转不接 cli_timeout_seconds
+        runner, model, reasoning_strength = parts
         return _dispatch_cli_runner(
             runner, prompt,
             model=model or None,
@@ -4503,8 +4494,8 @@ class CliChat(OpenAIChat):
     reasoning_strength: str = ""
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
-        """一次子进程。空转预算归 transport 策略：不把 model.timeout（召对 90 /
-        结算 300 槽位）当子进程墙钟——ADR 0001 槽位保留，但不再 SIGKILL 出字进程。"""
+        """一次子进程。等多久算死归 transport 策略（设置页那一格的静默判死阈值）：
+        出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。"""
         return _dispatch_cli_runner(
             self.backend,
             prompt,
@@ -4741,7 +4732,6 @@ def gate_llm_config_from_args(
     args: Any,
     *,
     reasoning_strength: str = "high",
-    cli_timeout_seconds: float = 600.0,
 ) -> LLMConfig:
     """四闸脚本 _config/_cfg 单一实现：按 channel 构造 LLMConfig。
 
@@ -4791,7 +4781,6 @@ def gate_llm_config_from_args(
         channel="cli",
         cli_runner=runner,
         cli_model=model,
-        cli_timeout_seconds=cli_timeout_seconds,
         reasoning_strength=reasoning_strength,
     )
 
