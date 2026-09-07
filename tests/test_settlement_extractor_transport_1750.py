@@ -114,6 +114,7 @@ class _TransportAgent:
         always_error: bool = False,
         idle_fail_first: bool = False,
         empty_terminal_first: bool = False,
+        always_empty_terminal: bool = False,
         long_activity_span: float = 0.0,
         clock: dict | None = None,
         clock_lock: threading.Lock | None = None,
@@ -124,6 +125,7 @@ class _TransportAgent:
         self.always_error = bool(always_error)
         self.idle_fail_first = bool(idle_fail_first)
         self.empty_terminal_first = bool(empty_terminal_first)
+        self.always_empty_terminal = bool(always_empty_terminal)
         self.long_activity_span = float(long_activity_span)
         self.clock = clock
         self.clock_lock = clock_lock or threading.Lock()
@@ -158,7 +160,7 @@ class _TransportAgent:
             yield RunContent("")  # 触发 idle check
             return
         # 空终包：有活动 chunk，终包 content="" → empty_output_failure 可重试
-        if self.empty_terminal_first and n == 1:
+        if self.always_empty_terminal or (self.empty_terminal_first and n == 1):
             yield RunContent("…")
             yield RunOutput("")
             return
@@ -753,3 +755,54 @@ def test_extractor_empty_terminal_retries(tracer_client, monkeypatch):
         f"empty-terminal retry success must book fingerprint; "
         f"budget={(after.get('budget') or {}).get('国库')!r}"
     )
+
+
+def test_extractor_empty_terminal_exhausted_pins_current_behavior(
+    tracer_client, monkeypatch,
+):
+    """#1797 阶段 0：空终包耗尽预算 → 现行行为固定（非 xfail、非未来 spec）。
+
+    真实入口 POST /api/decree/issue/stream；替身上游终包 content='' 三次；
+    断言 transport_attempts≥3、LLMUnavailable(code=llm_empty_output)、
+    error pack 落盘、月不进（不吞空 delta）。
+    与 test_extractor_empty_terminal_retries（空后成功）分立，不平行同构。
+    """
+    client = tracer_client
+    turn0, game = _new_game_with_directive(client)
+
+    agents = {
+        m: _TransportAgent(m, always_empty_terminal=(m == "internal"))
+        for m in EXTRACTION_MODULES
+    }
+    _wire_real_extract_path(monkeypatch, agents)
+
+    resp = _issue_stream(client, expected_turn=turn0, step="empty-exhausted")
+    event, data = _terminal_sse(resp)
+    assert event == "error", (event, data)
+
+    transport_attempts = agents["internal"].calls
+    assert transport_attempts >= 3, (
+        f"empty terminal must exhaust default 3 attempts; got {transport_attempts} "
+        f"data={data!r}"
+    )
+
+    assert isinstance(data, dict), data
+    # 机器契约只咬 typed 键（code/provider_message）；玩家 message 是结算恢复面文案，不锁措辞
+    assert data.get("code") == "llm_empty_output", data
+    assert data.get("provider_message") == "empty output", data
+
+    _wait_pending_writes(game)
+    after = _get_state(client)
+    assert _turn_of(after) == turn0, (
+        f"empty exhaust must not advance month (no swallow); turn={_turn_of(after)}"
+    )
+    recovery = after.get("settlement_recovery")
+    assert isinstance(recovery, dict), recovery
+    assert recovery.get("error_pack_path"), recovery
+    assert recovery.get("ready_replay") is False
+
+    manifest = _pack_manifest(recovery)
+    assert manifest.get("exception_type") == "LLMUnavailable", manifest
+    pack_msg = str(manifest.get("exception_message") or "")
+    assert "empty output" in pack_msg, manifest
+    assert int(manifest.get("attempt") or 0) >= 1, manifest
