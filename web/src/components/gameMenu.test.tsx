@@ -100,7 +100,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(text).toContain("Base URL");
     expect(text).toContain("推理强度");
     expect(text).not.toContain("CLI Runner");
-    expect(text).not.toContain("CLI 超时");
+    expect(text).not.toContain("静默判死");
     cleanup();
   });
 
@@ -121,7 +121,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("CLI Runner");
-    expect(text).toContain("CLI 超时");
+    expect(text).toContain("静默判死");
     expect(text).not.toContain("Base URL");
     cleanup();
   });

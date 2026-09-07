@@ -210,7 +210,8 @@ export function ApiSettingsModal({
   // 用 raw cli_model_saved（空=默认档），不用 resolved cli_model——后者把默认兜底成
   // 模型名会让下拉误判「其他(手填)」并在空保存时钉死字面量（CMR R1）。
   const [cliModel, setCliModel] = React.useState(initial?.cli_model_saved ?? "");
-  const [cliTimeout, setCliTimeout] = React.useState(String(initial?.cli_timeout_seconds || 300));
+  // 静默判死阈值（秒）：距上次新内容这么久没动静就判该次调用已死并重试。
+  const [cliTimeout, setCliTimeout] = React.useState(String(initial?.cli_timeout_seconds || 60));
   const [baseUrl, setBaseUrl] = React.useState(initial?.base_url || "https://api.deepseek.com");
   const [model, setModel] = React.useState(initial?.model || "deepseek-chat");
   const [advancedModel, setAdvancedModel] = React.useState(initial?.advanced_model || "");
@@ -277,7 +278,7 @@ export function ApiSettingsModal({
           channel,
           cli_runner: cliRunner.trim(),
           cli_model: cliModel.trim(),
-          cli_timeout_seconds: parseFloat(cliTimeout) || 300,
+          cli_timeout_seconds: parseFloat(cliTimeout) || 60,
           base_url: baseUrl.trim(),
           model: model.trim(),
           api_key: apiKey.trim(),
@@ -363,8 +364,8 @@ export function ApiSettingsModal({
               />
             </div>
             <label>
-              CLI Timeout Seconds
-              <input type="number" min={30} max={1800} value={cliTimeout} onChange={(e) => setCliTimeout(e.target.value)} placeholder="300" />
+              静默判死（秒）<small className="menu-hint">（距上次新内容这么久没有动静，就判这次调用已死，自动重试）</small>
+              <input type="number" min={30} max={1800} value={cliTimeout} onChange={(e) => setCliTimeout(e.target.value)} placeholder="60" />
             </label>
           </>
         )}
