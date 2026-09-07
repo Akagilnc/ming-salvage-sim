@@ -3944,6 +3944,9 @@ class WebGame:
                                 "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
                                 chat_turn_id,
                             )
+                        # #1465 ④：回话未成终失败 — 与重试起手同形无条件 replace，再 error
+                        # （禁「只 put error 不 replace」；客户端已处理空 replace）
+                        emit_delta("", replace=True)
                     if isinstance(error, LLMUnavailable):
                         ev_queue.put({
                             "type": "error",
