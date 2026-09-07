@@ -109,6 +109,23 @@ def _restore_content_characters(content):
     content.characters = saved
 
 
+@pytest.fixture(autouse=True)
+def _transport_retry_interval_instant():
+    """#1792：测试默认不真等 attempt 间隔（生产默认 5s）。
+
+    需时钟断言的用例自行 monkeypatch `_sleep_retry_interval` 推进受控时钟。
+    独立 MonkeyPatch：测试内 monkeypatch.undo() 不会撤掉本兜底。
+    """
+    import ming_sim.llm_transport as transport_mod
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(transport_mod, "_sleep_retry_interval", lambda _seconds: None)
+    try:
+        yield
+    finally:
+        mp.undo()
+
+
 @pytest.fixture
 def game(content, _game_template_path):
     """返回 (db, state, content)：开局同核临时库，用例间隔离。
