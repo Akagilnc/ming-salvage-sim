@@ -3758,11 +3758,18 @@ class WebGame:
             yield {"type": "error", "message": str(error), **identity}
             return
 
+        # #1465 ④：半流已呈现临时正文时，终失败须 replace 清空（与重试起手同形），
+        # 再 put error——禁「只 put error 不 replace」致半句戏内残留。
+        stream_presented = {"v": False}
+
         def emit_delta(delta: str, *, replace: bool = False) -> None:
             # replace=True：复用既有 delta 事件形态，令客户端重置本轮临时正文后再接
             item: Dict[str, Any] = {"type": "delta", "content": delta}
             if replace:
                 item["replace"] = True
+                stream_presented["v"] = False
+            elif delta:
+                stream_presented["v"] = True
             ev_queue.put(item)
 
         def worker() -> None:
@@ -3944,6 +3951,9 @@ class WebGame:
                                 "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
                                 chat_turn_id,
                             )
+                        # #1465 ④：回话未成且半流已呈现 → replace 清临时后再 error
+                        if stream_presented["v"]:
+                            emit_delta("", replace=True)
                     if isinstance(error, LLMUnavailable):
                         ev_queue.put({
                             "type": "error",
