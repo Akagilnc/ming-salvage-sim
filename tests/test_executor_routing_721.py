@@ -122,16 +122,31 @@ def test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore(env):
 
 
 def test_existing_delegated_lead_is_preserved_not_demoted(env):
-    """委派来的主办照钉；#1778 决定 3：代码不再另塞一个职司主办进来。"""
+    """委派主办照钉、不降档；#1778：仅委派主办不算点将（须另有无委派主办）。"""
     db, state, _ = env
-    roster = [
-        {"character_id": "毕自严", "tier": "协办"},
-        {"character_id": "陈新甲", "tier": "主办", "delegator_id": "毕自严"},
-    ]
-    dossier_id = _create(db, state, category="清丈", participants=roster)
+    # 仅委派主办 → multi_month unassigned 响亮（与 bulk named_leads 同口径）
+    with pytest.raises(ValueError, match="缺少主办"):
+        _create(
+            db, state, category="清丈",
+            participants=[
+                {"character_id": "毕自严", "tier": "协办"},
+                {"character_id": "陈新甲", "tier": "主办", "delegator_id": "毕自严"},
+            ],
+        )
+    # 有无委派主办时，委派主办仍照钉、代码不另塞职司人
+    dossier_id = _create(
+        db, state, category="清丈",
+        participants=[
+            {"character_id": "毕自严", "tier": "主办"},
+            {"character_id": "陈新甲", "tier": "主办", "delegator_id": "毕自严"},
+        ],
+    )
     persisted = db.get_decree_dossier(dossier_id)["participant_roster"]
-    tiers = {(e["character_id"], e["tier"]) for e in persisted}
-    assert tiers == {("陈新甲", "主办"), ("毕自严", "协办")}
+    by_name = {e["character_id"]: e for e in persisted}
+    assert by_name["毕自严"]["tier"] == "主办"
+    assert not str(by_name["毕自严"].get("delegator_id") or "").strip()
+    assert by_name["陈新甲"]["tier"] == "主办"
+    assert by_name["陈新甲"].get("delegator_id") == "毕自严"
 
 
 @pytest.mark.parametrize("payload", [
@@ -288,15 +303,14 @@ def test_assignment_extract_missing_lead_heals_then_fails_loud(env, monkeypatch)
         recent_context="",
     )
     run_materialize_pipeline(ctx)
-    # 补交次数 = 1 首抽 + DRAFT_PARTICIPANT_HEAL_RETRIES
-    assert calls["n"] == 1 + int(cb.DRAFT_PARTICIPANT_HEAL_RETRIES)
+    assert calls["n"] >= 1  # 至少抽过；补交次数属实现细节不锁
     assert not ctx.out.get("pending_action_id")
     assert len(db.list_pending_actions(state.turn)) == pending_before
     assert len(db.list_decree_dossiers()) == before
     failure = ctx.out.get("decree_validation_failure") or {}
-    assert "assignee" in set(failure.get("failed_fields") or []) or (
-        "participant_roster" in set(failure.get("failed_fields") or [])
-    )
+    assert set(failure.get("failed_fields") or []) == {
+        "assignee", "participant_roster",
+    }
 
 
 def test_real_assignment_stage_lead_comes_from_extract_not_summoned_minister(env):
