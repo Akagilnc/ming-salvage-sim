@@ -10,6 +10,8 @@ Seams:
 
 from __future__ import annotations
 
+from unittest import mock
+
 import json
 import threading
 import types
@@ -43,9 +45,14 @@ from tests.test_month_loop_tracer_1468 import (
 from web_app import WebGame
 
 
-def _ctx(db, character, candidates, turn, *, message, reply, recent_context="", chat_turn_id=0):
+def _ctx(
+    db, character, candidates, turn, *,
+    message, reply, recent_context="", chat_turn_id=0, content=None,
+):
     return MaterializeCtx(
-        session=SimpleNamespace(db=db, state=SimpleNamespace(turn=turn)),
+        session=SimpleNamespace(
+            db=db, state=SimpleNamespace(turn=turn), content=content,
+        ),
         character=SimpleNamespace(name=character, office_type="文官"),
         player_message=message,
         reply=reply,
@@ -55,6 +62,19 @@ def _ctx(db, character, candidates, turn, *, message, reply, recent_context="", 
         recent_context=recent_context,
         chat_turn_id=int(chat_turn_id or 0),
     )
+
+
+def _extract_lead_result(lead_name: str) -> dict:
+    """#1778：后置抽取同缝返回值——承办人/名单键。"""
+    name = str(lead_name or "").strip()
+    out = {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    if name:
+        out["assignee"] = name
+        out["participant_roster"] = [{
+            "character_id": name, "tier": "主办",
+            "role": "", "delegator_id": None,
+        }]
+    return out
 
 
 def _seed_prior_three_matters(db, minister_name, turn):
@@ -75,11 +95,27 @@ def _classify_assignment_via_real_entry(
     recent_context="",
     pending_summaries=None,
     scripted_payload,
+    extract_lead="",
 ):
-    """走真实 classify_cli_action_intent 入口；仅 mock LLM backend，禁预造 payload 旁路。"""
+    """走真实 classify_cli_action_intent 入口；仅 mock LLM backend，禁预造 payload 旁路。
+
+    #1778：后置抽取亦经 _run_backend（tag=draft_intent）；同桩兼答承办人，不锁死 action_intent 单 tag。
+    """
+    lead = str(extract_lead or "").strip()
 
     def _scripted(prompt, llm_config=None, tag=""):
-        assert tag == "action_intent"
+        if tag == "draft_intent":
+            return (json.dumps({
+                "拟旨意图": "无",
+                "承办人": lead,
+                "参与人": ([{
+                    "character_id": lead, "tier": "主办",
+                    "role": "", "delegator_id": None,
+                }] if lead else []),
+            }, ensure_ascii=False), 0)
+        if tag == "decree_validation_recovery":
+            return ("交办缺承办人，请陛下明示人选。", 0)
+        assert tag == "action_intent", tag
         assert message in prompt
         assert "【最近相关召对】" in prompt
         if (recent_context or "").strip():
@@ -106,7 +142,7 @@ def _active_ming(db, content, *, exclude=""):
     )
 
 
-def _silence_serial(monkeypatch):
+def _silence_serial(monkeypatch, *, lead: str = ""):
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
         "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
         "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
@@ -114,9 +150,11 @@ def _silence_serial(monkeypatch):
     monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
         "appoint_action": "无", "name": "", "office": "",
     })
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "无", "draft_text": "", "target_candidate": "",
-    })
+    # #1778：交办后置抽取同缝；lead 非空则带回承办人/名单
+    monkeypatch.setattr(
+        cb, "extract_draft_intent",
+        lambda *a, **k: _extract_lead_result(lead),
+    )
     monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
     monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("must not call serial classifier")))
@@ -136,16 +174,17 @@ def _stage_assignment(
     db, turn, *, title, target_id=None, assignee=None,
     commitment_kind="无", stop_condition="", end_turn=0,
     ongoing_effects="", message=None, reply=None, target_candidate="",
-    actor=None,
+    actor=None, monkeypatch=None, content=None,
 ):
     actor = actor or db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
+    lead = str(assignee or actor or "").strip()
     payload = {
         "kind": "assignment",
         "title": title,
         "target_id": target_id or title,
-        "assignee": assignee or actor,
+        "assignee": lead,
         "commitment_kind": commitment_kind,
     }
     if stop_condition:
@@ -157,13 +196,31 @@ def _stage_assignment(
     if target_candidate:
         payload["target_candidate"] = target_candidate
     candidate = candidates_from_classifier_payload(payload, soft=False)
-    spoken = message or f"着{payload['assignee']}办{title}。"
+    spoken = message or f"着{lead}办{title}。"
     ctx = _ctx(
         db, actor, candidate, turn,
         message=spoken,
         reply=reply or f"臣请奉行：{title}。请陛下定夺准驳。",
+        content=content,
     )
-    run_materialize_pipeline(ctx)
+    # #1778：后置抽取同缝；无 monkeypatch 时仍用 mock 罩住 extract
+    patcher = (
+        monkeypatch.setattr
+        if monkeypatch is not None
+        else None
+    )
+    if monkeypatch is not None:
+        monkeypatch.setattr(
+            cb, "extract_draft_intent",
+            lambda *a, **k: _extract_lead_result(lead),
+        )
+        run_materialize_pipeline(ctx)
+    else:
+        with mock.patch.object(
+            cb, "extract_draft_intent",
+            lambda *a, **k: _extract_lead_result(lead),
+        ):
+            run_materialize_pipeline(ctx)
     return ctx
 
 
@@ -245,15 +302,15 @@ def test_assignment_cluster_registered_with_materialize_fn():
     assert "commitment_kind" in names
     assert "stop_condition" in names
     assert "target_candidate" in names
-    # #520 r2：owner=当前召对大臣；assignee 分类字段无改派用途，已删
+    # #520 r2 / #1778：分类器不设 assignee 改派入口；承办人来后置抽取
     assert "assignee" not in names
 
 
-# ── #520 r2：owner 单一来源 / 无民心夹带 / 相对期限 / 当轮锚 ──────────
+# ── #1778：承办人后置抽取 / 无民心夹带 / 相对期限 / 当轮锚 ──────────
 
 
-def test_assignment_owner_is_audience_minister_not_classifier_assignee(game):
-    """软分类器 assignee/name 不得覆盖 owner；owner=当前召对大臣。"""
+def test_assignment_lead_from_extract_not_code_fill_current_minister(game, monkeypatch):
+    """#1778：名单＝后置抽取所得，不是当前召对大臣；分类器 assignee 字段不入候选。"""
     db, state, content = game
     actor = _active_ming(db, content)
     other = _active_ming(db, content, exclude=actor.name)
@@ -263,15 +320,22 @@ def test_assignment_owner_is_audience_minister_not_classifier_assignee(game):
         "kind": "assignment",
         "title": "核钱粮",
         "target_id": "he-qianliang",
-        "assignee": other.name,  # 分类器误填他人
-        "name": other.name,
+        "assignee": actor.name,  # 分类器若带回亦不得当改派入口（FieldSpec 已删）
+        "name": actor.name,
         "commitment_kind": "无",
     }
     candidates = candidates_from_classifier_payload(payload, soft=False)
+    assert "assignee" not in candidates[0]
+    # 抽取所得＝other（≠ 召对大臣 actor）
+    monkeypatch.setattr(
+        cb, "extract_draft_intent",
+        lambda *a, **k: _extract_lead_result(other.name),
+    )
     ctx = _ctx(
         db, actor.name, candidates, state.turn,
-        message=f"这核钱粮的事你办。",
-        reply="臣请奉行。请陛下定夺准驳。",
+        message="这核钱粮的事着人去办。",
+        reply=f"臣请交{other.name}承办。请陛下定夺准驳。",
+        content=content,
     )
     run_materialize_pipeline(ctx)
     pending_id = ctx.out["pending_action_id"]
@@ -279,12 +343,12 @@ def test_assignment_owner_is_audience_minister_not_classifier_assignee(game):
     pending = json.loads(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["payload_json"])
-    owner = pending.get("assignee_id") or pending.get("assignee")
-    assert owner == actor.name
-    assert owner != other.name
+    lead = pending.get("assignee_id") or pending.get("assignee")
+    assert lead == other.name
+    assert lead != actor.name
 
     dossier = _close_night_dossier(db, state, content, pending_id)
-    assert dossier["executor_id"] == actor.name
+    assert dossier["executor_id"] == other.name
 
 
 def test_assignment_verdict_does_not_inject_public_support_plus_one(game):
@@ -310,10 +374,12 @@ def test_assignment_verdict_does_not_inject_public_support_plus_one(game):
     assert metrics.get("民心") in (None, 0), f"不得夹带民心默认：{effect!r}"
 
 
-def test_relative_deadline_months_becomes_absolute_end_turn(game):
+def test_relative_deadline_months_becomes_absolute_end_turn(game, monkeypatch):
     """交办接缝：相对期限月数 → 绝对 end_turn=turn+N；stop_condition 可校验 dict 原样落。"""
     db, state, content = game
     actor = _active_ming(db, content)
+    monkeypatch.setattr(cb, "extract_draft_intent",
+                        lambda *a, **k: _extract_lead_result(actor.name))
     stop = {"army.guanning.arrears": "<=0"}
     ongoing = {
         "economy": [{
@@ -409,13 +475,15 @@ def test_classify_prompt_stop_condition_example_is_single_layer_json(monkeypatch
     assert marker in prompt
 
 
-def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game):
+def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game, monkeypatch):
     """#520 r4 / #1565：recent_context 空时案卷正文须同时保留皇帝任务描述与大臣领命回话。
 
     题名=分类 title；正文唯一真源=payload.text（上下文链），不写平行 body。
     """
     db, state, content = game
     actor = _active_ming(db, content)
+    monkeypatch.setattr(cb, "extract_draft_intent",
+                        lambda *a, **k: _extract_lead_result(actor.name))
     player = "朕要你解决九边欠饷，并保证——不会再欠。"
     reply = "臣请立军令状：边饷按月补齐，直至关宁无欠。请陛下定夺准驳。"
     payload = {
@@ -442,7 +510,7 @@ def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game
     assert reply in body, f"须保留大臣领命回话，got={body!r}"
 
 
-def test_assignment_body_keeps_current_turn_short_line_against_prior_substring(game):
+def test_assignment_body_keeps_current_turn_short_line_against_prior_substring(game, monkeypatch):
     """#520 正文义务：当轮短句不得因是前轮长文子串而被 _context_line_present 吞掉。
 
     题名仍只认结构化 title|target_id（0142，不恢复散文题名 oracle）。
@@ -450,6 +518,8 @@ def test_assignment_body_keeps_current_turn_short_line_against_prior_substring(g
     """
     db, state, content = game
     actor = _active_ming(db, content)
+    monkeypatch.setattr(cb, "extract_draft_intent",
+                        lambda *a, **k: _extract_lead_result(actor.name))
     # 前轮长文含当轮短句子串「三事」
     recent = (
         "皇帝：核钱粮、整宗藩、护内帑，卿有何策？\n"
@@ -493,6 +563,8 @@ def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch)
 
     db, state, content = game
     actor = _active_ming(db, content)
+    monkeypatch.setattr(cb, "extract_draft_intent",
+                        lambda *a, **k: _extract_lead_result(actor.name))
     player = (
         "户部亏空日甚，太仓入不敷出。卿可据实奏对，并拟一道旨："
         "清核太仓出纳、暂缓非急工役、优发边饷要紧处，限半月回报。"
@@ -518,7 +590,7 @@ def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch)
         cb, "_run_backend_for_config",
         lambda _p, _c=None, *, tag="": ("臣请陛下明示交办题名后重拟。", 1),
     )
-    _silence_serial(monkeypatch)
+    _silence_serial(monkeypatch, lead=actor.name)
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     wg = _wire_web_game(db, state, content, _SyncAgent(reply), monkeypatch)
 
@@ -683,7 +755,7 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
             "commitment_kind": "无",
         }, soft=False)
 
-    _silence_serial(monkeypatch)
+    _silence_serial(monkeypatch, lead=minister)
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(
         cb, "extract_confirmation_intent",
@@ -828,7 +900,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
             text = a_reply if assign_msg in blob else q_reply
             return SimpleNamespace(content=text, tools=[])
 
-    _silence_serial(monkeypatch)
+    _silence_serial(monkeypatch, lead=minister)
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(
         cb, "extract_confirmation_intent",
@@ -1077,6 +1149,7 @@ def test_beat6_three_matters_fan_out_three_independent_candidates(game, monkeypa
         monkeypatch,
         message=message,
         recent_context=recent,
+        extract_lead=actor.name,
         scripted_payload=[
             {
                 "kind": "assignment",
@@ -1091,9 +1164,14 @@ def test_beat6_three_matters_fan_out_three_independent_candidates(game, monkeypa
     assert len(candidates) == 3
     assert {c.get("kind") for c in candidates} == {"assignment"}
 
+    monkeypatch.setattr(
+        cb, "extract_draft_intent",
+        lambda *a, **k: _extract_lead_result(actor.name),
+    )
     ctx = _ctx(
         db, actor.name, candidates, state.turn,
         message=message, reply=reply, recent_context=recent,
+        content=content,
     )
     run_materialize_pipeline(ctx)
 
@@ -1125,6 +1203,7 @@ def test_beat8_reinforce_updates_existing_and_adds_fourth(game, monkeypatch):
     )
     first_candidates = _classify_assignment_via_real_entry(
         monkeypatch,
+        extract_lead=actor.name,
         message=first_message,
         recent_context=first_recent,
         scripted_payload=[
@@ -1142,11 +1221,16 @@ def test_beat8_reinforce_updates_existing_and_adds_fourth(game, monkeypatch):
             )
         ],
     )
+    monkeypatch.setattr(
+        cb, "extract_draft_intent",
+        lambda *a, **k: _extract_lead_result(actor.name),
+    )
     run_materialize_pipeline(_ctx(
         db, actor.name, first_candidates, state.turn,
         message=first_message,
         reply="臣请分办三事，请陛下定夺准驳。",
         recent_context=first_recent,
+        content=content,
     ))
     first_rows = _assignment_pendings(db, state.turn, minister_name=actor.name)
     assert len(first_rows) == 3
@@ -1168,6 +1252,7 @@ def test_beat8_reinforce_updates_existing_and_adds_fourth(game, monkeypatch):
     ]
     reinforced = _classify_assignment_via_real_entry(
         monkeypatch,
+        extract_lead=actor.name,
         message=reinforce_message,
         recent_context=recent,
         pending_summaries=pending_summaries,
@@ -1206,9 +1291,14 @@ def test_beat8_reinforce_updates_existing_and_adds_fourth(game, monkeypatch):
         ],
     )
     assert len(reinforced) == 4
+    monkeypatch.setattr(
+        cb, "extract_draft_intent",
+        lambda *a, **k: _extract_lead_result(actor.name),
+    )
     run_materialize_pipeline(_ctx(
         db, actor.name, reinforced, state.turn,
         message=reinforce_message, reply=reinforce_reply, recent_context=recent,
+        content=content,
     ))
 
     staged = dict(_assignment_pendings(db, state.turn, minister_name=actor.name))
@@ -1248,6 +1338,7 @@ def test_beat10_accept_three_lands_three_independent_initiatives(game, monkeypat
     # 先走真实分类入口，再 silence 串行抽取（apply 只消费已分类候选）
     scripted = _classify_assignment_via_real_entry(
         monkeypatch,
+        extract_lead=actor.name,
         message=message,
         recent_context=recent,
         scripted_payload=[
@@ -1265,7 +1356,7 @@ def test_beat10_accept_three_lands_three_independent_initiatives(game, monkeypat
             )
         ],
     )
-    _silence_serial(monkeypatch)
+    _silence_serial(monkeypatch, lead=actor.name)
     # apply 入口消费真实分类结果；materialize 仍取同一 recent_context 链
     monkeypatch.setattr(
         session_mod, "_recent_audience_context_for_secret_order",
@@ -1442,7 +1533,7 @@ def test_cross_round_assignment_update_undo_restores_before_image(game, monkeypa
     """跨轮强化更新既有候选后，撤回本轮恢复前像（ADR 0038）。"""
     db, state, content = game
     minister = _active_ming(db, content)
-    _silence_serial(monkeypatch)
+    _silence_serial(monkeypatch, lead=minister.name)
 
     original_title = "核钱粮"
     updated_title = "核钱粮（加紧催办）"

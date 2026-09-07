@@ -1454,6 +1454,12 @@ def test_explicit_prefix_grant_and_assignment_two_durable_dossiers(game, monkeyp
             "标题": "清查辽饷收支", "事务类别": "钱粮",
             "目标类型": "issue", "目标ID": "hubu", "颁布方式": "普通",
             "施行范围": "无",
+            # #1778：交办须自带承办人/名单（后置抽取同缝）
+            "承办人": actor,
+            "参与人": [{
+                "character_id": actor, "tier": "主办",
+                "role": "", "delegator_id": None,
+            }],
         },
     ]}
     backend_calls = []
