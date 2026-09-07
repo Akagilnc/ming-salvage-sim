@@ -1542,17 +1542,12 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     // settlement_display 持久真源不升格；流终态走 decisions 避免 reload。
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     const encoder = new TextEncoder();
-    let liveState: Record<string, unknown> = {
+    const liveState: Record<string, unknown> = {
       ...settlementBaseState("player"),
       turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
       previous_summary: "",
       pending_decisions: [],
       directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
-    };
-    const settlingDisplay = {
-      ...settlementBaseState("settling"),
-      directives: [],
-      previous_summary: "",
     };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
@@ -1568,8 +1563,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
-        // ADR 0149：点即入——后续 GET state 投影核账展示态。
-        liveState = settlingDisplay;
         return new Response(new ReadableStream<Uint8Array>({
           start(controller) { streamController = controller; },
         }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
@@ -1594,33 +1587,15 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       });
     });
     expect(findButton(host, "盖玺颁诏过月")).toBeFalsy();
-    // typed stage 未到：#1725 既有兜底不改字
-    expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain("档房摘录正在呈递。");
-    // 核账期面（同会话 decor / 状态口）：王承恩递话 + 半程局势藏
+    // 核账期面（同会话 face）：王承恩递话 + 半程局势藏；#1725 兜底措辞/aria 刻度不重证
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull());
     });
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
-    expect(host.querySelector(".game-shell")?.getAttribute("data-settlement-display")).toBe("1");
 
-    // typed stage 到达后显示阶段与刻度（#1725）
+    // 收束：decisions → 必达 DecisionModal 仍可达（#1236；兼本票批红从新入口之证明）
     await act(async () => {
       await vi.waitFor(() => expect(streamController).toBeTruthy());
-      streamController.enqueue(encoder.encode(
-        'event: stage\ndata: {"content":"数值推演结算","current":2,"total":5}\n\n',
-      ));
-    });
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain("数值推演结算");
-        const bar = host.querySelector('[data-testid="settlement-wait-progress"]');
-        expect(bar?.getAttribute("aria-valuenow")).toBe("2");
-        expect(bar?.getAttribute("aria-valuemax")).toBe("5");
-      });
-    });
-
-    // 收束：decisions → 必达 DecisionModal 仍可达（#1236）
-    await act(async () => {
       streamController.enqueue(encoder.encode(
         `event: decisions\ndata: ${JSON.stringify({ decisions: [validDecision] })}\n\n`,
       ));
@@ -1689,7 +1664,6 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
         expect(host.querySelector("[data-testid=settlement-lock-decor]")).not.toBeNull();
       });
     });
-    expect(host.querySelector(".settlement-lock-stage")?.textContent || "").toContain("档房摘录正在呈递。");
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
 
     // 放行 advance：awaiting 停窗，busy 清后批红必达

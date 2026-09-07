@@ -376,27 +376,21 @@ export function App() {
 
   // #1236：关闭组面若仍挂着（刷新前已开），核账期强制收起，避免半程内容残留。
   // hooks 须在 early return 之前。关闭组成员固定，不经表查字面 true。
-  // #1796：同会话 busy 只经 settlementFace/edictOpen 藏台（不 setActiveModal none）——
-  // 失败清 busy 后拟诏台可带回 error；持久 settlement_display 仍走本 effect 清 activeModal。
+  // #1796：settlementFace 单点 OR（持久 ∨ 同会话 busy）；抽屉收起吃 face，
+  // setActiveModal("none") 仍只吃持久 settlementDisplay——失败清 busy 后拟诏台可带回 error。
   const sessionSettlingBusy = busy === "月末结算";
   const settlementDisplay = isSettlementDisplay(state?.turn);
   const settlementFace = settlementDisplay || sessionSettlingBusy;
   React.useEffect(() => {
-    if (!settlementDisplay) return;
+    if (!settlementFace) return;
     setRegionDrawerOpen(false);
     setArmyDrawerOpen(false);
     setMapIntelOpen(false);
+    if (!settlementDisplay) return;
     if (activeModal === "secret_orders" || activeModal === "edict" || activeModal === "chat") {
       setActiveModal("none");
     }
-  }, [settlementDisplay, activeModal]);
-  // #1796：同会话 busy 亦收起关闭组抽屉（region/army/map intel），与上条持久 effect 分工。
-  React.useEffect(() => {
-    if (!sessionSettlingBusy) return;
-    setRegionDrawerOpen(false);
-    setArmyDrawerOpen(false);
-    setMapIntelOpen(false);
-  }, [sessionSettlingBusy]);
+  }, [settlementFace, settlementDisplay, activeModal]);
 
   // #1342：hooks 须在 early return 之前。开底部命令模态时收起全部抽屉。
   const closeAllDrawers = React.useCallback(() => {
@@ -583,7 +577,7 @@ export function App() {
   const armyOpen = armyDrawerOpen && isFaceReachable("army", settlementFace);
 
   return (
-    <main className="game-shell" data-settlement-display={settlementFace ? "1" : "0"}>
+    <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>
       <GameHud
         stageRef={hudStageCbRef}
         ready={ready}
@@ -599,7 +593,7 @@ export function App() {
         onClosedFaceAttempt={(reason) => setError(reason)}
         edictOpen={edictOpen}
         onCloseEdict={() => setActiveModal("none")}
-        sessionSettlementDecor={sessionSettlingBusy}
+        settlementFace={settlementFace}
       />
 
       <CourtDrawer
