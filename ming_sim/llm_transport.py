@@ -9,6 +9,8 @@ CLI runner / 召对半流呈现 / 外层截断点由后续切片迁移。
 - SDK 阻塞（等下一 chunk / httpx read）：bind_transport_sdk_budget 把 model.timeout
   临时设为 attempt_timeout_seconds；事件界 check_idle_budget 不能中止该阻塞。
 - 事件边界空转：距上次活动 ≥ idle_timeout_seconds → TransportIdleTimeout（可重试）。
+  该阈值 = 设置页那一格（runtime 档 cli.timeout_seconds），CLI 与 API 同吃一个权威；
+  解析走 llm_config.cli_idle_timeout_seconds，本模块不另立默认、不第二次 clamp。
 - 不设 attempt 总墙钟（宪法 #9）；每次 attempt 重新取得完整空转预算。
 - create_chat_model 默认保留未迁移 timeout_seconds / max_retries=1；
   已迁移接缝（召对流、run_agent_text）临时覆盖。
@@ -28,8 +30,8 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import (
+    CLI_DEFAULT_TIMEOUT_SECONDS,
     TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
-    TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS,
     TRANSPORT_DEFAULT_MAX_ATTEMPTS,
 )
 
@@ -58,7 +60,8 @@ class TransportPolicy:
     # SDK/httpx read 阻塞预算（bind_transport_sdk_budget → model.timeout）。
     attempt_timeout_seconds: float = TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
     # 事件界空转预算（check_idle_budget）；与 SDK 阻塞轴分家，不得混用。
-    idle_timeout_seconds: float = TRANSPORT_DEFAULT_IDLE_TIMEOUT_SECONDS
+    # 真源 = 设置页那一格（cli.timeout_seconds），此处只兜底其默认。
+    idle_timeout_seconds: float = CLI_DEFAULT_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -103,8 +106,15 @@ def transport_attempts_public(attempts: List[TransportAttempt]) -> List[dict]:
 
 
 def transport_policy_from_mapping(data: object) -> TransportPolicy:
-    """从 runtime 映射归一策略。数值解析单权威 = llm_config._transport_runtime_slot。"""
-    from ming_sim.llm_config import transport_runtime_slot
+    """从 runtime 映射归一策略。数值解析单权威在 llm_config：
+
+    - 次数 / SDK 阻塞预算 → transport 段（transport_runtime_slot）
+    - 静默判死阈值 → 设置页那一格 cli.timeout_seconds（cli_idle_timeout_seconds）
+
+    只给 transport 段（无 cli 槽）时静默阈值取默认——设置页写过的值经整份 runtime
+    映射进来。
+    """
+    from ming_sim.llm_config import cli_idle_timeout_seconds, transport_runtime_slot
 
     if not isinstance(data, dict):
         return default_transport_policy()
@@ -115,7 +125,7 @@ def transport_policy_from_mapping(data: object) -> TransportPolicy:
     return TransportPolicy(
         max_attempts=int(slot["max_attempts"]),
         attempt_timeout_seconds=float(slot["attempt_timeout_seconds"]),
-        idle_timeout_seconds=float(slot["idle_timeout_seconds"]),
+        idle_timeout_seconds=cli_idle_timeout_seconds(data),
     )
 
 

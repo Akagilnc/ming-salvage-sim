@@ -1,243 +1,98 @@
-"""Minister chat uses a short timeout (≤ MINISTER_CHAT_CLI_TIMEOUT_SECONDS),
-decoupled from settlement's long timeout (issue #353).
+"""召对「等多久算死」= 设置页那一格（静默判死阈值）。#1465 切片③。
 
-#1185: observe short-timeout failure via public model.invoke. Boundary stubs
-only time out when the forwarded timeout is short (≤ cap); missing/long values
-succeed immediately — production that stops forwarding the short timeout goes red.
-No sleep, real network, or real LLM.
+owner 2026-09-07 拍：设置页 `cli_timeout_seconds` 从「总超时」改接空转轴——距上次
+新内容这么久没有动静，就判该次调用已死并重试；#353 的召对 90 / 结算 300 分档随硬墙
+钟一同删（不再有第二套超时权威，CLI 与 API 同吃这一个阈值）。
 
-#1465 切片③：CLI 侧该槽位仍按 90 封顶（ADR 0001 槽位保留），但**不再当子进程总墙钟**
-——不得再拿它 SIGKILL 正在出字的 CLI；CLI 空转预算归 transport 策略。API 侧不变。
+本文件从真实入口证明这条线：设置 API 写阈值 → 召对流（CLI 通道）判死时点随之变。
+受控推进时钟，不跑真墙钟、不起真 CLI 进程、不连真 LLM。
 """
 
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
-from unittest.mock import MagicMock, patch
-
-import httpx
 import pytest
-from agno.models.message import Message
-from agno.models.openai import OpenAIChat
-from agno.exceptions import ModelProviderError
+from fastapi.testclient import TestClient
 
-from ming_sim.cli_backend import CliChat
-from ming_sim.models import CLI_DEFAULT_TIMEOUT_SECONDS, MINISTER_CHAT_CLI_TIMEOUT_SECONDS, LLMConfig
-from ming_sim.registry import create_minister_agent
-import ming_sim.cli_backend as cli_backend
+import ming_sim.cli_backend as cb
+import web_app
+from tests.cli_process_doubles import SilentUntilKilled, install_fake_cli_runner
+from tests.test_chat_stream_failpaths_393 import _parse_sse, _post_chat_stream
+from tests.test_cli_transport_1465 import _cli_web_game
+
+# 受控时钟：每读一次表推进阈值的 1/4——判死落在第 4 次空转核查，时点确定不看真墙钟。
+_CHECKS_TO_DEATH = 4
 
 
-def _cfg_settlement_timeout(*, channel: str = "cli") -> LLMConfig:
-    if channel == "cli":
-        return LLMConfig(
-            api_key="",
-            base_url="",
-            model="gpt-5.5",
-            channel="cli",
-            cli_runner="codex",
-            cli_model="gpt-5.5",
-            cli_timeout_seconds=CLI_DEFAULT_TIMEOUT_SECONDS,
-            timeout_seconds=CLI_DEFAULT_TIMEOUT_SECONDS,
-        )
-    return LLMConfig(
-        api_key="sk-test",
-        base_url="https://example.com/v1",
-        model="gpt-4",
-        channel="api",
-        timeout_seconds=CLI_DEFAULT_TIMEOUT_SECONDS,
+def _save_idle_threshold_via_settings_api(monkeypatch, tmp_path, seconds: float) -> float:
+    """真实设置入口：POST /api/menu/llm（CLI 通道）写下静默判死阈值，落到临时 runtime 档。"""
+    from ming_sim import llm_config as llm_config_mod
+
+    monkeypatch.setattr(
+        llm_config_mod, "RUNTIME_LLM_PATH", str(tmp_path / "runtime_llm.json")
     )
-
-
-def _make_context() -> MagicMock:
-    state = MagicMock(year=1640, period=1, turn=1)
-    db_mock = MagicMock()
-    db_mock.get_consort_traits.return_value = {"extra_skills": [], "extra_traits": []}
-    db_mock.conn.execute.return_value.fetchone.return_value = [0]
-    db_mock.get_character_status.return_value = ("active", "在朝")
-    db_mock.resolve_power_id.return_value = "ming"
-    db_mock.army_roster.return_value = ""
-    ctx = MagicMock()
-    ctx.state = state
-    ctx.db = db_mock
-    ctx.game_world_prompt = ""
-    ctx.minister_agent_prompt = ""
-    ctx.consort_agent_prompt = ""
-    ctx.characters = {}
-    return ctx
-
-
-def _make_character() -> MagicMock:
-    ch = MagicMock()
-    ch.name = "测试大臣"
-    ch.office = "内阁"
-    ch.office_type = "cabinet"
-    ch.personal_skills = ["谋略"]
-    ch.style = "周正"
-    ch.summary = "测试"
-    ch.power_id = "ming"
-    return ch
-
-
-_REGISTRY_STUBS = [
-    ("ming_sim.registry.build_character_knowledge_brief", ""),
-    ("ming_sim.registry.build_recommendation_brief", ""),
-    ("ming_sim.registry.build_secret_order_brief", ""),
-    ("ming_sim.registry.build_minister_tools", []),
-    ("ming_sim.registry._skills_for", MagicMock()),
-    ("ming_sim.registry.character_context_with_db", "角色描述"),
-]
-
-
-@contextmanager
-def _minister_agent_construction(ctx):
-    """Stub registry side seams; keep real create_chat_model so timeout is live."""
-    with ExitStack() as stack:
-        for name, val in _REGISTRY_STUBS:
-            stack.enter_context(patch(name, return_value=val))
-        stack.enter_context(
-            patch(
-                "ming_sim.registry.Agent",
-                side_effect=lambda **kwargs: MagicMock(model=kwargs.get("model")),
-            )
-        )
-        stack.enter_context(patch("ming_sim.registry._ctx", return_value=ctx))
-        yield
-
-
-def _invoke_minister_model(model) -> None:
-    model.invoke(
-        [Message(role="user", content="召对")],
-        Message(role="assistant"),
+    # 保存前的连通性 smoke 会真起 CLI/网络调用，本测只验阈值这条线 → 只替换该边界。
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda *_a, **_k: None)
+    response = TestClient(web_app.app).post(
+        "/api/menu/llm",
+        json={
+            "base_url": "",
+            "model": "",
+            "api_key": "",
+            "channel": "cli",
+            "cli_runner": "claude",
+            "cli_model": "cli-model-test",
+            "cli_timeout_seconds": seconds,
+        },
     )
+    assert response.status_code == 200, response.text
+    assert response.json()["llm"]["cli_timeout_seconds"] == seconds
+    return seconds
 
 
-def _install_cli_process_boundary(monkeypatch) -> dict:
-    """CLI 子进程边界替身（生产 Popen + 增量读）；记录 Popen kwargs 供墙钟断言。"""
-    from tests.cli_process_doubles import FakeCliProcess
+@pytest.mark.parametrize("idle_seconds", [45.0, 120.0])
+def test_minister_chat_idle_death_time_follows_settings_threshold(
+    monkeypatch, tmp_path, game, idle_seconds,
+):
+    """设置页写下的静默阈值就是召对判死的时点：改这一格，判死时点随之变。
 
-    captured: dict = {}
-
-    def fake_popen(cmd, **kw):
-        captured["cmd"] = list(cmd)
-        captured["kw"] = kw
-        return FakeCliProcess(cmd, stdout_script=("大臣回话\n",), returncode=0,
-                              popen_kwargs=kw)
-
-    monkeypatch.setattr(cli_backend.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(cli_backend, "_resolve_cli_bin", lambda name, configured: f"/fake/{name}")
-    monkeypatch.setattr(cli_backend, "_trace", lambda rec: None)
-    return captured
-
-
-def _short_timeout_values(timeout_ext) -> list[float]:
-    if not timeout_ext:
-        return []
-    values: list[float] = []
-    if isinstance(timeout_ext, dict):
-        for key in ("read", "connect"):
-            raw = timeout_ext.get(key)
-            if raw is not None:
-                values.append(float(raw))
-    else:
-        for key in ("read", "connect"):
-            raw = getattr(timeout_ext, key, None)
-            if raw is not None:
-                values.append(float(raw))
-    return values
-
-
-def _api_timeout_transport() -> httpx.MockTransport:
-    """Boundary stand-in: ReadTimeout only when request timeout extension is short."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        ext = request.extensions.get("timeout")
-        short = any(v <= MINISTER_CHAT_CLI_TIMEOUT_SECONDS for v in _short_timeout_values(ext))
-        if short:
-            raise httpx.ReadTimeout("minister chat short timeout", request=request)
-        body = {
-            "id": "chatcmpl-minister-timeout",
-            "object": "chat.completion",
-            "created": 1,
-            "model": "gpt-4",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "臣遵旨。"},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-        }
-        return httpx.Response(200, json=body)
-
-    return httpx.MockTransport(handler)
-
-
-def _bind_api_timeout_transport(model) -> None:
-    model.http_client = httpx.Client(transport=_api_timeout_transport())
-    model.client = None
-
-
-def test_minister_agent_cli_timeout_slot_capped_and_not_a_subprocess_wall(monkeypatch):
-    """召对 CLI 槽位仍按 90 封顶（#353 / ADR 0001），且不再下发成子进程墙钟（#1465）。
-
-    观察面 = 公共 model.timeout（封顶事实）+ Popen 实参（无 timeout 墙）+ 出字即成案。
+    注入 = 大臣的 CLI 子进程一个字都不出。观察面 = 相邻两次子进程起跑的时钟差
+    （= 上一次熬到判死用掉的静默时长）+ 玩家侧结构化 error。时钟每被读一次推进
+    阈值的 1/4，判死时点确定，不跑真墙钟。
     """
-    captured = _install_cli_process_boundary(monkeypatch)
-    ctx = _make_context()
-    cfg = _cfg_settlement_timeout(channel="cli")
-    with _minister_agent_construction(ctx):
-        agent = create_minister_agent(_make_character(), cfg, ctx, ctx.db)
+    idle = _save_idle_threshold_via_settings_api(monkeypatch, tmp_path, idle_seconds)
+    step = idle / _CHECKS_TO_DEATH
+    clock = {"t": 1000.0}
 
-    assert isinstance(agent.model, CliChat)
-    # 槽位仍封顶（结算 300 → 召对 90）
-    assert float(agent.model.timeout) == MINISTER_CHAT_CLI_TIMEOUT_SECONDS
-    # 出字的子进程照常成案：短槽位不再 SIGKILL 它
-    _invoke_minister_model(agent.model)
-    assert "timeout" not in captured["kw"]
-    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS
-    assert cfg.timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS
+    def _advancing_clock() -> float:
+        clock["t"] += step
+        return clock["t"]
 
+    monkeypatch.setattr(cb, "_cli_process_clock", _advancing_clock)
+    script = install_fake_cli_runner(monkeypatch, [
+        {"stdout": (SilentUntilKilled(),), "returncode": 0},
+    ])
+    starts: list[float] = []
+    scripted_popen = cb.subprocess.Popen
 
-def test_minister_agent_api_timeout_capped(monkeypatch):
-    """API minister invoke fails on short request timeout; channel stays API not env CLI."""
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    ctx = _make_context()
-    cfg = _cfg_settlement_timeout(channel="api")
-    assert cfg.channel == "api"
-    with _minister_agent_construction(ctx):
-        agent = create_minister_agent(_make_character(), cfg, ctx, ctx.db)
+    def _recording_popen(cmd, **kwargs):
+        starts.append(clock["t"])  # 只读，不推进
+        return scripted_popen(cmd, **kwargs)
 
-    model = agent.model
-    assert isinstance(model, OpenAIChat)
-    assert not isinstance(model, CliChat)
-    _bind_api_timeout_transport(model)
-    with pytest.raises(ModelProviderError, match="[Tt]imed out|timeout"):
-        _invoke_minister_model(model)
-    assert cfg.timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS
+    monkeypatch.setattr(cb.subprocess, "Popen", _recording_popen)
+    web_game, minister = _cli_web_game(game)
 
+    response = _post_chat_stream(monkeypatch, web_game, minister)
+    assert response.status_code == 200, response.text
+    events = _parse_sse(response.text)
+    assert events[-1][0] == "error", events
+    detail = events[-1][1]
+    attempts = detail.get("transport_attempts") or []
+    assert attempts, detail
+    assert [a.get("code") for a in attempts] == ["llm_idle_timeout"] * len(attempts), attempts
+    assert script.calls == len(attempts) >= 2
 
-def test_minister_agent_does_not_mutate_original_llm_config(monkeypatch):
-    """create_minister_agent must not modify the caller's LLMConfig (no side-effects)."""
-    _install_cli_process_boundary(monkeypatch)
-    original_cli = CLI_DEFAULT_TIMEOUT_SECONDS
-    original_api = CLI_DEFAULT_TIMEOUT_SECONDS
-    cfg = LLMConfig(
-        api_key="",
-        base_url="",
-        model="gpt-5.5",
-        channel="cli",
-        cli_runner="codex",
-        cli_model="gpt-5.5",
-        cli_timeout_seconds=original_cli,
-        timeout_seconds=original_api,
-    )
-    ctx = _make_context()
-    with _minister_agent_construction(ctx):
-        agent = create_minister_agent(_make_character(), cfg, ctx, ctx.db)
-
-    assert cfg.cli_timeout_seconds == original_cli
-    assert cfg.timeout_seconds == original_api
-    _invoke_minister_model(agent.model)
-    assert cfg.cli_timeout_seconds == original_cli
-    assert cfg.timeout_seconds == original_api
+    # 每一次都熬满设置页写下的阈值才判死（上界 = 一次核查的粒度）
+    spans = [b - a for a, b in zip(starts, starts[1:])]
+    assert spans, starts
+    for span in spans:
+        assert idle <= span <= idle + 2 * step, (idle, spans)

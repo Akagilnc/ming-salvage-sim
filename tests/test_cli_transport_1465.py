@@ -7,7 +7,6 @@ code / outcome / message_id / 夜未封 / 子进程调用次数。受控时钟�
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -23,22 +22,32 @@ from tests.test_chat_stream_failpaths_393 import (
 _OK_REPLY = "臣已核辽饷，谨复奏。\n"
 
 
-def _pin_transport_policy(monkeypatch, tmp_path, **transport) -> None:
-    """把 transport 预算钉在临时 runtime 档，免受本机 runtime_llm.json 漂移影响。"""
+def _pin_transport_policy(
+    monkeypatch,
+    tmp_path,
+    *,
+    idle_timeout_seconds: float = 30.0,
+    max_attempts: int = 3,
+    attempt_timeout_seconds: float = 30.0,
+) -> None:
+    """把预算钉在临时 runtime 档，免受本机 runtime_llm.json 漂移影响。
+
+    静默判死阈值走设置页那一格（cli.timeout_seconds）——与设置 API 同一落盘入口
+    （save_runtime_llm），不另写一份档格式。
+    """
     from ming_sim import llm_config as llm_config_mod
 
-    slot = {
-        "max_attempts": 3,
-        "attempt_timeout_seconds": 30.0,
-        "idle_timeout_seconds": 30.0,
-    }
-    slot.update(transport)
     path = tmp_path / "runtime_llm.json"
-    path.write_text(
-        json.dumps({"channel": "cli", "transport": slot}, ensure_ascii=False),
-        encoding="utf-8",
-    )
     monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
+    llm_config_mod.save_runtime_llm(
+        "", "", "",
+        channel="cli",
+        cli_runner="claude",
+        cli_model="cli-model-test",
+        cli_timeout_seconds=idle_timeout_seconds,
+        transport_max_attempts=max_attempts,
+        transport_attempt_timeout_seconds=attempt_timeout_seconds,
+    )
 
 
 def _cli_web_game(game, *, backend: str = "claude"):
