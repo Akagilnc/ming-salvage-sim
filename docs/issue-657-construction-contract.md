@@ -197,7 +197,7 @@ follow_draft / midzhi 领域写前（首写前）:
 |---|---|---|---|
 | `label` | 是 | 非空 str | 不入机械字段；`decree_text` 回退源 |
 | `hint` | 是 | 非空 str | 不入机械字段 |
-| `action_type` | 是 | ∈ RESCRIPT_ROUTABLE | `action_type` |
+| `action_type` | 是 | ∈ DOSSIER_ACTION_TYPES | `action_type` |
 | `assignee_name` | 键必须在 | str，可 `""` | 见类表 |
 | `target_kind` | 是 | ∈ TARGET_KINDS 八值，**禁空** | 同名 |
 | `target_id` | 是 | 非空 str | 同名 |
@@ -221,7 +221,8 @@ grant_action, account, purpose, amount, cadence, execution_surface,
 appoint_action, appointment_tenure,
 punish_action,
 privilege,
-summon_target   # 仅 summon 行；差务 option 固定 ""
+summon_target,   # 仅 summon 行；差务 option 固定 ""
+participant_roster   # #1778 决定 3：ADR 0053 三档名单；capability 派生同键
 ```
 
 - 缺键按协议默认（`""`/0）参与派生
@@ -256,7 +257,7 @@ summon_target   # 仅 summon 行；差务 option 固定 ""
 | 期限 | 可选 | `deadline_months` 或绝对 `end_turn`；mapper **必须** `_assignment_absolute_end_turn(...)` 写绝对 `end_turn` |
 
 - **负例**：`transaction_category` 与显式 assignee/主办**均缺**；`until_stop` 无 stop_condition
-- **判后**：≥1 正例绝对 `end_turn` initiative + 承办人（**至少覆盖 duty route B**）
+- **判后**：≥1 正例绝对 `end_turn` initiative + 承办人（**后出为准 → #1778 决定 3**：主办来自票拟 `participant_roster`，不再覆盖 duty route B）
 
 #### 2) military_order
 

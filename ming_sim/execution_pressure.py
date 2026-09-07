@@ -749,11 +749,17 @@ def _tsv_data_row(cells: Sequence[object]) -> str:
     return "\t".join(_escape_tsv_cell(c) for c in cells)
 
 
+# #1778 决定 4 甲：两轴 TSV 只列有在办案卷的省；末尾事实句让判官知未列省闲着。
+# 改输入，不改判官口径（P6）。
+_IDLE_PROVINCES_FACT = "其余各省无在办差务"
+
+
 def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
     """一省一块投影：灾情行 → 省盘 → 军镇行 → 主办行 → 到差态行；无全局重排。20 列 ABI。
 
     #659 军镇行复用既有列（不扩 ABI）：主办=军名、在办数=省源欠月、能力=中央欠月、
     负荷=哗变闩(0/1)、灾情id=army_id、灾种=mutiny_status。
+    #1778：末尾加「其余各省无在办差务」类事实句（未成块的省＝闲）。
     """
     header = (
         "行类\t省\t省在办数\t士绅阻力\t流寇压力\t贼强度\t督抚派系\t督抚操守"
@@ -860,6 +866,8 @@ def _render_two_axis_tsv(provinces: Sequence[Mapping[str, object]]) -> str:
                     str(arr.get("duty_arrival_status") or ""),
                 ])
             )
+    # #1778 验收 7：有在办案卷的省照旧成块；未列省＝闲，末尾一句事实输入。
+    lines.append(_IDLE_PROVINCES_FACT)
     return "\n".join(lines)
 
 

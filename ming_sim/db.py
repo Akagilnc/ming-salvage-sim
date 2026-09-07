@@ -14652,7 +14652,7 @@ class GameDB:
 
         #1778 决定 4：全国政令也是一份案卷，不按省拆——oracle 只对 region 目标
         给出属地行，其余（含 national）单行 region_id=''；与 create_decree_dossier
-        共享单行内核。路由/校验失败 → 整旨零行；复合键按 (source, region_id) 查补。
+        共享单行内核。契约错抛 ValueError；复合键按 (source, region_id) 查补。
         """
         from ming_sim.execution_pressure import resolve_dossier_region_ids
         from ming_sim.executor_routing import resolve_lead_executors
@@ -19090,12 +19090,9 @@ class GameDB:
             # draft 时则已越过最终提交边界，应当立即取得案卷身份。
             # #658：与 free-form / confirm 共吃 _ensure_directive_dossier（含御笔强推）。
             if status == "draft":
-                dossier_ids = self._ensure_directive_dossier(
+                self._ensure_directive_dossier(
                     state, did, text, payload, commit=False,
-                    rejection_collector=rejection_collector,
                 )
-                if not dossier_ids:
-                    return False
                 # conversational commit 的 pending_action_id 绑回案卷（push 复用路径
                 # 只写 directive_id，普通 create 路径本就带 pending_action_id）
                 self.conn.execute(
@@ -19812,9 +19809,8 @@ class GameDB:
     def _ensure_directive_dossier(
         self, state: GameState, directive_id: int, text: str,
         payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
-        rejection_collector=None,
     ) -> List[int]:
-        """旧式/新式旨稿共用的幂等成案口；#654 返回 List[int]（fan-out 多行）。
+        """旧式/新式旨稿共用的幂等成案口；返回已成案 dossier id 列表（#1778 起 national 亦单行）。
 
         #658：payload.target_dossier_id 指向 stalled 廷议时，复用该案卷并落御笔手敕，
         不新建第二案卷。directive identity = directive:<id>。
@@ -19972,10 +19968,8 @@ class GameDB:
         #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨产物错记 rejection、保持 draft，不波及他旨。
         #1769：产物错（ValueError，含 PayOrderKeyError）逐项留痕；真代码故障不得洗成
         locality_fanout_failed——回滚后写错误包并 SettlementAbort（0005/0008 D1/D6）。
-        未成案的两条形状同一终态：① 抛 ValueError 的产物/契约错；② 段内 record 后
-        不抛、只返回零案卷的 collector-only 拒收。二者
-        都保持 draft、都进返回列表供补交、都在终态落痕——漏掉②则该旨既补不了交
-        也永不留痕（r2 CI 红根因）。
+        #1778：create 不再 collector-only 返回零案卷；未成案形状＝抛 ValueError，
+        保持 draft、进返回列表供补交、终态落痕。
         record_rejections=False：仅探测供补交，不落 rejection_reports（拒只在
         耗尽/终态后落痕，避免补交成功仍残留首轮拒收）。
         返回 [{directive_id, reason}, ...] 供结算路补交；成功旨不入列表。
@@ -20000,28 +19994,11 @@ class GameDB:
                         continue
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
-                    recorded_before = len(collector.pending())
                     try:
-                        dossier_ids = self._ensure_directive_dossier(
+                        self._ensure_directive_dossier(
                             state, did, str(row["text"]),
                             self.read_directive_dossier_payload(row), commit=False,
-                            rejection_collector=collector,
                         )
-                        if not dossier_ids:
-                            # collector-only 拒收（段内 record 后不抛）：与产物错
-                            # 同一终态——整旨零行、保持 draft、拒因进补交反馈。
-                            # 丢了它 = 该旨既补不了交也永不留痕（#1769 r2）。
-                            self.conn.execute(f"ROLLBACK TO {sp}")
-                            new_records = collector.pending()[recorded_before:]
-                            reason = "；".join(
-                                str(item.get("reason") or "") for item in new_records
-                            ).strip("；")
-                            if not reason:
-                                reason = "成案被拒，未产出案卷"
-                            rejection_rows.append(
-                                {"directive_id": did, "reason": reason},
-                            )
-                            tlog(f"[ensure_dossiers] 旨#{did} 成案拒收：{reason}")
                     except ValueError as exc:
                         # 产物/契约错：逐项隔离留痕，保持 draft（#1769 补交/耗尽入口）
                         self.conn.execute(f"ROLLBACK TO {sp}")
