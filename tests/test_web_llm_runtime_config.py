@@ -650,6 +650,33 @@ def test_menu_save_llm_validates_api_channel_over_backend_env(monkeypatch):
     assert saved[0][1]["channel"] == "api"
 
 
+def test_menu_save_llm_verify_carries_runtime_default_headers(monkeypatch):
+    """#1794：菜单保存 verify 配置装入档内头表；设置 UI 不露字段，请求体无头。"""
+    headers = {"X-Session": "from-disk", "User-Agent": "ming-qa/1.0"}
+    seen = []
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "api",
+        "api": {
+            "base_url": "https://old.example.com/v1",
+            "model": "old-model",
+            "api_key": "sk-old",
+            "default_headers": headers,
+        },
+        "default_headers": headers,
+    })
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: seen.append(cfg))
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *args, **kwargs: None)
+
+    result = asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+        base_url="https://api.example.com",
+        model="gpt-api",
+        api_key="sk-test",
+    )))
+
+    assert result["ok"] is True
+    assert seen and seen[0].default_headers == headers
+
+
 def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)

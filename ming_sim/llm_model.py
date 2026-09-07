@@ -169,7 +169,7 @@ def create_chat_model(
     }
     # #1794：API 附加请求头表整张透传 default_headers；空表不塞键＝现状。
     # 不解析、不校验、不按 base_url/模型分派、不内置任何 provider 专用头。
-    headers = getattr(llm_config, "default_headers", None) or {}
+    headers = llm_config.default_headers or {}
     if headers:
         kwargs["default_headers"] = dict(headers)
     # OpenAI 推理族（gpt-5*/o*）拒 top_p：luna 回 HTTP 400 空 assistant → agno

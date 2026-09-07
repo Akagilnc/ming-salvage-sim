@@ -64,6 +64,7 @@ from ming_sim.llm_config import (
     normalize_reasoning_strength,
     legacy_reasoning_strength,
     save_runtime_llm,
+    _slot_header_table,
 )
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
@@ -423,7 +424,7 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         cli_runner=config.cli_runner,
         cli_model=config.cli_model,
         cli_timeout_seconds=config.cli_timeout_seconds,
-        default_headers=dict(getattr(config, "default_headers", None) or {}),
+        default_headers=dict(config.default_headers or {}),
     )
     try:
         verify_llm_available(advanced_config)
@@ -547,13 +548,10 @@ def _llm_config_from_runtime(
         # 占位符不当真 key：清空让下游空检查报「未配 API key」，
         # 而不是拿假 key 去探 OpenAI（误导性 412）。
         api_key = ""
-    # #1794：附加头只属 API 槽；从 runtime api 段（或顶层 alias）原样装入。
+    # #1794：附加头只属 API 槽；从 runtime api 段（或顶层 alias）经唯一归一缝装入。
     api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
-    raw_headers = api_slot.get("default_headers", runtime.get("default_headers"))
-    default_headers = (
-        {str(k): "" if v is None else str(v) for k, v in raw_headers.items()}
-        if isinstance(raw_headers, dict)
-        else {}
+    default_headers = _slot_header_table(
+        api_slot.get("default_headers", runtime.get("default_headers"))
     )
     return LLMConfig(
         api_key=api_key,
@@ -1087,7 +1085,7 @@ class WebGame:
             new_adv_key = advanced_api_key.strip()
         new_adv_thinking_level = ""
         # #1794：设置 UI 不露头表，in-game 改配置须保留当前头（save 侧同口径）。
-        new_default_headers = dict(getattr(cur, "default_headers", None) or {})
+        new_default_headers = dict(cur.default_headers or {})
         return LLMConfig(
             api_key=new_key,
             base_url=base,
@@ -5949,8 +5947,8 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     reasoning_strength = normalize_reasoning_strength(request.reasoning_strength)
     if not (base_url and model):
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
+    existing = load_runtime_llm()
     if not api_key:
-        existing = load_runtime_llm()
         for candidate in (existing.get("api_key"), os.environ.get("OPENAI_API_KEY", "")):
             if _has_real_api_key(candidate):
                 api_key = str(candidate).strip()
@@ -5959,8 +5957,9 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="api_key 未配置，请填写。")
     # advanced_api_key 留空：复用已存的（避免覆盖成空）。
     if advanced_model and not advanced_api_key:
-        existing = load_runtime_llm()
         advanced_api_key = real_api_key_or_empty(existing.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
+    # #1794：verify 配置须装入档内头表（经同一归一缝）；设置 UI 不露此字段，请求体无头。
+    default_headers = _slot_header_table(existing.get("default_headers"))
     normalized_base_url = normalize_openai_base_url(base_url)
     config = LLMConfig(
         api_key=api_key,
@@ -5974,6 +5973,7 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         advanced_thinking_level=advanced_thinking_level,
         reasoning_strength=reasoning_strength,
         channel="api",
+        default_headers=default_headers,
     )
     try:
         # CLI/API smoke 是阻塞子进程/网络调用(只要还在出字就一直跑,静默超 cli_timeout_seconds

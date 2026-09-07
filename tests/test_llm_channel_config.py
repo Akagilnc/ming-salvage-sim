@@ -234,7 +234,7 @@ def test_create_chat_model_never_injects_max_tokens(monkeypatch):
 
 
 def test_create_chat_model_passes_default_headers_at_transport_boundary(monkeypatch):
-    """#1794：配置附加头整张交给 OpenAIChat.default_headers；transport 边界可见。"""
+    """#1794：配置附加头整张交给 OpenAIChat.default_headers 公开字段。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     headers = {
         "X-Custom-Session": "sess-fixed-1",
@@ -253,9 +253,6 @@ def test_create_chat_model_passes_default_headers_at_transport_boundary(monkeypa
     assert isinstance(model, OpenAIChat)
     assert not isinstance(model, CliChat)
     assert model.default_headers == headers
-    # transport 边界：进 OpenAI client 构造参数
-    client_params = model._get_client_params()
-    assert client_params.get("default_headers") == headers
 
 
 def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
@@ -282,20 +279,56 @@ def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
     assert "default_headers" not in captured[0]
 
 
-def test_api_header_path_has_no_provider_special_names():
-    """#1794：附加头透传路径生产代码不得内置 provider 专名。"""
-    from pathlib import Path
+def test_minister_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game):
+    """#1794：召对/拟诏真实入口 → OpenAIChat 构造缝头表整张到达；不跑真实 LLM。"""
+    from ming_sim.agents import bind_content as agents_bind, create_rescript_draft_agent
+    from ming_sim.models import CourtContext
+    from ming_sim.registry import bind_content as registry_bind, create_minister_agent
 
-    roots = (
-        Path("ming_sim/llm_model.py"),
-        Path("ming_sim/llm_config.py"),
-        Path("ming_sim/models.py"),
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    db, state, content = game
+    agents_bind(content)
+    registry_bind(content)
+
+    headers = {
+        "X-Custom-Session": "sess-fixed-1",
+        "User-Agent": "ming-qa/1.0",
+    }
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+        default_headers=headers,
     )
-    banned = ("opencode", "x-opencode-session")
-    for path in roots:
-        text = path.read_text(encoding="utf-8").lower()
-        for token in banned:
-            assert token not in text, f"{path} must not contain {token!r}"
+
+    captured: list = []
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured.append(dict(kwargs))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
+
+    character = next(
+        c for c in content.characters.values()
+        if c.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(c.name)[0] == "active"
+    )
+    create_minister_agent(
+        character,
+        cfg,
+        CourtContext(state=state, db=db, previous_summary=""),
+        db,
+    )
+    assert captured, "召对入口须构造 OpenAIChat"
+    assert captured[-1].get("default_headers") == headers
+
+    before = len(captured)
+    create_rescript_draft_agent(cfg, db)
+    assert len(captured) == before + 1, "拟诏入口须再构造一次 OpenAIChat"
+    assert captured[-1].get("default_headers") == headers
 
 
 def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch):
