@@ -1,0 +1,12 @@
+{
+  "db_path": "/workspace/Ming_LLM/data-8010/ming_sim_1788790932502604575.db",
+  "turn": 1,
+  "year": 1627,
+  "period": 10,
+  "version": "0.53.0.0",
+  "attempt": 2,
+  "exception_type": "LLMUnavailable",
+  "exception_message": "LLM 调用失败（已尝试 3 次）：empty output",
+  "timestamp": "2026-09-07T14:52:08.395678+00:00",
+  "ready_payload_digest": null
+}
