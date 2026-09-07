@@ -1,0 +1,28 @@
+65:INFO:     127.0.0.1:49446 - "POST /api/ministers/%E6%AF%95%E8%87%AA%E4%B8%A5/chat/stream HTTP/1.1" 200 OK
+66-INFO:     127.0.0.1:49456 - "GET /api/audience/scroll HTTP/1.1" 200 OK
+67:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+68-         {'error': {'message': "Model 'DeepSeek-V4-Flash' is at its concurrency 
+69-         limit (32); please retry later or use another model", 'type':          
+70-         'rate_limit_error', 'code': 'model_concurrency_rate_limit_exceeded'}}} 
+71:ERROR    Error in Agent run: Unknown model error                                
+72:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+73-         {'error': {'message': "Model 'DeepSeek-V4-Flash' is at its concurrency 
+74-         limit (32); please retry later or use another model", 'type':          
+75-         'rate_limit_error', 'code': 'model_concurrency_rate_limit_exceeded'}}} 
+76:ERROR    Error in Agent run: Unknown model error                                
+77:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+78-         {'error': {'message': "Model 'DeepSeek-V4-Flash' is at its concurrency 
+79-         limit (32); please retry later or use another model", 'type':          
+80-         'rate_limit_error', 'code': 'model_concurrency_rate_limit_exceeded'}}} 
+81:ERROR    Error in Agent run: Unknown model error                                
+82:ERROR    Rate limit error from OpenAI API: Error code: 429 - {'detail':         
+83-         {'error': {'message': "Model 'DeepSeek-V4-Flash' is at its concurrency 
+84-         limit (32); please retry later or use another model", 'type':          
+85-         'rate_limit_error', 'code': 'model_concurrency_rate_limit_exceeded'}}} 
+86:ERROR    Error in Agent run: Unknown model error                                
+87-[TOKEN] caller=? model=self-dploy/DeepSeek-V4-Flash prompt=662 cached=0 completion=159 reasoning=0 total=821
+88-[TOKEN] caller=? model=self-dploy/DeepSeek-V4-Flash prompt=662 cached=0 completion=159 reasoning=0 total=821
+89-[TOKEN] caller=? model=self-dploy/DeepSeek-V4-Flash prompt=662 cached=0 completion=159 reasoning=0 total=821
+90-[TOKEN] caller=? model=self-dploy/DeepSeek-V4-Flash prompt=662 cached=0 completion=159 reasoning=0 total=821
+91-INFO:     127.0.0.1:49446 - "GET /api/audience/scroll HTTP/1.1" 200 OK
+92-[TOKEN] caller=? model=self-dploy/DeepSeek-V4-Flash prompt=1961 cached=0 completion=191 reasoning=0 total=2152
