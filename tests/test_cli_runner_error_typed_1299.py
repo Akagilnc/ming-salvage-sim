@@ -93,12 +93,21 @@ def test_clichat_normal_reply_still_returns(monkeypatch):
 
 
 def test_extract_agent_text_error_status_raises_typed_not_leaks_banner():
-    """agno 吞异常后 status=ERROR + content=横幅 → extract 抛 typed，不返回横幅。"""
+    """agno 吞异常后 status=ERROR + content=横幅 → extract 抛 typed，不返回横幅。
+
+    #1465 ④：系统层 code=llm_run_error、message != 戏内单源；机器横幅不进 message。
+    """
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
     run_output = SimpleNamespace(content=_RUNNER_BANNER, status="ERROR")
     with pytest.raises(LLMUnavailable) as ei:
         extract_agent_text(run_output)
+    assert ei.value.message
+    assert ei.value.message != CLI_RUNNER_PLAYER_MESSAGE
+    assert ei.value.code == "llm_run_error"
     _assert_no_machine_text(ei.value.message)
     _assert_no_machine_text(str(ei.value))
+    assert ei.value.provider_message  # 横幅诊断可回指
 
 
 def test_extract_agent_text_error_enum_status_raises():
@@ -152,20 +161,3 @@ def test_chat_answer_path_typed_failure_keeps_scroll_clean():
     assert persisted == []
 
 
-def test_llm_unavailable_player_message_is_system_layer_not_diegetic():
-    """#1465 ④ / P7 / ADR 0046：ERROR status 走系统层 typed，禁固定戏内话术。
-
-    契约只断结构化字段：code、message 非空且 != 戏内单源、机器横幅不进 message；
-    诊断在 provider_message。不锁 message 措辞/长度。
-    """
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-
-    run_output = SimpleNamespace(content=_RUNNER_BANNER, status="ERROR")
-    with pytest.raises(LLMUnavailable) as ei:
-        extract_agent_text(run_output)
-    msg = ei.value.message
-    assert msg  # 非空系统层出口
-    assert msg != CLI_RUNNER_PLAYER_MESSAGE
-    _assert_no_machine_text(msg)
-    assert ei.value.code == "llm_run_error"
-    assert ei.value.provider_message  # 横幅诊断可回指
