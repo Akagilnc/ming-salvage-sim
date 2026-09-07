@@ -1087,36 +1087,6 @@ def _fiscal_funding_cut_this_turn(
     return False
 
 
-def _is_oneshot_grant_report_deadline(db: Any, row: Any) -> bool:
-    """#1783：一次性拨帑案上的报告期限承诺——不是月供承诺，不进断供候选。"""
-    import json as _json
-    from ming_sim.staged_commitment import normalize_commitment_stages
-
-    try:
-        origin = str(row["origin_ref"] or "").strip()
-    except (TypeError, KeyError, IndexError):
-        return False
-    did = parse_dossier_id(origin)
-    if did is None:
-        return False
-    dossier = db.get_decree_dossier(int(did))
-    if dossier is None or str(dossier.get("action_type") or "") != "grant_allocation":
-        return False
-    try:
-        payload = _json.loads(str(dossier.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
-    if str(payload.get("cadence") or "").strip() == "每月":
-        return False
-    try:
-        stages_raw = row["stages_json"]
-    except (TypeError, KeyError, IndexError):
-        stages_raw = None
-    return bool(normalize_commitment_stages(stages_raw))
-
-
 def _scan_funding_cutoff(db: Any, state: Any) -> List[int]:
     """断供：停拨（ongoing 空/fiscal 裁撤）或欠额达阈（当月实拨 < 承诺×阈）。"""
     written: List[int] = []
@@ -1124,9 +1094,6 @@ def _scan_funding_cutoff(db: Any, state: Any) -> List[int]:
     for row in list_active_commitments(db):
         cid = int(row["id"])
         if has_pending_plea(db, cid, breach_kind=BREACH_KIND_FUNDING):
-            continue
-        # 一次性拨帑的报告期限不是月供承诺（#1783）
-        if _is_oneshot_grant_report_deadline(db, row):
             continue
         origin_refs = _commitment_origin_refs(row, cid)
         promised = _promised_monthly_amount(row)
