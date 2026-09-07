@@ -1107,6 +1107,15 @@ def _scan_funding_cutoff(db: Any, state: Any) -> List[int]:
             cutoff = True
             reason = "承诺月供财政裁撤/减额达阈"
         elif not has_monthly and prior:
+            # #1783：纯分段到期承诺（报告期限等）无 ongoing 月供，不得因同 origin
+            # 的一次性拨付流水被读成「月供已断」。真月供停拨仍走 end_turn/无段表支。
+            from ming_sim.staged_commitment import normalize_commitment_stages
+            try:
+                stages_raw = row["stages_json"]
+            except (TypeError, KeyError, IndexError):
+                stages_raw = None
+            if normalize_commitment_stages(stages_raw):
+                continue
             cutoff = True
             reason = "承诺月供停拨"
         elif has_monthly and prior:
