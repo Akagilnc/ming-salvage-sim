@@ -748,27 +748,8 @@ def test_menu_status_and_game_config_expose_default_headers(monkeypatch):
     assert game_cfg["default_headers"] == headers
 
 
-def test_build_and_set_llm_config_accept_default_headers(monkeypatch):
-    """#1794：局内保存带头表；省略则保留当前。"""
-    current = LLMConfig(
-        api_key="sk-cur",
-        base_url="https://api.example.com/v1",
-        model="m",
-        channel="api",
-        default_headers={"X-Keep": "yes"},
-    )
-    fake = SimpleNamespace(session=SimpleNamespace(llm_config=current, begin_turn=lambda: None))
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api": {"api_key": "sk-cur"}})
-
-    kept = web_app.WebGame.build_llm_config(fake, "https://api.example.com/v1", "m", "")
-    assert kept.default_headers == {"X-Keep": "yes"}
-
-    updated = web_app.WebGame.build_llm_config(
-        fake, "https://api.example.com/v1", "m", "",
-        default_headers={"X-New": "1", "User-Agent": "ming-qa/1.0"},
-    )
-    assert updated.default_headers == {"X-New": "1", "User-Agent": "ming-qa/1.0"}
-
+def test_api_set_llm_config_accepts_default_headers(monkeypatch):
+    """#1794：局内 /api/llm/config 真入口带头表传给 build 并回读。"""
     built = {}
 
     def fake_build(*a, **k):

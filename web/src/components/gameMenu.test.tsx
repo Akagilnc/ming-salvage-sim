@@ -92,6 +92,10 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
   });
 
   it("shows API fields and hides CLI fields when channel=api (initial render)", async () => {
+    mockFetch({
+      ...BASE_LLM_RESPONSE,
+      default_headers: { "X-Session": "abc" },
+    });
     const { cleanup } = render(<LLMConfigTab />);
     // flush fetch + state updates
     await act(async () => {});
@@ -101,10 +105,16 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(text).toContain("推理强度");
     expect(text).not.toContain("CLI Runner");
     expect(text).not.toContain("静默判死");
+    // #1794：头表属 API 区——有请求头名输入即露表（不锁标题措辞）
+    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(1);
     cleanup();
   });
 
   it("shows CLI fields and hides API fields when channel is switched to cli", async () => {
+    mockFetch({
+      ...BASE_LLM_RESPONSE,
+      default_headers: { "X-Session": "abc" },
+    });
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
 
@@ -123,10 +133,15 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(text).toContain("CLI Runner");
     expect(text).toContain("静默判死");
     expect(text).not.toContain("Base URL");
+    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(0);
     cleanup();
   });
 
   it("restores API fields when channel is switched back to api", async () => {
+    mockFetch({
+      ...BASE_LLM_RESPONSE,
+      default_headers: { "X-Session": "abc" },
+    });
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
 
@@ -150,6 +165,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("Base URL");
     expect(text).not.toContain("CLI Runner");
+    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(1);
     cleanup();
   });
 
@@ -161,6 +177,7 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("CLI Runner");
     expect(text).not.toContain("Base URL");
+    expect(document.querySelectorAll('input[aria-label="请求头名"]').length).toBe(0);
     cleanup();
   });
 
@@ -894,7 +911,6 @@ describe("LLMConfigTab — default_headers table (#1794)", () => {
     const { cleanup } = render(<LLMConfigTab />);
     await act(async () => {});
 
-    expect(document.body.textContent).toContain("附加请求头");
     const nameInputs = Array.from(
       document.querySelectorAll<HTMLInputElement>('input[aria-label="请求头名"]')
     );
@@ -951,33 +967,6 @@ describe("LLMConfigTab — default_headers table (#1794)", () => {
       "X-Session": "abc",
       "X-Extra": "1",
     });
-    cleanup();
-  });
-
-  it("hides the header table on CLI channel and sends empty table only for API saves", async () => {
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
-    global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      calls.push({ url, init });
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({
-          ...BASE_LLM_RESPONSE,
-          default_headers: { "X-Keep": "yes" },
-        }),
-      } as Response);
-    });
-    const { cleanup } = render(<LLMConfigTab />);
-    await act(async () => {});
-    expect(document.body.textContent).toContain("附加请求头");
-
-    const channelSelect = Array.from(document.querySelectorAll("select")).find((s) =>
-      s.querySelector('option[value="cli"]')
-    ) as HTMLSelectElement;
-    act(() => {
-      channelSelect.value = "cli";
-      channelSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    expect(document.body.textContent).not.toContain("附加请求头");
     cleanup();
   });
 });
