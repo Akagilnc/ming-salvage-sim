@@ -226,7 +226,15 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             content=game.content,
         )
         assert game.db.list_next_audience_todos(status=TODO_STATUS_PENDING)
-        assert list_due_review_scenes(game.db, game.state)
+        scenes = list_due_review_scenes(game.db, game.state)
+        # 验收 3：场面属本案到期复核，不得冒出断供哭谏
+        due_scenes = [
+            s for s in scenes
+            if s.get("kind") == "due_review"
+            and int(s.get("dossier_id") or 0) == dossier_id
+        ]
+        assert due_scenes, scenes
+        assert not any(s.get("kind") == "breach_plea" for s in scenes), scenes
 
         settle_with_delta(
             game.state, game.db, {}, before_turn=int(game.state.turn),

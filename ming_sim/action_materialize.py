@@ -2647,6 +2647,11 @@ def stage_grant_allocation_candidate(
     )
     if absolute_due > int(turn):
         staged["due_turn"] = absolute_due
+        # 题名真源贯到 staged：initiative 只认 title|target_id；优先用途/拨帑动作中文锚
+        if not str(staged.get("title") or "").strip():
+            label = purpose or action
+            if label:
+                staged["title"] = str(label).strip()
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
