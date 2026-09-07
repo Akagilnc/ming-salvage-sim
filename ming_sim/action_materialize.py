@@ -2640,12 +2640,12 @@ def stage_grant_allocation_candidate(
         staged["purpose"] = ""
         # #1624：普通 grant 原样转发字符串/空值；值域由 durable 独家验并对异常非空 fail-loud。
         staged["execution_surface"] = str(execution_surface or "").strip()
-    # #1783：同一事的完成期限挂本案；日级不足一月由分类器填截止回合=turn+1。
+    # #1783：同一事完成期限挂本案；日级不足一月由分类器填截止回合=turn+1。
+    # 期限单源＝due_turn（军令同款；禁 end_turn 双写）。
     absolute_due = _assignment_absolute_end_turn(
         int(turn), end_turn=end_turn, deadline_months=deadline_months,
     )
     if absolute_due > int(turn):
-        staged["end_turn"] = absolute_due
         staged["due_turn"] = absolute_due
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)

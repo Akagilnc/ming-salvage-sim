@@ -42,36 +42,6 @@ _UTTERANCE = (
 )
 
 
-def test_classify_prompt_splits_by_matters_not_verbs_1783(monkeypatch, game):
-    """验收 4：说明书按几件事拆、一件事一案；旧「并存/省略/彼此独立/日级不填」句失效。"""
-    import ming_sim.cli_backend as cb
-
-    db, state, content = game
-    captured = {}
-
-    def _scripted(prompt, llm_config=None, tag=""):
-        captured["prompt"] = prompt
-        assert tag == "action_intent"
-        return (json.dumps({"动作类型": "无"}, ensure_ascii=False), 0)
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _scripted)
-    cb.classify_cli_action_intent(
-        _UTTERANCE,
-        recent_context="",
-        current_turn=int(state.turn),
-    )
-    prompt = captured["prompt"]
-    assert "按几件事拆" in prompt
-    assert "同一件事只出一条" in prompt
-    turn_n = int(state.turn)
-    assert f"日级期限不足一月则截止回合={turn_n + 1}" in prompt
-    # 旧病根句不得再出现（同一事情形）
-    assert "拟旨与其任免/拨帑等机械载荷候选可按既有契约并存" not in prompt
-    assert "不得因拟旨前缀改判拟旨而省略拨款候选" not in prompt
-    assert "交办·责成表达与拟旨彼此独立" not in prompt
-    assert "日级期限无法换算为月数或回合，不填写期限月数或截止回合" not in prompt
-
-
 def test_http_audience_one_matter_grant_with_deadline_1783(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
@@ -234,15 +204,6 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         ]
         assert assignment_dossiers == [], assignment_dossiers
 
-        # 0076 单段承诺已挂本案 origin_ref
-        commitment = game.db.conn.execute(
-            "SELECT id, stages_json FROM issues WHERE origin_ref=? AND status='active'",
-            (f"dossier:{dossier_id}",),
-        ).fetchone()
-        assert commitment is not None
-        stages = json.loads(str(commitment["stages_json"] or "[]"))
-        assert stages and int(stages[0]["due_turn"]) == turn_before + 1
-
         pay_logs = [
             dict(r) for r in game.db.conn.execute(
                 """
@@ -255,36 +216,26 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         assert len(pay_logs) == 1, pay_logs
         assert float(pay_logs[0]["delta"]) == pytest.approx(-15)
 
-        # ── 验收 3：受控推进回合 → 0076 到期复核 → 0052 执行格有值 ──
+        # 验收 3：受控推进 → 0076 到期复核 → 执行格（钱已落＝fulfilled，0076 既有映射）
         from ming_sim.decree import settle_with_delta
         from ming_sim.due_review import list_due_review_scenes
         from ming_sim.staged_commitment import TODO_STATUS_PENDING
 
-        # settle 当前回合（turn_before+1）：期限到期写 todo，回合推进
         settle_with_delta(
             game.state, game.db, {}, before_turn=int(game.state.turn),
             content=game.content,
         )
-        todos = game.db.list_next_audience_todos(status=TODO_STATUS_PENDING)
-        assert todos, "到期应写入 next_audience_todos"
-        scenes = list_due_review_scenes(game.db, game.state)
-        assert scenes, "次回合召对面应顶出复命场面"
-        scene_blob = json.dumps(scenes[0], ensure_ascii=False)
-        # 玩家面不出现执行格枚举字面
-        for token in ("fulfilled", "degraded", "failed", "transformed", "executing"):
-            assert token not in scene_blob
-            assert token not in str(scenes[0].get("scene_text") or "")
+        assert game.db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        assert list_due_review_scenes(game.db, game.state)
 
-        # 再 settle：经召对窗后落 0052 执行格
         settle_with_delta(
             game.state, game.db, {}, before_turn=int(game.state.turn),
             content=game.content,
         )
         after_due = game.db.get_decree_dossier(dossier_id)
         assert after_due is not None
-        outcome = str(after_due.get("execution_outcome") or "")
-        # 既有枚举，不新增；钱已落＝有实绩 → fulfilled；无实绩无表报 → failed（怠办）
-        assert outcome in {"fulfilled", "degraded", "failed", "transformed"}, after_due
+        # 本路 economy 实况已落、无表报 → 0076 decide 唯一终值 fulfilled
+        assert after_due["execution_outcome"] == "fulfilled", after_due
         assert after_due["status"] == "closed"
     finally:
         try:

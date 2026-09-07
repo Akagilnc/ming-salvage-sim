@@ -16434,25 +16434,27 @@ class GameDB:
                     state, row, payload, dossier_id,
                     content=content, registry=None,
                 ) or set())
-            # #1783：同一事完成期限未到 → 保持 executing，挂 0076 到期复核承诺；
-            # 期限届满由 due_review 落 0052 既有执行格（不在成案当夜收夜终裁）。
-            due_turn = int(row.get("due_turn") or 0)
-            if due_turn <= 0:
+            # #1783：仅 grant 完成期限未到 → 保持 executing，挂 0076 到期复核承诺；
+            # 其它类型终局路径不动。期限真源＝案卷列/payload.due_turn（军令同款单源）。
+            if str(row.get("action_type") or "") == "grant_allocation":
                 try:
-                    due_turn = int(
-                        payload.get("due_turn") or payload.get("end_turn") or 0
-                    )
+                    due_turn = int(row.get("due_turn") or 0)
                 except (TypeError, ValueError):
                     due_turn = 0
-            if due_turn > int(state.turn):
-                self.transition_decree_dossier(
-                    dossier_id, "executing", commit=False,
-                )
-                if str(row.get("action_type") or "") == "grant_allocation":
+                if due_turn <= 0:
+                    try:
+                        due_turn = int(payload.get("due_turn") or 0)
+                    except (TypeError, ValueError):
+                        due_turn = 0
+                if due_turn > int(state.turn):
+                    self.transition_decree_dossier(
+                        dossier_id, "executing", commit=False,
+                    )
                     self._ensure_grant_deadline_commitment(
                         state, row, payload, dossier_id, due_turn=due_turn,
                     )
-            elif policy["execution_surface"] in {"terminal", "immediate"}:
+                    return affected_people
+            if policy["execution_surface"] in {"terminal", "immediate"}:
                 self.record_dossier_execution(
                     dossier_id, "fulfilled", "颁布即终局", state.turn,
                     close=True, commit=False,
@@ -17432,12 +17434,13 @@ class GameDB:
     def _ensure_grant_deadline_commitment(
         self, state, row, payload, dossier_id, *, due_turn: int,
     ) -> None:
-        """#1783：拨帑案完成期限 → 单段 staged commitment，供 0076 到期复核。
+        """#1783：拨帑完成期限 → 并入既有 initiative 装配，供 0076 到期复核。
 
-        钱已在颁布缝落地；期限未到保持 executing。到期由 write_due →
-        list_due_review_scenes / apply_pending_due_reviews 既有缝消费。
+        题名/正文＝_initiative_title_and_body；段表＝capture_commitment_stages；
+        软拒同交办格（record_dossier_execution failed）。钱已在颁布缝落地。
         """
         from ming_sim.issues import apply_score_extraction
+        from ming_sim.staged_commitment import capture_commitment_stages
 
         origin_ref = f"dossier:{int(dossier_id)}"
         existing = self.conn.execute(
@@ -17446,32 +17449,39 @@ class GameDB:
         ).fetchone()
         if existing is not None:
             return
-        decree_text = str(row.get("decree_text") or payload.get("text") or "").strip()
-        criterion = str(payload.get("ongoing_effects") or "").strip() or "依限奏报"
-        title = criterion[:40] if criterion else (decree_text[:40] or "依限奏报")
-        actor = str(
-            payload.get("actor") or payload.get("_minister_name") or ""
-        ).strip()
-        roster: list = []
-        if actor:
-            roster = [{"character_id": actor, "tier": "主办"}]
-        stages = [{
-            "stage_idx": 0,
-            "due_turn": int(due_turn),
-            "criterion_text": criterion[:120],
-            "origin_context": decree_text[:120] or criterion[:120],
-        }]
+        title, stage_text = self._initiative_title_and_body(payload, row)
+        if not title:
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed",
+                "拨帑期限缺少结构化题名（title 或 target_id）",
+                state.turn, close=True, commit=False,
+            )
+            return
+        stages_norm = capture_commitment_stages(
+            [{
+                "stage_idx": 0,
+                "due_turn": int(due_turn),
+                "criterion_text": title,
+                "origin_context": stage_text[:120] or title,
+            }],
+            narrative_text=stage_text,
+            origin_turn=int(getattr(state, "turn", 0) or 0),
+        )
         ni: Dict[str, object] = {
             "origin_kind": "decree",
             "origin_ref": origin_ref,
             "kind": "initiative",
             "title": title,
-            "stage_text": decree_text or criterion,
+            "stage_text": stage_text,
             "commitment_kind": "until_stop",
-            "stages": stages,
+            "stages": stages_norm,
         }
-        if roster:
-            ni["participant_roster"] = roster
+        actor = str(
+            payload.get("actor") or payload.get("_minister_name") or ""
+        ).strip()
+        if actor:
+            ni["participant_roster"] = [{"character_id": actor, "tier": "主办"}]
         out = apply_score_extraction(
             self, state, {"new_issues": [ni]}, content=None,
         )
@@ -17479,7 +17489,10 @@ class GameDB:
         item = created[0] if created else {"rejected": True, "reason": "拨帑期限承诺未落"}
         if item.get("rejected"):
             reason = str(item.get("reason") or "拨帑期限承诺被拒")
-            raise ValueError(reason)
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed", reason, state.turn, close=True, commit=False,
+            )
 
     def _apply_assignment_verdict_effect(
         self, state, row, payload, dossier_id,
