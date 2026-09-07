@@ -803,6 +803,5 @@ def test_extractor_empty_terminal_exhausted_pins_current_behavior(
 
     manifest = _pack_manifest(recovery)
     assert manifest.get("exception_type") == "LLMUnavailable", manifest
-    pack_msg = str(manifest.get("exception_message") or "")
-    assert "empty output" in pack_msg, manifest
+    # exception_message 是人话拼接，不锁措辞（与既有终失败案同尺）
     assert int(manifest.get("attempt") or 0) >= 1, manifest

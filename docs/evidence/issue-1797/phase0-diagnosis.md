@@ -177,7 +177,7 @@ Nous 模型目录（proxy `/v1/models`，本机复放时读到）对 `deepseek/d
 | 用例 | `test_extractor_empty_terminal_exhausted_pins_current_behavior` |
 | 入口 | 真 HTTP `POST /api/decree/issue/stream`（复用 #1468 `tracer_client` + 既有 extract 接线） |
 | 替身 | `_TransportAgent(always_empty_terminal=True)` 于 **internal**：活动 chunk + 终包 `content=""` |
-| 断言（现行，非 xfail） | `calls >= 3`；SSE `code=llm_empty_output` 且 `provider_message=empty output`；`settlement_recovery.error_pack_path`；manifest `exception_type=LLMUnavailable` 且 message 含 empty output；**月不进** |
+| 断言（现行，非 xfail） | `calls >= 3`；SSE `code=llm_empty_output` 且 `provider_message=empty output`；`settlement_recovery.error_pack_path` + `ready_replay is False`；manifest `exception_type=LLMUnavailable` + `attempt>=1`；**月不进**（不锁 exception_message/玩家 message 措辞） |
 | 不碰 | `test_extractor_empty_terminal_retries`（空后成功）原样 |
 
 聚焦命令与结果：
