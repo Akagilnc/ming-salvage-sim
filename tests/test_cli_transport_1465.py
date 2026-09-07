@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import threading
 from types import SimpleNamespace
+from typing import Callable, Dict, Optional
 
 import pytest
 
 import ming_sim.cli_backend as cb
+import ming_sim.llm_transport as transport_mod
 from tests.cli_process_doubles import SilentUntilKilled, install_fake_cli_runner
 from tests.test_chat_stream_failpaths_393 import (
     _parse_sse,
@@ -21,6 +23,66 @@ from tests.test_chat_stream_failpaths_393 import (
 )
 
 _OK_REPLY = "臣已核辽饷，谨复奏。\n"
+
+
+def _install_read_loop_silence_clock(
+    monkeypatch,
+    controlled: Dict[str, float],
+) -> tuple[Callable[[float], Callable[[], Optional[str]]], Dict[str, object]]:
+    """把受控静默窗接到读循环 Empty→check_idle_budget 上。
+
+    泵线程只交付块；时钟间隔在主环可观测的 queue.Empty 窗口注入。
+    返回 `(silence, state)`：`silence(seconds)` 作脚本项，块入队后泵侧等主环
+    真的 check 完本窗（gate 由 check_idle 在 inject 耗尽时 set）；不得用未 set
+    的 wait 装睡。state 供断言 checks / injected_total（非钩子自累）。
+    """
+    real_check = transport_mod.check_idle_budget
+    state: Dict[str, object] = {
+        "inject_left": 0.0,
+        "injected_total": 0.0,
+        "checks": 0,
+        "gate": None,
+    }
+
+    def _check_idle_with_inject(
+        *,
+        last_activity_at: float,
+        policy,
+        clock: Optional[Callable[[], float]] = None,
+    ):
+        left = float(state["inject_left"] or 0.0)
+        if left > 0.0:
+            state["checks"] = int(state["checks"]) + 1
+            # 一窗一次注入整段间隔（间隔本身 < idle）；推进共享受控时钟字典。
+            controlled["t"] = float(controlled["t"]) + left
+            state["inject_left"] = 0.0
+            state["injected_total"] = float(state["injected_total"]) + left
+            gate = state["gate"]
+            if isinstance(gate, threading.Event):
+                gate.set()
+        return real_check(
+            last_activity_at=last_activity_at, policy=policy, clock=clock,
+        )
+
+    monkeypatch.setattr(transport_mod, "check_idle_budget", _check_idle_with_inject)
+
+    def _silence(seconds: float) -> Callable[[], Optional[str]]:
+        gap = float(seconds)
+
+        def _hook() -> Optional[str]:
+            gate = threading.Event()
+            state["gate"] = gate
+            state["inject_left"] = gap
+            if not gate.wait(timeout=5.0):
+                raise AssertionError(
+                    f"read loop never reached Empty→check_idle during {gap}s silence"
+                )
+            state["gate"] = None
+            return None
+
+        return _hook
+
+    return _silence, state
 
 
 def _pin_transport_policy(
@@ -202,20 +264,25 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
 
 
 def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, game):
-    """④持续出字跨旧 300s 硬墙不被杀（受控推进时钟，不跑真墙钟）。"""
-    _pin_transport_policy(monkeypatch, tmp_path, idle_timeout_seconds=30.0)
+    """④持续出字跨旧 300s 硬墙不被杀（受控推进时钟，不跑真墙钟）。
+
+    时钟间隔必须落在读循环 Empty→check_idle 可观测静默窗，不得藏在泵钩子里。
+    """
+    idle = 30.0
+    _pin_transport_policy(monkeypatch, tmp_path, idle_timeout_seconds=idle)
     clock = {"t": 1000.0}
     monkeypatch.setattr(cb, "_cli_process_clock", lambda: clock["t"])
+    silence, silence_state = _install_read_loop_silence_clock(monkeypatch, clock)
 
-    def _advance(seconds: float, text: str):
-        def _hook():
-            clock["t"] += seconds
-            return text
-        return _hook
-
-    # 每 25s 出一行（< idle 30s），累计 500s > 旧 300s 墙
+    # 每行后静默 25s（< idle 30s），19 窗累计 475s > 旧 300s 墙
+    gap = 25.0
+    chunks = []
+    for i in range(20):
+        chunks.append(f"第{i}段辽饷奏报。\n")
+        if i < 19:
+            chunks.append(silence(gap))
     script = install_fake_cli_runner(monkeypatch, [{
-        "stdout": tuple(_advance(25.0, f"第{i}段辽饷奏报。\n") for i in range(20)),
+        "stdout": tuple(chunks),
         "returncode": 0,
     }])
     web_game, minister = _cli_web_game(game)
@@ -225,6 +292,8 @@ def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, g
     events = _parse_sse(response.text)
     assert "done" in [e[0] for e in events], events
     done = next(e[1] for e in events if e[0] == "done")
+    assert int(silence_state["checks"]) >= 19, silence_state
+    assert float(silence_state["injected_total"]) > 300.0, silence_state
     assert clock["t"] - 1000.0 > 300.0, clock
     assert script.calls == 1
     attempts = done.get("transport_attempts") or []
@@ -238,35 +307,29 @@ def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
     """⑤静默超阈值判死并重试；每 attempt 独立整份 idle 预算（受控时钟）。
 
     对照：完全无字节超 idle 仍判死可重试；无换行字节持续到达（间隔 < idle、
-    累计 > idle）不算静默，不被杀。
+    累计 > idle）不算静默，不被杀。间隔必须经读循环 Empty→check_idle 注入，
+    泵钩子自累不得当判据。
     """
     idle = 30.0
     _pin_transport_policy(monkeypatch, tmp_path, idle_timeout_seconds=idle)
     clock = {"t": 500.0}
     monkeypatch.setattr(cb, "_cli_process_clock", lambda: clock["t"])
-    attempt2_span = {"used": 0.0}
+    silence, silence_state = _install_read_loop_silence_clock(monkeypatch, clock)
 
     def _advance_while_silent() -> None:
         # 首 attempt 一个字节都不出：受控时钟持续推进 → 静默超预算判死
         clock["t"] += 5.0
 
-    def _advance_chunk(seconds: float, text: str):
-        pause = threading.Event()
-        def _hook():
-            # 受控时钟推进期间让主环有机会 Empty→check_idle；间隔 < idle。
-            end = clock["t"] + seconds
-            while clock["t"] < end:
-                clock["t"] = min(clock["t"] + 5.0, end)
-                pause.wait(0.01)
-            attempt2_span["used"] += seconds
-            return text
-        return _hook
-
-    # 无换行块间隔 0.4*idle < idle，累计 1.2*idle > idle：按新字节刷新，不得判死
+    # 无换行块之间插入主环可观测静默：间隔 0.4*idle < idle，三窗累计 1.2*idle > idle
+    gap = idle * 0.4
     no_nl_chunks = (
-        _advance_chunk(idle * 0.4, "臣已核"),
-        _advance_chunk(idle * 0.4, "辽饷，"),
-        _advance_chunk(idle * 0.4, "谨复奏。\n"),
+        "臣已核",
+        silence(gap),
+        "辽饷，",
+        silence(gap),
+        "又续报，",
+        silence(gap),
+        "谨复奏。\n",
     )
 
     script = install_fake_cli_runner(monkeypatch, [
@@ -286,5 +349,7 @@ def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
     assert script.calls == 2
     # 首 attempt 的子进程确实被 kill（不留孤儿）
     assert script.processes[0].killed.is_set()
-    assert attempt2_span["used"] > idle, attempt2_span
+    # 判别力：attempt2 静默窗经主环 check_idle 注入，累计 > idle（非钩子自累）
+    assert int(silence_state["checks"]) >= 3, silence_state
+    assert float(silence_state["injected_total"]) > idle, silence_state
     assert int(done.get("minister_message_id") or 0) > 0
