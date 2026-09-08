@@ -130,29 +130,30 @@ def create_chat_model(
     extra_body = provider_extra_body(llm_config.base_url, llm_config.model)
     wants_thinking = enable_thinking or reasoning_strength in {"low", "medium", "high"}
     disables_thinking = reasoning_strength == "off"
-    if is_dashscope_base_url(llm_config.base_url) and (wants_thinking or disables_thinking):
-        # 推演/评估类 agent 需要深思,开 qwen thinking
-        extra_body = {"enable_thinking": not disables_thinking}
-        budget = _THINKING_BUDGET_BY_STRENGTH.get(reasoning_strength)
-        if budget is not None:
-            extra_body["thinking_budget"] = budget
-        elif thinking_budget is not None and not disables_thinking:
-            extra_body["thinking_budget"] = int(thinking_budget)
-    elif enable_thinking and is_deepseek_model(llm_config.model):
-        extra_body = {}  # deepseek 默认深思,清掉 disabled/reasoning-off
-    elif is_minimax_base_url(llm_config.base_url) and (wants_thinking or disables_thinking):
-        # 统一推理强度优先：off→disabled、低/中/高→adaptive。仅在没有统一强度（遗留
-        # enable_thinking 路）时才看旧 thinking_level，否则遗留 thinking_level=disabled 会作
-        # 隐藏旋钮把用户选的「中/高」压回 disabled（#358 cmr）。
-        if disables_thinking:
-            thinking_type = "disabled"
-        elif reasoning_strength in {"low", "medium", "high"}:
-            thinking_type = "adaptive"
-        else:
-            thinking_type = (llm_config.thinking_level or "adaptive").strip().lower()
-            if thinking_type not in {"adaptive", "disabled"}:
+    # #1797 v7 1b：DeepSeek 系统一关闭压过 reasoning_strength / enable_thinking，
+    # 保留 provider_extra_body 的端点关闭键；非 DeepSeek 仍走既有强度语义。
+    if not is_deepseek_model(llm_config.model):
+        if is_dashscope_base_url(llm_config.base_url) and (wants_thinking or disables_thinking):
+            # 推演/评估类 agent 需要深思,开 qwen thinking
+            extra_body = {"enable_thinking": not disables_thinking}
+            budget = _THINKING_BUDGET_BY_STRENGTH.get(reasoning_strength)
+            if budget is not None:
+                extra_body["thinking_budget"] = budget
+            elif thinking_budget is not None and not disables_thinking:
+                extra_body["thinking_budget"] = int(thinking_budget)
+        elif is_minimax_base_url(llm_config.base_url) and (wants_thinking or disables_thinking):
+            # 统一推理强度优先：off→disabled、低/中/高→adaptive。仅在没有统一强度（遗留
+            # enable_thinking 路）时才看旧 thinking_level，否则遗留 thinking_level=disabled 会作
+            # 隐藏旋钮把用户选的「中/高」压回 disabled（#358 cmr）。
+            if disables_thinking:
+                thinking_type = "disabled"
+            elif reasoning_strength in {"low", "medium", "high"}:
                 thinking_type = "adaptive"
-        extra_body = {"thinking": {"type": thinking_type}, "reasoning_split": True}
+            else:
+                thinking_type = (llm_config.thinking_level or "adaptive").strip().lower()
+                if thinking_type not in {"adaptive", "disabled"}:
+                    thinking_type = "adaptive"
+            extra_body = {"thinking": {"type": thinking_type}, "reasoning_split": True}
     # #1465：create_chat_model 默认仍 timeout_seconds / max_retries=1。
     # 已迁移接缝（召对流、run_agent_text）用 bind_transport_sdk_budget 临时覆盖
     # （timeout←attempt_timeout + max_retries=0）。
