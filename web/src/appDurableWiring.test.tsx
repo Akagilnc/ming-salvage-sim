@@ -1825,6 +1825,72 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
   });
 
+  it("#1808 fail-closed 后普通 HUD 可见失败，不依赖任何 modal", async () => {
+    // 真实入口：settling 续跑 → issue/stream SSE error → fail-closed 回 player。
+    // 无 modal 打开时主界面须有 role=alert；成功路径不得挂该位。
+    const FAIL_MSG = "月末结算失败：核账中止（替身）。";
+    let liveState: Record<string, unknown> = settlementBaseState("settling", {
+      settlement_recovery: {
+        message: "上月结算未完成（进度已保存）。",
+        ready_replay: true,
+        error_pack_path: "/tmp/error_packs/turn5_attempt1",
+      },
+      previous_summary: "",
+      pending_decisions: [],
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        // fail-closed：快照已受理前半程未提交 → 回 player，settlement_display 清。
+        liveState = {
+          ...settlementBaseState("player"),
+          turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+          previous_summary: "",
+          pending_decisions: [],
+          directives: [{ id: 1, text: "半程拟诏草稿", status: "draft" }],
+        };
+        return sseResp("error", { message: FAIL_MSG });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    // 起手：续跑面在，无失败 alert、无 modal
+    expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+
+    const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement;
+    expect(resume).not.toBeNull();
+    await click(resume);
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[data-testid="hud-error"]')).not.toBeNull();
+      });
+    });
+    // 普通 HUD：无相关 modal；失败告知在主界面
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(host.querySelector('[data-testid="decision-recovery"]')).toBeNull();
+    const hudAlert = host.querySelector('[data-testid="hud-error"][role="alert"]');
+    expect(hudAlert).not.toBeNull();
+    expect(hudAlert!.textContent).toContain(FAIL_MSG);
+    // 核账期面已退（fail-closed 回 player）——月初快照/核账叙事不得被告警改写为核账态
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
+  });
+
   it("#1620 本地 pending 后权威 refresh all-decided/resume_phase2 清 stale modal", async () => {
     // 只证：曾有本地 pending → 权威态切 all-decided/resume_phase2 → modal 卸 + settle-resume。
     // 不夹 SSE picks 恢复、不夹 busy 二提交。loadState 车辆=落印 stream error（仅触发刷新）。

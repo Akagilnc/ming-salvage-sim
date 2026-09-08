@@ -876,6 +876,20 @@ export function App() {
         </div>
       ) : null}
 
+      {/* #1808：fail-closed 后 error 在主界面可见，不依赖任何 modal。
+          呈现文本走既有 setError 人话/上游消息，不新造固定句式。
+          pausedDecisionError 已由 DecisionRecoveryPanel 承重（#1620 单一 alert），不双播。 */}
+      {error && !pausedDecisionError ? (
+        <div
+          className="recovery-banner decision-recovery-banner"
+          role="alert"
+          aria-live="assertive"
+          data-testid="hud-error"
+        >
+          <span className="recovery-banner-message">{error}</span>
+        </div>
+      ) : null}
+
       {/* 必达：批红恢复——不得被 busy/SettlementLock 误关 */}
       {pausedDecisionError ? (
         <div data-testid="decision-recovery">
