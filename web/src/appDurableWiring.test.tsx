@@ -230,6 +230,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const alert = host.querySelector('[role="alert"]')!;
     expect(alert.textContent).toBe(detail.message);
     expect(alert.textContent).not.toContain(detail.code);
+    // #1808：非结算通道不得泄漏到普通 HUD 告警位
+    expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
   });
 
   it("中断回话重试直接消费洪承畴 payload，并刷新夜卷轴而不重拉目标历史", async () => {
@@ -1889,6 +1891,67 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     // 核账期面已退（fail-closed 回 player）——月初快照/核账叙事不得被告警改写为核账态
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
     expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
+  });
+
+  it("#1808 fail-closed 且拟诏台开着：只走既有 modal 告警，不双播 HUD", async () => {
+    // 真实入口：开拟诏 → 盖玺 → SSE error → face 退后台带回 error。
+    // 既有 EdictModal role=alert 仍在；hud-error 不得并行。
+    const FAIL_MSG = "月末结算失败：拟诏台带回（替身）。";
+    let liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
+      });
+      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+      });
+      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+        liveState = {
+          ...settlementBaseState("player"),
+          turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+          previous_summary: "",
+          pending_decisions: [],
+          directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+        };
+        return sseResp("error", { message: FAIL_MSG });
+      }
+      return jsonResp({});
+    }));
+
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const seal = findButton(host, "盖玺颁诏过月");
+    expect(seal).toBeTruthy();
+    await click(seal);
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        // face 退后拟诏台带回；modal 内 alert 可见
+        const dialog = host.querySelector('[role="dialog"][aria-label="诏书草案"]');
+        expect(dialog).not.toBeNull();
+        expect(dialog!.querySelector('[role="alert"]')).not.toBeNull();
+      });
+    });
+    const modalAlert = host.querySelector('[role="dialog"][aria-label="诏书草案"] [role="alert"]');
+    expect(modalAlert!.textContent).toContain(FAIL_MSG);
+    // 不双播：HUD 告警位不得与 modal 并行
+    expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
+    expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
   });
 
   it("#1620 本地 pending 后权威 refresh all-decided/resume_phase2 清 stale modal", async () => {

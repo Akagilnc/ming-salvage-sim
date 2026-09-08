@@ -212,6 +212,7 @@ export function App() {
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,
+    settlementHudError,
     issueDecree,
     advanceWithoutEdict,
     submitDecisions,
@@ -876,17 +877,17 @@ export function App() {
         </div>
       ) : null}
 
-      {/* #1808：fail-closed 后 error 在主界面可见，不依赖任何 modal。
-          呈现文本走既有 setError 人话/上游消息，不新造固定句式。
-          pausedDecisionError 已由 DecisionRecoveryPanel 承重（#1620 单一 alert），不双播。 */}
-      {error && !pausedDecisionError ? (
+      {/* #1808：phase-1 fail-closed 的 HUD 告知——只吃 settlementHudError，不投影共享 error。
+          相关 modal（拟诏/召对/未落库）正在消费同一失败时不双播；DecisionRecoveryPanel 另承 phase-2。
+          呈现文本走上游消息，不新造固定句式。 */}
+      {settlementHudError && !edictOpen && !chatOpen ? (
         <div
           className="recovery-banner decision-recovery-banner"
           role="alert"
           aria-live="assertive"
           data-testid="hud-error"
         >
-          <span className="recovery-banner-message">{error}</span>
+          <span className="recovery-banner-message">{settlementHudError}</span>
         </div>
       ) : null}
 

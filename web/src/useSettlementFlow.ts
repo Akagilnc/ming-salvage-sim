@@ -40,6 +40,8 @@ export function useSettlementFlow({
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
   const [decisionFailures, setDecisionFailures] = React.useState<PendingActionFailure[]>([]);
   const [pausedDecisionError, setPausedDecisionError] = React.useState("");
+  // #1808：phase-1 fail-closed 的 HUD 专用位——与共享 error 分轨，避免召对等通道泄漏到普通 HUD。
+  const [settlementHudError, setSettlementHudError] = React.useState("");
 
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
   // #657：typed resume_phase2 时空 pending 不报 PAUSED，接到 phase2 空 POST 续跑。
@@ -116,6 +118,13 @@ export function useSettlementFlow({
     setSettleProgress(null);
     setSettleThinking("");
     setSettleNarrative("");
+    setSettlementHudError("");
+  };
+
+  // #1808：phase-1 fail-closed 同时写共享 error（modal 带回）与 HUD 专用位。
+  const surfacePhase1Failure = (message: string) => {
+    setError(message);
+    setSettlementHudError(message);
   };
 
   const issueDecree = async () => {
@@ -157,10 +166,10 @@ export function useSettlementFlow({
         // main #1442：pending_action_failures 落库面优先。欠账耗尽走失败单源（#1353 fold-in），无补写 CTA。
         const errMsg = typeof outcome.data === "string" ? outcome.data : (errData.message || "颁诏失败。");
         if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
-          setError(errMsg);
+          surfacePhase1Failure(errMsg);
           return;
         }
-        setError(errMsg);
+        surfacePhase1Failure(errMsg);
         setBusy("");
         return;
       }
@@ -187,7 +196,7 @@ export function useSettlementFlow({
     } catch (err) {
       // #1700：与 phase-2 catch 对称，失败后刷新权威相位。
       await loadState();
-      setError(err instanceof Error ? err.message : String(err));
+      surfacePhase1Failure(err instanceof Error ? err.message : String(err));
       setBusy("");
     }
   };
@@ -305,11 +314,11 @@ export function useSettlementFlow({
       }
       const failures = detail?.pending_action_failures;
       if (Array.isArray(failures) && await surfacePendingActionFailures(failures)) {
-        setError(detail?.message || "退朝失败。");
+        surfacePhase1Failure(detail?.message || "退朝失败。");
         return;
       }
       const errMsg = err instanceof Error ? err.message : String(err);
-      setError(errMsg);
+      surfacePhase1Failure(errMsg);
     } finally {
       setBusy("");
     }
@@ -358,6 +367,7 @@ export function useSettlementFlow({
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,
+    settlementHudError,
     issueDecree,
     advanceWithoutEdict,
     submitDecisions,
