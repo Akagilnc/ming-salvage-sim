@@ -1993,12 +1993,12 @@ def _merge_healed_missing_options(
     - option：既有合并语义。
     缺响应/身份冲突 → 跳过该项，继续下一次补交（外部输入契约）。
     """
-    has_top = any((f.scope or _SCOPE_OPTION) == _SCOPE_TOP for f in failures)
     has_unformed = any(
         (f.exhaust or "") == _EXHAUST_DEGRADE_MONTH for f in failures
     )
-    # 未成形或 top 失败且补交显式给出 items → 整份采用（仍经后续 validate）
-    if (baseline is None or has_top) and isinstance(healed.get("items"), list):
+    # 仅未成形 top 允许整份 items 重画；①b-2/①c 的失败单元不是 items 内容，
+    # 不得因补交带 items 就改写/重排/清空原合法条目（只影响自己）。
+    if (baseline is None or has_unformed) and isinstance(healed.get("items"), list):
         return copy.deepcopy(healed)
 
     if baseline is None or has_unformed:
@@ -2009,13 +2009,21 @@ def _merge_healed_missing_options(
 
     result = copy.deepcopy(baseline)
     if "items" not in result or not isinstance(result.get("items"), list):
-        if isinstance(healed.get("items"), list):
-            return copy.deepcopy(healed)
+        # 底稿无 items 却非 unformed 路径：保持失败，等耗尽/下轮；不偷换补交 items
         raise ValueError(
-            '票拟补交顶层无 items list：须返回 {"items":[...]} 或 heals'
+            '票拟补交顶层无 items list：须返回 heals 或待耗尽处置'
         )
 
-    # top unknown_keys：补交若只回 items 已在上方处理；此处若仍带未知键，保留等耗尽忽略
+    # ①b-2：补交响应未再携带未知顶层键 → 只从底稿删这些键，不改 items
+    for failure in failures:
+        if (failure.exhaust or "") != _EXHAUST_IGNORE_TOP_KEYS:
+            continue
+        for fact in failure.field_failures:
+            key = str(fact.get("field") or "")
+            if key and key not in _TOP_ALLOWED_KEYS and key not in healed:
+                result.pop(key, None)
+
+    # ①c 超限：不在合并期按补交 items 重写；耗尽按原序截尾（只影响超出单元）
     base_items = result["items"]
     by_id = _healed_options_by_id(healed)
     for failure in failures:
