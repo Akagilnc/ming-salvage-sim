@@ -129,29 +129,21 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
         run_metrics = getattr(run_src, "usage", None)
     if run_metrics is not None:
         lines.append(f"\n[usage/metrics] {_dump_value(run_metrics)}")
-    # finish_reason：只认字面名；run / choices[0] / model_provider_data / message / provider_data
-    finish_reason = getattr(run_src, "finish_reason", None)
-    if finish_reason is None:
-        choices = getattr(run_src, "choices", None)
-        if choices:
-            ch0 = choices[0]
-            finish_reason = (
-                ch0.get("finish_reason") if isinstance(ch0, dict) else getattr(ch0, "finish_reason", None)
-            )
-    if finish_reason is None:
-        mpd = getattr(run_src, "model_provider_data", None)
-        if isinstance(mpd, dict):
-            finish_reason = mpd.get("finish_reason")
-    if finish_reason is None:
+    # finish_reason：只认字面键，只走 dump 入口实有容器（RunOutput.model_provider_data /
+    # Message.provider_data）。agno 不把 Choice.finish_reason 写入这两处时据实记缺。
+    finish_reason = None
+    mpd = getattr(run_src, "model_provider_data", None)
+    if isinstance(mpd, dict):
+        finish_reason = mpd.get("finish_reason")
+    if finish_reason is None or finish_reason == "":
+        finish_reason = None
         for m in msgs:
-            fr = getattr(m, "finish_reason", None)
-            if fr is None:
-                pdata = getattr(m, "provider_data", None)
-                if isinstance(pdata, dict):
-                    fr = pdata.get("finish_reason")
-            if fr is not None and fr != "":
-                finish_reason = fr
-                break
+            pdata = getattr(m, "provider_data", None)
+            if isinstance(pdata, dict):
+                fr = pdata.get("finish_reason")
+                if fr is not None and fr != "":
+                    finish_reason = fr
+                    break
     if finish_reason is None or finish_reason == "":
         lines.append("\n[finish_reason] (缺)")
     else:
