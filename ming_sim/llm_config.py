@@ -237,21 +237,24 @@ def is_minimax_base_url(base_url: str) -> bool:
 def provider_extra_body(base_url: str, model: str = "") -> Optional[Dict[str, object]]:
     """Provider 默认 extra_body。
 
-    #1797：DeepSeek 全系关思考——判据是模型 id（非 base_url  alone）。
-    键按端点实测分派（runner 复放 + 本仓既有官方行为）：
-    - 官方 deepseek.com：{"thinking": {"type": "disabled"}}（既有，有效）
-    - 中转商（非 deepseek.com）：{"reasoning": {"enabled": False}}
+    #1797：DeepSeek 全系关思考——模型 id 决定「要不要关」，键按端点实测分派。
+    dashscope/minimax 端点分派必须在 DeepSeek 模型短路之前：
+    「非 deepseek.com」不得一律当 Nous 中转。
+    - deepseek.com + DeepSeek 系：{"thinking": {"type": "disabled"}}
+    - dashscope/aliyuncs（含 DeepSeek 系）：{"enable_thinking": False}
+    - minimax（含 DeepSeek 系）：{"thinking": {"type": "disabled"}}
+    - 其余中转 + DeepSeek 系：{"reasoning": {"enabled": False}}
       （thinking.disabled 在 Nous/hermes 无效；reasoning.enabled=false 有效）
-    非 DeepSeek 模型：dashscope/minimax 分支不变。
     """
-    if is_deepseek_model(model):
-        if is_deepseek_base_url(base_url):
-            return {"thinking": {"type": "disabled"}}
-        return {"reasoning": {"enabled": False}}
+    # 端点既有键优先：DeepSeek 系跑在百炼/minimax 上仍映射该端点键。
     if is_dashscope_base_url(base_url):
         return {"enable_thinking": False}
     if is_minimax_base_url(base_url):
         return {"thinking": {"type": "disabled"}}
+    if is_deepseek_model(model):
+        if is_deepseek_base_url(base_url):
+            return {"thinking": {"type": "disabled"}}
+        return {"reasoning": {"enabled": False}}
     return None
 
 

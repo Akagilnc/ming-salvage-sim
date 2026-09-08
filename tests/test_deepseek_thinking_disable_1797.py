@@ -12,7 +12,7 @@ from ming_sim.models import LLMConfig
 
 
 def test_create_chat_model_deepseek_on_hermes_emits_reasoning_disable(monkeypatch):
-    """DeepSeek 系 + 非官方 base_url → reasoning.enabled=false。"""
+    """DeepSeek 系 + 非端点特化中转（如 hermes/Nous）→ reasoning.enabled=false。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
         api_key="sk-test",
@@ -30,6 +30,32 @@ def test_create_chat_model_deepseek_on_official_keeps_thinking_disabled(monkeypa
     cfg = LLMConfig(
         api_key="sk-test",
         base_url="https://api.deepseek.com/v1",
+        model="deepseek-v4-flash-0731",
+        channel="api",
+    )
+    model = create_chat_model(cfg, enable_thinking=False)
+    assert model.extra_body == {"thinking": {"type": "disabled"}}
+
+
+def test_create_chat_model_deepseek_on_dashscope_uses_enable_thinking(monkeypatch):
+    """DeepSeek 系（含 deepseek/ 前缀）× dashscope → 端点既有键 enable_thinking:false。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="deepseek/deepseek-v4-flash-0731",
+        channel="api",
+    )
+    model = create_chat_model(cfg, enable_thinking=False)
+    assert model.extra_body == {"enable_thinking": False}
+
+
+def test_create_chat_model_deepseek_on_minimax_uses_endpoint_key(monkeypatch):
+    """DeepSeek 系 × minimax → 端点既有键 thinking.disabled。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.minimaxi.com/v1",
         model="deepseek-v4-flash-0731",
         channel="api",
     )
