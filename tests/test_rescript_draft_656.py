@@ -500,8 +500,8 @@ def test_generate_ungrounded_army_heals_then_drops_sibling_kept(monkeypatch, tmp
 
 
 def test_payload_projects_character_targets_full_characters_name_set(game):
-    """#1804：票拟人物目录外延＝characters.name 全集；不筛在朝/官职；无裸属性。"""
-    from ming_sim.simulation import build_simulator_payload
+    """#1804：票拟入口人物目录外延＝characters.name 全集；不筛在朝/官职；无裸属性。"""
+    from ming_sim.rescript_draft import character_targets_from_db
 
     db, state, _content = game
     # 离场且无官职的在册人——目录与闸均须收纳（防回退 #1778）
@@ -519,10 +519,11 @@ def test_payload_projects_character_targets_full_characters_name_set(game):
         str(row["name"]): str(row["office"] or "")
         for row in db.conn.execute("SELECT name, office FROM characters").fetchall()
     }
-    simulator_payload = build_simulator_payload(state, db, "", "")
+    # 票拟入口缝：目录由 db 投影注入 payload，不经共享 simulator_payload。
     payload = build_rescript_draft_payload(
-        state, "邸报", simulator_payload,
+        state, "邸报", {},
         {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
+        character_targets=character_targets_from_db(db),
     )
     catalog = payload["character_targets"]
     assert isinstance(catalog, list) and catalog

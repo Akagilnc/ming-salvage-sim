@@ -1201,17 +1201,20 @@ def _project_army_targets(table: object) -> List[Dict[str, str]]:
     ]
 
 
-def _project_character_targets(table: object) -> List[Dict[str, str]]:
-    """#1804：人物目录＝characters 盘面 name+office 全集投影（与落库缝合法集同延）。
+def character_targets_from_db(db: object) -> List[Dict[str, str]]:
+    """#1804：票拟人物目录＝characters.name 全集（name+office）。
 
     不筛在朝/官职/事务类别；官职只供认人，不限可选性；禁忠诚/能力等裸属性。
+    真源是 characters 表；由票拟入口注入 payload，不进共享 simulator 盘面。
     """
-    return _project_board_targets(
-        table,
-        fields=("name", "office"),
-        required=("name",),
-        label="character",
-    )
+    rows = db.conn.execute(  # type: ignore[attr-defined]
+        "SELECT name, office FROM characters ORDER BY name"
+    ).fetchall()
+    return [
+        {"name": str(row["name"]), "office": str(row["office"] or "")}
+        for row in rows
+        if str(row["name"] or "").strip()
+    ]
 
 
 def _project_board_targets(
@@ -1252,12 +1255,14 @@ def build_rescript_draft_payload(
     narrative: str,
     simulator_payload: Dict[str, object],
     triage_actor: Dict[str, str],
+    character_targets: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, object]:
     """票拟生成 LLM 步的确定性输入（F1.3：零依赖 extractor 输出，只读盘面投影）。
 
     active_issues 取 simulator_payload 里已投影的一份再过票拟出口定性投影（0143
     输入侧投影唯一通道，issue_id 是权威绑定快照）；缺失时回空表并留痕（无盘面可
     投影＝无急务可选）。
+    character_targets 由票拟入口缝注入（#1804）；缺省不塞空目录（空目录会把合法名全拒）。
     """
     raw_issues = simulator_payload.get("active_issues")
     if not isinstance(raw_issues, list):
@@ -1289,11 +1294,9 @@ def build_rescript_draft_payload(
         "target": {"min_items": 3, "max_items": MAX_RESCRIPT_DRAFTS},
     }
     # #1804：与 region/army 同形人物目录；外延＝characters.name 全集（#1778）。
-    # 仅当盘面带 characters 投影时写入——缺源不塞空目录（空目录会把合法名全拒）。
-    if "characters" in simulator_payload:
-        payload["character_targets"] = _project_character_targets(
-            simulator_payload.get("characters"),
-        )
+    # 票拟入口注入；缺省不写键（旧夹具无目录不误伤 generation grounding）。
+    if character_targets is not None:
+        payload["character_targets"] = list(character_targets)
     return payload
 
 

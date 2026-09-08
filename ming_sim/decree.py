@@ -90,6 +90,7 @@ from ming_sim.decree_vocabulary import (
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.rescript_draft import (
     build_rescript_draft_payload,
+    character_targets_from_db,
     generate_rescript_draft,
     select_triage_actor,
 )
@@ -2221,8 +2222,11 @@ def _settle_after_narrative(
             # （F3.2）：分拣人事实钉进每条票拟行，任免后可机械断言。结果写入闭包持有
             # 的 draft_cell，供 persist 与重跑真源同事务读回（F2.5）。
             draft_agent = create_rescript_draft_agent(llm_config, agno_db)
+            # #1804：人物目录在票拟入口缝注入；不进共享 simulator_payload（避免
+            # 月度推演/extractor 输入与 resolve-context 存档夹带票拟专用数据）。
             draft_payload = build_rescript_draft_payload(
                 state, narrative, simulator_payload, triage_actor,
+                character_targets=character_targets_from_db(db),
             )
             drafts = generate_rescript_draft(draft_agent, draft_payload, before_turn)
             if drafts:
