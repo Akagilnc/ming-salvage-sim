@@ -1,7 +1,7 @@
 """#1801 r2：三类整批判死改重试、只影响自己（复用 #1746 heal 回路）。
 
 验收缝：generate_rescript_draft（真实入口，无真实 LLM）。
-六样：①a 未成形 / ①b-1 utf8 / ①b-2 顶层未知键 / ①c 超上限 /
+六样：①a 未成形 / ①b-1 utf8 / ①b-2 顶层未知键 / ①c 条目数无上限 /
 ② 条目字段 / ③ option A shape。
 """
 from __future__ import annotations
@@ -13,7 +13,6 @@ import pytest
 
 import ming_sim.rescript_draft as rescript_mod
 from ming_sim.rescript_draft import (
-    MAX_RESCRIPT_DRAFTS,
     RESCRIPT_OPTION_FIELD_HEAL_RETRIES,
     generate_rescript_draft,
 )
@@ -216,10 +215,11 @@ def test_1801_unknown_top_key_heal_omit_key_succeeds_keeps_items(monkeypatch, tm
 
 
 # ---------------------------------------------------------------------------
-# ①c 条目数超上限
+# ①c 条目数无硬上限（owner 令删门；不 raise、不截尾、不触发重试）
 # ---------------------------------------------------------------------------
 
-def test_1801_over_limit_heals_then_keeps_prefix_trims_tail(monkeypatch, tmp_path):
+def test_1801_eight_items_all_pass_no_heal_no_trim(monkeypatch, tmp_path):
+    """①c：给 8 条 → 8 条全照呈；不报错、不截尾、不进 heal。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     items = [_item(f"条目{i}") for i in range(8)]
     raw = _items_json(items)
@@ -227,64 +227,12 @@ def test_1801_over_limit_heals_then_keeps_prefix_trims_tail(monkeypatch, tmp_pat
     monkeypatch.setattr(rescript_mod, "run_agent_text", llm)
     drafts = generate_rescript_draft(object(), _ctx(), turn=104)
     assert drafts is not None
-    assert len(drafts) == MAX_RESCRIPT_DRAFTS
-    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(MAX_RESCRIPT_DRAFTS)]
-    assert "rescript-draft-heal" in tags
-    req = _parse_heal(prompts[1])
-    f0 = req["failures"][0]
-    assert f0["scope"] == "top"
-    assert f0["exhaust"] == "trim_tail"
-    cur = _field_map(f0)["items"]["current"]
-    assert cur["len"] == 8
+    assert len(drafts) == 8
+    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(8)]
+    assert tags == ["rescript-draft"]
+    assert "rescript-draft-heal" not in tags
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn104.json"
-    note_obj = json.loads(note.read_text(encoding="utf-8"))
-    trimmed = note_obj.get("trimmed_tail") or []
-    assert trimmed and _field_map(trimmed[0])["items"]["current"]["len"] == 8
-
-
-def test_1801_over_limit_heal_exact_prefix_succeeds_without_exhaust(monkeypatch, tmp_path):
-    """①c：补交 items 恰好为原序前 MAX 条 → 重试成功，不必耗尽。"""
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    full = [_item(f"条目{i}") for i in range(8)]
-    first = _items_json(full)
-    healed = _items_json(full[:MAX_RESCRIPT_DRAFTS])
-    n = {"i": 0}
-    tags: list[str] = []
-
-    def _llm(_a, _p, tag="", prior_messages=None):
-        tags.append(tag)
-        n["i"] += 1
-        return first if n["i"] == 1 else healed
-
-    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
-    drafts = generate_rescript_draft(object(), _ctx(), turn=116)
-    assert drafts is not None
-    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(MAX_RESCRIPT_DRAFTS)]
-    assert tags == ["rescript-draft", "rescript-draft-heal"]
-    assert n["i"] == 2
-    # 成功路径无耗尽附记
-    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn116.json"
     assert not note.exists()
-
-
-def test_1801_over_limit_heal_rewritten_items_must_not_replace_prefix(monkeypatch, tmp_path):
-    """①c：heal 回改写后的短 items 不得替换原前缀；耗尽仍按原序留前 N。"""
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    first = _items_json([_item(f"条目{i}") for i in range(8)])
-    # 补交企图用完全不同的 5 条替换——代码不得采纳
-    healed = _items_json([_item(f"篡改{i}") for i in range(5)])
-    n = {"i": 0}
-
-    def _llm(_a, _p, tag="", prior_messages=None):
-        n["i"] += 1
-        return first if n["i"] == 1 else healed
-
-    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
-    drafts = generate_rescript_draft(object(), _ctx(), turn=115)
-    assert drafts is not None
-    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(MAX_RESCRIPT_DRAFTS)]
-    assert all(not t.startswith("篡改") for t in (d["title"] for d in drafts))
-    assert n["i"] == 1 + RESCRIPT_OPTION_FIELD_HEAL_RETRIES
 
 
 # ---------------------------------------------------------------------------
