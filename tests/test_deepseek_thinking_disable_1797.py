@@ -1,4 +1,4 @@
-"""#1797：DeepSeek 全系按模型 id 关思考；llm_dump 记 reasoning/usage。
+"""#1797：DeepSeek 全系按模型 id 关思考；llm_dump 记 reasoning/usage/finish_reason。
 
 真实入口 create_chat_model / _dump_llm_messages；不跑真实 LLM。
 """
@@ -50,8 +50,8 @@ def test_create_chat_model_non_deepseek_on_relay_unchanged(monkeypatch):
     assert model.extra_body is None
 
 
-def test_dump_llm_messages_records_reasoning_body_and_usage_tokens(monkeypatch, tmp_path):
-    """dump 落盘含 reasoning 正文与 usage.reasoning_tokens（不锁标签句式）。"""
+def test_dump_llm_messages_records_reasoning_usage_finish_reason(monkeypatch, tmp_path):
+    """dump 三样均落盘：reasoning / usage.reasoning_tokens / finish_reason（键值同断）。"""
     import ming_sim.agents as agents_mod
 
     dump_path = tmp_path / "llm_dump_test.log"
@@ -72,15 +72,18 @@ def test_dump_llm_messages_records_reasoning_body_and_usage_tokens(monkeypatch, 
         total_tokens=120,
         reasoning_tokens=42,
     )
+    # finish_reason 取自 OpenAI choices 级实际结构（Choice.finish_reason）
     output = SimpleNamespace(
         messages=[msg],
         reasoning_content=None,
         metrics=metrics,
+        choices=[SimpleNamespace(finish_reason="stop")],
     )
 
     agents_mod._dump_llm_messages(output, "test-tag")
 
     text = dump_path.read_text(encoding="utf-8")
-    assert "思考过程甲" in text
-    assert "中转 reasoning 正文" in text
+    assert "  [reasoning_content] (5 字)\n思考过程甲" in text
+    assert "  [reasoning] (15 字)\n中转 reasoning 正文" in text
     assert '"reasoning_tokens": 42' in text
+    assert "[finish_reason] stop" in text
