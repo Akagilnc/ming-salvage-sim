@@ -13,7 +13,6 @@ from ming_sim.exceptions import DependencyMismatch, LLMUnavailable
 from ming_sim.llm_config import (
     CLI_BACKEND_PLACEHOLDER,
     is_dashscope_base_url,
-    is_deepseek_base_url,
     is_deepseek_model,
     is_minimax_base_url,
     openai_model_id_without_provider,
@@ -139,9 +138,7 @@ def create_chat_model(
             extra_body["thinking_budget"] = budget
         elif thinking_budget is not None and not disables_thinking:
             extra_body["thinking_budget"] = int(thinking_budget)
-    elif enable_thinking and (
-        is_deepseek_model(llm_config.model) or is_deepseek_base_url(llm_config.base_url)
-    ):
+    elif enable_thinking and is_deepseek_model(llm_config.model):
         extra_body = {}  # deepseek 默认深思,清掉 disabled/reasoning-off
     elif is_minimax_base_url(llm_config.base_url) and (wants_thinking or disables_thinking):
         # 统一推理强度优先：off→disabled、低/中/高→adaptive。仅在没有统一强度（遗留

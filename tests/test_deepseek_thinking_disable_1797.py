@@ -83,5 +83,4 @@ def test_dump_llm_messages_records_reasoning_body_and_usage_tokens(monkeypatch, 
     text = dump_path.read_text(encoding="utf-8")
     assert "思考过程甲" in text
     assert "中转 reasoning 正文" in text
-    assert "42" in text
-    assert "reasoning_tokens" in text
+    assert '"reasoning_tokens": 42' in text
