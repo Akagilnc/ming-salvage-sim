@@ -606,12 +606,13 @@ def _valid_item(i: int) -> dict:
     }
 
 
-def test_validate_items_over_limit_fails_whole_batch():
-    """A1 判词：处理条目前校验 items 总数——超 5 条即 ValueError 整批失败，
-    零截断零保留（不 slice、不静默丢弃后项）。6 条全合法与第 6 条非法同判。"""
+def test_validate_items_no_count_cap_keeps_all_legal():
+    """#1801 ①c：条目数无硬上限——6 条全合法照呈；第 6 条字段非法仍整批 ValueError
+    （非 isolate 直调口径；条数本身不再是失败因）。"""
     six_legal = [_valid_item(i) for i in range(6)]
-    with pytest.raises(ValueError):
-        validate_rescript_draft_items({"items": six_legal}, set())
+    drafts = validate_rescript_draft_items({"items": six_legal}, set())
+    assert len(drafts) == 6
+    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(6)]
     sixth_illegal = [_valid_item(i) for i in range(5)]
     sixth_illegal.append({"title": "缺导语"})
     with pytest.raises(ValueError):
@@ -975,8 +976,8 @@ def test_mixed_batch_item_field_failure_keeps_sibling(game, monkeypatch, tmp_pat
     assert state.turn == turn + 1
 
 
-def test_over_limit_keeps_prefix_in_llm_order(game, monkeypatch, tmp_path):
-    """#1801 ①c：6 条全合法超限 → heal 耗尽按原序保留前 5、剔尾部，响亮留痕。"""
+def test_six_legal_items_all_kept_no_count_cap(game, monkeypatch, tmp_path):
+    """#1801 ①c：6 条全合法 → 6 条全照呈；不截尾、不进 heal、无 degraded note。"""
     import ming_sim.rescript_draft as rescript_draft
     import ming_sim.simulation as simulation
 
@@ -1014,17 +1015,15 @@ def test_over_limit_keeps_prefix_in_llm_order(game, monkeypatch, tmp_path):
         before_turn=turn, _emit=lambda *a: None, content=content,
     )
     drafts = db.list_rescript_drafts()
-    assert len(drafts) == 5
-    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(5)]
+    assert len(drafts) == 6
+    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(6)]
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
-    assert note.is_file()
-    note_obj = json.loads(note.read_text(encoding="utf-8"))
-    assert note_obj.get("trimmed_tail") or note_obj.get("failures")
+    assert not note.exists()
     assert state.turn == turn + 1
 
 
-def test_sixth_item_illegal_trims_and_drops_bad_keeps_prefix(game, monkeypatch, tmp_path):
-    """#1801 ①c+②：超限 + 第 6 条非法 → 截尾后前 5 合法照呈（非法尾条被隔离）。"""
+def test_sixth_item_illegal_drops_only_bad_keeps_siblings(game, monkeypatch, tmp_path):
+    """#1801 ②：第 6 条字段非法 → heal 耗尽只剔该条，前 5 合法照呈（与条数无关）。"""
     import ming_sim.rescript_draft as rescript_draft
     import ming_sim.simulation as simulation
 

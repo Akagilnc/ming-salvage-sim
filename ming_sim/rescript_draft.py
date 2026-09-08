@@ -148,7 +148,6 @@ _EXHAUST_DROP_OPTION = "drop_option"
 _EXHAUST_DROP_ITEM = "drop_item"
 _EXHAUST_DEGRADE_MONTH = "degrade_month"
 _EXHAUST_IGNORE_TOP_KEYS = "ignore_top_keys"
-_EXHAUST_TRIM_TAIL = "trim_tail"
 _SCOPE_OPTION = "option"
 _SCOPE_ITEM = "item"
 _SCOPE_TOP = "top"
@@ -1456,7 +1455,7 @@ def validate_rescript_draft_items(
 
     - 顶层非法（非 dict / 无 items list）：isolate 时 top 失败（耗尽无票拟）；否则 ValueError；
     - 顶层未知键：isolate 时 top 失败（耗尽忽略该键）；否则 ValueError；
-    - 条目数超上限：isolate 时 top 失败（耗尽按原序留前 N）；否则 ValueError；
+    - 条目数无硬上限（#1801 ①c owner 令删门；给 N 条即 N 条全照呈）；
     - 条目必需字段缺失/空白/不可编码/非 object/未知字段：isolate 时条目失败
       （耗尽只剔该条目）；否则 ValueError；
     - options 为空或非 list：该条目按 F2.3 不足照实消失、其它条目照常呈上（#1801 删项数门）；
@@ -1515,26 +1514,6 @@ def validate_rescript_draft_items(
             )
 
     items = data["items"]
-    if len(items) > MAX_RESCRIPT_DRAFTS:
-        if isolate_option_missing:
-            missing_failures.append(
-                _top_failure(
-                    kind="over_limit",
-                    exhaust=_EXHAUST_TRIM_TAIL,
-                    raw={"items_len": len(items)},
-                    field_failures=[
-                        _field_failure(
-                            "items",
-                            current={"len": len(items)},
-                            expected={"max_items": MAX_RESCRIPT_DRAFTS, "keep": "prefix_in_llm_order"},
-                        )
-                    ],
-                )
-            )
-        else:
-            raise ValueError(
-                f"票拟条目超上限：{len(items)} 条 > {MAX_RESCRIPT_DRAFTS}（整批失败，F2.5）"
-            )
 
     def _required_text_or_fail(
         item: Dict[str, object],
@@ -1996,7 +1975,7 @@ def _merge_healed_missing_options(
     has_unformed = any(
         (f.exhaust or "") == _EXHAUST_DEGRADE_MONTH for f in failures
     )
-    # 仅未成形 top 允许整份 items 重画；①b-2/①c 的失败单元不是 items 内容，
+    # 仅未成形 top 允许整份 items 重画；①b-2 的失败单元不是 items 内容，
     # 不得因补交带 items 就改写/重排/清空原合法条目（只影响自己）。
     if (baseline is None or has_unformed) and isinstance(healed.get("items"), list):
         return copy.deepcopy(healed)
@@ -2022,20 +2001,6 @@ def _merge_healed_missing_options(
             key = str(fact.get("field") or "")
             if key and key not in _TOP_ALLOWED_KEYS and key not in healed:
                 result.pop(key, None)
-
-    # ①c：补交 items 恰好＝底稿授权前缀（前 MAX 条原样、无改写重排）→ 采纳截尾成功；
-    # 改写/删前缀/重排 → 不采纳，留待下轮或耗尽按原序截尾。
-    if any((f.exhaust or "") == _EXHAUST_TRIM_TAIL for f in failures):
-        h_items = healed.get("items")
-        b_items = result.get("items")
-        if (
-            isinstance(h_items, list)
-            and isinstance(b_items, list)
-            and len(b_items) > MAX_RESCRIPT_DRAFTS
-        ):
-            authorized = b_items[:MAX_RESCRIPT_DRAFTS]
-            if h_items == authorized:
-                result["items"] = copy.deepcopy(h_items)
 
     base_items = result["items"]
     by_id = _healed_options_by_id(healed)
@@ -2094,7 +2059,6 @@ def _drop_options_by_failures(
 
     - degrade_month 且无可用 items → None（本月无票拟）；
     - ignore_top_keys → 丢掉未知顶层键，响亮由调用方 tlog；
-    - trim_tail → 按原序保留前 MAX_RESCRIPT_DRAFTS；
     - drop_item → 剔该条目；
     - drop_option → 剔该 option；条目 options 空则整条去掉（F2.3）。
     """
@@ -2127,17 +2091,6 @@ def _drop_options_by_failures(
         return {"items": []}
 
     items: List[object] = list(result["items"])
-
-    # ①c：按 LLM 原序保留前 N，剔尾部
-    trimmed = 0
-    if any((f.exhaust or "") == _EXHAUST_TRIM_TAIL for f in failures):
-        if len(items) > MAX_RESCRIPT_DRAFTS:
-            trimmed = len(items) - MAX_RESCRIPT_DRAFTS
-            items = items[:MAX_RESCRIPT_DRAFTS]
-            tlog(
-                f"[rescript] 条目超上限耗尽后按原序截尾（响亮）："
-                f"trimmed={trimmed} kept={MAX_RESCRIPT_DRAFTS}"
-            )
 
     drop_items: set[int] = set()
     drop_opts: Dict[int, set[int]] = {}
@@ -2268,8 +2221,9 @@ def generate_rescript_draft(
 
     #1746/#1801：可定位契约失败（option/item/top，不问种类）→ 同一会话补交
     （结构化失败事实 field/current/expected，最多 RESCRIPT_OPTION_FIELD_HEAL_RETRIES 次）；
-    耗尽只影响自己——option 剔 option、条目剔条目、顶层未知键忽略、超上限按原序截尾、
-    未成形无票拟；其余照出，不告知皇帝；后台 tlog + error pack 响亮留痕。
+    耗尽只影响自己——option 剔 option、条目剔条目、顶层未知键忽略、未成形无票拟；
+    其余照出，不告知皇帝；后台 tlog + error pack 响亮留痕。
+    条目数无硬上限（①c 已删门）：不因条数 raise／heal／截尾。
     """
     # payload 序列化是纯程序逻辑：其错误属代码侧错（ADR 0005），不在降级面内，响亮上抛。
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
@@ -2415,9 +2369,6 @@ def generate_rescript_draft(
             "ignored_top_keys": [
                 r for r in drop_rows if r.get("exhaust") == _EXHAUST_IGNORE_TOP_KEYS
             ],
-            "trimmed_tail": [
-                r for r in drop_rows if r.get("exhaust") == _EXHAUST_TRIM_TAIL
-            ],
             "unformed": [
                 r for r in drop_rows if r.get("exhaust") == _EXHAUST_DEGRADE_MONTH
             ],
@@ -2440,7 +2391,7 @@ def generate_rescript_draft(
                 isolate_option_missing=True,
             )
         except RescriptOptionMissingFieldsBatch as still_exc:
-            # 截尾/忽略键后可能仍残留其它失败：再应用一次耗尽处置
+            # 忽略键后可能仍残留其它失败：再应用一次耗尽处置
             dropped2 = _drop_options_by_failures(dropped, list(still_exc.failures))
             if dropped2 is None:
                 tlog("[rescript] 二次耗尽仍未成形，本月无票拟。")
