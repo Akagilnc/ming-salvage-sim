@@ -146,8 +146,6 @@ def test_1801_item_utf8_heals_then_drops_only_bad_item(monkeypatch, tmp_path):
 
 def test_1801_unknown_top_key_heals_then_ignores_key_keeps_items(monkeypatch, tmp_path):
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    logs: list[str] = []
-    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
     payload = {"items": [_item("陕西告饥"), _item("辽饷")], "summary": "臣请圣裁"}
     raw = json.dumps(payload, ensure_ascii=False)
     llm, tags, prompts = _never_fix_llm(raw)
@@ -161,9 +159,60 @@ def test_1801_unknown_top_key_heals_then_ignores_key_keeps_items(monkeypatch, tm
     assert f0["scope"] == "top"
     assert f0["exhaust"] == "ignore_top_keys"
     assert "summary" in _field_map(f0)
-    assert any("未知键" in m and "summary" in m for m in logs)
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn103.json"
-    assert note.is_file()
+    note_obj = json.loads(note.read_text(encoding="utf-8"))
+    ignored = note_obj.get("ignored_top_keys") or []
+    assert ignored and any(
+        "summary" in (row.get("missing_fields") or [])
+        or any(f.get("field") == "summary" for f in (row.get("field_failures") or []))
+        for row in ignored
+    )
+
+
+def test_1801_unknown_top_key_heal_items_empty_must_not_wipe_siblings(monkeypatch, tmp_path):
+    """①b-2 成功补交不得因 heal 回 {"items":[]} 清空原合法条目。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    first = json.dumps(
+        {"items": [_item("陕西告饥"), _item("辽饷")], "summary": "臣请圣裁"},
+        ensure_ascii=False,
+    )
+    # 补交只回空 items——不得整份替换底稿
+    healed = json.dumps({"items": []}, ensure_ascii=False)
+    n = {"i": 0}
+    tags: list[str] = []
+
+    def _llm(_a, _p, tag="", prior_messages=None):
+        tags.append(tag)
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=113)
+    assert drafts is not None
+    assert [d["title"] for d in drafts] == ["陕西告饥", "辽饷"]
+    assert "rescript-draft-heal" in tags
+
+
+def test_1801_unknown_top_key_heal_omit_key_succeeds_keeps_items(monkeypatch, tmp_path):
+    """①b-2：补交响应不再带未知键 → 只剔该键，items 原样呈上（不必耗尽）。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    first = json.dumps(
+        {"items": [_item("陕西告饥"), _item("辽饷")], "summary": "臣请圣裁"},
+        ensure_ascii=False,
+    )
+    # heals 空壳且无 summary → 合并期从底稿删 summary
+    healed = json.dumps({"heals": []}, ensure_ascii=False)
+    n = {"i": 0}
+
+    def _llm(_a, _p, tag="", prior_messages=None):
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=114)
+    assert drafts is not None
+    assert [d["title"] for d in drafts] == ["陕西告饥", "辽饷"]
+    assert n["i"] == 2  # 一次补交即成，未耗尽
 
 
 # ---------------------------------------------------------------------------
@@ -172,8 +221,6 @@ def test_1801_unknown_top_key_heals_then_ignores_key_keeps_items(monkeypatch, tm
 
 def test_1801_over_limit_heals_then_keeps_prefix_trims_tail(monkeypatch, tmp_path):
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    logs: list[str] = []
-    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
     items = [_item(f"条目{i}") for i in range(8)]
     raw = _items_json(items)
     llm, tags, prompts = _never_fix_llm(raw)
@@ -189,7 +236,29 @@ def test_1801_over_limit_heals_then_keeps_prefix_trims_tail(monkeypatch, tmp_pat
     assert f0["exhaust"] == "trim_tail"
     cur = _field_map(f0)["items"]["current"]
     assert cur["len"] == 8
-    assert any("截尾" in m and "trimmed=3" in m for m in logs)
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn104.json"
+    note_obj = json.loads(note.read_text(encoding="utf-8"))
+    trimmed = note_obj.get("trimmed_tail") or []
+    assert trimmed and _field_map(trimmed[0])["items"]["current"]["len"] == 8
+
+
+def test_1801_over_limit_heal_rewritten_items_must_not_replace_prefix(monkeypatch, tmp_path):
+    """①c：heal 回改写后的短 items 不得替换原前缀；耗尽仍按原序留前 N。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    first = _items_json([_item(f"条目{i}") for i in range(8)])
+    # 补交企图用完全不同的 5 条替换——代码不得采纳
+    healed = _items_json([_item(f"篡改{i}") for i in range(5)])
+    n = {"i": 0}
+
+    def _llm(_a, _p, tag="", prior_messages=None):
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=115)
+    assert drafts is not None
+    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(MAX_RESCRIPT_DRAFTS)]
+    assert all(not t.startswith("篡改") for t in (d["title"] for d in drafts))
 
 
 # ---------------------------------------------------------------------------
