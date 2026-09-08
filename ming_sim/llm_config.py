@@ -215,6 +215,17 @@ def is_deepseek_base_url(base_url: str) -> bool:
     return "deepseek.com" in base_url.lower()
 
 
+def is_deepseek_model(model: str) -> bool:
+    """模型 id 属 DeepSeek 系（含 deepseek/ 前缀与 bare deepseek-* id）。"""
+    raw = (model or "").strip().lower()
+    if not raw:
+        return False
+    if raw.startswith("deepseek/"):
+        return True
+    model_id = raw.rsplit("/", 1)[-1]
+    return model_id.startswith("deepseek")
+
+
 def is_dashscope_base_url(base_url: str) -> bool:
     return "dashscope" in base_url.lower() or "aliyuncs" in base_url.lower()
 
@@ -224,9 +235,20 @@ def is_minimax_base_url(base_url: str) -> bool:
     return "minimaxi.com" in lowered or "minimax.io" in lowered
 
 
-def provider_extra_body(base_url: str) -> Optional[Dict[str, object]]:
-    if is_deepseek_base_url(base_url):
-        return {"thinking": {"type": "disabled"}}
+def provider_extra_body(base_url: str, model: str = "") -> Optional[Dict[str, object]]:
+    """Provider 默认 extra_body。
+
+    #1797：DeepSeek 全系关思考——判据是模型 id（非 base_url  alone）。
+    键按端点实测分派（runner 复放 + 本仓既有官方行为）：
+    - 官方 deepseek.com：{"thinking": {"type": "disabled"}}（既有，有效）
+    - 中转商（非 deepseek.com）：{"reasoning": {"enabled": False}}
+      （thinking.disabled 在 Nous/hermes 无效；reasoning.enabled=false 有效）
+    非 DeepSeek 模型：dashscope/minimax 分支不变。
+    """
+    if is_deepseek_model(model):
+        if is_deepseek_base_url(base_url):
+            return {"thinking": {"type": "disabled"}}
+        return {"reasoning": {"enabled": False}}
     if is_dashscope_base_url(base_url):
         return {"enable_thinking": False}
     if is_minimax_base_url(base_url):

@@ -63,33 +63,140 @@ _DUMP_LLM = os.environ.get("MING_SIM_DUMP_LLM", "").strip() in ("1", "true", "ye
 _DUMP_PATH = f"scripts/runs/llm_dump_{os.getpid()}.log"
 
 
+def _dump_field_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except TypeError:
+        return str(value)
+
+
+def _message_attr(message: Any, name: str) -> Any:
+    """取 message 上真实存在的字段；dict / provider_data 回退，不臆造名。"""
+    if isinstance(message, dict):
+        if name in message:
+            return message.get(name)
+    else:
+        if hasattr(message, name):
+            val = getattr(message, name, None)
+            if val is not None:
+                return val
+        pdata = getattr(message, "provider_data", None)
+        if isinstance(pdata, dict) and name in pdata:
+            return pdata.get(name)
+    return None
+
+
+def _format_usage_like(obj: Any) -> str:
+    """把 usage/metrics 压成可读行；字段名跟真实对象走。"""
+    if obj is None:
+        return ""
+    if isinstance(obj, dict):
+        return _dump_field_text(obj)
+    keys = (
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "cached_tokens",
+        "cost",
+    )
+    parts: Dict[str, Any] = {}
+    for key in keys:
+        if hasattr(obj, key):
+            val = getattr(obj, key, None)
+            if val is not None:
+                parts[key] = val
+    details = getattr(obj, "completion_tokens_details", None)
+    if details is not None:
+        if isinstance(details, dict):
+            parts["completion_tokens_details"] = details
+            if details.get("reasoning_tokens") is not None and "reasoning_tokens" not in parts:
+                parts["reasoning_tokens"] = details.get("reasoning_tokens")
+        else:
+            detail_bits: Dict[str, Any] = {}
+            for dkey in (
+                "reasoning_tokens",
+                "accepted_prediction_tokens",
+                "rejected_prediction_tokens",
+                "audio_tokens",
+                "image_tokens",
+            ):
+                if hasattr(details, dkey):
+                    dval = getattr(details, dkey, None)
+                    if dval is not None:
+                        detail_bits[dkey] = dval
+            if detail_bits:
+                parts["completion_tokens_details"] = detail_bits
+                if "reasoning_tokens" in detail_bits and "reasoning_tokens" not in parts:
+                    parts["reasoning_tokens"] = detail_bits["reasoning_tokens"]
+    return _dump_field_text(parts) if parts else repr(obj)
+
+
 def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> None:
     """把这次 run 的完整 messages（含 system prompt）追加写盘。仅 _DUMP_LLM 开时生效。
 
     非流式：output 即 RunOutput，带 .messages。
-    流式：终结事件 RunCompletedEvent 无 .messages，改从 agent.get_last_run_output() 取。"""
+    流式：终结事件 RunCompletedEvent 无 .messages，改从 agent.get_last_run_output() 取。
+    #1797：加记 reasoning 类字段（长度+正文）与 usage/metrics（含 reasoning token）。
+    """
     if not _DUMP_LLM:
         return
+    run_src = output
     msgs = getattr(output, "messages", None)
     if not msgs and agent is not None:
         try:
             last = agent.get_last_run_output()
             msgs = getattr(last, "messages", None)
+            if last is not None:
+                run_src = last
         except Exception:  # noqa: BLE001 — dump 是调试旁路，任何异常都不该断结算
             msgs = None
     if not msgs:
         return
     lines = [f"\n{'='*80}\n[DUMP] tag={tag}  共 {len(msgs)} 条 message\n{'='*80}"]
+    # 真实结构里出现过的 reasoning 类名（官方 reasoning_content / vLLM·Nous reasoning 等）
+    reasoning_field_names = (
+        "reasoning_content",
+        "redacted_reasoning_content",
+        "reasoning",
+        "reasoning_details",
+    )
     for i, m in enumerate(msgs):
-        role = getattr(m, "role", "?")
-        content = getattr(m, "content", "")
+        role = getattr(m, "role", m.get("role", "?") if isinstance(m, dict) else "?")
+        content = getattr(m, "content", None) if not isinstance(m, dict) else m.get("content")
         if content is None:
             content = ""
         lines.append(f"\n----- #{i} role={role} ({len(str(content))} 字) -----\n{content}")
+        for fname in reasoning_field_names:
+            rval = _message_attr(m, fname)
+            if rval is None or rval == "" or rval == [] or rval == {}:
+                continue
+            rtext = _dump_field_text(rval)
+            lines.append(f"\n  [{fname}] ({len(rtext)} 字)\n{rtext}")
         # 工具调用也带上
-        tcalls = getattr(m, "tool_calls", None)
+        tcalls = getattr(m, "tool_calls", None) if not isinstance(m, dict) else m.get("tool_calls")
         if tcalls:
             lines.append(f"\n  [tool_calls] {tcalls}")
+        m_metrics = getattr(m, "metrics", None) if not isinstance(m, dict) else m.get("metrics")
+        if m_metrics is not None:
+            lines.append(f"\n  [metrics] {_format_usage_like(m_metrics)}")
+    run_reasoning = getattr(run_src, "reasoning_content", None)
+    if run_reasoning:
+        rtext = _dump_field_text(run_reasoning)
+        lines.append(f"\n[run.reasoning_content] ({len(rtext)} 字)\n{rtext}")
+    run_metrics = getattr(run_src, "metrics", None)
+    if run_metrics is None:
+        run_metrics = getattr(run_src, "usage", None)
+    if run_metrics is not None:
+        lines.append(f"\n[usage/metrics] {_format_usage_like(run_metrics)}")
     try:
         with open(_DUMP_PATH, "a", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
