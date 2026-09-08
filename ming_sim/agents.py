@@ -85,7 +85,7 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
 
     非流式：output 即 RunOutput，带 .messages。
     流式：终结事件 RunCompletedEvent 无 .messages，改从 agent.get_last_run_output() 取。
-    #1797：加记 reasoning 类字段（长度+正文）与 usage/metrics（原样）。
+    #1797：加记 reasoning 类字段（长度+正文）、usage/metrics、finish_reason（原样；缺则记缺）。
     """
     if not _DUMP_LLM:
         return
@@ -129,6 +129,33 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
         run_metrics = getattr(run_src, "usage", None)
     if run_metrics is not None:
         lines.append(f"\n[usage/metrics] {_dump_value(run_metrics)}")
+    # finish_reason：只认字面名；run / choices[0] / model_provider_data / message / provider_data
+    finish_reason = getattr(run_src, "finish_reason", None)
+    if finish_reason is None:
+        choices = getattr(run_src, "choices", None)
+        if choices:
+            ch0 = choices[0]
+            finish_reason = (
+                ch0.get("finish_reason") if isinstance(ch0, dict) else getattr(ch0, "finish_reason", None)
+            )
+    if finish_reason is None:
+        mpd = getattr(run_src, "model_provider_data", None)
+        if isinstance(mpd, dict):
+            finish_reason = mpd.get("finish_reason")
+    if finish_reason is None:
+        for m in msgs:
+            fr = getattr(m, "finish_reason", None)
+            if fr is None:
+                pdata = getattr(m, "provider_data", None)
+                if isinstance(pdata, dict):
+                    fr = pdata.get("finish_reason")
+            if fr is not None and fr != "":
+                finish_reason = fr
+                break
+    if finish_reason is None or finish_reason == "":
+        lines.append("\n[finish_reason] (缺)")
+    else:
+        lines.append(f"\n[finish_reason] {_dump_value(finish_reason)}")
     try:
         with open(_DUMP_PATH, "a", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
