@@ -143,6 +143,16 @@ def _raise_option_missing_fields(
     )
 
 
+# #1801：同一 heal 回路扩到 top/item/option；exhaust 决定耗尽后只影响自己的处置。
+_EXHAUST_DROP_OPTION = "drop_option"
+_EXHAUST_DROP_ITEM = "drop_item"
+_EXHAUST_DEGRADE_MONTH = "degrade_month"
+_EXHAUST_IGNORE_TOP_KEYS = "ignore_top_keys"
+_SCOPE_OPTION = "option"
+_SCOPE_ITEM = "item"
+_SCOPE_TOP = "top"
+
+
 @dataclass(frozen=True)
 class RescriptOptionMissingFailure:
     item_index: int
@@ -153,18 +163,21 @@ class RescriptOptionMissingFailure:
     # 机面结构身份：补交请求显式携带、响应回指；不依赖 title/label 自由文。
     heal_id: str = ""
     field_failures: Tuple[Dict[str, object], ...] = ()
+    # #1801 扩面：option（#1746 默认）/ item / top；exhaust 为耗尽处置。
+    scope: str = _SCOPE_OPTION
+    exhaust: str = _EXHAUST_DROP_OPTION
 
 
 class RescriptOptionMissingFieldsBatch(ValueError):
-    """一批 option 契约失败（validate isolate 模式一次收齐，供补交/剔除）。"""
+    """一批可定位契约失败（validate isolate 模式一次收齐，供同一 heal 回路补交/剔除）。"""
 
     def __init__(self, failures: Sequence[RescriptOptionMissingFailure]) -> None:
         self.failures = list(failures)
         parts = [
-            f"{f.title!r}#{f.option_index}:{','.join(f.missing_fields)}"
+            f"{f.scope}:{f.heal_id or f.title!r}#{f.option_index}:{','.join(f.missing_fields)}"
             for f in self.failures
         ]
-        super().__init__("票拟 option 契约失败：" + "; ".join(parts))
+        super().__init__("票拟契约失败：" + "; ".join(parts))
 
 # #657 C.3 层 A option 必填键（缺一 shape 失败）；draft_capability 由服务端派生写入。
 # #1624 / PR#1719：required/present/action-conditional 为 typed 单源——
@@ -1355,67 +1368,267 @@ def _note_option_utf8_failures(
                 )
 
 
+def _item_heal_id(item_index: int) -> str:
+    return f"item:{int(item_index)}"
+
+
+def _top_heal_id(kind: str) -> str:
+    return f"top:{kind}"
+
+
+def _item_failure(
+    *,
+    item_index: int,
+    title: str = "",
+    raw_item: object = None,
+    field_failures: Sequence[Mapping[str, object]],
+) -> RescriptOptionMissingFailure:
+    facts = tuple(dict(f) for f in field_failures)
+    return RescriptOptionMissingFailure(
+        item_index=int(item_index),
+        option_index=-1,
+        title=str(title or ""),
+        missing_fields=tuple(str(f["field"]) for f in facts),
+        raw_option=raw_item,
+        heal_id=_item_heal_id(item_index),
+        field_failures=facts,
+        scope=_SCOPE_ITEM,
+        exhaust=_EXHAUST_DROP_ITEM,
+    )
+
+
+def _top_failure(
+    *,
+    kind: str,
+    exhaust: str,
+    raw: object = None,
+    field_failures: Sequence[Mapping[str, object]],
+    title: str = "",
+) -> RescriptOptionMissingFailure:
+    facts = tuple(dict(f) for f in field_failures)
+    return RescriptOptionMissingFailure(
+        item_index=-1,
+        option_index=-1,
+        title=str(title or ""),
+        missing_fields=tuple(str(f["field"]) for f in facts),
+        raw_option=raw,
+        heal_id=_top_heal_id(kind),
+        field_failures=facts,
+        scope=_SCOPE_TOP,
+        exhaust=exhaust,
+    )
+
+
+def _contract_exc_to_top_failure(
+    exc: BaseException,
+    *,
+    raw: str = "",
+) -> RescriptOptionMissingFailure:
+    """首抽/未成形解析失败 → 同一 heal 回路的 top 失败（耗尽无票拟）。"""
+    return _top_failure(
+        kind="unformed",
+        exhaust=_EXHAUST_DEGRADE_MONTH,
+        raw={"error": type(exc).__name__, "detail": str(exc)[:500], "raw_summary": (raw or "")[:500]},
+        field_failures=[
+            _field_failure(
+                "items",
+                current={
+                    "error": type(exc).__name__,
+                    "detail": str(exc)[:500],
+                    "raw_summary": (raw or "")[:500],
+                },
+                expected={"type": "object", "keys": ["items"], "items_type": "list"},
+            )
+        ],
+    )
+
+
 def validate_rescript_draft_items(
     data: object,
     board_issue_ids: set[int],
     *,
-    min_options: int = 2,
-    max_options: int = 3,
     isolate_option_missing: bool = False,
     region_target_ids: Optional[set[str]] = None,
     army_target_ids: Optional[set[str]] = None,
 ) -> List[Dict[str, object]]:
     """shape 校验（F2.2/F2.5）＋权威快照绑定＋原样不变式（F3.3）。
 
-    - 顶层非法（非 dict / 无 items list）→ raise ValueError（整批降级，本月无头版）；
-    - 条目必需字段缺失或非法（title/context）→ raise ValueError 整批失败；
-    - options 数量：首抽/常规默认 2–3（F2.2）；#1746 剔除后 min_options=1 仍可呈；
+    - 顶层非法（非 dict / 无 items list）：isolate 时 top 失败（耗尽无票拟）；否则 ValueError；
+    - 顶层未知键：isolate 时 top 失败（耗尽忽略该键）；否则 ValueError；
+    - 条目数无硬上限（#1801 ①c owner 令删门；给 N 条即 N 条全照呈）；
+    - 条目必需字段缺失/空白/不可编码/非 object/未知字段：isolate 时条目失败
+      （耗尽只剔该条目）；否则 ValueError；
+    - options 为空或非 list：该条目按 F2.3 不足照实消失、其它条目照常呈上（#1801 删项数门）；
     - 可定位单 option 的契约失败（#1746，不问错种类）：isolate_option_missing=True
       时收齐为 RescriptOptionMissingFieldsBatch（补交／耗尽单 option 剔除）；
       False 时仍整批 ValueError（旧直调行为）；
     - 合法 `items=[]` 仍是「本月无急务」（F2.3）；
     - 自由文本零删改；draft_capability 服务端重算。
     """
-    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
-        raise ValueError("票拟生成输出顶层非法：须为 {\"items\":[...]}")
-    unknown_top = set(data) - _TOP_ALLOWED_KEYS
-    if unknown_top:
-        raise ValueError(
-            f"票拟顶层含未知字段（整批 shape 错，F2.5/F3.3）：{sorted(unknown_top)}"
-        )
-    items = data["items"]
-    if len(items) > MAX_RESCRIPT_DRAFTS:
-        raise ValueError(
-            f"票拟条目超上限：{len(items)} 条 > {MAX_RESCRIPT_DRAFTS}（整批失败，F2.5）"
-        )
+    missing_failures: List[RescriptOptionMissingFailure] = []
 
-    def _required_text(item: Dict[str, object], field: str) -> str:
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        if isolate_option_missing:
+            current_type = type(data).__name__
+            items_val: object = None
+            if isinstance(data, dict):
+                items_val = data.get("items")
+                current_type = f"dict.items={type(items_val).__name__}"
+            raise RescriptOptionMissingFieldsBatch([
+                _top_failure(
+                    kind="unformed",
+                    exhaust=_EXHAUST_DEGRADE_MONTH,
+                    raw=data if isinstance(data, dict) else {"type": type(data).__name__},
+                    field_failures=[
+                        _field_failure(
+                            "items",
+                            current=current_type if not isinstance(data, dict) else items_val,
+                            expected={"type": "object", "keys": ["items"], "items_type": "list"},
+                        )
+                    ],
+                )
+            ])
+        raise ValueError("票拟生成输出顶层非法：须为 {\"items\":[...]}")
+
+    unknown_top = sorted(set(data) - _TOP_ALLOWED_KEYS)
+    if unknown_top:
+        if isolate_option_missing:
+            missing_failures.append(
+                _top_failure(
+                    kind="unknown_keys",
+                    exhaust=_EXHAUST_IGNORE_TOP_KEYS,
+                    raw={k: data.get(k) for k in unknown_top},
+                    field_failures=[
+                        _field_failure(
+                            key,
+                            current=data.get(key),
+                            expected={"allowed_keys": sorted(_TOP_ALLOWED_KEYS)},
+                        )
+                        for key in unknown_top
+                    ],
+                )
+            )
+        else:
+            raise ValueError(
+                f"票拟顶层含未知字段（整批 shape 错，F2.5/F3.3）：{unknown_top}"
+            )
+
+    items = data["items"]
+
+    def _required_text_or_fail(
+        item: Dict[str, object],
+        field: str,
+        *,
+        item_index: int,
+        title_hint: str,
+    ) -> Optional[str]:
         value = item.get(field)
         if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"票拟条目缺必需字段或为空白：{field}")
-        _assert_utf8(value, field)
+            msg = f"票拟条目缺必需字段或为空白：{field}"
+            if isolate_option_missing:
+                missing_failures.append(
+                    _item_failure(
+                        item_index=item_index,
+                        title=title_hint,
+                        raw_item=item,
+                        field_failures=[
+                            _field_failure(
+                                field,
+                                current=value,
+                                expected={"type": "nonempty_str"},
+                            )
+                        ],
+                    )
+                )
+                return None
+            raise ValueError(msg)
+        try:
+            _assert_utf8(value, field)
+        except ValueError:
+            if isolate_option_missing:
+                missing_failures.append(
+                    _item_failure(
+                        item_index=item_index,
+                        title=title_hint if field != "title" else value,
+                        raw_item=item,
+                        field_failures=[
+                            _field_failure(
+                                field,
+                                current=value,
+                                expected={"encoding": "utf-8"},
+                            )
+                        ],
+                    )
+                )
+                return None
+            raise
         return value  # 原样返回，零删改（F3.3）
 
     drafts: List[Dict[str, object]] = []
-    missing_failures: List[RescriptOptionMissingFailure] = []
     for item_index, raw in enumerate(items):
         if not isinstance(raw, dict):
+            if isolate_option_missing:
+                missing_failures.append(
+                    _item_failure(
+                        item_index=item_index,
+                        title="",
+                        raw_item=raw,
+                        field_failures=[
+                            _field_failure(
+                                "item",
+                                current=type(raw).__name__,
+                                expected={"type": "object"},
+                            )
+                        ],
+                    )
+                )
+                continue
             raise ValueError("票拟条目非 object（整批失败，F2.5）")
-        unknown = set(raw) - _ITEM_ALLOWED_KEYS
+        unknown = sorted(set(raw) - _ITEM_ALLOWED_KEYS)
         if unknown:
+            if isolate_option_missing:
+                title_hint = raw.get("title") if isinstance(raw.get("title"), str) else ""
+                missing_failures.append(
+                    _item_failure(
+                        item_index=item_index,
+                        title=str(title_hint or ""),
+                        raw_item=raw,
+                        field_failures=[
+                            _field_failure(
+                                key,
+                                current=raw.get(key),
+                                expected={"allowed_keys": sorted(_ITEM_ALLOWED_KEYS)},
+                            )
+                            for key in unknown
+                        ],
+                    )
+                )
+                continue
             raise ValueError(
-                f"票拟条目含未知字段（整批 shape 错，F2.5/F3.3 零删改不静默省略）：{sorted(unknown)}"
+                f"票拟条目含未知字段（整批 shape 错，F2.5/F3.3 零删改不静默省略）：{unknown}"
             )
-        title = _required_text(raw, "title")
-        context = _required_text(raw, "context")
+        title_val = _required_text_or_fail(
+            raw, "title", item_index=item_index, title_hint="",
+        )
+        if title_val is None:
+            continue
+        context_val = _required_text_or_fail(
+            raw, "context", item_index=item_index, title_hint=title_val,
+        )
+        if context_val is None:
+            continue
+        title = title_val
+        context = context_val
         raw_opts = raw.get("options")
-        if not isinstance(raw_opts, list) or not (
-            min_options <= len(raw_opts) <= max_options
-        ):
-            raise ValueError(
-                f"票拟条目 options 非 {min_options}-{max_options} 项"
-                f"（整批失败，F2.2）：{title!r}"
+        if not isinstance(raw_opts, list) or not raw_opts:
+            # #1801：项数门已删；0 项／非 list 按 F2.3 不足照实消失，不整批判死
+            opts_len = len(raw_opts) if isinstance(raw_opts, list) else "n/a"
+            tlog(
+                f"[rescript] 票拟条目 options 不足照实消失（F2.3）："
+                f"title={title!r} options_type={type(raw_opts).__name__} "
+                f"options_len={opts_len}"
             )
+            continue
         options: List[Dict[str, object]] = []
         item_missing: List[RescriptOptionMissingFailure] = []
         for option_index, opt in enumerate(raw_opts):
@@ -1548,31 +1761,41 @@ def _missing_field_heal_feedback(
     attempt: int,
     max_attempts: int,
 ) -> str:
-    """#1746 契约失败补交请求：同一会话续接的结构化 JSON（字段/现值/期望 + 身份 + 底稿）。
+    """#1746/#1801 契约失败补交请求：同一会话续接的结构化 JSON（字段/现值/期望 + 身份 + 底稿）。
 
-    heal-covers-illegal-values-too：不问错种类。请求体是实际送给 LLM 的 user 内容，
-    机器与测试只认 typed 键，不解析散文。源值经 JSON 运输边界转义，loads 后与源一致。
+    heal-covers-illegal-values-too：不问错种类；scope=option/item/top 共用本请求。
+    请求体是实际送给 LLM 的 user 内容，机器与测试只认 typed 键，不解析散文。
     """
     payload_failures: List[Dict[str, object]] = []
     for failure in failures:
-        heal_id = failure.heal_id or _option_heal_id(
-            failure.item_index, failure.option_index,
-        )
+        scope = failure.scope or _SCOPE_OPTION
+        if failure.heal_id:
+            heal_id = failure.heal_id
+        elif scope == _SCOPE_ITEM:
+            heal_id = _item_heal_id(failure.item_index)
+        elif scope == _SCOPE_TOP:
+            heal_id = _top_heal_id("shape")
+        else:
+            heal_id = _option_heal_id(failure.item_index, failure.option_index)
         field_failures = [dict(fact) for fact in failure.field_failures]
-        draft_option: object = None
+        draft_unit: object = None
         if isinstance(failure.raw_option, dict):
-            draft_option = dict(failure.raw_option)
-            draft_option["heal_id"] = heal_id
+            draft_unit = dict(failure.raw_option)
+            draft_unit["heal_id"] = heal_id
         elif failure.raw_option is not None:
-            draft_option = failure.raw_option
-        payload_failures.append({
+            draft_unit = failure.raw_option
+        entry: Dict[str, object] = {
             "heal_id": heal_id,
+            "scope": scope,
+            "exhaust": failure.exhaust or _EXHAUST_DROP_OPTION,
             "item_index": int(failure.item_index),
             "option_index": int(failure.option_index),
             "missing_fields": list(failure.missing_fields),
             "field_failures": field_failures,
-            "draft_option": draft_option,
-        })
+            # 兼容 #1746：option 失败仍用 draft_option 键；其它 scope 同值。
+            "draft_option": draft_unit,
+        }
+        payload_failures.append(entry)
     body: Dict[str, object] = {
         "kind": "rescript_option_field_heal",
         "attempt": int(attempt),
@@ -1581,8 +1804,9 @@ def _missing_field_heal_feedback(
             "Fix listed field_failures (field/current/expected).",
             'Return partial fields: {"heals":[{"heal_id":"i:o", "<field>":...},...]} ',
             'or complete option: {"heals":[{"heal_id":"i:o", "option":{...}}]} ',
-            'or items with explicit heal_id on each fixed option.',
-            "Do not rewrite sibling options; code does not guess defaults.",
+            'or item fix: {"heals":[{"heal_id":"item:i", "title":..., "context":...}]} ',
+            'or full redraw: {"items":[...]} (required for top/unformed).',
+            "Do not rewrite sibling units; code does not guess defaults.",
         ],
         "failures": payload_failures,
     }
@@ -1602,14 +1826,16 @@ def _healed_options_by_id(
 ) -> Dict[str, Tuple[dict, bool]]:
     """一次解析补交响应 → heal_id 索引。
 
-    契约三形态（显式语义，不猜形）：
-    - 部分字段 heals（无 option 键）→ replace=False，合并；
+    契约形态（显式语义，不猜形）：
+    - 部分字段 heals（无 option/item 键）→ replace=False，合并；
     - 完整 option heals（有 option 键）→ replace=True，整份替换；
-    - 带显式 heal_id 的 items → replace=True，整份替换。
+    - 完整 item heals（有 item 键）→ replace=True，整份替换；
+    - 带显式 heal_id 的 items 内 option → replace=True，整份替换；
+    - 带显式 heal_id 的 items 条目本身 → replace=True（item:* id）。
     同 id 多命中记为冲突（值 None），查找时拒绝。
     """
     index: Dict[str, Optional[Tuple[dict, bool]]] = {}
-    _ID_KEYS = frozenset({"heal_id", "item_index", "option_index"})
+    _ID_KEYS = frozenset({"heal_id", "item_index", "option_index", "scope", "exhaust"})
 
     def _push(heal_id: str, option: object, *, replace: bool) -> None:
         if not heal_id or not isinstance(option, dict):
@@ -1635,6 +1861,11 @@ def _healed_options_by_id(
                 if isinstance(opt, dict):
                     _push(heal_id, opt, replace=True)
                 continue
+            if "item" in entry:
+                item_body = entry.get("item")
+                if isinstance(item_body, dict):
+                    _push(heal_id, item_body, replace=True)
+                continue
             # 身份键清洗唯一在 _push；部分体直接移交 entry
             _push(heal_id, entry, replace=False)
 
@@ -1643,6 +1874,9 @@ def _healed_options_by_id(
         for item in items:
             if not isinstance(item, dict):
                 continue
+            item_hid = _explicit_heal_id(item)
+            if item_hid:
+                _push(item_hid, item, replace=True)
             opts = item.get("options")
             if not isinstance(opts, list):
                 continue
@@ -1654,33 +1888,22 @@ def _healed_options_by_id(
     return {k: v for k, v in index.items() if v is not None}
 
 
-def _find_healed_option_for_failure(
-    by_id: Mapping[str, Tuple[dict, bool]],
-    failure: RescriptOptionMissingFailure,
-) -> Optional[Tuple[dict, bool]]:
-    """按补交请求显式 heal_id 回指定位；缺失或冲突均拒绝。"""
-    want = (failure.heal_id or _option_heal_id(
-        failure.item_index, failure.option_index,
-    )).strip()
-    if not want:
-        return None
-    return by_id.get(want)
-
-
 def _apply_option_heal(
     baseline_opt: object,
     replacement: dict,
     failure: RescriptOptionMissingFailure,
     *,
     replace: bool,
+    allowed_keys: Optional[frozenset] = None,
 ) -> Optional[dict]:
-    """把补交结果写入底稿 option。
+    """把补交结果写入底稿 option/item。
 
-    - 显式完整 option（option 包装 / items 形态）→ 整份替换，交权威完整校验；
+    - 显式完整包装 → 整份替换，交权威完整校验；
     - 部分字段 → 合并提供的键；未知多余键若在失败集且未再给出则删除；
     - 底稿非 object：接受替换体；
     - 不按 required 键猜完整形态；不把显式完整体自动补成原稿。
     """
+    allow = allowed_keys if allowed_keys is not None else _LAYER_A_ALLOWED_KEYS
     # 一次 deepcopy 隔离 ownership；合并路径不再对同一值二次复制
     body = {k: copy.deepcopy(v) for k, v in replacement.items()}
     if not isinstance(baseline_opt, dict) or replace:
@@ -1697,36 +1920,112 @@ def _apply_option_heal(
         changed = True
     for field in failure.missing_fields:
         key = str(field)
-        if key == _OPTION_REPLACE_FIELD or key in body:
+        if key == _OPTION_REPLACE_FIELD or key == "item" or key in body:
             continue
         # 未知/多余键：补交未再给出 → 从底稿删除
-        if key in out and key not in _LAYER_A_ALLOWED_KEYS:
+        if key in out and key not in allow:
             del out[key]
             changed = True
     return out if changed else None
 
 
+def _find_healed_unit_for_failure(
+    by_id: Mapping[str, Tuple[dict, bool]],
+    failure: RescriptOptionMissingFailure,
+) -> Optional[Tuple[dict, bool]]:
+    scope = failure.scope or _SCOPE_OPTION
+    if failure.heal_id:
+        want = failure.heal_id.strip()
+    elif scope == _SCOPE_ITEM:
+        want = _item_heal_id(failure.item_index)
+    elif scope == _SCOPE_TOP:
+        want = (failure.heal_id or "").strip()
+    else:
+        want = _option_heal_id(failure.item_index, failure.option_index)
+    if not want:
+        return None
+    return by_id.get(want)
+
+
 def _merge_healed_missing_options(
-    baseline: Dict[str, Any],
+    baseline: Optional[Dict[str, Any]],
     healed: Dict[str, Any],
     failures: Sequence[RescriptOptionMissingFailure],
 ) -> Dict[str, Any]:
-    """#1746：回填失败 option；兄弟 option 不改写。
+    """#1746/#1801：回填失败单元；兄弟不改写。
 
-    显式完整 option 整份替换；部分字段合并。底稿与坐标依已成立不变式直接消费。
+    - top/未成形：补交若给 items，整份替换底稿；
+    - item：按 heal_id 合并/替换条目；
+    - option：既有合并语义。
     缺响应/身份冲突 → 跳过该项，继续下一次补交（外部输入契约）。
     """
+    has_unformed = any(
+        (f.exhaust or "") == _EXHAUST_DEGRADE_MONTH for f in failures
+    )
+    # 仅未成形 top 允许整份 items 重画；①b-2 的失败单元不是 items 内容，
+    # 不得因补交带 items 就改写/重排/清空原合法条目（只影响自己）。
+    if (baseline is None or has_unformed) and isinstance(healed.get("items"), list):
+        return copy.deepcopy(healed)
+
+    if baseline is None or has_unformed:
+        # 无底稿/未成形：补交必须显式给 items；不得把旁路 JSON 空壳洗成「本月无急务」
+        raise ValueError(
+            '票拟补交未成形：须返回 {"items":[...]}'
+        )
+
     result = copy.deepcopy(baseline)
+    if "items" not in result or not isinstance(result.get("items"), list):
+        # 底稿无 items 却非 unformed 路径：保持失败，等耗尽/下轮；不偷换补交 items
+        raise ValueError(
+            '票拟补交顶层无 items list：须返回 heals 或待耗尽处置'
+        )
+
+    # ①b-2：补交响应未再携带未知顶层键 → 只从底稿删这些键，不改 items
+    for failure in failures:
+        if (failure.exhaust or "") != _EXHAUST_IGNORE_TOP_KEYS:
+            continue
+        for fact in failure.field_failures:
+            key = str(fact.get("field") or "")
+            if key and key not in _TOP_ALLOWED_KEYS and key not in healed:
+                result.pop(key, None)
+
     base_items = result["items"]
     by_id = _healed_options_by_id(healed)
     for failure in failures:
-        base_item = base_items[failure.item_index]
-        base_opts = base_item["options"]
-        base_opt = base_opts[failure.option_index]
-        found = _find_healed_option_for_failure(by_id, failure)
+        scope = failure.scope or _SCOPE_OPTION
+        if scope == _SCOPE_TOP:
+            continue
+        found = _find_healed_unit_for_failure(by_id, failure)
         if found is None:
-            continue  # 缺响应或身份冲突：外部输入，下次补交
+            continue
         replacement, replace = found
+        if scope == _SCOPE_ITEM:
+            if not (0 <= failure.item_index < len(base_items)):
+                continue
+            base_item = base_items[failure.item_index]
+            patched = _apply_option_heal(
+                base_item if isinstance(base_item, dict) else None,
+                replacement,
+                failure,
+                replace=replace,
+                allowed_keys=_ITEM_ALLOWED_KEYS,
+            )
+            if patched is None:
+                continue
+            base_items[failure.item_index] = patched
+            continue
+        # option
+        if not (0 <= failure.item_index < len(base_items)):
+            continue
+        base_item = base_items[failure.item_index]
+        if not isinstance(base_item, dict):
+            continue
+        base_opts = base_item.get("options")
+        if not isinstance(base_opts, list):
+            continue
+        if not (0 <= failure.option_index < len(base_opts)):
+            continue
+        base_opt = base_opts[failure.option_index]
         patched = _apply_option_heal(
             base_opt, replacement, failure, replace=replace,
         )
@@ -1737,35 +2036,85 @@ def _merge_healed_missing_options(
 
 
 def _drop_options_by_failures(
-    data: Dict[str, Any],
+    data: Optional[Dict[str, Any]],
     failures: Sequence[RescriptOptionMissingFailure],
-) -> Dict[str, Any]:
-    """耗尽后只剔失败 option；急务条目 options 空则整条去掉（F2.3 不足照实）。
+) -> Optional[Dict[str, Any]]:
+    """耗尽后按失败单元只影响自己（#1746 option 剔 + #1801 item/top 处置）。
 
-    底稿 items 依已成立不变式直接消费；程序破坏自然上抛。
+    - degrade_month 且无可用 items → None（本月无票拟）；
+    - ignore_top_keys → 丢掉未知顶层键，响亮由调用方 tlog；
+    - drop_item → 剔该条目；
+    - drop_option → 剔该 option；条目 options 空则整条去掉（F2.3）。
     """
-    drop_map: Dict[int, set[int]] = {}
+    if data is None or not isinstance(data, dict):
+        if any((f.exhaust or "") == _EXHAUST_DEGRADE_MONTH for f in failures):
+            return None
+        return {"items": []}
+
+    result = copy.deepcopy(data)
+
+    # ①b-2：忽略顶层未知键
+    ignore_keys: List[str] = []
     for failure in failures:
-        drop_map.setdefault(int(failure.item_index), set()).add(int(failure.option_index))
-    raw_items = data["items"]
+        if (failure.exhaust or "") != _EXHAUST_IGNORE_TOP_KEYS:
+            continue
+        for fact in failure.field_failures:
+            key = str(fact.get("field") or "")
+            if key and key not in _TOP_ALLOWED_KEYS:
+                ignore_keys.append(key)
+    for key in ignore_keys:
+        result.pop(key, None)
+    if ignore_keys:
+        tlog(
+            f"[rescript] 顶层未知键耗尽后忽略（响亮）：{json.dumps(sorted(set(ignore_keys)))}"
+        )
+
+    if not isinstance(result.get("items"), list):
+        if any((f.exhaust or "") == _EXHAUST_DEGRADE_MONTH for f in failures):
+            return None
+        return {"items": []}
+
+    items: List[object] = list(result["items"])
+
+    drop_items: set[int] = set()
+    drop_opts: Dict[int, set[int]] = {}
+    for failure in failures:
+        exhaust = failure.exhaust or _EXHAUST_DROP_OPTION
+        if exhaust == _EXHAUST_DROP_ITEM and failure.item_index >= 0:
+            drop_items.add(int(failure.item_index))
+        elif exhaust == _EXHAUST_DROP_OPTION and failure.item_index >= 0 and failure.option_index >= 0:
+            drop_opts.setdefault(int(failure.item_index), set()).add(int(failure.option_index))
+
     kept_items: List[object] = []
-    for item_index, item in enumerate(raw_items):
-        drop_idxs = drop_map.get(item_index) or set()
+    for item_index, item in enumerate(items):
+        if item_index in drop_items:
+            continue
+        drop_idxs = drop_opts.get(item_index) or set()
         if not drop_idxs:
             kept_items.append(item)
             continue
-        raw_opts = item["options"]
+        if not isinstance(item, dict):
+            continue
+        raw_opts = item.get("options")
+        if not isinstance(raw_opts, list):
+            continue
         kept_opts = [
             opt for option_index, opt in enumerate(raw_opts)
             if option_index not in drop_idxs
         ]
         if not kept_opts:
-            # 该急务 options 全剔 → 条目消失，其它急务不受牵连
             continue
         new_item = dict(item)
         new_item["options"] = kept_opts
         kept_items.append(new_item)
-    return {"items": kept_items}
+
+    # 只保留 items；顶层其它键已在 ignore 时处理，耗尽后输出干净顶层
+    out: Dict[str, Any] = {"items": kept_items}
+    if any((f.exhaust or "") == _EXHAUST_DEGRADE_MONTH for f in failures):
+        # 未成形耗尽：若仍无 list items 语义上应无票拟；有 items 则已成形，继续
+        if data is None or not isinstance(data.get("items"), list):
+            return None
+    return out
 
 
 def _failure_log_rows(
@@ -1773,11 +2122,19 @@ def _failure_log_rows(
 ) -> List[Dict[str, object]]:
     rows: List[Dict[str, object]] = []
     for failure in failures:
-        heal_id = failure.heal_id or _option_heal_id(
-            failure.item_index, failure.option_index,
-        )
+        scope = failure.scope or _SCOPE_OPTION
+        if failure.heal_id:
+            heal_id = failure.heal_id
+        elif scope == _SCOPE_ITEM:
+            heal_id = _item_heal_id(failure.item_index)
+        elif scope == _SCOPE_TOP:
+            heal_id = _top_heal_id("shape")
+        else:
+            heal_id = _option_heal_id(failure.item_index, failure.option_index)
         row: Dict[str, object] = {
             "heal_id": heal_id,
+            "scope": scope,
+            "exhaust": failure.exhaust or _EXHAUST_DROP_OPTION,
             "title": failure.title,
             "item_index": failure.item_index,
             "option_index": failure.option_index,
@@ -1798,7 +2155,7 @@ def _with_heal_response_contract_failure(
     exc: BaseException,
     raw: str,
 ) -> List[RescriptOptionMissingFailure]:
-    """补交响应自身不合契约时，把失败位置/现值/期望并入既有 option 失败事实。
+    """补交响应自身不合契约时，把失败位置/现值/期望并入既有失败事实。
 
     不另造循环：仍走同一 ≤3 补交/剔除回路；下一次请求经 field_failures 携带
     本次响应哪里不合契约，不得只重复旧缺字段。
@@ -1827,6 +2184,8 @@ def _with_heal_response_contract_failure(
                 raw_option=failure.raw_option,
                 heal_id=failure.heal_id,
                 field_failures=facts,
+                scope=failure.scope or _SCOPE_OPTION,
+                exhaust=failure.exhaust or _EXHAUST_DROP_OPTION,
             )
         )
     return out
@@ -1841,15 +2200,14 @@ def generate_rescript_draft(
 
     响亮降级契约（F2.5）按错误归属拆缝（r2 裁决 B3 / ADR 0005 / relation_brew 同款
     先例）：业务降级面只收声明类型——LLM 调用缝只收 typed LLMUnavailable；解析/shape
-    校验缝只收 LLMContractError/ValueError。命中即 tlog 留痕＋诊断目录附记，返回 None，
-    本月视作无头版。程序错（RuntimeError/KeyError/TypeError 等）**响亮上抛**——票拟
-    业务降级 ≠ 代码故障降级，不再以「非承重支路」为由吞程序错误。
+    校验失败走同一 heal 回路（#1746/#1801）。provider 不可用仍立即降级返回 None。
+    程序错（RuntimeError/KeyError/TypeError 等）**响亮上抛**。
 
-    #1746：可定位到单 option 的契约失败（缺/错/组合/接地/形，不问种类）→ 同一会话
-    补交（结构化失败事实 field/current/expected，最多 RESCRIPT_OPTION_FIELD_HEAL_RETRIES
-    次）；耗尽只剔除该 option，其余急务/option 照出，不告知皇帝；后台 tlog + error pack
-    响亮留痕。剔后剩 1 个 option 仍可呈（F2.2 局部修订）；剩 0 则该急务条目不足照实消失。
-    顶层/急务条目/provider 调用失败仍整批降级，不扩成所有异常都 heal。
+    #1746/#1801：可定位契约失败（option/item/top，不问种类）→ 同一会话补交
+    （结构化失败事实 field/current/expected，最多 RESCRIPT_OPTION_FIELD_HEAL_RETRIES 次）；
+    耗尽只影响自己——option 剔 option、条目剔条目、顶层未知键忽略、未成形无票拟；
+    其余照出，不告知皇帝；后台 tlog + error pack 响亮留痕。
+    条目数无硬上限（①c 已删门）：不因条数 raise／heal／截尾。
     """
     # payload 序列化是纯程序逻辑：其错误属代码侧错（ADR 0005），不在降级面内，响亮上抛。
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
@@ -1875,15 +2233,11 @@ def generate_rescript_draft(
         data: object,
         *,
         isolate_option_missing: bool,
-        min_options: int = 2,
-        max_options: int = 3,
     ) -> List[Dict[str, object]]:
         # grounding 由 validate 内唯一完整 option 校验负责（不在此重复末端断言）
         return validate_rescript_draft_items(
             data,
             board_ids,
-            min_options=min_options,
-            max_options=max_options,
             isolate_option_missing=isolate_option_missing,
             region_target_ids=region_target_ids,
             army_target_ids=army_target_ids,
@@ -1892,7 +2246,7 @@ def generate_rescript_draft(
     heal_retries = max(0, int(RESCRIPT_OPTION_FIELD_HEAL_RETRIES))
     heal_attempt = 0
     pending_missing: Optional[List[RescriptOptionMissingFailure]] = None
-    # 单一底稿：首抽/补交合并共用。
+    # 单一底稿：首抽/补交合并共用（未成形时可为 None）。
     working_data: Optional[Dict[str, Any]] = None
     heal_trace: List[Dict[str, object]] = []
     # 本票拟链局部会话：真实 user/assistant 轮次入 prior_messages（不持久化、不启其它角色）。
@@ -1933,12 +2287,12 @@ def generate_rescript_draft(
             }
             heal_trace.append(entry)
             tlog(
-                f"[rescript] option 契约失败补交产出 {heal_attempt}/{heal_retries} "
+                f"[rescript] 契约失败补交产出 {heal_attempt}/{heal_retries} "
                 f"raw_summary={json.dumps(entry['raw_summary'])} "
                 f"failures={json.dumps(entry['failures'])}"
             )
         try:
-            if tag == "rescript-draft-heal" and working_data is not None and pending_missing:
+            if tag == "rescript-draft-heal" and pending_missing is not None:
                 healed_data = _parse_rescript_json_strict(raw)
                 if not isinstance(healed_data, dict):
                     raise ValueError(
@@ -1957,31 +2311,30 @@ def generate_rescript_draft(
         except RescriptOptionMissingFieldsBatch as exc:
             pending_missing = list(exc.failures)
         except (LLMContractError, ValueError) as exc:
-            # 已有底稿的补交响应契约失败（非法 JSON / 围栏外 prose / 非 object 等）
-            # → 消耗本次补交，保留底稿与已成功兄弟，沿唯一 ≤3 回路继续。
-            # 首抽顶层/急务条目失败仍整批降级（无 pending 底稿）。
-            if working_data is None or pending_missing is None:
-                _degrade(exc)
-                return None
-            pending_missing = _with_heal_response_contract_failure(
-                pending_missing, exc=exc, raw=raw,
-            )
+            # 解析/契约失败进入同一 heal 回路（#1801：首抽未成形也重试，不立即整批死）。
+            # 已在补交轮：把响应契约失败并入既有事实。
+            if pending_missing is not None:
+                pending_missing = _with_heal_response_contract_failure(
+                    pending_missing, exc=exc, raw=raw,
+                )
+            else:
+                pending_missing = [_contract_exc_to_top_failure(exc, raw=raw)]
         else:
             tlog(f"[rescript] 票拟生成 {len(drafts)} 条。")
             return drafts
 
-        # 可定位 option 契约失败 / 补交响应契约失败：同一 continue-or-drop 回路
+        # 可定位契约失败 / 补交响应契约失败：同一 continue-or-drop 回路
         rows = _failure_log_rows(pending_missing)
         if heal_attempt < heal_retries:
             heal_attempt += 1
             tlog(
-                f"[rescript] option 契约失败补交 {heal_attempt}/{heal_retries}："
+                f"[rescript] 契约失败补交 {heal_attempt}/{heal_retries}："
                 f"{json.dumps(rows)}"
             )
             continue
-        # 耗尽：只剔失败 option，其余照出；不告知皇帝；后台响亮留痕
+        # 耗尽：按失败单元只影响自己；不告知皇帝；后台响亮留痕
         tlog(
-            f"[rescript] option 契约失败补交耗尽，剔除："
+            f"[rescript] 契约失败补交耗尽，按单元处置："
             f"{json.dumps(rows)} "
             f"heal_trace={json.dumps(heal_trace)}"
         )
@@ -1989,29 +2342,54 @@ def generate_rescript_draft(
             {**row, "heal_attempts": heal_retries}
             for row in rows
         ]
+        extra_note: Dict[str, object] = {
+            "dropped_options": [
+                r for r in drop_rows
+                if r.get("exhaust") == _EXHAUST_DROP_OPTION or r.get("scope") == _SCOPE_OPTION
+            ],
+            "dropped_items": [
+                r for r in drop_rows if r.get("exhaust") == _EXHAUST_DROP_ITEM
+            ],
+            "ignored_top_keys": [
+                r for r in drop_rows if r.get("exhaust") == _EXHAUST_IGNORE_TOP_KEYS
+            ],
+            "unformed": [
+                r for r in drop_rows if r.get("exhaust") == _EXHAUST_DEGRADE_MONTH
+            ],
+            "heal_trace": heal_trace,
+            "failures": drop_rows,
+        }
         _write_degraded_note(
             turn,
             "option_missing_fields_heal_exhausted",
-            extra={
-                "dropped_options": drop_rows,
-                "heal_trace": heal_trace,
-            },
+            extra=extra_note,
         )
-        # 底稿在首抽/前轮已确立；非法则程序破坏自然上抛
         dropped = _drop_options_by_failures(working_data, pending_missing)
+        if dropped is None:
+            tlog("[rescript] 未成形耗尽，本月无票拟。")
+            return None
         try:
-            # F2.2 局部修订：剔后剩 1 仍呈；0 option 条目已在 drop 时去掉
+            # 耗尽处置后的数据应已去掉坏单元；再遇 isolate 失败则二次处置一次
             drafts = _validate(
                 dropped,
-                isolate_option_missing=False,
-                min_options=1,
-                max_options=3,
+                isolate_option_missing=True,
             )
+        except RescriptOptionMissingFieldsBatch as still_exc:
+            # 忽略键后可能仍残留其它失败：再应用一次耗尽处置
+            dropped2 = _drop_options_by_failures(dropped, list(still_exc.failures))
+            if dropped2 is None:
+                tlog("[rescript] 二次耗尽仍未成形，本月无票拟。")
+                return None
+            try:
+                drafts = _validate(dropped2, isolate_option_missing=False)
+            except (LLMContractError, ValueError, RescriptOptionMissingFieldsBatch) as drop_exc:
+                _degrade(drop_exc)
+                return None
         except (LLMContractError, ValueError) as drop_exc:
             _degrade(drop_exc)
             return None
         tlog(
             f"[rescript] 票拟生成 {len(drafts)} 条"
-            f"（契约失败剔除 {len(pending_missing)} option 后）。"
+            f"（契约失败处置 {len(pending_missing)} 单元后）。"
         )
         return drafts
