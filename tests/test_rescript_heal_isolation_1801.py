@@ -1,0 +1,239 @@
+"""#1801 r2：三类整批判死改重试、只影响自己（复用 #1746 heal 回路）。
+
+验收缝：generate_rescript_draft（真实入口，无真实 LLM）。
+六样：①a 未成形 / ①b-1 utf8 / ①b-2 顶层未知键 / ①c 超上限 /
+② 条目字段 / ③ option A shape。
+"""
+from __future__ import annotations
+
+import json
+from copy import deepcopy
+
+import pytest
+
+import ming_sim.rescript_draft as rescript_mod
+from ming_sim.rescript_draft import (
+    MAX_RESCRIPT_DRAFTS,
+    RESCRIPT_OPTION_FIELD_HEAL_RETRIES,
+    generate_rescript_draft,
+)
+
+
+_ROSTER = [{"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None}]
+
+
+def _ctx() -> dict:
+    return {
+        "active_issues": [],
+        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
+        "army_targets": [
+            {"id": "guanning", "name": "关宁军", "station": "宁远"},
+        ],
+        "gazette": "邸报",
+        "triage_actor": {},
+        "turn": {},
+    }
+
+
+def _opt(**kw) -> dict:
+    base = {
+        "label": "拟",
+        "hint": "h",
+        "action_type": "assignment",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "locality_scope": "single",
+        "region_id": "shaanxi",
+        "assignee_name": "",
+        "transaction_category": "督赈",
+        "participant_roster": [dict(i) for i in _ROSTER],
+    }
+    base.update(kw)
+    return base
+
+
+def _item(title: str, *, context: str = "导语", options=None) -> dict:
+    return {
+        "title": title,
+        "context": context,
+        "options": options if options is not None else [_opt(label=f"{title}-甲"), _opt(label=f"{title}-乙")],
+    }
+
+
+def _items_json(items: list) -> str:
+    return json.dumps({"items": items}, ensure_ascii=False)
+
+
+def _parse_heal(prompt: object) -> dict:
+    assert isinstance(prompt, str) and prompt.strip()
+    body = json.loads(prompt)
+    assert body.get("kind") == "rescript_option_field_heal"
+    assert isinstance(body.get("failures"), list) and body["failures"]
+    return body
+
+
+def _field_map(failure: dict) -> dict:
+    out = {}
+    for fact in failure.get("field_failures") or []:
+        out[str(fact["field"])] = fact
+    return out
+
+
+def _never_fix_llm(first_raw: str):
+    tags: list[str] = []
+    prompts: list[str] = []
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        tags.append(tag)
+        prompts.append(prompt)
+        return first_raw
+
+    return _llm, tags, prompts
+
+
+# ---------------------------------------------------------------------------
+# ①a 未成形（非 items / 围栏外 prose）
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "not-json {",
+        "```json\n{\"items\":[]}\n```\n臣请圣裁",
+        json.dumps({"nope": []}),
+    ],
+    ids=["malformed", "fence_prose", "no_items_key"],
+)
+def test_1801_top_unformed_heals_then_no_drafts(raw, monkeypatch, tmp_path):
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    llm, tags, prompts = _never_fix_llm(raw)
+    monkeypatch.setattr(rescript_mod, "run_agent_text", llm)
+    assert generate_rescript_draft(object(), _ctx(), turn=101) is None
+    assert tags[0] == "rescript-draft"
+    assert tags[1:] == ["rescript-draft-heal"] * RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    req = _parse_heal(prompts[1])
+    assert req["failures"][0]["scope"] == "top"
+    assert req["failures"][0]["exhaust"] == "degrade_month"
+    assert "items" in _field_map(req["failures"][0])
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn101.json"
+    assert note.is_file()
+
+
+# ---------------------------------------------------------------------------
+# ①b-1 不可编码字符（条目 title）
+# ---------------------------------------------------------------------------
+
+def test_1801_item_utf8_heals_then_drops_only_bad_item(monkeypatch, tmp_path):
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    good = _item("陕西告饥")
+    bad = _item("\ud800", context="坏 title")
+    raw = _items_json([good, bad])
+    llm, tags, prompts = _never_fix_llm(raw)
+    monkeypatch.setattr(rescript_mod, "run_agent_text", llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=102)
+    assert drafts is not None
+    assert len(drafts) == 1 and drafts[0]["title"] == good["title"]
+    assert "rescript-draft-heal" in tags
+    req = _parse_heal(prompts[1])
+    assert req["failures"][0]["scope"] == "item"
+    assert req["failures"][0]["exhaust"] == "drop_item"
+    assert "title" in _field_map(req["failures"][0])
+
+
+# ---------------------------------------------------------------------------
+# ①b-2 顶层未知键
+# ---------------------------------------------------------------------------
+
+def test_1801_unknown_top_key_heals_then_ignores_key_keeps_items(monkeypatch, tmp_path):
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    logs: list[str] = []
+    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
+    payload = {"items": [_item("陕西告饥"), _item("辽饷")], "summary": "臣请圣裁"}
+    raw = json.dumps(payload, ensure_ascii=False)
+    llm, tags, prompts = _never_fix_llm(raw)
+    monkeypatch.setattr(rescript_mod, "run_agent_text", llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=103)
+    assert drafts is not None
+    assert [d["title"] for d in drafts] == ["陕西告饥", "辽饷"]
+    assert "rescript-draft-heal" in tags
+    req = _parse_heal(prompts[1])
+    f0 = req["failures"][0]
+    assert f0["scope"] == "top"
+    assert f0["exhaust"] == "ignore_top_keys"
+    assert "summary" in _field_map(f0)
+    assert any("未知键" in m and "summary" in m for m in logs)
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn103.json"
+    assert note.is_file()
+
+
+# ---------------------------------------------------------------------------
+# ①c 条目数超上限
+# ---------------------------------------------------------------------------
+
+def test_1801_over_limit_heals_then_keeps_prefix_trims_tail(monkeypatch, tmp_path):
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    logs: list[str] = []
+    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
+    items = [_item(f"条目{i}") for i in range(8)]
+    raw = _items_json(items)
+    llm, tags, prompts = _never_fix_llm(raw)
+    monkeypatch.setattr(rescript_mod, "run_agent_text", llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=104)
+    assert drafts is not None
+    assert len(drafts) == MAX_RESCRIPT_DRAFTS
+    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(MAX_RESCRIPT_DRAFTS)]
+    assert "rescript-draft-heal" in tags
+    req = _parse_heal(prompts[1])
+    f0 = req["failures"][0]
+    assert f0["scope"] == "top"
+    assert f0["exhaust"] == "trim_tail"
+    cur = _field_map(f0)["items"]["current"]
+    assert cur["len"] == 8
+    assert any("截尾" in m and "trimmed=3" in m for m in logs)
+
+
+# ---------------------------------------------------------------------------
+# ② 条目字段非法
+# ---------------------------------------------------------------------------
+
+def test_1801_item_missing_context_heals_then_drops_only_item(monkeypatch, tmp_path):
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    good = _item("兄条目")
+    bad = {"title": "缺导语", "options": [_opt(label="a"), _opt(label="b")]}
+    raw = _items_json([good, bad])
+    llm, tags, prompts = _never_fix_llm(raw)
+    monkeypatch.setattr(rescript_mod, "run_agent_text", llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=105)
+    assert drafts is not None
+    assert len(drafts) == 1 and drafts[0]["title"] == good["title"]
+    req = _parse_heal(prompts[1])
+    assert req["failures"][0]["scope"] == "item"
+    assert "context" in _field_map(req["failures"][0])
+    assert req["failures"][0]["heal_id"] == "item:1"
+
+
+# ---------------------------------------------------------------------------
+# ③ option A shape（非 object）耗尽只剔该 option
+# ---------------------------------------------------------------------------
+
+def test_1801_option_a_shape_heals_then_drops_only_option(monkeypatch, tmp_path):
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    sibling = _opt(label="兄弟")
+    frozen = deepcopy(sibling)
+    bad_item = _item("急务", options=["not-a-dict", sibling])
+    other = _item("其它急务")
+    raw = _items_json([bad_item, other])
+    llm, tags, prompts = _never_fix_llm(raw)
+    monkeypatch.setattr(rescript_mod, "run_agent_text", llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=106)
+    assert drafts is not None
+    assert len(drafts) == 2
+    first = next(d for d in drafts if d["title"] == "急务")
+    assert len(first["options"]) == 1
+    for k, v in frozen.items():
+        assert first["options"][0].get(k) == v
+    assert any(d["title"] == "其它急务" for d in drafts)
+    req = _parse_heal(prompts[1])
+    assert req["failures"][0]["scope"] == "option"
+    assert req["failures"][0]["heal_id"] == "0:0"
+    assert "option" in _field_map(req["failures"][0])
