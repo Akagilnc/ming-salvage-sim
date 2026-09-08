@@ -418,11 +418,16 @@ def _render_action_conditional_contract(conditional: object) -> str:
     return "action-conditional：" + "。".join(parts) + "。"
 
 
-def rescript_layer_a_prompt_contract() -> str:
+def rescript_layer_a_prompt_contract(
+    *,
+    character_targets_supplied: bool = False,
+) -> str:
     """初拟/改票共用：由 layer_a_option_shape 渲染层 A 完整受理契约。
 
     structured_decree_prompt_contract 承目标/属地/承办子契约；本块补
     required/present/action_types/action-conditional/grant_kind。
+    character_targets_supplied：本批是否注入 character_targets。有则 roster
+    人物主键指向该目录；无则不下 character_targets 子句（P6：只要求它能看见的）。
     禁 agents 手抄；禁复述 grounding 规则；禁锁本函数措辞。
     """
     shape = layer_a_option_shape()
@@ -434,19 +439,30 @@ def rescript_layer_a_prompt_contract() -> str:
     grant_kind = str(shape["grant_kind_army_pay"])
     server_only = "/".join(str(k) for k in shape["server_only_keys"])  # type: ignore[arg-type]
     conditional = _render_action_conditional_contract(shape.get("action_conditional"))
+    # #1804：目录在场才钉 character_targets；改票入口不供目录，不写该子句。
+    if character_targets_supplied:
+        roster_person = (
+            f"{{character_id: 须取自同批 character_targets.name, tier∈{roster_tiers}, "
+            f"role: 职分文字（可空串）, delegator_id: 委派人本名（无则 null，"
+            f"有则同取 character_targets.name）}}；"
+            f"{roster_shape['require_tier']} 至少一人、也可数人合力；"  # type: ignore[index]
+            "旨里点了谁就照写谁，未点名的由你按人物与局势荐入名单；"
+            "官职栏只供认人，不得用官职名冒充人物名；"
+        )
+    else:
+        roster_person = (
+            f"{{character_id: 朝堂名册上的大臣本名, tier∈{roster_tiers}, "
+            f"role: 职分文字（可空串）, delegator_id: 委派人本名（无则 null）}}；"
+            f"{roster_shape['require_tier']} 至少一人、也可数人合力；"  # type: ignore[index]
+            "旨里点了谁就照写谁，未点名的由你按人物与局势荐入名单；"
+        )
     return (
         "票拟层 A option 受理契约（与 normalize_rescript_layer_a_option 共用 shape）："
         f"每项 options[] 必填非空 {required}；"
         f"action_type∈{actions}；"
         f"{present} 三键必须输出（值可空串）；"
         f"{PARTICIPANT_ROSTER_KEY} 写这道旨的参与名单，每项 "
-        f"{{character_id: 须取自同批 character_targets.name, tier∈{roster_tiers}, "
-        f"role: 职分文字（可空串）, delegator_id: 委派人本名（无则 null，"
-        f"有则同取 character_targets.name）}}；"
-        f"{roster_shape['require_tier']} 至少一人、也可数人合力；"  # type: ignore[index]
-        "旨里点了谁就照写谁，未点名的由你按人物与局势荐入名单；"
-        "官职栏只供认人，不得用官职名冒充人物名；"
-
+        + roster_person
         + conditional
         + f"grant_allocation 军饷用 grant_kind={grant_kind}"
         f"（禁直写 grant_action=协饷；kind 与 grant_action 不得并存）；"
@@ -1372,45 +1388,42 @@ def _ungrounded_roster_person_failure(
     *,
     character_names: Optional[set[str]],
 ) -> Optional[RescriptOptionMissingFieldsError]:
-    """#1804：participant_roster.character_id／delegator_id 须在同批 character_targets。
+    """#1804：participant_roster 两人物主键须在同批 character_targets。
 
     唯一非法判据＝人不存在（与 db._validate_participant_roster_references 同延）；
     不判在朝/任职。无目录时不检（与 target 接地同款）。assignee_name 不在此闸。
+    失败 field 用顶层 participant_roster（current=整份现值 roster、expected=合法集），
+    与 #1801 顶层 option 键补交／_apply_option_heal 合并路径相容；禁点号嵌套键。
     """
     if character_names is None or not isinstance(raw_option, dict):
         return None
     roster = raw_option.get(PARTICIPANT_ROSTER_KEY)
     if not isinstance(roster, list):
         return None
-    legal = sorted(character_names)
-    facts: List[Dict[str, object]] = []
+    ungrounded = False
     for item in roster:
         if not isinstance(item, Mapping):
             continue
         character_id = str(item.get("character_id") or "").strip()
         if character_id and character_id not in character_names:
-            facts.append(
-                _field_failure(
-                    f"{PARTICIPANT_ROSTER_KEY}.character_id",
-                    current=character_id,
-                    expected=legal,
-                )
-            )
+            ungrounded = True
+            break
         delegator_id = str(item.get("delegator_id") or "").strip()
         if delegator_id and delegator_id not in character_names:
-            facts.append(
-                _field_failure(
-                    f"{PARTICIPANT_ROSTER_KEY}.delegator_id",
-                    current=delegator_id,
-                    expected=legal,
-                )
-            )
-    if not facts:
+            ungrounded = True
+            break
+    if not ungrounded:
         return None
     return RescriptOptionMissingFieldsError(
         f"票拟 option.{PARTICIPANT_ROSTER_KEY} 人物不在同批 character_targets",
         raw_option=raw_option,
-        field_failures=facts,
+        field_failures=[
+            _field_failure(
+                PARTICIPANT_ROSTER_KEY,
+                current=list(roster),
+                expected=sorted(character_names),
+            )
+        ],
     )
 
 
