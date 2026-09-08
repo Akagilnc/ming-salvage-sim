@@ -759,15 +759,6 @@ def build_simulator_payload(
             raw.pop(field)
         court_rows.append(raw)
     court_roster = _auto_table(court_rows)
-    # #1804：characters.name 全集（name+office）供票拟 character_targets 投影；
-    # 不筛在朝/官职；禁忠诚/能力等裸属性（P4/0143）。与落库缝合法集同延。
-    character_rows = [
-        {"name": str(r["name"]), "office": str(r["office"] or "")}
-        for r in db.conn.execute(
-            "SELECT name, office FROM characters ORDER BY name"
-        ).fetchall()
-        if str(r["name"] or "").strip()
-    ]
     from ming_sim.population_pressure import (
         displaced_pool_balance_rows,
         recent_reflux_cause_rows,
@@ -844,7 +835,6 @@ def build_simulator_payload(
         "regions": _auto_table(region_rows),
         "armies": _auto_table(army_rows),
         "buildings": _auto_table(db.building_payload()),
-        "characters": _auto_table(character_rows),
         "court_roster": court_roster,
         # ADR 0009 人才池视图（读取端闭环）：居家/致仕/削籍在世者带 reason_code，
         # 裁判与玩家看得见可起复之人。自动转 TSV（build_simulator_context 尾部兜底）。
