@@ -982,12 +982,21 @@ def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
     )
 
 
-def _rescript_option_instructions() -> list[str]:
-    """月末票拟/改票共用：层 A 完整受理 + 目标/属地/承办子契约；禁入口手抄。"""
+def _rescript_option_instructions(
+    *,
+    character_targets_supplied: bool = False,
+) -> list[str]:
+    """月末票拟/改票：层 A 完整受理 + 目标/属地/承办子契约；禁入口手抄。
+
+    character_targets_supplied 与本批 payload 是否注入 character_targets 对齐：
+    初拟供目录 → True；改票不供 → False（不下 character_targets 子句）。
+    """
     from ming_sim.rescript_draft import rescript_layer_a_prompt_contract
     from ming_sim.structured_decree import structured_decree_prompt_contract
     return [
-        rescript_layer_a_prompt_contract(),
+        rescript_layer_a_prompt_contract(
+            character_targets_supplied=character_targets_supplied,
+        ),
         structured_decree_prompt_contract(),
     ]
 
@@ -1010,7 +1019,8 @@ def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Age
         instructions=[
             ctx.game_world_prompt,
             ctx.rescript_draft_prompt,
-            *_rescript_option_instructions(),
+            # 初拟 payload 注入 character_targets（#1804）
+            *_rescript_option_instructions(character_targets_supplied=True),
         ],
         add_history_to_context=False,
         markdown=False,
@@ -1031,7 +1041,8 @@ def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Ag
             "每个 option 须满足运行时注入的层 A 受理契约与结构化旨意子契约；"
             "军队目标的 target_id 只可从同批 army_targets 中选择。"
         ),
-        *_rescript_option_instructions(),
+        # 改票 payload 不供 character_targets：契约不下该目录子句（#1804 P6）
+        *_rescript_option_instructions(character_targets_supplied=False),
     ]
     return Agent(
         name="批红改票官",

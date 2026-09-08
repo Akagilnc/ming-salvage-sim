@@ -539,13 +539,21 @@ def test_payload_projects_character_targets_full_characters_name_set(game):
 def test_generate_unknown_roster_character_heals_with_legal_set_then_lands(
     monkeypatch, tmp_path,
 ):
-    """#1804：roster.character_id=官职名 → heal 带失败事实+合法集；改在册名后落库。"""
+    """#1804：roster 官职名 → 顶层 participant_roster 失败事实+合法集；照协议部分键补交落库。
+
+    广告协议只认顶层 option 键合并；field 须为 participant_roster（非整点号嵌套键），
+    补交体 {"heals":[{"heal_id":"i:o","participant_roster":...}]} 即修复。
+    """
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     item = _legal_item()
     sibling = dict(item["options"][1])
-    item["options"][0]["participant_roster"] = [{
+    bad_roster = [{
         "character_id": "陕西巡抚", "tier": "主办", "role": "", "delegator_id": None,
     }]
+    fixed_roster = [{
+        "character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    item["options"][0]["participant_roster"] = bad_roster
     catalog = [
         {"name": "毕自严", "office": "户部尚书"},
         {"name": "崔呈秀", "office": "兵部尚书"},
@@ -558,13 +566,9 @@ def test_generate_unknown_roster_character_heals_with_legal_set_then_lands(
         n["i"] += 1
         if n["i"] == 1:
             return json.dumps({"items": [item]}, ensure_ascii=False)
-        # 补交：改回在册人名
-        fixed = dict(item["options"][0])
-        fixed["participant_roster"] = [{
-            "character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None,
-        }]
+        # 照广告协议部分键补交：只回顶层 participant_roster，不整 option 替换
         return json.dumps({
-            "heals": [{"heal_id": "0:0", "option": fixed}],
+            "heals": [{"heal_id": "0:0", "participant_roster": fixed_roster}],
         }, ensure_ascii=False)
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
@@ -584,11 +588,15 @@ def test_generate_unknown_roster_character_heals_with_legal_set_then_lands(
         str(f["field"]): f
         for f in heal_req["failures"][0]["field_failures"]
     }
-    assert "participant_roster.character_id" in facts
-    assert facts["participant_roster.character_id"]["current"] == "陕西巡抚"
-    assert set(facts["participant_roster.character_id"]["expected"]) == {
-        "毕自严", "崔呈秀",
-    }
+    # 顶层键：与 _apply_option_heal 合并路径相容；禁点号嵌套键
+    assert "participant_roster" in facts
+    assert "participant_roster.character_id" not in facts
+    assert "participant_roster.delegator_id" not in facts
+    assert facts["participant_roster"]["current"] == bad_roster
+    assert set(facts["participant_roster"]["expected"]) == {"毕自严", "崔呈秀"}
+    # 部分键补交不得把点号键写进 option 顶层
+    assert "participant_roster.character_id" not in bad_fixed
+    assert "participant_roster.delegator_id" not in bad_fixed
 
 
 def test_generate_unknown_delegator_heals_then_drops_sibling_kept(
