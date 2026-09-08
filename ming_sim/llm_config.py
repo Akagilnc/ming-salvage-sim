@@ -215,6 +215,16 @@ def is_deepseek_base_url(base_url: str) -> bool:
     return "deepseek.com" in base_url.lower()
 
 
+def is_deepseek_model(model: str) -> bool:
+    """模型 id 属 DeepSeek 系（含 deepseek/ 前缀与 bare deepseek-* id）。"""
+    raw = (model or "").strip().lower()
+    if not raw:
+        return False
+    if raw.startswith("deepseek/"):
+        return True
+    return openai_model_id_without_provider(model).startswith("deepseek")
+
+
 def is_dashscope_base_url(base_url: str) -> bool:
     return "dashscope" in base_url.lower() or "aliyuncs" in base_url.lower()
 
@@ -224,13 +234,27 @@ def is_minimax_base_url(base_url: str) -> bool:
     return "minimaxi.com" in lowered or "minimax.io" in lowered
 
 
-def provider_extra_body(base_url: str) -> Optional[Dict[str, object]]:
-    if is_deepseek_base_url(base_url):
-        return {"thinking": {"type": "disabled"}}
+def provider_extra_body(base_url: str, model: str = "") -> Optional[Dict[str, object]]:
+    """Provider 默认 extra_body。
+
+    #1797：DeepSeek 全系关思考——模型 id 决定「要不要关」，键按端点实测分派。
+    dashscope/minimax 端点分派必须在 DeepSeek 模型短路之前：
+    「非 deepseek.com」不得一律当 Nous 中转。
+    - deepseek.com + DeepSeek 系：{"thinking": {"type": "disabled"}}
+    - dashscope/aliyuncs（含 DeepSeek 系）：{"enable_thinking": False}
+    - minimax（含 DeepSeek 系）：{"thinking": {"type": "disabled"}}
+    - 其余中转 + DeepSeek 系：{"reasoning": {"enabled": False}}
+      （thinking.disabled 在 Nous/hermes 无效；reasoning.enabled=false 有效）
+    """
+    # 端点既有键优先：DeepSeek 系跑在百炼/minimax 上仍映射该端点键。
     if is_dashscope_base_url(base_url):
         return {"enable_thinking": False}
     if is_minimax_base_url(base_url):
         return {"thinking": {"type": "disabled"}}
+    if is_deepseek_model(model):
+        if is_deepseek_base_url(base_url):
+            return {"thinking": {"type": "disabled"}}
+        return {"reasoning": {"enabled": False}}
     return None
 
 
