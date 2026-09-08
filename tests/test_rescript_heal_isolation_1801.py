@@ -1,13 +1,12 @@
-"""#1801 r2：三类整批判死改重试、只影响自己（复用 #1746 heal 回路）。
+"""#1801：票面独有验收（generate_rescript_draft 真实入口，无真实 LLM）。
 
-验收缝：generate_rescript_draft（真实入口，无真实 LLM）。
-六样：①a 未成形 / ①b-1 utf8 / ①b-2 顶层未知键 / ①c 条目数无上限 /
-② 条目字段 / ③ option A shape。
+①a 未成形变体（fence_prose / no_items_key；malformed 归 1746）/
+①b-1 utf8 / ①b-2 顶层未知键三案 / ①c 8 条全照呈。
+② 缺 context、③ option non_object 与 1746 同批案实质重复，不重盖。
 """
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 
 import pytest
 
@@ -97,11 +96,11 @@ def _never_fix_llm(first_raw: str):
 @pytest.mark.parametrize(
     "raw",
     [
-        "not-json {",
+        # malformed（"not-json {"）与 1746 test_first_draw_parse_failure_heals_then_degrades 同输入同断言，不重盖
         "```json\n{\"items\":[]}\n```\n臣请圣裁",
         json.dumps({"nope": []}),
     ],
-    ids=["malformed", "fence_prose", "no_items_key"],
+    ids=["fence_prose", "no_items_key"],
 )
 def test_1801_top_unformed_heals_then_no_drafts(raw, monkeypatch, tmp_path):
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -235,48 +234,3 @@ def test_1801_eight_items_all_pass_no_heal_no_trim(monkeypatch, tmp_path):
     assert not note.exists()
 
 
-# ---------------------------------------------------------------------------
-# ② 条目字段非法
-# ---------------------------------------------------------------------------
-
-def test_1801_item_missing_context_heals_then_drops_only_item(monkeypatch, tmp_path):
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    good = _item("兄条目")
-    bad = {"title": "缺导语", "options": [_opt(label="a"), _opt(label="b")]}
-    raw = _items_json([good, bad])
-    llm, tags, prompts = _never_fix_llm(raw)
-    monkeypatch.setattr(rescript_mod, "run_agent_text", llm)
-    drafts = generate_rescript_draft(object(), _ctx(), turn=105)
-    assert drafts is not None
-    assert len(drafts) == 1 and drafts[0]["title"] == good["title"]
-    req = _parse_heal(prompts[1])
-    assert req["failures"][0]["scope"] == "item"
-    assert "context" in _field_map(req["failures"][0])
-    assert req["failures"][0]["heal_id"] == "item:1"
-
-
-# ---------------------------------------------------------------------------
-# ③ option A shape（非 object）耗尽只剔该 option
-# ---------------------------------------------------------------------------
-
-def test_1801_option_a_shape_heals_then_drops_only_option(monkeypatch, tmp_path):
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    sibling = _opt(label="兄弟")
-    frozen = deepcopy(sibling)
-    bad_item = _item("急务", options=["not-a-dict", sibling])
-    other = _item("其它急务")
-    raw = _items_json([bad_item, other])
-    llm, tags, prompts = _never_fix_llm(raw)
-    monkeypatch.setattr(rescript_mod, "run_agent_text", llm)
-    drafts = generate_rescript_draft(object(), _ctx(), turn=106)
-    assert drafts is not None
-    assert len(drafts) == 2
-    first = next(d for d in drafts if d["title"] == "急务")
-    assert len(first["options"]) == 1
-    for k, v in frozen.items():
-        assert first["options"][0].get(k) == v
-    assert any(d["title"] == "其它急务" for d in drafts)
-    req = _parse_heal(prompts[1])
-    assert req["failures"][0]["scope"] == "option"
-    assert req["failures"][0]["heal_id"] == "0:0"
-    assert "option" in _field_map(req["failures"][0])
