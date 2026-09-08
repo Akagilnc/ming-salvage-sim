@@ -2023,7 +2023,20 @@ def _merge_healed_missing_options(
             if key and key not in _TOP_ALLOWED_KEYS and key not in healed:
                 result.pop(key, None)
 
-    # ①c 超限：不在合并期按补交 items 重写；耗尽按原序截尾（只影响超出单元）
+    # ①c：补交 items 恰好＝底稿授权前缀（前 MAX 条原样、无改写重排）→ 采纳截尾成功；
+    # 改写/删前缀/重排 → 不采纳，留待下轮或耗尽按原序截尾。
+    if any((f.exhaust or "") == _EXHAUST_TRIM_TAIL for f in failures):
+        h_items = healed.get("items")
+        b_items = result.get("items")
+        if (
+            isinstance(h_items, list)
+            and isinstance(b_items, list)
+            and len(b_items) > MAX_RESCRIPT_DRAFTS
+        ):
+            authorized = b_items[:MAX_RESCRIPT_DRAFTS]
+            if h_items == authorized:
+                result["items"] = copy.deepcopy(h_items)
+
     base_items = result["items"]
     by_id = _healed_options_by_id(healed)
     for failure in failures:

@@ -242,6 +242,31 @@ def test_1801_over_limit_heals_then_keeps_prefix_trims_tail(monkeypatch, tmp_pat
     assert trimmed and _field_map(trimmed[0])["items"]["current"]["len"] == 8
 
 
+def test_1801_over_limit_heal_exact_prefix_succeeds_without_exhaust(monkeypatch, tmp_path):
+    """①c：补交 items 恰好为原序前 MAX 条 → 重试成功，不必耗尽。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    full = [_item(f"条目{i}") for i in range(8)]
+    first = _items_json(full)
+    healed = _items_json(full[:MAX_RESCRIPT_DRAFTS])
+    n = {"i": 0}
+    tags: list[str] = []
+
+    def _llm(_a, _p, tag="", prior_messages=None):
+        tags.append(tag)
+        n["i"] += 1
+        return first if n["i"] == 1 else healed
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=116)
+    assert drafts is not None
+    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(MAX_RESCRIPT_DRAFTS)]
+    assert tags == ["rescript-draft", "rescript-draft-heal"]
+    assert n["i"] == 2
+    # 成功路径无耗尽附记
+    note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn116.json"
+    assert not note.exists()
+
+
 def test_1801_over_limit_heal_rewritten_items_must_not_replace_prefix(monkeypatch, tmp_path):
     """①c：heal 回改写后的短 items 不得替换原前缀；耗尽仍按原序留前 N。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -259,6 +284,7 @@ def test_1801_over_limit_heal_rewritten_items_must_not_replace_prefix(monkeypatc
     assert drafts is not None
     assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(MAX_RESCRIPT_DRAFTS)]
     assert all(not t.startswith("篡改") for t in (d["title"] for d in drafts))
+    assert n["i"] == 1 + RESCRIPT_OPTION_FIELD_HEAL_RETRIES
 
 
 # ---------------------------------------------------------------------------
