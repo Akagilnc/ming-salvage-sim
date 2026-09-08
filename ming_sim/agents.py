@@ -71,12 +71,6 @@ def _dump_value(value: Any) -> str:
         return value
     if isinstance(value, dict):
         return json.dumps(value, ensure_ascii=False, default=str)
-    dump = getattr(value, "model_dump", None) or getattr(value, "dict", None)
-    if callable(dump):
-        try:
-            return json.dumps(dump(), ensure_ascii=False, default=str)
-        except Exception:  # noqa: BLE001 — dump 旁路
-            pass
     raw = getattr(value, "__dict__", None)
     if isinstance(raw, dict) and raw:
         return json.dumps(raw, ensure_ascii=False, default=str)

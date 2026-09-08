@@ -222,8 +222,7 @@ def is_deepseek_model(model: str) -> bool:
         return False
     if raw.startswith("deepseek/"):
         return True
-    model_id = raw.rsplit("/", 1)[-1]
-    return model_id.startswith("deepseek")
+    return openai_model_id_without_provider(model).startswith("deepseek")
 
 
 def is_dashscope_base_url(base_url: str) -> bool:
