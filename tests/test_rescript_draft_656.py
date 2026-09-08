@@ -606,12 +606,13 @@ def _valid_item(i: int) -> dict:
     }
 
 
-def test_validate_items_over_limit_fails_whole_batch():
-    """A1 判词：处理条目前校验 items 总数——超 5 条即 ValueError 整批失败，
-    零截断零保留（不 slice、不静默丢弃后项）。6 条全合法与第 6 条非法同判。"""
+def test_validate_items_no_count_cap_keeps_all_legal():
+    """#1801 ①c：条目数无硬上限——6 条全合法照呈；第 6 条字段非法仍整批 ValueError
+    （非 isolate 直调口径；条数本身不再是失败因）。"""
     six_legal = [_valid_item(i) for i in range(6)]
-    with pytest.raises(ValueError):
-        validate_rescript_draft_items({"items": six_legal}, set())
+    drafts = validate_rescript_draft_items({"items": six_legal}, set())
+    assert len(drafts) == 6
+    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(6)]
     sixth_illegal = [_valid_item(i) for i in range(5)]
     sixth_illegal.append({"title": "缺导语"})
     with pytest.raises(ValueError):
@@ -624,19 +625,68 @@ def test_validate_items_over_limit_fails_whole_batch():
     lambda item: item.pop("title"),
     lambda item: item.update(context=""),
     lambda item: item.pop("context"),
-    lambda item: item.update(options=[item["options"][0]]),          # 只 1 项
-    lambda item: item.update(options=item["options"] * 2),           # 4 项
     lambda item: item["options"].__setitem__(0, {"label": "a"}),      # hint 缺失
     lambda item: item["options"].__setitem__(0, {"label": "", "hint": "h"}),
     lambda item: item["options"].__setitem__(0, {"hint": "h"}),       # label 缺失
 ])
 def test_validate_items_missing_required_field_fails_whole_batch(mutate):
-    """冻结票面 F2.2/F2.5：任一必需字段缺失/非法＝整批失败，不保留合法项成部分头版。"""
+    """冻结票面 F2.2/F2.5：title/context/option 内部契约非法＝整批失败（#1801 后项数不再整批）。"""
     good = _valid_item(0)
     bad = _valid_item(1)
     mutate(bad)
     with pytest.raises(ValueError):
         validate_rescript_draft_items({"items": [good, bad]}, set())
+
+
+def test_validate_items_single_option_is_legal():
+    """#1801：单拟合法——条目只给 1 个 option 照常呈上。"""
+    item = _valid_item(0)
+    item["options"] = [item["options"][0]]
+    drafts = validate_rescript_draft_items({"items": [item]}, set())
+    assert len(drafts) == 1
+    assert len(drafts[0]["options"]) == 1
+    assert drafts[0]["title"] == item["title"]
+
+
+def test_validate_items_many_options_not_gated_or_truncated():
+    """#1801：多项不拦——5 个 option 照常呈上、不截断、不报错。"""
+    item = _valid_item(0)
+    base = item["options"][0]
+    item["options"] = [
+        {**base, "label": f"拟{i}", "hint": f"h{i}"} for i in range(5)
+    ]
+    drafts = validate_rescript_draft_items({"items": [item]}, set())
+    assert len(drafts) == 1
+    assert [o["label"] for o in drafts[0]["options"]] == [f"拟{i}" for i in range(5)]
+
+
+def test_validate_items_empty_options_drops_item_keeps_siblings(monkeypatch):
+    """#1801：0 项按 F2.3 不足照实消失；其它条目仍呈上；日志响亮；不整批判死。"""
+    logs: list[str] = []
+    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
+    good = _valid_item(0)
+    empty = _valid_item(1)
+    empty["options"] = []
+    drafts = validate_rescript_draft_items({"items": [good, empty]}, set())
+    assert len(drafts) == 1
+    assert drafts[0]["title"] == good["title"]
+    assert len(drafts[0]["options"]) == 2
+    assert logs, "0 项条目消失须响亮留痕"
+    assert any(empty["title"] in msg for msg in logs)
+
+
+def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch):
+    """#1801：非 list options 该条目消失；其它条目仍呈上；日志响亮；不整批判死。"""
+    logs: list[str] = []
+    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
+    good = _valid_item(0)
+    bad = _valid_item(1)
+    bad["options"] = "not-a-list"
+    drafts = validate_rescript_draft_items({"items": [good, bad]}, set())
+    assert len(drafts) == 1
+    assert drafts[0]["title"] == good["title"]
+    assert logs, "非 list options 条目消失须响亮留痕"
+    assert any(bad["title"] in msg for msg in logs)
 
 
 def test_validate_items_empty_list_is_legal_headless_month():
@@ -843,7 +893,7 @@ def test_extractor_abort_rolls_back_drafts(game, monkeypatch, tmp_path):
 
 
 def test_draft_degrade_does_not_abort_settlement(game, monkeypatch, tmp_path):
-    """F2.5：票拟步形状校验失败＝响亮降级，本月无头版，结算照常完成。"""
+    """F2.5/#1801 ①a：票拟未成形经 heal 耗尽＝本月无头版，结算照常完成。"""
     import ming_sim.rescript_draft as rescript_draft
     import ming_sim.simulation as simulation
 
@@ -854,7 +904,7 @@ def test_draft_degrade_does_not_abort_settlement(game, monkeypatch, tmp_path):
     _add_character(db, "测试首辅", "内阁首辅", "阉党")
 
     def _fake_run(agent, prompt, tag, **_kwargs):
-        if tag == "rescript-draft":
+        if tag in ("rescript-draft", "rescript-draft-heal"):
             return "这不是 JSON"
         return _CANNED
 
@@ -875,9 +925,8 @@ def test_draft_degrade_does_not_abort_settlement(game, monkeypatch, tmp_path):
     assert state.turn == turn + 1  # 结算本体完成、回合照常推进
 
 
-def test_mixed_batch_shape_failure_degrades_whole_month(game, monkeypatch, tmp_path):
-    """冻结票面 F2.2/F2.5：一合法＋一缺必需字段的混合批次＝整月响亮降级——零行落库、
-    降级附记在、结算不中止（不得保留合法项形成部分头版，不得把缺失洗成空串）。"""
+def test_mixed_batch_item_field_failure_keeps_sibling(game, monkeypatch, tmp_path):
+    """#1801 ②：一合法＋一缺必需字段 → heal 耗尽只剔坏条目，兄弟照呈，结算不中止。"""
     import ming_sim.rescript_draft as rescript_draft
     import ming_sim.simulation as simulation
 
@@ -891,13 +940,13 @@ def test_mixed_batch_shape_failure_degrades_whole_month(game, monkeypatch, tmp_p
         {"issue_id": 42, "title": "陕西告饥",
          "context": "秦地赤旱千里，赈济不可缓。",
          "options": _two_opts("发帑赈济", "所安者饥民", "缓议加派", "所拂者小农")},
-        {"title": "辽饷告匮", "options": [   # 缺 context 必需字段 → 整批非法
+        {"title": "辽饷告匮", "options": [   # 缺 context → 条目粒度
             {"label": "折发宗禄", "hint": "所拂者宗藩"},
             {"label": "加派小农", "hint": "所拂者小农"}]},
     ]}, ensure_ascii=False)
 
     def _fake_run(agent, prompt, tag, **_kwargs):
-        if tag == "rescript-draft":
+        if tag in ("rescript-draft", "rescript-draft-heal"):
             return draft_raw
         return _CANNED
 
@@ -917,16 +966,18 @@ def test_mixed_batch_shape_failure_degrades_whole_month(game, monkeypatch, tmp_p
         relevant_memories=[], secret_orders={},
         before_turn=turn, _emit=lambda *a: None, content=content,
     )
-    assert db.list_rescript_drafts() == []   # 零行落库：不保留合法项成部分头版
+    drafts = db.list_rescript_drafts()
+    assert len(drafts) == 1
+    assert drafts[0]["title"] == "陕西告饥"
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
-    assert note.is_file()                    # 降级附记在
-    assert "context" in note.read_text(encoding="utf-8")
-    assert state.turn == turn + 1            # 结算不中止、回合照常推进
+    assert note.is_file()
+    note_obj = json.loads(note.read_text(encoding="utf-8"))
+    assert note_obj.get("dropped_items") or note_obj.get("failures")
+    assert state.turn == turn + 1
 
 
-def test_over_limit_legal_batch_degrades_whole_month_zero_rows(game, monkeypatch, tmp_path):
-    """A1 回归（6 条全合法）：超限＝整月响亮降级——零行落库、降级附记在、结算不中止
-    （不截断保留前五条成部分头版）。"""
+def test_six_legal_items_all_kept_no_count_cap(game, monkeypatch, tmp_path):
+    """#1801 ①c：6 条全合法 → 6 条全照呈；不截尾、不进 heal、无 degraded note。"""
     import ming_sim.rescript_draft as rescript_draft
     import ming_sim.simulation as simulation
 
@@ -939,11 +990,11 @@ def test_over_limit_legal_batch_degrades_whole_month_zero_rows(game, monkeypatch
     draft_raw = json.dumps({"items": [
         {"issue_id": 42, "title": f"条目{i}", "context": f"导语{i}，赈济不可缓。",
          "options": _two_opts("发帑赈济", "所安者饥民", "缓议加派", "所拂者小农")}
-        for i in range(6)  # 6 条全合法，仍超上限 → 整批失败
+        for i in range(6)
     ]}, ensure_ascii=False)
 
     def _fake_run(agent, prompt, tag, **_kwargs):
-        if tag == "rescript-draft":
+        if tag in ("rescript-draft", "rescript-draft-heal"):
             return draft_raw
         return _CANNED
 
@@ -954,20 +1005,25 @@ def test_over_limit_legal_batch_degrades_whole_month_zero_rows(game, monkeypatch
     _settle_after_narrative(
         state, db, None, None,
         decree_text="诏", narrative="邸报",
-        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}], "transit_semantics": []},
+        simulator_payload={
+            "active_issues": [{"issue_id": 42, "title": "陕西告饥"}],
+            "regions": {"cols": ["id", "name", "kind"],
+                        "rows": [["shaanxi", "陕西", "布政司"]]},
+            "transit_semantics": [],
+        },
         relevant_memories=[], secret_orders={},
         before_turn=turn, _emit=lambda *a: None, content=content,
     )
-    assert db.list_rescript_drafts() == []   # 零行落库：第六条不再被静默截丢
+    drafts = db.list_rescript_drafts()
+    assert len(drafts) == 6
+    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(6)]
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
-    assert note.is_file()                    # 降级附记在（响亮而非静默）
-    # 标准 JSON 转义保真：结构化 reason，不锁原文呈现
-    assert "超上限" in json.loads(note.read_text(encoding="utf-8"))["reason"]
-    assert state.turn == turn + 1            # 结算不中止、回合照常推进
+    assert not note.exists()
+    assert state.turn == turn + 1
 
 
-def test_sixth_item_illegal_degrades_whole_month_zero_rows(game, monkeypatch, tmp_path):
-    """A1 回归（第 6 条非法）：前 5 条合法也不保留——整月降级零行落库。"""
+def test_sixth_item_illegal_drops_only_bad_keeps_siblings(game, monkeypatch, tmp_path):
+    """#1801 ②：第 6 条字段非法 → heal 耗尽只剔该条，前 5 合法照呈（与条数无关）。"""
     import ming_sim.rescript_draft as rescript_draft
     import ming_sim.simulation as simulation
 
@@ -984,7 +1040,7 @@ def test_sixth_item_illegal_degrades_whole_month_zero_rows(game, monkeypatch, tm
     draft_raw = json.dumps({"items": items}, ensure_ascii=False)
 
     def _fake_run(agent, prompt, tag, **_kwargs):
-        if tag == "rescript-draft":
+        if tag in ("rescript-draft", "rescript-draft-heal"):
             return draft_raw
         return _CANNED
 
@@ -995,11 +1051,18 @@ def test_sixth_item_illegal_degrades_whole_month_zero_rows(game, monkeypatch, tm
     _settle_after_narrative(
         state, db, None, None,
         decree_text="诏", narrative="邸报",
-        simulator_payload={"active_issues": [{"issue_id": 42, "title": "陕西告饥"}], "transit_semantics": []},
+        simulator_payload={
+            "active_issues": [{"issue_id": 42, "title": "陕西告饥"}],
+            "regions": {"cols": ["id", "name", "kind"],
+                        "rows": [["shaanxi", "陕西", "布政司"]]},
+            "transit_semantics": [],
+        },
         relevant_memories=[], secret_orders={},
         before_turn=turn, _emit=lambda *a: None, content=content,
     )
-    assert db.list_rescript_drafts() == []   # 零行落库：前五条合法项不成部分头版
+    drafts = db.list_rescript_drafts()
+    assert len(drafts) == 5
+    assert [d["title"] for d in drafts] == [f"条目{i}" for i in range(5)]
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{turn}.json"
     assert note.is_file()
     assert state.turn == turn + 1

@@ -686,7 +686,8 @@ def test_option_shape_failures_heal_not_batch(
 
 
 
-def test_provider_and_item_level_still_whole_batch(monkeypatch, tmp_path):
+def test_provider_still_whole_batch_item_missing_heals_and_drops(monkeypatch, tmp_path):
+    """provider 不可用仍立即降级；#1801 ②条目缺字段走 heal，耗尽只剔该条目。"""
     from ming_sim.exceptions import LLMUnavailable
 
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -695,9 +696,21 @@ def test_provider_and_item_level_still_whole_batch(monkeypatch, tmp_path):
         lambda *_a, **_k: (_ for _ in ()).throw(LLMUnavailable("down")),
     )
     assert generate_rescript_draft(object(), _ctx(), turn=19) is None
-    raw = _items_json([{"title": "辽饷告匮", "options": [_hold(), _army_pay()]}])
-    monkeypatch.setattr(rescript_mod, "run_agent_text", lambda *_a, **_k: raw)
-    assert generate_rescript_draft(object(), _ctx(), turn=20) is None
+
+    good = {"title": "陕西告饥", "context": "赤旱", "options": [_hold(label="兄")]}
+    bad = {"title": "辽饷告匮", "options": [_hold(), _army_pay()]}  # 缺 context
+    raw = _items_json([good, bad])
+    tags: list[str] = []
+
+    def _llm(_a, _p, tag="", prior_messages=None):
+        tags.append(tag)
+        return raw
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), _ctx(), turn=20)
+    assert drafts is not None
+    assert len(drafts) == 1 and drafts[0]["title"] == good["title"]
+    assert "rescript-draft-heal" in tags
 
 
 # ---------------------------------------------------------------------------
@@ -840,18 +853,24 @@ def test_heal_response_contract_failure_consumes_attempt_keeps_siblings(
             assert exp.get("type") == "object"
 
 
-def test_first_draw_parse_failure_still_whole_batch_degrade(monkeypatch, tmp_path):
-    """首抽顶层解析失败仍整批降级；不得误入补交回路。"""
+def test_first_draw_parse_failure_heals_then_degrades(monkeypatch, tmp_path):
+    """#1801 ①a：首抽未成形 → 同一 heal 回路重试；耗尽本月无票拟且响亮留痕。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     tags: list[str] = []
+    prompts: list[str] = []
 
-    def _llm(_a, _p, tag="", prior_messages=None):
+    def _llm(_a, prompt, tag="", prior_messages=None):
         tags.append(tag)
+        prompts.append(prompt)
         return "not-json {"
 
     monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
     assert generate_rescript_draft(object(), _ctx(), turn=62) is None
-    assert tags == ["rescript-draft"]
+    assert tags == ["rescript-draft"] + ["rescript-draft-heal"] * RESCRIPT_OPTION_FIELD_HEAL_RETRIES
+    req = _parse_heal_request(prompts[1])
+    assert req["failures"] and req["failures"][0].get("scope") == "top"
+    ff = _field_failure_map(req["failures"][0])
+    assert "items" in ff
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / "turn62.json"
     assert note.is_file()
 
