@@ -1,0 +1,283 @@
+[
+  {
+    "title": "辽东索饷",
+    "decision_key": "rescript_draft:1:2",
+    "kind": "rescript_draft",
+    "options": [
+      {
+        "label": "发内帑补关宁欠饷",
+        "hint": "内帑虽亦不裕，然辽左安危重于一切，宜速发帑银以安军心，再议他项。",
+        "action_type": "grant_allocation",
+        "assignee_name": "",
+        "target_id": "guanning",
+        "target_kind": "army",
+        "account": "内库",
+        "amount": 300000,
+        "purpose": "补饷",
+        "transaction_category": "钱粮",
+        "participant_roster": [
+          {
+            "character_id": "黄立极",
+            "tier": "主办",
+            "role": "票拟",
+            "delegator_id": null
+          }
+        ]
+      },
+      {
+        "label": "敕户部速筹辽饷",
+        "hint": "令户部多方筹措，然太仓空虚，恐缓不济急，且挪借他项必致顾此失彼。",
+        "action_type": "assignment",
+        "assignee_name": "郭允厚",
+        "target_id": "liaodong",
+        "target_kind": "region",
+        "account": null,
+        "amount": null,
+        "purpose": null,
+        "transaction_category": "钱粮",
+        "participant_roster": [
+          {
+            "character_id": "郭允厚",
+            "tier": "主办",
+            "role": "筹饷",
+            "delegator_id": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "辽东索饷告急",
+    "decision_key": "rescript_draft:2:3",
+    "kind": "rescript_draft",
+    "options": [
+      {
+        "label": "发内帑补发关宁欠饷",
+        "hint": "内帑虽亦不丰，然关宁安危系于社稷，当速补欠饷以安军心。此策可解燃眉，然内库亦虚，须防他处效尤。",
+        "action_type": "grant_allocation",
+        "assignee_name": "户部尚书郭允厚",
+        "target_id": "guanning",
+        "target_kind": "army",
+        "account": "内库",
+        "amount": 30,
+        "purpose": "补饷",
+        "transaction_category": "钱粮",
+        "participant_roster": [
+          {
+            "character_id": "郭允厚",
+            "tier": "主办",
+            "role": "户部尚书，负责拨饷",
+            "delegator_id": null
+          }
+        ]
+      },
+      {
+        "label": "敕户部速挪他项银两补饷",
+        "hint": "不动内帑，令户部设法挪借，然太仓空虚，恐缓不济急，军心更难维系。",
+        "action_type": "assignment",
+        "assignee_name": "户部尚书郭允厚",
+        "target_id": "liaodong",
+        "target_kind": "region",
+        "account": null,
+        "amount": null,
+        "purpose": null,
+        "transaction_category": "钱粮",
+        "participant_roster": [
+          {
+            "character_id": "郭允厚",
+            "tier": "主办",
+            "role": "户部尚书，负责挪借银两",
+            "delegator_id": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "陕西饥火蔓延",
+    "decision_key": "rescript_draft:2:4",
+    "kind": "rescript_draft",
+    "options": [
+      {
+        "label": "发内帑并拨太仓银赈济陕西",
+        "hint": "饥民待哺，若再迟延，恐流寇愈炽。此策可稍安民心，然需款甚巨，内库亦紧。",
+        "action_type": "grant_allocation",
+        "assignee_name": "陕西巡抚",
+        "target_id": "shaanxi",
+        "target_kind": "region",
+        "account": null,
+        "amount": 10,
+        "purpose": null,
+        "transaction_category": "督赈",
+        "participant_roster": [
+          {
+            "character_id": "陕西巡抚",
+            "tier": "主办",
+            "role": "负责赈济事宜",
+            "delegator_id": null
+          }
+        ]
+      },
+      {
+        "label": "敕陕西巡抚开仓平粜并招抚流民",
+        "hint": "不动帑银，以地方之力自救，然仓粮已竭，恐难为继，仅可暂缓。",
+        "action_type": "assignment",
+        "assignee_name": "陕西巡抚",
+        "target_id": "shaanxi",
+        "target_kind": "region",
+        "account": null,
+        "amount": null,
+        "purpose": null,
+        "transaction_category": "督赈",
+        "participant_roster": [
+          {
+            "character_id": "陕西巡抚",
+            "tier": "主办",
+            "role": "负责开仓平粜与招抚流民",
+            "delegator_id": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "户部亏空难填",
+    "decision_key": "rescript_draft:2:5",
+    "kind": "rescript_draft",
+    "options": [
+      {
+        "label": "敕户部严核盐课商税并清丈田亩",
+        "hint": "此策可增岁入，然触及士绅利益，阻力必大，且非数月可竟。",
+        "action_type": "assignment",
+        "assignee_name": "户部尚书郭允厚",
+        "target_id": "beizhili",
+        "target_kind": "region",
+        "account": null,
+        "amount": null,
+        "purpose": null,
+        "transaction_category": "钱粮",
+        "participant_roster": [
+          {
+            "character_id": "郭允厚",
+            "tier": "主办",
+            "role": "户部尚书，负责盐课商税清丈",
+            "delegator_id": null
+          }
+        ]
+      },
+      {
+        "label": "暂缓清丈，先裁冗费以节流",
+        "hint": "节流易行而效缓，可稍减亏空，然非根本之策。",
+        "action_type": "assignment",
+        "assignee_name": "户部尚书郭允厚",
+        "target_id": "beizhili",
+        "target_kind": "region",
+        "account": null,
+        "amount": null,
+        "purpose": null,
+        "transaction_category": "钱粮",
+        "participant_roster": [
+          {
+            "character_id": "郭允厚",
+            "tier": "主办",
+            "role": "户部尚书，负责裁冗费",
+            "delegator_id": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "京营整饬难行",
+    "decision_key": "rescript_draft:2:6",
+    "kind": "rescript_draft",
+    "options": [
+      {
+        "label": "另派干员严查京营",
+        "hint": "崔呈秀党羽遍布，恐难自清。另派忠干之臣彻查，可收实效，然必触阉党余势。",
+        "action_type": "assignment",
+        "assignee_name": "兵部侍郎",
+        "target_id": "jingying",
+        "target_kind": "army",
+        "account": null,
+        "amount": null,
+        "purpose": null,
+        "transaction_category": "缉拿",
+        "participant_roster": [
+          {
+            "character_id": "兵部侍郎",
+            "tier": "主办",
+            "role": "负责严查京营",
+            "delegator_id": null
+          }
+        ]
+      },
+      {
+        "label": "仍令崔呈秀续办，宽以时日",
+        "hint": "崔呈秀领衔，虽敷衍，然骤易其人恐生变。宽限时日，观其后效。",
+        "action_type": "assignment",
+        "assignee_name": "崔呈秀",
+        "target_id": "jingying",
+        "target_kind": "army",
+        "account": null,
+        "amount": null,
+        "purpose": null,
+        "transaction_category": "缉拿",
+        "participant_roster": [
+          {
+            "character_id": "崔呈秀",
+            "tier": "主办",
+            "role": "兵部尚书，负责京营整饬",
+            "delegator_id": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "辽东欠饷如何措置",
+    "decision_key": "decision:3:0",
+    "kind": "decision",
+    "options": [
+      {
+        "label": "发内帑银二十万两补关宁军欠饷",
+        "hint": "暂稳军心，然内库仅存二十二万两，所余无几，且九边其他欠饷军镇恐援例索饷",
+        "action_type": null,
+        "assignee_name": null,
+        "target_id": null,
+        "target_kind": null,
+        "account": null,
+        "amount": null,
+        "purpose": null,
+        "transaction_category": null,
+        "participant_roster": null
+      },
+      {
+        "label": "命户部截漕折银十万两充辽饷",
+        "hint": "不动内帑，然京师仓储更虚，漕运旧例破坏，东南士绅必哗然",
+        "action_type": null,
+        "assignee_name": null,
+        "target_id": null,
+        "target_kind": null,
+        "account": null,
+        "amount": null,
+        "purpose": null,
+        "transaction_category": null,
+        "participant_roster": null
+      },
+      {
+        "label": "遣官宣谕宁锦，许以春前补足欠饷",
+        "hint": "不动库银，先以诏书安定军心，然空言无银，恐士卒不信、鼓噪更甚",
+        "action_type": null,
+        "assignee_name": null,
+        "target_id": null,
+        "target_kind": null,
+        "account": null,
+        "amount": null,
+        "purpose": null,
+        "transaction_category": null,
+        "participant_roster": null
+      }
+    ]
+  }
+]
