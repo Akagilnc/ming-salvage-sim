@@ -14,6 +14,7 @@ from ming_sim.llm_config import (
     CLI_BACKEND_PLACEHOLDER,
     is_dashscope_base_url,
     is_deepseek_base_url,
+    is_deepseek_model,
     is_minimax_base_url,
     openai_model_id_without_provider,
     provider_extra_body,
@@ -127,7 +128,7 @@ def create_chat_model(
 ) -> OpenAIChat:
     install_token_stats_patch()
     reasoning_strength = (getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
-    extra_body = provider_extra_body(llm_config.base_url)
+    extra_body = provider_extra_body(llm_config.base_url, llm_config.model)
     wants_thinking = enable_thinking or reasoning_strength in {"low", "medium", "high"}
     disables_thinking = reasoning_strength == "off"
     if is_dashscope_base_url(llm_config.base_url) and (wants_thinking or disables_thinking):
@@ -138,8 +139,10 @@ def create_chat_model(
             extra_body["thinking_budget"] = budget
         elif thinking_budget is not None and not disables_thinking:
             extra_body["thinking_budget"] = int(thinking_budget)
-    elif enable_thinking and is_deepseek_base_url(llm_config.base_url):
-        extra_body = {}  # deepseek-v4 默认深思,清掉 disabled
+    elif enable_thinking and (
+        is_deepseek_model(llm_config.model) or is_deepseek_base_url(llm_config.base_url)
+    ):
+        extra_body = {}  # deepseek 默认深思,清掉 disabled/reasoning-off
     elif is_minimax_base_url(llm_config.base_url) and (wants_thinking or disables_thinking):
         # 统一推理强度优先：off→disabled、低/中/高→adaptive。仅在没有统一强度（遗留
         # enable_thinking 路）时才看旧 thinking_level，否则遗留 thinking_level=disabled 会作
