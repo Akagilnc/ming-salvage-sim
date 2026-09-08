@@ -1888,19 +1888,6 @@ def _healed_options_by_id(
     return {k: v for k, v in index.items() if v is not None}
 
 
-def _find_healed_option_for_failure(
-    by_id: Mapping[str, Tuple[dict, bool]],
-    failure: RescriptOptionMissingFailure,
-) -> Optional[Tuple[dict, bool]]:
-    """按补交请求显式 heal_id 回指定位；缺失或冲突均拒绝。"""
-    want = (failure.heal_id or _option_heal_id(
-        failure.item_index, failure.option_index,
-    )).strip()
-    if not want:
-        return None
-    return by_id.get(want)
-
-
 def _apply_option_heal(
     baseline_opt: object,
     replacement: dict,
@@ -2009,9 +1996,6 @@ def _merge_healed_missing_options(
         if scope == _SCOPE_TOP:
             continue
         found = _find_healed_unit_for_failure(by_id, failure)
-        if found is None:
-            # 兼容旧查找路径（option）
-            found = _find_healed_option_for_failure(by_id, failure)
         if found is None:
             continue
         replacement, replace = found
