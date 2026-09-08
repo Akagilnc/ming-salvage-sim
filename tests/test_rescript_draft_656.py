@@ -624,19 +624,68 @@ def test_validate_items_over_limit_fails_whole_batch():
     lambda item: item.pop("title"),
     lambda item: item.update(context=""),
     lambda item: item.pop("context"),
-    lambda item: item.update(options=[item["options"][0]]),          # 只 1 项
-    lambda item: item.update(options=item["options"] * 2),           # 4 项
     lambda item: item["options"].__setitem__(0, {"label": "a"}),      # hint 缺失
     lambda item: item["options"].__setitem__(0, {"label": "", "hint": "h"}),
     lambda item: item["options"].__setitem__(0, {"hint": "h"}),       # label 缺失
 ])
 def test_validate_items_missing_required_field_fails_whole_batch(mutate):
-    """冻结票面 F2.2/F2.5：任一必需字段缺失/非法＝整批失败，不保留合法项成部分头版。"""
+    """冻结票面 F2.2/F2.5：title/context/option 内部契约非法＝整批失败（#1801 后项数不再整批）。"""
     good = _valid_item(0)
     bad = _valid_item(1)
     mutate(bad)
     with pytest.raises(ValueError):
         validate_rescript_draft_items({"items": [good, bad]}, set())
+
+
+def test_validate_items_single_option_is_legal():
+    """#1801：单拟合法——条目只给 1 个 option 照常呈上。"""
+    item = _valid_item(0)
+    item["options"] = [item["options"][0]]
+    drafts = validate_rescript_draft_items({"items": [item]}, set())
+    assert len(drafts) == 1
+    assert len(drafts[0]["options"]) == 1
+    assert drafts[0]["title"] == item["title"]
+
+
+def test_validate_items_many_options_not_gated_or_truncated():
+    """#1801：多项不拦——5 个 option 照常呈上、不截断、不报错。"""
+    item = _valid_item(0)
+    base = item["options"][0]
+    item["options"] = [
+        {**base, "label": f"拟{i}", "hint": f"h{i}"} for i in range(5)
+    ]
+    drafts = validate_rescript_draft_items({"items": [item]}, set())
+    assert len(drafts) == 1
+    assert [o["label"] for o in drafts[0]["options"]] == [f"拟{i}" for i in range(5)]
+
+
+def test_validate_items_empty_options_drops_item_keeps_siblings(monkeypatch):
+    """#1801：0 项按 F2.3 不足照实消失；其它条目仍呈上；日志响亮；不整批判死。"""
+    logs: list[str] = []
+    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
+    good = _valid_item(0)
+    empty = _valid_item(1)
+    empty["options"] = []
+    drafts = validate_rescript_draft_items({"items": [good, empty]}, set())
+    assert len(drafts) == 1
+    assert drafts[0]["title"] == good["title"]
+    assert len(drafts[0]["options"]) == 2
+    assert logs, "0 项条目消失须响亮留痕"
+    assert any(empty["title"] in msg for msg in logs)
+
+
+def test_validate_items_non_list_options_drops_item_keeps_siblings(monkeypatch):
+    """#1801：非 list options 该条目消失；其它条目仍呈上；日志响亮；不整批判死。"""
+    logs: list[str] = []
+    monkeypatch.setattr(rescript_mod, "tlog", logs.append)
+    good = _valid_item(0)
+    bad = _valid_item(1)
+    bad["options"] = "not-a-list"
+    drafts = validate_rescript_draft_items({"items": [good, bad]}, set())
+    assert len(drafts) == 1
+    assert drafts[0]["title"] == good["title"]
+    assert logs, "非 list options 条目消失须响亮留痕"
+    assert any(bad["title"] in msg for msg in logs)
 
 
 def test_validate_items_empty_list_is_legal_headless_month():

@@ -1359,8 +1359,6 @@ def validate_rescript_draft_items(
     data: object,
     board_issue_ids: set[int],
     *,
-    min_options: int = 2,
-    max_options: int = 3,
     isolate_option_missing: bool = False,
     region_target_ids: Optional[set[str]] = None,
     army_target_ids: Optional[set[str]] = None,
@@ -1369,7 +1367,7 @@ def validate_rescript_draft_items(
 
     - 顶层非法（非 dict / 无 items list）→ raise ValueError（整批降级，本月无头版）；
     - 条目必需字段缺失或非法（title/context）→ raise ValueError 整批失败；
-    - options 数量：首抽/常规默认 2–3（F2.2）；#1746 剔除后 min_options=1 仍可呈；
+    - options 为空或非 list：该条目按 F2.3 不足照实消失、其它条目照常呈上（#1801 删项数门）；
     - 可定位单 option 的契约失败（#1746，不问错种类）：isolate_option_missing=True
       时收齐为 RescriptOptionMissingFieldsBatch（补交／耗尽单 option 剔除）；
       False 时仍整批 ValueError（旧直调行为）；
@@ -1409,13 +1407,15 @@ def validate_rescript_draft_items(
         title = _required_text(raw, "title")
         context = _required_text(raw, "context")
         raw_opts = raw.get("options")
-        if not isinstance(raw_opts, list) or not (
-            min_options <= len(raw_opts) <= max_options
-        ):
-            raise ValueError(
-                f"票拟条目 options 非 {min_options}-{max_options} 项"
-                f"（整批失败，F2.2）：{title!r}"
+        if not isinstance(raw_opts, list) or not raw_opts:
+            # #1801：项数门已删；0 项／非 list 按 F2.3 不足照实消失，不整批判死
+            opts_len = len(raw_opts) if isinstance(raw_opts, list) else "n/a"
+            tlog(
+                f"[rescript] 票拟条目 options 不足照实消失（F2.3）："
+                f"title={title!r} options_type={type(raw_opts).__name__} "
+                f"options_len={opts_len}"
             )
+            continue
         options: List[Dict[str, object]] = []
         item_missing: List[RescriptOptionMissingFailure] = []
         for option_index, opt in enumerate(raw_opts):
@@ -1848,7 +1848,7 @@ def generate_rescript_draft(
     #1746：可定位到单 option 的契约失败（缺/错/组合/接地/形，不问种类）→ 同一会话
     补交（结构化失败事实 field/current/expected，最多 RESCRIPT_OPTION_FIELD_HEAL_RETRIES
     次）；耗尽只剔除该 option，其余急务/option 照出，不告知皇帝；后台 tlog + error pack
-    响亮留痕。剔后剩 1 个 option 仍可呈（F2.2 局部修订）；剩 0 则该急务条目不足照实消失。
+    响亮留痕。剔后剩 ≥1 个 option 仍可呈；剩 0 则该急务条目不足照实消失。
     顶层/急务条目/provider 调用失败仍整批降级，不扩成所有异常都 heal。
     """
     # payload 序列化是纯程序逻辑：其错误属代码侧错（ADR 0005），不在降级面内，响亮上抛。
@@ -1875,15 +1875,11 @@ def generate_rescript_draft(
         data: object,
         *,
         isolate_option_missing: bool,
-        min_options: int = 2,
-        max_options: int = 3,
     ) -> List[Dict[str, object]]:
         # grounding 由 validate 内唯一完整 option 校验负责（不在此重复末端断言）
         return validate_rescript_draft_items(
             data,
             board_ids,
-            min_options=min_options,
-            max_options=max_options,
             isolate_option_missing=isolate_option_missing,
             region_target_ids=region_target_ids,
             army_target_ids=army_target_ids,
@@ -2000,12 +1996,10 @@ def generate_rescript_draft(
         # 底稿在首抽/前轮已确立；非法则程序破坏自然上抛
         dropped = _drop_options_by_failures(working_data, pending_missing)
         try:
-            # F2.2 局部修订：剔后剩 1 仍呈；0 option 条目已在 drop 时去掉
+            # 0 option 条目已在 drop 时去掉；#1801 后无项数门
             drafts = _validate(
                 dropped,
                 isolate_option_missing=False,
-                min_options=1,
-                max_options=3,
             )
         except (LLMContractError, ValueError) as drop_exc:
             _degrade(drop_exc)
