@@ -499,6 +499,296 @@ def test_generate_ungrounded_army_heals_then_drops_sibling_kept(monkeypatch, tmp
     assert drafts[0]["options"][0].get("label") == sibling.get("label")
 
 
+def test_payload_projects_character_targets_full_characters_name_set(game):
+    """#1804：票拟入口人物目录外延＝characters.name 全集；不筛在朝/官职；无裸属性。"""
+    from ming_sim.rescript_draft import character_targets_from_db
+
+    db, state, _content = game
+    # 离场且无官职的在册人——目录与闸均须收纳（防回退 #1778）
+    db.conn.execute(
+        "UPDATE characters SET status='retired', office='' "
+        "WHERE name=(SELECT name FROM characters LIMIT 1)"
+    )
+    db.conn.commit()
+    known = {
+        str(row["name"])
+        for row in db.conn.execute("SELECT name FROM characters").fetchall()
+        if str(row["name"] or "").strip()
+    }
+    office_by_name = {
+        str(row["name"]): str(row["office"] or "")
+        for row in db.conn.execute("SELECT name, office FROM characters").fetchall()
+    }
+    # 票拟入口缝：目录由 db 投影注入 payload，不经共享 simulator_payload。
+    payload = build_rescript_draft_payload(
+        state, "邸报", {},
+        {"name": "首辅", "office": "内阁首辅", "faction": "阉党"},
+        character_targets=character_targets_from_db(db),
+    )
+    catalog = payload["character_targets"]
+    assert isinstance(catalog, list) and catalog
+    names = {row["name"] for row in catalog}
+    assert names == known
+    for row in catalog:
+        assert set(row) == {"name", "office"}
+        assert row["office"] == office_by_name[row["name"]]
+        for banned in ("loyalty", "ability", "integrity", "courage", "identity", "faction"):
+            assert banned not in row
+
+
+def test_generate_combined_target_and_roster_failures_reported_together_then_land(
+    monkeypatch, tmp_path,
+):
+    """#1804 C：同一 option 同时坏 target_id 与 roster → 首轮补交一次告全两类；
+
+    一次改对两处即落库。短路装回会使首轮只见 target_id（变异验证见本测）。
+    """
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    item = _legal_item()
+    sibling = dict(item["options"][1])
+    # 坏项：target 与 roster 同时未接地（region 与 target 同坏，保持 single 组合自洽）
+    item["options"][0]["target_id"] = "ningyuan"
+    item["options"][0]["region_id"] = "ningyuan"
+    bad_roster = [{
+        "character_id": "陕西巡抚", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    fixed_roster = [{
+        "character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    item["options"][0]["participant_roster"] = bad_roster
+    catalog = [
+        {"name": "毕自严", "office": "户部尚书"},
+        {"name": "崔呈秀", "office": "兵部尚书"},
+    ]
+    n = {"i": 0}
+    prompts: list[str] = []
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        prompts.append(prompt)
+        n["i"] += 1
+        if n["i"] == 1:
+            return json.dumps({"items": [item]}, ensure_ascii=False)
+        # 一次改对两处目录失败；region_id 随 target 回目录内合法值（组合自洽，非本闸）
+        return json.dumps({
+            "heals": [{
+                "heal_id": "0:0",
+                "target_id": "shaanxi",
+                "region_id": "shaanxi",
+                "participant_roster": fixed_roster,
+            }],
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), {
+        "active_issues": [],
+        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
+        "character_targets": catalog,
+    }, 1)
+    assert drafts is not None and len(drafts) == 1
+    assert len(drafts[0]["options"]) == 2
+    fixed = drafts[0]["options"][0]
+    assert fixed["target_id"] == "shaanxi"
+    assert fixed["participant_roster"][0]["character_id"] == "毕自严"
+    assert drafts[0]["options"][1].get("label") == sibling.get("label")
+    # 首轮补交请求须同时带出两类失败事实（合并上报，非串行短路）
+    assert len(prompts) >= 2
+    heal_req = json.loads(prompts[1])
+    assert heal_req["kind"] == "rescript_option_field_heal"
+    fields = {
+        str(f["field"])
+        for f in heal_req["failures"][0]["field_failures"]
+    }
+    assert "target_id" in fields
+    assert "participant_roster" in fields
+
+
+def test_generate_combined_target_roster_partial_heal_reports_remaining(
+    monkeypatch, tmp_path,
+):
+    """#1804 C：首轮同时报两类；只改对一处 → 下轮仍如实报剩余那处。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    item = _legal_item()
+    sibling = dict(item["options"][1])
+    item["options"][0]["target_id"] = "ningyuan"
+    item["options"][0]["region_id"] = "ningyuan"
+    bad_roster = [{
+        "character_id": "陕西巡抚", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    fixed_roster = [{
+        "character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    item["options"][0]["participant_roster"] = bad_roster
+    catalog = [
+        {"name": "毕自严", "office": "户部尚书"},
+        {"name": "崔呈秀", "office": "兵部尚书"},
+    ]
+    n = {"i": 0}
+    prompts: list[str] = []
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        prompts.append(prompt)
+        n["i"] += 1
+        if n["i"] == 1:
+            return json.dumps({"items": [item]}, ensure_ascii=False)
+        if n["i"] == 2:
+            # 只改对 target（+region 组合自洽），roster 仍坏
+            return json.dumps({
+                "heals": [{
+                    "heal_id": "0:0",
+                    "target_id": "shaanxi",
+                    "region_id": "shaanxi",
+                }],
+            }, ensure_ascii=False)
+        # 次轮改 roster
+        return json.dumps({
+            "heals": [{"heal_id": "0:0", "participant_roster": fixed_roster}],
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), {
+        "active_issues": [],
+        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
+        "character_targets": catalog,
+    }, 1)
+    assert drafts is not None and len(drafts) == 1
+    assert len(drafts[0]["options"]) == 2
+    assert drafts[0]["options"][0]["target_id"] == "shaanxi"
+    assert drafts[0]["options"][0]["participant_roster"][0]["character_id"] == "毕自严"
+    assert drafts[0]["options"][1].get("label") == sibling.get("label")
+    assert len(prompts) >= 3
+    first_heal = json.loads(prompts[1])
+    first_fields = {
+        str(f["field"]) for f in first_heal["failures"][0]["field_failures"]
+    }
+    assert first_fields >= {"target_id", "participant_roster"}
+    second_heal = json.loads(prompts[2])
+    second_fields = {
+        str(f["field"]) for f in second_heal["failures"][0]["field_failures"]
+    }
+    assert second_fields == {"participant_roster"}
+
+
+def test_generate_unknown_roster_character_heals_with_legal_set_then_lands(
+    monkeypatch, tmp_path,
+):
+    """#1804：roster 官职名 → 顶层 participant_roster 失败事实+合法集；照协议部分键补交落库。
+
+    广告协议只认顶层 option 键合并；field 须为 participant_roster（非整点号嵌套键），
+    补交体 {"heals":[{"heal_id":"i:o","participant_roster":...}]} 即修复。
+    """
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    item = _legal_item()
+    sibling = dict(item["options"][1])
+    bad_roster = [{
+        "character_id": "陕西巡抚", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    fixed_roster = [{
+        "character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    item["options"][0]["participant_roster"] = bad_roster
+    catalog = [
+        {"name": "毕自严", "office": "户部尚书"},
+        {"name": "崔呈秀", "office": "兵部尚书"},
+    ]
+    n = {"i": 0}
+    prompts: list[str] = []
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        prompts.append(prompt)
+        n["i"] += 1
+        if n["i"] == 1:
+            return json.dumps({"items": [item]}, ensure_ascii=False)
+        # 照广告协议部分键补交：只回顶层 participant_roster，不整 option 替换
+        return json.dumps({
+            "heals": [{"heal_id": "0:0", "participant_roster": fixed_roster}],
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), {
+        "active_issues": [],
+        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
+        "character_targets": catalog,
+    }, 1)
+    assert drafts is not None and len(drafts) == 1
+    assert len(drafts[0]["options"]) == 2
+    bad_fixed = drafts[0]["options"][0]
+    assert bad_fixed["participant_roster"][0]["character_id"] == "毕自严"
+    assert drafts[0]["options"][1].get("label") == sibling.get("label")
+    heal_req = json.loads(prompts[1])
+    assert heal_req["kind"] == "rescript_option_field_heal"
+    facts = {
+        str(f["field"]): f
+        for f in heal_req["failures"][0]["field_failures"]
+    }
+    # 顶层键：与 _apply_option_heal 合并路径相容；禁点号嵌套键
+    assert "participant_roster" in facts
+    assert "participant_roster.character_id" not in facts
+    assert "participant_roster.delegator_id" not in facts
+    assert facts["participant_roster"]["current"] == bad_roster
+    assert set(facts["participant_roster"]["expected"]) == {"毕自严", "崔呈秀"}
+    # 部分键补交不得把点号键写进 option 顶层
+    assert "participant_roster.character_id" not in bad_fixed
+    assert "participant_roster.delegator_id" not in bad_fixed
+
+
+def test_generate_unknown_delegator_heals_then_drops_sibling_kept(
+    monkeypatch, tmp_path,
+):
+    """#1804：delegator_id 不存在 → heal；耗尽只剔该 option。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    item = _legal_item()
+    sibling = dict(item["options"][1])
+    item["options"][0]["participant_roster"] = [{
+        "character_id": "毕自严", "tier": "主办", "role": "",
+        "delegator_id": "兵部侍郎",
+    }]
+    monkeypatch.setattr(
+        rescript_mod, "run_agent_text",
+        lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
+    )
+    drafts = generate_rescript_draft(object(), {
+        "active_issues": [],
+        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
+        "character_targets": [
+            {"name": "毕自严", "office": "户部尚书"},
+            {"name": "崔呈秀", "office": "兵部尚书"},
+        ],
+    }, 1)
+    assert drafts is not None and len(drafts) == 1
+    assert len(drafts[0]["options"]) == 1
+    assert drafts[0]["options"][0].get("label") == sibling.get("label")
+
+
+def test_generate_existing_offcourt_roster_character_lands(monkeypatch, tmp_path):
+    """#1804 防回退 #1778：存在但不在朝/无官职 → 合法落库，不得判非法。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    item = _legal_item()
+    item["options"][0]["participant_roster"] = [{
+        "character_id": "离场无职甲", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    item["options"][1]["participant_roster"] = [{
+        "character_id": "离场无职甲", "tier": "主办", "role": "",
+        "delegator_id": "离场无职乙",
+    }]
+    monkeypatch.setattr(
+        rescript_mod, "run_agent_text",
+        lambda *a, **k: json.dumps({"items": [item]}, ensure_ascii=False),
+    )
+    drafts = generate_rescript_draft(object(), {
+        "active_issues": [],
+        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
+        "character_targets": [
+            {"name": "离场无职甲", "office": ""},
+            {"name": "离场无职乙", "office": ""},
+            {"name": "毕自严", "office": "户部尚书"},
+        ],
+    }, 1)
+    assert drafts is not None and len(drafts) == 1
+    assert len(drafts[0]["options"]) == 2
+    assert drafts[0]["options"][0]["participant_roster"][0]["character_id"] == "离场无职甲"
+    assert drafts[0]["options"][1]["participant_roster"][0]["delegator_id"] == "离场无职乙"
+
+
 def test_generate_military_order_region_target_heals_then_drops(monkeypatch, tmp_path):
     """#1746 heal-covers-illegal-values-too：军令 target_kind=region 非法 → 补交耗尽只剔该 option。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))

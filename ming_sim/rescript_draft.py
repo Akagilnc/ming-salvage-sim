@@ -418,11 +418,16 @@ def _render_action_conditional_contract(conditional: object) -> str:
     return "action-conditional：" + "。".join(parts) + "。"
 
 
-def rescript_layer_a_prompt_contract() -> str:
+def rescript_layer_a_prompt_contract(
+    *,
+    character_targets_supplied: bool = False,
+) -> str:
     """初拟/改票共用：由 layer_a_option_shape 渲染层 A 完整受理契约。
 
     structured_decree_prompt_contract 承目标/属地/承办子契约；本块补
     required/present/action_types/action-conditional/grant_kind。
+    character_targets_supplied：本批是否注入 character_targets。有则 roster
+    人物主键指向该目录；无则不下 character_targets 子句（P6：只要求它能看见的）。
     禁 agents 手抄；禁复述 grounding 规则；禁锁本函数措辞。
     """
     shape = layer_a_option_shape()
@@ -434,16 +439,30 @@ def rescript_layer_a_prompt_contract() -> str:
     grant_kind = str(shape["grant_kind_army_pay"])
     server_only = "/".join(str(k) for k in shape["server_only_keys"])  # type: ignore[arg-type]
     conditional = _render_action_conditional_contract(shape.get("action_conditional"))
+    # #1804：目录在场才钉 character_targets；改票入口不供目录，不写该子句。
+    if character_targets_supplied:
+        roster_person = (
+            f"{{character_id: 须取自同批 character_targets.name, tier∈{roster_tiers}, "
+            f"role: 职分文字（可空串）, delegator_id: 委派人本名（无则 null，"
+            f"有则同取 character_targets.name）}}；"
+            f"{roster_shape['require_tier']} 至少一人、也可数人合力；"  # type: ignore[index]
+            "旨里点了谁就照写谁，未点名的由你按人物与局势荐入名单；"
+            "官职栏只供认人，不得用官职名冒充人物名；"
+        )
+    else:
+        roster_person = (
+            f"{{character_id: 朝堂名册上的大臣本名, tier∈{roster_tiers}, "
+            f"role: 职分文字（可空串）, delegator_id: 委派人本名（无则 null）}}；"
+            f"{roster_shape['require_tier']} 至少一人、也可数人合力；"  # type: ignore[index]
+            "旨里点了谁就照写谁，未点名的由你按人物与局势荐入名单；"
+        )
     return (
         "票拟层 A option 受理契约（与 normalize_rescript_layer_a_option 共用 shape）："
         f"每项 options[] 必填非空 {required}；"
         f"action_type∈{actions}；"
         f"{present} 三键必须输出（值可空串）；"
         f"{PARTICIPANT_ROSTER_KEY} 写这道旨的参与名单，每项 "
-        f"{{character_id: 朝堂名册上的大臣本名, tier∈{roster_tiers}, "
-        f"role: 职分文字（可空串）, delegator_id: 委派人本名（无则 null）}}；"
-        f"{roster_shape['require_tier']} 至少一人、也可数人合力；"  # type: ignore[index]
-        "旨里点了谁就照写谁，未点名的由你按人物与局势荐入名单；"
+        + roster_person
         + conditional
         + f"grant_allocation 军饷用 grant_kind={grant_kind}"
         f"（禁直写 grant_action=协饷；kind 与 grant_action 不得并存）；"
@@ -1198,6 +1217,22 @@ def _project_army_targets(table: object) -> List[Dict[str, str]]:
     ]
 
 
+def character_targets_from_db(db: object) -> List[Dict[str, str]]:
+    """#1804：票拟人物目录＝characters.name 全集（name+office）。
+
+    不筛在朝/官职/事务类别；官职只供认人，不限可选性；禁忠诚/能力等裸属性。
+    真源是 characters 表；由票拟入口注入 payload，不进共享 simulator 盘面。
+    """
+    rows = db.conn.execute(  # type: ignore[attr-defined]
+        "SELECT name, office FROM characters ORDER BY name"
+    ).fetchall()
+    return [
+        {"name": str(row["name"]), "office": str(row["office"] or "")}
+        for row in rows
+        if str(row["name"] or "").strip()
+    ]
+
+
 def _project_board_targets(
     table: object,
     *,
@@ -1236,12 +1271,14 @@ def build_rescript_draft_payload(
     narrative: str,
     simulator_payload: Dict[str, object],
     triage_actor: Dict[str, str],
+    character_targets: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, object]:
     """票拟生成 LLM 步的确定性输入（F1.3：零依赖 extractor 输出，只读盘面投影）。
 
     active_issues 取 simulator_payload 里已投影的一份再过票拟出口定性投影（0143
     输入侧投影唯一通道，issue_id 是权威绑定快照）；缺失时回空表并留痕（无盘面可
     投影＝无急务可选）。
+    character_targets 由票拟入口缝注入（#1804）；缺省不塞空目录（空目录会把合法名全拒）。
     """
     raw_issues = simulator_payload.get("active_issues")
     if not isinstance(raw_issues, list):
@@ -1256,7 +1293,7 @@ def build_rescript_draft_payload(
     # （生成侧 machine discriminator），层 A 映射到内部 grant_action=协饷。
     from ming_sim.action_materialize import GRANT_ACTIONS
 
-    return {
+    payload: Dict[str, object] = {
         "turn": {
             "year": state.year,
             "period": state.period,
@@ -1272,6 +1309,11 @@ def build_rescript_draft_payload(
         "grant_kinds": [_GRANT_KIND_ARMY_PAY],
         "target": {"min_items": 3, "max_items": MAX_RESCRIPT_DRAFTS},
     }
+    # #1804：与 region/army 同形人物目录；外延＝characters.name 全集（#1778）。
+    # 票拟入口注入；缺省不写键（旧夹具无目录不误伤 generation grounding）。
+    if character_targets is not None:
+        payload["character_targets"] = list(character_targets)
+    return payload
 
 
 def _option_failure_from_exc(
@@ -1336,6 +1378,50 @@ def _ungrounded_target_failure(
                 "target_id",
                 current=tid,
                 expected=sorted(catalog),
+            )
+        ],
+    )
+
+
+def _ungrounded_roster_person_failure(
+    raw_option: object,
+    *,
+    character_names: Optional[set[str]],
+) -> Optional[RescriptOptionMissingFieldsError]:
+    """#1804：participant_roster 两人物主键须在同批 character_targets。
+
+    唯一非法判据＝人不存在（与 db._validate_participant_roster_references 同延）；
+    不判在朝/任职。无目录时不检（与 target 接地同款）。assignee_name 不在此闸。
+    失败 field 用顶层 participant_roster（current=整份现值 roster、expected=合法集），
+    与 #1801 顶层 option 键补交／_apply_option_heal 合并路径相容；禁点号嵌套键。
+    """
+    if character_names is None or not isinstance(raw_option, dict):
+        return None
+    roster = raw_option.get(PARTICIPANT_ROSTER_KEY)
+    if not isinstance(roster, list):
+        return None
+    ungrounded = False
+    for item in roster:
+        if not isinstance(item, Mapping):
+            continue
+        character_id = str(item.get("character_id") or "").strip()
+        if character_id and character_id not in character_names:
+            ungrounded = True
+            break
+        delegator_id = str(item.get("delegator_id") or "").strip()
+        if delegator_id and delegator_id not in character_names:
+            ungrounded = True
+            break
+    if not ungrounded:
+        return None
+    return RescriptOptionMissingFieldsError(
+        f"票拟 option.{PARTICIPANT_ROSTER_KEY} 人物不在同批 character_targets",
+        raw_option=raw_option,
+        field_failures=[
+            _field_failure(
+                PARTICIPANT_ROSTER_KEY,
+                current=list(roster),
+                expected=sorted(character_names),
             )
         ],
     )
@@ -1450,6 +1536,7 @@ def validate_rescript_draft_items(
     isolate_option_missing: bool = False,
     region_target_ids: Optional[set[str]] = None,
     army_target_ids: Optional[set[str]] = None,
+    character_names: Optional[set[str]] = None,
 ) -> List[Dict[str, object]]:
     """shape 校验（F2.2/F2.5）＋权威快照绑定＋原样不变式（F3.3）。
 
@@ -1654,12 +1741,31 @@ def validate_rescript_draft_items(
                 raise ValueError(
                     f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
                 ) from exc
-            # 成功归一后唯一接地检查；失败进同一补交
-            ground_exc = _ungrounded_target_failure(
+            # 成功归一后接地检查；失败进同一补交。
+            # #1804 C：同一校验趟合并上报 target 与 roster 两类独立目录失败，
+            # 不因 target 先失败而短路 roster（首轮补交须一次告全）。
+            target_exc = _ungrounded_target_failure(
                 normalized_opt,
                 region_target_ids=region_target_ids,
                 army_target_ids=army_target_ids,
             )
+            roster_exc = _ungrounded_roster_person_failure(
+                normalized_opt,
+                character_names=character_names,
+            )
+            if target_exc is None:
+                ground_exc = roster_exc
+            elif roster_exc is None:
+                ground_exc = target_exc
+            else:
+                ground_exc = RescriptOptionMissingFieldsError(
+                    f"{target_exc}；{roster_exc}",
+                    raw_option=target_exc.raw_option,
+                    field_failures=(
+                        list(target_exc.field_failures)
+                        + list(roster_exc.field_failures)
+                    ),
+                )
             if ground_exc is not None:
                 if isolate_option_missing:
                     item_missing.append(_option_failure_from_exc(
@@ -2227,6 +2333,17 @@ def generate_rescript_draft(
         str(row["id"]) for row in army_targets
         if isinstance(row, dict) and isinstance(row.get("id"), str)
     } if isinstance(army_targets, list) else set()
+    # #1804：人物目录缺省＝不检（旧夹具无目录不误伤）；list 在则按 name 全集精确核。
+    character_targets = payload.get("character_targets")
+    character_names: Optional[set[str]] = None
+    if isinstance(character_targets, list):
+        character_names = {
+            str(row["name"]).strip()
+            for row in character_targets
+            if isinstance(row, dict)
+            and isinstance(row.get("name"), str)
+            and str(row["name"]).strip()
+        }
     board_ids = _board_issue_ids(payload.get("active_issues"))
 
     def _validate(
@@ -2241,6 +2358,7 @@ def generate_rescript_draft(
             isolate_option_missing=isolate_option_missing,
             region_target_ids=region_target_ids,
             army_target_ids=army_target_ids,
+            character_names=character_names,
         )
 
     heal_retries = max(0, int(RESCRIPT_OPTION_FIELD_HEAL_RETRIES))

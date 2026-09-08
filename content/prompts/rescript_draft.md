@@ -23,6 +23,7 @@
     - `label`：一句可奉行的拟语（如「发帑金赈济陕西」「敕该抚查勘灾情」）
     - `hint`：方向性陈词（如此举所安者谁、所拂者谁）
     - `target_kind=region` 时 `target_id` 必须从 input 的 `region_targets` 选择 `id`，地名须按同项 `name` 对照，不得自造区域 id。`target_kind=army` 时必须从同批 `army_targets` 选择 `id`，中文军名按同项 `name` 对照，不得用省 id/地名冒充军 id。
+    - `participant_roster` 的 `character_id`／`delegator_id` 必须从同批 `character_targets` 选择 `name`（官职栏只供认人，不得用官职名冒充人物名）。
     - `grant_action`（非军饷 grant）只能从 input 的 `grant_actions` 闭集取值；军饷 `grant_kind` 取自 input `grant_kinds`，并显式填 `purpose`/`account`/`amount`/army `target_id`——服务端不补
   - 可**两拟陈两端**——拿不定或不愿独任时，并列两端各陈利弊，由圣断。
 - **通篇用定性文字**：描述轻重、安危、人心向背，一律以定性说法表达——如「需款甚巨」「兵力已疲」「民力已竭」，让陛下从措辞分量里读出缓急。
