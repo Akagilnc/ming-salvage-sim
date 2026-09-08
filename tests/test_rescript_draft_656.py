@@ -536,6 +536,138 @@ def test_payload_projects_character_targets_full_characters_name_set(game):
             assert banned not in row
 
 
+def test_generate_combined_target_and_roster_failures_reported_together_then_land(
+    monkeypatch, tmp_path,
+):
+    """#1804 C：同一 option 同时坏 target_id 与 roster → 首轮补交一次告全两类；
+
+    一次改对两处即落库。短路装回会使首轮只见 target_id（变异验证见本测）。
+    """
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    item = _legal_item()
+    sibling = dict(item["options"][1])
+    # 坏项：target 与 roster 同时未接地（region 与 target 同坏，保持 single 组合自洽）
+    item["options"][0]["target_id"] = "ningyuan"
+    item["options"][0]["region_id"] = "ningyuan"
+    bad_roster = [{
+        "character_id": "陕西巡抚", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    fixed_roster = [{
+        "character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    item["options"][0]["participant_roster"] = bad_roster
+    catalog = [
+        {"name": "毕自严", "office": "户部尚书"},
+        {"name": "崔呈秀", "office": "兵部尚书"},
+    ]
+    n = {"i": 0}
+    prompts: list[str] = []
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        prompts.append(prompt)
+        n["i"] += 1
+        if n["i"] == 1:
+            return json.dumps({"items": [item]}, ensure_ascii=False)
+        # 一次改对两处目录失败；region_id 随 target 回目录内合法值（组合自洽，非本闸）
+        return json.dumps({
+            "heals": [{
+                "heal_id": "0:0",
+                "target_id": "shaanxi",
+                "region_id": "shaanxi",
+                "participant_roster": fixed_roster,
+            }],
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), {
+        "active_issues": [],
+        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
+        "character_targets": catalog,
+    }, 1)
+    assert drafts is not None and len(drafts) == 1
+    assert len(drafts[0]["options"]) == 2
+    fixed = drafts[0]["options"][0]
+    assert fixed["target_id"] == "shaanxi"
+    assert fixed["participant_roster"][0]["character_id"] == "毕自严"
+    assert drafts[0]["options"][1].get("label") == sibling.get("label")
+    # 首轮补交请求须同时带出两类失败事实（合并上报，非串行短路）
+    assert len(prompts) >= 2
+    heal_req = json.loads(prompts[1])
+    assert heal_req["kind"] == "rescript_option_field_heal"
+    fields = {
+        str(f["field"])
+        for f in heal_req["failures"][0]["field_failures"]
+    }
+    assert "target_id" in fields
+    assert "participant_roster" in fields
+
+
+def test_generate_combined_target_roster_partial_heal_reports_remaining(
+    monkeypatch, tmp_path,
+):
+    """#1804 C：首轮同时报两类；只改对一处 → 下轮仍如实报剩余那处。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    item = _legal_item()
+    sibling = dict(item["options"][1])
+    item["options"][0]["target_id"] = "ningyuan"
+    item["options"][0]["region_id"] = "ningyuan"
+    bad_roster = [{
+        "character_id": "陕西巡抚", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    fixed_roster = [{
+        "character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None,
+    }]
+    item["options"][0]["participant_roster"] = bad_roster
+    catalog = [
+        {"name": "毕自严", "office": "户部尚书"},
+        {"name": "崔呈秀", "office": "兵部尚书"},
+    ]
+    n = {"i": 0}
+    prompts: list[str] = []
+
+    def _llm(_a, prompt, tag="", prior_messages=None):
+        prompts.append(prompt)
+        n["i"] += 1
+        if n["i"] == 1:
+            return json.dumps({"items": [item]}, ensure_ascii=False)
+        if n["i"] == 2:
+            # 只改对 target（+region 组合自洽），roster 仍坏
+            return json.dumps({
+                "heals": [{
+                    "heal_id": "0:0",
+                    "target_id": "shaanxi",
+                    "region_id": "shaanxi",
+                }],
+            }, ensure_ascii=False)
+        # 次轮改 roster
+        return json.dumps({
+            "heals": [{"heal_id": "0:0", "participant_roster": fixed_roster}],
+        }, ensure_ascii=False)
+
+    monkeypatch.setattr(rescript_mod, "run_agent_text", _llm)
+    drafts = generate_rescript_draft(object(), {
+        "active_issues": [],
+        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
+        "character_targets": catalog,
+    }, 1)
+    assert drafts is not None and len(drafts) == 1
+    assert len(drafts[0]["options"]) == 2
+    assert drafts[0]["options"][0]["target_id"] == "shaanxi"
+    assert drafts[0]["options"][0]["participant_roster"][0]["character_id"] == "毕自严"
+    assert drafts[0]["options"][1].get("label") == sibling.get("label")
+    assert len(prompts) >= 3
+    first_heal = json.loads(prompts[1])
+    first_fields = {
+        str(f["field"]) for f in first_heal["failures"][0]["field_failures"]
+    }
+    assert first_fields >= {"target_id", "participant_roster"}
+    second_heal = json.loads(prompts[2])
+    second_fields = {
+        str(f["field"]) for f in second_heal["failures"][0]["field_failures"]
+    }
+    assert second_fields == {"participant_roster"}
+
+
 def test_generate_unknown_roster_character_heals_with_legal_set_then_lands(
     monkeypatch, tmp_path,
 ):

@@ -1741,17 +1741,30 @@ def validate_rescript_draft_items(
                 raise ValueError(
                     f"票拟 option 层 A shape 失败（整批失败，F2.2/F2.5）：{title!r} {exc}"
                 ) from exc
-            # 成功归一后唯一接地检查；失败进同一补交
-            ground_exc = _ungrounded_target_failure(
+            # 成功归一后接地检查；失败进同一补交。
+            # #1804 C：同一校验趟合并上报 target 与 roster 两类独立目录失败，
+            # 不因 target 先失败而短路 roster（首轮补交须一次告全）。
+            target_exc = _ungrounded_target_failure(
                 normalized_opt,
                 region_target_ids=region_target_ids,
                 army_target_ids=army_target_ids,
             )
-            if ground_exc is None:
-                # #1804：roster 两人物主键对同批 character_targets 精确存在性
-                ground_exc = _ungrounded_roster_person_failure(
-                    normalized_opt,
-                    character_names=character_names,
+            roster_exc = _ungrounded_roster_person_failure(
+                normalized_opt,
+                character_names=character_names,
+            )
+            if target_exc is None:
+                ground_exc = roster_exc
+            elif roster_exc is None:
+                ground_exc = target_exc
+            else:
+                ground_exc = RescriptOptionMissingFieldsError(
+                    f"{target_exc}；{roster_exc}",
+                    raw_option=target_exc.raw_option,
+                    field_failures=(
+                        list(target_exc.field_failures)
+                        + list(roster_exc.field_failures)
+                    ),
                 )
             if ground_exc is not None:
                 if isolate_option_missing:
