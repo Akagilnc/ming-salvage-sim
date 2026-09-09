@@ -1,0 +1,198 @@
+[
+  {
+    "decision_key": "rescript_draft:1:1",
+    "title": "辽东索饷",
+    "kind": "rescript_draft",
+    "options": [
+      {
+        "label": "敕户部速拨辽饷十万两",
+        "action_type": "grant_allocation",
+        "locality_scope": "single",
+        "target_kind": "region",
+        "target_id": "liaodong",
+        "region_id": "liaodong",
+        "amount": 10,
+        "account": null,
+        "purpose": null,
+        "grant_kind": null,
+        "assignee_name": "郭允厚",
+        "participant_roster": [
+          {
+            "character_id": "郭允厚",
+            "tier": "主办",
+            "role": "户部尚书，主理拨饷",
+            "delegator_id": null
+          }
+        ]
+      },
+      {
+        "label": "命督师王之臣查核军饷实情",
+        "action_type": "assignment",
+        "locality_scope": "single",
+        "target_kind": "region",
+        "target_id": "liaodong",
+        "region_id": "liaodong",
+        "amount": null,
+        "account": null,
+        "purpose": null,
+        "grant_kind": null,
+        "assignee_name": "王之臣",
+        "participant_roster": [
+          {
+            "character_id": "王之臣",
+            "tier": "主办",
+            "role": "蓟辽督师，查核军饷",
+            "delegator_id": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "decision_key": "rescript_draft:1:2",
+    "title": "户部亏空",
+    "kind": "rescript_draft",
+    "options": [
+      {
+        "label": "严敕户部清理亏空，禁挪借",
+        "action_type": "assignment",
+        "locality_scope": "single",
+        "target_kind": "region",
+        "target_id": "beizhili",
+        "region_id": "beizhili",
+        "amount": null,
+        "account": null,
+        "purpose": null,
+        "grant_kind": null,
+        "assignee_name": "郭允厚",
+        "participant_roster": [
+          {
+            "character_id": "郭允厚",
+            "tier": "主办",
+            "role": "户部尚书，清理亏空",
+            "delegator_id": null
+          }
+        ]
+      },
+      {
+        "label": "命御史清查京通仓亏短",
+        "action_type": "assignment",
+        "locality_scope": "single",
+        "target_kind": "region",
+        "target_id": "beizhili",
+        "region_id": "beizhili",
+        "amount": null,
+        "account": null,
+        "purpose": null,
+        "grant_kind": null,
+        "assignee_name": "张延登",
+        "participant_roster": [
+          {
+            "character_id": "张延登",
+            "tier": "主办",
+            "role": "左都御史，清查仓亏",
+            "delegator_id": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "decision_key": "rescript_draft:1:3",
+    "title": "陕西流寇起",
+    "kind": "rescript_draft",
+    "options": [
+      {
+        "label": "敕陕西巡抚练国事剿抚并用",
+        "action_type": "assignment",
+        "locality_scope": "single",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "region_id": "shaanxi",
+        "amount": null,
+        "account": null,
+        "purpose": null,
+        "grant_kind": null,
+        "assignee_name": "练国事",
+        "participant_roster": [
+          {
+            "character_id": "练国事",
+            "tier": "主办",
+            "role": "陕西巡抚，剿抚流寇",
+            "delegator_id": null
+          }
+        ]
+      },
+      {
+        "label": "发内帑银赈济陕北饥民",
+        "action_type": "grant_allocation",
+        "locality_scope": "single",
+        "target_kind": "region",
+        "target_id": "shaanxi",
+        "region_id": "shaanxi",
+        "amount": 5,
+        "account": null,
+        "purpose": null,
+        "grant_kind": null,
+        "assignee_name": "",
+        "participant_roster": [
+          {
+            "character_id": "黄立极",
+            "tier": "主办",
+            "role": "内阁首辅，拟旨发帑",
+            "delegator_id": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "decision_key": "decision:2:0",
+    "title": "关宁欠饷如何补",
+    "kind": "decision",
+    "options": [
+      {
+        "label": "发内帑银三十万两补关宁欠饷",
+        "action_type": null,
+        "locality_scope": null,
+        "target_kind": null,
+        "target_id": null,
+        "region_id": null,
+        "amount": null,
+        "account": null,
+        "purpose": null,
+        "grant_kind": null,
+        "assignee_name": null,
+        "participant_roster": null
+      },
+      {
+        "label": "命户部再挪他项垫辽饷",
+        "action_type": null,
+        "locality_scope": null,
+        "target_kind": null,
+        "target_id": null,
+        "region_id": null,
+        "amount": null,
+        "account": null,
+        "purpose": null,
+        "grant_kind": null,
+        "assignee_name": null,
+        "participant_roster": null
+      },
+      {
+        "label": "先遣御史核关宁实额再议",
+        "action_type": null,
+        "locality_scope": null,
+        "target_kind": null,
+        "target_id": null,
+        "region_id": null,
+        "amount": null,
+        "account": null,
+        "purpose": null,
+        "grant_kind": null,
+        "assignee_name": null,
+        "participant_roster": null
+      }
+    ]
+  }
+]

@@ -1,0 +1,6 @@
+Bug class: UI/resolve structured decree combo fail (not LLM empty-output).
+Player-visible: structured decree 组合校验失败: scope/target_kind + 重新拉取待批决策 loop.
+Pending GET shows grant_allocation options with locality_scope=single target_kind=region amount set but account/purpose/grant_kind null.
+Final decision:2:0 options are label/hint only (no structured fields).
+dump-schema: N/A for resolve SSE error text (not an LLM completion dump). Rescript/simulator TOKEN lines in this run show reasoning=0 (thinking off).
+HEAD: bf7110166
