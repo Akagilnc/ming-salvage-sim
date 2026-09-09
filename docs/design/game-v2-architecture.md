@@ -272,6 +272,8 @@ owner 要求「先立milestone。然后先把需要的大模块立票」，并�
 
 Wayfinder 绘图阶段的旧存档范围裁定及 owner 原话已记入[总规格的 Out of Scope](https://github.com/Akagilnc/ming-salvage-sim/issues/1812)；后续设计从该处读取，不另立兼容性 ADR。
 
+后续未决问题的权威导航为[游戏架构重构决策地图：从职责边界走到可施工路线](https://github.com/Akagilnc/ming-salvage-sim/issues/1817)。地图使用原生子票及阻塞关系管理问题，决策内容归各票的 resolution comment；下列条目仅保留此前调查范围，当前待讨论项以地图查询为准。前后端独立立票的 owner 澄清见总规格，不据此将前端并入后端流程模块。
+
 ### 后续深挖
 
 - 人事、财政、军事各自的具体模块边界与内部读写接口，以及现有能力哪些直接沿用；面向 LLM 的统一记录入口已定于 0154。
