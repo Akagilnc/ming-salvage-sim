@@ -40,6 +40,8 @@ export function useSettlementFlow({
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
   const [decisionFailures, setDecisionFailures] = React.useState<PendingActionFailure[]>([]);
   const [pausedDecisionError, setPausedDecisionError] = React.useState("");
+  // #1808：phase-1 fail-closed 的 HUD 专用位——与共享 error 分轨，避免召对等通道泄漏到普通 HUD。
+  const [settlementHudError, setSettlementHudError] = React.useState("");
 
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
   // #657：typed resume_phase2 时空 pending 不报 PAUSED，接到 phase2 空 POST 续跑。
@@ -116,7 +118,19 @@ export function useSettlementFlow({
     setSettleProgress(null);
     setSettleThinking("");
     setSettleNarrative("");
+    setSettlementHudError("");
   };
+
+  // #1808：phase-1 fail-closed 同时写共享 error（modal 带回）与 HUD 专用位。
+  const surfacePhase1Failure = (message: string) => {
+    setError(message);
+    setSettlementHudError(message);
+  };
+
+  // #1808 C：退局/再入局清 HUD 残留——接缝归既有 exitToMenu / enterGameAfterMenu。
+  const clearSettlementHudError = React.useCallback(() => {
+    setSettlementHudError("");
+  }, []);
 
   const issueDecree = async () => {
     beginSettlementWait();
@@ -152,15 +166,25 @@ export function useSettlementFlow({
           window.location.reload();
           return;
         }
-        // #1700 / #1418 r2 对称：phase-1 失败后 loadState，使 settling 续跑面可挂上。
-        await loadState();
+        // #1808 B 同类：phase-1 呈现先响亮落地；其后 loadState / pending 消费链 reject 不得吞掉已写告警。
+        // #1700 / #1418 r2：loadState 使 settling 续跑面可挂上（best-effort）。
         // main #1442：pending_action_failures 落库面优先。欠账耗尽走失败单源（#1353 fold-in），无补写 CTA。
         const errMsg = typeof outcome.data === "string" ? outcome.data : (errData.message || "颁诏失败。");
-        if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
-          setError(errMsg);
-          return;
+        surfacePhase1Failure(errMsg);
+        try {
+          await loadState();
+        } catch (refreshErr) {
+          // 刷新失败不抵消已落地的 phase-1 呈现；次级真因仍落痕（ADR 0005）。
+          console.warn("[settlement] phase-1 failure refresh failed", refreshErr);
         }
-        setError(errMsg);
+        try {
+          if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
+            return;
+          }
+        } catch (pendingErr) {
+          // pending 消费链失败不得吞主告警；次级真因落痕（ADR 0005）。
+          console.warn("[settlement] phase-1 pending-failure surface failed", pendingErr);
+        }
         setBusy("");
         return;
       }
@@ -185,9 +209,14 @@ export function useSettlementFlow({
       window.location.reload();
       return;
     } catch (err) {
-      // #1700：与 phase-2 catch 对称，失败后刷新权威相位。
-      await loadState();
-      setError(err instanceof Error ? err.message : String(err));
+      // #1808 B 同类：先响亮；#1700 loadState 刷新权威相位为 best-effort。
+      surfacePhase1Failure(err instanceof Error ? err.message : String(err));
+      try {
+        await loadState();
+      } catch (refreshErr) {
+        // 刷新失败不抵消已落地的 phase-1 呈现；次级真因仍落痕（ADR 0005）。
+        console.warn("[settlement] phase-1 failure refresh failed", refreshErr);
+      }
       setBusy("");
     }
   };
@@ -303,13 +332,22 @@ export function useSettlementFlow({
         window.location.reload();
         return;
       }
+      // #1808 B：catch 内 await 链 reject 不得全静默——phase-1 呈现先落地，再 best-effort 消费 pending。
       const failures = detail?.pending_action_failures;
-      if (Array.isArray(failures) && await surfacePendingActionFailures(failures)) {
-        setError(detail?.message || "退朝失败。");
-        return;
+      const hasPending = Array.isArray(failures) && failures.length > 0;
+      surfacePhase1Failure(
+        hasPending
+          ? (detail?.message || "退朝失败。")
+          : (err instanceof Error ? err.message : String(err)),
+      );
+      try {
+        if (hasPending && await surfacePendingActionFailures(failures)) {
+          return;
+        }
+      } catch (pendingErr) {
+        // pending 消费链 reject 时主告警已响亮；次级真因落痕（ADR 0005）。
+        console.warn("[settlement] phase-1 pending-failure surface failed", pendingErr);
       }
-      const errMsg = err instanceof Error ? err.message : String(err);
-      setError(errMsg);
     } finally {
       setBusy("");
     }
@@ -358,6 +396,8 @@ export function useSettlementFlow({
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,
+    settlementHudError,
+    clearSettlementHudError,
     issueDecree,
     advanceWithoutEdict,
     submitDecisions,

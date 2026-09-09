@@ -212,6 +212,8 @@ export function App() {
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,
+    settlementHudError,
+    clearSettlementHudError,
     issueDecree,
     advanceWithoutEdict,
     submitDecisions,
@@ -262,10 +264,12 @@ export function App() {
   const enterGameAfterMenu = React.useCallback(async () => {
     // #1764：新局归属——清本地拟诏会话态，防上一局失败卡/编辑/compose 残留。
     resetLocalEdictState();
+    // #1808 C：再入局清上一局 settlementHudError，防陈旧失败冒充当前 HUD。
+    clearSettlementHudError();
     setUndoneChatIdentity(null);
     setAppView("game");
     await loadState();
-  }, [loadState, resetLocalEdictState]);
+  }, [loadState, resetLocalEdictState, clearSettlementHudError]);
 
   const exitToMenu = React.useCallback(async () => {
     // #499：清空 state 前推进持久投影代次，作废在飞的旧 done 刷新——否则迟到刷新会在退菜单后
@@ -273,12 +277,14 @@ export function App() {
     beginDurableMutation();
     // #1764：离局即推进本地拟诏归属代次并清零，迟到 create/save/delete 回执不得写回。
     resetLocalEdictState();
+    // #1808 C：退菜单清 settlementHudError，接缝归既有退出路径。
+    clearSettlementHudError();
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
     setUndoneChatIdentity(null);
     setAppView("menu");
     await refreshMenuStatus();
-  }, [refreshMenuStatus, beginDurableMutation, resetLocalEdictState]);
+  }, [refreshMenuStatus, beginDurableMutation, resetLocalEdictState, clearSettlementHudError]);
 
   React.useEffect(() => {
     if (!state) return;
@@ -575,6 +581,14 @@ export function App() {
   const mapIntelVisible = mapIntelOpen && selectedNode && isFaceReachable("node_intel", settlementFace);
   const regionOpen = regionDrawerOpen && isFaceReachable("region", settlementFace);
   const armyOpen = armyDrawerOpen && isFaceReachable("army", settlementFace);
+  // #1808 A：续跑恢复面与 hud-error 同槽——挂载判定单点，供门控避让共用。
+  const phase2Resume = needsPhase2Resume(
+    state.turn.phase,
+    state.pending_decisions || [],
+    state.turn.settlement_display,
+    state.resume_phase2,
+  );
+  const settleResumeMounted = state.turn.phase === "settling" || phase2Resume;
 
   return (
     <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>
@@ -837,42 +851,45 @@ export function App() {
 
       {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
           ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
-          #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。 */}
-      {state.turn.phase === "settling"
-        || needsPhase2Resume(
-          state.turn.phase,
-          state.pending_decisions || [],
-          state.turn.settlement_display,
-          state.resume_phase2,
-        )
-        ? (
+          #1418 r2 / #657：all-decided 或 typed resume_phase2 → 同条续跑面，空 POST resolve_decisions/stream。
+          #1808 A：与 hud-error 同槽（.recovery-banner fixed top:64px）——恢复面挂载时 HUD 门控避让，
+          不得压盖唯一续跑 CTA；fail-closed 回 player 时本面不挂，HUD 核心验收仍成立。 */}
+      {settleResumeMounted ? (
         <div className="recovery-banner" data-testid="settle-resume">
           <span className="recovery-banner-message">
             {state.settlement_recovery?.message
               || "上月结算未完成（进度已保存）。"}
           </span>
           {(() => {
-            const phase2 = needsPhase2Resume(
-              state.turn.phase,
-              state.pending_decisions || [],
-              state.turn.settlement_display,
-              state.resume_phase2,
-            );
             // #1620：typed 恢复动作——phase2 / ready 重放 → resume；ready=0 → resimulate。
             // 文案为人服务；契约只落真实 click→POST，不锁措辞、不挂测试专用属性。
-            const recoveryAction = phase2 || state.settlement_recovery?.ready_replay !== false
+            const recoveryAction = phase2Resume || state.settlement_recovery?.ready_replay !== false
               ? "resume"
               : "resimulate";
             return (
               <button
                 className="seal-btn-issue"
-                onClick={phase2 ? resumePhase2 : issueDecree}
+                onClick={phase2Resume ? resumePhase2 : issueDecree}
                 disabled={!!busy}
               >
                 {recoveryAction === "resimulate" ? "重新推演" : "续跑结算"}
               </button>
             );
           })()}
+        </div>
+      ) : null}
+
+      {/* #1808：phase-1 fail-closed 的 HUD 告知——只吃 settlementHudError，不投影共享 error。
+          相关 modal（拟诏/召对/未落库）正在消费同一失败时不双播；DecisionRecoveryPanel 另承 phase-2。
+          呈现文本走上游消息，不新造固定句式。settle-resume 挂载时避让（A）。 */}
+      {settlementHudError && !edictOpen && !chatOpen && !settleResumeMounted ? (
+        <div
+          className="recovery-banner decision-recovery-banner"
+          role="alert"
+          aria-live="assertive"
+          data-testid="hud-error"
+        >
+          <span className="recovery-banner-message">{settlementHudError}</span>
         </div>
       ) : null}
 

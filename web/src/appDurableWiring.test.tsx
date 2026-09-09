@@ -230,6 +230,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const alert = host.querySelector('[role="alert"]')!;
     expect(alert.textContent).toBe(detail.message);
     expect(alert.textContent).not.toContain(detail.code);
+    // #1808：非结算通道不得泄漏到普通 HUD 告警位
+    expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
   });
 
   it("中断回话重试直接消费洪承畴 payload，并刷新夜卷轴而不重拉目标历史", async () => {
@@ -1340,9 +1342,11 @@ const settlementBaseState = (phase: string, extra: Record<string, unknown> = {})
 });
 
 const stubSettlementFetch = (
-  state: unknown,
+  state: unknown | (() => unknown),
   saves: unknown[] = [],
   load?: (url: URL, init?: RequestInit) => Promise<Response> | Response,
+  // 可选覆写：返回 Response 则短路；返回 void/undefined 则回落到默认空 json。
+  route?: (url: URL, init?: RequestInit) => Promise<Response | void> | Response | void,
 ) => {
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const u = new URL(String(url), "http://t.local");
@@ -1350,7 +1354,10 @@ const stubSettlementFetch = (
     if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
     if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves });
     if (u.pathname.includes("/api/saves/") && u.pathname.endsWith("/load") && load) return load(u, init);
-    if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
+    if (u.pathname.endsWith("/api/game/state")) {
+      const current = typeof state === "function" ? (state as () => unknown)() : state;
+      return jsonResp(current);
+    }
     if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
       turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
     });
@@ -1358,6 +1365,10 @@ const stubSettlementFetch = (
       turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
     });
     if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+    if (route) {
+      const override = await route(u, init);
+      if (override) return override;
+    }
     return jsonResp({});
   }));
 };
@@ -1825,6 +1836,117 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
   });
 
+  it("#1808 fail-closed 后普通 HUD 可见失败，不依赖任何 modal", async () => {
+    // 真实入口：settling 续跑 → issue/stream SSE error → fail-closed 回 player。
+    // 无 modal 打开时主界面须有 role=alert；成功路径不得挂该位。
+    const FAIL_MSG = "月末结算失败：核账中止（替身）。";
+    let liveState: Record<string, unknown> = settlementBaseState("settling", {
+      settlement_recovery: {
+        message: "上月结算未完成（进度已保存）。",
+        ready_replay: true,
+        error_pack_path: "/tmp/error_packs/turn5_attempt1",
+      },
+      previous_summary: "",
+      pending_decisions: [],
+    });
+    stubSettlementFetch(
+      () => liveState,
+      [],
+      undefined,
+      (u, init) => {
+        if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+          // fail-closed：快照已受理前半程未提交 → 回 player，settlement_display 清。
+          liveState = {
+            ...settlementBaseState("player"),
+            turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+            previous_summary: "",
+            pending_decisions: [],
+            directives: [{ id: 1, text: "半程拟诏草稿", status: "draft" }],
+          };
+          return sseResp("error", { message: FAIL_MSG });
+        }
+      },
+    );
+
+    const host = await mountApp();
+    // 起手：续跑面在，无失败 alert、无 modal
+    expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+
+    const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement;
+    expect(resume).not.toBeNull();
+    await click(resume);
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[data-testid="hud-error"]')).not.toBeNull();
+      });
+    });
+    // 普通 HUD：无相关 modal；失败告知在主界面
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(host.querySelector('[data-testid="decision-recovery"]')).toBeNull();
+    const hudAlert = host.querySelector('[data-testid="hud-error"][role="alert"]');
+    expect(hudAlert).not.toBeNull();
+    expect(hudAlert!.textContent).toContain(FAIL_MSG);
+    // 核账期面已退（fail-closed 回 player）——月初快照/核账叙事不得被告警改写为核账态
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
+    expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
+  });
+
+  it("#1808 fail-closed 且拟诏台开着：只走既有 modal 告警，不双播 HUD", async () => {
+    // 真实入口：开拟诏 → 盖玺 → SSE error → face 退后台带回 error。
+    // 既有 EdictModal role=alert 仍在；hud-error 不得并行。
+    const FAIL_MSG = "月末结算失败：拟诏台带回（替身）。";
+    let liveState: Record<string, unknown> = {
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+      directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+    };
+    stubSettlementFetch(
+      () => liveState,
+      [],
+      undefined,
+      (u, init) => {
+        if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+          liveState = {
+            ...settlementBaseState("player"),
+            turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+            previous_summary: "",
+            pending_decisions: [],
+            directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+          };
+          return sseResp("error", { message: FAIL_MSG });
+        }
+      },
+    );
+
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    const seal = findButton(host, "盖玺颁诏过月");
+    expect(seal).toBeTruthy();
+    await click(seal);
+
+    await act(async () => {
+      await vi.waitFor(() => {
+        // face 退后拟诏台带回；modal 内 alert 可见
+        const dialog = host.querySelector('[role="dialog"][aria-label="诏书草案"]');
+        expect(dialog).not.toBeNull();
+        expect(dialog!.querySelector('[role="alert"]')).not.toBeNull();
+      });
+    });
+    const modalAlert = host.querySelector('[role="dialog"][aria-label="诏书草案"] [role="alert"]');
+    expect(modalAlert!.textContent).toContain(FAIL_MSG);
+    // 不双播：HUD 告警位不得与 modal 并行
+    expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
+    expect(host.querySelectorAll('[role="alert"]').length).toBe(1);
+  });
+
   it("#1620 本地 pending 后权威 refresh all-decided/resume_phase2 清 stale modal", async () => {
     // 只证：曾有本地 pending → 权威态切 all-decided/resume_phase2 → modal 卸 + settle-resume。
     // 不夹 SSE picks 恢复、不夹 busy 二提交。loadState 车辆=落印 stream error（仅触发刷新）。
@@ -1988,6 +2110,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(resume).not.toBeNull();
     expect(resume!.disabled).toBe(false);
     expect(resume!.textContent).toContain("续跑结算");
+    // #1808 A：settle-resume 挂载时 hud-error 门控避让，不得压盖唯一续跑 CTA。
+    expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
     // 陈旧常态写面不再当权威：settling 门控已投影续跑，busy 已清。
     expect(host.querySelector(".settlement-lock")).toBeNull();
   });

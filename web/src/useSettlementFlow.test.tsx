@@ -65,6 +65,7 @@ type HookApi = ReturnType<typeof useSettlementFlow>;
 function mountHarness(opts: {
   loadState: () => Promise<GameState | null>;
   initial?: GameState;
+  surfacePendingActionFailures?: (failures?: unknown[]) => Promise<boolean>;
 }) {
   const hookRef = { current: null as HookApi | null };
   const stateRef = { current: opts.initial ?? preClickState };
@@ -90,7 +91,8 @@ function mountHarness(opts: {
       cheatDirective,
       setCheatDirective,
       loadState,
-      surfacePendingActionFailures: async () => false,
+      surfacePendingActionFailures: opts.surfacePendingActionFailures
+        ?? (async () => false),
       state,
     });
 
@@ -282,6 +284,44 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
 
     expect(reload).not.toHaveBeenCalled();
     expect(host.querySelector("[data-testid=error]")?.textContent || "").not.toBe("");
+    cleanup();
+  });
+
+  it("#1808 B pending 消费链 reject 时 phase-1 仍响亮，不静默", async () => {
+    // 真实入口：advanceWithoutEdict catch → surfacePendingActionFailures 内 await 链 reject
+    // → 仍须落到 error / settlementHudError，不得只清 busy。
+    const FAIL_MSG = "退朝失败：欠账未落库（替身）。";
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      statusText: "Error",
+      json: async () => ({
+        detail: {
+          message: FAIL_MSG,
+          pending_action_failures: [{
+            action_id: "a1",
+            minister_name: "袁崇焕",
+            summary: "落库失败",
+          }],
+        },
+      }),
+    })));
+
+    const { host, hookRef, cleanup } = mountHarness({
+      loadState: async () => preClickState,
+      initial: preClickState,
+      surfacePendingActionFailures: async () => {
+        throw new Error("loadState rejected inside pending consume");
+      },
+    });
+
+    await act(async () => {
+      await hookRef.current!.advanceWithoutEdict();
+    });
+
+    expect(host.querySelector("[data-testid=error]")?.textContent).toBe(FAIL_MSG);
+    expect(hookRef.current!.settlementHudError).toBe(FAIL_MSG);
+    expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
     cleanup();
   });
 });
