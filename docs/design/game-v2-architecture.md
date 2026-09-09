@@ -13,6 +13,7 @@
 | 账本、中间层、真假与角色判断 | [ADR 0153](../adr/0153-v2-world-record-and-two-way-mediation.md) |
 | 一件事与跨领域结果 | [ADR 0154](../adr/0154-v2-affairs-unify-story-and-isolate-progress.md) |
 | 同场一个 LLM、一次给料的首期取舍 | [ADR 0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) |
+| 世界实况中的文字事实 | [ADR 0156](../adr/0156-v2-world-record-includes-textual-facts.md) |
 | 北极星索引 | [AUDIENCE_NORTH_STAR.md](../AUDIENCE_NORTH_STAR.md) |
 | 北极星正文 | [越次召对·杨嗣昌](../../archive/越次召对-杨嗣昌.md)、[乾清宫一夜](../../archive/乾清宫一夜-崇祯元年十一月.md) |
 
@@ -133,6 +134,20 @@ owner（03:11:07Z）：
 > 其实严格来说不是这个人递话，是谁在这个职位上，谁递话
 
 不把职位的职责与某个固定人物绑定，不把耳语认证成全知真话。人物与职位已有相关设计，后续先检查复用，不为此另造一套平行人事体系。
+
+## 文字事实依据
+
+2026-09-09，本轮继续 grill 的 Q1，助手提出「世界账本是否允许保存没有专门字段的实际情况」，以「孙传庭右臂受伤，暂时不能亲自挥刀，但仍能指挥军队」为例；建议精确核算量保持数值记录，特殊实际情况可用文字保存、供后续 LLM 使用和更新，而不是每次先开发专用机制。
+
+该问题明确询问：
+
+> 文字不只用于对话和记忆，也可以是世界实况本身的记录形式。它与“某人声称孙传庭受伤”明确分开。
+
+owner 回答：
+
+> 可以没问题
+
+决策真源为 [0156](../adr/0156-v2-world-record-includes-textual-facts.md)，词义见 CONTEXT「文字事实（V2）」；尚未决定更新、保留历史及数值与文字记录的具体组织方式。
 
 ## 现有能力与复用线索
 
