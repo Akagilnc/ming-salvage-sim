@@ -1,5 +1,7 @@
 # SETTLEMENT_FLOW.md — 月末结算管线（driver 调引擎的顺序）
 
+> 本文描述**现行代码**的结算顺序；文中带〔V2 设计注记〕的句子指向 proposed 的 ADR 0155 / 0157 / 0158（设计分支，未实施），在实现接入前一律以本文的现行描述为准，注记只标「将来会改到哪里、由 #1816 认领同步」。
+
 **真相源**：`ming_sim/decree.py:resolve_directives + _settle_after_narrative`，可复用核为 `pre_settle` + `settle_with_delta`（driver 与真实流程同核，ADR 0004）。
 **事务边界与崩溃恢复**：见 `docs/adr/0008-settlement-applier-contract-and-transaction-boundary.md`（v0.8.0.0 起）。一句话：前半段 `pre_settle` 提交后保持已落，后半段 `settle_with_delta` 整段单一 `applier.atomic`、全有或全无。
 原版是 simulator/extractor 两步 LLM；探针 step1 我**一次产 delta**，driver 把两步合一。
