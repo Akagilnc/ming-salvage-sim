@@ -32,3 +32,5 @@ Status: Accepted（2026-07-02：本地 cmr 十轮收敛（codex xhigh + agy + Op
 - **砍掉撤回本轮**：最贴角色保真，但探针期它是兜模型质量风险的（既有 CONTEXT 词条立意），不砍。
 
 后出注记（2026-09-09，决策票 [#1821](https://github.com/Akagilnc/ming-salvage-sim/issues/1821) owner 拍）：夜内直写白名单增第四类——**转译声明的当场实况**（人物生死 / 下狱 / 革职 / 在场、文字事实、公开说法、边事件、入册；原第②③项并入此类），带源轮、撤回本轮以前像日志逆转，「新增夜内直写须过设计审」的义务由 #1821 履行；交办（任免 / 拨帑 / 明发政令）仍走暂存 → 已应允 → 收夜提交，本 ADR 提交时序不动。应允 / 拒绝 / 未表态的判读改由每轮转译 LLM 声明（[0155](0155-v2-single-scene-llm-with-complete-perspectives.md) 场中承接段），不另起分类器。「收夜 × 在飞回话先等其完成并入档」不变；收夜对**转译**不等（[0036](0036-audience-night-restore-resume-at-last-entry.md) 后出注记）。
+
+后出注记补正（cmr 2026-09-09）：「退朝不等转译」指退朝交互立即返回、夜落幕呈现不等；**封夜提交（已应允成案、拆旨、背书批）join 最后一轮转译后再运行**（[0155](0155-v2-single-scene-llm-with-complete-perspectives.md) 场中承接段、[0036](0036-audience-night-restore-resume-at-last-entry.md) 后出注记同），不存在收夜后才到的转译写入；撤回本轮终结该轮在飞转译不变。
