@@ -11,7 +11,7 @@
 | 游戏总原则 | [CLAUDE.md「探针设计铁律」](../../CLAUDE.md) |
 | V2 新用语与既有领域词 | [CONTEXT.md](../../CONTEXT.md) |
 | 账本、中间层、真假与角色判断 | [ADR 0153](../adr/0153-v2-world-record-and-two-way-mediation.md) |
-| 一件事、跨领域结果、时间与隔离 | [ADR 0154](../adr/0154-v2-affairs-unify-story-and-isolate-progress.md) |
+| 一件事与跨领域结果 | [ADR 0154](../adr/0154-v2-affairs-unify-story-and-isolate-progress.md) |
 | 同场一个 LLM、一次给料的首期取舍 | [ADR 0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) |
 | 北极星索引 | [AUDIENCE_NORTH_STAR.md](../AUDIENCE_NORTH_STAR.md) |
 | 北极星正文 | [越次召对·杨嗣昌](../../archive/越次召对-杨嗣昌.md)、[乾清宫一夜](../../archive/乾清宫一夜-崇祯元年十一月.md) |
@@ -111,7 +111,9 @@ owner（03:03:18Z）：
 > 我觉得你说的这个推进的案例存在嘛？
 > 另外总原则就是只影响自己！不准因为一件事拖垮隔壁的事情
 
-不能由此另造实时调度系统；也不能用旧整批回滚实现代替新的隔离目标。
+已拍定的是「不因一件事拖垮其他事」这个总原则。助手随后把它展开成「抽取／落账失败不得撤销别件结果、不得重演」，没有得到对具体程序语义的单独确认，不能把这段推论当成已拍定的回滚协议；部分提交、恢复和重演怎样落实仍待设计。
+
+现行 [0008](../adr/0008-settlement-applier-contract-and-transaction-boundary.md) 与 [0150](../adr/0150-entity-adapter-directory-and-settle-delta.md) 的整段回滚，以及 [0015](../adr/0015-delta-apply-failure-per-item-rejection.md) 的项级隔离，都是后续核对对象，本轮不宣布哪种事务实现已经被替换。也不能把上述讨论扩成实时调度系统。
 
 ## 召对取舍依据
 
