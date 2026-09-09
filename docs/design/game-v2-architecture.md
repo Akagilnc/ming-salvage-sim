@@ -1,6 +1,6 @@
 # 游戏架构重构讨论
 
-状态：设计讨论中，未完成详设，未授权施工。更新至 2026-09-09 #1819 决策。
+状态：设计讨论中，未完成详设，未授权施工。更新至 2026-09-09 #1821 决策。
 
 「V2」是本轮重新思考架构的历史称呼，不是另做一款游戏；文件名与分支保留该称呼只为延续引用。目标是重构现有游戏，不预设第二运行入口、第二套存档或两代产品并行维护。
 
@@ -14,7 +14,7 @@
 | 本轮重构用语与既有领域词 | [CONTEXT.md](../../CONTEXT.md) |
 | 账本、中间层、真假与角色判断 | [ADR 0153](../adr/0153-v2-world-record-and-two-way-mediation.md) |
 | 一件事与跨领域结果 | [ADR 0154](../adr/0154-v2-affairs-unify-story-and-isolate-progress.md) |
-| 同场一个 LLM、材料备齐后自主取阅 | [ADR 0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) |
+| 同场一个 LLM、材料备齐后自主取阅、场中转译承接 | [ADR 0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) |
 | 世界实况中的文字事实 | [ADR 0156](../adr/0156-v2-world-record-includes-textual-facts.md) |
 | 单件模型调用重试耗尽时的过月取舍 | [ADR 0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) |
 | 北极星索引 | [AUDIENCE_NORTH_STAR.md](../AUDIENCE_NORTH_STAR.md) |
@@ -260,7 +260,19 @@ owner 回答（保留原字，按问答上下文指第一种）：
 
 取舍：推演者三层全看（实况 + 人物经历 + 公开说法）；人物按职位只读**衙门底账**——本衙门直接掌管的账读实况，辖外只读奏报与公开说法，总揽职位只读奏报与案卷（未选：一律走奏报口径、现状整份实况）；开场默认在场只有最小集，其余在目录里；三处硬上限与每回合 5 次工具调用撤除；**「给一个地方它自己读」**——每次调用备一个目录、材料写成人读文本、CLI 以它为 cwd 用自带只读工具、API 通道用「列目录 / 读文件」读同一目录，读材料上两通道一致（未选：无 tool 通道全文放进上下文，owner 明否；文本信封模拟取阅；只留 API 通道）；目录按人物 / 事务 / 公开说法分列、推演者另有盘面、根目录索引；递话人同大臣规则、不直读他人真值；已读 = 本场上下文已取，跨场不记；P4 / 0143 照旧；旧的按需查询工具退役进目录，动作类工具归 #1815 / #1821。决定并入 [0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md)，[0034](../adr/0034-minister-audience-fed-perspectival-knowledge-not-omniscient.md) 界定补钉①与 [0046](../adr/0046-message-contract-four-diegetic-roles-thin-system-layer.md) 递话 role 各加后出注记，词义入 CONTEXT「角色可读材料」「材料目录」「公事档案」「衙门底账」「递话人」。
 
-未定：目录文件的具体写法与刷新实现、读工具接口签名（#1814 模块设计 / #1815）；codex exec 默认沙箱是否只读、pi 有无只读档、claude 放开 Read / Glob / Grep 的实际效果（接入时真跑证）；场中即时结果怎样写入（#1821）；玩家何时看见（#1823）。
+未定：目录文件的具体写法与刷新实现、读工具接口签名（#1814 模块设计 / #1815）；codex exec 默认沙箱是否只读、pi 有无只读档、claude 放开 Read / Glob / Grep 的实际效果（接入时真跑证）；场中即时结果怎样写入已定于 [#1821](https://github.com/Akagilnc/ming-salvage-sim/issues/1821)（见「场中承接与后台转译」节）；玩家何时看见（#1823）。
+
+## 场中承接与后台转译（决策票 #1821）
+
+2026-09-09，wayfinder 决策票 [整场召对怎样交出即时结果并接续玩家操作](https://github.com/Akagilnc/ming-salvage-sim/issues/1821) 一轮 grill 加时间问题两问，owner 答复原文：第一轮「a 但是时间问题怎么解决？ / a / a / a」；runner 答「转译不挡下一句、只在收夜等最后一轮」后，owner「你说退朝哪里等，我觉得可以不拦着退朝。反正后台跑，过月开始之前也有时间可以加进去跑」；runner 把它重摆成「退朝立刻落幕 / 提交批在后台 / 过月前收进去」三段，owner 纠正「我不知道你理解对没有。我的意思不是改变转译的发生时间和次序，只是让它是后台任务不要挡着前台」；对稿后「好」。resolution 全文与题面在该票评论；这里只留取舍与依据。
+
+代码事实（只读调查）：一次调用只演一位大臣（一人一 agent，`summon` 只告诉前端下一位是谁）；API 通道 agent 带动作工具（拟旨 / 任免 / 入册 / 宣人 / 罢免 / 密令哨兵），CLI 通道靠「拟旨如下：」「密令如下：」前缀 + 与回话并行的意图分类器 + 密令动作抽取，两路汇于 `pending_actions`；每轮回话后拖三条 LLM（故事抽取、边事件判官、读心——读心直读目标真值）加高亮判官；场中真会变的真实盘面只有边事件（当轮）与收夜行止；恢复靠 `reconcile_interrupted_chat_turns` 与 `reply/retry`。
+
+取舍：**每轮一次转译 LLM**（未选：场景 LLM 自己边演边声明——API 工具 / CLI 写文件，抵 0033 零形式约束、两通道写路分造；两套并存）——回话就是场景 LLM 的交代，与推演者同形；**转译是后台任务、前台不等**——发生时间与次序不变（回话后起、按轮串行），下一句不等、退朝不等，收夜处理在后台等最后一轮，过月前完成、未完成则过月等（修订 0036「收夜前清空待补否则中止收夜」；runner 曾提「只在收夜等」与「提交批改后台」两版，均非 owner 意思，作废）；**一条对话轮 = 整段自由戏文**（未选：按说话人分段的结构化信封）——角色与可闻性由转译标记、呈现层读；**当场实况当场落账本**、成 0038 白名单第四类（未选：只放行文字事实与公开说法；一律等收夜）——交办仍暂存 → 已应允 → 收夜成案 → 颁布关，分别由 LLM 演绎说了算；**记录进目录、下一句看见**（未选：记录落定后立刻再起续演调用）。决定并入 [0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) 场中承接段，[0036](../adr/0036-audience-night-restore-resume-at-last-entry.md)、[0038](../adr/0038-retract-round-is-hard-delete-with-mid-night-write-whitelist.md)、[0046](../adr/0046-message-contract-four-diegetic-roles-thin-system-layer.md)、[0045](../adr/0045-highlight-judge-is-sole-source-same-backend-postpass.md)、[0028](../adr/0028-audience-secret-order-capture-and-action-classification.md)、[0082](../adr/0082-edge-event-write-sides-settlement-audience-recommendation.md)、[0035](../adr/0035-audience-night-open-story-ledger.md) 各加后出注记，词义入 CONTEXT「转译」「当场实况」。
+
+按已定推出：下一句从已持久化对话轮 + 账 + 目录重建；递话触发归 LLM，三个代码触发的递话 agent 与读心记录退役；宣 X 口令落入殿账后起一次场景调用；转译边演边产交办载荷、承接不了的当事实回场、代码不做「所指对象未明 → 强制追问」校验闸；当场实况挂哪件事务由转译说；人物经历仍读时投影、按转译标记取；收夜照旧；留给过月的 = 交办成案后的后果 + 局势机械载体。
+
+未定：转译的输出契约字段与调用实现、目录重写时机（#1814 / #1815）；前端怎样呈现整段戏文与拖尾到的记录（#1823）；过月前 join 后台项与重试耗尽处置（#1822）。
 
 ## 现有能力与复用线索
 
@@ -309,7 +321,7 @@ Wayfinder 绘图阶段的旧存档范围裁定及 owner 原话已记入[总规�
 - 人事、财政、军事各自的具体模块边界与内部读写接口，以及现有能力哪些直接沿用；面向 LLM 的统一记录入口已定于 0154。
 - 事务的身份、边界、诞生、了结、经手人及与案卷 / 流水 / 经历 / 文字事实 / 公开说法 / 局势的关联已定于 [#1818](https://github.com/Akagilnc/ming-salvage-sim/issues/1818)（见「事务的身份与关联」节）；余下记录能力的具体接口与调用次数，不把所有原话强拆成字段。
 - 公开说法已定为独立记录并入公开层（#1818）；供料的地方、可读范围与取阅方式已定于 [#1819](https://github.com/Akagilnc/ming-salvage-sim/issues/1819)（见「供料的地方与取阅」节）；记忆的具体保存结构留给模块设计，记忆整理不在本轮待设计范围，复杂传播与信念机制也不自动进入首期。
-- 场景演绎中的即时结果怎样进入记录（#1821）；综合推演怎样使用计算反馈已定于 [#1820](https://github.com/Akagilnc/ming-salvage-sim/issues/1820)（见「核算反馈与数值归属」节）；调用拆分、等待与保存恢复尚未详设。
+- 场景演绎中的即时结果怎样进入记录已定于 [#1821](https://github.com/Akagilnc/ming-salvage-sim/issues/1821)（见「场中承接与后台转译」节）；综合推演怎样使用计算反馈已定于 [#1820](https://github.com/Akagilnc/ming-salvage-sim/issues/1820)（见「核算反馈与数值归属」节）；调用拆分、等待与保存恢复：场中的已定于 #1821（后台转译、前台不等），过月侧归 #1822。
 - 事务隔离和共享资源的具体边界；模型调用重试耗尽的玩家体验已定于 0157，其余故障与具体恢复实现仍待定，不擅自决定事务锁或重试次数。
 - 与既有 ADR/实现的衔接及复用范围。本轮重构方向不代表本次直接撤销未讨论的玩法契约，也不要求为旧实现形状背兼容包袱，不另立独立游戏版本。
 

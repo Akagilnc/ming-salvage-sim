@@ -41,3 +41,5 @@ Status: Accepted（2026-07-02：随 #470 设计闸一并评审——本地 cmr �
 ## 修订（2026-08-28，owner A 裁决——#1503 显式拟旨载荷式 typed 成案）
 
 本修订 supersede 本 ADR 决定 1/2 中拟旨前缀零分类、拟旨仍零 LLM 取回话原文（#344）的旧口径。owner A 允许显式拟旨在成案边界并发一次既有 typed classifier 产出载荷、复用既有拨款单轨，非载荷仍 generic，密令前缀与后置 extractor 不变。详设与验收只引用 #1503。
+
+后出注记（2026-09-09，决策票 [#1821](https://github.com/Akagilnc/ming-salvage-sim/issues/1821) owner 拍）：与回话并行的意图分类器（`classify_cli_action_intent`）、既有密令动作抽取、任免抽取合并为每轮回话后一次转译 LLM（[0155](0155-v2-single-scene-llm-with-complete-perspectives.md) 场中承接段，后台任务、前台不等）；显式前缀仍是结构性信号、作转译输入；决定 3 的纯数据 no-op 比对与 2026-07-23「结构性信号 ＞ LLM 软判 ＞ 落无」链不变。「所指对象未明 → 强制追问」类校验闸不再由代码做，承接不了的当事实回场、大臣自己演（#1820 决定 3 同理）。
