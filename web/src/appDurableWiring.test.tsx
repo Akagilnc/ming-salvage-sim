@@ -1342,9 +1342,11 @@ const settlementBaseState = (phase: string, extra: Record<string, unknown> = {})
 });
 
 const stubSettlementFetch = (
-  state: unknown,
+  state: unknown | (() => unknown),
   saves: unknown[] = [],
   load?: (url: URL, init?: RequestInit) => Promise<Response> | Response,
+  // 可选覆写：返回 Response 则短路；返回 void/undefined 则回落到默认空 json。
+  route?: (url: URL, init?: RequestInit) => Promise<Response | void> | Response | void,
 ) => {
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const u = new URL(String(url), "http://t.local");
@@ -1352,7 +1354,10 @@ const stubSettlementFetch = (
     if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
     if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves });
     if (u.pathname.includes("/api/saves/") && u.pathname.endsWith("/load") && load) return load(u, init);
-    if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
+    if (u.pathname.endsWith("/api/game/state")) {
+      const current = typeof state === "function" ? (state as () => unknown)() : state;
+      return jsonResp(current);
+    }
     if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
       turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
     });
@@ -1360,6 +1365,10 @@ const stubSettlementFetch = (
       turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
     });
     if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+    if (route) {
+      const override = await route(u, init);
+      if (override) return override;
+    }
     return jsonResp({});
   }));
 };
@@ -1840,32 +1849,24 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       previous_summary: "",
       pending_decisions: [],
     });
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
-      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
-        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
-      });
-      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
-        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
-      });
-      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
-      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
-        // fail-closed：快照已受理前半程未提交 → 回 player，settlement_display 清。
-        liveState = {
-          ...settlementBaseState("player"),
-          turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
-          previous_summary: "",
-          pending_decisions: [],
-          directives: [{ id: 1, text: "半程拟诏草稿", status: "draft" }],
-        };
-        return sseResp("error", { message: FAIL_MSG });
-      }
-      return jsonResp({});
-    }));
+    stubSettlementFetch(
+      () => liveState,
+      [],
+      undefined,
+      (u, init) => {
+        if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+          // fail-closed：快照已受理前半程未提交 → 回 player，settlement_display 清。
+          liveState = {
+            ...settlementBaseState("player"),
+            turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+            previous_summary: "",
+            pending_decisions: [],
+            directives: [{ id: 1, text: "半程拟诏草稿", status: "draft" }],
+          };
+          return sseResp("error", { message: FAIL_MSG });
+        }
+      },
+    );
 
     const host = await mountApp();
     // 起手：续跑面在，无失败 alert、无 modal
@@ -1904,31 +1905,23 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       pending_decisions: [],
       directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
     };
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-      const u = new URL(String(url), "http://t.local");
-      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(liveState);
-      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
-        turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_attendant: false, has_directive: true }],
-      });
-      if (u.pathname.includes("/api/history/turn/")) return jsonResp({
-        turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
-      });
-      if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
-      if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
-        liveState = {
-          ...settlementBaseState("player"),
-          turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
-          previous_summary: "",
-          pending_decisions: [],
-          directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
-        };
-        return sseResp("error", { message: FAIL_MSG });
-      }
-      return jsonResp({});
-    }));
+    stubSettlementFetch(
+      () => liveState,
+      [],
+      undefined,
+      (u, init) => {
+        if (u.pathname.endsWith("/api/decree/issue/stream") && init?.method === "POST") {
+          liveState = {
+            ...settlementBaseState("player"),
+            turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+            previous_summary: "",
+            pending_decisions: [],
+            directives: [{ id: 1, text: "拨辽饷", status: "draft" }],
+          };
+          return sseResp("error", { message: FAIL_MSG });
+        }
+      },
+    );
 
     const host = await mountApp();
     await click(edictCommand(host));

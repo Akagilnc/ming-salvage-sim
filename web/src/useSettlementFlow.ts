@@ -164,12 +164,12 @@ export function useSettlementFlow({
         // #1700 / #1418 r2 对称：phase-1 失败后 loadState，使 settling 续跑面可挂上。
         await loadState();
         // main #1442：pending_action_failures 落库面优先。欠账耗尽走失败单源（#1353 fold-in），无补写 CTA。
+        // #1808：phase-1 呈现只调一次——pending 是否消费只决定 return/setBusy，不改 HUD 写入语义。
         const errMsg = typeof outcome.data === "string" ? outcome.data : (errData.message || "颁诏失败。");
+        surfacePhase1Failure(errMsg);
         if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
-          surfacePhase1Failure(errMsg);
           return;
         }
-        surfacePhase1Failure(errMsg);
         setBusy("");
         return;
       }
@@ -312,13 +312,15 @@ export function useSettlementFlow({
         window.location.reload();
         return;
       }
+      // #1808：phase-1 呈现只调一次；pending 消费与否只分流 return，HUD 写入语义不变。
       const failures = detail?.pending_action_failures;
-      if (Array.isArray(failures) && await surfacePendingActionFailures(failures)) {
-        surfacePhase1Failure(detail?.message || "退朝失败。");
-        return;
-      }
-      const errMsg = err instanceof Error ? err.message : String(err);
-      surfacePhase1Failure(errMsg);
+      const consumed = Array.isArray(failures) && await surfacePendingActionFailures(failures);
+      surfacePhase1Failure(
+        consumed
+          ? (detail?.message || "退朝失败。")
+          : (err instanceof Error ? err.message : String(err)),
+      );
+      if (consumed) return;
     } finally {
       setBusy("");
     }
