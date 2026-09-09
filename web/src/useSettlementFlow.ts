@@ -173,15 +173,17 @@ export function useSettlementFlow({
         surfacePhase1Failure(errMsg);
         try {
           await loadState();
-        } catch {
-          // 刷新失败不抵消已落地的 phase-1 呈现
+        } catch (refreshErr) {
+          // 刷新失败不抵消已落地的 phase-1 呈现；次级真因仍落痕（ADR 0005）。
+          console.warn("[settlement] phase-1 failure refresh failed", refreshErr);
         }
         try {
           if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
             return;
           }
-        } catch {
-          // pending 消费链失败不得吞掉已响亮的 phase-1 呈现
+        } catch (pendingErr) {
+          // pending 消费链失败不得吞主告警；次级真因落痕（ADR 0005）。
+          console.warn("[settlement] phase-1 pending-failure surface failed", pendingErr);
         }
         setBusy("");
         return;
@@ -211,8 +213,9 @@ export function useSettlementFlow({
       surfacePhase1Failure(err instanceof Error ? err.message : String(err));
       try {
         await loadState();
-      } catch {
-        // 刷新失败不抵消已落地的 phase-1 呈现
+      } catch (refreshErr) {
+        // 刷新失败不抵消已落地的 phase-1 呈现；次级真因仍落痕（ADR 0005）。
+        console.warn("[settlement] phase-1 failure refresh failed", refreshErr);
       }
       setBusy("");
     }
@@ -341,8 +344,9 @@ export function useSettlementFlow({
         if (hasPending && await surfacePendingActionFailures(failures)) {
           return;
         }
-      } catch {
-        // pending 消费链（其内 loadState）reject 时告警已响亮，不得再吞
+      } catch (pendingErr) {
+        // pending 消费链 reject 时主告警已响亮；次级真因落痕（ADR 0005）。
+        console.warn("[settlement] phase-1 pending-failure surface failed", pendingErr);
       }
     } finally {
       setBusy("");
