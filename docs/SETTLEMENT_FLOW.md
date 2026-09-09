@@ -1,5 +1,7 @@
 # SETTLEMENT_FLOW.md — 月末结算管线（driver 调引擎的顺序）
 
+> 本文描述**现行代码**的结算顺序；文中带〔V2 设计注记〕的句子指向 proposed 的 ADR 0155 / 0157 / 0158（设计分支，未实施），在实现接入前一律以本文的现行描述为准，注记只标「将来会改到哪里、由 #1816 认领同步」。
+
 **真相源**：`ming_sim/decree.py:resolve_directives + _settle_after_narrative`，可复用核为 `pre_settle` + `settle_with_delta`（driver 与真实流程同核，ADR 0004）。
 **事务边界与崩溃恢复**：见 `docs/adr/0008-settlement-applier-contract-and-transaction-boundary.md`（v0.8.0.0 起）。一句话：前半段 `pre_settle` 提交后保持已落，后半段 `settle_with_delta` 整段单一 `applier.atomic`、全有或全无。
 原版是 simulator/extractor 两步 LLM；探针 step1 我**一次产 delta**，driver 把两步合一。
@@ -177,7 +179,7 @@
   12. db.save_turn_extraction(...)                  # inertia 合并后才存：玩家明细 / 时间线含 inertia 人物变更
 
   13. [我产 chapter memory {body, tags}]  ← 起居注史官身份
-      → record_chapter_memory(state, {body, tags})  # 必须在结局判定前；记的 applied 已含 inertia 人物变更
+      → record_chapter_memory(state, {body, tags})  # 必须在结局判定前；记的 applied 已含 inertia 人物变更  # 〔V2 设计注记（ADR 0157，proposed）：章节记忆改为推进后的后台任务，不变式改为「在结局总评前」；接入时同步（#1816）〕
 
   14. clear_gated_legacies(db, state)              # 开局负面修正按 clear_gate 程序判定消除
 
@@ -258,7 +260,7 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 
 ## 不变式 / 雷区
 
-- **顺序不能改**：`auto_trigger_seed_issues` 必须在产邸报前；`apply_issue_inertia_and_ongoing` 必须在 `save_turn_extraction` + `chapter memory` 之前（inertia 追加的玩家可见人物变更要先并进 `applied` 再存 / 记，否则玩家明细与起居注漏 inertia 人物变更）；`chapter memory` 必须在结局判定前。（注：`apply_issue_inertia_and_ongoing` 的 `touched_ids=` 入参已不再用作跳过过滤——`issues.py` 内 `_ = touched_ids`、惯性漂吃全部 active issue；decree 仍按 advances 计算并传入只为保留调用签名，非不变式。）
+- **顺序不能改**：`auto_trigger_seed_issues` 必须在产邸报前；`apply_issue_inertia_and_ongoing` 必须在 `save_turn_extraction` + `chapter memory` 之前（inertia 追加的玩家可见人物变更要先并进 `applied` 再存 / 记，否则玩家明细与起居注漏 inertia 人物变更）；`chapter memory` 必须在结局判定前。（注：`apply_issue_inertia_and_ongoing` 的 `touched_ids=` 入参已不再用作跳过过滤——`issues.py` 内 `_ = touched_ids`、惯性漂吃全部 active issue；decree 仍按 advances 计算并传入只为保留调用签名，非不变式。） 〔V2 设计注记（ADR 0157，proposed）：分段落账后此顺序按段重排、章节记忆后台化；接入时同步（#1816）〕
 - **assert turn==before_turn+1**：phase2 完整跑完必须推进一回合，没推进就是 bug。
 - **HITL 暂停时不要推进**：return awaiting=True 时 state.turn 不动，玩家亲裁后续跑 phase2 才推。
 - **结算只判一次结局**：state.ended=True 后保持不动，继续推月只走 fixed flows。
