@@ -7,3 +7,5 @@ Status: Accepted（2026-07-03 随 PR #554 合入 90c7a70a；决策：2026-07-03 
 后出注记（2026-09-09，决策票 [#1819](https://github.com/Akagilnc/ming-salvage-sim/issues/1819) owner 拍）：递话 role 的材料与大臣同一规则——本人经历 + 御前近臣职位可查公事 + 公开层；不再直读他人忠诚 / 派系 / 身份 / 罪证真值，读心是「递话人按自己所知给的判断」，厂卫密报若有记录可查、那是记录不是真值。可闻性两层不变。
 
 后出注记（2026-09-09，决策票 [#1821](https://github.com/Akagilnc/ming-salvage-sim/issues/1821) owner 拍）：一条对话轮 = 场景 LLM 的整段自由戏文（可含大臣、插话者、递话人），生成链零格式约束（[0033](0033-minister-audience-prompt-characterize-not-constrain.md)）；四类 role 的划分改由每轮转译 LLM 标在戏文分段上（说话人、可闻性），呈现层读标记排版（#1823），不把 role 信封塞回生成链。递话不再是代码触发的独立调用与 `mindreading` 事件，是戏文里可闻性为私的一段。系统提示行瘦身口径不变。
+
+后出注记（2026-09-09，决策票 [#1823](https://github.com/Akagilnc/ming-salvage-sim/issues/1823) owner 拍）：一轮呈现为一块卷，转译标记到了在原位上四类样式、块不拆、文字不动；递话样式 = 左侧虚线 + 斜体 + 名标，不加底色；系统提示行三处（回话中断 / 转译待补 / 过月耗尽）同一形态 + 「重试」；左栏大立绘 = 御前主角（转译判，宣 X 当场先切）。见 [0158](0158-v2-frontend-receives-audience-month-and-recovery.md)。

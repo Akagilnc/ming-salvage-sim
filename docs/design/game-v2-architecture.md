@@ -1,6 +1,6 @@
 # 游戏架构重构讨论
 
-状态：设计讨论中，未完成详设，未授权施工。更新至 2026-09-09 #1822 决策。
+状态：设计讨论中，未完成详设，未授权施工。更新至 2026-09-09 #1823 决策（地图六张决策票全部关闭）。
 
 「V2」是本轮重新思考架构的历史称呼，不是另做一款游戏；文件名与分支保留该称呼只为延续引用。目标是重构现有游戏，不预设第二运行入口、第二套存档或两代产品并行维护。
 
@@ -17,6 +17,7 @@
 | 同场一个 LLM、材料备齐后自主取阅、场中转译承接 | [ADR 0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) |
 | 世界实况中的文字事实 | [ADR 0156](../adr/0156-v2-world-record-includes-textual-facts.md) |
 | 过月的场与段、单件模型调用重试耗尽时的取舍与恢复 | [ADR 0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) |
+| 独立前端怎样接住召对、过月与恢复（一夜一卷、推演卷、失败一种形态、立绘归转译判） | [ADR 0158](../adr/0158-v2-frontend-receives-audience-month-and-recovery.md) |
 | 北极星索引 | [AUDIENCE_NORTH_STAR.md](../AUDIENCE_NORTH_STAR.md) |
 | 北极星正文 | [越次召对·杨嗣昌](../../archive/越次召对-杨嗣昌.md)、[乾清宫一夜](../../archive/乾清宫一夜-崇祯元年十一月.md) |
 
@@ -286,6 +287,20 @@ owner 回答（保留原字，按问答上下文指第一种）：
 
 未定：转译的输出字段、「本月事毕」的声明方式与目录重写实现（#1815 / #1814）；核账期停住、重试与流式推演文的前端呈现（#1823）；接入时真跑证推演段在各 CLI 后端的固定开销；引擎新核算公式（接入时立票）。
 
+## 前端接住召对、过月与恢复（决策票 #1823）
+
+2026-09-09，wayfinder 决策票 [独立前端怎样接住召对、过月和恢复过程](https://github.com/Akagilnc/ming-salvage-sim/issues/1823) 一轮 grill 八题加 mock 三轮，owner 答复原文：八题「可以。没意见」（全取推荐）；第一版 mock 后「你这样。我准备的大图立绘咋办」→ runner 认错、把真立绘放回并加立绘开关荐甲 → owner「问题是左下角立绘显示谁呢？」「你的意思是一直不变是吗？还是根据宣的人变。那同时两三个人在场呢？」→ runner 用洪承畴段逐时点列甲 / 乙 / 丁三表改荐丁 → owner「不用。丁看起来可以」；两屏「A吧 / A」；「加背景色太丑了。能不能换字体/粗体/字色？」。resolution 全文、题面与代码事实在该票评论；mock 在 throwaway 分支 `prototype/1823-frontend-mock`（本地未推）与 vault 冻结副本。
+
+代码事实（只读调查）：`web/src` 无路由，单一 `App` 用 `ModalName` 切「页面」；召对按大臣开面板（URL 带大臣名，一人一 agent），后端已按角色切成多条消息逐条渲染，读心 / 高亮按归属轮补挂；结算等待面 `SettlementLock`（进度条 + 推敲 + 奏章流）只挂在会话忙碌上、刷新即丢，完成整页 reload；核账期 = 月初快照谓词（`_month_open_snapshot()` 一身两职）+ 王承恩固定递话条（前端字串）+ 逐面门控；失败 = HUD 横幅两钮（续跑结算 / 重新推演）+ 拟诏台 error；召对崩溃 = 「重新生成回话」钮；密令失败 = 只列不修的「未落库政务」面板；重开靠 `GameState` 字段门控同一棵树；HTTP = 结算 SSE 同步到终态、`GET /api/game/state` 1 秒轮询在飞标记、无 WebSocket；立绘资产 `web/public/portraits/minister_*.png`（682×1024）。
+
+取舍：**一夜一卷轴、一个输入框**（未选：沿用按大臣开面板）；**一轮 = 一块卷、转译到了原位上样式、块不拆**（未选：等标记再显示；永远中性；拆分气泡；剧本体）；**戏文轮上只补挂分段标记与高亮**（未选：机械回执）；**左栏大立绘 = 御前主角、转译判、宣 X 当场先切**（未选：跟最近宣入者；跟最后说话人；舞台并排半身；大图 + 殿侧小立绘）；**核账期主面 = 本月推演卷**，不流推敲、无进度条、推进后卷即邸报（未选：右侧邸报房；文书页；沿用 SettlementLock）；**失败一种形态**——出事记录下一条系统提示行 + 一个「重试」，三处同形，不给跳过，未落库政务面板退役（未选：两钮选逃生口；汇总面板）；**重开落点按账本直接落**（未选：一律先落 HUD）；**交接写到能力层**，请求形态归实现（未选：定死协议）；**高亮不加底色、字色 + 粗体**。决定写入 [ADR 0158](../adr/0158-v2-frontend-receives-audience-month-and-recovery.md)，[0044](../adr/0044-audience-stage-is-night-scroll-reading-story-ledger.md)、[0046](../adr/0046-message-contract-four-diegetic-roles-thin-system-layer.md)、[0047](../adr/0047-buttons-are-command-accelerators-composer-contract.md)、[0036](../adr/0036-audience-night-restore-resume-at-last-entry.md)、[0148](../adr/0148-settlement-period-shows-month-open-snapshot-not-engine-mid-state.md)、[0149](../adr/0149-enter-settlement-period-on-click-in-flight-continues.md) 各加后出注记，词义入 CONTEXT「推演卷」「御前主角」，更新「核账期」「续夜」「四类戏内消息」「夜卷轴 / 起居注」「高亮判官」。
+
+教训（runner 记）：第一版 mock 把左栏换成名册、砍了 owner 备好的大立绘位——mock 不得砍掉 owner 已备素材的位置；立绘「显示谁」是真决策，代码规则（最近宣入 / 最后说话）各有错脸，按 P6 归转译判。
+
+按已定推出：转译输出多一项「本轮御前主角」（字段归 #1815）；晚一句才看见的清单加一项立绘切换（除宣 X 口令）；#1220「无进度条」口径落实、现状进度条随推演卷退役；核账叙事按 P7 由 LLM 长出、现状固定字串接入时清理；`GET …/chat/mindreading` 轮询、`mindreading` 事件、`PendingFailureNoticePanel`、`chatFailures` 行、`settle-resume` 双钮随本决定退役；0045 高亮补挂路子沿用、只标大臣分段。
+
+未定：前端能力的请求形态与断线重接（前端规格票）；推演卷段间分隔与请旨暂停处的呈现细节（试玩调）；转译声明字段（#1815）。
+
 ## 现有能力与复用线索
 
 以下是静态代码调查，不是 owner 的玩法裁定，也不表示测试或实际游戏已经验证。调查基线为 `3a0f6d4d3`；设计分支从 `bf7110166` 建立，后者新增 #1808 的核账失败告知。本页用路径与符号定位，不用会随改动漂移的行号。
@@ -335,6 +350,7 @@ Wayfinder 绘图阶段的旧存档范围裁定及 owner 原话已记入[总规�
 - 公开说法已定为独立记录并入公开层（#1818）；供料的地方、可读范围与取阅方式已定于 [#1819](https://github.com/Akagilnc/ming-salvage-sim/issues/1819)（见「供料的地方与取阅」节）；记忆的具体保存结构留给模块设计，记忆整理不在本轮待设计范围，复杂传播与信念机制也不自动进入首期。
 - 场景演绎中的即时结果怎样进入记录已定于 [#1821](https://github.com/Akagilnc/ming-salvage-sim/issues/1821)（见「场中承接与后台转译」节）；综合推演怎样使用计算反馈已定于 [#1820](https://github.com/Akagilnc/ming-salvage-sim/issues/1820)（见「核算反馈与数值归属」节）；调用拆分、等待与保存恢复：场中的已定于 #1821（后台转译、前台不等），过月侧已定于 [#1822](https://github.com/Akagilnc/ming-salvage-sim/issues/1822)（见「过月的段与恢复」节）。
 - 事务隔离和共享资源的边界（账本即占用、先交代先扣）与模型调用重试耗尽的过月形状、恢复入口已定于 #1822 / 0157；其余故障与具体恢复实现仍待定，不擅自决定事务锁或重试次数。
+- 前端怎样接住召对、过月与恢复已定于 [#1823](https://github.com/Akagilnc/ming-salvage-sim/issues/1823)（见「前端接住召对、过月与恢复」节，ADR 0158）；前端规格票据此建立，请求形态归其施工票。地图六张决策票至此全部关闭，下一阶段为回到 to-spec 更新既有规格、再 to-tickets，须 owner 拍。
 - 与既有 ADR/实现的衔接及复用范围。本轮重构方向不代表本次直接撤销未讨论的玩法契约，也不要求为旧实现形状背兼容包袱，不另立独立游戏版本。
 
 本轮产物只保存已讨论的方向、理由、例子和未知项。下一轮继续领域架构讨论，不进入代码施工；设计文档评审检查是否忠实、有无遗漏或擅自加戏，不以“还有未决项”逼出未经讨论的细节。

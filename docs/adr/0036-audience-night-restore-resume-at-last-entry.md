@@ -24,3 +24,5 @@ Status: Accepted（2026-07-02：本地 cmr 十轮收敛（codex xhigh + agy + Op
 - **让玩家把最后一句重打一遍**：记录里出现两句相同的话，脏且没必要。
 
 后出注记（2026-09-09，决策票 [#1821](https://github.com/Akagilnc/ming-salvage-sim/issues/1821) owner 拍）：「收夜是史实书写边界、收夜前须清空待补；进入收夜先强制同步补跑一次，仍失败 → fail-closed 中止收夜」一段修订——叙事抽取（现为每轮一次的转译，[0155](0155-v2-single-scene-llm-with-complete-perspectives.md) 场中承接段）是后台任务，发生时间与次序不变（每轮回话后起、按轮串行），前台不等：退朝不等待补，收夜处理要用最后一轮转译的在后台等，过月前完成、未完成则过月等、重试耗尽走 [0157](0157-v2-month-waits-for-exhausted-model-call-recovery.md)（owner 原话「不是改变转译的发生时间和次序，只是让它是后台任务不要挡着前台」）。原理由（收夜 beat 消费机械在场名单）在一个 LLM 从戏文写收夜描写后不再成立；晚到的在场账仍按源轮时序插回（本 ADR「时序键绑定源对话轮」不变）。待补 + 显眼提示 + 原地重试 + 不挡对话、补跑真源 = 已持久化回话、撤回终结在飞残余，均不变。
+
+后出注记（2026-09-09，决策票 [#1823](https://github.com/Akagilnc/ming-salvage-sim/issues/1823) owner 拍）：丢失回话的重试与转译待补、过月耗尽的重试同一形态（出事记录下一条系统提示行 + 「重试」），仍是系统层动作；重开直接回到殿上、卷开在最后一轮；「未落库政务」面板与召对内密令失败行退役（拒收是戏内事实回场，#1820）。见 [0158](0158-v2-frontend-receives-audience-month-and-recovery.md)。
