@@ -127,6 +127,11 @@ export function useSettlementFlow({
     setSettlementHudError(message);
   };
 
+  // #1808 C：退局/再入局清 HUD 残留——接缝归既有 exitToMenu / enterGameAfterMenu。
+  const clearSettlementHudError = React.useCallback(() => {
+    setSettlementHudError("");
+  }, []);
+
   const issueDecree = async () => {
     beginSettlementWait();
     setError("");
@@ -161,14 +166,22 @@ export function useSettlementFlow({
           window.location.reload();
           return;
         }
-        // #1700 / #1418 r2 对称：phase-1 失败后 loadState，使 settling 续跑面可挂上。
-        await loadState();
+        // #1808 B 同类：phase-1 呈现先响亮落地；其后 loadState / pending 消费链 reject 不得吞掉已写告警。
+        // #1700 / #1418 r2：loadState 使 settling 续跑面可挂上（best-effort）。
         // main #1442：pending_action_failures 落库面优先。欠账耗尽走失败单源（#1353 fold-in），无补写 CTA。
-        // #1808：phase-1 呈现只调一次——pending 是否消费只决定 return/setBusy，不改 HUD 写入语义。
         const errMsg = typeof outcome.data === "string" ? outcome.data : (errData.message || "颁诏失败。");
         surfacePhase1Failure(errMsg);
-        if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
-          return;
+        try {
+          await loadState();
+        } catch {
+          // 刷新失败不抵消已落地的 phase-1 呈现
+        }
+        try {
+          if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
+            return;
+          }
+        } catch {
+          // pending 消费链失败不得吞掉已响亮的 phase-1 呈现
         }
         setBusy("");
         return;
@@ -194,9 +207,13 @@ export function useSettlementFlow({
       window.location.reload();
       return;
     } catch (err) {
-      // #1700：与 phase-2 catch 对称，失败后刷新权威相位。
-      await loadState();
+      // #1808 B 同类：先响亮；#1700 loadState 刷新权威相位为 best-effort。
       surfacePhase1Failure(err instanceof Error ? err.message : String(err));
+      try {
+        await loadState();
+      } catch {
+        // 刷新失败不抵消已落地的 phase-1 呈现
+      }
       setBusy("");
     }
   };
@@ -312,15 +329,21 @@ export function useSettlementFlow({
         window.location.reload();
         return;
       }
-      // #1808：phase-1 呈现只调一次；pending 消费与否只分流 return，HUD 写入语义不变。
+      // #1808 B：catch 内 await 链 reject 不得全静默——phase-1 呈现先落地，再 best-effort 消费 pending。
       const failures = detail?.pending_action_failures;
-      const consumed = Array.isArray(failures) && await surfacePendingActionFailures(failures);
+      const hasPending = Array.isArray(failures) && failures.length > 0;
       surfacePhase1Failure(
-        consumed
+        hasPending
           ? (detail?.message || "退朝失败。")
           : (err instanceof Error ? err.message : String(err)),
       );
-      if (consumed) return;
+      try {
+        if (hasPending && await surfacePendingActionFailures(failures)) {
+          return;
+        }
+      } catch {
+        // pending 消费链（其内 loadState）reject 时告警已响亮，不得再吞
+      }
     } finally {
       setBusy("");
     }
@@ -370,6 +393,7 @@ export function useSettlementFlow({
     decisionFailures,
     pausedDecisionError,
     settlementHudError,
+    clearSettlementHudError,
     issueDecree,
     advanceWithoutEdict,
     submitDecisions,

@@ -2110,6 +2110,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(resume).not.toBeNull();
     expect(resume!.disabled).toBe(false);
     expect(resume!.textContent).toContain("续跑结算");
+    // #1808 A：settle-resume 挂载时 hud-error 门控避让，不得压盖唯一续跑 CTA。
+    expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
     // 陈旧常态写面不再当权威：settling 门控已投影续跑，busy 已清。
     expect(host.querySelector(".settlement-lock")).toBeNull();
   });
