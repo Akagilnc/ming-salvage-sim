@@ -253,6 +253,25 @@ owner 最后对财政的提醒（03:14:55Z）：
 
 ## 尚未设计
 
+### 大模块立票边界（2026-09-09）
+
+owner 要求「先立milestone。然后先把需要的大模块立票」，并调用 to-spec。助手将人事、财政、军事与架构职责并列列票后，owner 纠正：
+
+> 人事 财政 军事 不是现在就有的东西嘛？123看起来倒是架构的东西。 456是怎么打算的？
+
+助手修订为：人事、财政、军事是既有领域能力及贯穿验收场景，不预先各立重做票；具体接入时确有独立重构问题，再据实立票。owner 回答「可以」。这不是取消这些领域的验收，也不是承诺旧实现不许调整。
+
+已建立 [M18](https://github.com/Akagilnc/ming-salvage-sim/milestone/18)；总规格与共同验收真源为 [#1812](https://github.com/Akagilnc/ming-salvage-sim/issues/1812)。四张大模块票为：
+
+- [#1813 世界记录与事务记忆](https://github.com/Akagilnc/ming-salvage-sim/issues/1813)
+- [#1814 按身份供料与自主取阅](https://github.com/Akagilnc/ming-salvage-sim/issues/1814)
+- [#1815 LLM 结果转译与统一记录](https://github.com/Akagilnc/ming-salvage-sim/issues/1815)
+- [#1816 召对与过月衔接](https://github.com/Akagilnc/ming-salvage-sim/issues/1816)
+
+票面规格在 tracker 维护，本页只保留取舍依据与索引，不复制票面。它们不是施工切片，也不是已授权开工；M17 的旧票未在本轮迁移或关闭。
+
+### 后续深挖
+
 - 人事、财政、军事各自的具体模块边界与内部读写接口，以及现有能力哪些直接沿用；面向 LLM 的统一记录入口已定于 0154。
 - 事务怎样承接旨意、案卷、授权、人物经历与持续结果；不把所有原话强拆成字段，也不另立平行案卷。
 - 记忆的具体归属与保存结构、公共消息与个人经历的组织方式；首期供料依 0155，记忆整理不在本轮待设计范围，复杂传播与信念机制也不自动进入首期。
