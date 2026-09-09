@@ -12,7 +12,7 @@
 | V2 新用语与既有领域词 | [CONTEXT.md](../../CONTEXT.md) |
 | 账本、中间层、真假与角色判断 | [ADR 0153](../adr/0153-v2-world-record-and-two-way-mediation.md) |
 | 一件事与跨领域结果 | [ADR 0154](../adr/0154-v2-affairs-unify-story-and-isolate-progress.md) |
-| 同场一个 LLM、一次给料的首期取舍 | [ADR 0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) |
+| 同场一个 LLM、材料备齐后自主取阅 | [ADR 0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) |
 | 世界实况中的文字事实 | [ADR 0156](../adr/0156-v2-world-record-includes-textual-facts.md) |
 | 单件模型调用重试耗尽时的过月取舍 | [ADR 0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) |
 | 北极星索引 | [AUDIENCE_NORTH_STAR.md](../AUDIENCE_NORTH_STAR.md) |
@@ -123,6 +123,8 @@ owner（03:08:55Z）：
 
 > 我觉得先一次给全，llm自己判断读多少
 
+此处「给全」的含义由 owner 后续明确为材料可供自主取阅，不是全量注入上下文；助手原先写成「不按需读取」是误解，澄清原话见 [记忆供料保持简单](#记忆供料保持简单)。
+
 owner（03:11:07Z）：
 
 > 不。你提醒我了。北极星案例就是一个llm自己演出来的戏。暂时不用多llm
@@ -187,6 +189,12 @@ owner 先限定场景：
 > 不做整理。真到了上下文影响这个事情出现再说
 
 因此首期不引入长期记忆整理、摘要或因假设容量压力而预建的供料优化；后续是否需要改进，以实际出现的上下文影响为前提。此取舍并入 [0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md)，不是授权删除现有实现中的历史摘要功能，也不改变角色可见范围。
+
+owner 随后澄清「提供」与「读取」的区别（保留原字）：
+
+> 因为你提供在哪里。不代码llm要马上读啊。llm就像你现在工作一样。你会马上把仓库的所有东西都读一次嘛？但是想读的时候自己可以去读
+
+所以材料备齐只表示在其可读范围内可用，LLM 想读时自行读取；不要求开场把全部原文载入上下文。此前助手在 ADR 0155 写入「不采用按需检索往返」是错误转述，现已删除；这是对原意的纠正，不是 owner 推翻先前决定。此处允许自主取阅，不据此预设搜索服务、向量库或某种文件/工具接口，仍不让角色越过中间层直接读取全局 DB 实况。
 
 ## 现有能力与复用线索
 
