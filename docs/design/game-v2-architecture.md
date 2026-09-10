@@ -1,6 +1,6 @@
 # 游戏架构重构讨论
 
-状态：设计讨论中，未完成详设，未授权施工。更新至 2026-09-09 #1823 决策（地图六张决策票全部关闭）。设计 PR [#1825](https://github.com/Akagilnc/ming-salvage-sim/pull/1825) 已并入 main（merge commit fa0175a26，2026-09-10）；to-spec 已回写五张规格并建前端规格票 [#1826](https://github.com/Akagilnc/ming-salvage-sim/issues/1826)。
+状态：设计讨论中，未完成详设，未授权施工。更新至 2026-09-09 #1823 决策（地图六张决策票全部关闭）。设计 PR [#1825](https://github.com/Akagilnc/ming-salvage-sim/pull/1825) 已并入 main（merge commit fa0175a26，2026-09-10）；to-spec 已回写五张规格并建前端规格票 [#1826](https://github.com/Akagilnc/ming-salvage-sim/issues/1826)。 2026-09-10 owner grill 重定过月形状（旨意夜里预推暂存、两段式批红、邸报即邸报、章节记忆退役），ADR 0153 注记 / 0155 注记 / 0157 / 0158 随之修订（本轮 PR，proposed）。
 
 「V2」是本轮重新思考架构的历史称呼，不是另做一款游戏；文件名与分支保留该称呼只为延续引用。目标是重构现有游戏，不预设第二运行入口、第二套存档或两代产品并行维护。
 
@@ -16,8 +16,8 @@
 | 一件事与跨领域结果 | [ADR 0154](../adr/0154-v2-affairs-unify-story-and-isolate-progress.md) |
 | 同场一个 LLM、材料备齐后自主取阅、场中转译承接 | [ADR 0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) |
 | 世界实况中的文字事实 | [ADR 0156](../adr/0156-v2-world-record-includes-textual-facts.md) |
-| 过月的场与段、单件模型调用重试耗尽时的取舍与恢复 | [ADR 0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) |
-| 独立前端怎样接住召对、过月与恢复（一夜一卷、推演卷、失败一种形态、立绘归转译判） | [ADR 0158](../adr/0158-v2-frontend-receives-audience-month-and-recovery.md) |
+| 过月的形状：旨意夜里预推暂存、过月按序落账、月末推世界事件、批红、写邸报后推进；失败与恢复 | [ADR 0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) |
+| 独立前端怎样接住召对、过月与恢复（一夜一卷、等待面 + 邸报落位、失败一种形态、立绘归转译判） | [ADR 0158](../adr/0158-v2-frontend-receives-audience-month-and-recovery.md) |
 | 北极星索引 | [AUDIENCE_NORTH_STAR.md](../AUDIENCE_NORTH_STAR.md) |
 | 北极星正文 | [越次召对·杨嗣昌](../../archive/越次召对-杨嗣昌.md)、[乾清宫一夜](../../archive/乾清宫一夜-崇祯元年十一月.md) |
 
@@ -283,7 +283,13 @@ owner 回答（保留原字，按问答上下文指第一种）：
 
 代码事实（只读调查）：现状每月 1 次全世界 simulator（走流式入口、不套 transport 重试闭环，单次尝试）+ 5 个并行 extractor 模块（各 3 次尝试）+ 章节记忆 + 关系酿制；`settle_with_delta` 整段原子、ready=1 delta 重放；耗尽后无专门「补」入口，玩家重新点颁布 / 退朝；`economy_moves` 按 list 顺序先到先得、见底再扣的那条静默消失；军队 / 人物同 id 双改无冲突检测；月初快照与核账期已实现；HTTP 入口同步阻塞到结算返回。
 
-规则真源：分段落账、收尾与恢复见 [0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)，包含 2026-09-10 owner 对最终月报顺序的后出裁决。
+规则真源：过月形状、落账、收尾与恢复见 [0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)。2026-09-10 owner grill 重定形状，见下节「过月与邸报再定」。
+
+## 过月与邸报再定（2026-09-10 grill）
+
+owner 2026-09-10 就「邸报到底有哪些内容，哪些强烈依赖引擎，哪些无所谓」grill，原话逐条冻于 [#1812 评论 5612672787](https://github.com/Akagilnc/ming-salvage-sim/issues/1812#issuecomment-5612672787)。要点：月报就是现在的邸报，不立「最终月报」；邸报要准确 = 引擎写完、LLM 据结果写，LLM 提什么不受限、引擎摆的事实归引擎；结果只在月末可知（否掉夜里落账、递话人当场知道）；过月等待是严重问题，判官 / 推演 / 转译三步移到按钮前夜里逐旨预做、暂存不落账；世界事件月末推（因果准，夜里预推备用）；批红页不必立刻出、两段等待优于一段；请旨按选项预推；失败 = 3 次自动重试（429 不重、5xx 5 秒后）用尽后报错 + 错误包 + 重试钮；邸报给大臣读、不含密令；章节记忆退役；推演过程不给玩家看；邸报落核账期页不另弹窗。
+代码事实（本轮实查）：现状邸报在前、五路 extractor 从邸报抽账、无经济闸；`<<DECISION>>` 块以奏疏批红形态呈现（0043）、打回三选在结算批红页、强颁次月办（db.py:15758）；`TransportPolicy` 已是 3 次 / 5 秒但 429 可重、月末 simulator 不在重试闭环（agents.py:380）；章节记忆三个读者（下月推演 decree.py:1638、结局总评 :3522、大臣 registry.py:206）。
+决定见 [0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)、[0158](../adr/0158-v2-frontend-receives-audience-month-and-recovery.md) 决定 5 / 6、[0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) 与 [0153](../adr/0153-v2-world-record-and-two-way-mediation.md) 后出注记；#1820 决定 1、#1822 决定 1 / 2 / 5② / 7、#1823 决定 5 由此修订。
 
 实施承接见对应规格票，本页不另维护派生规则。
 

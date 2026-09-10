@@ -57,12 +57,12 @@ _Avoid_: 与回话并行的意图分类器、关键词正则、让演戏的 LLM 
 _Avoid_: 代码动作分类表、等收夜才落的人物生死、以「当场」为名绕开颁布关的明发之旨
 
 **推演段（V2）**:
-过月推演场里推演者一次写出的自由推演文，可包含多件事务的交代；它是推演过程记录，不等于最终月报。落账、收尾与恢复见 [0157](docs/adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)。
-_Avoid_: 整月一次交完再一起转译、按事务各起一场、代码设段数上限、另存转译产出当重试真源、引擎按类别定谁先扣款、资源锁或占用表
+推演者一次写出的推演文：夜里为一道已应允的旨预推它的后果，或月末为本月世界事件推演；是转译的输入与恢复依据，不给皇帝看，不是邸报。形状见 [0157](docs/adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)。
+_Avoid_: 当作邸报呈现、月末一场分段续演（前版）、代码设段数上限、引擎按类别定谁先扣款、资源锁或占用表
 
-**推演卷（V2）**:
-核账期承载本月推演过程的主面；最终月报是 LLM 据已核算结果写出的本月叙事。呈现见 [0158](docs/adr/0158-v2-frontend-receives-audience-month-and-recovery.md)，收尾顺序见 [0157](docs/adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)。
-_Avoid_: 进度条、推敲（thinking）流、把推演过程直接认作最终月报
+**预推 / 暂存声明（V2）**:
+夜里为每道已应允的旨在后台做的判官、推演、转译及其账目声明；只暂存，不落账、不进材料目录、不上界面，过月时按下旨先后核算落账；撤旨作废。规则见 [0157](docs/adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)。
+_Avoid_: 夜里落账、递话人当场知道结果、把暂存当第二套账本、推演卷（前版给皇帝看过程的主面）
 
 **御前主角（V2）**:
 召对里左栏大立绘站的那个人，与全部在场者不同。选择与呈现规则见 [0158](docs/adr/0158-v2-frontend-receives-audience-month-and-recovery.md)。
@@ -250,8 +250,8 @@ _Avoid_: 全量状态、邸报 JSON
 _Avoid_: agent 记得、邸报暗示、把「效果判后落」误读成决策没落库
 
 **邸报**:
-回合结束后展示给玩家的朝廷报告。它应该渲染已结算事实，而不是成为第二套事实来源。
-_Avoid_: 把 durable state 语境里的邸报称作 simulator output
+回合结束后展示给玩家的朝廷报告。V2：引擎全部结果落定后由单独一次 LLM 调用据实况写（名义、实入、拒收、经过、请旨答复），即「月报」，不立第二个概念；不嵌决策块、不含密令、整份作公开文书进公开层供大臣自读、历月邸报入目录索引（章节记忆退役）。它渲染已结算事实，不是第二套事实来源。规则见 [0157](docs/adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)。
+_Avoid_: 把 durable state 语境里的邸报称作 simulator output、「最终月报」、从邸报抽取账目、在邸报里塞密令
 
 **有状态实体**:
 字段即事实来源的持久游戏对象，例如人物、军队、事项、建筑、机构、关隘。
