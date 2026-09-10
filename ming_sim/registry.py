@@ -26,7 +26,7 @@ from ming_sim.qualitative import (
     power_band,
 )
 from ming_sim.token_stats import tlog
-from ming_sim.materials import material_tools, prepare_character_materials
+from ming_sim.materials import PreparedMaterials, material_tools, prepare_character_materials
 from ming_sim.tools import _duty_location, build_minister_tools
 
 _content: Optional[GameContent] = None
@@ -457,6 +457,8 @@ def create_minister_agent(
     context: CourtContext,
     agno_db: SqliteDb,
     session_id: Optional[str] = None,
+    *,
+    prepared: Optional[PreparedMaterials] = None,
 ) -> Agent:
     # 召对不再另立一套超时分档（#353 的 90/300 随硬墙钟一同删）：等多久算死由设置页
     # 那一格（静默判死阈值）统一说了算，召对与结算同吃 transport 策略（#1465 切片③
@@ -494,7 +496,9 @@ def create_minister_agent(
         tools = [_make_cultivate_tool(character, context)]
     else:
         # 开场只带最小集；其余加工材料进目录，由 list/read 或 CLI cwd 自取（#1830）。
-        prepared = prepare_character_materials(context.db, context.state, character)
+        # #1812：真实消息入口可能已备好本条消息唯一一份材料；无则本处自备。
+        if prepared is None:
+            prepared = prepare_character_materials(context.db, context.state, character)
         if hasattr(model, "materials_dir"):
             model.materials_dir = str(prepared.root)
         monthly_block_parts = [
@@ -554,20 +558,30 @@ class MinisterRegistry:
         # 懒加载：不在构造时预建全人物 agent（一整月通常只召见两三人，预建 50+ 个
         # 都要查 DB 拼 memory_brief，纯浪费）。改由 get() 首次取用时按需建并缓存。
 
-    def _create(self, character: Character) -> Agent:
+    def _create(
+        self, character: Character, *, prepared: Optional[PreparedMaterials] = None,
+    ) -> Agent:
         return create_minister_agent(
             character,
             self.llm_config,
             self.context,
             self.agno_db,
             session_id=self.session_ids[character.name],
+            prepared=prepared,
         )
 
-    def get(self, character: Character) -> Agent:
-        """懒加载：首次召见某大臣才建其 Agent（含查 DB 拼 memory_brief），之后本回合复用缓存。"""
+    def get(
+        self, character: Character, *, prepared: Optional[PreparedMaterials] = None,
+    ) -> Agent:
+        """懒加载：首次召见某大臣才建其 Agent（含查 DB 拼 memory_brief），之后本回合复用缓存。
+
+        #1812：`prepared` 只在本次触发新建时使用——真实消息入口把本条消息唯一一次
+        prepare_character_materials 结果传入，供 Agent 创建、tools/model cwd 与
+        开场共用；命中缓存则忽略，不为老 agent 重建。
+        """
         agent = self.agents.get(character.name)
         if agent is None:
-            agent = self._create(character)
+            agent = self._create(character, prepared=prepared)
             self.agents[character.name] = agent
         return agent
 

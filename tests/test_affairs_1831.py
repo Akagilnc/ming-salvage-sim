@@ -333,6 +333,44 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
 
 
+def test_closed_affair_rejects_new_dossier_attach(game):
+    """#1812 家族：已了结事务不得再接新案卷（ADR 0154／#1818 决定 2）。
+
+    LLM 仍判剧情边界，代码只在真实成案入口（create_decree_dossiers）执行 typed
+    状态契约；resolve_declaration 校验 status，不新增平行校验口。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+    closed = db.affairs.open(
+        name=NINGYUAN, origin=ORIGIN,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    db.affairs.declare_closed(closed.id, turn=state.turn)
+    before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    try:
+        db.create_decree_dossiers(
+            state,
+            action_type="assignment",
+            decree_text="调洪承畴赴宁远",
+            target_kind="issue",
+            target_id="ningyuan-general",
+            executor_kind="character",
+            executor_id=minister,
+            pending_action_id=91004,
+            payload={
+                "assignee_id": minister,
+                "affair_declaration": _declaration(attach="existing", affair_id=closed.id),
+            },
+        )
+    except ValueError as exc:
+        assert str(closed.id) in str(exc)
+    else:
+        raise AssertionError("expected closed-affair attach to fail loud")
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
+    assert db.affairs.get(closed.id).status == "closed"
+    assert db.affairs.dossiers(closed.id) == ()
+
+
 def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypatch):
     db, state, content = game
     minister = _minister(db)

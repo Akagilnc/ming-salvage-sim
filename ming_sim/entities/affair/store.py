@@ -145,7 +145,11 @@ class AffairStore:
         parsed = parse_affair_declaration(declaration, allowed=allowed)
         if parsed["attach"] == _ATTACH_EXISTING:
             affair_id = int(parsed["affair_id"])
-            self.get(affair_id)
+            affair = self.get(affair_id)
+            # #1812：已了结事务不得再接新案卷（ADR 0154／#1818 决定 2：接到哪件
+            # 已开着的事上）。LLM 仍判剧情边界；代码只执行这条 typed 状态契约。
+            if affair.status != "open":
+                raise ValueError(f"事务 {affair_id} 已了结，不能再接新案卷")
             return affair_id
         key = str(parsed.get("birth_key") or "").strip()
         if key:

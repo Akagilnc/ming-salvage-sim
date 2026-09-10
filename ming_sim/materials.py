@@ -121,21 +121,65 @@ def _spoken_this_scene(db: Any, character: Any) -> str:
     return str(audience_scene_recap(db, getattr(character, "name", "")) or "").strip()
 
 
+def _own_affair_lines(
+    db: Any, state: Any, character_name: str,
+) -> list[tuple[str, str, str]]:
+    """Durable affairs (#1818 决定 1/6) where this character holds a dossier seat.
+
+    Reuses AffairStore.input_brief (identity + latest textual fact) and
+    AffairStore.dossiers — no parallel affair-visibility mechanism.
+    """
+    from ming_sim.participant_roster import participant_roster_names
+
+    store = getattr(db, "affairs", None)
+    if store is None or not hasattr(store, "input_brief"):
+        return []
+    lines: list[tuple[str, str, str]] = []
+    for brief in store.input_brief(getattr(db, "textual_facts", None)):
+        affair_id = int(brief["id"])
+        participates = False
+        for dossier in store.dossiers(affair_id):
+            row = db.conn.execute(
+                "SELECT participant_roster FROM decree_dossiers WHERE id=?",
+                (int(dossier["id"]),),
+            ).fetchone()
+            if row is not None and character_name in participant_roster_names(
+                row["participant_roster"],
+            ):
+                participates = True
+                break
+        if not participates:
+            continue
+        situation = str(brief.get("current_situation") or "").strip() or "见目录。"
+        lines.append((f"affair-{affair_id}", str(brief.get("name") or ""), situation))
+    return lines
+
+
 def _character_affair_lines(
     db: Any, state: Any, character_name: str, knowledge: dict,
-) -> list[tuple[str, str]]:
-    """One issue-visibility projection for opening and the directory tree."""
+) -> list[tuple[str, str, str]]:
+    """Matter lines for opening and the directory tree.
+
+    Each line is (durable_dir_key, display_title, situation). The directory
+    key must be collision-free across distinct matters — the title is
+    display-only and never used to derive a path (#1812: titles differing
+    only by an unsafe character both normalized to the same segment).
+    """
     from ming_sim.knowledge import _issue_audience_case_events
 
-    lines: list[tuple[str, str]] = []
+    lines: list[tuple[str, str, str]] = []
     seen: set[str] = set()
     for issue in knowledge.get("issues") or []:
         title = str(issue.get("title") or "").strip()
-        if not title or title in seen:
+        try:
+            dir_key = f"issue-{int(issue.get('id'))}"
+        except (TypeError, ValueError):
+            dir_key = ""
+        if not title or not dir_key or dir_key in seen:
             continue
-        seen.add(title)
+        seen.add(dir_key)
         situation = str(issue.get("stage_text") or "").strip() or "见目录。"
-        lines.append((title, situation))
+        lines.append((dir_key, title, situation))
     known_ids = {
         str(item.get("source_id") or "")
         for item in [
@@ -149,41 +193,52 @@ def _character_affair_lines(
         db, state, character_name, known_source_ids=known_ids,
     ):
         title = str(item.get("title") or "").strip()
-        if not title or title in seen:
+        match = re.match(r"issue:(\d+)$", str(item.get("source_id") or ""))
+        dir_key = f"issue-{match.group(1)}" if match else ""
+        if not title or not dir_key or dir_key in seen:
             continue
-        seen.add(title)
+        seen.add(dir_key)
         situation = str(item.get("body") or "").strip() or "见目录。"
-        lines.append((title, situation))
+        lines.append((dir_key, title, situation))
     for row in _carryover_drafts(db, state):
-        title = f"尚未入档旨稿#{int(row['id'])}"
-        if title in seen:
+        dir_key = f"draft-{int(row['id'])}"
+        if dir_key in seen:
             continue
-        seen.add(title)
+        seen.add(dir_key)
+        title = f"尚未入档旨稿#{int(row['id'])}"
         body = str(row.get("text") or "").strip()
-        lines.append((title, f"{body}（尚未入档）" if body else "尚未入档"))
+        lines.append((dir_key, title, f"{body}（尚未入档）" if body else "尚未入档"))
+    for dir_key, title, situation in _own_affair_lines(db, state, character_name):
+        if dir_key in seen or not title:
+            continue
+        seen.add(dir_key)
+        lines.append((dir_key, title, situation))
     return lines
 
 
 def _opening_affair_lines(
     db: Any, state: Any, character_name: str, knowledge: dict,
 ) -> list[tuple[str, str]]:
-    """Opening min-set: 正经手事务 ⊂ unique visible issue projection."""
+    """Opening min-set: 正经手事务 ⊂ unique visible matter projection."""
     from ming_sim.knowledge import _issue_audience_names
     from ming_sim.participant_roster import participant_roster_names
 
     visible = {
-        title: situation
-        for title, situation in _character_affair_lines(db, state, character_name, knowledge)
+        dir_key: (title, situation)
+        for dir_key, title, situation in _character_affair_lines(
+            db, state, character_name, knowledge,
+        )
     }
     handled: list[tuple[str, str]] = []
     seen: set[str] = set()
     active = db.list_active_issues() if hasattr(db, "list_active_issues") else []
     for issue in active:
         try:
-            title = str(issue["title"] or "").strip()
-        except (KeyError, IndexError, TypeError):
+            issue_id = int(issue["id"])
+        except (KeyError, IndexError, TypeError, ValueError):
             continue
-        if not title or title not in visible or title in seen:
+        dir_key = f"issue-{issue_id}"
+        if dir_key not in visible or dir_key in seen:
             continue
         try:
             roster = participant_roster_names(issue["participant_roster"])
@@ -191,11 +246,16 @@ def _opening_affair_lines(
             roster = set()
         if character_name not in roster and character_name not in _issue_audience_names(db, issue):
             continue
-        seen.add(title)
-        handled.append((title, visible[title]))
-    for title, situation in visible.items():
-        if title.startswith("尚未入档旨稿") and title not in seen:
-            seen.add(title)
+        seen.add(dir_key)
+        handled.append(visible[dir_key])
+    # Unfiled drafts and the character's own durable affairs (#1818/#1831) are
+    # by construction things this character is handling — no separate active-
+    # issue roster gate needed for them.
+    for dir_key, (title, situation) in visible.items():
+        if dir_key in seen:
+            continue
+        if dir_key.startswith("draft-") or dir_key.startswith("affair-"):
+            seen.add(dir_key)
             handled.append((title, situation))
     return handled
 
@@ -320,10 +380,12 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
     )
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/公事档案.txt")
 
-    for title, situation in _character_affair_lines(db, state, name, knowledge):
-        affair_dir = tmp / _AFFAIR_DIR / _safe_segment(title)
-        _write_text(affair_dir / "当前情况.txt", situation)
-        index.append(f"{_AFFAIR_DIR}/{_safe_segment(title)}/当前情况.txt")
+    for dir_key, title, situation in _character_affair_lines(db, state, name, knowledge):
+        # #1812：目录段用不碰撞的 durable id；标题只作展示，写进正文首行。
+        seg = _safe_segment(dir_key)
+        affair_dir = tmp / _AFFAIR_DIR / seg
+        _write_text(affair_dir / "当前情况.txt", f"{title}：{situation}".strip("："))
+        index.append(f"{_AFFAIR_DIR}/{seg}/当前情况.txt")
 
     public_by_month: dict[tuple[int, int], list[str]] = {}
     for item in knowledge.get("public_events") or []:
@@ -380,17 +442,3 @@ def prepare_character_materials(
         character, state, _present_names(db, character), affairs, _spoken_this_scene(db, character),
     )
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
-
-
-def directory_has_raw_world_copy(root: Path, db: Any) -> bool:
-    """True when the tree contains a raw world-library replica (db/json dump)."""
-    root_r = Path(root).resolve()
-    forbidden_suffixes = {".db", ".sqlite", ".sqlite3", ".json"}
-    for item in root_r.rglob("*"):
-        if not item.is_file():
-            continue
-        if item.suffix.lower() in forbidden_suffixes:
-            return True
-        if item.name == Path(str(getattr(db, "path", "") or "")).name:
-            return True
-    return False
