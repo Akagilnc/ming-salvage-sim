@@ -263,11 +263,14 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/经历.txt")
 
     world = dict(knowledge.get("world") or {})
-    world.pop("public", None)
+    ledger_keys = (
+        "treasury", "military", "personnel", "construction",
+        "security", "court", "regional",
+    )
     office_lines = [
         f"{key}：{value}"
         for key, value in world.items()
-        if str(value or "").strip()
+        if key in ledger_keys and str(value or "").strip()
     ]
     if hasattr(db, "list_referenceable_dossiers"):
         brief = render_referenceable_dossier_brief(

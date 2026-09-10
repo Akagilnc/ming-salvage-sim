@@ -645,8 +645,6 @@ def load_skill_content() -> Tuple[
         "treasury", "military", "regional", "personnel", "construction", "security", "court"
     }
     for office_type, domains in knowledge_domains.items():
-        if not domains:
-            raise SystemExit(f"skills.json.office_knowledge_domains.{office_type} 不能为空")
         unknown = sorted(set(domains) - allowed_knowledge_domains)
         if unknown:
             raise SystemExit(

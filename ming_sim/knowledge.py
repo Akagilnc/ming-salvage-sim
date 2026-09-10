@@ -292,6 +292,19 @@ def project_court_roster_rows(
     ]
 
 
+def _appointment_register(db: Any, state: Any) -> str:
+    """吏部任免簿：当前在朝职名，不是派系底账。"""
+    if not hasattr(db, "current_court_roster_rows"):
+        return "任免簿：暂无。"
+    rows = db.current_court_roster_rows(state)
+    if not rows:
+        return "任免簿：暂无。"
+    return "任免簿：\n" + "\n".join(
+        f"{row['name']}：{row['office'] or '无现任官职'}"
+        for row in rows
+    )
+
+
 def _role_roster(db: Any, office_type: str, state: Any) -> str:
     """Return only the current roster for this office type.
 
@@ -393,7 +406,7 @@ def _world(
             db.region_report(limit=10),
             f"省级流民态势：{regional_displaced_pressure_brief(db)}",
         )),
-        "personnel": lambda: db.faction_report(audience=True),
+        "personnel": lambda: _appointment_register(db, state),
         "construction": lambda: db.buildings_report(qualitative=True),
         "security": lambda: db.power_report(exclude_self=True, audience=True),
         "court": lambda: "\n".join((
