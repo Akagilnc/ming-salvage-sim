@@ -648,8 +648,8 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
         "UPDATE powers SET leverage=19, military_strength=82, supply=67 "
         "WHERE id != 'ming'"
     )
-    minister = next(c for c in content.characters.values() if c.office_type == "内臣")
-    db.conn.execute("UPDATE characters SET office_type='内臣' WHERE name=?", (minister.name,))
+    minister = next(c for c in content.characters.values() if c.office_type == "都察院")
+    db.conn.execute("UPDATE characters SET office_type='都察院' WHERE name=?", (minister.name,))
     db.conn.commit()
 
     # engine rails / global builders still surface the planted material; final boundary must not.
@@ -669,7 +669,7 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
         for d in [prepare_character_materials(db, _ctx(game).state, minister)]
         for path in list_materials(d.root) if path != "INDEX.txt"
     )
-    assert "court：" in blob
+    assert "security：" in blob
     assert not _RAW_ABSTRACT_AXIS.search(rendered)
     assert not _RAW_ABSTRACT_AXIS.search(blob)
     assert region_poison not in rendered

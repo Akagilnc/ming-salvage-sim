@@ -435,7 +435,7 @@
     "地方": ["regional"],
     "边镇": ["military", "regional"],
     "司礼监": [],
-    "内臣": ["court"],
+    "内臣": [],
     "内廷": ["court"],
     "锦衣卫": ["security"],
     "东厂": ["security"],

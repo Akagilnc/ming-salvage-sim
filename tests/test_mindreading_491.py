@@ -196,7 +196,7 @@ def test_mindreading_does_not_ingest_target_ledger_truths(game):
     assert "truths" not in materials
     assert set(material) == {"当轮回话", "近臣自身见闻", "近臣公事档案"}
     blob = json.dumps(material, ensure_ascii=False)
-    for tok in ("92", "15", "identity", "loyalty", "seed_guilt", "合谋"):
+    for tok in ("92", "15", "identity", "loyalty", "seed_guilt", "皇党", "合谋"):
         assert tok not in blob
     assert payload["narration"] == model.text
 
