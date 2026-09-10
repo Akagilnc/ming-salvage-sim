@@ -179,7 +179,7 @@
   12. db.save_turn_extraction(...)                  # inertia 合并后才存：玩家明细 / 时间线含 inertia 人物变更
 
   13. [我产 chapter memory {body, tags}]  ← 起居注史官身份
-      → record_chapter_memory(state, {body, tags})  # 必须在结局判定前；记的 applied 已含 inertia 人物变更  # 〔V2 设计注记（ADR 0157，proposed）：章节记忆改为推进后的后台任务，不变式改为「在结局总评前」；接入时同步（#1816）〕
+      → record_chapter_memory(state, {body, tags})  # 必须在结局判定前；记的 applied 已含 inertia 人物变更  # 〔V2 设计注记（ADR 0157，proposed）：章节记忆退役，历月邸报入材料目录索引自读；接入时同步（#1816）〕
 
   14. clear_gated_legacies(db, state)              # 开局负面修正按 clear_gate 程序判定消除
 
@@ -260,7 +260,7 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 
 ## 不变式 / 雷区
 
-- **顺序不能改**：`auto_trigger_seed_issues` 必须在产邸报前；`apply_issue_inertia_and_ongoing` 必须在 `save_turn_extraction` + `chapter memory` 之前（inertia 追加的玩家可见人物变更要先并进 `applied` 再存 / 记，否则玩家明细与起居注漏 inertia 人物变更）；`chapter memory` 必须在结局判定前。（注：`apply_issue_inertia_and_ongoing` 的 `touched_ids=` 入参已不再用作跳过过滤——`issues.py` 内 `_ = touched_ids`、惯性漂吃全部 active issue；decree 仍按 advances 计算并传入只为保留调用签名，非不变式。） 〔V2 设计注记（ADR 0157，proposed）：分段落账后此顺序按段重排、章节记忆后台化；接入时同步（#1816）〕
+- **顺序不能改**：`auto_trigger_seed_issues` 必须在产邸报前；`apply_issue_inertia_and_ongoing` 必须在 `save_turn_extraction` + `chapter memory` 之前（inertia 追加的玩家可见人物变更要先并进 `applied` 再存 / 记，否则玩家明细与起居注漏 inertia 人物变更）；`chapter memory` 必须在结局判定前。（注：`apply_issue_inertia_and_ongoing` 的 `touched_ids=` 入参已不再用作跳过过滤——`issues.py` 内 `_ = touched_ids`、惯性漂吃全部 active issue；decree 仍按 advances 计算并传入只为保留调用签名，非不变式。） 〔V2 设计注记（ADR 0157，proposed）：过月按 0157 重排（旨意夜里预推暂存、按序落账、世界事件、批红、邸报）、章节记忆退役；接入时同步（#1816）〕
 - **assert turn==before_turn+1**：phase2 完整跑完必须推进一回合，没推进就是 bug。
 - **HITL 暂停时不要推进**：return awaiting=True 时 state.turn 不动，玩家亲裁后续跑 phase2 才推。
 - **结算只判一次结局**：state.ended=True 后保持不动，继续推月只走 fixed flows。
