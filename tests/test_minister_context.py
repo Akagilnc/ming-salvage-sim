@@ -26,7 +26,6 @@ from ming_sim.context import (
 )
 from ming_sim.registry import (
     build_building_brief,
-    build_court_brief,
     build_region_brief,
     create_minister_agent,
 )
@@ -258,32 +257,6 @@ def test_minister_context_falls_back_for_character_without_dossier(game):
     assert "以官职与任事处推知其处世分寸" in dossier
     assert "暂无可核的特别包袱" in dossier
     assert dossier in rendered
-
-
-def test_court_brief_keeps_money_scopes_identity_and_hides_abstract_scores(game):
-    """court_brief：钱粮可数保留；不旁路人物认同；他派 agenda 不入面。"""
-    db, state, content = game
-    minister = _active_ministers(content, db, n=1)[0]
-    other = db.conn.execute(
-        "SELECT name FROM factions WHERE name != ? LIMIT 1", (minister.faction,)
-    ).fetchone()
-    assert other is not None
-    secret = "SENTINEL_COURT_OTHER_FACTION"
-    db.conn.execute(
-        "UPDATE factions SET agenda=? WHERE name=?", (secret, other["name"]),
-    )
-    db.conn.commit()
-
-    bare = build_court_brief(_ctx(game))
-    scoped = build_court_brief(_ctx(game), minister)
-
-    assert "国库" in bare and "万两" in bare
-    assert f"第{state.turn}回合" in bare
-    assert "朝堂派系档料" not in bare
-    assert "民心" not in bare and "皇威" not in bare
-    assert "/100" not in bare
-    assert secret not in scoped
-    assert "【党派认同】" in scoped
 
 
 # ---------------------------------------------------------------------------

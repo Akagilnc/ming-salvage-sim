@@ -20,6 +20,7 @@ _INDEX_NAME = "INDEX.txt"
 _PERSON_DIR = "人物"
 _AFFAIR_DIR = "事务"
 _PUBLIC_DIR = "公开说法"
+_GAZETTE_DIR = f"{_PUBLIC_DIR}/邸报"
 _COURT_ROSTER_REL = f"{_PERSON_DIR}/朝臣名册.txt"
 
 
@@ -322,6 +323,24 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
         fname = f"{year}年{period}月.txt" if year and period else "未标年月.txt"
         _write_text(tmp / _PUBLIC_DIR / fname, "\n".join(lines))
         index.append(f"{_PUBLIC_DIR}/{fname}")
+
+    if hasattr(db, "list_turn_reports"):
+        for report in db.list_turn_reports():
+            if int(report["turn"]) <= 0:
+                continue
+            body = str(report.get("report") or "").strip()
+            if not body:
+                continue
+            year = int(report.get("year") or 0)
+            period = int(report.get("period") or 0)
+            fname = (
+                f"{year}年{period}月.txt"
+                if year and period
+                else f"turn-{int(report['turn'])}.txt"
+            )
+            rel = f"{_GAZETTE_DIR}/{fname}"
+            _write_text(tmp / rel, body)
+            index.append(rel)
 
     _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")
     return index

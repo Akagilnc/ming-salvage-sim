@@ -1257,16 +1257,12 @@ def test_frame_beats_flow_from_provider_and_vary(game):
     _ = n2
 
 
-def test_assembly_never_calls_omniscient_builders(game, monkeypatch):
-    """审计断言：组装路径绝不调全知 builder（court_brief / 全员名册类全局块）。"""
+def test_assembly_never_calls_omniscient_builders(game):
+    """组装路径经见闻供给接口，不依赖已退役的 court_brief / 全员名册 builder。"""
     import ming_sim.registry as registry
 
-    def _boom(*a, **k):
-        raise AssertionError("组装路径调用了全知 builder（违 ADR 0034）")
-
-    monkeypatch.setattr(registry, "build_court_brief", _boom)
-    monkeypatch.setattr(registry, "build_court_roster", _boom)
-    monkeypatch.setattr(registry, "build_court_roster_index", _boom)
+    for name in ("build_court_brief", "build_court_roster", "build_court_roster_index"):
+        assert not hasattr(registry, name)
 
     db, state, content = game
     minister = _active_minister(db, content)

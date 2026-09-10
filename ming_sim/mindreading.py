@@ -106,7 +106,7 @@ def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]
             "title": str(item.get("title") or ""),
             "body": str(item.get("body") or ""),
         })
-    return {"heard": heard[-20:]}
+    return {"heard": heard}
 
 
 def build_mindreading_materials(

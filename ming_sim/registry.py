@@ -1,4 +1,4 @@
-"""大臣 Agent 创建与注册表，朝会动态上下文 court_brief。L6。
+"""大臣 Agent 创建与注册表。读取走材料目录（#1830 / #1833）。
 
 通过 bind_content() 注入 GameContent。
 """
@@ -15,7 +15,7 @@ from agno.skills.loaders.local import LocalSkills
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
-from ming_sim.context import character_context_with_db, faction_context_with_db
+from ming_sim.context import character_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig
 from ming_sim.recommendations import build_recommendation_brief
 from ming_sim.llm_model import create_chat_model
@@ -23,9 +23,7 @@ from ming_sim.knowledge import render_character_knowledge
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
-    power_band,
 )
-from ming_sim.token_stats import tlog
 from ming_sim.materials import material_tools, prepare_character_materials
 from ming_sim.tools import _duty_location, build_minister_tools
 
@@ -63,41 +61,6 @@ def _ctx() -> GameContent:
     return _content
 
 
-def build_court_brief(context: CourtContext, character: Optional[Character] = None) -> str:
-    """每回合精简上下文：仅含回合 + 核心数值 + 在办事项 + 钱粮一句话。
-    地区/军队/派系/事项详情靠大臣按需读材料目录。
-    """
-    metrics = context.state.metrics
-    money_line = (
-        f"国库{metrics.get('国库', 0)}万两，内库{metrics.get('内库', 0)}万两。"
-    )
-    score_line = "民情与君威见于各地奏报和行事反应。"
-    if character:
-        # Characterized callers must use the same perspectival issue rail as
-        # the agent prompt; the uncharacterized board brief remains an engine
-        # overview for non-minister callers.
-        issues = context.db.get_character_knowledge(context.state, character.name).get("issues", [])
-    else:
-        issues = context.db.list_active_issues()
-    issue_lines: List[str] = []
-    for row in issues[:10]:
-        kind_tag = "系统" if row["kind"] == "situation" else "玩家"
-        issue_lines.append(
-            f"#{row['id']}[{kind_tag}]{row['title']}"
-            f"（局势未决；向好端：{row['bar_good_meaning']}；向坏端：{row['bar_bad_meaning']}）"
-        )
-    issues_brief = "；".join(issue_lines) if issue_lines else "无"
-    identity_brief = faction_context_with_db(character, context.db) if character else ""
-    return (
-        f"本{TURN_UNIT}：{context.state.year}年{context.state.period}月（第{context.state.turn}回合）。"
-        f"钱粮：{money_line}国势：{score_line}。"
-        f"在办事项：{issues_brief}。"
-        f"{identity_brief}"
-        f"势力档料：{_power_brief(context)}。"
-        f"地区/奏报/钱粮/人事/军队详情见材料目录，按需自取。"
-    )
-
-
 def _minister_game_world_prompt(prompt: str) -> str:
     """给大臣的世界观说明只保留呈现口径，不把引擎量表喂给角色。"""
     lines = []
@@ -110,112 +73,6 @@ def _minister_game_world_prompt(prompt: str) -> str:
             line = "- 军队盘面中驻地、统帅、兵种、人数、月饷与欠饷等可数物照实呈报；补给、士气、训练、装备、火器、机动、忠诚以定性描述呈报；随军大炮照门数呈报。"
         lines.append(line)
     return "\n".join(lines)
-
-
-def _power_brief(context: CourtContext) -> str:
-    """势力的抽象轴也只以定性档料进入扮演 prompt。"""
-    rows = context.db.power_rows(exclude_self=True)
-    if not rows:
-        return "势力未建档。"
-
-    return "；".join(
-        f"{row['name']}（{row['leader']}）：{row['stance']}，朝势{power_band(row['leverage'])}、"
-        f"军力{power_band(row['military_strength'])}、财力{power_band(row['supply'])}，"
-        f"{row['status']}；近动：{row['last_action'] or '尚无新动'}"
-        for row in rows
-    )
-
-
-def build_court_roster(context: CourtContext) -> str:
-    """全体在朝大臣名册——表格（| 分隔）压 token，固定喂进大臣 system。
-    去掉了 inspect_minister/list_court/list_personnel 后，大臣据此知道"别人"现状，不再调工具查。
-    含被罢/下狱/流放/致仕者（标状态），不含后宫、宗藩、未仕（#1317 r2 可召同口径）、非大明、未登场。
-    """
-    from ming_sim.session import _is_summonable_court_minister
-
-    db = context.db
-    lines: List[str] = []
-    resolve = db.resolve_power_id
-    for c in _ctx().characters.values():
-        # 可召资格单真源（惰性 resolve）；offstage 先短路省 resolve（gemini PR#130 R1）。
-        status, reason = db.get_character_status(c.name)
-        if status == "offstage":
-            continue
-        if not _is_summonable_court_minister(c, resolve_power_id=resolve):
-            continue
-        # 直接按字段吐原值，不脑补、不翻译。状态原值 + 缘由（如有）。
-        state_cell = f"{status}（{reason}）" if reason else status
-        lines.append(
-            "|".join((c.name, c.office or "无现任官职", c.office_type, c.faction, state_cell))
-        )
-    if not lines:
-        return ""
-    return (
-        "【在朝人事名册（现状以此为准，提及他人官职/状态直接据此作答，不要凭历史印象）】\n"
-        "（| 分隔，列序＝姓名|现职|官署|派系|状态）：\n"
-        + "\n".join(lines)
-    )
-
-
-def build_court_roster_index(context: CourtContext) -> str:
-    """人物数超 100 时用索引替代完整名册：仅姓名+官署+状态，完整信息见材料目录。"""
-    from ming_sim.session import _is_summonable_court_minister
-
-    db = context.db
-    lines: List[str] = []
-    resolve = db.resolve_power_id
-    for c in _ctx().characters.values():
-        # 同 build_court_roster：可召单真源 + offstage 先短路（#1317 r2 / gemini PR#130 R1）。
-        status, reason = db.get_character_status(c.name)
-        if status == "offstage":
-            continue
-        if not _is_summonable_court_minister(c, resolve_power_id=resolve):
-            continue
-        state_cell = f"{status}（{reason}）" if reason else status
-        lines.append(f"{c.name}：{c.office or '无现任官职'}，{state_cell}")
-    if not lines:
-        return ""
-    return (
-        "【在朝人事索引（涉及人物官职/状态时读材料目录查完整信息）】\n"
-        + "\n".join(lines)
-    )
-
-
-def build_last_gazette_brief(context: CourtContext) -> str:
-    """上回合（上月）邸报全文，固定喂进大臣 system。
-    上月朝局/地方/灾兵祸福见邸报；更早月份见材料目录。无上月邸报（开局首回合）返回空。"""
-    prev_turn = int(context.state.turn) - 1
-    if prev_turn < 0:
-        return ""
-    report = context.db.get_turn_report(prev_turn)
-    if not report or not report.strip():
-        return ""
-    safe_report = str(report or "")
-    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份见材料目录）】\n" + safe_report
-
-
-def build_memory_brief(character: Character, context: CourtContext) -> str:
-    """从人物见闻投影渲染更早朝局；章节表不是人物读取端。"""
-    prev_turn = int(context.state.turn) - 1
-    knowledge = context.db.get_character_knowledge(context.state, character.name)
-    chapters = [c for c in knowledge.get("public_events", [])
-                if (c.get("kind") == "chapter_summary" or str(c.get("source_id") or "").startswith("chapter_source:"))
-                and int(c.get("turn") or 0) != prev_turn]
-    lines = ["【更早朝局（起居注章节，上月详情见上方邸报）】"]
-    for c in chapters:
-        body = str(c.get("body") or c.get("title") or "")
-        if body:
-            lines.append(f"- {c['year']}年{c['period']}月：{body}")
-    if len(lines) == 1:
-        return ""
-    brief = "\n".join(lines)
-    chap_list = "、".join(f"{c['year']}年{c['period']}月" for c in chapters)
-    tlog(
-        f"[装填大臣记忆] 建「{character.name}」对话Agent时，把更早朝局的起居注章节"
-        f"（每月一段朝局叙事，取 turn-2 及更早4月内）塞进其system上下文，"
-        f"让他作答能记得这几月发生过什么。本次装 {len(chapters)} 章：{chap_list}，共 {len(brief)} 字"
-    )
-    return brief
 
 
 def build_character_knowledge_brief(character: Character, context: CourtContext) -> str:
@@ -526,7 +383,6 @@ def create_minister_agent(
         skills=minister_skills if not is_consort else None,
         add_history_to_context=True,
         num_history_runs=6,
-        tool_call_limit=5,
         markdown=False,
     )
 
