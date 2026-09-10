@@ -716,6 +716,28 @@ def test_run_claude_stdout_only(monkeypatch):
     assert captured["kw"].get("env") is None
 
 
+def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path):
+    """#1830：materials_dir 传到真实子进程 seam（cwd + 只读 argv）。"""
+    root = str(tmp_path / "materials")
+    tmp_path.joinpath("materials").mkdir()
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out, n = cb._run_codex("p", materials_dir=root)
+    assert out == "ok" and n == 1
+    assert captured["kw"].get("cwd") == root
+    assert "--sandbox" in captured["cmd"] and "read-only" in captured["cmd"]
+    assert "--ignore-user-config" in captured["cmd"]
+
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out, n = cb._run_claude("p", materials_dir=root)
+    assert out == "ok" and n == 1
+    assert captured["kw"].get("cwd") == root
+    assert "--allowedTools" in captured["cmd"]
+    assert "Read" in captured["cmd"] and "Glob" in captured["cmd"]
+    joined = " ".join(captured["cmd"])
+    disallowed_span = joined.split("--disallowedTools", 1)[-1]
+    assert "Read" not in disallowed_span.split("--", 1)[0]
+
+
 def test_run_codex_flags_and_stdout(monkeypatch):
     body = '{"k": []}'
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
