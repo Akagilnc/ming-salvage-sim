@@ -798,6 +798,8 @@ def test_scale_fallback_court_roster_rejects_poison_without_personnel_authorizat
 
     captured = _capture_agent(game, minister)
     assert "query_court_roster" not in {tool.__name__ for tool in captured[minister.name]["tools"]}
+    from ming_sim.registry import _OFFICE_SKILLS
+    assert "court-roster" not in _OFFICE_SKILLS["_base"]
     instructions = "\n".join(captured[minister.name]["instructions"])
     assert poison["name"] not in instructions
     prepared = prepare_character_materials(db, state, minister)

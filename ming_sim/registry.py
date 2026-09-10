@@ -19,7 +19,7 @@ from ming_sim.context import character_context_with_db, faction_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig
 from ming_sim.recommendations import build_recommendation_brief
 from ming_sim.llm_model import create_chat_model
-from ming_sim.knowledge import project_court_roster_rows, render_character_knowledge
+from ming_sim.knowledge import render_character_knowledge
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
@@ -34,27 +34,22 @@ _skills_cache: Dict[str, Skills] = {}
 
 # 各 office_type 对应的 skill 子集。只给该类大臣实际需要的 skill，
 # 避免把 simulator/extractor 专用 skill 注入大臣 system prompt 浪费 token。
+# 读取一律走材料目录（#1819 / #1830）；此处只留动作类 skill。
 _OFFICE_SKILLS: Dict[str, List[str]] = {
-    # 所有大臣共有：记忆检索、拟旨入档、密令、召见传人
-    # 人物>100 或军队>30 时改为动态 tool 查询（当前 40人/17军，暂全量注入 system）
     "_base": ["memory-recall", "decree-drafting", "secret-order", "summon"],
-    # 礼部：额外选妃
     "礼部":   ["consort-selection"],
-    # 司礼监：选妃
     "司礼监": ["consort-selection"],
 }
 
 
-def _skills_for(office_type: str, extra: List[str] = []) -> Skills:
-    """按 office_type 返回精简 skill 集。extra 为运行时动态追加（不缓存）。"""
-    cache_key = office_type if not extra else f"{office_type}+{','.join(sorted(extra))}"
-    if cache_key not in _skills_cache:
+def _skills_for(office_type: str) -> Skills:
+    """按 office_type 返回精简 skill 集。"""
+    if office_type not in _skills_cache:
         names = list(_OFFICE_SKILLS["_base"])
         names += _OFFICE_SKILLS.get(office_type, [])
-        names += [n for n in extra if n not in names]
         loaders = [LocalSkills(f".agno_skills/{n}", validate=False) for n in names]
-        _skills_cache[cache_key] = Skills(loaders)
-    return _skills_cache[cache_key]
+        _skills_cache[office_type] = Skills(loaders)
+    return _skills_cache[office_type]
 
 
 def bind_content(content: GameContent) -> None:
@@ -99,7 +94,7 @@ def build_court_brief(context: CourtContext, character: Optional[Character] = No
         f"在办事项：{issues_brief}。"
         f"{identity_brief}"
         f"势力档料：{_power_brief(context)}。"
-        f"地区/奏报/钱粮详情见材料目录，按需自取；人事与军队详情见下方固定名册。"
+        f"地区/奏报/钱粮/人事/军队详情见材料目录，按需自取。"
     )
 
 
@@ -499,21 +494,6 @@ def create_minister_agent(
         tools = [_make_cultivate_tool(character, context)]
     else:
         # 开场只带最小集；其余加工材料进目录，由 list/read 或 CLI cwd 自取（#1830）。
-        complete_roster = context.db.current_court_roster_rows(context.state)
-        army_count = context.db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
-        projected_world = context.db.get_character_knowledge(
-            context.state, character.name,
-        )
-        projected_roster = project_court_roster_rows(
-            complete_roster, projected_world, character.office_type,
-        )
-        # Scale thresholds operate on the authorized slice, never on the global
-        # backing set: a large court cannot manufacture a personnel capability.
-        use_roster_tool = len(projected_roster) > 100
-        projected_world = projected_world.get("world") or {}
-        # The threshold may alter delivery, never authorization: a role without
-        # the military domain must not receive either the roster tool or skill.
-        use_army_tool = army_count > 30 and "military" in projected_world
         prepared = prepare_character_materials(context.db, context.state, character)
         if hasattr(model, "materials_dir"):
             model.materials_dir = str(prepared.root)
@@ -534,12 +514,7 @@ def create_minister_agent(
         # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
         if character.office_type in ("司礼监", "礼部"):
             tools.append(_make_select_consort_tool(context))
-        extra_skills = []
-        if use_roster_tool:
-            extra_skills.append("court-roster")
-        if use_army_tool:
-            extra_skills.append("army-roster")
-        minister_skills = _skills_for(character.office_type, extra=extra_skills)
+        minister_skills = _skills_for(character.office_type)
     return Agent(
         name=character.name,
         id=f"minister-{character.name}",
