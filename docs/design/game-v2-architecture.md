@@ -239,7 +239,7 @@ owner 回答（保留原字，按问答上下文指第一种）：
 
 代码事实（只读调查）：仓内没有贯穿性的「一件事」实体——流水 / 日志以 `origin_ref="dossier:<id>"` 指案卷，`issues` 与 `decree_dossiers` 无互指，角色见闻来源用 `source_id` 前缀，章节记忆只有回合号与自由 tags；到期复命每次从 `origin_ref` 现拼案卷、奏报史、实际效果、催办史、经办人。文字事实现无家（仅 `status_reason` 等覆盖式单值列）。公开层 = `character_knowledge_events` 中 `character_name=''` 且 `kind='public'` 的行。
 
-取舍：事务是一条自己的记录，别的记录指向它（未选放大案卷、只串关联链、拿 issue 当事务）；边界、诞生（与案卷同在成案时；推演中新起）、了结（LLM 声明）都归 LLM，代码不判；不自设经手人名单；文字事实追加带月份、挂描述对象，事务当前情况即挂事务的文字事实；公开说法独立记录入 0034 公开层；流水照旧指案卷、案卷指事务；局势保留为事务下机械载体并指向事务。决定分别并入 [0154](../adr/0154-v2-affairs-unify-story-and-isolate-progress.md)、[0156](../adr/0156-v2-world-record-includes-textual-facts.md)、[0153](../adr/0153-v2-world-record-and-two-way-mediation.md)，词义入 CONTEXT。
+规则真源：事务身份与关联见 [0154](../adr/0154-v2-affairs-unify-story-and-isolate-progress.md)，文字事实见 [0156](../adr/0156-v2-world-record-includes-textual-facts.md)，公开说法见 [0153](../adr/0153-v2-world-record-and-two-way-mediation.md)。
 
 未定：表布局与引用字段形状、记录能力接口（#1815；核算反馈与数值归属已定于 #1820，见下节）、供料读取方式（#1819）、共享资源与故障（#1822）、局势退役与否（接入时看）。
 
@@ -249,7 +249,7 @@ owner 回答（保留原字，按问答上下文指第一种）：
 
 代码事实（只读调查）：现行就是「交代即结束」的现状形态——推演 prompt 要求每笔钱写单一确定金额，extractor 照抄，核算在推演写完之后 clamp；实况只经 `treasury_brief` 一句与章节记忆间接回流，上月名义邸报原文照喂下月推演；`reconciliation_inputs` 从未接线。抄没、缴获、斩获、伤亡现无核算，推演 prompt 让 LLM 写「军损多少」。`economy_moves` 被 clamp 到 0 时既不入 applied 也不入 rejected。
 
-取舍：实况回同一场推演（未选：交代即结束下月才见、固定两段续演）；「能确定的，归引擎，不能确定的，归 llm」——判断归 LLM、判断既定后能算的数归引擎，推演者的数一律是名义（未选：推演者说多少记多少、推演者数字当引擎输入再 clamp、成色也归引擎判）；拒收当事实回推演者、代码不另加邸报提示句（未选：照 0015 现状）；沿途损耗归引擎、人物自选量归 LLM 只 clamp（未选：按忠诚 / 贪腐算——即现 `covert_progress` 地板，清理归 #1815）。决定并入 [0153](../adr/0153-v2-world-record-and-two-way-mediation.md)，0008 决定 5 与 0015 决定 3 加后出注记，词义入 CONTEXT「名义数 / 实况数」。
+规则真源：核算反馈与数值归属见 [0153](../adr/0153-v2-world-record-and-two-way-mediation.md)。
 
 未定：记录能力的接口形状与转译调用拆分（#1815）；逐笔落账与 0008 后半段原子边界、多事争一库的扣款顺序（#1822）；玩家何时看见名义与实况的分岔（#1821 / #1823）；引擎新核算的公式（接入时立票）。
 
@@ -261,7 +261,7 @@ owner 回答（保留原字，按问答上下文指第一种）：
 
 代码事实（只读调查）：大臣 prompt 每场建一次并缓存，装见闻最近 20 条 + 密令 + 荐人材料 + 名册；职位现状栏是 `content/skills.json` 静态表按职位映射到整份引擎实况报告（内阁看真兵额）；换任时新任自动得本衙门实况栏、前任私密行不转移。推演者拿全盘面（上月邸报尾 1500 字、章节记忆近 6 月）、完全不读人物经历与公开说法、无工具。递话人是三个一次性 agent，读心直接 SELECT 目标真值。按需读取工具只在 API 通道有 function-calling（每回合 5 次上限）；CLI 通道（codex / agy / claude …）把全部消息压成一段文本并硬写「你没有任何文件、目录、数据库、代码、工具或命令可用」，而所有 CLI 进程本就跑在 `$TMPDIR/ming_agy_sandbox` 这个故意留空的 cwd 里——壳在、里面没放东西。
 
-取舍：推演者三层全看（实况 + 人物经历 + 公开说法）；人物按职位只读**衙门底账**——本衙门直接掌管的账读实况，辖外只读奏报与公开说法，总揽职位只读奏报与案卷（未选：一律走奏报口径、现状整份实况）；开场默认在场只有最小集，其余在目录里；三处硬上限与每回合 5 次工具调用撤除；**「给一个地方它自己读」**——每次调用备一个目录、材料写成人读文本、CLI 以它为 cwd 用自带只读工具、API 通道用「列目录 / 读文件」读同一目录，读材料上两通道一致（未选：无 tool 通道全文放进上下文，owner 明否；文本信封模拟取阅；只留 API 通道）；目录按人物 / 事务 / 公开说法分列、推演者另有盘面、根目录索引；递话人同大臣规则、不直读他人真值；已读 = 本场上下文已取，跨场不记；P4 / 0143 照旧；旧的按需查询工具退役进目录，动作类工具归 #1815 / #1821。决定并入 [0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md)，[0034](../adr/0034-minister-audience-fed-perspectival-knowledge-not-omniscient.md) 界定补钉①与 [0046](../adr/0046-message-contract-four-diegetic-roles-thin-system-layer.md) 递话 role 各加后出注记，词义入 CONTEXT「角色可读材料」「材料目录」「公事档案」「衙门底账」「递话人」。
+规则真源：材料供给与读取见 [0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md)。
 
 未定：目录文件的具体写法与刷新实现、读工具接口签名（#1814 模块设计 / #1815）；codex exec 默认沙箱是否只读、pi 有无只读档、claude 放开 Read / Glob / Grep 的实际效果（接入时真跑证）；场中即时结果怎样写入已定于 [#1821](https://github.com/Akagilnc/ming-salvage-sim/issues/1821)（见「场中承接与后台转译」节）；玩家何时看见（#1823）。
 
@@ -271,9 +271,9 @@ owner 回答（保留原字，按问答上下文指第一种）：
 
 代码事实（只读调查）：一次调用只演一位大臣（一人一 agent，`summon` 只告诉前端下一位是谁）；API 通道 agent 带动作工具（拟旨 / 任免 / 入册 / 宣人 / 罢免 / 密令哨兵），CLI 通道靠「拟旨如下：」「密令如下：」前缀 + 与回话并行的意图分类器 + 密令动作抽取，两路汇于 `pending_actions`；每轮回话后拖三条 LLM（故事抽取、边事件判官、读心——读心直读目标真值）加高亮判官；场中真会变的真实盘面只有边事件（当轮）与收夜行止；恢复靠 `reconcile_interrupted_chat_turns` 与 `reply/retry`。
 
-取舍：**每轮一次转译 LLM**（未选：场景 LLM 自己边演边声明——API 工具 / CLI 写文件，抵 0033 零形式约束、两通道写路分造；两套并存）——回话就是场景 LLM 的交代，与推演者同形；**转译是后台任务、前台不等**——发生时间与次序不变（回话后起、按轮串行），下一句不等、退朝不等，收夜处理在后台等最后一轮，过月前完成、未完成则过月等（修订 0036「收夜前清空待补否则中止收夜」；runner 曾提「只在收夜等」与「提交批改后台」两版，均非 owner 意思，作废）；**一条对话轮 = 整段自由戏文**（未选：按说话人分段的结构化信封）——角色与可闻性由转译标记、呈现层读；**当场实况当场落账本**、成 0038 白名单第四类（未选：只放行文字事实与公开说法；一律等收夜）——交办仍暂存 → 已应允 → 收夜成案 → 颁布关，分别由 LLM 演绎说了算；**记录进目录、下一句看见**（未选：记录落定后立刻再起续演调用）。决定并入 [0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md) 场中承接段，[0036](../adr/0036-audience-night-restore-resume-at-last-entry.md)、[0038](../adr/0038-retract-round-is-hard-delete-with-mid-night-write-whitelist.md)、[0046](../adr/0046-message-contract-four-diegetic-roles-thin-system-layer.md)、[0045](../adr/0045-highlight-judge-is-sole-source-same-backend-postpass.md)、[0028](../adr/0028-audience-secret-order-capture-and-action-classification.md)、[0082](../adr/0082-edge-event-write-sides-settlement-audience-recommendation.md)、[0035](../adr/0035-audience-night-open-story-ledger.md) 各加后出注记，词义入 CONTEXT「转译」「当场实况」。
+规则真源：召对与后台转译承接见 [0155](../adr/0155-v2-single-scene-llm-with-complete-perspectives.md)。
 
-按已定推出：下一句从已持久化对话轮 + 账 + 目录重建；递话触发归 LLM，三个代码触发的递话 agent 与读心记录退役；宣 X 口令落入殿账后起一次场景调用；转译边演边产交办载荷、承接不了的当事实回场、代码不做「所指对象未明 → 强制追问」校验闸；当场实况挂哪件事务由转译说；人物经历仍读时投影、按转译标记取；收夜照旧；留给过月的 = 交办成案后的后果 + 局势机械载体。
+实施承接见对应规格票，本页不另维护派生规则。
 
 未定：转译的输出契约字段与调用实现、目录重写时机（#1814 / #1815）；前端怎样呈现整段戏文与拖尾到的记录（#1823）；过月前 join 后台项与重试耗尽处置（#1822）。
 
@@ -283,9 +283,9 @@ owner 回答（保留原字，按问答上下文指第一种）：
 
 代码事实（只读调查）：现状每月 1 次全世界 simulator（走流式入口、不套 transport 重试闭环，单次尝试）+ 5 个并行 extractor 模块（各 3 次尝试）+ 章节记忆 + 关系酿制；`settle_with_delta` 整段原子、ready=1 delta 重放；耗尽后无专门「补」入口，玩家重新点颁布 / 退朝；`economy_moves` 按 list 顺序先到先得、见底再扣的那条静默消失；军队 / 人物同 id 双改无冲突检测；月初快照与核账期已实现；HTTP 入口同步阻塞到结算返回。
 
-取舍：**一场推演、分段交代、实况回场续演**（未选：按事务多场并行；先总推演再按事务分演）——段数由推演者定、它自己声明本月事毕、一段交完是常态、代码不设段数上限；共同资源不另设占用，账本即占用，**扣款顺序 = 交代在段中的先后**（未选：引擎按类别优先；推演者另标优先级）；**一段一次提交**（数据库事务；owner 原话「一段一个事务」，「事务」在此指数据库事务，与词表「事务（V2）」那件事不同，cmr 2026-09-09 改词避免撞车）——一段的转译 + 核算 + 落账全有或全无，段落定即提交，月份推进是最后单独一笔（未选：整段原子；按一件事务原子；按交代原子——要另存转译产出，owner 追问后删）；**0157 只管丢了就缺后果的调用**（推演段、转译、收夜拆旨与背书批、颁布判官），失败项 = 耗尽的那一次调用，已落的不动、重跑它再续演，章节记忆 / 关系酿制 / 结局总评 / 高亮照旧降级（未选：扩到全部调用；按事务撤回重演）；**耗尽后核账期停住**、月初快照 + 核账叙事不变、系统提示行告知可重试、重试只重跑那一次调用再自动续跑、重开同态、错误包照发、不给跳过，逃生口 = 转译反复失败的段丢弃、从上一段重演（未选：后台无限重试；缺着进下月）；**缩短等待**——机械尾后台化（推进后后台跑、下月过月前完成，旧不变式「章节记忆在结局判定前」改为「在结局总评前」）、一段交完是常态、推演文流式呈现归 #1823（未选：推演者带记账工具一次调用内往返——转译仍要在工具里跑，省的只是每段固定开销）；**段 = 对话轮**，生成完即持久化，一段一次转译，恢复只看最后一段落没落账，不另存转译产出（未选：按事务拆开并行转译；整月跑完再转译）。粗估一段月约 1.5 分钟、两段月约 2 分钟，现状约 2 分钟；CLI 后端每次调用的固定开销归池令。决定并入 [0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)，[0008](../adr/0008-settlement-applier-contract-and-transaction-boundary.md) 决定 2 / 3 / 6、[0154](../adr/0154-v2-affairs-unify-story-and-isolate-progress.md)、[0148](../adr/0148-settlement-period-shows-month-open-snapshot-not-engine-mid-state.md)、[0149](../adr/0149-enter-settlement-period-on-click-in-flight-continues.md) 各加后出注记，词义入 CONTEXT「推演段」、更新「转译」「核账期」。
+规则真源：分段落账、收尾与恢复见 [0157](../adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md)，包含 2026-09-10 owner 对最终月报顺序的后出裁决。
 
-按已定推出：过月 join 点 = 一点即进核账期（0149）→ 等后台转译清空（#1821）→ 收夜（成案、拆旨分事务、背书批）→ pre_settle 前半段 → 颁布判官 → 推演场，核账期本身就是等待面；无新旨月份同一条链（#1274）；推进由推演者说「本月事毕」；请旨 = 一笔交代、场暂停等批红（0043 / 0048 / 0055 / 0093 不动）；0148 只管呈现；重试次数是实现细节；推演段与转译的输入 = 已持久化的段 + 目录，不依赖活模型会话。
+实施承接见对应规格票，本页不另维护派生规则。
 
 未定：转译的输出字段、「本月事毕」的声明方式与目录重写实现（#1815 / #1814）；核账期停住、重试与流式推演文的前端呈现（#1823）；接入时真跑证推演段在各 CLI 后端的固定开销；引擎新核算公式（接入时立票）。
 
@@ -295,11 +295,11 @@ owner 回答（保留原字，按问答上下文指第一种）：
 
 代码事实（只读调查）：`web/src` 无路由，单一 `App` 用 `ModalName` 切「页面」；召对按大臣开面板（URL 带大臣名，一人一 agent），后端已按角色切成多条消息逐条渲染，读心 / 高亮按归属轮补挂；结算等待面 `SettlementLock`（进度条 + 推敲 + 奏章流）只挂在会话忙碌上、刷新即丢，完成整页 reload；核账期 = 月初快照谓词（`_month_open_snapshot()` 一身两职）+ 王承恩固定递话条（前端字串）+ 逐面门控；失败 = HUD 横幅两钮（续跑结算 / 重新推演）+ 拟诏台 error；召对崩溃 = 「重新生成回话」钮；密令失败 = 只列不修的「未落库政务」面板；重开靠 `GameState` 字段门控同一棵树；HTTP = 结算 SSE 同步到终态、`GET /api/game/state` 1 秒轮询在飞标记、无 WebSocket；立绘资产 `web/public/portraits/minister_*.png`（682×1024）。
 
-取舍：**一夜一卷轴、一个输入框**（未选：沿用按大臣开面板）；**一轮 = 一块卷、转译到了原位上样式、块不拆**（未选：等标记再显示；永远中性；拆分气泡；剧本体）；**戏文轮上只补挂分段标记与高亮**（未选：机械回执）——交办去向沿用拟诏台，拟诏台按 [#1772](https://github.com/Akagilnc/ming-salvage-sim/issues/1772) 收束（删御笔自拟、旨意只从召对来）后保留草稿 / 已发两区，本票只用它看去向；**左栏大立绘 = 御前主角、转译判、宣 X 当场先切**（未选：跟最近宣入者；跟最后说话人；舞台并排半身；大图 + 殿侧小立绘）；**核账期主面 = 本月推演卷**，不流推敲、无进度条、推进后卷即邸报（未选：右侧邸报房；文书页；沿用 SettlementLock）；**失败一种形态**——出事记录下一条系统提示行 + 一个「重试」，三处同形，不给跳过，未落库政务面板退役（未选：两钮选逃生口；汇总面板）；**重开落点按账本直接落**（未选：一律先落 HUD）；**交接写到能力层**，请求形态归实现（未选：定死协议）；**高亮不加底色、字色 + 粗体**。决定写入 [ADR 0158](../adr/0158-v2-frontend-receives-audience-month-and-recovery.md)，[0044](../adr/0044-audience-stage-is-night-scroll-reading-story-ledger.md)、[0046](../adr/0046-message-contract-four-diegetic-roles-thin-system-layer.md)、[0047](../adr/0047-buttons-are-command-accelerators-composer-contract.md)、[0036](../adr/0036-audience-night-restore-resume-at-last-entry.md)、[0148](../adr/0148-settlement-period-shows-month-open-snapshot-not-engine-mid-state.md)、[0149](../adr/0149-enter-settlement-period-on-click-in-flight-continues.md) 各加后出注记，词义入 CONTEXT「推演卷」「御前主角」，更新「核账期」「续夜」「四类戏内消息」「夜卷轴 / 起居注」「高亮判官」。
+规则真源：前端呈现与恢复入口见 [0158](../adr/0158-v2-frontend-receives-audience-month-and-recovery.md)。
 
 教训（runner 记）：第一版 mock 把左栏换成名册、砍了 owner 备好的大立绘位——mock 不得砍掉 owner 已备素材的位置；立绘「显示谁」是真决策，代码规则（最近宣入 / 最后说话）各有错脸，按 P6 归转译判。
 
-按已定推出：转译输出多一项「本轮御前主角」（字段归 #1815）；晚一句才看见的清单加一项立绘切换（除宣 X 口令）；#1220「无进度条」口径落实、现状进度条随推演卷退役；核账叙事按 P7 由 LLM 长出、现状固定字串接入时清理；`GET …/chat/mindreading` 轮询、`mindreading` 事件、`PendingFailureNoticePanel`、`chatFailures` 行、`settle-resume` 双钮随本决定退役；0045 高亮补挂路子沿用、只标大臣分段。
+实施承接见对应规格票，本页不另维护派生规则。
 
 未定：前端能力的请求形态与断线重接（前端规格票）；推演卷段间分隔与请旨暂停处的呈现细节（试玩调）；转译声明字段（#1815）。
 
