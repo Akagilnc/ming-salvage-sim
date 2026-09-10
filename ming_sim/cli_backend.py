@@ -98,10 +98,8 @@ _GROK_BIN = os.environ.get("MING_SIM_GROK_BIN", "grok")
 _PI_BIN = os.environ.get("MING_SIM_PI_BIN", "pi")
 # 受支持 CLI runner 单一真源（membership + 文案 + env 回落共用）。
 _CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
-# #1830 材料模式只承认已证明读取根的 runner。Claude `--restricted` 把
-# file tools 限制在工作目录；Codex `--sandbox read-only`/`--cd` 仍可读树外
-# 文件（真跑 /etc/hosts 成功），故 Codex 材料模式启动前响亮拒绝。
-_MATERIALS_CLI_RUNNERS = frozenset({"claude"})
+# #1830 / #1827：材料模式只承认 Codex 与 Claude。其余 runner 启动前响亮拒绝。
+_MATERIALS_CLI_RUNNERS = frozenset({"codex", "claude"})
 # 闸脚本 --runner choices 单一真源（不含 agy：闸形制未用）。脚本 import 此元组，禁各自复制。
 GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok", "pi")
 # 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
@@ -608,6 +606,7 @@ def _codex_cmd(
     *,
     json_events: bool = False,
     reasoning_strength: Optional[str] = None,
+    materials_dir: Optional[str] = None,
 ) -> List[str]:
     cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
     reasoning = _codex_reasoning_effort(reasoning_strength)
@@ -616,6 +615,8 @@ def _codex_cmd(
     if json_events:
         cmd.append("--json")
     cmd += ["--ephemeral", "--skip-git-repo-check"]
+    if materials_dir:
+        cmd += ["--ignore-user-config", "--sandbox", "read-only"]
     cmd.append("-")
     return cmd
 
@@ -691,19 +692,20 @@ def _cli_runner_command(
       （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
     - claude：`-p --output-format text`，prompt 走 stdin；thinking 预算走 env。
     - cursor / kimi / grok / pi：prompt 走参数（无 stdin 约定），干净答案在 stdout。
-    材料目录（#1830）：仅 Claude。cwd 指向目录；`--restricted` 把文件工具
-    限制在工作目录，只开放 Read/Glob/Grep。Codex CLI 无材料树读取边界，
-    材料模式启动前拒绝，不以 cwd/argv 形状冒充隔离。
+    材料目录（#1830 / #1827）：仅 Codex / Claude。cwd 指向目录；
+    Codex 显式 `--sandbox read-only` + `--ignore-user-config`；
+    Claude 只开放 Read/Glob/Grep。
     """
     if materials_dir and runner not in _MATERIALS_CLI_RUNNERS:
         raise RuntimeError(
-            f"材料模式仅支持 Claude，拒绝 runner={runner}"
+            f"材料模式仅支持 Codex 与 Claude，拒绝 runner={runner}"
         )
     if runner == "agy":
         return [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"], prompt, None
     if runner == "codex":
         cmd = _codex_cmd(
             model, json_events=json_events, reasoning_strength=reasoning_strength,
+            materials_dir=materials_dir,
         )
         return cmd, prompt, None
     if runner == "claude":
@@ -714,8 +716,6 @@ def _cli_runner_command(
         ]
         if materials_dir:
             cmd += [
-                "--restricted",
-                "--strict-mcp-config",
                 "--allowedTools", "Read", "Glob", "Grep",
                 "--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit",
                 "WebFetch", "WebSearch", "Task",
