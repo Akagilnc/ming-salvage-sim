@@ -152,16 +152,12 @@ def _own_affair_lines(
     it mirrors the existing participant/audience "handling" gate already
     applied to ordinary (non-linked) issues, checked against whichever linked
     issue points here — this is the #1830 opening min-set's established
-    criterion, unchanged by this fix.
-
-    Whether a *closed* affair whose linked issue is still active and still
-    passes that gate should count as opening 正经手 is an open product
-    question (escalated, undecided) — this function does not rule on it in
-    either direction. It stays out of scope by construction: the linked-issue
-    handling gate below only ever contributes for an affair that is still
-    open, so a closed affair's `is_handling` can only ever come from genuine
-    dossier participation, which is not the escalated question and is
-    unchanged from every prior round.
+    criterion, and this fix does not change it in either direction (whether
+    a closed affair whose linked issue is still active and still passes that
+    gate should count as opening 正经手 is an open, escalated product
+    question — left exactly as it behaved before this directory rewrite,
+    not decided here; do not gate this check on the affair's open/closed
+    status, that would itself be taking a side).
     """
     from ming_sim.knowledge import _issue_audience_case_events, _issue_audience_names
     from ming_sim.participant_roster import participant_roster_names
@@ -216,10 +212,6 @@ def _own_affair_lines(
             str(item.get("body") or "").strip(),
         )
 
-    # #1812：closed-affair opening 判定未拍——linked-issue 经手闸只在事务仍
-    # open 时纳入 handling_ids，不把这条闸的适用范围扩到已关闭的事务（该扩展
-    # 正是被 escalate 的未决问题本身，不由本轮实现）。
-    open_ids = {int(a.id) for a in store.list_open()}
     handling_ids: set[int] = set()
     for issue in (db.list_active_issues() if hasattr(db, "list_active_issues") else []):
         try:
@@ -227,7 +219,7 @@ def _own_affair_lines(
         except (KeyError, IndexError, TypeError, ValueError):
             continue
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
-        if not linked_affair_id or linked_affair_id not in open_ids:
+        if not linked_affair_id:
             continue
         try:
             roster = participant_roster_names(issue["participant_roster"])
