@@ -13,6 +13,11 @@ import re
 from typing import Any, Dict
 
 from ming_sim.participant_roster import participant_roster_names
+from ming_sim.public_sayings import (
+    is_public_saying_source,
+    public_layer_events,
+    public_layer_prose,
+)
 
 
 def _issue_audience_names(db: Any, issue: Any) -> set[str]:
@@ -436,6 +441,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
     public_events.extend(_source_archive_rows(db, character_name, int(state.turn)))
+    public_events.extend(public_layer_events(db))
     # Issued directives are public by their nature.  Read them here so old
     # saves and the normal decree path need no second write hook.
     for directive in db.list_issued_directives():
@@ -668,7 +674,8 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         deduped_public.append(row)
     visible_public = deduped_public
     public_bodies = [
-        _prose(item.get("body") or item.get("title") or "")
+        public_layer_prose(item) if is_public_saying_source(item.get("source_id"))
+        else _prose(item.get("body") or item.get("title") or "")
         for item in visible_public
         if (item.get("body") or item.get("title"))
         and not str(item.get("source_id") or "").startswith("opening:")
