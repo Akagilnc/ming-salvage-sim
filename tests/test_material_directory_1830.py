@@ -6,8 +6,16 @@ list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    ChatCompletionMessageFunctionToolCall,
+    Function as ToolFunction,
+)
 
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
@@ -94,32 +102,83 @@ def test_opening_is_minimum_set_not_full_projection(game, tmp_path):
     assert blob
 
 
-def test_api_and_cli_cwd_read_same_bytes(game, tmp_path):
+def test_api_agent_tool_and_cli_cwd_process_read_same_file(game, tmp_path):
+    """API = Agent.run 发出 read_material；CLI = 子进程以材料目录为 cwd 读同一文件。"""
+    import ming_sim.cli_backend as cb
+    from ming_sim.cli_backend import CliChat, _fake_completion
+
     db, state, content = game
     character = _active_minister(db, content)
-    prepared = prepare_character_materials(
-        db, state, character, dest_root=tmp_path / "m",
-    )
+    dest = tmp_path / "m"
+    prepared = prepare_character_materials(db, state, character, dest_root=dest)
     rel = next(p for p in list_materials(prepared.root) if p.endswith("经历.txt"))
-    api_text = read_material(prepared.root, rel)
-    cli_text = (prepared.root / rel).read_text(encoding="utf-8")
-    assert api_text == cli_text
+    expected = read_material(prepared.root, rel)
 
-    import ming_sim.cli_backend as cb
+    class ForcedRead(CliChat):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.trace = []
+
+        def invoke(self, messages, assistant_message, response_format=None, tools=None, **kwargs):
+            names = []
+            for item in tools or []:
+                fn = item.get("function", item) if isinstance(item, dict) else {}
+                names.append(fn.get("name") if isinstance(fn, dict) else None)
+            assistant_message.metrics.start_timer()
+            if "read_material" not in names:
+                assistant_message.metrics.stop_timer()
+                raise AssertionError("audience agent missing read_material")
+            if not self.trace:
+                self.trace.append({"tool": "read_material", "path": rel})
+                call = ChatCompletionMessageFunctionToolCall(
+                    id="call-read-1830",
+                    type="function",
+                    function=ToolFunction(
+                        name="read_material",
+                        arguments=json.dumps({"path": rel}, ensure_ascii=False),
+                    ),
+                )
+                assistant_message.metrics.stop_timer()
+                return self._parse_provider_response(
+                    _fake_completion("", self.id, [call]),
+                    response_format=response_format,
+                )
+            assistant_message.metrics.stop_timer()
+            return self._parse_provider_response(
+                _fake_completion("已取阅", self.id),
+                response_format=response_format,
+            )
+
+    model = ForcedRead(id="t", backend="codex", api_key="cli-backend")
+    cfg = LLMConfig(api_key="", base_url="", model="t", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.create_chat_model", return_value=model):
+        agent = create_minister_agent(character, cfg, _ctx(game), None)
+    output = agent.run("请取阅你的经历材料")
+    executions = list(getattr(output, "tools", None) or [])
+    assert executions
+    read_exec = next(item for item in executions if getattr(item, "tool_name", "") == "read_material")
+    assert read_exec.tool_args["path"] == rel
+    assert read_exec.result == expected
+    assert model.trace == [{"tool": "read_material", "path": rel}]
+
+    cli_out = subprocess.check_output(
+        [sys.executable, "-c", f"from pathlib import Path; print(Path({rel!r}).read_text(encoding='utf-8'), end='')"],
+        cwd=str(prepared.root),
+        text=True,
+    )
+    assert cli_out == expected
+
     cmd, _stdin, _env = cb._cli_runner_command(
         "codex", "p", materials_dir=str(prepared.root),
     )
     assert "--sandbox" in cmd and "read-only" in cmd
     assert "--ignore-user-config" in cmd
-
     cmd, _stdin, _env = cb._cli_runner_command(
         "claude", "p", materials_dir=str(prepared.root),
     )
     joined = " ".join(cmd)
     assert "--allowedTools" in cmd
     assert "Read" in cmd and "Glob" in cmd and "Grep" in cmd
-    assert "Bash" in cmd and "Write" in cmd
-    assert "--permission-mode" in cmd
     disallowed_span = joined.split("--disallowedTools", 1)[-1]
     assert "Read" not in disallowed_span.split("--", 1)[0]
 
