@@ -227,10 +227,10 @@ def render_character_knowledge(
 
     This is the single presentation seam for both live session prompts and
     minister-agent prompts.  The projection has already enforced access
-    control; this function only de-duplicates sources, orders them, and caps
-    the prompt material.  #1281 issue stage_text for seed-event audiences is
-    synthesized here (read-time) when ``db``/``state`` are supplied — never
-    written into the durable knowledge projection.
+    control; this function only de-duplicates sources and orders them.
+    #1281 issue stage_text for seed-event audiences is synthesized here
+    (read-time) when ``db``/``state`` are supplied — never written into the
+    durable knowledge projection.
     """
     lines = [f"【{character_name}此刻所知的天下（仅此人物见闻）】"]
     for key, value in (knowledge.get("world") or {}).items():
@@ -256,11 +256,11 @@ def render_character_knowledge(
             int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
         )
         by_source[key] = item
-    recent_items = sorted(
+    items = sorted(
         by_source.values(),
         key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
-    )[-20:]
-    for item in recent_items:
+    )
+    for item in items:
         title = str(item.get("title") or "旧闻")
         body = str(item.get("body") or "")
         if body:

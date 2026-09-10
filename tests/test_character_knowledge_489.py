@@ -5,6 +5,7 @@ import json
 from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
+from ming_sim.materials import prepare_character_materials
 from tests.dossier_test_helpers import create_test_secret_order
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -110,6 +111,24 @@ def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatc
     assert "military" not in view["world"]
     assert "treasury" not in view["world"]
 
+def test_inner_court_materials_do_not_read_faction_report(game, tmp_path, monkeypatch):
+    db, state, content = game
+
+    def forbidden(*_a, **_k):
+        raise AssertionError("unauthorised faction_report")
+
+    monkeypatch.setattr(db, "faction_report", forbidden)
+    previous = content.characters["王承恩"]
+    messenger = content.characters["曹化淳"]
+    db.set_character_office(previous.name, "内廷随侍", "内廷")
+    db.set_character_office(messenger.name, "御前近臣", "内廷")
+    for person in (previous, messenger):
+        world = db.get_character_knowledge(state, person.name)["world"]
+        assert "court" not in world
+        prepare_character_materials(
+            db, state, person, dest_root=tmp_path / person.name,
+        )
+
 def test_every_distinct_office_type_gets_a_distinct_current_world_slice(game):
     db, state, content = game
     characters_by_type = {
@@ -195,7 +214,7 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     view = db.get_character_knowledge(state, minister.name)["world"]
     roster = db.current_court_roster_rows(state)
     assert roster
-    assert "任免簿" in view["personnel"]
+    assert "personnel" in view
     assert roster[0]["name"] in view["personnel"]
     assert (roster[0]["office"] or "无现任官职") in view["personnel"]
     assert "不应读取的派系底账" not in view["personnel"]

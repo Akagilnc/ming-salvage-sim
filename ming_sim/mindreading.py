@@ -77,18 +77,14 @@ def build_scouting_precision_payload(
 
 
 def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]:
-    from ming_sim.materials import character_office_archive_text
+    from ming_sim.materials import (
+        character_hearing_records,
+        character_office_archive_text,
+    )
 
     knowledge = db.get_character_knowledge(state, reader.name)
-    # 去掉 turn/kind/source 等机面元数据，只传读心者自己的听闻与依法可读公事。
-    heard = []
-    for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
-        heard.append({
-            "title": str(item.get("title") or ""),
-            "body": str(item.get("body") or ""),
-        })
     return {
-        "heard": heard[-20:],
+        "heard": character_hearing_records(knowledge),
         "公事档案": character_office_archive_text(db, state, reader, knowledge),
     }
 

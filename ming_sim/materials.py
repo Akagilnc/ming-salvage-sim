@@ -225,21 +225,27 @@ _LEDGER_KEYS = (
 )
 
 
-def character_office_archive_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
-    """本衙门公事档案：职位底账 + 可见案卷。与目录 公事档案.txt 同一份。
+def character_hearing_records(knowledge: dict) -> list[dict[str, str]]:
+    """可见经历与公开说法的同一批投影，不裁条数。"""
+    records: list[dict[str, str]] = []
+    for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
+        title = str(item.get("title") or "")
+        body = str(item.get("body") or "")
+        if title or body:
+            records.append({"title": title, "body": body})
+    return records
 
-    当前御前近臣的档案不含 court（faction_report 派系真值）；案卷与其它底账照旧。
-    """
+
+def character_office_archive_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
+    """本衙门公事档案：职位底账 + 可见案卷。与目录 公事档案.txt 同一份。"""
     from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
-    from ming_sim.mindreading import current_inner_court_attendant_name
 
     name = str(getattr(character, "name", "") or "")
     world = dict(knowledge.get("world") or {})
-    skip = {"court"} if current_inner_court_attendant_name(db) == name else set()
     office_lines = [
         f"{key}：{value}"
         for key, value in world.items()
-        if key in _LEDGER_KEYS and key not in skip and str(value or "").strip()
+        if key in _LEDGER_KEYS and str(value or "").strip()
     ]
     if hasattr(db, "list_referenceable_dossiers"):
         brief = render_referenceable_dossier_brief(
@@ -273,8 +279,6 @@ def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> 
 
 
 def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict) -> list[str]:
-    from ming_sim.knowledge import render_character_knowledge
-
     name = str(getattr(character, "name", "") or "")
     index: list[str] = []
 
@@ -282,9 +286,8 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
     index.append(_COURT_ROSTER_REL)
 
     person_dir = tmp / _PERSON_DIR / _safe_segment(name)
-    private_events = knowledge.get("events") or []
     experience_lines = []
-    for item in private_events:
+    for item in knowledge.get("events") or []:
         title = str(item.get("title") or "").strip()
         body = str(item.get("body") or "").strip()
         if title or body:
@@ -297,15 +300,6 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
         character_office_archive_text(db, state, character, knowledge),
     )
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/公事档案.txt")
-
-    # Keep a full processed projection in the directory for on-demand read;
-    # this is mediation output, not a raw world-library dump.
-    rendered = render_character_knowledge(
-        knowledge, name, db=db, state=state,
-    )
-    if rendered:
-        _write_text(person_dir / "见闻.txt", rendered)
-        index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/见闻.txt")
 
     visible_affairs = _visible_affair_lines(knowledge)
     visible_titles = {title for title, _ in visible_affairs}
