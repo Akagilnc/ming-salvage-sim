@@ -262,24 +262,103 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
 
 
 def test_existing_open_affair_grounds_split_declaration(game, monkeypatch):
+    """#1812：接到既开事务＝真实拆旨入口的授权快照契约（同一宁远 tracer，不另立
+    平行测试）。同一开夜内三批拆旨，收夜才统一提交（既有「开夜内准而未落，收夜
+    才交」机制）：(1) 快照内且仍 open→接上；(2) 快照外——拆旨那刻尚未开、落账前
+    才新开，即便收夜时仍 open 也拒；(3) 关闭后新声明拒。另用真实成案入口验证
+    已合法绑定后再关闭的同指重试幂等，不受 (2)(3) 的校验误伤。"""
     db, state, content = game
     minister = _minister(db)
     existing = db.affairs.open(
         name=NINGYUAN, origin=ORIGIN,
         year=state.year, period=state.period, turn=state.turn,
     )
-    night = audience_night.open_night(db, state)
-    audience_night.summon_enter(db, int(night["id"]), minister)
+    sess = _session(db, state, content, reply="臣拟三道接到前案。")
+
+    # (1) 成功：existing 在拆旨快照内且仍 open → 三道全允、本夜收夜后落地同一
+    # 事务下三份案卷（开夜内准而未落、收夜才提交是既有机制，此夜须先收完，
+    # 后续再关 existing，免得 (3) 的关闭误伤这批本该合法落地的案卷）。
+    night1 = audience_night.open_night(db, state)
+    audience_night.summon_enter(db, int(night1["id"]), minister)
     _script_split(
         monkeypatch, _ningyuan_drafts(db, minister),
         batch_declaration=_declaration(attach="existing", affair_id=existing.id),
     )
-    sess = _session(db, state, content, reply="臣拟三道接到前案。")
     sess.chat(minister, ORIGIN)
     sess.chat(minister, "三事全允")
-    audience_night.close_night(db, state, night_id=night["id"], content=content)
-    assert [row.id for row in db.affairs.list_open()] == [existing.id]
+    audience_night.close_night(db, state, night_id=night1["id"], content=content)
     assert len(db.affairs.dossiers(existing.id)) == 3
+    assert db.affairs.get(existing.id).status == "open"
+
+    # (2) 快照外：拆旨那刻这件事尚未开（不在授权快照内），拆旨之后、收夜之前才
+    # 新开——即便收夜时它已 open，也不得被接上（不能只信收夜时重读的 live 状态）。
+    late_id = int(
+        db.conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM affairs").fetchone()[0]
+    )
+    night2 = audience_night.open_night(db, state)
+    audience_night.summon_enter(db, int(night2["id"]), minister)
+    _script_split(
+        monkeypatch, _ningyuan_drafts(db, minister),
+        batch_declaration=_declaration(attach="existing", affair_id=late_id),
+    )
+    sess.chat(minister, ORIGIN)
+    late_affair = db.affairs.open(
+        name="快照外新事", origin="拆旨之后才立案",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    assert late_affair.id == late_id
+    sess.chat(minister, "三事全允")
+    audience_night.close_night(db, state, night_id=night2["id"], content=content)
+    assert db.affairs.dossiers(late_affair.id) == ()
+
+    # (3) 关闭后：existing 拆旨那刻仍 open（在授权快照内，与 (2) 区分开——这里
+    # 单独立住「status」这条边界，不是被 (2) 的授权快照顺带挡住），但收夜提交前
+    # 已了结——同样不得再挂上新案卷。
+    before_dossiers = len(db.affairs.dossiers(existing.id))
+    night3 = audience_night.open_night(db, state)
+    audience_night.summon_enter(db, int(night3["id"]), minister)
+    _script_split(
+        monkeypatch, _ningyuan_drafts(db, minister),
+        batch_declaration=_declaration(attach="existing", affair_id=existing.id),
+    )
+    sess.chat(minister, ORIGIN)
+    db.affairs.declare_closed(existing.id, turn=state.turn)
+    sess.chat(minister, "三事全允")
+    audience_night.close_night(db, state, night_id=night3["id"], content=content)
+    assert len(db.affairs.dossiers(existing.id)) == before_dossiers
+    assert db.affairs.get(existing.id).status == "closed"
+
+    # (4) 已合法绑定后再关闭的同指重试幂等，不受 (2)(3) 的校验误伤：先在 existing
+    # 仍 open 时用真实成案入口绑一条案卷，existing 关闭后重试同一
+    # (pending_action_id, region_id) 走既有指针短路，不重新校验 open/授权快照。
+    retry_existing = db.affairs.open(
+        name="另案宁远", origin="另一支援",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    retry_pending_id = 91777
+    bound_dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="调洪承畴驰援",
+        target_kind="issue", target_id="ningyuan-retry",
+        executor_kind="character", executor_id=minister,
+        pending_action_id=retry_pending_id,
+        payload={
+            "assignee_id": minister,
+            "affair_declaration": _declaration(attach="existing", affair_id=retry_existing.id),
+        },
+    )
+    db.affairs.declare_closed(retry_existing.id, turn=state.turn)
+    retried_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="调洪承畴驰援",
+        target_kind="issue", target_id="ningyuan-retry",
+        executor_kind="character", executor_id=minister,
+        pending_action_id=retry_pending_id,
+        payload={
+            "assignee_id": minister,
+            "affair_declaration": _declaration(attach="existing", affair_id=retry_existing.id),
+        },
+    )
+    assert retried_id == bound_dossier_id
+    assert bound_dossier_id in {int(d["id"]) for d in db.affairs.dossiers(retry_existing.id)}
 
 
 def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
@@ -331,44 +410,6 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
     else:
         raise AssertionError("expected conflict")
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
-
-
-def test_closed_affair_rejects_new_dossier_attach(game):
-    """#1812 家族：已了结事务不得再接新案卷（ADR 0154／#1818 决定 2）。
-
-    LLM 仍判剧情边界，代码只在真实成案入口（create_decree_dossiers）执行 typed
-    状态契约；resolve_declaration 校验 status，不新增平行校验口。
-    """
-    db, state, _ = game
-    minister = _minister(db)
-    closed = db.affairs.open(
-        name=NINGYUAN, origin=ORIGIN,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    db.affairs.declare_closed(closed.id, turn=state.turn)
-    before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    try:
-        db.create_decree_dossiers(
-            state,
-            action_type="assignment",
-            decree_text="调洪承畴赴宁远",
-            target_kind="issue",
-            target_id="ningyuan-general",
-            executor_kind="character",
-            executor_id=minister,
-            pending_action_id=91004,
-            payload={
-                "assignee_id": minister,
-                "affair_declaration": _declaration(attach="existing", affair_id=closed.id),
-            },
-        )
-    except ValueError as exc:
-        assert str(closed.id) in str(exc)
-    else:
-        raise AssertionError("expected closed-affair attach to fail loud")
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
-    assert db.affairs.get(closed.id).status == "closed"
-    assert db.affairs.dossiers(closed.id) == ()
 
 
 def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypatch):

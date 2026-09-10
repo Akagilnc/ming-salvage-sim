@@ -2547,17 +2547,24 @@ def _stamp_split_birth_key(declaration: Mapping[str, Any]) -> Dict[str, Any]:
     return body
 
 
-def _draft_intent_open_affair_facts(db: Any) -> str:
-    """Structured open-affair list so existing.affair_id is chosen from input, not guessed."""
+def _draft_intent_open_affairs(db: Any) -> tuple[str, list[int]]:
+    """Structured open-affair snapshot for the 拆旨 prompt: facts text + frozen id set.
+
+    Both come from the same read (#1812): the LLM's existing.affair_id gets
+    checked at admission against exactly this frozen set, not a later live
+    re-read — an affair opened after this snapshot, or never shown to the
+    LLM, must not be attachable even if it happens to still be open then.
+    """
     if db is None:
-        return ""
+        return "", []
     store = getattr(db, "affairs", None)
     list_open = getattr(store, "list_open", None)
     if not callable(list_open):
-        return ""
+        return "", []
     rows = list_open()
     if not rows:
-        return ""
+        return "", []
+    ids = [int(row.id) for row in rows]
     lines = [
         json.dumps(
             {"id": int(row.id), "name": row.name, "origin": row.origin},
@@ -2565,11 +2572,12 @@ def _draft_intent_open_affair_facts(db: Any) -> str:
         )
         for row in rows
     ]
-    return (
+    facts = (
         "【已开事务】existing 的 affair_id 必须取自下列对象的 id，不得自造。\n"
         + "\n".join(lines)
         + "\n"
     )
+    return facts, ids
 
 
 def _participant_fields_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2904,7 +2912,7 @@ def extract_draft_intent(
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
-    open_affair_facts = _draft_intent_open_affair_facts(db)
+    open_affair_facts, authorized_open_ids = _draft_intent_open_affairs(db)
     from ming_sim.action_clusters import (
         assert_action_candidate_shape,
         cluster_fields_prompt,
@@ -2989,7 +2997,10 @@ def extract_draft_intent(
             {
                 "affair_declaration": _stamp_split_birth_key(
                     batch_declaration["affair_declaration"]
-                )
+                ),
+                # #1812：existing 声明须受本次拆旨 LLM 实际所见开放事务集合约束，
+                # 随声明整道带到成案点，不在成案时重读 live 状态判定授权。
+                "authorized_open_ids": list(authorized_open_ids),
             }
             if batch_declaration else {}
         )
@@ -3360,7 +3371,8 @@ def extract_draft_intent(
             single_declaration = {
                 "affair_declaration": _stamp_split_birth_key(
                     single_declaration["affair_declaration"]
-                )
+                ),
+                "authorized_open_ids": list(authorized_open_ids),
             }
         single_result = {
             "draft_action": _action, "draft_text": draft_text, "target_candidate": "",
@@ -3401,7 +3413,8 @@ def extract_draft_intent(
         cand_declaration = {
             "affair_declaration": _stamp_split_birth_key(
                 cand_declaration["affair_declaration"]
-            )
+            ),
+            "authorized_open_ids": list(authorized_open_ids),
         }
     cand_result = {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
