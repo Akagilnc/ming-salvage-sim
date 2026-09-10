@@ -409,10 +409,6 @@ def _world(
         "personnel": lambda: _appointment_register(db, state),
         "construction": lambda: db.buildings_report(qualitative=True),
         "security": lambda: db.power_report(exclude_self=True, audience=True),
-        "court": lambda: "\n".join((
-            db.faction_report(audience=True),
-            db.power_report(exclude_self=True, audience=True),
-        )),
     }
     facts = {
         domain: _prose(report_builders[domain]())

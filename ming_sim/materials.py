@@ -221,7 +221,7 @@ def _opening_text(
 
 _LEDGER_KEYS = (
     "treasury", "military", "personnel", "construction",
-    "security", "court", "regional",
+    "security", "regional",
 )
 
 

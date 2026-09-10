@@ -9,7 +9,7 @@
 - 他知道什么  —— ADR 0034 角色见闻，**经见闻供给接口注入**（默认 get_character_knowledge=#489 底座）
 - 他怎么被召来 —— 发起账召法（宣入/传召/越次）
 - 时辰地点    —— 召对夜容器持久属性（cmr R7：取自夜，不另传）
-- 当下朝局张力 —— 见闻内的定性朝局切片（court/security 域；无此域＝此人不感知，perspectival）
+- 当下朝局张力 —— 见闻内的定性朝局切片（security 域；无此域＝此人不感知，perspectival）
 - 前次入殿与奏对 —— 该人本夜先前的入殿账 + 奏对回话（AC2）
 - 本夜公开层账 —— 同夜先发生的殿上公开账（该知扩散取数；御前低语不入，PRD R1）
 
@@ -100,15 +100,11 @@ def _default_knowledge_provider(db: Any, state: Any) -> KnowledgeProvider:
 
 
 def _court_tension(knowledge: Dict[str, Any]) -> str:
-    """从见闻投影取定性朝局张力：court/security 域（皆 audience=True 定性口径，P4 安全）。
+    """从见闻投影取定性朝局张力：security 域（audience=True 定性口径，P4 安全）。
     此人所任官职不含该域＝他不感知这层张力，返回空（perspectival，非全知）。"""
     world = knowledge.get("world") if isinstance(knowledge, dict) else None
     world = world or {}
-    for domain in ("court", "security"):
-        value = str(world.get(domain) or "").strip()
-        if value:
-            return value
-    return ""
+    return str(world.get("security") or "").strip()
 
 
 def _characterization(db: Any, person_name: str) -> str:

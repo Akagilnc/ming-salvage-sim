@@ -642,7 +642,7 @@ def load_skill_content() -> Tuple[
         data.get("office_knowledge_domains"), "skills.json.office_knowledge_domains"
     )
     allowed_knowledge_domains = {
-        "treasury", "military", "regional", "personnel", "construction", "security", "court"
+        "treasury", "military", "regional", "personnel", "construction", "security"
     }
     for office_type, domains in knowledge_domains.items():
         unknown = sorted(set(domains) - allowed_knowledge_domains)
