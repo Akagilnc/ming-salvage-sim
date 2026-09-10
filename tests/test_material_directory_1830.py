@@ -150,6 +150,11 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert not any(
         p.startswith(f"事务/issue-{bystander_issue_id}/") for p in affair_files
     )
+    # 目录可见 ≠ 开场经手（#1830 最小集）：character 只是旁观者，既非该事务
+    # 案卷参与人，挂靠的 issue 也无参与名单/audience 命中——不得被开场宣告
+    # 「正经手事务」在办这件事。
+    assert bystander_affair.name not in prepared.opening
+    assert bystander_situation not in prepared.opening
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
