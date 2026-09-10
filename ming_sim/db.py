@@ -14974,29 +14974,15 @@ class GameDB:
             ordered.append(int(did))
         return ordered
 
-    @staticmethod
-    def _authorized_open_ids_from_payload(
-        payload: Mapping[str, object] | None,
-    ) -> Optional[Set[int]]:
-        """#1812：拆旨 LLM 实际所见开放事务的冻结快照（随声明整道带到成案点）。
-
-        缺席＝调用方未走拆旨快照这道缝（如系统直建、测试直传声明）——不在这层
-        加约束，只吃 resolve_declaration 自身的 open 状态校验。存在则须为整数
-        列表，坏形状响亮拒绝而非静默放行。
-        """
-        if payload is None:
-            return None
-        raw = payload.get("authorized_open_ids")
-        if raw is None:
-            return None
-        if not isinstance(raw, list):
-            raise ValueError("authorized_open_ids 须为整数列表")
-        return {int(item) for item in raw}
-
     def _resolve_affair_id_from_payload(
         self, state: GameState, payload: Mapping[str, object] | None,
     ) -> int:
-        """Typed 拆旨声明 → 事务 id；无声明不自建；本阶段不消费了结。"""
+        """Typed 拆旨声明 → 事务 id；无声明不自建；本阶段不消费了结。
+
+        #1812：existing 的授权已在拆旨抽取那一次读取当场验过（cli_backend.py
+        _affair_declaration_from_draft_obj）；此处只再做 live-open 校验
+        （resolve_declaration 自身的 status 契约），不重复保存/透传开放集合。
+        """
         from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
         declaration = declaration_from_payload(payload, allowed=ATTACH_BIRTH)
         if declaration is None:
@@ -15007,7 +14993,6 @@ class GameDB:
             period=int(state.period),
             turn=int(state.turn),
             allowed=ATTACH_BIRTH,
-            authorized_ids=self._authorized_open_ids_from_payload(payload),
         ))
 
     def _attach_affair_from_payload(
@@ -15024,7 +15009,6 @@ class GameDB:
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),
-            authorized_ids=self._authorized_open_ids_from_payload(payload),
         )
 
     def _create_decree_dossier_row(

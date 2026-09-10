@@ -1471,8 +1471,6 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             # #658：御笔强推 target 须随对话拟旨 staging 完整保留，禁第二案卷。
             "target_dossier_id",
             "affair_declaration",
-            # #1812：existing 声明的授权开放集合快照，随声明整道保留到成案点。
-            "authorized_open_ids",
         ) + dossier_carriers
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):

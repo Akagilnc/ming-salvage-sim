@@ -141,7 +141,6 @@ class AffairStore:
         period: int,
         turn: int,
         allowed: frozenset[str] = ATTACH_BIRTH,
-        authorized_ids: set[int] | None = None,
     ) -> int:
         parsed = parse_affair_declaration(declaration, allowed=allowed)
         if parsed["attach"] == _ATTACH_EXISTING:
@@ -149,12 +148,11 @@ class AffairStore:
             affair = self.get(affair_id)
             # #1812：已了结事务不得再接新案卷（ADR 0154／#1818 决定 2：接到哪件
             # 已开着的事上）。LLM 仍判剧情边界；代码只执行这条 typed 状态契约。
+            # existing 的 affair_id 是否取自拆旨那次可见集合，在声明抽取的同一次
+            # 读取上已当场验过（cli_backend.py _affair_declaration_from_draft_obj）；
+            # 此处只做成案点的 live-open 校验，不重复保存/透传整份开放集合。
             if affair.status != "open":
                 raise ValueError(f"事务 {affair_id} 已了结，不能再接新案卷")
-            # #1812：仅 live open 不够——必须是拆旨 LLM 实际所见的那批开放事务，
-            # 否则批间新开的事务只要落账时仍 open 就会被伪造/过期声明蹭上。
-            if authorized_ids is not None and affair_id not in authorized_ids:
-                raise ValueError("事务不在本批可见输入")
             return affair_id
         key = str(parsed.get("birth_key") or "").strip()
         if key:

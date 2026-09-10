@@ -123,20 +123,23 @@ def _spoken_this_scene(db: Any, character: Any) -> str:
 
 def _own_affair_lines(
     db: Any, state: Any, character_name: str,
-) -> list[tuple[str, str, str]]:
+) -> list[tuple[str, str, str, str]]:
     """Durable affairs (#1818 决定 1/6) where this character holds a dossier seat.
 
-    Reuses AffairStore.input_brief (identity + latest textual fact) and
-    AffairStore.dossiers — no parallel affair-visibility mechanism.
+    Each line is (dir_key, title, directory_text, opening_text). ADR 0156：
+    文字事实只追加不覆盖，读时按时间顺序全部提供，由 LLM 自行判断当前——目录
+    须给全部月份的事实；开场仍只放最新一句（#1830 最小集）。Reuses
+    AffairStore.list_open/current_situation/dossiers — no parallel mechanism.
     """
     from ming_sim.participant_roster import participant_roster_names
 
     store = getattr(db, "affairs", None)
-    if store is None or not hasattr(store, "input_brief"):
+    if store is None or not hasattr(store, "list_open"):
         return []
-    lines: list[tuple[str, str, str]] = []
-    for brief in store.input_brief(getattr(db, "textual_facts", None)):
-        affair_id = int(brief["id"])
+    textual_facts = getattr(db, "textual_facts", None)
+    lines: list[tuple[str, str, str, str]] = []
+    for affair in store.list_open():
+        affair_id = int(affair.id)
         participates = False
         for dossier in store.dossiers(affair_id):
             row = db.conn.execute(
@@ -150,36 +153,68 @@ def _own_affair_lines(
                 break
         if not participates:
             continue
-        situation = str(brief.get("current_situation") or "").strip() or "见目录。"
-        lines.append((f"affair-{affair_id}", str(brief.get("name") or ""), situation))
+        facts = (
+            store.current_situation(textual_facts, affair_id)
+            if textual_facts is not None else ()
+        )
+        if facts:
+            directory_text = "\n".join(
+                f"{fact.occurred_month}：{fact.body}" for fact in facts
+            )
+            opening_text = str(facts[-1].body or "").strip() or "见目录。"
+        else:
+            directory_text = "见目录。"
+            opening_text = "见目录。"
+        lines.append((
+            f"affair-{affair_id}", str(affair.name or ""), directory_text, opening_text,
+        ))
     return lines
+
+
+def _issue_linked_to_affair(db: Any, issue_id: object) -> bool:
+    """ADR 0154：已指向 affair 的 issue 是该事务的机械载体，不是另一件事。"""
+    store = getattr(db, "affairs", None)
+    if store is None or not hasattr(store, "affair_id_for_issue"):
+        return False
+    try:
+        return int(store.affair_id_for_issue(int(issue_id))) > 0
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def _character_affair_lines(
     db: Any, state: Any, character_name: str, knowledge: dict,
-) -> list[tuple[str, str, str]]:
+) -> list[tuple[str, str, str, str]]:
     """Matter lines for opening and the directory tree.
 
-    Each line is (durable_dir_key, display_title, situation). The directory
-    key must be collision-free across distinct matters — the title is
-    display-only and never used to derive a path (#1812: titles differing
-    only by an unsafe character both normalized to the same segment).
+    Each line is (durable_dir_key, display_title, directory_text, opening_text).
+    The directory key must be collision-free across distinct matters — the
+    title is display-only and never used to derive a path (#1812: titles
+    differing only by an unsafe character both normalized to the same
+    segment). directory_text and opening_text differ only for durable
+    affairs (full dated history vs latest one-liner); every other matter
+    kind uses the same text for both. An issue already pointed at a durable
+    affair is that affair's mechanical carrier (ADR 0154) — it does not get
+    a second standalone entry here.
     """
     from ming_sim.knowledge import _issue_audience_case_events
 
-    lines: list[tuple[str, str, str]] = []
+    lines: list[tuple[str, str, str, str]] = []
     seen: set[str] = set()
     for issue in knowledge.get("issues") or []:
-        title = str(issue.get("title") or "").strip()
         try:
-            dir_key = f"issue-{int(issue.get('id'))}"
+            issue_id = int(issue.get("id"))
         except (TypeError, ValueError):
-            dir_key = ""
-        if not title or not dir_key or dir_key in seen:
+            continue
+        if _issue_linked_to_affair(db, issue_id):
+            continue
+        title = str(issue.get("title") or "").strip()
+        dir_key = f"issue-{issue_id}"
+        if not title or dir_key in seen:
             continue
         seen.add(dir_key)
         situation = str(issue.get("stage_text") or "").strip() or "见目录。"
-        lines.append((dir_key, title, situation))
+        lines.append((dir_key, title, situation, situation))
     known_ids = {
         str(item.get("source_id") or "")
         for item in [
@@ -192,14 +227,16 @@ def _character_affair_lines(
     for item in _issue_audience_case_events(
         db, state, character_name, known_source_ids=known_ids,
     ):
-        title = str(item.get("title") or "").strip()
         match = re.match(r"issue:(\d+)$", str(item.get("source_id") or ""))
-        dir_key = f"issue-{match.group(1)}" if match else ""
-        if not title or not dir_key or dir_key in seen:
+        if not match or _issue_linked_to_affair(db, match.group(1)):
+            continue
+        title = str(item.get("title") or "").strip()
+        dir_key = f"issue-{match.group(1)}"
+        if not title or dir_key in seen:
             continue
         seen.add(dir_key)
         situation = str(item.get("body") or "").strip() or "见目录。"
-        lines.append((dir_key, title, situation))
+        lines.append((dir_key, title, situation, situation))
     for row in _carryover_drafts(db, state):
         dir_key = f"draft-{int(row['id'])}"
         if dir_key in seen:
@@ -207,12 +244,15 @@ def _character_affair_lines(
         seen.add(dir_key)
         title = f"尚未入档旨稿#{int(row['id'])}"
         body = str(row.get("text") or "").strip()
-        lines.append((dir_key, title, f"{body}（尚未入档）" if body else "尚未入档"))
-    for dir_key, title, situation in _own_affair_lines(db, state, character_name):
+        text = f"{body}（尚未入档）" if body else "尚未入档"
+        lines.append((dir_key, title, text, text))
+    for dir_key, title, directory_text, opening_text in _own_affair_lines(
+        db, state, character_name,
+    ):
         if dir_key in seen or not title:
             continue
         seen.add(dir_key)
-        lines.append((dir_key, title, situation))
+        lines.append((dir_key, title, directory_text, opening_text))
     return lines
 
 
@@ -224,8 +264,8 @@ def _opening_affair_lines(
     from ming_sim.participant_roster import participant_roster_names
 
     visible = {
-        dir_key: (title, situation)
-        for dir_key, title, situation in _character_affair_lines(
+        dir_key: (title, opening_text)
+        for dir_key, title, _directory_text, opening_text in _character_affair_lines(
             db, state, character_name, knowledge,
         )
     }
@@ -380,11 +420,18 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
     )
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/公事档案.txt")
 
-    for dir_key, title, situation in _character_affair_lines(db, state, name, knowledge):
-        # #1812：目录段用不碰撞的 durable id；标题只作展示，写进正文首行。
+    for dir_key, title, directory_text, _opening_text in _character_affair_lines(
+        db, state, name, knowledge,
+    ):
+        # #1812：目录段用不碰撞的 durable id；标题只作展示，写进正文。多行的
+        # （事务全部按月文字事实，ADR 0156）另起一行，单行的沿用冒号连写。
         seg = _safe_segment(dir_key)
         affair_dir = tmp / _AFFAIR_DIR / seg
-        _write_text(affair_dir / "当前情况.txt", f"{title}：{situation}".strip("："))
+        if title and "\n" in directory_text:
+            body = f"{title}\n{directory_text}"
+        else:
+            body = f"{title}：{directory_text}".strip("：")
+        _write_text(affair_dir / "当前情况.txt", body)
         index.append(f"{_AFFAIR_DIR}/{seg}/当前情况.txt")
 
     public_by_month: dict[tuple[int, int], list[str]] = {}

@@ -32,7 +32,9 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Type, Union
+from typing import (
+    Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Type, Union,
+)
 
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
@@ -2530,11 +2532,25 @@ def _missing_execution_lead_feedback() -> str:
     )
 
 
-def _affair_declaration_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
-    """Typed 拆旨声明（new|existing）；缺席不猜。本阶段不消费了结。"""
+def _affair_declaration_from_draft_obj(
+    obj: Mapping[str, Any], *, authorized_open_ids: Sequence[int],
+) -> Dict[str, Any]:
+    """Typed 拆旨声明（new|existing）；缺席不猜。本阶段不消费了结。
+
+    #1812：existing 的 affair_id 须取自本次拆旨同一次 list_open() 读到的开放
+    事务集合，当场响亮拒绝伪造/过期引用——不透传整份开放集合到成案点；
+    成案点另做一次 live-open 校验（AffairStore.resolve_declaration）。
+    """
     from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
     declaration = declaration_from_payload(obj, allowed=ATTACH_BIRTH)
-    return {} if declaration is None else {"affair_declaration": dict(declaration)}
+    if declaration is None:
+        return {}
+    if (
+        declaration.get("attach") == "existing"
+        and int(declaration.get("affair_id") or 0) not in authorized_open_ids
+    ):
+        raise ValueError("事务不在本批可见输入")
+    return {"affair_declaration": dict(declaration)}
 
 
 def _stamp_split_birth_key(declaration: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2987,7 +3003,9 @@ def extract_draft_intent(
         invalid_batch = not isinstance(values, list) or len(values) != draft_count
         try:
             batch_declaration = (
-                _affair_declaration_from_draft_obj(obj)
+                _affair_declaration_from_draft_obj(
+                    obj, authorized_open_ids=authorized_open_ids,
+                )
                 if isinstance(obj, dict) else {}
             )
         except ValueError:
@@ -2998,9 +3016,6 @@ def extract_draft_intent(
                 "affair_declaration": _stamp_split_birth_key(
                     batch_declaration["affair_declaration"]
                 ),
-                # #1812：existing 声明须受本次拆旨 LLM 实际所见开放事务集合约束，
-                # 随声明整道带到成案点，不在成案时重读 live 状态判定授权。
-                "authorized_open_ids": list(authorized_open_ids),
             }
             if batch_declaration else {}
         )
@@ -3366,13 +3381,17 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        single_declaration = _affair_declaration_from_draft_obj(obj)
+        try:
+            single_declaration = _affair_declaration_from_draft_obj(
+                obj, authorized_open_ids=authorized_open_ids,
+            )
+        except ValueError:
+            return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
         if single_declaration:
             single_declaration = {
                 "affair_declaration": _stamp_split_birth_key(
                     single_declaration["affair_declaration"]
                 ),
-                "authorized_open_ids": list(authorized_open_ids),
             }
         single_result = {
             "draft_action": _action, "draft_text": draft_text, "target_candidate": "",
@@ -3408,13 +3427,17 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    cand_declaration = _affair_declaration_from_draft_obj(obj)
+    try:
+        cand_declaration = _affair_declaration_from_draft_obj(
+            obj, authorized_open_ids=authorized_open_ids,
+        )
+    except ValueError:
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if cand_declaration:
         cand_declaration = {
             "affair_declaration": _stamp_split_birth_key(
                 cand_declaration["affair_declaration"]
             ),
-            "authorized_open_ids": list(authorized_open_ids),
         }
     cand_result = {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,

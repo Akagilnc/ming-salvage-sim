@@ -63,11 +63,25 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
         pending_action_id=93001, payload={"assignee_id": character.name},
     )
     db.affairs.point_dossier(dossier_id, affair.id)
-    affair_situation = "护送银两已出京，尚未抵宁远"
+    # (c) ADR 0156：文字事实只追加不覆盖，读时按时间顺序全部提供——目录须给
+    # 该事务全部月份的事实，不能只留最新一条；开场仍只放最新一句（最小集）。
+    affair_situation_old = "护送启程，尚在筹备"
+    affair_situation_new = "护送银两已出京，尚未抵宁远"
     db.textual_facts.append(
-        subject_kind="affair", subject_id=str(affair.id), body=affair_situation,
+        subject_kind="affair", subject_id=str(affair.id), body=affair_situation_old,
+        year=state.year, period=max(1, state.period - 1), turn=state.turn,
+    )
+    db.textual_facts.append(
+        subject_kind="affair", subject_id=str(affair.id), body=affair_situation_new,
         year=state.year, period=state.period, turn=state.turn,
     )
+    # (d) ADR 0154：已指向该事务的 issue 是其机械载体，不是另一件事——不得在
+    # 事务/issue-N 与 事务/affair-N 两处冒充两件事。
+    linked_issue_id = db.insert_issue(
+        state, kind="situation", title="宁远护送机械载体",
+        origin_kind="decree", stage_text="不得单独露面",
+    )
+    db.affairs.point_issue(linked_issue_id, affair.id)
 
     dest = tmp_path / "materials"
     prepared = prepare_character_materials(db, state, character, dest_root=dest)
@@ -95,9 +109,20 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     bodies = [read_material(prepared.root, p) for p in affair_files]
     assert any("第一件的近况" in b for b in bodies)
     assert any("第二件的近况" in b for b in bodies)
-    assert any(affair_situation in b for b in bodies)
+    # (c) 目录给该事务全部月份的事实，早晚两条都在、按时间顺序；开场只放最新。
+    affair_path = next(p for p in affair_files if p.startswith(f"事务/affair-{affair.id}/"))
+    affair_body = read_material(prepared.root, affair_path)
+    assert affair_situation_old in affair_body
+    assert affair_situation_new in affair_body
+    assert affair_body.index(affair_situation_old) < affair_body.index(affair_situation_new)
     assert affair.name in prepared.opening
-    assert affair_situation in prepared.opening
+    assert affair_situation_new in prepared.opening
+    assert affair_situation_old not in prepared.opening
+    # (d) 已挂靠该事务的 issue 不另立一个 事务/issue-N 身份，也不重复露面。
+    assert not any(
+        p.startswith(f"事务/issue-{linked_issue_id}/") for p in affair_files
+    )
+    assert "不得单独露面" not in "\n".join(bodies)
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
