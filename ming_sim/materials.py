@@ -226,15 +226,20 @@ _LEDGER_KEYS = (
 
 
 def character_office_archive_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
-    """本衙门公事档案：职位底账 + 可见案卷。与目录 公事档案.txt 同一份。"""
+    """本衙门公事档案：职位底账 + 可见案卷。与目录 公事档案.txt 同一份。
+
+    当前御前近臣的档案不含 court（faction_report 派系真值）；案卷与其它底账照旧。
+    """
     from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
+    from ming_sim.mindreading import is_inner_court_attendant
 
     name = str(getattr(character, "name", "") or "")
     world = dict(knowledge.get("world") or {})
+    skip = {"court"} if is_inner_court_attendant(character) else set()
     office_lines = [
         f"{key}：{value}"
         for key, value in world.items()
-        if key in _LEDGER_KEYS and str(value or "").strip()
+        if key in _LEDGER_KEYS and key not in skip and str(value or "").strip()
     ]
     if hasattr(db, "list_referenceable_dossiers"):
         brief = render_referenceable_dossier_brief(

@@ -161,6 +161,40 @@ def test_messenger_knows_yuan_death_only_as_public_saying_without_target_truths(
     assert "loyalty" not in dumped
 
 
+def test_attendant_moved_to_court_office_keeps_dossiers_not_faction_truth(
+    game, tmp_path,
+):
+    db, state, content = game
+    messenger = content.characters["王承恩"]
+    db.set_character_office(messenger.name, "御前近臣", "内廷")
+    from ming_sim.mindreading import current_inner_court_attendant_name
+    assert current_inner_court_attendant_name(db) == messenger.name
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="SENTINEL_COURT_ATTENDANT_DOSSIER_1832",
+        target_kind="issue", target_id="validation",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    faction = db.faction_report(audience=True)
+    assert "皇党" in faction
+
+    prepared = prepare_character_materials(
+        db, state, messenger, dest_root=tmp_path / "court-attendant",
+    )
+    archive = _office_archive(prepared, messenger.name)
+    materials = build_mindreading_materials(
+        db, state, messenger, content.characters["温体仁"], "臣有本奏。",
+    )
+    office = materials["reader_context"]["公事档案"]
+    assert "SENTINEL_COURT_ATTENDANT_DOSSIER_1832" in archive
+    assert office.strip() == archive.strip()
+    assert faction not in archive
+    assert faction not in office
+    assert "court：" not in archive
+    dumped = str(materials)
+    assert "皇党" not in dumped
+    assert "truths" not in materials
+
+
 def test_successor_reads_office_archive_not_predecessor_private(game, tmp_path):
     db, state, content = game
     predecessor = content.characters["郭允厚"]
