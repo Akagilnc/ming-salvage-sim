@@ -1,6 +1,6 @@
 # 游戏架构重构讨论
 
-状态：设计讨论中，未完成详设，未授权施工。更新至 2026-09-09 #1823 决策（地图六张决策票全部关闭）。设计 PR [#1825](https://github.com/Akagilnc/ming-salvage-sim/pull/1825) 评审中；to-spec 已回写五张规格并建前端规格票 [#1826](https://github.com/Akagilnc/ming-salvage-sim/issues/1826)。
+状态：设计讨论中，未完成详设，未授权施工。更新至 2026-09-09 #1823 决策（地图六张决策票全部关闭）。设计 PR [#1825](https://github.com/Akagilnc/ming-salvage-sim/pull/1825) 已并入 main（merge commit fa0175a26，2026-09-10）；to-spec 已回写五张规格并建前端规格票 [#1826](https://github.com/Akagilnc/ming-salvage-sim/issues/1826)。
 
 「V2」是本轮重新思考架构的历史称呼，不是另做一款游戏；文件名与分支保留该称呼只为延续引用。目标是重构现有游戏，不预设第二运行入口、第二套存档或两代产品并行维护。
 
