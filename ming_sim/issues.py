@@ -8209,10 +8209,42 @@ def apply_score_extraction(
     authorized_open_affairs = (
         open_affair_ids_at_input if isinstance(open_affair_ids_at_input, set) else set()
     )
+    from uuid import uuid4
+    from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+
+    batch_new_identities: dict[tuple[str, str], str] = {}
+
+    def _stamp_batch_new_declaration(item: object) -> object:
+        if not isinstance(item, dict):
+            return item
+        try:
+            parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
+        except (TypeError, ValueError):
+            return item
+        if parsed is None or parsed.get("attach") != "new":
+            return item
+        ident = (str(parsed["name"]), str(parsed["origin"]))
+        key = str(parsed.get("birth_key") or "").strip()
+        if not key:
+            key = batch_new_identities.setdefault(ident, f"result:{uuid4().hex}")
+        else:
+            batch_new_identities.setdefault(ident, key)
+        return {**item, "affair_declaration": {**parsed, "birth_key": key}}
+
+    for field in (
+        "economy_moves", "new_issues", "人物变更",
+        "office_changes", "character_status_changes", "appointments",
+    ):
+        raw_items = extracted.get(field)
+        if isinstance(raw_items, list):
+            extracted[field] = [_stamp_batch_new_declaration(item) for item in raw_items]
 
     def _origin_ref_from_result_item(item: Mapping[str, object] | None) -> str:
+        stamped = _stamp_batch_new_declaration(item)
+        if not isinstance(stamped, dict):
+            stamped = item
         return db.affairs.origin_ref_from_result_item(
-            item,
+            stamped,
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),

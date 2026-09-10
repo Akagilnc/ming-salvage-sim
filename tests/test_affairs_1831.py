@@ -316,7 +316,7 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
         "internal": json.dumps({
             "钱粮收支": [{
                 "账户": "国库", "增量": -1, "分类": "善后", "原因": "无案卷后果",
-                "事务声明": _declaration(birth_key="result-economy"),
+                "事务声明": _declaration(),
             }],
         }, ensure_ascii=False),
         "military_external": '{"new_armies": []}',
@@ -336,7 +336,7 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
         "personnel_secret": json.dumps({
             "人物变更": [{
                 "name": minister, "动作": "评定", "loyalty": 1,
-                "事务声明": _declaration(birth_key="result-person"),
+                "事务声明": _declaration(),
             }],
         }, ensure_ascii=False),
         "relations": '{"大臣互动": []}',
@@ -351,16 +351,15 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
     created = applied["issue_summary"]["new_issues"][0]
     assert created["rejected"] is False
     born = db.affairs.affair_id_for_issue(int(created["issue_id"]))
-    economy_affair = db.affairs.peek_declared_id(_declaration(birth_key="result-economy"))
-    person_affair = db.affairs.peek_declared_id(_declaration(birth_key="result-person"))
-    assert economy_affair not in {None, born, person_affair}
+    assert born > 0
+    affair_ref = db.affairs.origin_ref(born)
     assert db.conn.execute(
         "SELECT origin_ref FROM economy_ledger WHERE origin_ref=?",
-        (db.affairs.origin_ref(economy_affair),),
+        (affair_ref,),
     ).fetchone()
     assert db.conn.execute(
         "SELECT origin_ref FROM person_logs WHERE origin_ref=?",
-        (db.affairs.origin_ref(person_affair),),
+        (affair_ref,),
     ).fetchone()
 
     denied = apply_score_extraction(

@@ -1718,7 +1718,6 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
-        _copy_item_affair_declaration(item, entry)
         # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
         if "beyond_intent" in item:
             entry["beyond_intent"] = item["beyond_intent"]
@@ -1779,7 +1778,6 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
-        _copy_item_affair_declaration(item, entry)
         # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
         if "beyond_intent" in item:
             entry["beyond_intent"] = item["beyond_intent"]
@@ -1809,7 +1807,6 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
-        _copy_item_affair_declaration(item, entry)
         # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
         if "beyond_intent" in item:
             entry["beyond_intent"] = item["beyond_intent"]
