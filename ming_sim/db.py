@@ -2635,6 +2635,9 @@ class GameDB:
             "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
             "ON decree_dossiers(executor_kind, executor_id, status)"
         )
+        from ming_sim.entities.textual_fact import TextualFactStore
+        TextualFactStore.ensure_schema(self.conn)
+        self.textual_facts = TextualFactStore(self.conn)
         self.conn.commit()
         self._migrate_legacy_office_pollution()
         # #9 R1 finding#1 [P1]：老档迁移校准须放在「seed 路 + driver 路」都过的点。driver.open_game
