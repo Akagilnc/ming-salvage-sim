@@ -763,7 +763,8 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     seen = {}
 
     def fake_chunks(runner, prompt, *, model=None,
-                    reasoning_strength=None, json_events=False, clock=None):
+                    reasoning_strength=None, json_events=False, clock=None,
+                    materials_dir=None):
         seen["runner"] = runner
         seen["json_events"] = json_events
         seen["reasoning_strength"] = reasoning_strength

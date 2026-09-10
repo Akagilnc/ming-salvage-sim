@@ -469,18 +469,26 @@ def test_minister_agent_uses_only_its_character_knowledge_projection(game):
     captured = _capture_agent(game, first, second)
     first_rendered = "\n".join(captured[first.name]["instructions"])
     second_rendered = "\n".join(captured[second.name]["instructions"])
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    first_blob = "\n".join(
+        read_material(d.root, path)
+        for d in [prepare_character_materials(db, state, first)]
+        for path in list_materials(d.root) if path != "INDEX.txt"
+    )
+    second_blob = "\n".join(
+        read_material(d.root, path)
+        for d in [prepare_character_materials(db, state, second)]
+        for path in list_materials(d.root) if path != "INDEX.txt"
+    )
 
-    assert first_mark in first_rendered
-    assert second_mark not in first_rendered
-    assert hidden_secret in first_rendered
+    assert first_mark in first_blob
+    assert second_mark not in first_blob
+    assert hidden_secret in first_blob
+    assert hidden_secret not in second_blob
+    assert second_mark in second_blob
+    assert first_mark not in second_blob
     assert hidden_secret not in second_rendered
-    assert second_mark in second_rendered
-    assert first_mark not in second_rendered
-    assert "【已授权在朝名册】" in first_rendered
-    assert (
-        f"{visible_roster_row['name']}："
-        f"{visible_roster_row['office'] or '无现任官职'}，{visible_roster_row['status']}"
-    ) in first_rendered
+    assert f"【{first.name}此刻所知的天下" not in first_rendered
     assert hidden_roster_row["name"] not in first_rendered
 
 
@@ -521,10 +529,23 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
 
     first_rendered = "\n".join(captured[first.name])
     second_rendered = "\n".join(captured[second.name])
-    assert hidden in first_rendered
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    first_dir = prepare_character_materials(db, state, first)
+    second_dir = prepare_character_materials(db, state, second)
+    first_blob = "\n".join(
+        read_material(first_dir.root, path)
+        for path in list_materials(first_dir.root) if path != "INDEX.txt"
+    )
+    second_blob = "\n".join(
+        read_material(second_dir.root, path)
+        for path in list_materials(second_dir.root) if path != "INDEX.txt"
+    )
+    assert hidden in first_blob
+    assert hidden not in second_blob
+    assert "章节上游标记-两人可见" in first_blob
+    assert "章节上游标记-两人可见" in second_blob
     assert hidden not in second_rendered
-    assert "章节上游标记-两人可见" in first_rendered
-    assert "章节上游标记-两人可见" in second_rendered
+    assert f"【{first.name}此刻所知的天下" not in first_rendered
 
     second_tools = {f.__name__: f for f in build_minister_tools(second, _ctx(game))}
     assert hidden not in second_tools["search_memories"](keywords="密查辽饷")
@@ -532,7 +553,7 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
 
 def test_minister_agents_use_distinct_real_db_world_slices_by_office(game):
     """两个职位经最终 agent seam 组装出各自真实职位域的世界切片。"""
-    db, _state, content = game
+    db, state, content = game
     representatives = {}
     for minister in content.characters.values():
         if (minister.office_type in content.office_knowledge_domains
@@ -561,15 +582,28 @@ def test_minister_agents_use_distinct_real_db_world_slices_by_office(game):
 
     first_text = "\n".join(captured[first.name]["instructions"])
     second_text = "\n".join(captured[second.name]["instructions"])
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    first_blob = "\n".join(
+        read_material(d.root, path)
+        for d in [prepare_character_materials(db, state, first)]
+        for path in list_materials(d.root) if path != "INDEX.txt"
+    )
+    second_blob = "\n".join(
+        read_material(d.root, path)
+        for d in [prepare_character_materials(db, state, second)]
+        for path in list_materials(d.root) if path != "INDEX.txt"
+    )
     first_domains = set(content.office_knowledge_domains[first.office_type])
     second_domains = set(content.office_knowledge_domains[second.office_type])
     assert first_domains != second_domains
     for domain in first_domains - second_domains:
-        assert f"{domain}：" in first_text
-        assert f"{domain}：" not in second_text
+        assert f"{domain}：" in first_blob
+        assert f"{domain}：" not in second_blob
     for domain in second_domains - first_domains:
-        assert f"{domain}：" in second_text
-        assert f"{domain}：" not in first_text
+        assert f"{domain}：" in second_blob
+        assert f"{domain}：" not in first_blob
+    assert f"【{first.name}此刻所知的天下" not in first_text
+    assert f"【{second.name}此刻所知的天下" not in second_text
 
 
 def test_minister_context_secret_order_chain_filters_final_tools_and_instructions(game):
@@ -588,8 +622,21 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
 
     first_text = "\n".join(captured[first.name]["instructions"])
     second_text = "\n".join(captured[second.name]["instructions"])
-    assert marker in first_text
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    first_blob = "\n".join(
+        read_material(d.root, path)
+        for d in [prepare_character_materials(db, state, first)]
+        for path in list_materials(d.root) if path != "INDEX.txt"
+    )
+    second_blob = "\n".join(
+        read_material(d.root, path)
+        for d in [prepare_character_materials(db, state, second)]
+        for path in list_materials(d.root) if path != "INDEX.txt"
+    )
+    assert marker in first_blob
+    assert marker not in second_blob
     assert marker not in second_text
+    assert f"【{first.name}此刻所知的天下" not in first_text
     second_tools = {f.__name__: f for f in build_minister_tools(second, _ctx(game))}
     assert marker not in second_tools["search_memories"](keywords="军饷")
 
@@ -792,11 +839,20 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
 
     captured = _capture_agent(game, minister)
     rendered = "\n".join(captured[minister.name]["instructions"])
-    assert "court：" in rendered
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    blob = "\n".join(
+        read_material(d.root, path)
+        for d in [prepare_character_materials(db, _ctx(game).state, minister)]
+        for path in list_materials(d.root) if path != "INDEX.txt"
+    )
+    assert "court：" in blob
     assert not _RAW_ABSTRACT_AXIS.search(rendered)
+    assert not _RAW_ABSTRACT_AXIS.search(blob)
     assert region_poison not in rendered
     assert building_poison not in rendered
-    assert power_band(19) in rendered or power_band(82) in rendered or power_band(67) in rendered
+    assert region_poison not in blob
+    assert building_poison not in blob
+    assert power_band(19) in blob or power_band(82) in blob or power_band(67) in blob
 
 
 def test_audience_faction_and_power_reports_never_emit_raw_abstract_axes(game):

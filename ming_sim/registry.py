@@ -26,6 +26,7 @@ from ming_sim.qualitative import (
     power_band,
 )
 from ming_sim.token_stats import tlog
+from ming_sim.materials import material_tools, prepare_character_materials
 from ming_sim.tools import _duty_location, build_minister_tools
 
 _content: Optional[GameContent] = None
@@ -500,9 +501,7 @@ def create_minister_agent(
         ]
         tools = [_make_cultivate_tool(character, context)]
     else:
-        # 月度动态上下文全挂 system 末尾——见闻投影是唯一世界输入；前面 game_world /
-        # minister_agent / character 静态段仍命中前缀缓存。旧 registry 全知 builders
-        # 保留给其他调用方，但不能从此处绕过角色见闻边界。
+        # 开场只带最小集；其余加工材料进目录，由 list/read 或 CLI cwd 自取（#1830）。
         complete_roster = context.db.current_court_roster_rows(context.state)
         army_count = context.db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
         projected_world = context.db.get_character_knowledge(
@@ -518,25 +517,12 @@ def create_minister_agent(
         # The threshold may alter delivery, never authorization: a role without
         # the military domain must not receive either the roster tool or skill.
         use_army_tool = army_count > 30 and "military" in projected_world
-        knowledge_brief = build_character_knowledge_brief(character, context)
-        secret_brief = build_secret_order_brief(character, context)
-        recommendation_brief = build_recommendation_brief(context.db, context.state, character.name)
+        prepared = prepare_character_materials(context.db, context.state, character)
+        if hasattr(model, "materials_dir"):
+            model.materials_dir = str(prepared.root)
         monthly_block_parts = [
-            f"当前为 {context.state.year} 年 {context.state.period} 月（第 {context.state.turn} 回合）。"
-            "作答涉及时序（某事多久前、某人是否已亡、某限期是否到）时以此为准。",
+            prepared.opening,
         ]
-        if knowledge_brief:
-            monthly_block_parts.append(knowledge_brief)
-        if secret_brief:
-            monthly_block_parts.append(secret_brief)
-        monthly_block_parts.append(recommendation_brief)
-        if projected_roster and not use_roster_tool:
-            monthly_block_parts.append(
-                "【已授权在朝名册】\n" + "\n".join(
-                    f"{row['name']}：{row['office'] or '无现任官职'}，{row['status']}"
-                    for row in projected_roster
-                )
-            )
         instructions = [
             _minister_game_world_prompt(c.game_world_prompt),
             c.minister_agent_prompt,
@@ -545,9 +531,11 @@ def create_minister_agent(
             f"你与皇帝的多轮对话会持续到本{TURN_UNIT}退朝；同一{TURN_UNIT}复召时要接续此前奏对，不要重置记忆。",
             "\n\n".join(monthly_block_parts),
         ]
-        tools = build_minister_tools(character, context,
-                                     use_roster_tool=use_roster_tool,
-                                     use_army_tool=use_army_tool)
+        tools = material_tools(prepared.root) + build_minister_tools(
+            character, context,
+            use_roster_tool=use_roster_tool,
+            use_army_tool=use_army_tool,
+        )
         # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
         if character.office_type in ("司礼监", "礼部"):
             tools.append(_make_select_consort_tool(context))
