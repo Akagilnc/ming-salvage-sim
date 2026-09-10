@@ -2492,19 +2492,29 @@ def _stamp_split_birth_key(declaration: Mapping[str, Any]) -> Dict[str, Any]:
     return body
 
 
-def _share_extract_affair_declaration(drafts: List[Dict[str, Any]]) -> None:
-    shared = None
-    for draft in drafts:
-        raw = draft.get("affair_declaration")
-        if isinstance(raw, dict):
-            shared = raw
-            break
-    if shared is None:
-        return
-    stamped = _stamp_split_birth_key(shared)
-    for draft in drafts:
-        if draft.get("affair_declaration"):
-            draft["affair_declaration"] = dict(stamped)
+def _draft_intent_open_affair_facts(db: Any) -> str:
+    """Structured open-affair list so existing.affair_id is chosen from input, not guessed."""
+    if db is None:
+        return ""
+    store = getattr(db, "affairs", None)
+    list_open = getattr(store, "list_open", None)
+    if not callable(list_open):
+        return ""
+    rows = list_open()
+    if not rows:
+        return ""
+    lines = [
+        json.dumps(
+            {"id": int(row.id), "name": row.name, "origin": row.origin},
+            ensure_ascii=False,
+        )
+        for row in rows
+    ]
+    return (
+        "【已开事务】existing 的 affair_id 必须取自下列对象的 id，不得自造。\n"
+        + "\n".join(lines)
+        + "\n"
+    )
 
 
 def _participant_fields_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2839,6 +2849,7 @@ def extract_draft_intent(
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
+    open_affair_facts = _draft_intent_open_affair_facts(db)
     from ming_sim.action_clusters import (
         assert_action_candidate_shape,
         cluster_fields_prompt,
@@ -2890,6 +2901,7 @@ def extract_draft_intent(
             + army_facts
             + pay_order_facts
             + stalled_push_facts
+            + open_affair_facts
             + "御笔强推逐道只填目标案卷ID；普通非拨帑旨用共同契约字段，拨帑旨只用 ACTION_CLUSTERS 字段。两种形状不得并存。\n"
             + "同一句交办只写一处事务声明（对象顶层，attach 仅 new|existing）；"
             "多道旨共用该声明。无声明则不自建事务。\n"
@@ -2918,6 +2930,14 @@ def extract_draft_intent(
         except ValueError:
             batch_declaration = {}
             invalid_batch = True
+        stamped_declaration = (
+            {
+                "affair_declaration": _stamp_split_birth_key(
+                    batch_declaration["affair_declaration"]
+                )
+            }
+            if batch_declaration else {}
+        )
         for value in values if isinstance(values, list) else []:
             if not isinstance(value, dict):
                 invalid_batch = True
@@ -2965,6 +2985,7 @@ def extract_draft_intent(
                     "draft_action": "拟旨", "draft_text": text,
                     "target_candidate": "", "mode": mode,
                     "target_dossier_id": imperial_push_target_dossier_id(probe),
+                    **stamped_declaration,
                 })
                 draft_combo_flags.append(False)
                 continue
@@ -3028,14 +3049,6 @@ def extract_draft_intent(
                 break
             if entries is not None:
                 mechanical["entries"] = entries
-            item_declaration = _affair_declaration_from_draft_obj(value)
-            if (
-                batch_declaration
-                and item_declaration
-                and item_declaration != batch_declaration
-            ):
-                invalid_batch = True
-                break
             drafts.append({
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
@@ -3043,20 +3056,9 @@ def extract_draft_intent(
                 "mode": mode,
                 "participant_roster": value["参与人"] if "参与人" in value else [],
                 **mechanical,
-                **(batch_declaration or item_declaration),
+                **stamped_declaration,
             })
             draft_combo_flags.append(needs_combo)
-        if drafts and not batch_declaration:
-            stamped = [
-                d.get("affair_declaration") for d in drafts if d.get("affair_declaration")
-            ]
-            if stamped and any(item != stamped[0] for item in stamped):
-                invalid_batch = True
-            elif stamped:
-                shared = {"affair_declaration": stamped[0]}
-                drafts = [{**d, **shared} for d in drafts]
-        if drafts and not invalid_batch:
-            _share_extract_affair_declaration(drafts)
         if invalid_batch or not any(draft is not None for draft in drafts):
             drafts = []
             draft_combo_flags = []
@@ -3157,6 +3159,7 @@ def extract_draft_intent(
         + army_facts
         + pay_order_facts
         + stalled_push_facts
+        + open_affair_facts
         + draft_context
         + candidates_context
         + "【皇帝】" + (player_message or "（无）") + "\n"

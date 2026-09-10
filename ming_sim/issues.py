@@ -11,7 +11,7 @@ import math
 import re
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
 
 from ming_sim.applier import atomic
 from ming_sim.appointment_tenure import appointment_tenure_from
@@ -8209,6 +8209,16 @@ def apply_score_extraction(
     authorized_open_affairs = (
         open_affair_ids_at_input if isinstance(open_affair_ids_at_input, set) else set()
     )
+
+    def _origin_ref_from_result_item(item: Mapping[str, object] | None) -> str:
+        return db.affairs.origin_ref_from_result_item(
+            item,
+            year=int(state.year),
+            period=int(state.period),
+            turn=int(state.turn),
+            authorized_ids=authorized_open_affairs,
+        )
+
     for raw in extracted.get("affair_declarations") or []:
         try:
             if not isinstance(raw, dict):
@@ -8513,13 +8523,21 @@ def apply_score_extraction(
     # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
     # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
     economy_moves = []
+    economy_rejections: List[Dict[str, object]] = []
     for move in extracted.get("economy_moves") or []:
         if not isinstance(move, dict):
             economy_moves.append(move)
             continue
-        origin_ref = str(
-            move.get("origin_ref") or move.get("来源引用") or ""
-        ).strip()
+        try:
+            origin_ref = _origin_ref_from_result_item(move)
+        except (TypeError, ValueError, KeyError) as exc:
+            economy_rejections.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": str(exc), "item": move,
+            })
+            continue
+        if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
+            move = {**move, "origin_ref": origin_ref}
         # #1503 单写者：仅按 origin_ref=dossier:<id> 复用既有 payload 案卷 provenance
         # 判重（_payload_owned_dossier_for_origin）。不得按 army+turn 吞掉同回合
         # 独立「盘面自发」补饷；已消费案卷身份由 extractor 输入接缝保留。
@@ -8552,7 +8570,7 @@ def apply_score_extraction(
         require_origin=True,
     )
     applied_economy = [r for r in _eco_out if not r.get("rejected")]
-    economy_rejections = [r for r in _eco_out if r.get("rejected")]
+    economy_rejections.extend(r for r in _eco_out if r.get("rejected"))
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
@@ -8753,7 +8771,16 @@ def apply_score_extraction(
             ))
 
     for person_change in pre_issue_person_changes:
-        origin_ref = str(person_change.get("origin_ref") or "").strip()
+        try:
+            origin_ref = _origin_ref_from_result_item(person_change)
+        except (TypeError, ValueError, KeyError) as exc:
+            applied_person_changes.append({
+                "name": str(person_change.get("name") or "").strip(),
+                "动作": str(person_change.get("动作") or "").strip(),
+                "rejected": True, "category": "invalid_enum",
+                "reason": str(exc), "item": dict(person_change),
+            })
+            continue
         clean_change = dict(person_change)
         _apply_normalized_person_changes([clean_change], legacy=legacy_person_mode, origin_ref=origin_ref)
 
@@ -8981,7 +9008,16 @@ def apply_score_extraction(
             ))
         army_changes.extend(event_army_changes)
         for item in event_person_changes:
-            origin_ref = str(item.get("origin_ref") or "").strip()
+            try:
+                origin_ref = _origin_ref_from_result_item(item)
+            except (TypeError, ValueError, KeyError) as exc:
+                event_person_results.append({
+                    "name": str(item.get("name") or "").strip(),
+                    "动作": str(item.get("动作") or "").strip(),
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": str(exc), "item": dict(item),
+                })
+                continue
             clean_item = dict(item)
             event_person_results.extend(_apply_normalized_person_changes(
                 [clean_item], legacy=legacy_person_mode, origin_ref=origin_ref, require_origin=True,
@@ -9011,7 +9047,16 @@ def apply_score_extraction(
             new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队均未成功）"
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""), reason=new_issue["reason"])
     for person_change in post_issue_person_changes:
-        origin_ref = str(person_change.get("origin_ref") or "").strip()
+        try:
+            origin_ref = _origin_ref_from_result_item(person_change)
+        except (TypeError, ValueError, KeyError) as exc:
+            applied_person_changes.append({
+                "name": str(person_change.get("name") or "").strip(),
+                "动作": str(person_change.get("动作") or "").strip(),
+                "rejected": True, "category": "invalid_enum",
+                "reason": str(exc), "item": dict(person_change),
+            })
+            continue
         clean_change = dict(person_change)
         _apply_normalized_person_changes([clean_change], legacy=legacy_person_mode, origin_ref=origin_ref)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -328,6 +329,85 @@ class AffairStore:
         return textual_facts.readable_materials(
             subject_kind="affair", subject_id=str(int(affair_id)),
         )
+
+    def origin_ref_from_result_item(
+        self,
+        item: Mapping[str, object] | None,
+        *,
+        year: int,
+        period: int,
+        turn: int,
+        authorized_ids: set[int] | None = None,
+    ) -> str:
+        """Birth declaration on a result item becomes affair:<id> when origin_ref is empty."""
+        if not item:
+            return ""
+        origin_ref = str(item.get("origin_ref") or item.get("来源引用") or "").strip()
+        if origin_ref:
+            return origin_ref
+        parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
+        if parsed is None:
+            return ""
+        if parsed["attach"] == _ATTACH_EXISTING and authorized_ids is not None:
+            if int(parsed["affair_id"]) not in authorized_ids:
+                raise ValueError("事务不在本批可见输入")
+        return self.origin_ref(
+            self.resolve_declaration(
+                parsed, year=year, period=period, turn=turn, allowed=ATTACH_BIRTH,
+            )
+        )
+
+    def experiences(self, affair_id: int) -> tuple[dict[str, object], ...]:
+        """Read-time projection: story-ledger rows tagged or pointed at this affair."""
+        from ming_sim.audience_night import exact_mingfa_publication_directive_id
+
+        self.get(affair_id)
+        refs = set(self.origin_refs(affair_id))
+        directive_ids: set[int] = set()
+        for row in self._conn.execute(
+            "SELECT d.directive_id AS dossier_directive, "
+            "pa.committed_directive_id AS committed_directive "
+            "FROM decree_dossiers d "
+            "LEFT JOIN pending_actions pa ON pa.id = d.pending_action_id "
+            "WHERE d.affair_id=?",
+            (int(affair_id),),
+        ).fetchall():
+            for key in ("dossier_directive", "committed_directive"):
+                value = int(row[key] or 0)
+                if value > 0:
+                    directive_ids.add(value)
+        out: list[dict[str, object]] = []
+        for row in self._conn.execute(
+            "SELECT id, person_names, tags, body, origin_ref "
+            "FROM story_ledger_entries ORDER BY id"
+        ).fetchall():
+            origin = str(row["origin_ref"] or "").strip()
+            try:
+                tags = json.loads(row["tags"] or "[]")
+            except (TypeError, ValueError):
+                tags = []
+            if not isinstance(tags, list):
+                tags = []
+            tagged = any(
+                exact_mingfa_publication_directive_id(tag) in directive_ids
+                for tag in tags
+            )
+            if origin not in refs and not tagged:
+                continue
+            try:
+                people = json.loads(row["person_names"] or "[]")
+            except (TypeError, ValueError):
+                people = []
+            if not isinstance(people, list):
+                people = []
+            out.append({
+                "id": int(row["id"]),
+                "body": str(row["body"] or ""),
+                "origin_ref": origin,
+                "person_names": [str(name) for name in people if str(name).strip()],
+                "tags": [str(tag) for tag in tags if str(tag).strip()],
+            })
+        return tuple(out)
 
 
 def parse_affair_declaration(
