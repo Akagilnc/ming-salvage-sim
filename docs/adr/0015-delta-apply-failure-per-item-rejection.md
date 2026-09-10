@@ -45,3 +45,5 @@ ADR 0005 / 0008 已钉死大半：代码错（KeyError/AttributeError/schema 漂
 - **两个 deferred 数据门挂发版后 #209**：方案 b = **#207**（per-item LLM 重 ask 经济性）靠 #63 **拒收报告留痕（真拒收）** 当数据源；F4 = **#210**（new_issues 收紧到严格拒整项的频率门）靠**非阻塞容忍度量通道（不落 `rejection_reports` 行，codex R5 P2）** 当数据源——容忍归一非真拒收，两个数据源不可混（否则成功旨意被误判失败、重开 R4 洞）。
 - 修订 ADR 0008 决定 3 的 validate 粒度。
 - restore 无损不受影响：好项当回合全落、坏项留痕（崩溃安全），崩溃续跑读 `resolve_context`（干净那批）。
+
+〔2026-09-10 后出注记：#1820 拍的「拒收当事实回给同一场推演者、改口重交」随核算反馈驱动的同场续演循环取消——拒收项留痕、本月不重交，作为实况进入邸报作者供料与下月材料（密令来源的只走密报）；见 [0157](0157-v2-month-waits-for-exhausted-model-call-recovery.md) 步骤 2 / 5 与 [0153](0153-v2-world-record-and-two-way-mediation.md) 后出注记二。本条其余拒收留痕规则不变。〕
