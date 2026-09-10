@@ -113,6 +113,7 @@ ITEM_FIELD_ALIASES = {
     "inertia_delta": "inertia_delta", "惯性增量": "inertia_delta",
     "origin_kind": "origin_kind", "来源类型": "origin_kind",
     "origin_ref": "origin_ref", "来源引用": "origin_ref", "诏书引用": "origin_ref",
+    "affair_declaration": "affair_declaration", "事务声明": "affair_declaration",
     # #649 人口守恒转移 item 字段（canonical 白名单见 constants.POPULATION_TRANSFER_FIELDS）
     "source": "source", "源": "source", "源阶级": "source",
     "target": "target", "目标": "target", "目标阶级": "target",
@@ -242,6 +243,7 @@ ITEM_FIELD_LABELS = {
     "inertia_delta": "惯性增量",
     "origin_kind": "来源类型",
     "origin_ref": "来源引用",
+    "affair_declaration": "事务声明",
     "id": "编号",
     "kind": "类型",
     "title": "标题",
@@ -1016,16 +1018,23 @@ for _module, _fields in MODULE_FIELDS.items():
 
 
 def _open_affairs_brief(db: GameDB) -> List[Dict[str, object]]:
-    """Open affairs for extractor/simulator: id plus name/origin to identify them."""
-    return [
-        {
+    """Open affairs for extractor/simulator: identity plus story-ledger experiences."""
+    brief: List[Dict[str, object]] = []
+    for affair in db.affairs.list_open():
+        brief.append({
             "id": int(affair.id),
             "name": affair.name,
             "origin": affair.origin,
             "status": affair.status,
-        }
-        for affair in db.affairs.list_open()
-    ]
+            "experiences": [
+                {
+                    "person_names": list(row["person_names"]),
+                    "body": row["body"],
+                }
+                for row in db.affairs.experiences(affair.id)
+            ],
+        })
+    return brief
 
 
 def _extractor_context_payload(
@@ -1608,6 +1617,14 @@ def _clean_world_advance(raw: object) -> Dict[str, str]:
     return cleaned
 
 
+def _copy_item_affair_declaration(
+    item: Dict[str, object], entry: Dict[str, object],
+) -> None:
+    """Keep the same typed 事务声明 the issues module already owns."""
+    if item.get("affair_declaration") is not None:
+        entry["affair_declaration"] = item["affair_declaration"]
+
+
 def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
     cleaned: List[Dict[str, object]] = []
     if not isinstance(raw, list):
@@ -1656,6 +1673,7 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        _copy_item_affair_declaration(item, entry)
         # #622：beyond_intent 无损透传。_canonical_item_fields 已把 旨外/旨外标记/旨外恶果
         # 归一到该键；cleaner 不判值（ADR 0008 决定1），真假判定归 flows 写端
         # GameDB.coerce_beyond_intent_flag。显式 False 亦透传——在场即原值放行，
@@ -1700,6 +1718,7 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        _copy_item_affair_declaration(item, entry)
         # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
         if "beyond_intent" in item:
             entry["beyond_intent"] = item["beyond_intent"]
@@ -1760,6 +1779,7 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        _copy_item_affair_declaration(item, entry)
         # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
         if "beyond_intent" in item:
             entry["beyond_intent"] = item["beyond_intent"]
@@ -1789,6 +1809,7 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        _copy_item_affair_declaration(item, entry)
         # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
         if "beyond_intent" in item:
             entry["beyond_intent"] = item["beyond_intent"]
