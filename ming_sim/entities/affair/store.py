@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
 _ATTACH_CLOSE = "close"
+ATTACH_BIRTH = frozenset({_ATTACH_NEW, _ATTACH_EXISTING})
+ATTACH_RESULT_CLOSE = frozenset({_ATTACH_CLOSE})
+_birth_batch_ids: ContextVar[dict[tuple[object, ...], int] | None] = ContextVar(
+    "affair_birth_batch_ids", default=None,
+)
 _ORIGIN_AFFAIR = "affair"
 _ORIGIN_DOSSIER = "dossier"
 _POINTER_TABLES = {
@@ -136,8 +143,9 @@ class AffairStore:
         year: int,
         period: int,
         turn: int,
+        allowed: frozenset[str] = ATTACH_BIRTH,
     ) -> int:
-        parsed = parse_affair_declaration(declaration)
+        parsed = parse_affair_declaration(declaration, allowed=allowed)
         if parsed["attach"] == _ATTACH_EXISTING:
             affair_id = int(parsed["affair_id"])
             self.get(affair_id)
@@ -150,7 +158,11 @@ class AffairStore:
             ).fetchone()
             if existing is not None:
                 return int(existing["id"])
-        return self.open(
+        cache = _birth_batch_ids.get()
+        ident = _new_identity(parsed)
+        if cache is not None and ident in cache:
+            return cache[ident]
+        affair_id = self.open(
             name=str(parsed["name"]),
             origin=str(parsed["origin"]),
             year=year,
@@ -158,36 +170,48 @@ class AffairStore:
             turn=turn,
             birth_key=key,
         ).id
+        if cache is not None:
+            cache[ident] = affair_id
+        return affair_id
 
-    def peek_declared_id(self, declaration: Mapping[str, object]) -> int | None:
+    def peek_declared_id(
+        self,
+        declaration: Mapping[str, object],
+        *,
+        allowed: frozenset[str] = ATTACH_BIRTH,
+    ) -> int | None:
         """Read the declared identity without creating an affair."""
-        parsed = parse_affair_declaration(declaration)
-        if parsed["attach"] in {_ATTACH_EXISTING, _ATTACH_CLOSE}:
+        parsed = parse_affair_declaration(declaration, allowed=allowed)
+        if parsed["attach"] == _ATTACH_EXISTING:
             affair_id = int(parsed["affair_id"])
             self.get(affair_id)
             return affair_id
         key = str(parsed.get("birth_key") or "").strip()
-        if not key:
+        if key:
+            row = self._conn.execute(
+                "SELECT id FROM affairs WHERE birth_key=?", (key,),
+            ).fetchone()
+            return None if row is None else int(row["id"])
+        cache = _birth_batch_ids.get()
+        if cache is None:
             return None
-        row = self._conn.execute(
-            "SELECT id FROM affairs WHERE birth_key=?", (key,),
-        ).fetchone()
-        return None if row is None else int(row["id"])
+        return cache.get(_new_identity(parsed))
 
-    def apply_declaration(
+    def close_from_declaration(
         self,
         declaration: Mapping[str, object],
         *,
-        year: int,
-        period: int,
         turn: int,
+        authorized_ids: set[int],
     ) -> int:
-        parsed = parse_affair_declaration(declaration)
-        if parsed["attach"] == _ATTACH_CLOSE:
-            return self.declare_closed(int(parsed["affair_id"]), turn=turn).id
-        return self.resolve_declaration(
-            declaration, year=year, period=period, turn=turn,
+        """Close only an open affair id visible in this batch's structured input."""
+        parsed = parse_affair_declaration(
+            declaration, allowed=ATTACH_RESULT_CLOSE,
         )
+        affair_id = int(parsed["affair_id"])
+        if affair_id not in authorized_ids:
+            raise ValueError("事务不在本批可见输入")
+        return self.declare_closed(affair_id, turn=turn).id
 
     def attach_from_declaration(
         self,
@@ -199,21 +223,19 @@ class AffairStore:
         period: int,
         turn: int,
     ) -> int:
-        """Bind a row from a typed declaration. Peek before create so conflicts leave no orphan."""
+        """Bind a row from a birth declaration. Peek before create so conflicts leave no orphan."""
         current = self._current_pointer(table, row_id)
-        peeked = self.peek_declared_id(declaration)
-        parsed = parse_affair_declaration(declaration)
+        peeked = self.peek_declared_id(declaration, allowed=ATTACH_BIRTH)
         if current:
             if peeked != current:
                 raise ValueError(
                     f"{_POINTER_TABLES[table]}已指向事务 {current}，"
                     f"不能改指 {peeked or '新事务'}"
                 )
-            if parsed["attach"] == _ATTACH_CLOSE:
-                self.declare_closed(current, turn=turn)
             return current
-        affair_id = self.apply_declaration(
+        affair_id = self.resolve_declaration(
             declaration, year=year, period=period, turn=turn,
+            allowed=ATTACH_BIRTH,
         )
         self.attach_pointer(table, row_id, affair_id)
         return affair_id
@@ -303,11 +325,6 @@ class AffairStore:
         refs.extend(f"{_ORIGIN_DOSSIER}:{int(row['id'])}" for row in self.dossiers(affair_id))
         return tuple(refs)
 
-    def character_experiences(self, textual_facts: Any, affair_id: int):
-        return textual_facts.pointing_at(
-            self.origin_refs(affair_id), subject_kind="character",
-        )
-
     def affair_id_for_issue(self, issue_id: int) -> int:
         row = self._conn.execute(
             "SELECT affair_id FROM issues WHERE id=?", (int(issue_id),)
@@ -323,11 +340,22 @@ class AffairStore:
         )
 
 
-def parse_affair_declaration(raw: object) -> dict[str, object]:
+def parse_affair_declaration(
+    raw: object,
+    *,
+    allowed: frozenset[str] | None = None,
+) -> dict[str, object]:
     """Typed LLM declaration only. No prose parsing."""
     if not isinstance(raw, Mapping):
         raise ValueError("事务声明须为对象")
     attach = str(raw.get("attach") or "").strip()
+    permitted = ATTACH_BIRTH | ATTACH_RESULT_CLOSE if allowed is None else allowed
+    if attach not in permitted:
+        if attach == _ATTACH_CLOSE:
+            raise ValueError("本阶段不能了结事务")
+        if attach in {_ATTACH_NEW, _ATTACH_EXISTING}:
+            raise ValueError("顶层事务声明只接受了结")
+        raise ValueError("事务声明 attach 不在本阶段")
     if attach == _ATTACH_NEW:
         name = str(raw.get("name") or "").strip()
         origin = str(raw.get("origin") or "").strip()
@@ -338,20 +366,22 @@ def parse_affair_declaration(raw: object) -> dict[str, object]:
         if key:
             out["birth_key"] = key
         return out
-    if attach in {_ATTACH_EXISTING, _ATTACH_CLOSE}:
-        try:
-            affair_id = int(raw.get("affair_id"))
-        except (TypeError, ValueError):
-            affair_id = 0
-        if affair_id <= 0:
-            raise ValueError(
-                "了结须有 affair_id" if attach == _ATTACH_CLOSE else "接到已开事务须有 affair_id"
-            )
-        return {"attach": attach, "affair_id": affair_id}
-    raise ValueError("事务声明 attach 须为 new、existing 或 close")
+    try:
+        affair_id = int(raw.get("affair_id"))
+    except (TypeError, ValueError):
+        affair_id = 0
+    if affair_id <= 0:
+        raise ValueError(
+            "了结须有 affair_id" if attach == _ATTACH_CLOSE else "接到已开事务须有 affair_id"
+        )
+    return {"attach": attach, "affair_id": affair_id}
 
 
-def declaration_from_payload(payload: Mapping[str, object] | None) -> Mapping[str, object] | None:
+def declaration_from_payload(
+    payload: Mapping[str, object] | None,
+    *,
+    allowed: frozenset[str] = ATTACH_BIRTH,
+) -> Mapping[str, object] | None:
     if not payload:
         return None
     raw = payload.get("affair_declaration")
@@ -359,7 +389,30 @@ def declaration_from_payload(payload: Mapping[str, object] | None) -> Mapping[st
         raw = payload.get("事务声明")
     if raw is None:
         return None
-    return parse_affair_declaration(raw)
+    return parse_affair_declaration(raw, allowed=allowed)
+
+
+@contextmanager
+def birth_batch() -> Iterator[dict[tuple[object, ...], int]]:
+    """Same close-night / result batch shares one identity for identical new declarations."""
+    current = _birth_batch_ids.get()
+    if current is not None:
+        yield current
+        return
+    token = _birth_batch_ids.set({})
+    try:
+        cache = _birth_batch_ids.get()
+        assert cache is not None
+        yield cache
+    finally:
+        _birth_batch_ids.reset(token)
+
+
+def _new_identity(parsed: Mapping[str, object]) -> tuple[object, ...]:
+    key = str(parsed.get("birth_key") or "").strip()
+    if key:
+        return ("birth_key", key)
+    return ("new", str(parsed["name"]), str(parsed["origin"]))
 
 
 def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:

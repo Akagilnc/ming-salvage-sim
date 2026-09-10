@@ -180,9 +180,9 @@
 ## 事务声明（#1831 / ADR 0154）
 
 事务的边界与了结由本档房按奏章里已经给出的明确声明写出，代码不判、不按 `结案局势`、条件或盘面阈值自动了结。
-- 推演交结果时新起或接到已开事务：`{"attach":"new","name":"事务名","origin":"起因","birth_key":"可选键"}` 或 `{"attach":"existing","affair_id":整数}`。`affair_id` 必须来自 input `open_affairs` 的 `id`。
-- 奏章明确声明此事了结：`{"attach":"close","affair_id":整数}`，`affair_id` 同样必须来自 input `open_affairs`。没声明了结就不要写 close；`结案局势` 只结案卷下的局势，不等于了结事务。
-- 不得从邸报自由散文猜边界或猜了结。无声明则 `事务声明` 填 `[]`。
+- 顶层 `事务声明` 只写了结：`{"attach":"close","affair_id":整数}`，`affair_id` 必须来自本批 input `open_affairs` 的 `id`。没声明了结就不要写 close；`结案局势` 只结案卷下的局势，不等于了结事务。
+- 推演交结果时新起或接到已开事务，把同一 typed 对象写在所声明的结果上（如 `新立局势` 的 `事务声明`）：`{"attach":"new","name":"事务名","origin":"起因"}` 或 `{"attach":"existing","affair_id":整数}`（`affair_id` 来自 input `open_affairs`）。不得只在顶层数组创建或查找一个没有后果指向的空事务。
+- 不得从邸报自由散文猜边界或猜了结。无了结则顶层 `事务声明` 填 `[]`。
 
 ## 输出 JSON
 

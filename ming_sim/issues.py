@@ -5725,6 +5725,15 @@ def apply_issue_tracker_output(
             else []
         )
         # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
+        from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+        try:
+            issue_affair = declaration_from_payload(ni, allowed=ATTACH_BIRTH)
+        except (TypeError, ValueError) as exc:
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": str(exc), "item": ni, "title": title,
+            })
+            continue
         issue_id = db.insert_issue(
             state,
             kind=kind,
@@ -5757,6 +5766,15 @@ def apply_issue_tracker_output(
             stages_json=stages_norm,
             commit=commit_now,
         )
+        if issue_affair is not None:
+            db.affairs.attach_from_declaration(
+                "issues",
+                issue_id,
+                issue_affair,
+                year=int(state.year),
+                period=int(state.period),
+                turn=int(state.turn),
+            )
         applied_item = {"issue_id": issue_id, "kind": kind, "title": title, "rejected": False}
         if commitment_kind:
             applied_item["commitment_kind"] = commitment_kind
@@ -8152,6 +8170,7 @@ def apply_score_extraction(
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
     dossier_ids_at_input: Optional[set[int]] = None,
     secret_dossier_ids_at_input: Optional[set[int]] = None,
+    open_affair_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -8170,15 +8189,17 @@ def apply_score_extraction(
     }
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
+    authorized_open_affairs = (
+        open_affair_ids_at_input if isinstance(open_affair_ids_at_input, set) else set()
+    )
     for raw in extracted.get("affair_declarations") or []:
         try:
             if not isinstance(raw, dict):
                 raise ValueError("事务声明须为对象")
-            db.affairs.apply_declaration(
+            db.affairs.close_from_declaration(
                 raw,
-                year=int(state.year),
-                period=int(state.period),
                 turn=int(state.turn),
+                authorized_ids=authorized_open_affairs,
             )
         except (TypeError, ValueError, KeyError) as exc:
             validate_rejections.append(

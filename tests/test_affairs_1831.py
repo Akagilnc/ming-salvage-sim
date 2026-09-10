@@ -10,7 +10,6 @@ import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
-from ming_sim.llm_config import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
@@ -21,7 +20,6 @@ from ming_sim.simulation import (
 
 NINGYUAN = "宁远护送"
 ORIGIN = "拨银、调将、派兵去宁远"
-BIRTH_KEY = "ningyuan-escort"
 PROGRESS = "护送银两已出京，尚未抵宁远"
 ARRIVED = "银两已抵宁远，洪承畴接管防务"
 SILENCE = "袁崇焕被灭口，无案可稽"
@@ -35,7 +33,7 @@ def _minister(db):
     return str(row["name"])
 
 
-def _declaration(*, attach="new", birth_key=BIRTH_KEY, affair_id=None):
+def _declaration(*, attach="new", birth_key="", affair_id=None):
     body = {"attach": attach}
     if attach == "new":
         body["name"] = NINGYUAN
@@ -199,8 +197,10 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         state, "国库", -1, "灭口善后", "无案卷后果",
         origin_ref=affair_origin,
     )
-    experiences = db.affairs.character_experiences(db.textual_facts, affair.id)
-    assert [fact.body for fact in experiences] == [SILENCE]
+    character_facts = db.textual_facts.pointing_at(
+        [affair_origin], subject_kind="character",
+    )
+    assert [fact.body for fact in character_facts] == [SILENCE]
     silent = db.conn.execute(
         "SELECT origin_ref FROM economy_ledger WHERE origin_ref=?",
         (affair_origin,),
@@ -217,8 +217,8 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         assert [fact.body for fact in materials] == [PROGRESS]
         assert restored.affairs.affair_id_for_issue(issue_id) == affair.id
         assert [
-            fact.body for fact in restored.affairs.character_experiences(
-                restored.textual_facts, affair.id,
+            fact.body for fact in restored.textual_facts.pointing_at(
+                [restored.affairs.origin_ref(affair.id)], subject_kind="character",
             )
         ] == [SILENCE]
     finally:
@@ -343,24 +343,16 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
             pending_action_id=pending_id,
             payload={
                 "assignee_id": minister,
-                "affair_declaration": {
-                    "attach": "new",
-                    "name": "孤儿",
-                    "origin": "不该落地",
-                    "birth_key": "orphan-affair",
-                },
+                "affair_declaration": _declaration(
+                    birth_key="orphan-affair",
+                ),
             },
         )
     except ValueError:
         pass
     else:
         raise AssertionError("expected conflict")
-    assert db.affairs.peek_declared_id({
-        "attach": "new",
-        "name": "孤儿",
-        "origin": "不该落地",
-        "birth_key": "orphan-affair",
-    }) is None
+    assert db.affairs.peek_declared_id(_declaration(birth_key="orphan-affair")) is None
     assert int(db.get_decree_dossier(dossier_id)["affair_id"]) == first.id
 
     issue_id = db.insert_issue(state, kind="situation", title="已指局势")
@@ -404,30 +396,53 @@ def test_code_does_not_auto_close_or_merge_affairs(game, monkeypatch):
     still = db.affairs.get(first.id)
     assert still.status == "open"
 
+    spawned = db.insert_issue(state, kind="situation", title="推演新起")
+    born = db.affairs.attach_from_declaration(
+        "issues", spawned, _declaration(),
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    assert db.affairs.affair_id_for_issue(spawned) == born
+    assert born not in {first.id, second.id}
+
+    before_affairs = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    apply_score_extraction(
+        db, state,
+        {"affair_declarations": [_declaration()]},
+        open_affair_ids_at_input=set(),
+    )
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before_affairs
+    assert db.affairs.get(first.id).status == "open"
+
+    try:
+        db.create_decree_dossiers(
+            state,
+            action_type="assignment",
+            decree_text="调洪承畴赴宁远",
+            target_kind="issue",
+            target_id="ningyuan-general",
+            executor_kind="character",
+            executor_id=minister,
+            payload={
+                "assignee_id": minister,
+                "affair_declaration": _declaration(
+                    attach="close", affair_id=first.id,
+                ),
+            },
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected birth close to fail")
+    assert db.affairs.get(first.id).status == "open"
+
     extractor_input = build_extractor_shared_context(db, state, "宁远护送已毕，此事了结。", "")
     open_from_input = extractor_input["open_affairs"]
-    input_ids = [int(row["id"]) for row in open_from_input]
+    input_ids = {int(row["id"]) for row in open_from_input}
     assert first.id in input_ids
     assert second.id in input_ids
-    close_id = next(
-        int(row["id"]) for row in open_from_input if int(row["id"]) == first.id
-    )
+    close_id = first.id
 
-    import ming_sim.agents as agents_mod
     import ming_sim.simulation as simulation
-    agents_mod.bind_content(content)
-    monkeypatch.setattr(agents_mod, "_llm_for_role", lambda config, role: config)
-    monkeypatch.setattr(agents_mod, "create_chat_model", lambda *args, **kwargs: object())
-    monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
-    agent = agents_mod.create_score_extractor_module_agent(
-        LLMConfig(api_key="test", base_url="https://example.invalid/v1", model="test"),
-        object(),
-        module="issues",
-    )
-    instructions = "\n".join(agent["instructions"])
-    assert "事务声明" in instructions
-    assert '"attach":"close"' in instructions or "attach=close" in instructions
-
     canned = {
         "internal": '{"economy_moves": []}',
         "military_external": '{"new_armies": []}',
@@ -454,7 +469,14 @@ def test_code_does_not_auto_close_or_merge_affairs(game, monkeypatch):
     assert merged["affair_declarations"] == [
         {"attach": "close", "affair_id": close_id},
     ]
-    assert close_id in input_ids
-    apply_score_extraction(db, state, merged)
+    apply_score_extraction(
+        db, state, merged, open_affair_ids_at_input={second.id},
+    )
+    assert db.affairs.get(first.id).status == "open"
+    apply_score_extraction(
+        db, state, merged, open_affair_ids_at_input=input_ids,
+    )
     assert db.affairs.get(first.id).status == "closed"
-    assert [row.id for row in db.affairs.list_open()] == [second.id]
+    assert db.affairs.get(second.id).status == "open"
+    assert db.affairs.get(born).status == "open"
+    assert {row.id for row in db.affairs.list_open()} == {second.id, born}
