@@ -717,19 +717,9 @@ def test_run_claude_stdout_only(monkeypatch):
 
 
 def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path):
-    """#1830：materials_dir 传到真实子进程 seam（cwd + 只读 argv）。"""
+    """#1830：Claude 材料模式传到真实子进程 seam（cwd + --restricted）。"""
     root = str((tmp_path / "materials").resolve())
     tmp_path.joinpath("materials").mkdir()
-    captured = _capture_run(monkeypatch, _P(stdout="ok"))
-    out, n = cb._run_codex("p", materials_dir=root)
-    assert out == "ok" and n == 1
-    assert captured["kw"].get("cwd") == root
-    assert "--sandbox" in captured["cmd"] and "read-only" in captured["cmd"]
-    assert "--ignore-user-config" in captured["cmd"]
-    assert "--cd" in captured["cmd"]
-    assert captured["cmd"][captured["cmd"].index("--cd") + 1] == root
-    assert "disk-full-read-access" not in " ".join(captured["cmd"])
-
     captured = _capture_run(monkeypatch, _P(stdout="ok"))
     out, n = cb._run_claude("p", materials_dir=root)
     assert out == "ok" and n == 1
@@ -744,9 +734,9 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     assert "Read" not in disallowed_span.split("--", 1)[0]
 
 
-@pytest.mark.parametrize("runner", ["agy", "cursor", "kimi", "grok", "pi"])
+@pytest.mark.parametrize("runner", ["codex", "agy", "cursor", "kimi", "grok", "pi"])
 def test_materials_mode_rejects_unsupported_runners(tmp_path, runner):
-    """#1830：未取证 runner 遇材料模式启动前响亮拒绝，不扩只读能力。"""
+    """#1830：无材料树读取边界的 runner 启动前响亮拒绝。"""
     root = str(tmp_path / "materials")
     tmp_path.joinpath("materials").mkdir()
     with pytest.raises(RuntimeError, match="材料模式仅支持"):
