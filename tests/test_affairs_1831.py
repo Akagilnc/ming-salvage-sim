@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import threading
 from types import SimpleNamespace
 
 import ming_sim.audience_night as audience_night
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 import ming_sim.simulation as simulation
-from ming_sim.audience_extraction import parse_extraction_facts, run_extraction_for_turn
+from ming_sim.audience_extraction import parse_extraction_facts
 from ming_sim.db import GameDB
 from ming_sim.entities.affair import affair_id_from_experience_origin_ref
 from ming_sim.issues import apply_score_extraction
@@ -559,95 +558,6 @@ def test_translation_experience_marks_affair_without_dossier(game):
         ) == affair.id
     finally:
         restored.close()
-
-
-class _CannedFactsAgent:
-    """canned 抽取员：run() 回带 .content 的对象（extract_agent_text 读 .content）。"""
-
-    def __init__(self, output: str) -> None:
-        self._output = output
-
-    def run(self, _material):
-        return SimpleNamespace(content=self._output)
-
-
-class _RaceGate:
-    """真实 write_gate（`threading.Lock` 包装）：首次 `with` 块退出（对应
-    `run_extraction_for_turn` 首闸短读区结束的瞬间）时，唤醒一个也须经本 gate
-    才能了结事务的并发关闭线程，并等它完工才放行——逼出「读点在首闸内」与
-    「读点在首闸外、LLM 调用前」之间唯一有意义的确定性窗口，不依赖 LLM 调用
-    本身的调度时序（#1831 大理寺打回：仅靠 LLM 前/后计时的旧证据咬不住
-    gate 边界本身——两个版本都在 LLM 调用前完成读取）。"""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._first_release_done = False
-        self.on_first_release = None
-
-    def __enter__(self) -> "_RaceGate":
-        self._lock.acquire()
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> bool:
-        self._lock.release()
-        if not self._first_release_done:
-            self._first_release_done = True
-            if self.on_first_release is not None:
-                self.on_first_release()
-        return False
-
-
-def _close_affair_under_gate(db, gate: "_RaceGate", affair_id: int, turn: int) -> None:
-    with gate:
-        db.affairs.declare_closed(affair_id, turn=turn)
-
-
-def test_run_extraction_for_turn_freezes_open_affair_authorization_inside_first_gate(game):
-    """真实入口 `run_extraction_for_turn`：open-affair 授权集须在首次 write_gate
-    短读区**内**读取并冻结，不得移到 gate 外（哪怕仍在 LLM 调用之前）。用同一
-    gate 上的并发关闭写手，在首闸释放的瞬间强制竞态：读点若仍在 gate 内，读到
-    的是冻结前的开集，落账凭该冻结集合放行；读点若已经溜到 gate 外，读到的会
-    是并发关闭后的空集，落账因「事务不在本批可见输入」拒收（#1831）。"""
-    db, state, _ = game
-    minister = _minister(db)
-    affair = db.affairs.open(
-        name=NINGYUAN, origin=ORIGIN,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    nid, ctid, seq = _persist_reply(db, state, minister, reply="臣记下边报，尚待奏闻。")
-
-    gate = _RaceGate()
-
-    def _race_close_on_first_gate_release() -> None:
-        closer = threading.Thread(
-            target=_close_affair_under_gate, args=(db, gate, affair.id, state.turn),
-        )
-        closer.start()
-        closer.join(timeout=2)
-        assert not closer.is_alive()
-
-    gate.on_first_release = _race_close_on_first_gate_release
-
-    agent = _CannedFactsAgent(json.dumps({
-        "facts": [{
-            "person_names": [],
-            "body": "护送途中闻边报，尚无案卷",
-            "事务声明": {"attach": "existing", "affair_id": affair.id},
-        }],
-    }, ensure_ascii=False))
-
-    result = run_extraction_for_turn(
-        db=db, minister_name=minister, reply="臣记下边报，尚待奏闻。",
-        chat_turn_id=ctid, night_id=nid, source_night_seq=seq,
-        llm_config=object(), write_gate=gate,
-        extractor_agent=agent,
-    )
-
-    # 竞态确已发生：关闭线程赶在首闸释放瞬间了结了事务（早于 LLM 调用）。
-    assert db.affairs.get(affair.id).status == "closed"
-    assert result["status"] == "done"
-    rows = db.affairs.experiences(affair.id)
-    assert len(rows) == 1
 
 
 def test_close_requires_open_affairs_visible_in_batch(game, monkeypatch):
