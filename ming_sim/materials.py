@@ -307,6 +307,15 @@ def _opening_affair_lines(
     same participant/audience gate issues already pass still decides whether
     a *linked* issue's affair counts as handling; only a genuine dossier
     participant (`is_dossier_participant`) is handling unconditionally.
+
+    An affair's own closing does not end its still-active linked issue's
+    mechanical life (ADR 0154) — when the affair has closed, its directory
+    entry stops being produced and `_character_affair_lines` keeps the
+    issue's own entry as a fallback instead of folding it away. Opening must
+    pick whichever identity `_character_affair_lines` actually produced
+    (`affair-N` when present, else the retained `issue-N`), or a still-active,
+    still-handled linked issue on a closed affair silently drops out of
+    opening (#1812 p2 follow-up).
     """
     from ming_sim.knowledge import _issue_audience_names
     from ming_sim.participant_roster import participant_roster_names
@@ -326,7 +335,9 @@ def _opening_affair_lines(
         except (KeyError, IndexError, TypeError, ValueError):
             continue
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
-        target_key = f"affair-{linked_affair_id}" if linked_affair_id else f"issue-{issue_id}"
+        affair_key = f"affair-{linked_affair_id}" if linked_affair_id else ""
+        folded = bool(affair_key) and affair_key in visible
+        target_key = affair_key if folded else f"issue-{issue_id}"
         if target_key not in visible:
             continue
         try:
@@ -335,7 +346,7 @@ def _opening_affair_lines(
             roster = set()
         if character_name not in roster and character_name not in _issue_audience_names(db, issue):
             continue
-        if linked_affair_id:
+        if folded:
             # Merged into the affair's own entry — record the gate pass, do
             # not consume the affair's dir_key here (a genuine dossier
             # participant still needs the unconditional pass below).

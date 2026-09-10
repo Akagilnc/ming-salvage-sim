@@ -100,6 +100,26 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
         origin_kind="decree", stage_text="不得单独露面",
     )
     db.affairs.point_issue(bystander_issue_id, bystander_affair.id)
+    # (f) 事务了结不等于其机械载体 issue 跟着终止（ADR 0154 两者分开）：挂靠的
+    # affair 已关闭、不再产出 affair-N 投影，_character_affair_lines 因而保留
+    # issue-N 自己的条目——开场选身份须跟目录投影一致，回退用 issue-N 走既有
+    # participant 经手闸，不能因为曾经挂靠过 affair 就整条从开场消失。
+    closed_affair = db.affairs.open(
+        name="宣府欠饷", origin="宣府镇奏报欠饷",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    handled_issue_stage = "仍在核算，未结"
+    handled_issue_id = db.insert_issue(
+        state, kind="situation", title="宣府欠饷机械载体",
+        origin_kind="decree", stage_text=handled_issue_stage,
+        participants=[character.name],
+    )
+    db.record_character_participation(
+        state, [character.name], "issue", "宣府欠饷机械载体",
+        body=handled_issue_stage, source_id=f"issue:{handled_issue_id}",
+    )
+    db.affairs.point_issue(handled_issue_id, closed_affair.id)
+    db.affairs.declare_closed(closed_affair.id, turn=state.turn)
 
     dest = tmp_path / "materials"
     prepared = prepare_character_materials(db, state, character, dest_root=dest)
@@ -155,6 +175,16 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     # 「正经手事务」在办这件事。
     assert bystander_affair.name not in prepared.opening
     assert bystander_situation not in prepared.opening
+    # (f) 已关闭事务上仍 active、character 确实经手（participant_roster 命中）
+    # 的 linked issue：目录退回用 issue-N 自己的条目（没有 affair-N 可归并），
+    # 开场须跟着目录投影选同一身份，不能因为它曾挂靠过 affair 就漏进开场。
+    assert any(
+        p.startswith(f"事务/issue-{handled_issue_id}/") for p in affair_files
+    )
+    assert not any(
+        p.startswith(f"事务/affair-{closed_affair.id}/") for p in affair_files
+    )
+    assert handled_issue_stage in prepared.opening
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
