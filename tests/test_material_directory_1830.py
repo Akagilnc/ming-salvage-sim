@@ -60,6 +60,21 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert not directory_has_raw_world_copy(prepared.root, db)
 
 
+def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("dossier boom")
+
+    db.list_referenceable_dossiers = boom
+    try:
+        prepare_character_materials(db, state, character, dest_root=tmp_path / "m")
+        raise AssertionError("expected fail loud")
+    except RuntimeError as exc:
+        assert "dossier boom" in str(exc)
+
+
 def test_read_material_stays_inside_directory(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
@@ -115,6 +130,15 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
     tool_names = {getattr(fn, "__name__", "") for fn in captured["tools"]}
     assert "list_materials" in tool_names
     assert "read_material" in tool_names
+    assert "propose_directive" in tool_names
+    retired_reads = {
+        "list_regions", "inspect_region", "read_past_report", "search_memories",
+        "inspect_treasury_ledger", "check_treasury", "list_memorials",
+        "inspect_memorial", "list_buildings", "inspect_building",
+        "estimate_resistance", "query_court_roster", "query_army_roster",
+        "allocate_payroll", "audit_tax_arrears",
+    }
+    assert not (tool_names & retired_reads)
     tools = {fn.__name__: fn for fn in captured["tools"]}
     listing = tools["list_materials"]()
     rel = next(line for line in listing.splitlines() if line.endswith("经历.txt"))

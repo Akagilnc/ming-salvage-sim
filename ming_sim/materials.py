@@ -55,13 +55,10 @@ def _resolve_inside(root: Path, rel: str) -> Path:
 
 
 def character_materials_root(db: Any, state: Any, character: Any) -> Path:
+    from ming_sim.audience_night import get_open_night
+
     parent = Path(str(getattr(db, "path", "") or ".")).resolve().parent
-    night = None
-    try:
-        from ming_sim.audience_night import get_open_night
-        night = get_open_night(db)
-    except Exception:
-        night = None
+    night = get_open_night(db)
     key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
     return parent / "materials" / key / _safe_segment(getattr(character, "name", ""))
 
@@ -107,24 +104,20 @@ def material_tools(root: Path) -> list:
 
 
 def _present_names(db: Any, character: Any) -> List[str]:
+    from ming_sim.audience_night import get_open_night, present_names_at
+
     name = str(getattr(character, "name", "") or "")
-    try:
-        from ming_sim.audience_night import get_open_night, present_names_at
-        night = get_open_night(db)
-        if night is None:
-            return [name] if name else []
-        names = sorted(present_names_at(db, int(night["id"])))
-        return names or ([name] if name else [])
-    except Exception:
+    night = get_open_night(db)
+    if night is None:
         return [name] if name else []
+    names = sorted(present_names_at(db, int(night["id"])))
+    return names or ([name] if name else [])
 
 
 def _spoken_this_scene(db: Any, character: Any) -> str:
-    try:
-        from ming_sim.audience_night import audience_scene_recap
-        return str(audience_scene_recap(db, getattr(character, "name", "")) or "").strip()
-    except Exception:
-        return ""
+    from ming_sim.audience_night import audience_scene_recap
+
+    return str(audience_scene_recap(db, getattr(character, "name", "")) or "").strip()
 
 
 def _visible_affair_lines(knowledge: dict) -> list[tuple[str, str]]:
@@ -190,17 +183,14 @@ def _handled_affair_lines(db: Any, state: Any, character_name: str, knowledge: d
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:
     if not hasattr(db, "list_directives"):
         return []
-    try:
-        return [
-            row for row in db.list_directives(state, statuses=("draft",))
-            if int(row["turn"]) < int(state.turn)
-            and (
-                not hasattr(db, "get_dossier_for_directive")
-                or db.get_dossier_for_directive(int(row["id"])) is None
-            )
-        ]
-    except Exception:
-        return []
+    return [
+        row for row in db.list_directives(state, statuses=("draft",))
+        if int(row["turn"]) < int(state.turn)
+        and (
+            not hasattr(db, "get_dossier_for_directive")
+            or db.get_dossier_for_directive(int(row["id"])) is None
+        )
+    ]
 
 
 def _opening_text(
@@ -254,12 +244,9 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
         if str(value or "").strip()
     ]
     if hasattr(db, "list_referenceable_dossiers"):
-        try:
-            brief = render_referenceable_dossier_brief(
-                db.list_referenceable_dossiers(name, state.turn),
-            )
-        except Exception:
-            brief = ""
+        brief = render_referenceable_dossier_brief(
+            db.list_referenceable_dossiers(name, state.turn),
+        )
         if brief:
             office_lines.append(brief)
     _write_text(person_dir / "公事档案.txt", "\n".join(office_lines) or "（无）")
@@ -274,12 +261,14 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
         _write_text(person_dir / "见闻.txt", rendered)
         index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/见闻.txt")
 
-    for title, situation in _visible_affair_lines(knowledge):
+    visible_affairs = _visible_affair_lines(knowledge)
+    visible_titles = {title for title, _ in visible_affairs}
+    for title, situation in visible_affairs:
         affair_dir = tmp / _AFFAIR_DIR / _safe_segment(title)
         _write_text(affair_dir / "当前情况.txt", situation)
         index.append(f"{_AFFAIR_DIR}/{_safe_segment(title)}/当前情况.txt")
     for title, situation in _handled_affair_lines(db, state, name, knowledge):
-        if any(existing == title for existing, _ in _visible_affair_lines(knowledge)):
+        if title in visible_titles:
             continue
         affair_dir = tmp / _AFFAIR_DIR / _safe_segment(title)
         _write_text(affair_dir / "当前情况.txt", situation)

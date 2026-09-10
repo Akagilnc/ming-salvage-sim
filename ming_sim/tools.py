@@ -215,7 +215,8 @@ def _commitment_tool_fields(db, state, row) -> str:
 
 
 def build_minister_tools(character: Character, context: CourtContext,
-                         use_roster_tool: bool = False, use_army_tool: bool = False):
+                         use_roster_tool: bool = False, use_army_tool: bool = False,
+                         include_query_tools: bool = True):
     def projection() -> Dict[str, object]:
         from ming_sim.knowledge import build_character_knowledge
         return build_character_knowledge(context.db, context.state, character.name)
@@ -899,7 +900,16 @@ def build_minister_tools(character: Character, context: CourtContext,
         }, ensure_ascii=False)
         return f"__pending_recommendation__{payload}"
 
-    tools = [
+    action_tools = [
+        propose_directive,
+        secret_order,
+        rush_staged_commitment,
+        dismiss_minister,
+        summon_minister,
+        recommend_person,
+        register_unlisted_person,
+    ]
+    query_tools = [
         list_memorials,
         inspect_memorial,
         list_regions,
@@ -910,24 +920,20 @@ def build_minister_tools(character: Character, context: CourtContext,
         read_past_report,
         search_memories,
         inspect_treasury_ledger,
-        propose_directive,
-        secret_order,
-        rush_staged_commitment,
-        dismiss_minister,
-        summon_minister,
-        recommend_person,
-        register_unlisted_person,
     ]
     if use_roster_tool:
-        tools.append(query_court_roster)
+        query_tools.append(query_court_roster)
     # A scale threshold may switch an authorized projection from inline text
     # to a tool, but it must never grant a domain the role does not possess.
     if use_army_tool and "military" in (projection().get("world") or {}):
-        tools.append(query_army_roster)
+        query_tools.append(query_army_roster)
     if character.office_type == "吏部":
-        tools.append(propose_appointment)
+        action_tools.append(propose_appointment)
     if character.office_type in ("户部", "内阁", "司礼监"):
-        tools.extend([check_treasury, allocate_payroll, audit_tax_arrears])
+        query_tools.extend([check_treasury, allocate_payroll, audit_tax_arrears])
+    tools = list(action_tools)
+    if include_query_tools:
+        tools.extend(query_tools)
     unique_tools = []
     seen_tool_names: set = set()
     for tool in tools:

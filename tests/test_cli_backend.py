@@ -718,7 +718,7 @@ def test_run_claude_stdout_only(monkeypatch):
 
 def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path):
     """#1830：materials_dir 传到真实子进程 seam（cwd + 只读 argv）。"""
-    root = str(tmp_path / "materials")
+    root = str((tmp_path / "materials").resolve())
     tmp_path.joinpath("materials").mkdir()
     captured = _capture_run(monkeypatch, _P(stdout="ok"))
     out, n = cb._run_codex("p", materials_dir=root)
@@ -726,16 +726,31 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     assert captured["kw"].get("cwd") == root
     assert "--sandbox" in captured["cmd"] and "read-only" in captured["cmd"]
     assert "--ignore-user-config" in captured["cmd"]
+    assert "--cd" in captured["cmd"]
+    assert captured["cmd"][captured["cmd"].index("--cd") + 1] == root
+    assert "disk-full-read-access" not in " ".join(captured["cmd"])
 
     captured = _capture_run(monkeypatch, _P(stdout="ok"))
     out, n = cb._run_claude("p", materials_dir=root)
     assert out == "ok" and n == 1
     assert captured["kw"].get("cwd") == root
+    assert "--restricted" in captured["cmd"]
+    assert "--strict-mcp-config" in captured["cmd"]
+    assert "--add-dir" not in captured["cmd"]
     assert "--allowedTools" in captured["cmd"]
     assert "Read" in captured["cmd"] and "Glob" in captured["cmd"]
     joined = " ".join(captured["cmd"])
     disallowed_span = joined.split("--disallowedTools", 1)[-1]
     assert "Read" not in disallowed_span.split("--", 1)[0]
+
+
+@pytest.mark.parametrize("runner", ["agy", "cursor", "kimi", "grok", "pi"])
+def test_materials_mode_rejects_unsupported_runners(tmp_path, runner):
+    """#1830：未取证 runner 遇材料模式启动前响亮拒绝，不扩只读能力。"""
+    root = str(tmp_path / "materials")
+    tmp_path.joinpath("materials").mkdir()
+    with pytest.raises(RuntimeError, match="材料模式仅支持"):
+        cb._cli_runner_command(runner, "p", materials_dir=root)
 
 
 def test_run_codex_flags_and_stdout(monkeypatch):

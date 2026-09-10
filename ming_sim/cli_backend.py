@@ -98,6 +98,8 @@ _GROK_BIN = os.environ.get("MING_SIM_GROK_BIN", "grok")
 _PI_BIN = os.environ.get("MING_SIM_PI_BIN", "pi")
 # 受支持 CLI runner 单一真源（membership + 文案 + env 回落共用）。
 _CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
+# #1830 材料模式只承认 Codex / Claude；其余 runner 启动前响亮拒绝。
+_MATERIALS_CLI_RUNNERS = frozenset({"codex", "claude"})
 # 闸脚本 --runner choices 单一真源（不含 agy：闸形制未用）。脚本 import 此元组，禁各自复制。
 GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok", "pi")
 # 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
@@ -614,7 +616,11 @@ def _codex_cmd(
         cmd.append("--json")
     cmd += ["--ephemeral", "--skip-git-repo-check"]
     if materials_dir:
-        cmd += ["--ignore-user-config", "--sandbox", "read-only"]
+        cmd += [
+            "--ignore-user-config",
+            "--sandbox", "read-only",
+            "--cd", str(Path(materials_dir).resolve()),
+        ]
     cmd.append("-")
     return cmd
 
@@ -690,9 +696,14 @@ def _cli_runner_command(
       （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
     - claude：`-p --output-format text`，prompt 走 stdin；thinking 预算走 env。
     - cursor / kimi / grok / pi：prompt 走参数（无 stdin 约定），干净答案在 stdout。
-    材料目录（#1830 / #1827）：cwd 指向目录；codex 显式 `--sandbox read-only`，
-    claude 只开放 Read/Glob/Grep。
+    材料目录（#1830 / #1827）：仅 Codex / Claude。cwd 指向目录；
+    Codex `--cd` 绑定工作根 + `--sandbox read-only`（不授 disk-full-read-access）；
+    Claude `--restricted` 把文件工具限制在工作目录，只开放 Read/Glob/Grep。
     """
+    if materials_dir and runner not in _MATERIALS_CLI_RUNNERS:
+        raise RuntimeError(
+            f"材料模式仅支持 Codex 与 Claude，拒绝 runner={runner}"
+        )
     if runner == "agy":
         return [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"], prompt, None
     if runner == "codex":
@@ -709,6 +720,8 @@ def _cli_runner_command(
         ]
         if materials_dir:
             cmd += [
+                "--restricted",
+                "--strict-mcp-config",
                 "--allowedTools", "Read", "Glob", "Grep",
                 "--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit",
                 "WebFetch", "WebSearch", "Task",
@@ -810,7 +823,7 @@ def _iter_cli_runner_text(
     final_text = ""
     for line in _iter_cli_process_lines(
         cmd, stdin_text=stdin_text, env=env,
-        cwd=(materials_dir or None),
+        cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
         clock=clock, outcome=outcome,
     ):
         if json_events:

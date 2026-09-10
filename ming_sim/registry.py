@@ -532,9 +532,7 @@ def create_minister_agent(
             "\n\n".join(monthly_block_parts),
         ]
         tools = material_tools(prepared.root) + build_minister_tools(
-            character, context,
-            use_roster_tool=use_roster_tool,
-            use_army_tool=use_army_tool,
+            character, context, include_query_tools=False,
         )
         # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
         if character.office_type in ("司礼监", "礼部"):
