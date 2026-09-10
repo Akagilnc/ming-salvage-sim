@@ -2087,6 +2087,21 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_character_knowledge_events_character
                 ON character_knowledge_events(character_name, turn, id);
 
+            -- #1829 公开说法：独立记录，投影进公开层；不改人物实况。
+            CREATE TABLE IF NOT EXISTS public_sayings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                body TEXT NOT NULL,
+                involved_characters TEXT NOT NULL DEFAULT '[]',
+                affair_ref TEXT NOT NULL DEFAULT '',
+                source_id TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_public_sayings_affair
+                ON public_sayings(affair_ref, id);
+
             CREATE TABLE IF NOT EXISTS character_knowledge_sources (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn INTEGER NOT NULL,
