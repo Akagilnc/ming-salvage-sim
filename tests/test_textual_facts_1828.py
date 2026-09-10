@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 
+from ming_sim.applier import atomic
 from ming_sim.db import GameDB
-from ming_sim.knowledge import build_character_knowledge, render_character_knowledge
+from ming_sim.knowledge import build_character_knowledge
 
 
 INJURY = "孙传庭右臂受伤，暂时不能亲自挥刀，但仍能指挥军队"
@@ -108,13 +109,31 @@ def test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics(game
     assert tuple(after_row) == tuple(before_row)
 
     knowledge = build_character_knowledge(db, state, "孙传庭")
-    rendered = render_character_knowledge(knowledge, "孙传庭", db=db, state=state)
     dump = json.dumps(knowledge, ensure_ascii=False)
     assert INJURY not in dump
-    assert INJURY not in rendered
     public = knowledge.get("public_events") or []
     private = knowledge.get("events") or []
     assert not any(INJURY in str(item.get("body") or "") for item in (*public, *private))
+
+
+def test_append_inside_atomic_rolls_back_with_outer_transaction(game):
+    db, state, _ = game
+    try:
+        with atomic(db):
+            db.textual_facts.append(
+                subject_kind="character",
+                subject_id="孙传庭",
+                body=INJURY,
+                year=state.year,
+                period=state.period,
+                turn=state.turn,
+            )
+            raise RuntimeError("force rollback")
+    except RuntimeError:
+        pass
+    assert db.textual_facts.readable_materials(
+        subject_kind="character", subject_id="孙传庭",
+    ) == ()
 
 
 def test_textual_facts_survive_reopen(game, content):

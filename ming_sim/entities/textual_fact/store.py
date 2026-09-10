@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ming_sim.applier import sanitize_sqlite_text
+from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
 from ming_sim.models import reign_period_label
 
 TEXTUAL_FACT_SUBJECT_KINDS = frozenset({"character", "army", "region", "affair"})
@@ -72,7 +72,7 @@ class TextualFactStore:
         year_n = int(year)
         turn_n = int(turn)
         stored = sanitize_sqlite_text(body)
-        owns = _owns_transaction(self._conn)
+        owns = connection_owns_transaction(self._conn)
         cur = self._conn.execute(
             "INSERT INTO textual_facts (subject_kind, subject_id, year, period, turn, body) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -126,9 +126,3 @@ def _parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
     return kind, target
 
 
-def _owns_transaction(conn: Any) -> bool:
-    return not (
-        bool(getattr(conn, "_commit_suspended", False))
-        or int(getattr(conn, "_atomic_depth", 0) or 0) > 0
-        or conn.in_transaction
-    )
