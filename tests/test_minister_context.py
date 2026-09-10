@@ -543,7 +543,7 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
     db, _state, content = game
     region_poison = "SENTINEL_GLOBAL_REGION_BUILDER"
     building_poison = "SENTINEL_GLOBAL_BUILDING_BUILDER"
-    # plant into rows the global builders actually surface (top danger region + buildings brief)
+    # plant into rows that db.region_report / db.buildings_report actually surface
     region_row = db.conn.execute(
         "SELECT id FROM regions WHERE id='shaanxi'"
     ).fetchone()
@@ -552,7 +552,7 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
     ).fetchone()
     assert region_row is not None and building_row is not None
     db.conn.execute("UPDATE regions SET public_support=29, unrest=64")
-    # keep poisoned region at top of danger_order so region_brief must carry the sentinel
+    # keep poisoned region at top of danger_order so region_report must carry the sentinel
     db.conn.execute(
         "UPDATE regions SET public_support=1, unrest=99, name=? WHERE id=?",
         (region_poison, region_row["id"]),

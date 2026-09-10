@@ -229,10 +229,8 @@ def create_minister_agent(
     # owner 2026-09-07）。此处按原配置构造，不改调用方对象。
     # temperature 0.6：保留人物个性，但收敛发挥——少在拟旨里夹带题外私货。
     model = create_chat_model(llm_config, temperature=0.6, top_p=0.9)
-    # 缓存策略：instructions 全部静态化（仅依赖 character，不依赖每月 state/events）。
-    # game_world / minister_agent prompt、character 档案 跨月完全相同 → DeepSeek 前缀缓存命中。
-    # 每月动态上下文（钱粮、奏报、地区、军队、派系）由 MinisterRegistry 在 agent 创建后通过首轮
-    # user message 喂入，不污染 system prompt。
+    # 开场只带最小集（身份、在场、日期、正经手事务、本场已说的话）。
+    # 钱粮/奏报/地区/军队/派系等加工材料进材料目录，由模型自读（#1830 / ADR 0155）。
     # The caller owns the live content/state pair.  Requiring the module-level
     # registry binding here makes this public construction seam fail in fresh
     # sessions (and lets a stale binding win over a restored context).
@@ -317,7 +315,7 @@ class MinisterRegistry:
             for name in characters
         }
         # 懒加载：不在构造时预建全人物 agent（一整月通常只召见两三人，预建 50+ 个
-        # 都要查 DB 拼 memory_brief，纯浪费）。改由 get() 首次取用时按需建并缓存。
+        # 都要查 DB 拼材料目录，纯浪费）。改由 get() 首次取用时按需建并缓存。
 
     def _create(self, character: Character) -> Agent:
         return create_minister_agent(
@@ -329,7 +327,7 @@ class MinisterRegistry:
         )
 
     def get(self, character: Character) -> Agent:
-        """懒加载：首次召见某大臣才建其 Agent（含查 DB 拼 memory_brief），之后本回合复用缓存。"""
+        """懒加载：首次召见某大臣才建其 Agent（含材料目录），之后本回合复用缓存。"""
         agent = self.agents.get(character.name)
         if agent is None:
             agent = self._create(character)
