@@ -20,7 +20,8 @@ import web_app
 from ming_sim.intelligence import _qualitative_domain_statement
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.models import CourtContext
-from ming_sim.tools import build_board_query_tools, build_minister_tools
+from ming_sim.materials import list_materials, prepare_character_materials, read_material
+from ming_sim.tools import build_board_query_tools
 
 
 # 关宁 seed 静态 status 句（content/armies.json）；永不随 arrears 更新，是本票病灶样本。
@@ -250,13 +251,12 @@ def test_shared_consumers_still_surface_status(read_game):
     ]
     _assert_text_keeps_statuses(roster, all_statuses, "army_roster")
     assert seed_status in roster
-    # 经大臣 query_army_roster 工具闭包再钉（军事域授权）
-    mtools = {
-        f.__name__: f
-        for f in build_minister_tools(war, ctx, use_army_tool=True)
-    }
-    tool_roster = mtools["query_army_roster"]([])
-    _assert_text_keeps_statuses(tool_roster, all_statuses, "tools.query_army_roster")
+    prepared = prepare_character_materials(db, state, war)
+    blob = "\n".join(
+        read_material(prepared.root, path)
+        for path in list_materials(prepared.root) if path != "INDEX.txt"
+    )
+    _assert_text_keeps_statuses(blob, all_statuses, "materials.directory")
 
     # DB 字段零改写
     assert _guanning_db_status(db) == seed_status

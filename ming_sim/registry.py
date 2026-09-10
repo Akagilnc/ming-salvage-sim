@@ -70,7 +70,7 @@ def _ctx() -> GameContent:
 
 def build_court_brief(context: CourtContext, character: Optional[Character] = None) -> str:
     """每回合精简上下文：仅含回合 + 核心数值 + 在办事项 + 钱粮一句话。
-    地区/军队/派系/事项详情靠大臣按需调 tool 查（list_regions, inspect_memorial 等）。
+    地区/军队/派系/事项详情靠大臣按需读材料目录。
     """
     metrics = context.state.metrics
     money_line = (
@@ -99,7 +99,7 @@ def build_court_brief(context: CourtContext, character: Optional[Character] = No
         f"在办事项：{issues_brief}。"
         f"{identity_brief}"
         f"势力档料：{_power_brief(context)}。"
-        f"地区/奏报/钱粮详情按需调工具查（list_regions/inspect_region/inspect_memorial/check_treasury 等）；人事与军队详情见下方固定名册。"
+        f"地区/奏报/钱粮详情见材料目录，按需自取；人事与军队详情见下方固定名册。"
     )
 
 
@@ -163,7 +163,7 @@ def build_court_roster(context: CourtContext) -> str:
 
 
 def build_court_roster_index(context: CourtContext) -> str:
-    """人物数超 100 时用索引替代完整名册：仅姓名+官署+状态，完整信息由 query_court_roster tool 提供。"""
+    """人物数超 100 时用索引替代完整名册：仅姓名+官署+状态，完整信息见材料目录。"""
     from ming_sim.session import _is_summonable_court_minister
 
     db = context.db
@@ -181,15 +181,14 @@ def build_court_roster_index(context: CourtContext) -> str:
     if not lines:
         return ""
     return (
-        "【在朝人事索引（涉及人物官职/状态时先调 query_court_roster 查完整信息）】\n"
+        "【在朝人事索引（涉及人物官职/状态时读材料目录查完整信息）】\n"
         + "\n".join(lines)
     )
 
 
 def build_last_gazette_brief(context: CourtContext) -> str:
     """上回合（上月）邸报全文，固定喂进大臣 system。
-    去掉了"上月须调 read_past_report"的依赖，大臣首轮即知上月朝局/地方/灾兵祸福。
-    更早月份的邸报仍由 read_past_report 工具按需查。无上月邸报（开局首回合）返回空。"""
+    上月朝局/地方/灾兵祸福见邸报；更早月份见材料目录。无上月邸报（开局首回合）返回空。"""
     prev_turn = int(context.state.turn) - 1
     if prev_turn < 0:
         return ""
@@ -197,7 +196,7 @@ def build_last_gazette_brief(context: CourtContext) -> str:
     if not report or not report.strip():
         return ""
     safe_report = str(report or "")
-    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份调 read_past_report 查）】\n" + safe_report
+    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份见材料目录）】\n" + safe_report
 
 
 def build_memory_brief(character: Character, context: CourtContext) -> str:
@@ -271,8 +270,7 @@ def build_secret_order_brief(character: Character, context: CourtContext) -> str
 
 
 def build_region_brief(context: CourtContext) -> str:
-    """两京十三省危情概览注入大臣 system —— CLI 后端无 list_regions 工具，
-    靠此让大臣知地方民心/动乱/边压，谈政略不抓瞎。"""
+    """两京十三省危情概览。"""
     try:
         return context.db.region_report(limit=8)
     except Exception:
@@ -280,8 +278,7 @@ def build_region_brief(context: CourtContext) -> str:
 
 
 def build_building_brief(context: CourtContext) -> str:
-    """现有建筑紧凑表（名·类·省 规模/完好/产出）——省去叙述控 token。
-    CLI 后端无 list_buildings 工具，靠此让大臣知国家有哪些厂局仓坞。"""
+    """现有建筑紧凑表（名·类·省 规模/完好/产出）。"""
     try:
         # 用中文地区名（LEFT JOIN regions），不漏拼音 region_id（beizhili 等英文进 system
         # 会诱发模型 code-switch 蹦英文；地区无名时退回 region_id）。
@@ -532,7 +529,7 @@ def create_minister_agent(
             "\n\n".join(monthly_block_parts),
         ]
         tools = material_tools(prepared.root) + build_minister_tools(
-            character, context, include_query_tools=False,
+            character, context,
         )
         # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
         if character.office_type in ("司礼监", "礼部"):

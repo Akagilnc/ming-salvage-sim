@@ -2312,11 +2312,12 @@ def test_talent_pool_excludes_prince_unfilled_and_future_debut(saved_game):
 
 
 def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
-    """registry.build_court_roster(_index) + tools.get_active_ministers / query_court_roster
+    """registry.build_court_roster(_index) + tools.get_active_ministers / 材料目录
     与 simulator/web 同口径排除 active 宗藩（cmr R3 cross-section，全 roster 面一致）。"""
     from ming_sim.models import CourtContext
     from ming_sim import registry as reg
-    from ming_sim.tools import build_board_query_tools, build_minister_tools
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    from ming_sim.tools import build_board_query_tools
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     reg.bind_content(content)
@@ -2331,10 +2332,12 @@ def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
         and getattr(c, "office_type", "") not in ("后宫", "宗藩")
         and db.get_character_status(n)[0] == "active"
     )
-    mtools = {f.__name__: f
-              for f in build_minister_tools(content.characters[minister_name], ctx, use_roster_tool=True)}
-    if "query_court_roster" in mtools:
-        assert name not in mtools["query_court_roster"]()
+    prepared = prepare_character_materials(db, state, content.characters[minister_name])
+    blob = "\n".join(
+        read_material(prepared.root, path)
+        for path in list_materials(prepared.root) if path != "INDEX.txt"
+    )
+    assert name not in blob
 
 
 def test_apply_office_appointment_rejects_vassal_prince(game):

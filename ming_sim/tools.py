@@ -1,19 +1,16 @@
-"""大臣 Agent 工具集：查询工具 + court tools（拟旨/退下/换人）。L5。"""
+"""大臣 Agent 工具集：court 动作工具（拟旨/密令/退下/换人）。读取走材料目录。"""
 
 from __future__ import annotations
 
 import json
-import re
 from typing import Dict, List, Optional
 
 from ming_sim.constants import DOSSIER_LINK_TYPES, TURN_UNIT
-from ming_sim.context import _ctx as _content_ctx, state_context
+from ming_sim.context import state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
 from ming_sim.issues import TravelTone, normalize_travel_tone
 from ming_sim.person_archive_contract import PERSON_ACTIONS
-from ming_sim.qualitative import progress_band, qualitative_band
 from ming_sim.strict_types import strict_int
-from ming_sim.token_stats import tlog
 
 _STATUS_CN = {
     "active": "在朝",
@@ -54,21 +51,6 @@ def _duty_location(office: str, office_type: str, status: str) -> str:
     if office_type == "地方":
         return "按现职在地方任事。"
     return "按现职任事，具体地点需看官衔所辖。"
-
-
-def _compact_json_text(raw: object) -> str:
-    text = str(raw or "").strip()
-    if not text:
-        return "（未填）"
-    try:
-        return json.dumps(json.loads(text), ensure_ascii=False, separators=(",", ":"))
-    except (TypeError, ValueError):
-        return text
-
-
-def _progress_band(value: object) -> str:
-    # Single vocabulary lives in qualitative.progress_band (#1356 r6).
-    return progress_band(value)
 
 
 _ABSTRACT_STOP_FIELDS = {
@@ -150,38 +132,6 @@ def _qualitative_stop_condition(raw: object) -> str:
     return "、".join(parts) or "（条件未详）"
 
 
-def _qualitative_condition(raw: object) -> str:
-    """Hide abstract thresholds in legacy resolve/fail condition strings."""
-    text = str(raw or "").strip()
-    match = re.fullmatch(r"([^<>=!]+?)\s*(<=|>=|==|!=|<|>)\s*(-?\d+(?:\.\d+)?)", text)
-    if not match:
-        return "（条件已存档）" if text else "（未填）"
-    key = match.group(1).strip()
-    field = key.rsplit(".", 1)[-1]
-    if field in _COUNTABLE_STOP_FIELDS:
-        return f"{key}{match.group(2)}{match.group(3)}"
-    display_key = key
-    parts = key.split(".")
-    if len(parts) >= 2:
-        subject = parts[-2]
-        try:
-            content = _content_ctx()
-            for collection in (content.regions, content.armies, content.characters):
-                match_subject = next(
-                    (item.name for item in collection.values()
-                     if getattr(item, "id", None) == subject),
-                    None,
-                )
-                if match_subject:
-                    subject = match_subject
-                    break
-        except (AttributeError, RuntimeError):
-            pass
-        display_key = f"{subject}{field}"
-    label = _ABSTRACT_STOP_FIELDS.get(field, field)
-    return f"{display_key.replace(field, label)}达到所定档位"
-
-
 def _commitment_tool_fields(db, state, row) -> str:
     keys = row.keys() if hasattr(row, "keys") else []
     commitment_kind = str(row["commitment_kind"] if "commitment_kind" in keys else "").strip()
@@ -214,251 +164,7 @@ def _commitment_tool_fields(db, state, row) -> str:
     )
 
 
-def build_minister_tools(character: Character, context: CourtContext,
-                         use_roster_tool: bool = False, use_army_tool: bool = False,
-                         include_query_tools: bool = True):
-    def projection() -> Dict[str, object]:
-        from ming_sim.knowledge import build_character_knowledge
-        return build_character_knowledge(context.db, context.state, character.name)
-
-    def scoped_world(domain: str) -> str:
-        """Read only the already-built character projection, never a global rail."""
-        world = projection().get("world") or {}
-        return str(world.get(domain) or "本职见闻未载此项。")
-
-    def visible_issues() -> List[Dict[str, object]]:
-        return list(projection().get("issues") or [])
-
-    def filter_domain(domain: str, query: str = "") -> str:
-        rendered = scoped_world(domain)
-        needle = str(query or "").strip()
-        if not needle:
-            return rendered
-        lines = [line for line in rendered.splitlines() if needle in line]
-        return "\n".join(lines) if lines else f"见闻中未载{needle}。"
-
-    def query_court_roster(names: List[str] = []) -> str:
-        """按角色的本职、人事域与可见事件投影结构化在朝名册。"""
-        from ming_sim.knowledge import project_court_roster_rows
-
-        wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
-        rows = project_court_roster_rows(
-            context.db.current_court_roster_rows(context.state, wanted),
-            projection(),
-            character.office_type,
-        )
-        if not rows:
-            return "见闻中未载所查人物。"
-        if not wanted:
-            return "【在朝人事索引】\n" + "\n".join(
-                f"{row['name']}：{row['office'] or '无现任官职'}，{row['status']}"
-                for row in rows
-            )
-        return "【在朝人事详情】\n" + "\n".join(
-            "|".join(str(value or "") for value in (
-                row["name"], row["office"], row["office_type"], row["faction"],
-                row["status_reason"] or row["status"],
-            )) for row in rows
-        )
-
-    def query_army_roster(names: List[str] = []) -> str:
-        """角色获准使用军籍工具后，空查完整索引、具名查完整记录。"""
-        wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
-        if not wanted:
-            return context.db.army_roster(qualitative_equipment=True)
-        return context.db.army_roster(filter_names=wanted, qualitative_equipment=True) \
-            or "见闻中未载所查军队。"
-
-    def list_memorials() -> str:
-        """查看当前在办的所有事项（issue）。"""
-        rows = visible_issues()
-        if not rows:
-            return f"本{TURN_UNIT}无在办事项。"
-        lines = []
-        for idx, row in enumerate(rows, 1):
-            kind_tag = "系统" if row["kind"] == "situation" else "皇帝推动"
-            commitment_fields = _commitment_tool_fields(context.db, context.state, row)
-            commitment_suffix = f"，{commitment_fields}" if commitment_fields else ""
-            targets = "、".join(row.get("target_roster") or [])
-            target_suffix = f"；标靶：{targets}" if targets else ""
-            lines.append(
-                f"{idx}. #{row['id']}[{kind_tag}]{row['title']}"
-                f"（进展{_progress_band(row['bar_value'])}；向好端：{row['bar_good_meaning']}；"
-                f"{row['stage_text']}{commitment_suffix}{target_suffix}）"
-            )
-        return "\n".join(lines)
-
-    def inspect_memorial(slot: int) -> str:
-        """查看某条在办事项的细节。slot 是事项编号（由 list_memorials 给出）。"""
-        rows = visible_issues()
-        try:
-            n = int(slot)
-        except (ValueError, TypeError):
-            return f"slot 必须是整数 1-{len(rows)}。"
-        if n < 1 or n > len(rows):
-            return f"slot 越界 {n}。本{TURN_UNIT}有 {len(rows)} 条在办事项。"
-        row = rows[n - 1]
-        commitment_fields = _commitment_tool_fields(context.db, context.state, row)
-        commitment_text = f"承诺字段：{commitment_fields}。" if commitment_fields else ""
-        targets = "、".join(row.get("target_roster") or [])
-        target_text = f"标靶：{targets}。" if targets else ""
-        return (
-            f"#{row['id']} {row['title']}（进展{_progress_band(row['bar_value'])}，"
-            f"{row['bar_bad_meaning']}↔{row['bar_good_meaning']}）。"
-            f"阶段：{row['stage_text']}。牵涉：{row['faction_hint'] or '—'}。"
-            f"结案条件：{_qualitative_condition(row['resolve_condition'])}。"
-            f"失败条件：{_qualitative_condition(row['fail_condition'])}。"
-            f"{target_text}{commitment_text}"
-        )
-
-    def list_regions() -> str:
-        f"""查看两京十三省最危险地区和账面{TURN_UNIT}税。"""
-        return scoped_world("regional")
-
-    def inspect_region(region_name: str) -> str:
-        """查看某一地区人口、民心、动乱、天灾、人祸、田亩和税收。"""
-        # The overview rail is intentionally capped for prompt size, but an
-        # office already authorized for the regional domain may inspect a
-        # named region.  Use the DB's qualitative presenter rather than its
-        # raw detail path so this on-demand read keeps the P4 boundary.
-        if not scoped_world("regional") or scoped_world("regional") == "本职见闻未载此项。":
-            return "本职见闻未载此项。"
-        try:
-            return context.db.region_detail(region_name, qualitative=True)
-        except ValueError:
-            return f"见闻中未载{str(region_name or '').strip()}。"
-
-    def list_buildings() -> str:
-        """查看全国在册建筑（火炮厂、矿厂、常平仓、边堡、织造局等）的等级、完好、维护费与产出。"""
-        return scoped_world("construction")
-
-    def inspect_building(building_name: str) -> str:
-        """查看某座建筑的类别、等级、完好、维护费、风险与产出。"""
-        return filter_domain("construction", building_name)
-
-    def estimate_resistance(slot: int) -> str:
-        """估算某条在办事项若下旨推动的主要阻力。slot 是事项编号（由 list_memorials 给出）。"""
-        rows = visible_issues()
-        try:
-            n = int(slot)
-        except (ValueError, TypeError):
-            return f"slot 必须是整数 1-{len(rows)}。"
-        if n < 1 or n > len(rows):
-            return f"slot 越界 {n}。本{TURN_UNIT}有 {len(rows)} 条在办事项。"
-        row = rows[n - 1]
-        # The tool may only estimate from the issue already present in the
-        # character projection.  Do not rebuild a national resistance score
-        # from global factions/regions/armies here: those are separate
-        # perspectival rails and would bypass the read boundary.
-        resistance = int(row["severity"]) // 4
-        tags = row["faction_hint"] or ""
-        if resistance >= 23:
-            level = "高"
-        elif resistance >= 18:
-            level = "中"
-        else:
-            level = "低"
-        return f"{row['title']}阻力{level}，主要牵涉：{tags or '—'}。"
-
-    def read_past_report(year: int = 0, month: int = 0) -> str:
-        """读某年某月邸报全文，了解此前朝局走向、地方动静、灾兵祸福，避免接旨时凭空臆议。
-        **上月邸报已固定注入上下文（见 system 末尾【上回合邸报全文】），无须再调本工具查上月**；
-        本工具用于查更早月份。
-        参数：
-        - year：年份（如 1628）。缺省（0）默认查上上月（上月已在上下文，故缺省往前再退一月）。
-        - month：月份（1-12）。缺省（0）配 year 缺省即上上月；若给了 year 而 month=0，按 1 月算。
-        所求年月未到、无邸报存档或在登基之前 → 提示『未见正式记录』。"""
-        # 缺省：查上上月（state.year/period - 2）——上月邸报已固定在上下文，缺省再往前退一月。
-        if not year:
-            target_year = context.state.year
-            target_month = context.state.period - 2
-            while target_month < 1:
-                target_month += 12
-                target_year -= 1
-        else:
-            target_year = int(year)
-            target_month = int(month) if month else 1
-            target_month = max(1, min(12, target_month))
-        knowledge = projection()
-        rows = [
-            item for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
-            if int(item.get("year") or 0) == target_year
-            and int(item.get("period") or 0) == target_month
-            and item.get("body")
-        ]
-        if not rows:
-            return f"{target_year}年{target_month}月未见正式邸报记录。"
-        lines = [f"【{target_year}年{target_month}月见闻】"]
-        for item in rows:
-            lines.append(f"{item.get('title') or '旧闻'}：{item['body']}")
-        return "\n".join(lines)
-
-    def search_memories(keywords: str = "", year: int = 0, period: int = 0) -> str:
-        """检索起居注章节旧事。支持两种方式（可同时用）：
-        - keywords: 逗号分隔关键词，如 "魏忠贤,下狱" 或 "山东,民变"；
-        - year+period: 按年月检索，取前后2月窗口，如 year=1628, period=3。
-        两种场景必须调用：1.皇帝问及某人/某地/某事；2.拟旨前涉及人事处置，先查旧况避免重复。
-        """
-        knowledge = projection()
-        all_ch = [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
-        hits = []
-        if year:
-            ref_turn = (int(year) - 1627) * 12 + (int(period or 1) - 10) + 1
-            hits = [c for c in all_ch if abs(int(c.get("turn") or 0) - ref_turn) <= 2]
-        kw_list = [k.strip() for k in str(keywords or "").split(",") if k.strip()]
-        if kw_list:
-            kw_hits = [
-                c for c in all_ch
-                if any(kw in (c.get("body") or "") or kw in (c.get("title") or "") for kw in kw_list)
-            ]
-            seen = {c.get("source_id") for c in hits}
-            hits += [c for c in kw_hits if c.get("source_id") not in seen]
-        if not hits:
-            desc = f"「{'、'.join(kw_list)}」" if kw_list else f"{year}年{period}月前后"
-            return f"未找到与{desc}相关的起居注记载。"
-        tlog(f"[search_memories] kw={kw_list} year={year} period={period} hit={len(hits)}")
-        label = " ".join(kw_list) or f"{year}年{period}月"
-        lines = [f"【起居注检索：{label}】"]
-        for c in sorted(hits, key=lambda item: int(item.get("turn") or 0))[-8:]:
-            body = str(c.get("body") or c.get("title") or "")
-            if body:
-                lines.append(f"- {c['year']}年{c['period']}月：{body}")
-        if len(lines) == 1:
-            return "未见正式邸报记录。"
-        return "\n".join(lines)
-
-    def check_treasury() -> str:
-        """查国库、内库、收支和欠账。"""
-        return scoped_world("treasury")
-
-    def inspect_treasury_ledger(account: str = "内库", turns: int = 6) -> str:
-        """查本职见闻中的国库或内库流水摘要。
-        涉及内库/国库调动来源、历史拨款、查抄收益、赏赐开销时调用。
-        account: "国库" 或 "内库"；turns: 查最近几回合（默认6）。
-        """
-        acc = (account or "内库").strip()
-        if acc not in {"国库", "内库"}:
-            return "account 须为「国库」或「内库」。"
-        # The ledger read is owned by the role-scoped knowledge projection.
-        # Never reopen economy_ledger here: doing so bypasses the office gate.
-        from ming_sim.knowledge import build_character_treasury_ledger
-        rendered = build_character_treasury_ledger(
-            context.db, context.state, character.name, acc, turns,
-        )
-        if not rendered:
-            return "本职见闻未载此项。"
-        return rendered
-
-    def audit_tax_arrears(target: str = "各省积欠") -> str:
-        """清查积欠、估算可追收入库。"""
-        needle = "" if target.strip() == "各省积欠" else target
-        return filter_domain("regional", needle)
-
-    def allocate_payroll(target: str = f"本{TURN_UNIT}急需钱粮处") -> str:
-        """核算军饷调度。"""
-        needle = "" if target.strip() == f"本{TURN_UNIT}急需钱粮处" else target
-        return filter_domain("military", needle)
-
+def build_minister_tools(character: Character, context: CourtContext):
     def propose_directive(
         decree_text: str,
         punish_action: str = "",
@@ -909,34 +615,11 @@ def build_minister_tools(character: Character, context: CourtContext,
         recommend_person,
         register_unlisted_person,
     ]
-    query_tools = [
-        list_memorials,
-        inspect_memorial,
-        list_regions,
-        inspect_region,
-        list_buildings,
-        inspect_building,
-        estimate_resistance,
-        read_past_report,
-        search_memories,
-        inspect_treasury_ledger,
-    ]
-    if use_roster_tool:
-        query_tools.append(query_court_roster)
-    # A scale threshold may switch an authorized projection from inline text
-    # to a tool, but it must never grant a domain the role does not possess.
-    if use_army_tool and "military" in (projection().get("world") or {}):
-        query_tools.append(query_army_roster)
     if character.office_type == "吏部":
         action_tools.append(propose_appointment)
-    if character.office_type in ("户部", "内阁", "司礼监"):
-        query_tools.extend([check_treasury, allocate_payroll, audit_tax_arrears])
-    tools = list(action_tools)
-    if include_query_tools:
-        tools.extend(query_tools)
     unique_tools = []
     seen_tool_names: set = set()
-    for tool in tools:
+    for tool in action_tools:
         name = getattr(tool, "__name__", str(tool))
         if name in seen_tool_names:
             continue

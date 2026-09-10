@@ -1,4 +1,4 @@
-"""#1830 S1：材料目录骨架与两通道读取。
+"""#1830 S1：材料目录骨架与目录读取。
 
 Seams: prepare_character_materials (directory + opening min set),
 list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
