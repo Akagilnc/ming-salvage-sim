@@ -476,8 +476,9 @@ def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:
     kind, _, rest = text.partition(":")
     if kind not in {_ORIGIN_AFFAIR, _ORIGIN_DOSSIER}:
         return None, None
+    head = rest.split("/", 1)[0]
     try:
-        target = int(rest)
+        target = int(head)
     except (TypeError, ValueError):
         return None, None
     if target <= 0:

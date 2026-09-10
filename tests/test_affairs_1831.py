@@ -11,6 +11,7 @@ import ming_sim.session as session_mod
 import ming_sim.simulation as simulation
 from ming_sim.audience_extraction import parse_extraction_facts
 from ming_sim.db import GameDB
+from ming_sim.entities.affair import parse_origin_ref
 from ming_sim.issues import apply_score_extraction
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from ming_sim.session import GameSession
@@ -218,10 +219,14 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         db, state, "银两已出京", involved_characters=[minister],
         affair_ref=db.affairs.origin_ref(affair.id),
     )
-    lived = db.affairs.experiences(affair.id)
-    assert lived
-    assert minister in lived[0]["person_names"]
-    assert lived[0]["origin_ref"] in db.affairs.origin_refs(affair.id)
+    pubs = [
+        entry for entry in audience_night.list_ledger(db, night["id"])
+        if audience_night.TAG_MINGFA in (entry.get("tags") or [])
+        and str(entry.get("origin_ref") or "")
+    ]
+    assert pubs
+    refs = set(db.affairs.origin_refs(affair.id))
+    assert {str(entry["origin_ref"]) for entry in pubs} <= refs
     brief = build_extractor_shared_context(db, state, "宁远护送", "")
     row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
     assert "experiences" not in row
@@ -235,9 +240,14 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         assert loaded.name == NINGYUAN
         materials = restored.affairs.current_situation(restored.textual_facts, affair.id)
         assert [fact.body for fact in materials] == [PROGRESS]
-        restored_lived = restored.affairs.experiences(affair.id)
-        assert minister in restored_lived[0]["person_names"]
-        assert restored_lived[0]["origin_ref"] in restored.affairs.origin_refs(affair.id)
+        restored_pubs = [
+            entry for entry in audience_night.list_ledger(restored, night["id"])
+            if audience_night.TAG_MINGFA in (entry.get("tags") or [])
+            and str(entry.get("origin_ref") or "")
+        ]
+        assert restored_pubs
+        restored_refs = set(restored.affairs.origin_refs(affair.id))
+        assert {str(entry["origin_ref"]) for entry in restored_pubs} <= restored_refs
         restored_brief = build_extractor_shared_context(restored, state, "宁远护送", "")
         restored_row = next(
             item for item in restored_brief["open_affairs"] if int(item["id"]) == affair.id
@@ -474,7 +484,7 @@ def test_translation_experience_marks_affair_without_dossier(game):
     rows = db.affairs.experiences(affair.id)
     assert len(rows) == 1
     assert minister in rows[0]["person_names"]
-    assert rows[0]["origin_ref"].startswith(db.affairs.origin_ref(affair.id))
+    assert parse_origin_ref(rows[0]["origin_ref"]) == ("affair", affair.id)
     brief = build_extractor_shared_context(db, state, "宁远护送", "")
     row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
     assert "experiences" not in row
@@ -485,8 +495,8 @@ def test_translation_experience_marks_affair_without_dossier(game):
     try:
         restored_rows = restored.affairs.experiences(affair.id)
         assert minister in restored_rows[0]["person_names"]
-        assert restored_rows[0]["origin_ref"].startswith(
-            restored.affairs.origin_ref(affair.id),
+        assert parse_origin_ref(restored_rows[0]["origin_ref"]) == (
+            "affair", affair.id,
         )
     finally:
         restored.close()
