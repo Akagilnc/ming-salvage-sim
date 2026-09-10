@@ -2482,6 +2482,31 @@ def _affair_declaration_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]
     return {} if declaration is None else {"affair_declaration": dict(declaration)}
 
 
+def _stamp_split_birth_key(declaration: Mapping[str, Any]) -> Dict[str, Any]:
+    """One extract shares one durable new identity; do not infer from name/origin."""
+    body = dict(declaration)
+    if body.get("attach") != "new" or str(body.get("birth_key") or "").strip():
+        return body
+    from uuid import uuid4
+    body["birth_key"] = f"split:{uuid4().hex}"
+    return body
+
+
+def _share_extract_affair_declaration(drafts: List[Dict[str, Any]]) -> None:
+    shared = None
+    for draft in drafts:
+        raw = draft.get("affair_declaration")
+        if isinstance(raw, dict):
+            shared = raw
+            break
+    if shared is None:
+        return
+    stamped = _stamp_split_birth_key(shared)
+    for draft in drafts:
+        if draft.get("affair_declaration"):
+            draft["affair_declaration"] = dict(stamped)
+
+
 def _participant_fields_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
     """从抽取原包收承办人/参与人——拟旨意图=无时仍可后置点将（#1778）。"""
     out: Dict[str, Any] = {}
@@ -3030,6 +3055,8 @@ def extract_draft_intent(
             elif stamped:
                 shared = {"affair_declaration": stamped[0]}
                 drafts = [{**d, **shared} for d in drafts]
+        if drafts and not invalid_batch:
+            _share_extract_affair_declaration(drafts)
         if invalid_batch or not any(draft is not None for draft in drafts):
             drafts = []
             draft_combo_flags = []
@@ -3270,13 +3297,20 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
+        single_declaration = _affair_declaration_from_draft_obj(obj)
+        if single_declaration:
+            single_declaration = {
+                "affair_declaration": _stamp_split_birth_key(
+                    single_declaration["affair_declaration"]
+                )
+            }
         single_result = {
             "draft_action": _action, "draft_text": draft_text, "target_candidate": "",
             "dossier_action_type": dossier_action,
             "target_kind": target_kind, "target_id": target_id_value,
             "participant_roster": obj["参与人"] if "参与人" in obj else [],
             **mechanical,
-            **_affair_declaration_from_draft_obj(obj),
+            **single_declaration,
         }
         return _finalize_extract_with_combo(single_result, needs_combo=needs_combo)
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
@@ -3304,13 +3338,20 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
+    cand_declaration = _affair_declaration_from_draft_obj(obj)
+    if cand_declaration:
+        cand_declaration = {
+            "affair_declaration": _stamp_split_birth_key(
+                cand_declaration["affair_declaration"]
+            )
+        }
     cand_result = {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
         "dossier_action_type": dossier_action,
         "target_kind": target_kind, "target_id": target_id_value,
         "participant_roster": obj["参与人"] if "参与人" in obj else [],
         **mechanical,
-        **_affair_declaration_from_draft_obj(obj),
+        **cand_declaration,
     }
     return _finalize_extract_with_combo(cand_result, needs_combo=needs_combo)
 

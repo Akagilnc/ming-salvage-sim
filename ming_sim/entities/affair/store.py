@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Iterator, Mapping
+from typing import Any, Mapping
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
 
@@ -14,9 +12,6 @@ _ATTACH_EXISTING = "existing"
 _ATTACH_CLOSE = "close"
 ATTACH_BIRTH = frozenset({_ATTACH_NEW, _ATTACH_EXISTING})
 ATTACH_RESULT_CLOSE = frozenset({_ATTACH_CLOSE})
-_birth_batch_ids: ContextVar[dict[tuple[object, ...], int] | None] = ContextVar(
-    "affair_birth_batch_ids", default=None,
-)
 _ORIGIN_AFFAIR = "affair"
 _ORIGIN_DOSSIER = "dossier"
 _POINTER_TABLES = {
@@ -158,11 +153,7 @@ class AffairStore:
             ).fetchone()
             if existing is not None:
                 return int(existing["id"])
-        cache = _birth_batch_ids.get()
-        ident = _new_identity(parsed)
-        if cache is not None and ident in cache:
-            return cache[ident]
-        affair_id = self.open(
+        return self.open(
             name=str(parsed["name"]),
             origin=str(parsed["origin"]),
             year=year,
@@ -170,9 +161,6 @@ class AffairStore:
             turn=turn,
             birth_key=key,
         ).id
-        if cache is not None:
-            cache[ident] = affair_id
-        return affair_id
 
     def peek_declared_id(
         self,
@@ -187,15 +175,12 @@ class AffairStore:
             self.get(affair_id)
             return affair_id
         key = str(parsed.get("birth_key") or "").strip()
-        if key:
-            row = self._conn.execute(
-                "SELECT id FROM affairs WHERE birth_key=?", (key,),
-            ).fetchone()
-            return None if row is None else int(row["id"])
-        cache = _birth_batch_ids.get()
-        if cache is None:
+        if not key:
             return None
-        return cache.get(_new_identity(parsed))
+        row = self._conn.execute(
+            "SELECT id FROM affairs WHERE birth_key=?", (key,),
+        ).fetchone()
+        return None if row is None else int(row["id"])
 
     def close_from_declaration(
         self,
@@ -222,8 +207,13 @@ class AffairStore:
         year: int,
         period: int,
         turn: int,
+        authorized_ids: set[int] | None = None,
     ) -> int:
         """Bind a row from a birth declaration. Peek before create so conflicts leave no orphan."""
+        parsed = parse_affair_declaration(declaration, allowed=ATTACH_BIRTH)
+        if parsed["attach"] == _ATTACH_EXISTING and authorized_ids is not None:
+            if int(parsed["affair_id"]) not in authorized_ids:
+                raise ValueError("事务不在本批可见输入")
         current = self._current_pointer(table, row_id)
         peeked = self.peek_declared_id(declaration, allowed=ATTACH_BIRTH)
         if current:
@@ -390,29 +380,6 @@ def declaration_from_payload(
     if raw is None:
         return None
     return parse_affair_declaration(raw, allowed=allowed)
-
-
-@contextmanager
-def birth_batch() -> Iterator[dict[tuple[object, ...], int]]:
-    """Same close-night / result batch shares one identity for identical new declarations."""
-    current = _birth_batch_ids.get()
-    if current is not None:
-        yield current
-        return
-    token = _birth_batch_ids.set({})
-    try:
-        cache = _birth_batch_ids.get()
-        assert cache is not None
-        yield cache
-    finally:
-        _birth_batch_ids.reset(token)
-
-
-def _new_identity(parsed: Mapping[str, object]) -> tuple[object, ...]:
-    key = str(parsed.get("birth_key") or "").strip()
-    if key:
-        return ("birth_key", key)
-    return ("new", str(parsed["name"]), str(parsed["origin"]))
 
 
 def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:

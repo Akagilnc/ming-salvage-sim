@@ -5079,6 +5079,7 @@ def apply_issue_tracker_output(
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
     event_result_delta_event_ids: Optional[set[str]] = None,
     defer_event_trigger_ids: Optional[set[str]] = None,
+    open_affair_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
@@ -5734,6 +5735,18 @@ def apply_issue_tracker_output(
                 "reason": str(exc), "item": ni, "title": title,
             })
             continue
+        if (
+            issue_affair is not None
+            and issue_affair.get("attach") == "existing"
+            and isinstance(open_affair_ids_at_input, set)
+            and int(issue_affair["affair_id"]) not in open_affair_ids_at_input
+        ):
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": "事务不在本批可见输入",
+                "item": ni, "title": title,
+            })
+            continue
         issue_id = db.insert_issue(
             state,
             kind=kind,
@@ -5774,6 +5787,10 @@ def apply_issue_tracker_output(
                 year=int(state.year),
                 period=int(state.period),
                 turn=int(state.turn),
+                authorized_ids=(
+                    open_affair_ids_at_input
+                    if isinstance(open_affair_ids_at_input, set) else None
+                ),
             )
         applied_item = {"issue_id": issue_id, "kind": kind, "title": title, "rejected": False}
         if commitment_kind:
@@ -8753,7 +8770,8 @@ def apply_score_extraction(
         candidate_event_ids_authoritative=candidate_event_ids_authoritative,
         impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
-        defer_event_trigger_ids=strategic_event_pool_ids)
+        defer_event_trigger_ids=strategic_event_pool_ids,
+        open_affair_ids_at_input=authorized_open_affairs)
 
     commitment_economy_carriers: List[Dict[str, object]] = []
     for item in issue_summary.get("new_issues") or []:

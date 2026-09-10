@@ -127,7 +127,12 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
     ]
     assert len(pending) == 3
     payloads = [json.loads(row["payload_json"] or "{}") for row in pending]
-    assert all(payload.get("affair_declaration") == declaration for payload in payloads)
+    shared = payloads[0].get("affair_declaration")
+    assert isinstance(shared, dict)
+    assert shared.get("attach") == "new"
+    assert shared.get("name") == NINGYUAN
+    assert str(shared.get("birth_key") or "").startswith("split:")
+    assert all(payload.get("affair_declaration") == shared for payload in payloads)
 
     monkeypatch.setattr(
         cb, "extract_confirmation_intent",
@@ -380,7 +385,7 @@ def test_code_does_not_auto_close_or_merge_affairs(game, monkeypatch):
     assert first.id != second.id
     assert [row.id for row in db.affairs.list_open()] == [first.id, second.id]
 
-    db.create_decree_dossier(
+    dossier_id = db.create_decree_dossier(
         state,
         action_type="assignment",
         decree_text="调洪承畴赴宁远",
@@ -395,14 +400,74 @@ def test_code_does_not_auto_close_or_merge_affairs(game, monkeypatch):
     )
     still = db.affairs.get(first.id)
     assert still.status == "open"
-
-    spawned = db.insert_issue(state, kind="situation", title="推演新起")
-    born = db.affairs.attach_from_declaration(
-        "issues", spawned, _declaration(),
-        year=state.year, period=state.period, turn=state.turn,
+    result_origin_id = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text="推演结果来源旨",
+        target_kind="issue",
+        target_id="ningyuan-result",
+        executor_kind="character",
+        executor_id=minister,
+        pending_action_id=92000,
+        payload={"assignee_id": minister},
     )
-    assert db.affairs.affair_id_for_issue(spawned) == born
-    assert born not in {first.id, second.id}
+    db.record_dossier_decision(result_origin_id, "promulgated")
+
+    independent = []
+    for pending_id, target in ((92001, "left-ningyuan"), (92002, "right-ningyuan")):
+        independent.append(db.create_decree_dossier(
+            state,
+            action_type="assignment",
+            decree_text="另起同名交办",
+            target_kind="issue",
+            target_id=target,
+            executor_kind="character",
+            executor_id=minister,
+            pending_action_id=pending_id,
+            payload={
+                "assignee_id": minister,
+                "affair_declaration": _declaration(),
+            },
+        ))
+    left_affair = int(db.get_decree_dossier(independent[0])["affair_id"])
+    right_affair = int(db.get_decree_dossier(independent[1])["affair_id"])
+    assert left_affair != right_affair
+
+    origin = f"dossier:{result_origin_id}"
+    before_issues = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
+    denied = apply_score_extraction(
+        db, state,
+        {"new_issues": [{
+            "origin_kind": "decree",
+            "origin_ref": origin,
+            "kind": "situation",
+            "title": "越权挂接",
+            "affair_declaration": _declaration(
+                attach="existing", affair_id=second.id,
+            ),
+        }]},
+        content=content,
+        open_affair_ids_at_input={first.id},
+    )
+    assert denied["issue_summary"]["new_issues"][0]["rejected"] is True
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"] == before_issues
+
+    spawned = apply_score_extraction(
+        db, state,
+        {"new_issues": [{
+            "origin_kind": "decree",
+            "origin_ref": origin,
+            "kind": "situation",
+            "title": "推演新起",
+            "affair_declaration": _declaration(),
+        }]},
+        content=content,
+        open_affair_ids_at_input={first.id, second.id},
+    )
+    created = spawned["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is False
+    born = db.affairs.affair_id_for_issue(int(created["issue_id"]))
+    assert born not in {first.id, second.id, left_affair, right_affair}
 
     before_affairs = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
     apply_score_extraction(
@@ -479,4 +544,6 @@ def test_code_does_not_auto_close_or_merge_affairs(game, monkeypatch):
     assert db.affairs.get(first.id).status == "closed"
     assert db.affairs.get(second.id).status == "open"
     assert db.affairs.get(born).status == "open"
-    assert {row.id for row in db.affairs.list_open()} == {second.id, born}
+    assert {row.id for row in db.affairs.list_open()} == {
+        second.id, left_affair, right_affair, born,
+    }

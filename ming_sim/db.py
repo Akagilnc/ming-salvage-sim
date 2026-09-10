@@ -14890,42 +14890,40 @@ class GameDB:
                     existing_by_region[key] = int(row["id"])
 
         # ④ 一次写入：仅 missing；commit 一次；返回 existing∪new 确定序
-        from ming_sim.entities.affair import birth_batch
         new_ids_by_region: Dict[str, int] = {}
-        with birth_batch():
-            for entry in plan:
-                rid = str(entry["region_id"] or "")
-                if rid in existing_by_region:
-                    self._attach_affair_from_payload(
-                        state, entry["payload"], existing_by_region[rid],  # type: ignore[arg-type]
-                    )
-                    continue
-                did = self._create_decree_dossier_row(
-                    state,
-                    action_type=action_type,
-                    decree_text=decree_text,
-                    target_kind=target_kind or str(entry["payload"].get("target_kind") or ""),  # type: ignore[union-attr]
-                    target_id=(
-                        target_id if target_id not in (None, "")
-                        else entry["payload"].get("target_id") or ""  # type: ignore[union-attr]
-                    ),
-                    executor_kind=str(entry.get("executor_kind") or ""),
-                    executor_id=entry.get("executor_id"),
-                    source_chat_turn_id=source_chat_turn_id,
-                    pending_action_id=pending_action_id,
-                    directive_id=directive_id,
-                    secret_order_id=secret_order_id,
-                    payload=entry["payload"],  # type: ignore[arg-type]
-                    status=status,
-                    due_turn=due_turn,
-                    extension=entry.get("extension") or None,  # type: ignore[arg-type]
-                    participants=entry["participants"],  # type: ignore[arg-type]
-                    commit=False,
-                    _issued_secret_order=_issued_secret_order,
-                    region_id=rid,
-                    _skip_lead_route=True,
+        for entry in plan:
+            rid = str(entry["region_id"] or "")
+            if rid in existing_by_region:
+                self._attach_affair_from_payload(
+                    state, entry["payload"], existing_by_region[rid],  # type: ignore[arg-type]
                 )
-                new_ids_by_region[rid] = int(did)
+                continue
+            did = self._create_decree_dossier_row(
+                state,
+                action_type=action_type,
+                decree_text=decree_text,
+                target_kind=target_kind or str(entry["payload"].get("target_kind") or ""),  # type: ignore[union-attr]
+                target_id=(
+                    target_id if target_id not in (None, "")
+                    else entry["payload"].get("target_id") or ""  # type: ignore[union-attr]
+                ),
+                executor_kind=str(entry.get("executor_kind") or ""),
+                executor_id=entry.get("executor_id"),
+                source_chat_turn_id=source_chat_turn_id,
+                pending_action_id=pending_action_id,
+                directive_id=directive_id,
+                secret_order_id=secret_order_id,
+                payload=entry["payload"],  # type: ignore[arg-type]
+                status=status,
+                due_turn=due_turn,
+                extension=entry.get("extension") or None,  # type: ignore[arg-type]
+                participants=entry["participants"],  # type: ignore[arg-type]
+                commit=False,
+                _issued_secret_order=_issued_secret_order,
+                region_id=rid,
+                _skip_lead_route=True,
+            )
+            new_ids_by_region[rid] = int(did)
 
         self._commit_dossier_write(commit)
 
@@ -18665,138 +18663,136 @@ class GameDB:
             bool(getattr(self.conn, "_commit_suspended", False))
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
         )
-        from ming_sim.entities.affair import birth_batch
-        with birth_batch():
-            for pa in rows:
-                if pa["kind"] == "directive" and pa["action"] == "拟旨":
-                    prepared = self._prepare_pending_directive(
-                        state, pa, content=content,
-                        allow_clarification=action_ids is not None,
-                    )
-                    classification = prepared["classification"]
-                    if classification == "needs_clarification":
-                        continue
-                    if classification == "invalid":
-                        cm = atomic(self) if owns_transaction else contextlib.nullcontext()
-                        with cm:
-                            self.conn.execute(
-                                "UPDATE pending_actions SET status='failed' WHERE id=?",
-                                (int(pa["id"]),),
-                            )
-                        continue
-                    payload = dict(prepared["payload"])
-                    payload["_canonical_pending_directive"] = True
-                    committed = self._commit_conversational_draft(
-                        state, pa, payload, content=content, registry=registry,
-                        directive_status=directive_status,
-                        rejection_collector=rejection_collector)
-                    if committed is not None:
-                        applied.append(committed)
+        for pa in rows:
+            if pa["kind"] == "directive" and pa["action"] == "拟旨":
+                prepared = self._prepare_pending_directive(
+                    state, pa, content=content,
+                    allow_clarification=action_ids is not None,
+                )
+                classification = prepared["classification"]
+                if classification == "needs_clarification":
                     continue
-                try:
-                    payload = json.loads(pa["payload_json"] or "{}")
-                    if not isinstance(payload, dict):
-                        payload = {}
-                except (ValueError, TypeError):
+                if classification == "invalid":
+                    cm = atomic(self) if owns_transaction else contextlib.nullcontext()
+                    with cm:
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='failed' WHERE id=?",
+                            (int(pa["id"]),),
+                        )
+                    continue
+                payload = dict(prepared["payload"])
+                payload["_canonical_pending_directive"] = True
+                committed = self._commit_conversational_draft(
+                    state, pa, payload, content=content, registry=registry,
+                    directive_status=directive_status,
+                    rejection_collector=rejection_collector)
+                if committed is not None:
+                    applied.append(committed)
+                continue
+            try:
+                payload = json.loads(pa["payload_json"] or "{}")
+                if not isinstance(payload, dict):
                     payload = {}
-                # apply 抛错(如 催办 对已非 active 的密令)= 当 False:下面标 failed、
-                # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
-                cm = atomic(self) if owns_transaction else contextlib.nullcontext()
-                with cm:
-                    savepoint = f"pending_action_apply_{int(pa['id'])}"
-                    ok = False
-                    office_memory_key = None
-                    office_memory_before = None
-                    office_memory_had_key = False
-                    if pa["kind"] == "office" and content is not None:
-                        office_memory_key = str(payload.get("name") or "").strip()
-                        if office_memory_key:
-                            office_memory_had_key = office_memory_key in content.characters
-                            office_memory_before = content.characters.get(office_memory_key)
+            except (ValueError, TypeError):
+                payload = {}
+            # apply 抛错(如 催办 对已非 active 的密令)= 当 False:下面标 failed、
+            # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
+            cm = atomic(self) if owns_transaction else contextlib.nullcontext()
+            with cm:
+                savepoint = f"pending_action_apply_{int(pa['id'])}"
+                ok = False
+                office_memory_key = None
+                office_memory_before = None
+                office_memory_had_key = False
+                if pa["kind"] == "office" and content is not None:
+                    office_memory_key = str(payload.get("name") or "").strip()
+                    if office_memory_key:
+                        office_memory_had_key = office_memory_key in content.characters
+                        office_memory_before = content.characters.get(office_memory_key)
 
-                    def restore_office_memory() -> None:
-                        if not office_memory_key:
-                            return
-                        if office_memory_had_key:
-                            content.characters[office_memory_key] = office_memory_before
-                        else:
-                            content.characters.pop(office_memory_key, None)
+                def restore_office_memory() -> None:
+                    if not office_memory_key:
+                        return
+                    if office_memory_had_key:
+                        content.characters[office_memory_key] = office_memory_before
+                    else:
+                        content.characters.pop(office_memory_key, None)
 
-                    self.conn.execute(f"SAVEPOINT {savepoint}")
-                    try:
-                        ok = self._apply_pending_action(
-                            state, pa, payload, content=content, registry=registry,
-                            rejection_collector=rejection_collector)
-                        if ok:
-                            self.conn.execute(
-                                "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
-                        else:
-                            self.conn.execute(f"ROLLBACK TO {savepoint}")
-                            restore_office_memory()
-                            # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
-                            # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
-                            self.conn.execute(
-                                "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-                    except Exception as exc:
+                self.conn.execute(f"SAVEPOINT {savepoint}")
+                try:
+                    ok = self._apply_pending_action(
+                        state, pa, payload, content=content, registry=registry,
+                        rejection_collector=rejection_collector)
+                    if ok:
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='committed' WHERE id=?", (int(pa["id"]),))
+                    else:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         restore_office_memory()
-                        # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
-                        from ming_sim.applier import RejectionCollectorRequired
-                        if isinstance(exc, RejectionCollectorRequired):
-                            raise
-                        rejection = getattr(exc, "dossier_link_rejection", None)
-                        if rejection is not None:
-                            self._record_dossier_link_rejection(
-                                *rejection, pending_action_id=int(pa["id"]),
-                            )
-                        tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-                        ok = False
+                        # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
+                        # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-                    finally:
-                        self.conn.execute(f"RELEASE {savepoint}")
-                    if rejection_collector is not None:
-                        rejection_collector.flush_to_db(self)
-                if ok:
-                    item: Dict[str, object] = {
-                        "id": pa["id"],
-                        "kind": pa["kind"],
-                        "action": pa["action"],
-                        "target_id": pa["target_id"],
-                    }
-                    # #1376：新建密令落库后把真实 order id 回传确认面（stage 时 target_id 为空）。
-                    if pa["kind"] == "secret_order" and str(pa["action"] or "") == "新建":
-                        row = self.conn.execute(
-                            "SELECT secret_order_id FROM decree_dossiers "
-                            "WHERE pending_action_id=? AND secret_order_id IS NOT NULL "
-                            "ORDER BY id DESC LIMIT 1",
-                            (int(pa["id"]),),
-                        ).fetchone()
-                        if row is not None and row["secret_order_id"] is not None:
-                            item["secret_order_id"] = int(row["secret_order_id"])
-                        else:
-                            from ming_sim.covert_progress import (
-                                build_covert_task_contract,
-                                covert_task_from_payload,
-                                find_active_investigation_order_id,
-                                _investigation_target_of,
-                            )
-                            raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
-                            if raw_task:
-                                frozen = build_covert_task_contract(covert_task=raw_task) or {}
-                                inv_target = _investigation_target_of(frozen)
-                                if inv_target:
-                                    merged_oid = find_active_investigation_order_id(self, inv_target)
-                                    if merged_oid > 0:
-                                        item["secret_order_id"] = int(merged_oid)
-                    # Direct person mutations (调教/密令…) surface names for outer-commit
-                    # registry projection when settle passes registry=None.
-                    affected = self._affected_people_from_pending_action(pa, payload)
-                    if affected:
-                        item["affected_people"] = sorted(affected)
-                    applied.append(item)
-            # 镜像归外层 collector owner（0150-D2；本方法不自建不自镜像）。
-            return applied
+                except Exception as exc:
+                    self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    restore_office_memory()
+                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
+                    from ming_sim.applier import RejectionCollectorRequired
+                    if isinstance(exc, RejectionCollectorRequired):
+                        raise
+                    rejection = getattr(exc, "dossier_link_rejection", None)
+                    if rejection is not None:
+                        self._record_dossier_link_rejection(
+                            *rejection, pending_action_id=int(pa["id"]),
+                        )
+                    tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                    ok = False
+                    self.conn.execute(
+                        "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+                finally:
+                    self.conn.execute(f"RELEASE {savepoint}")
+                if rejection_collector is not None:
+                    rejection_collector.flush_to_db(self)
+            if ok:
+                item: Dict[str, object] = {
+                    "id": pa["id"],
+                    "kind": pa["kind"],
+                    "action": pa["action"],
+                    "target_id": pa["target_id"],
+                }
+                # #1376：新建密令落库后把真实 order id 回传确认面（stage 时 target_id 为空）。
+                if pa["kind"] == "secret_order" and str(pa["action"] or "") == "新建":
+                    row = self.conn.execute(
+                        "SELECT secret_order_id FROM decree_dossiers "
+                        "WHERE pending_action_id=? AND secret_order_id IS NOT NULL "
+                        "ORDER BY id DESC LIMIT 1",
+                        (int(pa["id"]),),
+                    ).fetchone()
+                    if row is not None and row["secret_order_id"] is not None:
+                        item["secret_order_id"] = int(row["secret_order_id"])
+                    else:
+                        from ming_sim.covert_progress import (
+                            build_covert_task_contract,
+                            covert_task_from_payload,
+                            find_active_investigation_order_id,
+                            _investigation_target_of,
+                        )
+                        raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
+                        if raw_task:
+                            frozen = build_covert_task_contract(covert_task=raw_task) or {}
+                            inv_target = _investigation_target_of(frozen)
+                            if inv_target:
+                                merged_oid = find_active_investigation_order_id(self, inv_target)
+                                if merged_oid > 0:
+                                    item["secret_order_id"] = int(merged_oid)
+                # Direct person mutations (调教/密令…) surface names for outer-commit
+                # registry projection when settle passes registry=None.
+                affected = self._affected_people_from_pending_action(pa, payload)
+                if affected:
+                    item["affected_people"] = sorted(affected)
+                applied.append(item)
+        # 镜像归外层 collector owner（0150-D2；本方法不自建不自镜像）。
+        return applied
 
     @staticmethod
     def _state_for_turn(state: GameState, turn: int) -> GameState:
