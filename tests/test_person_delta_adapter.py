@@ -2312,15 +2312,10 @@ def test_talent_pool_excludes_prince_unfilled_and_future_debut(saved_game):
 
 
 def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
-    """tools.get_active_ministers / 材料目录与 simulator/web 同口径排除 active 宗藩。"""
-    from ming_sim.models import CourtContext
+    """材料目录与 simulator/web 同口径排除 active 宗藩。"""
     from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    from ming_sim.tools import build_board_query_tools
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
-    ctx = CourtContext(state=state, db=db, previous_summary="")
-    board = {f.__name__: f for f in build_board_query_tools(ctx)}
-    assert name not in board["get_active_ministers"]()
     minister_name = next(
         n for n, c in content.characters.items()
         if getattr(c, "power_id", "ming") == "ming"

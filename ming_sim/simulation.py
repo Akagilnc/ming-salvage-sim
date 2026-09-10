@@ -486,8 +486,8 @@ def _talent_pool_rows(db: "GameDB", state: GameState) -> List[Dict[str, object]]
     ADR L104 池 = (active+身名分听用候铨) ∪ (offstage/retired/dismissed 在世)。active 半=
     顶替离任者（office='听用候铨'，仍 active 可即起复，S5 核心玩趣）。锚 身名分 office='听用候铨'
     （非 office_type=待铨——后者兼作分类失败 fallback、被污染，决定10/L94）。"""
-    # roster scope（与 court_roster / active_ministers / tools.get_active_ministers /
-    # tools.get_active_ministers / 材料目录朝臣名册 / web_app.in_talent_pool 同口径）：
+    # roster scope（与 court_roster / active_ministers /
+    # 材料目录朝臣名册 / web_app.in_talent_pool 同口径）：
     # 只放大明、非后宫、非宗藩、非未仕、非流寇，且已历史登场。否则混进非起复对象：
     # ① 流寇/后金 offstage（李自成等）——流寇按 faction 排除，招抚归明后 power_id 翻 ming
     #   （character_power_changes）、仅 power_id 闸漏（与 web_app.in_talent_pool 同 bug 类，cmr R1 A）；
@@ -1095,7 +1095,7 @@ def _extractor_context_payload(
     )
     active_ministers = [
         dict(r) for r in db.conn.execute(
-            # roster scope（同 court_roster / _talent_pool_rows / tools.get_active_ministers）：
+            # roster scope（同 court_roster / _talent_pool_rows / 材料目录朝臣名册）：
             # 大明、非后宫、非宗藩、非未仕（#1317 r2 可召单真源；PR #106 / PR#121）。
             "SELECT name,office,office_type,faction,power_id,location,transit_to "
             "FROM characters WHERE status='active' AND power_id='ming' "

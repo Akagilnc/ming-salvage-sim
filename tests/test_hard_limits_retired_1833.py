@@ -76,7 +76,7 @@ def test_gazettes_older_than_six_months_are_indexed_in_full(game, tmp_path):
         assert len(body) > 1500
 
 
-def test_api_material_reads_beyond_five_are_not_rejected(game):
+def test_api_minister_agent_has_no_tool_call_limit(game):
     db, state, content = game
     character = _active_minister(db, content)
     captured = {}
@@ -90,15 +90,30 @@ def test_api_material_reads_beyond_five_are_not_rejected(game):
          patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
         create_minister_agent(character, cfg, _ctx(game), db)
 
-    assert captured.get("tool_call_limit") in (None, 0)
-    tools = {fn.__name__: fn for fn in captured["tools"]}
-    listing = tools["list_materials"]()
-    rels = [line for line in listing.splitlines() if line.strip() and line != "INDEX.txt"]
-    assert len(rels) >= 6
-    for rel in rels[:6]:
-        body = tools["read_material"](rel)
-        assert body
-        assert not str(body).startswith("无法读取")
+    assert "tool_call_limit" not in captured
+    tool_names = {getattr(fn, "__name__", "") for fn in captured["tools"]}
+    assert "list_materials" in tool_names
+    assert "read_material" in tool_names
+    retired = {
+        "list_regions", "inspect_region", "read_past_report", "search_memories",
+        "inspect_treasury_ledger", "check_treasury", "list_memorials",
+        "inspect_memorial", "list_buildings", "inspect_building",
+        "view_state", "list_armies", "inspect_army", "list_powers",
+        "inspect_power", "list_issues", "inspect_issue", "get_active_ministers",
+        "get_faction_class_state",
+    }
+    assert not (tool_names & retired)
+
+
+def test_retired_board_query_builders_are_gone():
+    import ming_sim.tools as tools
+
+    for name in (
+        "build_board_query_tools",
+        "build_simulator_tools",
+        "build_extractor_tools",
+    ):
+        assert not hasattr(tools, name)
 
 
 def test_simulator_keeps_full_previous_gazette(game):

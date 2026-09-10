@@ -427,7 +427,6 @@ def is_vassal_prince(character: "Character") -> bool:
     受守面清单（新增同类面时一并加，勿漏）：
     - web_app: visible_in_court / in_talent_pool / _require_active_minister / api_create_secret_order
     - simulation: court_roster / active_ministers / _talent_pool_rows（SQL office_type NOT IN(…'宗藩'…)）
-    - tools: get_active_ministers
     - materials: 人物/朝臣名册.txt
     - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
@@ -456,7 +455,6 @@ def is_weishi(character: "Character") -> bool:
     - cli: terminal.choose_minister
     - cli_backend: _draft_intent_character_roster_facts（拟诏事实块）
     - simulation: court_roster / active_ministers（SQL office_type NOT IN(…'未仕')）
-    - tools: get_active_ministers
     - materials: 人物/朝臣名册.txt
     - db: current_court_roster_rows（已排）
     - web_app: in_talent_pool / simulation._talent_pool_rows（未入仕非「可起复前臣」）
