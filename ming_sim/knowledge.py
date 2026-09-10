@@ -97,11 +97,22 @@ def knowledge_row_visible_to(
     target_name = str(target_value("name") or target_value("character_id") or character_name)
     target_office_type = str(target_value("office_type") or "")
     target_office = str(target_value("office") or "")
+    source_id = str(row["source_id"] or "")
     try:
         excluded_names = json.loads(row["excluded_names"] or "[]")
     except (TypeError, ValueError, KeyError, IndexError):
         excluded_names = []
     excluded = {str(name) for name in excluded_names}
+    # The row's own ``excluded_names`` column may predate a person exclusion
+    # persisted on the source afterward, or (for read-time synthesized rows,
+    # e.g. issue case text) may never carry the column at all.  This gate is
+    # the single authority for a source's secrecy boundary, so it re-reads
+    # the durable per-source blacklist itself rather than trusting callers to
+    # pre-load it into a parallel row before calling in.
+    if hasattr(db, "knowledge_exclusions_for_source"):
+        excluded |= {
+            str(name) for name in (db.knowledge_exclusions_for_source(source_id) or [])
+        }
     if character_name in excluded or target_name in excluded:
         return False
     targets: object = {}
@@ -115,7 +126,6 @@ def knowledge_row_visible_to(
         except (TypeError, ValueError):
             targets = {}
     if not isinstance(targets, dict) or not targets:
-        source_id = str(row["source_id"] or "")
         if hasattr(db, "knowledge_exclusion_targets_for_source"):
             targets = db.knowledge_exclusion_targets_for_source(source_id)
     people = {str(name) for name in (targets.get("people", []) if isinstance(targets, dict) else [])}
@@ -138,7 +148,7 @@ def knowledge_row_visible_to(
     try:
         source = db.conn.execute(
             "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
-            (str(row["source_id"] or ""),),
+            (source_id,),
         ).fetchone()
     except (AttributeError, KeyError, IndexError, TypeError):
         source = None
@@ -154,27 +164,6 @@ def knowledge_row_visible_to(
         if participants and character_name not in participants:
             return False
     return True
-
-
-def _source_exclusion_row(
-    db: Any, source_id: str, *, office_type: str = "", office: str = "",
-) -> dict:
-    """Load the durable person/office blacklist for one source.
-
-    Issue and event consumers share this row so a later public or roster
-    projection cannot drop the explicit exclusion.
-    """
-    excluded_names: list[str] = []
-    if hasattr(db, "knowledge_exclusions_for_source"):
-        excluded_names = [
-            str(name) for name in (db.knowledge_exclusions_for_source(source_id) or [])
-        ]
-    return {
-        "source_id": source_id,
-        "excluded_names": json.dumps(excluded_names, ensure_ascii=False),
-        "office_type": office_type,
-        "office": office,
-    }
 
 
 def _prose(text: object) -> str:
@@ -215,7 +204,7 @@ def _issue_audience_case_events(
             continue
         if not knowledge_row_visible_to(
             db,
-            _source_exclusion_row(db, source_id),
+            {"source_id": source_id},
             character_name,
         ):
             continue
@@ -742,9 +731,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
                 continue
         if not knowledge_row_visible_to(
             db,
-            _source_exclusion_row(
-                db, source_id, office_type=office_type, office=office_name,
-            ),
+            {"source_id": source_id, "office_type": office_type, "office": office_name},
             character_name,
         ):
             continue

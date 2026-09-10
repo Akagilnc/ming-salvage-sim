@@ -4,7 +4,7 @@ import json
 
 from ming_sim.models import Character
 import pytest
-from ming_sim.knowledge import build_character_knowledge
+from ming_sim.knowledge import build_character_knowledge, knowledge_row_visible_to
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from tests.dossier_test_helpers import create_test_secret_order
 
@@ -566,6 +566,31 @@ def test_issue_source_blacklist_vetoes_knowledge_opening_and_directory(game, tmp
     assert marker in knower_prepared.opening
     assert marker in knower_blob
     assert public_marker in knower_blob
+
+def test_gate_rejects_persisted_exclusion_bypass_by_empty_call_row(game):
+    """`knowledge_row_visible_to` is the sole authority for a source's person
+    exclusion (#1812).  A caller passing a row whose own ``excluded_names``
+    is empty must not resurrect access to a name the source has durably
+    excluded — the gate must re-read the persisted boundary itself instead
+    of trusting a caller-assembled row."""
+    db, state, content = game
+    hidden = next(c for c in content.characters.values() if c.office_type == "礼部")
+    marker = "SENTINEL_GATE_BYPASS_1812"
+    issue_id = db.insert_issue(
+        state, kind="initiative", title=marker, origin_kind="test",
+        origin_ref="test:gate-bypass-1812", stage_text=marker,
+        participants=[{"character_id": hidden.name}],
+    )
+    source_id = f"issue:{issue_id}"
+    db.register_character_knowledge_source(
+        state, [{"character_id": hidden.name}], "assignment", marker, marker,
+        source_id, excluded_names=[hidden.name],
+    )
+
+    assert knowledge_row_visible_to(
+        db, {"source_id": source_id, "excluded_names": "[]"}, hidden.name,
+    ) is False
+
 
 def test_secret_blacklist_survives_later_public_projection(game):
     db, state, content = game
