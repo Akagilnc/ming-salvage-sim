@@ -8212,7 +8212,7 @@ def apply_score_extraction(
     from uuid import uuid4
     from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
 
-    batch_new_identities: dict[str, str] = {}
+    batch_new_identities: dict[str, tuple[str, str, str]] = {}
 
     def _stamp_batch_new_declaration(item: object) -> object:
         if not isinstance(item, dict):
@@ -8223,17 +8223,24 @@ def apply_score_extraction(
             return item
         if parsed is None or parsed.get("attach") != "new":
             return item
-        key = str(parsed.get("birth_key") or "").strip()
         identity = str(parsed.get("identity") or "").strip()
-        if not key:
-            if identity:
-                key = batch_new_identities.setdefault(identity, f"result:{uuid4().hex}")
-            else:
+        name = str(parsed["name"])
+        origin = str(parsed["origin"])
+        if identity:
+            prior = batch_new_identities.get(identity)
+            if prior is None:
                 key = f"result:{uuid4().hex}"
+                batch_new_identities[identity] = (key, name, origin)
+            else:
+                key, prior_name, prior_origin = prior
+                if prior_name != name or prior_origin != origin:
+                    raise ValueError("同批事务 identity 声明冲突")
+        else:
+            key = f"result:{uuid4().hex}"
         stamped = {
             "attach": "new",
-            "name": parsed["name"],
-            "origin": parsed["origin"],
+            "name": name,
+            "origin": origin,
             "birth_key": key,
         }
         return {**item, "affair_declaration": stamped}
@@ -8247,11 +8254,8 @@ def apply_score_extraction(
             extracted[field] = [_stamp_batch_new_declaration(item) for item in raw_items]
 
     def _origin_ref_from_result_item(item: Mapping[str, object] | None) -> str:
-        stamped = _stamp_batch_new_declaration(item)
-        if not isinstance(stamped, dict):
-            stamped = item
         return db.affairs.origin_ref_from_result_item(
-            stamped,
+            item,
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),

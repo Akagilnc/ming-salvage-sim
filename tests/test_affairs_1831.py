@@ -424,6 +424,55 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
     )
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before + 2
 
+    planted = _declaration(birth_key="result:planted-key")
+    before_planted = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    apply_score_extraction(
+        db, state,
+        {"economy_moves": [{
+            "account": "国库", "delta": -3, "category": "善后", "reason": "跨次甲",
+            "affair_declaration": planted,
+        }]},
+        content=content, open_affair_ids_at_input={first.id, second.id},
+    )
+    apply_score_extraction(
+        db, state,
+        {"人物变更": [{
+            "name": minister, "动作": "评定", "loyalty": 1,
+            "affair_declaration": planted,
+        }]},
+        content=content, open_affair_ids_at_input={first.id, second.id},
+    )
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM affairs",
+    ).fetchone()["n"] == before_planted + 2
+
+    before_conflict = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    try:
+        apply_score_extraction(
+            db, state,
+            {
+                "economy_moves": [{
+                    "account": "国库", "delta": -4, "category": "善后", "reason": "冲突甲",
+                    "affair_declaration": _declaration(identity="conflict-id"),
+                }],
+                "人物变更": [{
+                    "name": minister, "动作": "评定", "loyalty": 1,
+                    "affair_declaration": {
+                        "attach": "new", "name": "另一名", "origin": "另一起因",
+                        "identity": "conflict-id",
+                    },
+                }],
+            },
+            content=content, open_affair_ids_at_input={first.id, second.id},
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected identity conflict")
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM affairs",
+    ).fetchone()["n"] == before_conflict
+
 
 def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
     db, state, _ = game
