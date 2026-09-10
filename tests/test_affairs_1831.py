@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import threading
 from types import SimpleNamespace
 
 import ming_sim.audience_night as audience_night
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 import ming_sim.simulation as simulation
-from ming_sim.audience_extraction import parse_extraction_facts
+from ming_sim.audience_extraction import parse_extraction_facts, run_extraction_for_turn
 from ming_sim.db import GameDB
 from ming_sim.entities.affair import affair_id_from_experience_origin_ref
 from ming_sim.issues import apply_score_extraction
@@ -560,31 +561,52 @@ def test_translation_experience_marks_affair_without_dossier(game):
         restored.close()
 
 
-def test_settle_story_extraction_honors_frozen_authorization_not_live_state(game):
-    """落账须用调用方在首闸内冻结的 open-affair 授权集，不得重读 live 状态：
-    事务在冻结之后、落账之前被了结，仍应按冻结时刻的授权放行（#1831）。"""
+class _CloseAffairDuringExtractAgent:
+    """canned 抽取员：run()（模拟 LLM 调用期间）把首闸冻结时仍开的事务了结，
+    赛跑并发收夜/了结与本轮抽取；回带一条接到该（此刻已了结）事务的经历事实。"""
+
+    def __init__(self, db, affair_id: int, turn: int) -> None:
+        self._db = db
+        self._affair_id = affair_id
+        self._turn = turn
+
+    def run(self, _material):
+        self._db.affairs.declare_closed(self._affair_id, turn=self._turn)
+        output = json.dumps({
+            "facts": [{
+                "person_names": [],
+                "body": "护送途中闻边报，尚无案卷",
+                "事务声明": {"attach": "existing", "affair_id": self._affair_id},
+            }],
+        }, ensure_ascii=False)
+        return SimpleNamespace(content=output)
+
+
+def test_run_extraction_for_turn_freezes_open_affair_authorization_across_close_race(game):
+    """真实入口 `run_extraction_for_turn`：首闸内冻结的 open-affair 授权集须原样
+    传到落账口。事务在冻结之后、LLM 调用期间（落账之前）被了结——live 状态已不
+    含它——仍须按冻结时刻的授权放行经历落账，不得因读点移出首闸或授权集未透传
+    到 `_settle_or_pending`/`settle_story_extraction` 而在 live 漂移下拒收（#1831）。"""
     db, state, _ = game
     minister = _minister(db)
     affair = db.affairs.open(
         name=NINGYUAN, origin=ORIGIN,
         year=state.year, period=state.period, turn=state.turn,
     )
-    nid, ctid, seq = _persist_reply(db, state, minister)
-    facts = parse_extraction_facts({
-        "facts": [{
-            "person_names": [minister],
-            "body": "护送途中闻边报，尚无案卷",
-            "事务声明": _declaration(attach="existing", affair_id=affair.id),
-        }],
-    })
-    # 模拟并发：冻结授权之后、落账之前，事务被了结——live list_open 已不含它。
-    db.affairs.declare_closed(affair.id, turn=state.turn)
-    db.settle_story_extraction(
-        ctid, nid, facts, seq, authorized_open_ids={affair.id},
+    nid, ctid, seq = _persist_reply(db, state, minister, reply="臣记下边报，尚待奏闻。")
+    agent = _CloseAffairDuringExtractAgent(db, affair.id, state.turn)
+
+    result = run_extraction_for_turn(
+        db=db, minister_name=minister, reply="臣记下边报，尚待奏闻。",
+        chat_turn_id=ctid, night_id=nid, source_night_seq=seq,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=agent,
     )
+
+    assert result["status"] == "done"
+    assert db.affairs.get(affair.id).status == "closed"
     rows = db.affairs.experiences(affair.id)
     assert len(rows) == 1
-    assert minister in rows[0]["person_names"]
 
 
 def test_close_requires_open_affairs_visible_in_batch(game, monkeypatch):
