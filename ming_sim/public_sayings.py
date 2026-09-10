@@ -13,10 +13,6 @@ SOURCE_PREFIX = "public_saying:"
 LAYER_TITLE = "有此说法"
 
 
-def is_public_saying_source(source_id: object) -> bool:
-    return str(source_id or "").startswith(SOURCE_PREFIX)
-
-
 def public_layer_prose(item: Mapping[str, object]) -> str:
     """公开层读到的是「有此说法」，不是实况。"""
     title = str(item.get("title") or LAYER_TITLE).strip() or LAYER_TITLE

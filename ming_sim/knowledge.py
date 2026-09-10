@@ -14,7 +14,6 @@ from typing import Any, Dict
 
 from ming_sim.participant_roster import participant_roster_names
 from ming_sim.public_sayings import (
-    is_public_saying_source,
     public_layer_events,
     public_layer_prose,
 )
@@ -441,7 +440,6 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
     public_events.extend(_source_archive_rows(db, character_name, int(state.turn)))
-    public_events.extend(public_layer_events(db))
     # Issued directives are public by their nature.  Read them here so old
     # saves and the normal decree path need no second write hook.
     for directive in db.list_issued_directives():
@@ -474,7 +472,6 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             aggregate_row = (
                 source_id.startswith("opening:")
                 or source_id.startswith("directive:")
-                or is_public_saying_source(source_id)
                 or (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
                 or source_id.startswith("chapter:")
                 or source_id == f"settlement:narrative:{turn}"
@@ -619,7 +616,6 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             or str(row.get("source_id") or "").startswith("projection:")
             or str(row.get("source_id") or "").startswith("opening:")
             or str(row.get("source_id") or "").startswith("directive:")
-            or is_public_saying_source(row.get("source_id"))
         )
         if knowledge_row_visible_to(
             db,
@@ -647,7 +643,6 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     visible_public = [
         row for row in visible_public
         if str(row.get("source_id") or "").startswith("projection:")
-        or is_public_saying_source(row.get("source_id"))
         or not any(
             str(row.get("body") or "")
             and str(row.get("body") or "") in aggregate
@@ -665,30 +660,39 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     visible_public = [
         row for row in visible_public
         if str(row.get("source_id") or "").startswith("projection:")
-        or is_public_saying_source(row.get("source_id"))
         or (int(row.get("turn") or 0), str(row.get("body") or "")) not in archive_bodies
     ]
     deduped_public = []
-    seen_exact: set[tuple[int, str, str]] = set()
+    seen_exact: set[tuple[int, str]] = set()
     for row in visible_public:
-        source_id = str(row.get("source_id") or "")
-        identity = (
-            int(row.get("turn") or 0),
-            source_id if is_public_saying_source(source_id) else "",
-            str(row.get("body") or ""),
-        )
-        if identity[2] and identity in seen_exact:
+        identity = (int(row.get("turn") or 0), str(row.get("body") or ""))
+        if identity[1] and identity in seen_exact:
             continue
         seen_exact.add(identity)
         deduped_public.append(row)
-    visible_public = deduped_public
+    # Independently persisted public sayings never enter the archive
+    # aggregation/dedup rules above.  Append the authoritative public-layer
+    # projection after those rules, then join its layer prose.
+    public_saying_events = [
+        {
+            key: (_prose(value) if key == "body" else value)
+            for key, value in row.items() if key != "excluded_names"
+        }
+        for row in public_layer_events(db)
+        if knowledge_row_visible_to(
+            db,
+            {**row, "office_type": office_type, "office": office_name},
+            character_name,
+        )
+    ]
+    visible_public = [*deduped_public, *public_saying_events]
     public_bodies = [
-        public_layer_prose(item) if is_public_saying_source(item.get("source_id"))
-        else _prose(item.get("body") or item.get("title") or "")
-        for item in visible_public
+        _prose(item.get("body") or item.get("title") or "")
+        for item in deduped_public
         if (item.get("body") or item.get("title"))
         and not str(item.get("source_id") or "").startswith("opening:")
     ]
+    public_bodies.extend(public_layer_prose(item) for item in public_saying_events)
     world["public"] = "\n".join(public_bodies) or world["public"]
     known_source_ids = {
         str(row.get("source_id") or "")
