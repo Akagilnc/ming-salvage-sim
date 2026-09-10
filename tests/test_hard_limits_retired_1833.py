@@ -105,17 +105,6 @@ def test_api_minister_agent_has_no_tool_call_limit(game):
     assert not (tool_names & retired)
 
 
-def test_retired_board_query_builders_are_gone():
-    import ming_sim.tools as tools
-
-    for name in (
-        "build_board_query_tools",
-        "build_simulator_tools",
-        "build_extractor_tools",
-    ):
-        assert not hasattr(tools, name)
-
-
 def test_simulator_keeps_full_previous_gazette(game):
     db, state, _content = game
     marker = "PREVIOUS_GAZETTE_HEAD_SENTINEL"

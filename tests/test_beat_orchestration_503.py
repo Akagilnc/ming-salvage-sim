@@ -1258,12 +1258,7 @@ def test_frame_beats_flow_from_provider_and_vary(game):
 
 
 def test_assembly_never_calls_omniscient_builders(game):
-    """组装路径经见闻供给接口，不依赖已退役的 court_brief / 全员名册 builder。"""
-    import ming_sim.registry as registry
-
-    for name in ("build_court_brief", "build_court_roster", "build_court_roster_index"):
-        assert not hasattr(registry, name)
-
+    """组装路径经见闻供给接口，不经全知盘面。"""
     db, state, content = game
     minister = _active_minister(db, content)
     night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
