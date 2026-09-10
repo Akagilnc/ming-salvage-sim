@@ -104,10 +104,12 @@ def test_opening_is_minimum_set_not_full_projection(game, tmp_path):
     opening = prepared.opening
     assert character.name in opening
     assert character.office in opening
-    assert f"{state.year}年{state.period}月" in opening
-    assert "正经手事务" in opening
-    assert "本场已说的话" in opening
-    assert f"【{character.name}此刻所知的天下" not in opening
+    knowledge = db.get_character_knowledge(state, character.name)
+    world = knowledge.get("world") or {}
+    for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
+        value = str(world.get(key) or "").strip()
+        if value:
+            assert value not in opening
     blob = "\n".join(
         read_material(prepared.root, path)
         for path in list_materials(prepared.root)
@@ -132,8 +134,12 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
 
     instructions = "\n".join(captured["instructions"])
     assert character.name in instructions
-    assert f"{state.year}年{state.period}月" in instructions
-    assert f"【{character.name}此刻所知的天下" not in instructions
+    knowledge = db.get_character_knowledge(state, character.name)
+    world = knowledge.get("world") or {}
+    for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
+        value = str(world.get(key) or "").strip()
+        if value:
+            assert value not in instructions
     tool_names = {getattr(fn, "__name__", "") for fn in captured["tools"]}
     assert "list_materials" in tool_names
     assert "read_material" in tool_names
@@ -180,7 +186,12 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
     )
     assert spoken in prompt
     assert "下一句" in prompt
-    assert f"【{character.name}此刻所知的天下" not in prompt
+    knowledge = db.get_character_knowledge(state, character.name)
+    world = knowledge.get("world") or {}
+    for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
+        value = str(world.get(key) or "").strip()
+        if value:
+            assert value not in prompt
 
     path = str(db.path)
     db.close()

@@ -511,7 +511,11 @@ def test_audience_prompt_projects_return_report_with_derived_source(game, monkey
     )
     assert "近臣查访" in blob
     assert "军队警讯" in blob
-    assert f"【{minister.name}此刻所知的天下" not in prompt
+    world = db.get_character_knowledge(state, minister.name).get("world") or {}
+    for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
+        value = str(world.get(key) or "").strip()
+        if value:
+            assert value not in prompt
 
 
 def test_audience_prompt_does_not_create_near_minister_report_for_ordinary_minister(game):

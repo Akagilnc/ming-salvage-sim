@@ -35,7 +35,10 @@ def test_sun_chuanting_injury_then_recovery_both_readable_by_month(game):
         subject_kind="character", subject_id="孙传庭",
     )
     assert [fact.body for fact in materials] == [INJURY, RECOVERY]
-    assert [fact.occurred_month for fact in materials] == ["天启七年十月", "天启七年十一月"]
+    assert [(fact.year, fact.period) for fact in materials] == [
+        (state.year, state.period),
+        (state.year, state.period + 1),
+    ]
 
 
 def test_textual_facts_on_army_region_and_affair_are_object_materials(game):
@@ -157,6 +160,6 @@ def test_textual_facts_survive_reopen(game, content):
             subject_kind="character", subject_id="孙传庭",
         )
         assert [fact.body for fact in materials] == [INJURY, RECOVERY]
-        assert [fact.occurred_month for fact in materials] == ["天启七年十月", "天启七年十一月"]
+        assert [(fact.year, fact.period) for fact in materials] == [(1627, 10), (1627, 11)]
     finally:
         restored.close()

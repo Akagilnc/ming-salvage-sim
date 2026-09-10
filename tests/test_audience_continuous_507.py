@@ -175,7 +175,11 @@ def test_reply_input_routes_per_character_knowledge_not_one_answer_for_all(game)
         for path in list_materials(d.root) if path != "INDEX.txt"
     )
     assert "近臣查访" in attendant_blob
-    assert f"【{STANDING}此刻所知的天下" not in prompt_attendant
+    world = db.get_character_knowledge(state, STANDING).get("world") or {}
+    for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
+        value = str(world.get(key) or "").strip()
+        if value:
+            assert value not in prompt_attendant
 
     # 负向：同一问题问不知情的普通大臣——目录不注入近臣查访见闻
     prompt_minister = GameSession._audience_prompt_for_message(

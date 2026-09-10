@@ -5,7 +5,7 @@ import json
 from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import prepare_character_materials
+from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from tests.dossier_test_helpers import create_test_secret_order
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -476,6 +476,96 @@ def test_excluded_participant_event_is_not_visible_to_excluded_character(game):
     view = db.get_character_knowledge(state, minister.name)
 
     assert not any(item["source_id"] == "restricted:excluded" for item in view["events"])
+
+def _directory_blob(prepared) -> str:
+    return "\n".join(
+        read_material(prepared.root, path)
+        for path in list_materials(prepared.root)
+        if path != "INDEX.txt"
+    )
+
+
+@pytest.mark.parametrize("mode", ["person", "office"])
+def test_issue_source_blacklist_vetoes_knowledge_opening_and_directory(game, tmp_path, mode):
+    db, state, content = game
+    knower = next(c for c in content.characters.values() if c.office_type == "户部")
+    hidden = next(c for c in content.characters.values() if c.office_type == "礼部")
+    marker = f"SENTINEL_ISSUE_BLACKLIST_{mode}"
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title=marker,
+        origin_kind="test",
+        origin_ref=f"test:issue-blacklist-{mode}",
+        stage_text=marker,
+        participants=[
+            {"character_id": knower.name},
+            {"character_id": hidden.name},
+        ],
+    )
+    source_id = f"issue:{issue_id}"
+    excluded_names = [hidden.name] if mode == "person" else []
+    excluded_targets = (
+        {}
+        if mode == "person"
+        else {"people": [], "offices": [hidden.office_type]}
+    )
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": knower.name}, {"character_id": hidden.name}],
+        "assignment",
+        marker,
+        marker,
+        source_id,
+        excluded_names=excluded_names,
+        excluded_targets=excluded_targets,
+    )
+
+    public_marker = f"SENTINEL_PUBLIC_ISSUE_BLACKLIST_{mode}"
+    public_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title=public_marker,
+        origin_kind="test",
+        origin_ref=f"test:public-issue-blacklist-{mode}",
+        stage_text=public_marker,
+        participants=[],
+    )
+    db.register_character_knowledge_source(
+        state,
+        [],
+        "assignment",
+        public_marker,
+        public_marker,
+        f"issue:{public_id}",
+        excluded_names=excluded_names,
+        excluded_targets=excluded_targets,
+    )
+
+    hidden_view = db.get_character_knowledge(state, hidden.name)
+    knower_view = db.get_character_knowledge(state, knower.name)
+    assert not any(item.get("source_id") == source_id for item in hidden_view["events"])
+    assert not any(item.get("title") == marker for item in hidden_view["issues"])
+    assert not any(item.get("title") == public_marker for item in hidden_view["issues"])
+    assert any(item.get("source_id") == source_id for item in knower_view["events"])
+    assert any(item.get("title") == marker for item in knower_view["issues"])
+    assert any(item.get("title") == public_marker for item in knower_view["issues"])
+
+    hidden_prepared = prepare_character_materials(
+        db, state, hidden, dest_root=tmp_path / "hidden",
+    )
+    knower_prepared = prepare_character_materials(
+        db, state, knower, dest_root=tmp_path / "knower",
+    )
+    hidden_blob = _directory_blob(hidden_prepared)
+    knower_blob = _directory_blob(knower_prepared)
+    assert marker not in hidden_prepared.opening
+    assert marker not in hidden_blob
+    assert public_marker not in hidden_prepared.opening
+    assert public_marker not in hidden_blob
+    assert marker in knower_prepared.opening
+    assert marker in knower_blob
+    assert public_marker in knower_blob
 
 def test_secret_blacklist_survives_later_public_projection(game):
     db, state, content = game

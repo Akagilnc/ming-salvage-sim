@@ -21425,7 +21425,10 @@ class GameDB:
                     "period": int(row["period"] or 0),
                     "kind": row["kind"] or "assignment", "title": row["title"],
                     "body": row["body"] or "", "source_id": source_id,
-                    **({"excluded_names": "[]"} if include_exclusions else {}),
+                    **({"excluded_names": json.dumps(
+                        self.knowledge_exclusions_for_source(source_id),
+                        ensure_ascii=False,
+                    )} if include_exclusions else {}),
                 })
                 known_sources.add(source_id)
         return result

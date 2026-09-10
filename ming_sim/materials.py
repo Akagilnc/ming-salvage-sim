@@ -121,7 +121,12 @@ def _spoken_this_scene(db: Any, character: Any) -> str:
     return str(audience_scene_recap(db, getattr(character, "name", "")) or "").strip()
 
 
-def _visible_affair_lines(knowledge: dict) -> list[tuple[str, str]]:
+def _character_affair_lines(
+    db: Any, state: Any, character_name: str, knowledge: dict,
+) -> list[tuple[str, str]]:
+    """One issue-visibility projection for opening and the directory tree."""
+    from ming_sim.knowledge import _issue_audience_case_events
+
     lines: list[tuple[str, str]] = []
     seen: set[str] = set()
     for issue in knowledge.get("issues") or []:
@@ -131,42 +136,13 @@ def _visible_affair_lines(knowledge: dict) -> list[tuple[str, str]]:
         seen.add(title)
         situation = str(issue.get("stage_text") or "").strip() or "见目录。"
         lines.append((title, situation))
-    return lines
-
-
-def _handled_affair_lines(db: Any, state: Any, character_name: str, knowledge: dict) -> list[tuple[str, str]]:
-    from ming_sim.knowledge import _issue_audience_case_events
-    from ming_sim.participant_roster import participant_roster_names
-
-    seen: set[str] = set()
-    lines: list[tuple[str, str]] = []
-    active = db.list_active_issues() if hasattr(db, "list_active_issues") else []
-    for issue in active:
-        try:
-            title = str(issue["title"] or "").strip()
-        except (KeyError, IndexError, TypeError):
-            continue
-        if not title or title in seen:
-            continue
-        try:
-            roster = issue["participant_roster"]
-        except (KeyError, IndexError, TypeError):
-            roster = []
-        try:
-            participants = participant_roster_names(roster)
-        except (KeyError, IndexError, TypeError):
-            participants = set()
-        if character_name not in participants:
-            continue
-        seen.add(title)
-        try:
-            situation = str(issue["stage_text"] or "").strip() or "见目录。"
-        except (KeyError, IndexError, TypeError):
-            situation = "见目录。"
-        lines.append((title, situation))
     known_ids = {
         str(item.get("source_id") or "")
-        for item in [*(knowledge.get("events") or []), *(knowledge.get("public_events") or [])]
+        for item in [
+            *(knowledge.get("events") or []),
+            *(knowledge.get("public_events") or []),
+            *(knowledge.get("issues") or []),
+        ]
         if item.get("source_id")
     }
     for item in _issue_audience_case_events(
@@ -178,7 +154,50 @@ def _handled_affair_lines(db: Any, state: Any, character_name: str, knowledge: d
         seen.add(title)
         situation = str(item.get("body") or "").strip() or "见目录。"
         lines.append((title, situation))
+    for row in _carryover_drafts(db, state):
+        title = f"尚未入档旨稿#{int(row['id'])}"
+        if title in seen:
+            continue
+        seen.add(title)
+        body = str(row.get("text") or "").strip()
+        lines.append((title, f"{body}（尚未入档）" if body else "尚未入档"))
     return lines
+
+
+def _opening_affair_lines(
+    db: Any, state: Any, character_name: str, knowledge: dict,
+) -> list[tuple[str, str]]:
+    """Opening min-set: 正经手事务 ⊂ unique visible issue projection."""
+    from ming_sim.knowledge import _issue_audience_names
+    from ming_sim.participant_roster import participant_roster_names
+
+    visible = {
+        title: situation
+        for title, situation in _character_affair_lines(db, state, character_name, knowledge)
+    }
+    handled: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    active = db.list_active_issues() if hasattr(db, "list_active_issues") else []
+    for issue in active:
+        try:
+            title = str(issue["title"] or "").strip()
+        except (KeyError, IndexError, TypeError):
+            continue
+        if not title or title not in visible or title in seen:
+            continue
+        try:
+            roster = participant_roster_names(issue["participant_roster"])
+        except (KeyError, IndexError, TypeError):
+            roster = set()
+        if character_name not in roster and character_name not in _issue_audience_names(db, issue):
+            continue
+        seen.add(title)
+        handled.append((title, visible[title]))
+    for title, situation in visible.items():
+        if title.startswith("尚未入档旨稿") and title not in seen:
+            seen.add(title)
+            handled.append((title, situation))
+    return handled
 
 
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:
@@ -301,26 +320,9 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
     )
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/公事档案.txt")
 
-    visible_affairs = _visible_affair_lines(knowledge)
-    visible_titles = {title for title, _ in visible_affairs}
-    for title, situation in visible_affairs:
+    for title, situation in _character_affair_lines(db, state, name, knowledge):
         affair_dir = tmp / _AFFAIR_DIR / _safe_segment(title)
         _write_text(affair_dir / "当前情况.txt", situation)
-        index.append(f"{_AFFAIR_DIR}/{_safe_segment(title)}/当前情况.txt")
-    for title, situation in _handled_affair_lines(db, state, name, knowledge):
-        if title in visible_titles:
-            continue
-        affair_dir = tmp / _AFFAIR_DIR / _safe_segment(title)
-        _write_text(affair_dir / "当前情况.txt", situation)
-        index.append(f"{_AFFAIR_DIR}/{_safe_segment(title)}/当前情况.txt")
-
-    for row in _carryover_drafts(db, state):
-        title = f"尚未入档旨稿#{int(row['id'])}"
-        body = str(row.get("text") or "").strip()
-        _write_text(
-            tmp / _AFFAIR_DIR / _safe_segment(title) / "当前情况.txt",
-            f"{body}（尚未入档）" if body else "尚未入档",
-        )
         index.append(f"{_AFFAIR_DIR}/{_safe_segment(title)}/当前情况.txt")
 
     public_by_month: dict[tuple[int, int], list[str]] = {}
@@ -373,11 +375,7 @@ def prepare_character_materials(
             shutil.rmtree(tmp, ignore_errors=True)
         raise
 
-    affairs = _handled_affair_lines(db, state, name, knowledge)
-    for row in _carryover_drafts(db, state):
-        title = f"尚未入档旨稿#{int(row['id'])}"
-        body = str(row.get("text") or "").strip()
-        affairs.append((title, f"{body}（尚未入档）" if body else "尚未入档"))
+    affairs = _opening_affair_lines(db, state, name, knowledge)
     opening = _opening_text(
         character, state, _present_names(db, character), affairs, _spoken_this_scene(db, character),
     )

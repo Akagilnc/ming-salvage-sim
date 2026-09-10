@@ -156,6 +156,27 @@ def knowledge_row_visible_to(
     return True
 
 
+def _source_exclusion_row(
+    db: Any, source_id: str, *, office_type: str = "", office: str = "",
+) -> dict:
+    """Load the durable person/office blacklist for one source.
+
+    Issue and event consumers share this row so a later public or roster
+    projection cannot drop the explicit exclusion.
+    """
+    excluded_names: list[str] = []
+    if hasattr(db, "knowledge_exclusions_for_source"):
+        excluded_names = [
+            str(name) for name in (db.knowledge_exclusions_for_source(source_id) or [])
+        ]
+    return {
+        "source_id": source_id,
+        "excluded_names": json.dumps(excluded_names, ensure_ascii=False),
+        "office_type": office_type,
+        "office": office,
+    }
+
+
 def _prose(text: object) -> str:
     """Carry durable report prose without mechanically interpreting it."""
     return str(text or "")
@@ -194,8 +215,7 @@ def _issue_audience_case_events(
             continue
         if not knowledge_row_visible_to(
             db,
-            {"source_id": source_id, "excluded_names": "[]",
-             "office_type": "", "office": ""},
+            _source_exclusion_row(db, source_id),
             character_name,
         ):
             continue
@@ -705,7 +725,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     world["public"] = "\n".join(public_bodies) or world["public"]
     known_source_ids = {
         str(row.get("source_id") or "")
-        for row in [*events, *public_events]
+        for row in [*visible_events, *visible_public]
         if row.get("source_id")
     }
     visible_issues = []
@@ -722,7 +742,9 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
                 continue
         if not knowledge_row_visible_to(
             db,
-            {"source_id": source_id, "excluded_names": "[]", "office_type": office_type, "office": office_name},
+            _source_exclusion_row(
+                db, source_id, office_type=office_type, office=office_name,
+            ),
             character_name,
         ):
             continue

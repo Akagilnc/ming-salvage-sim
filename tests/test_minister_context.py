@@ -49,6 +49,14 @@ from ming_sim.db import _qualitative_army_stat
 from tests.dossier_test_helpers import create_test_secret_order
 
 
+def _assert_not_world_dump(text, knowledge):
+    world = knowledge.get("world") or {}
+    for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
+        value = str(world.get(key) or "").strip()
+        if value:
+            assert value not in text
+
+
 def _ctx(game):
     db, state, _ = game
     return CourtContext(state=state, db=db, previous_summary="")
@@ -351,7 +359,7 @@ def test_minister_agent_uses_only_its_character_knowledge_projection(game):
     assert second_mark in second_blob
     assert first_mark not in second_blob
     assert hidden_secret not in second_rendered
-    assert f"【{first.name}此刻所知的天下" not in first_rendered
+    _assert_not_world_dump(first_rendered, db.get_character_knowledge(state, first.name))
     assert hidden_roster_row["name"] not in first_rendered
 
 
@@ -408,7 +416,7 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
     assert "章节上游标记-两人可见" in first_blob
     assert "章节上游标记-两人可见" in second_blob
     assert hidden not in second_rendered
-    assert f"【{first.name}此刻所知的天下" not in first_rendered
+    _assert_not_world_dump(first_rendered, db.get_character_knowledge(state, first.name))
 
 
 def test_minister_agents_use_distinct_real_db_world_slices_by_office(game):
@@ -462,8 +470,8 @@ def test_minister_agents_use_distinct_real_db_world_slices_by_office(game):
     for domain in second_domains - first_domains:
         assert f"{domain}：" in second_blob
         assert f"{domain}：" not in first_blob
-    assert f"【{first.name}此刻所知的天下" not in first_text
-    assert f"【{second.name}此刻所知的天下" not in second_text
+    _assert_not_world_dump(first_text, db.get_character_knowledge(state, first.name))
+    _assert_not_world_dump(second_text, db.get_character_knowledge(state, second.name))
 
 
 def test_minister_context_secret_order_chain_filters_final_tools_and_instructions(game):
@@ -496,7 +504,7 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
     assert marker in first_blob
     assert marker not in second_blob
     assert marker not in second_text
-    assert f"【{first.name}此刻所知的天下" not in first_text
+    _assert_not_world_dump(first_text, db.get_character_knowledge(state, first.name))
 
 
 def test_secret_order_blacklist_overrides_assignee_brief_and_reference_candidate(game):
