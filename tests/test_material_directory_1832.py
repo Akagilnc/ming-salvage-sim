@@ -6,6 +6,8 @@ build_mindreading_materials (递话人材料，不含目标真值).
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ming_sim.materials import (
     list_materials,
     prepare_character_materials,
@@ -165,9 +167,22 @@ def test_attendant_moved_to_court_office_keeps_dossiers_not_faction_truth(
     game, tmp_path,
 ):
     db, state, content = game
-    messenger = content.characters["王承恩"]
+    previous_live = content.characters["王承恩"]
+    messenger_live = content.characters["曹化淳"]
+    previous = replace(
+        previous_live, office=previous_live.office, office_type=previous_live.office_type,
+    )
+    messenger = replace(
+        messenger_live, office=messenger_live.office, office_type=messenger_live.office_type,
+    )
+    db.set_character_office(previous.name, "内廷随侍", "内廷")
     db.set_character_office(messenger.name, "御前近臣", "内廷")
-    from ming_sim.mindreading import current_inner_court_attendant_name
+    assert db.conn.execute(
+        "SELECT office_type FROM characters WHERE name=?", (previous.name,),
+    ).fetchone()["office_type"] == "内廷"
+    from ming_sim.mindreading import current_inner_court_attendant_name, is_inner_court_attendant
+    assert not is_inner_court_attendant(messenger)
+    assert is_inner_court_attendant(previous)
     assert current_inner_court_attendant_name(db) == messenger.name
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text="SENTINEL_COURT_ATTENDANT_DOSSIER_1832",
@@ -193,6 +208,14 @@ def test_attendant_moved_to_court_office_keeps_dossiers_not_faction_truth(
     dumped = str(materials)
     assert "皇党" not in dumped
     assert "truths" not in materials
+    previous_archive = _office_archive(
+        prepare_character_materials(
+            db, state, previous, dest_root=tmp_path / "former-attendant",
+        ),
+        previous.name,
+    )
+    assert faction in previous_archive
+    assert "court：" in previous_archive
 
 
 def test_successor_reads_office_archive_not_predecessor_private(game, tmp_path):

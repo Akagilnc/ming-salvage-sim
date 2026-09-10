@@ -231,11 +231,11 @@ def character_office_archive_text(db: Any, state: Any, character: Any, knowledge
     当前御前近臣的档案不含 court（faction_report 派系真值）；案卷与其它底账照旧。
     """
     from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
-    from ming_sim.mindreading import is_inner_court_attendant
+    from ming_sim.mindreading import current_inner_court_attendant_name
 
     name = str(getattr(character, "name", "") or "")
     world = dict(knowledge.get("world") or {})
-    skip = {"court"} if is_inner_court_attendant(character) else set()
+    skip = {"court"} if current_inner_court_attendant_name(db) == name else set()
     office_lines = [
         f"{key}：{value}"
         for key, value in world.items()
