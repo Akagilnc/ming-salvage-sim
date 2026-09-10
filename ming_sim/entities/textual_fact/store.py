@@ -124,5 +124,3 @@ def _parse_subject(subject_kind: object, subject_id: object) -> tuple[str, str]:
     if not target:
         raise ValueError("textual fact subject_id cannot be empty")
     return kind, target
-
-

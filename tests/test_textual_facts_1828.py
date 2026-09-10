@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
-import json
-
 from ming_sim.applier import atomic
 from ming_sim.db import GameDB
-from ming_sim.knowledge import build_character_knowledge
 
 
 INJURY = "孙传庭右臂受伤，暂时不能亲自挥刀，但仍能指挥军队"
 RECOVERY = "已痊愈"
+
+
+def _hearsay_records(db):
+    events = tuple(
+        tuple(row)
+        for row in db.conn.execute(
+            "SELECT id, character_name, turn, year, period, kind, title, body, source_id "
+            "FROM character_knowledge_events ORDER BY id"
+        )
+    )
+    sources = tuple(
+        tuple(row)
+        for row in db.conn.execute(
+            "SELECT id, turn, year, period, kind, title, body, source_id "
+            "FROM character_knowledge_sources ORDER BY id"
+        )
+    )
+    return events, sources
 
 
 def test_sun_chuanting_injury_then_recovery_both_readable_by_month(game):
@@ -90,6 +105,7 @@ def test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics(game
         "SELECT loyalty, ability, status FROM characters WHERE name=?",
         ("孙传庭",),
     ).fetchone()
+    before_hearsay = _hearsay_records(db)
 
     db.textual_facts.append(
         subject_kind="character",
@@ -107,13 +123,7 @@ def test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics(game
     ).fetchone()
     assert (after_status, after_reason) == (before_status, before_reason)
     assert tuple(after_row) == tuple(before_row)
-
-    knowledge = build_character_knowledge(db, state, "孙传庭")
-    dump = json.dumps(knowledge, ensure_ascii=False)
-    assert INJURY not in dump
-    public = knowledge.get("public_events") or []
-    private = knowledge.get("events") or []
-    assert not any(INJURY in str(item.get("body") or "") for item in (*public, *private))
+    assert _hearsay_records(db) == before_hearsay
 
 
 def test_append_inside_atomic_rolls_back_with_outer_transaction(game):
