@@ -824,6 +824,7 @@ def build_simulator_payload(
         "recent_reflux_causes": recent_reflux_causes,
         "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
+        "open_affairs": _open_affairs_brief(db),
         "candidate_events": candidate_events,
         "fiscal_levy_memorial_estimates": fiscal_levy_memorial_estimates(state, db),
         # #653 F3.1：财政事实摘要（F2 六源纯投影）喂 simulator——被亏方怨气定性叙事由
@@ -1014,6 +1015,19 @@ for _module, _fields in MODULE_FIELDS.items():
         _FIELD_OWNER_MODULE.setdefault(_field, _module)
 
 
+def _open_affairs_brief(db: GameDB) -> List[Dict[str, object]]:
+    """Open affairs for extractor/simulator: id plus name/origin to identify them."""
+    return [
+        {
+            "id": int(affair.id),
+            "name": affair.name,
+            "origin": affair.origin,
+            "status": affair.status,
+        }
+        for affair in db.affairs.list_open()
+    ]
+
+
 def _extractor_context_payload(
     db: GameDB,
     state: GameState,
@@ -1116,6 +1130,7 @@ def _extractor_context_payload(
         "narrative": narrative,
         "decree_text": decree_text,
         "active_issues": issues_brief,
+        "open_affairs": _open_affairs_brief(db),
         "issue_auto_economy": issue_auto_economy,
         "candidate_events": [{"id": ev.id, "title": ev.title} for ev in gather_candidate_events(state, db)],
         "current_state": dict(state.metrics),
@@ -1144,6 +1159,7 @@ def _extractor_compat_payload(base: Dict[str, object]) -> Dict[str, object]:
         "narrative": base["narrative"],
         "decree_text": base["decree_text"],
         "active_issues": base["active_issues"],
+        "open_affairs": base["open_affairs"],
         "issue_auto_economy": base["issue_auto_economy"],
         "candidate_events": base["candidate_events"],
         "current_state": base["current_state"],

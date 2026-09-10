@@ -12,7 +12,11 @@ from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from ming_sim.llm_config import LLMConfig
 from ming_sim.session import GameSession
-from ming_sim.simulation import EXTRACTION_MODULES, extract_scores_by_modules_with_agno
+from ming_sim.simulation import (
+    EXTRACTION_MODULES,
+    build_extractor_shared_context,
+    extract_scores_by_modules_with_agno,
+)
 
 
 NINGYUAN = "宁远护送"
@@ -400,6 +404,15 @@ def test_code_does_not_auto_close_or_merge_affairs(game, monkeypatch):
     still = db.affairs.get(first.id)
     assert still.status == "open"
 
+    extractor_input = build_extractor_shared_context(db, state, "宁远护送已毕，此事了结。", "")
+    open_from_input = extractor_input["open_affairs"]
+    input_ids = [int(row["id"]) for row in open_from_input]
+    assert first.id in input_ids
+    assert second.id in input_ids
+    close_id = next(
+        int(row["id"]) for row in open_from_input if int(row["id"]) == first.id
+    )
+
     import ming_sim.agents as agents_mod
     import ming_sim.simulation as simulation
     agents_mod.bind_content(content)
@@ -422,7 +435,7 @@ def test_code_does_not_auto_close_or_merge_affairs(game, monkeypatch):
             "局势推进": [], "新立局势": [], "事件结局": {},
             "撤销局势": [], "结案局势": [],
             "案卷执行": [], "案卷参与人": [], "拨帑对账": [], "政敌检举": [],
-            "事务声明": [{"attach": "close", "affair_id": first.id}],
+            "事务声明": [{"attach": "close", "affair_id": close_id}],
         }, ensure_ascii=False),
         "personnel_secret": '{"secret_order_updates": []}',
         "relations": '{"大臣互动": []}',
@@ -439,8 +452,9 @@ def test_code_does_not_auto_close_or_merge_affairs(game, monkeypatch):
         db, state, "宁远护送已毕，此事了结。", parallel=False,
     )
     assert merged["affair_declarations"] == [
-        {"attach": "close", "affair_id": first.id},
+        {"attach": "close", "affair_id": close_id},
     ]
+    assert close_id in input_ids
     apply_score_extraction(db, state, merged)
     assert db.affairs.get(first.id).status == "closed"
     assert [row.id for row in db.affairs.list_open()] == [second.id]
