@@ -8170,6 +8170,20 @@ def apply_score_extraction(
     }
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
+    for raw in extracted.get("affair_declarations") or []:
+        try:
+            if not isinstance(raw, dict):
+                raise ValueError("事务声明须为对象")
+            db.affairs.apply_declaration(
+                raw,
+                year=int(state.year),
+                period=int(state.period),
+                turn=int(state.turn),
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            validate_rejections.append(
+                ("affair_declarations", {"raw_value": raw}, str(exc)),
+            )
     # #623：召对 extraction 真入口——反悔/坚持消费哭谏条（须先于 cancels 物化，
     # 使 persist 先结账，cancels 环看到已非 active 而跳过，防双路径）。
     from ming_sim.breach_plea import resolve_breach_pleas_from_extraction

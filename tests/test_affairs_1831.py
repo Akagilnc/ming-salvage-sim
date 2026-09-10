@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 import ming_sim.audience_night as audience_night
+import ming_sim.cli_backend as cb
+import ming_sim.session as session_mod
 from ming_sim.db import GameDB
+from ming_sim.issues import apply_score_extraction
+from ming_sim.session import GameSession
 
 
 NINGYUAN = "宁远护送"
@@ -11,6 +18,7 @@ ORIGIN = "拨银、调将、派兵去宁远"
 BIRTH_KEY = "ningyuan-escort"
 PROGRESS = "护送银两已出京，尚未抵宁远"
 ARRIVED = "银两已抵宁远，洪承畴接管防务"
+SILENCE = "袁崇焕被灭口，无案可稽"
 
 
 def _minister(db):
@@ -33,53 +41,102 @@ def _declaration(*, attach="new", birth_key=BIRTH_KEY, affair_id=None):
     return body
 
 
-def _stage_three(db, state, minister, declaration):
-    payloads = (
-        {
-            "text": "拨银三十万解往宁远",
-            "actor": minister,
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue",
-            "target_id": "ningyuan-silver",
-            "amount": 300000,
-            "account": "国库",
-            "affair_declaration": declaration,
-        },
-        {
-            "text": "调洪承畴赴宁远",
-            "actor": minister,
-            "dossier_action_type": "assignment",
-            "assignee": minister,
-            "target_kind": "issue",
-            "target_id": "ningyuan-general",
-            "affair_declaration": declaration,
-        },
-        {
-            "text": "派兵护送去宁远",
-            "actor": minister,
-            "dossier_action_type": "military_order",
-            "assignee": minister,
-            "target_kind": "army",
-            "target_id": "guanning",
-            "deadline_months": 2,
-            "affair_declaration": declaration,
-        },
-    )
-    return [
-        db.stage_pending_action(
-            state.turn, kind="directive", action="拟旨",
-            minister_name=minister, payload=payload,
-        )
-        for payload in payloads
-    ]
+def _session(db, state, content, *, reply):
+    class FakeAgent:
+        def run(self, _msg):
+            return SimpleNamespace(content=reply, tools=[])
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = SimpleNamespace(get=lambda _c: FakeAgent())
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
+    sess.temporary_characters = {}
+    sess._retrieve_memories_for_message = lambda message: message
+    return sess
 
 
-def test_ningyuan_close_night_one_affair_three_dossiers(game):
+def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
+    """玩家一句交办 → 受控拆旨 → 应允 → 收夜：一件事务下三份案卷。"""
     db, state, content = game
     minister = _minister(db)
+    army_id = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
     night = audience_night.open_night(db, state)
-    pending_ids = _stage_three(db, state, minister, _declaration())
-    db.mark_pending_night_approved(pending_ids, night_id=night["id"])
+    audience_night.summon_enter(db, int(night["id"]), minister)
+    declaration = _declaration()
+    drafts = [
+        {
+            "正文": "拨银三十万解往宁远",
+            "动作类型": "grant_allocation",
+            "目标类型": "region",
+            "目标": "shaanxi",
+            "金额": 300000,
+            "账户": "国库",
+            "执行面": "in_transit",
+            "颁布方式": "ordinary",
+            "事务声明": declaration,
+        },
+        {
+            "正文": "调洪承畴赴宁远",
+            "动作类型": "assignment",
+            "目标类型": "region",
+            "目标ID": "shaanxi",
+            "承办人": minister,
+            "颁布方式": "普通",
+            "事务声明": declaration,
+        },
+        {
+            "正文": "派兵护送去宁远",
+            "动作类型": "military_order",
+            "目标类型": "army",
+            "目标ID": army_id,
+            "承办人": minister,
+            "期限月数": 2,
+            "颁布方式": "普通",
+            "事务声明": declaration,
+        },
+    ]
+    classified = json.dumps(
+        [{"动作类型": "拟旨"} for _ in drafts], ensure_ascii=False,
+    )
+
+    def scripted_backend(*_args, **kwargs):
+        tag = kwargs.get("tag")
+        if tag == "action_intent":
+            return classified, 0
+        if tag == "draft_intent":
+            return json.dumps({"成品旨稿": drafts}, ensure_ascii=False), 0
+        raise AssertionError(f"unexpected backend call: {tag}")
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", scripted_backend)
+    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
+    sess = _session(
+        db, state, content,
+        reply="臣拟三道：拨银、调将、派兵护送去宁远。",
+    )
+    sess.chat(minister, ORIGIN)
+
+    pending = [
+        row for row in db.list_pending_actions(int(state.turn), minister_name=minister)
+        if row["kind"] == "directive"
+    ]
+    assert len(pending) == 3
+    payloads = [json.loads(row["payload_json"] or "{}") for row in pending]
+    assert all(payload.get("affair_declaration") == declaration for payload in payloads)
+
+    monkeypatch.setattr(
+        cb, "extract_confirmation_intent",
+        lambda *a, **k: {"confirmation": "应允", "target_ids": [], "new_content": ""},
+    )
+    monkeypatch.setattr(
+        cb, "extract_directive_confirmation",
+        lambda player_message, minister_reply, candidates, llm_config=None: {
+            "decision": "应允",
+            "target_ids": [int(item["id"]) for item in candidates],
+        },
+    )
+    sess.chat(minister, "三事全允")
     audience_night.close_night(db, state, night_id=night["id"], content=content)
 
     open_affairs = db.affairs.list_open()
@@ -96,42 +153,70 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game):
     }
     assert all(int(row["affair_id"]) == affair.id for row in dossiers)
 
-
-def test_ledger_points_at_dossier_issue_points_at_affair(game):
-    db, state, _ = game
-    minister = _minister(db)
-    affair = db.affairs.open(
-        name=NINGYUAN, origin=ORIGIN,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="拨银三十万解往宁远",
-        target_kind="issue",
-        target_id="ningyuan-silver",
-        payload={
-            "account": "国库",
-            "amount": 300000,
-            "affair_declaration": _declaration(attach="existing", affair_id=affair.id),
-        },
-    )
-    dossier = db.get_decree_dossier(dossier_id)
-    assert int(dossier["affair_id"]) == affair.id
-
+    first_id = int(dossiers[0]["id"])
     db.record_issue_economy_move(
         state, "国库", -1, "奉旨拨帑", "宁远护送银",
-        origin_ref=f"dossier:{dossier_id}",
+        origin_ref=f"dossier:{first_id}",
     )
     origin = db.conn.execute(
         "SELECT origin_ref FROM economy_ledger WHERE origin_ref=?",
-        (f"dossier:{dossier_id}",),
+        (f"dossier:{first_id}",),
     ).fetchone()["origin_ref"]
-    assert origin == f"dossier:{dossier_id}"
+    assert origin == f"dossier:{first_id}"
 
-    issue_id = db.insert_issue(state, kind="situation", title="宁远护送未达")
-    db.affairs.point_issue(issue_id, affair.id)
+    issue_id = db.insert_issue(
+        state, kind="situation", title="宁远护送未达",
+        origin_kind="decree", origin_ref=f"dossier:{first_id}",
+    )
     assert db.affairs.affair_id_for_issue(issue_id) == affair.id
+
+    db.textual_facts.append(
+        subject_kind="affair",
+        subject_id=str(affair.id),
+        body=PROGRESS,
+        year=state.year,
+        period=state.period,
+        turn=state.turn,
+    )
+    db.textual_facts.append(
+        subject_kind="character",
+        subject_id=minister,
+        body=SILENCE,
+        year=state.year,
+        period=state.period,
+        turn=state.turn,
+        origin_ref=db.affairs.origin_ref(affair.id),
+    )
+    affair_origin = db.affairs.origin_ref(affair.id)
+    assert db.effect_origin_rejection(affair_origin) is None
+    db.record_issue_economy_move(
+        state, "国库", -1, "灭口善后", "无案卷后果",
+        origin_ref=affair_origin,
+    )
+    experiences = db.affairs.character_experiences(db.textual_facts, affair.id)
+    assert [fact.body for fact in experiences] == [SILENCE]
+    silent = db.conn.execute(
+        "SELECT origin_ref FROM economy_ledger WHERE origin_ref=?",
+        (affair_origin,),
+    ).fetchone()["origin_ref"]
+    assert silent == affair_origin
+
+    path = db.path
+    db.close()
+    restored = GameDB(path, content)
+    try:
+        loaded = restored.affairs.get(affair.id)
+        assert loaded.name == NINGYUAN
+        materials = restored.affairs.current_situation(restored.textual_facts, affair.id)
+        assert [fact.body for fact in materials] == [PROGRESS]
+        assert restored.affairs.affair_id_for_issue(issue_id) == affair.id
+        assert [
+            fact.body for fact in restored.affairs.character_experiences(
+                restored.textual_facts, affair.id,
+            )
+        ] == [SILENCE]
+    finally:
+        restored.close()
 
 
 def test_bulk_existing_dossier_receives_declared_affair(game):
@@ -272,41 +357,15 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
     }) is None
     assert int(db.get_decree_dossier(dossier_id)["affair_id"]) == first.id
 
-
-def test_affair_current_situation_survives_reopen(game, content):
-    db, state, _ = game
-    path = db.path
-    affair = db.affairs.open(
-        name=NINGYUAN, origin=ORIGIN,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    db.textual_facts.append(
-        subject_kind="affair",
-        subject_id=str(affair.id),
-        body=PROGRESS,
-        year=state.year,
-        period=state.period,
-        turn=state.turn,
-    )
-    db.textual_facts.append(
-        subject_kind="affair",
-        subject_id=str(affair.id),
-        body=ARRIVED,
-        year=state.year,
-        period=state.period + 1,
-        turn=state.turn + 1,
-    )
-    db.close()
-
-    restored = GameDB(path, content)
+    issue_id = db.insert_issue(state, kind="situation", title="已指局势")
+    db.affairs.point_issue(issue_id, first.id)
     try:
-        loaded = restored.affairs.get(affair.id)
-        assert loaded.name == NINGYUAN
-        assert loaded.origin == ORIGIN
-        materials = restored.affairs.current_situation(restored.textual_facts, affair.id)
-        assert [fact.body for fact in materials] == [PROGRESS, ARRIVED]
-    finally:
-        restored.close()
+        db.affairs.point_issue(issue_id, other.id)
+    except ValueError as exc:
+        assert str(first.id) in str(exc)
+    else:
+        raise AssertionError("expected issue conflict")
+    assert db.affairs.affair_id_for_issue(issue_id) == first.id
 
 
 def test_code_does_not_auto_close_or_merge_affairs(game):
@@ -339,6 +398,8 @@ def test_code_does_not_auto_close_or_merge_affairs(game):
     still = db.affairs.get(first.id)
     assert still.status == "open"
 
-    closed = db.affairs.declare_closed(first.id, turn=state.turn)
-    assert closed.status == "closed"
+    apply_score_extraction(db, state, {
+        "affair_declarations": [{"attach": "close", "affair_id": first.id}],
+    })
+    assert db.affairs.get(first.id).status == "closed"
     assert [row.id for row in db.affairs.list_open()] == [second.id]

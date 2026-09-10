@@ -90,6 +90,7 @@ TOP_LEVEL_ALIASES = {
     "密令执行态": "covert_exec_selections",
     "崇祯结局": "emperor_fate",
     "大臣互动": "relation_edge_events",
+    "事务声明": "affair_declarations",
 }
 TOP_LEVEL_LABELS = {value: key for key, value in TOP_LEVEL_ALIASES.items()}
 
@@ -982,6 +983,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
     "relation_edge_events": [],  # #633/ADR 0082 结算口：邸报大臣互动边事件
+    "affair_declarations": [],
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
@@ -992,7 +994,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
         "dossier_executions", "dossier_participants", "dossier_reconciliations",
-        "faction_denunciations", "authority_changes",
+        "faction_denunciations", "authority_changes", "affair_declarations",
     },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "covert_exec_selections",

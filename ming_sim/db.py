@@ -2655,6 +2655,7 @@ class GameDB:
         from ming_sim.entities.textual_fact import TextualFactStore
         from ming_sim.entities.affair import AffairStore
         TextualFactStore.ensure_schema(self.conn)
+        self.ensure_column("textual_facts", "origin_ref", "TEXT NOT NULL DEFAULT ''")
         self.textual_facts = TextualFactStore(self.conn)
         AffairStore.ensure_schema(self.conn)
         self.ensure_column("decree_dossiers", "affair_id", "INTEGER NOT NULL DEFAULT 0")
@@ -6998,6 +6999,17 @@ class GameDB:
                 valid = dossier_id > 0 and self.get_decree_dossier(dossier_id) is not None \
                     and self.dossier_authorizes_effects(dossier_id)
             except (OverflowError, TypeError, ValueError):
+                valid = False
+        elif value.startswith("affair:"):
+            try:
+                from ming_sim.entities.affair.store import parse_origin_ref
+                kind, affair_id = parse_origin_ref(value)
+                if kind == "affair" and affair_id is not None:
+                    self.affairs.get(int(affair_id))
+                    valid = True
+                else:
+                    valid = False
+            except (KeyError, OverflowError, TypeError, ValueError):
                 valid = False
         if valid:
             return None
@@ -14942,10 +14954,12 @@ class GameDB:
         self, state: GameState, payload: Mapping[str, object] | None,
     ) -> int:
         """Typed 拆旨声明 → 事务 id；无声明不自建（代码不划边界）。"""
-        if not payload or payload.get("affair_declaration") is None:
+        from ming_sim.entities.affair import declaration_from_payload
+        declaration = declaration_from_payload(payload)
+        if declaration is None:
             return 0
-        return int(self.affairs.resolve_declaration(
-            payload["affair_declaration"],
+        return int(self.affairs.apply_declaration(
+            declaration,
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),
@@ -14954,25 +14968,18 @@ class GameDB:
     def _attach_affair_from_payload(
         self, state: GameState, payload: Mapping[str, object] | None, dossier_id: int,
     ) -> None:
-        if not payload or payload.get("affair_declaration") is None:
+        from ming_sim.entities.affair import declaration_from_payload
+        declaration = declaration_from_payload(payload)
+        if declaration is None:
             return
-        current = self.conn.execute(
-            "SELECT affair_id FROM decree_dossiers WHERE id=?",
-            (int(dossier_id),),
-        ).fetchone()
-        if current is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        current_id = int(current["affair_id"] or 0)
-        if current_id:
-            peeked = self.affairs.peek_declared_id(payload["affair_declaration"])
-            if peeked == current_id:
-                return
-            raise ValueError(
-                f"案卷已指向事务 {current_id}，不能改指 {peeked or '新事务'}"
-            )
-        affair_id = self._resolve_affair_id_from_payload(state, payload)
-        if affair_id:
-            self.affairs.point_dossier(int(dossier_id), affair_id)
+        self.affairs.attach_from_declaration(
+            "decree_dossiers",
+            int(dossier_id),
+            declaration,
+            year=int(state.year),
+            period=int(state.period),
+            turn=int(state.turn),
+        )
 
     def _create_decree_dossier_row(
         self,
@@ -20758,6 +20765,8 @@ class GameDB:
                 state.turn,
             ),
         )
+        issue_id = int(cur.lastrowid)
+        self.affairs.bind_from_origin_ref("issues", issue_id, origin_ref)
         if commit:
             self.conn.commit()
         self.register_character_knowledge_source(
