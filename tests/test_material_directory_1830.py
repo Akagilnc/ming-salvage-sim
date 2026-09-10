@@ -75,16 +75,18 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
         subject_kind="affair", subject_id=str(affair.id), body=affair_situation_new,
         year=state.year, period=state.period, turn=state.turn,
     )
-    # (d) ADR 0154：已指向该事务的 issue 是其机械载体，不是另一件事——不得在
-    # 事务/issue-N 与 事务/affair-N 两处冒充两件事。
+    # (d) ADR 0154：已指向该事务的 issue 是其机械载体——单一投影不丢内容：
+    # 不另立 事务/issue-N 第二身份，但它自己的机械材料须并进 事务/affair-N。
+    linked_issue_stage = "不得单独露面但材料不能丢"
     linked_issue_id = db.insert_issue(
         state, kind="situation", title="宁远护送机械载体",
-        origin_kind="decree", stage_text="不得单独露面",
+        origin_kind="decree", stage_text=linked_issue_stage,
     )
     db.affairs.point_issue(linked_issue_id, affair.id)
     # (e) 单一投影不得连带丢材料：另一件事务 character 不是案卷参与人，但挂靠
     # 它的 issue 无参与名单（公开可见）——原有知识透视仍看得到，合并须把它
-    # 归到该事务的 affair-N 身份，不能因为不是 dossier 参与人就整条消失。
+    # 归到该事务的 affair-N 身份（含它自己的机械材料），不能因为不是 dossier
+    # 参与人就整条消失，也不冒出对应的 issue-N。
     bystander_affair = db.affairs.open(
         name="辽东军情", origin="边镇急报",
         year=state.year, period=state.period, turn=state.turn,
@@ -95,17 +97,25 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
         body=bystander_situation,
         year=state.year, period=state.period, turn=state.turn,
     )
+    bystander_issue_stage = "旁观者也不该看不见的机械材料"
     bystander_issue_id = db.insert_issue(
         state, kind="situation", title="辽东军情机械载体",
-        origin_kind="decree", stage_text="不得单独露面",
+        origin_kind="decree", stage_text=bystander_issue_stage,
     )
     db.affairs.point_issue(bystander_issue_id, bystander_affair.id)
-    # (f) 事务了结不等于其机械载体 issue 跟着终止（ADR 0154 两者分开）：挂靠的
-    # affair 已关闭、不再产出 affair-N 投影，_character_affair_lines 因而保留
-    # issue-N 自己的条目——开场选身份须跟目录投影一致，回退用 issue-N 走既有
-    # participant 经手闸，不能因为曾经挂靠过 affair 就整条从开场消失。
+    # (f) 事务了结不等于其机械载体 issue 跟着终止，也不等于该事务的 durable
+    # 身份/全史从目录消失（ADR 0154 两者分开；#1819 Resolution 3/7 各事务全史
+    # 常驻目录）：closed_affair 关闭前留一条历史文字事实，关闭后仍可在同一
+    # 事务/affair-N 查到该事实与其 linked issue 的机械材料——不回退成
+    # issue-N 冒充事务。是否让这种情形继续算 opening「正经手」是另一未拍
+    # 的产品取舍，此处只如实核对现状不反转（handled_issue_stage 断言）。
     closed_affair = db.affairs.open(
         name="宣府欠饷", origin="宣府镇奏报欠饷",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    closed_affair_fact = "宣府欠饷已核实，尚待补发"
+    db.textual_facts.append(
+        subject_kind="affair", subject_id=str(closed_affair.id), body=closed_affair_fact,
         year=state.year, period=state.period, turn=state.turn,
     )
     handled_issue_stage = "仍在核算，未结"
@@ -156,17 +166,21 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert affair.name in prepared.opening
     assert affair_situation_new in prepared.opening
     assert affair_situation_old not in prepared.opening
-    # (d) 已挂靠该事务的 issue 不另立一个 事务/issue-N 身份，也不重复露面。
+    # (d) 已挂靠该事务的 issue 不另立一个 事务/issue-N 身份，但它自己的机械
+    # 材料须并进 事务/affair-N，不得丢弃。
     assert not any(
         p.startswith(f"事务/issue-{linked_issue_id}/") for p in affair_files
     )
-    assert "不得单独露面" not in "\n".join(bodies)
+    assert linked_issue_stage in affair_body
     # (e) 非案卷参与人但可见 linked issue：材料不得整条消失——归并到该事务
-    # 自己的 affair-N 身份（挂事务文字事实），也不冒出对应的 issue-N。
+    # 自己的 affair-N 身份（挂事务文字事实 + linked issue 机械材料），也不
+    # 冒出对应的 issue-N。
     bystander_path = next(
         p for p in affair_files if p.startswith(f"事务/affair-{bystander_affair.id}/")
     )
-    assert bystander_situation in read_material(prepared.root, bystander_path)
+    bystander_body = read_material(prepared.root, bystander_path)
+    assert bystander_situation in bystander_body
+    assert bystander_issue_stage in bystander_body
     assert not any(
         p.startswith(f"事务/issue-{bystander_issue_id}/") for p in affair_files
     )
@@ -175,16 +189,22 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     # 「正经手事务」在办这件事。
     assert bystander_affair.name not in prepared.opening
     assert bystander_situation not in prepared.opening
-    # (f) 已关闭事务上仍 active、character 确实经手（participant_roster 命中）
-    # 的 linked issue：目录退回用 issue-N 自己的条目（没有 affair-N 可归并），
-    # 开场须跟着目录投影选同一身份，不能因为它曾挂靠过 affair 就漏进开场。
-    assert any(
+    # (f) 事务了结不清空其 durable 身份或全史（#1819 Resolution 3/7）：已关闭
+    # 的 closed_affair 仍在同一 事务/affair-N 里能查到关闭前的历史文字事实，
+    # 且其仍 active 的 linked issue 机械材料并进同一身份，不回退成 issue-N
+    # 冒充事务。是否算 opening「正经手」是另一未拍的产品取舍，这里只如实核对
+    # 现状（closed_affair 是否仍入 opening）不反转它。
+    assert not any(
         p.startswith(f"事务/issue-{handled_issue_id}/") for p in affair_files
     )
-    assert not any(
-        p.startswith(f"事务/affair-{closed_affair.id}/") for p in affair_files
+    closed_path = next(
+        p for p in affair_files if p.startswith(f"事务/affair-{closed_affair.id}/")
     )
-    assert handled_issue_stage in prepared.opening
+    closed_body = read_material(prepared.root, closed_path)
+    assert closed_affair.name in closed_body
+    assert closed_affair_fact in closed_body
+    assert handled_issue_stage in closed_body
+    assert closed_affair.name in prepared.opening
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
