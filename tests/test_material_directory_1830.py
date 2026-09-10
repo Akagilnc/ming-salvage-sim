@@ -192,8 +192,8 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     # (f) 事务了结不清空其 durable 身份或全史（#1819 Resolution 3/7）：已关闭
     # 的 closed_affair 仍在同一 事务/affair-N 里能查到关闭前的历史文字事实，
     # 且其仍 active 的 linked issue 机械材料并进同一身份，不回退成 issue-N
-    # 冒充事务。是否算 opening「正经手」是另一未拍的产品取舍，这里只如实核对
-    # 现状（closed_affair 是否仍入 opening）不反转它。
+    # 冒充事务——本轮只保这条目录契约。是否算 opening「正经手」是另一未拍
+    # 的产品取舍（已 escalate），不在此断言、不由本轮实现锁定任一方向。
     assert not any(
         p.startswith(f"事务/issue-{handled_issue_id}/") for p in affair_files
     )
@@ -204,7 +204,6 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert closed_affair.name in closed_body
     assert closed_affair_fact in closed_body
     assert handled_issue_stage in closed_body
-    assert closed_affair.name in prepared.opening
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
