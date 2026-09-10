@@ -10,7 +10,9 @@ import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
+from ming_sim.llm_config import LLMConfig
 from ming_sim.session import GameSession
+from ming_sim.simulation import EXTRACTION_MODULES, extract_scores_by_modules_with_agno
 
 
 NINGYUAN = "宁远护送"
@@ -368,8 +370,8 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
     assert db.affairs.affair_id_for_issue(issue_id) == first.id
 
 
-def test_code_does_not_auto_close_or_merge_affairs(game):
-    db, state, _content = game
+def test_code_does_not_auto_close_or_merge_affairs(game, monkeypatch):
+    db, state, content = game
     minister = _minister(db)
     first = db.affairs.open(
         name=NINGYUAN, origin=ORIGIN,
@@ -398,8 +400,47 @@ def test_code_does_not_auto_close_or_merge_affairs(game):
     still = db.affairs.get(first.id)
     assert still.status == "open"
 
-    apply_score_extraction(db, state, {
-        "affair_declarations": [{"attach": "close", "affair_id": first.id}],
-    })
+    import ming_sim.agents as agents_mod
+    import ming_sim.simulation as simulation
+    agents_mod.bind_content(content)
+    monkeypatch.setattr(agents_mod, "_llm_for_role", lambda config, role: config)
+    monkeypatch.setattr(agents_mod, "create_chat_model", lambda *args, **kwargs: object())
+    monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
+    agent = agents_mod.create_score_extractor_module_agent(
+        LLMConfig(api_key="test", base_url="https://example.invalid/v1", model="test"),
+        object(),
+        module="issues",
+    )
+    instructions = "\n".join(agent["instructions"])
+    assert "事务声明" in instructions
+    assert '"attach":"close"' in instructions or "attach=close" in instructions
+
+    canned = {
+        "internal": '{"economy_moves": []}',
+        "military_external": '{"new_armies": []}',
+        "issues": json.dumps({
+            "局势推进": [], "新立局势": [], "事件结局": {},
+            "撤销局势": [], "结案局势": [],
+            "案卷执行": [], "案卷参与人": [], "拨帑对账": [], "政敌检举": [],
+            "事务声明": [{"attach": "close", "affair_id": first.id}],
+        }, ensure_ascii=False),
+        "personnel_secret": '{"secret_order_updates": []}',
+        "relations": '{"大臣互动": []}',
+    }
+
+    def _fake_run(_agent, _prompt, tag):
+        if str(tag).startswith("extractor/"):
+            return canned[tag.split("/", 1)[1]]
+        return _prompt
+
+    monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
+    merged, _localized, _inputs = extract_scores_by_modules_with_agno(
+        {module: object() for module in EXTRACTION_MODULES},
+        db, state, "宁远护送已毕，此事了结。", parallel=False,
+    )
+    assert merged["affair_declarations"] == [
+        {"attach": "close", "affair_id": first.id},
+    ]
+    apply_score_extraction(db, state, merged)
     assert db.affairs.get(first.id).status == "closed"
     assert [row.id for row in db.affairs.list_open()] == [second.id]
