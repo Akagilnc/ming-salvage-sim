@@ -90,6 +90,7 @@ TOP_LEVEL_ALIASES = {
     "密令执行态": "covert_exec_selections",
     "崇祯结局": "emperor_fate",
     "大臣互动": "relation_edge_events",
+    "事务声明": "affair_declarations",
 }
 TOP_LEVEL_LABELS = {value: key for key, value in TOP_LEVEL_ALIASES.items()}
 
@@ -112,6 +113,7 @@ ITEM_FIELD_ALIASES = {
     "inertia_delta": "inertia_delta", "惯性增量": "inertia_delta",
     "origin_kind": "origin_kind", "来源类型": "origin_kind",
     "origin_ref": "origin_ref", "来源引用": "origin_ref", "诏书引用": "origin_ref",
+    "affair_declaration": "affair_declaration", "事务声明": "affair_declaration",
     # #649 人口守恒转移 item 字段（canonical 白名单见 constants.POPULATION_TRANSFER_FIELDS）
     "source": "source", "源": "source", "源阶级": "source",
     "target": "target", "目标": "target", "目标阶级": "target",
@@ -241,6 +243,7 @@ ITEM_FIELD_LABELS = {
     "inertia_delta": "惯性增量",
     "origin_kind": "来源类型",
     "origin_ref": "来源引用",
+    "affair_declaration": "事务声明",
     "id": "编号",
     "kind": "类型",
     "title": "标题",
@@ -823,6 +826,7 @@ def build_simulator_payload(
         "recent_reflux_causes": recent_reflux_causes,
         "powers_brief": db.power_report(exclude_self=True),
         "active_issues": issues_payload,
+        "open_affairs": _open_affairs_brief(db),
         "candidate_events": candidate_events,
         "fiscal_levy_memorial_estimates": fiscal_levy_memorial_estimates(state, db),
         # #653 F3.1：财政事实摘要（F2 六源纯投影）喂 simulator——被亏方怨气定性叙事由
@@ -982,6 +986,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
     "relation_edge_events": [],  # #633/ADR 0082 结算口：邸报大臣互动边事件
+    "affair_declarations": [],
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
@@ -992,7 +997,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
         "dossier_executions", "dossier_participants", "dossier_reconciliations",
-        "faction_denunciations", "authority_changes",
+        "faction_denunciations", "authority_changes", "affair_declarations",
     },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "covert_exec_selections",
@@ -1010,6 +1015,11 @@ _FIELD_OWNER_MODULE: Dict[str, str] = {}
 for _module, _fields in MODULE_FIELDS.items():
     for _field in _fields:
         _FIELD_OWNER_MODULE.setdefault(_field, _module)
+
+
+def _open_affairs_brief(db: GameDB) -> List[Dict[str, object]]:
+    """Open affairs for extractor/simulator: identity plus one current-situation line."""
+    return db.affairs.input_brief(db.textual_facts)
 
 
 def _extractor_context_payload(
@@ -1114,6 +1124,7 @@ def _extractor_context_payload(
         "narrative": narrative,
         "decree_text": decree_text,
         "active_issues": issues_brief,
+        "open_affairs": _open_affairs_brief(db),
         "issue_auto_economy": issue_auto_economy,
         "candidate_events": [{"id": ev.id, "title": ev.title} for ev in gather_candidate_events(state, db)],
         "current_state": dict(state.metrics),
@@ -1142,6 +1153,7 @@ def _extractor_compat_payload(base: Dict[str, object]) -> Dict[str, object]:
         "narrative": base["narrative"],
         "decree_text": base["decree_text"],
         "active_issues": base["active_issues"],
+        "open_affairs": base["open_affairs"],
         "issue_auto_economy": base["issue_auto_economy"],
         "candidate_events": base["candidate_events"],
         "current_state": base["current_state"],
@@ -1590,6 +1602,14 @@ def _clean_world_advance(raw: object) -> Dict[str, str]:
     return cleaned
 
 
+def _copy_item_affair_declaration(
+    item: Dict[str, object], entry: Dict[str, object],
+) -> None:
+    """Keep the same typed 事务声明 the issues module already owns."""
+    if item.get("affair_declaration") is not None:
+        entry["affair_declaration"] = item["affair_declaration"]
+
+
 def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
     cleaned: List[Dict[str, object]] = []
     if not isinstance(raw, list):
@@ -1638,6 +1658,7 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        _copy_item_affair_declaration(item, entry)
         # #622：beyond_intent 无损透传。_canonical_item_fields 已把 旨外/旨外标记/旨外恶果
         # 归一到该键；cleaner 不判值（ADR 0008 决定1），真假判定归 flows 写端
         # GameDB.coerce_beyond_intent_flag。显式 False 亦透传——在场即原值放行，

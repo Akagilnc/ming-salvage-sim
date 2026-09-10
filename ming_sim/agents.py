@@ -765,12 +765,15 @@ def create_audience_extractor_agent(llm_config: LLMConfig) -> Agent:
             "落成故事账。只搬运对话里真实演出的情节，不虚构、不引申、不复述整段原文。",
             "只输出 JSON，形如 "
             '{"facts":[{"person_names":["甲","乙"],"audibility":"殿上公开",'
-            '"body":"一句话记该情节","tags":["站台"],"presence_effect":""}]}。',
+            '"body":"一句话记该情节","tags":["站台"],"presence_effect":"",'
+            '"事务声明":{"attach":"existing","affair_id":1}}]}。',
             "字段规则：person_names=涉及人（可空数组）；audibility 取 "
             "「殿上公开」或「御前低语」（递话/读心/私语类御前内容标私，缺省公开）；"
             "body=一句中文情节记述；tags=开放短标签数组；presence_effect 仅当该情节"
-            "改变某人在场时取 'enter'（入殿/近前）或 'exit'（自行退至殿侧/告退），否则空串。",
-            "不要输出 endorsement 或任何案卷绑定字段——背书由收夜专用通道处理。",
+            "改变某人在场时取 'enter'（入殿/近前）或 'exit'（自行退至殿侧/告退），否则空串；"
+            "情节属于某件已开事务时写 typed 事务声明 attach=existing，affair_id 必须取自 "
+            "input open_affairs 的 id（无案卷经历也直接指事务）；不属于任何已开事务则省略。",
+            "不要输出 endorsement——背书由收夜专用通道处理。",
             "没有可抽取的显著情节时输出 {\"facts\":[]}。不输出 JSON 以外任何文字。",
         ],
         add_history_to_context=False,

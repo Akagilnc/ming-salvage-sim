@@ -1635,11 +1635,14 @@ def close_night(
             }
             _mingfa_candidates = db.conn.execute(
                 """
-                SELECT td.id AS directive_id, td.actor, td.text
+                SELECT td.id AS directive_id, td.actor, td.text,
+                       MIN(d.id) AS dossier_id, MAX(d.affair_id) AS affair_id
                 FROM pending_actions pa
                 JOIN turn_directives td ON td.id = pa.committed_directive_id
+                LEFT JOIN decree_dossiers d ON d.pending_action_id = pa.id
                 WHERE pa.night_id = ? AND pa.kind = 'directive'
                   AND pa.status = 'committed' AND pa.committed_directive_id > 0
+                GROUP BY td.id, td.actor, td.text
                 ORDER BY td.id
                 """,
                 (int(night_id),),
@@ -1649,6 +1652,14 @@ def close_night(
                 _did = str(_did_int)
                 if not _did_int or _did in already_ids:
                     continue
+                dossier_id = int(_pd["dossier_id"] or 0)
+                affair_id = int(_pd["affair_id"] or 0)
+                if dossier_id > 0:
+                    origin_ref = f"dossier:{dossier_id}"
+                elif affair_id > 0:
+                    origin_ref = db.affairs.origin_ref(affair_id)
+                else:
+                    origin_ref = ""
                 append_ledger_entry(
                     db, night_id,
                     person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],
@@ -1657,6 +1668,7 @@ def close_night(
                     tags=[TAG_MINGFA, mingfa_publication_tag(_did_int)],
                     check_dead=False,
                     allow_closing=True,
+                    origin_ref=origin_ref,
                 )
             tags = [TAG_CLOSE_NIGHT]
             if auto:

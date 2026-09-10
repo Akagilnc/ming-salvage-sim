@@ -1470,6 +1470,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "entries",
             # #658：御笔强推 target 须随对话拟旨 staging 完整保留，禁第二案卷。
             "target_dossier_id",
+            "affair_declaration",
         ) + dossier_carriers
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):
