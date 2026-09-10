@@ -10,24 +10,6 @@ INJURY = "孙传庭右臂受伤，暂时不能亲自挥刀，但仍能指挥军�
 RECOVERY = "已痊愈"
 
 
-def _hearsay_records(db):
-    events = tuple(
-        tuple(row)
-        for row in db.conn.execute(
-            "SELECT id, character_name, turn, year, period, kind, title, body, source_id "
-            "FROM character_knowledge_events ORDER BY id"
-        )
-    )
-    sources = tuple(
-        tuple(row)
-        for row in db.conn.execute(
-            "SELECT id, turn, year, period, kind, title, body, source_id "
-            "FROM character_knowledge_sources ORDER BY id"
-        )
-    )
-    return events, sources
-
-
 def test_sun_chuanting_injury_then_recovery_both_readable_by_month(game):
     db, state, _ = game
     assert state.year == 1627 and state.period == 10
@@ -105,7 +87,7 @@ def test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics(game
         "SELECT loyalty, ability, status FROM characters WHERE name=?",
         ("孙传庭",),
     ).fetchone()
-    before_hearsay = _hearsay_records(db)
+    before_knowledge = db.get_character_knowledge(state, "孙传庭")
 
     db.textual_facts.append(
         subject_kind="character",
@@ -121,9 +103,11 @@ def test_textual_facts_are_not_rumors_and_do_not_change_character_mechanics(game
         "SELECT loyalty, ability, status FROM characters WHERE name=?",
         ("孙传庭",),
     ).fetchone()
+    after_knowledge = db.get_character_knowledge(state, "孙传庭")
     assert (after_status, after_reason) == (before_status, before_reason)
     assert tuple(after_row) == tuple(before_row)
-    assert _hearsay_records(db) == before_hearsay
+    assert after_knowledge["events"] == before_knowledge["events"]
+    assert after_knowledge["public_events"] == before_knowledge["public_events"]
 
 
 def test_append_inside_atomic_rolls_back_with_outer_transaction(game):
