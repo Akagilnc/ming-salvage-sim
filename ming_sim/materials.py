@@ -20,6 +20,7 @@ _INDEX_NAME = "INDEX.txt"
 _PERSON_DIR = "人物"
 _AFFAIR_DIR = "事务"
 _PUBLIC_DIR = "公开说法"
+_COURT_ROSTER_REL = f"{_PERSON_DIR}/朝臣名册.txt"
 
 
 @dataclass(frozen=True)
@@ -218,12 +219,37 @@ def _opening_text(
     return "\n".join(parts)
 
 
+def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
+    """Processed court roster for on-demand read (retired query_court_roster)."""
+    from ming_sim.knowledge import project_court_roster_rows
+
+    office_type = str(
+        knowledge.get("office_type") or getattr(character, "office_type", "") or ""
+    )
+    rows: list[Any] = []
+    if hasattr(db, "current_court_roster_rows"):
+        rows = project_court_roster_rows(
+            db.current_court_roster_rows(state),
+            knowledge,
+            office_type,
+        )
+    if not rows:
+        return "见闻中未载所查人物。"
+    return "【在朝人事索引】\n" + "\n".join(
+        f"{row['name']}：{row['office'] or '无现任官职'}，{row['status']}"
+        for row in rows
+    )
+
+
 def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict) -> list[str]:
     from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
     from ming_sim.knowledge import render_character_knowledge
 
     name = str(getattr(character, "name", "") or "")
     index: list[str] = []
+
+    _write_text(tmp / _COURT_ROSTER_REL, _court_roster_text(db, state, character, knowledge))
+    index.append(_COURT_ROSTER_REL)
 
     person_dir = tmp / _PERSON_DIR / _safe_segment(name)
     private_events = knowledge.get("events") or []

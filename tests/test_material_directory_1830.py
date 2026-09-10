@@ -50,13 +50,20 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
 
     names = list_materials(prepared.root)
     assert "INDEX.txt" in names
+    assert "人物/朝臣名册.txt" in names
     assert any(p.startswith("人物/") and p.endswith("/经历.txt") for p in names)
     assert any(p.startswith("人物/") and p.endswith("/公事档案.txt") for p in names)
     index = read_material(prepared.root, "INDEX.txt")
+    assert "人物/朝臣名册.txt" in index.splitlines()
     for line in index.splitlines():
         if line.strip():
             assert line.strip() in names
             assert read_material(prepared.root, line.strip())
+    roster = read_material(prepared.root, "人物/朝臣名册.txt")
+    status, _reason = db.get_character_status(character.name)
+    assert character.name in roster
+    assert (character.office or "无现任官职") in roster
+    assert status in roster
     assert not directory_has_raw_world_copy(prepared.root, db)
 
 
