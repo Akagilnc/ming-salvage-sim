@@ -474,6 +474,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             aggregate_row = (
                 source_id.startswith("opening:")
                 or source_id.startswith("directive:")
+                or is_public_saying_source(source_id)
                 or (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
                 or source_id.startswith("chapter:")
                 or source_id == f"settlement:narrative:{turn}"
@@ -618,6 +619,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             or str(row.get("source_id") or "").startswith("projection:")
             or str(row.get("source_id") or "").startswith("opening:")
             or str(row.get("source_id") or "").startswith("directive:")
+            or is_public_saying_source(row.get("source_id"))
         )
         if knowledge_row_visible_to(
             db,
@@ -645,6 +647,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     visible_public = [
         row for row in visible_public
         if str(row.get("source_id") or "").startswith("projection:")
+        or is_public_saying_source(row.get("source_id"))
         or not any(
             str(row.get("body") or "")
             and str(row.get("body") or "") in aggregate
@@ -662,13 +665,19 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     visible_public = [
         row for row in visible_public
         if str(row.get("source_id") or "").startswith("projection:")
+        or is_public_saying_source(row.get("source_id"))
         or (int(row.get("turn") or 0), str(row.get("body") or "")) not in archive_bodies
     ]
     deduped_public = []
-    seen_exact: set[tuple[int, str]] = set()
+    seen_exact: set[tuple[int, str, str]] = set()
     for row in visible_public:
-        identity = (int(row.get("turn") or 0), str(row.get("body") or ""))
-        if identity[1] and identity in seen_exact:
+        source_id = str(row.get("source_id") or "")
+        identity = (
+            int(row.get("turn") or 0),
+            source_id if is_public_saying_source(source_id) else "",
+            str(row.get("body") or ""),
+        )
+        if identity[2] and identity in seen_exact:
             continue
         seen_exact.add(identity)
         deduped_public.append(row)

@@ -86,6 +86,26 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     )
 
 
+def test_public_saying_survives_same_turn_archive_projection(game):
+    db, state, content = game
+    reader = _礼部大臣(content)
+    claim = "袁崇焕已死于宁远"
+    record_public_saying(db, state, claim, involved_characters=["袁崇焕"])
+    db.save_turn_report(state, f"本月邸报亦录：{claim}", public_body=f"本月邸报亦录：{claim}")
+    db.save_chapter_memory(state, "朝局", f"章节旧闻复述：{claim}")
+
+    view = db.get_character_knowledge(state, reader.name)
+    saying = next(
+        item for item in view["public_events"]
+        if str(item.get("source_id") or "").startswith("public_saying:")
+    )
+    assert saying["title"] == "有此说法"
+    assert saying["body"] == claim
+    public_text = view["world"].get("public") or ""
+    assert "有此说法" in public_text
+    assert claim in public_text
+
+
 def test_public_saying_may_annotate_person_affair_or_neither(game):
     db, state, _content = game
 
