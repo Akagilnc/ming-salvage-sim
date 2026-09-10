@@ -15,7 +15,7 @@ import re
 import sqlite3
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
-from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
+from ming_sim.applier import atomic, connection_owns_transaction, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SQL_IN
 from ming_sim.assets import format_money, format_money_delta, format_wanliang_amount
@@ -911,11 +911,7 @@ class GameDB:
 
     def owns_transaction(self) -> bool:
         """Return True when this GameDB call site should commit its own writes."""
-        return not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-            or self.conn.in_transaction
-        )
+        return connection_owns_transaction(self.conn)
 
     def init_schema(self) -> None:
         self.conn.executescript(
@@ -2650,6 +2646,9 @@ class GameDB:
             "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
             "ON decree_dossiers(executor_kind, executor_id, status)"
         )
+        from ming_sim.entities.textual_fact import TextualFactStore
+        TextualFactStore.ensure_schema(self.conn)
+        self.textual_facts = TextualFactStore(self.conn)
         self.conn.commit()
         self._migrate_legacy_office_pollution()
         # #9 R1 finding#1 [P1]：老档迁移校准须放在「seed 路 + driver 路」都过的点。driver.open_game

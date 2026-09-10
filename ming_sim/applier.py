@@ -133,6 +133,19 @@ class _SuspendableConnection(sqlite3.Connection):
         return super().executescript(sql_script)
 
 
+def connection_owns_transaction(conn: Any) -> bool:
+    """True when this connection should commit its own writes.
+
+    Shared by GameDB and entity stores: a call site must not commit if an
+    outer atomic/BEGIN already owns the transaction.
+    """
+    return not (
+        bool(getattr(conn, "_commit_suspended", False))
+        or int(getattr(conn, "_atomic_depth", 0) or 0) > 0
+        or conn.in_transaction
+    )
+
+
 @contextmanager
 def atomic(db: Any) -> Iterator[None]:
     """把 db.conn 上的一段写序列包成单事务，期内暂停所有 commit。
