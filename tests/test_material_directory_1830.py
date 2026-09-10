@@ -82,6 +82,24 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
         origin_kind="decree", stage_text="不得单独露面",
     )
     db.affairs.point_issue(linked_issue_id, affair.id)
+    # (e) 单一投影不得连带丢材料：另一件事务 character 不是案卷参与人，但挂靠
+    # 它的 issue 无参与名单（公开可见）——原有知识透视仍看得到，合并须把它
+    # 归到该事务的 affair-N 身份，不能因为不是 dossier 参与人就整条消失。
+    bystander_affair = db.affairs.open(
+        name="辽东军情", origin="边镇急报",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    bystander_situation = "辽东军情已奏闻，尚候圣裁"
+    db.textual_facts.append(
+        subject_kind="affair", subject_id=str(bystander_affair.id),
+        body=bystander_situation,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    bystander_issue_id = db.insert_issue(
+        state, kind="situation", title="辽东军情机械载体",
+        origin_kind="decree", stage_text="不得单独露面",
+    )
+    db.affairs.point_issue(bystander_issue_id, bystander_affair.id)
 
     dest = tmp_path / "materials"
     prepared = prepare_character_materials(db, state, character, dest_root=dest)
@@ -123,6 +141,15 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
         p.startswith(f"事务/issue-{linked_issue_id}/") for p in affair_files
     )
     assert "不得单独露面" not in "\n".join(bodies)
+    # (e) 非案卷参与人但可见 linked issue：材料不得整条消失——归并到该事务
+    # 自己的 affair-N 身份（挂事务文字事实），也不冒出对应的 issue-N。
+    bystander_path = next(
+        p for p in affair_files if p.startswith(f"事务/affair-{bystander_affair.id}/")
+    )
+    assert bystander_situation in read_material(prepared.root, bystander_path)
+    assert not any(
+        p.startswith(f"事务/issue-{bystander_issue_id}/") for p in affair_files
+    )
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):

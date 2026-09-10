@@ -123,8 +123,10 @@ def _spoken_this_scene(db: Any, character: Any) -> str:
 
 def _own_affair_lines(
     db: Any, state: Any, character_name: str,
+    *, extra_visible_ids: frozenset = frozenset(),
 ) -> list[tuple[str, str, str, str]]:
-    """Durable affairs (#1818 决定 1/6) where this character holds a dossier seat.
+    """Durable affairs (#1818 决定 1/6) this character has a legitimate reason
+    to see: a dossier seat, or (per caller) an already-visible linked issue.
 
     Each line is (dir_key, title, directory_text, opening_text). ADR 0156：
     文字事实只追加不覆盖，读时按时间顺序全部提供，由 LLM 自行判断当前——目录
@@ -140,17 +142,18 @@ def _own_affair_lines(
     lines: list[tuple[str, str, str, str]] = []
     for affair in store.list_open():
         affair_id = int(affair.id)
-        participates = False
-        for dossier in store.dossiers(affair_id):
-            row = db.conn.execute(
-                "SELECT participant_roster FROM decree_dossiers WHERE id=?",
-                (int(dossier["id"]),),
-            ).fetchone()
-            if row is not None and character_name in participant_roster_names(
-                row["participant_roster"],
-            ):
-                participates = True
-                break
+        participates = affair_id in extra_visible_ids
+        if not participates:
+            for dossier in store.dossiers(affair_id):
+                row = db.conn.execute(
+                    "SELECT participant_roster FROM decree_dossiers WHERE id=?",
+                    (int(dossier["id"]),),
+                ).fetchone()
+                if row is not None and character_name in participant_roster_names(
+                    row["participant_roster"],
+                ):
+                    participates = True
+                    break
         if not participates:
             continue
         facts = (
@@ -171,15 +174,15 @@ def _own_affair_lines(
     return lines
 
 
-def _issue_linked_to_affair(db: Any, issue_id: object) -> bool:
-    """ADR 0154：已指向 affair 的 issue 是该事务的机械载体，不是另一件事。"""
+def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
+    """ADR 0154：issue 若已指向某 affair，返回该 affair id；未挂靠返 0。"""
     store = getattr(db, "affairs", None)
     if store is None or not hasattr(store, "affair_id_for_issue"):
-        return False
+        return 0
     try:
-        return int(store.affair_id_for_issue(int(issue_id))) > 0
+        return int(store.affair_id_for_issue(int(issue_id)))
     except (KeyError, TypeError, ValueError):
-        return False
+        return 0
 
 
 def _character_affair_lines(
@@ -193,11 +196,35 @@ def _character_affair_lines(
     differing only by an unsafe character both normalized to the same
     segment). directory_text and opening_text differ only for durable
     affairs (full dated history vs latest one-liner); every other matter
-    kind uses the same text for both. An issue already pointed at a durable
-    affair is that affair's mechanical carrier (ADR 0154) — it does not get
-    a second standalone entry here.
+    kind uses the same text for both.
+
+    An issue already pointed at a durable affair is that affair's mechanical
+    carrier (ADR 0154) — it must not surface as a second standalone identity.
+    But this character may legitimately see the issue (existing knowledge/
+    audience visibility) without holding a dossier seat on the affair itself
+    (#1812 p1: a naive "drop the issue" merge silently loses that material).
+    So a visible linked issue is folded into the affair's own entry instead
+    of being dropped outright — only suppressed once confirmed the affair
+    entry will actually be produced (i.e. the affair is still open; a linked
+    issue on a closed affair keeps its own entry, since there is no affair
+    projection left to carry it).
     """
     from ming_sim.knowledge import _issue_audience_case_events
+
+    store = getattr(db, "affairs", None)
+    open_affair_ids = (
+        {int(a.id) for a in store.list_open()}
+        if store is not None and hasattr(store, "list_open") else set()
+    )
+    linked_visible_affair_ids: set[int] = set()
+
+    def _fold_into_affair(issue_id: int) -> bool:
+        """True and recorded when this issue's affair will get its own entry."""
+        linked_affair_id = _issue_linked_affair_id(db, issue_id)
+        if linked_affair_id and linked_affair_id in open_affair_ids:
+            linked_visible_affair_ids.add(linked_affair_id)
+            return True
+        return False
 
     lines: list[tuple[str, str, str, str]] = []
     seen: set[str] = set()
@@ -206,7 +233,7 @@ def _character_affair_lines(
             issue_id = int(issue.get("id"))
         except (TypeError, ValueError):
             continue
-        if _issue_linked_to_affair(db, issue_id):
+        if _fold_into_affair(issue_id):
             continue
         title = str(issue.get("title") or "").strip()
         dir_key = f"issue-{issue_id}"
@@ -228,10 +255,13 @@ def _character_affair_lines(
         db, state, character_name, known_source_ids=known_ids,
     ):
         match = re.match(r"issue:(\d+)$", str(item.get("source_id") or ""))
-        if not match or _issue_linked_to_affair(db, match.group(1)):
+        if not match:
+            continue
+        issue_id = int(match.group(1))
+        if _fold_into_affair(issue_id):
             continue
         title = str(item.get("title") or "").strip()
-        dir_key = f"issue-{match.group(1)}"
+        dir_key = f"issue-{issue_id}"
         if not title or dir_key in seen:
             continue
         seen.add(dir_key)
@@ -247,7 +277,7 @@ def _character_affair_lines(
         text = f"{body}（尚未入档）" if body else "尚未入档"
         lines.append((dir_key, title, text, text))
     for dir_key, title, directory_text, opening_text in _own_affair_lines(
-        db, state, character_name,
+        db, state, character_name, extra_visible_ids=frozenset(linked_visible_affair_ids),
     ):
         if dir_key in seen or not title:
             continue
