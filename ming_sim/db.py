@@ -10384,6 +10384,7 @@ class GameDB:
         不得仅凭 night.status 自动授权，不加 token/registry/第二写口。
         """
         from ming_sim.audience_night import PRESENCE_ENTER, append_ledger_entry
+        from ming_sim.entities.affair import ATTACH_EXPERIENCE, declaration_from_payload
 
         cid = int(chat_turn_id)
         if self.get_story_extract_status(cid) == "done":
@@ -10423,6 +10424,7 @@ class GameDB:
                         source=Provenance.system_simulation,
                     ), int(turn_row["turn"] if turn_row is not None else 0))
                 collector.flush_to_db(self)
+            authorized_open = {int(row.id) for row in self.affairs.list_open()}
             for fact in accepted:
                 persons = [
                     str(n).strip()
@@ -10430,6 +10432,16 @@ class GameDB:
                     if str(n).strip()
                 ]
                 presence_effect = str(fact.get("presence_effect") or "")
+                origin_ref = ""
+                parsed = declaration_from_payload(fact, allowed=ATTACH_EXPERIENCE)
+                if parsed is not None:
+                    origin_ref = self.affairs.origin_ref_from_result_item(
+                        fact,
+                        year=0,
+                        period=0,
+                        turn=0,
+                        authorized_ids=authorized_open,
+                    )
                 entry_id = append_ledger_entry(
                     self,
                     int(night_id),
@@ -10443,6 +10455,7 @@ class GameDB:
                     presence_effect=presence_effect,
                     order_key=base,
                     allow_closing=bool(allow_closing),
+                    origin_ref=origin_ref,
                 )
                 new_ids.append(int(entry_id))
             self.conn.execute(

@@ -35,6 +35,7 @@ from ming_sim.audience_night import (
     persons_present_tonight,
     write_audience_error_pack,
 )
+from ming_sim.entities.affair import ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
 from ming_sim.session_write_queue import TicketCancelled
@@ -84,7 +85,8 @@ def parse_extraction_facts(raw: Any) -> List[Dict[str, Any]]:
     """校验并规整普通故事事实列表；任一条对不上契约即响亮拒收（AC3）。
 
     合法事实：body 非空字符串；audibility ∈ {殿上公开,御前低语}（缺省公开）；
-    presence_effect ∈ {'',enter,exit}；person_names/tags 为字符串数组。
+    presence_effect ∈ {'',enter,exit}；person_names/tags 为字符串数组；
+    可选 typed 事务声明仅 existing（affair_id），指向已开事务。
     空 facts（无显著情节）合法——返回 []。
     不含 endorsement（背书走夜级 endorsement-only 批处理）。
     """
@@ -135,13 +137,28 @@ def parse_extraction_facts(raw: Any) -> List[Dict[str, Any]]:
                 f"第 {idx} 条 tags 须为字符串数组",
                 code="extraction_bad_shape", detail={"index": idx},
             )
-        facts.append({
+        fact = {
             "person_names": [n.strip() for n in person_names_raw if n.strip()],
             "audibility": str(audibility),
             "body": body.strip(),
             "tags": [t for t in tags_raw if t],
             "presence_effect": str(presence_effect),
-        })
+        }
+        if item.get("affair_declaration") is not None or item.get("事务声明") is not None:
+            try:
+                parsed = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
+            except ValueError as exc:
+                raise ExtractionShapeError(
+                    f"第 {idx} 条事务声明非法：{exc}",
+                    code="extraction_bad_shape", detail={"index": idx},
+                ) from None
+            if parsed is None:
+                raise ExtractionShapeError(
+                    f"第 {idx} 条事务声明非法",
+                    code="extraction_bad_shape", detail={"index": idx},
+                )
+            fact["affair_declaration"] = dict(parsed)
+        facts.append(fact)
     return facts
 
 
@@ -261,6 +278,7 @@ def extract_story_facts(
     llm_config: Any,
     extractor_agent: Any = None,
     emperor_text: str = "",
+    open_affairs: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """调抽取员把一轮君臣对话结构化成普通故事事实；问话与回话皆空返回 []。
 
@@ -283,6 +301,7 @@ def extract_story_facts(
         "当前在场": list(present_names),
         "皇帝问话": question_text,
         "回话原文": reply_text,
+        "open_affairs": [dict(row) for row in (open_affairs or ())],
     }
     output = extract_agent_text(
         agent.run(json.dumps(materials, ensure_ascii=False))
@@ -477,6 +496,10 @@ def run_extraction_for_turn(
             )
 
         try:
+            open_affairs = []
+            store = getattr(db, "affairs", None)
+            if store is not None and hasattr(store, "input_brief"):
+                open_affairs = store.input_brief(getattr(db, "textual_facts", None))
             facts = extract_story_facts(
                 reply,
                 minister_name=minister_name,
@@ -484,6 +507,7 @@ def run_extraction_for_turn(
                 llm_config=llm_config,
                 extractor_agent=extractor_agent,
                 emperor_text=question_text,
+                open_affairs=open_affairs,
             )
         except Exception as exc:
             return _pending_with_pack(

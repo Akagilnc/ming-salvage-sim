@@ -13,6 +13,7 @@ _ATTACH_EXISTING = "existing"
 _ATTACH_CLOSE = "close"
 ATTACH_BIRTH = frozenset({_ATTACH_NEW, _ATTACH_EXISTING})
 ATTACH_RESULT_CLOSE = frozenset({_ATTACH_CLOSE})
+ATTACH_EXPERIENCE = frozenset({_ATTACH_EXISTING})
 _ORIGIN_AFFAIR = "affair"
 _ORIGIN_DOSSIER = "dossier"
 _POINTER_TABLES = {
@@ -330,6 +331,24 @@ class AffairStore:
             subject_kind="affair", subject_id=str(int(affair_id)),
         )
 
+    def input_brief(self, textual_facts: Any = None) -> list[dict[str, object]]:
+        """Default LLM input: identity plus one current-situation line. No full experiences."""
+        brief: list[dict[str, object]] = []
+        for affair in self.list_open():
+            situation = ""
+            if textual_facts is not None:
+                facts = self.current_situation(textual_facts, affair.id)
+                if facts:
+                    situation = str(facts[-1].body or "")
+            brief.append({
+                "id": int(affair.id),
+                "name": affair.name,
+                "origin": affair.origin,
+                "status": affair.status,
+                "current_situation": situation,
+            })
+        return brief
+
     def origin_ref_from_result_item(
         self,
         item: Mapping[str, object] | None,
@@ -358,29 +377,19 @@ class AffairStore:
         )
 
     def experiences(self, affair_id: int) -> tuple[dict[str, object], ...]:
-        """Read-time projection: story-ledger rows tagged or pointed at this affair."""
-        from ming_sim.audience_night import exact_mingfa_publication_directive_id
-
+        """Read-time projection: story-ledger rows whose origin_ref points at this affair."""
         self.get(affair_id)
-        refs = set(self.origin_refs(affair_id))
-        directive_ids: set[int] = set()
-        for row in self._conn.execute(
-            "SELECT d.directive_id AS dossier_directive, "
-            "pa.committed_directive_id AS committed_directive "
-            "FROM decree_dossiers d "
-            "LEFT JOIN pending_actions pa ON pa.id = d.pending_action_id "
-            "WHERE d.affair_id=?",
-            (int(affair_id),),
-        ).fetchall():
-            for key in ("dossier_directive", "committed_directive"):
-                value = int(row[key] or 0)
-                if value > 0:
-                    directive_ids.add(value)
-        out: list[dict[str, object]] = []
-        for row in self._conn.execute(
+        refs = self.origin_refs(affair_id)
+        placeholders = ",".join("?" for _ in refs)
+        rows = self._conn.execute(
             "SELECT id, person_names, tags, body, origin_ref "
-            "FROM story_ledger_entries ORDER BY id"
-        ).fetchall():
+            "FROM story_ledger_entries WHERE origin_ref IN ("
+            + placeholders
+            + ") ORDER BY id",
+            refs,
+        ).fetchall()
+        out: list[dict[str, object]] = []
+        for row in rows:
             origin = str(row["origin_ref"] or "").strip()
             try:
                 tags = json.loads(row["tags"] or "[]")
@@ -388,12 +397,6 @@ class AffairStore:
                 tags = []
             if not isinstance(tags, list):
                 tags = []
-            tagged = any(
-                exact_mingfa_publication_directive_id(tag) in directive_ids
-                for tag in tags
-            )
-            if origin not in refs and not tagged:
-                continue
             try:
                 people = json.loads(row["person_names"] or "[]")
             except (TypeError, ValueError):
@@ -423,7 +426,7 @@ def parse_affair_declaration(
     if attach not in permitted:
         if attach == _ATTACH_CLOSE:
             raise ValueError("本阶段不能了结事务")
-        if attach in {_ATTACH_NEW, _ATTACH_EXISTING}:
+        if attach in ATTACH_BIRTH and permitted == ATTACH_RESULT_CLOSE:
             raise ValueError("顶层事务声明只接受了结")
         raise ValueError("事务声明 attach 不在本阶段")
     if attach == _ATTACH_NEW:
@@ -432,9 +435,12 @@ def parse_affair_declaration(
         if not name or not origin:
             raise ValueError("新事务声明须有名字与起因")
         key = str(raw.get("birth_key") or "").strip()
+        identity = str(raw.get("identity") or "").strip()
         out: dict[str, object] = {"attach": _ATTACH_NEW, "name": name, "origin": origin}
         if key:
             out["birth_key"] = key
+        if identity:
+            out["identity"] = identity
         return out
     try:
         affair_id = int(raw.get("affair_id"))

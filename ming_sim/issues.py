@@ -8212,7 +8212,7 @@ def apply_score_extraction(
     from uuid import uuid4
     from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
 
-    batch_new_identities: dict[tuple[str, str], str] = {}
+    batch_new_identities: dict[str, str] = {}
 
     def _stamp_batch_new_declaration(item: object) -> object:
         if not isinstance(item, dict):
@@ -8223,13 +8223,20 @@ def apply_score_extraction(
             return item
         if parsed is None or parsed.get("attach") != "new":
             return item
-        ident = (str(parsed["name"]), str(parsed["origin"]))
         key = str(parsed.get("birth_key") or "").strip()
+        identity = str(parsed.get("identity") or "").strip()
         if not key:
-            key = batch_new_identities.setdefault(ident, f"result:{uuid4().hex}")
-        else:
-            batch_new_identities.setdefault(ident, key)
-        return {**item, "affair_declaration": {**parsed, "birth_key": key}}
+            if identity:
+                key = batch_new_identities.setdefault(identity, f"result:{uuid4().hex}")
+            else:
+                key = f"result:{uuid4().hex}"
+        stamped = {
+            "attach": "new",
+            "name": parsed["name"],
+            "origin": parsed["origin"],
+            "birth_key": key,
+        }
+        return {**item, "affair_declaration": stamped}
 
     for field in (
         "economy_moves", "new_issues", "人物变更",

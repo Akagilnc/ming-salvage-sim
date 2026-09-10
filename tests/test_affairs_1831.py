@@ -9,6 +9,7 @@ import ming_sim.audience_night as audience_night
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 import ming_sim.simulation as simulation
+from ming_sim.audience_extraction import parse_extraction_facts
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
@@ -33,16 +34,30 @@ def _minister(db):
     return str(row["name"])
 
 
-def _declaration(*, attach="new", birth_key="", affair_id=None):
+def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
     body = {"attach": attach}
     if attach == "new":
         body["name"] = NINGYUAN
         body["origin"] = ORIGIN
         if birth_key:
             body["birth_key"] = birth_key
+        if identity:
+            body["identity"] = identity
     else:
         body["affair_id"] = int(affair_id)
     return body
+
+
+def _persist_reply(db, state, minister, reply="臣记下此事。"):
+    night = audience_night.open_night(db, state)
+    nid = int(night["id"])
+    audience_night.summon_enter(db, nid, minister)
+    ctid = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
+    db.persist_minister_reply(minister, int(state.turn), reply, ctid)
+    row = db.conn.execute(
+        "SELECT night_seq FROM chat_turns WHERE id=?", (ctid,)
+    ).fetchone()
+    return nid, ctid, int(row["night_seq"])
 
 
 def _session(db, state, content, *, reply):
@@ -205,8 +220,8 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
     )
     brief = build_extractor_shared_context(db, state, "宁远护送", "")
     row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
-    assert row["experiences"]
-    assert minister in row["experiences"][0]["person_names"]
+    assert "experiences" not in row
+    assert row["current_situation"] == PROGRESS
 
     path = db.path
     db.close()
@@ -220,7 +235,8 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         restored_row = next(
             item for item in restored_brief["open_affairs"] if int(item["id"]) == affair.id
         )
-        assert minister in restored_row["experiences"][0]["person_names"]
+        assert "experiences" not in restored_row
+        assert restored_row["current_situation"] == PROGRESS
         assert list_public_sayings(
             restored, affair_ref=restored.affairs.origin_ref(affair.id),
         )
@@ -312,11 +328,12 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
         name="另事", origin="另一件交办",
         year=state.year, period=state.period, turn=state.turn,
     )
+    grouped = _declaration(identity="ningyuan-escort")
     canned = {
         "internal": json.dumps({
             "钱粮收支": [{
                 "账户": "国库", "增量": -1, "分类": "善后", "原因": "无案卷后果",
-                "事务声明": _declaration(),
+                "事务声明": grouped,
             }],
         }, ensure_ascii=False),
         "military_external": '{"new_armies": []}',
@@ -327,7 +344,7 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
                 "origin_ref": origin,
                 "kind": "situation",
                 "title": "推演新起",
-                "事务声明": _declaration(),
+                "事务声明": grouped,
             }],
             "事件结局": {}, "撤销局势": [], "结案局势": [],
             "案卷执行": [], "案卷参与人": [], "拨帑对账": [], "政敌检举": [],
@@ -336,7 +353,7 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
         "personnel_secret": json.dumps({
             "人物变更": [{
                 "name": minister, "动作": "评定", "loyalty": 1,
-                "事务声明": _declaration(),
+                "事务声明": grouped,
             }],
         }, ensure_ascii=False),
         "relations": '{"大臣互动": []}',
@@ -372,6 +389,23 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
         content=content, open_affair_ids_at_input={first.id},
     )
     assert denied["issue_summary"]["new_issues"][0]["rejected"] is True
+
+    before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "国库", "delta": -2, "category": "善后", "reason": "另起",
+                "affair_declaration": _declaration(identity="escort-a"),
+            }],
+            "人物变更": [{
+                "name": minister, "动作": "评定", "loyalty": 1,
+                "affair_declaration": _declaration(identity="escort-b"),
+            }],
+        },
+        content=content, open_affair_ids_at_input={first.id, second.id},
+    )
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before + 2
 
 
 def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
@@ -411,6 +445,42 @@ def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
     else:
         raise AssertionError("expected birth close to fail")
     assert db.affairs.get(first.id).status == "open"
+
+
+def test_translation_experience_marks_affair_without_dossier(game):
+    db, state, content = game
+    minister = _minister(db)
+    affair = db.affairs.open(
+        name=NINGYUAN, origin=ORIGIN,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    assert db.affairs.dossiers(affair.id) == ()
+    nid, ctid, seq = _persist_reply(db, state, minister)
+    facts = parse_extraction_facts({
+        "facts": [{
+            "person_names": [minister],
+            "body": "护送途中闻边报，尚无案卷",
+            "事务声明": _declaration(attach="existing", affair_id=affair.id),
+        }],
+    })
+    db.settle_story_extraction(ctid, nid, facts, seq)
+    rows = db.affairs.experiences(affair.id)
+    assert len(rows) == 1
+    assert minister in rows[0]["person_names"]
+    assert rows[0]["origin_ref"] == db.affairs.origin_ref(affair.id)
+    brief = build_extractor_shared_context(db, state, "宁远护送", "")
+    row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
+    assert "experiences" not in row
+
+    path = db.path
+    db.close()
+    restored = GameDB(path, content)
+    try:
+        restored_rows = restored.affairs.experiences(affair.id)
+        assert minister in restored_rows[0]["person_names"]
+        assert restored_rows[0]["origin_ref"] == restored.affairs.origin_ref(affair.id)
+    finally:
+        restored.close()
 
 
 def test_close_requires_open_affairs_visible_in_batch(game, monkeypatch):

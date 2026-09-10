@@ -1018,23 +1018,8 @@ for _module, _fields in MODULE_FIELDS.items():
 
 
 def _open_affairs_brief(db: GameDB) -> List[Dict[str, object]]:
-    """Open affairs for extractor/simulator: identity plus story-ledger experiences."""
-    brief: List[Dict[str, object]] = []
-    for affair in db.affairs.list_open():
-        brief.append({
-            "id": int(affair.id),
-            "name": affair.name,
-            "origin": affair.origin,
-            "status": affair.status,
-            "experiences": [
-                {
-                    "person_names": list(row["person_names"]),
-                    "body": row["body"],
-                }
-                for row in db.affairs.experiences(affair.id)
-            ],
-        })
-    return brief
+    """Open affairs for extractor/simulator: identity plus one current-situation line."""
+    return db.affairs.input_brief(db.textual_facts)
 
 
 def _extractor_context_payload(

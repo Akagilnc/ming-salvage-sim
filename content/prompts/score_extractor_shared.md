@@ -28,7 +28,7 @@ force_json 模式下你**只能输出最终 JSON**，不得吐出思考文本。
 ## 效果来源（canonical）
 
 每个会产生 durable effect 的条目必须携带 `来源引用`（内部名 `origin_ref`）。值只能从 input 中已颁案卷选 `dossier:<id>`，或在确属盘面自然演化时写精确哨兵 `盘面自发`；不得省略、猜造或改写哨兵。适用于 `钱粮收支`、`财政制度变化`、`新立月度收支`、`裁撤月度收支`、`人口转移` 每项、`地区变化`/`军队变化`/`势力变化` 的每个实体 value、`新建军队` 每项及 `人物变更` 每项。无净变化及会被既有 shape/id/value 校验拒收的项不属于 durable effect。
-无案卷的 `钱粮收支`、`人物变更` 与 `新立局势` 可改写与局势档房同一 typed `事务声明`（`attach=new|existing`；`existing.affair_id` 来自 input `open_affairs`；new 只给名字与起因，不要猜内部 id 或 birth_key）。同一批里相同 new 声明指向同一件事。不另立第二套声明形状。其它 durable 字段仍只用来源引用，不写事务声明。
+无案卷的 `钱粮收支`、`人物变更` 与 `新立局势` 可改写与局势档房同一 typed `事务声明`（`attach=new|existing`；`existing.affair_id` 来自 input `open_affairs`；new 给名字、起因；同一批多项同属一件新事务时必须带同一显式 `identity`（本批分组名，不是内部 id / birth_key）；无 `identity` 的 new 各自独立，代码不按名字或起因归并。不要猜 birth_key）。不另立第二套声明形状。其它 durable 字段仍只用来源引用，不写事务声明。
 若该 durable effect 是借旨意名义行超出本意的加派、浮收、裁撤或受益（钱粮一次性收支与财政制度/新立/裁撤月度科目皆然），在同条标注 `旨外`/`旨外恶果`（内部名 `beyond_intent`）。
 
 ## 字段契约总表
