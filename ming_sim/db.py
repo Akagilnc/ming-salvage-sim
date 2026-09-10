@@ -14882,6 +14882,9 @@ class GameDB:
         for entry in plan:
             rid = str(entry["region_id"] or "")
             if rid in existing_by_region:
+                self._attach_affair_from_payload(
+                    state, entry["payload"], existing_by_region[rid],  # type: ignore[arg-type]
+                )
                 continue
             did = self._create_decree_dossier_row(
                 state,

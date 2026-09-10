@@ -134,6 +134,44 @@ def test_ledger_points_at_dossier_issue_points_at_affair(game):
     assert db.affairs.affair_id_for_issue(issue_id) == affair.id
 
 
+def test_bulk_existing_dossier_receives_declared_affair(game):
+    db, state, _ = game
+    minister = _minister(db)
+    pending_id = 91001
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text="调洪承畴赴宁远",
+        target_kind="issue",
+        target_id="ningyuan-general",
+        executor_kind="character",
+        executor_id=minister,
+        pending_action_id=pending_id,
+        payload={"assignee_id": minister},
+    )
+    assert int(db.get_decree_dossier(dossier_id)["affair_id"]) == 0
+    affair = db.affairs.open(
+        name=NINGYUAN, origin=ORIGIN,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    ids = db.create_decree_dossiers(
+        state,
+        action_type="assignment",
+        decree_text="调洪承畴赴宁远",
+        target_kind="issue",
+        target_id="ningyuan-general",
+        executor_kind="character",
+        executor_id=minister,
+        pending_action_id=pending_id,
+        payload={
+            "assignee_id": minister,
+            "affair_declaration": _declaration(attach="existing", affair_id=affair.id),
+        },
+    )
+    assert ids == [dossier_id]
+    assert int(db.get_decree_dossier(dossier_id)["affair_id"]) == affair.id
+
+
 def test_affair_current_situation_survives_reopen(game, content):
     db, state, _ = game
     path = db.path

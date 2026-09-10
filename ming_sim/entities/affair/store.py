@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS affairs (
 );
 CREATE INDEX IF NOT EXISTS idx_affairs_open
     ON affairs(status, id);
-CREATE INDEX IF NOT EXISTS idx_affairs_birth
-    ON affairs(created_turn, birth_key, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_affairs_declared_identity
+    ON affairs(birth_key) WHERE birth_key <> '';
 """
 
 
@@ -138,10 +138,8 @@ class AffairStore:
         key = str(parsed.get("birth_key") or "").strip()
         if key:
             existing = self._conn.execute(
-                "SELECT id FROM affairs "
-                "WHERE birth_key=? AND created_turn=? AND status='open' "
-                "ORDER BY id LIMIT 1",
-                (key, int(turn)),
+                "SELECT id FROM affairs WHERE birth_key=?",
+                (key,),
             ).fetchone()
             if existing is not None:
                 return int(existing["id"])
