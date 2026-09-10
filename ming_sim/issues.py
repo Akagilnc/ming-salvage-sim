@@ -8214,15 +8214,18 @@ def apply_score_extraction(
 
     batch_new_identities: dict[str, tuple[str, str, str]] = {}
 
-    def _stamp_batch_new_declaration(item: object) -> object:
+    def _stamp_batch_new_declaration(item: object) -> tuple[object, str | None]:
+        """Stamp a shared birth_key onto same-identity siblings, or hand back a
+        per-item rejection reason on identity conflict. Never raises: ADR 0005
+        坏项逐项拒收，合法 sibling 照落，不带走整批。"""
         if not isinstance(item, dict):
-            return item
+            return item, None
         try:
             parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
         except (TypeError, ValueError):
-            return item
+            return item, None
         if parsed is None or parsed.get("attach") != "new":
-            return item
+            return item, None
         identity = str(parsed.get("identity") or "").strip()
         name = str(parsed["name"])
         origin = str(parsed["origin"])
@@ -8234,7 +8237,7 @@ def apply_score_extraction(
             else:
                 key, prior_name, prior_origin = prior
                 if prior_name != name or prior_origin != origin:
-                    raise ValueError("同批事务 identity 声明冲突")
+                    return item, f"同批事务 identity「{identity}」声明冲突"
         else:
             key = f"result:{uuid4().hex}"
         stamped = {
@@ -8243,7 +8246,7 @@ def apply_score_extraction(
             "origin": origin,
             "birth_key": key,
         }
-        return {**item, "affair_declaration": stamped}
+        return {**item, "affair_declaration": stamped}, None
 
     for field in (
         "economy_moves", "new_issues", "人物变更",
@@ -8251,7 +8254,14 @@ def apply_score_extraction(
     ):
         raw_items = extracted.get(field)
         if isinstance(raw_items, list):
-            extracted[field] = [_stamp_batch_new_declaration(item) for item in raw_items]
+            kept: List[object] = []
+            for raw_item in raw_items:
+                stamped, conflict_reason = _stamp_batch_new_declaration(raw_item)
+                if conflict_reason is not None:
+                    validate_rejections.append((field, raw_item, conflict_reason))
+                    continue
+                kept.append(stamped)
+            extracted[field] = kept
 
     def _origin_ref_from_result_item(item: Mapping[str, object] | None) -> str:
         return db.affairs.origin_ref_from_result_item(

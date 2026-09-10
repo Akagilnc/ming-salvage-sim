@@ -11,7 +11,7 @@ import ming_sim.session as session_mod
 import ming_sim.simulation as simulation
 from ming_sim.audience_extraction import parse_extraction_facts
 from ming_sim.db import GameDB
-from ming_sim.entities.affair import parse_origin_ref
+from ming_sim.entities.affair import affair_id_from_experience_origin_ref
 from ming_sim.issues import apply_score_extraction
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from ming_sim.session import GameSession
@@ -395,6 +395,8 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
         "SELECT origin_ref FROM person_logs WHERE origin_ref=?",
         (affair_ref,),
     ).fetchone()
+    # canonical affair 来源精确匹配：故事经历后缀不得被 durable-effect 来源校验放行。
+    assert db.effect_origin_rejection(f"{affair_ref}/turn:1/0") is not None
 
     denied = apply_score_extraction(
         db, state,
@@ -446,32 +448,37 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
         "SELECT COUNT(*) AS n FROM affairs",
     ).fetchone()["n"] == before_planted + 2
 
+    # 同批同 identity 但 name/origin 冲突：坏项逐项拒收，合法 sibling 照落——不
+    # 得从预处理抛穿中止整批（ADR 0005，#1831）。
     before_conflict = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    try:
-        apply_score_extraction(
-            db, state,
-            {
-                "economy_moves": [{
-                    "account": "国库", "delta": -4, "category": "善后", "reason": "冲突甲",
-                    "affair_declaration": _declaration(identity="conflict-id"),
-                }],
-                "人物变更": [{
-                    "name": minister, "动作": "评定", "loyalty": 1,
-                    "affair_declaration": {
-                        "attach": "new", "name": "另一名", "origin": "另一起因",
-                        "identity": "conflict-id",
-                    },
-                }],
-            },
-            content=content, open_affair_ids_at_input={first.id, second.id},
-        )
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("expected identity conflict")
+    conflict_result = apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "国库", "delta": -4, "category": "善后", "reason": "冲突甲",
+                "affair_declaration": _declaration(identity="conflict-id"),
+            }],
+            "人物变更": [{
+                "name": minister, "动作": "评定", "loyalty": 1,
+                "affair_declaration": {
+                    "attach": "new", "name": "另一名", "origin": "另一起因",
+                    "identity": "conflict-id",
+                },
+            }],
+        },
+        content=content, open_affair_ids_at_input={first.id, second.id},
+    )
+    # sibling（economy_moves，先声明 identity 的一项）照落，新建一事务。
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM affairs",
-    ).fetchone()["n"] == before_conflict
+    ).fetchone()["n"] == before_conflict + 1
+    # 冲突项（人物变更，identity 相同但 name/origin 不符）单项拒收，不落地。
+    assert conflict_result["applied_person_changes"] == []
+    assert any(
+        rejection.get("report_section") == "人物变更"
+        and "identity" in str(rejection.get("reason"))
+        for rejection in conflict_result["validate_shape_rejections"]
+    )
 
 
 def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
@@ -529,11 +536,13 @@ def test_translation_experience_marks_affair_without_dossier(game):
             "事务声明": _declaration(attach="existing", affair_id=affair.id),
         }],
     })
-    db.settle_story_extraction(ctid, nid, facts, seq)
+    db.settle_story_extraction(
+        ctid, nid, facts, seq, authorized_open_ids={affair.id},
+    )
     rows = db.affairs.experiences(affair.id)
     assert len(rows) == 1
     assert minister in rows[0]["person_names"]
-    assert parse_origin_ref(rows[0]["origin_ref"]) == ("affair", affair.id)
+    assert affair_id_from_experience_origin_ref(rows[0]["origin_ref"]) == affair.id
     brief = build_extractor_shared_context(db, state, "宁远护送", "")
     row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
     assert "experiences" not in row
@@ -544,11 +553,38 @@ def test_translation_experience_marks_affair_without_dossier(game):
     try:
         restored_rows = restored.affairs.experiences(affair.id)
         assert minister in restored_rows[0]["person_names"]
-        assert parse_origin_ref(restored_rows[0]["origin_ref"]) == (
-            "affair", affair.id,
-        )
+        assert affair_id_from_experience_origin_ref(
+            restored_rows[0]["origin_ref"],
+        ) == affair.id
     finally:
         restored.close()
+
+
+def test_settle_story_extraction_honors_frozen_authorization_not_live_state(game):
+    """落账须用调用方在首闸内冻结的 open-affair 授权集，不得重读 live 状态：
+    事务在冻结之后、落账之前被了结，仍应按冻结时刻的授权放行（#1831）。"""
+    db, state, _ = game
+    minister = _minister(db)
+    affair = db.affairs.open(
+        name=NINGYUAN, origin=ORIGIN,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    nid, ctid, seq = _persist_reply(db, state, minister)
+    facts = parse_extraction_facts({
+        "facts": [{
+            "person_names": [minister],
+            "body": "护送途中闻边报，尚无案卷",
+            "事务声明": _declaration(attach="existing", affair_id=affair.id),
+        }],
+    })
+    # 模拟并发：冻结授权之后、落账之前，事务被了结——live list_open 已不含它。
+    db.affairs.declare_closed(affair.id, turn=state.turn)
+    db.settle_story_extraction(
+        ctid, nid, facts, seq, authorized_open_ids={affair.id},
+    )
+    rows = db.affairs.experiences(affair.id)
+    assert len(rows) == 1
+    assert minister in rows[0]["person_names"]
 
 
 def test_close_requires_open_affairs_visible_in_batch(game, monkeypatch):

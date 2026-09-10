@@ -10368,6 +10368,7 @@ class GameDB:
         source_night_seq: int,
         *,
         allow_closing: bool = False,
+        authorized_open_ids: Optional[set[int]] = None,
     ) -> List[int]:
         """一轮抽取产出的多条账在**同一事务内全有或全无**落库 + 抽取水位 → 'done'（ADR 0036 cmr R3）。
 
@@ -10382,6 +10383,11 @@ class GameDB:
 
         CLOSING 默认拒写；仅 close_night ordinary drain 显式 `allow_closing=True`，
         不得仅凭 night.status 自动授权，不加 token/registry/第二写口。
+
+        `authorized_open_ids` 为调用方在 write_gate 首闸内冻结的 open-affair 授权集
+        （LLM 所见即落账所认）；传入时原样使用，不重读 live list_open——否则模型见到
+        的集合与落账认可的集合可在并发下漂移（#1831）。未传（如既有直调测试）保持
+        旧行为：现读现授权。
         """
         from ming_sim.audience_night import PRESENCE_ENTER, append_ledger_entry
         from ming_sim.entities.affair import ATTACH_EXPERIENCE, declaration_from_payload
@@ -10424,7 +10430,10 @@ class GameDB:
                         source=Provenance.system_simulation,
                     ), int(turn_row["turn"] if turn_row is not None else 0))
                 collector.flush_to_db(self)
-            authorized_open = {int(row.id) for row in self.affairs.list_open()}
+            authorized_open = (
+                set(authorized_open_ids) if authorized_open_ids is not None
+                else {int(row.id) for row in self.affairs.list_open()}
+            )
             for fact in accepted:
                 persons = [
                     str(n).strip()

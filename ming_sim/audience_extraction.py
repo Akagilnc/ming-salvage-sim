@@ -480,26 +480,30 @@ def run_extraction_for_turn(
             if db.get_story_extract_status(cid) == "done":
                 return {"status": "done", "chat_turn_id": cid, "already": True}
 
-            # 短读并入首闸：禁 gate 外碰共享 conn（与屏障 close / 他腿并发）。
+            # 短读并入首闸：禁 gate 外碰共享 conn（与屏障 close / 他腿并发）。open_affairs
+            # 与其 id 集在此一次冻结；LLM 见到的与落账认可的必须是同一批，不得在
+            # gate 外或落账时重读 live 状态（#1831 修理腿）。
             question_text = _user_message_for_turn(db, cid)
             if present_names is None:
                 try:
                     present_names = sorted(persons_present_tonight(db, int(night_id)))
                 except Exception:
                     present_names = []
+            open_affairs = []
+            store = getattr(db, "affairs", None)
+            if store is not None and hasattr(store, "input_brief"):
+                open_affairs = store.input_brief(getattr(db, "textual_facts", None))
+            authorized_open_ids = {int(item["id"]) for item in open_affairs}
 
         if not str(reply or "").strip() and not question_text.strip():
             return _settle_or_pending(
                 db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
                 facts=[], source_night_seq=source_night_seq, fact_count=0,
                 allow_closing=allow_closing,
+                authorized_open_ids=authorized_open_ids,
             )
 
         try:
-            open_affairs = []
-            store = getattr(db, "affairs", None)
-            if store is not None and hasattr(store, "input_brief"):
-                open_affairs = store.input_brief(getattr(db, "textual_facts", None))
             facts = extract_story_facts(
                 reply,
                 minister_name=minister_name,
@@ -520,6 +524,7 @@ def run_extraction_for_turn(
             facts=facts, source_night_seq=source_night_seq,
             fact_count=len(facts),
             allow_closing=allow_closing,
+            authorized_open_ids=authorized_open_ids,
         )
     finally:
         if owner is not None:
@@ -669,8 +674,13 @@ def _settle_or_pending(
     cid: int, night_id: int, minister_name: str,
     facts: Sequence[Mapping[str, Any]], source_night_seq: int, fact_count: int,
     allow_closing: bool = False,
+    authorized_open_ids: Optional[set[int]] = None,
 ) -> Dict[str, Any]:
-    """持锁落账 + 二次幂等复查；落账失败与抽取失败同语义（pack+pending，不抛穿 catch_up）。"""
+    """持锁落账 + 二次幂等复查；落账失败与抽取失败同语义（pack+pending，不抛穿 catch_up）。
+
+    `authorized_open_ids` 携带调用方在首闸内冻结的 open-affair 授权集，落账
+    须原样使用，不得在此重读 live 状态（#1831 修理腿）。
+    """
     try:
         with write_gate:
             if db.get_story_extract_status(cid) == "done":
@@ -678,6 +688,7 @@ def _settle_or_pending(
             entry_ids = db.settle_story_extraction(
                 cid, int(night_id), facts, int(source_night_seq),
                 allow_closing=bool(allow_closing),
+                authorized_open_ids=authorized_open_ids,
             )
     except Exception as exc:
         return _pending_with_pack(
