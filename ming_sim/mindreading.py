@@ -2,8 +2,8 @@
 
 这是内容层 seam，不负责 UI 或召对编排：回话正文必须由调用方显式传入，
 因此可以在回话流式完成后后台排队，而不会让生成器偷偷等待另一条会话管线。
-读心者只携带角色见闻投影；目标的内部底账仅在此处转译成给玩家可读的定性
-旁白，不把机器分值带进 payload。
+读心者只携带角色见闻投影，按自己所知给判断；不直读目标忠诚 / 派系 /
+身份 / 罪证真值。
 """
 
 from __future__ import annotations
@@ -16,10 +16,6 @@ from ming_sim.db import normalize_office
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
 from ming_sim.models import Character
-from ming_sim.qualitative import (
-    identity_band,
-    qualitative_character_axis,
-)
 
 
 _INNER_COURT_ATTENDANT_OFFICES = frozenset({"信邸内官随驾", "御前近臣"})
@@ -80,33 +76,17 @@ def build_scouting_precision_payload(
     }
 
 
-def _seed_guilt_text(character: object) -> str:
-    raw = _character_field(character, "seed_guilt") or ""
-    try:
-        guilt = json.loads(raw) if isinstance(raw, str) else raw
-    except (TypeError, ValueError):
-        guilt = {}
-    if not isinstance(guilt, Mapping):
-        return "底案未见坐实之事。"
-    crime = str(guilt.get("crime") or "无")
-    severity = str(guilt.get("severity") or "无")
-    if crime == "无" and severity == "无":
-        return "底案未见坐实之事。"
-    return f"底案留有{crime}（案情分量：{severity}）。"
-
-
 def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]:
+    from ming_sim.materials import (
+        character_hearing_records,
+        character_office_archive_text,
+    )
+
     knowledge = db.get_character_knowledge(state, reader.name)
-    # 去掉 turn/kind/source 等机面元数据，只传读心者自己的听闻正文。当前盘面
-    # 会包含可数军政事实；读心 payload 的职责是转译人物底账，不能把无关盘面
-    # 混入而意外重现裸人物分值。
-    heard = []
-    for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
-        heard.append({
-            "title": str(item.get("title") or ""),
-            "body": str(item.get("body") or ""),
-        })
-    return {"heard": heard[-20:]}
+    return {
+        "heard": character_hearing_records(knowledge),
+        "公事档案": character_office_archive_text(db, state, reader, knowledge),
+    }
 
 
 def build_mindreading_materials(
@@ -139,33 +119,13 @@ def build_mindreading_materials(
     if not str(minister_reply or "").strip():
         raise ValueError("读心 payload 需要显式的大臣回话正文")
 
-    current_target: object = target
-    if hasattr(db, "conn"):
-        row = db.conn.execute(
-            "SELECT faction, identity, loyalty, seed_guilt FROM characters WHERE name=?",
-            (target.name,),
-        ).fetchone()
-        if row is not None:
-            current_target = row
-
-    identity = int(_character_field(current_target, "identity") or 0)
-    loyalty = int(_character_field(current_target, "loyalty") or 0)
-    faction = str(_character_field(current_target, "faction") or "未明党籍")
     reader_context = _reader_context(db, state, reader)
-    party_truth = f"名义党派：{faction}；对本党的认同：{identity_band(identity)}。"
-    loyalty_truth = f"对君的真心：{qualitative_character_axis('loyalty', loyalty)}。"
-    guilt_truth = _seed_guilt_text(current_target)
     return {
         "reader": reader.name,
         "target": target.name,
         "source": "见闻",
         "precision": intelligence_precision(target_factor, channel_factor),
         "reader_context": reader_context,
-        "truths": {
-            "党账": party_truth,
-            "君臣账": loyalty_truth,
-            "底案": guilt_truth,
-        },
         "reply_text": minister_reply,
     }
 
@@ -180,16 +140,13 @@ def generate_mindreading_payload(
 
     #1474：无真增量时模型空返回 → None（本轮缺席，非失败）。
     """
-    truths = materials.get("truths")
     reader_context = materials.get("reader_context")
-    if not isinstance(truths, Mapping) or not isinstance(reader_context, Mapping):
-        raise ValueError("读心材料缺少真相投影或近臣见闻")
+    if not isinstance(reader_context, Mapping):
+        raise ValueError("读心材料缺少近臣见闻")
     model_materials = {
         "当轮回话": materials.get("reply_text"),
-        "党账": truths.get("党账"),
-        "君臣账": truths.get("君臣账"),
-        "底案": truths.get("底案"),
         "近臣自身见闻": reader_context.get("heard", []),
+        "近臣公事档案": reader_context.get("公事档案", ""),
     }
     agent = mindreading_agent
     if agent is None:

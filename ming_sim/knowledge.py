@@ -227,10 +227,10 @@ def render_character_knowledge(
 
     This is the single presentation seam for both live session prompts and
     minister-agent prompts.  The projection has already enforced access
-    control; this function only de-duplicates sources, orders them, and caps
-    the prompt material.  #1281 issue stage_text for seed-event audiences is
-    synthesized here (read-time) when ``db``/``state`` are supplied — never
-    written into the durable knowledge projection.
+    control; this function only de-duplicates sources and orders them.
+    #1281 issue stage_text for seed-event audiences is synthesized here
+    (read-time) when ``db``/``state`` are supplied — never written into the
+    durable knowledge projection.
     """
     lines = [f"【{character_name}此刻所知的天下（仅此人物见闻）】"]
     for key, value in (knowledge.get("world") or {}).items():
@@ -256,11 +256,11 @@ def render_character_knowledge(
             int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
         )
         by_source[key] = item
-    recent_items = sorted(
+    items = sorted(
         by_source.values(),
         key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
-    )[-20:]
-    for item in recent_items:
+    )
+    for item in items:
         title = str(item.get("title") or "旧闻")
         body = str(item.get("body") or "")
         if body:
@@ -290,6 +290,19 @@ def project_court_roster_rows(
         if str(row["office_type"] or "") == current_office_type
         or str(row["name"] or "") in visible_event_text
     ]
+
+
+def _appointment_register(db: Any, state: Any) -> str:
+    """吏部任免簿：当前在朝职名，不是派系底账。"""
+    if not hasattr(db, "current_court_roster_rows"):
+        return "任免簿：暂无。"
+    rows = db.current_court_roster_rows(state)
+    if not rows:
+        return "任免簿：暂无。"
+    return "任免簿：\n" + "\n".join(
+        f"{row['name']}：{row['office'] or '无现任官职'}"
+        for row in rows
+    )
 
 
 def _role_roster(db: Any, office_type: str, state: Any) -> str:
@@ -393,13 +406,9 @@ def _world(
             db.region_report(limit=10),
             f"省级流民态势：{regional_displaced_pressure_brief(db)}",
         )),
-        "personnel": lambda: db.faction_report(audience=True),
+        "personnel": lambda: _appointment_register(db, state),
         "construction": lambda: db.buildings_report(qualitative=True),
         "security": lambda: db.power_report(exclude_self=True, audience=True),
-        "court": lambda: "\n".join((
-            db.faction_report(audience=True),
-            db.power_report(exclude_self=True, audience=True),
-        )),
     }
     facts = {
         domain: _prose(report_builders[domain]())

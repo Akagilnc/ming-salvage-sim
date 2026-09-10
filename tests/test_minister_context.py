@@ -648,8 +648,8 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
         "UPDATE powers SET leverage=19, military_strength=82, supply=67 "
         "WHERE id != 'ming'"
     )
-    minister = next(c for c in content.characters.values() if c.office_type == "内阁")
-    db.conn.execute("UPDATE characters SET office_type='内阁' WHERE name=?", (minister.name,))
+    minister = next(c for c in content.characters.values() if c.office_type == "都察院")
+    db.conn.execute("UPDATE characters SET office_type='都察院' WHERE name=?", (minister.name,))
     db.conn.commit()
 
     # engine rails / global builders still surface the planted material; final boundary must not.
@@ -669,7 +669,7 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
         for d in [prepare_character_materials(db, _ctx(game).state, minister)]
         for path in list_materials(d.root) if path != "INDEX.txt"
     )
-    assert "court：" in blob
+    assert "security：" in blob
     assert not _RAW_ABSTRACT_AXIS.search(rendered)
     assert not _RAW_ABSTRACT_AXIS.search(blob)
     assert region_poison not in rendered
@@ -715,7 +715,7 @@ def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
 
 
 def test_minister_materials_characterize_region_army_and_issue_progress(game):
-    """兵部材料目录：地区/军情均不泄抽象轴裸值。"""
+    """边镇材料目录：地区/军情均不泄抽象轴裸值。"""
     db, state, content = game
     db.conn.execute(
         "UPDATE regions SET public_support=13, unrest=87, "
@@ -723,7 +723,10 @@ def test_minister_materials_characterize_region_army_and_issue_progress(game):
     )
     db.conn.execute("UPDATE armies SET firearm_equipment=58 WHERE owner_power='ming'")
     db.conn.commit()
-    minister = next(c for c in content.characters.values() if c.office_type == "兵部")
+    minister = next(
+        c for c in content.characters.values()
+        if c.office_type == "边镇" and db.get_character_status(c.name)[0] == "active"
+    )
     prepared = prepare_character_materials(db, state, minister)
     blob = "\n".join(
         read_material(prepared.root, path)
