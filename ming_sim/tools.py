@@ -12,17 +12,6 @@ from ming_sim.issues import TravelTone, normalize_travel_tone
 from ming_sim.person_archive_contract import PERSON_ACTIONS
 from ming_sim.strict_types import strict_int
 
-_STATUS_CN = {
-    "active": "在朝",
-    "offstage": "赋闲",
-    "candidate": "候选",
-    "dismissed": "已罢黜",
-    "imprisoned": "下狱",
-    "exiled": "流放",
-    "retired": "致仕",
-    "dead": "已故",
-}
-
 
 def _duty_location(office: str, office_type: str, status: str) -> str:
     if status == "dead":
