@@ -152,12 +152,41 @@ class AffairStore:
             birth_key=key,
         ).id
 
+    def peek_declared_id(self, declaration: Mapping[str, object]) -> int | None:
+        """Read the declared identity without creating an affair."""
+        parsed = parse_affair_declaration(declaration)
+        if parsed["attach"] == _ATTACH_EXISTING:
+            affair_id = int(parsed["affair_id"])
+            self.get(affair_id)
+            return affair_id
+        key = str(parsed.get("birth_key") or "").strip()
+        if not key:
+            return None
+        row = self._conn.execute(
+            "SELECT id FROM affairs WHERE birth_key=?", (key,),
+        ).fetchone()
+        return None if row is None else int(row["id"])
+
     def point_dossier(self, dossier_id: int, affair_id: int) -> None:
         self.get(affair_id)
+        row = self._conn.execute(
+            "SELECT affair_id FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        current = int(row["affair_id"] or 0)
+        want = int(affair_id)
+        if current == want:
+            return
+        if current != 0:
+            raise ValueError(
+                f"案卷已指向事务 {current}，不能改指 {want}"
+            )
         owns = connection_owns_transaction(self._conn)
         self._conn.execute(
             "UPDATE decree_dossiers SET affair_id=? WHERE id=? AND affair_id=0",
-            (int(affair_id), int(dossier_id)),
+            (want, int(dossier_id)),
         )
         if owns:
             self._conn.commit()

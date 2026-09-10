@@ -171,6 +171,107 @@ def test_bulk_existing_dossier_receives_declared_affair(game):
     assert ids == [dossier_id]
     assert int(db.get_decree_dossier(dossier_id)["affair_id"]) == affair.id
 
+    again = db.create_decree_dossiers(
+        state,
+        action_type="assignment",
+        decree_text="调洪承畴赴宁远",
+        target_kind="issue",
+        target_id="ningyuan-general",
+        executor_kind="character",
+        executor_id=minister,
+        pending_action_id=pending_id,
+        payload={
+            "assignee_id": minister,
+            "affair_declaration": _declaration(attach="existing", affair_id=affair.id),
+        },
+    )
+    assert again == [dossier_id]
+    assert int(db.get_decree_dossier(dossier_id)["affair_id"]) == affair.id
+
+
+def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
+    db, state, _ = game
+    minister = _minister(db)
+    pending_id = 91002
+    first = db.affairs.open(
+        name=NINGYUAN, origin=ORIGIN,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    other = db.affairs.open(
+        name="另事", origin="另一件交办",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text="调洪承畴赴宁远",
+        target_kind="issue",
+        target_id="ningyuan-general",
+        executor_kind="character",
+        executor_id=minister,
+        pending_action_id=pending_id,
+        payload={
+            "assignee_id": minister,
+            "affair_declaration": _declaration(attach="existing", affair_id=first.id),
+        },
+    )
+    before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    try:
+        db.create_decree_dossiers(
+            state,
+            action_type="assignment",
+            decree_text="调洪承畴赴宁远",
+            target_kind="issue",
+            target_id="ningyuan-general",
+            executor_kind="character",
+            executor_id=minister,
+            pending_action_id=pending_id,
+            payload={
+                "assignee_id": minister,
+                "affair_declaration": _declaration(
+                    attach="existing", affair_id=other.id,
+                ),
+            },
+        )
+    except ValueError as exc:
+        assert str(first.id) in str(exc)
+    else:
+        raise AssertionError("expected conflict")
+    assert int(db.get_decree_dossier(dossier_id)["affair_id"]) == first.id
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
+
+    try:
+        db.create_decree_dossiers(
+            state,
+            action_type="assignment",
+            decree_text="调洪承畴赴宁远",
+            target_kind="issue",
+            target_id="ningyuan-general",
+            executor_kind="character",
+            executor_id=minister,
+            pending_action_id=pending_id,
+            payload={
+                "assignee_id": minister,
+                "affair_declaration": {
+                    "attach": "new",
+                    "name": "孤儿",
+                    "origin": "不该落地",
+                    "birth_key": "orphan-affair",
+                },
+            },
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected conflict")
+    assert db.affairs.peek_declared_id({
+        "attach": "new",
+        "name": "孤儿",
+        "origin": "不该落地",
+        "birth_key": "orphan-affair",
+    }) is None
+    assert int(db.get_decree_dossier(dossier_id)["affair_id"]) == first.id
+
 
 def test_affair_current_situation_survives_reopen(game, content):
     db, state, _ = game

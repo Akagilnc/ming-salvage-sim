@@ -14954,6 +14954,22 @@ class GameDB:
     def _attach_affair_from_payload(
         self, state: GameState, payload: Mapping[str, object] | None, dossier_id: int,
     ) -> None:
+        if not payload or payload.get("affair_declaration") is None:
+            return
+        current = self.conn.execute(
+            "SELECT affair_id FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
+        ).fetchone()
+        if current is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        current_id = int(current["affair_id"] or 0)
+        if current_id:
+            peeked = self.affairs.peek_declared_id(payload["affair_declaration"])
+            if peeked == current_id:
+                return
+            raise ValueError(
+                f"案卷已指向事务 {current_id}，不能改指 {peeked or '新事务'}"
+            )
         affair_id = self._resolve_affair_id_from_payload(state, payload)
         if affair_id:
             self.affairs.point_dossier(int(dossier_id), affair_id)
