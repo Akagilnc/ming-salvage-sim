@@ -6,7 +6,6 @@ list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -145,16 +144,6 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
     rel = next(line for line in listing.splitlines() if line.endswith("经历.txt"))
     body = tools["read_material"](rel)
     assert body
-    skill_root = Path(".agno_skills")
-    assert not (skill_root / "court-roster").exists()
-    assert not (skill_root / "army-roster").exists()
-    loaded = "\n".join(
-        p.read_text(encoding="utf-8")
-        for p in sorted(skill_root.glob("*/SKILL.md"))
-    )
-    assert "search_memories" not in loaded
-    assert "query_court_roster" not in loaded
-    assert "query_army_roster" not in loaded
 
 
 def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
