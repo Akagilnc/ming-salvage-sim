@@ -17,13 +17,7 @@ from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig
-from ming_sim.recommendations import build_recommendation_brief
 from ming_sim.llm_model import create_chat_model
-from ming_sim.knowledge import render_character_knowledge
-from ming_sim.qualitative import (
-    building_output_effect,
-    building_qualitative_fields,
-)
 from ming_sim.materials import material_tools, prepare_character_materials
 from ming_sim.tools import _duty_location, build_minister_tools
 
@@ -73,91 +67,6 @@ def _minister_game_world_prompt(prompt: str) -> str:
             line = "- 军队盘面中驻地、统帅、兵种、人数、月饷与欠饷等可数物照实呈报；补给、士气、训练、装备、火器、机动、忠诚以定性描述呈报；随军大炮照门数呈报。"
         lines.append(line)
     return "\n".join(lines)
-
-
-def build_character_knowledge_brief(character: Character, context: CourtContext) -> str:
-    """Render the minister's perspectival world slice for the audience prompt.
-
-    ``get_character_knowledge`` is the sole read boundary here: unlike the
-    legacy registry builders it applies office scoping and source exclusions
-    before anything reaches the model.  Keep this as one block so a future
-    prompt assembly change cannot accidentally reintroduce a global rail.
-    """
-    knowledge = context.db.get_character_knowledge(context.state, character.name)
-    return render_character_knowledge(
-        knowledge, character.name, db=context.db, state=context.state,
-    )
-
-
-def build_secret_order_brief(character: Character, context: CourtContext) -> str:
-    """本大臣名下进行中密令的提醒——只列编号+标题+本月推进了没，不泄具体进展。
-    详情由大臣自己调 report_secret_order_progress 查（同时可写进展）。非承办人不提示。"""
-    try:
-        orders = context.db.get_active_secret_orders_for_minister(character.name)
-    except Exception:
-        return ""
-    if not orders:
-        return ""
-    lines = [
-        "【你身上还在办的密令】",
-        "★ 皇帝问进度时调 `report_secret_order_progress(order_id, progress=本月新一步进展)`：有 progress 时先暂存待确认，确认后落档；若只想查看历史则留空 progress；同月补充会修正本月行。",
-        "★ 皇帝催办/加急时调 `rush_secret_order(order_id, deadline_months=1/3/0, reason=催办缘由)`：1=下月到期，3=三月内到期，0=本月到期对账。",
-        "★ 自认任务办到位时调 `submit_secret_order_for_review(order_id, claim=自述办结陈词)`：缩期限至本月，月末按实进度对账。",
-        "★ progress / claim 写具体事实：派谁去、查到什么、摸到哪一层、下一步指向谁。空话「待实据到手」不算。",
-        "★ 大臣无权直接判 done/failed——结案由月末实进度对账派生。",
-        "在册密令：",
-    ]
-    for o in orders:
-        advanced = context.db._has_secret_order_period_line(
-            int(o["id"]), "result", context.state.year, context.state.period
-        )
-        tag = "✅ 本月已推进" if advanced else "⚠️ 本月尚未推进"
-        due_turn = int(o.get("due_turn") or 0)
-        due_text = f"；御限剩 {max(0, due_turn - int(context.state.turn))} 月" if due_turn else ""
-        lines.append(f"  - #{o['id']}「{o['title']}」 {tag}{due_text}")
-        content_brief = (o.get("content") or "")[:80].replace("\n", " ")
-        if content_brief:
-            lines.append(f"    （任务摘要：{content_brief}…）")
-    return "\n".join(lines)
-
-
-def build_region_brief(context: CourtContext) -> str:
-    """两京十三省危情概览。"""
-    try:
-        return context.db.region_report(limit=8)
-    except Exception:
-        return ""
-
-
-def build_building_brief(context: CourtContext) -> str:
-    """现有建筑紧凑表（名·类·省 规模/完好/产出）。"""
-    try:
-        # 用中文地区名（LEFT JOIN regions），不漏拼音 region_id（beizhili 等英文进 system
-        # 会诱发模型 code-switch 蹦英文；地区无名时退回 region_id）。
-        rows = context.db.conn.execute(
-            "SELECT b.name AS name, b.category AS category, "
-            "COALESCE(r.name, b.region_id) AS region_name, "
-            "b.level AS level, b.condition AS condition, "
-            "b.risk AS risk, "
-            "b.output_metric AS output_metric, b.output_amount AS output_amount "
-            "FROM buildings b LEFT JOIN regions r ON r.id = b.region_id "
-            "ORDER BY b.region_id, b.category"
-        ).fetchall()
-    except Exception:
-        return ""
-    if not rows:
-        return ""
-
-    lines = []
-    for r in rows:
-        metric = str(r["output_metric"] or "")
-        out = building_output_effect(metric, r["output_amount"], prefix="·")
-        level, condition, _risk = building_qualitative_fields(r)
-        lines.append(
-            f"{r['name']}（{r['category']}·{r['region_name']}）"
-            f"Lv档{level}，完好{condition}{out}"
-        )
-    return "【现有建筑（名·类别·地区 规模/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
 
 
 def _make_cultivate_tool(character: Character, context: CourtContext):

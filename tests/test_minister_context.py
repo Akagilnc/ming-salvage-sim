@@ -24,11 +24,7 @@ from ming_sim.context import (
     _MINISTER_DOSSIERS,
     _identity_bucket,
 )
-from ming_sim.registry import (
-    build_building_brief,
-    build_region_brief,
-    create_minister_agent,
-)
+from ming_sim.registry import create_minister_agent
 from ming_sim.tools import build_minister_tools
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.qualitative import (
@@ -94,56 +90,6 @@ _RAW_ABSTRACT_AXIS = re.compile(
     r"(?:民心|动乱|士绅阻力|军事压力|皇威|火器|完好|进度|bar|满意|势力|威望|实力|经济)"
     r"\s*[:：]?\s*\d+"
 )
-
-
-# ---------------------------------------------------------------------------
-# region / building briefs
-# ---------------------------------------------------------------------------
-
-def test_region_brief_surfaces_db_regions_and_qualitative_scores(game):
-    """region_brief ← region_report：地区名入面；抽象分走定性 helper，不泄裸值。"""
-    db, _state, _content = game
-    names = [row["name"] for row in db.conn.execute("SELECT name FROM regions").fetchall()]
-    assert names
-
-    baseline = build_region_brief(_ctx(game))
-    assert baseline and any(name in baseline for name in names)
-
-    db.conn.execute("UPDATE regions SET public_support=13, unrest=87")
-    db.conn.commit()
-    rendered = build_region_brief(_ctx(game))
-
-    assert not re.search(r"(?:民心|动乱)\s*[:：]?\s*(?:13|87)\b", rendered)
-    assert _support_label(13) in rendered
-    assert _unrest_label(87) in rendered
-    assert "粮情" in rendered
-    assert not re.search(r"粮食\d+万石", rendered)
-
-
-def test_building_brief_joins_chinese_region_and_qualitative_fields(game):
-    """建筑表 LEFT JOIN 中文地区名；规模/完好走 building_* helper，不泄拼音 id / 裸档。"""
-    db, _state, _content = game
-    rows = db.conn.execute(
-        "SELECT b.name AS name, b.region_id AS region_id, "
-        "COALESCE(r.name, b.region_id) AS region_name, "
-        "b.level AS level, b.condition AS condition "
-        "FROM buildings b LEFT JOIN regions r ON r.id = b.region_id"
-    ).fetchall()
-    assert rows
-
-    db.conn.execute("UPDATE buildings SET level=41, condition=73")
-    db.conn.commit()
-    rendered = build_building_brief(_ctx(game))
-
-    assert rendered.startswith("【现有建筑")
-    assert "Lv档" in rendered
-    for row in rows:
-        assert row["region_name"] in rendered
-        if row["region_name"] != row["region_id"]:
-            assert row["region_id"] not in rendered
-    assert not re.search(r"Lv(?:档)?41|完好(?:度)?73", rendered)
-    assert building_level_description(41) in rendered
-    assert building_condition_description(73) in rendered
 
 
 # ---------------------------------------------------------------------------
@@ -625,11 +571,11 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
     db.conn.execute("UPDATE characters SET office_type='内阁' WHERE name=?", (minister.name,))
     db.conn.commit()
 
-    # engine rails / global builders still surface the planted material; final boundary must not.
+    # engine rails still surface the planted material; final boundary must not.
     assert "满意17" in db.faction_report()
     assert "威望19" in db.power_report(exclude_self=True)
-    assert region_poison in build_region_brief(_ctx(game))
-    assert building_poison in build_building_brief(_ctx(game))
+    assert region_poison in db.region_report(limit=8)
+    assert building_poison in db.buildings_report(qualitative=True)
     knowledge_text = str(db.get_character_knowledge(_ctx(game).state, minister.name))
     assert region_poison not in knowledge_text
     assert building_poison not in knowledge_text

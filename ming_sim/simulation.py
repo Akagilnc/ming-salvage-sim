@@ -829,7 +829,7 @@ def build_simulator_payload(
         # 既有 simulator 自由长出，零新增 LLM 调用；阶级 satisfaction 变动仍只由
         # internal extractor 的 class_delta 槽产出（EXTRACTION_MODULES 一字不动）。
         "fiscal_fact_brief": build_fiscal_fact_brief(db),
-        "previous_narrative_tail": previous_narrative or "",
+        "previous_narrative": previous_narrative or "",
         "historical_anchor": historical_anchor_for_month(state.year, state.period),
         "victory_status": victory_status(db, state),
         "regions": _auto_table(region_rows),

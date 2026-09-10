@@ -324,23 +324,22 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
         _write_text(tmp / _PUBLIC_DIR / fname, "\n".join(lines))
         index.append(f"{_PUBLIC_DIR}/{fname}")
 
-    if hasattr(db, "list_turn_reports"):
-        for report in db.list_turn_reports():
-            if int(report["turn"]) <= 0:
-                continue
-            body = str(report.get("report") or "").strip()
-            if not body:
-                continue
-            year = int(report.get("year") or 0)
-            period = int(report.get("period") or 0)
-            fname = (
-                f"{year}年{period}月.txt"
-                if year and period
-                else f"turn-{int(report['turn'])}.txt"
-            )
-            rel = f"{_GAZETTE_DIR}/{fname}"
-            _write_text(tmp / rel, body)
-            index.append(rel)
+    for report in db.list_turn_reports():
+        if int(report["turn"]) <= 0:
+            continue
+        body = str(report.get("report") or "").strip()
+        if not body:
+            continue
+        year = int(report.get("year") or 0)
+        period = int(report.get("period") or 0)
+        fname = (
+            f"{year}年{period}月.txt"
+            if year and period
+            else f"turn-{int(report['turn'])}.txt"
+        )
+        rel = f"{_GAZETTE_DIR}/{fname}"
+        _write_text(tmp / rel, body)
+        index.append(rel)
 
     _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")
     return index

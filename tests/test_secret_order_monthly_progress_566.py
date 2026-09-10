@@ -217,11 +217,15 @@ def test_only_emperor_private_payload_shows_monthly_report(game):
     emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
     assert emperor_order["dossier_progress"][-1]["memorial_text"] == marker
 
-    # The report does not leak into the assignee's registry-fed audience brief.
-    from ming_sim.registry import CourtContext, build_secret_order_brief
+    # The report does not leak into the assignee's on-demand material directory.
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
     assignee = content.characters[emperor_order["minister_name"]]
-    private_brief = build_secret_order_brief(assignee, CourtContext(db=db, state=state))
-    assert marker not in private_brief
+    prepared = prepare_character_materials(db, state, assignee)
+    private_blob = "\n".join(
+        read_material(prepared.root, path)
+        for path in list_materials(prepared.root)
+    )
+    assert marker not in private_blob
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
