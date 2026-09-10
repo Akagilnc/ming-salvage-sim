@@ -219,6 +219,32 @@ def _opening_text(
     return "\n".join(parts)
 
 
+_LEDGER_KEYS = (
+    "treasury", "military", "personnel", "construction",
+    "security", "court", "regional",
+)
+
+
+def character_office_archive_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
+    """本衙门公事档案：职位底账 + 可见案卷。与目录 公事档案.txt 同一份。"""
+    from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
+
+    name = str(getattr(character, "name", "") or "")
+    world = dict(knowledge.get("world") or {})
+    office_lines = [
+        f"{key}：{value}"
+        for key, value in world.items()
+        if key in _LEDGER_KEYS and str(value or "").strip()
+    ]
+    if hasattr(db, "list_referenceable_dossiers"):
+        brief = render_referenceable_dossier_brief(
+            db.list_referenceable_dossiers(name, state.turn),
+        )
+        if brief:
+            office_lines.append(brief)
+    return "\n".join(office_lines) or "（无）"
+
+
 def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
     """Processed court roster for on-demand read (retired query_court_roster)."""
     from ming_sim.knowledge import project_court_roster_rows
@@ -242,7 +268,6 @@ def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> 
 
 
 def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict) -> list[str]:
-    from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
     from ming_sim.knowledge import render_character_knowledge
 
     name = str(getattr(character, "name", "") or "")
@@ -262,23 +287,10 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
     _write_text(person_dir / "经历.txt", "\n".join(experience_lines) or "（无）")
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/经历.txt")
 
-    world = dict(knowledge.get("world") or {})
-    ledger_keys = (
-        "treasury", "military", "personnel", "construction",
-        "security", "court", "regional",
+    _write_text(
+        person_dir / "公事档案.txt",
+        character_office_archive_text(db, state, character, knowledge),
     )
-    office_lines = [
-        f"{key}：{value}"
-        for key, value in world.items()
-        if key in ledger_keys and str(value or "").strip()
-    ]
-    if hasattr(db, "list_referenceable_dossiers"):
-        brief = render_referenceable_dossier_brief(
-            db.list_referenceable_dossiers(name, state.turn),
-        )
-        if brief:
-            office_lines.append(brief)
-    _write_text(person_dir / "公事档案.txt", "\n".join(office_lines) or "（无）")
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/公事档案.txt")
 
     # Keep a full processed projection in the directory for on-demand read;

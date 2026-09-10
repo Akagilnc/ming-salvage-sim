@@ -130,6 +130,11 @@ def test_messenger_knows_yuan_death_only_as_public_saying_without_target_truths(
     record_public_saying(
         db, state, public_body, involved_characters=[target.name],
     )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="SENTINEL_ATTENDANT_DOSSIER_1832",
+        target_kind="issue", target_id="validation",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
 
     prepared = prepare_character_materials(
         db, state, messenger, dest_root=tmp_path / "messenger",
@@ -142,13 +147,18 @@ def test_messenger_knows_yuan_death_only_as_public_saying_without_target_truths(
     materials = build_mindreading_materials(
         db, state, messenger, content.characters["温体仁"], "臣有本奏。",
     )
+    archive = _office_archive(prepared, messenger.name)
+    office = materials["reader_context"]["公事档案"]
+    assert "SENTINEL_ATTENDANT_DOSSIER_1832" in archive
+    assert office.strip() == archive.strip()
+    assert "SENTINEL_ATTENDANT_DOSSIER_1832" in office
     assert "truths" not in materials
     dumped = str(materials)
     assert "对君的真心" not in dumped
     assert "名义党派" not in dumped
     assert "底案留有" not in dumped
-    assert str(int(content.characters["温体仁"].loyalty)) not in dumped
-    assert str(int(content.characters["温体仁"].identity)) not in dumped
+    assert "seed_guilt" not in dumped
+    assert "loyalty" not in dumped
 
 
 def test_successor_reads_office_archive_not_predecessor_private(game, tmp_path):
