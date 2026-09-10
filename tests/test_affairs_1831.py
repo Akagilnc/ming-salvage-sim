@@ -218,6 +218,10 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         db, state, "银两已出京", involved_characters=[minister],
         affair_ref=db.affairs.origin_ref(affair.id),
     )
+    lived = db.affairs.experiences(affair.id)
+    assert lived
+    assert minister in lived[0]["person_names"]
+    assert lived[0]["origin_ref"] in db.affairs.origin_refs(affair.id)
     brief = build_extractor_shared_context(db, state, "宁远护送", "")
     row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
     assert "experiences" not in row
@@ -231,6 +235,9 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         assert loaded.name == NINGYUAN
         materials = restored.affairs.current_situation(restored.textual_facts, affair.id)
         assert [fact.body for fact in materials] == [PROGRESS]
+        restored_lived = restored.affairs.experiences(affair.id)
+        assert minister in restored_lived[0]["person_names"]
+        assert restored_lived[0]["origin_ref"] in restored.affairs.origin_refs(affair.id)
         restored_brief = build_extractor_shared_context(restored, state, "宁远护送", "")
         restored_row = next(
             item for item in restored_brief["open_affairs"] if int(item["id"]) == affair.id
@@ -467,7 +474,7 @@ def test_translation_experience_marks_affair_without_dossier(game):
     rows = db.affairs.experiences(affair.id)
     assert len(rows) == 1
     assert minister in rows[0]["person_names"]
-    assert rows[0]["origin_ref"] == db.affairs.origin_ref(affair.id)
+    assert rows[0]["origin_ref"].startswith(db.affairs.origin_ref(affair.id))
     brief = build_extractor_shared_context(db, state, "宁远护送", "")
     row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
     assert "experiences" not in row
@@ -478,7 +485,9 @@ def test_translation_experience_marks_affair_without_dossier(game):
     try:
         restored_rows = restored.affairs.experiences(affair.id)
         assert minister in restored_rows[0]["person_names"]
-        assert restored_rows[0]["origin_ref"] == restored.affairs.origin_ref(affair.id)
+        assert restored_rows[0]["origin_ref"].startswith(
+            restored.affairs.origin_ref(affair.id),
+        )
     finally:
         restored.close()
 

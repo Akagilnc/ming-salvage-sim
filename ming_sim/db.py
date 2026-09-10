@@ -10435,13 +10435,15 @@ class GameDB:
                 origin_ref = ""
                 parsed = declaration_from_payload(fact, allowed=ATTACH_EXPERIENCE)
                 if parsed is not None:
-                    origin_ref = self.affairs.origin_ref_from_result_item(
+                    pointed = self.affairs.origin_ref_from_result_item(
                         fact,
                         year=0,
                         period=0,
                         turn=0,
                         authorized_ids=authorized_open,
                     )
+                    if pointed:
+                        origin_ref = f"{pointed}/turn:{cid}/{len(new_ids)}"
                 entry_id = append_ledger_entry(
                     self,
                     int(night_id),

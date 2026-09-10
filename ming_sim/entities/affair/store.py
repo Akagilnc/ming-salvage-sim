@@ -380,13 +380,14 @@ class AffairStore:
         """Read-time projection: story-ledger rows whose origin_ref points at this affair."""
         self.get(affair_id)
         refs = self.origin_refs(affair_id)
+        affair_ref = self.origin_ref(affair_id)
         placeholders = ",".join("?" for _ in refs)
         rows = self._conn.execute(
             "SELECT id, person_names, tags, body, origin_ref "
             "FROM story_ledger_entries WHERE origin_ref IN ("
             + placeholders
-            + ") ORDER BY id",
-            refs,
+            + ") OR origin_ref LIKE ? ORDER BY id",
+            (*refs, f"{affair_ref}/%"),
         ).fetchall()
         out: list[dict[str, object]] = []
         for row in rows:
