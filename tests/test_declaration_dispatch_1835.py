@@ -105,6 +105,8 @@ def test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row(g
 
 
 def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item(game):
+    """AC3：单项拒收不牵连同批合法项；J1：拒收落进既有 rejection_reports 单一
+    真源（DB 行），不只活在本次调用的返回值里。"""
     db, state, _ = game
     minister = _minister(db)
 
@@ -126,6 +128,41 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
     assert db.textual_facts.readable_materials(
         subject_kind="character", subject_id="子虚乌有之人",
     ) == ()
+
+    rows = db.conn.execute(
+        "SELECT section, category, item_json FROM rejection_reports WHERE turn=?",
+        (int(state.turn),),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["section"] == "textual_facts"
+    assert rows[0]["category"] == "hallucinated_id"
+    assert "子虚乌有之人" in rows[0]["item_json"]
+
+
+def test_unknown_top_level_section_is_rejected_durably_without_dropping_sibling(game):
+    """J2：拼错/未知的顶层 section 键不静默漏项，走同一 durable 拒收单一真源；
+    合法兄弟 section 照常落地（AC1 无漏项）。"""
+    db, state, _ = game
+    minister = _minister(db)
+
+    declaration = {
+        "textual_facts": [{
+            "subject_kind": "character", "subject_id": minister, "body": "如实记事",
+        }],
+        "textual_fact": [{"subject_kind": "character", "subject_id": minister, "body": "拼错字段名"}],
+    }
+    result = dispatch_declaration(db, state, declaration, minister_name=minister)
+
+    assert len(result.textual_facts.applied) == 1
+    assert result.textual_facts.rejected == []
+
+    rows = db.conn.execute(
+        "SELECT section, category FROM rejection_reports WHERE turn=?",
+        (int(state.turn),),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["section"] == "textual_fact"
+    assert rows[0]["category"] == "invalid_shape"
 
 
 def test_promise_refuse_withdraws_staged_action_and_missing_action_id_is_rejected(game):
@@ -472,14 +509,17 @@ def test_edge_event_conflicting_affair_pointer_is_rejected_first_binding_kept(ga
 
 
 def test_protagonist_lands_and_rejects_nonexistent_person(game):
+    """J7：protagonist 无既有落库口，返回的是 projected 校验结果（`validated`），
+    不冒称 `SectionResult.applied`（那意味着已落库）。"""
     db, state, _ = game
     minister = _minister(db)
 
     ok = dispatch_declaration(db, state, {"protagonist": {"person_name": minister}})
-    assert ok.protagonist.applied == [{"person_name": minister}]
+    assert ok.protagonist.validated == {"person_name": minister}
+    assert ok.protagonist.rejected == []
 
     bad = dispatch_declaration(db, state, {"protagonist": {"person_name": "子虚乌有之人"}})
-    assert bad.protagonist.applied == []
+    assert bad.protagonist.validated is None
     assert bad.protagonist.rejected[0].category == "hallucinated_id"
 
 
@@ -530,7 +570,13 @@ def test_registration_attaches_declared_affair(game):
 
 
 def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
-    """ADR 0157 步骤 1-2：暂存不落账，作废后不结算，按序结算一旨一提交且幂等。"""
+    """ADR 0157 步骤 1-2：暂存不落账，作废后不结算，按给定顺序（不是暂存顺序）
+    逐旨一提交且幂等；J6：decree:1/decree:3 均存活且刻意用与暂存相反的结算
+    顺序，断言落账顺序服从传入的 `decree_refs_in_order`——若结算把迭代顺序
+    反了，facts 顺序会翻转、本测试变红（变异真跑）。decree:2 覆盖作废分支。
+    J1：decree:3 里混一条引用不存在人物的项，断言其拒收在暂存/结算路径下
+    同样落进 durable 的 rejection_reports（重新查库而非只看返回值），幂等
+    重结算不重复落库。"""
     from ming_sim.declaration_dispatch import (
         discard_staged_declaration,
         settle_staged_declarations_in_decree_order,
@@ -554,6 +600,14 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
         }]},
         turn=int(state.turn),
     )
+    stage_declaration(
+        db, decree_ref="decree:3",
+        declaration={"textual_facts": [
+            {"subject_kind": "character", "subject_id": minister, "body": "旨三：后到之旨"},
+            {"subject_kind": "character", "subject_id": "子虚乌有之人", "body": "旨三：凭空捏造"},
+        ]},
+        turn=int(state.turn),
+    )
     # 暂存不落账。
     assert db.textual_facts.readable_materials(
         subject_kind="character", subject_id=minister,
@@ -562,20 +616,39 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
     discarded = discard_staged_declaration(db, "decree:2")
     assert discarded == 1
 
+    # 刻意把 decree:3 排在 decree:1 之前——与暂存先后（1→2→3）相反，用来断言
+    # 结算真的服从传入顺序，而不是暂存插入顺序。
     results = settle_staged_declarations_in_decree_order(
-        db, state, ["decree:2", "decree:1"],
+        db, state, ["decree:3", "decree:1"],
     )
     assert "decree:2" not in results  # 全部作废，静默跳过
+    assert len(results["decree:3"].textual_facts.applied) == 1
+    assert len(results["decree:3"].textual_facts.rejected) == 1
+    assert results["decree:3"].textual_facts.rejected[0].category == "hallucinated_id"
     assert len(results["decree:1"].textual_facts.applied) == 1
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    assert [f.body for f in facts] == ["旨一：暂存中"]
+    # 落账顺序 = 传入的结算顺序（先 decree:3 后 decree:1），不是暂存顺序。
+    assert [f.body for f in facts] == ["旨三：后到之旨", "旨一：暂存中"]
 
-    # 幂等：再结算一次不重复落账。
-    again = settle_staged_declarations_in_decree_order(db, state, ["decree:1"])
-    assert "decree:1" not in again
+    rows = db.conn.execute(
+        "SELECT section, category, item_json FROM rejection_reports WHERE turn=?",
+        (int(state.turn),),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["section"] == "textual_facts"
+    assert rows[0]["category"] == "hallucinated_id"
+    assert "子虚乌有之人" in rows[0]["item_json"]
+
+    # 幂等：再结算一次不重复落账、不重复拒收。
+    again = settle_staged_declarations_in_decree_order(db, state, ["decree:3", "decree:1"])
+    assert again == {}
     facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    assert [f.body for f in facts_after] == ["旨一：暂存中"]
+    assert [f.body for f in facts_after] == ["旨三：后到之旨", "旨一：暂存中"]
+    rows_after = db.conn.execute(
+        "SELECT COUNT(*) c FROM rejection_reports WHERE turn=?", (int(state.turn),),
+    ).fetchone()
+    assert rows_after["c"] == 1
 
 
 def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):

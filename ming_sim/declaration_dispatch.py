@@ -61,7 +61,7 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
@@ -70,9 +70,11 @@ from ming_sim.action_materialize import (
 from ming_sim.applier import (
     Provenance,
     RejectedItem,
+    RejectionCollector,
     SectionResult,
     atomic,
     connection_owns_transaction,
+    mirror_rejections_after_commit,
 )
 from ming_sim.audience_night import (
     AUDIBILITY_PRIVATE,
@@ -83,6 +85,7 @@ from ming_sim.audience_night import (
     append_ledger_entry,
 )
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
+from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.issues import apply_person_changes_only
 from ming_sim.public_sayings import record_public_saying
 from ming_sim.relations import validate_edge_kind
@@ -97,8 +100,30 @@ _PRESENCE_ITEM_EFFECTS = {"enter": PRESENCE_ENTER, "exit": PRESENCE_EXIT}
 
 
 @dataclass(frozen=True)
+class ProtagonistResult:
+    """本轮御前主角声明的校验结果——不是落库结果（J7）：``protagonist`` 目前
+    无既有落库口（呈现侧归 F3 #1851，真正按源轮持久化与恢复由 #1838 接线），
+    冒称 ``SectionResult.applied``（其契约明定「已落库」）会让调用方误信已
+    持久化。``validated`` 是已校验存在的主角人物名投影，供后续调用方（C1a/
+    C1b/C3）在真正接线落库前先拿到一个诚实的中间结果；为空表示本声明未含
+    主角或被拒收。"""
+
+    validated: Optional[Dict[str, Any]]
+    rejected: List[RejectedItem]
+
+    def merge(self, other: "ProtagonistResult") -> "ProtagonistResult":
+        """同一旨下多条暂存声明折叠：后到声明的主角覆盖前者（同「应允/拒绝」
+        晚声明为准的语义），rejected 逐项累加不覆盖。"""
+        return ProtagonistResult(
+            validated=other.validated if other.validated is not None else self.validated,
+            rejected=self.rejected + other.rejected,
+        )
+
+
+@dataclass(frozen=True)
 class DeclarationDispatchResult:
-    """一份声明分派后的落地结果，逐 section 复用既有「items 进 → applied/rejected 出」契约。"""
+    """一份声明分派后的落地结果，逐 section 复用既有「items 进 → applied/rejected 出」契约
+    （``protagonist`` 例外：见 :class:`ProtagonistResult`）。"""
 
     commissions: SectionResult
     promises: SectionResult
@@ -108,7 +133,7 @@ class DeclarationDispatchResult:
     presence: SectionResult
     scene_facts: SectionResult
     edge_events: SectionResult
-    protagonist: SectionResult
+    protagonist: ProtagonistResult
     registrations: SectionResult
 
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
@@ -128,13 +153,46 @@ class DeclarationDispatchResult:
         )
 
 
+_SECTION_FIELDS: Tuple[str, ...] = (
+    "commissions", "promises", "textual_facts", "public_sayings",
+    "on_scene_facts", "presence", "scene_facts", "edge_events",
+    "protagonist", "registrations",
+)
+_KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
+
+
 def _empty_dispatch_result() -> DeclarationDispatchResult:
     empty = SectionResult(applied=[], rejected=[])
     return DeclarationDispatchResult(
         commissions=empty, promises=empty, textual_facts=empty, public_sayings=empty,
         on_scene_facts=empty, presence=empty, scene_facts=empty, edge_events=empty,
-        protagonist=empty, registrations=empty,
+        protagonist=ProtagonistResult(validated=None, rejected=[]), registrations=empty,
     )
+
+
+def _record_section_rejections(
+    collector: RejectionCollector, result: DeclarationDispatchResult, turn: int,
+) -> None:
+    """把十个已知 section 各自产生的拒收统一记进同一个收集器（J1：声明入口
+    单一收集，不各自零散处理 durable 化）。"""
+    for name in _SECTION_FIELDS:
+        for rejected_item in getattr(result, name).rejected:
+            collector.record(name, rejected_item, turn)
+
+
+def _record_unknown_sections(
+    collector: RejectionCollector, declaration: Mapping[str, object], turn: int,
+    source: Provenance,
+) -> None:
+    """顶层键不在十个已知 section 之列（拼错字段名等）→ 逐个记一条
+    ``invalid_shape`` 拒收，不静默漏项（ADR 0015 决定 7 / 票面 AC1，J2）。"""
+    for key in declaration.keys():
+        if key in _KNOWN_SECTIONS:
+            continue
+        collector.record(str(key), RejectedItem(
+            item={"raw_value": declaration[key]}, reason=f"未知 section：{key}",
+            category="invalid_shape", source=source,
+        ), turn)
 
 
 def dispatch_declaration(
@@ -145,6 +203,7 @@ def dispatch_declaration(
     minister_name: str = "",
     night_id: int = 0,
     source: Provenance = Provenance.system_simulation,
+    collector: Optional[RejectionCollector] = None,
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。
 
@@ -154,8 +213,15 @@ def dispatch_declaration(
     此时只能应允/拒绝同样未挂靠任何夜的暂存）；「在场进出」「说话人分段与
     可闻性」同样挂在这一夜的账本上，无夜（night_id<=0）时整批拒收，不落成
     孤儿账。
+
+    ``collector``：调用方持有的拒收收集器——:func:`settle_staged_declarations_in_decree_order`
+    传入，令同一旨下多条暂存声明的拒收与该旨的 ``mark_settled`` 落在同一次
+    提交；不传时本函数自己开一段最小事务，把本次十个 section 的拒收（含未知
+    顶层键，见 :func:`_record_unknown_sections`）落进既有 ``rejection_reports``
+    单一真源（ADR 0008 决定 5，不建声明专用拒收表），提交成功后镜像 jsonl
+    （J1/J2）。
     """
-    return DeclarationDispatchResult(
+    result = DeclarationDispatchResult(
         commissions=_dispatch_commissions(
             db, state, declaration.get("commissions"),
             minister_name=minister_name, source=source,
@@ -188,6 +254,16 @@ def dispatch_declaration(
             db, state, declaration.get("registrations"), source=source,
         ),
     )
+    owns_collector = collector is None
+    active_collector = collector if collector is not None else RejectionCollector()
+    turn = int(state.turn)
+    _record_unknown_sections(active_collector, declaration, turn, source)
+    _record_section_rejections(active_collector, result, turn)
+    if owns_collector:
+        with atomic(db):
+            active_collector.flush_to_db(db)
+        mirror_rejections_after_commit(db, active_collector, rejections_jsonl_path)
+    return result
 
 
 def stage_declaration(
@@ -226,6 +302,11 @@ def settle_staged_declarations_in_decree_order(
     ``decree_refs_in_order`` 是调用方给定的下旨先后顺序——「先后」本身由旨意
     系统的下达时点决定，不归本分派器派生或校验；本函数只保证按给定顺序逐一
     幂等结算。
+
+    该旨下逐条暂存声明的拒收共用同一个 :class:`~ming_sim.applier.RejectionCollector`
+    ——`flush_to_db` 与 `mark_settled` 落在同一个 `atomic(db)` 块内一次提交
+    （J1：暂存结算路径的拒收与其结算标记同一事务，不单独一次提交），提交
+    成功后再镜像 jsonl。
     """
     results: Dict[str, DeclarationDispatchResult] = {}
     for decree_ref in decree_refs_in_order:
@@ -234,14 +315,18 @@ def settle_staged_declarations_in_decree_order(
         staged = db.staged_declarations.staged_for(decree_ref)
         if not staged:
             continue
+        collector = RejectionCollector()
         with atomic(db):
             merged = _empty_dispatch_result()
             for item in staged:
                 merged = merged.merge(dispatch_declaration(
                     db, state, item.declaration,
                     minister_name=minister_name, night_id=night_id, source=source,
+                    collector=collector,
                 ))
             db.staged_declarations.mark_settled(decree_ref)
+            collector.flush_to_db(db)
+        mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
         results[decree_ref] = merged
     return results
 
@@ -249,15 +334,28 @@ def settle_staged_declarations_in_decree_order(
 def _section_items(
     raw: object, *, label: str, source: Provenance,
 ) -> Tuple[Sequence[Mapping[str, object]], List[RejectedItem]]:
-    """拆不出项（非数组）→ 整段一条拒收；能拆出项 → 逐项处理。"""
+    """拆不出项（非数组）→ 整段一条拒收；能拆出项 → 逐项拆分，非 Mapping 的
+    单项单独拒收，只把合法 Mapping 项交回调用方（J4：容器拆分 + 形状归一
+    收进一个入口，九个 section 分派器不再各自重复同一段
+    `isinstance(item, Mapping)` 判断）。"""
     if not raw:
         return (), []
-    if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
-        return tuple(raw), []
-    return (), [RejectedItem(
-        item={"raw_value": raw}, reason=f"{label}须为数组",
-        category="invalid_shape", source=source,
-    )]
+    if not (isinstance(raw, Sequence) and not isinstance(raw, (str, bytes))):
+        return (), [RejectedItem(
+            item={"raw_value": raw}, reason=f"{label}须为数组",
+            category="invalid_shape", source=source,
+        )]
+    items: List[Mapping[str, object]] = []
+    rejected: List[RejectedItem] = []
+    for entry in raw:
+        if isinstance(entry, Mapping):
+            items.append(entry)
+        else:
+            rejected.append(RejectedItem(
+                item={"raw_value": entry}, reason=f"{label}须为对象",
+                category="invalid_shape", source=source,
+            ))
+    return tuple(items), rejected
 
 
 def _reject(
@@ -286,9 +384,6 @@ def _dispatch_commissions(
     items, rejected = _section_items(raw, label="交办声明", source=source)
     applied: List[Any] = []
     for item in items:
-        if not isinstance(item, Mapping):
-            _reject(rejected, item, "交办声明须为对象", "invalid_shape", source)
-            continue
         grant = item.get("grant") or {}
         if not isinstance(grant, Mapping):
             _reject(rejected, item, "拨帑载荷须为对象", "invalid_shape", source)
@@ -343,9 +438,6 @@ def _dispatch_promises(
     items, rejected = _section_items(raw, label="应允/拒绝声明", source=source)
     applied: List[Any] = []
     for item in items:
-        if not isinstance(item, Mapping):
-            _reject(rejected, item, "应允/拒绝声明须为对象", "invalid_shape", source)
-            continue
         try:
             action_id = int(item.get("action_id"))
         except (TypeError, ValueError):
@@ -457,9 +549,6 @@ def _dispatch_textual_facts(db: Any, state: Any, raw: object, *, source: Provena
     items, rejected = _section_items(raw, label="文字事实声明", source=source)
     applied: List[Any] = []
     for item in items:
-        if not isinstance(item, Mapping):
-            _reject(rejected, item, "文字事实声明须为对象", "invalid_shape", source)
-            continue
         subject_kind = str(item.get("subject_kind") or "").strip()
         subject_id = str(item.get("subject_id") or "").strip()
         try:
@@ -500,9 +589,6 @@ def _dispatch_public_sayings(db: Any, state: Any, raw: object, *, source: Proven
     items, rejected = _section_items(raw, label="公开说法声明", source=source)
     applied: List[Any] = []
     for item in items:
-        if not isinstance(item, Mapping):
-            _reject(rejected, item, "公开说法声明须为对象", "invalid_shape", source)
-            continue
         involved = item.get("involved_characters") or ()
         if (
             not isinstance(involved, Sequence)
@@ -546,9 +632,6 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
     items, rejected = _section_items(raw, label="当场实况声明", source=source)
     applied: List[Any] = []
     for item in items:
-        if not isinstance(item, Mapping):
-            _reject(rejected, item, "当场实况声明须为对象", "invalid_shape", source)
-            continue
         affair_id, error_category = _peek_affair_id(db, item)
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
@@ -603,9 +686,6 @@ def _dispatch_presence(
     items, rejected = _section_items(raw, label="在场进出声明", source=source)
     applied: List[Any] = []
     for item in items:
-        if not isinstance(item, Mapping):
-            _reject(rejected, item, "在场进出声明须为对象", "invalid_shape", source)
-            continue
         name = str(item.get("person_name") or "").strip()
         effect = _PRESENCE_ITEM_EFFECTS.get(str(item.get("effect") or "").strip())
         body = str(item.get("body") or "").strip()
@@ -649,9 +729,6 @@ def _dispatch_scene_facts(
     items, rejected = _section_items(raw, label="说话人分段声明", source=source)
     applied: List[Any] = []
     for item in items:
-        if not isinstance(item, Mapping):
-            _reject(rejected, item, "说话人分段声明须为对象", "invalid_shape", source)
-            continue
         body = str(item.get("body") or "").strip()
         audibility = item.get("audibility") or AUDIBILITY_PUBLIC
         person_names = item.get("person_names") or []
@@ -702,9 +779,6 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
     items, rejected = _section_items(raw, label="边事件声明", source=source)
     applied: List[Any] = []
     for item in items:
-        if not isinstance(item, Mapping):
-            _reject(rejected, item, "边事件声明须为对象", "invalid_shape", source)
-            continue
         source_name = str(item.get("source") or "").strip()
         target_name = str(item.get("target") or "").strip()
         context = item.get("context")
@@ -748,29 +822,32 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
     return SectionResult(applied=applied, rejected=rejected)
 
 
-def _dispatch_protagonist(db: Any, raw: object, *, source: Provenance) -> SectionResult:
-    """本轮御前主角：目前无既有落库口（呈现侧归 F3 #1851），本函数只做既有人物
-    存在性校验并把校验结果原样交回调用方，不静默丢、也不发明新表承接。"""
+def _dispatch_protagonist(db: Any, raw: object, *, source: Provenance) -> ProtagonistResult:
+    """本轮御前主角：目前无既有落库口（呈现侧归 F3 #1851，真正按源轮持久化与
+    恢复由 #1838 接线），本函数只做既有人物存在性校验，把校验结果作为
+    projected 值原样交回调用方——不冒称 :class:`~ming_sim.applier.SectionResult`
+    的 ``applied``（那意味着已落库），也不发明一张承接不了完整落库语义的
+    全局主角表（J7）。"""
     if not raw:
-        return SectionResult(applied=[], rejected=[])
+        return ProtagonistResult(validated=None, rejected=[])
     if not isinstance(raw, Mapping):
-        return SectionResult(applied=[], rejected=[RejectedItem(
+        return ProtagonistResult(validated=None, rejected=[RejectedItem(
             item={"raw_value": raw}, reason="御前主角声明须为对象",
             category="invalid_shape", source=source,
         )])
     name = str(raw.get("person_name") or "").strip()
     if not name:
-        return SectionResult(applied=[], rejected=[RejectedItem(
+        return ProtagonistResult(validated=None, rejected=[RejectedItem(
             item=dict(raw), reason="御前主角声明须含 person_name",
             category="invalid_shape", source=source,
         )])
     try:
         _assert_characters_exist(db, [name])
     except KeyError as exc:
-        return SectionResult(applied=[], rejected=[RejectedItem(
+        return ProtagonistResult(validated=None, rejected=[RejectedItem(
             item=dict(raw), reason=str(exc), category="hallucinated_id", source=source,
         )])
-    return SectionResult(applied=[{"person_name": name}], rejected=[])
+    return ProtagonistResult(validated={"person_name": name}, rejected=[])
 
 
 def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
@@ -794,9 +871,6 @@ def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provena
     items, rejected = _section_items(raw, label="入册声明", source=source)
     applied: List[Any] = []
     for item in items:
-        if not isinstance(item, Mapping):
-            _reject(rejected, item, "入册声明须为对象", "invalid_shape", source)
-            continue
         name = str(item.get("name") or "").strip()
         office = str(item.get("office") or "").strip()
         office_type = str(item.get("office_type") or "").strip()

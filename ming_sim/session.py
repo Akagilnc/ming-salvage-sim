@@ -2964,10 +2964,11 @@ class GameSession:
         恢复窗婉拒（PR #90 R2 codex P2）：同 _apply_appointment，事务边界外直写一律冻。
         查重/落库唯一实现见 `register_unlisted_person_record`，与转译声明分派
         共用；本方法只处理召对场景专属的后续动作（agent registry 绑定、临时
-        人物清理、是否随即传召），以及这条历史工具路径自己既有的 style/loyalty/
-        source_label 按 source 归一取舍——`register_unlisted_person` 工具的
-        schema 本就没给 LLM 开放 style 字段（tools.py），这条既有生产行为本票
-        不改动，只是不再让共享构档函数替它决定。"""
+        人物清理、是否随即传召），以及这条历史工具路径自己既有的 loyalty/
+        source_label 按 source 归一取舍——style 不再合成占位文案（P7），只原样
+        取 LLM 明确给的字段；`register_unlisted_person` 工具的 schema 本就没
+        给 LLM 开放 style 字段（tools.py），故此路径目前恒为空，走
+        `register_unlisted_person_record` 既有下游缺省。"""
         if self._proposal_blocked(self.state):
             return ("", False)
         import json as _json
@@ -2981,11 +2982,14 @@ class GameSession:
         aliases = [str(a) for a in aliases_raw] if isinstance(aliases_raw, list) else []
         source_kind = str(data.get("source") or "historical").strip()
         if source_kind == "historical":
-            source_label, style, loyalty = "史实人物补档", "史实补档，待召对细察", 62
+            source_label, loyalty = "史实人物补档", 62
         elif source_kind == "user_confirmed":
-            source_label, style, loyalty = "皇帝确认背景补档", "陛下点名，底细待察", 60
+            source_label, loyalty = "皇帝确认背景补档", 60
         else:
-            source_label, style, loyalty = "名册外人物补档", "名册外补档，待召对细察", 60
+            source_label, loyalty = "名册外人物补档", 60
+        # P7：style 只能原样来自 LLM 明确字段，不合成补文案（register_unlisted_person
+        # 工具 schema 本就没给 LLM 开放 style 字段，故此路径目前恒为空，走下游既有缺省）。
+        style = str(data.get("style") or "").strip()
         character = register_unlisted_person_record(
             self.db, self.state, self.content,
             name=str(data.get("name") or ""),
