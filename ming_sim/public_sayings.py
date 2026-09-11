@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Mapping
 
+from ming_sim.applier import connection_owns_transaction
+
 SOURCE_PREFIX = "public_saying:"
 LAYER_TITLE = "有此说法"
 
@@ -44,7 +46,7 @@ def record_public_saying(
     affair = affair_ref
     people = _character_names(involved_characters)
     people_json = json.dumps(people, ensure_ascii=False)
-    owns = bool(commit) and (not hasattr(db, "owns_transaction") or db.owns_transaction())
+    owns = bool(commit) and connection_owns_transaction(db.conn)
     cur = db.conn.execute(
         "INSERT INTO public_sayings "
         "(turn, year, period, body, involved_characters, affair_ref, source_id) "

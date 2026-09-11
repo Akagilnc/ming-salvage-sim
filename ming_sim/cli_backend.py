@@ -2530,6 +2530,48 @@ def _missing_execution_lead_feedback() -> str:
     )
 
 
+def _affair_declaration_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
+    """Typed 拆旨声明（new|existing）；缺席不猜。本阶段不消费了结。"""
+    from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+    declaration = declaration_from_payload(obj, allowed=ATTACH_BIRTH)
+    return {} if declaration is None else {"affair_declaration": dict(declaration)}
+
+
+def _stamp_split_birth_key(declaration: Mapping[str, Any]) -> Dict[str, Any]:
+    """One extract shares one durable new identity; do not infer from name/origin."""
+    body = dict(declaration)
+    if body.get("attach") != "new" or str(body.get("birth_key") or "").strip():
+        return body
+    from uuid import uuid4
+    body["birth_key"] = f"split:{uuid4().hex}"
+    return body
+
+
+def _draft_intent_open_affair_facts(db: Any) -> str:
+    """Structured open-affair list so existing.affair_id is chosen from input, not guessed."""
+    if db is None:
+        return ""
+    store = getattr(db, "affairs", None)
+    list_open = getattr(store, "list_open", None)
+    if not callable(list_open):
+        return ""
+    rows = list_open()
+    if not rows:
+        return ""
+    lines = [
+        json.dumps(
+            {"id": int(row.id), "name": row.name, "origin": row.origin},
+            ensure_ascii=False,
+        )
+        for row in rows
+    ]
+    return (
+        "【已开事务】existing 的 affair_id 必须取自下列对象的 id，不得自造。\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 def _participant_fields_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
     """从抽取原包收承办人/参与人——拟旨意图=无时仍可后置点将（#1778）。"""
     out: Dict[str, Any] = {}
@@ -2862,6 +2904,7 @@ def extract_draft_intent(
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
+    open_affair_facts = _draft_intent_open_affair_facts(db)
     from ming_sim.action_clusters import (
         assert_action_candidate_shape,
         cluster_fields_prompt,
@@ -2889,11 +2932,12 @@ def extract_draft_intent(
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
             f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
             "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-            '{"成品旨稿": ['
+            '{"事务声明":{"attach":"new|existing","name":"","origin":"","affair_id":null},'
+            '"成品旨稿": ['
             '{"正文":"第一道完整旨稿","动作类型":"assignment",'
             '"目标类型":"region","目标ID":"shaanxi","地区ID":"shaanxi",'
             '"施行范围":"单省","事务类别":"督赈","承办人":"","目标案卷ID":null,'
-            '"颁布方式":"普通|中旨直发"},'
+            '"颁布方式":"普通|中旨直发"}},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
             '"目标ID":"...",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
@@ -2912,7 +2956,10 @@ def extract_draft_intent(
             + army_facts
             + pay_order_facts
             + stalled_push_facts
+            + open_affair_facts
             + "御笔强推逐道只填目标案卷ID；普通非拨帑旨用共同契约字段，拨帑旨只用 ACTION_CLUSTERS 字段。两种形状不得并存。\n"
+            + "同一句交办只写一处事务声明（对象顶层，attach 仅 new|existing）；"
+            "多道旨共用该声明。无声明则不自建事务。\n"
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
@@ -2930,6 +2977,22 @@ def extract_draft_intent(
         draft_combo_flags: List[bool] = []
         seen_texts = set()
         invalid_batch = not isinstance(values, list) or len(values) != draft_count
+        try:
+            batch_declaration = (
+                _affair_declaration_from_draft_obj(obj)
+                if isinstance(obj, dict) else {}
+            )
+        except ValueError:
+            batch_declaration = {}
+            invalid_batch = True
+        stamped_declaration = (
+            {
+                "affair_declaration": _stamp_split_birth_key(
+                    batch_declaration["affair_declaration"]
+                )
+            }
+            if batch_declaration else {}
+        )
         for value in values if isinstance(values, list) else []:
             if not isinstance(value, dict):
                 invalid_batch = True
@@ -2977,6 +3040,7 @@ def extract_draft_intent(
                     "draft_action": "拟旨", "draft_text": text,
                     "target_candidate": "", "mode": mode,
                     "target_dossier_id": imperial_push_target_dossier_id(probe),
+                    **stamped_declaration,
                 })
                 draft_combo_flags.append(False)
                 continue
@@ -3047,6 +3111,7 @@ def extract_draft_intent(
                 "mode": mode,
                 "participant_roster": value["参与人"] if "参与人" in value else [],
                 **mechanical,
+                **stamped_declaration,
             })
             draft_combo_flags.append(needs_combo)
         if invalid_batch or not any(draft is not None for draft in drafts):
@@ -3100,6 +3165,7 @@ def extract_draft_intent(
         '  "承办人": "",\n'
         '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
         '  "期限月数": null,           // 军令必填正整数；非军令留 null\n'
+        '  "事务声明": {"attach":"new|existing","name":"","origin":"","affair_id":null},\n'
         '  "目标案卷ID": null' + (
             "," if (_candidates or _supplement_mode) else ""
         ) + '        // 御笔强推议而不决廷议时填该案卷整数 ID；非此意图留 null\n'
@@ -3141,12 +3207,14 @@ def extract_draft_intent(
         + _DIRECTIVE_MODE_PROMPT + "\n"
         + structured_decree_prompt_contract() + "\n"
         '非拨帑旨填共同契约目标/属地/事务类别/承办字段及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
+        '同一句交办只写一处事务声明（attach 仅 new|existing）；无声明不自建。\n'
         "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
         + roster_facts
         + army_facts
         + pay_order_facts
         + stalled_push_facts
+        + open_affair_facts
         + draft_context
         + candidates_context
         + "【皇帝】" + (player_message or "（无）") + "\n"
@@ -3287,12 +3355,20 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
+        single_declaration = _affair_declaration_from_draft_obj(obj)
+        if single_declaration:
+            single_declaration = {
+                "affair_declaration": _stamp_split_birth_key(
+                    single_declaration["affair_declaration"]
+                )
+            }
         single_result = {
             "draft_action": _action, "draft_text": draft_text, "target_candidate": "",
             "dossier_action_type": dossier_action,
             "target_kind": target_kind, "target_id": target_id_value,
             "participant_roster": obj["参与人"] if "参与人" in obj else [],
             **mechanical,
+            **single_declaration,
         }
         return _finalize_extract_with_combo(single_result, needs_combo=needs_combo)
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
@@ -3320,12 +3396,20 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
+    cand_declaration = _affair_declaration_from_draft_obj(obj)
+    if cand_declaration:
+        cand_declaration = {
+            "affair_declaration": _stamp_split_birth_key(
+                cand_declaration["affair_declaration"]
+            )
+        }
     cand_result = {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
         "dossier_action_type": dossier_action,
         "target_kind": target_kind, "target_id": target_id_value,
         "participant_roster": obj["参与人"] if "参与人" in obj else [],
         **mechanical,
+        **cand_declaration,
     }
     return _finalize_extract_with_combo(cand_result, needs_combo=needs_combo)
 

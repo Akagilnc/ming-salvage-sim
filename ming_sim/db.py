@@ -1563,6 +1563,7 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 closed_at TEXT,
+                affair_id INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(directive_id) REFERENCES turn_directives(id) ON DELETE CASCADE,
                 FOREIGN KEY(secret_order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
             );
@@ -1577,6 +1578,8 @@ class GameDB:
                 ON decree_dossiers(status, id);
             CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
                 ON decree_dossiers(target_kind, target_id, status);
+            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_affair
+                ON decree_dossiers(affair_id, id);
             -- ADR 0054：只存新案卷→旧案卷；关系本身无状态位。
             CREATE TABLE IF NOT EXISTS decree_dossier_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1939,8 +1942,11 @@ class GameDB:
                 last_advance_turn INTEGER NOT NULL DEFAULT 0,
                 closed_turn INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                affair_id INTEGER NOT NULL DEFAULT 0
             );
+            CREATE INDEX IF NOT EXISTS idx_issues_affair
+                ON issues(affair_id, id);
 
             -- #620 / ADR 0074：次回合召对待办（分段到期等）；结算内确定性写入、不停轮。
             -- #624 / ADR 0078：payload_json 引擎侧列（真伪底）；玩家投影路径不读。
@@ -2647,8 +2653,21 @@ class GameDB:
             "ON decree_dossiers(executor_kind, executor_id, status)"
         )
         from ming_sim.entities.textual_fact import TextualFactStore
+        from ming_sim.entities.affair import AffairStore
         TextualFactStore.ensure_schema(self.conn)
+        self.ensure_column("textual_facts", "origin_ref", "TEXT NOT NULL DEFAULT ''")
         self.textual_facts = TextualFactStore(self.conn)
+        AffairStore.ensure_schema(self.conn)
+        self.ensure_column("decree_dossiers", "affair_id", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("issues", "affair_id", "INTEGER NOT NULL DEFAULT 0")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_affair "
+            "ON decree_dossiers(affair_id, id)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_issues_affair ON issues(affair_id, id)"
+        )
+        self.affairs = AffairStore(self.conn)
         self.conn.commit()
         self._migrate_legacy_office_pollution()
         # #9 R1 finding#1 [P1]：老档迁移校准须放在「seed 路 + driver 路」都过的点。driver.open_game
@@ -6981,6 +7000,17 @@ class GameDB:
                     and self.dossier_authorizes_effects(dossier_id)
             except (OverflowError, TypeError, ValueError):
                 valid = False
+        elif value.startswith("affair:"):
+            try:
+                from ming_sim.entities.affair.store import parse_origin_ref
+                kind, affair_id = parse_origin_ref(value)
+                if kind == "affair" and affair_id is not None:
+                    self.affairs.get(int(affair_id))
+                    valid = True
+                else:
+                    valid = False
+            except (KeyError, OverflowError, TypeError, ValueError):
+                valid = False
         if valid:
             return None
         return {
@@ -10338,6 +10368,7 @@ class GameDB:
         source_night_seq: int,
         *,
         allow_closing: bool = False,
+        authorized_open_ids: Optional[set[int]] = None,
     ) -> List[int]:
         """一轮抽取产出的多条账在**同一事务内全有或全无**落库 + 抽取水位 → 'done'（ADR 0036 cmr R3）。
 
@@ -10352,8 +10383,14 @@ class GameDB:
 
         CLOSING 默认拒写；仅 close_night ordinary drain 显式 `allow_closing=True`，
         不得仅凭 night.status 自动授权，不加 token/registry/第二写口。
+
+        `authorized_open_ids` 为调用方在 write_gate 首闸内冻结的 open-affair 授权集
+        （LLM 所见即落账所认）；传入时原样使用，不重读 live list_open——否则模型见到
+        的集合与落账认可的集合可在并发下漂移（#1831）。未传（如既有直调测试）保持
+        旧行为：现读现授权。
         """
         from ming_sim.audience_night import PRESENCE_ENTER, append_ledger_entry
+        from ming_sim.entities.affair import ATTACH_EXPERIENCE, declaration_from_payload
 
         cid = int(chat_turn_id)
         if self.get_story_extract_status(cid) == "done":
@@ -10393,6 +10430,10 @@ class GameDB:
                         source=Provenance.system_simulation,
                     ), int(turn_row["turn"] if turn_row is not None else 0))
                 collector.flush_to_db(self)
+            authorized_open = (
+                set(authorized_open_ids) if authorized_open_ids is not None
+                else {int(row.id) for row in self.affairs.list_open()}
+            )
             for fact in accepted:
                 persons = [
                     str(n).strip()
@@ -10400,6 +10441,18 @@ class GameDB:
                     if str(n).strip()
                 ]
                 presence_effect = str(fact.get("presence_effect") or "")
+                origin_ref = ""
+                parsed = declaration_from_payload(fact, allowed=ATTACH_EXPERIENCE)
+                if parsed is not None:
+                    pointed = self.affairs.origin_ref_from_result_item(
+                        fact,
+                        year=0,
+                        period=0,
+                        turn=0,
+                        authorized_ids=authorized_open,
+                    )
+                    if pointed:
+                        origin_ref = f"{pointed}/turn:{cid}/{len(new_ids)}"
                 entry_id = append_ledger_entry(
                     self,
                     int(night_id),
@@ -10413,6 +10466,7 @@ class GameDB:
                     presence_effect=presence_effect,
                     order_key=base,
                     allow_closing=bool(allow_closing),
+                    origin_ref=origin_ref,
                 )
                 new_ids.append(int(entry_id))
             self.conn.execute(
@@ -12703,7 +12757,7 @@ class GameDB:
         for key in (
             "source_chat_turn_id", "pending_action_id", "directive_id",
             "due_turn", "created_turn", "created_year", "created_period",
-            "held_turn",
+            "held_turn", "affair_id",
         ):
             out[key] = int(out.get(key) or 0)
         if out.get("secret_order_id") is not None:
@@ -14864,6 +14918,9 @@ class GameDB:
         for entry in plan:
             rid = str(entry["region_id"] or "")
             if rid in existing_by_region:
+                self._attach_affair_from_payload(
+                    state, entry["payload"], existing_by_region[rid],  # type: ignore[arg-type]
+                )
                 continue
             did = self._create_decree_dossier_row(
                 state,
@@ -14916,6 +14973,38 @@ class GameDB:
         for _, did in extras:
             ordered.append(int(did))
         return ordered
+
+    def _resolve_affair_id_from_payload(
+        self, state: GameState, payload: Mapping[str, object] | None,
+    ) -> int:
+        """Typed 拆旨声明 → 事务 id；无声明不自建；本阶段不消费了结。"""
+        from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+        declaration = declaration_from_payload(payload, allowed=ATTACH_BIRTH)
+        if declaration is None:
+            return 0
+        return int(self.affairs.resolve_declaration(
+            declaration,
+            year=int(state.year),
+            period=int(state.period),
+            turn=int(state.turn),
+            allowed=ATTACH_BIRTH,
+        ))
+
+    def _attach_affair_from_payload(
+        self, state: GameState, payload: Mapping[str, object] | None, dossier_id: int,
+    ) -> None:
+        from ming_sim.entities.affair import declaration_from_payload
+        declaration = declaration_from_payload(payload)
+        if declaration is None:
+            return
+        self.affairs.attach_from_declaration(
+            "decree_dossiers",
+            int(dossier_id),
+            declaration,
+            year=int(state.year),
+            period=int(state.period),
+            turn=int(state.turn),
+        )
 
     def _create_decree_dossier_row(
         self,
@@ -15056,7 +15145,9 @@ class GameDB:
                 f"SELECT id FROM decree_dossiers WHERE {lookup_sql}", lookup_params,
             ).fetchone()
             if existing is not None:
-                return int(existing["id"])
+                dossier_id = int(existing["id"])
+                self._attach_affair_from_payload(state, canonical_payload, dossier_id)
+                return dossier_id
         source_turn_id = int(source_chat_turn_id or 0)
         if source_turn_id <= 0 and int(pending_action_id or 0) > 0:
             origin = self.conn.execute(
@@ -15141,14 +15232,16 @@ class GameDB:
             if "execution_signal" in durable_extension:
                 raise ValueError("案卷 extension execution_signal 冲突")
             durable_extension["execution_signal"] = signal
+        affair_id = self._resolve_affair_id_from_payload(state, canonical_payload)
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
                 (action_type,target_kind,target_id,executor_kind,executor_id,
                  source_chat_turn_id,pending_action_id,
                  directive_id,secret_order_id,region_id,decree_text,payload_json,status,due_turn,
-                 extension_json,participant_roster,created_turn,created_year,created_period)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 extension_json,participant_roster,created_turn,created_year,created_period,
+                 affair_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 action, canonical_target_kind, canonical_target_id,
@@ -15162,6 +15255,7 @@ class GameDB:
                 json.dumps(durable_extension, ensure_ascii=False),
                 json.dumps(roster, ensure_ascii=False),
                 int(state.turn), int(state.year), int(state.period),
+                int(affair_id),
             ),
         )
         dossier_id = int(cur.lastrowid)
@@ -20696,6 +20790,8 @@ class GameDB:
                 state.turn,
             ),
         )
+        issue_id = int(cur.lastrowid)
+        self.affairs.bind_from_origin_ref("issues", issue_id, origin_ref)
         if commit:
             self.conn.commit()
         self.register_character_knowledge_source(

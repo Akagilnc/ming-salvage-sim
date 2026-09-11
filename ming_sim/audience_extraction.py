@@ -35,6 +35,7 @@ from ming_sim.audience_night import (
     persons_present_tonight,
     write_audience_error_pack,
 )
+from ming_sim.entities.affair import ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
 from ming_sim.session_write_queue import TicketCancelled
@@ -84,7 +85,8 @@ def parse_extraction_facts(raw: Any) -> List[Dict[str, Any]]:
     """校验并规整普通故事事实列表；任一条对不上契约即响亮拒收（AC3）。
 
     合法事实：body 非空字符串；audibility ∈ {殿上公开,御前低语}（缺省公开）；
-    presence_effect ∈ {'',enter,exit}；person_names/tags 为字符串数组。
+    presence_effect ∈ {'',enter,exit}；person_names/tags 为字符串数组；
+    可选 typed 事务声明仅 existing（affair_id），指向已开事务。
     空 facts（无显著情节）合法——返回 []。
     不含 endorsement（背书走夜级 endorsement-only 批处理）。
     """
@@ -135,13 +137,28 @@ def parse_extraction_facts(raw: Any) -> List[Dict[str, Any]]:
                 f"第 {idx} 条 tags 须为字符串数组",
                 code="extraction_bad_shape", detail={"index": idx},
             )
-        facts.append({
+        fact = {
             "person_names": [n.strip() for n in person_names_raw if n.strip()],
             "audibility": str(audibility),
             "body": body.strip(),
             "tags": [t for t in tags_raw if t],
             "presence_effect": str(presence_effect),
-        })
+        }
+        if item.get("affair_declaration") is not None or item.get("事务声明") is not None:
+            try:
+                parsed = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
+            except ValueError as exc:
+                raise ExtractionShapeError(
+                    f"第 {idx} 条事务声明非法：{exc}",
+                    code="extraction_bad_shape", detail={"index": idx},
+                ) from None
+            if parsed is None:
+                raise ExtractionShapeError(
+                    f"第 {idx} 条事务声明非法",
+                    code="extraction_bad_shape", detail={"index": idx},
+                )
+            fact["affair_declaration"] = dict(parsed)
+        facts.append(fact)
     return facts
 
 
@@ -261,6 +278,7 @@ def extract_story_facts(
     llm_config: Any,
     extractor_agent: Any = None,
     emperor_text: str = "",
+    open_affairs: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """调抽取员把一轮君臣对话结构化成普通故事事实；问话与回话皆空返回 []。
 
@@ -283,6 +301,7 @@ def extract_story_facts(
         "当前在场": list(present_names),
         "皇帝问话": question_text,
         "回话原文": reply_text,
+        "open_affairs": [dict(row) for row in (open_affairs or ())],
     }
     output = extract_agent_text(
         agent.run(json.dumps(materials, ensure_ascii=False))
@@ -461,19 +480,27 @@ def run_extraction_for_turn(
             if db.get_story_extract_status(cid) == "done":
                 return {"status": "done", "chat_turn_id": cid, "already": True}
 
-            # 短读并入首闸：禁 gate 外碰共享 conn（与屏障 close / 他腿并发）。
+            # 短读并入首闸：禁 gate 外碰共享 conn（与屏障 close / 他腿并发）。open_affairs
+            # 与其 id 集在此一次冻结；LLM 见到的与落账认可的必须是同一批，不得在
+            # gate 外或落账时重读 live 状态（#1831 修理腿）。
             question_text = _user_message_for_turn(db, cid)
             if present_names is None:
                 try:
                     present_names = sorted(persons_present_tonight(db, int(night_id)))
                 except Exception:
                     present_names = []
+            open_affairs = []
+            store = getattr(db, "affairs", None)
+            if store is not None and hasattr(store, "input_brief"):
+                open_affairs = store.input_brief(getattr(db, "textual_facts", None))
+            authorized_open_ids = {int(item["id"]) for item in open_affairs}
 
         if not str(reply or "").strip() and not question_text.strip():
             return _settle_or_pending(
                 db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
                 facts=[], source_night_seq=source_night_seq, fact_count=0,
                 allow_closing=allow_closing,
+                authorized_open_ids=authorized_open_ids,
             )
 
         try:
@@ -484,6 +511,7 @@ def run_extraction_for_turn(
                 llm_config=llm_config,
                 extractor_agent=extractor_agent,
                 emperor_text=question_text,
+                open_affairs=open_affairs,
             )
         except Exception as exc:
             return _pending_with_pack(
@@ -496,6 +524,7 @@ def run_extraction_for_turn(
             facts=facts, source_night_seq=source_night_seq,
             fact_count=len(facts),
             allow_closing=allow_closing,
+            authorized_open_ids=authorized_open_ids,
         )
     finally:
         if owner is not None:
@@ -645,8 +674,13 @@ def _settle_or_pending(
     cid: int, night_id: int, minister_name: str,
     facts: Sequence[Mapping[str, Any]], source_night_seq: int, fact_count: int,
     allow_closing: bool = False,
+    authorized_open_ids: Optional[set[int]] = None,
 ) -> Dict[str, Any]:
-    """持锁落账 + 二次幂等复查；落账失败与抽取失败同语义（pack+pending，不抛穿 catch_up）。"""
+    """持锁落账 + 二次幂等复查；落账失败与抽取失败同语义（pack+pending，不抛穿 catch_up）。
+
+    `authorized_open_ids` 携带调用方在首闸内冻结的 open-affair 授权集，落账
+    须原样使用，不得在此重读 live 状态（#1831 修理腿）。
+    """
     try:
         with write_gate:
             if db.get_story_extract_status(cid) == "done":
@@ -654,6 +688,7 @@ def _settle_or_pending(
             entry_ids = db.settle_story_extraction(
                 cid, int(night_id), facts, int(source_night_seq),
                 allow_closing=bool(allow_closing),
+                authorized_open_ids=authorized_open_ids,
             )
     except Exception as exc:
         return _pending_with_pack(

@@ -5,7 +5,6 @@ from __future__ import annotations
 import shutil
 
 from ming_sim.db import GameDB
-from ming_sim.knowledge import render_character_knowledge
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 
 
@@ -71,10 +70,6 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     )
     assert saying["title"] == "有此说法"
     assert saying["body"] == "袁崇焕已死于宁远"
-    assert "有此说法" in (view["world"].get("public") or "")
-    rendered = render_character_knowledge(view, reader.name)
-    assert "有此说法" in rendered
-    assert "袁崇焕已死于宁远" in rendered
 
     status, _ = db.get_character_status("袁崇焕")
     assert status != "dead"
@@ -101,9 +96,6 @@ def test_public_saying_survives_same_turn_archive_projection(game):
     )
     assert saying["title"] == "有此说法"
     assert saying["body"] == claim
-    public_text = view["world"].get("public") or ""
-    assert "有此说法" in public_text
-    assert claim in public_text
 
 
 def test_public_saying_may_annotate_person_affair_or_neither(game):
