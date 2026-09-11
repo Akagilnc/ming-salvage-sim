@@ -1,6 +1,8 @@
-"""#1281: issue audience facts use the canonical typed material projection."""
+"""#1281: issue materials = knowledge visibility ∪ audience-named supplement."""
 
 from __future__ import annotations
+
+import json
 
 import pytest
 
@@ -11,6 +13,7 @@ from ming_sim.materials import list_materials, prepare_character_materials
 AUDIENCE_NAME = "郭允厚"
 ISSUE_TITLE = "户部亏空"
 NON_AUDIENCE_NAME = "崔呈秀"
+PRIVATE_PARTICIPANT = "温体仁"
 
 
 def _issue_row(db):
@@ -27,19 +30,23 @@ def _issue_paths(prepared, issue_id: int) -> set[str]:
     return {path for path in list_materials(prepared.root) if path == expected}
 
 
-def test_issue_material_is_visible_only_to_the_typed_event_audience(game, tmp_path):
+def test_issue_materials_keep_knowledge_visibility_without_audience_veto(game, tmp_path):
     db, state, content = game
     issue_id = int(_issue_row(db)["id"])
-    audience_projection = project_issue_materials(
-        db, AUDIENCE_NAME, db.get_character_knowledge(state, AUDIENCE_NAME),
-    )
-    outsider_projection = project_issue_materials(
-        db, NON_AUDIENCE_NAME, db.get_character_knowledge(state, NON_AUDIENCE_NAME),
-    )
-    projected = next(row for row in audience_projection if row["id"] == issue_id)
-    assert projected["source_id"] == f"issue:{issue_id}"
-    assert AUDIENCE_NAME in projected["audience_names"]
-    assert all(row["id"] != issue_id for row in outsider_projection)
+    audience_knowledge = db.get_character_knowledge(state, AUDIENCE_NAME)
+    outsider_knowledge = db.get_character_knowledge(state, NON_AUDIENCE_NAME)
+    assert any(int(row["id"]) == issue_id for row in audience_knowledge.get("issues") or [])
+    assert any(int(row["id"]) == issue_id for row in outsider_knowledge.get("issues") or [])
+
+    audience_projection = project_issue_materials(db, AUDIENCE_NAME, audience_knowledge)
+    outsider_projection = project_issue_materials(db, NON_AUDIENCE_NAME, outsider_knowledge)
+    audience_row = next(row for row in audience_projection if row["id"] == issue_id)
+    outsider_row = next(row for row in outsider_projection if row["id"] == issue_id)
+
+    assert audience_row["source_id"] == f"issue:{issue_id}"
+    assert outsider_row["source_id"] == f"issue:{issue_id}"
+    assert AUDIENCE_NAME in audience_row["audience_names"]
+    assert NON_AUDIENCE_NAME not in outsider_row["audience_names"]
 
     audience = prepare_character_materials(
         db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "audience",
@@ -47,30 +54,77 @@ def test_issue_material_is_visible_only_to_the_typed_event_audience(game, tmp_pa
     outsider = prepare_character_materials(
         db, state, content.characters[NON_AUDIENCE_NAME], dest_root=tmp_path / "outsider",
     )
-
     assert _issue_paths(audience, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
-    assert _issue_paths(outsider, issue_id) == set()
+    assert _issue_paths(outsider, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
     assert f"事务/issue-{issue_id}/当前情况.txt" in audience.index_lines
-    assert f"事务/issue-{issue_id}/当前情况.txt" not in outsider.index_lines
+    assert f"事务/issue-{issue_id}/当前情况.txt" in outsider.index_lines
 
 
-@pytest.mark.parametrize("stored_audiences", ["[]", "{}", "not-json"])
-def test_event_issue_without_valid_audience_is_absent_from_the_material_directory(
-    game, tmp_path, stored_audiences,
-):
+def test_empty_audience_is_empty_supplement_not_knowledge_veto(game, tmp_path):
     db, state, content = game
     row = _issue_row(db)
     issue_id = int(row["id"])
     db.conn.execute(
-        "UPDATE events SET audiences=? WHERE id=?", (stored_audiences, row["origin_ref"]),
+        "UPDATE events SET audiences=? WHERE id=?", ("[]", row["origin_ref"]),
     )
+
+    knowledge = db.get_character_knowledge(state, AUDIENCE_NAME)
+    assert any(int(item["id"]) == issue_id for item in knowledge.get("issues") or [])
+    projected = next(
+        item for item in project_issue_materials(db, AUDIENCE_NAME, knowledge)
+        if item["id"] == issue_id
+    )
+    assert projected["audience_names"] == ()
 
     prepared = prepare_character_materials(
         db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
     )
+    assert _issue_paths(prepared, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
 
-    assert _issue_paths(prepared, issue_id) == set()
-    assert f"事务/issue-{issue_id}/当前情况.txt" not in prepared.index_lines
+
+def test_audience_supplement_grants_originating_issue_outside_knowledge(game, tmp_path):
+    db, state, content = game
+    row = _issue_row(db)
+    issue_id = int(row["id"])
+    db.conn.execute(
+        "UPDATE issues SET participant_roster=? WHERE id=?",
+        (json.dumps([{"character_id": PRIVATE_PARTICIPANT}], ensure_ascii=False), issue_id),
+    )
+
+    audience_knowledge = db.get_character_knowledge(state, AUDIENCE_NAME)
+    outsider_knowledge = db.get_character_knowledge(state, NON_AUDIENCE_NAME)
+    assert all(int(item["id"]) != issue_id for item in audience_knowledge.get("issues") or [])
+    assert all(int(item["id"]) != issue_id for item in outsider_knowledge.get("issues") or [])
+
+    audience_projection = project_issue_materials(db, AUDIENCE_NAME, audience_knowledge)
+    outsider_projection = project_issue_materials(db, NON_AUDIENCE_NAME, outsider_knowledge)
+    projected = next(item for item in audience_projection if item["id"] == issue_id)
+    assert projected["source_id"] == f"issue:{issue_id}"
+    assert AUDIENCE_NAME in projected["audience_names"]
+    assert all(item["id"] != issue_id for item in outsider_projection)
+
+    audience = prepare_character_materials(
+        db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "audience",
+    )
+    outsider = prepare_character_materials(
+        db, state, content.characters[NON_AUDIENCE_NAME], dest_root=tmp_path / "outsider",
+    )
+    assert _issue_paths(audience, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+    assert _issue_paths(outsider, issue_id) == set()
+
+
+@pytest.mark.parametrize("stored_audiences", ["{}", "not-json", "null"])
+def test_malformed_event_audience_fails_loud_from_material_entry(game, tmp_path, stored_audiences):
+    db, state, content = game
+    row = _issue_row(db)
+    db.conn.execute(
+        "UPDATE events SET audiences=? WHERE id=?", (stored_audiences, row["origin_ref"]),
+    )
+
+    with pytest.raises((TypeError, ValueError, json.JSONDecodeError)):
+        prepare_character_materials(
+            db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+        )
 
 
 def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path):

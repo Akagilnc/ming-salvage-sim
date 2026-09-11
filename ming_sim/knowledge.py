@@ -20,12 +20,13 @@ from ming_sim.public_sayings import (
 
 
 def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
-    """Resolve an event issue's audience, or ``None`` for non-event issues.
+    """Audience-name supplement for an event-origin issue, or ``None`` if N/A.
 
-    Opening/seed situations list knowers on the originating event's ``audiences``
-    field.  Issues themselves do not duplicate that column; look up via
-    ``origin_kind=event_pool`` → events table, then content fallback.  An empty
-    set is therefore an event with no authorized reader, not a public event.
+    ``events.audiences`` names a positive grant onto originating issues; it is
+    not an ACL/veto over ``knowledge["issues"]``.  A legitimate empty list is an
+    empty supplement.  DB execution errors and JSON/typed-shape malformations
+    propagate unchanged.  Content fallback applies only when the events query
+    succeeds with no row.
     """
     try:
         origin_kind = str(issue["origin_kind"] or "")
@@ -36,27 +37,30 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
         return None
     if not origin_ref:
         return set()
+
     raw: object = None
-    row = None
+    saw_db_row = False
     if hasattr(db, "conn"):
         row = db.conn.execute(
             "SELECT audiences FROM events WHERE id=?", (origin_ref,),
         ).fetchone()
         if row is not None:
+            saw_db_row = True
             raw = row["audiences"]
-    if row is None:
+    if not saw_db_row:
         content = getattr(db, "content", None)
         event_by_id = getattr(content, "event_by_id", None) or {}
         ev = event_by_id.get(origin_ref)
-        if ev is not None:
-            raw = getattr(ev, "audiences", None)
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw or "[]")
-        except (TypeError, ValueError):
+        if ev is None:
             return set()
+        raw = getattr(ev, "audiences", None)
+
+    if isinstance(raw, str):
+        raw = json.loads(raw)
     if not isinstance(raw, (list, tuple)):
-        return set()
+        raise TypeError(
+            f"event {origin_ref!r} audiences must be a list, got {type(raw).__name__}"
+        )
     return {str(name).strip() for name in raw if str(name).strip()}
 
 
@@ -163,17 +167,54 @@ def _prose(text: object) -> str:
 def project_issue_materials(
     db: Any, character_name: str, knowledge: Dict[str, object],
 ) -> list[Dict[str, object]]:
-    """Canonical typed issue/source visibility projection for one reader."""
-    projected: list[Dict[str, object]] = []
+    """Canonical materials projection: knowledge issues ∪ audience-named grant.
+
+    Base visibility is exactly ``knowledge["issues"]``.  ``events.audiences``
+    only adds originating issues that name this reader; it never removes a
+    knowledge-visible issue.  A legitimate empty audience list is an empty
+    supplement.
+    """
+    projected: dict[int, Dict[str, object]] = {}
+
     for issue in knowledge.get("issues") or []:
-        audiences = _issue_audience_names(db, issue)
-        if audiences is not None and character_name not in audiences:
+        try:
+            issue_id = int(issue["id"])
+        except (KeyError, TypeError, ValueError):
             continue
+        audiences = _issue_audience_names(db, issue)
         row = dict(issue)
-        row["source_id"] = str(row.get("source_id") or f"issue:{int(row['id'])}")
+        row["source_id"] = str(row.get("source_id") or f"issue:{issue_id}")
         row["audience_names"] = tuple(sorted(audiences or ()))
-        projected.append(row)
-    return projected
+        projected[issue_id] = row
+
+    active_issues = db.list_active_issues() if hasattr(db, "list_active_issues") else []
+    for issue in active_issues:
+        try:
+            issue_id = int(issue["id"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if issue_id in projected:
+            continue
+        audiences = _issue_audience_names(db, issue)
+        if not audiences or character_name not in audiences:
+            continue
+        row = {
+            "id": issue_id,
+            "kind": issue["kind"],
+            "origin_kind": issue["origin_kind"],
+            "origin_ref": issue["origin_ref"],
+            "title": issue["title"],
+            "stage_text": issue["stage_text"],
+            "resolve_condition": issue["resolve_condition"],
+            "fail_condition": issue["fail_condition"],
+            "affair_id": int(issue["affair_id"] or 0),
+            "participant_roster": issue["participant_roster"],
+            "source_id": f"issue:{issue_id}",
+            "audience_names": tuple(sorted(audiences)),
+        }
+        projected[issue_id] = row
+
+    return list(projected.values())
 
 
 def render_character_knowledge(
