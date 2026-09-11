@@ -738,6 +738,8 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "end_turn": issue["end_turn"],
             "commitment_kind": issue["commitment_kind"],
             "target_roster": target_roster,
+            "affair_id": int(issue["affair_id"] or 0),
+            "participant_roster": issue["participant_roster"],
         })
     return {
         "character_name": character_name,

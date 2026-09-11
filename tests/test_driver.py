@@ -383,7 +383,7 @@ def test_cli_prepare_then_settle_applies_delta_file(game, tmp_path, capsys):
     assert rc_prep == 0
     # tlog 与 handoff 同 stdout：handoff 为最后一行 JSON。
     handoff_line = [ln for ln in prep_out.splitlines() if ln.strip()][-1]
-    assert json.loads(handoff_line) == []  # 无抵达月 handoff=[]
+    assert json.loads(handoff_line)["transit_arrivals"] == []
 
     rc = driver.main(["settle", "--delta", str(delta_file)], game=game)
 
@@ -796,7 +796,7 @@ def test_prepare_before_narrative_file_order_spy(game, tmp_path, monkeypatch):
 
     arrivals = run_prepare(db, state, content)
     events.append("prepare_done")
-    assert arrivals == [{"name": name, "location": dest}]
+    assert arrivals["transit_arrivals"] == [{"name": name, "location": dest}]
 
     narrative_path = tmp_path / "narrative.json"
     # 外部生成：仅在 prepare 之后才写/读 narrative 文件
@@ -840,7 +840,7 @@ def test_prepare_arrival_handoff_matches_db_content_and_ready0(game):
     turn = state.turn
     arrivals = run_prepare(db, state, content)
     expected = [{"name": name, "location": dest}]
-    assert arrivals == expected
+    assert arrivals["transit_arrivals"] == expected
     assert tuple(_transit_ledger(db, name)) == (dest, "", None, None, 0)
     assert _mirror_ledger(content, name) == (dest, "", None, None, 0)
     ctx = db.get_resolve_context(turn)
@@ -935,7 +935,7 @@ def test_prepare_crash_reopen_settle_no_second_tick(game, monkeypatch, tmp_path)
         run_settle(db2, state2, content, {}, narrative="恢复后续")
         assert tick_calls["n"] == ticks_before  # 不二次 tick
         assert state2.turn == turn + 1
-        assert isinstance(arrivals, list)
+        assert isinstance(arrivals, dict)
     finally:
         db2.close()
 
@@ -944,7 +944,7 @@ def test_prepare_no_arrival_month_returns_empty_list(game):
     """E：无抵达月 arrivals=`[]`。"""
     db, state, content = game
     arrivals = run_prepare(db, state, content)
-    assert arrivals == []
+    assert arrivals["transit_arrivals"] == []
     ctx = db.get_resolve_context(state.turn)
     assert ctx["simulator_payload"]["transit_arrivals"] == []
 
@@ -1026,7 +1026,7 @@ def test_prepare_ready0_reentry_preserves_context_bytes(game, monkeypatch):
     assert ctx1["decree_text"] == "御笔原诏"
     assert ctx1["source"] == Provenance.hitl_decision.value
     assert ctx1["extracted"] is None
-    assert arrivals1 == [{"name": name, "location": dest}]
+    assert arrivals1["transit_arrivals"] == [{"name": name, "location": dest}]
 
     arrivals2 = run_prepare(db, state, content)  # 默认空诏 + player_decree
     ctx2 = db.get_resolve_context(turn)

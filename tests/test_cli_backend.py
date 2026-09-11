@@ -725,8 +725,8 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     out, n = cb._run_claude("p", materials_dir=root)
     assert out == "ok" and n == 1
     assert captured["kw"].get("cwd") == root
-    assert "--restricted" in captured["cmd"]
-    assert "--strict-mcp-config" in captured["cmd"]
+    assert "--restricted" not in captured["cmd"]
+    assert "--strict-mcp-config" not in captured["cmd"]
     assert "--add-dir" not in captured["cmd"]
     assert "--allowedTools" in captured["cmd"]
     assert "Read" in captured["cmd"] and "Glob" in captured["cmd"]

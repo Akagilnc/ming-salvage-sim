@@ -2574,7 +2574,10 @@ def prepare_resolve_front_half(
                 transit_arrivals_out=transit_arrivals_box,
             )
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
-            placeholder_payload = {"transit_arrivals": list(transit_arrivals_box)}
+            placeholder_payload = {
+                "transit_arrivals": list(transit_arrivals_box),
+                "open_affairs": db.affairs.input_brief(getattr(db, "textual_facts", None)),
+            }
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
             #（clear_for_resimulation 后 phase 非 FRONT_HALF_DONE 重入时尤甚）。
             prior_placeholder = db.get_resolve_context(int(state.turn))

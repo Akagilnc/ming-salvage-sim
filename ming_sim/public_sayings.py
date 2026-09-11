@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Mapping
 
-from ming_sim.applier import connection_owns_transaction
+from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
 
 SOURCE_PREFIX = "public_saying:"
 LAYER_TITLE = "有此说法"
@@ -42,8 +42,8 @@ def record_public_saying(
         raise ValueError("公开说法正文不能为空")
     if not isinstance(affair_ref, str):
         raise ValueError("事务引用必须为字符串")
-    text = body
-    affair = affair_ref
+    text = sanitize_sqlite_text(body)
+    affair = sanitize_sqlite_text(affair_ref.strip())
     people = _character_names(involved_characters)
     people_json = json.dumps(people, ensure_ascii=False)
     owns = bool(commit) and connection_owns_transaction(db.conn)

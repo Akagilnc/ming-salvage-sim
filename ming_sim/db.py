@@ -10430,6 +10430,11 @@ class GameDB:
                 set(authorized_open_ids) if authorized_open_ids is not None
                 else {int(row.id) for row in self.affairs.list_open()}
             )
+            clock = self.conn.execute(
+                "SELECT year, period, turn FROM game_state WHERE id=1"
+            ).fetchone()
+            if clock is None:
+                raise ValueError("存档缺 game_state 时钟")
             for fact in accepted:
                 persons = [
                     str(n).strip()
@@ -10442,9 +10447,9 @@ class GameDB:
                 if parsed is not None:
                     pointed = self.affairs.origin_ref_from_result_item(
                         fact,
-                        year=0,
-                        period=0,
-                        turn=0,
+                        year=int(clock["year"]),
+                        period=int(clock["period"]),
+                        turn=int(clock["turn"]),
                         authorized_ids=authorized_open,
                     )
                     if pointed:

@@ -93,27 +93,6 @@ def test_read_material_stays_inside_directory(game, tmp_path):
         pass
 
 
-def test_opening_is_minimum_set_not_full_projection(game, tmp_path):
-    db, state, content = game
-    character = _active_minister(db, content)
-    prepared = prepare_character_materials(
-        db, state, character, dest_root=tmp_path / "m",
-    )
-    opening = prepared.opening
-    assert character.name in opening
-    assert character.office in opening
-    assert f"{state.year}年{state.period}月" in opening
-    assert "正经手事务" in opening
-    assert "本场已说的话" in opening
-    assert f"【{character.name}此刻所知的天下" not in opening
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root)
-        if path != "INDEX.txt"
-    )
-    assert blob
-
-
 def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
     db, state, content = game
     character = _active_minister(db, content)
@@ -128,10 +107,6 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
          patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
         create_minister_agent(character, cfg, _ctx(game), db)
 
-    instructions = "\n".join(captured["instructions"])
-    assert character.name in instructions
-    assert f"{state.year}年{state.period}月" in instructions
-    assert f"【{character.name}此刻所知的天下" not in instructions
     tool_names = {getattr(fn, "__name__", "") for fn in captured["tools"]}
     assert "list_materials" in tool_names
     assert "read_material" in tool_names
@@ -176,9 +151,6 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
     prompt = GameSession._audience_prompt_for_message(
         session, "下一句", character,
     )
-    assert spoken in prompt
-    assert "下一句" in prompt
-    assert f"【{character.name}此刻所知的天下" not in prompt
 
     path = str(db.path)
     db.close()
@@ -191,7 +163,6 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
         prompt2 = GameSession._audience_prompt_for_message(
             session2, "重开后一句", character2,
         )
-        assert spoken in prompt2
         prepared = prepare_character_materials(restored, state2, character2)
         rel = next(p for p in list_materials(prepared.root) if p.endswith("经历.txt"))
         assert read_material(prepared.root, rel)

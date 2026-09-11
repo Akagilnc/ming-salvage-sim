@@ -701,7 +701,6 @@ def _cli_runner_command(
         ]
         if materials_dir:
             cmd += [
-                "--restricted", "--strict-mcp-config",
                 "--allowedTools", "Read", "Glob", "Grep",
                 "--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit",
                 "WebFetch", "WebSearch", "Task",
@@ -2950,7 +2949,7 @@ def extract_draft_intent(
             '{"正文":"第一道完整旨稿","动作类型":"assignment",'
             '"目标类型":"region","目标ID":"shaanxi","地区ID":"shaanxi",'
             '"施行范围":"单省","事务类别":"督赈","承办人":"","目标案卷ID":null,'
-            '"颁布方式":"普通|中旨直发"}},'
+            '"颁布方式":"普通|中旨直发"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
             '"目标ID":"...",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
@@ -3368,7 +3367,10 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        single_declaration = _affair_declaration_from_draft_obj(obj)
+        try:
+            single_declaration = _affair_declaration_from_draft_obj(obj)
+        except (TypeError, ValueError):
+            return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
         if single_declaration:
             single_declaration = {
                 "affair_declaration": _stamp_split_birth_key(
@@ -3409,7 +3411,10 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    cand_declaration = _affair_declaration_from_draft_obj(obj)
+    try:
+        cand_declaration = _affair_declaration_from_draft_obj(obj)
+    except (TypeError, ValueError):
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if cand_declaration:
         cand_declaration = {
             "affair_declaration": _stamp_split_birth_key(
@@ -3573,7 +3578,7 @@ def project_draft_extract_to_directive_payload(
     for field in (
         "amount", "account", "execution_surface", "assignee",
         "deadline_months", "participant_roster", "locality_scope", "entries",
-        "target_dossier_id",
+        "target_dossier_id", "affair_declaration",
         "grant_action", "purpose", "cadence",
         "region_id", "transaction_category",
     ):

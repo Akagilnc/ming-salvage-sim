@@ -387,7 +387,7 @@ export function LLMConfigTab() {
   const [cliReasoningStrength, setCliReasoningStrength] = React.useState("");
   // 通道感知（#51）：局中也能切 API / CLI 通道,不再被强制降级到 api。
   const [channel, setChannel] = React.useState<"api" | "cli">("api");
-  const [cliRunner, setCliRunner] = React.useState("agy");
+  const [cliRunner, setCliRunner] = React.useState("codex");
   const [cliModel, setCliModel] = React.useState("");
   const [cliTimeout, setCliTimeout] = React.useState(String(CLI_DEFAULT_TIMEOUT));
   const [headerRows, setHeaderRows] = React.useState<HeaderRow[]>([]);

@@ -9,6 +9,7 @@ live agent session.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 from dataclasses import dataclass
@@ -31,8 +32,13 @@ class PreparedMaterials:
 
 
 def _safe_segment(name: object) -> str:
+    """Readable, path-safe text identity with a collision-resistant suffix."""
     text = str(name or "").strip() or "未名"
-    return _UNSAFE.sub("_", text)[:80]
+    clean = _UNSAFE.sub("_", text).strip()
+    if clean in {"", ".", ".."}:
+        clean = "未名"
+    digest = hashlib.sha256(text.encode("utf-8", errors="surrogatepass")).hexdigest()[:12]
+    return f"{clean[:48]}-{digest}"
 
 
 def _write_text(path: Path, body: str) -> None:
@@ -121,64 +127,27 @@ def _spoken_this_scene(db: Any, character: Any) -> str:
     return str(audience_scene_recap(db, getattr(character, "name", "")) or "").strip()
 
 
-def _visible_affair_lines(knowledge: dict) -> list[tuple[str, str]]:
-    lines: list[tuple[str, str]] = []
-    seen: set[str] = set()
+def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
+    """Material matters are exactly the already-authorized knowledge projection."""
+    lines: list[dict[str, object]] = []
     for issue in knowledge.get("issues") or []:
+        issue_id = int(issue.get("id") or 0)
         title = str(issue.get("title") or "").strip()
-        if not title or title in seen:
+        if issue_id <= 0 or not title:
             continue
-        seen.add(title)
-        situation = str(issue.get("stage_text") or "").strip() or "见目录。"
-        lines.append((title, situation))
+        lines.append({
+            "id": issue_id,
+            "affair_id": int(issue.get("affair_id") or 0),
+            "title": title,
+            "situation": str(issue.get("stage_text") or "").strip() or "见目录。",
+            "resolve_condition": str(issue.get("resolve_condition") or "").strip(),
+            "fail_condition": str(issue.get("fail_condition") or "").strip(),
+        })
     return lines
 
 
-def _handled_affair_lines(db: Any, state: Any, character_name: str, knowledge: dict) -> list[tuple[str, str]]:
-    from ming_sim.knowledge import _issue_audience_case_events
-    from ming_sim.participant_roster import participant_roster_names
-
-    seen: set[str] = set()
-    lines: list[tuple[str, str]] = []
-    active = db.list_active_issues() if hasattr(db, "list_active_issues") else []
-    for issue in active:
-        try:
-            title = str(issue["title"] or "").strip()
-        except (KeyError, IndexError, TypeError):
-            continue
-        if not title or title in seen:
-            continue
-        try:
-            roster = issue["participant_roster"]
-        except (KeyError, IndexError, TypeError):
-            roster = []
-        try:
-            participants = participant_roster_names(roster)
-        except (KeyError, IndexError, TypeError):
-            participants = set()
-        if character_name not in participants:
-            continue
-        seen.add(title)
-        try:
-            situation = str(issue["stage_text"] or "").strip() or "见目录。"
-        except (KeyError, IndexError, TypeError):
-            situation = "见目录。"
-        lines.append((title, situation))
-    known_ids = {
-        str(item.get("source_id") or "")
-        for item in [*(knowledge.get("events") or []), *(knowledge.get("public_events") or [])]
-        if item.get("source_id")
-    }
-    for item in _issue_audience_case_events(
-        db, state, character_name, known_source_ids=known_ids,
-    ):
-        title = str(item.get("title") or "").strip()
-        if not title or title in seen:
-            continue
-        seen.add(title)
-        situation = str(item.get("body") or "").strip() or "见目录。"
-        lines.append((title, situation))
-    return lines
+def _handled_affair_lines(db: Any, state: Any, character_name: str, knowledge: dict) -> list[dict[str, object]]:
+    return _visible_affair_lines(knowledge)
 
 
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:
@@ -198,7 +167,7 @@ def _opening_text(
     character: Any,
     state: Any,
     present: Sequence[str],
-    affairs: Sequence[tuple[str, str]],
+    affairs: Sequence[dict[str, object]],
     spoken: str,
 ) -> str:
     name = str(getattr(character, "name", "") or "")
@@ -210,7 +179,10 @@ def _opening_text(
     ]
     if affairs:
         parts.append("正经手事务：")
-        parts.extend(f"- {title}：{situation}" for title, situation in affairs)
+        parts.extend(
+            f"- #{item['id']} {item['title']}：{item['situation']}"
+            for item in affairs
+        )
     else:
         parts.append("正经手事务：（无）")
     parts.append("本场已说的话：")
@@ -287,18 +259,19 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
         _write_text(person_dir / "见闻.txt", rendered)
         index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/见闻.txt")
 
-    visible_affairs = _visible_affair_lines(knowledge)
-    visible_titles = {title for title, _ in visible_affairs}
-    for title, situation in visible_affairs:
-        affair_dir = tmp / _AFFAIR_DIR / _safe_segment(title)
-        _write_text(affair_dir / "当前情况.txt", situation)
-        index.append(f"{_AFFAIR_DIR}/{_safe_segment(title)}/当前情况.txt")
-    for title, situation in _handled_affair_lines(db, state, name, knowledge):
-        if title in visible_titles:
-            continue
-        affair_dir = tmp / _AFFAIR_DIR / _safe_segment(title)
-        _write_text(affair_dir / "当前情况.txt", situation)
-        index.append(f"{_AFFAIR_DIR}/{_safe_segment(title)}/当前情况.txt")
+    for item in _visible_affair_lines(knowledge):
+        segment = f"issue-{int(item['id'])}"
+        affair_dir = tmp / _AFFAIR_DIR / segment
+        details = [
+            f"事项ID：{item['id']}",
+            f"事务ID：{item['affair_id']}" if item["affair_id"] else "",
+            f"标题：{item['title']}",
+            f"当前情况：{item['situation']}",
+            f"办结条件：{item['resolve_condition']}" if item["resolve_condition"] else "",
+            f"失败条件：{item['fail_condition']}" if item["fail_condition"] else "",
+        ]
+        _write_text(affair_dir / "当前情况.txt", "\n".join(x for x in details if x))
+        index.append(f"{_AFFAIR_DIR}/{segment}/当前情况.txt")
 
     for row in _carryover_drafts(db, state):
         title = f"尚未入档旨稿#{int(row['id'])}"
@@ -363,7 +336,10 @@ def prepare_character_materials(
     for row in _carryover_drafts(db, state):
         title = f"尚未入档旨稿#{int(row['id'])}"
         body = str(row.get("text") or "").strip()
-        affairs.append((title, f"{body}（尚未入档）" if body else "尚未入档"))
+        affairs.append({
+            "id": f"draft-{int(row['id'])}", "title": title,
+            "situation": f"{body}（尚未入档）" if body else "尚未入档",
+        })
     opening = _opening_text(
         character, state, _present_names(db, character), affairs, _spoken_this_scene(db, character),
     )

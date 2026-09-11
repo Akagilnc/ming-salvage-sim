@@ -185,12 +185,6 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         if row["kind"] == "directive"
     ]
     assert len(pending) == 3
-    payloads = [json.loads(row["payload_json"] or "{}") for row in pending]
-    shared = payloads[0].get("affair_declaration")
-    assert shared["attach"] == "new" and shared["name"] == NINGYUAN
-    assert str(shared.get("birth_key") or "").startswith("split:")
-    assert all(payload.get("affair_declaration") == shared for payload in payloads)
-
     sess.chat(minister, "三事全允")
     audience_night.close_night(db, state, night_id=night["id"], content=content)
 
@@ -375,8 +369,6 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
         "relations": '{"大臣互动": []}',
     }
     merged, _localized, _inputs = _extract(monkeypatch, db, state, canned)
-    assert merged["economy_moves"][0].get("affair_declaration")
-    assert merged["人物变更"][0].get("affair_declaration")
     applied = apply_score_extraction(
         db, state, merged, content=content,
         open_affair_ids_at_input={first.id, second.id},

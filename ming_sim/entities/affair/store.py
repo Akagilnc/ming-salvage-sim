@@ -295,6 +295,20 @@ class AffairStore:
     def point_issue(self, issue_id: int, affair_id: int) -> None:
         self.attach_pointer("issues", issue_id, affair_id)
 
+    def assert_origin_matches_declaration(
+        self, origin_ref: str, declaration: Mapping[str, object]
+    ) -> None:
+        """Preflight two pointers before their carrier row is inserted."""
+        kind, target = parse_origin_ref(origin_ref)
+        if kind != _ORIGIN_DOSSIER:
+            return
+        dossier_affair = self._current_pointer("decree_dossiers", int(target))
+        declared = self.peek_declared_id(declaration, allowed=ATTACH_BIRTH)
+        if dossier_affair and declared != dossier_affair:
+            raise ValueError(
+                f"案卷已指向事务 {dossier_affair}，不能同时声明 {declared or '新事务'}"
+            )
+
     def bind_from_origin_ref(self, table: str, row_id: int, origin_ref: str) -> None:
         """Follow origin_ref onto an affair. Dossier hops; affair:id binds directly."""
         kind, target = parse_origin_ref(origin_ref)
