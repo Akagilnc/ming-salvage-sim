@@ -191,13 +191,19 @@ class AffairStore:
         turn: int,
         authorized_ids: set[int],
     ) -> int:
-        """Close only an open affair id visible in this batch's structured input."""
+        """Close only a visible affair without an active linked issue."""
         parsed = parse_affair_declaration(
             declaration, allowed=ATTACH_RESULT_CLOSE,
         )
         affair_id = int(parsed["affair_id"])
         if affair_id not in authorized_ids:
             raise ValueError("事务不在本批可见输入")
+        active_issue = self._conn.execute(
+            "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
+            (affair_id,),
+        ).fetchone()
+        if active_issue is not None:
+            raise ValueError("事务尚有未了局势")
         return self.declare_closed(affair_id, turn=turn).id
 
     def attach_from_declaration(

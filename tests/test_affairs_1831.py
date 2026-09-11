@@ -587,6 +587,18 @@ def test_close_requires_open_affairs_visible_in_batch(game, monkeypatch):
     merged, _localized, _inputs = _extract(monkeypatch, db, state, canned)
     apply_score_extraction(db, state, merged, open_affair_ids_at_input={second.id})
     assert db.affairs.get(first.id).status == "open"
+
+    issue_id = db.conn.execute(
+        "INSERT INTO issues (kind, title, origin_turn, affair_id) VALUES (?, ?, ?, ?)",
+        ("situation", "护送仍在途中", state.turn, first.id),
+    ).lastrowid
+    rejected = apply_score_extraction(
+        db, state, merged, open_affair_ids_at_input=input_ids,
+    )
+    assert db.affairs.get(first.id).status == "open"
+    assert rejected["validate_shape_rejections"][0]["report_section"] == "affair_declarations"
+
+    db.conn.execute("UPDATE issues SET status='resolved' WHERE id=?", (issue_id,))
     apply_score_extraction(db, state, merged, open_affair_ids_at_input=input_ids)
     assert db.affairs.get(first.id).status == "closed"
     assert db.affairs.get(second.id).status == "open"
