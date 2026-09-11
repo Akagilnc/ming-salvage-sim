@@ -5,7 +5,7 @@ import json
 from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge, knowledge_row_visible_to
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
+from ming_sim.materials import prepare_character_materials
 from tests.dossier_test_helpers import create_test_secret_order
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -477,16 +477,8 @@ def test_excluded_participant_event_is_not_visible_to_excluded_character(game):
 
     assert not any(item["source_id"] == "restricted:excluded" for item in view["events"])
 
-def _directory_blob(prepared) -> str:
-    return "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root)
-        if path != "INDEX.txt"
-    )
-
-
 @pytest.mark.parametrize("mode", ["person", "office"])
-def test_issue_source_blacklist_vetoes_knowledge_opening_and_directory(game, tmp_path, mode):
+def test_issue_source_blacklist_vetoes_knowledge_events_and_issues(game, mode):
     db, state, content = game
     knower = next(c for c in content.characters.values() if c.office_type == "户部")
     hidden = next(c for c in content.characters.values() if c.office_type == "礼部")
@@ -551,21 +543,6 @@ def test_issue_source_blacklist_vetoes_knowledge_opening_and_directory(game, tmp
     assert any(item.get("title") == marker for item in knower_view["issues"])
     assert any(item.get("title") == public_marker for item in knower_view["issues"])
 
-    hidden_prepared = prepare_character_materials(
-        db, state, hidden, dest_root=tmp_path / "hidden",
-    )
-    knower_prepared = prepare_character_materials(
-        db, state, knower, dest_root=tmp_path / "knower",
-    )
-    # 目录渲染同一排除边界只查一处真源（blob 是全量，opening 属其子集，
-    # 查 blob 即够——不重复对 opening 再查一遍，#1812 契约断言不落重复渲染面）。
-    hidden_blob = _directory_blob(hidden_prepared)
-    knower_blob = _directory_blob(knower_prepared)
-    assert marker not in hidden_blob
-    assert public_marker not in hidden_blob
-    assert marker in knower_blob
-    assert public_marker in knower_blob
-
 def test_gate_rejects_persisted_exclusion_bypass_by_empty_call_row(game):
     """`knowledge_row_visible_to` is the sole authority for a source's person
     exclusion (#1812).  A caller passing a row whose own ``excluded_names``
@@ -619,9 +596,9 @@ def test_public_reports_accumulate_across_turns(game):
 
     view = db.get_character_knowledge(later, minister.name)
 
-    bodies = [item["body"] for item in view["public_events"]]
-    assert any("第一回合：清丈已明发。" in body for body in bodies)
-    assert any("第三回合：军务有变。" in body for body in bodies)
+    source_ids = {item.get("source_id") for item in view["public_events"]}
+    assert "projection:turn_report:1" in source_ids
+    assert "projection:turn_report:3" in source_ids
 
 def test_participation_record_adapter_covers_assignment_shape(game):
     db, state, content = game

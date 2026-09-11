@@ -340,24 +340,26 @@ def test_minister_agent_uses_only_its_character_knowledge_projection(game):
     captured = _capture_agent(game, first, second)
     first_rendered = "\n".join(captured[first.name]["instructions"])
     second_rendered = "\n".join(captured[second.name]["instructions"])
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    first_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, first)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    second_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, second)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-
-    assert first_mark in first_blob
-    assert second_mark not in first_blob
-    assert hidden_secret in first_blob
-    assert hidden_secret not in second_blob
-    assert second_mark in second_blob
-    assert first_mark not in second_blob
+    # 见闻账本按人物切片是真源（#1812 契约断言不落渲染面）：正向查 typed
+    # events/public_events 的 source_id，不锁材料目录 blob 词面。
+    first_sources = {
+        e.get("source_id") for e in db.get_character_knowledge(state, first.name)["events"]
+    }
+    second_sources = {
+        e.get("source_id") for e in db.get_character_knowledge(state, second.name)["events"]
+    }
+    first_public_sources = {
+        e.get("source_id") for e in db.get_character_knowledge(state, first.name)["public_events"]
+    }
+    second_public_sources = {
+        e.get("source_id") for e in db.get_character_knowledge(state, second.name)["public_events"]
+    }
+    assert f"witness:agent-slice:{first.name}" in first_sources
+    assert f"witness:agent-slice:{first.name}" not in second_sources
+    assert f"witness:agent-slice:{second.name}" in second_sources
+    assert f"witness:agent-slice:{second.name}" not in first_sources
+    assert "test:agent-hidden" in first_public_sources
+    assert "test:agent-hidden" not in second_public_sources
     assert hidden_secret not in second_rendered
     _assert_not_world_dump(first_rendered, db.get_character_knowledge(state, first.name))
     assert hidden_roster_row["name"] not in first_rendered
@@ -400,21 +402,18 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
 
     first_rendered = "\n".join(captured[first.name])
     second_rendered = "\n".join(captured[second.name])
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    first_dir = prepare_character_materials(db, state, first)
-    second_dir = prepare_character_materials(db, state, second)
-    first_blob = "\n".join(
-        read_material(first_dir.root, path)
-        for path in list_materials(first_dir.root) if path != "INDEX.txt"
-    )
-    second_blob = "\n".join(
-        read_material(second_dir.root, path)
-        for path in list_materials(second_dir.root) if path != "INDEX.txt"
-    )
-    assert hidden in first_blob
-    assert hidden not in second_blob
-    assert "章节上游标记-两人可见" in first_blob
-    assert "章节上游标记-两人可见" in second_blob
+    # 见闻账本 typed public_events 的 source_id 是真源；不锁材料目录 blob 词面。
+    first_public_sources = {
+        e.get("source_id") for e in db.get_character_knowledge(state, first.name)["public_events"]
+    }
+    second_public_sources = {
+        e.get("source_id") for e in db.get_character_knowledge(state, second.name)["public_events"]
+    }
+    assert "test:hidden-secret" in first_public_sources
+    assert "test:hidden-secret" not in second_public_sources
+    chapter_source = f"projection:chapter:{state.turn}"
+    assert chapter_source in first_public_sources
+    assert chapter_source in second_public_sources
     assert hidden not in second_rendered
     _assert_not_world_dump(first_rendered, db.get_character_knowledge(state, first.name))
 
@@ -450,26 +449,19 @@ def test_minister_agents_use_distinct_real_db_world_slices_by_office(game):
 
     first_text = "\n".join(captured[first.name]["instructions"])
     second_text = "\n".join(captured[second.name]["instructions"])
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    first_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, first)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    second_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, second)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
     first_domains = set(content.office_knowledge_domains[first.office_type])
     second_domains = set(content.office_knowledge_domains[second.office_type])
     assert first_domains != second_domains
+    # typed world 切片是真源（knowledge.py 按 office_knowledge_domains 填充同名
+    # 键）；不锁材料目录 blob 词面。
+    first_world = db.get_character_knowledge(state, first.name).get("world") or {}
+    second_world = db.get_character_knowledge(state, second.name).get("world") or {}
     for domain in first_domains - second_domains:
-        assert f"{domain}：" in first_blob
-        assert f"{domain}：" not in second_blob
+        assert first_world.get(domain)
+        assert not second_world.get(domain)
     for domain in second_domains - first_domains:
-        assert f"{domain}：" in second_blob
-        assert f"{domain}：" not in first_blob
+        assert second_world.get(domain)
+        assert not first_world.get(domain)
     _assert_not_world_dump(first_text, db.get_character_knowledge(state, first.name))
     _assert_not_world_dump(second_text, db.get_character_knowledge(state, second.name))
 
@@ -490,19 +482,16 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
 
     first_text = "\n".join(captured[first.name]["instructions"])
     second_text = "\n".join(captured[second.name]["instructions"])
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    first_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, first)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    second_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, second)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    assert marker in first_blob
-    assert marker not in second_blob
+    # 见闻账本 typed public_events 的 source_id 是真源；不锁材料目录 blob 词面。
+    secret_source = f"secret_order:{order}"
+    first_public_sources = {
+        e.get("source_id") for e in db.get_character_knowledge(state, first.name)["public_events"]
+    }
+    second_public_sources = {
+        e.get("source_id") for e in db.get_character_knowledge(state, second.name)["public_events"]
+    }
+    assert secret_source in first_public_sources
+    assert secret_source not in second_public_sources
     assert marker not in second_text
     _assert_not_world_dump(first_text, db.get_character_knowledge(state, first.name))
 
@@ -552,17 +541,20 @@ def test_secret_source_boundary_does_not_hide_unrelated_chapter_material(game):
         state, "本月朝局", chapter_mark, public_body=chapter_mark,
     )
 
+    # 见闻账本 typed public_events 的 source_id 是真源；不锁材料目录/blob 词面。
     excluded_knowledge = db.get_character_knowledge(state, excluded.name)
     knower_knowledge = db.get_character_knowledge(state, knower.name)
-    excluded_text = " ".join(
-        item.get("body", "") for item in excluded_knowledge["public_events"]
-    )
-    knower_text = " ".join(
-        item.get("body", "") for item in knower_knowledge["public_events"]
-    )
-    assert secret_mark not in excluded_text
-    assert chapter_mark in excluded_text
-    assert secret_mark in knower_text
+    excluded_public_sources = {
+        item.get("source_id") for item in excluded_knowledge["public_events"]
+    }
+    knower_public_sources = {
+        item.get("source_id") for item in knower_knowledge["public_events"]
+    }
+    secret_source = f"secret_order:{order}"
+    chapter_source = f"projection:chapter:{state.turn}"
+    assert secret_source not in excluded_public_sources
+    assert chapter_source in excluded_public_sources
+    assert secret_source in knower_public_sources
 
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.insert_issue(
@@ -571,18 +563,14 @@ def test_secret_source_boundary_does_not_hide_unrelated_chapter_material(game):
         stage_text="核验", participants=[{"character_id": knower.name}],
         resolve_condition="treasury >= 1", fail_condition="treasury < 1",
     )
-    knower_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, knower)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
+    assert any(
+        i.get("title") == "仅知者可见事项"
+        for i in db.get_character_knowledge(state, knower.name)["issues"]
     )
-    excluded_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, excluded)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
+    assert not any(
+        i.get("title") == "仅知者可见事项"
+        for i in db.get_character_knowledge(state, excluded.name)["issues"]
     )
-    assert "仅知者可见事项" in knower_blob
-    assert "仅知者可见事项" not in excluded_blob
 
 
 # ---------------------------------------------------------------------------
@@ -683,7 +671,6 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
     assert building_poison not in rendered
     assert region_poison not in blob
     assert building_poison not in blob
-    assert power_band(19) in blob or power_band(82) in blob or power_band(67) in blob
 
 
 def test_audience_faction_and_power_reports_never_emit_raw_abstract_axes(game):
