@@ -478,8 +478,8 @@ def _dispatch_commissions(
                     cadence=grant.get("cadence", ""),
                 )
             else:
-                text = str(item.get("text") or "").strip()
-                if not text:
+                text = str(item.get("text") or "")
+                if not text.strip():
                     raise DecreeMaterializationValidationError(
                         "交办声明缺正文（不猜散文）", failed_fields=("text",),
                     )

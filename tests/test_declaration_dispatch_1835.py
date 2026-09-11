@@ -39,8 +39,10 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
         int(state.turn), "directive", "拟旨", minister, {"text": "已暂存旧旨"},
     )
 
+    # 首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账（P6）。
+    commission_text = "  遣使赈济陕西  \n"
     declaration = {
-        "commissions": [{"text": "遣使赈济陕西"}],
+        "commissions": [{"text": commission_text}],
         "promises": [{"action_id": pre_staged_id, "decision": "应允"}],
         "textual_facts": [{
             "subject_kind": "character", "subject_id": minister,
@@ -57,6 +59,13 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
     assert len(result.promises.applied) == 1 and result.promises.rejected == []
     assert len(result.textual_facts.applied) == 1 and result.textual_facts.rejected == []
     assert len(result.public_sayings.applied) == 1 and result.public_sayings.rejected == []
+
+    commission_row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()
+    commission_payload = json.loads(commission_row["payload_json"])
+    assert commission_payload["text"] == commission_text  # 原样落账，含首尾空白，代码没有 strip 篡改
 
     approved_row = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (pre_staged_id,),
@@ -77,9 +86,11 @@ def test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row(g
     army_id = _army_id(db)
     before = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
 
+    # 首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账（P6）。
+    commission_text = "  拨国库十五万两协饷该军  \n"
     declaration = {
         "commissions": [{
-            "text": "拨国库十五万两协饷该军",
+            "text": commission_text,
             "grant": {
                 "amount": 150000, "account": "国库", "purpose": "补饷",
                 "target_kind": "army", "target_id": army_id,
@@ -98,7 +109,7 @@ def test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row(g
         (result.commissions.applied[0]["id"],),
     ).fetchone()
     payload = json.loads(row["payload_json"])
-    assert payload["text"] == "拨国库十五万两协饷该军"
+    assert payload["text"] == commission_text  # 原样落账，含首尾空白，代码没有 strip 篡改
     assert payload["amount"] == 150000
     assert payload["account"] == "国库"
     assert payload["target_id"] == army_id
