@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -142,31 +143,20 @@ def test_tuple_audience_container_fails_loud_from_content_fallback(game, tmp_pat
     """Content-path audiences must be list[str]; tuple is not a legal container."""
     db, state, content = game
     row = _issue_row(db)
-    origin_ref = str(row["origin_ref"])
-    event = content.event_by_id[origin_ref]
-    event.audiences = (AUDIENCE_NAME,)  # type: ignore[assignment]
-    real_conn = db.conn
+    content_only_ref = "content-only-tuple-audience"
+    db.conn.execute(
+        "UPDATE issues SET origin_ref=? WHERE id=?",
+        (content_only_ref, int(row["id"])),
+    )
+    source = content.event_by_id[str(row["origin_ref"])]
+    content.event_by_id[content_only_ref] = replace(
+        source, id=content_only_ref, audiences=(AUDIENCE_NAME,),  # type: ignore[arg-type]
+    )
 
-    class NoEventRowConnection:
-        def __getattr__(self, name):
-            return getattr(real_conn, name)
-
-        def execute(self, sql, parameters=()):
-            if "SELECT audiences FROM events" in sql:
-                class _Empty:
-                    def fetchone(self):
-                        return None
-                return _Empty()
-            return real_conn.execute(sql, parameters)
-
-    db.conn = NoEventRowConnection()
-    try:
-        with pytest.raises(TypeError):
-            prepare_character_materials(
-                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
-            )
-    finally:
-        db.conn = real_conn
+    with pytest.raises(TypeError):
+        prepare_character_materials(
+            db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+        )
 
 
 def test_malformed_knowledge_issue_id_fails_loud_from_material_entry(game, tmp_path):
