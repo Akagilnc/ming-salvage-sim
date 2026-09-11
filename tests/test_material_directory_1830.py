@@ -19,6 +19,7 @@ from ming_sim.audience_night import (
 )
 from ming_sim.materials import (
     _handled_affair_lines,
+    _visible_affair_lines,
     list_materials,
     material_tools,
     prepare_character_materials,
@@ -91,8 +92,9 @@ def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, 
     assert issue_paths == {
         "事务/issue-101/当前情况.txt", "事务/issue-102/当前情况.txt",
     }
+    projected = _visible_affair_lines(knowledge)
     assert [row["id"] for row in _handled_affair_lines(
-        db, state, character.name, knowledge,
+        db, state, character.name, projected,
     )] == [101]
 
 

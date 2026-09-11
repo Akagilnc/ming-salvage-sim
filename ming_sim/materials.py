@@ -142,20 +142,23 @@ def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
             "situation": str(issue.get("stage_text") or "").strip() or "见目录。",
             "resolve_condition": str(issue.get("resolve_condition") or "").strip(),
             "fail_condition": str(issue.get("fail_condition") or "").strip(),
+            "source_id": str(issue.get("source_id") or f"issue:{issue_id}"),
+            "audience_names": tuple(issue.get("audience_names") or ()),
+            "participant_roster": issue.get("participant_roster") or "[]",
         })
     return lines
 
 
-def _handled_affair_lines(db: Any, state: Any, character_name: str, knowledge: dict) -> list[dict[str, object]]:
-    """Filter the already-authorized projection to matters this character handles."""
+def _handled_affair_lines(
+    db: Any, state: Any, character_name: str, issue_materials: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Filter canonical visible issue materials to matters this character handles."""
     from ming_sim.participant_roster import participant_roster_names
 
-    handled_ids = {
-        int(issue.get("id") or 0)
-        for issue in knowledge.get("issues") or []
-        if character_name in participant_roster_names(issue.get("participant_roster"))
-    }
-    return [item for item in _visible_affair_lines(knowledge) if int(item["id"]) in handled_ids]
+    return [
+        item for item in issue_materials
+        if character_name in participant_roster_names(item.get("participant_roster"))
+    ]
 
 
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:
@@ -221,7 +224,10 @@ def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> 
     )
 
 
-def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict) -> list[str]:
+def _write_tree(
+    tmp: Path, db: Any, state: Any, character: Any, knowledge: dict,
+    issue_materials: Sequence[dict[str, object]],
+) -> list[str]:
     from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
     from ming_sim.knowledge import render_character_knowledge
 
@@ -267,7 +273,7 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
         _write_text(person_dir / "见闻.txt", rendered)
         index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/见闻.txt")
 
-    for item in _visible_affair_lines(knowledge):
+    for item in issue_materials:
         segment = f"issue-{int(item['id'])}"
         affair_dir = tmp / _AFFAIR_DIR / segment
         details = [
@@ -315,7 +321,7 @@ def prepare_character_materials(
     *,
     dest_root: Optional[Path] = None,
 ) -> PreparedMaterials:
-    from ming_sim.knowledge import build_character_knowledge
+    from ming_sim.knowledge import build_character_knowledge, project_issue_materials
 
     name = str(getattr(character, "name", "") or "")
     knowledge = {}
@@ -323,6 +329,9 @@ def prepare_character_materials(
         knowledge = db.get_character_knowledge(state, name)
     else:
         knowledge = build_character_knowledge(db, state, name)
+    issue_materials = _visible_affair_lines({
+        "issues": project_issue_materials(db, name, knowledge),
+    })
 
     dest = Path(dest_root) if dest_root is not None else character_materials_root(db, state, character)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -331,7 +340,7 @@ def prepare_character_materials(
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
     try:
-        index = _write_tree(tmp, db, state, character, knowledge)
+        index = _write_tree(tmp, db, state, character, knowledge, issue_materials)
         if dest.exists():
             shutil.rmtree(dest)
         tmp.rename(dest)
@@ -340,7 +349,7 @@ def prepare_character_materials(
             shutil.rmtree(tmp, ignore_errors=True)
         raise
 
-    affairs = _handled_affair_lines(db, state, name, knowledge)
+    affairs = _handled_affair_lines(db, state, name, issue_materials)
     for row in _carryover_drafts(db, state):
         title = f"尚未入档旨稿#{int(row['id'])}"
         body = str(row.get("text") or "").strip()

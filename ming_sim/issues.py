@@ -8582,15 +8582,13 @@ def apply_score_extraction(
                 if not results or all(result.get("rejected") for result in results):
                     db.conn.execute(f"ROLLBACK TO {savepoint}")
                 db.conn.execute(f"RELEASE {savepoint}")
-            except (TypeError, ValueError, KeyError) as exc:
+            except Exception:
+                # The adapter has already converted admissible LLM input errors
+                # into rejected results.  Anything escaping it is an execution
+                # failure: restore this item's savepoint, then fail loud.
                 db.conn.execute(f"ROLLBACK TO {savepoint}")
                 db.conn.execute(f"RELEASE {savepoint}")
-                applied_person_changes.append({
-                    "name": str(person_change.get("name") or "").strip(),
-                    "动作": str(person_change.get("动作") or "").strip(),
-                    "rejected": True, "category": "invalid_enum",
-                    "reason": str(exc), "item": dict(person_change),
-                })
+                raise
 
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
@@ -8624,13 +8622,12 @@ def apply_score_extraction(
             else:
                 applied_economy.extend(results)
             db.conn.execute(f"RELEASE {savepoint}")
-        except (TypeError, ValueError, KeyError) as exc:
+        except Exception:
+            # Input rejection belongs to _apply_economy_list.  DB/writer and
+            # other execution failures must not be relabelled as invalid_enum.
             db.conn.execute(f"ROLLBACK TO {savepoint}")
             db.conn.execute(f"RELEASE {savepoint}")
-            economy_rejections.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": str(exc), "item": raw_move,
-            })
+            raise
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
