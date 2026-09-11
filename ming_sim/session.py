@@ -49,8 +49,6 @@ from ming_sim.decree import (
 from ming_sim.error_pack import clear_for_resimulation
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
-from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
-from ming_sim.knowledge import render_character_knowledge
 from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince, is_weishi
@@ -1920,76 +1918,36 @@ class GameSession:
         return result
 
     def _audience_prompt_for_message(self, message: str, character: Character, *, chat_turn_id: int = 0) -> str:
-        # Chapter summaries are a global narrative cache and may contain secret
-        # or off-stage facts.  Character knowledge is the only audience input
-        # allowed to cross this boundary; public reports are projected there
-        # with their source-level exclusions applied.
-        augmented = message
+        # Opening context is the #1819 minimum set.  Full perspectival material
+        # lives in the prepared directory and is read on demand (#1830).
         try:
-            knowledge = self.db.get_character_knowledge(self.state, character.name)
+            self.db.get_character_knowledge(self.state, character.name)
         except Exception:
-            # Legacy projection trouble may fall back to ordinary chat, but it
-            # must be visible rather than silently authorising a factual reply.
             return "【近臣回奏暂不可用：见闻记录读取失败；不得据此臆答事实。】\n\n" + message
         if (
             is_inner_court_attendant(character)
             and any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情", "查访"))
         ):
             try:
-                # The report is written to the durable, character-scoped
-                # knowledge source before rebuilding the projection.  This
-                # prevents a keyword hit from injecting a global snapshot into
-                # every minister's prompt and leaves restore with the same
-                # source/audience boundary.
                 self.db.persist_return_report(
                     self.state, character.name, message,
                     chat_turn_id=chat_turn_id,
                 )
-                knowledge = self.db.get_character_knowledge(self.state, character.name)
             except Exception:
                 return "【近臣回奏暂不可用：查访未能持久留档；不得据此臆答事实。】\n\n" + message
+        from ming_sim.materials import prepare_character_materials
         try:
-            brief = render_character_knowledge(
-                knowledge, character.name, db=self.db, state=self.state,
-            )
+            prepared = prepare_character_materials(self.db, self.state, character)
         except Exception:
             return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
-        if brief:
-            augmented = brief + "\n\n" + augmented
-        candidates = self.db.list_referenceable_dossiers(character.name, self.state.turn)
-        dossier_brief = render_referenceable_dossier_brief(candidates)
-        if dossier_brief:
-            augmented = dossier_brief + "\n\n" + augmented
-        # 连场 presence-aware（#507 / ADR 0035）：宣下一个不断场、前一位留殿侧侍立时，
-        # 对话流按在场名单送入组装——在场者补话可引用其在场时段殿上公开对话，未在场者
-        # 的组装输入不含殿内对话（区间取数复用 audible_entries_for，御前低语不流入）。
-        try:
-            from ming_sim.audience_night import audience_scene_recap
-            recap = audience_scene_recap(self.db, character.name)
-        except Exception:
-            recap = ""
-        if recap:
-            augmented = recap + "\n\n" + augmented
-        # 未明发草案不属于公开层；参与者/知情圈须通过持久见闻事件投影进入提示。
-        # 这里不能直接读取本回合的全局草案列表，否则未参与大臣会越过排除边界获知密事。
-        # #1769 例外且仅此一项：**跨月**未入档旨稿（turn<本回合、仍 draft、无案卷）
-        # ——它上月已随颁诏发出、只是没能落档，不是尚在御案上的密事；owner 御批的终态
-        # 是「原旨留到下月、大臣开桌提醒」，追问渠道复用召对 A 路（不新建通知/队列/
-        # 持久状态）。呈现由 LLM 自己长（P7），此处只供事实。
-        carryover = [
-            row for row in self.db.list_directives(self.state, statuses=("draft",))
-            if int(row["turn"]) < int(self.state.turn)
-            and self.db.get_dossier_for_directive(int(row["id"])) is None
-        ]
-        if carryover:
-            lines = ["【陛下前月已发、尚未入档的旨稿（如有关联，可奏请陛下明示如何处置；"
-                     "勿向陛下念内部编号）】"]
-            lines += [
-                f"#{int(row['id'])} {str(row['text'] or '')}（尚未入档）"
-                for row in carryover
-            ]
-            augmented = "\n".join(lines) + "\n\n" + augmented
-        return augmented
+        registry = getattr(self, "registry", None)
+        agent = None
+        if registry is not None:
+            agent = getattr(registry, "agents", {}).get(character.name)
+        model = getattr(agent, "model", None) if agent is not None else None
+        if model is not None and hasattr(model, "materials_dir"):
+            model.materials_dir = str(prepared.root)
+        return prepared.opening + "\n\n" + message
 
     def apply_cli_conversation_actions(
         self, character: Character, player_message: str, answer: str,

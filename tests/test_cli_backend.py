@@ -716,6 +716,49 @@ def test_run_claude_stdout_only(monkeypatch):
     assert captured["kw"].get("env") is None
 
 
+def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path):
+    """#1830 / #1827：Claude 材料模式传到真实子进程 seam（cwd + Read/Glob/Grep）。"""
+    root = str((tmp_path / "materials").resolve())
+    tmp_path.joinpath("materials").mkdir()
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out, n = cb._run_claude("p", materials_dir=root)
+    assert out == "ok" and n == 1
+    assert captured["kw"].get("cwd") == root
+    assert "--restricted" not in captured["cmd"]
+    assert "--strict-mcp-config" not in captured["cmd"]
+    assert "--add-dir" not in captured["cmd"]
+    assert "--allowedTools" in captured["cmd"]
+    assert "Read" in captured["cmd"] and "Glob" in captured["cmd"]
+    joined = " ".join(captured["cmd"])
+    disallowed_span = joined.split("--disallowedTools", 1)[-1]
+    assert "Read" not in disallowed_span.split("--", 1)[0]
+
+
+def test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path):
+    """#1830 / #1827：Codex 材料模式 cwd + --ignore-user-config --sandbox read-only。"""
+    root = str((tmp_path / "materials").resolve())
+    tmp_path.joinpath("materials").mkdir()
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out, n = cb._run_codex("p", materials_dir=root)
+    assert out == "ok" and n == 1
+    assert captured["kw"].get("cwd") == root
+    assert "--ignore-user-config" in captured["cmd"]
+    assert "--sandbox" in captured["cmd"]
+    assert "read-only" in captured["cmd"]
+    assert "--skip-git-repo-check" in captured["cmd"]
+    assert "--ephemeral" in captured["cmd"]
+
+
+@pytest.mark.parametrize("runner", ["agy", "cursor", "kimi", "grok", "pi"])
+def test_materials_mode_rejects_unsupported_runners(tmp_path, runner):
+    """#1830：未验收材料能力的 runner 启动前响亮拒绝。"""
+    root = str(tmp_path / "materials")
+    tmp_path.joinpath("materials").mkdir()
+    with pytest.raises(RuntimeError, match="材料模式仅支持 Codex 与 Claude"):
+        cb._cli_runner_command(runner, "p", materials_dir=root)
+
+
 def test_run_codex_flags_and_stdout(monkeypatch):
     body = '{"k": []}'
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
@@ -763,7 +806,8 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     seen = {}
 
     def fake_chunks(runner, prompt, *, model=None,
-                    reasoning_strength=None, json_events=False, clock=None):
+                    reasoning_strength=None, json_events=False, clock=None,
+                    materials_dir=None):
         seen["runner"] = runner
         seen["json_events"] = json_events
         seen["reasoning_strength"] = reasoning_strength

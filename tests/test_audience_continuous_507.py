@@ -168,11 +168,24 @@ def test_reply_input_routes_per_character_knowledge_not_one_answer_for_all(game)
     # 里、断言其存在恒真=假绿；「近臣查访」只由角色见闻投影渲染进 prompt、不在原问中。
     prompt_attendant = GameSession._audience_prompt_for_message(
         session, question, content.characters[STANDING])
-    assert "近臣查访" in prompt_attendant.replace(question, "")
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    attendant_blob = "\n".join(
+        read_material(d.root, path)
+        for d in [prepare_character_materials(db, state, content.characters[STANDING])]
+        for path in list_materials(d.root) if path != "INDEX.txt"
+    )
+    assert "近臣查访" in attendant_blob
+    assert f"【{STANDING}此刻所知的天下" not in prompt_attendant
 
-    # 负向：同一问题问不知情的普通大臣——不注入近臣查访见闻（答复因见闻不同而不同，千人千答）
+    # 负向：同一问题问不知情的普通大臣——目录不注入近臣查访见闻
     prompt_minister = GameSession._audience_prompt_for_message(
         session, question, content.characters["毕自严"])
+    minister_blob = "\n".join(
+        read_material(d.root, path)
+        for d in [prepare_character_materials(db, state, content.characters["毕自严"])]
+        for path in list_materials(d.root) if path != "INDEX.txt"
+    )
+    assert "近臣查访" not in minister_blob
     assert "近臣查访" not in prompt_minister
 
 
