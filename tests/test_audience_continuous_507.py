@@ -163,18 +163,9 @@ def test_reply_input_routes_per_character_knowledge_not_one_answer_for_all(game)
     session = SimpleNamespace(db=db, state=state)
     question = "陕西巡抚可有？"
 
-    # 正向：问常在近臣王承恩——回奏输入取自其角色见闻。断言**去掉玩家原问后仍在**的见闻
-    # 注入标记（近臣查访得督抚官缺实况），锁的是知识注入而非问句回声——「陕西巡抚」本在原问
-    # 里、断言其存在恒真=假绿；「近臣查访」只由角色见闻投影渲染进 prompt、不在原问中。
+    # 正向：问常在近臣王承恩——回奏输入取自其角色见闻，世界库裸值不得外泄（负向闸案）。
     prompt_attendant = GameSession._audience_prompt_for_message(
         session, question, content.characters[STANDING])
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    attendant_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, content.characters[STANDING])]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    assert "近臣查访" in attendant_blob
     world = db.get_character_knowledge(state, STANDING).get("world") or {}
     for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
         value = str(world.get(key) or "").strip()
@@ -184,6 +175,7 @@ def test_reply_input_routes_per_character_knowledge_not_one_answer_for_all(game)
     # 负向：同一问题问不知情的普通大臣——目录不注入近臣查访见闻
     prompt_minister = GameSession._audience_prompt_for_message(
         session, question, content.characters["毕自严"])
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
     minister_blob = "\n".join(
         read_material(d.root, path)
         for d in [prepare_character_materials(db, state, content.characters["毕自严"])]

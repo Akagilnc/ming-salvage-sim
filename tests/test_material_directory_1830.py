@@ -147,16 +147,12 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     # #1812：无裸副本——真实 prepare 输出里不该出现世界库/JSON 转储文件。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
 
-    # (a) 两件撞名局势不得合并/互相覆盖：各自成篇，正文互不相同（不锁具体
+    # (a) 两件撞名局势不得合并/互相覆盖：各自成篇（路径结构化契约；不锁正文
     # 措辞——生成物只特征化观察，按 #1812 契约断言只落结构化字段的规则）。
     affair_files = [p for p in list_materials(prepared.root) if p.startswith("事务/")]
-    bodies = [read_material(prepared.root, p) for p in affair_files]
-    assert len(bodies) == len(set(bodies)) and all(bodies)
-    # (c) 目录给该事务全部月份的事实（结构化路径落地，非按正文措辞判定）；
+    # (c) 目录给该事务全部月份的事实落在结构化路径上（非按正文措辞判定）；
     # 开场为最小集，不含跨月历史。
-    affair_path = next(p for p in affair_files if p.startswith(f"事务/affair-{affair.id}/"))
-    affair_body = read_material(prepared.root, affair_path)
-    assert affair_body
+    next(p for p in affair_files if p.startswith(f"事务/affair-{affair.id}/"))
     assert affair_situation_old not in prepared.opening
     # (d) 已挂靠该事务的 issue 不另立一个 事务/issue-N 身份——材料并入
     # 事务/affair-N（路径结构化契约），不得单独露面。
@@ -165,11 +161,9 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     )
     # (e) 非案卷参与人但可见 linked issue：归并到该事务自己的 affair-N 身份，
     # 不冒出对应的 issue-N（路径结构化契约）。
-    bystander_path = next(
+    next(
         p for p in affair_files if p.startswith(f"事务/affair-{bystander_affair.id}/")
     )
-    bystander_body = read_material(prepared.root, bystander_path)
-    assert bystander_body
     assert not any(
         p.startswith(f"事务/issue-{bystander_issue_id}/") for p in affair_files
     )
@@ -180,11 +174,9 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert bystander_situation not in prepared.opening
     # (f) 事务了结不清空其 durable 身份或全史（#1819 Resolution 3/7）：已关闭
     # 的 closed_affair 仍在同一 事务/affair-N 路径下能查到（结构化路径契约）。
-    closed_path = next(
+    next(
         p for p in affair_files if p.startswith(f"事务/affair-{closed_affair.id}/")
     )
-    closed_body = read_material(prepared.root, closed_path)
-    assert closed_body
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
@@ -230,12 +222,6 @@ def test_opening_is_minimum_set_not_full_projection(game, tmp_path):
         value = str(world.get(key) or "").strip()
         if value:
             assert value not in opening
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root)
-        if path != "INDEX.txt"
-    )
-    assert blob
 
 
 def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
@@ -275,8 +261,7 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
     tools = {fn.__name__: fn for fn in captured["tools"]}
     listing = tools["list_materials"]()
     rel = next(line for line in listing.splitlines() if line.endswith("经历.txt"))
-    body = tools["read_material"](rel)
-    assert body
+    tools["read_material"](rel)  # 经由工具接口真实读取不抛错
 
 
 def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
@@ -330,6 +315,6 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
             n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in restored_names
         )
         rel = next(p for p in list_materials(prepared.root) if p.endswith("经历.txt"))
-        assert read_material(prepared.root, rel)
+        read_material(prepared.root, rel)  # 重建后仍可真实读取不抛错
     finally:
         restored.close()

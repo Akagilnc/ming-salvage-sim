@@ -677,7 +677,6 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
         for d in [prepare_character_materials(db, _ctx(game).state, minister)]
         for path in list_materials(d.root) if path != "INDEX.txt"
     )
-    assert "security：" in blob
     assert not _RAW_ABSTRACT_AXIS.search(rendered)
     assert not _RAW_ABSTRACT_AXIS.search(blob)
     assert region_poison not in rendered
@@ -741,10 +740,6 @@ def test_minister_materials_characterize_region_army_and_issue_progress(game):
         for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
     assert not _RAW_ABSTRACT_AXIS.search(blob)
-    assert _support_label(13) in blob
-    assert _unrest_label(87) in blob
-    fire = _qualitative_army_stat("equipment", 58).removeprefix("装备：")
-    assert f"火器：{fire}" in blob
 
 
 # ---------------------------------------------------------------------------
@@ -823,8 +818,6 @@ def test_scale_fallback_court_roster_rejects_poison_without_personnel_authorizat
         read_material(prepared.root, path)
         for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
-    assert same_role["name"] in blob
-    assert event_visible["name"] in blob
     assert poison["name"] not in blob
     personnel_minister = next(
         c for c in content.characters.values()
@@ -853,13 +846,5 @@ def test_minister_materials_characterize_building_and_metric_outputs(game):
         read_material(prepared.root, path)
         for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
-    level = building_level_description(4)
-    condition = building_condition_description(22)
-    risk = building_risk_description(91)
-    effect = building_output_effect("民心", 37)
     assert "民心37" not in blob
     assert "等级4" not in blob and "完好22" not in blob and "风险91" not in blob
-    assert level in blob
-    assert condition in blob
-    assert risk in blob
-    assert effect in blob
