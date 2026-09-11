@@ -18,14 +18,14 @@ def test_choices_cover_all_supported_runners():
     choices = cb.cli_model_choices()
     # 每个受支持的 CLI runner 都要有一档清单（与 _CLI_BACKENDS 单一真源对齐，#1256）。
     assert set(choices) == set(cb._CLI_BACKENDS)
-    assert set(choices) == {"codex", "claude"}
+    assert set(choices) == {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"}
 
 
 def test_cli_runner_choices_cover_all_supported_runners():
-    """CLI Runner 下拉只公开具备材料目录能力的 runner。"""
+    """CLI Runner 下拉公开全部受支持 runner。"""
     runners = cb.cli_runner_choices()
     values = [r["value"] for r in runners]
-    assert values == ["codex", "claude"]
+    assert values == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
     for opt in runners:
         assert set(opt) == {"value", "label"}
         assert opt["label"]

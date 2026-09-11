@@ -751,13 +751,17 @@ def test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tm
     assert "--ephemeral" in captured["cmd"]
 
 
-@pytest.mark.parametrize("runner", ["agy"])
-def test_materials_mode_rejects_unsupported_runners(tmp_path, runner):
-    """#1830：未验收材料能力的 runner 启动前响亮拒绝。"""
-    root = str(tmp_path / "materials")
+def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tmp_path):
+    """Agy 1.2.0 材料调用用 --print=<prompt>，不再走失效 sandbox/stdin。"""
+    root = str((tmp_path / "materials").resolve())
     tmp_path.joinpath("materials").mkdir()
-    with pytest.raises(RuntimeError, match="材料模式无安全的只读启动形态"):
-        cb._cli_runner_command(runner, "p", materials_dir=root)
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out, n = cb._run_agy("PROMPT", materials_dir=root)
+    assert out == "ok" and n == 1
+    assert captured["kw"].get("cwd") == root
+    assert captured["cmd"][-1] == "--print=PROMPT"
+    assert captured["kw"].get("stdin") is None
+    assert "--sandbox" not in captured["cmd"]
 
 
 def test_run_codex_flags_and_stdout(monkeypatch):
@@ -1562,7 +1566,7 @@ def test_public_cli_support_restores_existing_runners(monkeypatch):
     assert cb._CLI_BACKENDS == frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
     assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
     assert [row["value"] for row in cb.cli_runner_choices()] == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
-    assert set(cb.cli_model_choices()) == {"codex", "claude"}
+    assert set(cb.cli_model_choices()) == set(cb._CLI_BACKENDS)
     for name in ("opencode",):
         assert not cb.is_supported_cli_runner(name)
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)

@@ -11,7 +11,7 @@
 这是探针的预期，不是缺陷。
 
 调用约定来自 wiki/concepts/codex-bot-conventions.md + cross-model-review.md：
-- agy：先暖 keychain（auth 是 race），warm + retry（初试 1 + 最多 3），--sandbox。
+- agy：先暖 keychain（auth 是 race），Agy 1.2.0 用 `--print=<prompt>`。
 - codex：`codex exec -` 必须 stdin pipe，绝不 positional；始终 2>&1。
 """
 
@@ -90,15 +90,13 @@ _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
-# Legacy runner commands remain private implementation details; M18 publicly
-# supports only the two runners with verified material-directory isolation.
 _CURSOR_BIN = os.environ.get("MING_SIM_CURSOR_BIN", "cursor-agent")
 _KIMI_BIN = os.environ.get("MING_SIM_KIMI_BIN", "kimi")
 _GROK_BIN = os.environ.get("MING_SIM_GROK_BIN", "grok")
 _PI_BIN = os.environ.get("MING_SIM_PI_BIN", "pi")
 # 受支持 CLI runner 单一真源（membership + 文案 + env 回落共用）。
 _CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
-_MATERIALS_CLI_RUNNERS = _CLI_BACKENDS - {"agy"}
+_MATERIALS_CLI_RUNNERS = _CLI_BACKENDS
 # 闸脚本 --runner choices 与公开支持集同源。
 GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok", "pi")
 # 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
@@ -169,6 +167,8 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
     codex_default = cli_model_from_env("codex", CODEX_DEFAULT_MODEL)
     claude_default = cli_model_from_env("claude", CLAUDE_DEFAULT_MODEL)
     return {
+        # agy：模型档由 CLI 自身选择，只提供默认逃生档。
+        "agy": [{"value": "", "label": "默认 · gemini"}],
         # codex：默认 gpt-5.5（机理扎实、字段全）；spark 最快、建 issue 满分。
         # gpt-5.4 不入档（bench 偏长且不在「可用主力」；mini 漏 DECISION 块已淘汰）。
         "codex": [
@@ -182,6 +182,11 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
             {"value": "claude-haiku-4-5", "label": "claude-haiku-4-5 · 快"},
             {"value": "claude-sonnet-4-6", "label": "claude-sonnet-4-6 · 慢，偏离线鉴赏"},
         ],
+        # 尚无策展模型档的 runner 保留 CLI 自身默认。
+        "cursor": [{"value": "", "label": "默认"}],
+        "kimi": [{"value": "", "label": "默认"}],
+        "grok": [{"value": "", "label": "默认"}],
+        "pi": [{"value": "", "label": "默认"}],
     }
 
 
@@ -670,20 +675,18 @@ def _cli_runner_command(
     """runner → (argv, stdin 文本, env)。各 runner 调用约定单真源；执行读法共用 helper。
 
     实测约定（docs/LLM_BACKEND_BENCH.md §9 / #1256 / #1274-qa-y1）：
-    - agy：`-p --sandbox`，prompt 走 stdin；调用前先暖 keychain（auth race）。
+    - agy 1.2.0：`--print=<prompt>` 单参数；调用前先暖 keychain（auth race）。
     - codex：`exec -` 必须 stdin pipe（绝不 positional）；`--skip-git-repo-check`
       （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
     - claude：`-p --output-format text`，prompt 走 stdin；thinking 预算走 env。
     - cursor / kimi / grok / pi：prompt 走参数（无 stdin 约定），干净答案在 stdout。
-    材料目录（#1830 / #1827）：cwd 指向目录；各 runner 只开放读取面。
-    Agy 当前 CLI 没有非持久的工具 allowlist，因此材料模式不启动它。
+    材料目录（#1830 / #1827）：cwd 指向目录；各 runner 只开放读取面或由 prompt
+    明确约束只读。Agy 不另建强沙箱，也不写用户 settings。
     """
     if materials_dir and runner not in _MATERIALS_CLI_RUNNERS:
-        raise RuntimeError(
-            f"材料模式无安全的只读启动形态，拒绝 runner={runner}"
-        )
+        raise RuntimeError(f"runner 不支持材料目录：{runner}")
     if runner == "agy":
-        return [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"], prompt, None
+        return [_resolve_cli_bin("agy", _AGY_BIN), f"--print={prompt}"], None, None
     if runner == "codex":
         cmd = _codex_cmd(
             model, json_events=json_events, reasoning_strength=reasoning_strength,
@@ -907,7 +910,7 @@ def _run_cli_runner(
 
 
 def _run_agy(prompt: str, *, materials_dir: Optional[str] = None) -> Tuple[str, int]:
-    """调 agy -p --sandbox 一次（warm keychain 仍做；重试归 transport）。"""
+    """调 agy --print=<prompt> 一次（warm keychain 仍做；重试归 transport）。"""
     return _run_cli_runner("agy", prompt, materials_dir=materials_dir)
 
 
@@ -1232,7 +1235,7 @@ def _messages_to_prompt(
     if materials_dir:
         prompt += (
             "\n\n【材料】你的材料在当前目录。根目录 INDEX 一行一项。想读哪份自己读。"
-            "只读当前材料目录，不得写入、修改或创建任何文件。"
+            "禁止读取当前材料目录之外的任何内容；不得写入、修改或创建任何文件。"
             "直接以你所扮演的角色身份，用**中文**给出最终回答。"
         )
     else:
