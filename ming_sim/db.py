@@ -2654,9 +2654,12 @@ class GameDB:
         )
         from ming_sim.entities.textual_fact import TextualFactStore
         from ming_sim.entities.affair import AffairStore
+        from ming_sim.entities.staged_declaration import StagedDeclarationStore
         TextualFactStore.ensure_schema(self.conn)
         self.ensure_column("textual_facts", "origin_ref", "TEXT NOT NULL DEFAULT ''")
         self.textual_facts = TextualFactStore(self.conn)
+        StagedDeclarationStore.ensure_schema(self.conn)
+        self.staged_declarations = StagedDeclarationStore(self.conn)
         AffairStore.ensure_schema(self.conn)
         self.ensure_column("decree_dossiers", "affair_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "affair_id", "INTEGER NOT NULL DEFAULT 0")

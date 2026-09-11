@@ -199,30 +199,69 @@ def test_on_scene_person_status_change_lands_and_rejects_nonexistent_person(game
     assert status == "imprisoned"
 
 
-def test_presence_enter_and_exit_land_on_night_ledger_no_night_context_rejects(game):
-    db, state, content = game
+def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
+    """P6/P7：落账正文必须是声明自带的原文，代码不得拼「某某入殿」这类模板句。"""
+    db, state, _ = game
     minister = _minister(db)
     from ming_sim.audience_night import open_night
 
     night = open_night(db, state)
     night_id = int(night["id"])
+    declared_body = "内侍高唱，乔尚书趋步入殿，绯袍犹带风尘。"
 
     declaration = {
-        "presence": [
-            {"person_name": minister, "effect": "enter"},
-            {"person_name": minister, "effect": "exit"},
-        ],
+        "presence": [{"person_name": minister, "effect": "enter", "body": declared_body}],
     }
     result = dispatch_declaration(db, state, declaration, night_id=night_id)
-    assert len(result.presence.applied) == 2
     assert result.presence.rejected == []
+    assert len(result.presence.applied) == 1
 
-    no_night_result = dispatch_declaration(db, state, declaration, night_id=0)
-    assert no_night_result.presence.applied == []
-    assert len(no_night_result.presence.rejected) == 2
+    row = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?",
+        (result.presence.applied[0]["id"],),
+    ).fetchone()
+    assert row["body"] == declared_body  # 原样落账，代码没有拼接/替换成模板句
 
 
-def test_scene_fact_speaker_segment_lands_with_audibility_and_bad_audibility_is_rejected(game):
+def test_presence_rejects_nonexistent_person_without_polluting_ledger(game):
+    """AC3：有效夜下引用不存在的人物一样要逐项拒收，不能真落进 story_ledger_entries。"""
+    db, state, _ = game
+    from ming_sim.audience_night import open_night
+
+    night = open_night(db, state)
+    night_id = int(night["id"])
+    before = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+
+    declaration = {
+        "presence": [{"person_name": "子虚乌有之人", "effect": "enter", "body": "凭空捏造之人入殿。"}],
+    }
+    result = dispatch_declaration(db, state, declaration, night_id=night_id)
+
+    assert result.presence.applied == []
+    assert len(result.presence.rejected) == 1
+    assert result.presence.rejected[0].category == "hallucinated_id"
+    after = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+    assert after == before  # 没有孤儿账落进去
+
+
+def test_presence_with_no_night_context_is_rejected_as_missing_ref(game):
+    db, state, _ = game
+    minister = _minister(db)
+
+    declaration = {
+        "presence": [{"person_name": minister, "effect": "enter", "body": "入殿。"}],
+    }
+    result = dispatch_declaration(db, state, declaration, night_id=0)
+    assert result.presence.applied == []
+    assert len(result.presence.rejected) == 1
+    assert result.presence.rejected[0].category == "missing_ref"
+
+
+def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_and_ghost_person(game):
     db, state, _ = game
     minister = _minister(db)
     from ming_sim.audience_night import open_night
@@ -234,14 +273,30 @@ def test_scene_fact_speaker_segment_lands_with_audibility_and_bad_audibility_is_
         "scene_facts": [
             {"body": "臣领旨。", "audibility": "殿上公开", "person_names": [minister]},
             {"body": "低声私语", "audibility": "非法可闻性"},
+            {"body": "凭空捏造之人插话。", "audibility": "殿上公开", "person_names": ["子虚乌有之人"]},
         ],
     }
+    before = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
     result = dispatch_declaration(db, state, declaration, night_id=night_id)
+    after = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+
     assert len(result.scene_facts.applied) == 1
-    assert len(result.scene_facts.rejected) == 1
+    assert after - before == 1  # 只有合法项真落账，坏项不留孤儿账
+    categories = {r.category for r in result.scene_facts.rejected}
+    assert categories == {"invalid_shape", "hallucinated_id"}
+
+    row = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?",
+        (result.scene_facts.applied[0]["id"],),
+    ).fetchone()
+    assert row["body"] == "臣领旨。"
 
 
-def test_edge_event_lands_and_rejects_unknown_kind(game):
+def test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_differently(game):
     db, state, _ = game
     ministers = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
@@ -253,12 +308,14 @@ def test_edge_event_lands_and_rejects_unknown_kind(game):
         "edge_events": [
             {"source": a, "target": b, "event_kind": "撑腰", "context": "当殿举荐"},
             {"source": a, "target": b, "event_kind": "不存在的类目", "context": "…"},
+            {"source": a, "target": "子虚乌有之人", "event_kind": "撑腰", "context": "…"},
+            {"source": a, "target": b, "event_kind": "撑腰", "context": ""},
         ],
     }
     result = dispatch_declaration(db, state, declaration)
     assert len(result.edge_events.applied) == 1
-    assert len(result.edge_events.rejected) == 1
-    assert result.edge_events.rejected[0].category == "hallucinated_id"
+    by_category = {r.category for r in result.edge_events.rejected}
+    assert by_category == {"invalid_enum", "hallucinated_id", "invalid_shape"}
 
 
 def test_protagonist_lands_and_rejects_nonexistent_person(game):
@@ -270,4 +327,78 @@ def test_protagonist_lands_and_rejects_nonexistent_person(game):
 
     bad = dispatch_declaration(db, state, {"protagonist": {"person_name": "子虚乌有之人"}})
     assert bad.protagonist.applied == []
-    assert len(bad.protagonist.rejected) == 1
+    assert bad.protagonist.rejected[0].category == "hallucinated_id"
+
+
+def test_registration_adds_new_person_to_roster_and_rejects_existing_name(game):
+    db, state, _ = game
+    minister = _minister(db)
+
+    declaration = {
+        "registrations": [
+            {"name": "李若璉補", "office": "锦衣卫百户", "office_type": "武职", "source": "historical"},
+            {"name": minister, "office": "户部尚书", "office_type": "文职"},
+        ],
+    }
+    result = dispatch_declaration(db, state, declaration)
+
+    assert len(result.registrations.applied) == 1
+    assert result.registrations.applied[0] == {"name": "李若璉補"}
+    assert len(result.registrations.rejected) == 1
+
+    row = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name=?", ("李若璉補",),
+    ).fetchone()
+    assert row is not None
+    assert row["status"] == "active"
+    assert row["office"] == "锦衣卫百户"
+    assert "李若璉補" in db.content.characters
+
+
+def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
+    """ADR 0157 步骤 1-2：暂存不落账，作废后不结算，按序结算一旨一提交且幂等。"""
+    from ming_sim.declaration_dispatch import (
+        discard_staged_declaration,
+        settle_staged_declarations_in_decree_order,
+        stage_declaration,
+    )
+
+    db, state, _ = game
+    minister = _minister(db)
+
+    stage_declaration(
+        db, decree_ref="decree:1",
+        declaration={"textual_facts": [{
+            "subject_kind": "character", "subject_id": minister, "body": "旨一：暂存中",
+        }]},
+        turn=int(state.turn),
+    )
+    stage_declaration(
+        db, decree_ref="decree:2",
+        declaration={"textual_facts": [{
+            "subject_kind": "character", "subject_id": minister, "body": "旨二：即将作废",
+        }]},
+        turn=int(state.turn),
+    )
+    # 暂存不落账。
+    assert db.textual_facts.readable_materials(
+        subject_kind="character", subject_id=minister,
+    ) == ()
+
+    discarded = discard_staged_declaration(db, "decree:2")
+    assert discarded == 1
+
+    results = settle_staged_declarations_in_decree_order(
+        db, state, ["decree:2", "decree:1"],
+    )
+    assert "decree:2" not in results  # 全部作废，静默跳过
+    assert len(results["decree:1"].textual_facts.applied) == 1
+
+    facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts] == ["旨一：暂存中"]
+
+    # 幂等：再结算一次不重复落账。
+    again = settle_staged_declarations_in_decree_order(db, state, ["decree:1"])
+    assert "decree:1" not in again
+    facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts_after] == ["旨一：暂存中"]
