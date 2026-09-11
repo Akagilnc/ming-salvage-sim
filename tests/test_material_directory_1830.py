@@ -6,6 +6,9 @@ list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from ming_sim.audience_night import (
@@ -15,12 +18,15 @@ from ming_sim.audience_night import (
     summon_enter,
 )
 from ming_sim.materials import (
+    _handled_affair_lines,
     list_materials,
+    material_tools,
     prepare_character_materials,
     read_material,
 )
 from ming_sim.models import CourtContext, LLMConfig
 from ming_sim.registry import create_minister_agent
+from ming_sim.session import GameSession
 
 
 def _active_minister(db, content, *, office_type=None):
@@ -61,6 +67,33 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert character.name in roster
     assert (character.office or "无现任官职") in roster
     assert status in roster
+
+
+def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+    knowledge = {"issues": [
+        {"id": 101, "title": "经手事项", "participant_roster": json.dumps([
+            {"character_id": character.name, "tier": "主办"},
+        ])},
+        {"id": 102, "title": "无人承办事项", "participant_roster": "[]"},
+    ]}
+
+    original_get = db.get_character_knowledge
+    db.get_character_knowledge = lambda *_args: knowledge
+    try:
+        prepared = prepare_character_materials(
+            db, state, character, dest_root=tmp_path / "materials",
+        )
+    finally:
+        db.get_character_knowledge = original_get
+    issue_paths = {line for line in prepared.index_lines if line.startswith("事务/issue-")}
+    assert issue_paths == {
+        "事务/issue-101/当前情况.txt", "事务/issue-102/当前情况.txt",
+    }
+    assert [row["id"] for row in _handled_affair_lines(
+        db, state, character.name, knowledge,
+    )] == [101]
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
@@ -145,8 +178,14 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
         body=spoken, audibility=AUDIBILITY_PUBLIC,
     )
 
-    prepared = prepare_character_materials(db, state, character)
-    index_before = prepared.index_lines
+    model = SimpleNamespace(materials_dir="")
+    registry = SimpleNamespace(agents={character.name: SimpleNamespace(model=model)})
+    session = SimpleNamespace(db=db, state=state, registry=registry)
+    GameSession._audience_prompt_for_message(session, "下一句", character)
+    prepared_root = Path(model.materials_dir)
+    index_before = tuple(
+        line for line in read_material(prepared_root, "INDEX.txt").splitlines() if line
+    )
     turn_pointer = db.conn.execute(
         "SELECT user_message_id, minister_message_id FROM chat_turns WHERE id=?", (ct,),
     ).fetchone()
@@ -163,10 +202,24 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
             "SELECT user_message_id, minister_message_id FROM chat_turns WHERE id=?", (ct,),
         ).fetchone()
         assert tuple(restored_pointer) == (uid, mid)
-        rebuilt = prepare_character_materials(restored, state2, character2)
-        assert rebuilt.index_lines == index_before
-        rel = next(p for p in rebuilt.index_lines if p.endswith("经历.txt"))
-        assert rel in list_materials(rebuilt.root)
-        assert read_material(rebuilt.root, rel)
+        restored_model = SimpleNamespace(materials_dir="")
+        restored_registry = SimpleNamespace(
+            agents={character2.name: SimpleNamespace(model=restored_model)},
+        )
+        restored_session = SimpleNamespace(
+            db=restored, state=state2, registry=restored_registry,
+        )
+        GameSession._audience_prompt_for_message(
+            restored_session, "重开后一句", character2,
+        )
+        rebuilt_root = Path(restored_model.materials_dir)
+        rebuilt_index = tuple(
+            line for line in read_material(rebuilt_root, "INDEX.txt").splitlines() if line
+        )
+        assert rebuilt_index == index_before
+        tools = {tool.__name__: tool for tool in material_tools(rebuilt_root)}
+        rel = next(p for p in rebuilt_index if p.endswith("经历.txt"))
+        assert rel in tools["list_materials"]().splitlines()
+        assert tools["read_material"](rel)
     finally:
         restored.close()
