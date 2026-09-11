@@ -39,7 +39,7 @@ def test_non_streaming_path_surfaces_pending_action_id(game, monkeypatch):
     """非流式 session 路径(_cli_backend_fallback_actions)也要 surface pending_action_id,
     与流式不漂移(ship-pre CMR);暂存不当场落 secret_order_id。"""
     db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "非流式承办官"
     oid = _create_secret_order(db, state, who, "原标题", "原内容", [], deadline_months=0)
@@ -2528,7 +2528,7 @@ def test_no_backend_is_noop(read_game, monkeypatch):
 def test_draft_prefix_stages_directive(game, monkeypatch):
     """玩家『拟旨如下：』→ 大臣回话原文进 pending_actions，等待对话确认或颁诏默认同意。"""
     db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     _no_conv_action(monkeypatch)
     seed = "臣领旨。敕谕户部与陕西巡抚发太仓银三万两亲督赈发。钦此。"
     result = _result()
@@ -2593,8 +2593,6 @@ def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatc
         return canned, 1
 
     monkeypatch.setattr(cb, "_run_codex", fake_codex)
-    monkeypatch.setattr(cb, "_run_agy", lambda p: (_ for _ in ()).throw(
-        AssertionError("runtime codex 通道不应回落 agy")))
     result = _result()
     result.answer = "臣领密旨，可授李若琏暗查。"
     _session(
@@ -2618,7 +2616,7 @@ def test_runtime_cli_secret_prefix_merges_via_configured_runner(game, monkeypatc
 def test_secret_prefix_creates_order(game, monkeypatch):
     """#397/#413：玩家『密令如下：』→ 合并皇帝旨意 + extractor，先暂存，确认/commit 后建 active 密令。"""
     db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     canned = json.dumps({
         "标题": "查辽东军饷有无侵冒",
         "内容": "查辽东军饷有无侵冒，三月内回奏；可授李若琏暗查。",
@@ -2631,7 +2629,7 @@ def test_secret_prefix_creates_order(game, monkeypatch):
         "交付目标": 1, "效果符号": 1, "地区": "henan", "地区字段": "registered_land", "地区目标值": "421",
         "标签": [],
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda p: (canned, 1))
+    monkeypatch.setattr(cb, "_run_codex", lambda p, **kw: (canned, 1))
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     result = _result()
     result.answer = "臣领密旨，可授李若琏暗查。"
@@ -2649,7 +2647,7 @@ def test_secret_prefix_creates_order(game, monkeypatch):
 def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
     """#413：前缀密令只暂存候选；正式 commit 时才建密令并 refresh 承办大臣 agent。"""
     db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     refreshed = []
     registry = SimpleNamespace(refresh=lambda name: refreshed.append(name))
@@ -2664,7 +2662,7 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
             content = "查甲"
         return (json.dumps({"标题": "查甲", "内容": content, "承办人": who,
                             "期限月数": 0, "差务": "清丈", "价值轴": ["实务事功"], "方向": 1, "交付单位": "万亩", "交付目标": 1, "效果符号": 1, "地区": "henan", "地区字段": "registered_land", "地区目标值": "421", "标签": []}, ensure_ascii=False), 1)
-    monkeypatch.setattr(cb, "_run_agy", fake_agy)
+    monkeypatch.setattr(cb, "_run_codex", fake_agy)
 
     r1 = _result(); r1.answer = "臣领旨一。"
     s._cli_backend_fallback_actions(r1, SimpleNamespace(name=who, office_type="兵部"), "密令如下：查甲")
@@ -2694,7 +2692,7 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
 def test_existing_directive_not_overwritten(read_game, monkeypatch):
     """agno 工具已产 directive 时，胶水不重复入档（result.proposed_directive 非空）。"""
     db, state, _ = read_game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     _no_conv_action(monkeypatch)
     sentinel = SimpleNamespace(id=999, text="原工具产出", status="draft")
     result = _result()
@@ -2711,7 +2709,7 @@ def test_conversation_update_lands_via_session_path(game, monkeypatch):
     """无前缀、口头说『更新密令』→ session 路径(apply_cli_conversation_actions)把更新进 pending 暂存,
     颁诏 commit 才落真实表(ADR 0006 动作闸门);召对当场不直写、不丢动作。"""
     db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "会话动作承办官"
     oid = _create_secret_order(db, state, who, "原标题", "原内容", ["甲"], deadline_months=0)
@@ -2748,7 +2746,7 @@ def test_secret_conversation_actions_persist_complete_minister_reply(
     game, monkeypatch, action, payload_key,
 ):
     db, state, _content = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     who = "长回话承办官"
     oid = _create_secret_order(db, state, who, "查核边饷", "逐项查核", [])
     if action == "记进展":
@@ -2848,12 +2846,7 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
         calls.append(("codex", model))
         return canned, 1
 
-    def fake_agy(prompt):
-        calls.append(("agy",))
-        raise RuntimeError("agy should not be used")
-
     monkeypatch.setattr(cb, "_run_codex", fake_codex)
-    monkeypatch.setattr(cb, "_run_agy", fake_agy)
     s = _session(
         db,
         state,
@@ -2885,7 +2878,7 @@ def test_runtime_cli_conversation_update_uses_configured_runner_without_env(game
 def test_conversation_rush_skips_non_active(game, monkeypatch):
     """催办目标恰为非 active 时不抛错、不误置成功（target_active 守门）。"""
     db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     who = "待核承办官"
     oid = _create_secret_order(db, state, who, "已结令", "内容", [], deadline_months=6)
