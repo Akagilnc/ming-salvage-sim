@@ -368,17 +368,3 @@ def prepare_character_materials(
         character, state, _present_names(db, character), affairs, _spoken_this_scene(db, character),
     )
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
-
-
-def directory_has_raw_world_copy(root: Path, db: Any) -> bool:
-    """True when the tree contains a raw world-library replica (db/json dump)."""
-    root_r = Path(root).resolve()
-    forbidden_suffixes = {".db", ".sqlite", ".sqlite3", ".json"}
-    for item in root_r.rglob("*"):
-        if not item.is_file():
-            continue
-        if item.suffix.lower() in forbidden_suffixes:
-            return True
-        if item.name == Path(str(getattr(db, "path", "") or "")).name:
-            return True
-    return False

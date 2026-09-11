@@ -479,10 +479,8 @@ def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:
     """Canonical exact reference only: `affair:<id>` or `dossier:<id>`.
 
     No slash suffix accepted here — that is the story-experience seam's own
-    provenance shape (`affair:<id>/turn:<n>/<k>`), recognized by
-    `affair_id_from_experience_origin_ref` instead, so a durable-effect origin
-    check (`db.effect_origin_rejection`) reusing this parser cannot be widened
-    into accepting arbitrary suffixes as canonical (#1831).
+    provenance shape (`affair:<id>/turn:<n>/<k>`). Keeping this parser exact
+    prevents durable-effect checks from accepting arbitrary suffixes as canonical.
     """
     text = str(origin_ref or "").strip()
     if ":" not in text:
@@ -497,21 +495,6 @@ def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:
     if target <= 0:
         return None, None
     return kind, target
-
-
-def affair_id_from_experience_origin_ref(origin_ref: object) -> int | None:
-    """Recognize this seam's own suffixed experience provenance:
-    `affair:<id>` or `affair:<id>/<suffix>` (e.g. `/turn:<cid>/<n>`)."""
-    text = str(origin_ref or "").strip()
-    prefix = f"{_ORIGIN_AFFAIR}:"
-    if not text.startswith(prefix):
-        return None
-    head = text[len(prefix):].split("/", 1)[0]
-    try:
-        target = int(head)
-    except (TypeError, ValueError):
-        return None
-    return target if target > 0 else None
 
 
 def _row_to_affair(row: Any) -> Affair:

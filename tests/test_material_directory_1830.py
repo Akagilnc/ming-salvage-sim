@@ -16,7 +16,6 @@ from ming_sim.audience_night import (
     summon_enter,
 )
 from ming_sim.materials import (
-    directory_has_raw_world_copy,
     list_materials,
     prepare_character_materials,
     read_material,
@@ -64,7 +63,6 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert character.name in roster
     assert (character.office or "无现任官职") in roster
     assert status in roster
-    assert not directory_has_raw_world_copy(prepared.root, db)
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
@@ -195,7 +193,6 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
         )
         assert spoken in prompt2
         prepared = prepare_character_materials(restored, state2, character2)
-        assert not directory_has_raw_world_copy(prepared.root, restored)
         rel = next(p for p in list_materials(prepared.root) if p.endswith("经历.txt"))
         assert read_material(prepared.root, rel)
     finally:

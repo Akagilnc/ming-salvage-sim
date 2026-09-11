@@ -11,7 +11,6 @@ import ming_sim.session as session_mod
 import ming_sim.simulation as simulation
 from ming_sim.audience_extraction import parse_extraction_facts
 from ming_sim.db import GameDB
-from ming_sim.entities.affair import affair_id_from_experience_origin_ref
 from ming_sim.issues import apply_score_extraction
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from ming_sim.session import GameSession
@@ -542,7 +541,7 @@ def test_translation_experience_marks_affair_without_dossier(game):
     rows = db.affairs.experiences(affair.id)
     assert len(rows) == 1
     assert minister in rows[0]["person_names"]
-    assert affair_id_from_experience_origin_ref(rows[0]["origin_ref"]) == affair.id
+    assert str(rows[0]["origin_ref"]).startswith(f"affair:{affair.id}/")
     brief = build_extractor_shared_context(db, state, "宁远护送", "")
     row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
     assert "experiences" not in row
@@ -553,9 +552,7 @@ def test_translation_experience_marks_affair_without_dossier(game):
     try:
         restored_rows = restored.affairs.experiences(affair.id)
         assert minister in restored_rows[0]["person_names"]
-        assert affair_id_from_experience_origin_ref(
-            restored_rows[0]["origin_ref"],
-        ) == affair.id
+        assert restored_rows[0]["origin_ref"] == rows[0]["origin_ref"]
     finally:
         restored.close()
 
