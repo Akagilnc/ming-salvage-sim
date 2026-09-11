@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ming_sim.knowledge import project_issue_materials
 from ming_sim.materials import list_materials, prepare_character_materials
 
@@ -13,7 +15,7 @@ NON_AUDIENCE_NAME = "崔呈秀"
 
 def _issue_row(db):
     row = db.conn.execute(
-        "SELECT id, stage_text FROM issues WHERE title=? AND status='active' LIMIT 1",
+        "SELECT id, stage_text, origin_ref FROM issues WHERE title=? AND status='active' LIMIT 1",
         (ISSUE_TITLE,),
     ).fetchone()
     assert row is not None
@@ -50,6 +52,48 @@ def test_issue_material_is_visible_only_to_the_typed_event_audience(game, tmp_pa
     assert _issue_paths(outsider, issue_id) == set()
     assert f"事务/issue-{issue_id}/当前情况.txt" in audience.index_lines
     assert f"事务/issue-{issue_id}/当前情况.txt" not in outsider.index_lines
+
+
+@pytest.mark.parametrize("stored_audiences", ["[]", "{}", "not-json"])
+def test_event_issue_without_valid_audience_is_absent_from_the_material_directory(
+    game, tmp_path, stored_audiences,
+):
+    db, state, content = game
+    row = _issue_row(db)
+    issue_id = int(row["id"])
+    db.conn.execute(
+        "UPDATE events SET audiences=? WHERE id=?", (stored_audiences, row["origin_ref"]),
+    )
+
+    prepared = prepare_character_materials(
+        db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+    )
+
+    assert _issue_paths(prepared, issue_id) == set()
+    assert f"事务/issue-{issue_id}/当前情况.txt" not in prepared.index_lines
+
+
+def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path):
+    db, state, content = game
+    real_conn = db.conn
+
+    class FailingEventAudienceConnection:
+        def __getattr__(self, name):
+            return getattr(real_conn, name)
+
+        def execute(self, sql, parameters=()):
+            if "SELECT audiences FROM events" in sql:
+                raise RuntimeError("audience ledger read failed")
+            return real_conn.execute(sql, parameters)
+
+    db.conn = FailingEventAudienceConnection()
+    try:
+        with pytest.raises(RuntimeError, match="audience ledger read failed"):
+            prepare_character_materials(
+                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+            )
+    finally:
+        db.conn = real_conn
 
 
 def test_issue_material_projection_does_not_pollute_durable_events_or_db(game, tmp_path):

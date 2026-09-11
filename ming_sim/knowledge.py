@@ -19,38 +19,37 @@ from ming_sim.public_sayings import (
 )
 
 
-def _issue_audience_names(db: Any, issue: Any) -> set[str]:
-    """Resolve seed-event audiences for an issue (read-model only).
+def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
+    """Resolve an event issue's audience, or ``None`` for non-event issues.
 
     Opening/seed situations list knowers on the originating event's ``audiences``
     field.  Issues themselves do not duplicate that column; look up via
-    ``origin_kind=event_pool`` → events table, then content fallback.
+    ``origin_kind=event_pool`` → events table, then content fallback.  An empty
+    set is therefore an event with no authorized reader, not a public event.
     """
     try:
         origin_kind = str(issue["origin_kind"] or "")
         origin_ref = str(issue["origin_ref"] or "").strip()
     except (KeyError, IndexError, TypeError):
-        return set()
-    if origin_kind != "event_pool" or not origin_ref:
+        return None
+    if origin_kind != "event_pool":
+        return None
+    if not origin_ref:
         return set()
     raw: object = None
+    row = None
     if hasattr(db, "conn"):
-        try:
-            row = db.conn.execute(
-                "SELECT audiences FROM events WHERE id=?", (origin_ref,),
-            ).fetchone()
-        except Exception:
-            row = None
+        row = db.conn.execute(
+            "SELECT audiences FROM events WHERE id=?", (origin_ref,),
+        ).fetchone()
         if row is not None:
             raw = row["audiences"]
-    if raw is None:
+    if row is None:
         content = getattr(db, "content", None)
         event_by_id = getattr(content, "event_by_id", None) or {}
         ev = event_by_id.get(origin_ref)
         if ev is not None:
-            raw = getattr(ev, "audiences", None) or []
-    if raw is None:
-        return set()
+            raw = getattr(ev, "audiences", None)
     if isinstance(raw, str):
         try:
             raw = json.loads(raw or "[]")
@@ -168,15 +167,11 @@ def project_issue_materials(
     projected: list[Dict[str, object]] = []
     for issue in knowledge.get("issues") or []:
         audiences = _issue_audience_names(db, issue)
-        try:
-            origin_kind = str(issue["origin_kind"] or "")
-        except (KeyError, IndexError, TypeError):
-            origin_kind = ""
-        if origin_kind == "event_pool" and audiences and character_name not in audiences:
+        if audiences is not None and character_name not in audiences:
             continue
         row = dict(issue)
         row["source_id"] = str(row.get("source_id") or f"issue:{int(row['id'])}")
-        row["audience_names"] = tuple(sorted(audiences))
+        row["audience_names"] = tuple(sorted(audiences or ()))
         projected.append(row)
     return projected
 
