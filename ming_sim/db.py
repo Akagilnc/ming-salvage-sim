@@ -10386,7 +10386,11 @@ class GameDB:
         旧行为：现读现授权。
         """
         from ming_sim.audience_night import PRESENCE_ENTER, append_ledger_entry
-        from ming_sim.entities.affair import ATTACH_EXPERIENCE, declaration_from_payload
+        from ming_sim.entities.affair import (
+            ATTACH_EXPERIENCE,
+            UnauthorizedAffairOriginRef,
+            declaration_from_payload,
+        )
 
         cid = int(chat_turn_id)
         if self.get_story_extract_status(cid) == "done":
@@ -10400,10 +10404,21 @@ class GameDB:
         if srow is not None and str(srow["status"] or "") in {"failed", "undone"}:
             return []
         base = float(int(source_night_seq or 0)) + 0.5
+        authorized_open = (
+            set(authorized_open_ids) if authorized_open_ids is not None
+            else {int(row.id) for row in self.affairs.list_open()}
+        )
+        clock = self.conn.execute(
+            "SELECT year, period, turn FROM game_state WHERE id=1"
+        ).fetchone()
+        if clock is None:
+            raise ValueError("存档缺 game_state 时钟")
         accepted: List[Mapping[str, Any]] = []
         rejected: List[tuple[Mapping[str, Any], str]] = []
         # Validate model-owned items before opening the all-or-nothing application
         # transaction. Endorsements are never settled here (#612 night-level batch).
+        # Unauthorized affair origin is the same narrow per-item reject signal as
+        # economy/person paths (ADR 0005/0015): keep siblings, leave structured trace.
         for fact in facts:
             if "_rejected_story_fact" in fact:
                 rejected.append((fact.get("_rejected_story_fact") or {}, str(fact.get("_rejection_reason") or "事实形状非法")))
@@ -10411,6 +10426,21 @@ class GameDB:
             if isinstance(fact, Mapping) and "endorsement" in fact:
                 rejected.append((dict(fact), "普通故事抽取不得携带 endorsement"))
                 continue
+            if (
+                isinstance(fact, Mapping)
+                and declaration_from_payload(fact, allowed=ATTACH_EXPERIENCE) is not None
+            ):
+                try:
+                    self.affairs.origin_ref_from_result_item(
+                        fact,
+                        year=int(clock["year"]),
+                        period=int(clock["period"]),
+                        turn=int(clock["turn"]),
+                        authorized_ids=authorized_open,
+                    )
+                except UnauthorizedAffairOriginRef as exc:
+                    rejected.append((dict(fact), str(exc)))
+                    continue
             accepted.append(fact)
 
         new_ids: List[int] = []
@@ -10426,15 +10456,6 @@ class GameDB:
                         source=Provenance.system_simulation,
                     ), int(turn_row["turn"] if turn_row is not None else 0))
                 collector.flush_to_db(self)
-            authorized_open = (
-                set(authorized_open_ids) if authorized_open_ids is not None
-                else {int(row.id) for row in self.affairs.list_open()}
-            )
-            clock = self.conn.execute(
-                "SELECT year, period, turn FROM game_state WHERE id=1"
-            ).fetchone()
-            if clock is None:
-                raise ValueError("存档缺 game_state 时钟")
             for fact in accepted:
                 persons = [
                     str(n).strip()

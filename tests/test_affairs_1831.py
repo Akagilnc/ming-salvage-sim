@@ -11,6 +11,7 @@ import ming_sim.session as session_mod
 import ming_sim.simulation as simulation
 from ming_sim.audience_extraction import parse_extraction_facts
 from ming_sim.db import GameDB
+from ming_sim import issues as issues_mod
 from ming_sim.issues import apply_score_extraction
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from ming_sim.session import GameSession
@@ -688,3 +689,100 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
         and "未了局势" in row["reason"]
         for row in result["validate_shape_rejections"]
     )
+
+
+def test_story_extraction_rejects_unauthorized_affair_origin_itemwise(game):
+    """越权经历挂接只拒该项：合法 sibling 落账、水位完成、拒收留痕。"""
+    db, state, content = game
+    minister = _minister(db)
+    authorized = db.affairs.open(
+        name=NINGYUAN, origin=ORIGIN,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    unauthorized = db.affairs.open(
+        name="另事", origin="另一件交办",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    nid, ctid, seq = _persist_reply(db, state, minister)
+    facts = parse_extraction_facts({
+        "facts": [
+            {
+                "person_names": [minister],
+                "body": "越权挂接经历",
+                "事务声明": _declaration(attach="existing", affair_id=unauthorized.id),
+            },
+            {
+                "person_names": [minister],
+                "body": "合法经历 sibling",
+                "事务声明": _declaration(attach="existing", affair_id=authorized.id),
+            },
+        ],
+    })
+    ids = db.settle_story_extraction(
+        ctid, nid, facts, seq, authorized_open_ids={authorized.id},
+    )
+    assert len(ids) == 1
+    assert db.get_story_extract_status(ctid) == "done"
+    assert len(db.affairs.experiences(authorized.id)) == 1
+    assert db.affairs.experiences(unauthorized.id) == ()
+    rows = db.conn.execute(
+        "SELECT section, reason FROM rejection_reports WHERE section = ?",
+        ("story_facts",),
+    ).fetchall()
+    assert any("事务不在本批" in str(row["reason"]) for row in rows)
+
+
+def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game):
+    """战略人物越权来源拒收须进入最终 applied_person_changes；material sibling 仍触发。"""
+    db, state, content = game
+    issues_mod.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    authorized = db.affairs.open(
+        name=NINGYUAN, origin=ORIGIN,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    unauthorized = db.affairs.open(
+        name="另事", origin="另一件交办",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    db.conn.execute(
+        "UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"),
+    )
+    db.conn.execute(
+        "UPDATE characters SET status = ? WHERE name = ?", ("active", "卢象升"),
+    )
+    out = apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "region_delta": {
+                "beizhili": {
+                    "origin_ref": "盘面自发",
+                    "military_pressure": 15,
+                    "reason": "戊寅虏变软判畿南受压",
+                },
+            },
+            "人物变更": [{
+                "name": "卢象升",
+                "动作": "评定",
+                "loyalty": 1,
+                "origin_ref": db.affairs.origin_ref(unauthorized.id),
+                "reason": "戊寅虏变软判主帅功过",
+            }],
+        },
+        content=content,
+        open_affair_ids_at_input={authorized.id},
+    )
+    assert out["issue_summary"]["new_issues"][0].get("rejected") is not True
+    assert db.has_event_triggered("wuyin_lubian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",),
+    ).fetchone()["military_pressure"] == 35
+    rejected_persons = [
+        row for row in out["applied_person_changes"]
+        if row.get("rejected") and row.get("name") == "卢象升"
+    ]
+    assert len(rejected_persons) == 1
+    assert "事务不在本批" in str(rejected_persons[0].get("reason") or "")

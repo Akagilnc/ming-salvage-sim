@@ -9128,6 +9128,14 @@ def apply_score_extraction(
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
             apply_event_cascading_invalidations(state, db, commit=commit_now)
             new_issue["reason"] = "事件已记为触发，软判结果已落主账"
+            # Successful person applies already extended applied_person_changes via
+            # _apply_normalized_person_changes (same object ids). Origin-auth rejects
+            # only lived in event_person_results — promote them once into the final
+            # projection so material siblings cannot erase the structured trace.
+            present = {id(row) for row in applied_person_changes}
+            for row in event_person_results:
+                if row.get("rejected") and id(row) not in present:
+                    applied_person_changes.append(row)
         else:
             new_issue["rejected"] = True
             new_issue["category"] = "missing_world_state_delta"
