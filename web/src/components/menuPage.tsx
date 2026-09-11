@@ -320,7 +320,7 @@ export function ApiSettingsModal({
     <div className="menu-modal-bg" onClick={onClose}>
       <div className="menu-modal" onClick={(e) => e.stopPropagation()}>
         <h2>LLM 后端</h2>
-        <p className="menu-hint">API 通道用商业模型；CLI 通道用本机 agent（agy/codex/claude），可脱 key。配置写入本地，不上传。</p>
+        <p className="menu-hint">API 通道用商业模型；CLI 通道用本机 agent（codex/claude），可脱 key。配置写入本地，不上传。</p>
         <label>
           通道
           <select value={channel} onChange={(e) => setChannel(e.target.value === "cli" ? "cli" : "api")}>
