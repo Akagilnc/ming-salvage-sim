@@ -17,6 +17,7 @@ export const CLI_RUNNER_FALLBACK: readonly CliRunnerChoice[] = [
   { value: "cursor", label: "cursor" },
   { value: "kimi", label: "kimi" },
   { value: "grok", label: "grok" },
+  { value: "pi", label: "pi" },
 ] as const;
 
 /** Resolve runner dropdown options: backend list wins; else fallback constant. */

@@ -8,6 +8,7 @@ stays mocked (no real binary/LLM/network).
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -633,7 +634,7 @@ def test_backend_env(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     assert cb.cli_backend_from_env() is None
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    assert cb.cli_backend_from_env() is None
+    assert cb.cli_backend_from_env() == "agy"
 
 
 def test_backend_env_claude(monkeypatch):
@@ -748,6 +749,15 @@ def test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tm
     assert "read-only" in captured["cmd"]
     assert "--skip-git-repo-check" in captured["cmd"]
     assert "--ephemeral" in captured["cmd"]
+
+
+@pytest.mark.parametrize("runner", ["agy"])
+def test_materials_mode_rejects_unsupported_runners(tmp_path, runner):
+    """#1830：未验收材料能力的 runner 启动前响亮拒绝。"""
+    root = str(tmp_path / "materials")
+    tmp_path.joinpath("materials").mkdir()
+    with pytest.raises(RuntimeError, match="材料模式无安全的只读启动形态"):
+        cb._cli_runner_command(runner, "p", materials_dir=root)
 
 
 def test_run_codex_flags_and_stdout(monkeypatch):
@@ -1087,11 +1097,13 @@ def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
     [
         ("_run_codex", "/Users/x/.local/bin/codex"),
         ("_run_claude", "/opt/homebrew/bin/claude"),
+        ("_run_agy", "/Users/x/.local/bin/agy"),
     ],
 )
 def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     cb._BIN_CACHE.clear()
     monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: resolved)
+    monkeypatch.setattr(cb, "_warm_keychain", lambda: None)
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
     getattr(cb, runner)("p")
@@ -1239,7 +1251,7 @@ def test_extract_preserves_array_trailing_comma_via_loads_path(monkeypatch):
 
 def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
     """#1563：公开 invoke 只证 prompt 角色标签顺序与 typed completion 结构；不锁生成正文。"""
-    cc = cb.CliChat(id="cli-test", backend="codex")
+    cc = cb.CliChat(id="cli-test", backend="agy")
     seen = {}
 
     # Deterministic fixture the old _strip_agent_narration would have rewritten
@@ -1279,7 +1291,7 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
 
 
 def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
-    cc = cb.CliChat(id="cli-test", backend="codex")
+    cc = cb.CliChat(id="cli-test", backend="agy")
     seen = []
 
     def fake_cli(prompt):
@@ -1306,7 +1318,7 @@ def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
     """#1299/#1310：runner 失败翻 typed LLMUnavailable；trace 仍记机器原文。"""
     from ming_sim.exceptions import LLMUnavailable
-    cc = cb.CliChat(id="cli-test", backend="codex")
+    cc = cb.CliChat(id="cli-test", backend="agy")
     monkeypatch.setattr(cc, "_call_cli", lambda p: (_ for _ in ()).throw(RuntimeError("cli down")))
     traced = {}
     monkeypatch.setattr(cb, "_trace", lambda rec: traced.update(rec))
@@ -1328,12 +1340,20 @@ def test_clichat_call_cli_dispatch(monkeypatch):
         seen["claude"] = model
         return ("CLAUDE", 1)
 
+    def fake_agy(p):
+        seen["agy"] = "called"
+        return ("AGY", 1)
+
     monkeypatch.setattr(cb, "_run_codex", fake_codex)
     monkeypatch.setattr(cb, "_run_claude", fake_claude)
+    monkeypatch.setattr(cb, "_run_agy", fake_agy)
     assert cb.CliChat(id="m-codex", backend="codex", timeout=111)._call_cli("p") == ("CODEX", 1)
     assert cb.CliChat(id="m-claude", backend="claude", timeout=222)._call_cli("p") == ("CLAUDE", 1)
+    assert cb.CliChat(id="m-agy", backend="agy", timeout=333)._call_cli("p") == ("AGY", 1)
+    # #1465 切片③：model.timeout 不再下发给 runner；等多久算死归 transport 策略。
     assert seen["codex"] == "m-codex"
     assert seen["claude"] == "m-claude"
+    assert seen["agy"] == "called"
 
 
 def test_clichat_call_cli_unknown_backend_raises():
@@ -1341,15 +1361,63 @@ def test_clichat_call_cli_unknown_backend_raises():
         cb.CliChat(id="m", backend="bogus")._call_cli("p")
 
 
-# ── runner 失败分类（重试归 transport，runner 内无私有循环）──
+# ── agy 单次调用 / runner 失败分类（重试归 transport，runner 内无私有循环）──
 
 
+def _agy_popen(monkeypatch, script):
+    """agy 子进程替身：script 为逐次调用的 (stdout, returncode)。"""
+    from tests.cli_process_doubles import FakeCliProcess
+
+    state = {"agy": 0, "warm": 0}
+
+    def fake_warm():
+        state["warm"] += 1
+
+    def fake_popen(cmd, **kw):
+        index = state["agy"]
+        state["agy"] += 1
+        text, rc = script[min(index, len(script) - 1)]
+        return FakeCliProcess(
+            cmd,
+            stdout_script=((text,) if text else ()),
+            returncode=rc,
+            popen_kwargs=kw,
+        )
+
+    monkeypatch.setattr(cb, "_warm_keychain", fake_warm)
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
+    return state
 
 
+def test_run_agy_success_single_subprocess(monkeypatch):
+    state = _agy_popen(monkeypatch, [("STDOUT_BODY", 0)])
+    out, attempts = cb._run_agy("PROMPT")
+    assert out == "STDOUT_BODY" and attempts == 1
+    assert state["agy"] == 1
+    assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
 
 
+@pytest.mark.parametrize(
+    "banner", ["Authentication required", "authentication timed out"],
+)
+def test_run_agy_auth_race_is_retryable_typed_without_private_loop(monkeypatch, banner):
+    """#1465 切片③：agy auth race 抛可重试 typed，**一次子进程**——
+    重试次数归 llm_transport，runner 内不得再自转 4 次。"""
+    from ming_sim.exceptions import LLMUnavailable
+
+    state = _agy_popen(monkeypatch, [(banner, 0)])
+    with pytest.raises(LLMUnavailable) as ei:
+        cb._run_agy("p")
+    assert ei.value.code == "llm_connection_error"
+    assert state["agy"] == 1
 
 
+def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
+    """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
+    state = _agy_popen(monkeypatch, [("", 1)])
+    with pytest.raises(RuntimeError):
+        cb._run_agy("p")
+    assert state["agy"] == 1
 
 
 class _RcProc:
@@ -1490,33 +1558,171 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──
 
 
-def test_public_cli_support_is_codex_and_claude_only(monkeypatch):
-    assert cb._CLI_BACKENDS == frozenset({"codex", "claude"})
-    assert cb.GATE_CLI_RUNNERS == ("codex", "claude")
-    assert [row["value"] for row in cb.cli_runner_choices()] == ["codex", "claude"]
+def test_public_cli_support_restores_existing_runners(monkeypatch):
+    assert cb._CLI_BACKENDS == frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
+    assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
+    assert [row["value"] for row in cb.cli_runner_choices()] == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
     assert set(cb.cli_model_choices()) == {"codex", "claude"}
-    for name in ("agy", "cursor", "kimi", "grok", "pi", "opencode"):
+    for name in ("opencode",):
         assert not cb.is_supported_cli_runner(name)
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)
         assert cb.cli_backend_from_env() is None
 
 
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
+def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_path, runner):
+    root = str((tmp_path / "materials").resolve())
+    tmp_path.joinpath("materials").mkdir()
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out, n = cb._run_cli_runner(runner, "PROMPT", materials_dir=root)
+    assert out == "ok" and n == 1
+    assert captured["kw"].get("cwd") == root
+    cmd = captured["cmd"]
+    if runner == "cursor":
+        assert "ask" in cmd and "enabled" in cmd
+    elif runner == "kimi":
+        agent_path = cmd[cmd.index("--agent-file") + 1]
+        assert not os.path.exists(agent_path)
+    elif runner == "grok":
+        assert "Read,Glob,Grep" in cmd and "read-only" in cmd
+        assert "--always-approve" not in cmd
+    else:
+        assert "read,grep,find,ls" in cmd
+        for flag in ("--no-session", "--no-extensions", "--no-skills",
+                     "--no-prompt-templates", "--no-themes", "--no-context-files"):
+            assert flag in cmd
 
 
+def test_run_cursor_flags_and_stdout(monkeypatch):
+    body = "CURSOR_OK"
+    captured = _capture_run(monkeypatch, _P(stdout=body, stderr="noise"))
+    out, n = cb._run_cursor("PROMPT_BODY", model="auto")
+    assert out == body and n == 1
+    cmd = captured["cmd"]
+    assert "-p" in cmd
+    assert "--output-format" in cmd and cmd[cmd.index("--output-format") + 1] == "text"
+    assert "--model" in cmd and cmd[cmd.index("--model") + 1] == "auto"
+    assert "--trust" in cmd
+    assert "PROMPT_BODY" in cmd  # positional prompt
+    assert captured["kw"].get("input") in (None, "")  # not stdin
 
 
+def test_run_kimi_prompt_flag_no_yolo_stdout_only(monkeypatch):
+    body = "KIMI_OK"
+    captured = _capture_run(monkeypatch, _P(stdout=body, stderr="kimi version 0.36.1\nTo resume..."))
+    out, n = cb._run_kimi("PROMPT_BODY", model="kimi-k2")
+    assert out == body and n == 1
+    cmd = captured["cmd"]
+    assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "PROMPT_BODY"
+    assert "--yolo" not in cmd and "-y" not in cmd and "--auto" not in cmd
+    assert "-m" in cmd and cmd[cmd.index("-m") + 1] == "kimi-k2"
+    # stderr noise must not pollute answer
+    assert "resume" not in out.lower()
 
 
+def test_run_grok_flags_effort_and_plain(monkeypatch):
+    body = "GROK_OK"
+    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""))
+    out, n = cb._run_grok("PROMPT_BODY", model="grok-4.5", reasoning_strength="medium")
+    assert out == body and n == 1
+    cmd = captured["cmd"]
+    assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "PROMPT_BODY"
+    assert "-m" in cmd and cmd[cmd.index("-m") + 1] == "grok-4.5"
+    assert "--output-format" in cmd and cmd[cmd.index("--output-format") + 1] == "plain"
+    # ticket: effort only low/med/high；medium → med
+    assert "--effort" in cmd and cmd[cmd.index("--effort") + 1] == "med"
 
 
+def test_run_pi_flags_thinking_and_stdout(monkeypatch):
+    """#1274-qa-y1：pi -p 非交互；stdout 取文；reasoning → --thinking；model 透传。"""
+    body = "PI_OK"
+    captured = _capture_run(monkeypatch, _P(stdout=body, stderr="pi log noise"))
+    out, n = cb._run_pi(
+        "PROMPT_BODY", model="openai/gpt-4o", reasoning_strength="medium",
+    )
+    assert out == body and n == 1
+    cmd = captured["cmd"]
+    assert "-p" in cmd or "--print" in cmd
+    assert "--no-tools" in cmd  # #1456：禁内置工具，防 prompt 注入驱动 read/bash/edit/write
+    assert "--model" in cmd and cmd[cmd.index("--model") + 1] == "openai/gpt-4o"
+    # pi --help：--thinking off|minimal|low|medium|high|xhigh|max；抽象 medium 直传
+    assert "--thinking" in cmd and cmd[cmd.index("--thinking") + 1] == "medium"
+    assert "PROMPT_BODY" in cmd  # positional prompt
+    assert captured["kw"].get("input") in (None, "")  # not stdin
+    assert "noise" not in out.lower()
 
 
+@pytest.mark.parametrize(
+    "env,attr,out",
+    [
+        ("cursor", "_run_cursor", "CURSOR_OUT"),
+        ("kimi", "_run_kimi", "KIMI_OUT"),
+        ("grok", "_run_grok", "GROK_OUT"),
+        ("pi", "_run_pi", "PI_OUT"),
+    ],
+)
+def test_run_backend_dispatch_new_runners(monkeypatch, env, attr, out):
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", env)
+    monkeypatch.setattr(cb, attr, lambda p, **kw: (out, 1))
+    assert cb._run_backend("x") == (out, 1)
 
 
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
+def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
+    from ming_sim.models import LLMConfig
+
+    seen = {}
+
+    def fake(prompt, model=None, reasoning_strength=None, **kw):
+        seen["args"] = (prompt, model, reasoning_strength)
+        return (f"{runner}-ok", 1)
+
+    monkeypatch.setattr(cb, f"_run_{runner}", fake)
+    cfg = LLMConfig(
+        api_key="", base_url="", model="m", channel="cli",
+        cli_runner=runner, cli_model="mdl-x", cli_timeout_seconds=12.0,
+        reasoning_strength="low",
+    )
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    text, n = cb._run_backend_for_config("P", cfg, tag="t")
+    assert text == f"{runner}-ok" and n == 1
+    assert seen["args"][0] == "P"
+    assert seen["args"][1] == "mdl-x"
+    # 槽位（cli_timeout_seconds）是设置页的静默判死阈值，不逐调用透传给 runner
+    assert seen["args"][2] == "low"
 
 
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
+def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
+    seen = {}
+
+    def fake(prompt, model=None, reasoning_strength=None, **kw):
+        seen["model"] = model
+        return ("OK", 1)
+
+    monkeypatch.setattr(cb, f"_run_{runner}", fake)
+    chat = cb.CliChat(id="mdl", backend=runner, timeout=99)
+    assert chat._call_cli("p") == ("OK", 1)
+    # cli_model 仍透传；model.timeout 不再下发给 runner（等多久算死归 transport 策略）
+    assert seen["model"] == "mdl"
 
 
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
+def test_describe_effective_model_includes_new_runners(runner):
+    from ming_sim.models import LLMConfig
+
+    cfg = LLMConfig(
+        api_key="", base_url="", model="api-fallback", channel="cli",
+        cli_runner=runner, cli_model="live-model",
+    )
+    assert cb.describe_effective_model(cfg) == f"{runner}/live-model"
+
+
+@pytest.mark.parametrize("runner", ["_run_cursor", "_run_kimi", "_run_grok", "_run_pi"])
+def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
+    _capture_run(monkeypatch, _RcProc(stderr="auth failed", returncode=1))
+    with pytest.raises(RuntimeError):
+        getattr(cb, runner)("p")
 
 
 # ── #1256 S2 gate LLM args / config / evidence ──

@@ -1,4 +1,4 @@
-"""本地 CLI LLM 后端：把 agy / codex 当 LLM，脱离 api key。
+"""本地 CLI LLM 后端：用已支持的本机 agent runner 调用 LLM，脱离 api key。
 
 探针目标：把游戏 LLM 后端从「api key 调远端」换成「本地自治 CLI agent」。
 做法 = 继承 agno 的 OpenAIChat，只覆盖最底层 invoke：
@@ -6,8 +6,8 @@
 交回 agno 原生 _parse_provider_response 解析。agno 全套（解析/流式回退/
 消息格式）原样复用，零 function-calling（工具不传，大臣退化成纯文本进谏）。
 
-启用：环境变量 MING_SIM_LLM_BACKEND=codex（或 claude）。
-机器依赖：本机已装并登录 agy（~/.local/bin/agy）/ codex。不兼容别的机器——
+启用：环境变量 MING_SIM_LLM_BACKEND=<runner>。
+机器依赖：本机已安装并登录所选 runner。不兼容别的机器——
 这是探针的预期，不是缺陷。
 
 调用约定来自 wiki/concepts/codex-bot-conventions.md + cross-model-review.md：
@@ -74,9 +74,12 @@ from ming_sim.participant_roster import (
 # vocabulary compatible, but do not let manual/draft extraction create it yet.
 DRAFT_ACTION_TYPES = DIRECTIVE_ACTION_TYPES - {"acting_appointment"}
 
-_CLI_CWD = os.path.join(tempfile.gettempdir(), "ming_cli_sandbox")
-os.makedirs(_CLI_CWD, exist_ok=True)
+# agy 是自治编程 agent：给它仓库目录当 workspace，它会跑去翻源码/DB 研究问题，
+# 行动计划（英文）泄进角色对话 + 元游戏泄漏。给它一个空目录当 cwd，无可探。
+_AGY_CWD = os.path.join(tempfile.gettempdir(), "ming_agy_sandbox")
+os.makedirs(_AGY_CWD, exist_ok=True)
 
+_AGY_BIN = os.environ.get("MING_SIM_AGY_BIN", "agy")
 # CODEX_DEFAULT_MODEL / CLAUDE_DEFAULT_MODEL 现 import 自 models（见上，#60）。
 _CODEX_BIN = os.environ.get("MING_SIM_CODEX_BIN", "codex")
 _CODEX_MODEL = os.environ.get("MING_SIM_CODEX_MODEL", CODEX_DEFAULT_MODEL)
@@ -87,18 +90,24 @@ _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
+# Legacy runner commands remain private implementation details; M18 publicly
+# supports only the two runners with verified material-directory isolation.
+_CURSOR_BIN = os.environ.get("MING_SIM_CURSOR_BIN", "cursor-agent")
+_KIMI_BIN = os.environ.get("MING_SIM_KIMI_BIN", "kimi")
+_GROK_BIN = os.environ.get("MING_SIM_GROK_BIN", "grok")
+_PI_BIN = os.environ.get("MING_SIM_PI_BIN", "pi")
 # 受支持 CLI runner 单一真源（membership + 文案 + env 回落共用）。
-_CLI_BACKENDS = frozenset({"codex", "claude"})
-_MATERIALS_CLI_RUNNERS = _CLI_BACKENDS
+_CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
+_MATERIALS_CLI_RUNNERS = _CLI_BACKENDS - {"agy"}
 # 闸脚本 --runner choices 与公开支持集同源。
-GATE_CLI_RUNNERS = ("codex", "claude")
+GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok", "pi")
 # 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
 # GATE_CLI_RUNNERS ⊂ 此序（无 agy）；禁在 menuPage/gameMenu 再硬编一份。
 # #1274-qa-y1：pi 紧随 grok（UI_ORDER∩_CLI_BACKENDS → cli_runner_choices 自动带出）。
-_CLI_RUNNER_UI_ORDER = ("codex", "claude")
-_CLI_RUNNER_LABELS: Dict[str, str] = {}
+_CLI_RUNNER_UI_ORDER = ("agy", "codex", "claude", "cursor", "kimi", "grok", "pi")
+_CLI_RUNNER_LABELS = {"agy": "agy（Gemini）"}
 # 实际消费 --model / cli_model 的 runner（describe_effective_model 用）；agy 走自身 ladder。
-_CLI_MODEL_RUNNERS = _CLI_BACKENDS
+_CLI_MODEL_RUNNERS = frozenset({"codex", "claude", "cursor", "kimi", "grok", "pi"})
 _CODEX_REASONING_BY_STRENGTH = {
     "off": "low",
     "low": "low",
@@ -111,10 +120,25 @@ _CLAUDE_THINKING_TOKENS_BY_STRENGTH = {
     "medium": "10000",
     "high": "32000",
 }
+# grok Build CLI --effort 仅 low/med/high（#1256 票面）；抽象 medium → med。
+_GROK_EFFORT_BY_STRENGTH = {
+    "off": "low",
+    "low": "low",
+    "medium": "med",
+    "high": "high",
+}
+# pi CLI --thinking：off/minimal/low/medium/high/xhigh/max（pi --help 实测）；
+# 抽象 off/low/medium/high 与 pi 同名档直传（亦支持 --model provider/id:<thinking> 后缀）。
+_PI_THINKING_BY_STRENGTH = {
+    "off": "off",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+}
 # 支持 reasoning_strength 传输的 CLI runner 单源（#1271/#1274-y1）：与上方 *_BY_STRENGTH
 # 表同缝。有传输表 = 支持；kimi/cursor 无独立档位旗，不入此集（另票/庭裁）。
 # 导出 frozenset——llm_config 谓词与 web payload 均消费此名，禁第二处手写名单。
-CLI_REASONING_STRENGTH_RUNNERS = frozenset({"codex", "claude"})
+CLI_REASONING_STRENGTH_RUNNERS = frozenset({"codex", "claude", "grok", "pi"})
 
 
 def cli_runner_choices() -> List[Dict[str, str]]:
@@ -189,7 +213,7 @@ _EXTRA_BIN_DIRS = [
 _BIN_CACHE: Dict[str, str] = {}               # runner 名 → 解析后的可执行路径（进程内缓存）
 _DISCOVERED_LOGIN_PATH: Optional[str] = None  # 登录 shell PATH，懒发现一次
 # 登录 shell 探测走「import 时捕获的原始 run」，不受测试 monkeypatch cb.subprocess.run
-# 影响，也就不会污染 runner 的 mock 调用计数。
+# 影响，也就不会污染 _run_agy 等的 mock 调用计数。
 _RAW_RUN = subprocess.run
 
 
@@ -245,7 +269,7 @@ def _static_search_path() -> str:
 
 
 def _resolve_cli_bin(name: str, configured: str) -> str:
-    """runner（codex/claude）解析成可执行绝对路径，**命中才缓存**。分级兜底，
+    """runner（agy/codex/claude）解析成可执行绝对路径，**命中才缓存**。分级兜底，
     登录 shell 是最后一级（仅前两级都 miss 才 spawn zsh）：
     1) 现有 PATH which（含 MING_SIM_*_BIN 给的绝对路径）。
     2) 补常见安装目录（~/.local/bin 等）再 which——不 spawn 登录 shell。
@@ -267,7 +291,7 @@ def _resolve_cli_bin(name: str, configured: str) -> str:
                 found = shutil.which(configured, path=_dedup_path([_static_search_path(), login]))
         if found:
             # 绝对化:configured 是相对路径(相对 MING_SIM_*_BIN / 相对 PATH 项)时 which 会
-            # 返回相对串,而 _run_* 用 cwd=_CLI_CWD 跑会按沙箱目录解析→FileNotFoundError;
+            # 返回相对串,而 _run_* 用 cwd=_AGY_CWD 跑会按沙箱目录解析→FileNotFoundError;
             # 绝对路径才兑现「解析成可执行绝对路径」的契约(gemini r2 G-R2)。abspath 对已
             # 绝对的路径是 no-op。
             found = os.path.abspath(found)
@@ -350,6 +374,17 @@ def _trace(record: Dict[str, Any]) -> None:
         _log(f"trace 写盘失败：{exc}")
 
 
+def _warm_keychain() -> None:
+    """暖 macOS keychain 路径，缓解 agy headless auth 的 1s race（见 wiki）。"""
+    try:
+        subprocess.run(
+            ["security", "find-generic-password", "-s", "Antigravity Safe Storage"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+        )
+    except Exception:
+        pass
+
+
 # CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
 _CLI_POLL_SECONDS = 0.05
 
@@ -358,6 +393,9 @@ def _cli_process_clock() -> float:
     """CLI 增量读循环的取时点（受控推进用；生产恒 time.monotonic）。"""
     return time.monotonic()
 
+
+# agy headless auth 是已知 race（见 wiki）：stdout/stderr 出现这些串即瞬断，可重试。
+_AGY_AUTH_MARKERS = ("Authentication required", "authentication timed out")
 
 
 @dataclass
@@ -427,7 +465,7 @@ def _iter_cli_process_lines(
         stdin=subprocess.PIPE if stdin_text is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        cwd=cwd or _CLI_CWD,
+        cwd=cwd or _AGY_CWD,
         env=env,
     )
     chunks: "queue.Queue[Tuple[str, Optional[bytes]]]" = queue.Queue()
@@ -609,6 +647,16 @@ def _codex_final_text(obj: object) -> str:
     return ""
 
 
+def _grok_effort(reasoning_strength: Optional[str]) -> Optional[str]:
+    strength = str(reasoning_strength or "").strip().lower()
+    return _GROK_EFFORT_BY_STRENGTH.get(strength)
+
+
+def _pi_thinking(reasoning_strength: Optional[str]) -> Optional[str]:
+    strength = str(reasoning_strength or "").strip().lower()
+    return _PI_THINKING_BY_STRENGTH.get(strength)
+
+
 def _cli_runner_command(
     runner: str,
     prompt: str,
@@ -617,6 +665,7 @@ def _cli_runner_command(
     reasoning_strength: Optional[str] = None,
     json_events: bool = False,
     materials_dir: Optional[str] = None,
+    kimi_agent_file: Optional[str] = None,
 ) -> Tuple[List[str], Optional[str], Optional[Dict[str, str]]]:
     """runner → (argv, stdin 文本, env)。各 runner 调用约定单真源；执行读法共用 helper。
 
@@ -626,14 +675,15 @@ def _cli_runner_command(
       （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
     - claude：`-p --output-format text`，prompt 走 stdin；thinking 预算走 env。
     - cursor / kimi / grok / pi：prompt 走参数（无 stdin 约定），干净答案在 stdout。
-    材料目录（#1830 / #1827）：仅 Codex / Claude。cwd 指向目录；
-    Codex 显式 `--sandbox read-only` + `--ignore-user-config`；
-    Claude 只开放 Read/Glob/Grep。
+    材料目录（#1830 / #1827）：cwd 指向目录；各 runner 只开放读取面。
+    Agy 当前 CLI 没有非持久的工具 allowlist，因此材料模式不启动它。
     """
     if materials_dir and runner not in _MATERIALS_CLI_RUNNERS:
         raise RuntimeError(
-            f"材料模式仅支持 Codex 与 Claude，拒绝 runner={runner}"
+            f"材料模式无安全的只读启动形态，拒绝 runner={runner}"
         )
+    if runner == "agy":
+        return [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"], prompt, None
     if runner == "codex":
         cmd = _codex_cmd(
             model, json_events=json_events, reasoning_strength=reasoning_strength,
@@ -668,7 +718,55 @@ def _cli_runner_command(
             else:
                 env.pop("MAX_THINKING_TOKENS", None)
         return cmd, prompt, env
+    if runner == "cursor":
+        cmd = [
+            _resolve_cli_bin("cursor", _CURSOR_BIN),
+            "-p", "--output-format", "text", "--trust",
+        ]
+        if materials_dir:
+            cmd += ["--mode", "ask", "--sandbox", "enabled"]
+        if model:
+            cmd.extend(["--model", model])
+        cmd.append(prompt)
+        return cmd, None, None
+    if runner == "kimi":
+        # -p 单用：本机 kimi 0.36.1 实测与 --yolo/--auto 组合会被 parse 拒收。
+        cmd = [_resolve_cli_bin("kimi", _KIMI_BIN), "-p", prompt,
+               "--output-format", "text"]
+        if materials_dir and kimi_agent_file:
+            cmd += ["--agent-file", kimi_agent_file]
+        if model:
+            cmd.extend(["-m", model])
+        return cmd, None, None
+    if runner == "grok":
+        cmd = [_resolve_cli_bin("grok", _GROK_BIN), "-p", prompt,
+               "--output-format", "plain"]
+        if materials_dir:
+            cmd += ["--tools", "Read,Glob,Grep", "--sandbox", "read-only",
+                    "--permission-mode", "dontAsk", "--disable-web-search",
+                    "--no-subagents"]
+        if model:
+            cmd.extend(["-m", model])
+        effort = _grok_effort(reasoning_strength)
+        if effort:
+            cmd.extend(["--effort", effort])
+        return cmd, None, None
+    if runner == "pi":
+        # --no-tools：游戏/玩家文本不可注入驱动内置 read/bash/edit/write（#1456）。
+        cmd = [_resolve_cli_bin("pi", _PI_BIN), "-p", "--mode", "text", "--no-tools"]
+        if materials_dir:
+            cmd += ["--tools", "read,grep,find,ls", "--no-session",
+                    "--no-extensions", "--no-skills", "--no-prompt-templates",
+                    "--no-themes", "--no-context-files", "--no-approve"]
+        if model:
+            cmd.extend(["--model", model])
+        thinking = _pi_thinking(reasoning_strength)
+        if thinking is not None:
+            cmd.extend(["--thinking", thinking])
+        cmd.append(prompt)
+        return cmd, None, None
     raise RuntimeError(f"未知 CLI backend：{runner}")
+
 
 def _iter_cli_runner_text(
     runner: str,
@@ -703,40 +801,58 @@ def _iter_cli_runner_text(
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
 
+    if runner == "agy":
+        _warm_keychain()  # 操作步骤（缓解 headless auth race），不是重试策略
+    kimi_agent_path: Optional[str] = None
+    if materials_dir and runner == "kimi":
+        handle = tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False)
+        try:
+            handle.write("---\nname: ming-material-reader\ntools:\n  - Read\n  - Grep\n  - Glob\n---\nRead-only material reviewer. Never write or execute commands.\n")
+        finally:
+            handle.close()
+        kimi_agent_path = handle.name
     cmd, stdin_text, env = _cli_runner_command(
         runner, prompt, model=model, reasoning_strength=reasoning_strength,
         json_events=json_events, materials_dir=materials_dir,
+        kimi_agent_file=kimi_agent_path,
     )
     outcome = _CliProcessOutcome()
     pieces: List[str] = []
     final_text = ""
-    for line in _iter_cli_process_lines(
-        cmd, stdin_text=stdin_text, env=env,
-        cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
-        clock=clock, outcome=outcome,
-    ):
-        if json_events:
-            stripped = line.strip()
-            if not stripped:
+    try:
+        for line in _iter_cli_process_lines(
+            cmd, stdin_text=stdin_text, env=env,
+            cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
+            clock=clock, outcome=outcome,
+        ):
+            if json_events:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    obj = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                delta = _codex_event_text(obj)
+                if delta:
+                    pieces.append(delta)
+                    # 已确认 stdin 写失败则不再放产出；半流不回卷、不另造缓冲。
+                    if outcome.stdin_error is None:
+                        yield delta
+                    continue
+                maybe_final = _codex_final_text(obj)
+                if maybe_final:
+                    final_text = maybe_final
                 continue
-            try:
-                obj = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            delta = _codex_event_text(obj)
-            if delta:
-                pieces.append(delta)
-                # 已确认 stdin 写失败则不再放产出；半流不回卷、不另造缓冲。
-                if outcome.stdin_error is None:
-                    yield delta
-                continue
-            maybe_final = _codex_final_text(obj)
-            if maybe_final:
-                final_text = maybe_final
-            continue
-        # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
-        pieces.append(line)
+            # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
+            pieces.append(line)
 
+    finally:
+        if kimi_agent_path:
+            try:
+                os.unlink(kimi_agent_path)
+            except FileNotFoundError:
+                pass
     returncode = int(outcome.returncode or 0)
     stderr = outcome.stderr or ""
     stdout_text = "".join(pieces)
@@ -746,6 +862,12 @@ def _iter_cli_runner_text(
         raise RuntimeError(
             f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
         ) from outcome.stdin_error
+    if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
+        raise LLMUnavailable(
+            "LLM 连接失败。",
+            code="llm_connection_error",
+            provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
+        )
     text = stdout_text.strip() or final_text.strip()
     if runner == "codex" and not json_events and not text:
         # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
@@ -786,6 +908,11 @@ def _run_cli_runner(
     return text.strip(), 1
 
 
+def _run_agy(prompt: str, *, materials_dir: Optional[str] = None) -> Tuple[str, int]:
+    """调 agy -p --sandbox 一次（warm keychain 仍做；重试归 transport）。"""
+    return _run_cli_runner("agy", prompt, materials_dir=materials_dir)
+
+
 def _run_codex(
     prompt: str,
     model: Optional[str] = None,
@@ -816,6 +943,58 @@ def _run_claude(
     )
 
 
+def _run_cursor(
+    prompt: str,
+    model: Optional[str] = None,
+    reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；cursor 无 effort 档
+    *,
+    materials_dir: Optional[str] = None,
+) -> Tuple[str, int]:
+    """调 cursor-agent -p 一次（#1256）。"""
+    return _run_cli_runner("cursor", prompt, model=model, materials_dir=materials_dir)
+
+
+def _run_kimi(
+    prompt: str,
+    model: Optional[str] = None,
+    reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；kimi -p 无 effort 档
+    *,
+    materials_dir: Optional[str] = None,
+) -> Tuple[str, int]:
+    """调 kimi -p 一次（#1256）。"""
+    return _run_cli_runner("kimi", prompt, model=model, materials_dir=materials_dir)
+
+
+def _run_grok(
+    prompt: str,
+    model: Optional[str] = None,
+    reasoning_strength: Optional[str] = None,
+    *,
+    materials_dir: Optional[str] = None,
+) -> Tuple[str, int]:
+    """调 Grok Build CLI 一次（#1256；--effort 仅 low/med/high）。"""
+    return _run_cli_runner(
+        "grok", prompt, model=model,
+        reasoning_strength=reasoning_strength,
+        materials_dir=materials_dir,
+    )
+
+
+def _run_pi(
+    prompt: str,
+    model: Optional[str] = None,
+    reasoning_strength: Optional[str] = None,
+    *,
+    materials_dir: Optional[str] = None,
+) -> Tuple[str, int]:
+    """调本机 pi CLI 一次性非交互出文（#1274-qa-y1）。"""
+    return _run_cli_runner(
+        "pi", prompt, model=model,
+        reasoning_strength=reasoning_strength,
+        materials_dir=materials_dir,
+    )
+
+
 def _dispatch_cli_runner(
     runner: str,
     prompt: str,
@@ -833,6 +1012,21 @@ def _dispatch_cli_runner(
     if runner == "claude":
         return _run_claude(prompt, model=model,
                            reasoning_strength=reasoning_strength, **extra)
+    if runner == "cursor":
+        return _run_cursor(prompt, model=model,
+                           reasoning_strength=reasoning_strength, **extra)
+    if runner == "kimi":
+        return _run_kimi(prompt, model=model,
+                         reasoning_strength=reasoning_strength, **extra)
+    if runner == "grok":
+        return _run_grok(prompt, model=model,
+                         reasoning_strength=reasoning_strength, **extra)
+    if runner == "pi":
+        return _run_pi(prompt, model=model,
+                       reasoning_strength=reasoning_strength, **extra)
+    if runner == "agy":
+        # agy 忽略 --model（走自身 ladder），不给它挂不被消费的 model。
+        return _run_agy(prompt, **extra)
     raise RuntimeError(f"未知 CLI backend：{runner}")
 
 
@@ -1040,6 +1234,7 @@ def _messages_to_prompt(
     if materials_dir:
         prompt += (
             "\n\n【材料】你的材料在当前目录。根目录 INDEX 一行一项。想读哪份自己读。"
+            "只读当前材料目录，不得写入、修改或创建任何文件。"
             "直接以你所扮演的角色身份，用**中文**给出最终回答。"
         )
     else:
