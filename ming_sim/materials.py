@@ -722,13 +722,14 @@ def _write_world_tree(
     state: Any,
     public_events: list,
     affair_lines: list[tuple[str, str, str, str]],
+    board_text: str,
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
 
     index: list[str] = []
 
     board_rel = f"{_BOARD_DIR}/全局.txt"
-    _write_text(tmp / board_rel, _world_board_text(db, state))
+    _write_text(tmp / board_rel, board_text)
     index.append(board_rel)
 
     _write_text(tmp / _COURT_ROSTER_REL, _world_roster_text(db, state))
@@ -786,6 +787,9 @@ def prepare_world_materials(
     knowledge = build_character_knowledge(db, state, "")
     public_events = knowledge.get("public_events") or []
     affair_lines = _world_affair_lines(db)
+    # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
+    # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
+    board_text = _world_board_text(db, state)
 
     dest = Path(dest_root) if dest_root is not None else world_materials_root(db, state)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -794,7 +798,7 @@ def prepare_world_materials(
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
     try:
-        index = _write_world_tree(tmp, db, state, public_events, affair_lines)
+        index = _write_world_tree(tmp, db, state, public_events, affair_lines, board_text)
         if dest.exists():
             shutil.rmtree(dest)
         tmp.rename(dest)
@@ -803,6 +807,5 @@ def prepare_world_materials(
             shutil.rmtree(tmp, ignore_errors=True)
         raise
 
-    board_text = _world_board_text(db, state)
     opening = _world_opening_text(state, board_text, affair_lines)
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))

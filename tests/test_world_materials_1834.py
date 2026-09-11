@@ -2,6 +2,11 @@
 
 Seam: prepare_world_materials (directory + opening min set), reusing
 list_materials/read_material (#1830 API, generic over any root).
+
+大理寺 01a08e3a 裁定：本文件只留结构化契约（目录路径、INDEX 一致性、无裸
+副本）；对盘面/事务/opening/经历/邸报等人读渲染文本的措辞或固定片段机械
+断言（含哨兵）已整类删除，不得换形复造——`read_material` 越目录契约已由
+tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重复。
 """
 
 from __future__ import annotations
@@ -9,37 +14,11 @@ from __future__ import annotations
 from ming_sim.materials import list_materials, prepare_world_materials, read_material
 
 
-def _an_active_character(content):
-    for character in content.characters.values():
-        if character.office_type not in ("后宫", "宗藩"):
-            return character.name
-    raise AssertionError("no eligible character in fixture content")
-
-
 def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tmp_path):
     db, state, content = game
-    name = _an_active_character(content)
 
-    # 全量盘面须来自账本本身，不来自任何奏报/邸报文本——摆一个可核对的国库真值。
-    db.conn.execute(
-        "UPDATE economy_accounts SET balance = ? WHERE account = ?",
-        (314159, "国库"),
-    )
-    db.conn.commit()
-
-    # 一件开着的事务，两条按月文字事实（ADR 0156：读时按时间顺序全部提供）。
     affair = db.affairs.open(
         name="宁远护送", origin="拨银、调将、派兵去宁远",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    situation_old = "护送启程，尚在筹备"
-    situation_new = "护送银两已出京，尚未抵宁远"
-    db.textual_facts.append(
-        subject_kind="affair", subject_id=str(affair.id), body=situation_old,
-        year=state.year, period=max(1, state.period - 1), turn=state.turn,
-    )
-    db.textual_facts.append(
-        subject_kind="affair", subject_id=str(affair.id), body=situation_new,
         year=state.year, period=state.period, turn=state.turn,
     )
 
@@ -48,7 +27,7 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     past_year, past_period, past_turn = state.year, max(1, state.period - 1), max(0, state.turn - 1)
     from ming_sim.models import GameState
     past_state = GameState(turn=past_turn, year=past_year, period=past_period, metrics=dict(state.metrics))
-    db.save_turn_report(past_state, "SENTINEL_PAST_GAZETTE_TEXT")
+    db.save_turn_report(past_state, "历月邸报正文")
 
     dest = tmp_path / "world-materials"
     prepared = prepare_world_materials(db, state, dest_root=dest)
@@ -67,86 +46,14 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
             assert line.strip() in names
             assert read_material(prepared.root, line.strip())
 
-    # 推演者读到的是实况数（账本真值），不是奏报数。
-    board = read_material(prepared.root, "盘面/全局.txt")
-    assert "314159" in board or "31.4" in board or "314,159" in board
-
-    # 事务全史全部提供，早晚两条都在、按时间顺序；开场只放最新一句。
-    affair_path = next(p for p in names if p.startswith(f"事务/affair-{affair.id}/"))
-    affair_body = read_material(prepared.root, affair_path)
-    assert situation_old in affair_body
-    assert situation_new in affair_body
-    assert affair_body.index(situation_old) < affair_body.index(situation_new)
-    assert affair.name in prepared.opening
-    assert situation_new in prepared.opening
-    assert situation_old not in prepared.opening
-
-    # 历月邸报以一行索引入目录：其内容可读到，且不是被压缩/摘要过的第二套文本。
-    gazette_path = next(p for p in names if p.startswith("邸报/"))
-    assert "SENTINEL_PAST_GAZETTE_TEXT" in read_material(prepared.root, gazette_path)
-
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
-
-
-def test_opening_is_board_and_open_affairs_only(game, tmp_path):
-    db, state, content = game
-    affair = db.affairs.open(
-        name="辽东军情", origin="边镇急报",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    situation = "辽东军情已奏闻，尚候圣裁"
-    db.textual_facts.append(
-        subject_kind="affair", subject_id=str(affair.id), body=situation,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-
-    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
-
-    assert affair.name in prepared.opening
-    assert situation in prepared.opening
-    # 人物经历不是开场最小集（0155：开场只放盘面全量 + 开着的事务清单）。
-    roster_names = [
-        name for name in list_materials(prepared.root)
-        if name.startswith("人物/") and name.endswith("/经历.txt")
-    ]
-    assert roster_names
-    experience_body = read_material(prepared.root, roster_names[0])
-    if experience_body.strip() and experience_body.strip() != "（无）":
-        assert experience_body not in prepared.opening
-
-
-def test_read_material_stays_inside_world_directory(game, tmp_path):
-    db, state, content = game
-    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
-    try:
-        read_material(prepared.root, "../outside.txt")
-        raise AssertionError("expected path confinement")
-    except ValueError:
-        pass
-
-
-def test_board_is_not_truncated_to_the_old_brief_top_n(game, tmp_path):
-    """大理寺 bounce 1：`region_report(limit=10)`/`army_report(limit=30)` 曾把盘面
-    截成「危局前 N」简报，第 11 个地区/第 31 支军队进不了目录（#1819 决定 4/5、
-    #1834 验收「全盘面」）。基底开局盘面已有 29 个地区（真实入口，不用造假数据即
-    可越过旧 10 条上限）；断言全部区名都在盘面文本里，证明确实不截断。"""
-    db, state, content = game
-    region_names = [
-        row["name"] for row in db.conn.execute("SELECT name FROM regions ORDER BY name").fetchall()
-    ]
-    assert len(region_names) > 10, "fixture 需天然越过旧 limit=10 才能证明不截断"
-
-    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
-    board = read_material(prepared.root, "盘面/全局.txt")
-    for name in region_names:
-        assert name in board, f"{name} 应在全量盘面里，未截断"
 
 
 def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_path):
     """大理寺 bounce 2：经历目录曾只给当前在朝名册白名单里的人，已离朝/致仕/未在
     朝的人物经历整条消失（#1819 决定 1：各人物经历三层全可读，不按当前在朝状态
-    收窄）。挑一个真实不在当前朝臣名册里的人物，写一条真实经历事件，断言仍可读。"""
+    收窄）。挑一个真实不在当前朝臣名册里的人物，断言其经历文件仍存在于目录。"""
     db, state, content = game
     active_names = {row["name"] for row in db.current_court_roster_rows(state)}
     all_names = [
@@ -156,15 +63,6 @@ def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_
     assert off_court, "fixture 需天然存在不在当前朝臣名册的人物"
     name = off_court[0]
 
-    sentinel = "SENTINEL_OFFCOURT_EXPERIENCE_1834"
-    db.conn.execute(
-        "INSERT INTO character_knowledge_events "
-        "(turn, year, period, character_name, kind, title, body, source_id) "
-        "VALUES (?, ?, ?, ?, 'event', '旧闻', ?, 'test:1834')",
-        (state.turn, state.year, state.period, name, sentinel),
-    )
-    db.conn.commit()
-
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
     names = list_materials(prepared.root)
     rel = next(
@@ -172,18 +70,12 @@ def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_
         None,
     )
     assert rel is not None, f"{name}（不在当前朝臣名册）应仍有经历文件"
-    assert sentinel in read_material(prepared.root, rel)
 
 
 def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
     db, state, content = game
     affair = db.affairs.open(
         name="宣府欠饷", origin="宣府镇奏报欠饷",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    fact = "宣府欠饷已核实，尚待补发"
-    db.textual_facts.append(
-        subject_kind="affair", subject_id=str(affair.id), body=fact,
         year=state.year, period=state.period, turn=state.turn,
     )
     path = str(db.path)
@@ -195,7 +87,6 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         state2 = restored.load_state()
         prepared = prepare_world_materials(restored, state2, dest_root=tmp_path / "m2")
         names = list_materials(prepared.root)
-        affair_path = next(p for p in names if p.startswith(f"事务/affair-{affair.id}/"))
-        assert fact in read_material(prepared.root, affair_path)
+        assert any(p.startswith(f"事务/affair-{affair.id}/") for p in names)
     finally:
         restored.close()
