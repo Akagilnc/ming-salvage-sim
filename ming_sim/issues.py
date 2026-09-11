@@ -8220,7 +8220,11 @@ def apply_score_extraction(
         open_affair_ids_at_input if isinstance(open_affair_ids_at_input, set) else set()
     )
     from uuid import uuid4
-    from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+    from ming_sim.entities.affair import (
+        ATTACH_BIRTH,
+        UnauthorizedAffairOriginRef,
+        declaration_from_payload,
+    )
 
     batch_new_identities: dict[str, tuple[str, str, str]] = {}
 
@@ -8582,6 +8586,17 @@ def apply_score_extraction(
                 if not results or all(result.get("rejected") for result in results):
                     db.conn.execute(f"ROLLBACK TO {savepoint}")
                 db.conn.execute(f"RELEASE {savepoint}")
+            except UnauthorizedAffairOriginRef as exc:
+                # Narrow LLM origin authorization failure only — not TypeError/
+                # ValueError/KeyError, which stay fail-loud with writer/DB faults.
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+                applied_person_changes.append({
+                    "name": str(person_change.get("name") or "").strip(),
+                    "动作": str(person_change.get("动作") or "").strip(),
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": str(exc), "item": dict(person_change),
+                })
             except Exception:
                 # The adapter has already converted admissible LLM input errors
                 # into rejected results.  Anything escaping it is an execution
@@ -8622,6 +8637,15 @@ def apply_score_extraction(
             else:
                 applied_economy.extend(results)
             db.conn.execute(f"RELEASE {savepoint}")
+        except UnauthorizedAffairOriginRef as exc:
+            # Narrow LLM origin authorization failure only — not TypeError/
+            # ValueError/KeyError, which stay fail-loud with writer/DB faults.
+            db.conn.execute(f"ROLLBACK TO {savepoint}")
+            db.conn.execute(f"RELEASE {savepoint}")
+            economy_rejections.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": str(exc), "item": raw_move,
+            })
         except Exception:
             # Input rejection belongs to _apply_economy_list.  DB/writer and
             # other execution failures must not be relabelled as invalid_enum.
@@ -9072,7 +9096,8 @@ def apply_score_extraction(
         for item in event_person_changes:
             try:
                 origin_ref = _origin_ref_from_result_item(item)
-            except (TypeError, ValueError, KeyError) as exc:
+            except UnauthorizedAffairOriginRef as exc:
+                # Same narrow origin-auth signal as itemwise economy/person paths.
                 event_person_results.append({
                     "name": str(item.get("name") or "").strip(),
                     "动作": str(item.get("动作") or "").strip(),

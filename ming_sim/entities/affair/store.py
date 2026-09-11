@@ -20,6 +20,14 @@ _POINTER_TABLES = {
     "decree_dossiers": "案卷",
     "issues": "局势",
 }
+_UNAUTHORIZED_AFFAIR_ORIGIN = "事务不在本批可见输入"
+
+
+class UnauthorizedAffairOriginRef(ValueError):
+    """LLM cited an affair outside this batch's frozen authorized set."""
+
+    def __init__(self, message: str = _UNAUTHORIZED_AFFAIR_ORIGIN) -> None:
+        super().__init__(message)
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS affairs (
@@ -197,7 +205,7 @@ class AffairStore:
         )
         affair_id = int(parsed["affair_id"])
         if affair_id not in authorized_ids:
-            raise ValueError("事务不在本批可见输入")
+            raise UnauthorizedAffairOriginRef()
         active_issue = self._conn.execute(
             "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
             (affair_id,),
@@ -221,7 +229,7 @@ class AffairStore:
         parsed = parse_affair_declaration(declaration, allowed=ATTACH_BIRTH)
         if parsed["attach"] == _ATTACH_EXISTING and authorized_ids is not None:
             if int(parsed["affair_id"]) not in authorized_ids:
-                raise ValueError("事务不在本批可见输入")
+                raise UnauthorizedAffairOriginRef()
         current = self._current_pointer(table, row_id)
         peeked = self.peek_declared_id(declaration, allowed=ATTACH_BIRTH)
         if current:
@@ -389,14 +397,14 @@ class AffairStore:
                 and authorized_ids is not None
                 and target not in authorized_ids
             ):
-                raise ValueError("事务不在本批可见输入")
+                raise UnauthorizedAffairOriginRef()
             return origin_ref
         parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
         if parsed is None:
             return ""
         if parsed["attach"] == _ATTACH_EXISTING and authorized_ids is not None:
             if int(parsed["affair_id"]) not in authorized_ids:
-                raise ValueError("事务不在本批可见输入")
+                raise UnauthorizedAffairOriginRef()
         return self.origin_ref(
             self.resolve_declaration(
                 parsed, year=year, period=period, turn=turn, allowed=ATTACH_BIRTH,
