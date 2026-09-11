@@ -795,28 +795,36 @@ def test_scale_fallback_court_roster_rejects_poison_without_personnel_authorizat
     assert poison["name"] not in instructions
     prepared = prepare_character_materials(db, state, minister)
     assert "人物/朝臣名册.txt" in list_materials(prepared.root)
-    roster = read_material(prepared.root, "人物/朝臣名册.txt")
-    assert same_role["name"] in roster
-    assert (same_role["office"] or "无现任官职") in roster
-    assert same_role["status"] in roster
-    assert event_visible["name"] in roster
-    assert poison["name"] not in roster
     blob = "\n".join(
         read_material(prepared.root, path)
         for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
     assert poison["name"] not in blob
+    # 名册渲染前的 typed 投影是真源（materials.py 内部即调此函数产出名册
+    # 正文）；正向查投影行的结构化 name 字段，不锁名册正文词面。
+    from ming_sim.knowledge import project_court_roster_rows
+    knowledge = db.get_character_knowledge(state, minister.name)
+    projected_names = {
+        row["name"]
+        for row in project_court_roster_rows(complete_roster, knowledge, minister.office_type)
+    }
+    assert same_role["name"] in projected_names
+    assert event_visible["name"] in projected_names
+    assert poison["name"] not in projected_names
     personnel_minister = next(
         c for c in content.characters.values()
         if "personnel" in content.office_knowledge_domains.get(c.office_type, ())
         and c.office_type not in ("后宫", "宗藩")
         and db.get_character_status(c.name)[0] == "active"
     )
-    personnel_roster = read_material(
-        prepare_character_materials(db, state, personnel_minister).root,
-        "人物/朝臣名册.txt",
-    )
-    assert poison["name"] in personnel_roster
+    personnel_knowledge = db.get_character_knowledge(state, personnel_minister.name)
+    personnel_names = {
+        row["name"]
+        for row in project_court_roster_rows(
+            complete_roster, personnel_knowledge, personnel_minister.office_type,
+        )
+    }
+    assert poison["name"] in personnel_names
 
 
 

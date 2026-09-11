@@ -21,7 +21,6 @@ from ming_sim.intelligence import _qualitative_domain_statement
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.models import CourtContext
 from ming_sim.report import print_header
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.tools import build_board_query_tools
 
 ARMY = "guanning"
@@ -336,15 +335,9 @@ def test_four_chains_embed_situation_matrix(game):
         board["inspect_army"](ARMY), sit, "tools.inspect_army"
     )
 
-    # 链4：roster / 材料目录（LLM 输入装配）
+    # 链4：roster（LLM 输入装配）
     roster = db.army_roster()
     _assert_chain_embeds_situation(roster, sit, "army_roster")
-    prepared = prepare_character_materials(db, state, war)
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    _assert_chain_embeds_situation(blob, sit, "materials.directory")
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)

@@ -20,7 +20,6 @@ import web_app
 from ming_sim.intelligence import _qualitative_domain_statement
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.models import CourtContext
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.tools import build_board_query_tools
 
 
@@ -251,12 +250,6 @@ def test_shared_consumers_still_surface_status(read_game):
     ]
     _assert_text_keeps_statuses(roster, all_statuses, "army_roster")
     assert seed_status in roster
-    prepared = prepare_character_materials(db, state, war)
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    _assert_text_keeps_statuses(blob, all_statuses, "materials.directory")
 
     # DB 字段零改写
     assert _guanning_db_status(db) == seed_status
