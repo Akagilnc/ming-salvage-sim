@@ -43,7 +43,19 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 既有契约）。只有 **protagonist** 未接入：它不是一条带来源的记录，而是「谁在
 御前」这个选择性指针本身，且本轮已校验其指向的人物真实存在——「所属事务」
 对一个选择指针没有独立于其已校验存在性之外的意义，故未强行给它挂一个不
-对应任何落库行为的事务字段。
+对应任何落库行为的事务字段。edge_events 与 on_scene_facts 的「动作本身 +
+事务指针绑定」放在同一个 `atomic(db)` 块逐项处理，指针冲突时整块回滚——不
+会出现「动作已落库、只是没绑上事务」的半写状态；registrations 的指针绑定
+对象是刚插入的新行（`affair_id` 恒为 0），绑定不会与既有事务冲突，因此不需
+要同样的回滚兜底（直接调用，失败即代表某处不变式被打破，按 ADR 0005 响亮
+失败而非当作 LLM 数据问题吞掉）。
+
+`register_unlisted_person_record`（本模块 `_dispatch_registrations` 与
+`GameSession._apply_unlisted_person_registration` 共用）本身不再合成
+`style` 占位文案（P7）：声明给什么就存什么，没给就是空字符串；历史召对工具
+路径按 source 归一 `style`/`loyalty` 仍是那条既有路径自己算好后显式传入的
+既有行为，本票未改动、只是把「谁负责决定这段文字」的边界从共享函数收回到
+各自调用方。
 """
 
 from __future__ import annotations
@@ -256,6 +268,16 @@ def _reject(
         item=dict(item) if isinstance(item, Mapping) else {"raw_value": item},
         reason=reason, category=category, source=source,
     ))
+
+
+class _ItemAtomicReject(Exception):
+    """在 `with atomic(db):` 块内抛出以整项回滚（连同事务指针绑定）、外层
+    捕获后转成该项的 rejected 记录，不留半写状态。"""
+
+    def __init__(self, reason: str, category: str) -> None:
+        self.reason = reason
+        self.category = category
+        super().__init__(reason)
 
 
 def _dispatch_commissions(
@@ -515,14 +537,14 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
     既有 `PERSON_ACTIONS` 闭集词汇——如「处置」配 `status=dead/imprisoned`、
     「罢黜」= 革职；既有核已做「非既有人物 → hallucinated_id」逐项拒收。
 
-    各自所属事务：事务引用在人物变更真正落库之前先校验（引用不存在事务的项
-    直接拒收，不把它送进 `apply_person_changes_only`）；落库成功后再绑
-    `characters.affair_id`（`_attach_character_affair_pointer`，characters
-    非整数主键、不能复用 AffairStore 的通用指针实现）。人物变更已经真实发生，
-    事后绑定失败（人物已挂别的事务）不撤销变更、不误报成拒收，异常信息原样
-    带回 applied 项。"""
+    各自所属事务：人物变更与事务指针绑定放进同一个 `atomic(db)` 块逐项处理
+    （不再整批调用 `apply_person_changes_only`）——指针绑定失败时整块回滚，
+    该项进 rejected、不产生任何副作用；`apply_person_changes_only` 在既有
+    事务内运行时会自行注册运行时快照（`_register_runtime_rollback_snapshot`），
+    回滚会连带撤销它对 `content.characters` 做的内存态更改，不会出现「DB 已
+    回滚、内存态却留着」的半写状态。"""
     items, rejected = _section_items(raw, label="当场实况声明", source=source)
-    prepared: List[Tuple[Mapping[str, object], int | None]] = []
+    applied: List[Any] = []
     for item in items:
         if not isinstance(item, Mapping):
             _reject(rejected, item, "当场实况声明须为对象", "invalid_shape", source)
@@ -531,28 +553,31 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
             continue
-        prepared.append((item, affair_id))
-    applied: List[Any] = []
-    if prepared:
-        valid_items = [item for item, _ in prepared]
-        outcome = apply_person_changes_only(
-            db, state, valid_items, origin_ref="转译声明",
-        )
-        for (input_item, affair_id), result in zip(prepared, outcome.get("applied_person_changes") or ()):
-            if result.get("rejected"):
-                _reject(
-                    rejected, input_item, str(result.get("reason") or ""),
-                    str(result.get("category") or "invalid_enum"), source,
+        try:
+            with atomic(db):
+                outcome = apply_person_changes_only(
+                    db, state, [item], origin_ref="转译声明",
                 )
-                continue
-            if affair_id is not None:
-                name = str(result.get("name") or "").strip()
-                try:
-                    _attach_character_affair_pointer(db, name, affair_id)
-                except (ValueError, KeyError) as exc:
-                    result = dict(result)
-                    result["affair_attach_error"] = str(exc)
-            applied.append(result)
+                results = list(outcome.get("applied_person_changes") or ())
+                if not results:
+                    raise _ItemAtomicReject("人物变更未产生结果", "invalid_shape")
+                result = results[0]
+                if result.get("rejected"):
+                    raise _ItemAtomicReject(
+                        str(result.get("reason") or ""),
+                        str(result.get("category") or "invalid_enum"),
+                    )
+                if affair_id is not None:
+                    name = str(result.get("name") or "").strip()
+                    try:
+                        _attach_character_affair_pointer(db, name, affair_id)
+                    except (ValueError, KeyError) as exc:
+                        category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
+                        raise _ItemAtomicReject(str(exc), category) from exc
+        except _ItemAtomicReject as exc:
+            _reject(rejected, item, exc.reason, exc.category, source)
+            continue
+        applied.append(result)
     return SectionResult(applied=applied, rejected=rejected)
 
 
@@ -670,8 +695,10 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
     """边事件：既有唯一写口 `record_relation_edge_event`。三类失败各自准确归类：
     未知 event_kind = invalid_enum；source/target 非在册人物 = hallucinated_id；
     空 source/target/context 等形状问题 = invalid_shape——不拿宽 catch 一律
-    冒称实体幻觉。各自所属事务：`relation_edge_events` 是整数 id 主键，落库
-    成功后直接复用 AffairStore 通用指针（`attach_pointer`）绑事务。"""
+    冒称实体幻觉。各自所属事务：`relation_edge_events` 是整数 id 主键，直接
+    复用 AffairStore 通用指针（`attach_pointer`）；写事件与绑指针放进同一个
+    `atomic(db)` 块，指针冲突时整块回滚（该项进 rejected，不留半写的「有边事件
+    没有所属事务」状态）。"""
     items, rejected = _section_items(raw, label="边事件声明", source=source)
     applied: List[Any] = []
     for item in items:
@@ -699,16 +726,24 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
             continue
         try:
-            event_id = db.record_relation_edge_event(
-                source=source_name, target=target_name, event_kind=event_kind,
-                context=context, origin=f"转译声明:turn{int(state.turn)}",
-                turn=int(state.turn), year=int(state.year), period=int(state.period),
-            )
-        except ValueError as exc:
-            _reject(rejected, item, str(exc), "invalid_shape", source)
+            with atomic(db):
+                try:
+                    event_id = db.record_relation_edge_event(
+                        source=source_name, target=target_name, event_kind=event_kind,
+                        context=context, origin=f"转译声明:turn{int(state.turn)}",
+                        turn=int(state.turn), year=int(state.year), period=int(state.period),
+                    )
+                except ValueError as exc:
+                    raise _ItemAtomicReject(str(exc), "invalid_shape") from exc
+                if affair_id is not None:
+                    try:
+                        db.affairs.attach_pointer("relation_edge_events", event_id, affair_id)
+                    except (ValueError, KeyError) as exc:
+                        category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
+                        raise _ItemAtomicReject(str(exc), category) from exc
+        except _ItemAtomicReject as exc:
+            _reject(rejected, item, exc.reason, exc.category, source)
             continue
-        if affair_id is not None:
-            db.affairs.attach_pointer("relation_edge_events", event_id, affair_id)
         applied.append({"id": event_id, "source": source_name, "target": target_name})
     return SectionResult(applied=applied, rejected=rejected)
 
@@ -742,10 +777,18 @@ def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provena
     """入册：登记名册外人物进入本局可召见人物池。构档的唯一权威实现是
     `ming_sim.session.register_unlisted_person_record`——`GameSession.
     _apply_unlisted_person_registration`（召对场景 LLM 工具触发）与本函数
-    共用它，查重规则、默认值、落库都不在两处各写一份。「登记之后随手把他
-    召上殿」是召对专属的 UI 便利动作，留给召对侧自己决定要不要做；入册本身
-    与是否立刻传召是两件事，本分派器只管前者。各自所属事务同 on_scene_facts：
-    落库后再绑 `characters.affair_id`，绑定失败不撤销已完成的入册。"""
+    共用它，查重规则、落库都不在两处各写一份。「登记之后随手把他召上殿」是
+    召对专属的 UI 便利动作，留给召对侧自己决定要不要做；入册本身与是否立刻
+    传召是两件事，本分派器只管前者。
+
+    `style`（人物材料上的可感文字）原样取声明自带的值，不合成任何占位文案
+    （P7）——声明没给就留空，不像 `_apply_unlisted_person_registration` 那条
+    历史工具路径那样按 source 归一模板句（那是那条既有路径自己的取舍，本函数
+    的共享实现已不再替它决定，见 `register_unlisted_person_record`）。
+
+    各自所属事务：事务引用在真正登记之前先校验，引用不存在事务的项在产生
+    副作用前就被拒收；新登记的人物是刚插入的行（`affair_id` 必为 0），绑定
+    不可能与已存在的事务冲突，故直接调用、不需要原子回滚兜底。"""
     from ming_sim.session import register_unlisted_person_record
 
     items, rejected = _section_items(raw, label="入册声明", source=source)
@@ -767,23 +810,25 @@ def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provena
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
             continue
+        try:
+            loyalty = int(item.get("loyalty"))
+        except (TypeError, ValueError):
+            loyalty = 55
         character = register_unlisted_person_record(
             db, state, db.content,
             name=name, office=office, office_type=office_type,
             faction=str(item.get("faction") or ""),
             aliases=[str(a) for a in (item.get("aliases") or ()) if isinstance(a, str)],
-            source=str(item.get("source") or "historical"),
+            source_label="转译声明入册",
+            style=str(item.get("style") or ""),
+            loyalty=loyalty,
             summary=str(item.get("summary") or ""),
         )
         if character is None:
             # 字段已在上面校验过非空，到这里返回 None 只可能是姓名/别名已在册。
             _reject(rejected, item, f"人物已在册：{name}", "invalid_state", source)
             continue
-        applied_entry: Dict[str, object] = {"name": character.name}
         if affair_id is not None:
-            try:
-                _attach_character_affair_pointer(db, character.name, affair_id)
-            except (ValueError, KeyError) as exc:
-                applied_entry["affair_attach_error"] = str(exc)
-        applied.append(applied_entry)
+            _attach_character_affair_pointer(db, character.name, affair_id)
+        applied.append({"name": character.name})
     return SectionResult(applied=applied, rejected=rejected)

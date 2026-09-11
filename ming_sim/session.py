@@ -283,18 +283,29 @@ def register_unlisted_person_record(
     office_type: str,
     faction: str = "",
     aliases: Sequence[str] = (),
-    source: str = "historical",
+    source_label: str = "名册外人物补档",
+    style: str = "",
+    loyalty: int = 55,
     summary: str = "",
     llm_config: Any = None,
 ) -> Optional[Character]:
     """登记名册外人物的唯一权威构档：查重（`_find_existing_minister`，姓名与
-    别名both查）+ 默认值 + `db.add_character` 落库 + portrait_id 回填。
+    别名both查）+ `db.add_character` 落库 + portrait_id 回填。
 
     这是登记本身的唯一实现——`GameSession._apply_unlisted_person_registration`
     （召对场景 LLM 工具触发）与 `ming_sim.declaration_dispatch._dispatch_registrations`
-    （转译声明触发）共用本函数，不各自维护一份查重/默认值规则。「登记后是否
-    立刻传召」「绑定 agent registry」等各自会话形态专属的后续动作，留给两个
-    调用方自己在拿到返回的 `Character` 后处理，不在此处发生。
+    （转译声明触发）共用本函数，不各自维护一份查重规则。「登记后是否立刻传召」
+    「绑定 agent registry」等各自会话形态专属的后续动作，留给两个调用方自己在
+    拿到返回的 `Character` 后处理，不在此处发生。
+
+    本函数不替 LLM 生成 `style`（人物材料上的可感文字，P7：玩家可感文本模板
+    违宪）——`style` 原样存调用方传入的值，缺省是空字符串，不合成占位文案。
+    旧的「按 source 归一 style/loyalty/source_label 三元组」是
+    `_apply_unlisted_person_registration` 那条历史召对场景 LLM 工具路径自己的
+    既有取舍（该工具的 schema 本就没给 LLM 开放 style 字段，本票不改动这条
+    既有生产行为），由该调用方自己算好显式传入；转译声明路径的调用方
+    （`_dispatch_registrations`）则原样透传声明里的 `style`（LLM 自己写的），
+    没有就留空，不落任何合成文案。
 
     返回新建的 `Character`；字段缺失或已在册（含别名命中）→ ``None``。
     """
@@ -312,13 +323,6 @@ def register_unlisted_person_record(
     faction_value = str(faction or "中立").strip()
     if faction_value not in content.factions:
         faction_value = "中立"
-    source_kind = str(source or "historical").strip()
-    if source_kind == "historical":
-        source_label, style, loyalty = "史实人物补档", "史实补档，待召对细察", 62
-    elif source_kind == "user_confirmed":
-        source_label, style, loyalty = "皇帝确认背景补档", "陛下点名，底细待察", 60
-    else:
-        source_label, style, loyalty = "名册外人物补档", "名册外补档，待召对细察", 60
     character = Character(
         name=name,
         office=office,
@@ -326,17 +330,17 @@ def register_unlisted_person_record(
         faction=faction_value,
         aliases=alias_list,
         personal_skills=[],
-        loyalty=loyalty,
+        loyalty=int(loyalty),
         ability=55,
         integrity=60,
         courage=55,
-        style=style,
+        style=str(style or "").strip(),
         power_id="ming",
         status="active",
         summary=str(summary or "").strip(),
     )
     content.characters[name] = character
-    db.add_character(state, character, source=source_label, llm_config=llm_config)
+    db.add_character(state, character, source=str(source_label or "").strip(), llm_config=llm_config)
     row = db.conn.execute(
         "SELECT portrait_id FROM characters WHERE name=?", (name,),
     ).fetchone()
@@ -2958,9 +2962,12 @@ class GameSession:
         """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。
 
         恢复窗婉拒（PR #90 R2 codex P2）：同 _apply_appointment，事务边界外直写一律冻。
-        构档规则（查重/默认值/落库）唯一实现见 `register_unlisted_person_record`，
-        与转译声明分派共用；本方法只处理召对场景专属的后续动作（agent registry
-        绑定、临时人物清理、是否随即传召）。"""
+        查重/落库唯一实现见 `register_unlisted_person_record`，与转译声明分派
+        共用；本方法只处理召对场景专属的后续动作（agent registry 绑定、临时
+        人物清理、是否随即传召），以及这条历史工具路径自己既有的 style/loyalty/
+        source_label 按 source 归一取舍——`register_unlisted_person` 工具的
+        schema 本就没给 LLM 开放 style 字段（tools.py），这条既有生产行为本票
+        不改动，只是不再让共享构档函数替它决定。"""
         if self._proposal_blocked(self.state):
             return ("", False)
         import json as _json
@@ -2972,6 +2979,13 @@ class GameSession:
             return ("", False)
         aliases_raw = data.get("aliases") or []
         aliases = [str(a) for a in aliases_raw] if isinstance(aliases_raw, list) else []
+        source_kind = str(data.get("source") or "historical").strip()
+        if source_kind == "historical":
+            source_label, style, loyalty = "史实人物补档", "史实补档，待召对细察", 62
+        elif source_kind == "user_confirmed":
+            source_label, style, loyalty = "皇帝确认背景补档", "陛下点名，底细待察", 60
+        else:
+            source_label, style, loyalty = "名册外人物补档", "名册外补档，待召对细察", 60
         character = register_unlisted_person_record(
             self.db, self.state, self.content,
             name=str(data.get("name") or ""),
@@ -2979,7 +2993,9 @@ class GameSession:
             office_type=str(data.get("office_type") or ""),
             faction=str(data.get("faction") or ""),
             aliases=aliases,
-            source=str(data.get("source") or "historical"),
+            source_label=source_label,
+            style=style,
+            loyalty=loyalty,
             summary=str(data.get("summary") or ""),
             llm_config=self.llm_config,
         )

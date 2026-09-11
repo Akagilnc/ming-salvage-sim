@@ -240,6 +240,47 @@ def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game
     assert status != "imprisoned"  # 拒收在变更发生前，不留半成品
 
 
+def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_too(game):
+    """指针绑定与人物变更同一原子块：已挂事务 A 的人物再声明挂事务 B，指针
+    冲突时连同人物变更一起回滚——不是「变更真落库、只是绑事务失败」的半写。"""
+    db, state, _ = game
+    minister = _minister(db)
+    affair_a = db.affairs.open(
+        name="宁远护送", origin="拨银、调将、派兵去宁远",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    affair_b = db.affairs.open(
+        name="蓟镇募兵", origin="募兵备边",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    first = dispatch_declaration(db, state, {
+        "on_scene_facts": [{
+            "name": minister, "动作": "处置", "status": "imprisoned", "reason": "下狱待勘",
+            "affair_declaration": {"attach": "existing", "affair_id": affair_a.id},
+        }],
+    })
+    assert len(first.on_scene_facts.applied) == 1
+    status_before, _ = db.get_character_status(minister)
+    assert status_before == "imprisoned"
+
+    conflicting = dispatch_declaration(db, state, {
+        "on_scene_facts": [{
+            "name": minister, "动作": "处置", "status": "dead", "reason": "另案牵连",
+            "affair_declaration": {"attach": "existing", "affair_id": affair_b.id},
+        }],
+    })
+    assert conflicting.on_scene_facts.applied == []
+    assert len(conflicting.on_scene_facts.rejected) == 1
+    assert conflicting.on_scene_facts.rejected[0].category == "invalid_state"
+
+    status_after, _ = db.get_character_status(minister)
+    assert status_after == "imprisoned"  # 没有被冲突项的「dead」半写进去
+    row = db.conn.execute(
+        "SELECT affair_id FROM characters WHERE name=?", (minister,),
+    ).fetchone()
+    assert row["affair_id"] == affair_a.id  # 指针仍是最初绑的那个，没被改动
+
+
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
     """P6/P7：落账正文必须是声明自带的原文，代码不得拼「某某入殿」这类模板句。"""
     db, state, _ = game
@@ -384,6 +425,50 @@ def test_edge_event_attaches_declared_affair(game):
         (result.edge_events.applied[0]["id"],),
     ).fetchone()
     assert row["affair_id"] == affair.id
+
+
+def test_edge_event_conflicting_affair_pointer_is_rejected_first_binding_kept(game):
+    """同一条边事件（去重键相同）第二次声明指向不同事务：指针冲突时该项整块
+    回滚、不误报为 applied，也不改动第一次已绑的事务指针（写事件与绑指针在
+    同一 atomic 块内）。"""
+    db, state, _ = game
+    ministers = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
+    ).fetchall()
+    a, b = str(ministers[0]["name"]), str(ministers[1]["name"])
+    affair_a = db.affairs.open(
+        name="宁远护送", origin="拨银、调将、派兵去宁远",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    affair_b = db.affairs.open(
+        name="蓟镇募兵", origin="募兵备边",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    same_event = {"source": a, "target": b, "event_kind": "撑腰", "context": "当殿举荐"}
+
+    first = dispatch_declaration(db, state, {
+        "edge_events": [{
+            **same_event,
+            "affair_declaration": {"attach": "existing", "affair_id": affair_a.id},
+        }],
+    })
+    assert len(first.edge_events.applied) == 1
+    event_id = first.edge_events.applied[0]["id"]
+
+    second = dispatch_declaration(db, state, {
+        "edge_events": [{
+            **same_event,
+            "affair_declaration": {"attach": "existing", "affair_id": affair_b.id},
+        }],
+    })
+    assert second.edge_events.applied == []
+    assert len(second.edge_events.rejected) == 1
+    assert second.edge_events.rejected[0].category == "invalid_state"
+
+    row = db.conn.execute(
+        "SELECT affair_id FROM relation_edge_events WHERE id=?", (event_id,),
+    ).fetchone()
+    assert row["affair_id"] == affair_a.id
 
 
 def test_protagonist_lands_and_rejects_nonexistent_person(game):
