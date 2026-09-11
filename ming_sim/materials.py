@@ -634,10 +634,12 @@ def _world_board_text(db: Any, state: Any) -> str:
     """盘面全量：未按职位裁切的实况账本（0034 后出注记：仅人物按职位读衙门底账，
     推演者不受此限）。各段落直取账本读方法，不经任何奏报/邸报文本中转——满足
     「推演者读到的是实况数不是奏报数」。"""
+    # limit=None：与 region_rows/army_rows/treasury_report 的既有「None=不截断」
+    # 约定一致，真正的全量——不是拿一个更大的数顶替旧上限（#1834 大理寺 bounce）。
     sections = (
-        ("国库", db.treasury_report(state)),
-        ("军务", db.army_report(limit=30)),
-        ("地方", db.region_report(limit=10)),
+        ("国库", db.treasury_report(state, limit=None)),
+        ("军务", db.army_report(limit=None)),
+        ("地方", db.region_report(limit=None)),
         ("营建", db.buildings_report(qualitative=True)),
         ("边防", db.power_report(exclude_self=True)),
         ("阶级", db.class_report(audience=True)),
@@ -698,12 +700,18 @@ def _write_gazette_index(tmp: Path, db: Any) -> list[str]:
     return index
 
 
-def _world_roster_names(db: Any, state: Any) -> list[str]:
-    if not hasattr(db, "current_court_roster_rows"):
+def _world_roster_names(db: Any) -> list[str]:
+    """全部人物经历真源：持久 characters 表，不以当前在朝名册为白名单
+
+    (#1834 大理寺 bounce：已离朝/下狱/致仕/死亡等不在当前朝臣名册的人物仍须
+    可读——#1819 Resolution 决定 1「各人物经历……三层全可读」不按当前在朝
+    状态收窄）。「盘面」里的在朝名册（_world_roster_text）另有独立投影，与此
+    处经历目录的人物枚举各司其职，互不作为对方的过滤条件。"""
+    if not hasattr(db, "conn"):
         return []
     return [
         str(row["name"] or "").strip()
-        for row in db.current_court_roster_rows(state)
+        for row in db.conn.execute("SELECT name FROM characters ORDER BY name").fetchall()
         if str(row["name"] or "").strip()
     ]
 
@@ -726,7 +734,7 @@ def _write_world_tree(
     _write_text(tmp / _COURT_ROSTER_REL, _world_roster_text(db, state))
     index.append(_COURT_ROSTER_REL)
 
-    for name in _world_roster_names(db, state):
+    for name in _world_roster_names(db):
         knowledge = (
             db.get_character_knowledge(state, name) if hasattr(db, "get_character_knowledge")
             else build_character_knowledge(db, state, name)

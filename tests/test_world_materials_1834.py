@@ -126,6 +126,55 @@ def test_read_material_stays_inside_world_directory(game, tmp_path):
         pass
 
 
+def test_board_is_not_truncated_to_the_old_brief_top_n(game, tmp_path):
+    """大理寺 bounce 1：`region_report(limit=10)`/`army_report(limit=30)` 曾把盘面
+    截成「危局前 N」简报，第 11 个地区/第 31 支军队进不了目录（#1819 决定 4/5、
+    #1834 验收「全盘面」）。基底开局盘面已有 29 个地区（真实入口，不用造假数据即
+    可越过旧 10 条上限）；断言全部区名都在盘面文本里，证明确实不截断。"""
+    db, state, content = game
+    region_names = [
+        row["name"] for row in db.conn.execute("SELECT name FROM regions ORDER BY name").fetchall()
+    ]
+    assert len(region_names) > 10, "fixture 需天然越过旧 limit=10 才能证明不截断"
+
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
+    board = read_material(prepared.root, "盘面/全局.txt")
+    for name in region_names:
+        assert name in board, f"{name} 应在全量盘面里，未截断"
+
+
+def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_path):
+    """大理寺 bounce 2：经历目录曾只给当前在朝名册白名单里的人，已离朝/致仕/未在
+    朝的人物经历整条消失（#1819 决定 1：各人物经历三层全可读，不按当前在朝状态
+    收窄）。挑一个真实不在当前朝臣名册里的人物，写一条真实经历事件，断言仍可读。"""
+    db, state, content = game
+    active_names = {row["name"] for row in db.current_court_roster_rows(state)}
+    all_names = [
+        row["name"] for row in db.conn.execute("SELECT name FROM characters ORDER BY name").fetchall()
+    ]
+    off_court = [name for name in all_names if name not in active_names]
+    assert off_court, "fixture 需天然存在不在当前朝臣名册的人物"
+    name = off_court[0]
+
+    sentinel = "SENTINEL_OFFCOURT_EXPERIENCE_1834"
+    db.conn.execute(
+        "INSERT INTO character_knowledge_events "
+        "(turn, year, period, character_name, kind, title, body, source_id) "
+        "VALUES (?, ?, ?, ?, 'event', '旧闻', ?, 'test:1834')",
+        (state.turn, state.year, state.period, name, sentinel),
+    )
+    db.conn.commit()
+
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m")
+    names = list_materials(prepared.root)
+    rel = next(
+        (p for p in names if p.startswith("人物/") and p.endswith("/经历.txt") and name in p),
+        None,
+    )
+    assert rel is not None, f"{name}（不在当前朝臣名册）应仍有经历文件"
+    assert sentinel in read_material(prepared.root, rel)
+
+
 def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
     db, state, content = game
     affair = db.affairs.open(
