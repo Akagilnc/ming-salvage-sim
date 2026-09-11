@@ -152,11 +152,13 @@ def test_tuple_audience_container_fails_loud_from_content_fallback(game, tmp_pat
     content.event_by_id[content_only_ref] = replace(
         source, id=content_only_ref, audiences=(AUDIENCE_NAME,),  # type: ignore[arg-type]
     )
-
-    with pytest.raises(TypeError):
-        prepare_character_materials(
-            db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
-        )
+    try:
+        with pytest.raises(TypeError):
+            prepare_character_materials(
+                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+            )
+    finally:
+        content.event_by_id.pop(content_only_ref, None)
 
 
 def test_malformed_knowledge_issue_id_fails_loud_from_material_entry(game, tmp_path):
