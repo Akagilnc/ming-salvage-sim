@@ -136,10 +136,8 @@ def _require_prepared_context(db, state):
     return ctx
 
 
-def _merge_settle_simulator_payload(
-    ctx, *, dossier_ids_at_input, open_affair_ids_at_input,
-) -> dict:
-    """案卷等完整键 ∪ 既有 ready=0 context 的 transit_arrivals（只读合并，禁整键覆写丢失）。"""
+def _merge_settle_simulator_payload(ctx, *, dossier_ids_at_input) -> dict:
+    """补齐案卷键，同时原样沿用 prepare 已冻结的其它 simulator 输入。"""
     prev = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
     payload: dict = {
         "decree_dossiers": [
@@ -148,7 +146,7 @@ def _merge_settle_simulator_payload(
         "open_affairs": (
             [dict(row) for row in prev.get("open_affairs", [])]
             if isinstance(prev, dict) and isinstance(prev.get("open_affairs"), list)
-            else [{"id": affair_id} for affair_id in sorted(open_affair_ids_at_input)]
+            else []
         ),
     }
     if isinstance(prev, dict) and "transit_arrivals" in prev:
@@ -243,14 +241,11 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
             db, secret_orders_for_sim,
         )
-        open_affair_ids_at_input = {
-            int(affair.id) for affair in db.affairs.list_open()
-        }
         simulator_payload = _merge_settle_simulator_payload(
             ctx,
             dossier_ids_at_input=dossier_ids_at_input,
-            open_affair_ids_at_input=open_affair_ids_at_input,
         )
+        open_affair_ids_at_input = _open_affair_ids_from_payload(simulator_payload)
         extracted = persist_resolve_context(
             db, before_turn, extracted,
             decree_text=decree_text, narrative=narrative,

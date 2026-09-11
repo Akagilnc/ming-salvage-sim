@@ -485,6 +485,48 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
         for rejection in conflict_result["validate_shape_rejections"]
     )
 
+    # Carrier validation and affair birth are one itemwise transaction.
+    before_invalid = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    invalid = apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "不存在账户", "delta": -1, "category": "善后", "reason": "坏载体",
+                "affair_declaration": _declaration(identity="invalid-economy"),
+            }],
+            "人物变更": [{
+                "name": minister, "动作": "瞎搞一通",
+                "affair_declaration": _declaration(identity="invalid-person"),
+            }],
+        },
+        content=content, open_affair_ids_at_input={first.id, second.id},
+    )
+    assert invalid["economy_moves_rejections"][0]["rejected"] is True
+    assert any(row.get("rejected") for row in invalid["applied_person_changes"])
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before_invalid
+
+    # A conflicting new-issue declaration is dropped before either its issue or affair is born.
+    issues_before = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
+    affairs_before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    new_conflict = apply_score_extraction(
+        db, state,
+        {"new_issues": [
+            {"origin_kind": "decree", "kind": "situation", "title": "合法同批项",
+             "affair_declaration": _declaration(identity="new-conflict")},
+            {"origin_kind": "decree", "kind": "situation", "title": "冲突项",
+             "affair_declaration": {
+                 "attach": "new", "name": "另一事务", "origin": "另一来源",
+                 "identity": "new-conflict",
+             }},
+        ]},
+        content=content, open_affair_ids_at_input={first.id, second.id},
+    )
+    assert len(new_conflict["issue_summary"]["new_issues"]) == 1
+    assert any(row.get("report_section") == "new_issues"
+               for row in new_conflict["validate_shape_rejections"])
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"] == issues_before + 1
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == affairs_before + 1
+
 
 def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
     db, state, _ = game

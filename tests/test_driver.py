@@ -949,6 +949,25 @@ def test_prepare_no_arrival_month_returns_empty_list(game):
     assert ctx["simulator_payload"]["transit_arrivals"] == []
 
 
+def test_settle_authority_uses_prepare_frozen_open_affairs(game):
+    db, state, content = game
+    payload = run_prepare(db, state, content)
+    frozen_ids = {int(row["id"]) for row in payload["open_affairs"]}
+    late = db.affairs.open(
+        name="迟到事务", origin="prepare 后才出现",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    assert late.id not in frozen_ids
+
+    run_settle(
+        db, state, content,
+        {"affair_declarations": [{"attach": "close", "affair_id": late.id}]},
+        source=Provenance.system_simulation,
+    )
+
+    assert db.affairs.get(late.id).status == "open"
+
+
 def test_settle_without_prepare_fails_loud_zero_writes(game):
     """F：未 prepare 的 settle 响亮失败且零写。"""
     db, state, content = game

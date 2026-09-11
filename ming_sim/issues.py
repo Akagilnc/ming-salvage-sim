@@ -8567,6 +8567,31 @@ def apply_score_extraction(
         applied_person_changes.extend(results)
         return results
 
+    def _apply_person_changes_itemwise(
+        changes: List[Dict[str, object]], *, phase: str,
+    ) -> None:
+        """Apply carrier-bound person changes atomically one item at a time."""
+        for index, person_change in enumerate(changes):
+            savepoint = f"person_affair_{phase}_{index}"
+            db.conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                origin_ref = _origin_ref_from_result_item(person_change)
+                results = _apply_normalized_person_changes(
+                    [dict(person_change)], legacy=legacy_person_mode, origin_ref=origin_ref,
+                )
+                if not results or all(result.get("rejected") for result in results):
+                    db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+            except (TypeError, ValueError, KeyError) as exc:
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+                applied_person_changes.append({
+                    "name": str(person_change.get("name") or "").strip(),
+                    "动作": str(person_change.get("动作") or "").strip(),
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": str(exc), "item": dict(person_change),
+                })
+
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
@@ -8805,27 +8830,7 @@ def apply_score_extraction(
                 state, {power_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
             ))
 
-    for index, person_change in enumerate(pre_issue_person_changes):
-        savepoint = f"person_affair_pre_{index}"
-        db.conn.execute(f"SAVEPOINT {savepoint}")
-        try:
-            origin_ref = _origin_ref_from_result_item(person_change)
-            clean_change = dict(person_change)
-            results = _apply_normalized_person_changes(
-                [clean_change], legacy=legacy_person_mode, origin_ref=origin_ref,
-            )
-            if not results or all(result.get("rejected") for result in results):
-                db.conn.execute(f"ROLLBACK TO {savepoint}")
-            db.conn.execute(f"RELEASE {savepoint}")
-        except (TypeError, ValueError, KeyError) as exc:
-            db.conn.execute(f"ROLLBACK TO {savepoint}")
-            db.conn.execute(f"RELEASE {savepoint}")
-            applied_person_changes.append({
-                "name": str(person_change.get("name") or "").strip(),
-                "动作": str(person_change.get("动作") or "").strip(),
-                "rejected": True, "category": "invalid_enum",
-                "reason": str(exc), "item": dict(person_change),
-            })
+    _apply_person_changes_itemwise(pre_issue_person_changes, phase="pre")
 
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
     issue_summary = apply_issue_tracker_output(db, state, {
@@ -9106,27 +9111,7 @@ def apply_score_extraction(
             new_issue["category"] = "missing_world_state_delta"
             new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队均未成功）"
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""), reason=new_issue["reason"])
-    for index, person_change in enumerate(post_issue_person_changes):
-        savepoint = f"person_affair_post_{index}"
-        db.conn.execute(f"SAVEPOINT {savepoint}")
-        try:
-            origin_ref = _origin_ref_from_result_item(person_change)
-            clean_change = dict(person_change)
-            results = _apply_normalized_person_changes(
-                [clean_change], legacy=legacy_person_mode, origin_ref=origin_ref,
-            )
-            if not results or all(result.get("rejected") for result in results):
-                db.conn.execute(f"ROLLBACK TO {savepoint}")
-            db.conn.execute(f"RELEASE {savepoint}")
-        except (TypeError, ValueError, KeyError) as exc:
-            db.conn.execute(f"ROLLBACK TO {savepoint}")
-            db.conn.execute(f"RELEASE {savepoint}")
-            applied_person_changes.append({
-                "name": str(person_change.get("name") or "").strip(),
-                "动作": str(person_change.get("动作") or "").strip(),
-                "rejected": True, "category": "invalid_enum",
-                "reason": str(exc), "item": dict(person_change),
-            })
+    _apply_person_changes_itemwise(post_issue_person_changes, phase="post")
 
     def _norm_int_leaf(v):
         """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,

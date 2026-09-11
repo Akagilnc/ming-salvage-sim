@@ -147,7 +147,15 @@ def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
 
 
 def _handled_affair_lines(db: Any, state: Any, character_name: str, knowledge: dict) -> list[dict[str, object]]:
-    return _visible_affair_lines(knowledge)
+    """Filter the already-authorized projection to matters this character handles."""
+    from ming_sim.participant_roster import participant_roster_names
+
+    handled_ids = {
+        int(issue.get("id") or 0)
+        for issue in knowledge.get("issues") or []
+        if character_name in participant_roster_names(issue.get("participant_roster"))
+    }
+    return [item for item in _visible_affair_lines(knowledge) if int(item["id"]) in handled_ids]
 
 
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:

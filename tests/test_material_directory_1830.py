@@ -6,7 +6,6 @@ list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from ming_sim.audience_night import (
@@ -22,7 +21,6 @@ from ming_sim.materials import (
 )
 from ming_sim.models import CourtContext, LLMConfig
 from ming_sim.registry import create_minister_agent
-from ming_sim.session import GameSession
 
 
 def _active_minister(db, content, *, office_type=None):
@@ -147,10 +145,12 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
         body=spoken, audibility=AUDIBILITY_PUBLIC,
     )
 
-    session = SimpleNamespace(db=db, state=state, registry=None)
-    prompt = GameSession._audience_prompt_for_message(
-        session, "下一句", character,
-    )
+    prepared = prepare_character_materials(db, state, character)
+    index_before = prepared.index_lines
+    turn_pointer = db.conn.execute(
+        "SELECT user_message_id, minister_message_id FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert tuple(turn_pointer) == (uid, mid)
 
     path = str(db.path)
     db.close()
@@ -159,12 +159,14 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
     try:
         state2 = restored.load_state()
         character2 = content.characters[character.name]
-        session2 = SimpleNamespace(db=restored, state=state2, registry=None)
-        prompt2 = GameSession._audience_prompt_for_message(
-            session2, "重开后一句", character2,
-        )
-        prepared = prepare_character_materials(restored, state2, character2)
-        rel = next(p for p in list_materials(prepared.root) if p.endswith("经历.txt"))
-        assert read_material(prepared.root, rel)
+        restored_pointer = restored.conn.execute(
+            "SELECT user_message_id, minister_message_id FROM chat_turns WHERE id=?", (ct,),
+        ).fetchone()
+        assert tuple(restored_pointer) == (uid, mid)
+        rebuilt = prepare_character_materials(restored, state2, character2)
+        assert rebuilt.index_lines == index_before
+        rel = next(p for p in rebuilt.index_lines if p.endswith("经历.txt"))
+        assert rel in list_materials(rebuilt.root)
+        assert read_material(rebuilt.root, rel)
     finally:
         restored.close()
