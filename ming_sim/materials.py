@@ -124,7 +124,8 @@ def _present_names(db: Any, character: Any) -> List[str]:
 def _spoken_this_scene(db: Any, character: Any) -> str:
     from ming_sim.audience_night import audience_scene_recap
 
-    return str(audience_scene_recap(db, getattr(character, "name", "")) or "").strip()
+    # #1812 P6：本场对话记录是自由正文，不得 strip；判空留给调用方按需处理。
+    return str(audience_scene_recap(db, getattr(character, "name", "")) or "")
 
 
 def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
@@ -181,12 +182,14 @@ def _own_affair_lines(
     linked_material: dict[int, list[str]] = {}
 
     def _collect_linked(issue_id: int, title: str, body: str) -> None:
+        # #1812 P6：title/body 是自由正文，判空只用局部 stripped 副本，写出用原文。
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
         if not linked_affair_id:
             return
-        text = f"{title}：{body}".strip("：") if (title or body) else ""
-        if text:
-            linked_material.setdefault(linked_affair_id, []).append(text)
+        if not (title.strip() or body.strip()):
+            return
+        text = f"{title}：{body}" if title and body else (title or body)
+        linked_material.setdefault(linked_affair_id, []).append(text)
 
     for issue in knowledge.get("issues") or []:
         try:
@@ -194,8 +197,8 @@ def _own_affair_lines(
         except (TypeError, ValueError):
             continue
         _collect_linked(
-            issue_id, str(issue.get("title") or "").strip(),
-            str(issue.get("stage_text") or "").strip(),
+            issue_id, str(issue.get("title") or ""),
+            str(issue.get("stage_text") or ""),
         )
     known_ids = {
         str(item.get("source_id") or "")
@@ -213,8 +216,8 @@ def _own_affair_lines(
         if not match:
             continue
         _collect_linked(
-            int(match.group(1)), str(item.get("title") or "").strip(),
-            str(item.get("body") or "").strip(),
+            int(match.group(1)), str(item.get("title") or ""),
+            str(item.get("body") or ""),
         )
 
     handling_ids: set[int] = set()
@@ -250,7 +253,9 @@ def _own_affair_lines(
         directory_lines = [*fact_lines, *extra_lines]
         directory_text = "\n".join(directory_lines) if directory_lines else "见目录。"
         if facts:
-            opening_text = str(facts[-1].body or "").strip() or "见目录。"
+            # #1812 P6：raw body 是文字事实自由正文，不得 strip。
+            raw_latest = str(facts[-1].body or "")
+            opening_text = raw_latest if raw_latest.strip() else "见目录。"
         elif extra_lines:
             opening_text = extra_lines[0]
         else:
@@ -293,12 +298,14 @@ def _character_affair_lines(
             continue
         if _issue_linked_affair_id(db, issue_id):
             continue
-        title = str(issue.get("title") or "").strip()
+        # #1812 P6：title/stage_text 是自由正文，判空只用局部 stripped 副本。
+        title = str(issue.get("title") or "")
         dir_key = f"issue-{issue_id}"
-        if not title or dir_key in seen:
+        if not title.strip() or dir_key in seen:
             continue
         seen.add(dir_key)
-        situation = str(issue.get("stage_text") or "").strip() or "见目录。"
+        raw_situation = str(issue.get("stage_text") or "")
+        situation = raw_situation if raw_situation.strip() else "见目录。"
         lines.append((dir_key, title, situation, situation, False))
     known_ids = {
         str(item.get("source_id") or "")
@@ -315,12 +322,14 @@ def _character_affair_lines(
         match = re.match(r"issue:(\d+)$", str(item.get("source_id") or ""))
         if not match or _issue_linked_affair_id(db, match.group(1)):
             continue
-        title = str(item.get("title") or "").strip()
+        # #1812 P6：title/body 是自由正文，判空只用局部 stripped 副本。
+        title = str(item.get("title") or "")
         dir_key = f"issue-{match.group(1)}"
-        if not title or dir_key in seen:
+        if not title.strip() or dir_key in seen:
             continue
         seen.add(dir_key)
-        situation = str(item.get("body") or "").strip() or "见目录。"
+        raw_situation = str(item.get("body") or "")
+        situation = raw_situation if raw_situation.strip() else "见目录。"
         lines.append((dir_key, title, situation, situation, False))
     for row in _carryover_drafts(db, state):
         dir_key = f"draft-{int(row['id'])}"
@@ -328,8 +337,9 @@ def _character_affair_lines(
             continue
         seen.add(dir_key)
         title = f"尚未入档旨稿#{int(row['id'])}"
-        body = str(row.get("text") or "").strip()
-        text = f"{body}（尚未入档）" if body else "尚未入档"
+        # #1812 P6：raw body 是草稿自由正文，判空只用局部 stripped 副本。
+        body = str(row.get("text") or "")
+        text = f"{body}（尚未入档）" if body.strip() else "尚未入档"
         lines.append((dir_key, title, text, text, True))
     for dir_key, title, directory_text, opening_text, is_handling in _own_affair_lines(
         db, state, character_name, knowledge,
@@ -432,7 +442,8 @@ def _opening_text(
     else:
         parts.append("正经手事务：（无）")
     parts.append("本场已说的话：")
-    parts.append(spoken if spoken else "（尚无）")
+    # #1812 P6：spoken 是自由正文，判空只用局部 stripped 副本，写出用原文。
+    parts.append(spoken if spoken.strip() else "（尚无）")
     parts.append("材料在当前目录。根目录 INDEX 一行一项。其余想读自己读。")
     return "\n".join(parts)
 
@@ -525,10 +536,14 @@ def _write_tree(
         # （事务全部按月文字事实，ADR 0156）另起一行，单行的沿用冒号连写。
         seg = _safe_segment(dir_key)
         affair_dir = tmp / _AFFAIR_DIR / seg
+        # #1812 P6：directory_text 是自由正文，不得 strip('：')——title 与
+        # directory_text 都非空才用冒号连写，否则各自原样单独落笔。
         if title and "\n" in directory_text:
             body = f"{title}\n{directory_text}"
+        elif title and directory_text:
+            body = f"{title}：{directory_text}"
         else:
-            body = f"{title}：{directory_text}".strip("：")
+            body = title or directory_text
         _write_text(affair_dir / "当前情况.txt", body)
         index.append(f"{_AFFAIR_DIR}/{seg}/当前情况.txt")
 
