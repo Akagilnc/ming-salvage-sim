@@ -584,7 +584,7 @@ def test_enrich_army_parsed_and_normalized(monkeypatch):
         },
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
+    monkeypatch.setattr(cb, "_run_codex", lambda prompt, **kw: (canned, 1))
     out = cb.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军")
     armies = out["effect_on_resolve"]["new_armies"]
     assert armies[0]["id"] == "qinjun"
@@ -596,7 +596,7 @@ def test_enrich_building_region_floor(monkeypatch):
         "effect_on_resolve": {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
+    monkeypatch.setattr(cb, "_run_codex", lambda prompt, **kw: (canned, 1))
     out = cb.enrich_initiative_effects("设格致局", "")
     assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
 
@@ -633,7 +633,7 @@ def test_backend_env(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     assert cb.cli_backend_from_env() is None
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    assert cb.cli_backend_from_env() == "agy"
+    assert cb.cli_backend_from_env() is None
 
 
 def test_backend_env_claude(monkeypatch):
@@ -645,7 +645,7 @@ def test_backend_env_claude(monkeypatch):
     "env,attr,out",
     [
         ("claude", "_run_claude", "CLAUDE_OUT"),
-        (None, "_run_agy", "AGY_OUT"),
+        (None, "_run_codex", "CODEX_DEFAULT_OUT"),
         ("codex", "_run_codex", "CODEX_OUT"),
     ],
 )
@@ -724,8 +724,8 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     out, n = cb._run_claude("p", materials_dir=root)
     assert out == "ok" and n == 1
     assert captured["kw"].get("cwd") == root
-    assert "--restricted" not in captured["cmd"]
-    assert "--strict-mcp-config" not in captured["cmd"]
+    assert "--restricted" in captured["cmd"]
+    assert "--strict-mcp-config" in captured["cmd"]
     assert "--add-dir" not in captured["cmd"]
     assert "--allowedTools" in captured["cmd"]
     assert "Read" in captured["cmd"] and "Glob" in captured["cmd"]
@@ -1548,7 +1548,7 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (canned, 1))
+    monkeypatch.setattr(cb, "_run_codex", lambda prompt, **kw: (canned, 1))
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
     assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
@@ -1557,30 +1557,18 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──
 
 
-def test_cli_backends_include_cursor_kimi_grok_pi():
-    assert {"cursor", "kimi", "grok", "pi"} <= set(cb._CLI_BACKENDS)
-    assert cb.is_supported_cli_runner("cursor")
-    assert cb.is_supported_cli_runner("kimi")
-    assert cb.is_supported_cli_runner("grok")
-    assert cb.is_supported_cli_runner("pi")
-    assert not cb.is_supported_cli_runner("opencode")  # 庭裁：走 api 通道，不入 runner 清单
-
-
-def test_gate_cli_runners_single_source_excludes_agy():
-    assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
-    assert "agy" not in cb.GATE_CLI_RUNNERS
-    assert set(cb.GATE_CLI_RUNNERS) <= set(cb._CLI_BACKENDS)
-
-
-def test_cli_backend_from_env_accepts_new_runners(monkeypatch):
-    for name in ("cursor", "kimi", "grok", "pi"):
+def test_public_cli_support_is_codex_and_claude_only(monkeypatch):
+    assert cb._CLI_BACKENDS == frozenset({"codex", "claude"})
+    assert cb.GATE_CLI_RUNNERS == ("codex", "claude")
+    assert [row["value"] for row in cb.cli_runner_choices()] == ["codex", "claude"]
+    assert set(cb.cli_model_choices()) == {"codex", "claude"}
+    for name in ("agy", "cursor", "kimi", "grok", "pi", "opencode"):
+        assert not cb.is_supported_cli_runner(name)
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)
-        assert cb.cli_backend_from_env() == name
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "opencode")
-    assert cb.cli_backend_from_env() is None
+        assert cb.cli_backend_from_env() is None
 
 
-def test_run_cursor_flags_and_stdout(monkeypatch):
+def _obsolete_test_run_cursor_flags_and_stdout(monkeypatch):
     body = "CURSOR_OK"
     captured = _capture_run(monkeypatch, _P(stdout=body, stderr="noise"))
     out, n = cb._run_cursor("PROMPT_BODY", model="auto")
@@ -1594,7 +1582,7 @@ def test_run_cursor_flags_and_stdout(monkeypatch):
     assert captured["kw"].get("input") in (None, "")  # not stdin
 
 
-def test_run_kimi_prompt_flag_no_yolo_stdout_only(monkeypatch):
+def _obsolete_test_run_kimi_prompt_flag_no_yolo_stdout_only(monkeypatch):
     body = "KIMI_OK"
     captured = _capture_run(monkeypatch, _P(stdout=body, stderr="kimi version 0.36.1\nTo resume..."))
     out, n = cb._run_kimi("PROMPT_BODY", model="kimi-k2")
@@ -1607,7 +1595,7 @@ def test_run_kimi_prompt_flag_no_yolo_stdout_only(monkeypatch):
     assert "resume" not in out.lower()
 
 
-def test_run_grok_flags_effort_and_plain(monkeypatch):
+def _obsolete_test_run_grok_flags_effort_and_plain(monkeypatch):
     body = "GROK_OK"
     captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""))
     out, n = cb._run_grok("PROMPT_BODY", model="grok-4.5", reasoning_strength="medium")
@@ -1620,7 +1608,7 @@ def test_run_grok_flags_effort_and_plain(monkeypatch):
     assert "--effort" in cmd and cmd[cmd.index("--effort") + 1] == "med"
 
 
-def test_run_pi_flags_thinking_and_stdout(monkeypatch):
+def _obsolete_test_run_pi_flags_thinking_and_stdout(monkeypatch):
     """#1274-qa-y1：pi -p 非交互；stdout 取文；reasoning → --thinking；model 透传。"""
     body = "PI_OK"
     captured = _capture_run(monkeypatch, _P(stdout=body, stderr="pi log noise"))
@@ -1648,14 +1636,14 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
         ("pi", "_run_pi", "PI_OUT"),
     ],
 )
-def test_run_backend_dispatch_new_runners(monkeypatch, env, attr, out):
+def _obsolete_test_run_backend_dispatch_new_runners(monkeypatch, env, attr, out):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", env)
     monkeypatch.setattr(cb, attr, lambda p, **kw: (out, 1))
     assert cb._run_backend("x") == (out, 1)
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
-def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
+def _obsolete_test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
     from ming_sim.models import LLMConfig
 
     seen = {}
@@ -1680,7 +1668,7 @@ def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
-def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
+def _obsolete_test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
     seen = {}
 
     def fake(prompt, model=None, reasoning_strength=None, **kw):
@@ -1695,7 +1683,7 @@ def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
-def test_describe_effective_model_includes_new_runners(runner):
+def _obsolete_test_describe_effective_model_includes_new_runners(runner):
     from ming_sim.models import LLMConfig
 
     cfg = LLMConfig(
@@ -1706,7 +1694,7 @@ def test_describe_effective_model_includes_new_runners(runner):
 
 
 @pytest.mark.parametrize("runner", ["_run_cursor", "_run_kimi", "_run_grok", "_run_pi"])
-def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
+def _obsolete_test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
     _capture_run(monkeypatch, _RcProc(stderr="auth failed", returncode=1))
     with pytest.raises(RuntimeError):
         getattr(cb, runner)("p")
@@ -1716,10 +1704,10 @@ def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
 
 
 def test_gate_llm_config_cli_channel():
-    args = SimpleNamespace(channel="cli", runner="kimi", model="kimi-k2", api_key="", base_url="")
+    args = SimpleNamespace(channel="cli", runner="codex", model="gpt-5.3-codex-spark", api_key="", base_url="")
     cfg = cb.gate_llm_config_from_args(args)
     assert cfg.channel == "cli"
-    assert cfg.cli_runner == "kimi" and cfg.cli_model == "kimi-k2"
+    assert cfg.cli_runner == "codex" and cfg.cli_model == "gpt-5.3-codex-spark"
     assert cfg.api_key == "" and cfg.base_url == ""
 
 
@@ -1768,12 +1756,12 @@ def test_gate_llm_config_api_requires_key_and_url(monkeypatch):
 
 
 def test_gate_evidence_config_honest_cli_and_api():
-    cli_args = SimpleNamespace(channel="cli", runner="cursor", model="auto")
+    cli_args = SimpleNamespace(channel="cli", runner="claude", model="claude-opus-4-8")
     cli_cfg = cb.gate_llm_config_from_args(cli_args)
     cli_block = cb.gate_evidence_config(cli_args, cli_cfg)
     assert cli_block["channel"] == "cli"
-    assert cli_block["runner"] == "cursor"
-    assert cli_block["model"] == "auto"
+    assert cli_block["runner"] == "claude"
+    assert cli_block["model"] == "claude-opus-4-8"
 
     api_args = SimpleNamespace(
         channel="api", runner="codex", model="deepseek-v4-flash",
@@ -1793,5 +1781,5 @@ def test_add_gate_llm_args_uses_gate_cli_runners():
     # illegal runner rejected; legal accepted
     with pytest.raises(SystemExit):
         p.parse_args(["--runner", "opencode", "--model", "m"])
-    ns = p.parse_args(["--runner", "grok", "--model", "grok-4.5", "--channel", "cli"])
-    assert ns.runner == "grok" and ns.model == "grok-4.5"
+    ns = p.parse_args(["--runner", "claude", "--model", "claude-opus-4-8", "--channel", "cli"])
+    assert ns.runner == "claude" and ns.model == "claude-opus-4-8"

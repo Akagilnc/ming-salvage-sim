@@ -6,7 +6,7 @@
 交回 agno 原生 _parse_provider_response 解析。agno 全套（解析/流式回退/
 消息格式）原样复用，零 function-calling（工具不传，大臣退化成纯文本进谏）。
 
-启用：环境变量 MING_SIM_LLM_BACKEND=agy（或 codex）。
+启用：环境变量 MING_SIM_LLM_BACKEND=codex（或 claude）。
 机器依赖：本机已装并登录 agy（~/.local/bin/agy）/ codex。不兼容别的机器——
 这是探针的预期，不是缺陷。
 
@@ -90,18 +90,17 @@ _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
-# #1256：cursor / kimi / grok 本机 CLI runner；#1274-qa-y1 补 pi（owner：电脑上有的 CLI 一起接入）。
-# opencode 庭裁走 api 通道，不入此名单。
+# Legacy runner commands remain private implementation details; M18 publicly
+# supports only the two runners with verified material-directory isolation.
 _CURSOR_BIN = os.environ.get("MING_SIM_CURSOR_BIN", "cursor-agent")
 _KIMI_BIN = os.environ.get("MING_SIM_KIMI_BIN", "kimi")
 _GROK_BIN = os.environ.get("MING_SIM_GROK_BIN", "grok")
 _PI_BIN = os.environ.get("MING_SIM_PI_BIN", "pi")
 # 受支持 CLI runner 单一真源（membership + 文案 + env 回落共用）。
-_CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
-# #1830 / #1827：材料模式只承认 Codex 与 Claude。其余 runner 启动前响亮拒绝。
-_MATERIALS_CLI_RUNNERS = frozenset({"codex", "claude"})
-# 闸脚本 --runner choices 单一真源（不含 agy：闸形制未用）。脚本 import 此元组，禁各自复制。
-GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok", "pi")
+_CLI_BACKENDS = frozenset({"codex", "claude"})
+_MATERIALS_CLI_RUNNERS = _CLI_BACKENDS
+# 闸脚本 --runner choices 与公开支持集同源。
+GATE_CLI_RUNNERS = ("codex", "claude")
 # 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
 # GATE_CLI_RUNNERS ⊂ 此序（无 agy）；禁在 menuPage/gameMenu 再硬编一份。
 # #1274-qa-y1：pi 紧随 grok（UI_ORDER∩_CLI_BACKENDS → cli_runner_choices 自动带出）。
@@ -182,23 +181,6 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
             {"value": "", "label": f"默认 · {claude_default}"},
             {"value": "claude-haiku-4-5", "label": "claude-haiku-4-5 · 快"},
             {"value": "claude-sonnet-4-6", "label": "claude-sonnet-4-6 · 慢，偏离线鉴赏"},
-        ],
-        # agy：模型档模糊，只给「默认（gemini）」+ 前端「其他(手填)」逃生口。
-        "agy": [
-            {"value": "", "label": "默认 · gemini"},
-        ],
-        # #1256/#1274-y1 新 runner：策展档未立，只给默认档 + 前端「其他(手填)」逃生；--model 透传。
-        "cursor": [
-            {"value": "", "label": "默认"},
-        ],
-        "kimi": [
-            {"value": "", "label": "默认"},
-        ],
-        "grok": [
-            {"value": "", "label": "默认"},
-        ],
-        "pi": [
-            {"value": "", "label": "默认"},
         ],
     }
 
@@ -716,6 +698,7 @@ def _cli_runner_command(
         ]
         if materials_dir:
             cmd += [
+                "--restricted", "--strict-mcp-config",
                 "--allowedTools", "Read", "Glob", "Grep",
                 "--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit",
                 "WebFetch", "WebSearch", "Task",
@@ -1021,8 +1004,8 @@ def _dispatch_cli_runner(
 
 def _run_backend(prompt: str) -> Tuple[str, int]:
     """按 MING_SIM_LLM_BACKEND 分派到对应 CLI（enrich/secret 等非 CliChat 路径用）。
-    未设或非法 → agy（沿用原默认）。"""
-    return _dispatch_cli_runner(cli_backend_from_env() or "agy", prompt)
+    未设或非法时使用公开默认 Codex。"""
+    return _dispatch_cli_runner(cli_backend_from_env() or "codex", prompt)
 
 
 def _llm_channel(llm_config: Any = None) -> str:
@@ -1038,7 +1021,7 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, str]]:
     channel = _llm_channel(llm_config)
     if channel != "cli":
         return None
-    runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+    runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "codex").strip().lower()
     if runner not in _CLI_BACKENDS:
         raise RuntimeError(f"未知 CLI backend：{runner}")
     model = (getattr(llm_config, "cli_model", "") or "").strip()
@@ -1145,8 +1128,8 @@ def _backend_label(llm_config: Any = None) -> str:
     except RuntimeError:
         parts = None  # 不支持的 runner：trace 标签回落，不让构造崩
     if parts is not None:
-        return parts[0] or "agy"
-    return cli_backend_from_env() or "agy"
+        return parts[0] or "codex"
+    return cli_backend_from_env() or "codex"
 
 
 def describe_effective_model(llm_config: Any = None) -> str:
@@ -1157,7 +1140,7 @@ def describe_effective_model(llm_config: Any = None) -> str:
     可能是空串而本函数已解析出真实默认——本函数是更准的可读标签，不与 trace 的未解析 id 逐字对齐。"""
     channel = _llm_channel(llm_config)
     if channel == "cli":
-        runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+        runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "codex").strip().lower()
     elif channel != "api":
         runner = cli_backend_from_env()  # 空 channel：legacy env 回落
     else:

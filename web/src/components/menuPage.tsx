@@ -87,7 +87,7 @@ export function MenuPage({
   const llmReady = !!(status?.llm_ready ?? status?.has_api_key);
   const isCli = status?.llm?.channel === "cli";
   const currentBackend = isCli
-    ? `CLI · ${status?.llm?.cli_runner || "agy"}${status?.llm?.cli_model ? ` · ${status.llm.cli_model}` : ""}`
+    ? `CLI · ${status?.llm?.cli_runner || "codex"}${status?.llm?.cli_model ? ` · ${status.llm.cli_model}` : ""}`
     : `${status?.llm?.base_url || ""} · ${status?.llm?.model || ""}`;
   const hasMainDb = !!status?.has_main_db;
   const saves = status?.saves || [];
@@ -213,7 +213,7 @@ export function ApiSettingsModal({
   onSaved: () => Promise<void>;
 }) {
   const [channel, setChannel] = React.useState<"api" | "cli">(initial?.channel === "cli" ? "cli" : "api");
-  const [cliRunner, setCliRunner] = React.useState(initial?.cli_runner || "agy");
+  const [cliRunner, setCliRunner] = React.useState(initial?.cli_runner || "codex");
   // 用 raw cli_model_saved（空=默认档），不用 resolved cli_model——后者把默认兜底成
   // 模型名会让下拉误判「其他(手填)」并在空保存时钉死字面量（CMR R1）。
   const [cliModel, setCliModel] = React.useState(initial?.cli_model_saved ?? "");
@@ -254,7 +254,7 @@ export function ApiSettingsModal({
   const normalizedAdvancedModel = advancedModel.trim();
   const backendReasoningSupportCurrent = channel === backendChannel && (
     channel === "cli"
-      ? cliRunner === (initial?.cli_runner || "agy")
+      ? cliRunner === (initial?.cli_runner || "codex")
       : normalizedBaseUrl === (initial?.base_url || "").trim() &&
         normalizedModel === (initial?.model || "").trim() &&
         normalizedAdvancedBaseUrl === (initial?.advanced_base_url || "").trim() &&

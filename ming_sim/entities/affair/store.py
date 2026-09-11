@@ -369,6 +369,13 @@ class AffairStore:
             return ""
         origin_ref = str(item.get("origin_ref") or item.get("来源引用") or "").strip()
         if origin_ref:
+            kind, target = parse_origin_ref(origin_ref)
+            if (
+                kind == _ORIGIN_AFFAIR
+                and authorized_ids is not None
+                and target not in authorized_ids
+            ):
+                raise ValueError("事务不在本批可见输入")
             return origin_ref
         parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
         if parsed is None:

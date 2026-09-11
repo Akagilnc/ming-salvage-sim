@@ -5700,32 +5700,8 @@ def apply_issue_tracker_output(
         # 注：字符串字段含孤代理（JSON 解析出的 "\\ud800"）会在 SQLite bind 抛 UnicodeEncodeError。
         # #63 已在 SQLite-bind 序列化点统一用「保中文、净孤代理」helper 治理；本段不局部吞
         # UnicodeEncodeError，仍让非编码类代码/DB 异常按 ADR 0005 fail-loud 上抛。
-        # Validate provenance only after item-shape validation, so malformed
-        # fields retain their precise rejection category without ever reaching a write.
-        origin_error = db.effect_origin_rejection(origin_ref)
-        if not re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref) or origin_error:
-            applied_new.append({
-                "rejected": True, "category": "missing_ref", "item": ni,
-                "title": title,
-                "reason": (origin_error or {}).get(
-                    "reason", "new decree issue origin_ref 须为已颁 dossier:<id>"
-                ),
-            })
-            continue
-        from ming_sim.staged_commitment import (
-            capture_commitment_stages,
-            stages_source_from_issue_item,
-        )
-        stages_norm = (
-            capture_commitment_stages(
-                stages_source_from_issue_item(ni),
-                narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                origin_turn=int(state.turn),
-            )
-            if is_commitment
-            else []
-        )
-        # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
+        # Validate typed affair authority before any write. A decree issue may be
+        # grounded either by a promulgated dossier or by its typed affair declaration.
         from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
         try:
             issue_affair = declaration_from_payload(ni, allowed=ATTACH_BIRTH)
@@ -5747,6 +5723,31 @@ def apply_issue_tracker_output(
                 "item": ni, "title": title,
             })
             continue
+        origin_error = db.effect_origin_rejection(origin_ref) if origin_ref else None
+        dossier_origin = bool(re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref))
+        if issue_affair is None and (not dossier_origin or origin_error):
+            applied_new.append({
+                "rejected": True, "category": "missing_ref", "item": ni,
+                "title": title,
+                "reason": (origin_error or {}).get(
+                    "reason", "new decree issue 须有已颁 dossier:<id> 或合法事务声明"
+                ),
+            })
+            continue
+        from ming_sim.staged_commitment import (
+            capture_commitment_stages,
+            stages_source_from_issue_item,
+        )
+        stages_norm = (
+            capture_commitment_stages(
+                stages_source_from_issue_item(ni),
+                narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
+                origin_turn=int(state.turn),
+            )
+            if is_commitment
+            else []
+        )
+        # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
         issue_id = db.insert_issue(
             state,
             kind=kind,
@@ -8272,19 +8273,6 @@ def apply_score_extraction(
             authorized_ids=authorized_open_affairs,
         )
 
-    for raw in extracted.get("affair_declarations") or []:
-        try:
-            if not isinstance(raw, dict):
-                raise ValueError("事务声明须为对象")
-            db.affairs.close_from_declaration(
-                raw,
-                turn=int(state.turn),
-                authorized_ids=authorized_open_affairs,
-            )
-        except (TypeError, ValueError, KeyError) as exc:
-            validate_rejections.append(
-                ("affair_declarations", {"raw_value": raw}, str(exc)),
-            )
     # #623：召对 extraction 真入口——反悔/坚持消费哭谏条（须先于 cancels 物化，
     # 使 persist 先结账，cancels 环看到已非 active 而跳过，防双路径）。
     from ming_sim.breach_plea import resolve_breach_pleas_from_extraction
@@ -8852,6 +8840,23 @@ def apply_score_extraction(
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids,
         open_affair_ids_at_input=authorized_open_affairs)
+
+    # Affair closure observes the batch's final issue state. In particular, a
+    # same-batch linked issue must prevent closure rather than leave a closed
+    # affair pointing at active work.
+    for raw in extracted.get("affair_declarations") or []:
+        try:
+            if not isinstance(raw, dict):
+                raise ValueError("事务声明须为对象")
+            db.affairs.close_from_declaration(
+                raw,
+                turn=int(state.turn),
+                authorized_ids=authorized_open_affairs,
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            validate_rejections.append(
+                ("affair_declarations", {"raw_value": raw}, str(exc)),
+            )
 
     commitment_economy_carriers: List[Dict[str, object]] = []
     for item in issue_summary.get("new_issues") or []:

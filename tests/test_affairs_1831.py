@@ -408,6 +408,20 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
     )
     assert denied["issue_summary"]["new_issues"][0]["rejected"] is True
 
+    raw_denied = apply_score_extraction(
+        db, state,
+        {"economy_moves": [{
+            "account": "国库", "delta": -1, "category": "善后", "reason": "越权来源",
+            "origin_ref": db.affairs.origin_ref(second.id),
+        }]},
+        content=content, open_affair_ids_at_input={first.id},
+    )
+    assert raw_denied["economy_moves_rejections"][0]["rejected"] is True
+    assert db.conn.execute(
+        "SELECT 1 FROM economy_ledger WHERE origin_ref=?",
+        (db.affairs.origin_ref(second.id),),
+    ).fetchone() is None
+
     before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
     apply_score_extraction(
         db, state,
@@ -599,3 +613,44 @@ def test_close_requires_open_affairs_visible_in_batch(game, monkeypatch):
     apply_score_extraction(db, state, merged, open_affair_ids_at_input=input_ids)
     assert db.affairs.get(first.id).status == "closed"
     assert db.affairs.get(second.id).status == "open"
+
+
+def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
+    db, state, content = game
+    existing = db.affairs.open(
+        name=NINGYUAN, origin=ORIGIN,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    result = apply_score_extraction(
+        db, state,
+        {
+            "affair_declarations": [
+                _declaration(attach="close", affair_id=existing.id),
+            ],
+            "new_issues": [
+                {
+                    "origin_kind": "decree", "kind": "situation",
+                    "title": "护送仍在途中",
+                    "affair_declaration": _declaration(
+                        attach="existing", affair_id=existing.id,
+                    ),
+                },
+                {
+                    "origin_kind": "decree", "kind": "situation",
+                    "title": "推演另起风波",
+                    "affair_declaration": _declaration(identity="new-storm"),
+                },
+            ],
+        },
+        content=content, open_affair_ids_at_input={existing.id},
+    )
+    created = result["issue_summary"]["new_issues"]
+    assert [item["rejected"] for item in created] == [False, False]
+    assert db.affairs.affair_id_for_issue(created[0]["issue_id"]) == existing.id
+    assert db.affairs.affair_id_for_issue(created[1]["issue_id"]) != existing.id
+    assert db.affairs.get(existing.id).status == "open"
+    assert any(
+        row["report_section"] == "affair_declarations"
+        and "未了局势" in row["reason"]
+        for row in result["validate_shape_rejections"]
+    )
