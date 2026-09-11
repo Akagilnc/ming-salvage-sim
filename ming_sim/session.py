@@ -334,10 +334,10 @@ def register_unlisted_person_record(
         ability=55,
         integrity=60,
         courage=55,
-        style=str(style or "").strip(),
+        style=str(style or ""),
         power_id="ming",
         status="active",
-        summary=str(summary or "").strip(),
+        summary=str(summary or ""),
     )
     content.characters[name] = character
     db.add_character(state, character, source=str(source_label or "").strip(), llm_config=llm_config)
@@ -2987,9 +2987,9 @@ class GameSession:
             source_label, loyalty = "皇帝确认背景补档", 60
         else:
             source_label, loyalty = "名册外人物补档", 60
-        # P7：style 只能原样来自 LLM 明确字段，不合成补文案（register_unlisted_person
+        # P7：style 只能原样来自 LLM 明确字段，零删改，不合成补文案（register_unlisted_person
         # 工具 schema 本就没给 LLM 开放 style 字段，故此路径目前恒为空，走下游既有缺省）。
-        style = str(data.get("style") or "").strip()
+        style = str(data.get("style") or "")
         character = register_unlisted_person_record(
             self.db, self.state, self.content,
             name=str(data.get("name") or ""),

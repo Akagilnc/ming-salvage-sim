@@ -52,10 +52,12 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 
 `register_unlisted_person_record`（本模块 `_dispatch_registrations` 与
 `GameSession._apply_unlisted_person_registration` 共用）本身不再合成
-`style` 占位文案（P7）：声明给什么就存什么，没给就是空字符串；历史召对工具
-路径按 source 归一 `style`/`loyalty` 仍是那条既有路径自己算好后显式传入的
-既有行为，本票未改动、只是把「谁负责决定这段文字」的边界从共享函数收回到
-各自调用方。
+`style` 占位文案（P7），也不再对调用方传入的 `style`/`summary` 做任何删改
+（P6）：声明给什么就原样存什么，没给就是空字符串。历史召对工具路径按
+source 归一的只是 `loyalty`/`source_label`——那是那条既有路径自己算好后
+显式传入的既有行为，本票未改动；该路径的 `register_unlisted_person` 工具
+schema 本就没给 LLM 开放 `style` 字段，故其 `style` 目前恒为空，走本函数
+既有下游缺省，不是被按 source 合成。
 """
 
 from __future__ import annotations
@@ -256,9 +258,14 @@ def dispatch_declaration(
     minister_name: str = "",
     night_id: int = 0,
     source: Provenance = Provenance.system_simulation,
-    collector: Optional[RejectionCollector] = None,
 ) -> DeclarationDispatchResult:
-    """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。
+    """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
+    承接（ADR 0155）直接分派单条声明时用的公开入口，唯一契约：始终原子、始终
+    durable——自己开唯一一段 `atomic(db)`，把十个 section 的分派副作用、拒收
+    收集与 `flush_to_db` 全部包在同一个事务里，任一步失败（含 flush 本身失败）
+    都整体回滚，不会出现「合法 sibling 已落库、其拒收却没落进
+    ``rejection_reports``」的半写状态；提交成功后再镜像 jsonl。不建声明专用
+    拒收表，复用既有 ``rejection_reports`` 单一真源（ADR 0008 决定 5）。
 
     ``night_id``：本声明所属的召对夜——「应允/拒绝」只认这一夜暂存清单里的
     动作（ADR 0155：转译读「本夜暂存清单」），引用其它夜真实存在的 id 一律
@@ -267,34 +274,21 @@ def dispatch_declaration(
     可闻性」同样挂在这一夜的账本上，无夜（night_id<=0）时整批拒收，不落成
     孤儿账。
 
-    ``collector``：调用方持有的拒收收集器——:func:`settle_staged_declarations_in_decree_order`
-    传入时，本函数只把十个 section 的分派副作用与拒收（含未知顶层键，见
-    :func:`_record_unknown_sections`）记进那个收集器，落库时机与事务边界由
-    调用方的外层 `atomic(db)`（连同该旨的 `mark_settled`）拥有，本函数不另
-    开事务、不自己 flush/镜像。不传 collector 时（直接分派），本函数自己开
-    唯一一段 `atomic(db)`，把十个 section 的分派副作用、拒收收集与
-    `flush_to_db` 全部包在同一个事务里——任一步失败（含 flush 本身失败）都
-    整体回滚，不会出现「合法 sibling 已落库、其拒收却没落进
-    ``rejection_reports``」的半写状态（J1 判词：直接分派须在其真实事务边界
-    落库，且该边界须覆盖 section 分派本身，不能只包住 flush）；提交成功后
-    再镜像 jsonl。不建声明专用拒收表，复用既有 ``rejection_reports`` 单一
-    真源（ADR 0008 决定 5）。
+    :func:`settle_staged_declarations_in_decree_order` 结算一旨下多条暂存
+    声明时不走这个入口——它需要把同旨下每条声明的分派副作用、拒收与该旨的
+    `mark_settled` 落在同一次提交里，因此直接在自己的旨级 `atomic(db)` 内
+    复用下面的私有执行体 :func:`_dispatch_declaration_sections`，不经过本
+    函数另开的事务。
     """
-    if collector is not None:
-        return _dispatch_declaration_sections(
-            db, state, declaration,
-            minister_name=minister_name, night_id=night_id, source=source,
-            collector=collector,
-        )
-    own_collector = RejectionCollector()
+    collector = RejectionCollector()
     with atomic(db):
         result = _dispatch_declaration_sections(
             db, state, declaration,
             minister_name=minister_name, night_id=night_id, source=source,
-            collector=own_collector,
+            collector=collector,
         )
-        own_collector.flush_to_db(db)
-    mirror_rejections_after_commit(db, own_collector, rejections_jsonl_path)
+        collector.flush_to_db(db)
+    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return result
 
 
@@ -338,7 +332,10 @@ def settle_staged_declarations_in_decree_order(
     该旨下逐条暂存声明的拒收共用同一个 :class:`~ming_sim.applier.RejectionCollector`
     ——`flush_to_db` 与 `mark_settled` 落在同一个 `atomic(db)` 块内一次提交
     （J1：暂存结算路径的拒收与其结算标记同一事务，不单独一次提交），提交
-    成功后再镜像 jsonl。
+    成功后再镜像 jsonl。本函数不调用公开的 :func:`dispatch_declaration`（那
+    个入口自己另开一段独立事务），而是在自己的旨级 `atomic(db)` 内直接复用
+    私有执行体 :func:`_dispatch_declaration_sections`，让同旨下每条声明的
+    分派副作用与 `mark_settled` 共处这一个事务。
     """
     results: Dict[str, DeclarationDispatchResult] = {}
     for decree_ref in decree_refs_in_order:
@@ -351,7 +348,7 @@ def settle_staged_declarations_in_decree_order(
         with atomic(db):
             merged = _empty_dispatch_result()
             for item in staged:
-                merged = merged.merge(dispatch_declaration(
+                merged = merged.merge(_dispatch_declaration_sections(
                     db, state, item.declaration,
                     minister_name=minister_name, night_id=night_id, source=source,
                     collector=collector,
@@ -942,10 +939,10 @@ def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provena
     召对专属的 UI 便利动作，留给召对侧自己决定要不要做；入册本身与是否立刻
     传召是两件事，本分派器只管前者。
 
-    `style`（人物材料上的可感文字）原样取声明自带的值，不合成任何占位文案
-    （P7）——声明没给就留空，不像 `_apply_unlisted_person_registration` 那条
-    历史工具路径那样按 source 归一模板句（那是那条既有路径自己的取舍，本函数
-    的共享实现已不再替它决定，见 `register_unlisted_person_record`）。
+    `style`（人物材料上的可感文字）原样取声明自带的值、零删改地传给共享写核，
+    不合成任何占位文案（P7）——声明没给就留空。`_apply_unlisted_person_registration`
+    那条历史工具路径按 source 归一的是 `loyalty`/`source_label`，不是
+    `style`（见 `register_unlisted_person_record`）。
 
     各自所属事务：事务引用在真正登记之前先校验，引用不存在事务的项在产生
     副作用前就被拒收；新登记的人物是刚插入的行（`affair_id` 必为 0），绑定
