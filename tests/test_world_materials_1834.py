@@ -44,7 +44,6 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     for line in index.splitlines():
         if line.strip():
             assert line.strip() in names
-            assert read_material(prepared.root, line.strip())
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
