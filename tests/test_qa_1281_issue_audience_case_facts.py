@@ -113,7 +113,10 @@ def test_audience_supplement_grants_originating_issue_outside_knowledge(game, tm
     assert _issue_paths(outsider, issue_id) == set()
 
 
-@pytest.mark.parametrize("stored_audiences", ["{}", "not-json", "null"])
+@pytest.mark.parametrize(
+    "stored_audiences",
+    ["{}", "not-json", "null", '[1, "郭允厚"]', '["郭允厚", {"name": "x"}]'],
+)
 def test_malformed_event_audience_fails_loud_from_material_entry(game, tmp_path, stored_audiences):
     db, state, content = game
     row = _issue_row(db)
@@ -125,6 +128,19 @@ def test_malformed_event_audience_fails_loud_from_material_entry(game, tmp_path,
         prepare_character_materials(
             db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
         )
+
+
+def test_malformed_knowledge_issue_id_fails_loud_from_projection(game):
+    db, state, _content = game
+    knowledge = dict(db.get_character_knowledge(state, AUDIENCE_NAME))
+    issues = list(knowledge.get("issues") or [])
+    assert issues
+    bad = dict(issues[0])
+    bad["id"] = "not-an-id"
+    knowledge["issues"] = [bad, *issues[1:]]
+
+    with pytest.raises((TypeError, ValueError)):
+        project_issue_materials(db, AUDIENCE_NAME, knowledge)
 
 
 def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path):

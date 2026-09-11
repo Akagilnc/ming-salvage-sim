@@ -61,7 +61,17 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
         raise TypeError(
             f"event {origin_ref!r} audiences must be a list, got {type(raw).__name__}"
         )
-    return {str(name).strip() for name in raw if str(name).strip()}
+    names: set[str] = set()
+    for idx, name in enumerate(raw):
+        if not isinstance(name, str):
+            raise TypeError(
+                f"event {origin_ref!r} audiences[{idx}] must be str, "
+                f"got {type(name).__name__}"
+            )
+        stripped = name.strip()
+        if stripped:
+            names.add(stripped)
+    return names
 
 
 def _visible_domains(db: Any, office_type: str) -> tuple[str, ...]:
@@ -177,10 +187,7 @@ def project_issue_materials(
     projected: dict[int, Dict[str, object]] = {}
 
     for issue in knowledge.get("issues") or []:
-        try:
-            issue_id = int(issue["id"])
-        except (KeyError, TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         audiences = _issue_audience_names(db, issue)
         row = dict(issue)
         row["source_id"] = str(row.get("source_id") or f"issue:{issue_id}")
@@ -189,10 +196,7 @@ def project_issue_materials(
 
     active_issues = db.list_active_issues() if hasattr(db, "list_active_issues") else []
     for issue in active_issues:
-        try:
-            issue_id = int(issue["id"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         if issue_id in projected:
             continue
         audiences = _issue_audience_names(db, issue)
