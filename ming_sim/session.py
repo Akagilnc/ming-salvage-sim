@@ -17,7 +17,7 @@ import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 if TYPE_CHECKING:
     from ming_sim.materials import PreparedMaterials
@@ -271,6 +271,78 @@ def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Op
         if _is_ming_court_minister_character(c, resolve_power_id=resolve):
             return key
     return None
+
+
+def register_unlisted_person_record(
+    db: "GameDB",
+    state: "GameState",
+    content: GameContent,
+    *,
+    name: str,
+    office: str,
+    office_type: str,
+    faction: str = "",
+    aliases: Sequence[str] = (),
+    source: str = "historical",
+    summary: str = "",
+    llm_config: Any = None,
+) -> Optional[Character]:
+    """登记名册外人物的唯一权威构档：查重（`_find_existing_minister`，姓名与
+    别名both查）+ 默认值 + `db.add_character` 落库 + portrait_id 回填。
+
+    这是登记本身的唯一实现——`GameSession._apply_unlisted_person_registration`
+    （召对场景 LLM 工具触发）与 `ming_sim.declaration_dispatch._dispatch_registrations`
+    （转译声明触发）共用本函数，不各自维护一份查重/默认值规则。「登记后是否
+    立刻传召」「绑定 agent registry」等各自会话形态专属的后续动作，留给两个
+    调用方自己在拿到返回的 `Character` 后处理，不在此处发生。
+
+    返回新建的 `Character`；字段缺失或已在册（含别名命中）→ ``None``。
+    """
+    name = str(name or "").strip()
+    office = str(office or "").strip()
+    office_type = str(office_type or "").strip()
+    if not name or not office or not office_type:
+        return None
+    alias_list = [str(a).strip() for a in (aliases or ()) if str(a).strip()]
+    if _find_existing_minister(content, name, db) is not None:
+        return None
+    for alias in alias_list:
+        if _find_existing_minister(content, alias, db) is not None:
+            return None
+    faction_value = str(faction or "中立").strip()
+    if faction_value not in content.factions:
+        faction_value = "中立"
+    source_kind = str(source or "historical").strip()
+    if source_kind == "historical":
+        source_label, style, loyalty = "史实人物补档", "史实补档，待召对细察", 62
+    elif source_kind == "user_confirmed":
+        source_label, style, loyalty = "皇帝确认背景补档", "陛下点名，底细待察", 60
+    else:
+        source_label, style, loyalty = "名册外人物补档", "名册外补档，待召对细察", 60
+    character = Character(
+        name=name,
+        office=office,
+        office_type=office_type,
+        faction=faction_value,
+        aliases=alias_list,
+        personal_skills=[],
+        loyalty=loyalty,
+        ability=55,
+        integrity=60,
+        courage=55,
+        style=style,
+        power_id="ming",
+        status="active",
+        summary=str(summary or "").strip(),
+    )
+    content.characters[name] = character
+    db.add_character(state, character, source=source_label, llm_config=llm_config)
+    row = db.conn.execute(
+        "SELECT portrait_id FROM characters WHERE name=?", (name,),
+    ).fetchone()
+    if row:
+        character.portrait_id = str(row["portrait_id"])
+    return character
 
 
 def _recent_audience_context_for_secret_order(
@@ -2885,7 +2957,10 @@ class GameSession:
     def _apply_unlisted_person_registration(self, payload: str) -> Tuple[str, bool]:
         """登记史实未预设/用户确认背景的人物，进入本局正式可召见人物池。
 
-        恢复窗婉拒（PR #90 R2 codex P2）：同 _apply_appointment，事务边界外直写一律冻。"""
+        恢复窗婉拒（PR #90 R2 codex P2）：同 _apply_appointment，事务边界外直写一律冻。
+        构档规则（查重/默认值/落库）唯一实现见 `register_unlisted_person_record`，
+        与转译声明分派共用；本方法只处理召对场景专属的后续动作（agent registry
+        绑定、临时人物清理、是否随即传召）。"""
         if self._proposal_blocked(self.state):
             return ("", False)
         import json as _json
@@ -2895,61 +2970,25 @@ class GameSession:
             return ("", False)
         if not isinstance(data, dict):
             return ("", False)
-        name = str(data.get("name") or "").strip()
-        office = str(data.get("office") or "").strip()
-        office_type = str(data.get("office_type") or "").strip()
-        if not name or not office or not office_type:
-            return ("", False)
         aliases_raw = data.get("aliases") or []
-        aliases = [str(alias).strip() for alias in aliases_raw if str(alias).strip()] if isinstance(aliases_raw, list) else []
-        if _find_existing_minister(self.content, name, self.db) is not None:
-            return ("", False)
-        for alias in aliases:
-            if _find_existing_minister(self.content, alias, self.db) is not None:
-                return ("", False)
-        faction = str(data.get("faction") or "中立").strip()
-        if faction not in self.content.factions:
-            faction = "中立"
-        source_kind = str(data.get("source") or "historical").strip()
-        if source_kind == "historical":
-            source_label = "史实人物补档"
-            style = "史实补档，待召对细察"
-            loyalty = 62
-        elif source_kind == "user_confirmed":
-            source_label = "皇帝确认背景补档"
-            style = "陛下点名，底细待察"
-            loyalty = 60
-        else:
-            source_label = "名册外人物补档"
-            style = "名册外补档，待召对细察"
-            loyalty = 60
-        character = Character(
-            name=name,
-            office=office,
-            office_type=office_type,
-            faction=faction,
+        aliases = [str(a) for a in aliases_raw] if isinstance(aliases_raw, list) else []
+        character = register_unlisted_person_record(
+            self.db, self.state, self.content,
+            name=str(data.get("name") or ""),
+            office=str(data.get("office") or ""),
+            office_type=str(data.get("office_type") or ""),
+            faction=str(data.get("faction") or ""),
             aliases=aliases,
-            personal_skills=[],
-            loyalty=loyalty,
-            ability=55,
-            integrity=60,
-            courage=55,
-            style=style,
-            power_id="ming",
-            status="active",
-            summary=str(data.get("summary") or "").strip(),
+            source=str(data.get("source") or "historical"),
+            summary=str(data.get("summary") or ""),
+            llm_config=self.llm_config,
         )
-        self.content.characters[name] = character
-        self.db.add_character(self.state, character, source=source_label, llm_config=self.llm_config)
-        row = self.db.conn.execute(
-            "SELECT portrait_id FROM characters WHERE name=?", (name,)
-        ).fetchone()
-        if row:
-            character.portrait_id = str(row["portrait_id"])
+        if character is None:
+            return ("", False)
         if self.registry is not None:
             self.registry.register(character)
-        self.temporary_characters.pop(name, None)
-        return (name, bool(data.get("summon_after", True)))
+        self.temporary_characters.pop(character.name, None)
+        return (character.name, bool(data.get("summon_after", True)))
 
     def _apply_secret_order(self, payload: str, minister_name: str) -> int:
         """issue_secret_order 哨兵落库，返回新建密令 id（失败返回 0）。"""

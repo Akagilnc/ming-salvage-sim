@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.public_sayings import list_public_sayings
 
@@ -199,6 +201,45 @@ def test_on_scene_person_status_change_lands_and_rejects_nonexistent_person(game
     assert status == "imprisoned"
 
 
+def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game):
+    """各自所属事务：on_scene_facts 落库后绑 characters.affair_id；引用不存在
+    事务的项在人物变更真正发生前就被拒收（不产生半成品状态变更）。"""
+    db, state, _ = game
+    minister = _minister(db)
+    affair = db.affairs.open(
+        name="宁远护送", origin="拨银、调将、派兵去宁远",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+
+    ok = dispatch_declaration(db, state, {
+        "on_scene_facts": [{
+            "name": minister, "动作": "处置", "status": "imprisoned", "reason": "下狱待勘",
+            "affair_declaration": {"attach": "existing", "affair_id": affair.id},
+        }],
+    })
+    assert len(ok.on_scene_facts.applied) == 1
+    assert "affair_attach_error" not in ok.on_scene_facts.applied[0]
+    row = db.conn.execute(
+        "SELECT affair_id FROM characters WHERE name=?", (minister,),
+    ).fetchone()
+    assert row["affair_id"] == affair.id
+
+    other_minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND name!=? ORDER BY name LIMIT 1",
+        (minister,),
+    ).fetchone()["name"]
+    bad = dispatch_declaration(db, state, {
+        "on_scene_facts": [{
+            "name": other_minister, "动作": "处置", "status": "imprisoned", "reason": "…",
+            "affair_declaration": {"attach": "existing", "affair_id": affair.id + 999999},
+        }],
+    })
+    assert bad.on_scene_facts.applied == []
+    assert len(bad.on_scene_facts.rejected) == 1
+    status, _ = db.get_character_status(other_minister)
+    assert status != "imprisoned"  # 拒收在变更发生前，不留半成品
+
+
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
     """P6/P7：落账正文必须是声明自带的原文，代码不得拼「某某入殿」这类模板句。"""
     db, state, _ = game
@@ -318,6 +359,33 @@ def test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_d
     assert by_category == {"invalid_enum", "hallucinated_id", "invalid_shape"}
 
 
+def test_edge_event_attaches_declared_affair(game):
+    """各自所属事务：relation_edge_events 是整数主键，直接复用 AffairStore
+    通用指针（attach_pointer）绑事务。"""
+    db, state, _ = game
+    ministers = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
+    ).fetchall()
+    a, b = str(ministers[0]["name"]), str(ministers[1]["name"])
+    affair = db.affairs.open(
+        name="宁远护送", origin="拨银、调将、派兵去宁远",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+
+    result = dispatch_declaration(db, state, {
+        "edge_events": [{
+            "source": a, "target": b, "event_kind": "撑腰", "context": "当殿举荐",
+            "affair_declaration": {"attach": "existing", "affair_id": affair.id},
+        }],
+    })
+    assert len(result.edge_events.applied) == 1
+    row = db.conn.execute(
+        "SELECT affair_id FROM relation_edge_events WHERE id=?",
+        (result.edge_events.applied[0]["id"],),
+    ).fetchone()
+    assert row["affair_id"] == affair.id
+
+
 def test_protagonist_lands_and_rejects_nonexistent_person(game):
     db, state, _ = game
     minister = _minister(db)
@@ -345,6 +413,7 @@ def test_registration_adds_new_person_to_roster_and_rejects_existing_name(game):
     assert len(result.registrations.applied) == 1
     assert result.registrations.applied[0] == {"name": "李若璉補"}
     assert len(result.registrations.rejected) == 1
+    assert result.registrations.rejected[0].category == "invalid_state"
 
     row = db.conn.execute(
         "SELECT status, office FROM characters WHERE name=?", ("李若璉補",),
@@ -353,6 +422,26 @@ def test_registration_adds_new_person_to_roster_and_rejects_existing_name(game):
     assert row["status"] == "active"
     assert row["office"] == "锦衣卫百户"
     assert "李若璉補" in db.content.characters
+
+
+def test_registration_attaches_declared_affair(game):
+    db, state, _ = game
+    affair = db.affairs.open(
+        name="宁远护送", origin="拨银、调将、派兵去宁远",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+
+    result = dispatch_declaration(db, state, {
+        "registrations": [{
+            "name": "李若璉補", "office": "锦衣卫百户", "office_type": "武职",
+            "affair_declaration": {"attach": "existing", "affair_id": affair.id},
+        }],
+    })
+    assert result.registrations.applied == [{"name": "李若璉補"}]
+    row = db.conn.execute(
+        "SELECT affair_id FROM characters WHERE name=?", ("李若璉補",),
+    ).fetchone()
+    assert row["affair_id"] == affair.id
 
 
 def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
@@ -402,3 +491,45 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
     assert "decree:1" not in again
     facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
     assert [f.body for f in facts_after] == ["旨一：暂存中"]
+
+
+def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
+    """已结算的 decree_ref 不能再暂存——否则那条新 staged 行会永远没有机会被
+    结算或拒收（is_settled 一旦为真，settle 整体跳过该 ref），造成静默 stranded
+    状态。改旨应发新的 decree_ref，不是向已终结的旧 ref 追加。"""
+    from ming_sim.entities.staged_declaration import DecreeAlreadySettled
+    from ming_sim.declaration_dispatch import (
+        settle_staged_declarations_in_decree_order,
+        stage_declaration,
+    )
+
+    db, state, _ = game
+    minister = _minister(db)
+
+    stage_declaration(
+        db, decree_ref="decree:3",
+        declaration={"textual_facts": [{
+            "subject_kind": "character", "subject_id": minister, "body": "旨三：首次暂存",
+        }]},
+        turn=int(state.turn),
+    )
+    settle_staged_declarations_in_decree_order(db, state, ["decree:3"])
+    facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts] == ["旨三：首次暂存"]
+
+    with pytest.raises(DecreeAlreadySettled):
+        stage_declaration(
+            db, decree_ref="decree:3",
+            declaration={"textual_facts": [{
+                "subject_kind": "character", "subject_id": minister, "body": "旨三：迟到的重复暂存",
+            }]},
+            turn=int(state.turn),
+        )
+
+    # 拒绝发生在写入之前：没有留下一条永远不会被结算/拒收的孤儿 staged 行。
+    row = db.conn.execute(
+        "SELECT COUNT(*) c FROM staged_declarations WHERE decree_ref='decree:3' AND status='staged'",
+    ).fetchone()
+    assert row["c"] == 0
+    facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
+    assert [f.body for f in facts_after] == ["旨三：首次暂存"]

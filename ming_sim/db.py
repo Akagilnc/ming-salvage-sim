@@ -2663,12 +2663,26 @@ class GameDB:
         AffairStore.ensure_schema(self.conn)
         self.ensure_column("decree_dossiers", "affair_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "affair_id", "INTEGER NOT NULL DEFAULT 0")
+        # #1835：relation_edge_events 是整数 id 主键，可直接复用 AffairStore 通用
+        # 指针机制（_POINTER_TABLES）；characters 主键是 name（非整数 id），不
+        # 兼容该通用机制的 `WHERE id=?`，其「各自所属事务」绑定由
+        # ming_sim.declaration_dispatch 按 name 主键另写最小实现，语义对齐但不
+        # 强行改 AffairStore 的既有 id 主键契约。
+        self.ensure_column("relation_edge_events", "affair_id", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("characters", "affair_id", "INTEGER NOT NULL DEFAULT 0")
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_affair "
             "ON decree_dossiers(affair_id, id)"
         )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_issues_affair ON issues(affair_id, id)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_relation_edge_events_affair "
+            "ON relation_edge_events(affair_id, id)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_characters_affair ON characters(affair_id)"
         )
         self.affairs = AffairStore(self.conn)
         self.conn.commit()

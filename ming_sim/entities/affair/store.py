@@ -19,6 +19,7 @@ _ORIGIN_DOSSIER = "dossier"
 _POINTER_TABLES = {
     "decree_dossiers": "案卷",
     "issues": "局势",
+    "relation_edge_events": "边事件",
 }
 
 _SCHEMA_SQL = """

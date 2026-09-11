@@ -36,6 +36,15 @@ CREATE INDEX IF NOT EXISTS idx_staged_declarations_status
 """
 
 
+class DecreeAlreadySettled(ValueError):
+    """该 decree_ref 已经结算过，不能再暂存新声明（防止结算后悄悄多出永远不会
+    被消费/拒绝的孤儿 staged 行——一个 decree_ref 的生命周期是单向的
+    staged → (discarded | settled)，settled 是终态）。
+
+    ADR 0157「改旨 = 作废后按新旨重起」：同一件事需要再来一轮，调用方应发一个
+    新的 decree_ref，而不是向已终结的旧 ref 追加。"""
+
+
 @dataclass(frozen=True)
 class StagedDeclaration:
     id: int
@@ -61,6 +70,10 @@ class StagedDeclarationStore:
             raise ValueError("decree_ref 不能为空")
         if not isinstance(declaration, Mapping):
             raise ValueError("声明须为对象")
+        if self.is_settled(ref):
+            raise DecreeAlreadySettled(
+                f"decree_ref 已结算，不能再暂存新声明：{ref}（如需再起该旨，请用新的 decree_ref）"
+            )
         owns = connection_owns_transaction(self._conn)
         cur = self._conn.execute(
             "INSERT INTO staged_declarations (decree_ref, declaration_json, status, created_turn) "
