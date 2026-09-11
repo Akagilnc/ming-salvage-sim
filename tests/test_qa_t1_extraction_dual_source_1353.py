@@ -1061,7 +1061,7 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
                 status="COMPLETED",
             )
 
-    game.session.registry.get = lambda _ch: _Agent()
+    game.session.registry.get = lambda _ch, **_kw: _Agent()
     game.session.join_chat_turn_scene = lambda *_a, **_k: []
     game.session.persist_chat_turn_scene = lambda *_a, **_k: None
     game.session.abandon_chat_turn_scene = lambda *_a, **_k: None
@@ -1171,7 +1171,7 @@ def test_chat_stream_prologue_uses_ticketed_not_bare_runtime(web_game, monkeypat
             raise LLMUnavailable("boom")
             yield  # pragma: no cover
 
-    game.session.registry.get = lambda _ch: _Boom()
+    game.session.registry.get = lambda _ch, **_kw: _Boom()
     monkeypatch.setattr(game, "_persistent_chat_minister", lambda _n: False)
 
     events = list(game.chat_stream(minister, "边饷如何？"))

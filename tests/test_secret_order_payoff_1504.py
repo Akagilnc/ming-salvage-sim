@@ -1810,7 +1810,7 @@ def _web_secret_landing_client(tmp_path, monkeypatch, backend_fn):
         if getattr(ch, "power_id", "ming") == "ming"
         and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
     )
-    game.session.registry.get = lambda _character: _AudienceAgent()
+    game.session.registry.get = lambda _character, **_kw: _AudienceAgent()
     if game.session.llm_config is not None:
         game.session.llm_config.channel = "cli"
     client = TestClient(web_app.app)

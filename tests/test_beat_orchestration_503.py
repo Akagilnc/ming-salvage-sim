@@ -1571,7 +1571,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
             self.content = SimpleNamespace(
                 characters={minister: minister_double(minister)},
             )
-            self.registry = SimpleNamespace(get=lambda _c: _AgentOk())
+            self.registry = SimpleNamespace(get=lambda _c, **_kw: _AgentOk())
             self._character = lambda name: minister_double(name)
             self._start_cli_action_intent = lambda *_a, **_k: None
             self._finish_cli_action_intent = lambda *_a, **_k: None
@@ -1689,7 +1689,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     assert any(e.get("type") == "done" for e in events), events
     assert not abandon_entered.is_set(), "success path must not abandon"
 
-    session.registry = SimpleNamespace(get=lambda _c: _AgentBoom())
+    session.registry = SimpleNamespace(get=lambda _c, **_kw: _AgentBoom())
     object.__setattr__(rt, "chat_history", {minister: []})
     gen2 = rt.chat_stream(minister, "再问边饷")
     events2: list = []
@@ -1754,7 +1754,7 @@ def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
             yield SimpleNamespace(event="RunContent", content="臣告退。")
             yield RunOutput()
 
-    game.session.registry.get = lambda _c: _DismissAgent()
+    game.session.registry.get = lambda _c, **_kw: _DismissAgent()
 
     ctid, snap = game._start_chat_turn(minister)
     night_id = int(game.db.conn.execute(
@@ -1861,7 +1861,7 @@ def test_web_stream_exit_overlaps_unfinished_reply_after_dismiss_tool(web_game):
             yield SimpleNamespace(event="RunContent", content="告退。")
             yield RunOutput()
 
-    game.session.registry.get = lambda _c: _OverlapDismissAgent()
+    game.session.registry.get = lambda _c, **_kw: _OverlapDismissAgent()
 
     ctid, snap = game._start_chat_turn(minister)
     night_id = int(game.db.conn.execute(
@@ -1934,7 +1934,7 @@ def test_session_chat_exit_overlaps_inflight_action_intent(game):
             )
 
     class _Reg:
-        def get(self, _c):
+        def get(self, _c, **_kw):
             return _DismissAgent()
 
     sess = GameSession.__new__(GameSession)

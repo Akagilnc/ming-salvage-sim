@@ -898,7 +898,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
         cb, "extract_confirmation_intent",
         lambda *_a, **_k: {"confirmation": "应允", "target_ids": [], "new_content": ""},
     )
-    game.session.registry.get = lambda _ch: _PhaseAgent()
+    game.session.registry.get = lambda _ch, **_kw: _PhaseAgent()
 
     # ① 纯问事：HTTP chat 真实入口
     out = client.post(
@@ -1404,7 +1404,7 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
     sess.state = state
     sess.content = content
     sess.registry = SimpleNamespace(
-        get=lambda character: agent,
+        get=lambda character, **_kw: agent,
         session_ids={},
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")

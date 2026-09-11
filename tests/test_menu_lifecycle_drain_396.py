@@ -431,7 +431,7 @@ class _GapBRegistry:
     def __init__(self, agents: dict):
         self.agents = agents
 
-    def get(self, character):
+    def get(self, character, **_kw):
         return self.agents[character.name]
 
 

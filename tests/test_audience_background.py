@@ -63,7 +63,7 @@ class _FakeRegistry:
         self.agent = agent
         self.session_ids = {}
 
-    def get(self, _character):
+    def get(self, _character, **_kw):
         return self.agent
 
     def refresh(self, _name):
@@ -101,7 +101,7 @@ class _FakeSession(HallAdmissionSessionMixin):
     def _merge_staged_new_secret_order_content(self, *args, **kwargs):
         return GameSession._merge_staged_new_secret_order_content(self, *args, **kwargs)
 
-    def _audience_prompt_for_message(self, message):
+    def _audience_prompt_for_message(self, message, *_a, **_kw):
         return f"【增强上下文】{message}"
 
     def apply_cli_conversation_actions(self, *_args, **_kwargs):

@@ -8,7 +8,6 @@ CLI 和 Web 各自只做 I/O 包装。
 from __future__ import annotations
 
 import json
-import inspect
 import logging
 import re
 import sqlite3
@@ -1622,53 +1621,14 @@ class GameSession:
         # 控制指令（退下/换人/技能）由 CLI 层 parse_court_command 处理；
         # GameSession.chat 只负责与 agent 对话与 tool 截获。
         # #1812：本消息只备一次材料，供 Agent 首建、tools/model cwd 与开场共用；
-        # 不得各自再各建一份（重复全树重写+开场重复入 prompt）。失败时让
-        # _audience_prompt_for_message 走它自己的 fail-loud 回退文案——不在
-        # 这里改写原有的失败行为。
+        # 不得各自再各建一份（重复全树重写+开场重复入 prompt）。准备失败按
+        # ADR 0005 响亮失败，不吞异常、不改走无 prepared 的旧路。
         from ming_sim.materials import prepare_character_materials
-        try:
-            prepared = prepare_character_materials(self.db, self.state, character)
-        except Exception:
-            prepared = None
-        registry_get = self.registry.get
-        try:
-            get_signature = inspect.signature(registry_get)
-        except (TypeError, ValueError):
-            agent = registry_get(character)
-        else:
-            try:
-                get_signature.bind(character, prepared=prepared)
-            except TypeError:
-                agent = registry_get(character)
-            else:
-                agent = registry_get(character, prepared=prepared)
-        # Keep the public seam compatible with lightweight web/test session
-        # doubles that predate the optional character-aware audience context.
-        audience_prompt = self._audience_prompt_for_message
-        try:
-            prompt_signature = inspect.signature(audience_prompt)
-        except (TypeError, ValueError):
-            # The production bound method has an inspectable signature.  For
-            # opaque callables, preserve the character-aware production call;
-            # do not catch its runtime TypeError as a signature fallback.
-            augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
-        else:
-            try:
-                prompt_signature.bind(
-                    message, character, chat_turn_id=chat_turn_id, prepared=prepared,
-                )
-            except TypeError:
-                try:
-                    prompt_signature.bind(message, character, chat_turn_id=chat_turn_id)
-                except TypeError:
-                    prompt_signature.bind(message)
-                    augmented = audience_prompt(message)
-                else:
-                    augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
-            else:
-                augmented = audience_prompt(
-                    message, character, chat_turn_id=chat_turn_id, prepared=prepared,
-                )
+        prepared = prepare_character_materials(self.db, self.state, character)
+        agent = self.registry.get(character, prepared=prepared)
+        augmented = self._audience_prompt_for_message(
+            message, character, chat_turn_id=chat_turn_id, prepared=prepared,
+        )
         # #1566：密令 route 须在 command-verdict / exit / summon·dismiss 之前成立。
         message_text = (message or "").strip()
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES

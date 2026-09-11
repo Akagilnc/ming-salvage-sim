@@ -1268,7 +1268,7 @@ def _real_chat_session(db, state, content, monkeypatch, *, scripted, agent_tools
     sess.state = state
     sess.content = content
     sess.registry = SimpleNamespace(
-        get=lambda _character: FakeAgent(),
+        get=lambda _character, **_kw: FakeAgent(),
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}
@@ -1755,7 +1755,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             if getattr(ch, "power_id", "ming") == "ming"
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
         )
-        game.session.registry.get = lambda _character: _AudienceAgent()
+        game.session.registry.get = lambda _character, **_kw: _AudienceAgent()
         if game.session.llm_config is not None:
             game.session.llm_config.channel = "cli"
         if validation_case == "existing_draft_region_mismatch":
@@ -1914,7 +1914,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
         )
         canned = _TwoRoundHubuAgent()
-        game.session.registry.get = lambda _ch: canned
+        game.session.registry.get = lambda _ch, **_kw: canned
         if getattr(game.session, "llm_config", None) is not None:
             try:
                 game.session.llm_config.channel = "cli"

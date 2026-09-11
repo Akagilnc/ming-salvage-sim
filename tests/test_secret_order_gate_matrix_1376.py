@@ -334,7 +334,7 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     game = web_app.web_game
     assert game is not None
 
-    game.session.registry.get = lambda _ch: _CannedAgent()
+    game.session.registry.get = lambda _ch, **_kw: _CannedAgent()
     cfg = game.session.llm_config
     if getattr(cfg, "channel", None) != "cli":
         try:
@@ -472,14 +472,14 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
 
     assert resp.status_code == 200, f"{entry} inject → {resp.status_code}: {resp.text}"
     _wait_pending_writes(game)
-    game.session.registry.get = lambda _ch: _CannedAgent()
+    game.session.registry.get = lambda _ch, **_kw: _CannedAgent()
     return resp.json() or {}
 
 
 def _chat(env: dict, message: str) -> dict:
     client: TestClient = env["client"]
     game = env["game"]
-    game.session.registry.get = lambda _ch: _CannedAgent()
+    game.session.registry.get = lambda _ch, **_kw: _CannedAgent()
     resp = client.post(
         f"/api/ministers/{MINISTER}/chat",
         json={"message": message},
@@ -547,7 +547,7 @@ def _settle_month(env: dict) -> dict:
     _wait_pending_writes(game)
     open_n = an.get_open_night(game.db)
     assert open_n is None or str(open_n.get("status")) == an.NIGHT_STATUS_CLOSED, open_n
-    game.session.registry.get = lambda _ch: _CannedAgent()
+    game.session.registry.get = lambda _ch, **_kw: _CannedAgent()
     return data if isinstance(data, dict) else {}
 
 

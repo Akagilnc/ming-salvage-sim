@@ -294,7 +294,7 @@ def test_audience_grounded_army_pay_lands_through_close_night(
         if game.session.llm_config is not None:
             game.session.llm_config.channel = "cli"
         name = _active_ming_minister(game.db, game.content, office="户部").name
-        game.session.registry.get = lambda _ch: _Agent()
+        game.session.registry.get = lambda _ch, **_kw: _Agent()
         client = TestClient(web_app.app)
         turn_before = int(game.state.turn)
 

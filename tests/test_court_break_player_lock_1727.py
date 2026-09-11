@@ -144,7 +144,7 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
     minister = _active_minister(game)
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
-    game.session.registry.get = lambda _ch: _StreamFarewellAgent()
+    game.session.registry.get = lambda _ch, **_kw: _StreamFarewellAgent()
 
     trail_release = threading.Event()
     restore_trails = _install_trail_hold(game, trail_release)

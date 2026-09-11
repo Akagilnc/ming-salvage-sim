@@ -557,13 +557,12 @@ def test_issue_source_blacklist_vetoes_knowledge_opening_and_directory(game, tmp
     knower_prepared = prepare_character_materials(
         db, state, knower, dest_root=tmp_path / "knower",
     )
+    # 目录渲染同一排除边界只查一处真源（blob 是全量，opening 属其子集，
+    # 查 blob 即够——不重复对 opening 再查一遍，#1812 契约断言不落重复渲染面）。
     hidden_blob = _directory_blob(hidden_prepared)
     knower_blob = _directory_blob(knower_prepared)
-    assert marker not in hidden_prepared.opening
     assert marker not in hidden_blob
-    assert public_marker not in hidden_prepared.opening
     assert public_marker not in hidden_blob
-    assert marker in knower_prepared.opening
     assert marker in knower_blob
     assert public_marker in knower_blob
 

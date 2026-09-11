@@ -604,12 +604,12 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
     sess.registry = SimpleNamespace(
-        get=lambda _ch: SimpleNamespace(
+        get=lambda _ch, **_kw: SimpleNamespace(
             run=lambda *_a, **_k: SimpleNamespace(content="臣遵旨。", tools=[]),
         ),
         session_ids={},
     )
-    sess._audience_prompt_for_message = lambda msg, character=None, chat_turn_id=0: msg
+    sess._audience_prompt_for_message = lambda msg, character=None, chat_turn_id=0, **_kw: msg
     sess._start_cli_action_intent = lambda *_a, **_k: None
     sess._finish_cli_action_intent = lambda *_a, **_k: None
     sess.close_night_after_chat_if_needed = types.MethodType(

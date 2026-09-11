@@ -207,7 +207,7 @@ def _pick_active_minister(state: dict) -> str:
 
 
 def _install_canned_minister(game) -> None:
-    game.session.registry.get = lambda _ch: _CannedMinisterAgent()
+    game.session.registry.get = lambda _ch, **_kw: _CannedMinisterAgent()
 
 
 def _install_trail_hold(game, release: threading.Event):
@@ -797,7 +797,7 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind):
             return None
 
     agent = _StreamAgent()
-    game.session.registry.get = lambda _ch: agent
+    game.session.registry.get = lambda _ch, **_kw: agent
 
     stream = client.post(
         f"/api/ministers/{remote}/chat/stream",
@@ -842,7 +842,7 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
             return None
 
     sync = _SyncAgent()
-    game.session.registry.get = lambda _ch: sync
+    game.session.registry.get = lambda _ch, **_kw: sync
 
     resp = client.post(
         f"/api/ministers/{remote}/chat",

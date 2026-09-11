@@ -54,12 +54,12 @@ def _session(db, state, content, *, reply="臣领旨。", tools=None):
     sess.state = state
     sess.content = content
     sess.registry = SimpleNamespace(
-        get=lambda _c: FakeAgent(),
+        get=lambda _c, **_kw: FakeAgent(),
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = set()
     sess._retrieve_memories_for_message = lambda message: message
-    sess._audience_prompt_for_message = lambda message, character, chat_turn_id=0: message
+    sess._audience_prompt_for_message = lambda message, character, chat_turn_id=0, **_kw: message
     sess._start_cli_action_intent = lambda *a, **k: None
     sess._finish_cli_action_intent = lambda *a, **k: []
     sess.start_exit_scene_from_dismiss_tools = lambda *a, **k: None

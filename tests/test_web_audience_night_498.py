@@ -286,7 +286,7 @@ async def _start_hanging_chat(game, client, minister):
     故本 helper 在 raise 前 release+drain，不把半移交资源留给调用方。
     """
     started, allow = threading.Event(), threading.Event()
-    game.session.registry.get = lambda ch: _FakeAgent(started=started, allow=allow)
+    game.session.registry.get = lambda ch, **_kw: _FakeAgent(started=started, allow=allow)
     task = asyncio.create_task(
         client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
     try:
@@ -502,7 +502,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
         lambda *a, **k: _TracingEndorsementExtractor(),
     )
     # Real chat path uses registry agent; keep canned so freeze is the only outcome.
-    game.session.registry.get = lambda ch: _FakeAgent(answer="臣另有奏。")
+    game.session.registry.get = lambda ch, **_kw: _FakeAgent(answer="臣另有奏。")
 
     async def first_fail_scenario():
         async with _client() as issue_client, _client() as chat_client:
@@ -889,7 +889,7 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
     game = web_game
     minister = _active_minister(game)
     # 装好 fake LLM：删掉持锁内复查时，失败只会因非法开夜/建轮（而非缺 API key 401）。
-    game.session.registry.get = lambda ch: _FakeAgent()
+    game.session.registry.get = lambda ch, **_kw: _FakeAgent()
     game.state.turn_phase = TurnPhase.SUMMONING.value  # 锁前快速查通过
     nights0, turns0 = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")
 

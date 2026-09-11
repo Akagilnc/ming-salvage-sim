@@ -157,10 +157,10 @@ def test_active_impeachment_disposition_flows_from_player_tool_to_dossier(game, 
             )])
 
     sess = _directive_session(db, state, content)
-    sess.registry = SimpleNamespace(get=lambda _character: Agent())
+    sess.registry = SimpleNamespace(get=lambda _character, **_kw: Agent())
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *_args, **_kwargs: None
     sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
     result = GameSession.chat(sess, actor.name, f"对此弹劾潮{disposition}。")
@@ -930,7 +930,7 @@ def test_api_tool_args_deliver_punishment_fields_through_chat(game):
             )
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 
@@ -941,7 +941,7 @@ def test_api_tool_args_deliver_punishment_fields_through_chat(game):
     sess.registry = Registry()
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *_args, **_kwargs: None
     sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
 

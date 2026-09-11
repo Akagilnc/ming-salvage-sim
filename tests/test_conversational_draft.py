@@ -607,10 +607,10 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
     sess.db = db
     sess.state = state
     sess.content = content
-    sess.registry = types.SimpleNamespace(get=lambda _character: Agent())
+    sess.registry = types.SimpleNamespace(get=lambda _character, **_kw: Agent())
     sess.llm_config = types.SimpleNamespace(channel="cli")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     scripted = [{"kind": "secret", "secret_action": "新建"}]
     sess._start_cli_action_intent = lambda *_args, **_kwargs: scripted
     sess._finish_cli_action_intent = lambda future: future

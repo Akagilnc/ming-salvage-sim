@@ -271,7 +271,7 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
     agent = _StreamCrashAgent()
-    runtime.session.registry = SimpleNamespace(get=lambda _c: agent)
+    runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
     runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
@@ -294,7 +294,7 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
     agent = _StreamCrashAgent()
-    runtime.session.registry = SimpleNamespace(get=lambda _c: agent)
+    runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
     runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
@@ -358,7 +358,7 @@ def test_worker_postprocess_exception_emits_error_end():
     """
     db = _WorkerPathDB()
     runtime, minister = _base_runtime(db)
-    runtime.session.registry = SimpleNamespace(get=lambda _c: None)
+    runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
     runtime.session._character = lambda name: minister_double(minister)
     runtime.session._start_cli_action_intent = lambda *_a, **_k: None
     runtime.session.abandon_chat_turn_scene = lambda *_a, **_k: None

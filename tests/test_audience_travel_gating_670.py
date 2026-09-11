@@ -855,7 +855,7 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
     sess.content = content
     sess.temporary_characters = {}
     sess.registry = SimpleNamespace(
-        get=lambda _character: _Agent(),
+        get=lambda _character, **_kw: _Agent(),
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess._retrieve_memories_for_message = lambda text: text
@@ -962,7 +962,7 @@ def test_session_register_unlisted_summon_after_uses_admission(game, monkeypatch
         sess.content = content
         sess.temporary_characters = {}
         sess.registry = SimpleNamespace(
-            get=lambda _character: _Agent(),
+            get=lambda _character, **_kw: _Agent(),
             register=lambda _ch: None,
         )
         sess.llm_config = SimpleNamespace(channel="api")
@@ -1609,7 +1609,7 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
         agent = _SyncAgent(tools=non_secret_tools, chunks=["臣领密旨。"])
 
     s = runtime.session
-    s.registry = SimpleNamespace(get=lambda _ch: agent, session_ids={})
+    s.registry = SimpleNamespace(get=lambda _ch, **_kw: agent, session_ids={})
     s.llm_config = SimpleNamespace(channel="api")
     s._audience_prompt_for_message = (
         lambda msg, character=None, chat_turn_id=0: msg
@@ -2577,7 +2577,7 @@ def test_tool_summon_binds_origin_chat_turn_id_and_undo_deletes(game, monkeypatc
     sess.content = content
     sess.temporary_characters = {}
     sess.registry = SimpleNamespace(
-        get=lambda _character: _Agent(),
+        get=lambda _character, **_kw: _Agent(),
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess._retrieve_memories_for_message = lambda text: text

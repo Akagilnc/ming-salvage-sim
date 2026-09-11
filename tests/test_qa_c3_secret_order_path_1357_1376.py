@@ -345,7 +345,7 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
     try:
         name = _active_minister_name(game.db, game.content)
         # 唯一 fake 面：大臣回话 agent（LLM 边界）；确认/落库走生产。
-        game.session.registry.get = lambda _ch: _CannedAgent()
+        game.session.registry.get = lambda _ch, **_kw: _CannedAgent()
 
         pending_id = game.db.stage_pending_action(
             game.state.turn,

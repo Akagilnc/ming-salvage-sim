@@ -445,7 +445,7 @@ def _chat_shell(db, state, content, *, channel="cli"):
             return SimpleNamespace(content="臣遵旨改。", tools=[])
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 

@@ -134,7 +134,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
             and getattr(ch, "name", key) != "郭允厚"
         )
-        game.session.registry.get = lambda _ch: _HubuAgent()
+        game.session.registry.get = lambda _ch, **_kw: _HubuAgent()
         if getattr(game.session, "llm_config", None) is not None:
             try:
                 game.session.llm_config.channel = "cli"
