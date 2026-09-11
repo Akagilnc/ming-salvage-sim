@@ -152,28 +152,122 @@ def test_promise_refuse_withdraws_staged_action_and_missing_action_id_is_rejecte
     assert row is None
 
 
-def test_audience_and_month_end_call_the_same_dispatcher_no_parallel_logic(game):
-    """0155（召对承接）/0157（过月）两处生产调用点尚未接线（Status: proposed，未实施）；
-    本票只钉契约层的单一入口——两处未来调用点喂同形声明，落地同构，不必各自
-    另判一套分派逻辑（AC4：没有第二份同构逻辑）。"""
+def test_promise_referencing_action_id_belonging_to_another_night_is_rejected(game):
+    """AC3 的引用不存在实体拒收，对「id 真实存在但不属本声明所在夜」同样成立
+    （ADR 0155：转译只认「本夜暂存清单」）——不能因为 id 恰巧撞上另一夜真实
+    存在的暂存动作就误批它。"""
+    db, state, _ = game
+    minister = _minister(db)
+    other_night_id = 987654321
+    staged_id = db.stage_pending_action(
+        int(state.turn), "directive", "拟旨", minister, {"text": "另一夜的暂存"},
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET night_id=? WHERE id=?", (other_night_id, staged_id),
+    )
+    db.conn.commit()
+
+    declaration = {"promises": [{"action_id": staged_id, "decision": "应允"}]}
+    result = dispatch_declaration(
+        db, state, declaration, minister_name=minister, night_id=0,
+    )
+
+    assert result.promises.applied == []
+    assert len(result.promises.rejected) == 1
+    assert result.promises.rejected[0].category == "missing_ref"
+    row = db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+    ).fetchone()
+    assert row["night_approved"] == 0
+
+
+def test_on_scene_person_status_change_lands_and_rejects_nonexistent_person(game):
     db, state, _ = game
     minister = _minister(db)
 
-    def audience_side_call(decl):
-        return dispatch_declaration(db, state, decl, minister_name=minister)
+    declaration = {
+        "on_scene_facts": [
+            {"name": minister, "动作": "处置", "status": "imprisoned", "reason": "下狱待勘"},
+            {"name": "子虚乌有之人", "动作": "处置", "status": "dead", "reason": "凭空捏造"},
+        ],
+    }
+    result = dispatch_declaration(db, state, declaration, minister_name=minister)
 
-    def month_end_side_call(decl):
-        return dispatch_declaration(db, state, decl, minister_name=minister)
+    assert len(result.on_scene_facts.applied) == 1
+    assert len(result.on_scene_facts.rejected) == 1
+    status, _ = db.get_character_status(minister)
+    assert status == "imprisoned"
 
-    declaration_a = {"commissions": [{"text": "召对当轮交办"}]}
-    declaration_b = {"commissions": [{"text": "过月世界段交办"}]}
 
-    result_a = audience_side_call(declaration_a)
-    result_b = month_end_side_call(declaration_b)
+def test_presence_enter_and_exit_land_on_night_ledger_no_night_context_rejects(game):
+    db, state, content = game
+    minister = _minister(db)
+    from ming_sim.audience_night import open_night
 
-    assert len(result_a.commissions.applied) == 1
-    assert len(result_b.commissions.applied) == 1
-    # 两处调用点解析的是同一个模块级函数对象，不是各自一份平行实现。
-    assert audience_side_call.__globals__["dispatch_declaration"] is (
-        month_end_side_call.__globals__["dispatch_declaration"]
-    )
+    night = open_night(db, state)
+    night_id = int(night["id"])
+
+    declaration = {
+        "presence": [
+            {"person_name": minister, "effect": "enter"},
+            {"person_name": minister, "effect": "exit"},
+        ],
+    }
+    result = dispatch_declaration(db, state, declaration, night_id=night_id)
+    assert len(result.presence.applied) == 2
+    assert result.presence.rejected == []
+
+    no_night_result = dispatch_declaration(db, state, declaration, night_id=0)
+    assert no_night_result.presence.applied == []
+    assert len(no_night_result.presence.rejected) == 2
+
+
+def test_scene_fact_speaker_segment_lands_with_audibility_and_bad_audibility_is_rejected(game):
+    db, state, _ = game
+    minister = _minister(db)
+    from ming_sim.audience_night import open_night
+
+    night = open_night(db, state)
+    night_id = int(night["id"])
+
+    declaration = {
+        "scene_facts": [
+            {"body": "臣领旨。", "audibility": "殿上公开", "person_names": [minister]},
+            {"body": "低声私语", "audibility": "非法可闻性"},
+        ],
+    }
+    result = dispatch_declaration(db, state, declaration, night_id=night_id)
+    assert len(result.scene_facts.applied) == 1
+    assert len(result.scene_facts.rejected) == 1
+
+
+def test_edge_event_lands_and_rejects_unknown_kind(game):
+    db, state, _ = game
+    ministers = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
+    ).fetchall()
+    assert len(ministers) == 2
+    a, b = str(ministers[0]["name"]), str(ministers[1]["name"])
+
+    declaration = {
+        "edge_events": [
+            {"source": a, "target": b, "event_kind": "撑腰", "context": "当殿举荐"},
+            {"source": a, "target": b, "event_kind": "不存在的类目", "context": "…"},
+        ],
+    }
+    result = dispatch_declaration(db, state, declaration)
+    assert len(result.edge_events.applied) == 1
+    assert len(result.edge_events.rejected) == 1
+    assert result.edge_events.rejected[0].category == "hallucinated_id"
+
+
+def test_protagonist_lands_and_rejects_nonexistent_person(game):
+    db, state, _ = game
+    minister = _minister(db)
+
+    ok = dispatch_declaration(db, state, {"protagonist": {"person_name": minister}})
+    assert ok.protagonist.applied == [{"person_name": minister}]
+
+    bad = dispatch_declaration(db, state, {"protagonist": {"person_name": "子虚乌有之人"}})
+    assert bad.protagonist.applied == []
+    assert len(bad.protagonist.rejected) == 1
