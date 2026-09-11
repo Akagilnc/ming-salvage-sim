@@ -10,6 +10,7 @@ import pytest
 
 import ming_sim.cli_backend as cb
 from ming_sim.exceptions import LLMUnavailable
+from ming_sim.materials import prepare_character_materials
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
@@ -478,9 +479,10 @@ def test_audience_prompt_does_not_expose_unissued_draft_to_uninvolved_minister(g
         },
     )
     session = SimpleNamespace(db=db, state=state)
+    prepared = prepare_character_materials(db, state, minister)
 
     prompt = GameSession._audience_prompt_for_message(
-        session, "辽饷近况如何？", minister
+        session, "辽饷近况如何？", minister, prepared=prepared
     )
 
     assert "着户部清核辽饷" not in prompt
@@ -499,8 +501,11 @@ def test_audience_prompt_projects_return_report_with_derived_source(game, monkey
 
     monkeypatch.setattr(db, "build_return_report", build_report)
     session = SimpleNamespace(db=db, state=state)
+    prepared = prepare_character_materials(db, state, minister)
 
-    prompt = GameSession._audience_prompt_for_message(session, "请查访各镇欠饷如何？", minister)
+    prompt = GameSession._audience_prompt_for_message(
+        session, "请查访各镇欠饷如何？", minister, prepared=prepared
+    )
 
     assert calls == ["inquiry"]
     world = db.get_character_knowledge(state, minister.name).get("world") or {}
@@ -518,8 +523,11 @@ def test_audience_prompt_does_not_create_near_minister_report_for_ordinary_minis
         and "太监" not in character.office
     )
     session = SimpleNamespace(db=db, state=state)
+    prepared = prepare_character_materials(db, state, minister)
 
-    GameSession._audience_prompt_for_message(session, "请查访各镇欠饷如何？", minister)
+    GameSession._audience_prompt_for_message(
+        session, "请查访各镇欠饷如何？", minister, prepared=prepared
+    )
 
     assert not any(
         item.get("source_id", "").startswith("near_minister:")

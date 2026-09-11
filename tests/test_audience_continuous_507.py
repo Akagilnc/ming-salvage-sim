@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 from ming_sim import audience_night as an
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, AUDIBILITY_PUBLIC
+from ming_sim.materials import prepare_character_materials
 from ming_sim.session import GameSession
 
 STANDING = "王承恩"  # 常在员额（内廷近臣全程在场）
@@ -105,12 +106,14 @@ def test_audience_prompt_carries_heard_hall_dialogue_for_present_attendant(game)
     session = SimpleNamespace(db=db, state=state)
     # 正向：侍立在场的毕自严补话组装输入含其在场时段所闻殿上公开对话
     prompt_present = GameSession._audience_prompt_for_message(
-        session, "卿以为如何？", content.characters["毕自严"])
+        session, "卿以为如何？", content.characters["毕自严"],
+        prepared=prepare_character_materials(db, state, content.characters["毕自严"]))
     assert "徐光启奏：宜用洪承畴督师陕西。" in prompt_present
 
     # 负向（AC3）：未在场者（洪承畴，仅置 active 未入殿）组装输入不含殿内对话
     prompt_absent = GameSession._audience_prompt_for_message(
-        session, "卿以为如何？", content.characters["洪承畴"])
+        session, "卿以为如何？", content.characters["洪承畴"],
+        prepared=prepare_character_materials(db, state, content.characters["洪承畴"]))
     assert "徐光启奏：宜用洪承畴督师陕西" not in prompt_absent
 
 
@@ -165,7 +168,8 @@ def test_reply_input_routes_per_character_knowledge_not_one_answer_for_all(game)
 
     # 正向：问常在近臣王承恩——回奏输入取自其角色见闻，世界库裸值不得外泄（负向闸案）。
     prompt_attendant = GameSession._audience_prompt_for_message(
-        session, question, content.characters[STANDING])
+        session, question, content.characters[STANDING],
+        prepared=prepare_character_materials(db, state, content.characters[STANDING]))
     world = db.get_character_knowledge(state, STANDING).get("world") or {}
     for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
         value = str(world.get(key) or "").strip()
@@ -174,8 +178,9 @@ def test_reply_input_routes_per_character_knowledge_not_one_answer_for_all(game)
 
     # 负向：同一问题问不知情的普通大臣——目录不注入近臣查访见闻
     prompt_minister = GameSession._audience_prompt_for_message(
-        session, question, content.characters["毕自严"])
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+        session, question, content.characters["毕自严"],
+        prepared=prepare_character_materials(db, state, content.characters["毕自严"]))
+    from ming_sim.materials import list_materials, read_material
     minister_blob = "\n".join(
         read_material(d.root, path)
         for d in [prepare_character_materials(db, state, content.characters["毕自严"])]
@@ -202,7 +207,8 @@ def test_audience_prompt_excludes_hall_dialogue_after_command_dismiss(game):
 
     session = SimpleNamespace(db=db, state=state)
     prompt = GameSession._audience_prompt_for_message(
-        session, "卿以为如何？", content.characters["毕自严"])
+        session, "卿以为如何？", content.characters["毕自严"],
+        prepared=prepare_character_materials(db, state, content.characters["毕自严"]))
     assert "陕西糜烂当速定督抚" in prompt        # 正向：退前所闻仍在区间内
     assert "九边军饷全无着落" not in prompt      # 负向：退后公开对话越出侍立区间、不入组装
 
@@ -222,7 +228,8 @@ def test_audience_prompt_excludes_hall_dialogue_after_extraction_exit(game):
 
     session = SimpleNamespace(db=db, state=state)
     prompt = GameSession._audience_prompt_for_message(
-        session, "卿以为如何？", content.characters["毕自严"])
+        session, "卿以为如何？", content.characters["毕自严"],
+        prepared=prepare_character_materials(db, state, content.characters["毕自严"]))
     assert "陕西糜烂当速定督抚" in prompt        # 正向：退前所闻仍在
     assert "九边军饷全无着落" not in prompt      # 负向：抽取出场后公开对话不入组装
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from ming_sim.knowledge import render_character_knowledge
+from ming_sim.materials import prepare_character_materials
 from ming_sim.session import GameSession
 
 
@@ -32,8 +33,10 @@ def _render_for(db, state, name: str) -> str:
 
 def _prompt_for(db, state, content, name: str) -> str:
     session = SimpleNamespace(db=db, state=state)
+    character = content.characters[name]
     return GameSession._audience_prompt_for_message(
-        session, "户部钱粮近况如何？", content.characters[name],
+        session, "户部钱粮近况如何？", character,
+        prepared=prepare_character_materials(db, state, character),
     )
 
 

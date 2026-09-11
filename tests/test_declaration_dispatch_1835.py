@@ -358,7 +358,8 @@ def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
 
     night = open_night(db, state)
     night_id = int(night["id"])
-    declared_body = "内侍高唱，乔尚书趋步入殿，绯袍犹带风尘。"
+    # 首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账
+    declared_body = "  内侍高唱，乔尚书趋步入殿，绯袍犹带风尘。  \n"
 
     declaration = {
         "presence": [{"person_name": minister, "effect": "enter", "body": declared_body}],
@@ -371,7 +372,7 @@ def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
         "SELECT body FROM story_ledger_entries WHERE id=?",
         (result.presence.applied[0]["id"],),
     ).fetchone()
-    assert row["body"] == declared_body  # 原样落账，代码没有拼接/替换成模板句
+    assert row["body"] == declared_body  # 原样落账，含首尾空白，代码没有 strip 篡改
 
 
 def test_presence_rejects_nonexistent_person_without_polluting_ledger(game):
@@ -420,9 +421,10 @@ def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_an
     night = open_night(db, state)
     night_id = int(night["id"])
 
+    # 首项首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账
     declaration = {
         "scene_facts": [
-            {"body": "臣领旨。", "audibility": "殿上公开", "person_names": [minister]},
+            {"body": "  臣领旨。  \n", "audibility": "殿上公开", "person_names": [minister]},
             {"body": "低声私语", "audibility": "非法可闻性"},
             {"body": "凭空捏造之人插话。", "audibility": "殿上公开", "person_names": ["子虚乌有之人"]},
         ],
@@ -444,7 +446,7 @@ def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_an
         "SELECT body FROM story_ledger_entries WHERE id=?",
         (result.scene_facts.applied[0]["id"],),
     ).fetchone()
-    assert row["body"] == "臣领旨。"
+    assert row["body"] == "  臣领旨。  \n"  # 含首尾空白，未被 strip 篡改
 
 
 def test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_differently(game):

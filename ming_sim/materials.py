@@ -13,7 +13,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Sequence
+from typing import Any, Callable, List, Optional, Sequence
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _INDEX_NAME = "INDEX.txt"
@@ -23,6 +23,8 @@ _PUBLIC_DIR = "公开说法"
 _BOARD_DIR = "盘面"
 _GAZETTE_DIR = "邸报"
 _COURT_ROSTER_REL = f"{_PERSON_DIR}/朝臣名册.txt"
+_ARMY_DIR = "军队"
+_REGION_DIR = "地区"
 
 
 @dataclass(frozen=True)
@@ -569,6 +571,27 @@ def _write_public_by_month(tmp: Path, public_events: list) -> list[str]:
     return index
 
 
+def _rebuild_tree_atomically(dest: Path, write_tree: Callable[[Path], List[str]]) -> List[str]:
+    """一个局部原子目录重建接缝：建 tmp、写树成功才整体替换 dest；写入失败清
+    tmp、异常原样上抛，绝不留半成品目录——人物目录与世界目录共用同一份实现
+    （#1812/#1830/#1834，大理寺 Low：删除两处重复的 tmp 建/替/清逻辑）。"""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.parent / (dest.name + ".tmp")
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    tmp.mkdir(parents=True)
+    try:
+        index = write_tree(tmp)
+        if dest.exists():
+            shutil.rmtree(dest)
+        tmp.rename(dest)
+    except Exception:
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    return index
+
+
 def prepare_character_materials(
     db: Any,
     state: Any,
@@ -590,20 +613,9 @@ def prepare_character_materials(
     matter_lines = _character_affair_lines(db, state, name, knowledge)
 
     dest = Path(dest_root) if dest_root is not None else character_materials_root(db, state, character)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.parent / (dest.name + ".tmp")
-    if tmp.exists():
-        shutil.rmtree(tmp)
-    tmp.mkdir(parents=True)
-    try:
-        index = _write_tree(tmp, db, state, character, knowledge, matter_lines)
-        if dest.exists():
-            shutil.rmtree(dest)
-        tmp.rename(dest)
-    except Exception:
-        if tmp.exists():
-            shutil.rmtree(tmp, ignore_errors=True)
-        raise
+    index = _rebuild_tree_atomically(
+        dest, lambda tmp: _write_tree(tmp, db, state, character, knowledge, matter_lines),
+    )
 
     affairs = _opening_affair_lines(db, name, matter_lines)
     opening = _opening_text(
@@ -716,6 +728,30 @@ def _world_roster_names(db: Any) -> list[str]:
     ]
 
 
+def _world_subject_ids(db: Any, table: str) -> list[str]:
+    """`armies`/`regions` 全量 id（TEXT 主键），世界目录按对象枚举文字事实用。"""
+    if not hasattr(db, "conn"):
+        return []
+    return [
+        str(row["id"] or "").strip()
+        for row in db.conn.execute(f"SELECT id FROM {table} ORDER BY id").fetchall()
+        if str(row["id"] or "").strip()
+    ]
+
+
+def _textual_facts_text(textual_facts: Any, *, subject_kind: str, subject_id: str) -> str:
+    """这个对象名下全部文字事实（ADR 0156），按月连写、最新的在最后；无记录
+    给占位——世界目录按 character/army/region/affair 四类对象统一走这一条投影
+    （#1812/#1828/#1834：写口早接好，之前没有任何读口，人物伤势等只能落库、
+    过后无法再被推演读到；只在世界目录接，不注入人物私有全知目录）。"""
+    if textual_facts is None:
+        return "（无）"
+    facts = textual_facts.readable_materials(subject_kind=subject_kind, subject_id=subject_id)
+    if not facts:
+        return "（无）"
+    return "\n".join(f"{fact.occurred_month}：{fact.body}" for fact in facts)
+
+
 def _write_world_tree(
     tmp: Path,
     db: Any,
@@ -727,6 +763,7 @@ def _write_world_tree(
     from ming_sim.knowledge import build_character_knowledge
 
     index: list[str] = []
+    textual_facts = getattr(db, "textual_facts", None)
 
     board_rel = f"{_BOARD_DIR}/全局.txt"
     _write_text(tmp / board_rel, board_text)
@@ -740,8 +777,30 @@ def _write_world_tree(
             db.get_character_knowledge(state, name) if hasattr(db, "get_character_knowledge")
             else build_character_knowledge(db, state, name)
         )
-        rel = f"{_PERSON_DIR}/{_safe_segment(name)}/经历.txt"
+        person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
+        rel = f"{person_dir}/经历.txt"
         _write_text(tmp / rel, _experience_text(knowledge))
+        index.append(rel)
+        # #1828/#1834：人物名下按月文字事实（负伤/患病等）单独一份，世界目录
+        # 才有；人物私有经历目录（_write_tree）不注入，仍只按其知识见闻投影。
+        facts_rel = f"{person_dir}/按月实况.txt"
+        _write_text(tmp / facts_rel, _textual_facts_text(
+            textual_facts, subject_kind="character", subject_id=name,
+        ))
+        index.append(facts_rel)
+
+    for army_id in _world_subject_ids(db, "armies"):
+        rel = f"{_ARMY_DIR}/{_safe_segment(army_id)}/按月实况.txt"
+        _write_text(tmp / rel, _textual_facts_text(
+            textual_facts, subject_kind="army", subject_id=army_id,
+        ))
+        index.append(rel)
+
+    for region_id in _world_subject_ids(db, "regions"):
+        rel = f"{_REGION_DIR}/{_safe_segment(region_id)}/按月实况.txt"
+        _write_text(tmp / rel, _textual_facts_text(
+            textual_facts, subject_kind="region", subject_id=region_id,
+        ))
         index.append(rel)
 
     for dir_key, title, directory_text, _opening_text in affair_lines:
@@ -792,20 +851,9 @@ def prepare_world_materials(
     board_text = _world_board_text(db, state)
 
     dest = Path(dest_root) if dest_root is not None else world_materials_root(db, state)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.parent / (dest.name + ".tmp")
-    if tmp.exists():
-        shutil.rmtree(tmp)
-    tmp.mkdir(parents=True)
-    try:
-        index = _write_world_tree(tmp, db, state, public_events, affair_lines, board_text)
-        if dest.exists():
-            shutil.rmtree(dest)
-        tmp.rename(dest)
-    except Exception:
-        if tmp.exists():
-            shutil.rmtree(tmp, ignore_errors=True)
-        raise
+    index = _rebuild_tree_atomically(
+        dest, lambda tmp: _write_world_tree(tmp, db, state, public_events, affair_lines, board_text),
+    )
 
     opening = _world_opening_text(state, board_text, affair_lines)
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))

@@ -322,7 +322,11 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
         c for c in game.session.content.characters.values()
         if c.office_type not in ("后宫",)
     )
-    audience_input = game.session._audience_prompt_for_message("卿有何事？", minister)
+    from ming_sim.materials import prepare_character_materials
+    audience_input = game.session._audience_prompt_for_message(
+        "卿有何事？", minister,
+        prepared=prepare_character_materials(game.db, game.state, minister),
+    )
     assert str(row["text"] or "") in audience_input
     assert str(did) in audience_input
     # 反向（本回合新拟草案不得越界）归其契约本家：

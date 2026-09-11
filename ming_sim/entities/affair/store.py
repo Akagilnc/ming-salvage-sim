@@ -20,6 +20,13 @@ _POINTER_TABLES = {
     "decree_dossiers": "案卷",
     "issues": "局势",
     "relation_edge_events": "边事件",
+    "characters": "人物",
+}
+# 各表指针绑定用的主键列；未列出的默认整数 `id`。`characters` 主键是 name
+# （非整数 id），指针语义（未绑可绑一次/同值幂等/异值拒绝）与其它表完全一致，
+# 只是主键列不同，故此处配置而非另实现一份（#1812/#1831）。
+_POINTER_KEY_COLUMNS = {
+    "characters": "name",
 }
 
 _SCHEMA_SQL = """
@@ -251,9 +258,10 @@ class AffairStore:
         self.attach_pointer(table, row_id, affair_id)
         return affair_id
 
-    def attach_pointer(self, table: str, row_id: int, affair_id: int) -> None:
+    def attach_pointer(self, table: str, row_id: int | str, affair_id: int) -> None:
         """Unbound may bind once; same id is idempotent; a different id fails loud."""
         self.get(affair_id)
+        key_column = _POINTER_KEY_COLUMNS.get(table, "id")
         current = self._current_pointer(table, row_id)
         want = int(affair_id)
         if current == want:
@@ -264,8 +272,8 @@ class AffairStore:
             )
         owns = connection_owns_transaction(self._conn)
         cur = self._conn.execute(
-            f"UPDATE {table} SET affair_id=? WHERE id=? AND affair_id=0",
-            (want, int(row_id)),
+            f"UPDATE {table} SET affair_id=? WHERE {key_column}=? AND affair_id=0",
+            (want, row_id),
         )
         if int(cur.rowcount or 0) != 1:
             raise ValueError(
@@ -277,13 +285,14 @@ class AffairStore:
     def point_dossier(self, dossier_id: int, affair_id: int) -> None:
         self.attach_pointer("decree_dossiers", dossier_id, affair_id)
 
-    def _current_pointer(self, table: str, row_id: int) -> int:
+    def _current_pointer(self, table: str, row_id: int | str) -> int:
         label = _POINTER_TABLES.get(table)
         if label is None:
             raise ValueError(f"事务指针表非法：{table}")
+        key_column = _POINTER_KEY_COLUMNS.get(table, "id")
         row = self._conn.execute(
-            f"SELECT affair_id FROM {table} WHERE id=?",
-            (int(row_id),),
+            f"SELECT affair_id FROM {table} WHERE {key_column}=?",
+            (row_id if key_column != "id" else int(row_id),),
         ).fetchone()
         if row is None:
             raise KeyError(f"{label}不存在：{row_id}")

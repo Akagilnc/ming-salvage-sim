@@ -35,9 +35,19 @@ def record_public_saying(
     *,
     involved_characters: Iterable[str] = (),
     affair_ref: str = "",
+    excluded_names: Iterable[str] = (),
+    excluded_targets: Mapping[str, Iterable[str]] | None = None,
     commit: bool = True,
 ) -> int:
-    """记下一条公开说法，并写入公开层。不改人物实况。"""
+    """记下一条公开说法，并写入公开层。不改人物实况。
+
+    `excluded_names`/`excluded_targets`：密令『瞒某人』这类显式排除黑名单
+    一票否决压过公开层——公开说法自己的 source（`public_saying:<id>`）复用
+    既有 `knowledge_row_visible_to` 读口（它已经会回查
+    `knowledge_exclusions_for_source`/`knowledge_exclusion_targets_for_source`），
+    只是之前从未有写口往这个 source_id 上落过排除名单，闸有输入永远是空
+    （#1829/#1832）。落库走既有 `register_character_knowledge_source`（同
+    commissions 等其它 source 一样的持久黑名单表），不另建一套机制。"""
     if not isinstance(body, str) or not body.strip():
         raise ValueError("公开说法正文不能为空")
     if not isinstance(affair_ref, str):
@@ -67,6 +77,18 @@ def record_public_saying(
         "UPDATE public_sayings SET source_id=? WHERE id=?",
         (source_id, saying_id),
     )
+    names = _character_names(excluded_names)
+    targets = {
+        str(key): _character_names(values)
+        for key, values in (excluded_targets or {}).items()
+        if _character_names(values)
+    }
+    if (names or targets) and hasattr(db, "register_character_knowledge_source"):
+        db.register_character_knowledge_source(
+            state, (), kind="public", title=LAYER_TITLE, body=text,
+            source_id=source_id, excluded_names=names, excluded_targets=targets,
+            commit=False,
+        )
     if owns:
         db.conn.commit()
     return saying_id

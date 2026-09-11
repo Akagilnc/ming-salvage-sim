@@ -1992,7 +1992,7 @@ class GameSession:
         character: Character,
         *,
         chat_turn_id: int = 0,
-        prepared: Optional[PreparedMaterials] = None,
+        prepared: PreparedMaterials,
     ) -> str:
         # Opening context is the #1819 minimum set.  Full perspectival material
         # lives in the prepared directory and is read on demand (#1830).
@@ -2011,14 +2011,9 @@ class GameSession:
                 )
             except Exception:
                 return "【近臣回奏暂不可用：查访未能持久留档；不得据此臆答事实。】\n\n" + message
-        # #1812：caller (real chat entry) may already hold this message's one
-        # authoritative prepare; only build our own when none was shared.
-        if prepared is None:
-            from ming_sim.materials import prepare_character_materials
-            try:
-                prepared = prepare_character_materials(self.db, self.state, character)
-            except Exception:
-                return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
+        # #1812/#1830：唯一权威 prepare 在真实 chat 入口（GameSession.chat）一次
+        # 做成，按 ADR 0005 响亮失败；本函数不再另造一条吞异常、伪装成功的
+        # 兜底 prepare（那条路径生产从未真正调用，只有测试绕过真实入口触发）。
         registry = getattr(self, "registry", None)
         agent = None
         if registry is not None:

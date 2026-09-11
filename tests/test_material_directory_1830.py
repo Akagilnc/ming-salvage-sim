@@ -280,6 +280,7 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
     session = SimpleNamespace(db=db, state=state, registry=None)
     prompt = GameSession._audience_prompt_for_message(
         session, "下一句", character,
+        prepared=prepare_character_materials(db, state, character),
     )
     knowledge = db.get_character_knowledge(state, character.name)
     world = knowledge.get("world") or {}
@@ -296,10 +297,10 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
         state2 = restored.load_state()
         character2 = content.characters[character.name]
         session2 = SimpleNamespace(db=restored, state=state2, registry=None)
-        GameSession._audience_prompt_for_message(
-            session2, "重开后一句", character2,
-        )
         prepared = prepare_character_materials(restored, state2, character2)
+        GameSession._audience_prompt_for_message(
+            session2, "重开后一句", character2, prepared=prepared,
+        )
         restored_names = list_materials(prepared.root)
         assert not any(
             n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in restored_names

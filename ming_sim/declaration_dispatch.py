@@ -38,9 +38,9 @@ ADR 0155）与 :func:`stage_declaration` + :func:`settle_staged_declarations_in_
 textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 字段）、edge_events（`relation_edge_events` 整数主键，直接复用 AffairStore
 通用指针 `attach_pointer`）、on_scene_facts / registrations（`characters`
-主键是 name 非整数 id，AffairStore 通用指针假设整数 id 不兼容，改由本模块
-`_attach_character_affair_pointer` 按同样语义单独实现，未改 AffairStore
-既有契约）。只有 **protagonist** 未接入：它不是一条带来源的记录，而是「谁在
+主键是 name 非整数 id，AffairStore 通用指针 `attach_pointer` 现按表配置主键
+列——`characters` 配置为 `name`——同样直接复用，不再另实现一份，#1831）。
+只有 **protagonist** 未接入：它不是一条带来源的记录，而是「谁在
 御前」这个选择性指针本身，且本轮已校验其指向的人物真实存在——「所属事务」
 对一个选择指针没有独立于其已校验存在性之外的意义，故未强行给它挂一个不
 对应任何落库行为的事务字段。edge_events 与 on_scene_facts 的「动作本身 +
@@ -594,31 +594,12 @@ def _resolve_affair_origin_ref(db: Any, item: Mapping[str, object]) -> Tuple[str
 
 
 def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None:
-    """`characters` 主键是 name（非整数 id），AffairStore.attach_pointer 的通用
-    实现假设 id 整数主键、对这张表不适用；本地按同样的语义（未绑可绑一次、
-    同一事务幂等、绑别的事务响亮拒绝）实现，不改 AffairStore 的既有契约。
-    只在人物变更 / 入册已经真实落库之后调用——绑定失败不撤销已经发生的
-    落库（那会谎报「没发生」），调用方把异常信息原样带回结果，不吞。"""
-    db.affairs.get(affair_id)
-    row = db.conn.execute(
-        "SELECT affair_id FROM characters WHERE name=?", (name,),
-    ).fetchone()
-    if row is None:
-        raise KeyError(f"人物不存在：{name}")
-    current = int(row["affair_id"] or 0)
-    if current == affair_id:
-        return
-    if current != 0:
-        raise ValueError(f"人物已指向事务 {current}，不能改指 {affair_id}")
-    owns = connection_owns_transaction(db.conn)
-    cur = db.conn.execute(
-        "UPDATE characters SET affair_id=? WHERE name=? AND affair_id=0",
-        (affair_id, name),
-    )
-    if int(cur.rowcount or 0) != 1:
-        raise ValueError(f"人物已指向其它事务，不能改指 {affair_id}")
-    if owns:
-        db.conn.commit()
+    """`characters` 主键是 name（非整数 id）；AffairStore.attach_pointer 现按表
+    配置主键列（`characters` → `name`），语义（未绑可绑一次、同一事务幂等、
+    绑别的事务响亮拒绝）与其它指针表完全一致，直接复用、不再单独实现
+    （#1831）。只在人物变更 / 入册已经真实落库之后调用——绑定失败不撤销已经
+    发生的落库（那会谎报「没发生」），调用方把异常信息原样带回结果，不吞。"""
+    db.affairs.attach_pointer("characters", name, affair_id)
 
 
 def _dispatch_textual_facts(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
@@ -661,22 +642,43 @@ def _assert_characters_exist(db: Any, names: Sequence[str]) -> None:
             raise KeyError(f"人物不存在：{name}")
 
 
+def _string_array_field(item: Mapping[str, object], key: str) -> Optional[List[str]]:
+    """字段缺省视为空数组合法；给了就必须是纯字符串数组，否则返回 None 令
+    调用方拒收——与 `involved_characters` 既有校验同一套宽严尺度。"""
+    value = item.get(key) or ()
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or not all(isinstance(x, str) for x in value)
+    ):
+        return None
+    return list(value)
+
+
 def _dispatch_public_sayings(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+    """公开说法：R3 记录 + 进公开层。声明可带 `excluded_names`/`excluded_offices`
+    ——密令『瞒某人』这类显式排除黑名单随说法一起落进它自己的 source
+    （`public_saying:<id>`），一票否决压过公开层与职位桶（既有
+    `knowledge_row_visible_to` 读口，本节只补上一直缺失的写口，#1829/#1832）。"""
     items, rejected = _section_items(raw, label="公开说法声明", source=source)
     applied: List[Any] = []
     for item in items:
-        involved = item.get("involved_characters") or ()
-        if (
-            not isinstance(involved, Sequence)
-            or isinstance(involved, (str, bytes))
-            or not all(isinstance(name, str) for name in involved)
-        ):
+        involved = _string_array_field(item, "involved_characters")
+        if involved is None:
             _reject(rejected, item, "所涉人物须为字符串数组", "invalid_shape", source)
             continue
         try:
             _assert_characters_exist(db, involved)
         except KeyError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+        excluded_names = _string_array_field(item, "excluded_names")
+        if excluded_names is None:
+            _reject(rejected, item, "排除人物须为字符串数组", "invalid_shape", source)
+            continue
+        excluded_offices = _string_array_field(item, "excluded_offices")
+        if excluded_offices is None:
+            _reject(rejected, item, "排除职位须为字符串数组", "invalid_shape", source)
             continue
         affair_ref, error_category = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
@@ -686,6 +688,8 @@ def _dispatch_public_sayings(db: Any, state: Any, raw: object, *, source: Proven
             saying_id = record_public_saying(
                 db, state, item.get("body"),
                 involved_characters=involved, affair_ref=affair_ref,
+                excluded_names=excluded_names,
+                excluded_targets={"offices": excluded_offices} if excluded_offices else None,
             )
         except ValueError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
@@ -768,8 +772,8 @@ def _dispatch_presence(
     for item in items:
         name = str(item.get("person_name") or "").strip()
         effect = _PRESENCE_ITEM_EFFECTS.get(str(item.get("effect") or "").strip())
-        body = str(item.get("body") or "").strip()
-        if not name or effect is None or not body:
+        body = str(item.get("body") or "")
+        if not name or effect is None or not body.strip():
             _reject(
                 rejected, item,
                 "在场进出声明须含 person_name、enter/exit 之一，以及转译给出的正文",
@@ -809,12 +813,12 @@ def _dispatch_scene_facts(
     items, rejected = _section_items(raw, label="说话人分段声明", source=source)
     applied: List[Any] = []
     for item in items:
-        body = str(item.get("body") or "").strip()
+        body = str(item.get("body") or "")
         audibility = item.get("audibility") or AUDIBILITY_PUBLIC
         person_names = item.get("person_names") or []
         tags = item.get("tags") or []
         if (
-            not body
+            not body.strip()
             or audibility not in _AUDIBILITIES
             or not isinstance(person_names, Sequence) or isinstance(person_names, (str, bytes))
             or not all(isinstance(n, str) for n in person_names)
