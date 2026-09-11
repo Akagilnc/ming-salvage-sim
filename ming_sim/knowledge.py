@@ -13,6 +13,10 @@ import re
 from typing import Any, Dict
 
 from ming_sim.participant_roster import participant_roster_names
+from ming_sim.public_sayings import (
+    public_layer_events,
+    public_layer_prose,
+)
 
 
 def _issue_audience_names(db: Any, issue: Any) -> set[str]:
@@ -666,13 +670,29 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             continue
         seen_exact.add(identity)
         deduped_public.append(row)
-    visible_public = deduped_public
+    # Independently persisted public sayings never enter the archive
+    # aggregation/dedup rules above.  Append the authoritative public-layer
+    # projection after those rules, then join its layer prose.
+    public_saying_events = [
+        {
+            key: (_prose(value) if key == "body" else value)
+            for key, value in row.items() if key != "excluded_names"
+        }
+        for row in public_layer_events(db)
+        if knowledge_row_visible_to(
+            db,
+            {**row, "office_type": office_type, "office": office_name},
+            character_name,
+        )
+    ]
+    visible_public = [*deduped_public, *public_saying_events]
     public_bodies = [
         _prose(item.get("body") or item.get("title") or "")
-        for item in visible_public
+        for item in deduped_public
         if (item.get("body") or item.get("title"))
         and not str(item.get("source_id") or "").startswith("opening:")
     ]
+    public_bodies.extend(public_layer_prose(item) for item in public_saying_events)
     world["public"] = "\n".join(public_bodies) or world["public"]
     known_source_ids = {
         str(row.get("source_id") or "")
