@@ -300,10 +300,11 @@ def register_unlisted_person_record(
 
     本函数不替 LLM 生成 `style`（人物材料上的可感文字，P7：玩家可感文本模板
     违宪）——`style` 原样存调用方传入的值，缺省是空字符串，不合成占位文案。
-    旧的「按 source 归一 style/loyalty/source_label 三元组」是
-    `_apply_unlisted_person_registration` 那条历史召对场景 LLM 工具路径自己的
-    既有取舍（该工具的 schema 本就没给 LLM 开放 style 字段，本票不改动这条
-    既有生产行为），由该调用方自己算好显式传入；转译声明路径的调用方
+    历史召对场景 LLM 工具路径（`_apply_unlisted_person_registration`）按
+    source 归一的只是 `loyalty`/`source_label` 这两项——那是该路径自己算好后
+    显式传入的既有行为，本票未改动；`register_unlisted_person` 工具 schema
+    本就没给 LLM 开放 `style` 字段，故该路径的 `style` 目前恒为空，走本函数
+    既有下游缺省，不是被按 source 合成。转译声明路径的调用方
     （`_dispatch_registrations`）则原样透传声明里的 `style`（LLM 自己写的），
     没有就留空，不落任何合成文案。
 
