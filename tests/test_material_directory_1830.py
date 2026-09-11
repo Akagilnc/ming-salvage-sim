@@ -103,32 +103,26 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
         origin_kind="decree", stage_text=bystander_issue_stage,
     )
     db.affairs.point_issue(bystander_issue_id, bystander_affair.id)
-    # (f) 事务了结不等于其机械载体 issue 跟着终止，也不等于该事务的 durable
-    # 身份/全史从目录消失（ADR 0154 两者分开；#1819 Resolution 3/7 各事务全史
-    # 常驻目录）：closed_affair 关闭前留一条历史文字事实，关闭后仍可在同一
-    # 事务/affair-N 查到该事实与其 linked issue 的机械材料——不回退成
-    # issue-N 冒充事务。是否让这种情形继续算 opening「正经手」是另一未拍
-    # 的产品取舍，此处只如实核对现状不反转（handled_issue_stage 断言）。
+    # (f) 事务了结不等于该事务的 durable 身份/全史从目录消失（#1819
+    # Resolution 3/7 各事务全史常驻目录）：closed_affair 是合法关闭（无 active
+    # linked issue，ADR 0154 `affair-close-requires-no-active-linked-issues`）
+    # ——关闭前留一条历史文字事实，关闭后仍可在同一 事务/affair-N 查到。
     closed_affair = db.affairs.open(
         name="宣府欠饷", origin="宣府镇奏报欠饷",
         year=state.year, period=state.period, turn=state.turn,
     )
+    closed_dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="核实宣府欠饷",
+        target_kind="issue", target_id="xuanfu-arrears",
+        executor_kind="character", executor_id=character.name,
+        pending_action_id=93002, payload={"assignee_id": character.name},
+    )
+    db.affairs.point_dossier(closed_dossier_id, closed_affair.id)
     closed_affair_fact = "宣府欠饷已核实，尚待补发"
     db.textual_facts.append(
         subject_kind="affair", subject_id=str(closed_affair.id), body=closed_affair_fact,
         year=state.year, period=state.period, turn=state.turn,
     )
-    handled_issue_stage = "仍在核算，未结"
-    handled_issue_id = db.insert_issue(
-        state, kind="situation", title="宣府欠饷机械载体",
-        origin_kind="decree", stage_text=handled_issue_stage,
-        participants=[character.name],
-    )
-    db.record_character_participation(
-        state, [character.name], "issue", "宣府欠饷机械载体",
-        body=handled_issue_stage, source_id=f"issue:{handled_issue_id}",
-    )
-    db.affairs.point_issue(handled_issue_id, closed_affair.id)
     db.affairs.declare_closed(closed_affair.id, turn=state.turn)
 
     dest = tmp_path / "materials"
@@ -190,20 +184,14 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert bystander_affair.name not in prepared.opening
     assert bystander_situation not in prepared.opening
     # (f) 事务了结不清空其 durable 身份或全史（#1819 Resolution 3/7）：已关闭
-    # 的 closed_affair 仍在同一 事务/affair-N 里能查到关闭前的历史文字事实，
-    # 且其仍 active 的 linked issue 机械材料并进同一身份，不回退成 issue-N
-    # 冒充事务——本轮只保这条目录契约。是否算 opening「正经手」是另一未拍
-    # 的产品取舍（已 escalate），不在此断言、不由本轮实现锁定任一方向。
-    assert not any(
-        p.startswith(f"事务/issue-{handled_issue_id}/") for p in affair_files
-    )
+    # 的 closed_affair 仍在同一 事务/affair-N 里能查到真名与关闭前的历史
+    # 文字事实。
     closed_path = next(
         p for p in affair_files if p.startswith(f"事务/affair-{closed_affair.id}/")
     )
     closed_body = read_material(prepared.root, closed_path)
     assert closed_affair.name in closed_body
     assert closed_affair_fact in closed_body
-    assert handled_issue_stage in closed_body
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):

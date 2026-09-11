@@ -151,13 +151,12 @@ def _own_affair_lines(
     is_handling is True unconditionally for a dossier participant. Otherwise
     it mirrors the existing participant/audience "handling" gate already
     applied to ordinary (non-linked) issues, checked against whichever linked
-    issue points here — this is the #1830 opening min-set's established
-    criterion, and this fix does not change it in either direction (whether
-    a closed affair whose linked issue is still active and still passes that
-    gate should count as opening 正经手 is an open, escalated product
-    question — left exactly as it behaved before this directory rewrite,
-    not decided here; do not gate this check on the affair's open/closed
-    status, that would itself be taking a side).
+    issue points here — the #1830 opening min-set's established criterion,
+    unchanged by this fix. `AffairStore.declare_closed` (ADR 0154 decision
+    key `affair-close-requires-no-active-linked-issues`) rejects closing an
+    affair that still has an active linked issue, so "closed affair with a
+    still-active linked issue" cannot occur — this function does not need to
+    special-case it.
     """
     from ming_sim.knowledge import _issue_audience_case_events, _issue_audience_names
     from ming_sim.participant_roster import participant_roster_names
@@ -337,17 +336,20 @@ def _character_affair_lines(
 
 
 def _opening_affair_lines(
-    db: Any, state: Any, character_name: str, knowledge: dict,
+    db: Any,
+    character_name: str,
+    matter_lines: list[tuple[str, str, str, str, bool]],
 ) -> list[tuple[str, str]]:
     """Opening min-set: 正经手事务 ⊂ unique visible matter projection.
 
-    `_character_affair_lines` already resolved each affair's single identity
-    and its `is_handling` verdict (dossier participant, or a linked issue
-    that passes the existing participant/audience gate). This function only
-    consumes that verdict for "affair-" entries — it does not re-derive or
-    change the gate itself (#1812: whether a closed affair with a still
-    active, still-handled linked issue counts as opening 正经手 is an open
-    product question, decided upstream/elsewhere, not here).
+    `matter_lines` is the one frozen `_character_affair_lines` projection
+    `prepare_character_materials` already computed for this call — the
+    directory tree is built from the same object (#1812: one projection per
+    prepare, not a second independent recompute here). Each affair's single
+    identity and `is_handling` verdict (dossier participant, or a linked
+    issue that passes the existing participant/audience gate) is already
+    resolved there. This function only consumes that verdict for "affair-"
+    entries — it does not re-derive or change the gate itself.
     """
     from ming_sim.knowledge import _issue_audience_names
     from ming_sim.participant_roster import participant_roster_names
@@ -355,7 +357,7 @@ def _opening_affair_lines(
     visible = {
         dir_key: (title, opening_text, is_handling)
         for dir_key, title, _directory_text, opening_text, is_handling
-        in _character_affair_lines(db, state, character_name, knowledge)
+        in matter_lines
     }
     handled: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -488,7 +490,14 @@ def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> 
     )
 
 
-def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict) -> list[str]:
+def _write_tree(
+    tmp: Path,
+    db: Any,
+    state: Any,
+    character: Any,
+    knowledge: dict,
+    matter_lines: list[tuple[str, str, str, str, bool]],
+) -> list[str]:
     name = str(getattr(character, "name", "") or "")
     index: list[str] = []
 
@@ -511,9 +520,7 @@ def _write_tree(tmp: Path, db: Any, state: Any, character: Any, knowledge: dict)
     )
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/公事档案.txt")
 
-    for dir_key, title, directory_text, _opening_text, _is_participant in _character_affair_lines(
-        db, state, name, knowledge,
-    ):
+    for dir_key, title, directory_text, _opening_text, _is_handling in matter_lines:
         # #1812：目录段用不碰撞的 durable id；标题只作展示，写进正文。多行的
         # （事务全部按月文字事实，ADR 0156）另起一行，单行的沿用冒号连写。
         seg = _safe_segment(dir_key)
@@ -559,6 +566,10 @@ def prepare_character_materials(
     else:
         knowledge = build_character_knowledge(db, state, name)
 
+    # #1812：本次 prepare 只算一次事务材料投影，目录写入与 opening 过滤共用
+    # 同一份冻结结果——不各自重查一遍。
+    matter_lines = _character_affair_lines(db, state, name, knowledge)
+
     dest = Path(dest_root) if dest_root is not None else character_materials_root(db, state, character)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.parent / (dest.name + ".tmp")
@@ -566,7 +577,7 @@ def prepare_character_materials(
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
     try:
-        index = _write_tree(tmp, db, state, character, knowledge)
+        index = _write_tree(tmp, db, state, character, knowledge, matter_lines)
         if dest.exists():
             shutil.rmtree(dest)
         tmp.rename(dest)
@@ -575,7 +586,7 @@ def prepare_character_materials(
             shutil.rmtree(tmp, ignore_errors=True)
         raise
 
-    affairs = _opening_affair_lines(db, state, name, knowledge)
+    affairs = _opening_affair_lines(db, name, matter_lines)
     opening = _opening_text(
         character, state, _present_names(db, character), affairs, _spoken_this_scene(db, character),
     )

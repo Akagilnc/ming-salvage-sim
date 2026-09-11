@@ -8272,19 +8272,9 @@ def apply_score_extraction(
             authorized_ids=authorized_open_affairs,
         )
 
-    for raw in extracted.get("affair_declarations") or []:
-        try:
-            if not isinstance(raw, dict):
-                raise ValueError("事务声明须为对象")
-            db.affairs.close_from_declaration(
-                raw,
-                turn=int(state.turn),
-                authorized_ids=authorized_open_affairs,
-            )
-        except (TypeError, ValueError, KeyError) as exc:
-            validate_rejections.append(
-                ("affair_declarations", {"raw_value": raw}, str(exc)),
-            )
+    # #1812：affair 了结声明挪到 issue tracker（close_issues 等）落地之后再
+    # 应用——同批先结清挂靠的 issue，declare_closed 那道唯一 mutation seam
+    # 才能看到最新 issue 状态，不误拒"同批先结案再了结事务"。
     # #623：召对 extraction 真入口——反悔/坚持消费哭谏条（须先于 cancels 物化，
     # 使 persist 先结账，cancels 环看到已非 active 而跳过，防双路径）。
     from ming_sim.breach_plea import resolve_breach_pleas_from_extraction
@@ -8852,6 +8842,23 @@ def apply_score_extraction(
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids,
         open_affair_ids_at_input=authorized_open_affairs)
+
+    # #1812：issue tracker 落地（含 close_issues）之后再应用 affair 了结声明，
+    # 使 declare_closed 那道唯一 mutation seam 校验 active linked issue 时，
+    # 看到的是同批已结案的最新状态——不误拒"同批先结清 issue 再了结 affair"。
+    for raw in extracted.get("affair_declarations") or []:
+        try:
+            if not isinstance(raw, dict):
+                raise ValueError("事务声明须为对象")
+            db.affairs.close_from_declaration(
+                raw,
+                turn=int(state.turn),
+                authorized_ids=authorized_open_affairs,
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            validate_rejections.append(
+                ("affair_declarations", {"raw_value": raw}, str(exc)),
+            )
 
     commitment_economy_carriers: List[Dict[str, object]] = []
     for item in issue_summary.get("new_issues") or []:

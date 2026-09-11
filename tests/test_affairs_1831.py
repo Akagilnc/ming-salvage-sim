@@ -649,9 +649,18 @@ def test_close_requires_open_affairs_visible_in_batch(game, monkeypatch):
         name="另事", origin="另一件交办",
         year=state.year, period=state.period, turn=state.turn,
     )
+    # #1812：first 挂一条仍 active 的机械载体 issue（ADR 0154 decision key
+    # affair-close-requires-no-active-linked-issues：closed affair + active
+    # linked issue 不是合法状态）。
+    linked_issue_id = db.insert_issue(
+        state, kind="situation", title="宁远护送机械载体",
+        origin_kind="decree", stage_text="尚未核销",
+    )
+    db.affairs.point_issue(linked_issue_id, first.id)
+
     extractor_input = build_extractor_shared_context(db, state, "宁远护送已毕，此事了结。", "")
     input_ids = {int(row["id"]) for row in extractor_input["open_affairs"]}
-    canned = {
+    close_only = {
         "internal": '{"economy_moves": []}',
         "military_external": '{"new_armies": []}',
         "issues": json.dumps({
@@ -663,9 +672,69 @@ def test_close_requires_open_affairs_visible_in_batch(game, monkeypatch):
         "personnel_secret": '{"secret_order_updates": []}',
         "relations": '{"大臣互动": []}',
     }
-    merged, _localized, _inputs = _extract(monkeypatch, db, state, canned)
+    merged, _localized, _inputs = _extract(monkeypatch, db, state, close_only)
     apply_score_extraction(db, state, merged, open_affair_ids_at_input={second.id})
     assert db.affairs.get(first.id).status == "open"
-    apply_score_extraction(db, state, merged, open_affair_ids_at_input=input_ids)
+
+    # #1812：即便本批已获授权，first 仍挂着 active 的 linked issue——真实
+    # declare_closed mutation seam 逐项拒收这条了结声明，affair 保持 open；
+    # issue 也原样未动（代码只拒绝矛盾声明，不代替 LLM 自动结案/重开）。
+    result = apply_score_extraction(db, state, merged, open_affair_ids_at_input=input_ids)
+    assert db.affairs.get(first.id).status == "open"
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (linked_issue_id,),
+    ).fetchone()["status"] == "active"
+    assert any(
+        r.get("report_section") == "affair_declarations"
+        for r in result["validate_shape_rejections"]
+    )
+
+    # #1812：同批先合法结清 linked issue（结案局势→close_issues），issue
+    # tracker 落地顺序排在 affair 了结声明应用之前，declare_closed 校验时
+    # 已看到最新状态——二者同批都成功。
+    resolve_and_close = {
+        **close_only,
+        "issues": json.dumps({
+            "局势推进": [], "新立局势": [], "事件结局": {},
+            "撤销局势": [],
+            "结案局势": [{"issue_id": linked_issue_id, "reason": "resolved"}],
+            "案卷执行": [], "案卷参与人": [], "拨帑对账": [], "政敌检举": [],
+            "事务声明": [{"attach": "close", "affair_id": first.id}],
+        }, ensure_ascii=False),
+    }
+    merged2, _localized2, _inputs2 = _extract(monkeypatch, db, state, resolve_and_close)
+    apply_score_extraction(db, state, merged2, open_affair_ids_at_input=input_ids)
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (linked_issue_id,),
+    ).fetchone()["status"] != "active"
     assert db.affairs.get(first.id).status == "closed"
     assert db.affairs.get(second.id).status == "open"
+
+    # 边界：同批 issue close 本身被拒收（坏引用）时，linked issue 仍 active，
+    # affair 了结声明须继续被拒、third 保持 open——不是"只要声明了结案局势
+    # 就放行"，是真的校验 issue 落地后的状态。
+    third = db.affairs.open(
+        name="三事", origin="第三件交办",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    third_issue_id = db.insert_issue(
+        state, kind="situation", title="三事机械载体",
+        origin_kind="decree", stage_text="尚未核销",
+    )
+    db.affairs.point_issue(third_issue_id, third.id)
+    bad_resolve_and_close = {
+        **close_only,
+        "issues": json.dumps({
+            "局势推进": [], "新立局势": [], "事件结局": {},
+            "撤销局势": [],
+            "结案局势": [{"issue_id": 999999, "reason": "resolved"}],
+            "案卷执行": [], "案卷参与人": [], "拨帑对账": [], "政敌检举": [],
+            "事务声明": [{"attach": "close", "affair_id": third.id}],
+        }, ensure_ascii=False),
+    }
+    merged3, _localized3, _inputs3 = _extract(monkeypatch, db, state, bad_resolve_and_close)
+    apply_score_extraction(db, state, merged3, open_affair_ids_at_input={third.id})
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (third_issue_id,),
+    ).fetchone()["status"] == "active"
+    assert db.affairs.get(third.id).status == "open"

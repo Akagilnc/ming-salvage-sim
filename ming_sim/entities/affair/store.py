@@ -122,8 +122,19 @@ class AffairStore:
         return tuple(_row_to_affair(row) for row in rows)
 
     def declare_closed(self, affair_id: int, *, turn: int) -> Affair:
-        """LLM-declared close. No conditions, no dossier-status checks."""
+        """LLM-declared close. LLM decides the storyline boundary; the one
+        typed consistency contract enforced here (ADR 0154 decision key
+        `affair-close-requires-no-active-linked-issues`) is that a closed
+        affair may not have an active linked issue — reject the declaration
+        and leave the affair open, no dossier-status checks beyond that.
+        """
         self.get(affair_id)
+        active_linked = self._conn.execute(
+            "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
+            (int(affair_id),),
+        ).fetchone()
+        if active_linked is not None:
+            raise ValueError(f"事务 {affair_id} 仍有未结的挂靠局势，不能了结")
         owns = connection_owns_transaction(self._conn)
         self._conn.execute(
             "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
