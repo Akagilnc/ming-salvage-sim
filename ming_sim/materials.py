@@ -185,7 +185,7 @@ def _carryover_drafts(db: Any, state: Any) -> list[dict]:
     if not hasattr(db, "list_directives"):
         return []
     return [
-        row for row in db.list_directives(state, statuses=("draft",))
+        dict(row) for row in db.list_directives(state, statuses=("draft",))
         if int(row["turn"]) < int(state.turn)
         and (
             not hasattr(db, "get_dossier_for_directive")
