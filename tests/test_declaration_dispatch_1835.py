@@ -305,8 +305,11 @@ def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game
 
 def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_too(game):
     """指针绑定与人物变更同一原子块：已挂事务 A 的人物再声明挂事务 B，指针
-    冲突时连同人物变更一起回滚——不是「变更真落库、只是绑事务失败」的半写。"""
-    db, state, _ = game
+    冲突时连同人物变更一起回滚——不是「变更真落库、只是绑事务失败」的半写。
+    跨层回滚：`apply_person_changes_only` 直接改了 `content.characters[name]`
+    这个运行时对象（`db.set_character_status`），SAVEPOINT 只回滚 DB 行；
+    本项回滚必须连运行时对象也一并还原，否则 DB 与运行时盘面分叉。"""
+    db, state, content = game
     minister = _minister(db)
     affair_a = db.affairs.open(
         name="宁远护送", origin="拨银、调将、派兵去宁远",
@@ -342,6 +345,9 @@ def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_t
         "SELECT affair_id FROM characters WHERE name=?", (minister,),
     ).fetchone()
     assert row["affair_id"] == affair_a.id  # 指针仍是最初绑的那个，没被改动
+    # DB 回滚必须连运行时对象一起还原：不能出现「DB 仍是 imprisoned、
+    # content.characters 却停在冲突项写过的 dead」这种跨层分叉。
+    assert content.characters[minister].status == "imprisoned"
 
 
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):

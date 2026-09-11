@@ -421,16 +421,37 @@ def _item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
     这里真正需要的局部回滚原语。未在任何外层事务内（独立调用）时用
     `atomic(db)` 令本项独立开合、失败不牵连后续项——同 `db.py
     commit_pending_actions` 既有 idiom（`atomic(self) if owns_transaction
-    else contextlib.nullcontext()` + SAVEPOINT，同一机制不重复发明）。"""
+    else contextlib.nullcontext()` + SAVEPOINT，同一机制不重复发明）。
+
+    跨层回滚：`apply_person_changes_only` 等既有生产口在有外层事务时会调用
+    `issues.py::_register_runtime_rollback_snapshot`，把恢复 `state.metrics`
+    / `content.characters` 等运行时内存态的闭包追加进
+    `conn._runtime_rollback_callbacks`——但那些闭包只在连接级真
+    `conn.rollback()`（`_SuspendableConnection.rollback`）时才会被执行；
+    SAVEPOINT 只回滚 DB 行，不会触发它。本函数复用同一个既有列表：本项
+    body 开始前记下列表长度，失败时只弹出并按登记的相反顺序执行本项新增的
+    那些闭包（不新建平行的运行时快照系统），让 DB 与运行时内存态在「本项被
+    拒收、其余 sibling 正常」这一常见场景下也保持一致；成功路径与「整段
+    declaration 真失败」路径不动这份列表，交给外层真正的 commit/rollback
+    按既有语义处理。"""
     owns = connection_owns_transaction(db.conn)
     cm = atomic(db) if owns else contextlib.nullcontext()
     with cm:
+        rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+        if rollback_callbacks is None:
+            rollback_callbacks = []
+            db.conn._runtime_rollback_callbacks = rollback_callbacks
+        baseline = len(rollback_callbacks)
         db.conn.execute(f"SAVEPOINT {savepoint}")
         try:
             yield
         except BaseException:
             db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
             db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            item_callbacks = rollback_callbacks[baseline:]
+            del rollback_callbacks[baseline:]
+            for callback in reversed(item_callbacks):
+                callback()
             raise
         else:
             db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
@@ -685,10 +706,12 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
     块逐项处理（不再整批调用 `apply_person_changes_only`）——指针绑定失败时
     整块回滚，该项进 rejected、不产生任何副作用；`apply_person_changes_only`
     在既有事务内运行时会自行注册运行时快照（`_register_runtime_rollback_snapshot`），
-    回滚会连带撤销它对 `content.characters` 做的内存态更改，不会出现「DB 已
-    回滚、内存态却留着」的半写状态。用 SAVEPOINT 而非直接嵌套 `atomic(db)`：
-    本函数可能被 `dispatch_declaration` 自己的外层事务（直接分派或暂存结算）
-    调用，SAVEPOINT 才能在共享事务内做本项独立回滚而不牵连同批 sibling。"""
+    `_item_savepoint_scope` 在本项失败时手动回放该快照的 undo 闭包，回滚会
+    连带撤销它对 `content.characters` 做的内存态更改，不会出现「DB 已回滚、
+    内存态却留着」的半写状态（详见 :func:`_item_savepoint_scope` 文档）。用
+    SAVEPOINT 而非直接嵌套 `atomic(db)`：本函数可能被 `dispatch_declaration`
+    自己的外层事务（直接分派或暂存结算）调用，SAVEPOINT 才能在共享事务内做
+    本项独立回滚而不牵连同批 sibling。"""
     items, rejected = _section_items(raw, label="当场实况声明", source=source)
     applied: List[Any] = []
     for item in items:
