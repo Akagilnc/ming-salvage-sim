@@ -1583,6 +1583,22 @@ def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_pa
     elif runner == "kimi":
         agent_path = cmd[cmd.index("--agent-file") + 1]
         assert not os.path.exists(agent_path)
+        created = []
+        real_named_temp = cb.tempfile.NamedTemporaryFile
+
+        def tracked_temp(*args, **kwargs):
+            handle = real_named_temp(*args, **kwargs)
+            created.append(handle.name)
+            return handle
+
+        monkeypatch.setattr(cb.tempfile, "NamedTemporaryFile", tracked_temp)
+        monkeypatch.setattr(
+            cb, "_resolve_cli_bin",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("missing")),
+        )
+        with pytest.raises(RuntimeError, match="missing"):
+            list(cb._iter_cli_runner_text("kimi", "PROMPT", materials_dir=root))
+        assert created and not os.path.exists(created[0])
     elif runner == "grok":
         assert "Read,Glob,Grep" in cmd and "read-only" in cmd
         assert "--always-approve" not in cmd

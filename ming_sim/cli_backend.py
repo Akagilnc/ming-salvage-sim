@@ -811,20 +811,20 @@ def _iter_cli_runner_text(
         finally:
             handle.close()
         kimi_agent_path = handle.name
-    cmd, stdin_text, env = _cli_runner_command(
-        runner, prompt, model=model, reasoning_strength=reasoning_strength,
-        json_events=json_events, materials_dir=materials_dir,
-        kimi_agent_file=kimi_agent_path,
-    )
-    outcome = _CliProcessOutcome()
-    pieces: List[str] = []
-    final_text = ""
     try:
+        cmd, stdin_text, env = _cli_runner_command(
+            runner, prompt, model=model, reasoning_strength=reasoning_strength,
+            json_events=json_events, materials_dir=materials_dir,
+            kimi_agent_file=kimi_agent_path,
+        )
+        outcome = _CliProcessOutcome()
+        pieces: List[str] = []
+        final_text = ""
         for line in _iter_cli_process_lines(
-            cmd, stdin_text=stdin_text, env=env,
-            cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
-            clock=clock, outcome=outcome,
-        ):
+                cmd, stdin_text=stdin_text, env=env,
+                cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
+                clock=clock, outcome=outcome,
+            ):
             if json_events:
                 stripped = line.strip()
                 if not stripped:
@@ -846,45 +846,43 @@ def _iter_cli_runner_text(
                 continue
             # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
             pieces.append(line)
-
+        returncode = int(outcome.returncode or 0)
+        stderr = outcome.stderr or ""
+        stdout_text = "".join(pieces)
+        # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
+        # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
+        if outcome.stdin_error is not None:
+            raise RuntimeError(
+                f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
+            ) from outcome.stdin_error
+        if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
+            raise LLMUnavailable(
+                "LLM 连接失败。",
+                code="llm_connection_error",
+                provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
+            )
+        text = stdout_text.strip() or final_text.strip()
+        if runner == "codex" and not json_events and not text:
+            # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
+            text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
+        # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
+        if returncode != 0:
+            raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
+        if not text:
+            raise transport_failure_unavailable(
+                empty_output_failure(), attempts=1, exhausted=False,
+            )
+        # 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
+        if not json_events:
+            yield text
+        elif not pieces and final_text.strip():
+            yield final_text.strip()
     finally:
         if kimi_agent_path:
             try:
                 os.unlink(kimi_agent_path)
             except FileNotFoundError:
                 pass
-    returncode = int(outcome.returncode or 0)
-    stderr = outcome.stderr or ""
-    stdout_text = "".join(pieces)
-    # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
-    # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
-    if outcome.stdin_error is not None:
-        raise RuntimeError(
-            f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
-        ) from outcome.stdin_error
-    if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
-        raise LLMUnavailable(
-            "LLM 连接失败。",
-            code="llm_connection_error",
-            provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
-        )
-    text = stdout_text.strip() or final_text.strip()
-    if runner == "codex" and not json_events and not text:
-        # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
-        text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
-    # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
-    if returncode != 0:
-        raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
-    if not text:
-        raise transport_failure_unavailable(
-            empty_output_failure(), attempts=1, exhausted=False,
-        )
-    # 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
-    if not json_events:
-        yield text
-    elif not pieces and final_text.strip():
-        yield final_text.strip()
-
 
 def _run_cli_runner(
     runner: str,
