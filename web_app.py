@@ -670,7 +670,14 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
     return _character_power_id(character, db) == "ming"
 
 
-def _audience_prompt_for_web_chat(session: Any, text: str, character: Character, chat_turn_id: int) -> str:
+def _audience_prompt_for_web_chat(
+    session: Any,
+    text: str,
+    character: Character,
+    chat_turn_id: int,
+    *,
+    prepared: Any = None,
+) -> str:
     """Build a minister prompt without mistaking production failures for legacy APIs.
 
     Lightweight test doubles may still expose the old one-argument builder.
@@ -680,19 +687,19 @@ def _audience_prompt_for_web_chat(session: Any, text: str, character: Character,
 
     #1812/#1830：本消息只备一次材料，供 Agent 与组装提示共用——与 CLI
     `GameSession.chat` 同一份权威 prepare 契约，本函数就是 web 这一侧的唯一
-    真实 chat 入口，失败按 ADR 0005 响亮抛出，不吞异常伪装降级回奏。
+    真实 chat 入口，失败按 ADR 0005 响亮抛出，不吞异常伪装降级回奏。`prepared`
+    由调用方（`_chat_stream_payload`）唯一一次备好并传入，本函数不得自备
+    第二份（那会与 registry.get 首建 agent 时吃到的那份材料互相脱节）。
     """
     prompt_builder = getattr(session, "_audience_prompt_for_message", None)
     if prompt_builder is None:
         return text
     signature = inspect.signature(prompt_builder)
     try:
-        signature.bind(text, character, chat_turn_id=chat_turn_id, prepared=None)
+        signature.bind(text, character, chat_turn_id=chat_turn_id, prepared=prepared)
     except TypeError:
         signature.bind(text)
         return prompt_builder(text)
-    from ming_sim.materials import prepare_character_materials
-    prepared = prepare_character_materials(session.db, session.state, character)
     return prompt_builder(text, character, chat_turn_id=chat_turn_id, prepared=prepared)
 
 
@@ -2655,13 +2662,24 @@ class WebGame:
         explicit_secret_order: bool = False,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
-        agent = self.session.registry.get(character)
+        # #1812/#1830：本消息只备一次材料，供 registry.get 首建 agent 与组装提示
+        # 共用——与 CLI `GameSession.chat` 同一份权威 prepare 契约；不得各自再
+        # 各建一份（重复全树重写+开场重复入 prompt）。真实 session 恒有
+        # `_audience_prompt_for_message`；轻量 test double 若没有，
+        # `_audience_prompt_for_web_chat` 本就直接回退返回原文本，不进真实 chat
+        # 入口——同一 gate 用在这里，不强令它背真实建材依赖（与
+        # `_audience_prompt_for_web_chat` 自己的 legacy-double 兼容契约一致）。
+        prepared = None
+        if getattr(self.session, "_audience_prompt_for_message", None) is not None:
+            from ming_sim.materials import prepare_character_materials
+            prepared = prepare_character_materials(self.session.db, self.session.state, character)
+        agent = self.session.registry.get(character, prepared=prepared)
         # 动作意图分类只读皇帝消息，是唯一可与回话重叠的独立调用：由 worker 先于回话
         # 发出（跨越回话流式在飞），此处消费一次；不再在本轮内二次发起。
         # The session audience seam is per-character: passing only the message
         # makes a web-streamed question bypass that perspective.
         agent_prompt = _audience_prompt_for_web_chat(
-            self.session, text, character, chat_turn_id,
+            self.session, text, character, chat_turn_id, prepared=prepared,
         )
         # #542：dismiss tool 事件一出现就 start_exit，与尚未结束的回话流重叠。
         # #1566：密令 route 跳过流中 early-exit（与 interpret/session.chat 同门）。

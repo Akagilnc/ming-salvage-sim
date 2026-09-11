@@ -17,9 +17,12 @@ LAYER_TITLE = "有此说法"
 
 def public_layer_prose(item: Mapping[str, object]) -> str:
     """公开层读到的是「有此说法」，不是实况。"""
-    title = str(item.get("title") or LAYER_TITLE).strip() or LAYER_TITLE
-    body = str(item.get("body") or "").strip()
-    if body:
+    # #1812 P6：title/body 是自由正文，判空只用局部 stripped 副本，写出用原文。
+    title = str(item.get("title") or LAYER_TITLE)
+    if not title.strip():
+        title = LAYER_TITLE
+    body = str(item.get("body") or "")
+    if body.strip():
         return f"{title}：{body}"
     return title
 

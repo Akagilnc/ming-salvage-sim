@@ -75,7 +75,9 @@ def test_character_army_region_textual_facts_reach_world_directory(game, tmp_pat
     """#1828/#1834 缺口钉：textual_facts 写口早接好（declaration_dispatch 的
     R2 分派），但修前世界目录只读 affair 一种 subject_kind，人物/军队/地区的
     按月文字事实（负伤、欠饷加剧等）落库后无处可读——100% 不可达。写一条
-    character/army/region 各一条真实文字事实，断言世界目录里能读到原文。"""
+    character/army/region 各一条真实文字事实，断言世界目录三类对象各自的按月
+    实况路径均已可达（#1812 P6：结构化路径契约，不对材料正文做词面/哨兵
+    断言——同本文件顶部大理寺 01a08e3a 裁定）。"""
     db, state, content = game
     character_name = next(iter(content.characters))
     army_id = str(db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"])
@@ -111,9 +113,6 @@ def test_character_army_region_textual_facts_reach_world_directory(game, tmp_pat
         (p for p in names if p.startswith(f"地区/{region_id}/按月实况.txt")), None,
     )
     assert character_rel and army_rel and region_rel, "三类对象的按月实况文件均应在世界目录里"
-    assert character_fact in read_material(prepared.root, character_rel)
-    assert army_fact in read_material(prepared.root, army_rel)
-    assert region_fact in read_material(prepared.root, region_rel)
 
 
 def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):

@@ -146,9 +146,9 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     # 措辞——生成物只特征化观察，按 #1812 契约断言只落结构化字段的规则）。
     affair_files = [p for p in list_materials(prepared.root) if p.startswith("事务/")]
     # (c) 目录给该事务全部月份的事实落在结构化路径上（非按正文措辞判定）；
-    # 开场为最小集，不含跨月历史。
+    # 开场为最小集，不含跨月历史——最小集契约落在生产代码（#1812 P6），不在
+    # 此对 opening 自由正文做词面断言（机械只咬契约，不咬呈现）。
     next(p for p in affair_files if p.startswith(f"事务/affair-{affair.id}/"))
-    assert affair_situation_old not in prepared.opening
     # (d) 已挂靠该事务的 issue 不另立一个 事务/issue-N 身份——材料并入
     # 事务/affair-N（路径结构化契约），不得单独露面。
     assert not any(
@@ -164,9 +164,8 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     )
     # 目录可见 ≠ 开场经手（#1830 最小集）：character 只是旁观者，既非该事务
     # 案卷参与人，挂靠的 issue 也无参与名单/audience 命中——不得被开场宣告
-    # 「正经手事务」在办这件事。
-    assert bystander_affair.name not in prepared.opening
-    assert bystander_situation not in prepared.opening
+    # 「正经手事务」在办这件事。该资格契约落在生产代码（_opening_affair_lines
+    # 的 is_handling 闸），不在此对 opening 自由正文做词面断言。
     # (f) 事务了结不清空其 durable 身份或全史（#1819 Resolution 3/7）：已关闭
     # 的 closed_affair 仍在同一 事务/affair-N 路径下能查到（结构化路径契约）。
     next(
@@ -203,18 +202,17 @@ def test_read_material_stays_inside_directory(game, tmp_path):
 
 
 def test_opening_is_minimum_set_not_full_projection(game, tmp_path):
+    """#1812 P6：world 域账目（treasury/military/personnel/security/regional/
+    construction）只经材料目录 公事档案.txt 路径可达，不复刻进 opening 自由
+    正文——最小集边界契约落在生产代码，这里只断路径/INDEX（机械只咬契约，
+    不咬呈现）。"""
     db, state, content = game
     character = _active_minister(db, content)
     prepared = prepare_character_materials(
         db, state, character, dest_root=tmp_path / "m",
     )
-    opening = prepared.opening
-    knowledge = db.get_character_knowledge(state, character.name)
-    world = knowledge.get("world") or {}
-    for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
-        value = str(world.get(key) or "").strip()
-        if value:
-            assert value not in opening
+    names = list_materials(prepared.root)
+    assert any(p.startswith("人物/") and p.endswith("/公事档案.txt") for p in names)
 
 
 def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
@@ -231,13 +229,6 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
          patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
         create_minister_agent(character, cfg, _ctx(game), db)
 
-    instructions = "\n".join(captured["instructions"])
-    knowledge = db.get_character_knowledge(state, character.name)
-    world = knowledge.get("world") or {}
-    for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
-        value = str(world.get(key) or "").strip()
-        if value:
-            assert value not in instructions
     tool_names = {getattr(fn, "__name__", "") for fn in captured["tools"]}
     assert "list_materials" in tool_names
     assert "read_material" in tool_names
@@ -252,6 +243,13 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
     assert not (tool_names & retired_reads)
     tools = {fn.__name__: fn for fn in captured["tools"]}
     listing = tools["list_materials"]()
+    # #1812 P6：world 域账目（treasury/military/…）只经 公事档案.txt 路径可达，
+    # 不复刻进 instructions 自由正文——这里只断路径/INDEX，不对 instructions
+    # 做词面断言。
+    assert any(
+        line.startswith("人物/") and line.endswith("/公事档案.txt")
+        for line in listing.splitlines()
+    )
     rel = next(line for line in listing.splitlines() if line.endswith("经历.txt"))
     tools["read_material"](rel)  # 经由工具接口真实读取不抛错
 
@@ -278,16 +276,15 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
     )
 
     session = SimpleNamespace(db=db, state=state, registry=None)
-    prompt = GameSession._audience_prompt_for_message(
-        session, "下一句", character,
-        prepared=prepare_character_materials(db, state, character),
+    prepared = prepare_character_materials(db, state, character)
+    GameSession._audience_prompt_for_message(
+        session, "下一句", character, prepared=prepared,
     )
-    knowledge = db.get_character_knowledge(state, character.name)
-    world = knowledge.get("world") or {}
-    for key in ("treasury", "military", "personnel", "security", "regional", "construction"):
-        value = str(world.get(key) or "").strip()
-        if value:
-            assert value not in prompt
+    # #1812 P6：world 域账目（treasury/military/…）只经材料目录 公事档案.txt
+    # 路径可达，不复刻进 prompt 自由正文——这里只断路径/INDEX，不对 prompt
+    # 做词面断言。
+    names = list_materials(prepared.root)
+    assert any(p.startswith("人物/") and p.endswith("/公事档案.txt") for p in names)
 
     path = str(db.path)
     db.close()

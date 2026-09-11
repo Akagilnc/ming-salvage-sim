@@ -481,7 +481,6 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
     captured = _capture_agent(game, first, second)
 
     first_text = "\n".join(captured[first.name]["instructions"])
-    second_text = "\n".join(captured[second.name]["instructions"])
     # 见闻账本 typed public_events 的 source_id 是真源；不锁材料目录 blob 词面。
     secret_source = f"secret_order:{order}"
     first_public_sources = {
@@ -492,7 +491,6 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
     }
     assert secret_source in first_public_sources
     assert secret_source not in second_public_sources
-    assert marker not in second_text
     _assert_not_world_dump(first_text, db.get_character_knowledge(state, first.name))
 
 

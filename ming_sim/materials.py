@@ -41,7 +41,9 @@ def _safe_segment(name: object) -> str:
 
 def _write_text(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(str(body or "").rstrip() + "\n", encoding="utf-8")
+    # #1812 P6：raw body 是材料自由正文，不得 rstrip——只补齐末尾换行，不削内容。
+    text = str(body or "")
+    path.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
 
 
 def _resolve_inside(root: Path, rel: str) -> Path:
@@ -545,10 +547,12 @@ def _experience_text(knowledge: dict) -> str:
     """
     lines: list[str] = []
     for item in knowledge.get("events") or []:
-        title = str(item.get("title") or "").strip()
-        body = str(item.get("body") or "").strip()
-        if title or body:
-            lines.append(f"{title}：{body}".strip("："))
+        # #1812 P6：title/body 是自由正文，判空只用局部 stripped 副本，写出用原文。
+        title = str(item.get("title") or "")
+        body = str(item.get("body") or "")
+        if not (title.strip() or body.strip()):
+            continue
+        lines.append(f"{title}：{body}" if title and body else (title or body))
     return "\n".join(lines) or "（无）"
 
 
@@ -559,11 +563,13 @@ def _write_public_by_month(tmp: Path, public_events: list) -> list[str]:
     for item in public_events or []:
         year = int(item.get("year") or 0)
         period = int(item.get("period") or 0)
-        title = str(item.get("title") or "").strip()
-        body = str(item.get("body") or "").strip()
-        if not (title or body):
+        # #1812 P6：title/body 是自由正文，判空只用局部 stripped 副本，写出用原文。
+        title = str(item.get("title") or "")
+        body = str(item.get("body") or "")
+        if not (title.strip() or body.strip()):
             continue
-        public_by_month.setdefault((year, period), []).append(f"{title}：{body}".strip("："))
+        line = f"{title}：{body}" if title and body else (title or body)
+        public_by_month.setdefault((year, period), []).append(line)
     for (year, period), lines in sorted(public_by_month.items()):
         fname = f"{year}年{period}月.txt" if year and period else "未标年月.txt"
         _write_text(tmp / _PUBLIC_DIR / fname, "\n".join(lines))
@@ -690,7 +696,8 @@ def _world_affair_lines(db: Any) -> list[tuple[str, str, str, str]]:
         )
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         directory_text = "\n".join(fact_lines) if fact_lines else "见目录。"
-        opening_text = str(facts[-1].body or "").strip() if facts else "见目录。"
+        # #1812 P6：raw body 是文字事实自由正文，不得 strip。
+        opening_text = str(facts[-1].body or "") if facts else "见目录。"
         lines.append((f"affair-{affair.id}", str(affair.name or ""), directory_text, opening_text))
     return lines
 
