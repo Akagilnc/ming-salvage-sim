@@ -585,7 +585,7 @@ def test_enrich_army_parsed_and_normalized(monkeypatch):
         },
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_codex", lambda prompt, **kw: (canned, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
     out = cb.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军")
     armies = out["effect_on_resolve"]["new_armies"]
     assert armies[0]["id"] == "qinjun"
@@ -597,7 +597,7 @@ def test_enrich_building_region_floor(monkeypatch):
         "effect_on_resolve": {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_codex", lambda prompt, **kw: (canned, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
     out = cb.enrich_initiative_effects("设格致局", "")
     assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
 
@@ -646,7 +646,7 @@ def test_backend_env_claude(monkeypatch):
     "env,attr,out",
     [
         ("claude", "_run_claude", "CLAUDE_OUT"),
-        (None, "_run_codex", "CODEX_DEFAULT_OUT"),
+        (None, "_run_agy", "AGY_DEFAULT_OUT"),
         ("codex", "_run_codex", "CODEX_OUT"),
     ],
 )
@@ -1553,7 +1553,7 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
-    monkeypatch.setattr(cb, "_run_codex", lambda prompt, **kw: (canned, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
     assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"

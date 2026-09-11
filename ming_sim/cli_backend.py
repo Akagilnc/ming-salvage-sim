@@ -1033,8 +1033,8 @@ def _dispatch_cli_runner(
 
 def _run_backend(prompt: str) -> Tuple[str, int]:
     """按 MING_SIM_LLM_BACKEND 分派到对应 CLI（enrich/secret 等非 CliChat 路径用）。
-    未设或非法时使用公开默认 Codex。"""
-    return _dispatch_cli_runner(cli_backend_from_env() or "codex", prompt)
+    未设或非法时沿用默认 Agy。"""
+    return _dispatch_cli_runner(cli_backend_from_env() or "agy", prompt)
 
 
 def _llm_channel(llm_config: Any = None) -> str:
@@ -1050,7 +1050,7 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, str]]:
     channel = _llm_channel(llm_config)
     if channel != "cli":
         return None
-    runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "codex").strip().lower()
+    runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
     if runner not in _CLI_BACKENDS:
         raise RuntimeError(f"未知 CLI backend：{runner}")
     model = (getattr(llm_config, "cli_model", "") or "").strip()
@@ -1157,8 +1157,8 @@ def _backend_label(llm_config: Any = None) -> str:
     except RuntimeError:
         parts = None  # 不支持的 runner：trace 标签回落，不让构造崩
     if parts is not None:
-        return parts[0] or "codex"
-    return cli_backend_from_env() or "codex"
+        return parts[0] or "agy"
+    return cli_backend_from_env() or "agy"
 
 
 def describe_effective_model(llm_config: Any = None) -> str:
@@ -1169,7 +1169,7 @@ def describe_effective_model(llm_config: Any = None) -> str:
     可能是空串而本函数已解析出真实默认——本函数是更准的可读标签，不与 trace 的未解析 id 逐字对齐。"""
     channel = _llm_channel(llm_config)
     if channel == "cli":
-        runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "codex").strip().lower()
+        runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
     elif channel != "api":
         runner = cli_backend_from_env()  # 空 channel：legacy env 回落
     else:

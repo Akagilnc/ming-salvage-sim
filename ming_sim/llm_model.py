@@ -201,7 +201,7 @@ def create_chat_model(
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
     backend = None
     if channel == "cli":
-        backend = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "codex").strip().lower()
+        backend = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
     elif channel != "api":
         backend = cli_backend_from_env()
     if backend is not None and not is_supported_cli_runner(backend):
