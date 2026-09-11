@@ -114,33 +114,82 @@ def test_audience_supplement_grants_originating_issue_outside_knowledge(game, tm
 
 
 @pytest.mark.parametrize(
-    "stored_audiences",
-    ["{}", "not-json", "null", '[1, "郭允厚"]', '["郭允厚", {"name": "x"}]'],
+    ("stored_audiences", "expected_exc"),
+    [
+        ("{}", TypeError),
+        ("not-json", json.JSONDecodeError),
+        ("null", TypeError),
+        ('[1, "郭允厚"]', TypeError),
+        ('["郭允厚", {"name": "x"}]', TypeError),
+    ],
 )
-def test_malformed_event_audience_fails_loud_from_material_entry(game, tmp_path, stored_audiences):
+def test_malformed_event_audience_fails_loud_from_material_entry(
+    game, tmp_path, stored_audiences, expected_exc,
+):
     db, state, content = game
     row = _issue_row(db)
     db.conn.execute(
         "UPDATE events SET audiences=? WHERE id=?", (stored_audiences, row["origin_ref"]),
     )
 
-    with pytest.raises((TypeError, ValueError, json.JSONDecodeError)):
+    with pytest.raises(expected_exc):
         prepare_character_materials(
             db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
         )
 
 
-def test_malformed_knowledge_issue_id_fails_loud_from_projection(game):
-    db, state, _content = game
-    knowledge = dict(db.get_character_knowledge(state, AUDIENCE_NAME))
-    issues = list(knowledge.get("issues") or [])
-    assert issues
-    bad = dict(issues[0])
-    bad["id"] = "not-an-id"
-    knowledge["issues"] = [bad, *issues[1:]]
+def test_tuple_audience_container_fails_loud_from_content_fallback(game, tmp_path):
+    """Content-path audiences must be list[str]; tuple is not a legal container."""
+    db, state, content = game
+    row = _issue_row(db)
+    origin_ref = str(row["origin_ref"])
+    event = content.event_by_id[origin_ref]
+    event.audiences = (AUDIENCE_NAME,)  # type: ignore[assignment]
+    real_conn = db.conn
 
-    with pytest.raises((TypeError, ValueError)):
-        project_issue_materials(db, AUDIENCE_NAME, knowledge)
+    class NoEventRowConnection:
+        def __getattr__(self, name):
+            return getattr(real_conn, name)
+
+        def execute(self, sql, parameters=()):
+            if "SELECT audiences FROM events" in sql:
+                class _Empty:
+                    def fetchone(self):
+                        return None
+                return _Empty()
+            return real_conn.execute(sql, parameters)
+
+    db.conn = NoEventRowConnection()
+    try:
+        with pytest.raises(TypeError):
+            prepare_character_materials(
+                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+            )
+    finally:
+        db.conn = real_conn
+
+
+def test_malformed_knowledge_issue_id_fails_loud_from_material_entry(game, tmp_path):
+    db, state, content = game
+    real_get = db.get_character_knowledge
+
+    def poisoned_knowledge(state_arg, character_name):
+        knowledge = dict(real_get(state_arg, character_name))
+        issues = list(knowledge.get("issues") or [])
+        assert issues
+        bad = dict(issues[0])
+        bad["id"] = "not-an-id"
+        knowledge["issues"] = [bad, *issues[1:]]
+        return knowledge
+
+    db.get_character_knowledge = poisoned_knowledge  # type: ignore[method-assign]
+    try:
+        with pytest.raises(ValueError):
+            prepare_character_materials(
+                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+            )
+    finally:
+        db.get_character_knowledge = real_get  # type: ignore[method-assign]
 
 
 def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path):

@@ -57,9 +57,9 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
 
     if isinstance(raw, str):
         raw = json.loads(raw)
-    if not isinstance(raw, (list, tuple)):
+    if not isinstance(raw, list):
         raise TypeError(
-            f"event {origin_ref!r} audiences must be a list, got {type(raw).__name__}"
+            f"event {origin_ref!r} audiences must be a list[str], got {type(raw).__name__}"
         )
     names: set[str] = set()
     for idx, name in enumerate(raw):
