@@ -60,8 +60,9 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
@@ -195,32 +196,19 @@ def _record_unknown_sections(
         ), turn)
 
 
-def dispatch_declaration(
+def _dispatch_declaration_sections(
     db: Any,
     state: Any,
     declaration: Mapping[str, object],
     *,
-    minister_name: str = "",
-    night_id: int = 0,
-    source: Provenance = Provenance.system_simulation,
-    collector: Optional[RejectionCollector] = None,
+    minister_name: str,
+    night_id: int,
+    source: Provenance,
+    collector: RejectionCollector,
 ) -> DeclarationDispatchResult:
-    """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。
-
-    ``night_id``：本声明所属的召对夜——「应允/拒绝」只认这一夜暂存清单里的
-    动作（ADR 0155：转译读「本夜暂存清单」），引用其它夜真实存在的 id 一律
-    当作不存在实体拒收，不因 id 恰巧存在就误批（过月世界段转译没有夜，传 0，
-    此时只能应允/拒绝同样未挂靠任何夜的暂存）；「在场进出」「说话人分段与
-    可闻性」同样挂在这一夜的账本上，无夜（night_id<=0）时整批拒收，不落成
-    孤儿账。
-
-    ``collector``：调用方持有的拒收收集器——:func:`settle_staged_declarations_in_decree_order`
-    传入，令同一旨下多条暂存声明的拒收与该旨的 ``mark_settled`` 落在同一次
-    提交；不传时本函数自己开一段最小事务，把本次十个 section 的拒收（含未知
-    顶层键，见 :func:`_record_unknown_sections`）落进既有 ``rejection_reports``
-    单一真源（ADR 0008 决定 5，不建声明专用拒收表），提交成功后镜像 jsonl
-    （J1/J2）。
-    """
+    """真正跑十个 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
+    给定的收集器；只记不落库——落库时机与事务边界由调用方决定（J1 判词打回：
+    直接分派与暂存结算两条路径共用同一段执行体，不复制两份分派逻辑）。"""
     result = DeclarationDispatchResult(
         commissions=_dispatch_commissions(
             db, state, declaration.get("commissions"),
@@ -254,15 +242,59 @@ def dispatch_declaration(
             db, state, declaration.get("registrations"), source=source,
         ),
     )
-    owns_collector = collector is None
-    active_collector = collector if collector is not None else RejectionCollector()
     turn = int(state.turn)
-    _record_unknown_sections(active_collector, declaration, turn, source)
-    _record_section_rejections(active_collector, result, turn)
-    if owns_collector:
-        with atomic(db):
-            active_collector.flush_to_db(db)
-        mirror_rejections_after_commit(db, active_collector, rejections_jsonl_path)
+    _record_unknown_sections(collector, declaration, turn, source)
+    _record_section_rejections(collector, result, turn)
+    return result
+
+
+def dispatch_declaration(
+    db: Any,
+    state: Any,
+    declaration: Mapping[str, object],
+    *,
+    minister_name: str = "",
+    night_id: int = 0,
+    source: Provenance = Provenance.system_simulation,
+    collector: Optional[RejectionCollector] = None,
+) -> DeclarationDispatchResult:
+    """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。
+
+    ``night_id``：本声明所属的召对夜——「应允/拒绝」只认这一夜暂存清单里的
+    动作（ADR 0155：转译读「本夜暂存清单」），引用其它夜真实存在的 id 一律
+    当作不存在实体拒收，不因 id 恰巧存在就误批（过月世界段转译没有夜，传 0，
+    此时只能应允/拒绝同样未挂靠任何夜的暂存）；「在场进出」「说话人分段与
+    可闻性」同样挂在这一夜的账本上，无夜（night_id<=0）时整批拒收，不落成
+    孤儿账。
+
+    ``collector``：调用方持有的拒收收集器——:func:`settle_staged_declarations_in_decree_order`
+    传入时，本函数只把十个 section 的分派副作用与拒收（含未知顶层键，见
+    :func:`_record_unknown_sections`）记进那个收集器，落库时机与事务边界由
+    调用方的外层 `atomic(db)`（连同该旨的 `mark_settled`）拥有，本函数不另
+    开事务、不自己 flush/镜像。不传 collector 时（直接分派），本函数自己开
+    唯一一段 `atomic(db)`，把十个 section 的分派副作用、拒收收集与
+    `flush_to_db` 全部包在同一个事务里——任一步失败（含 flush 本身失败）都
+    整体回滚，不会出现「合法 sibling 已落库、其拒收却没落进
+    ``rejection_reports``」的半写状态（J1 判词：直接分派须在其真实事务边界
+    落库，且该边界须覆盖 section 分派本身，不能只包住 flush）；提交成功后
+    再镜像 jsonl。不建声明专用拒收表，复用既有 ``rejection_reports`` 单一
+    真源（ADR 0008 决定 5）。
+    """
+    if collector is not None:
+        return _dispatch_declaration_sections(
+            db, state, declaration,
+            minister_name=minister_name, night_id=night_id, source=source,
+            collector=collector,
+        )
+    own_collector = RejectionCollector()
+    with atomic(db):
+        result = _dispatch_declaration_sections(
+            db, state, declaration,
+            minister_name=minister_name, night_id=night_id, source=source,
+            collector=own_collector,
+        )
+        own_collector.flush_to_db(db)
+    mirror_rejections_after_commit(db, own_collector, rejections_jsonl_path)
     return result
 
 
@@ -369,13 +401,39 @@ def _reject(
 
 
 class _ItemAtomicReject(Exception):
-    """在 `with atomic(db):` 块内抛出以整项回滚（连同事务指针绑定）、外层
-    捕获后转成该项的 rejected 记录，不留半写状态。"""
+    """在 :func:`_item_savepoint_scope` 块内抛出以整项回滚（连同事务指针绑定）、
+    外层捕获后转成该项的 rejected 记录，不留半写状态。"""
 
     def __init__(self, reason: str, category: str) -> None:
         self.reason = reason
         self.category = category
         super().__init__(reason)
+
+
+@contextlib.contextmanager
+def _item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
+    """逐项落库的最小原子域，供 on_scene_facts / edge_events 的「动作 + 事务
+    指针绑定」两步复合写共用。已在外层事务（本模块 `dispatch_declaration`
+    直接分派自己的 `atomic(db)`，或 `settle_staged_declarations_in_decree_order`
+    的旨级 `atomic`）内时只用 SAVEPOINT 做本项细粒度回滚，不再另开一层
+    `atomic`——嵌套 `atomic()` 的 flat 语义会把「本函数用 try/except 接住内层
+    异常后继续下一项」判定为吞异常并响亮拦截（cmr S1 F2），SAVEPOINT 才是
+    这里真正需要的局部回滚原语。未在任何外层事务内（独立调用）时用
+    `atomic(db)` 令本项独立开合、失败不牵连后续项——同 `db.py
+    commit_pending_actions` 既有 idiom（`atomic(self) if owns_transaction
+    else contextlib.nullcontext()` + SAVEPOINT，同一机制不重复发明）。"""
+    owns = connection_owns_transaction(db.conn)
+    cm = atomic(db) if owns else contextlib.nullcontext()
+    with cm:
+        db.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            yield
+        except BaseException:
+            db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+        else:
+            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
 
 
 def _dispatch_commissions(
@@ -623,12 +681,14 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
     既有 `PERSON_ACTIONS` 闭集词汇——如「处置」配 `status=dead/imprisoned`、
     「罢黜」= 革职；既有核已做「非既有人物 → hallucinated_id」逐项拒收。
 
-    各自所属事务：人物变更与事务指针绑定放进同一个 `atomic(db)` 块逐项处理
-    （不再整批调用 `apply_person_changes_only`）——指针绑定失败时整块回滚，
-    该项进 rejected、不产生任何副作用；`apply_person_changes_only` 在既有
-    事务内运行时会自行注册运行时快照（`_register_runtime_rollback_snapshot`），
+    各自所属事务：人物变更与事务指针绑定放进同一个 :func:`_item_savepoint_scope`
+    块逐项处理（不再整批调用 `apply_person_changes_only`）——指针绑定失败时
+    整块回滚，该项进 rejected、不产生任何副作用；`apply_person_changes_only`
+    在既有事务内运行时会自行注册运行时快照（`_register_runtime_rollback_snapshot`），
     回滚会连带撤销它对 `content.characters` 做的内存态更改，不会出现「DB 已
-    回滚、内存态却留着」的半写状态。"""
+    回滚、内存态却留着」的半写状态。用 SAVEPOINT 而非直接嵌套 `atomic(db)`：
+    本函数可能被 `dispatch_declaration` 自己的外层事务（直接分派或暂存结算）
+    调用，SAVEPOINT 才能在共享事务内做本项独立回滚而不牵连同批 sibling。"""
     items, rejected = _section_items(raw, label="当场实况声明", source=source)
     applied: List[Any] = []
     for item in items:
@@ -637,7 +697,7 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
             continue
         try:
-            with atomic(db):
+            with _item_savepoint_scope(db, f"on_scene_fact_{int(state.turn)}_{id(item)}"):
                 outcome = apply_person_changes_only(
                     db, state, [item], origin_ref="转译声明",
                 )
@@ -774,8 +834,9 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
     空 source/target/context 等形状问题 = invalid_shape——不拿宽 catch 一律
     冒称实体幻觉。各自所属事务：`relation_edge_events` 是整数 id 主键，直接
     复用 AffairStore 通用指针（`attach_pointer`）；写事件与绑指针放进同一个
-    `atomic(db)` 块，指针冲突时整块回滚（该项进 rejected，不留半写的「有边事件
-    没有所属事务」状态）。"""
+    :func:`_item_savepoint_scope` 块，指针冲突时整块回滚（该项进 rejected，
+    不留半写的「有边事件没有所属事务」状态）；用 SAVEPOINT 而非直接嵌套
+    `atomic(db)`，理由同 :func:`_dispatch_on_scene_facts`。"""
     items, rejected = _section_items(raw, label="边事件声明", source=source)
     applied: List[Any] = []
     for item in items:
@@ -800,7 +861,7 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
             continue
         try:
-            with atomic(db):
+            with _item_savepoint_scope(db, f"edge_event_{int(state.turn)}_{id(item)}"):
                 try:
                     event_id = db.record_relation_edge_event(
                         source=source_name, target=target_name, event_kind=event_kind,

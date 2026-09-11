@@ -104,9 +104,14 @@ def test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row(g
     assert payload["target_id"] == army_id
 
 
-def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item(game):
+def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item(game, monkeypatch):
     """AC3：单项拒收不牵连同批合法项；J1：拒收落进既有 rejection_reports 单一
-    真源（DB 行），不只活在本次调用的返回值里。"""
+    真源（DB 行），不只活在本次调用的返回值里；直接分派的 section 写入与拒收
+    flush 共享同一个真实事务边界——大理寺判词打回：flush 本身失败时同批已
+    处理的合法 sibling 也不得已经落库（不能只把 atomic 包住 flush，section
+    分派副作用须在同一事务里）。"""
+    from ming_sim.applier import RejectionCollector
+
     db, state, _ = game
     minister = _minister(db)
 
@@ -116,6 +121,27 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
             {"subject_kind": "character", "subject_id": minister, "body": "如实记事"},
         ],
     }
+
+    # flush 失败路径：制造 rejection_reports flush 失败，断言合法 sibling
+    # 未落库、拒收表也没有半条行（同批要么都进、要么都不进）。
+    real_flush_to_db = RejectionCollector.flush_to_db
+
+    def _boom(self, db_arg):
+        raise RuntimeError("simulated flush_to_db failure")
+
+    monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
+    with pytest.raises(RuntimeError, match="simulated flush_to_db failure"):
+        dispatch_declaration(db, state, declaration, minister_name=minister)
+    monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush_to_db)
+
+    assert db.textual_facts.readable_materials(
+        subject_kind="character", subject_id=minister,
+    ) == ()
+    assert db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
+    ).fetchone() is None
+
+    # 恢复正常后，继续断成功路径：合法 sibling 落库、拒收落 durable（原有断言）。
     result = dispatch_declaration(db, state, declaration, minister_name=minister)
 
     assert len(result.textual_facts.rejected) == 1
