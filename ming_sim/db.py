@@ -34,7 +34,7 @@ from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
-from ming_sim.exceptions import LLMContractError
+from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
@@ -2453,8 +2453,6 @@ class GameDB:
         self.ensure_column(
             "character_offices", "region_id", "TEXT NOT NULL DEFAULT ''"
         )
-        # Retired parallel seat catalog: jurisdiction sole source is character_offices.region_id.
-        self.conn.execute("DROP TABLE IF EXISTS office_postings")
         self.ensure_column(
             "office_change_records", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
         )
@@ -6342,19 +6340,9 @@ class GameDB:
         is_person_title = eff_type in PERSON_TITLE_KINDS
         if not is_person_title:
             self._ensure_office_type_parent(eff_type)
-        posting_region = str(region_id or "").strip()
-        if eff_type in self._LOCAL_ARCHIVE_OFFICE_TYPES and not posting_region:
-            raise ValueError(
-                f"地方任命缺 region_id 任所：{name} → {office}（{eff_type}）"
-            )
-        if posting_region and eff_type in self._LOCAL_ARCHIVE_OFFICE_TYPES:
-            known = self.conn.execute(
-                "SELECT 1 FROM regions WHERE id=?", (posting_region,),
-            ).fetchone()
-            if known is None:
-                raise ValueError(
-                    f"unknown region_id {posting_region!r} for office appointment"
-                )
+        seat = self._require_local_office_region(
+            name=name, office=office, office_type=eff_type, region_id=region_id,
+        )
         if office_type or eff_type != current_type:
             self.conn.execute(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
@@ -6365,7 +6353,6 @@ class GameDB:
                 "UPDATE characters SET office=? WHERE name=?",
                 (office, name),
             )
-        seat = posting_region if eff_type in self._LOCAL_ARCHIVE_OFFICE_TYPES else ""
         self._record_character_office(name, office, eff_type, source, region_id=seat)
         # #9：授官改了 office_type/品级权重 → 全重算该人物所属朝堂派系 leverage（commit 前）。
         faction_row = self.conn.execute(
@@ -6640,12 +6627,12 @@ class GameDB:
                 getattr(character, "summary", "") or "",
             ),
         )
-        seat = str(getattr(character, "office_region", "") or "").strip()
-        if character.office_type in self._LOCAL_ARCHIVE_OFFICE_TYPES and not seat:
-            raise ValueError(
-                f"地方任命缺 region_id 任所：{character.name} → "
-                f"{character.office}（{character.office_type}）"
-            )
+        seat = self._require_local_office_region(
+            name=character.name,
+            office=character.office,
+            office_type=character.office_type,
+            region_id=str(getattr(character, "office_region", "") or ""),
+        )
         self._record_character_office(
             character.name, character.office, character.office_type, office_source,
             region_id=seat,
@@ -15785,6 +15772,34 @@ class GameDB:
         "生员", "乡绅", "富商", "布衣", "流寇", "待铨",
     })
     _LOCAL_ARCHIVE_OFFICE_TYPES = frozenset({"地方", "督抚", "边镇"})
+
+    def _require_local_office_region(
+        self,
+        *,
+        name: object,
+        office: object,
+        office_type: object,
+        region_id: object = "",
+    ) -> str:
+        """Local seats need a known region_id; non-local seats store empty seat."""
+        kind = str(office_type or "").strip()
+        if kind not in self._LOCAL_ARCHIVE_OFFICE_TYPES:
+            return ""
+        seat = str(region_id or "").strip()
+        if not seat:
+            raise OfficeAppointmentRejection(
+                f"地方任命缺 region_id 任所：{name} → {office}（{kind}）",
+                category="missing_field",
+            )
+        known = self.conn.execute(
+            "SELECT 1 FROM regions WHERE id=?", (seat,),
+        ).fetchone()
+        if known is None:
+            raise OfficeAppointmentRejection(
+                f"unknown region_id {seat!r} for office appointment",
+                category="missing_ref",
+            )
+        return seat
 
     def _central_archive_office_types(self) -> frozenset[str]:
         catalog = {

@@ -1363,6 +1363,17 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     ).fetchone()
     assert after["office"] == prior_office["office"]
     assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ()
+    # Unknown region_id is typed missing_ref — still no silent empty 辖域.
+    unknown = appoint(bare.name, "新设巡抚", "地方", region_id="not_a_region")
+    assert unknown and unknown[0].get("rejected"), unknown
+    assert unknown[0].get("category") == "missing_ref", unknown
+    assert isinstance(unknown[0].get("item"), dict), unknown
+    assert unknown[0]["item"].get("region_id") == "not_a_region"
+    after_unknown = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
+    ).fetchone()
+    assert after_unknown["office"] == prior_office["office"]
+    assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ()
     # Same real entrance later attaches seat; migration still independent of location.
     ok = appoint(bare.name, "新设巡抚", "地方", region_id="jiangxi")
     assert ok and not ok[0].get("rejected"), ok

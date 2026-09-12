@@ -6282,7 +6282,7 @@ def _restore_person_write_state(
     *,
     commit: bool = True,
 ) -> None:
-    character_rows, office_rows, faction_rows, content_rows, office_change_rows = snapshot[:5]
+    character_rows, office_rows, faction_rows, content_rows, office_change_rows = snapshot
     db.conn.execute("DELETE FROM character_offices")
     db.conn.execute("DELETE FROM office_change_records")
     snapshot_names = {str(row["name"]) for row in character_rows}
@@ -6450,10 +6450,8 @@ def _office_appointment_failure(
 ) -> Dict[str, object]:
     """Map known appointment write failures to typed rejection categories.
 
-    Local seat without ``region_id`` is a missing required field — not a generic
-    invalid_enum fallback for downstream declaration_dispatch.
+    Category comes only from typed exception attributes — never from message text.
     """
-    detail = str(exc)
     result: Dict[str, object] = {
         "name": name,
         "new_office": new_office,
@@ -6462,8 +6460,9 @@ def _office_appointment_failure(
     }
     if kind:
         result["kind"] = kind
-    if detail.startswith("地方任命缺 region_id"):
-        result["category"] = "missing_field"
+    category = getattr(exc, "category", None)
+    if isinstance(category, str) and category:
+        result["category"] = category
     return result
 
 
@@ -6678,13 +6677,10 @@ def _apply_person_changes(
         """Project typed appointment rejections onto ADR 0015 item/category shape."""
         if not result.get("rejected"):
             return result
-        reason = str(result.get("reason") or "")
         category = str(result.get("category") or "")
-        if not category and "地方任命缺 region_id" in reason:
-            category = "missing_field"
         if not category:
             return result
-        shaped = rejected(item, reason, category)
+        shaped = rejected(item, str(result.get("reason") or ""), category)
         for key, value in result.items():
             if key not in shaped:
                 shaped[key] = value

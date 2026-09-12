@@ -62,6 +62,18 @@ class LLMContractError(Exception):
         self.heal_evidence = heal_evidence
 
 
+class OfficeAppointmentRejection(ValueError):
+    """Local office appointment write rejection with ADR 0015 category.
+
+    category is the machine contract (missing_field / missing_ref); message is
+    human presentation only and must not be parsed by callers.
+    """
+
+    def __init__(self, message: str, *, category: str) -> None:
+        super().__init__(message)
+        self.category = category
+
+
 class SettlementAbort(Exception):
     """结算中止可重试（ADR 0008 决定 3/6）。
 
