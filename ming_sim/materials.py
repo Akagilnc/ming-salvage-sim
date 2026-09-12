@@ -27,6 +27,8 @@ _ARMY_DIR = "军队"
 _SECRET_DIR = "密令"
 _RECOMMEND_DIR = "荐人"
 _FACT_DIR = "事实"
+_BOARD_DIR = "盘面"
+_GAZETTE_DIR = "邸报"
 _COURT_ROSTER_REL = f"{_PERSON_DIR}/朝臣名册.txt"
 
 
@@ -401,14 +403,7 @@ def _write_tree(
     index.append(_COURT_ROSTER_REL)
 
     person_dir = tmp / _PERSON_DIR / _safe_segment(name)
-    private_events = knowledge.get("events") or []
-    experience_lines = []
-    for item in private_events:
-        title = str(item.get("title") or "").strip()
-        body = str(item.get("body") or "").strip()
-        if title or body:
-            experience_lines.append(f"{title}：{body}".strip("："))
-    _write_text(person_dir / "经历.txt", "\n".join(experience_lines) or "（无）")
+    _write_text(person_dir / "经历.txt", _experience_text(knowledge))
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/经历.txt")
 
     _write_text(
@@ -440,28 +435,7 @@ def _write_tree(
         _write_text(affair_dir / "当前情况.txt", "\n".join(x for x in details if x))
         index.append(f"{_AFFAIR_DIR}/{segment}/当前情况.txt")
 
-    for row in _carryover_drafts(db, state):
-        title = f"尚未入档旨稿#{int(row['id'])}"
-        body = str(row.get("text") or "").strip()
-        _write_text(
-            tmp / _AFFAIR_DIR / _safe_segment(title) / "当前情况.txt",
-            f"{body}（尚未入档）" if body else "尚未入档",
-        )
-        index.append(f"{_AFFAIR_DIR}/{_safe_segment(title)}/当前情况.txt")
-
-    public_by_month: dict[tuple[int, int], list[str]] = {}
-    for item in knowledge.get("public_events") or []:
-        year = int(item.get("year") or 0)
-        period = int(item.get("period") or 0)
-        title = str(item.get("title") or "").strip()
-        body = str(item.get("body") or "").strip()
-        if not (title or body):
-            continue
-        public_by_month.setdefault((year, period), []).append(f"{title}：{body}".strip("："))
-    for (year, period), lines in sorted(public_by_month.items()):
-        fname = f"{year}年{period}月.txt" if year and period else "未标年月.txt"
-        _write_text(tmp / _PUBLIC_DIR / fname, "\n".join(lines))
-        index.append(f"{_PUBLIC_DIR}/{fname}")
+    index.extend(_write_public_by_month(tmp, knowledge.get("public_events") or []))
 
     secret_rel = _write_secret_order_file(tmp, db, state, character)
     if secret_rel:
@@ -474,6 +448,42 @@ def _write_tree(
     index.extend(_write_army_detail_files(tmp, db, knowledge))
 
     _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")
+    return index
+
+
+def _experience_text(knowledge: dict) -> str:
+    """人物经历投影：知识见闻里本人经历事件，逐条『标题：正文』连写。
+
+    Shared by the per-character directory's own 经历.txt (#1830) and the
+    world materials directory's per-character 经历.txt (#1834) — one
+    projection, not two independently maintained renderings.
+    """
+    lines: list[str] = []
+    for item in knowledge.get("events") or []:
+        title = str(item.get("title") or "").strip()
+        body = str(item.get("body") or "").strip()
+        if title or body:
+            lines.append(f"{title}：{body}".strip("："))
+    return "\n".join(lines) or "（无）"
+
+
+def _write_public_by_month(tmp: Path, public_events: list) -> list[str]:
+    """公开说法按月分文件（#1830 既有形态，供人物目录与推演者目录共用）。"""
+    index: list[str] = []
+    public_by_month: dict[tuple[int, int], list[str]] = {}
+    for item in public_events or []:
+        year = int(item.get("year") or 0)
+        period = int(item.get("period") or 0)
+        title = str(item.get("title") or "").strip()
+        body = str(item.get("body") or "").strip()
+        if not (title or body):
+            continue
+        public_by_month.setdefault((year, period), []).append(f"{title}：{body}".strip("："))
+    for (year, period), lines in sorted(public_by_month.items()):
+        fname = f"{year}年{period}月.txt" if year and period else "未标年月.txt"
+        _write_text(tmp / _PUBLIC_DIR / fname, "\n".join(lines))
+        index.append(f"{_PUBLIC_DIR}/{fname}")
+
     return index
 
 
@@ -531,4 +541,203 @@ def prepare_character_materials(
         current_character, state, _present_names(db, character), affairs,
         _spoken_this_scene(db, character),
     )
+    return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
+
+
+# ── 过月推演者材料目录（#1834 / ADR 0153 / 0155 / 0157）──
+#
+# 推演者三层全看（实况 + 人物经历 + 公开说法），另有盘面（0155 读取形态段）。
+# 开场最小集 = 当前盘面全量 + 开着的事务清单；其余（各人经历、公开说法、历月
+# 邸报）按需自读。夜里预推段与过月世界段读同一目录（同 night/turn key，与
+# character_materials_root 同构）；预推产物本身不进目录（0157 原则）——本模块
+# 只备读，不提供任何暂存写入口，天然不会把预推产物写进来。
+
+
+def world_materials_root(db: Any, state: Any) -> Path:
+    from ming_sim.audience_night import get_open_night
+
+    parent = Path(str(getattr(db, "path", "") or ".")).resolve().parent
+    night = get_open_night(db)
+    key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
+    return parent / "materials" / key / "世界推演"
+
+
+def _world_board_text(db: Any, state: Any) -> str:
+    """盘面全量：未按职位裁切的实况账本（0034 后出注记：仅人物按职位读衙门底账，
+    推演者不受此限）。各段落直取账本读方法，不经任何奏报/邸报文本中转——满足
+    「推演者读到的是实况数不是奏报数」。"""
+    # limit=None：与 region_rows/army_rows/treasury_report 的既有「None=不截断」
+    # 约定一致，真正的全量——不是拿一个更大的数顶替旧上限（#1834 大理寺 bounce）。
+    sections = (
+        ("国库", db.treasury_report(state, limit=None)),
+        ("军务", db.army_report(limit=None)),
+        ("地方", db.region_report(limit=None)),
+        ("营建", db.buildings_report(qualitative=True)),
+        ("边防", db.power_report(exclude_self=True)),
+        ("阶级", db.class_report(audience=True)),
+    )
+    parts = [f"{title}：\n{body}" for title, body in sections if str(body or "").strip()]
+    return "\n\n".join(parts) or "（无）"
+
+
+def _world_roster_text(db: Any, state: Any) -> str:
+    if not hasattr(db, "current_court_roster_rows"):
+        return "在朝名册：暂无。"
+    rows = db.current_court_roster_rows(state)
+    if not rows:
+        return "在朝名册：暂无。"
+    return "在朝名册：\n" + "\n".join(
+        f"{row['name']}：{row['office'] or '无现任官职'}，{row['office_type']}，{row['status']}"
+        for row in rows
+    )
+
+
+def _world_affair_lines(db: Any) -> list[tuple[str, str, str, str]]:
+    """全部开着的事务及其当前情况（不按人物过滤——推演者看全量，非某人经手）。
+
+    Each line is (dir_key, title, directory_text, opening_text): directory_text
+    carries every dated textual fact (ADR 0156 全部提供), opening_text is only
+    the latest one-liner (0155 开场最小集只放一句)."""
+    store = getattr(db, "affairs", None)
+    if store is None or not hasattr(store, "list_open"):
+        return []
+    textual_facts = getattr(db, "textual_facts", None)
+    lines: list[tuple[str, str, str, str]] = []
+    for affair in store.list_open():
+        facts = (
+            store.current_situation(textual_facts, affair.id)
+            if textual_facts is not None else ()
+        )
+        fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
+        directory_text = "\n".join(fact_lines) if fact_lines else "见目录。"
+        opening_text = str(facts[-1].body or "").strip() if facts else "见目录。"
+        lines.append((f"affair-{affair.id}", str(affair.name or ""), directory_text, opening_text))
+    return lines
+
+
+def _write_gazette_index(tmp: Path, db: Any) -> list[str]:
+    """历月邸报一行索引入目录（章节记忆退役，M3；0155/0157 后出注记）：每回合一份
+    全文文件，根 INDEX 里天然是一行一项——不再压缩/摘要成第二套机制。"""
+    if not hasattr(db, "list_turn_reports"):
+        return []
+    index: list[str] = []
+    for row in db.list_turn_reports():
+        year = int(row.get("year") or 0)
+        period = int(row.get("period") or 0)
+        turn = int(row.get("turn") or 0)
+        fname = f"{year}年{period}月.txt" if year and period else f"turn-{turn}.txt"
+        rel = f"{_GAZETTE_DIR}/{fname}"
+        _write_text(tmp / rel, str(row.get("report") or ""))
+        index.append(rel)
+    return index
+
+
+def _world_roster_names(db: Any) -> list[str]:
+    """全部人物经历真源：持久 characters 表，不以当前在朝名册为白名单
+
+    (#1834 大理寺 bounce：已离朝/下狱/致仕/死亡等不在当前朝臣名册的人物仍须
+    可读——#1819 Resolution 决定 1「各人物经历……三层全可读」不按当前在朝
+    状态收窄）。「盘面」里的在朝名册（_world_roster_text）另有独立投影，与此
+    处经历目录的人物枚举各司其职，互不作为对方的过滤条件。"""
+    if not hasattr(db, "conn"):
+        return []
+    return [
+        str(row["name"] or "").strip()
+        for row in db.conn.execute("SELECT name FROM characters ORDER BY name").fetchall()
+        if str(row["name"] or "").strip()
+    ]
+
+
+def _write_world_tree(
+    tmp: Path,
+    db: Any,
+    state: Any,
+    public_events: list,
+    affair_lines: list[tuple[str, str, str, str]],
+    board_text: str,
+) -> list[str]:
+    from ming_sim.knowledge import build_character_knowledge
+
+    index: list[str] = []
+
+    board_rel = f"{_BOARD_DIR}/全局.txt"
+    _write_text(tmp / board_rel, board_text)
+    index.append(board_rel)
+
+    _write_text(tmp / _COURT_ROSTER_REL, _world_roster_text(db, state))
+    index.append(_COURT_ROSTER_REL)
+
+    for name in _world_roster_names(db):
+        knowledge = (
+            db.get_character_knowledge(state, name) if hasattr(db, "get_character_knowledge")
+            else build_character_knowledge(db, state, name)
+        )
+        rel = f"{_PERSON_DIR}/{_safe_segment(name)}/经历.txt"
+        _write_text(tmp / rel, _experience_text(knowledge))
+        index.append(rel)
+
+    for dir_key, title, directory_text, _opening_text in affair_lines:
+        seg = _safe_segment(dir_key)
+        body = f"{title}\n{directory_text}" if title else directory_text
+        rel = f"{_AFFAIR_DIR}/{seg}/当前情况.txt"
+        _write_text(tmp / rel, body)
+        index.append(rel)
+
+    index.extend(_write_public_by_month(tmp, public_events))
+    index.extend(_write_gazette_index(tmp, db))
+
+    _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")
+    return index
+
+
+def _world_opening_text(state: Any, board_text: str, affair_lines: list[tuple[str, str, str, str]]) -> str:
+    parts = [
+        f"日期：{int(state.year)}年{int(state.period)}月",
+        "盘面：",
+        board_text,
+        "开着的事务：" if affair_lines else "开着的事务：（无）",
+    ]
+    parts.extend(f"- {title}：{opening_text}" for _key, title, _directory_text, opening_text in affair_lines)
+    parts.append("人物经历、公开说法、历月邸报在当前目录，按需自读。根目录 INDEX 一行一项。")
+    return "\n".join(parts)
+
+
+def prepare_world_materials(
+    db: Any,
+    state: Any,
+    *,
+    dest_root: Optional[Path] = None,
+) -> PreparedMaterials:
+    """过月推演者材料目录：盘面全量 + 开着的事务清单进开场最小集；人物经历、
+    公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
+    在本函数职责内——本函数只组装可读材料，不提供任何写入口。"""
+    from ming_sim.knowledge import build_character_knowledge
+
+    # public_events 的既有投影与具体 character_name 无关（build_character_knowledge
+    # 里 public_events 恒取 `_character_knowledge_events("", ...)`）——借用同一投影，
+    # 不另建一套「世界公开说法」查询。
+    knowledge = build_character_knowledge(db, state, "")
+    public_events = knowledge.get("public_events") or []
+    affair_lines = _world_affair_lines(db)
+    # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
+    # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
+    board_text = _world_board_text(db, state)
+
+    dest = Path(dest_root) if dest_root is not None else world_materials_root(db, state)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.parent / (dest.name + ".tmp")
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    tmp.mkdir(parents=True)
+    try:
+        index = _write_world_tree(tmp, db, state, public_events, affair_lines, board_text)
+        if dest.exists():
+            shutil.rmtree(dest)
+        tmp.rename(dest)
+    except Exception:
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+        raise
+
+    opening = _world_opening_text(state, board_text, affair_lines)
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))

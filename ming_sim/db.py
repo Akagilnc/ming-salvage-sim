@@ -6729,7 +6729,7 @@ class GameDB:
             "transit_loss": int(values.get("hub_京运损耗", 0)),
         }
 
-    def treasury_report(self, state: GameState, limit: int = 6) -> str:
+    def treasury_report(self, state: GameState, limit: int | None = 6) -> str:
         account_rows = self.conn.execute(
             "SELECT account, balance FROM economy_accounts ORDER BY account DESC"
         ).fetchall()
@@ -6757,15 +6757,14 @@ class GameDB:
         if not period_text:
             period_text = f"本{TURN_UNIT}尚无新账"
 
-        ledger_rows = self.conn.execute(
-            """
-            SELECT year, period, account, delta, category, reason, actor
-            FROM economy_ledger
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+        # limit=None：不截断（#1834 推演者盘面全量——与 region_rows/army_rows
+        # 同一「None = 无 LIMIT 子句」约定，不是另造一套语义）。
+        ledger_sql = "SELECT year, period, account, delta, category, reason, actor FROM economy_ledger ORDER BY id DESC"
+        ledger_params: Tuple[object, ...] = ()
+        if limit is not None:
+            ledger_sql += " LIMIT ?"
+            ledger_params = (limit,)
+        ledger_rows = self.conn.execute(ledger_sql, ledger_params).fetchall()
         recent = []
         for row in reversed(ledger_rows):
             delta = int(row["delta"])
