@@ -104,10 +104,21 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     db, state, content = game
     character = _active_minister(db, content)
     army = db.conn.execute("SELECT id,name FROM armies ORDER BY id LIMIT 1").fetchone()
-    # Real posting write entry (not office_slots vacancy catalog).
-    db.set_character_office(
-        character.name, "陕西巡抚", office_type="地方", region_id="shaanxi",
-    )
+    # Real declaration entrance (not office_slots vacancy catalog / bare DB hook).
+    from ming_sim.issues import apply_person_changes_only
+    applied = apply_person_changes_only(
+        db, state,
+        [{
+            "name": character.name,
+            "动作": "任命",
+            "office": "陕西巡抚",
+            "office_type": "地方",
+            "region_id": "shaanxi",
+            "reason": "test-materials-posting",
+        }],
+        content=content,
+    )["applied_person_changes"]
+    assert applied and not applied[0].get("rejected"), applied
     db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (character.name,))
     db.conn.execute(
         "UPDATE armies SET commander=?,supply=17,morale=23,loyalty=31,training=44,equipment=52 "

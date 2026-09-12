@@ -55,7 +55,7 @@ force_json 模式下你**只能输出最终 JSON**，不得吐出思考文本。
 | `撤销局势` | array，每项 `{"局势编号":整数,"已付代价":object,"叙述":"..."}` | 皇帝撤销的局势 |
 | `结案局势` | array，每项 `{"局势编号":整数,"原因":"resolved\|failed\|acknowledged","叙述":"..."}` | 本{{TURN_UNIT}}结案/失败；`acknowledged` 仅用于到期待裁承诺已被皇帝裁决确认 |
 | `事务声明` | array，仅了结：`{"attach":"close","affair_id":整数}`，`affair_id` 必须来自本批 input `open_affairs` | 推演交结果时声明了结（#1831）；代码不判、不按结案自动了结；new/existing 写在所声明的结果上，不得在此数组空建事务；无声明填 `[]` |
-| `人物变更` | array，每项必须含 name、动作，以及 `来源引用` 或无案卷时的同一 typed `事务声明`；`动作` 只能是：{{PERSON_ACTIONS}}；按动作补 `office`/`office_type`/`status`/`new_power`/`transit_to`/`loyalty`/`style`/`reason` | ADR0009 人事档案单一入口；`行止` 只填来自 `region_ids` 的非空 `transit_to`，不得填 `location`；`评定.loyalty` 是忠诚增量；`性情.style` 是人物固有层完整替换 |
+| `人物变更` | array，每项必须含 name、动作，以及 `来源引用` 或无案卷时的同一 typed `事务声明`；`动作` 只能是：{{PERSON_ACTIONS}}；按动作补 `office`/`office_type`/`region_id`/`status`/`new_power`/`transit_to`/`loyalty`/`style`/`reason` | ADR0009 人事档案单一入口；地方/督抚/边镇任命须显式 `region_id`/`任所`（input `region_ids` 英文 id，任所≠行止）；`行止` 只填来自 `region_ids` 的非空 `transit_to`，不得填 `location`；`评定.loyalty` 是忠诚增量；`性情.style` 是人物固有层完整替换 |
 | `密令副作用` | array，每项 `{"密令编号":整数,"推演备注":"...","泄漏结论":boolean}`（泄漏结论可省略） | `在办` 组密令副作用；情节已实际公开（disclosed）才为 true |
 | `密令执行态` | array，每项 `{"密令编号":整数,"执行态":"忠实\|打折\|阳奉阴违\|反噬","备注":"..."}` | 在办密令带内选态（≥`covert_exec_floors` 底档，只准加重）；结案不由本字段 |
 

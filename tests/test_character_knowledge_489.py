@@ -1213,12 +1213,28 @@ def test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge(g
 
 
 def test_structured_person_scope_replaces_role_wide_world_reports(game):
+    """Appointment jurisdiction via real declaration entrance — not DB setter hooks."""
+    from ming_sim.issues import apply_person_changes_only
+
     db, state, content = game
+
+    def appoint(name, office, office_type, region_id="", reason="test-appointment"):
+        item = {
+            "name": name,
+            "动作": "任命",
+            "office": office,
+            "office_type": office_type,
+            "reason": reason,
+        }
+        if region_id:
+            item["region_id"] = region_id
+        return apply_person_changes_only(
+            db, state, [item], content=content,
+        )["applied_person_changes"]
+
     official = next(c for c in content.characters.values() if c.office_type == "地方")
-    # Real appointment write entry: set_character_office(region_id=…) → office_postings.
-    db.set_character_office(
-        official.name, "河南巡抚", office_type="地方", region_id="henan",
-    )
+    applied = appoint(official.name, "河南巡抚", "地方", region_id="henan")
+    assert applied and not applied[0].get("rejected"), applied
     # Physical presence elsewhere must not rewrite durable 辖域.
     db.conn.execute(
         "UPDATE characters SET location=? WHERE name=?",
@@ -1229,10 +1245,11 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert scoped["scope"]["region_ids"] == ("henan",)
     assert "regional" in scoped["world"] and "construction" in scoped["world"]
     assert db.project_office_identity(
-        "河南巡抚", "地方", location="fujian",
+        "河南巡抚", "地方", character_name=official.name, location="fujian",
     )["region_ids"] == ("henan",)
+    assert db.character_office_region(official.name) == "henan"
 
-    # Seed covers current real local seats; location override still ignored.
+    # Explicit content office_region seed; location override still ignored.
     seeded = (
         ("邹维琏", "福建巡抚", "地方", "fujian"),
         ("焦源溥", "大同巡抚", "地方", "shanxi"),
@@ -1244,21 +1261,75 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
             (name,),
         ).fetchone()
         assert row is not None and row["office"] == title and row["office_type"] == kind
+        assert content.characters[name].office_region == region
+        assert db.character_office_region(name) == region
         view = db.get_character_knowledge(state, name)
         assert view["scope"]["region_ids"] == (region,), name
         assert "regional" in view["world"]
-        proj = db.project_office_identity(title, kind, location="beizhili")
+        proj = db.project_office_identity(
+            title, kind, character_name=name, location="beizhili",
+        )
         assert proj["region_ids"] == (region,)
         assert proj["archive_key"] == f"slot:{title}@{region}"
 
-    # Cross-province postings do not share archive identity.
-    key_fj = db.project_office_identity("福建巡抚", "地方")
-    key_sx = db.project_office_identity("大同巡抚", "地方")
-    assert key_fj["archive_key"] != key_sx["archive_key"]
-    assert key_fj["region_ids"] == ("fujian",) and key_sx["region_ids"] == ("shanxi",)
+    # Cross-province same bare title must not share or overwrite seat identity.
+    other = next(
+        c for c in content.characters.values()
+        if c.name not in {official.name, "邹维琏", "焦源溥", "阎鸣泰", "练国事"}
+        and db.get_character_status(c.name)[0] == "active"
+        and c.office_type not in {"地方", "督抚", "边镇"}
+    )
+    a1 = appoint("练国事", "巡抚", "地方", region_id="shaanxi")
+    a2 = appoint(other.name, "巡抚", "地方", region_id="henan")
+    assert a1 and not a1[0].get("rejected"), a1
+    assert a2 and not a2[0].get("rejected"), a2
+    assert db.character_office_region("练国事") == "shaanxi"
+    assert db.character_office_region(other.name) == "henan"
+    key_sx = db.project_office_identity("巡抚", "地方", character_name="练国事")
+    key_hn = db.project_office_identity("巡抚", "地方", character_name=other.name)
+    assert key_sx["archive_key"] == "slot:巡抚@shaanxi"
+    assert key_hn["archive_key"] == "slot:巡抚@henan"
+    assert key_sx["archive_key"] != key_hn["archive_key"]
+    posts = {
+        (r["office_title"], r["region_id"])
+        for r in db.conn.execute(
+            "SELECT office_title, region_id FROM office_postings WHERE office_title=?",
+            ("巡抚",),
+        ).fetchall()
+    }
+    assert ("巡抚", "shaanxi") in posts and ("巡抚", "henan") in posts
+
+    # Succession: same seat title@region shares archive identity with predecessor.
+    pred = official.name
+    succ = next(
+        c.name for c in content.characters.values()
+        if c.name not in {pred, other.name, "练国事", "邹维琏", "焦源溥", "阎鸣泰"}
+        and db.get_character_status(c.name)[0] == "active"
+    )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="HENAN_SEAT_ARCHIVE",
+        target_kind="issue", target_id="henan-seat",
+        participants=[{"character_id": pred, "tier": "主办"}],
+    )
+    # predecessor leaves; successor takes same seat
+    appoint(pred, "闲住", "未仕")
+    s_applied = appoint(succ, "河南巡抚", "地方", region_id="henan")
+    assert s_applied and not s_applied[0].get("rejected"), s_applied
+    visible = {
+        int(item["id"])
+        for item in db.list_referenceable_dossiers(succ, state.turn)
+    }
+    assert int(dossier_id) in visible
+    assert db.project_office_identity(
+        "河南巡抚", "地方", character_name=succ,
+    )["archive_key"] == "slot:河南巡抚@henan"
 
     # 未仕/内廷 mere location is not jurisdiction.
-    idle = next(c for c in content.characters.values() if c.office_type not in {"地方", "督抚", "边镇"})
+    idle = next(
+        c for c in content.characters.values()
+        if c.office_type not in {"地方", "督抚", "边镇"}
+        and c.name not in {succ, other.name}
+    )
     regions = [str(r["id"]) for r in db.conn.execute("SELECT id FROM regions ORDER BY id").fetchall()]
     assert len(regions) >= 2
     db.conn.execute(
@@ -1266,7 +1337,9 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         ("闲住", "未仕", regions[0], idle.name),
     )
     db.conn.commit()
-    idle_proj = db.project_office_identity("闲住", "未仕", location=regions[0])
+    idle_proj = db.project_office_identity(
+        "闲住", "未仕", character_name=idle.name, location=regions[0],
+    )
     assert idle_proj["region_ids"] == ()
     assert idle_proj["archive_key"] == ""
     assert db.get_character_knowledge(state, idle.name)["scope"]["region_ids"] == ()
@@ -1274,30 +1347,36 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert inner_proj["region_ids"] == ()
     assert inner_proj["archive_key"] == ""
 
-    # Title text / bare appointment without region_id does not invent 辖域.
+    # Local appointment missing region_id is rejected item-wise — no silent empty 辖域.
     bare = next(
         c for c in content.characters.values()
-        if c.name not in {official.name, idle.name, "邹维琏", "焦源溥", "阎鸣泰"}
+        if c.name not in {
+            official.name, idle.name, other.name, succ, "邹维琏", "焦源溥", "阎鸣泰", "练国事",
+        }
         and db.get_character_status(c.name)[0] == "active"
+        and c.office_type not in {"地方", "督抚", "边镇"}
     )
-    db.set_character_office(bare.name, "新设巡抚", office_type="地方")
-    db.conn.execute(
-        "UPDATE characters SET location=? WHERE name=?", ("henan", bare.name),
-    )
-    db.conn.commit()
-    bare_proj = db.project_office_identity("新设巡抚", "地方", location="henan")
-    assert bare_proj["region_ids"] == ()
-    assert bare_proj["archive_key"] == "slot:新设巡抚"
+    prior_office = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
+    ).fetchone()
+    rejected = appoint(bare.name, "新设巡抚", "地方")
+    assert rejected and rejected[0].get("rejected"), rejected
+    assert "region_id" in str(rejected[0].get("reason") or "")
+    after = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
+    ).fetchone()
+    assert after["office"] == prior_office["office"]
     assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ()
-    # Same write entry later attaches the seat region; still independent of location.
-    db.set_character_office(
-        bare.name, "新设巡抚", office_type="地方", region_id="jiangxi",
-    )
+    # Same real entrance later attaches seat; migration still independent of location.
+    ok = appoint(bare.name, "新设巡抚", "地方", region_id="jiangxi")
+    assert ok and not ok[0].get("rejected"), ok
     db.conn.execute(
         "UPDATE characters SET location=? WHERE name=?", ("henan", bare.name),
     )
     db.conn.commit()
-    attached = db.project_office_identity("新设巡抚", "地方", location="henan")
+    attached = db.project_office_identity(
+        "新设巡抚", "地方", character_name=bare.name, location="henan",
+    )
     assert attached["region_ids"] == ("jiangxi",)
     assert attached["archive_key"] == "slot:新设巡抚@jiangxi"
     assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ("jiangxi",)
@@ -1428,10 +1507,17 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
         case_successor, inner_lead, inner_other, case_lead, case_helper,
     ) = people[:10]
     slot = db.conn.execute(
-        "SELECT office_title FROM office_slots WHERE region_id<>'' ORDER BY sort_order LIMIT 1"
+        "SELECT office_title, region_id FROM office_slots "
+        "WHERE region_id<>'' ORDER BY sort_order LIMIT 1"
     ).fetchone()
+    slot_region = str(slot["region_id"] or "").strip()
+    other_region = db.conn.execute(
+        "SELECT id FROM regions WHERE id<>? ORDER BY id LIMIT 1", (slot_region,),
+    ).fetchone()["id"]
     db.set_character_office(central_lead.name, "礼部尚书", office_type="礼部")
-    db.set_character_office(slot_lead.name, slot["office_title"], office_type="地方")
+    db.set_character_office(
+        slot_lead.name, slot["office_title"], office_type="地方", region_id=slot_region,
+    )
     db.record_character_participation(
         state, [central_lead.name], "private_matter", "私事", "PRIVATE_HISTORY_ONLY",
     )
@@ -1446,8 +1532,12 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     db.set_character_office(central_lead.name, "闲住", office_type="未仕")
     db.set_character_office(slot_lead.name, "闲住", office_type="未仕")
     db.set_character_office(central_successor.name, "礼部尚书", office_type="礼部")
-    db.set_character_office(slot_successor.name, slot["office_title"], office_type="地方")
-    db.set_character_office(outsider.name, "另一地方官", office_type="地方")
+    db.set_character_office(
+        slot_successor.name, slot["office_title"], office_type="地方", region_id=slot_region,
+    )
+    db.set_character_office(
+        outsider.name, "另一地方官", office_type="地方", region_id=other_region,
+    )
     db.set_character_office(case_successor.name, "刑部尚书", office_type="刑部")
     db.set_character_office(inner_lead.name, "内廷随侍", office_type="内廷")
     db.set_character_office(inner_other.name, "内廷随侍", office_type="内廷")

@@ -660,6 +660,9 @@ def apply_appointment(
         personal_skills=[],
         power_id="ming",
         status="active",
+        office_region=str(
+            data.get("office_region") or data.get("region_id") or ""
+        ).strip(),
         **person_fields,
     )
     content.characters[name] = character

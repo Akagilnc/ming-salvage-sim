@@ -1220,7 +1220,8 @@
         "crime": "无(大凌河诈降、再叛、终降清皆后事,坚决不预坐)",
         "severity": "无"
       },
-      "location": "liaodong"
+      "location": "liaodong",
+      "office_region": "liaodong"
     },
     {
       "name": "满桂",
@@ -1251,7 +1252,8 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "shanxi"
+      "location": "shanxi",
+      "office_region": "shanxi"
     },
     {
       "name": "赵率教",
@@ -1282,7 +1284,8 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "liaodong"
+      "location": "liaodong",
+      "office_region": "liaodong"
     },
     {
       "name": "王之臣",
@@ -1313,7 +1316,8 @@
         "crime": "无",
         "severity": "无"
       },
-      "location": "liaodong"
+      "location": "liaodong",
+      "office_region": "liaodong"
     },
     {
       "name": "毛文龙",
@@ -1345,7 +1349,8 @@
       "seed_guilt": {
         "crime": "东江镇跋扈、虚报兵额冒饷(争议非定谳;通敌之议后世聚讼,不坐实)——存疑",
         "severity": "轻"
-      }
+      },
+      "office_region": "dongjiang_area"
     },
     {
       "name": "阎鸣泰",
@@ -1376,7 +1381,8 @@
         "crime": "蓟辽总督,首倡为魏建生祠、献祠最力者之一(谀颂阿附,无直接血债)",
         "severity": "中"
       },
-      "location": "liaodong"
+      "location": "liaodong",
+      "office_region": "liaodong"
     },
     {
       "name": "洪承畴",
@@ -1407,7 +1413,8 @@
         "crime": "无(松锦战败后降清是崇祯十五年后事,铁律不预坐;此刻陕西督粮参政忠勤明臣)",
         "severity": "无"
       },
-      "location": "shaanxi"
+      "location": "shaanxi",
+      "office_region": "shaanxi"
     },
     {
       "name": "孙传庭",
@@ -2678,7 +2685,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "office_region": "guizhou"
     },
     {
       "name": "邹维琏",
@@ -2711,7 +2719,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "office_region": "fujian"
     },
     {
       "name": "练国事",
@@ -2743,7 +2752,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "office_region": "shaanxi"
     },
     {
       "name": "李待问",
@@ -2807,7 +2817,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "office_region": "shanxi"
     },
     {
       "name": "曾樱",
@@ -2840,7 +2851,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "office_region": "fujian"
     },
     {
       "name": "余大成",
@@ -2905,7 +2917,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "office_region": "guangdong"
     },
     {
       "name": "郑芝龙",
@@ -3164,7 +3177,8 @@
       "seed_guilt": {
         "crime": "无(此刻东江毛部将之明军武弁未叛;崇祯六年起降清是后事,务必勿预坐叛罪)",
         "severity": "无"
-      }
+      },
+      "office_region": "dongjiang_area"
     },
     {
       "name": "耿仲明",
@@ -3197,7 +3211,8 @@
       "seed_guilt": {
         "crime": "无(此刻东江毛部将之明军武弁未叛;后随孔有德降清是后事,勿预坐)",
         "severity": "无"
-      }
+      },
+      "office_region": "dongjiang_area"
     },
     {
       "name": "尚可喜",
@@ -3230,7 +3245,8 @@
       "seed_guilt": {
         "crime": "无(此刻东江明将未叛;崇祯七年降清是后事,勿预坐)",
         "severity": "无"
-      }
+      },
+      "office_region": "dongjiang_area"
     },
     {
       "name": "多铎",

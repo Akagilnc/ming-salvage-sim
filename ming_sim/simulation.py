@@ -157,6 +157,7 @@ ITEM_FIELD_ALIASES = {
     "armies": "armies", "军队": "armies",
     "action": "action", "动作": "action",
     "region_id": "region_id", "地区编号": "region_id",
+    "任所": "region_id", "辖区": "region_id", "任所编号": "region_id",
     "monthly_amount": "monthly_amount", "月增额": "monthly_amount", "月额": "monthly_amount",
     "building_id": "building_id", "建筑编号": "building_id",
     "category": "category", "类别": "category",

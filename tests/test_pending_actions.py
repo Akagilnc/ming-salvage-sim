@@ -1330,7 +1330,7 @@ def test_commit_appointment_applies_at_decree(game, monkeypatch):
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps(
                             {"任免动作": "任命", "姓名": new_name,
-                             "官职": "陕西巡抚", "顶替": ""}, ensure_ascii=False), 1))
+                             "官职": "陕西巡抚", "任所": "shaanxi", "顶替": ""}, ensure_ascii=False), 1))
     try:
         GameSession.apply_cli_conversation_actions(
             _fake_session(db, state), ch,
@@ -1772,7 +1772,7 @@ def test_commit_new_office_action_rolls_back_memory_registration(game, monkeypat
     content.characters.pop(new_name, None)
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name="测试召对",
-        payload={"name": new_name, "office": "陕西总督"},
+        payload={"name": new_name, "office": "陕西总督", "region_id": "shaanxi"},
     )
 
     monkeypatch.setattr(
@@ -1807,7 +1807,7 @@ def test_commit_new_office_action_restores_when_post_create_helper_raises(game, 
         (
             state.turn,
             "测试召对",
-            json.dumps({"name": new_name, "office": "陕西总督"}, ensure_ascii=False),
+            json.dumps({"name": new_name, "office": "陕西总督", "region_id": "shaanxi"}, ensure_ascii=False),
         ),
     )
     db.conn.commit()

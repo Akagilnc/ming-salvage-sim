@@ -224,6 +224,8 @@ def test_issue_unified_person_change_shadows_legacy_person_effects(game):
                         "name": name,
                         "动作": "任命",
                         "office": "陕西总督",
+                        "office_type": "地方",
+                        "region_id": "shaanxi",
                         "reason": "新键任官",
                     }
                 ],
@@ -535,6 +537,8 @@ def test_inertia_natural_resolve_applies_unified_person_change_with_bound_conten
                         "name": name,
                         "动作": "调任",
                         "office": "陕西总督",
+                        "office_type": "地方",
+                        "region_id": "shaanxi",
                         "office_type": "督抚",
                         "reason": "自然结案调任",
                     }

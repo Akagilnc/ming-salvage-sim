@@ -398,6 +398,8 @@ class Character:
     style: str
     power_id: str
     location: str = ""
+    # Explicit appointment jurisdiction (typed region_id). Not physical location.
+    office_region: str = ""
     transit_to: str = ""
     transit_distance_remaining: float | None = None
     transit_speed_factor: float | None = None

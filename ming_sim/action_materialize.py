@@ -1826,6 +1826,11 @@ def _stage_office_pending_core(
         "mode": resolve_directive_mode(extracted=appt.get("mode") or mode_mark),
         "summon_after": "是" if want_summon else "否",
     }
+    seat = str(
+        appt.get("region_id") or appt.get("任所") or appt.get("辖区") or ""
+    ).strip()
+    if seat:
+        payload["region_id"] = seat
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
     if tenure_mark == "署理":
         payload["任别"] = "署理"
@@ -4843,6 +4848,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 FieldSpec("office", "官职", None, "", max_len=40),
+                # Local/督抚/边镇 seat jurisdiction (typed region_id); not 行止.
+                FieldSpec("region_id", "任所", None, "", max_len=40),
                 FieldSpec(
                     "summon_after", "任命后传召",
                     frozenset({"是", "否"}), "否",

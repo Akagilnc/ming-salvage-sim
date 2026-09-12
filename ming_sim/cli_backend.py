@@ -3753,6 +3753,8 @@ def extract_appointment_action(
         "判定要点：皇帝口语如「着X任/授X为/升X/调X去/革X职/罢X」即任免；"
         "对已拟任免的路径应答「特旨钦命」→任免动作可无、颁布方式=中旨直发；"
         "「署理」→任免动作可无、任别=署理。"
+        "地方/督抚/边镇任命须填任所为英文 region_id（如 shaanxi/fujian/liaodong）；"
+        "任所是辖域不是行止去向；中央衙门任命任所留空。"
         "任命并令其入京/来见/赴阙 → 任命后传召=是；未要求传召则否。"
         "闲谈、议事、下密令、拟旨、惩处都不算。"
         "语义判断，别拘字面。无任免且无路径应答 → 任免动作填「无」、其余留空。\n\n"
@@ -3780,6 +3782,9 @@ def extract_appointment_action(
         "office": str(normalized.get("office") or "").strip()[:40],
         "summon_after": str(normalized.get("summon_after") or "否"),
     }
+    seat = str(normalized.get("region_id") or "").strip()[:40]
+    if seat:
+        result["region_id"] = seat
     mode = str(normalized.get("mode") or "").strip()
     if mode:
         result["mode"] = mode

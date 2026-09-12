@@ -6222,9 +6222,17 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         dict(row)
         for row in db.conn.execute(
             "SELECT character_name, office_title, office_type, source, dossier_id, "
-            "appointment_tenure, updated_at FROM character_offices"
+            "appointment_tenure, region_id, updated_at FROM character_offices"
         ).fetchall()
     ]
+    posting_rows = []
+    if db._table_exists("office_postings"):
+        posting_rows = [
+            dict(row)
+            for row in db.conn.execute(
+                "SELECT office_title, region_id, office_type, updated_at FROM office_postings"
+            ).fetchall()
+        ]
     office_change_rows = [
         dict(row)
         for row in db.conn.execute(
@@ -6243,7 +6251,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         ).fetchall()
     ]
     content_rows = _snapshot_content_character_rows(content)
-    return character_rows, office_rows, faction_rows, content_rows, office_change_rows
+    return character_rows, office_rows, faction_rows, content_rows, office_change_rows, posting_rows
 
 
 def _snapshot_content_character_rows(content: Optional[GameContent]) -> Dict[str, Dict[str, object]]:
@@ -6282,7 +6290,11 @@ def _restore_person_write_state(
     *,
     commit: bool = True,
 ) -> None:
-    character_rows, office_rows, faction_rows, content_rows, office_change_rows = snapshot
+    if len(snapshot) == 6:
+        character_rows, office_rows, faction_rows, content_rows, office_change_rows, posting_rows = snapshot
+    else:
+        character_rows, office_rows, faction_rows, content_rows, office_change_rows = snapshot
+        posting_rows = None
     db.conn.execute("DELETE FROM character_offices")
     db.conn.execute("DELETE FROM office_change_records")
     snapshot_names = {str(row["name"]) for row in character_rows}
@@ -6315,7 +6327,7 @@ def _restore_person_write_state(
     db.conn.executemany(
         "INSERT INTO character_offices "
         "(character_name, office_title, office_type, source, dossier_id, "
-        "appointment_tenure, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "appointment_tenure, region_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 row["character_name"],
@@ -6324,11 +6336,27 @@ def _restore_person_write_state(
                 row["source"],
                 row.get("dossier_id"),
                 row["appointment_tenure"],
+                str(row.get("region_id") or ""),
                 row["updated_at"],
             )
             for row in office_rows
         ],
     )
+    if posting_rows is not None and db._table_exists("office_postings"):
+        db.conn.execute("DELETE FROM office_postings")
+        db.conn.executemany(
+            "INSERT INTO office_postings "
+            "(office_title, region_id, office_type, updated_at) VALUES (?, ?, ?, ?)",
+            [
+                (
+                    row["office_title"],
+                    row["region_id"],
+                    row.get("office_type") or "",
+                    row.get("updated_at") or "",
+                )
+                for row in posting_rows
+            ],
+        )
     db.conn.executemany(
         "INSERT INTO office_change_records "
         "(id, character_name, office_title, office_type, source, dossier_id, "
@@ -6451,6 +6479,7 @@ def apply_office_appointment(
     new_office_type: str = "",
     faction: str = "中立",
     appointment_tenure: str = "真除",
+    region_id: str = "",
     llm_config: Any = None,
     commit: bool = True,
 ) -> Dict[str, object]:
@@ -6510,6 +6539,7 @@ def apply_office_appointment(
                     name, new_office, new_office_type,
                     source=reason[:60] or "诏书调任", llm_config=llm_config,
                     commit=commit,
+                    region_id=str(region_id or "").strip(),
                 )
             if cur_status == "active":
                 db.conn.execute(
@@ -6563,8 +6593,10 @@ def apply_office_appointment(
             },
             llm_config=llm_config or db.llm_config,
         )
+        seat = str(region_id or "").strip()
         appt = {"name": name, "office": new_office, "office_type": new_office_type,
-                "faction": faction, "reason": reason, "approved": True}
+                "faction": faction, "reason": reason, "approved": True,
+                "office_region": seat}
         with _appointment_tenure_scope(db, appointment_tenure):
             appointed, _ = apply_appointment(
                 db,
@@ -6980,6 +7012,12 @@ def _apply_person_changes(
                         new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
                         faction=str(item.get("faction") or "中立"),
                         appointment_tenure=appointment_tenure,
+                        region_id=str(
+                            item.get("region_id")
+                            or item.get("任所")
+                            or item.get("辖区")
+                            or ""
+                        ).strip(),
                         llm_config=llm_config,
                         commit=commit_person_change,
                     ),
@@ -7051,6 +7089,12 @@ def _apply_person_changes(
                 new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
                 faction=str(item.get("faction") or "中立"),
                 appointment_tenure=appointment_tenure,
+                region_id=str(
+                    item.get("region_id")
+                    or item.get("任所")
+                    or item.get("辖区")
+                    or ""
+                ).strip(),
                 llm_config=llm_config,
                 commit=False if derive_label else commit_person_change,
             )
