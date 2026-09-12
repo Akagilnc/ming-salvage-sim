@@ -19,7 +19,6 @@ from ming_sim.audience_night import (
 )
 from ming_sim.materials import (
     _handled_affair_lines,
-    _safe_segment,
     _visible_affair_lines,
     list_materials,
     material_tools,
@@ -27,7 +26,7 @@ from ming_sim.materials import (
     read_material,
 )
 from ming_sim.models import CourtContext, LLMConfig
-from ming_sim.registry import create_minister_agent
+from ming_sim.registry import MinisterRegistry, create_minister_agent
 from ming_sim.session import GameSession
 
 
@@ -105,15 +104,50 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     army = db.conn.execute("SELECT id,name FROM armies ORDER BY id LIMIT 1").fetchone()
     db.set_character_office(character.name, slot["office_title"], office_type="地方")
     db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (character.name,))
-    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", (character.name, army["id"]))
+    db.conn.execute(
+        "UPDATE armies SET commander=?,supply=17,morale=23,loyalty=31,training=44,equipment=52 "
+        "WHERE id=?", (character.name, army["id"]),
+    )
+    db.conn.execute(
+        "UPDATE regions SET public_support=13,unrest=87 WHERE id=?", (slot["region_id"],),
+    )
     db.conn.commit()
 
     prepared = prepare_character_materials(db, state, character, dest_root=tmp_path / "materials")
     names = list_materials(prepared.root)
     region_paths = [path for path in names if path.startswith("地区/")]
     army_paths = [path for path in names if path.startswith("军队/")]
-    assert region_paths == [f"地区/{_safe_segment(db.conn.execute('SELECT name FROM regions WHERE id=?', (slot['region_id'],)).fetchone()['name'])}/详情.txt"]
-    assert army_paths == [f"军队/{_safe_segment(army['name'])}/详情.txt"]
+    assert len(region_paths) == 1 and len(army_paths) == 1
+    region_text = read_material(prepared.root, region_paths[0])
+    army_text = read_material(prepared.root, army_paths[0])
+    region_name = db.conn.execute(
+        "SELECT name FROM regions WHERE id=?", (slot["region_id"],),
+    ).fetchone()["name"]
+    assert region_name in region_text and army["name"] in army_text
+    assert "民心13" not in region_text and "动乱87" not in region_text
+    assert "补给：17" not in army_text and "士气23" not in army_text
+
+
+def test_registry_refresh_releases_replaced_agent_materials(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+    old_root = tmp_path / "old-materials"
+    new_root = tmp_path / "new-materials"
+    old_root.mkdir()
+    new_root.mkdir()
+    registry = object.__new__(MinisterRegistry)
+    registry.content = content
+    registry.agents = {
+        character.name: SimpleNamespace(model=SimpleNamespace(materials_dir=str(old_root)))
+    }
+    registry._create = lambda _character: SimpleNamespace(
+        model=SimpleNamespace(materials_dir=str(new_root))
+    )
+
+    registry.refresh(character.name)
+
+    assert not old_root.exists()
+    assert new_root.exists()
 
 
 def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):

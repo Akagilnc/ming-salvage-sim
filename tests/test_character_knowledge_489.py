@@ -5,7 +5,7 @@ import json
 from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import prepare_character_materials
+from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from tests.dossier_test_helpers import create_test_secret_order
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -1241,19 +1241,6 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
     assert rows[1]["name"] not in view["world"]["command"]
 
 
-def test_ordinary_office_dossier_survives_successor_without_private_history(game):
-    db, state, content = game
-    predecessor = next(c for c in content.characters.values() if c.office_type == "礼部")
-    successor = next(c for c in content.characters.values() if c.name != predecessor.name)
-    dossier_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="核定历书行政案卷。",
-        target_kind="issue", target_id="calendar-office-archive",
-        participants=[{"character_id": predecessor.name, "tier": "主办"}],
-    )
-    assert any(d["id"] == dossier_id for d in db.list_referenceable_dossiers(predecessor.name, state.turn))
-    db.set_character_office(successor.name, "礼部尚书", office_type="礼部")
-    inherited = db.list_referenceable_dossiers(successor.name, state.turn)
-    assert any(d["id"] == dossier_id for d in inherited)
 
 
 def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
@@ -1271,3 +1258,75 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
     ledger = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
     assert "-1" in ledger and "密支" in ledger
     assert "秘密分类" not in ledger and "秘密流水原因" not in ledger
+
+
+def _office_archive_from_materials(db, state, character, root):
+    prepared = prepare_character_materials(db, state, character, dest_root=root)
+    path = next(p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt"))
+    return read_material(prepared.root, path)
+
+
+def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_path):
+    db, state, content = game
+    people = [c for c in content.characters.values() if db.get_character_status(c.name)[0] == "active"]
+    central_lead, slot_lead, central_successor, slot_successor, outsider, case_successor = people[:6]
+    slot = db.conn.execute(
+        "SELECT office_title FROM office_slots WHERE region_id<>'' ORDER BY sort_order LIMIT 1"
+    ).fetchone()
+    db.set_character_office(central_lead.name, "礼部尚书", office_type="礼部")
+    db.set_character_office(slot_lead.name, slot["office_title"], office_type="地方")
+    db.record_character_participation(
+        state, [central_lead.name], "private_matter", "私事", "PRIVATE_HISTORY_ONLY",
+    )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="JOINT_ADMIN_ARCHIVE",
+        target_kind="issue", target_id="joint-admin",
+        participants=[
+            {"character_id": central_lead.name, "tier": "主办"},
+            {"character_id": slot_lead.name, "tier": "主办"},
+        ],
+    )
+    row = db.conn.execute(
+        "SELECT office_archive_keys FROM decree_dossiers WHERE id=?", (dossier_id,),
+    ).fetchone()
+    assert set(json.loads(row["office_archive_keys"])) == {
+        "central:礼部", f"slot:{slot['office_title']}",
+    }
+    db.set_character_office(central_lead.name, "闲住", office_type="未仕")
+    db.set_character_office(slot_lead.name, "闲住", office_type="未仕")
+    db.set_character_office(central_successor.name, "礼部尚书", office_type="礼部")
+    db.set_character_office(slot_successor.name, slot["office_title"], office_type="地方")
+    db.set_character_office(outsider.name, "另一地方官", office_type="地方")
+    db.set_character_office(case_successor.name, "刑部尚书", office_type="刑部")
+
+    for reader in (central_successor, slot_successor):
+        archive = _office_archive_from_materials(db, state, reader, tmp_path / reader.name)
+        assert "JOINT_ADMIN_ARCHIVE" in archive
+        assert "PRIVATE_HISTORY_ONLY" not in archive
+    assert "JOINT_ADMIN_ARCHIVE" not in _office_archive_from_materials(
+        db, state, outsider, tmp_path / outsider.name,
+    )
+    assert "JOINT_ADMIN_ARCHIVE" not in _office_archive_from_materials(
+        db, state, case_successor, tmp_path / case_successor.name,
+    )
+
+
+def test_central_ledgers_and_unbounded_household_history_reach_final_materials(game, tmp_path):
+    db, state, content = game
+    household = next(c for c in content.characters.values() if c.office_type == "户部")
+    war = next(c for c in content.characters.values() if c.office_type == "兵部")
+    personnel = next(c for c in content.characters.values() if c.office_type == "吏部")
+    for index in range(31):
+        db.record_issue_economy_move(
+            state, "国库", 1, "旧账", f"EARLY_LEDGER_{index}",
+        )
+    household_archive = _office_archive_from_materials(
+        db, state, household, tmp_path / "household",
+    )
+    assert "EARLY_LEDGER_0" in household_archive and "内库" not in household_archive
+    war_archive = _office_archive_from_materials(db, state, war, tmp_path / "war")
+    assert "兵籍在册" in war_archive and "军心" not in war_archive and "欠饷" not in war_archive
+    personnel_archive = _office_archive_from_materials(
+        db, state, personnel, tmp_path / "personnel",
+    )
+    assert "任免簿" in personnel_archive

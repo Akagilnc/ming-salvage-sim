@@ -216,11 +216,6 @@ def minimal_opening_context(
     return "\n".join(parts)
 
 
-def _world_has_domain(knowledge: dict, domain: str) -> bool:
-    world = knowledge.get("world") or {}
-    return bool(str(world.get(domain) or "").strip())
-
-
 def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
     from ming_sim.models import CourtContext
     from ming_sim.registry import build_secret_order_brief

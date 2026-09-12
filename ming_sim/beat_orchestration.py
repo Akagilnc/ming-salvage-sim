@@ -79,7 +79,6 @@ class BeatInputs:
     characterization: str = ""       # 他是谁（ADR 0033）
     summon_method: str = ""          # 他怎么被召来（发起账召法）
     opening_context: str = ""       # 最小开场（身份/在场/日期/正经手/已说）
-    court_tension: str = ""          # 当下朝局张力（定性，见闻内切片）
     prior_appearances: Tuple[str, ...] = ()  # 前次入殿与奏对账目
     public_layer: Tuple[str, ...] = ()       # 本夜公开层账（该知扩散取数）
     audience_scenes: Tuple[str, ...] = ()    # 待顶出场面的结构化在世事实（由开夜内容生成自然呈现）
@@ -97,14 +96,6 @@ def _default_knowledge_provider(db: Any, state: Any) -> KnowledgeProvider:
         return db.get_character_knowledge(state, name) or {}
 
     return provider
-
-
-def _court_tension(knowledge: Dict[str, Any]) -> str:
-    """从见闻投影取定性朝局张力：security 域（audience=True 定性口径，P4 安全）。
-    此人所任官职不含该域＝他不感知这层张力，返回空（perspectival，非全知）。"""
-    world = knowledge.get("world") if isinstance(knowledge, dict) else None
-    world = world or {}
-    return str(world.get("security") or "").strip()
 
 
 def _characterization(db: Any, person_name: str) -> str:
@@ -209,7 +200,6 @@ def assemble_beat_inputs(
         subject = roster[0] if roster else ""
 
     knowledge = provider(subject) if subject else {}
-    court_tension = _court_tension(knowledge)
 
     from types import SimpleNamespace
     from ming_sim.materials import (
@@ -292,7 +282,6 @@ def assemble_beat_inputs(
         characterization=characterization,
         summon_method=str(summon_method or "") if beat_kind in (BEAT_ENTER, BEAT_SUMMON) else "",
         opening_context=opening_context,
-        court_tension=court_tension,
         prior_appearances=prior_appearances,
         public_layer=tuple(extra_public_layer) + _public_layer_bodies(
             db, night_id, before_entry_id=prior_bound,
@@ -350,7 +339,6 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
             "人物特征": inputs.characterization,
             "召法": inputs.summon_method,
             "人物开场": inputs.opening_context,
-            "人物感知的朝局张力": inputs.court_tension,
             "此前入殿与奏对": inputs.prior_appearances,
             "此前殿上公开之事": inputs.public_layer,
         }

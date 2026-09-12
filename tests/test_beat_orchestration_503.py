@@ -500,7 +500,7 @@ def _echo_generator(inputs: BeatInputs) -> str:
         f"kind={inputs.beat_kind}", f"person={inputs.person_name}",
         f"method={inputs.summon_method}", f"tod={inputs.time_of_day}",
         f"loc={inputs.location}", f"char={inputs.characterization}",
-        f"world={inputs.opening_context}", f"tension={inputs.court_tension}",
+        f"world={inputs.opening_context}",
         f"prior={'∥'.join(inputs.prior_appearances)}",
         f"public={'∥'.join(inputs.public_layer)}",
     ])

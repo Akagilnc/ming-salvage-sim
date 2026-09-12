@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from agno.agent import Agent
@@ -571,11 +573,21 @@ class MinisterRegistry:
             self.agents[character.name] = agent
         return agent
 
+    @staticmethod
+    def _release_materials(agent: Agent | None) -> None:
+        model = getattr(agent, "model", None)
+        root = str(getattr(model, "materials_dir", "") or "")
+        if root:
+            shutil.rmtree(Path(root), ignore_errors=True)
+
     def refresh(self, character_name: str) -> None:
         character = self.content.characters.get(character_name)
         if character is None:
             return
-        self.agents[character.name] = self._create(character)
+        replacement = self._create(character)
+        old = self.agents.get(character.name)
+        self.agents[character.name] = replacement
+        self._release_materials(old)
 
     def project_outcome(self, character_name: str) -> None:
         """Outer-commit projection for formal people after durable settlement.
@@ -598,7 +610,10 @@ class MinisterRegistry:
         self.session_ids[character.name] = (
             f"minister-{character.name}-turn-{self.context.state.turn}"
         )
-        self.agents[character.name] = self._create(character)
+        replacement = self._create(character)
+        old = self.agents.get(character.name)
+        self.agents[character.name] = replacement
+        self._release_materials(old)
 
     def register_runtime(self, character: Character) -> None:
         """注册不入正式名册的临时召见人物。"""

@@ -377,7 +377,7 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
              WHEN e.origin_ref LIKE 'dossier:%' THEN CAST(substr(e.origin_ref,9) AS INTEGER)
              ELSE e.dossier_id END
            LEFT JOIN secret_orders s ON s.id=d.secret_order_id
-           WHERE e.account='国库' ORDER BY e.id DESC LIMIT 30"""
+           WHERE e.account='国库' ORDER BY e.id DESC"""
     ).fetchall()
     lines = [f"太仓实存：{int(balance['balance'] if balance else state.metrics['国库'])}"]
     for row in reversed(rows):
