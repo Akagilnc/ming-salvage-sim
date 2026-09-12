@@ -438,15 +438,19 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
     frozen_snapshot = set(caller_frozen)
 
     pending_id = 91003
-    db.create_decree_dossier(
+    born_dossier_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="另起护送案",
         target_kind="issue", target_id="ningyuan-general",
         executor_kind="character", executor_id=minister,
         pending_action_id=pending_id, payload={"assignee_id": minister},
     )
-    dossier_born_id = int(
-        db.conn.execute("SELECT COALESCE(MAX(id), 0) AS n FROM affairs").fetchone()["n"]
-    ) + 1
+    existing_dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="另案待挂",
+        target_kind="issue", target_id="ningyuan-general",
+        executor_kind="character", executor_id=minister,
+        pending_action_id=91004, payload={"assignee_id": minister},
+    )
+    injected = {}
     original_body = issues_mod._apply_score_extraction_body
 
     def reuse_dossier_then_apply(*args, **kwargs):
@@ -460,25 +464,53 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
                 "affair_declaration": _declaration(identity="dossier-born-batch"),
             },
         )
+        born_id = int(db.conn.execute(
+            "SELECT affair_id FROM decree_dossiers WHERE id = ?", (born_dossier_id,),
+        ).fetchone()["affair_id"])
+        injected["born_id"] = born_id
+        try:
+            db.create_decree_dossiers(
+                state, action_type="assignment", decree_text="另案待挂",
+                target_kind="issue", target_id="ningyuan-general",
+                executor_kind="character", executor_id=minister,
+                pending_action_id=91004,
+                payload={
+                    "assignee_id": minister,
+                    "affair_declaration": _declaration(attach="existing", affair_id=born_id),
+                },
+            )
+        except ValueError as exc:
+            kwargs["validate_rejections"].append(("dossier_affair", {"affair_id": born_id}, str(exc)))
         extracted = args[2]
         extracted["economy_moves"] = [{
             "account": "国库", "delta": -1, "category": "善后", "reason": "案卷同批后果",
-            "origin_ref": db.affairs.origin_ref(dossier_born_id),
+            "origin_ref": db.affairs.origin_ref(born_id),
         }]
         extracted["affair_declarations"] = [
-            _declaration(attach="close", affair_id=dossier_born_id),
+            _declaration(attach="close", affair_id=born_id),
         ]
         return original_body(*args, **kwargs)
 
     monkeypatch.setattr(issues_mod, "_apply_score_extraction_body", reuse_dossier_then_apply)
-    dossier_batch = apply_score_extraction(
-        db, state, {}, content=content, open_affair_ids_at_input=caller_frozen,
-    )
-    monkeypatch.setattr(issues_mod, "_apply_score_extraction_body", original_body)
+    try:
+        dossier_batch = apply_score_extraction(
+            db, state, {}, content=content, open_affair_ids_at_input=caller_frozen,
+        )
+    finally:
+        monkeypatch.setattr(issues_mod, "_apply_score_extraction_body", original_body)
+    dossier_born_id = injected["born_id"]
+    assert db.conn.execute(
+        "SELECT affair_id FROM decree_dossiers WHERE id = ?", (born_dossier_id,),
+    ).fetchone()["affair_id"] == dossier_born_id
+    assert db.conn.execute(
+        "SELECT affair_id FROM decree_dossiers WHERE id = ?", (existing_dossier_id,),
+    ).fetchone()["affair_id"] == 0
     assert db.affairs.get(dossier_born_id).status == "open"
     assert not dossier_batch["economy_moves_rejections"]
-    assert any(row["report_section"] == "affair_declarations"
-               for row in dossier_batch["validate_shape_rejections"])
+    rejected_sections = {
+        row["report_section"] for row in dossier_batch["validate_shape_rejections"]
+    }
+    assert {"dossier_affair", "affair_declarations"} <= rejected_sections
     # new_issues birth must expand the single internal working set so a later
     # post-issue carrier (explicit origin_ref, no re-add) can use that newborn.
     expected_born_id = int(
