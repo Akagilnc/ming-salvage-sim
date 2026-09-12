@@ -186,15 +186,22 @@ def _remember_typed_failure(error: BaseException) -> None:
 
     只认本模块自己的 typed 异常（TransportIdleTimeout / LLMUnavailable）与 openai
     typed 异常：SDK 之后可能把它们吞成散文 RunErrorEvent，届时按记忆还原分类。
+    OpenAIChat.invoke 会把 openai typed 异常包装为 ModelProviderError 并显式
+    ``raise ... from provider_error``；外层本身不是 openai typed，须沿 __cause__
+    链取回既有 typed 事实（与 _remember_typed_status 同口径，不走 __context__）。
     未 typed 的异常不记，仍走 run_error_event_failure 的「无 status 不洗成瞬断」。
     """
     _remember_typed_status(error)
-    if isinstance(
-        error,
-        (TransportIdleTimeout, LLMUnavailable, APITimeoutError, APIConnectionError,
-         APIStatusError),
-    ):
-        _typed_provider_failure.set(classify_transport_failure(error))
+    cause: Optional[BaseException] = error
+    while cause is not None:
+        if isinstance(
+            cause,
+            (TransportIdleTimeout, LLMUnavailable, APITimeoutError, APIConnectionError,
+             APIStatusError),
+        ):
+            _typed_provider_failure.set(classify_transport_failure(cause))
+            return
+        cause = cause.__cause__
 
 
 def _capture_status_wrapper(method: Callable) -> Callable:
