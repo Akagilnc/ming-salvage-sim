@@ -125,29 +125,80 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     ).fetchone()["name"]
     assert region_name in region_text and army["name"] in army_text
     assert "民心13" not in region_text and "动乱87" not in region_text
-    assert "补给：17" not in army_text and "士气23" not in army_text
+    assert "补给：17" not in army_text
+    assert "士气：23" not in army_text and "士气23" not in army_text
+    assert "忠诚：31" not in army_text and "军心：31" not in army_text
+    assert "训练：44" not in army_text
+    assert "装备：52" not in army_text
 
 
-def test_registry_refresh_releases_replaced_agent_materials(game, tmp_path):
+def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
     old_root = tmp_path / "old-materials"
     new_root = tmp_path / "new-materials"
-    old_root.mkdir()
-    new_root.mkdir()
+    runtime_old = tmp_path / "runtime-old"
+    runtime_new = tmp_path / "runtime-new"
+    closed = tmp_path / "closed-materials"
+    session_old = tmp_path / "session-old"
+    for path in (old_root, new_root, runtime_old, runtime_new, closed, session_old):
+        path.mkdir()
     registry = object.__new__(MinisterRegistry)
     registry.content = content
+    registry.context = SimpleNamespace(state=state)
+    registry.session_ids = {}
     registry.agents = {
         character.name: SimpleNamespace(model=SimpleNamespace(materials_dir=str(old_root)))
     }
     registry._create = lambda _character: SimpleNamespace(
         model=SimpleNamespace(materials_dir=str(new_root))
     )
-
     registry.refresh(character.name)
+    assert not old_root.exists() and new_root.exists()
 
-    assert not old_root.exists()
-    assert new_root.exists()
+    registry.agents[character.name] = SimpleNamespace(
+        model=SimpleNamespace(materials_dir=str(runtime_old))
+    )
+    registry._create = lambda _character: SimpleNamespace(
+        model=SimpleNamespace(materials_dir=str(runtime_new))
+    )
+    registry.register_runtime(character)
+    assert not runtime_old.exists() and runtime_new.exists()
+
+    registry.agents["other"] = SimpleNamespace(
+        model=SimpleNamespace(materials_dir=str(closed))
+    )
+    registry.close()
+    assert not closed.exists() and not runtime_new.exists()
+    assert registry.agents == {}
+
+    session = object.__new__(GameSession)
+    leftover = object.__new__(MinisterRegistry)
+    leftover.agents = {
+        character.name: SimpleNamespace(model=SimpleNamespace(materials_dir=str(session_old)))
+    }
+    session.registry = leftover
+    replacement = object.__new__(MinisterRegistry)
+    replacement.agents = {}
+    session._adopt_registry(replacement)
+    assert session.registry is replacement
+    assert not session_old.exists()
+
+    session_close_dir = tmp_path / "session-close"
+    session_close_dir.mkdir()
+    closing = object.__new__(GameSession)
+    leftover_close = object.__new__(MinisterRegistry)
+    leftover_close.agents = {
+        character.name: SimpleNamespace(model=SimpleNamespace(materials_dir=str(session_close_dir)))
+    }
+    closing.registry = leftover_close
+    closing._scene_registry = SimpleNamespace(abandon_all=lambda: None)
+    closing.agno_db = None
+    closing.db = SimpleNamespace(close=lambda: None)
+    closing._close_epoch = 0
+    GameSession.close(closing)
+    assert closing.registry is None
+    assert not session_close_dir.exists()
 
 
 def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):

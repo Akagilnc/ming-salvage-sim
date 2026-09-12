@@ -577,17 +577,29 @@ class MinisterRegistry:
     def _release_materials(agent: Agent | None) -> None:
         model = getattr(agent, "model", None)
         root = str(getattr(model, "materials_dir", "") or "")
-        if root:
-            shutil.rmtree(Path(root), ignore_errors=True)
+        if not root:
+            return
+        path = Path(root)
+        if path.exists():
+            shutil.rmtree(path)
+
+    def _replace_agent(self, name: str, agent: Agent) -> None:
+        old = self.agents.get(name)
+        self.agents[name] = agent
+        if old is not None and old is not agent:
+            self._release_materials(old)
+
+    def close(self) -> None:
+        agents = list(self.agents.values())
+        self.agents.clear()
+        for agent in agents:
+            self._release_materials(agent)
 
     def refresh(self, character_name: str) -> None:
         character = self.content.characters.get(character_name)
         if character is None:
             return
-        replacement = self._create(character)
-        old = self.agents.get(character.name)
-        self.agents[character.name] = replacement
-        self._release_materials(old)
+        self._replace_agent(character.name, self._create(character))
 
     def project_outcome(self, character_name: str) -> None:
         """Outer-commit projection for formal people after durable settlement.
@@ -610,14 +622,11 @@ class MinisterRegistry:
         self.session_ids[character.name] = (
             f"minister-{character.name}-turn-{self.context.state.turn}"
         )
-        replacement = self._create(character)
-        old = self.agents.get(character.name)
-        self.agents[character.name] = replacement
-        self._release_materials(old)
+        self._replace_agent(character.name, self._create(character))
 
     def register_runtime(self, character: Character) -> None:
         """注册不入正式名册的临时召见人物。"""
         self.session_ids[character.name] = (
             f"temporary-{character.name}-turn-{self.context.state.turn}"
         )
-        self.agents[character.name] = self._create(character)
+        self._replace_agent(character.name, self._create(character))

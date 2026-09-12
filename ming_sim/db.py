@@ -15678,8 +15678,7 @@ class GameDB:
         ).fetchone() is not None:
             return f"slot:{title}"
         if kind in {
-            "内阁", "吏部", "户部", "兵部", "工部", "礼部", "翰林院",
-            "司礼监", "内臣", "内廷",
+            "内阁", "吏部", "户部", "兵部", "工部", "礼部", "翰林院", "司礼监",
         }:
             return f"central:{kind}"
         return ""

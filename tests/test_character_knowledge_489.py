@@ -1269,7 +1269,10 @@ def _office_archive_from_materials(db, state, character, root):
 def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_path):
     db, state, content = game
     people = [c for c in content.characters.values() if db.get_character_status(c.name)[0] == "active"]
-    central_lead, slot_lead, central_successor, slot_successor, outsider, case_successor = people[:6]
+    (
+        central_lead, slot_lead, central_successor, slot_successor, outsider,
+        case_successor, inner_lead, inner_other, case_lead, case_helper,
+    ) = people[:10]
     slot = db.conn.execute(
         "SELECT office_title FROM office_slots WHERE region_id<>'' ORDER BY sort_order LIMIT 1"
     ).fetchone()
@@ -1278,7 +1281,7 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     db.record_character_participation(
         state, [central_lead.name], "private_matter", "私事", "PRIVATE_HISTORY_ONLY",
     )
-    dossier_id = db.create_decree_dossier(
+    db.create_decree_dossier(
         state, action_type="assignment", decree_text="JOINT_ADMIN_ARCHIVE",
         target_kind="issue", target_id="joint-admin",
         participants=[
@@ -1286,18 +1289,30 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
             {"character_id": slot_lead.name, "tier": "主办"},
         ],
     )
-    row = db.conn.execute(
-        "SELECT office_archive_keys FROM decree_dossiers WHERE id=?", (dossier_id,),
-    ).fetchone()
-    assert set(json.loads(row["office_archive_keys"])) == {
-        "central:礼部", f"slot:{slot['office_title']}",
-    }
     db.set_character_office(central_lead.name, "闲住", office_type="未仕")
     db.set_character_office(slot_lead.name, "闲住", office_type="未仕")
     db.set_character_office(central_successor.name, "礼部尚书", office_type="礼部")
     db.set_character_office(slot_successor.name, slot["office_title"], office_type="地方")
     db.set_character_office(outsider.name, "另一地方官", office_type="地方")
     db.set_character_office(case_successor.name, "刑部尚书", office_type="刑部")
+    db.set_character_office(inner_lead.name, "内廷随侍", office_type="内廷")
+    db.set_character_office(inner_other.name, "内廷随侍", office_type="内廷")
+    db.create_decree_dossier(
+        state, action_type="assignment", decree_text="INNER_COURT_ARCHIVE",
+        target_kind="issue", target_id="inner-admin",
+        participants=[{"character_id": inner_lead.name, "tier": "主办"}],
+    )
+    db.set_character_office(case_lead.name, "刑部尚书", office_type="刑部")
+    db.set_character_office(case_helper.name, "锦衣卫指挥使", office_type="锦衣卫")
+    db.create_decree_dossier(
+        state, action_type="assignment", decree_text="CASE_FILE_ARCHIVE",
+        target_kind="issue", target_id="criminal-case",
+        participants=[
+            {"character_id": case_lead.name, "tier": "主办"},
+            {"character_id": case_helper.name, "tier": "协办"},
+        ],
+    )
+    db.set_character_office(case_lead.name, "闲住", office_type="未仕")
 
     for reader in (central_successor, slot_successor):
         archive = _office_archive_from_materials(db, state, reader, tmp_path / reader.name)
@@ -1308,6 +1323,18 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     )
     assert "JOINT_ADMIN_ARCHIVE" not in _office_archive_from_materials(
         db, state, case_successor, tmp_path / case_successor.name,
+    )
+    assert "INNER_COURT_ARCHIVE" in _office_archive_from_materials(
+        db, state, inner_lead, tmp_path / f"{inner_lead.name}-inner",
+    )
+    assert "INNER_COURT_ARCHIVE" not in _office_archive_from_materials(
+        db, state, inner_other, tmp_path / inner_other.name,
+    )
+    assert "CASE_FILE_ARCHIVE" in _office_archive_from_materials(
+        db, state, case_helper, tmp_path / case_helper.name,
+    )
+    assert "CASE_FILE_ARCHIVE" not in _office_archive_from_materials(
+        db, state, case_successor, tmp_path / f"{case_successor.name}-case",
     )
 
 

@@ -957,7 +957,7 @@ class GameSession:
         tlog(f"[接档] begin_turn 读档+历史 tick+人物同步+奏报 {time.monotonic() - _t:.1f}s")
         _t = time.monotonic()
         context = CourtContext(state=self.state, db=self.db, previous_summary=self.previous_summary)
-        self.registry = MinisterRegistry(self.llm_config, self.agno_db, context)
+        self._adopt_registry(MinisterRegistry(self.llm_config, self.agno_db, context))
         tlog(f"[接档] begin_turn 大臣 registry 重建 {time.monotonic() - _t:.1f}s")
         self.last_decree = ""
         self._decree_draft_fingerprint = ()
@@ -1035,7 +1035,7 @@ class GameSession:
                 db=self.db,
                 previous_summary=self.previous_summary,
             )
-            self.registry = MinisterRegistry(self.llm_config, self.agno_db, context)
+            self._adopt_registry(MinisterRegistry(self.llm_config, self.agno_db, context))
 
     # ── 召见阶段 ──────────────────────────────────────────────────────────
 
@@ -4045,16 +4045,27 @@ class GameSession:
         except Exception:
             return None
 
+    def _adopt_registry(self, registry: MinisterRegistry) -> None:
+        old = getattr(self, "registry", None)
+        self.registry = registry
+        if old is not None and old is not registry:
+            old.close()
+
     def close(self) -> None:
         """关主库连接，并释放 agno SqliteDb 连接池（#1749）。
 
         主库与 agno 共路径；只关 GameDB 就归档/搬移文件时，agno 仍持 WAL 句柄，
         进程 fd 会钉在 drained_*.db 上，活局写路径可落到 readonly。
 
-        次序：先 agno 后 db。agno 失败则立即上抛、不碰 db（两侧仍完整可恢复）。
+        次序：先 registry 材料目录，再 scene，再 agno，最后 db。任一侧失败上抛（ADR 0005）。
+        agno 失败则立即上抛、不碰 db（两侧仍完整可恢复）。
         agno 已成功后 ``_close_epoch`` 递增——此后即使 db.close 失败/conn 仍可探测，
-        也不得恢复为活局（registry 已失 agno）。任一侧失败上抛（ADR 0005）。
+        也不得恢复为活局（registry 已失 agno）。
         """
+        registry = getattr(self, "registry", None)
+        if registry is not None:
+            registry.close()
+            self.registry = None
         self._scene_registry.abandon_all()
         agno = getattr(self, "agno_db", None)
         if agno is not None:
