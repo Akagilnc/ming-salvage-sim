@@ -181,7 +181,9 @@ def _remember_typed_status(error: BaseException) -> None:
         cause = cause.__cause__
 
 
-def _remember_typed_failure(error: BaseException) -> None:
+def _remember_typed_failure(
+    error: BaseException, *, remember_connection: bool = True,
+) -> None:
     """记住提供方层已 typed 的失败（HTTP status + 分类）。
 
     只认本模块自己的 typed 异常（TransportIdleTimeout / LLMUnavailable）与 openai
@@ -190,15 +192,22 @@ def _remember_typed_failure(error: BaseException) -> None:
     ``raise ... from provider_error``；外层本身不是 openai typed，须沿 __cause__
     链取回既有 typed 事实（与 _remember_typed_status 同口径，不走 __context__）。
     未 typed 的异常不记，仍走 run_error_event_failure 的「无 status 不洗成瞬断」。
+
+    remember_connection：同步 verify/invoke 为 True（#1465 网络断重试）；流式
+    invoke_stream 为 False——无提供方 HTTP typed status 的连接断不得洗成
+    llm_connection_error 可重试（#1780）。idle / CLI LLMUnavailable / timeout /
+    status 仍记，与连接断分家。
     """
     _remember_typed_status(error)
     cause: Optional[BaseException] = error
     while cause is not None:
         if isinstance(
             cause,
-            (TransportIdleTimeout, LLMUnavailable, APITimeoutError, APIConnectionError,
-             APIStatusError),
+            (TransportIdleTimeout, LLMUnavailable, APITimeoutError, APIStatusError),
         ):
+            _typed_provider_failure.set(classify_transport_failure(cause))
+            return
+        if remember_connection and isinstance(cause, APIConnectionError):
             _typed_provider_failure.set(classify_transport_failure(cause))
             return
         cause = cause.__cause__
@@ -218,10 +227,8 @@ def _capture_status_wrapper(method: Callable) -> Callable:
             try:
                 yield from result
             except Exception as error:
-                # 流路径只记 HTTP typed status，供 run_error_event_failure 保真 4xx/5xx。
-                # 不走 _remember_typed_failure：cause 链上的 APIConnectionError 会把
-                # ModelProviderError 默认 502（无提供方 HTTP）洗成可重试瞬断（#1780）。
-                _remember_typed_status(error)
+                # 流路径：idle/CLI/timeout/status 仍记；连接断不洗成可重试（#1780）。
+                _remember_typed_failure(error, remember_connection=False)
                 raise
 
         return captured()
