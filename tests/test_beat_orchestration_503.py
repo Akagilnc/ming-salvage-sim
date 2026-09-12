@@ -1211,17 +1211,8 @@ def _fake_provider(tag):
     return provider
 
 
-def test_assembly_never_calls_omniscient_builders(game, monkeypatch):
-    """审计断言：组装路径绝不调全知 builder（court_brief / 全员名册类全局块）。"""
-    import ming_sim.registry as registry
-
-    def _boom(*a, **k):
-        raise AssertionError("组装路径调用了全知 builder（违 ADR 0034）")
-
-    monkeypatch.setattr(registry, "build_court_brief", _boom)
-    monkeypatch.setattr(registry, "build_court_roster", _boom)
-    monkeypatch.setattr(registry, "build_court_roster_index", _boom)
-
+def test_assembly_never_calls_omniscient_builders(game):
+    """组装路径经见闻供给接口与最小开场；全知 builder 已退役，见闻不内联进 opening。"""
     db, state, content = game
     minister = _active_minister(db, content)
     night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")

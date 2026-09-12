@@ -3,7 +3,7 @@
 刀口：
 - army_payload（web 军牌）停止携带 status；其余字段完整键集/逐字段机械对照
 - 军牌前端不渲染状态句（前端单测另钉）
-- 共享出口逐点真实调用：army_report / tools.list_armies / intelligence /
+- 共享出口逐点真实调用：army_report / intelligence /
   knowledge / state_payload.army_warning /
   army_detail / army_roster，仍含原 status（禁以直调 army_report 顶替消费点）
   （#321 P7：print_header 已拆除 army_report 直显，不再作为 status 消费点）
@@ -19,9 +19,7 @@ import pytest
 import web_app
 from ming_sim.intelligence import _qualitative_domain_statement
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.models import CourtContext
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
-from ming_sim.tools import build_board_query_tools
 
 
 # 关宁 seed 静态 status 句（content/armies.json）；永不随 arrears 更新，是本票病灶样本。
@@ -195,18 +193,8 @@ def test_shared_consumers_still_surface_status(read_game):
     """逐点真实消费出口：仍含原 status（禁以直调 army_report(limit=N) 顶替）。"""
     db, state, content = read_game
     seed_status = _guanning_db_status(db)
-    ctx = CourtContext(state=state, db=db, previous_summary="")
-    board_tools = {f.__name__: f for f in build_board_query_tools(ctx)}
 
-    # 1) tools.list_armies → 真实 tool 闭包（limit=8）
-    tools_text = board_tools["list_armies"]()
-    _assert_text_keeps_statuses(
-        tools_text, _danger_top_statuses(db, 8), "tools.list_armies"
-    )
-    if any(r["id"] == _GUANNING_ID for r in db.army_rows(limit=8, danger_order=True)):
-        assert seed_status in tools_text
-
-    # 2) intelligence arrears domain → 真实 _qualitative_domain_statement
+    # 1) intelligence arrears domain → 真实 _qualitative_domain_statement
     intel_text, intel_src = _qualitative_domain_statement(db, "各军欠饷如何")
     assert intel_src == "armies"
     _assert_text_keeps_statuses(
@@ -215,14 +203,14 @@ def test_shared_consumers_still_surface_status(read_game):
     if any(r["id"] == _GUANNING_ID for r in db.army_rows(limit=10, danger_order=True)):
         assert seed_status in intel_text
 
-    # 3) 兵部人物投影只见兵籍在册额，不携全表 status。
+    # 2) 兵部人物投影只见兵籍在册额，不携全表 status。
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
     military = (knowledge.get("world") or {}).get("military") or ""
     assert "兵籍在册" in military
     assert seed_status not in military
 
-    # 4) state_payload.army_warning → 真实 WebGame.state_payload 键
+    # 3) state_payload.army_warning → 真实 WebGame.state_payload 键
     payload = web_app.WebGame.state_payload(_web_runtime(db, state, content))
     army_warning = payload.get("army_warning") or ""
     _assert_text_keeps_statuses(
@@ -232,15 +220,12 @@ def test_shared_consumers_still_surface_status(read_game):
     for card in payload.get("armies") or []:
         assert "status" not in card or card.get("status") in (None, "")
 
-    # 5) army_detail → 真实详情缝（关宁全量，必含 seed status）
+    # 4) army_detail → 真实详情缝（关宁全量，必含 seed status）
     detail = db.army_detail(_GUANNING_ID)
     assert seed_status in detail, f"army_detail 缺关宁 status\n{detail!r}"
     assert "欠饷严重" in detail
-    # 经 tools.inspect_army 同一消费闭包再钉一次
-    inspect_text = board_tools["inspect_army"](_GUANNING_ID)
-    assert seed_status in inspect_text
 
-    # 6) army_roster → 真实名册缝（全表，含各军 status）
+    # 5) army_roster → 真实名册缝（全表，含各军 status）
     roster = db.army_roster()
     all_statuses = [
         str(row["status"] or "").strip()

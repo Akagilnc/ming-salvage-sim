@@ -24,12 +24,7 @@ from ming_sim.context import (
     _MINISTER_DOSSIERS,
     _identity_bucket,
 )
-from ming_sim.registry import (
-    build_building_brief,
-    build_court_brief,
-    build_region_brief,
-    create_minister_agent,
-)
+from ming_sim.registry import create_minister_agent
 from ming_sim.tools import build_minister_tools
 from ming_sim.materials import (
     _safe_segment,
@@ -100,56 +95,6 @@ _RAW_ABSTRACT_AXIS = re.compile(
     r"(?:民心|动乱|士绅阻力|军事压力|皇威|火器|完好|进度|bar|满意|势力|威望|实力|经济)"
     r"\s*[:：]?\s*\d+"
 )
-
-
-# ---------------------------------------------------------------------------
-# region / building briefs
-# ---------------------------------------------------------------------------
-
-def test_region_brief_surfaces_db_regions_and_qualitative_scores(game):
-    """region_brief ← region_report：地区名入面；抽象分走定性 helper，不泄裸值。"""
-    db, _state, _content = game
-    names = [row["name"] for row in db.conn.execute("SELECT name FROM regions").fetchall()]
-    assert names
-
-    baseline = build_region_brief(_ctx(game))
-    assert baseline and any(name in baseline for name in names)
-
-    db.conn.execute("UPDATE regions SET public_support=13, unrest=87")
-    db.conn.commit()
-    rendered = build_region_brief(_ctx(game))
-
-    assert not re.search(r"(?:民心|动乱)\s*[:：]?\s*(?:13|87)\b", rendered)
-    assert _support_label(13) in rendered
-    assert _unrest_label(87) in rendered
-    assert "粮情" in rendered
-    assert not re.search(r"粮食\d+万石", rendered)
-
-
-def test_building_brief_joins_chinese_region_and_qualitative_fields(game):
-    """建筑表 LEFT JOIN 中文地区名；规模/完好走 building_* helper，不泄拼音 id / 裸档。"""
-    db, _state, _content = game
-    rows = db.conn.execute(
-        "SELECT b.name AS name, b.region_id AS region_id, "
-        "COALESCE(r.name, b.region_id) AS region_name, "
-        "b.level AS level, b.condition AS condition "
-        "FROM buildings b LEFT JOIN regions r ON r.id = b.region_id"
-    ).fetchall()
-    assert rows
-
-    db.conn.execute("UPDATE buildings SET level=41, condition=73")
-    db.conn.commit()
-    rendered = build_building_brief(_ctx(game))
-
-    assert rendered.startswith("【现有建筑")
-    assert "Lv档" in rendered
-    for row in rows:
-        assert row["region_name"] in rendered
-        if row["region_name"] != row["region_id"]:
-            assert row["region_id"] not in rendered
-    assert not re.search(r"Lv(?:档)?41|完好(?:度)?73", rendered)
-    assert building_level_description(41) in rendered
-    assert building_condition_description(73) in rendered
 
 
 # ---------------------------------------------------------------------------
@@ -263,32 +208,6 @@ def test_minister_context_falls_back_for_character_without_dossier(game):
     assert "以官职与任事处推知其处世分寸" in dossier
     assert "暂无可核的特别包袱" in dossier
     assert dossier in rendered
-
-
-def test_court_brief_keeps_money_scopes_identity_and_hides_abstract_scores(game):
-    """court_brief：钱粮可数保留；不旁路人物认同；他派 agenda 不入面。"""
-    db, state, content = game
-    minister = _active_ministers(content, db, n=1)[0]
-    other = db.conn.execute(
-        "SELECT name FROM factions WHERE name != ? LIMIT 1", (minister.faction,)
-    ).fetchone()
-    assert other is not None
-    secret = "SENTINEL_COURT_OTHER_FACTION"
-    db.conn.execute(
-        "UPDATE factions SET agenda=? WHERE name=?", (secret, other["name"]),
-    )
-    db.conn.commit()
-
-    bare = build_court_brief(_ctx(game))
-    scoped = build_court_brief(_ctx(game), minister)
-
-    assert "国库" in bare and "万两" in bare
-    assert f"第{state.turn}回合" in bare
-    assert "朝堂派系档料" not in bare
-    assert "民心" not in bare and "皇威" not in bare
-    assert "/100" not in bare
-    assert secret not in scoped
-    assert "【党派认同】" in scoped
 
 
 # ---------------------------------------------------------------------------
@@ -506,8 +425,6 @@ def test_near_minister_army_report_keeps_one_complete_qualitative_fact(game):
     assert morale in fact
     assert "欠饷" in fact
     assert "已略去" not in fact
-
-
 
 
 def test_audience_faction_and_power_reports_never_emit_raw_abstract_axes(game):

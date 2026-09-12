@@ -489,8 +489,8 @@ def _talent_pool_rows(db: "GameDB", state: GameState) -> List[Dict[str, object]]
     ADR L104 池 = (active+身名分听用候铨) ∪ (offstage/retired/dismissed 在世)。active 半=
     顶替离任者（office='听用候铨'，仍 active 可即起复，S5 核心玩趣）。锚 身名分 office='听用候铨'
     （非 office_type=待铨——后者兼作分类失败 fallback、被污染，决定10/L94）。"""
-    # roster scope（与 court_roster / active_ministers / tools.get_active_ministers /
-    # tools.query_court_roster / registry.build_court_roster / web_app.in_talent_pool 同口径）：
+    # roster scope（与 court_roster / active_ministers /
+    # 材料目录朝臣名册 / web_app.in_talent_pool 同口径）：
     # 只放大明、非后宫、非宗藩、非未仕、非流寇，且已历史登场。否则混进非起复对象：
     # ① 流寇/后金 offstage（李自成等）——流寇按 faction 排除，招抚归明后 power_id 翻 ming
     #   （character_power_changes）、仅 power_id 闸漏（与 web_app.in_talent_pool 同 bug 类，cmr R1 A）；
@@ -740,7 +740,7 @@ def build_simulator_payload(
     # 在朝名单 = 目前当官的（active）：simulator 在朝盘面 + 任命查重。可起复者（居家/致仕/
     # 削籍）走 offstage_ministers 人才池，在押/流放者两份都不在（玩家下旨决定去留）。旧 status!=
     # 'offstage' 会把削籍/致仕/在押者也混进在朝名单、与人才池双重曝光自相矛盾。注：大臣 system 的
-    # 现状参照名册（registry.build_court_roster）另有用途、故意含非 active 带状态标签，不在此口径。
+    # 现状参照名册（材料目录朝臣名册）另有用途、故意含非 active 带状态标签，不在此口径。
     from ming_sim.qualitative import qualitative_character_axes
 
     court_rows = []
@@ -833,7 +833,7 @@ def build_simulator_payload(
         # 既有 simulator 自由长出，零新增 LLM 调用；阶级 satisfaction 变动仍只由
         # internal extractor 的 class_delta 槽产出（EXTRACTION_MODULES 一字不动）。
         "fiscal_fact_brief": build_fiscal_fact_brief(db),
-        "previous_narrative_tail": previous_narrative[-1500:] if previous_narrative else "",
+        "previous_narrative": previous_narrative or "",
         "historical_anchor": historical_anchor_for_month(state.year, state.period),
         "victory_status": victory_status(db, state),
         "regions": _auto_table(region_rows),
@@ -1105,7 +1105,7 @@ def _extractor_context_payload(
     )
     active_ministers = [
         dict(r) for r in db.conn.execute(
-            # roster scope（同 court_roster / _talent_pool_rows / tools.get_active_ministers）：
+            # roster scope（同 court_roster / _talent_pool_rows / 材料目录朝臣名册）：
             # 大明、非后宫、非宗藩、非未仕（#1317 r2 可召单真源；PR #106 / PR#121）。
             "SELECT name,office,office_type,faction,power_id,location,transit_to "
             "FROM characters WHERE status='active' AND power_id='ming' "

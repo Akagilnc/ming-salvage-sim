@@ -244,10 +244,42 @@ def minimal_opening_context(
 
 
 def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
-    from ming_sim.models import CourtContext
-    from ming_sim.registry import build_secret_order_brief
+    """Directory copy of the minister's active secret-order reminder.
 
-    brief = build_secret_order_brief(character, CourtContext(state=state, db=db))
+    Logic lives here after #1833 retired the registry brief builder; content
+    matches the former ``build_secret_order_brief`` projection.
+    """
+    name = str(getattr(character, "name", "") or "")
+    try:
+        orders = db.get_active_secret_orders_for_minister(name) if name else []
+    except Exception:
+        orders = []
+    if orders:
+        lines = [
+            "【你身上还在办的密令】",
+            "★ 皇帝问进度时调 `report_secret_order_progress(order_id, progress=本月新一步进展)`：有 progress 时先暂存待确认，确认后落档；若只想查看历史则留空 progress；同月补充会修正本月行。",
+            "★ 皇帝催办/加急时调 `rush_secret_order(order_id, deadline_months=1/3/0, reason=催办缘由)`：1=下月到期，3=三月内到期，0=本月到期对账。",
+            "★ 自认任务办到位时调 `submit_secret_order_for_review(order_id, claim=自述办结陈词)`：缩期限至本月，月末按实进度对账。",
+            "★ progress / claim 写具体事实：派谁去、查到什么、摸到哪一层、下一步指向谁。空话「待实据到手」不算。",
+            "★ 大臣无权直接判 done/failed——结案由月末实进度对账派生。",
+            "在册密令：",
+        ]
+        for o in orders:
+            advanced = db._has_secret_order_period_line(
+                int(o["id"]), "result", state.year, state.period,
+            )
+            tag = "✅ 本月已推进" if advanced else "⚠️ 本月尚未推进"
+            due_turn = int(o.get("due_turn") or 0)
+            due_text = (
+                f"；御限剩 {max(0, due_turn - int(state.turn))} 月" if due_turn else ""
+            )
+            lines.append(f"  - #{o['id']}「{o['title']}」 {tag}{due_text}")
+            content_brief = (o.get("content") or "")[:80].replace("\n", " ")
+            if content_brief:
+                lines.append(f"    （任务摘要：{content_brief}…）")
+        brief = "\n".join(lines)
+    else:
+        brief = ""
     rel = f"{_SECRET_DIR}/进行中.txt"
     _write_text(tmp / rel, brief or "（无进行中密令）")
     return rel
@@ -461,6 +493,7 @@ def _write_tree(
         index.append(f"{_AFFAIR_DIR}/{segment}/当前情况.txt")
 
     index.extend(_write_public_by_month(tmp, knowledge.get("public_events") or []))
+    index.extend(_write_gazette_index(tmp, db))
 
     secret_rel = _write_secret_order_file(tmp, db, state, character)
     if secret_rel:
@@ -626,8 +659,6 @@ def _world_affair_lines(db: Any) -> list[tuple[str, str, str, str]]:
 def _write_gazette_index(tmp: Path, db: Any) -> list[str]:
     """历月邸报一行索引入目录（章节记忆退役，M3；0155/0157 后出注记）：每回合一份
     全文文件，根 INDEX 里天然是一行一项——不再压缩/摘要成第二套机制。"""
-    if not hasattr(db, "list_turn_reports"):
-        return []
     index: list[str] = []
     for row in db.list_turn_reports():
         year = int(row.get("year") or 0)

@@ -83,6 +83,8 @@ def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]
     )
 
     knowledge = db.get_character_knowledge(state, reader.name)
+    # 听闻只取 title/body（character_hearing_records）；公事档案与目录同一份。
+    # 读心 payload 转译人物底账，不把无关盘面混入而重现裸人物分值。
     return {
         "heard": character_hearing_records(knowledge),
         "公事档案": character_office_archive_text(db, state, reader, knowledge),

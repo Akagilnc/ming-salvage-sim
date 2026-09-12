@@ -222,8 +222,9 @@ def render_character_knowledge(
     """Render one character's projected knowledge for an audience prompt.
 
     The projection has already enforced access control; this function only
-    de-duplicates and orders durable knowledge rows. Issue case material is
-    projected separately by ``project_issue_materials`` for the directory.
+    de-duplicates and orders durable knowledge rows without a feed cap.
+    Issue case material is projected separately by ``project_issue_materials``
+    for the directory.
     """
     lines = [f"【{character_name}此刻所知的天下（仅此人物见闻）】"]
     for key, value in (knowledge.get("world") or {}).items():
@@ -237,11 +238,11 @@ def render_character_knowledge(
             int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
         )
         by_source[key] = item
-    recent_items = sorted(
+    items = sorted(
         by_source.values(),
         key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
     )
-    for item in recent_items:
+    for item in items:
         title = str(item.get("title") or "旧闻")
         body = str(item.get("body") or "")
         if body:
@@ -555,26 +556,25 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     # each aggregate archive.  Source rows redact restricted fragments from
     # the aggregate, while independently persisted public fragments remain
     # available to the character.
-    if hasattr(db, "list_turn_reports"):
-        for report in db.list_turn_reports():
-            # The opening gazette is seed material, not a prior played turn.
-            # Its separately persisted opening facts remain visible without
-            # turning the turn-zero aggregate into every role's public rail.
-            if int(report["turn"]) <= 0:
-                continue
-            report_turn = int(report["turn"])
-            body = source_projection(
-                report_turn, report.get("report"),
-                public_counterpart=f"turn_report:{report_turn}:public",
-            )
-            if body:
-                public_events.append({
-                    "turn": int(report["turn"]), "year": int(report["year"]),
-                    "period": int(report["period"]), "kind": "public",
-                    "title": "邸报", "body": body,
-                    "source_id": f"projection:turn_report:{report['turn']}",
-                    "excluded_names": "[]",
-                })
+    for report in db.list_turn_reports():
+        # The opening gazette is seed material, not a prior played turn.
+        # Its separately persisted opening facts remain visible without
+        # turning the turn-zero aggregate into every role's public rail.
+        if int(report["turn"]) <= 0:
+            continue
+        report_turn = int(report["turn"])
+        body = source_projection(
+            report_turn, report.get("report"),
+            public_counterpart=f"turn_report:{report_turn}:public",
+        )
+        if body:
+            public_events.append({
+                "turn": int(report["turn"]), "year": int(report["year"]),
+                "period": int(report["period"]), "kind": "public",
+                "title": "邸报", "body": body,
+                "source_id": f"projection:turn_report:{report['turn']}",
+                "excluded_names": "[]",
+            })
     if hasattr(db, "list_chapter_memories"):
         for chapter in db.list_chapter_memories(upto_turn=state.turn):
             chapter_turn = int(chapter["turn"])

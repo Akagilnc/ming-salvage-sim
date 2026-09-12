@@ -33,8 +33,7 @@ from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.memories import effect_brief
 from ming_sim.agents import build_simulator_context
-from ming_sim.models import CourtContext
-from ming_sim.registry import build_character_knowledge_brief
+from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
     build_extractor_shared_context,
@@ -158,8 +157,10 @@ def test_disaster_war_real_payload_extractor_settlement_and_echo(
     assert "流民" in db.class_report(audience=True)
     assert reason in report
     minister = next(iter(content.characters.values()))
-    audience = build_character_knowledge_brief(
-        minister, CourtContext(state=state, db=db)
+    prepared = prepare_character_materials(db, state, minister)
+    audience = "\n".join(
+        read_material(prepared.root, path)
+        for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
     assert reason in audience
     assert "流民" in audience
