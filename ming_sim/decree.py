@@ -1007,6 +1007,25 @@ def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
     }
 
 
+def _open_affair_ids_from_payload(payload: object) -> set[int]:
+    from ming_sim.entities.affair import parse_positive_affair_id
+
+    if not isinstance(payload, dict):
+        return set()
+    raw = payload.get("open_affairs")
+    if not isinstance(raw, list):
+        return set()
+    ids: set[int] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            ids.add(parse_positive_affair_id(item.get("id")))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
 def secret_dossier_ids_from_secret_orders(db: GameDB, secret_orders: object) -> set[int]:
     """#1252: freeze secret-dossier roster-write authority from batch secret_orders.
 
@@ -2024,6 +2043,7 @@ def _replay_settle(
             impeachment_surge_candidates_at_input=gather_impeachment_surge_candidates(s, d),
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
             secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders),
+            open_affair_ids_at_input=_open_affair_ids_from_payload(simulator_payload),
         ),
         on_stage=lambda payload: _emit("stage", payload),
         source=source,  # 恢复重放沿用原始来源（#144）：玩家来源拒收恢复后仍给提示，不被记成 system
@@ -2336,6 +2356,7 @@ def _settle_after_narrative(
             impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
             secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders_for_sim),
+            open_affair_ids_at_input=_open_affair_ids_from_payload(simulator_payload),
         ),
         on_stage=lambda payload: _emit("stage", payload),
         # 来源贯穿（#146 A，整批按触发源）：皇帝下旨触发=player_decree（拒收提示皇帝）、
@@ -2553,7 +2574,10 @@ def prepare_resolve_front_half(
                 transit_arrivals_out=transit_arrivals_box,
             )
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
-            placeholder_payload = {"transit_arrivals": list(transit_arrivals_box)}
+            placeholder_payload = {
+                "transit_arrivals": list(transit_arrivals_box),
+                "open_affairs": db.affairs.input_brief(getattr(db, "textual_facts", None)),
+            }
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
             #（clear_for_resimulation 后 phase 非 FRONT_HALF_DONE 重入时尤甚）。
             prior_placeholder = db.get_resolve_context(int(state.turn))

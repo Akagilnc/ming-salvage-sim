@@ -387,7 +387,7 @@ export function LLMConfigTab() {
   const [cliReasoningStrength, setCliReasoningStrength] = React.useState("");
   // 通道感知（#51）：局中也能切 API / CLI 通道,不再被强制降级到 api。
   const [channel, setChannel] = React.useState<"api" | "cli">("api");
-  const [cliRunner, setCliRunner] = React.useState("agy");
+  const [cliRunner, setCliRunner] = React.useState("codex");
   const [cliModel, setCliModel] = React.useState("");
   const [cliTimeout, setCliTimeout] = React.useState(String(CLI_DEFAULT_TIMEOUT));
   const [headerRows, setHeaderRows] = React.useState<HeaderRow[]>([]);
@@ -402,7 +402,7 @@ export function LLMConfigTab() {
   const normalizedAdvancedModel = advancedModel.trim();
   const backendReasoningSupportCurrent = channel === backendChannel && (
     channel === "cli"
-      ? cliRunner === (info?.cli_runner || "agy")
+      ? cliRunner === (info?.cli_runner || "codex")
       : normalizedBaseUrl === (info?.base_url || "").trim() &&
         normalizedModel === (info?.model || "").trim() &&
         normalizedAdvancedBaseUrl === (info?.advanced_base_url || "").trim() &&
@@ -449,7 +449,7 @@ export function LLMConfigTab() {
         // 从已存 CLI 槽(persisted)初始化优先,而非 active cfg.cli_*——API 会话下 cfg.cli_model 可能被
         // cli_model_from_env 兜底成 API model 名,直接回填会把它当用户选项 post 回去(CMR R3 codex)。
         // (存盘响应无 persisted 字段 → 回落 active,channel=cli 时即刚提交值,正确。)
-        setCliRunner(data.persisted?.cli_runner || (data.channel === "cli" ? data.cli_runner || "" : "") || "agy");
+        setCliRunner(data.persisted?.cli_runner || (data.channel === "cli" ? data.cli_runner || "" : "") || "codex");
         setCliModel(data.persisted?.cli_model ?? (data.channel === "cli" ? data.cli_model || "" : ""));
         setCliTimeout(String(data.persisted?.cli_timeout_seconds || data.cli_timeout_seconds || CLI_DEFAULT_TIMEOUT));
         setHeaderRows(headersToRows(data.default_headers));
@@ -502,7 +502,7 @@ export function LLMConfigTab() {
       } else {
         setApiReasoningStrength(normalizeStrength(data.reasoning_strength || reasoningStrength));
       }
-      setCliRunner(data.cli_runner || "agy");
+      setCliRunner(data.cli_runner || "codex");
       // cliModel 不从 data.cli_model 回灌：那是 resolved 值（空/__keep__ 会被兜底成
       // 默认名或 cur 的已解析值），灌回会让策展下拉把默认/留空误判成「其他(手填)」。
       // 本地 cliModel 即用户刚提交且通过连通性校验的原值（raw），保留它即可——与加载端

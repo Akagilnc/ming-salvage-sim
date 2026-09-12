@@ -8,6 +8,7 @@ stays mocked (no real binary/LLM/network).
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -645,7 +646,7 @@ def test_backend_env_claude(monkeypatch):
     "env,attr,out",
     [
         ("claude", "_run_claude", "CLAUDE_OUT"),
-        (None, "_run_agy", "AGY_OUT"),
+        (None, "_run_agy", "AGY_DEFAULT_OUT"),
         ("codex", "_run_codex", "CODEX_OUT"),
     ],
 )
@@ -716,6 +717,56 @@ def test_run_claude_stdout_only(monkeypatch):
     assert captured["kw"].get("env") is None
 
 
+def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path):
+    """#1830 / #1827：Claude 材料模式传到真实子进程 seam（cwd + Read/Glob/Grep）。"""
+    root = str((tmp_path / "materials").resolve())
+    tmp_path.joinpath("materials").mkdir()
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out, n = cb._run_claude("p", materials_dir=root)
+    assert out == "ok" and n == 1
+    assert captured["kw"].get("cwd") == root
+    assert "--restricted" in captured["cmd"]
+    assert "--strict-mcp-config" in captured["cmd"]
+    assert "--bare" not in captured["cmd"]
+    assert "--add-dir" not in captured["cmd"]
+    assert "--allowedTools" in captured["cmd"]
+    assert "Read" in captured["cmd"] and "Glob" in captured["cmd"] and "Grep" in captured["cmd"]
+    mcp_at = captured["cmd"].index("--mcp-config")
+    assert captured["cmd"][mcp_at + 1] == '{"mcpServers":{}}'
+    assert "--permission-mode" in captured["cmd"]
+    assert "dontAsk" in captured["cmd"]
+    assert "--disallowedTools" not in captured["cmd"]
+
+
+def test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path):
+    """#1830 / #1827：Codex 材料模式 cwd + --ignore-user-config --sandbox read-only。"""
+    root = str((tmp_path / "materials").resolve())
+    tmp_path.joinpath("materials").mkdir()
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out, n = cb._run_codex("p", materials_dir=root)
+    assert out == "ok" and n == 1
+    assert captured["kw"].get("cwd") == root
+    assert "--ignore-user-config" in captured["cmd"]
+    assert "--sandbox" in captured["cmd"]
+    assert "read-only" in captured["cmd"]
+    assert "--skip-git-repo-check" in captured["cmd"]
+    assert "--ephemeral" in captured["cmd"]
+
+
+def test_agy_materials_mode_uses_material_cwd_and_print_argument(monkeypatch, tmp_path):
+    """Agy 1.2.0 材料调用用 --print=<prompt>，不再走失效 sandbox/stdin。"""
+    root = str((tmp_path / "materials").resolve())
+    tmp_path.joinpath("materials").mkdir()
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out, n = cb._run_agy("PROMPT", materials_dir=root)
+    assert out == "ok" and n == 1
+    assert captured["kw"].get("cwd") == root
+    assert captured["cmd"][-1] == "--print=PROMPT"
+    assert captured["kw"].get("stdin") is None
+    assert "--sandbox" not in captured["cmd"]
+
+
 def test_run_codex_flags_and_stdout(monkeypatch):
     body = '{"k": []}'
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
@@ -763,7 +814,8 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     seen = {}
 
     def fake_chunks(runner, prompt, *, model=None,
-                    reasoning_strength=None, json_events=False, clock=None):
+                    reasoning_strength=None, json_events=False, clock=None,
+                    materials_dir=None):
         seen["runner"] = runner
         seen["json_events"] = json_events
         seen["reasoning_strength"] = reasoning_strength
@@ -1504,7 +1556,7 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt: (canned, 1))
+    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
     assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
@@ -1513,27 +1565,55 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──
 
 
-def test_cli_backends_include_cursor_kimi_grok_pi():
-    assert {"cursor", "kimi", "grok", "pi"} <= set(cb._CLI_BACKENDS)
-    assert cb.is_supported_cli_runner("cursor")
-    assert cb.is_supported_cli_runner("kimi")
-    assert cb.is_supported_cli_runner("grok")
-    assert cb.is_supported_cli_runner("pi")
-    assert not cb.is_supported_cli_runner("opencode")  # 庭裁：走 api 通道，不入 runner 清单
-
-
-def test_gate_cli_runners_single_source_excludes_agy():
+def test_public_cli_support_restores_existing_runners(monkeypatch):
+    assert cb._CLI_BACKENDS == frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
     assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
-    assert "agy" not in cb.GATE_CLI_RUNNERS
-    assert set(cb.GATE_CLI_RUNNERS) <= set(cb._CLI_BACKENDS)
-
-
-def test_cli_backend_from_env_accepts_new_runners(monkeypatch):
-    for name in ("cursor", "kimi", "grok", "pi"):
+    assert [row["value"] for row in cb.cli_runner_choices()] == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
+    assert set(cb.cli_model_choices()) == set(cb._CLI_BACKENDS)
+    for name in ("opencode",):
+        assert not cb.is_supported_cli_runner(name)
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)
-        assert cb.cli_backend_from_env() == name
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "opencode")
-    assert cb.cli_backend_from_env() is None
+        assert cb.cli_backend_from_env() is None
+
+
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
+def test_material_runner_uses_cwd_and_read_only_tool_surface(monkeypatch, tmp_path, runner):
+    root = str((tmp_path / "materials").resolve())
+    tmp_path.joinpath("materials").mkdir()
+    captured = _capture_run(monkeypatch, _P(stdout="ok"))
+    out, n = cb._run_cli_runner(runner, "PROMPT", materials_dir=root)
+    assert out == "ok" and n == 1
+    assert captured["kw"].get("cwd") == root
+    cmd = captured["cmd"]
+    if runner == "cursor":
+        assert "ask" in cmd and "enabled" in cmd
+    elif runner == "kimi":
+        agent_path = cmd[cmd.index("--agent-file") + 1]
+        assert not os.path.exists(agent_path)
+        created = []
+        real_named_temp = cb.tempfile.NamedTemporaryFile
+
+        def tracked_temp(*args, **kwargs):
+            handle = real_named_temp(*args, **kwargs)
+            created.append(handle.name)
+            return handle
+
+        monkeypatch.setattr(cb.tempfile, "NamedTemporaryFile", tracked_temp)
+        monkeypatch.setattr(
+            cb, "_resolve_cli_bin",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("missing")),
+        )
+        with pytest.raises(RuntimeError, match="missing"):
+            list(cb._iter_cli_runner_text("kimi", "PROMPT", materials_dir=root))
+        assert created and not os.path.exists(created[0])
+    elif runner == "grok":
+        assert "Read,Glob,Grep" in cmd and "read-only" in cmd
+        assert "--always-approve" not in cmd
+    else:
+        assert "read,grep,find,ls" in cmd
+        for flag in ("--no-session", "--no-extensions", "--no-skills",
+                     "--no-prompt-templates", "--no-themes", "--no-context-files"):
+            assert flag in cmd
 
 
 def test_run_cursor_flags_and_stdout(monkeypatch):
@@ -1672,10 +1752,10 @@ def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
 
 
 def test_gate_llm_config_cli_channel():
-    args = SimpleNamespace(channel="cli", runner="kimi", model="kimi-k2", api_key="", base_url="")
+    args = SimpleNamespace(channel="cli", runner="codex", model="gpt-5.3-codex-spark", api_key="", base_url="")
     cfg = cb.gate_llm_config_from_args(args)
     assert cfg.channel == "cli"
-    assert cfg.cli_runner == "kimi" and cfg.cli_model == "kimi-k2"
+    assert cfg.cli_runner == "codex" and cfg.cli_model == "gpt-5.3-codex-spark"
     assert cfg.api_key == "" and cfg.base_url == ""
 
 
@@ -1724,12 +1804,12 @@ def test_gate_llm_config_api_requires_key_and_url(monkeypatch):
 
 
 def test_gate_evidence_config_honest_cli_and_api():
-    cli_args = SimpleNamespace(channel="cli", runner="cursor", model="auto")
+    cli_args = SimpleNamespace(channel="cli", runner="claude", model="claude-opus-4-8")
     cli_cfg = cb.gate_llm_config_from_args(cli_args)
     cli_block = cb.gate_evidence_config(cli_args, cli_cfg)
     assert cli_block["channel"] == "cli"
-    assert cli_block["runner"] == "cursor"
-    assert cli_block["model"] == "auto"
+    assert cli_block["runner"] == "claude"
+    assert cli_block["model"] == "claude-opus-4-8"
 
     api_args = SimpleNamespace(
         channel="api", runner="codex", model="deepseek-v4-flash",
@@ -1749,5 +1829,5 @@ def test_add_gate_llm_args_uses_gate_cli_runners():
     # illegal runner rejected; legal accepted
     with pytest.raises(SystemExit):
         p.parse_args(["--runner", "opencode", "--model", "m"])
-    ns = p.parse_args(["--runner", "grok", "--model", "grok-4.5", "--channel", "cli"])
-    assert ns.runner == "grok" and ns.model == "grok-4.5"
+    ns = p.parse_args(["--runner", "claude", "--model", "claude-opus-4-8", "--channel", "cli"])
+    assert ns.runner == "claude" and ns.model == "claude-opus-4-8"

@@ -503,8 +503,15 @@ def test_audience_prompt_projects_return_report_with_derived_source(game, monkey
     prompt = GameSession._audience_prompt_for_message(session, "请查访各镇欠饷如何？", minister)
 
     assert calls == ["inquiry"]
-    assert "近臣查访" in prompt
-    assert "军队警讯" in prompt
+    from ming_sim.materials import list_materials, prepare_character_materials, read_material
+    prepared = prepare_character_materials(db, state, minister)
+    blob = "\n".join(
+        read_material(prepared.root, path)
+        for path in list_materials(prepared.root) if path != "INDEX.txt"
+    )
+    assert "近臣查访" in blob
+    assert "军队警讯" in blob
+    assert f"【{minister.name}此刻所知的天下" not in prompt
 
 
 def test_audience_prompt_does_not_create_near_minister_report_for_ordinary_minister(game):

@@ -1,101 +1,230 @@
-"""#1281：议题 audiences 案情（stage_text）注入召对见闻。
-
-缺陷：seed「户部亏空」案情在 audiences 具题人口中，但召对该人时 LLM 上下文不含
-此案情——口径随机（当面翻供非骗是乱）。
-
-修法：议题 originating event 的 audiences 含被召对人时，stage_text 级案情在
-render_character_knowledge 渲染缝读时合成进召对上下文（非平行通道、非模板回话、
-不写入 get_character_knowledge 持久读 events——#492 durable 尾契约）。
-
-#1361 后 seed 具题人/案情改为在任户部尚书郭允厚 + 定性「太仓存银见绌」
-（对齐开局国库实数、禁与 320 恒冲突的「不足三百万」）；本钉随 seed 口径同步。
-"""
+"""#1281: issue materials = knowledge visibility ∪ audience-named supplement."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import json
+from dataclasses import replace
 
-from ming_sim.knowledge import render_character_knowledge
-from ming_sim.session import GameSession
+import pytest
+
+from ming_sim.knowledge import project_issue_materials
+from ming_sim.materials import list_materials, prepare_character_materials
 
 
-CASE_MARKER = "太仓存银见绌"
 AUDIENCE_NAME = "郭允厚"
 ISSUE_TITLE = "户部亏空"
+NON_AUDIENCE_NAME = "崔呈秀"
+PRIVATE_PARTICIPANT = "温体仁"
 
 
-def _render_for(db, state, name: str) -> str:
-    """渲染缝：持久读 + render（#1281 合成只发生在此）。"""
-    knowledge = db.get_character_knowledge(state, name)
-    return render_character_knowledge(knowledge, name, db=db, state=state)
-
-
-def _prompt_for(db, state, content, name: str) -> str:
-    session = SimpleNamespace(db=db, state=state)
-    return GameSession._audience_prompt_for_message(
-        session, "户部钱粮近况如何？", content.characters[name],
-    )
-
-
-def test_audience_prompt_feeds_issue_stage_text_when_summoned_is_in_audiences(game):
-    """正向：audiences 含具题户书 → 渲染缝 / 召对 context 含其具题案情。"""
-    db, state, content = game
-    rendered = _render_for(db, state, AUDIENCE_NAME)
-    assert CASE_MARKER in rendered
-    assert ISSUE_TITLE in rendered
-    prompt = _prompt_for(db, state, content, AUDIENCE_NAME)
-    assert CASE_MARKER in prompt
-    assert ISSUE_TITLE in prompt
-
-
-def test_audience_prompt_withholds_issue_stage_text_when_not_in_audiences(game):
-    """负向：audiences 不含者（崔呈秀）不在渲染缝注入此案情。"""
-    db, state, content = game
-    assert CASE_MARKER not in _render_for(db, state, "崔呈秀")
-    assert CASE_MARKER not in _prompt_for(db, state, content, "崔呈秀")
-
-
-def test_issue_audience_case_injection_is_llm_fact_not_player_face_change(game):
-    """P4：注入为召对渲染缝读时合成；持久读 events / 玩家面议题行 / 公开见闻表零写入。"""
-    db, state, content = game
+def _issue_row(db):
     row = db.conn.execute(
-        "SELECT stage_text FROM issues WHERE title=? AND status='active' LIMIT 1",
+        "SELECT id, stage_text, origin_ref FROM issues WHERE title=? AND status='active' LIMIT 1",
         (ISSUE_TITLE,),
     ).fetchone()
     assert row is not None
-    # 玩家议题板本就有 stage_text——本修不改其值
-    assert CASE_MARKER in str(row["stage_text"] or "")
-    stage_before = row["stage_text"]
-    public_before = int(
-        db.conn.execute(
-            "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE character_name=''"
-        ).fetchone()["n"]
+    return row
+
+
+def _issue_paths(prepared, issue_id: int) -> set[str]:
+    expected = f"事务/issue-{issue_id}/当前情况.txt"
+    return {path for path in list_materials(prepared.root) if path == expected}
+
+
+def test_issue_materials_keep_knowledge_visibility_without_audience_veto(game, tmp_path):
+    db, state, content = game
+    issue_id = int(_issue_row(db)["id"])
+    audience_knowledge = db.get_character_knowledge(state, AUDIENCE_NAME)
+    outsider_knowledge = db.get_character_knowledge(state, NON_AUDIENCE_NAME)
+    assert any(int(row["id"]) == issue_id for row in audience_knowledge.get("issues") or [])
+    assert any(int(row["id"]) == issue_id for row in outsider_knowledge.get("issues") or [])
+
+    audience_projection = project_issue_materials(db, AUDIENCE_NAME, audience_knowledge)
+    outsider_projection = project_issue_materials(db, NON_AUDIENCE_NAME, outsider_knowledge)
+    audience_row = next(row for row in audience_projection if row["id"] == issue_id)
+    outsider_row = next(row for row in outsider_projection if row["id"] == issue_id)
+
+    assert audience_row["source_id"] == f"issue:{issue_id}"
+    assert outsider_row["source_id"] == f"issue:{issue_id}"
+    assert AUDIENCE_NAME in audience_row["audience_names"]
+    assert NON_AUDIENCE_NAME not in outsider_row["audience_names"]
+
+    audience = prepare_character_materials(
+        db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "audience",
+    )
+    outsider = prepare_character_materials(
+        db, state, content.characters[NON_AUDIENCE_NAME], dest_root=tmp_path / "outsider",
+    )
+    assert _issue_paths(audience, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+    assert _issue_paths(outsider, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+    assert f"事务/issue-{issue_id}/当前情况.txt" in audience.index_lines
+    assert f"事务/issue-{issue_id}/当前情况.txt" in outsider.index_lines
+
+
+def test_empty_audience_is_empty_supplement_not_knowledge_veto(game, tmp_path):
+    db, state, content = game
+    row = _issue_row(db)
+    issue_id = int(row["id"])
+    db.conn.execute(
+        "UPDATE events SET audiences=? WHERE id=?", ("[]", row["origin_ref"]),
     )
 
-    # 持久读 API 不得被合成行污染（#492 durable 尾契约）
-    durable = db.get_character_knowledge(state, AUDIENCE_NAME)
-    assert not any(
-        str(item.get("kind") or "") == "issue_case"
-        or (
-            str(item.get("source_id") or "").startswith("issue:")
-            and CASE_MARKER in str(item.get("body") or "")
+    knowledge = db.get_character_knowledge(state, AUDIENCE_NAME)
+    assert any(int(item["id"]) == issue_id for item in knowledge.get("issues") or [])
+    projected = next(
+        item for item in project_issue_materials(db, AUDIENCE_NAME, knowledge)
+        if item["id"] == issue_id
+    )
+    assert projected["audience_names"] == ()
+
+    prepared = prepare_character_materials(
+        db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+    )
+    assert _issue_paths(prepared, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+
+
+def test_audience_supplement_grants_originating_issue_outside_knowledge(game, tmp_path):
+    db, state, content = game
+    row = _issue_row(db)
+    issue_id = int(row["id"])
+    db.conn.execute(
+        "UPDATE issues SET participant_roster=? WHERE id=?",
+        (json.dumps([{"character_id": PRIVATE_PARTICIPANT}], ensure_ascii=False), issue_id),
+    )
+
+    audience_knowledge = db.get_character_knowledge(state, AUDIENCE_NAME)
+    outsider_knowledge = db.get_character_knowledge(state, NON_AUDIENCE_NAME)
+    assert all(int(item["id"]) != issue_id for item in audience_knowledge.get("issues") or [])
+    assert all(int(item["id"]) != issue_id for item in outsider_knowledge.get("issues") or [])
+
+    audience_projection = project_issue_materials(db, AUDIENCE_NAME, audience_knowledge)
+    outsider_projection = project_issue_materials(db, NON_AUDIENCE_NAME, outsider_knowledge)
+    projected = next(item for item in audience_projection if item["id"] == issue_id)
+    assert projected["source_id"] == f"issue:{issue_id}"
+    assert AUDIENCE_NAME in projected["audience_names"]
+    assert all(item["id"] != issue_id for item in outsider_projection)
+
+    audience = prepare_character_materials(
+        db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "audience",
+    )
+    outsider = prepare_character_materials(
+        db, state, content.characters[NON_AUDIENCE_NAME], dest_root=tmp_path / "outsider",
+    )
+    assert _issue_paths(audience, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+    assert _issue_paths(outsider, issue_id) == set()
+
+
+@pytest.mark.parametrize(
+    ("stored_audiences", "expected_exc"),
+    [
+        ("{}", TypeError),
+        ("not-json", json.JSONDecodeError),
+        ("null", TypeError),
+        ('[1, "郭允厚"]', TypeError),
+        ('["郭允厚", {"name": "x"}]', TypeError),
+    ],
+)
+def test_malformed_event_audience_fails_loud_from_material_entry(
+    game, tmp_path, stored_audiences, expected_exc,
+):
+    db, state, content = game
+    row = _issue_row(db)
+    db.conn.execute(
+        "UPDATE events SET audiences=? WHERE id=?", (stored_audiences, row["origin_ref"]),
+    )
+
+    with pytest.raises(expected_exc):
+        prepare_character_materials(
+            db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
         )
-        for item in durable.get("events") or []
+
+
+def test_tuple_audience_container_fails_loud_from_content_fallback(game, tmp_path):
+    """Content-path audiences must be list[str]; tuple is not a legal container."""
+    db, state, content = game
+    row = _issue_row(db)
+    content_only_ref = "content-only-tuple-audience"
+    db.conn.execute(
+        "UPDATE issues SET origin_ref=? WHERE id=?",
+        (content_only_ref, int(row["id"])),
+    )
+    source = content.event_by_id[str(row["origin_ref"])]
+    content.event_by_id[content_only_ref] = replace(
+        source, id=content_only_ref, audiences=(AUDIENCE_NAME,),  # type: ignore[arg-type]
+    )
+    try:
+        with pytest.raises(TypeError):
+            prepare_character_materials(
+                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+            )
+    finally:
+        content.event_by_id.pop(content_only_ref, None)
+
+
+def test_malformed_knowledge_issue_id_fails_loud_from_material_entry(game, tmp_path):
+    db, state, content = game
+    real_get = db.get_character_knowledge
+
+    def poisoned_knowledge(state_arg, character_name):
+        knowledge = dict(real_get(state_arg, character_name))
+        issues = list(knowledge.get("issues") or [])
+        assert issues
+        bad = dict(issues[0])
+        bad["id"] = "not-an-id"
+        knowledge["issues"] = [bad, *issues[1:]]
+        return knowledge
+
+    db.get_character_knowledge = poisoned_knowledge  # type: ignore[method-assign]
+    try:
+        with pytest.raises(ValueError):
+            prepare_character_materials(
+                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+            )
+    finally:
+        db.get_character_knowledge = real_get  # type: ignore[method-assign]
+
+
+def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path):
+    db, state, content = game
+    real_conn = db.conn
+
+    class FailingEventAudienceConnection:
+        def __getattr__(self, name):
+            return getattr(real_conn, name)
+
+        def execute(self, sql, parameters=()):
+            if "SELECT audiences FROM events" in sql:
+                raise RuntimeError("audience ledger read failed")
+            return real_conn.execute(sql, parameters)
+
+    db.conn = FailingEventAudienceConnection()
+    try:
+        with pytest.raises(RuntimeError, match="audience ledger read failed"):
+            prepare_character_materials(
+                db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
+            )
+    finally:
+        db.conn = real_conn
+
+
+def test_issue_material_projection_does_not_pollute_durable_events_or_db(game, tmp_path):
+    db, state, content = game
+    row = _issue_row(db)
+    issue_id = int(row["id"])
+    stage_before = row["stage_text"]
+    public_before = int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE character_name=''"
+    ).fetchone()["n"])
+    durable_before = tuple(db.get_character_knowledge(state, AUDIENCE_NAME).get("events") or [])
+
+    prepared = prepare_character_materials(
+        db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
     )
 
-    rendered = _render_for(db, state, AUDIENCE_NAME)
-    assert CASE_MARKER in rendered  # 渲染缝事实材料
-    prompt = _prompt_for(db, state, content, AUDIENCE_NAME)
-    assert CASE_MARKER in prompt  # 召对 prompt 仍含案情
-
-    row_after = db.conn.execute(
-        "SELECT stage_text FROM issues WHERE title=? AND status='active' LIMIT 1",
-        (ISSUE_TITLE,),
-    ).fetchone()
+    assert _issue_paths(prepared, issue_id)
+    assert tuple(db.get_character_knowledge(state, AUDIENCE_NAME).get("events") or []) == durable_before
+    row_after = _issue_row(db)
     assert row_after["stage_text"] == stage_before
-    public_after = int(
-        db.conn.execute(
-            "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE character_name=''"
-        ).fetchone()["n"]
-    )
-    assert public_after == public_before
+    assert int(db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE character_name=''"
+    ).fetchone()["n"]) == public_before

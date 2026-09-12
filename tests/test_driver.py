@@ -383,7 +383,7 @@ def test_cli_prepare_then_settle_applies_delta_file(game, tmp_path, capsys):
     assert rc_prep == 0
     # tlog 与 handoff 同 stdout：handoff 为最后一行 JSON。
     handoff_line = [ln for ln in prep_out.splitlines() if ln.strip()][-1]
-    assert json.loads(handoff_line) == []  # 无抵达月 handoff=[]
+    assert json.loads(handoff_line)["transit_arrivals"] == []
 
     rc = driver.main(["settle", "--delta", str(delta_file)], game=game)
 
@@ -796,7 +796,7 @@ def test_prepare_before_narrative_file_order_spy(game, tmp_path, monkeypatch):
 
     arrivals = run_prepare(db, state, content)
     events.append("prepare_done")
-    assert arrivals == [{"name": name, "location": dest}]
+    assert arrivals["transit_arrivals"] == [{"name": name, "location": dest}]
 
     narrative_path = tmp_path / "narrative.json"
     # 外部生成：仅在 prepare 之后才写/读 narrative 文件
@@ -840,7 +840,7 @@ def test_prepare_arrival_handoff_matches_db_content_and_ready0(game):
     turn = state.turn
     arrivals = run_prepare(db, state, content)
     expected = [{"name": name, "location": dest}]
-    assert arrivals == expected
+    assert arrivals["transit_arrivals"] == expected
     assert tuple(_transit_ledger(db, name)) == (dest, "", None, None, 0)
     assert _mirror_ledger(content, name) == (dest, "", None, None, 0)
     ctx = db.get_resolve_context(turn)
@@ -932,10 +932,12 @@ def test_prepare_crash_reopen_settle_no_second_tick(game, monkeypatch, tmp_path)
         assert state2.turn_phase == TurnPhase.SETTLING.value
         ticks_before = tick_calls["n"]
         assert state2.turn == turn
+        handoff = arrivals
+        ctx2 = db2.get_resolve_context(turn)
+        assert ctx2["simulator_payload"] == handoff
         run_settle(db2, state2, content, {}, narrative="恢复后续")
         assert tick_calls["n"] == ticks_before  # 不二次 tick
         assert state2.turn == turn + 1
-        assert isinstance(arrivals, list)
     finally:
         db2.close()
 
@@ -944,9 +946,76 @@ def test_prepare_no_arrival_month_returns_empty_list(game):
     """E：无抵达月 arrivals=`[]`。"""
     db, state, content = game
     arrivals = run_prepare(db, state, content)
-    assert arrivals == []
+    assert arrivals["transit_arrivals"] == []
     ctx = db.get_resolve_context(state.turn)
     assert ctx["simulator_payload"]["transit_arrivals"] == []
+
+
+def test_settle_authority_uses_prepare_frozen_open_affairs(game):
+    db, state, content = game
+    payload = run_prepare(db, state, content)
+    frozen_ids = {int(row["id"]) for row in payload["open_affairs"]}
+    late = db.affairs.open(
+        name="迟到事务", origin="prepare 后才出现",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    assert late.id not in frozen_ids
+    settle_turn = state.turn
+
+    run_settle(
+        db, state, content,
+        {"affair_declarations": [{"attach": "close", "affair_id": late.id}]},
+        source=Provenance.system_simulation,
+    )
+
+    assert db.affairs.get(late.id).status == "open"
+    rows = db.conn.execute(
+        "SELECT section, category, item_json FROM rejection_reports "
+        "WHERE turn=? AND section='affair_declarations'",
+        (settle_turn,),
+    ).fetchall()
+    assert rows
+    assert rows[0]["category"] == "invalid_shape"
+    assert f'"affair_id": {int(late.id)}' in str(rows[0]["item_json"] or "")
+
+
+@pytest.mark.parametrize("bad_id", [True, 1.5])
+def test_settle_rejects_non_integer_frozen_open_affair_ids(game, bad_id):
+    db, state, content = game
+    affair = db.affairs.open(
+        name="冻结事务", origin="prepare 前已开",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    turn = state.turn
+    run_prepare(db, state, content)
+    ctx = db.get_resolve_context(turn)
+    payload = dict(ctx["simulator_payload"])
+    payload["open_affairs"] = [{"id": bad_id}]
+    db.save_resolve_context(
+        turn,
+        ctx["decree_text"],
+        ctx["narrative"],
+        payload,
+        secret_orders=ctx.get("secret_orders"),
+        relevant_memories=ctx.get("relevant_memories"),
+        extracted=None,
+        source=ctx.get("source") or "system_simulation",
+        attendant_message=ctx.get("attendant_message") or "",
+    )
+    run_settle(
+        db, state, content,
+        {"affair_declarations": [{"attach": "close", "affair_id": affair.id}]},
+        source=Provenance.system_simulation,
+    )
+    assert db.affairs.get(affair.id).status == "open"
+    rows = db.conn.execute(
+        "SELECT section, category, item_json FROM rejection_reports "
+        "WHERE turn=? AND section='affair_declarations'",
+        (turn,),
+    ).fetchall()
+    assert rows
+    assert rows[0]["category"] == "invalid_shape"
+    assert f'"affair_id": {int(affair.id)}' in str(rows[0]["item_json"] or "")
 
 
 def test_settle_without_prepare_fails_loud_zero_writes(game):
@@ -1026,7 +1095,7 @@ def test_prepare_ready0_reentry_preserves_context_bytes(game, monkeypatch):
     assert ctx1["decree_text"] == "御笔原诏"
     assert ctx1["source"] == Provenance.hitl_decision.value
     assert ctx1["extracted"] is None
-    assert arrivals1 == [{"name": name, "location": dest}]
+    assert arrivals1["transit_arrivals"] == [{"name": name, "location": dest}]
 
     arrivals2 = run_prepare(db, state, content)  # 默认空诏 + player_decree
     ctx2 = db.get_resolve_context(turn)

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 
+from ming_sim.materials import list_materials, read_material
 from ming_sim.models import CourtContext, LLMConfig
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
 from ming_sim.skills import bind_content as _bind_skills
@@ -43,8 +45,13 @@ def test_refresh_rebuilds_agent_with_new_secret_order(game, monkeypatch):
         reg.refresh(name)
         a2 = reg.get(char)
         assert a2 is not a1                      # refresh 后重建
-        joined = "\n".join(str(x) for x in a2.instructions)
-        assert "辰字密令更新测试" in joined        # 新 agent 上下文带上了新密令简报
+        materials_root = Path(a2.model.materials_dir)
+        joined = "\n".join(
+            read_material(materials_root, path)
+            for path in list_materials(materials_root)
+            if path != "INDEX.txt"
+        )
+        assert "辰字密令更新测试" in joined        # 新 agent 绑定的材料带上新密令
     finally:
         if os.path.exists(apath):
             os.remove(apath)

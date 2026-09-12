@@ -995,8 +995,11 @@ def test_api_tool_invalid_punishment_category_fails_without_side_effects(game):
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossiers_before
 
 
-def test_web_stream_transports_punishment_category_to_real_stage(game):
+def test_web_stream_transports_punishment_category_to_real_stage(game, monkeypatch):
     db, state, content = game
+    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *_a, **_k: {
+        "confirmation": "无", "target_ids": [], "new_content": "",
+    })
     target = _active_ming(db, content)
     minister = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' "

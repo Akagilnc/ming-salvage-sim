@@ -19,13 +19,14 @@ from ming_sim.context import character_context_with_db, faction_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig
 from ming_sim.recommendations import build_recommendation_brief
 from ming_sim.llm_model import create_chat_model
-from ming_sim.knowledge import project_court_roster_rows, render_character_knowledge
+from ming_sim.knowledge import render_character_knowledge
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
     power_band,
 )
 from ming_sim.token_stats import tlog
+from ming_sim.materials import material_tools, prepare_character_materials
 from ming_sim.tools import _duty_location, build_minister_tools
 
 _content: Optional[GameContent] = None
@@ -33,27 +34,22 @@ _skills_cache: Dict[str, Skills] = {}
 
 # 各 office_type 对应的 skill 子集。只给该类大臣实际需要的 skill，
 # 避免把 simulator/extractor 专用 skill 注入大臣 system prompt 浪费 token。
+# 读取一律走材料目录（#1819 / #1830）；此处只留动作类 skill。
 _OFFICE_SKILLS: Dict[str, List[str]] = {
-    # 所有大臣共有：记忆检索、拟旨入档、密令、召见传人
-    # 人物>100 或军队>30 时改为动态 tool 查询（当前 40人/17军，暂全量注入 system）
     "_base": ["memory-recall", "decree-drafting", "secret-order", "summon"],
-    # 礼部：额外选妃
     "礼部":   ["consort-selection"],
-    # 司礼监：选妃
     "司礼监": ["consort-selection"],
 }
 
 
-def _skills_for(office_type: str, extra: List[str] = []) -> Skills:
-    """按 office_type 返回精简 skill 集。extra 为运行时动态追加（不缓存）。"""
-    cache_key = office_type if not extra else f"{office_type}+{','.join(sorted(extra))}"
-    if cache_key not in _skills_cache:
+def _skills_for(office_type: str) -> Skills:
+    """按 office_type 返回精简 skill 集。"""
+    if office_type not in _skills_cache:
         names = list(_OFFICE_SKILLS["_base"])
         names += _OFFICE_SKILLS.get(office_type, [])
-        names += [n for n in extra if n not in names]
         loaders = [LocalSkills(f".agno_skills/{n}", validate=False) for n in names]
-        _skills_cache[cache_key] = Skills(loaders)
-    return _skills_cache[cache_key]
+        _skills_cache[office_type] = Skills(loaders)
+    return _skills_cache[office_type]
 
 
 def bind_content(content: GameContent) -> None:
@@ -69,7 +65,7 @@ def _ctx() -> GameContent:
 
 def build_court_brief(context: CourtContext, character: Optional[Character] = None) -> str:
     """每回合精简上下文：仅含回合 + 核心数值 + 在办事项 + 钱粮一句话。
-    地区/军队/派系/事项详情靠大臣按需调 tool 查（list_regions, inspect_memorial 等）。
+    地区/军队/派系/事项详情靠大臣按需读材料目录。
     """
     metrics = context.state.metrics
     money_line = (
@@ -98,7 +94,7 @@ def build_court_brief(context: CourtContext, character: Optional[Character] = No
         f"在办事项：{issues_brief}。"
         f"{identity_brief}"
         f"势力档料：{_power_brief(context)}。"
-        f"地区/奏报/钱粮详情按需调工具查（list_regions/inspect_region/inspect_memorial/check_treasury 等）；人事与军队详情见下方固定名册。"
+        f"地区/奏报/钱粮/人事/军队详情见材料目录，按需自取。"
     )
 
 
@@ -162,7 +158,7 @@ def build_court_roster(context: CourtContext) -> str:
 
 
 def build_court_roster_index(context: CourtContext) -> str:
-    """人物数超 100 时用索引替代完整名册：仅姓名+官署+状态，完整信息由 query_court_roster tool 提供。"""
+    """人物数超 100 时用索引替代完整名册：仅姓名+官署+状态，完整信息见材料目录。"""
     from ming_sim.session import _is_summonable_court_minister
 
     db = context.db
@@ -180,15 +176,14 @@ def build_court_roster_index(context: CourtContext) -> str:
     if not lines:
         return ""
     return (
-        "【在朝人事索引（涉及人物官职/状态时先调 query_court_roster 查完整信息）】\n"
+        "【在朝人事索引（涉及人物官职/状态时读材料目录查完整信息）】\n"
         + "\n".join(lines)
     )
 
 
 def build_last_gazette_brief(context: CourtContext) -> str:
     """上回合（上月）邸报全文，固定喂进大臣 system。
-    去掉了"上月须调 read_past_report"的依赖，大臣首轮即知上月朝局/地方/灾兵祸福。
-    更早月份的邸报仍由 read_past_report 工具按需查。无上月邸报（开局首回合）返回空。"""
+    上月朝局/地方/灾兵祸福见邸报；更早月份见材料目录。无上月邸报（开局首回合）返回空。"""
     prev_turn = int(context.state.turn) - 1
     if prev_turn < 0:
         return ""
@@ -196,7 +191,7 @@ def build_last_gazette_brief(context: CourtContext) -> str:
     if not report or not report.strip():
         return ""
     safe_report = str(report or "")
-    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份调 read_past_report 查）】\n" + safe_report
+    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份见材料目录）】\n" + safe_report
 
 
 def build_memory_brief(character: Character, context: CourtContext) -> str:
@@ -270,8 +265,7 @@ def build_secret_order_brief(character: Character, context: CourtContext) -> str
 
 
 def build_region_brief(context: CourtContext) -> str:
-    """两京十三省危情概览注入大臣 system —— CLI 后端无 list_regions 工具，
-    靠此让大臣知地方民心/动乱/边压，谈政略不抓瞎。"""
+    """两京十三省危情概览。"""
     try:
         return context.db.region_report(limit=8)
     except Exception:
@@ -279,8 +273,7 @@ def build_region_brief(context: CourtContext) -> str:
 
 
 def build_building_brief(context: CourtContext) -> str:
-    """现有建筑紧凑表（名·类·省 规模/完好/产出）——省去叙述控 token。
-    CLI 后端无 list_buildings 工具，靠此让大臣知国家有哪些厂局仓坞。"""
+    """现有建筑紧凑表（名·类·省 规模/完好/产出）。"""
     try:
         # 用中文地区名（LEFT JOIN regions），不漏拼音 region_id（beizhili 等英文进 system
         # 会诱发模型 code-switch 蹦英文；地区无名时退回 region_id）。
@@ -500,43 +493,13 @@ def create_minister_agent(
         ]
         tools = [_make_cultivate_tool(character, context)]
     else:
-        # 月度动态上下文全挂 system 末尾——见闻投影是唯一世界输入；前面 game_world /
-        # minister_agent / character 静态段仍命中前缀缓存。旧 registry 全知 builders
-        # 保留给其他调用方，但不能从此处绕过角色见闻边界。
-        complete_roster = context.db.current_court_roster_rows(context.state)
-        army_count = context.db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
-        projected_world = context.db.get_character_knowledge(
-            context.state, character.name,
-        )
-        projected_roster = project_court_roster_rows(
-            complete_roster, projected_world, character.office_type,
-        )
-        # Scale thresholds operate on the authorized slice, never on the global
-        # backing set: a large court cannot manufacture a personnel capability.
-        use_roster_tool = len(projected_roster) > 100
-        projected_world = projected_world.get("world") or {}
-        # The threshold may alter delivery, never authorization: a role without
-        # the military domain must not receive either the roster tool or skill.
-        use_army_tool = army_count > 30 and "military" in projected_world
-        knowledge_brief = build_character_knowledge_brief(character, context)
-        secret_brief = build_secret_order_brief(character, context)
-        recommendation_brief = build_recommendation_brief(context.db, context.state, character.name)
+        # 开场只带最小集；其余加工材料进目录，由 list/read 或 CLI cwd 自取（#1830）。
+        prepared = prepare_character_materials(context.db, context.state, character)
+        if hasattr(model, "materials_dir"):
+            model.materials_dir = str(prepared.root)
         monthly_block_parts = [
-            f"当前为 {context.state.year} 年 {context.state.period} 月（第 {context.state.turn} 回合）。"
-            "作答涉及时序（某事多久前、某人是否已亡、某限期是否到）时以此为准。",
+            prepared.opening,
         ]
-        if knowledge_brief:
-            monthly_block_parts.append(knowledge_brief)
-        if secret_brief:
-            monthly_block_parts.append(secret_brief)
-        monthly_block_parts.append(recommendation_brief)
-        if projected_roster and not use_roster_tool:
-            monthly_block_parts.append(
-                "【已授权在朝名册】\n" + "\n".join(
-                    f"{row['name']}：{row['office'] or '无现任官职'}，{row['status']}"
-                    for row in projected_roster
-                )
-            )
         instructions = [
             _minister_game_world_prompt(c.game_world_prompt),
             c.minister_agent_prompt,
@@ -545,18 +508,13 @@ def create_minister_agent(
             f"你与皇帝的多轮对话会持续到本{TURN_UNIT}退朝；同一{TURN_UNIT}复召时要接续此前奏对，不要重置记忆。",
             "\n\n".join(monthly_block_parts),
         ]
-        tools = build_minister_tools(character, context,
-                                     use_roster_tool=use_roster_tool,
-                                     use_army_tool=use_army_tool)
+        tools = material_tools(prepared.root) + build_minister_tools(
+            character, context,
+        )
         # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
         if character.office_type in ("司礼监", "礼部"):
             tools.append(_make_select_consort_tool(context))
-        extra_skills = []
-        if use_roster_tool:
-            extra_skills.append("court-roster")
-        if use_army_tool:
-            extra_skills.append("army-roster")
-        minister_skills = _skills_for(character.office_type, extra=extra_skills)
+        minister_skills = _skills_for(character.office_type)
     return Agent(
         name=character.name,
         id=f"minister-{character.name}",

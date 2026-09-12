@@ -11,7 +11,7 @@ import math
 import re
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
 
 from ming_sim.applier import atomic
 from ming_sim.appointment_tenure import appointment_tenure_from
@@ -4910,6 +4910,11 @@ def _strategic_event_result_preflight_error(
         origin_ref = item.get("origin_ref") if isinstance(item, dict) else None
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
+            # Batch-unauthorized affair is itemwise at apply (economy/person
+            # siblings continue). Envelope preflight only blocks missing/invalid
+            # provenance existence failures.
+            if origin_error.get("category") == "unauthorized_affair_origin":
+                continue
             return (
                 f"战略/外敌事件「{event_title or event_id}」{kind}战果来源拒收："
                 f"{origin_error.get('reason') or origin_error.get('category') or ''}"
@@ -5079,7 +5084,11 @@ def apply_issue_tracker_output(
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
     event_result_delta_event_ids: Optional[set[str]] = None,
     defer_event_trigger_ids: Optional[set[str]] = None,
+    open_affair_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
+    # Do not re-copy open_affair_ids_at_input: settle path already hands the single
+    # internal working set from apply_score_extraction; a second copy would drop
+    # same-batch new_issues births from later carriers (close / durable origin).
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
     pairing_warnings: List[str] = []  # #45/#46 国策结案实体后果强制配对告警（warn-only）
@@ -5699,18 +5708,49 @@ def apply_issue_tracker_output(
         # 注：字符串字段含孤代理（JSON 解析出的 "\\ud800"）会在 SQLite bind 抛 UnicodeEncodeError。
         # #63 已在 SQLite-bind 序列化点统一用「保中文、净孤代理」helper 治理；本段不局部吞
         # UnicodeEncodeError，仍让非编码类代码/DB 异常按 ADR 0005 fail-loud 上抛。
-        # Validate provenance only after item-shape validation, so malformed
-        # fields retain their precise rejection category without ever reaching a write.
-        origin_error = db.effect_origin_rejection(origin_ref)
-        if not re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref) or origin_error:
+        # Validate typed affair authority before any write. A decree issue may be
+        # grounded either by a promulgated dossier or by its typed affair declaration.
+        from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+        try:
+            issue_affair = declaration_from_payload(ni, allowed=ATTACH_BIRTH)
+        except (TypeError, ValueError) as exc:
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": str(exc), "item": ni, "title": title,
+            })
+            continue
+        if (
+            issue_affair is not None
+            and issue_affair.get("attach") == "existing"
+            and isinstance(open_affair_ids_at_input, set)
+            and int(issue_affair["affair_id"]) not in open_affair_ids_at_input
+        ):
+            applied_new.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": "事务不在本批可见输入",
+                "item": ni, "title": title,
+            })
+            continue
+        origin_error = db.effect_origin_rejection(origin_ref) if origin_ref else None
+        dossier_origin = bool(re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref))
+        if issue_affair is None and (not dossier_origin or origin_error):
             applied_new.append({
                 "rejected": True, "category": "missing_ref", "item": ni,
                 "title": title,
                 "reason": (origin_error or {}).get(
-                    "reason", "new decree issue origin_ref 须为已颁 dossier:<id>"
+                    "reason", "new decree issue 须有已颁 dossier:<id> 或合法事务声明"
                 ),
             })
             continue
+        if issue_affair is not None and dossier_origin:
+            try:
+                db.affairs.assert_origin_matches_declaration(origin_ref, issue_affair)
+            except (KeyError, TypeError, ValueError) as exc:
+                applied_new.append({
+                    "rejected": True, "category": "invalid_enum", "item": ni,
+                    "title": title, "reason": str(exc),
+                })
+                continue
         from ming_sim.staged_commitment import (
             capture_commitment_stages,
             stages_source_from_issue_item,
@@ -5725,8 +5765,8 @@ def apply_issue_tracker_output(
             else []
         )
         # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
-        issue_id = db.insert_issue(
-            state,
+        # issue+affair 成对写由 GameDB 拥有（ADR 0150-D3）；本段不自包事务生命周期。
+        _issue_fields = dict(
             kind=kind,
             title=title[:60] or "无名事项",
             origin_kind="decree",
@@ -5757,6 +5797,18 @@ def apply_issue_tracker_output(
             stages_json=stages_norm,
             commit=commit_now,
         )
+        if issue_affair is not None:
+            issue_id = db.insert_issue_with_affair_declaration(
+                state,
+                affair_declaration=issue_affair,
+                authorized_ids=(
+                    open_affair_ids_at_input
+                    if isinstance(open_affair_ids_at_input, set) else None
+                ),
+                **_issue_fields,
+            )
+        else:
+            issue_id = db.insert_issue(state, **_issue_fields)
         applied_item = {"issue_id": issue_id, "kind": kind, "title": title, "rejected": False}
         if commitment_kind:
             applied_item["commitment_kind"] = commitment_kind
@@ -8152,6 +8204,7 @@ def apply_score_extraction(
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
     dossier_ids_at_input: Optional[set[int]] = None,
     secret_dossier_ids_at_input: Optional[set[int]] = None,
+    open_affair_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -8170,6 +8223,126 @@ def apply_score_extraction(
     }
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
+    frozen_open_affairs = (
+        set(open_affair_ids_at_input) if isinstance(open_affair_ids_at_input, set) else set()
+    )
+    authorized_open_affairs = set(frozen_open_affairs)
+    # Single origin authority for this batch (GameDB.effect_origin_rejection).
+    _prev_batch_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+    _prev_batch_frozen = getattr(db, "_batch_frozen_open_affair_ids", None)
+    db._batch_authorized_open_affair_ids = authorized_open_affairs
+    db._batch_frozen_open_affair_ids = frozen_open_affairs
+    try:
+        return _apply_score_extraction_body(
+            db,
+            state,
+            extracted,
+            content=content,
+            registry=registry,
+            llm_config=llm_config,
+            candidate_event_ids_at_input=candidate_event_ids_at_input,
+            impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
+            dossier_ids_at_input=dossier_ids_at_input,
+            secret_dossier_ids_at_input=secret_dossier_ids_at_input,
+            authorized_open_affairs=authorized_open_affairs,
+            frozen_open_affairs=frozen_open_affairs,
+            caller_transaction=caller_transaction,
+            commit_now=commit_now,
+            relation_pre_roster=_relation_pre_roster,
+            validate_rejections=validate_rejections,
+        )
+    finally:
+        db._batch_authorized_open_affair_ids = _prev_batch_authorized
+        db._batch_frozen_open_affair_ids = _prev_batch_frozen
+
+
+def _apply_score_extraction_body(
+    db: GameDB,
+    state: GameState,
+    extracted: Dict[str, object],
+    *,
+    content,
+    registry,
+    llm_config: Any,
+    candidate_event_ids_at_input: Optional[set[str]],
+    impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]],
+    dossier_ids_at_input: Optional[set[int]],
+    secret_dossier_ids_at_input: Optional[set[int]],
+    authorized_open_affairs: set[int],
+    frozen_open_affairs: set[int],
+    caller_transaction: bool,
+    commit_now: bool,
+    relation_pre_roster: set[str],
+    validate_rejections: list,
+) -> Dict[str, object]:
+    """Bound apply body; batch affair authority is armed by caller."""
+    from uuid import uuid4
+    from ming_sim.entities.affair import (
+        ATTACH_BIRTH,
+        UnauthorizedAffairOriginRef,
+        declaration_from_payload,
+    )
+
+    batch_new_identities: dict[str, tuple[str, str, str]] = {}
+
+    def _stamp_batch_new_declaration(item: object) -> tuple[object, str | None]:
+        """Stamp a shared birth_key onto same-identity siblings, or hand back a
+        per-item rejection reason on identity conflict. Never raises: ADR 0005
+        坏项逐项拒收，合法 sibling 照落，不带走整批。"""
+        if not isinstance(item, dict):
+            return item, None
+        try:
+            parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
+        except (TypeError, ValueError) as exc:
+            return item, str(exc)
+        if parsed is None or parsed.get("attach") != "new":
+            return item, None
+        identity = str(parsed.get("identity") or "").strip()
+        name = str(parsed["name"])
+        origin = str(parsed["origin"])
+        if identity:
+            prior = batch_new_identities.get(identity)
+            if prior is None:
+                key = f"result:{uuid4().hex}"
+                batch_new_identities[identity] = (key, name, origin)
+            else:
+                key, prior_name, prior_origin = prior
+                if prior_name != name or prior_origin != origin:
+                    return item, f"同批事务 identity「{identity}」声明冲突"
+        else:
+            key = f"result:{uuid4().hex}"
+        stamped = {
+            "attach": "new",
+            "name": name,
+            "origin": origin,
+            "birth_key": key,
+        }
+        return {**item, "affair_declaration": stamped}, None
+
+    for field in (
+        "economy_moves", "new_issues", "人物变更",
+        "office_changes", "character_status_changes", "appointments",
+    ):
+        raw_items = extracted.get(field)
+        if isinstance(raw_items, list):
+            kept: List[object] = []
+            for raw_item in raw_items:
+                stamped, conflict_reason = _stamp_batch_new_declaration(raw_item)
+                if conflict_reason is not None:
+                    validate_rejections.append((field, raw_item, conflict_reason))
+                    continue
+                kept.append(stamped)
+            extracted[field] = kept
+
+    def _origin_ref_from_result_item(item: Mapping[str, object] | None) -> str:
+        return db.affairs.origin_ref_from_result_item(
+            item,
+            year=int(state.year),
+            period=int(state.period),
+            turn=int(state.turn),
+            authorized_ids=authorized_open_affairs,
+        )
+
     # #623：召对 extraction 真入口——反悔/坚持消费哭谏条（须先于 cancels 物化，
     # 使 persist 先结账，cancels 环看到已非 active 而跳过，防双路径）。
     from ming_sim.breach_plea import resolve_breach_pleas_from_extraction
@@ -8443,7 +8616,7 @@ def apply_score_extraction(
             registry=registry,
             llm_config=llm_config,
             allow_legacy_partial_power=legacy,
-            external_transaction=caller_transaction,
+            external_transaction=db.conn.in_transaction,
             origin_ref=origin_ref,
             require_origin=require_origin,
         )
@@ -8455,52 +8628,87 @@ def apply_score_extraction(
         applied_person_changes.extend(results)
         return results
 
+    def _apply_person_changes_itemwise(
+        changes: List[Dict[str, object]], *, phase: str,
+    ) -> None:
+        """Apply carrier-bound person changes atomically one item at a time."""
+        for index, person_change in enumerate(changes):
+            savepoint = f"person_affair_{phase}_{index}"
+            db.conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                origin_ref = _origin_ref_from_result_item(person_change)
+                results = _apply_normalized_person_changes(
+                    [dict(person_change)], legacy=legacy_person_mode, origin_ref=origin_ref,
+                )
+                if not results or all(result.get("rejected") for result in results):
+                    db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+            except UnauthorizedAffairOriginRef as exc:
+                # Narrow LLM origin authorization failure only — not TypeError/
+                # ValueError/KeyError, which stay fail-loud with writer/DB faults.
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+                applied_person_changes.append({
+                    "name": str(person_change.get("name") or "").strip(),
+                    "动作": str(person_change.get("动作") or "").strip(),
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": str(exc), "item": dict(person_change),
+                })
+            except Exception:
+                # The adapter has already converted admissible LLM input errors
+                # into rejected results.  Anything escaping it is an execution
+                # failure: restore this item's savepoint, then fail loud.
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+                raise
+
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
     # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
     # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
-    economy_moves = []
-    for move in extracted.get("economy_moves") or []:
-        if not isinstance(move, dict):
-            economy_moves.append(move)
-            continue
-        origin_ref = str(
-            move.get("origin_ref") or move.get("来源引用") or ""
-        ).strip()
-        # #1503 单写者：仅按 origin_ref=dossier:<id> 复用既有 payload 案卷 provenance
-        # 判重（_payload_owned_dossier_for_origin）。不得按 army+turn 吞掉同回合
-        # 独立「盘面自发」补饷；已消费案卷身份由 extractor 输入接缝保留。
-        if not origin_ref.startswith("dossier:"):
-            economy_moves.append(move)
-            continue
+    applied_economy: List[Dict[str, object]] = []
+    economy_rejections: List[Dict[str, object]] = []
+    for index, raw_move in enumerate(extracted.get("economy_moves") or []):
+        savepoint = f"economy_affair_{index}"
+        db.conn.execute(f"SAVEPOINT {savepoint}")
         try:
-            prefix, raw_id = origin_ref.split(":")
-            if prefix != "dossier":
-                raise ValueError("案卷 origin_ref 前缀非法")
-            dossier_id = _parse_sqlite_id(raw_id)
-        except (TypeError, ValueError):
-            # Malformed provenance is not a duplicate-allocation candidate;
-            # retain it for the durable-write seam to reject and report.
-            economy_moves.append(move)
-            continue
-        dossier = _payload_owned_dossier_for_origin(db, origin_ref)
-        if dossier is None or str(dossier.get("action_type") or "") != "grant_allocation":
-            economy_moves.append(move)
-            continue
-        # ADR 0055: structured allocation effects are materialized from the
-        # dossier payload.  The extractor may repeat the same non-empty delta,
-        # but origin-bound apply must not debit it twice.  Narrative dossiers
-        # remain on the extractor rail.
-    _eco_out = _apply_economy_list(
-        db,
-        state,
-        economy_moves,
-        commit=commit_now,
-        require_origin=True,
-    )
-    applied_economy = [r for r in _eco_out if not r.get("rejected")]
-    economy_rejections = [r for r in _eco_out if r.get("rejected")]
+            move = raw_move
+            if isinstance(move, dict):
+                origin_ref = _origin_ref_from_result_item(move)
+                if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
+                    move = {**move, "origin_ref": origin_ref}
+                # Structured grant dossiers already materialized their fiscal effect.
+                if origin_ref.startswith("dossier:"):
+                    dossier = _payload_owned_dossier_for_origin(db, origin_ref)
+                    if dossier is not None and str(dossier.get("action_type") or "") == "grant_allocation":
+                        db.conn.execute(f"RELEASE {savepoint}")
+                        continue
+            results = _apply_economy_list(
+                db, state, [move], commit=False, require_origin=True,
+            )
+            rejected = [row for row in results if row.get("rejected")]
+            if rejected:
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                economy_rejections.extend(rejected)
+            else:
+                applied_economy.extend(results)
+            db.conn.execute(f"RELEASE {savepoint}")
+        except UnauthorizedAffairOriginRef as exc:
+            # Narrow LLM origin authorization failure only — not TypeError/
+            # ValueError/KeyError, which stay fail-loud with writer/DB faults.
+            db.conn.execute(f"ROLLBACK TO {savepoint}")
+            db.conn.execute(f"RELEASE {savepoint}")
+            economy_rejections.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": str(exc), "item": raw_move,
+            })
+        except Exception:
+            # Input rejection belongs to _apply_economy_list.  DB/writer and
+            # other execution failures must not be relabelled as invalid_enum.
+            db.conn.execute(f"ROLLBACK TO {savepoint}")
+            db.conn.execute(f"RELEASE {savepoint}")
+            raise
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
@@ -8700,10 +8908,7 @@ def apply_score_extraction(
                 state, {power_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
             ))
 
-    for person_change in pre_issue_person_changes:
-        origin_ref = str(person_change.get("origin_ref") or "").strip()
-        clean_change = dict(person_change)
-        _apply_normalized_person_changes([clean_change], legacy=legacy_person_mode, origin_ref=origin_ref)
+    _apply_person_changes_itemwise(pre_issue_person_changes, phase="pre")
 
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
     issue_summary = apply_issue_tracker_output(db, state, {
@@ -8718,7 +8923,25 @@ def apply_score_extraction(
         candidate_event_ids_authoritative=candidate_event_ids_authoritative,
         impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
-        defer_event_trigger_ids=strategic_event_pool_ids)
+        defer_event_trigger_ids=strategic_event_pool_ids,
+        open_affair_ids_at_input=authorized_open_affairs)
+
+    # Affair closure observes the batch's final issue state. In particular, a
+    # same-batch linked issue must prevent closure rather than leave a closed
+    # affair pointing at active work.
+    for raw in extracted.get("affair_declarations") or []:
+        try:
+            if not isinstance(raw, dict):
+                raise ValueError("事务声明须为对象")
+            db.affairs.close_from_declaration(
+                raw,
+                turn=int(state.turn),
+                authorized_ids=frozen_open_affairs,
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            validate_rejections.append(
+                ("affair_declarations", {"raw_value": raw}, str(exc)),
+            )
 
     commitment_economy_carriers: List[Dict[str, object]] = []
     for item in issue_summary.get("new_issues") or []:
@@ -8928,7 +9151,17 @@ def apply_score_extraction(
             ))
         army_changes.extend(event_army_changes)
         for item in event_person_changes:
-            origin_ref = str(item.get("origin_ref") or "").strip()
+            try:
+                origin_ref = _origin_ref_from_result_item(item)
+            except UnauthorizedAffairOriginRef as exc:
+                # Same narrow origin-auth signal as itemwise economy/person paths.
+                event_person_results.append({
+                    "name": str(item.get("name") or "").strip(),
+                    "动作": str(item.get("动作") or "").strip(),
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": str(exc), "item": dict(item),
+                })
+                continue
             clean_item = dict(item)
             event_person_results.extend(_apply_normalized_person_changes(
                 [clean_item], legacy=legacy_person_mode, origin_ref=origin_ref, require_origin=True,
@@ -8952,15 +9185,20 @@ def apply_score_extraction(
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
             apply_event_cascading_invalidations(state, db, commit=commit_now)
             new_issue["reason"] = "事件已记为触发，软判结果已落主账"
+            # Successful person applies already extended applied_person_changes via
+            # _apply_normalized_person_changes (same object ids). Origin-auth rejects
+            # only lived in event_person_results — promote them once into the final
+            # projection so material siblings cannot erase the structured trace.
+            present = {id(row) for row in applied_person_changes}
+            for row in event_person_results:
+                if row.get("rejected") and id(row) not in present:
+                    applied_person_changes.append(row)
         else:
             new_issue["rejected"] = True
             new_issue["category"] = "missing_world_state_delta"
             new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队均未成功）"
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""), reason=new_issue["reason"])
-    for person_change in post_issue_person_changes:
-        origin_ref = str(person_change.get("origin_ref") or "").strip()
-        clean_change = dict(person_change)
-        _apply_normalized_person_changes([clean_change], legacy=legacy_person_mode, origin_ref=origin_ref)
+    _apply_person_changes_itemwise(post_issue_person_changes, phase="post")
 
     def _norm_int_leaf(v):
         """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
@@ -9486,7 +9724,7 @@ def apply_score_extraction(
         # T1 B 案：端点 ∈ 批内 pre∪post 名册并集——同批退场者与同批入场者的
         # 互动都落；前后均不合格（幻觉/皇帝入大臣端）仍拒收。此处已在该批人物
         # 变更全部 apply 之后，live 投影即 post-roster。
-        allowed_endpoint_names=_relation_pre_roster | {
+        allowed_endpoint_names=relation_pre_roster | {
             row["name"] for row in db.current_court_roster_rows(state)
         },
     )

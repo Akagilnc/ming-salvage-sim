@@ -2,7 +2,7 @@
 
 按 shared 的「抽取流程」五步走。本档房在各步的重点：
 
-本档房同样受 shared 的 canonical 来源总契约约束；不得输出无 `来源引用` 的 durable 条目。财政三段虽非本档房所有权，也不得代写或绕过其逐项来源要求。
+本档房同样受 shared 的 canonical 来源总契约约束；durable 条目须有 `来源引用`，或无案卷时写与 `新立局势` 相同的 typed `事务声明`。财政三段虽非本档房所有权，也不得代写或绕过其逐项来源要求。
 input 的 `secret_covert_effect_briefs` 若含 `canonical_fields` 含 `人物变更` 的项，按合同 `delivery` 可数单位（如人犯）产出本回合 `人物变更`，`来源引用` 必须逐字使用该 brief 的 `origin_ref`；不得把 brief 写入叙事。
 
 - **第 1 步（贴标签）**：`court_roster.status` 已是下狱/罢黜/流放/致仕/已故者，本{{TURN_UNIT}}邸报再提即背景复述，不重复写 `人物变更`；只有状态升级（dismissed→imprisoned→dead 等）才写。

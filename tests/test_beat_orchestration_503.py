@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
+import json
 import sqlite3
 import threading
 import time
@@ -499,7 +500,7 @@ def _echo_generator(inputs: BeatInputs) -> str:
         f"kind={inputs.beat_kind}", f"person={inputs.person_name}",
         f"method={inputs.summon_method}", f"tod={inputs.time_of_day}",
         f"loc={inputs.location}", f"char={inputs.characterization}",
-        f"world={inputs.perspectival_world}", f"tension={inputs.court_tension}",
+        f"world={inputs.opening_context}", f"tension={inputs.court_tension}",
         f"prior={'∥'.join(inputs.prior_appearances)}",
         f"public={'∥'.join(inputs.public_layer)}",
     ])
@@ -777,7 +778,9 @@ def test_exit_beat_routes_characterization_and_perspectival_inputs(game):
     assert seen[0].beat_kind == "exit"
     assert seen[0].person_name == "毕自严"
     assert seen[0].characterization
-    assert "退侍所见" in seen[0].perspectival_world
+    assert seen[0].person_name == "毕自严"
+    assert "身份：" in seen[0].opening_context
+    assert "毕自严" in seen[0].opening_context
     assert an.list_ledger(db, night["id"])[-1]["body"] == "毕自严整衣趋出。"
 
 
@@ -1208,55 +1211,6 @@ def _fake_provider(tag):
     return provider
 
 
-def test_enter_input_flows_from_injected_knowledge_provider(game):
-    db, state, content = game
-    minister = _active_minister(db, content)
-    night_id, _cid = an.attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="s", agno_runs_before=0,
-        time_of_day="戌时", location="乾清宫",
-        beat_generator=_echo_generator, knowledge_provider=_fake_provider("A"),
-    )
-    body = _enter_body(db, night_id, minister)
-    # 见闻输入真来自注入的供给接口（非默认 get_character_knowledge、非全知）
-    assert body and f"{minister}独有见闻#A" in body
-
-
-def test_frame_beats_flow_from_provider_and_vary(game):
-    """AC5：开场/收夜组装输入来自供给接口且随之变化（帧 beat 视角=常在员额首席）。"""
-    db, state, content = game
-    subject = an.resolve_standing_roster(db)[0]
-    minister = _active_minister(db, content)
-
-    night_id, _cid = an.attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="s", agno_runs_before=0,
-        time_of_day="戌时", location="乾清宫",
-        beat_generator=_echo_generator, knowledge_provider=_fake_provider("A"),
-    )
-    open_a = _ledger_body(db, night_id, an.TAG_OPEN_NIGHT)
-    assert f"{subject}独有见闻#A" in open_a
-
-    _land_reply(db, state, minister, _cid, night_id)
-    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
-    an.close_night(
-        db, state, night_id=night_id, content=content,
-        beat_generator=_echo_generator, knowledge_provider=_fake_provider("A"),
-        scene_registry=registry,
-    )
-    close_a = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
-    assert f"{subject}独有见闻#A" in close_a
-
-    # 换供给接口内容 → 帧 beat 输入随之变化（投毒版照喂全知只换文案会被此咬住：
-    # 无视 provider 的实现产不出这份 per-character 内容）
-    n2 = an.open_night(db, state, time_of_day="子时", location="文华殿")
-    body_open_b = bo.generate_open_beat_body(
-        db, state, time_of_day="子时", location="文华殿",
-        beat_generator=_echo_generator, knowledge_provider=_fake_provider("B"),
-    )
-    assert f"{subject}独有见闻#B" in body_open_b
-    assert "独有见闻#A" not in body_open_b
-    _ = n2
-
-
 def test_assembly_never_calls_omniscient_builders(game, monkeypatch):
     """审计断言：组装路径绝不调全知 builder（court_brief / 全员名册类全局块）。"""
     import ming_sim.registry as registry
@@ -1277,13 +1231,17 @@ def test_assembly_never_calls_omniscient_builders(game, monkeypatch):
         person_name=minister, summon_method=an.METHOD_XUANRU,
         knowledge_provider=_fake_provider("A"),
     )
-    assert f"{minister}独有见闻#A" in inputs.perspectival_world
+    assert minister in inputs.opening_context
+    assert f"{int(state.year)}年{int(state.period)}月" in inputs.opening_context
+    assert "独有见闻#A" not in inputs.opening_context
     frame = assemble_beat_inputs(
         db, state, beat_kind=BEAT_OPEN, time_of_day="戌时", location="乾清宫",
         knowledge_provider=_fake_provider("A"),
     )
     subject = an.resolve_standing_roster(db)[0]
-    assert f"{subject}独有见闻#A" in frame.perspectival_world
+    assert subject in frame.opening_context
+    assert f"{int(state.year)}年{int(state.period)}月" in frame.opening_context
+    assert "独有见闻#A" not in frame.opening_context
 
 
 def test_court_tension_routed_from_default_provider(game):
@@ -1342,8 +1300,10 @@ def test_create_llm_beat_generator_isolates_agent_per_call(monkeypatch):
     class _FakeAgent:
         def __init__(self, **_kwargs):
             agents.append(self)
+            self.prompt = None
 
-        def run(self, _prompt):
+        def run(self, prompt):
+            self.prompt = prompt
             return SimpleNamespace(content=f"agent-{id(self)}")
 
     monkeypatch.setattr("agno.agent.Agent", _FakeAgent)
@@ -1366,11 +1326,19 @@ def test_create_llm_beat_generator_isolates_agent_per_call(monkeypatch):
     spec.loader.exec_module(probe)
 
     gen = probe.create_llm_beat_generator(object())
-    out_a = gen(BeatInputs(beat_kind=BEAT_OPEN, time_of_day="戌时"))
-    out_b = gen(BeatInputs(beat_kind=BEAT_ENTER, person_name="甲"))
+    inputs_a = BeatInputs(beat_kind=BEAT_OPEN, time_of_day="戌时", opening_context="开场甲")
+    inputs_b = BeatInputs(beat_kind=BEAT_ENTER, person_name="甲", opening_context="开场乙")
+    out_a = gen(inputs_a)
+    out_b = gen(inputs_b)
     assert len(agents) == 2
     assert agents[0] is not agents[1]
     assert out_a != out_b
+    payload_a = json.loads(agents[0].prompt)
+    assert payload_a["人物开场"] == inputs_a.opening_context
+    assert "人物所知" not in payload_a
+    payload_b = json.loads(agents[1].prompt)
+    assert payload_b["人物开场"] == inputs_b.opening_context
+    assert "人物所知" not in payload_b
 
 
 def test_start_open_enter_releases_claim_when_discover_raises(game, monkeypatch):

@@ -31,6 +31,7 @@ from ming_sim.audience_night import (
     TAG_AUTO_CLOSE,
     TAG_CLOSE_NIGHT,
     TAG_ENTER,
+    TAG_MINGFA,
     TAG_OPEN_NIGHT,
     TAG_STANDING_ROSTER,
     AudienceNightError,
@@ -680,3 +681,38 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
     turns = an.list_chat_turns_for_night(db, int(open_n["id"]))
     assert turns and turns[-1]["minister_name"] == character.name
     assert int(turns[-1]["night_id"]) == int(open_n["id"]) > 0
+
+
+def test_close_night_committed_without_dossier_does_not_publish_mingfa(game):
+    """已提交、尚未成案的旨不得落明发账，也不得写空 provenance。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, location="乾清宫")
+    candidate_id = db.stage_directive_candidate(
+        state.turn, minister, {
+            "text": "拟拨十两赈济", "actor": minister,
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue", "target_id": "relief-no-dossier",
+            "amount": 10, "account": "国库",
+            "execution_surface": "immediate",
+        },
+    )
+    db.mark_pending_night_approved([candidate_id], night_id=int(night["id"]))
+    db.commit_pending_actions(
+        state, content=content, action_ids=[candidate_id],
+        directive_status="pending",
+    )
+    directive_id = int(db.conn.execute(
+        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        (candidate_id,),
+    ).fetchone()["committed_directive_id"])
+    assert db.get_dossier_for_directive(directive_id) is None
+    an.close_night(db, state, night_id=int(night["id"]), content=content)
+    assert db.get_dossier_for_directive(directive_id) is None
+    entries = an.list_ledger(db, int(night["id"]))
+    assert not any(TAG_MINGFA in (entry.get("tags") or []) for entry in entries)
+    assert not any(
+        TAG_MINGFA in (entry.get("tags") or [])
+        and not str(entry.get("origin_ref") or "").strip()
+        for entry in entries
+    )

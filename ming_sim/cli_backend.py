@@ -1,4 +1,4 @@
-"""本地 CLI LLM 后端：把 agy / codex 当 LLM，脱离 api key。
+"""本地 CLI LLM 后端：用已支持的本机 agent runner 调用 LLM，脱离 api key。
 
 探针目标：把游戏 LLM 后端从「api key 调远端」换成「本地自治 CLI agent」。
 做法 = 继承 agno 的 OpenAIChat，只覆盖最底层 invoke：
@@ -6,12 +6,12 @@
 交回 agno 原生 _parse_provider_response 解析。agno 全套（解析/流式回退/
 消息格式）原样复用，零 function-calling（工具不传，大臣退化成纯文本进谏）。
 
-启用：环境变量 MING_SIM_LLM_BACKEND=agy（或 codex）。
-机器依赖：本机已装并登录 agy（~/.local/bin/agy）/ codex。不兼容别的机器——
+启用：环境变量 MING_SIM_LLM_BACKEND=<runner>。
+机器依赖：本机已安装并登录所选 runner。不兼容别的机器——
 这是探针的预期，不是缺陷。
 
 调用约定来自 wiki/concepts/codex-bot-conventions.md + cross-model-review.md：
-- agy：先暖 keychain（auth 是 race），warm + retry（初试 1 + 最多 3），--sandbox。
+- agy：先暖 keychain（auth 是 race），Agy 1.2.0 用 `--print=<prompt>`。
 - codex：`codex exec -` 必须 stdin pipe，绝不 positional；始终 2>&1。
 """
 
@@ -90,15 +90,14 @@ _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
-# #1256：cursor / kimi / grok 本机 CLI runner；#1274-qa-y1 补 pi（owner：电脑上有的 CLI 一起接入）。
-# opencode 庭裁走 api 通道，不入此名单。
 _CURSOR_BIN = os.environ.get("MING_SIM_CURSOR_BIN", "cursor-agent")
 _KIMI_BIN = os.environ.get("MING_SIM_KIMI_BIN", "kimi")
 _GROK_BIN = os.environ.get("MING_SIM_GROK_BIN", "grok")
 _PI_BIN = os.environ.get("MING_SIM_PI_BIN", "pi")
 # 受支持 CLI runner 单一真源（membership + 文案 + env 回落共用）。
 _CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
-# 闸脚本 --runner choices 单一真源（不含 agy：闸形制未用）。脚本 import 此元组，禁各自复制。
+_MATERIALS_CLI_RUNNERS = _CLI_BACKENDS
+# 闸脚本 --runner choices 与公开支持集同源。
 GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok", "pi")
 # 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
 # GATE_CLI_RUNNERS ⊂ 此序（无 agy）；禁在 menuPage/gameMenu 再硬编一份。
@@ -168,6 +167,8 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
     codex_default = cli_model_from_env("codex", CODEX_DEFAULT_MODEL)
     claude_default = cli_model_from_env("claude", CLAUDE_DEFAULT_MODEL)
     return {
+        # agy：模型档由 CLI 自身选择，只提供默认逃生档。
+        "agy": [{"value": "", "label": "默认 · gemini"}],
         # codex：默认 gpt-5.5（机理扎实、字段全）；spark 最快、建 issue 满分。
         # gpt-5.4 不入档（bench 偏长且不在「可用主力」；mini 漏 DECISION 块已淘汰）。
         "codex": [
@@ -181,23 +182,11 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
             {"value": "claude-haiku-4-5", "label": "claude-haiku-4-5 · 快"},
             {"value": "claude-sonnet-4-6", "label": "claude-sonnet-4-6 · 慢，偏离线鉴赏"},
         ],
-        # agy：模型档模糊，只给「默认（gemini）」+ 前端「其他(手填)」逃生口。
-        "agy": [
-            {"value": "", "label": "默认 · gemini"},
-        ],
-        # #1256/#1274-y1 新 runner：策展档未立，只给默认档 + 前端「其他(手填)」逃生；--model 透传。
-        "cursor": [
-            {"value": "", "label": "默认"},
-        ],
-        "kimi": [
-            {"value": "", "label": "默认"},
-        ],
-        "grok": [
-            {"value": "", "label": "默认"},
-        ],
-        "pi": [
-            {"value": "", "label": "默认"},
-        ],
+        # 尚无策展模型档的 runner 保留 CLI 自身默认。
+        "cursor": [{"value": "", "label": "默认"}],
+        "kimi": [{"value": "", "label": "默认"}],
+        "grok": [{"value": "", "label": "默认"}],
+        "pi": [{"value": "", "label": "默认"}],
     }
 
 
@@ -604,6 +593,7 @@ def _codex_cmd(
     *,
     json_events: bool = False,
     reasoning_strength: Optional[str] = None,
+    materials_dir: Optional[str] = None,
 ) -> List[str]:
     cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
     reasoning = _codex_reasoning_effort(reasoning_strength)
@@ -611,7 +601,10 @@ def _codex_cmd(
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
     if json_events:
         cmd.append("--json")
-    cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
+    cmd += ["--ephemeral", "--skip-git-repo-check"]
+    if materials_dir:
+        cmd += ["--ignore-user-config", "--sandbox", "read-only"]
+    cmd.append("-")
     return cmd
 
 
@@ -676,29 +669,50 @@ def _cli_runner_command(
     model: Optional[str] = None,
     reasoning_strength: Optional[str] = None,
     json_events: bool = False,
+    materials_dir: Optional[str] = None,
+    kimi_agent_file: Optional[str] = None,
 ) -> Tuple[List[str], Optional[str], Optional[Dict[str, str]]]:
     """runner → (argv, stdin 文本, env)。各 runner 调用约定单真源；执行读法共用 helper。
 
     实测约定（docs/LLM_BACKEND_BENCH.md §9 / #1256 / #1274-qa-y1）：
-    - agy：`-p --sandbox`，prompt 走 stdin；调用前先暖 keychain（auth race）。
+    - agy 1.2.0：`--print=<prompt>` 单参数；调用前先暖 keychain（auth race）。
     - codex：`exec -` 必须 stdin pipe（绝不 positional）；`--skip-git-repo-check`
       （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
     - claude：`-p --output-format text`，prompt 走 stdin；thinking 预算走 env。
     - cursor / kimi / grok / pi：prompt 走参数（无 stdin 约定），干净答案在 stdout。
+    材料目录（#1830 / #1827）：cwd 指向目录；各 runner 只开放读取面或由 prompt
+    明确约束只读。Agy 不另建强沙箱，也不写用户 settings。
     """
+    if materials_dir and runner not in _MATERIALS_CLI_RUNNERS:
+        raise RuntimeError(f"runner 不支持材料目录：{runner}")
     if runner == "agy":
-        return [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"], prompt, None
+        return [_resolve_cli_bin("agy", _AGY_BIN), f"--print={prompt}"], None, None
     if runner == "codex":
         cmd = _codex_cmd(
             model, json_events=json_events, reasoning_strength=reasoning_strength,
+            materials_dir=materials_dir,
         )
         return cmd, prompt, None
     if runner == "claude":
         cmd = [
             _resolve_cli_bin("claude", _CLAUDE_BIN), "-p",
             "--model", (model or _CLAUDE_MODEL),
-            "--output-format", "text", "--disallowed-tools", *_CLAUDE_DISALLOWED,
+            "--output-format", "text",
         ]
+        if materials_dir:
+            # Single native isolation group (verified on host Claude):
+            # --restricted ignores user/project/local settings, drops command
+            # tools, and confines file tools to cwd; empty mcpServers + strict
+            # blocks foreign MCP. Do not use --bare here — it skips keychain auth.
+            cmd += [
+                "--restricted",
+                "--strict-mcp-config",
+                "--mcp-config", '{"mcpServers":{}}',
+                "--allowedTools", "Read", "Glob", "Grep",
+                "--permission-mode", "dontAsk",
+            ]
+        else:
+            cmd += ["--disallowed-tools", *_CLAUDE_DISALLOWED]
         env = None
         if reasoning_strength is not None:
             env = dict(os.environ)
@@ -715,6 +729,8 @@ def _cli_runner_command(
             _resolve_cli_bin("cursor", _CURSOR_BIN),
             "-p", "--output-format", "text", "--trust",
         ]
+        if materials_dir:
+            cmd += ["--mode", "ask", "--sandbox", "enabled"]
         if model:
             cmd.extend(["--model", model])
         cmd.append(prompt)
@@ -723,12 +739,18 @@ def _cli_runner_command(
         # -p 单用：本机 kimi 0.36.1 实测与 --yolo/--auto 组合会被 parse 拒收。
         cmd = [_resolve_cli_bin("kimi", _KIMI_BIN), "-p", prompt,
                "--output-format", "text"]
+        if materials_dir and kimi_agent_file:
+            cmd += ["--agent-file", kimi_agent_file]
         if model:
             cmd.extend(["-m", model])
         return cmd, None, None
     if runner == "grok":
         cmd = [_resolve_cli_bin("grok", _GROK_BIN), "-p", prompt,
                "--output-format", "plain"]
+        if materials_dir:
+            cmd += ["--tools", "Read,Glob,Grep", "--sandbox", "read-only",
+                    "--permission-mode", "dontAsk", "--disable-web-search",
+                    "--no-subagents"]
         if model:
             cmd.extend(["-m", model])
         effort = _grok_effort(reasoning_strength)
@@ -738,6 +760,10 @@ def _cli_runner_command(
     if runner == "pi":
         # --no-tools：游戏/玩家文本不可注入驱动内置 read/bash/edit/write（#1456）。
         cmd = [_resolve_cli_bin("pi", _PI_BIN), "-p", "--mode", "text", "--no-tools"]
+        if materials_dir:
+            cmd += ["--tools", "read,grep,find,ls", "--no-session",
+                    "--no-extensions", "--no-skills", "--no-prompt-templates",
+                    "--no-themes", "--no-context-files", "--no-approve"]
         if model:
             cmd.extend(["--model", model])
         thinking = _pi_thinking(reasoning_strength)
@@ -756,6 +782,7 @@ def _iter_cli_runner_text(
     reasoning_strength: Optional[str] = None,
     json_events: bool = False,
     clock: Optional[Callable[[], float]] = None,
+    materials_dir: Optional[str] = None,
 ) -> Iterator[str]:
     """跑一次 runner 子进程，产出该次 attempt 的文本。**一次子进程 = 一次 attempt**。
 
@@ -782,71 +809,86 @@ def _iter_cli_runner_text(
 
     if runner == "agy":
         _warm_keychain()  # 操作步骤（缓解 headless auth race），不是重试策略
-    cmd, stdin_text, env = _cli_runner_command(
-        runner, prompt, model=model, reasoning_strength=reasoning_strength,
-        json_events=json_events,
-    )
-    outcome = _CliProcessOutcome()
-    pieces: List[str] = []
-    final_text = ""
-    for line in _iter_cli_process_lines(
-        cmd, stdin_text=stdin_text, env=env,
-        clock=clock, outcome=outcome,
-    ):
-        if json_events:
-            stripped = line.strip()
-            if not stripped:
+    kimi_agent_path: Optional[str] = None
+    if materials_dir and runner == "kimi":
+        handle = tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False)
+        try:
+            handle.write("---\nname: ming-material-reader\ntools:\n  - Read\n  - Grep\n  - Glob\n---\nRead-only material reviewer. Never write or execute commands.\n")
+        finally:
+            handle.close()
+        kimi_agent_path = handle.name
+    try:
+        cmd, stdin_text, env = _cli_runner_command(
+            runner, prompt, model=model, reasoning_strength=reasoning_strength,
+            json_events=json_events, materials_dir=materials_dir,
+            kimi_agent_file=kimi_agent_path,
+        )
+        outcome = _CliProcessOutcome()
+        pieces: List[str] = []
+        final_text = ""
+        for line in _iter_cli_process_lines(
+                cmd, stdin_text=stdin_text, env=env,
+                cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
+                clock=clock, outcome=outcome,
+            ):
+            if json_events:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    obj = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                delta = _codex_event_text(obj)
+                if delta:
+                    pieces.append(delta)
+                    # 已确认 stdin 写失败则不再放产出；半流不回卷、不另造缓冲。
+                    if outcome.stdin_error is None:
+                        yield delta
+                    continue
+                maybe_final = _codex_final_text(obj)
+                if maybe_final:
+                    final_text = maybe_final
                 continue
+            # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
+            pieces.append(line)
+        returncode = int(outcome.returncode or 0)
+        stderr = outcome.stderr or ""
+        stdout_text = "".join(pieces)
+        # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
+        # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
+        if outcome.stdin_error is not None:
+            raise RuntimeError(
+                f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
+            ) from outcome.stdin_error
+        if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
+            raise LLMUnavailable(
+                "LLM 连接失败。",
+                code="llm_connection_error",
+                provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
+            )
+        text = stdout_text.strip() or final_text.strip()
+        if runner == "codex" and not json_events and not text:
+            # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
+            text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
+        # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
+        if returncode != 0:
+            raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
+        if not text:
+            raise transport_failure_unavailable(
+                empty_output_failure(), attempts=1, exhausted=False,
+            )
+        # 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
+        if not json_events:
+            yield text
+        elif not pieces and final_text.strip():
+            yield final_text.strip()
+    finally:
+        if kimi_agent_path:
             try:
-                obj = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            delta = _codex_event_text(obj)
-            if delta:
-                pieces.append(delta)
-                # 已确认 stdin 写失败则不再放产出；半流不回卷、不另造缓冲。
-                if outcome.stdin_error is None:
-                    yield delta
-                continue
-            maybe_final = _codex_final_text(obj)
-            if maybe_final:
-                final_text = maybe_final
-            continue
-        # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
-        pieces.append(line)
-
-    returncode = int(outcome.returncode or 0)
-    stderr = outcome.stderr or ""
-    stdout_text = "".join(pieces)
-    # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
-    # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
-    if outcome.stdin_error is not None:
-        raise RuntimeError(
-            f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
-        ) from outcome.stdin_error
-    if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
-        raise LLMUnavailable(
-            "LLM 连接失败。",
-            code="llm_connection_error",
-            provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
-        )
-    text = stdout_text.strip() or final_text.strip()
-    if runner == "codex" and not json_events and not text:
-        # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
-        text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
-    # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
-    if returncode != 0:
-        raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
-    if not text:
-        raise transport_failure_unavailable(
-            empty_output_failure(), attempts=1, exhausted=False,
-        )
-    # 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
-    if not json_events:
-        yield text
-    elif not pieces and final_text.strip():
-        yield final_text.strip()
-
+                os.unlink(kimi_agent_path)
+            except FileNotFoundError:
+                pass
 
 def _run_cli_runner(
     runner: str,
@@ -854,6 +896,7 @@ def _run_cli_runner(
     *,
     model: Optional[str] = None,
     reasoning_strength: Optional[str] = None,
+    materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
     """非流路径：读完整文再返回（内部仍增量读，只是不对外 yield）。
 
@@ -863,25 +906,29 @@ def _run_cli_runner(
         _iter_cli_runner_text(
             runner, prompt, model=model,
             reasoning_strength=reasoning_strength,
+            materials_dir=materials_dir,
         )
     )
     return text.strip(), 1
 
 
-def _run_agy(prompt: str) -> Tuple[str, int]:
-    """调 agy -p --sandbox 一次（warm keychain 仍做；重试归 transport）。"""
-    return _run_cli_runner("agy", prompt)
+def _run_agy(prompt: str, *, materials_dir: Optional[str] = None) -> Tuple[str, int]:
+    """调 agy --print=<prompt> 一次（warm keychain 仍做；重试归 transport）。"""
+    return _run_cli_runner("agy", prompt, materials_dir=materials_dir)
 
 
 def _run_codex(
     prompt: str,
     model: Optional[str] = None,
     reasoning_strength: Optional[str] = None,
+    *,
+    materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
     """调 codex exec - 一次；干净最终回话在 stdout（不合并 stderr 日志）。"""
     return _run_cli_runner(
         "codex", prompt, model=model,
         reasoning_strength=reasoning_strength,
+        materials_dir=materials_dir,
     )
 
 
@@ -889,11 +936,14 @@ def _run_claude(
     prompt: str,
     model: Optional[str] = None,
     reasoning_strength: Optional[str] = None,
+    *,
+    materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
     """调 claude -p 一次；干净回话在 stdout，thinking 预算经 env 显式设置。"""
     return _run_cli_runner(
         "claude", prompt, model=model,
         reasoning_strength=reasoning_strength,
+        materials_dir=materials_dir,
     )
 
 
@@ -901,29 +951,36 @@ def _run_cursor(
     prompt: str,
     model: Optional[str] = None,
     reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；cursor 无 effort 档
+    *,
+    materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
     """调 cursor-agent -p 一次（#1256）。"""
-    return _run_cli_runner("cursor", prompt, model=model)
+    return _run_cli_runner("cursor", prompt, model=model, materials_dir=materials_dir)
 
 
 def _run_kimi(
     prompt: str,
     model: Optional[str] = None,
     reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；kimi -p 无 effort 档
+    *,
+    materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
     """调 kimi -p 一次（#1256）。"""
-    return _run_cli_runner("kimi", prompt, model=model)
+    return _run_cli_runner("kimi", prompt, model=model, materials_dir=materials_dir)
 
 
 def _run_grok(
     prompt: str,
     model: Optional[str] = None,
     reasoning_strength: Optional[str] = None,
+    *,
+    materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
     """调 Grok Build CLI 一次（#1256；--effort 仅 low/med/high）。"""
     return _run_cli_runner(
         "grok", prompt, model=model,
         reasoning_strength=reasoning_strength,
+        materials_dir=materials_dir,
     )
 
 
@@ -931,11 +988,14 @@ def _run_pi(
     prompt: str,
     model: Optional[str] = None,
     reasoning_strength: Optional[str] = None,
+    *,
+    materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
     """调本机 pi CLI 一次性非交互出文（#1274-qa-y1）。"""
     return _run_cli_runner(
         "pi", prompt, model=model,
         reasoning_strength=reasoning_strength,
+        materials_dir=materials_dir,
     )
 
 
@@ -945,36 +1005,38 @@ def _dispatch_cli_runner(
     *,
     model: Optional[str] = None,
     reasoning_strength: Optional[str] = None,
+    materials_dir: Optional[str] = None,
 ) -> Tuple[str, int]:
     """runner 名 → 该 runner 的单次调用入口。全仓唯一一处 runner 分派链
     （env 分派 / config 分派 / CliChat 分派共用，禁再复制第二份）。"""
+    extra = {"materials_dir": materials_dir} if materials_dir else {}
     if runner == "codex":
         return _run_codex(prompt, model=model,
-                          reasoning_strength=reasoning_strength)
+                          reasoning_strength=reasoning_strength, **extra)
     if runner == "claude":
         return _run_claude(prompt, model=model,
-                           reasoning_strength=reasoning_strength)
+                           reasoning_strength=reasoning_strength, **extra)
     if runner == "cursor":
         return _run_cursor(prompt, model=model,
-                           reasoning_strength=reasoning_strength)
+                           reasoning_strength=reasoning_strength, **extra)
     if runner == "kimi":
         return _run_kimi(prompt, model=model,
-                         reasoning_strength=reasoning_strength)
+                         reasoning_strength=reasoning_strength, **extra)
     if runner == "grok":
         return _run_grok(prompt, model=model,
-                         reasoning_strength=reasoning_strength)
+                         reasoning_strength=reasoning_strength, **extra)
     if runner == "pi":
         return _run_pi(prompt, model=model,
-                       reasoning_strength=reasoning_strength)
+                       reasoning_strength=reasoning_strength, **extra)
     if runner == "agy":
         # agy 忽略 --model（走自身 ladder），不给它挂不被消费的 model。
-        return _run_agy(prompt)
+        return _run_agy(prompt, **extra)
     raise RuntimeError(f"未知 CLI backend：{runner}")
 
 
 def _run_backend(prompt: str) -> Tuple[str, int]:
     """按 MING_SIM_LLM_BACKEND 分派到对应 CLI（enrich/secret 等非 CliChat 路径用）。
-    未设或非法 → agy（沿用原默认）。"""
+    未设或非法时沿用默认 Agy。"""
     return _dispatch_cli_runner(cli_backend_from_env() or "agy", prompt)
 
 
@@ -1144,6 +1206,8 @@ def cli_backend_active(llm_config: Any = None) -> bool:
 def _messages_to_prompt(
     messages: List[Message],
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    *,
+    materials_dir: Optional[str] = None,
 ) -> str:
     """把 agno Message 列表压成单条 prompt。system 在前，对话在后。"""
     parts: List[str] = []
@@ -1171,11 +1235,18 @@ def _messages_to_prompt(
             "\n\n【输出格式硬约束】只输出一个合法 JSON 对象，不要任何前后说明、"
             "不要 markdown 代码围栏、不要注释。第一个字符必须是 {，最后一个字符必须是 }。"
         )
-    prompt += (
-        "\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。"
-        "不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。"
-        "直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。"
-    )
+    if materials_dir:
+        prompt += (
+            "\n\n【材料】你的材料在当前目录。根目录 INDEX 一行一项。想读哪份自己读。"
+            "禁止读取当前材料目录之外的任何内容；不得写入、修改或创建任何文件。"
+            "直接以你所扮演的角色身份，用**中文**给出最终回答。"
+        )
+    else:
+        prompt += (
+            "\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。"
+            "不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。"
+            "直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。"
+        )
     return prompt
 
 
@@ -2475,6 +2546,48 @@ def _missing_execution_lead_feedback() -> str:
     )
 
 
+def _affair_declaration_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
+    """Typed 拆旨声明（new|existing）；缺席不猜。本阶段不消费了结。"""
+    from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+    declaration = declaration_from_payload(obj, allowed=ATTACH_BIRTH)
+    return {} if declaration is None else {"affair_declaration": dict(declaration)}
+
+
+def _stamp_split_birth_key(declaration: Mapping[str, Any]) -> Dict[str, Any]:
+    """One extract shares one durable new identity; do not infer from name/origin."""
+    body = dict(declaration)
+    if body.get("attach") != "new" or str(body.get("birth_key") or "").strip():
+        return body
+    from uuid import uuid4
+    body["birth_key"] = f"split:{uuid4().hex}"
+    return body
+
+
+def _draft_intent_open_affair_facts(db: Any) -> str:
+    """Structured open-affair list so existing.affair_id is chosen from input, not guessed."""
+    if db is None:
+        return ""
+    store = getattr(db, "affairs", None)
+    list_open = getattr(store, "list_open", None)
+    if not callable(list_open):
+        return ""
+    rows = list_open()
+    if not rows:
+        return ""
+    lines = [
+        json.dumps(
+            {"id": int(row.id), "name": row.name, "origin": row.origin},
+            ensure_ascii=False,
+        )
+        for row in rows
+    ]
+    return (
+        "【已开事务】existing 的 affair_id 必须取自下列对象的 id，不得自造。\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 def _participant_fields_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
     """从抽取原包收承办人/参与人——拟旨意图=无时仍可后置点将（#1778）。"""
     out: Dict[str, Any] = {}
@@ -2807,6 +2920,7 @@ def extract_draft_intent(
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
+    open_affair_facts = _draft_intent_open_affair_facts(db)
     from ming_sim.action_clusters import (
         assert_action_candidate_shape,
         cluster_fields_prompt,
@@ -2834,7 +2948,8 @@ def extract_draft_intent(
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
             f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
             "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-            '{"成品旨稿": ['
+            '{"事务声明":{"attach":"new|existing","name":"","origin":"","affair_id":null},'
+            '"成品旨稿": ['
             '{"正文":"第一道完整旨稿","动作类型":"assignment",'
             '"目标类型":"region","目标ID":"shaanxi","地区ID":"shaanxi",'
             '"施行范围":"单省","事务类别":"督赈","承办人":"","目标案卷ID":null,'
@@ -2857,7 +2972,10 @@ def extract_draft_intent(
             + army_facts
             + pay_order_facts
             + stalled_push_facts
+            + open_affair_facts
             + "御笔强推逐道只填目标案卷ID；普通非拨帑旨用共同契约字段，拨帑旨只用 ACTION_CLUSTERS 字段。两种形状不得并存。\n"
+            + "同一句交办只写一处事务声明（对象顶层，attach 仅 new|existing）；"
+            "多道旨共用该声明。无声明则不自建事务。\n"
             + "【皇帝】" + (player_message or "（无）") + "\n"
             + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
@@ -2875,6 +2993,22 @@ def extract_draft_intent(
         draft_combo_flags: List[bool] = []
         seen_texts = set()
         invalid_batch = not isinstance(values, list) or len(values) != draft_count
+        try:
+            batch_declaration = (
+                _affair_declaration_from_draft_obj(obj)
+                if isinstance(obj, dict) else {}
+            )
+        except ValueError:
+            batch_declaration = {}
+            invalid_batch = True
+        stamped_declaration = (
+            {
+                "affair_declaration": _stamp_split_birth_key(
+                    batch_declaration["affair_declaration"]
+                )
+            }
+            if batch_declaration else {}
+        )
         for value in values if isinstance(values, list) else []:
             if not isinstance(value, dict):
                 invalid_batch = True
@@ -2922,6 +3056,7 @@ def extract_draft_intent(
                     "draft_action": "拟旨", "draft_text": text,
                     "target_candidate": "", "mode": mode,
                     "target_dossier_id": imperial_push_target_dossier_id(probe),
+                    **stamped_declaration,
                 })
                 draft_combo_flags.append(False)
                 continue
@@ -2992,6 +3127,7 @@ def extract_draft_intent(
                 "mode": mode,
                 "participant_roster": value["参与人"] if "参与人" in value else [],
                 **mechanical,
+                **stamped_declaration,
             })
             draft_combo_flags.append(needs_combo)
         if invalid_batch or not any(draft is not None for draft in drafts):
@@ -3045,6 +3181,7 @@ def extract_draft_intent(
         '  "承办人": "",\n'
         '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
         '  "期限月数": null,           // 军令必填正整数；非军令留 null\n'
+        '  "事务声明": {"attach":"new|existing","name":"","origin":"","affair_id":null},\n'
         '  "目标案卷ID": null' + (
             "," if (_candidates or _supplement_mode) else ""
         ) + '        // 御笔强推议而不决廷议时填该案卷整数 ID；非此意图留 null\n'
@@ -3086,12 +3223,14 @@ def extract_draft_intent(
         + _DIRECTIVE_MODE_PROMPT + "\n"
         + structured_decree_prompt_contract() + "\n"
         '非拨帑旨填共同契约目标/属地/事务类别/承办字段及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
+        '同一句交办只写一处事务声明（attach 仅 new|existing）；无声明不自建。\n'
         "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
         + roster_facts
         + army_facts
         + pay_order_facts
         + stalled_push_facts
+        + open_affair_facts
         + draft_context
         + candidates_context
         + "【皇帝】" + (player_message or "（无）") + "\n"
@@ -3161,6 +3300,14 @@ def extract_draft_intent(
         push_mode = _directive_mode(obj.get("颁布方式"))
         if push_mode is not None:
             push_out["mode"] = push_mode
+        try:
+            push_declaration = _affair_declaration_from_draft_obj(obj)
+        except (TypeError, ValueError):
+            push_declaration = {}
+        if push_declaration:
+            push_out["affair_declaration"] = _stamp_split_birth_key(
+                push_declaration["affair_declaration"]
+            )
         return push_out
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
     if dossier_action == "acting_appointment":
@@ -3232,12 +3379,23 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
+        try:
+            single_declaration = _affair_declaration_from_draft_obj(obj)
+        except (TypeError, ValueError):
+            return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+        if single_declaration:
+            single_declaration = {
+                "affair_declaration": _stamp_split_birth_key(
+                    single_declaration["affair_declaration"]
+                )
+            }
         single_result = {
             "draft_action": _action, "draft_text": draft_text, "target_candidate": "",
             "dossier_action_type": dossier_action,
             "target_kind": target_kind, "target_id": target_id_value,
             "participant_roster": obj["参与人"] if "参与人" in obj else [],
             **mechanical,
+            **single_declaration,
         }
         return _finalize_extract_with_combo(single_result, needs_combo=needs_combo)
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
@@ -3265,12 +3423,23 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
+    try:
+        cand_declaration = _affair_declaration_from_draft_obj(obj)
+    except (TypeError, ValueError):
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    if cand_declaration:
+        cand_declaration = {
+            "affair_declaration": _stamp_split_birth_key(
+                cand_declaration["affair_declaration"]
+            )
+        }
     cand_result = {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
         "dossier_action_type": dossier_action,
         "target_kind": target_kind, "target_id": target_id_value,
         "participant_roster": obj["参与人"] if "参与人" in obj else [],
         **mechanical,
+        **cand_declaration,
     }
     return _finalize_extract_with_combo(cand_result, needs_combo=needs_combo)
 
@@ -3421,7 +3590,7 @@ def project_draft_extract_to_directive_payload(
     for field in (
         "amount", "account", "execution_surface", "assignee",
         "deadline_months", "participant_roster", "locality_scope", "entries",
-        "target_dossier_id",
+        "target_dossier_id", "affair_declaration",
         "grant_action", "purpose", "cadence",
         "region_id", "transaction_category",
     ):
@@ -3473,10 +3642,14 @@ def project_draft_extract_to_directive_payload(
     if kind == "push":
         push_id = imperial_push_target_dossier_id(payload)
         assert push_id is not None
-        return {
+        push_payload: Dict[str, object] = {
             "target_dossier_id": push_id,
             "mode": declared_mode,
         }
+        declaration = captured.get("affair_declaration")
+        if declaration not in (None, ""):
+            push_payload["affair_declaration"] = declaration
+        return push_payload
     if kind == "empty":
         return _manual_special_decree_payload(declared_mode)
     return payload
@@ -4553,9 +4726,11 @@ _CLI_RECOMMENDATION_PREFIX = "[[recommend_person:"
 
 def _cli_prompt(
     messages: List[Message], response_format: object, tools: object,
+    *,
+    materials_dir: Optional[str] = None,
 ) -> str:
     """Build one CLI prompt, including instructions derived from offered tools."""
-    prompt = _messages_to_prompt(messages, response_format)
+    prompt = _messages_to_prompt(messages, response_format, materials_dir=materials_dir)
     recommendation_schema = next(
         (tool.get("function", tool) for tool in (tools or [])
          if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
@@ -4628,10 +4803,12 @@ class CliChat(OpenAIChat):
 
     backend: str = "agy"
     reasoning_strength: str = ""
+    materials_dir: str = ""
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
         """一次子进程。等多久算死归 transport 策略（设置页那一格的静默判死阈值）：
         出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。"""
+        materials = str(getattr(self, "materials_dir", "") or "").strip() or None
         return _dispatch_cli_runner(
             self.backend,
             prompt,
@@ -4639,6 +4816,7 @@ class CliChat(OpenAIChat):
             reasoning_strength=(
                 str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None
             ),
+            materials_dir=materials,
         )
 
     def invoke(  # type: ignore[override]
@@ -4656,7 +4834,8 @@ class CliChat(OpenAIChat):
         # 拟旨/密令不走 agno function-calling（agy 不支持）。大臣照常自然回话；
         # 玩家用拟旨/密令按钮（消息带前缀）时，handler 用 resolve_minister_actions
         # 把这句回话原文整段入档。invoke 只负责出文本。
-        prompt = _cli_prompt(messages, response_format, tools)
+        materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+        prompt = _cli_prompt(messages, response_format, tools, materials_dir=materials)
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
@@ -4687,6 +4866,7 @@ class CliChat(OpenAIChat):
                 "seq": seq, "tag": tag, "backend": self.backend, "model_id": self.id,
                 "dur_s": dt, "attempts": attempts, "wants_json": bool(response_format),
                 "prompt_chars": len(prompt), "resp_chars": len(text),
+                "materials_dir": str(getattr(self, "materials_dir", "") or ""),
                 "error": error, "prompt": prompt, "response": text,
             })
             _log(f"#{seq} {tag} {dt}s attempts={attempts} resp={len(text)}c"
@@ -4735,7 +4915,8 @@ class CliChat(OpenAIChat):
                 compress_tool_results=compress_tool_results,
             )
             return
-        prompt = _cli_prompt(messages, response_format, tools)
+        materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+        prompt = _cli_prompt(messages, response_format, tools, materials_dir=materials)
         held = ""
         try:
             # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
@@ -4747,6 +4928,7 @@ class CliChat(OpenAIChat):
                 model=str(getattr(self, "id", "") or ""),
                 reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
                 json_events=(self.backend == "codex"),
+                materials_dir=materials,
             )
             for delta in stream:
                 ready, held = _cli_stream_safe_prefix(held + str(delta))
