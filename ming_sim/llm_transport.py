@@ -476,9 +476,10 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
 
     - timeout → attempt_timeout_seconds：SDK/httpx read 阻塞唯一接缝
     - max_retries → 0：attempt 计数归本模块，禁 SDK 双重点数
-    - 包 invoke_stream / invoke / ainvoke：提供方 HTTP typed status 写入本
-      attempt 的 ContextVar，供 RunErrorEvent 与非流 extract ERROR 映射
-      （不解析 content 散文）
+    - 包 invoke_stream / invoke：提供方 HTTP typed status 写入本 attempt 的
+      ContextVar，供 RunErrorEvent 与非流 extract ERROR 映射（不解析 content 散文）。
+      不包 ainvoke：同步 wrapper 捕不住 await 时异常，还会抹掉 coroutine
+      function 身份；本票 verify 只走同步 invoke。
     退出后恢复原值、清空 typed status 并丢弃缓存 client，
     避免污染未迁移的同 model 路径。
     """
@@ -500,7 +501,7 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
             model.client = None
         if had_async:
             model.async_client = None
-        for name in ("invoke_stream", "invoke", "ainvoke"):
+        for name in ("invoke_stream", "invoke"):
             method = getattr(model, name, None)
             if callable(method):
                 wrapped[name] = method
