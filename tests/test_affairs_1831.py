@@ -418,6 +418,8 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
     ).fetchone() is None
 
     before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    caller_frozen = {first.id, second.id}
+    frozen_snapshot = set(caller_frozen)
     apply_score_extraction(
         db, state,
         {
@@ -430,9 +432,31 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
                 "affair_declaration": _declaration(identity="escort-b"),
             }],
         },
-        content=content, open_affair_ids_at_input={first.id, second.id},
+        content=content, open_affair_ids_at_input=caller_frozen,
     )
+    # same-batch birth expands only the internal working set; caller frozen input stays intact.
+    assert caller_frozen == frozen_snapshot == {first.id, second.id}
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before + 2
+    newborns = [
+        int(row["id"]) for row in db.conn.execute("SELECT id FROM affairs ORDER BY id").fetchall()
+        if int(row["id"]) not in frozen_snapshot
+    ]
+    assert len(newborns) >= 2
+    # subsequent call with the original frozen set still rejects a prior-batch newborn origin.
+    follow = apply_score_extraction(
+        db, state,
+        {"economy_moves": [{
+            "account": "国库", "delta": -1, "category": "善后", "reason": "跨批越权",
+            "origin_ref": db.affairs.origin_ref(newborns[-1]),
+        }]},
+        content=content, open_affair_ids_at_input=caller_frozen,
+    )
+    assert caller_frozen == frozen_snapshot
+    assert follow["economy_moves_rejections"][0]["rejected"] is True
+    assert db.conn.execute(
+        "SELECT 1 FROM economy_ledger WHERE origin_ref=?",
+        (db.affairs.origin_ref(newborns[-1]),),
+    ).fetchone() is None
 
     planted = _declaration(birth_key="result:planted-key")
     before_planted = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
@@ -484,7 +508,9 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
     assert conflict_result["applied_person_changes"] == []
     assert any(
         rejection.get("report_section") == "人物变更"
-        and "identity" in str(rejection.get("reason"))
+        and rejection.get("category") == "invalid_shape"
+        and isinstance(rejection.get("item"), dict)
+        and (rejection["item"].get("affair_declaration") or {}).get("identity") == "conflict-id"
         for rejection in conflict_result["validate_shape_rejections"]
     )
 

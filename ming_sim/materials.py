@@ -208,9 +208,6 @@ def minimal_opening_context(
     return "\n".join(parts)
 
 
-_opening_text = minimal_opening_context
-
-
 def _world_has_domain(knowledge: dict, domain: str) -> bool:
     world = knowledge.get("world") or {}
     return bool(str(world.get(domain) or "").strip())

@@ -970,13 +970,13 @@ def test_settle_authority_uses_prepare_frozen_open_affairs(game):
 
     assert db.affairs.get(late.id).status == "open"
     rows = db.conn.execute(
-        "SELECT section, category, reason FROM rejection_reports "
+        "SELECT section, category, item_json FROM rejection_reports "
         "WHERE turn=? AND section='affair_declarations'",
         (settle_turn,),
     ).fetchall()
     assert rows
-    assert str(rows[0]["category"] or "")
-    assert str(rows[0]["reason"] or "")
+    assert rows[0]["category"] == "invalid_shape"
+    assert f'"affair_id": {int(late.id)}' in str(rows[0]["item_json"] or "")
 
 
 @pytest.mark.parametrize("bad_id", [True, 1.5])
@@ -1009,13 +1009,13 @@ def test_settle_rejects_non_integer_frozen_open_affair_ids(game, bad_id):
     )
     assert db.affairs.get(affair.id).status == "open"
     rows = db.conn.execute(
-        "SELECT section, category, reason FROM rejection_reports "
+        "SELECT section, category, item_json FROM rejection_reports "
         "WHERE turn=? AND section='affair_declarations'",
         (turn,),
     ).fetchall()
     assert rows
-    assert str(rows[0]["category"] or "")
-    assert str(rows[0]["reason"] or "")
+    assert rows[0]["category"] == "invalid_shape"
+    assert f'"affair_id": {int(affair.id)}' in str(rows[0]["item_json"] or "")
 
 
 def test_settle_without_prepare_fails_loud_zero_writes(game):
