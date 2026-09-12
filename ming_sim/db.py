@@ -1003,6 +1003,15 @@ class GameDB:
                 sort_order INTEGER NOT NULL DEFAULT 0
             );
 
+            -- Durable office-posting → jurisdiction region (materials + dossier succession).
+            -- Distinct from office_slots (查访 vacancy catalog only; do not expand that table).
+            CREATE TABLE IF NOT EXISTS office_postings (
+                office_title TEXT PRIMARY KEY,
+                region_id TEXT NOT NULL,
+                office_type TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE VIEW IF NOT EXISTS office_vacancies AS
             SELECT
                 s.office_title,
@@ -2686,6 +2695,10 @@ class GameDB:
         )
         self.affairs = AffairStore(self.conn)
         self.conn.commit()
+        # Old saves open via init_schema only: backfill posting→region if empty.
+        self._seed_office_postings()
+        if self.table_has_rows("office_postings"):
+            self.conn.commit()
         self._migrate_legacy_office_pollution()
         # #9 R1 finding#1 [P1]：老档迁移校准须放在「seed 路 + driver 路」都过的点。driver.open_game
         # 只 GameDB()（→ init_schema）+ load_state、不调 seed_static_data，故若校准仅在 seed 末尾，
@@ -4076,6 +4089,8 @@ class GameDB:
         self._calibrate_faction_offsets(
             is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
         )
+        # After regions + characters exist: seed durable posting→region once.
+        self._seed_office_postings()
         self.conn.commit()
 
     def list_office_vacancies(self) -> List[Dict[str, object]]:
@@ -6290,9 +6305,12 @@ class GameDB:
         source: str = "诏书调任",
         llm_config: Any = None,
         commit: bool = True,
+        region_id: str = "",
     ) -> None:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
         同步 character_offices 备档。状态不变（仍 active）。
+        地方职若显式给 ``region_id``，经 :meth:`record_office_posting` 写入任所辖域
+        （不读人物 location）；省略则保留该职已有 posting，供继任共读。
         #9：授官改了 office_type/品级 → 末尾全重算所属朝堂派系 leverage（升迁也联动；
         起复路 set_character_status(active)→set_character_office(新职) 双 recompute，新职覆盖中间值）。"""
         office = normalize_office(office)
@@ -6323,6 +6341,9 @@ class GameDB:
                 (office, name),
             )
         self._record_character_office(name, office, eff_type, source)
+        posting_region = str(region_id or "").strip()
+        if posting_region and eff_type in self._LOCAL_ARCHIVE_OFFICE_TYPES:
+            self.record_office_posting(office, posting_region, eff_type)
         # #9：授官改了 office_type/品级权重 → 全重算该人物所属朝堂派系 leverage（commit 前）。
         faction_row = self.conn.execute(
             "SELECT faction FROM characters WHERE name=?", (name,)
@@ -15740,6 +15761,73 @@ class GameDB:
         }
         return frozenset(catalog - self._NON_CENTRAL_ARCHIVE_OFFICE_TYPES)
 
+    def record_office_posting(
+        self,
+        office_title: object,
+        region_id: object,
+        office_type: object = "",
+    ) -> None:
+        """Single write entry for durable office-posting → jurisdiction region.
+
+        Seed and subsequent local appointments share this seam. Character
+        ``location`` / 行止 is never consulted; callers pass typed ``region_id``.
+        """
+        title = normalize_office(str(office_title or ""))
+        rid = str(region_id or "").strip()
+        kind = str(office_type or "").strip()
+        if not title:
+            raise ValueError("office_title required for office posting")
+        if not rid:
+            raise ValueError("region_id required for office posting")
+        if hasattr(self, "conn"):
+            known = self.conn.execute(
+                "SELECT 1 FROM regions WHERE id=?", (rid,),
+            ).fetchone()
+            if known is None:
+                raise ValueError(f"unknown region_id {rid!r} for office posting")
+            self.conn.execute(
+                """
+                INSERT INTO office_postings (office_title, region_id, office_type)
+                VALUES (?, ?, ?)
+                ON CONFLICT(office_title) DO UPDATE SET
+                    region_id = excluded.region_id,
+                    office_type = CASE
+                        WHEN excluded.office_type = '' THEN office_postings.office_type
+                        ELSE excluded.office_type
+                    END,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (title, rid, kind),
+            )
+
+    def _seed_office_postings(self) -> None:
+        """Once: cover current content local seats as durable posting→region rows.
+
+        Uses content roster office + initial seat location as the posting's home
+        region (not live character location). Later travel never rewrites this.
+        """
+        if not self._table_exists("office_postings"):
+            return
+        if self.table_has_rows("office_postings"):
+            return
+        if not self.table_has_rows("regions"):
+            return
+        region_ids = {
+            str(row["id"])
+            for row in self.conn.execute("SELECT id FROM regions").fetchall()
+        }
+        content = getattr(self, "content", None)
+        characters = getattr(content, "characters", None) or {}
+        for character in characters.values():
+            kind = str(getattr(character, "office_type", "") or "").strip()
+            if kind not in self._LOCAL_ARCHIVE_OFFICE_TYPES:
+                continue
+            title = normalize_office(str(getattr(character, "office", "") or ""))
+            seat = str(getattr(character, "location", "") or "").strip()
+            if not title or seat not in region_ids:
+                continue
+            self.record_office_posting(title, seat, kind)
+
     def project_office_identity(
         self,
         office: object,
@@ -15751,10 +15839,11 @@ class GameDB:
 
         Shared by character materials scope and decree-dossier succession.
         Jurisdiction / local archive region comes only from the durable typed
-        ``office_slots`` posting→region relation. Character ``location`` is
-        physical presence (启程/抵达/移驻) and must never mint 辖域 or split
-        archive keys; free-text office titles are not parsed for region either.
-        ``location`` remains accepted for call-site stability and is ignored.
+        ``office_postings`` relation (seed + appointment write entry). Character
+        ``location`` is physical presence (启程/抵达/移驻) and must never mint
+        辖域 or split archive keys; free-text office titles are not parsed for
+        region either. ``location`` remains accepted for call-site stability
+        and is ignored. ``office_slots`` stays a vacancy catalog only.
         """
         del location  # physical presence ≠ posting jurisdiction
         title = normalize_office(str(office or ""))
@@ -15767,12 +15856,13 @@ class GameDB:
             return {"archive_key": "", "region_ids": ()}
 
         region_ids: tuple[str, ...] = ()
-        if title and hasattr(self, "conn"):
-            slot = self.conn.execute(
-                "SELECT region_id FROM office_slots WHERE office_title=?", (title,),
+        if title and hasattr(self, "conn") and self._table_exists("office_postings"):
+            posting = self.conn.execute(
+                "SELECT region_id FROM office_postings WHERE office_title=?",
+                (title,),
             ).fetchone()
-            if slot is not None:
-                rid = str(slot["region_id"] or "").strip()
+            if posting is not None:
+                rid = str(posting["region_id"] or "").strip()
                 if rid:
                     region_ids = (rid,)
 

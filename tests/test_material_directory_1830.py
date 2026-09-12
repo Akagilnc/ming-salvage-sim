@@ -103,18 +103,18 @@ def test_same_requested_root_creates_independent_material_invocations(game, tmp_
 def test_material_tree_contains_only_structurally_related_world_details(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
-    slot = db.conn.execute(
-        "SELECT office_title,region_id FROM office_slots WHERE region_id<>'' ORDER BY sort_order LIMIT 1"
-    ).fetchone()
     army = db.conn.execute("SELECT id,name FROM armies ORDER BY id LIMIT 1").fetchone()
-    db.set_character_office(character.name, slot["office_title"], office_type="地方")
+    # Real posting write entry (not office_slots vacancy catalog).
+    db.set_character_office(
+        character.name, "陕西巡抚", office_type="地方", region_id="shaanxi",
+    )
     db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (character.name,))
     db.conn.execute(
         "UPDATE armies SET commander=?,supply=17,morale=23,loyalty=31,training=44,equipment=52 "
         "WHERE id=?", (character.name, army["id"]),
     )
     db.conn.execute(
-        "UPDATE regions SET public_support=13,unrest=87 WHERE id=?", (slot["region_id"],),
+        "UPDATE regions SET public_support=13,unrest=87 WHERE id=?", ("shaanxi",),
     )
     db.conn.commit()
 
@@ -126,7 +126,7 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     region_text = read_material(prepared.root, region_paths[0])
     army_text = read_material(prepared.root, army_paths[0])
     region_name = db.conn.execute(
-        "SELECT name FROM regions WHERE id=?", (slot["region_id"],),
+        "SELECT name FROM regions WHERE id=?", ("shaanxi",),
     ).fetchone()["name"]
     assert region_name in region_text and army["name"] in army_text
     assert "民心13" not in region_text and "动乱87" not in region_text

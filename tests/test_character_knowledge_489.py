@@ -1215,29 +1215,47 @@ def test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge(g
 def test_structured_person_scope_replaces_role_wide_world_reports(game):
     db, state, content = game
     official = next(c for c in content.characters.values() if c.office_type == "地方")
-    slot = db.conn.execute(
-        "SELECT office_title,region_id FROM office_slots WHERE region_id<>'' ORDER BY sort_order LIMIT 1"
-    ).fetchone()
-    db.set_character_office(official.name, slot["office_title"], office_type="地方")
+    # Real appointment write entry: set_character_office(region_id=…) → office_postings.
+    db.set_character_office(
+        official.name, "河南巡抚", office_type="地方", region_id="henan",
+    )
+    # Physical presence elsewhere must not rewrite durable 辖域.
+    db.conn.execute(
+        "UPDATE characters SET location=? WHERE name=?",
+        ("fujian", official.name),
+    )
+    db.conn.commit()
     scoped = db.get_character_knowledge(state, official.name)
-    assert scoped["scope"]["region_ids"] == (slot["region_id"],)
+    assert scoped["scope"]["region_ids"] == ("henan",)
     assert "regional" in scoped["world"] and "construction" in scoped["world"]
+    assert db.project_office_identity(
+        "河南巡抚", "地方", location="fujian",
+    )["region_ids"] == ("henan",)
 
-    # Local office outside office_slots has no durable posting→region; physical
-    # location must not mint 辖域 (ADR 0009 location = 去向, not jurisdiction).
-    natural_row = db.conn.execute(
-        "SELECT name, office, office_type, location FROM characters "
-        "WHERE office_type IN ('地方','督抚','边镇') "
-        "AND (office LIKE '%巡抚%' OR office LIKE '%总督%') "
-        "AND COALESCE(location,'') <> '' "
-        "AND office NOT IN (SELECT office_title FROM office_slots) "
-        "ORDER BY name LIMIT 1"
-    ).fetchone()
-    assert natural_row is not None
-    natural_view = db.get_character_knowledge(state, natural_row["name"])
-    assert natural_view["scope"]["region_ids"] == ()
-    assert natural_row["location"] not in natural_view["scope"]["region_ids"]
-    assert "regional" not in natural_view["world"]
+    # Seed covers current real local seats; location override still ignored.
+    seeded = (
+        ("邹维琏", "福建巡抚", "地方", "fujian"),
+        ("焦源溥", "大同巡抚", "地方", "shanxi"),
+        ("阎鸣泰", "蓟辽总督", "边镇", "liaodong"),
+    )
+    for name, title, kind, region in seeded:
+        row = db.conn.execute(
+            "SELECT office, office_type, location FROM characters WHERE name=?",
+            (name,),
+        ).fetchone()
+        assert row is not None and row["office"] == title and row["office_type"] == kind
+        view = db.get_character_knowledge(state, name)
+        assert view["scope"]["region_ids"] == (region,), name
+        assert "regional" in view["world"]
+        proj = db.project_office_identity(title, kind, location="beizhili")
+        assert proj["region_ids"] == (region,)
+        assert proj["archive_key"] == f"slot:{title}@{region}"
+
+    # Cross-province postings do not share archive identity.
+    key_fj = db.project_office_identity("福建巡抚", "地方")
+    key_sx = db.project_office_identity("大同巡抚", "地方")
+    assert key_fj["archive_key"] != key_sx["archive_key"]
+    assert key_fj["region_ids"] == ("fujian",) and key_sx["region_ids"] == ("shanxi",)
 
     # 未仕/内廷 mere location is not jurisdiction.
     idle = next(c for c in content.characters.values() if c.office_type not in {"地方", "督抚", "边镇"})
@@ -1256,16 +1274,33 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert inner_proj["region_ids"] == ()
     assert inner_proj["archive_key"] == ""
 
-    # Generic local title: character location must not split archive / 辖域 identity.
-    key_a = db.project_office_identity("巡抚", "地方", location=regions[0])
-    key_b = db.project_office_identity("巡抚", "地方", location=regions[1])
-    assert key_a["region_ids"] == ()
-    assert key_b["region_ids"] == ()
-    assert key_a["archive_key"] == key_b["archive_key"] == "slot:巡抚"
-    # Title text is not a region parser either.
-    titled = db.project_office_identity("福建巡抚", "地方", location=regions[0])
-    assert titled["region_ids"] == ()
-    assert titled["archive_key"] == "slot:福建巡抚"
+    # Title text / bare appointment without region_id does not invent 辖域.
+    bare = next(
+        c for c in content.characters.values()
+        if c.name not in {official.name, idle.name, "邹维琏", "焦源溥", "阎鸣泰"}
+        and db.get_character_status(c.name)[0] == "active"
+    )
+    db.set_character_office(bare.name, "新设巡抚", office_type="地方")
+    db.conn.execute(
+        "UPDATE characters SET location=? WHERE name=?", ("henan", bare.name),
+    )
+    db.conn.commit()
+    bare_proj = db.project_office_identity("新设巡抚", "地方", location="henan")
+    assert bare_proj["region_ids"] == ()
+    assert bare_proj["archive_key"] == "slot:新设巡抚"
+    assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ()
+    # Same write entry later attaches the seat region; still independent of location.
+    db.set_character_office(
+        bare.name, "新设巡抚", office_type="地方", region_id="jiangxi",
+    )
+    db.conn.execute(
+        "UPDATE characters SET location=? WHERE name=?", ("henan", bare.name),
+    )
+    db.conn.commit()
+    attached = db.project_office_identity("新设巡抚", "地方", location="henan")
+    assert attached["region_ids"] == ("jiangxi",)
+    assert attached["archive_key"] == "slot:新设巡抚@jiangxi"
+    assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ("jiangxi",)
 
     # content 实有中央衙门（六科）进入权威投影，不是手补 whitelist 漏项。
     keke_lead = db.conn.execute(

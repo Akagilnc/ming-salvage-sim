@@ -423,7 +423,7 @@ def _world(
         result["personnel"] = _appointment_register(db, state)
 
     # Authoritative office→辖域 projection (shared with dossier archive keys).
-    # Region only from durable office_slots posting→region — never character location.
+    # Region only from durable office_postings — never character location.
     projected = {}
     if hasattr(db, "project_office_identity"):
         projected = db.project_office_identity(office_name, office_type) or {}
