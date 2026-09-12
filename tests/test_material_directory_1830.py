@@ -19,6 +19,7 @@ from ming_sim.audience_night import (
 )
 from ming_sim.materials import (
     _handled_affair_lines,
+    _safe_segment,
     _visible_affair_lines,
     list_materials,
     material_tools,
@@ -80,6 +81,39 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert character.name in roster
     assert (character.office or "无现任官职") in roster
     assert status in roster
+
+
+def test_same_requested_root_creates_independent_material_invocations(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+    requested = tmp_path / "materials"
+
+    first = prepare_character_materials(db, state, character, dest_root=requested)
+    second = prepare_character_materials(db, state, character, dest_root=requested)
+
+    assert first.root != second.root
+    assert read_material(first.root, "INDEX.txt")
+    assert read_material(second.root, "INDEX.txt")
+
+
+def test_material_tree_contains_only_structurally_related_world_details(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+    slot = db.conn.execute(
+        "SELECT office_title,region_id FROM office_slots WHERE region_id<>'' ORDER BY sort_order LIMIT 1"
+    ).fetchone()
+    army = db.conn.execute("SELECT id,name FROM armies ORDER BY id LIMIT 1").fetchone()
+    db.set_character_office(character.name, slot["office_title"], office_type="地方")
+    db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (character.name,))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", (character.name, army["id"]))
+    db.conn.commit()
+
+    prepared = prepare_character_materials(db, state, character, dest_root=tmp_path / "materials")
+    names = list_materials(prepared.root)
+    region_paths = [path for path in names if path.startswith("地区/")]
+    army_paths = [path for path in names if path.startswith("军队/")]
+    assert region_paths == [f"地区/{_safe_segment(db.conn.execute('SELECT name FROM regions WHERE id=?', (slot['region_id'],)).fetchone()['name'])}/详情.txt"]
+    assert army_paths == [f"军队/{_safe_segment(army['name'])}/详情.txt"]
 
 
 def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):

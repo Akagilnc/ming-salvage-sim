@@ -501,7 +501,11 @@ def prepare_character_materials(
         "issues": project_issue_materials(db, name, knowledge),
     })
 
-    dest = Path(dest_root) if dest_root is not None else character_materials_root(db, state, character)
+    dest = (
+        Path(dest_root) / uuid.uuid4().hex
+        if dest_root is not None
+        else character_materials_root(db, state, character)
+    )
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.parent / f"{dest.name}.{uuid.uuid4().hex}.tmp"
     tmp.mkdir(parents=True)
