@@ -1290,14 +1290,6 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert key_sx["archive_key"] == "slot:巡抚@shaanxi"
     assert key_hn["archive_key"] == "slot:巡抚@henan"
     assert key_sx["archive_key"] != key_hn["archive_key"]
-    posts = {
-        (r["office_title"], r["region_id"])
-        for r in db.conn.execute(
-            "SELECT office_title, region_id FROM office_postings WHERE office_title=?",
-            ("巡抚",),
-        ).fetchall()
-    }
-    assert ("巡抚", "shaanxi") in posts and ("巡抚", "henan") in posts
 
     # Succession: same seat title@region shares archive identity with predecessor.
     pred = official.name
@@ -1361,7 +1353,11 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     ).fetchone()
     rejected = appoint(bare.name, "新设巡抚", "地方")
     assert rejected and rejected[0].get("rejected"), rejected
-    assert "region_id" in str(rejected[0].get("reason") or "")
+    assert rejected[0].get("category") == "missing_field", rejected
+    assert isinstance(rejected[0].get("item"), dict), rejected
+    assert rejected[0]["item"].get("office") == "新设巡抚"
+    assert rejected[0]["item"].get("office_type") == "地方"
+    assert "region_id" not in rejected[0]["item"]
     after = db.conn.execute(
         "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
     ).fetchone()

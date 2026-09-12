@@ -6225,14 +6225,6 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
             "appointment_tenure, region_id, updated_at FROM character_offices"
         ).fetchall()
     ]
-    posting_rows = []
-    if db._table_exists("office_postings"):
-        posting_rows = [
-            dict(row)
-            for row in db.conn.execute(
-                "SELECT office_title, region_id, office_type, updated_at FROM office_postings"
-            ).fetchall()
-        ]
     office_change_rows = [
         dict(row)
         for row in db.conn.execute(
@@ -6251,7 +6243,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         ).fetchall()
     ]
     content_rows = _snapshot_content_character_rows(content)
-    return character_rows, office_rows, faction_rows, content_rows, office_change_rows, posting_rows
+    return character_rows, office_rows, faction_rows, content_rows, office_change_rows
 
 
 def _snapshot_content_character_rows(content: Optional[GameContent]) -> Dict[str, Dict[str, object]]:
@@ -6290,11 +6282,7 @@ def _restore_person_write_state(
     *,
     commit: bool = True,
 ) -> None:
-    if len(snapshot) == 6:
-        character_rows, office_rows, faction_rows, content_rows, office_change_rows, posting_rows = snapshot
-    else:
-        character_rows, office_rows, faction_rows, content_rows, office_change_rows = snapshot
-        posting_rows = None
+    character_rows, office_rows, faction_rows, content_rows, office_change_rows = snapshot[:5]
     db.conn.execute("DELETE FROM character_offices")
     db.conn.execute("DELETE FROM office_change_records")
     snapshot_names = {str(row["name"]) for row in character_rows}
@@ -6342,21 +6330,6 @@ def _restore_person_write_state(
             for row in office_rows
         ],
     )
-    if posting_rows is not None and db._table_exists("office_postings"):
-        db.conn.execute("DELETE FROM office_postings")
-        db.conn.executemany(
-            "INSERT INTO office_postings "
-            "(office_title, region_id, office_type, updated_at) VALUES (?, ?, ?, ?)",
-            [
-                (
-                    row["office_title"],
-                    row["region_id"],
-                    row.get("office_type") or "",
-                    row.get("updated_at") or "",
-                )
-                for row in posting_rows
-            ],
-        )
     db.conn.executemany(
         "INSERT INTO office_change_records "
         "(id, character_name, office_title, office_type, source, dossier_id, "
@@ -6467,6 +6440,33 @@ def _appointment_tenure_scope(db: GameDB, appointment_tenure: str):
         db.conn._appointment_tenure = previous_tenure
 
 
+def _office_appointment_failure(
+    name: str,
+    new_office: str,
+    exc: BaseException,
+    *,
+    kind: str = "",
+    reason_suffix: str = "",
+) -> Dict[str, object]:
+    """Map known appointment write failures to typed rejection categories.
+
+    Local seat without ``region_id`` is a missing required field — not a generic
+    invalid_enum fallback for downstream declaration_dispatch.
+    """
+    detail = str(exc)
+    result: Dict[str, object] = {
+        "name": name,
+        "new_office": new_office,
+        "rejected": True,
+        "reason": f"落库失败：{exc}{reason_suffix}",
+    }
+    if kind:
+        result["kind"] = kind
+    if detail.startswith("地方任命缺 region_id"):
+        result["category"] = "missing_field"
+    return result
+
+
 def apply_office_appointment(
     db: GameDB,
     state: GameState,
@@ -6564,7 +6564,7 @@ def apply_office_appointment(
                     registry.refresh(dp.split(":")[0])
         except Exception as exc:
             _restore_person_write_state(db, content, snapshot, commit=commit)
-            return {"name": name, "new_office": new_office, "rejected": True, "reason": f"落库失败：{exc}"}
+            return _office_appointment_failure(name, new_office, exc)
         return {
             "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
             "kind": "transfer", "reason": reason,
@@ -6623,8 +6623,10 @@ def apply_office_appointment(
                     **({"displaced": displaced_parts} if displaced_parts else {})}
     except Exception as exc:
         _restore_person_write_state(db, content, snapshot, commit=commit)
-        return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
-                "reason": f"落库失败：{exc}；原 status={cur_status or '不在册'}"}
+        return _office_appointment_failure(
+            name, new_office, exc, kind="appoint",
+            reason_suffix=f"；原 status={cur_status or '不在册'}",
+        )
     # apply_appointment 返回假值（查重拒/approved false/字段空——现均改库前早退）：防御性还原快照、
     # 与 except 路对称，确保此分支在任何 apply_appointment 行为下都不留半落库（P1 第一铁律，线上 gemini R3）。
     _restore_person_write_state(db, content, snapshot, commit=commit)
@@ -6668,6 +6670,25 @@ def _apply_person_changes(
         if status is not None:
             result["status"] = status
         return result
+
+    def project_appointment_result(
+        item: Dict[str, object],
+        result: Dict[str, object],
+    ) -> Dict[str, object]:
+        """Project typed appointment rejections onto ADR 0015 item/category shape."""
+        if not result.get("rejected"):
+            return result
+        reason = str(result.get("reason") or "")
+        category = str(result.get("category") or "")
+        if not category and "地方任命缺 region_id" in reason:
+            category = "missing_field"
+        if not category:
+            return result
+        shaped = rejected(item, reason, category)
+        for key, value in result.items():
+            if key not in shaped:
+                shaped[key] = value
+        return shaped
 
     def origin_rejected(item: Dict[str, object]) -> Dict[str, object] | None:
         error = db.effect_origin_rejection(origin_ref) if require_origin else None
@@ -7001,25 +7022,28 @@ def _apply_person_changes(
                     continue
                 result = {
                     "动作": effective_action,
-                    **apply_office_appointment(
-                        db,
-                        state,
-                        content,
-                        registry,
-                        name,
-                        new_office,
-                        reason=str(item.get("reason") or ""),
-                        new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
-                        faction=str(item.get("faction") or "中立"),
-                        appointment_tenure=appointment_tenure,
-                        region_id=str(
-                            item.get("region_id")
-                            or item.get("任所")
-                            or item.get("辖区")
-                            or ""
-                        ).strip(),
-                        llm_config=llm_config,
-                        commit=commit_person_change,
+                    **project_appointment_result(
+                        item,
+                        apply_office_appointment(
+                            db,
+                            state,
+                            content,
+                            registry,
+                            name,
+                            new_office,
+                            reason=str(item.get("reason") or ""),
+                            new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
+                            faction=str(item.get("faction") or "中立"),
+                            appointment_tenure=appointment_tenure,
+                            region_id=str(
+                                item.get("region_id")
+                                or item.get("任所")
+                                or item.get("辖区")
+                                or ""
+                            ).strip(),
+                            llm_config=llm_config,
+                            commit=commit_person_change,
+                        ),
                     ),
                 }
                 if transition.startswith("normalize:"):
@@ -7078,25 +7102,28 @@ def _apply_person_changes(
                     # 信用写端只消费 extractor 宣告本体行，禁盯 derived_from 文本特判。
                     "cascade_echo": True,
                 }
-            result = apply_office_appointment(
-                db,
-                state,
-                content,
-                registry,
-                name,
-                new_office,
-                reason=str(item.get("reason") or ""),
-                new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
-                faction=str(item.get("faction") or "中立"),
-                appointment_tenure=appointment_tenure,
-                region_id=str(
-                    item.get("region_id")
-                    or item.get("任所")
-                    or item.get("辖区")
-                    or ""
-                ).strip(),
-                llm_config=llm_config,
-                commit=False if derive_label else commit_person_change,
+            result = project_appointment_result(
+                item,
+                apply_office_appointment(
+                    db,
+                    state,
+                    content,
+                    registry,
+                    name,
+                    new_office,
+                    reason=str(item.get("reason") or ""),
+                    new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
+                    faction=str(item.get("faction") or "中立"),
+                    appointment_tenure=appointment_tenure,
+                    region_id=str(
+                        item.get("region_id")
+                        or item.get("任所")
+                        or item.get("辖区")
+                        or ""
+                    ).strip(),
+                    llm_config=llm_config,
+                    commit=False if derive_label else commit_person_change,
+                ),
             )
             wrapped = {"动作": effective_action, **result}
             if derive_label:
