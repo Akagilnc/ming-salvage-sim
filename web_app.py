@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional
 
@@ -434,12 +434,31 @@ def _verify_smoke_leg(config: LLMConfig, *, stage: str, prefix: str) -> Optional
         return HTTPException(status_code=400, detail=_llm_error_detail(exc, prefix))
 
 
+def _is_deterministic_provider_4xx(err: Optional[HTTPException]) -> bool:
+    """主腿提供方确定性 4xx（非 408/429）——可立刻上浮，不必等高级腿耗尽。"""
+    if err is None:
+        return False
+    detail = err.detail
+    if not isinstance(detail, dict):
+        return False
+    try:
+        status = int(detail.get("status_code"))
+    except (TypeError, ValueError):
+        return False
+    return 400 <= status < 500 and status not in (408, 429)
+
+
 def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
-    """校验主模型；若配置了 advanced_model，与主模型并行烟测（#884 / P5）。"""
+    """校验主模型；API 通道若配置了 advanced_model，与主模型并行烟测（#884 / P5）。
+
+    CLI 通道只验当前 CLI 主槽；保留的 API advanced 槽不另起一腿、也不改槽字段。
+    主腿确定性 4xx 已完成后立即上浮，不等高级腿耗尽。
+    """
     legs: List[tuple[str, LLMConfig, str]] = [
         ("smoke-main", config, "主模型连通性检查失败："),
     ]
-    if (config.advanced_model or "").strip():
+    channel = (config.channel or "").strip().lower()
+    if channel != "cli" and (config.advanced_model or "").strip():
         legs.append(
             (
                 "smoke-advanced",
@@ -454,16 +473,31 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         if err is not None:
             raise err
         return
-    with ThreadPoolExecutor(max_workers=len(legs), thread_name_prefix="llm-smoke") as pool:
+    pool = ThreadPoolExecutor(max_workers=len(legs), thread_name_prefix="llm-smoke")
+    try:
         futures = [
             pool.submit(_verify_smoke_leg, cfg, stage=stage, prefix=prefix)
             for stage, cfg, prefix in legs
         ]
-        errors = [fut.result() for fut in futures]
-    # 主腿优先 surface，避免并行把高级失败盖过主模型失败。
-    for err in errors:
-        if err is not None:
-            raise err
+        main_fut = futures[0]
+        pending = set(futures)
+        errors_by_fut: Dict[Future, Optional[HTTPException]] = {}
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                errors_by_fut[fut] = fut.result()
+            if main_fut in errors_by_fut:
+                main_err = errors_by_fut[main_fut]
+                if _is_deterministic_provider_4xx(main_err):
+                    raise main_err
+        # 主腿优先 surface，避免并行把高级失败盖过主模型失败。
+        for fut in futures:
+            err = errors_by_fut.get(fut)
+            if err is not None:
+                raise err
+    finally:
+        # 主腿 4xx 快路径不 cancel 高级腿、也不等它耗尽；线程池自行收尾。
+        pool.shutdown(wait=False)
 
 
 def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:

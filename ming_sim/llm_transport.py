@@ -218,7 +218,10 @@ def _capture_status_wrapper(method: Callable) -> Callable:
             try:
                 yield from result
             except Exception as error:
-                _remember_typed_failure(error)
+                # 流路径只记 HTTP typed status，供 run_error_event_failure 保真 4xx/5xx。
+                # 不走 _remember_typed_failure：cause 链上的 APIConnectionError 会把
+                # ModelProviderError 默认 502（无提供方 HTTP）洗成可重试瞬断（#1780）。
+                _remember_typed_status(error)
                 raise
 
         return captured()
