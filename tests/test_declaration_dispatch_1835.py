@@ -787,6 +787,62 @@ def test_declared_free_prose_is_persisted_byte_for_byte(game):
     assert payload["text"] == commission_text
 
 
+@pytest.mark.parametrize("section,field,bad", [
+    ("presence", "body", 123),
+    ("presence", "body", ["list"]),
+    ("presence", "body", {"k": 1}),
+    ("scene_facts", "body", 123),
+    ("scene_facts", "body", ["list"]),
+    ("scene_facts", "body", {"k": 1}),
+    ("commissions", "text", 123),
+    ("commissions", "text", ["list"]),
+    ("commissions", "text", {"k": 1}),
+])
+def test_non_string_declared_prose_is_durable_invalid_shape(game, section, field, bad):
+    db, state, _ = game
+    minister = _minister(db)
+    from ming_sim.audience_night import open_night
+
+    night = open_night(db, state)
+    night_id = int(night["id"])
+    before_ledger = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+    before_pending = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
+
+    if section == "presence":
+        declaration = {
+            "presence": [{"person_name": minister, "effect": "enter", field: bad}],
+        }
+    elif section == "scene_facts":
+        declaration = {
+            "scene_facts": [{
+                field: bad, "audibility": "殿上公开", "person_names": [minister],
+            }],
+        }
+    else:
+        declaration = {"commissions": [{field: bad}]}
+
+    result = dispatch_declaration(db, state, declaration, night_id=night_id)
+    section_result = getattr(result, section)
+    assert section_result.applied == []
+    assert section_result.rejected
+    assert section_result.rejected[0].category == "invalid_shape"
+    rows = db.conn.execute(
+        "SELECT section, category FROM rejection_reports WHERE turn=?",
+        (int(state.turn),),
+    ).fetchall()
+    assert (section, "invalid_shape") in {
+        (row["section"], row["category"]) for row in rows
+    }
+    after_ledger = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+    after_pending = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
+    assert after_ledger == before_ledger
+    assert after_pending == before_pending
+
+
 @pytest.mark.parametrize("raw", [{}, "", 0])
 def test_present_falsy_section_is_durable_invalid_shape(game, raw):
     db, state, _ = game

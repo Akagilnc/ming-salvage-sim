@@ -390,13 +390,16 @@ def _section_items(
 
 
 def _declared_prose(value: object) -> Optional[str]:
-    """Keep declared free text byte-for-byte; emptiness is judged on a copy."""
-    if value is None:
+    """Keep declared free text byte-for-byte; emptiness is judged on a copy.
+
+    Non-str values are not coerced: same type gate as TextualFactStore.append /
+    record_public_saying. Callers map None to durable invalid_shape.
+    """
+    if not isinstance(value, str):
         return None
-    text = value if isinstance(value, str) else str(value)
-    if not text.strip():
+    if not value.strip():
         return None
-    return text
+    return value
 
 
 def _reject(
@@ -491,10 +494,12 @@ def _dispatch_commissions(
                 )
             else:
                 text = _declared_prose(item.get("text"))
-                if not text:
-                    raise DecreeMaterializationValidationError(
-                        "交办声明缺正文（不猜散文）", failed_fields=("text",),
+                if text is None:
+                    _reject(
+                        rejected, item, "交办声明缺正文或正文须为字符串",
+                        "invalid_shape", source,
                     )
+                    continue
                 payload = {"text": text}
         except DecreeMaterializationValidationError as exc:
             _reject(rejected, item, str(exc), "invalid_enum", source)
