@@ -72,8 +72,9 @@ def _capture_agent(game, *characters):
     captured = {}
 
     def fake_agent(**kwargs):
+        from types import SimpleNamespace
         captured[kwargs["name"]] = kwargs
-        return kwargs
+        return SimpleNamespace(**kwargs)
 
     cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
     with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
@@ -242,8 +243,9 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
     captured = {}
 
     def fake_agent(**kwargs):
+        from types import SimpleNamespace
         captured[kwargs["name"]] = kwargs["instructions"]
-        return kwargs
+        return SimpleNamespace(**kwargs)
 
     cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
     with patch("ming_sim.registry.Agent", side_effect=fake_agent), \

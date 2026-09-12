@@ -20,21 +20,29 @@ def _pick_recommender(content):
     )
 
 
-def _stage_recommendation(db, state, recommender_name, row, office, reason):
+def _stage_recommendation(db, state, recommender_name, row, office, reason, region_id=""):
+    payload = {
+        "name": row["name"], "office": office,
+        "faction": row["faction"], "reason": reason,
+        "recommendation": {
+            "candidate": dict(row),
+            "recommender": recommender_name,
+        },
+    }
+    # Controlled fixture: local seats (e.g. 河道总督) carry typed 任所.
+    seat = str(region_id or "").strip() or {
+        "河道总督": "henan",
+        "陕西巡抚": "shaanxi",
+    }.get(str(office or "").strip(), "")
+    if seat:
+        payload["region_id"] = seat
     return db.stage_pending_action(
         state.turn,
         kind="office",
         action="任命",
         minister_name=recommender_name,
         target_id=None,
-        payload={
-            "name": row["name"], "office": office,
-            "faction": row["faction"], "reason": reason,
-            "recommendation": {
-                "candidate": dict(row),
-                "recommender": recommender_name,
-            },
-        },
+        payload=payload,
     )
 
 

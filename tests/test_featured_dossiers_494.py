@@ -91,8 +91,9 @@ def test_minister_agent_injects_faction_dossier_once(game):
     captured = {}
 
     def fake_agent(**kwargs):
+        from types import SimpleNamespace
         captured.update(kwargs)
-        return kwargs
+        return SimpleNamespace(**kwargs)
 
     config = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
     with patch("ming_sim.registry.Agent", side_effect=fake_agent), \

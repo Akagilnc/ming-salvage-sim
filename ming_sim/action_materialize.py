@@ -3187,6 +3187,7 @@ def stage_military_order_candidate(
     deadline_months: object = 0,
     due_turn: object = 0,
     office: object = "",
+    region_id: object = "",
     extracted_mode: object = None,
     target_candidate: object = None,
     transaction_category: object = "",
@@ -3277,6 +3278,10 @@ def stage_military_order_candidate(
     office_title = str(office or "").strip()
     if office_title:
         staged["office"] = office_title
+    # Preserve typed 任所 for local/边镇 office changes; never invent from station.
+    seat = str(region_id or "").strip()
+    if seat:
+        staged["region_id"] = seat
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
@@ -3316,6 +3321,11 @@ def _materialize_military_order(ctx: MaterializeCtx) -> None:
         deadline_months=intent.get("deadline_months"),
         due_turn=intent.get("due_turn"),
         office=intent.get("office"),
+        region_id=(
+            intent.get("region_id")
+            or intent.get("任所")
+            or intent.get("辖区")
+        ),
         extracted_mode=intent.get("mode"),
         target_candidate=intent.get("target_candidate"),
         transaction_category=intent.get("transaction_category"),
@@ -4772,6 +4782,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 # 可选：军将职守真变才填；判后走人物变更/任免唯一核
                 FieldSpec("office", "官职", None, "", max_len=40),
+                # Local/边镇 任所；与 appointment 同键，不从 station 推断
+                FieldSpec("region_id", "任所", None, "", max_len=40),
                 # #521 r2 / #502：明确改草指向；同军独立军令不得仅凭 target_id 覆盖
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
                 FieldSpec(

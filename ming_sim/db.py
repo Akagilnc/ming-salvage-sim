@@ -6319,8 +6319,9 @@ class GameDB:
     ) -> None:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
         同步 character_offices 备档。状态不变（仍 active）。
-        地方职（地方/督抚/边镇）必须显式 ``region_id`` 任所；写入本次任职
-        character_offices.region_id（不读 location）。
+        地方职任所经 :meth:`_require_local_office_region`：显式 typed region
+        原样消费；同人同职 identity 续任沿 character_offices.region_id；
+        真正新建/改授缺 typed 任所才拒（不读 location/官名推断）。
         #9：授官改了 office_type/品级 → 末尾全重算所属朝堂派系 leverage（升迁也联动；
         起复路 set_character_status(active)→set_character_office(新职) 双 recompute，新职覆盖中间值）。"""
         office = normalize_office(office)
@@ -15781,25 +15782,45 @@ class GameDB:
         office_type: object,
         region_id: object = "",
     ) -> str:
-        """Local seats need a known region_id; non-local seats store empty seat."""
+        """Single typed 任所 resolver for appointment writes.
+
+        - Non-local office types store empty seat (no field required).
+        - Explicit payload/dossier region_id is consumed as-is (known → seat;
+          unknown → missing_ref). Never inferred from title/location/other seat.
+        - Same person + same local office identity continuing as no-op / 任别 /
+          replay / 起复 reuses character_offices.region_id (may be empty).
+        - Truly new or reassigned local seats without a typed region this call
+          → missing_field.
+        """
         kind = str(office_type or "").strip()
         if kind not in self._LOCAL_ARCHIVE_OFFICE_TYPES:
             return ""
         seat = str(region_id or "").strip()
-        if not seat:
-            raise OfficeAppointmentRejection(
-                f"地方任命缺 region_id 任所：{name} → {office}（{kind}）",
-                category="missing_field",
-            )
-        known = self.conn.execute(
-            "SELECT 1 FROM regions WHERE id=?", (seat,),
-        ).fetchone()
-        if known is None:
-            raise OfficeAppointmentRejection(
-                f"unknown region_id {seat!r} for office appointment",
-                category="missing_ref",
-            )
-        return seat
+        if seat:
+            known = self.conn.execute(
+                "SELECT 1 FROM regions WHERE id=?", (seat,),
+            ).fetchone()
+            if known is None:
+                raise OfficeAppointmentRejection(
+                    f"unknown region_id {seat!r} for office appointment",
+                    category="missing_ref",
+                )
+            return seat
+        # No typed region this call — only continue an existing same-office seat.
+        person = str(name or "").strip()
+        title = normalize_office(str(office or ""))
+        if person and title and self._table_exists("character_offices"):
+            row = self.conn.execute(
+                "SELECT office_title, region_id FROM character_offices "
+                "WHERE character_name=?",
+                (person,),
+            ).fetchone()
+            if row is not None and normalize_office(str(row["office_title"] or "")) == title:
+                return str(row["region_id"] or "").strip()
+        raise OfficeAppointmentRejection(
+            f"地方任命缺 region_id 任所：{name} → {office}（{kind}）",
+            category="missing_field",
+        )
 
     def _central_archive_office_types(self) -> frozenset[str]:
         catalog = {
@@ -17459,13 +17480,23 @@ class GameDB:
                 and str(i.get("new_office") or i.get("office") or "").strip()
                 for i in office_items
             ):
-                office_items.append({
+                office_item: Dict[str, object] = {
                     "name": actor,
                     "动作": "调任",
                     "new_office": office_title,
                     "office": office_title,
                     "reason": reason,
-                })
+                }
+                # Preserve typed 任所 from dossier/pending payload; do not invent.
+                seat = str(
+                    payload.get("region_id")
+                    or payload.get("任所")
+                    or payload.get("辖区")
+                    or ""
+                ).strip()
+                if seat:
+                    office_item["region_id"] = seat
+                office_items.append(office_item)
         if not office_items:
             return set()
         from ming_sim.issues import _apply_person_changes

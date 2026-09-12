@@ -65,6 +65,7 @@ def _stage_military_order(
     deadline_months=3,
     due_turn=0,
     office="",
+    region_id="",
     message=None,
     reply=None,
     actor=None,
@@ -86,6 +87,16 @@ def _stage_military_order(
         payload["due_turn"] = due_turn
     if office:
         payload["office"] = office
+        # Controlled fixture: new local/边镇 seats need typed 任所 (not inferred
+        # from station text). Common military-order offices used by this suite.
+        seat = str(region_id or "").strip() or {
+            "大同总兵": "shanxi",
+            "宣府总兵": "beizhili",
+            "宁远总兵": "liaodong",
+            "蓟辽总督": "liaodong",
+        }.get(str(office or "").strip(), "")
+        if seat:
+            payload["region_id"] = seat
     candidate = candidates_from_classifier_payload(payload, soft=False)
     spoken = message or f"调{target_id}部{station or '限期出战'}。"
     ctx = _ctx(

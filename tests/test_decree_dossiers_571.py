@@ -1571,7 +1571,7 @@ def test_payload_owned_appointment_dedup_uses_prior_item_runtime_office_type(gam
         "人物变更": [
             {
                 "name": person["name"], "动作": "调任", "office": "前置异官",
-                "office_type": "地方", "任别": "真除",
+                "office_type": "地方", "region_id": "shaanxi", "任别": "真除",
                 "origin_ref": f"dossier:{dossier_id}",
             },
             {

@@ -34,7 +34,8 @@ class _FakeRegistry:
 
 def _stage_yuan_appointment_summon(
     game, monkeypatch, *, summon_after="是", appt_name="袁崇焕",
-    office="辽东巡抚", player_message=None, ban_appointment_extract=False,
+    office="辽东巡抚", region_id="", player_message=None,
+    ban_appointment_extract=False,
 ):
     db, state, content = game
     minister = _minister_wang_shaohui(db, content)
@@ -47,14 +48,24 @@ def _stage_yuan_appointment_summon(
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
     spoken = player_message or f"起复{appt_name}为{office}，传召入京。"
+    # Controlled fixture producer: new local seats carry typed 任所. Identity
+    # continuation (e.g. 袁崇焕→辽东巡抚) may omit; 巡抚登莱 ≠ archive 登莱巡抚.
+    intent = {
+        "kind": "appointment", "appoint_action": "任命",
+        "name": appt_name, "office": office, "summon_after": summon_after,
+    }
+    seat = str(region_id or "").strip() or {
+        "巡抚登莱": "shandong",
+        "辽东巡抚": "liaodong",
+        "陕西三边总督": "shaanxi",
+    }.get(str(office or "").strip(), "")
+    if seat:
+        intent["region_id"] = seat
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state, content), minister,
         player_message=spoken, answer="遵旨。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent=[{
-            "kind": "appointment", "appoint_action": "任命",
-            "name": appt_name, "office": office, "summon_after": summon_after,
-        }],
+        preclassified_intent=[intent],
     )
     pending = next(row for row in db.list_pending_actions(state.turn) if row["kind"] == "office")
     return pending, f"office:{pending['id']}"
