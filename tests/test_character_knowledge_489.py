@@ -5,6 +5,7 @@ import json
 from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
+from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from tests.dossier_test_helpers import create_test_secret_order
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -38,58 +39,8 @@ def test_secret_alias_exclusion_is_canonicalized_before_projection(game):
     row = db.conn.execute("SELECT excluded_names FROM secret_orders WHERE id=?", (order,)).fetchone()
     assert "魏忠贤" in row["excluded_names"]
 
-def test_every_supported_office_type_has_a_role_specific_current_world_slice(game):
-    db, state, content = game
-    characters_by_type = {
-        character.office_type: character
-        for character in content.characters.values()
-        if character.office_type
-    }
 
-    for office_type, domains in content.office_knowledge_domains.items():
-        character = characters_by_type.get(office_type)
-        if character is None:
-            continue
-        world = db.get_character_knowledge(state, character.name)["world"]
-        assert domains[0] in world, office_type
-        assert len(world) > 1, office_type
 
-def test_every_character_office_type_has_a_content_knowledge_mapping(game):
-    _db, _state, content = game
-
-    character_types = {
-        character.office_type
-        for character in content.characters.values()
-        if character.office_type
-    }
-
-    assert character_types <= set(content.office_knowledge_domains)
-
-def test_generic_offices_receive_distinct_current_world_slices(game):
-    db, state, content = game
-
-    expected_domains = {
-        # These offices have no dedicated numeric/report rail yet.  Their
-        # closest current-state rails are still better than a public-only view.
-        "礼部": {"personnel"},
-        "刑部": {"security"},
-        "翰林院": {"personnel"},
-        "都察院": {"personnel", "security"},
-    }
-    views = {
-        office_type: db.get_character_knowledge(
-            state,
-            next(c.name for c in content.characters.values()
-                 if c.office_type == office_type),
-        )["world"]
-        for office_type in expected_domains
-    }
-
-    for office_type, domains in expected_domains.items():
-        assert domains <= views[office_type].keys(), office_type
-        assert views[office_type]["public"]
-    assert views["礼部"] != views["刑部"]
-    assert views["刑部"] != views["都察院"]
 
 def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatch):
     db, state, content = game
@@ -103,96 +54,48 @@ def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatc
 
     view = db.get_character_knowledge(state, minister.name)
 
-    assert "personnel" in view["world"]
+    assert "personnel" not in view["world"]
     assert "military" not in view["world"]
     assert "treasury" not in view["world"]
 
-def test_every_distinct_office_type_gets_a_distinct_current_world_slice(game):
+def test_inner_court_materials_do_not_read_faction_report(game, tmp_path, monkeypatch):
     db, state, content = game
-    characters_by_type = {
-        character.office_type: character
-        for character in content.characters.values()
-        if character.office_type in content.office_knowledge_domains
-    }
 
-    views = {
-        office_type: db.get_character_knowledge(state, character.name)["world"]
-        for office_type, character in characters_by_type.items()
-    }
+    def forbidden(*_a, **_k):
+        raise AssertionError("unauthorised faction_report")
 
-    office_types = sorted(views)
-    for index, office_type in enumerate(office_types):
-        for other_type in office_types[index + 1:]:
-            assert views[office_type] != views[other_type], (
-                f"{office_type} 与 {other_type} 不应共享完全相同的见闻切片"
-            )
+    monkeypatch.setattr(db, "faction_report", forbidden)
+    previous = content.characters["王承恩"]
+    messenger = content.characters["曹化淳"]
+    db.set_character_office(previous.name, "内廷随侍", "内廷")
+    db.set_character_office(messenger.name, "御前近臣", "内廷")
+    for person in (previous, messenger):
+        world = db.get_character_knowledge(state, person.name)["world"]
+        assert "court" not in world
+        prepare_character_materials(
+            db, state, person, dest_root=tmp_path / person.name,
+        )
 
-def test_role_slice_contains_only_the_current_office_roster(game):
-    db, state, content = game
-    characters_by_type = {
-        character.office_type: character
-        for character in content.characters.values()
-        if character.office_type in content.office_knowledge_domains
-    }
 
-    for office_type, character in characters_by_type.items():
-        world = db.get_character_knowledge(state, character.name)["world"]
-        role_facts = world["role"]
 
-        assert office_type in role_facts
-        rows = db.conn.execute(
-            "SELECT name FROM characters WHERE office_type=? AND status='active' AND power_id='ming' "
-            "AND (debut_year=0 OR debut_year<? OR (debut_year=? AND debut_month<=?))",
-            (office_type, state.year, state.year, state.period),
-        ).fetchall()
-        assert all(row["name"] in role_facts for row in rows)
 
-def test_different_office_types_do_not_share_the_same_role_facts(game):
-    db, state, content = game
-    representatives = {}
-    for character in content.characters.values():
-        if character.office_type in content.office_knowledge_domains:
-            representatives.setdefault(character.office_type, character)
-
-    role_facts = {
-        office_type: db.get_character_knowledge(state, character.name)["world"]["role"]
-        for office_type, character in representatives.items()
-    }
-
-    assert len(set(role_facts.values())) == len(role_facts)
-
-def test_office_knowledge_domains_are_loaded_from_content(game, monkeypatch):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    monkeypatch.setitem(content.office_knowledge_domains, "礼部", ("military",))
-    seen_limits = []
-
-    def complete_small_army_report(*, limit):
-        seen_limits.append(limit)
-        return "\n".join(f"军籍第{i}营" for i in range(1, limit + 1))
-
-    monkeypatch.setattr(db, "army_report", complete_small_army_report)
-
-    view = db.get_character_knowledge(state, minister.name)
-
-    assert "military" in view["world"]
-    assert "军籍第30营" in view["world"]["military"]
-    assert seen_limits == [30]
-    assert "personnel" not in view["world"]
 
 def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     game, monkeypatch
 ):
     db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    monkeypatch.setattr(db, "faction_report", lambda **_: "当前派系事实")
+    minister = next(c for c in content.characters.values() if c.office_type == "吏部")
     monkeypatch.setattr(db, "army_report", lambda **_: "不应读取的军情")
     monkeypatch.setattr(db, "treasury_report", lambda *_args, **_: "不应读取的账目")
+    monkeypatch.setattr(db, "faction_report", lambda **_: "不应读取的派系底账")
 
     view = db.get_character_knowledge(state, minister.name)["world"]
-
-    assert view["personnel"] == "当前派系事实"
-    assert "礼部本职所涉" not in view["personnel"]
+    roster = db.current_court_roster_rows(state)
+    assert roster
+    assert "personnel" in view
+    assert roster[0]["name"] in view["personnel"]
+    assert (roster[0]["office"] or "无现任官职") in view["personnel"]
+    assert "不应读取的派系底账" not in view["personnel"]
     assert "military" not in view
     assert "treasury" not in view
 
@@ -521,18 +424,6 @@ def test_issue_write_path_projects_participants_across_restore(game):
     assert any(item["source_id"] == f"issue:{issue_id}" for item in before["events"])
     assert before["events"] == after["events"]
 
-def test_knowledge_world_keeps_countable_fiscal_facts_but_not_abstract_axes(game, monkeypatch):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "户部")
-    monkeypatch.setattr(
-        db, "treasury_report", lambda _state: "太仓银两167万两；民心低迷；皇威不足。"
-    )
-
-    view = db.get_character_knowledge(state, minister.name)
-
-    assert "treasury" in view["world"]
-    assert "167万两" in view["world"]["treasury"]
-    assert "民心低迷" in view["world"]["treasury"]
 
 def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
     db, state, content = game
@@ -738,17 +629,17 @@ def test_participant_roster_is_discovered_from_persistent_record_without_adapter
 
     assert any(item["title"] == "未经适配的新案卷" for item in view["events"])
 
-def test_office_blacklist_preserves_unrelated_court_domain_fact(game):
+def test_office_blacklist_preserves_unrelated_war_register_fact(game):
     db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "内阁")
+    minister = next(c for c in content.characters.values() if c.office_type == "兵部")
     create_test_secret_order(db,
         state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"]
     )
 
     view = db.get_character_knowledge(state, minister.name)
 
-    assert view["world"].get("personnel")
-    assert view["world"].get("treasury")
+    assert view["world"].get("military")
+    assert "treasury" not in view["world"]
 
 def test_event_office_blacklist_matches_current_office_name(game):
     db, state, content = game
@@ -897,28 +788,6 @@ def test_knowledge_titles_restore_without_persistence_truncation(game):
 
 # ── archive / source_scope contracts (moved from test_knowledge.py, #1185 wave1) ──
 
-def test_regional_world_keeps_qualitative_and_countable_region_facts(game):
-    """本职地区见闻须同时保留定性轴与独立的税额、炮数事实。"""
-    db, state, content = game
-    db.conn.execute(
-        "UPDATE regions SET public_support=13, unrest=87, grain_security=60, "
-        "tax_per_turn=20, cannon=3"
-    )
-    db.conn.commit()
-    regional = next(
-        knowledge["world"]["regional"]
-        for character in content.characters.values()
-        if db.get_character_status(character.name)[0] == "active"
-        for knowledge in [build_character_knowledge(db, state, character.name)]
-        if "regional" in knowledge["world"]
-    )
-
-    assert "民心" in regional
-    assert "动乱" in regional
-    assert "粮情" in regional
-    assert "税20万两/月" in regional
-    assert "城防炮3门" in regional
-    assert "已略去" not in regional
 
 @pytest.mark.parametrize(
     ("target_kind", "expected_visible"),
@@ -1341,3 +1210,391 @@ def test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge(g
         item.get("body", "") for item in db.get_character_knowledge(state, reader)["public_events"]
     )
     assert "旧档密令摘要不得公开" not in rendered
+
+
+def test_structured_person_scope_replaces_role_wide_world_reports(game):
+    """Appointment jurisdiction via real declaration entrance — not DB setter hooks."""
+    from ming_sim.issues import apply_person_changes_only
+
+    db, state, content = game
+
+    def appoint(name, office, office_type, region_id="", reason="test-appointment"):
+        item = {
+            "name": name,
+            "动作": "任命",
+            "office": office,
+            "office_type": office_type,
+            "reason": reason,
+        }
+        if region_id:
+            item["region_id"] = region_id
+        return apply_person_changes_only(
+            db, state, [item], content=content,
+        )["applied_person_changes"]
+
+    official = next(c for c in content.characters.values() if c.office_type == "地方")
+    applied = appoint(official.name, "河南巡抚", "地方", region_id="henan")
+    assert applied and not applied[0].get("rejected"), applied
+    # Physical presence elsewhere must not rewrite durable 辖域.
+    db.conn.execute(
+        "UPDATE characters SET location=? WHERE name=?",
+        ("fujian", official.name),
+    )
+    db.conn.commit()
+    scoped = db.get_character_knowledge(state, official.name)
+    assert scoped["scope"]["region_ids"] == ("henan",)
+    assert "regional" in scoped["world"] and "construction" in scoped["world"]
+    assert db.project_office_identity(
+        "河南巡抚", "地方", character_name=official.name, location="fujian",
+    )["region_ids"] == ("henan",)
+    assert db.character_office_region(official.name) == "henan"
+
+    # Explicit content office_region seed; location override still ignored.
+    seeded = (
+        ("邹维琏", "福建巡抚", "地方", "fujian"),
+        ("焦源溥", "大同巡抚", "地方", "shanxi"),
+        ("阎鸣泰", "蓟辽总督", "边镇", "liaodong"),
+    )
+    for name, title, kind, region in seeded:
+        row = db.conn.execute(
+            "SELECT office, office_type, location FROM characters WHERE name=?",
+            (name,),
+        ).fetchone()
+        assert row is not None and row["office"] == title and row["office_type"] == kind
+        assert content.characters[name].office_region == region
+        assert db.character_office_region(name) == region
+        view = db.get_character_knowledge(state, name)
+        assert view["scope"]["region_ids"] == (region,), name
+        assert "regional" in view["world"]
+        proj = db.project_office_identity(
+            title, kind, character_name=name, location="beizhili",
+        )
+        assert proj["region_ids"] == (region,)
+        assert proj["archive_key"] == f"slot:{title}@{region}"
+
+    # Cross-province same bare title must not share or overwrite seat identity.
+    other = next(
+        c for c in content.characters.values()
+        if c.name not in {official.name, "邹维琏", "焦源溥", "阎鸣泰", "练国事"}
+        and db.get_character_status(c.name)[0] == "active"
+        and c.office_type not in {"地方", "督抚", "边镇"}
+    )
+    a1 = appoint("练国事", "巡抚", "地方", region_id="shaanxi")
+    a2 = appoint(other.name, "巡抚", "地方", region_id="henan")
+    assert a1 and not a1[0].get("rejected"), a1
+    assert a2 and not a2[0].get("rejected"), a2
+    assert db.character_office_region("练国事") == "shaanxi"
+    assert db.character_office_region(other.name) == "henan"
+    key_sx = db.project_office_identity("巡抚", "地方", character_name="练国事")
+    key_hn = db.project_office_identity("巡抚", "地方", character_name=other.name)
+    assert key_sx["archive_key"] == "slot:巡抚@shaanxi"
+    assert key_hn["archive_key"] == "slot:巡抚@henan"
+    assert key_sx["archive_key"] != key_hn["archive_key"]
+
+    # Succession: same seat title@region shares archive identity with predecessor.
+    pred = official.name
+    succ = next(
+        c.name for c in content.characters.values()
+        if c.name not in {pred, other.name, "练国事", "邹维琏", "焦源溥", "阎鸣泰"}
+        and db.get_character_status(c.name)[0] == "active"
+    )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="HENAN_SEAT_ARCHIVE",
+        target_kind="issue", target_id="henan-seat",
+        participants=[{"character_id": pred, "tier": "主办"}],
+    )
+    # predecessor leaves; successor takes same seat
+    appoint(pred, "闲住", "未仕")
+    s_applied = appoint(succ, "河南巡抚", "地方", region_id="henan")
+    assert s_applied and not s_applied[0].get("rejected"), s_applied
+    visible = {
+        int(item["id"])
+        for item in db.list_referenceable_dossiers(succ, state.turn)
+    }
+    assert int(dossier_id) in visible
+    assert db.project_office_identity(
+        "河南巡抚", "地方", character_name=succ,
+    )["archive_key"] == "slot:河南巡抚@henan"
+
+    # 未仕/内廷 mere location is not jurisdiction.
+    idle = next(
+        c for c in content.characters.values()
+        if c.office_type not in {"地方", "督抚", "边镇"}
+        and c.name not in {succ, other.name}
+    )
+    regions = [str(r["id"]) for r in db.conn.execute("SELECT id FROM regions ORDER BY id").fetchall()]
+    assert len(regions) >= 2
+    db.conn.execute(
+        "UPDATE characters SET office=?, office_type=?, location=? WHERE name=?",
+        ("闲住", "未仕", regions[0], idle.name),
+    )
+    db.conn.commit()
+    idle_proj = db.project_office_identity(
+        "闲住", "未仕", character_name=idle.name, location=regions[0],
+    )
+    assert idle_proj["region_ids"] == ()
+    assert idle_proj["archive_key"] == ""
+    assert db.get_character_knowledge(state, idle.name)["scope"]["region_ids"] == ()
+    inner_proj = db.project_office_identity("内廷随侍", "内廷", location=regions[1])
+    assert inner_proj["region_ids"] == ()
+    assert inner_proj["archive_key"] == ""
+
+    # Local appointment missing region_id is rejected item-wise — no silent empty 辖域.
+    bare = next(
+        c for c in content.characters.values()
+        if c.name not in {
+            official.name, idle.name, other.name, succ, "邹维琏", "焦源溥", "阎鸣泰", "练国事",
+        }
+        and db.get_character_status(c.name)[0] == "active"
+        and c.office_type not in {"地方", "督抚", "边镇"}
+    )
+    prior_office = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
+    ).fetchone()
+    rejected = appoint(bare.name, "新设巡抚", "地方")
+    assert rejected and rejected[0].get("rejected"), rejected
+    assert rejected[0].get("category") == "missing_field", rejected
+    assert isinstance(rejected[0].get("item"), dict), rejected
+    assert rejected[0]["item"].get("office") == "新设巡抚"
+    assert rejected[0]["item"].get("office_type") == "地方"
+    assert "region_id" not in rejected[0]["item"]
+    after = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
+    ).fetchone()
+    assert after["office"] == prior_office["office"]
+    assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ()
+    # Unknown region_id is typed missing_ref — still no silent empty 辖域.
+    unknown = appoint(bare.name, "新设巡抚", "地方", region_id="not_a_region")
+    assert unknown and unknown[0].get("rejected"), unknown
+    assert unknown[0].get("category") == "missing_ref", unknown
+    assert isinstance(unknown[0].get("item"), dict), unknown
+    assert unknown[0]["item"].get("region_id") == "not_a_region"
+    after_unknown = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (bare.name,),
+    ).fetchone()
+    assert after_unknown["office"] == prior_office["office"]
+    assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ()
+    # Same real entrance later attaches seat; migration still independent of location.
+    ok = appoint(bare.name, "新设巡抚", "地方", region_id="jiangxi")
+    assert ok and not ok[0].get("rejected"), ok
+    db.conn.execute(
+        "UPDATE characters SET location=? WHERE name=?", ("henan", bare.name),
+    )
+    db.conn.commit()
+    attached = db.project_office_identity(
+        "新设巡抚", "地方", character_name=bare.name, location="henan",
+    )
+    assert attached["region_ids"] == ("jiangxi",)
+    assert attached["archive_key"] == "slot:新设巡抚@jiangxi"
+    assert db.get_character_knowledge(state, bare.name)["scope"]["region_ids"] == ("jiangxi",)
+
+    # content 实有中央衙门（六科）进入权威投影，不是手补 whitelist 漏项。
+    keke_lead = db.conn.execute(
+        "SELECT name, office, office_type FROM characters "
+        "WHERE office_type='六科' ORDER BY name LIMIT 1"
+    ).fetchone()
+    assert keke_lead is not None
+    assert db._office_archive_key(
+        keke_lead["office"], keke_lead["office_type"],
+    ) == "central:六科"
+    keke_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="KEKE_ARCHIVE",
+        target_kind="issue", target_id="keke-admin",
+        participants=[{"character_id": keke_lead["name"], "tier": "主办"}],
+    )
+    successor = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND name!=? ORDER BY name LIMIT 1",
+        (keke_lead["name"],),
+    ).fetchone()["name"]
+    db.set_character_office(successor, "户科给事中", office_type="六科")
+    visible_ids = {
+        int(item["id"])
+        for item in db.list_referenceable_dossiers(successor, state.turn)
+    }
+    assert int(keke_id) in visible_ids
+    # 外臣等人物 office_type 不得 mint central: 档案身份（朝鲜国王 ≠ 中央衙门）。
+    foreign = db.conn.execute(
+        "SELECT name FROM characters WHERE office_type='外臣' ORDER BY name LIMIT 2"
+    ).fetchall()
+    if len(foreign) >= 2:
+        assert db._office_archive_key("朝鲜国王", "外臣") == ""
+        wai_id = db.create_decree_dossier(
+            state, action_type="assignment", decree_text="WAI_LEAK",
+            target_kind="issue", target_id="wai-admin",
+            participants=[{"character_id": foreign[0]["name"], "tier": "主办"}],
+        )
+        wai_keys = db.conn.execute(
+            "SELECT office_archive_keys FROM decree_dossiers WHERE id=?",
+            (int(wai_id),),
+        ).fetchone()
+        assert json.loads(wai_keys["office_archive_keys"] or "[]") == []
+        wai_visible = {
+            int(item["id"])
+            for item in db.list_referenceable_dossiers(foreign[1]["name"], state.turn)
+        }
+        assert int(wai_id) not in wai_visible
+
+    # Malformed durable office_archive_keys fail loud on append participant.
+    broken = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="BROKEN_KEYS",
+        target_kind="issue", target_id="broken-keys",
+        participants=[{"character_id": official.name, "tier": "主办"}],
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET office_archive_keys=? WHERE id=?",
+        ("{not-a-list", int(broken)),
+    )
+    db.conn.commit()
+    helper = next(
+        c for c in content.characters.values()
+        if c.name != official.name and db.get_character_status(c.name)[0] == "active"
+    )
+    with pytest.raises((TypeError, ValueError, json.JSONDecodeError)):
+        db.append_decree_dossier_participants(
+            broken,
+            [{"character_id": helper.name, "tier": "协办"}],
+            state=state,
+        )
+
+    unscoped = next(c for c in content.characters.values() if c.office_type == "礼部")
+    world = db.get_character_knowledge(state, unscoped.name)["world"]
+    assert not ({"treasury", "military", "regional", "construction", "security"} & set(world))
+
+
+def test_army_truth_is_exactly_scoped_to_person_command(game):
+    db, state, content = game
+    general = next(c for c in content.characters.values() if c.office_type == "边镇")
+    rows = db.conn.execute("SELECT id,name FROM armies ORDER BY id LIMIT 2").fetchall()
+    db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (general.name,))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", (general.name, rows[0]["id"]))
+    db.conn.commit()
+    view = db.get_character_knowledge(state, general.name)
+    assert view["scope"]["army_ids"] == (rows[0]["id"],)
+    assert rows[0]["name"] in view["world"]["command"]
+    assert rows[1]["name"] not in view["world"]["command"]
+
+
+
+
+def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
+    db, state, content = game
+    clerk = next(c for c in content.characters.values() if c.office_type == "户部")
+    order_id = create_test_secret_order(
+        db, state, "毕自严", "密查太仓", "不可见案卷语义", [],
+        excluded_names=[clerk.name],
+    )
+    dossier = next(d for d in db.list_decree_dossiers() if d["secret_order_id"] == order_id)
+    db.record_issue_economy_move(
+        state, "国库", -1, "秘密分类", "秘密流水原因",
+        origin_ref=f"dossier:{dossier['id']}",
+    )
+    ledger = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
+    assert "-1" in ledger and "密支" in ledger
+    assert "秘密分类" not in ledger and "秘密流水原因" not in ledger
+
+
+def _office_archive_from_materials(db, state, character, root):
+    prepared = prepare_character_materials(db, state, character, dest_root=root)
+    path = next(p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt"))
+    return read_material(prepared.root, path)
+
+
+def _referenceable_dossier_ids(db, character_name, turn) -> set[int]:
+    return {
+        int(item["id"])
+        for item in db.list_referenceable_dossiers(character_name, turn)
+    }
+
+
+def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_path):
+    db, state, content = game
+    people = [c for c in content.characters.values() if db.get_character_status(c.name)[0] == "active"]
+    (
+        central_lead, slot_lead, central_successor, slot_successor, outsider,
+        case_successor, inner_lead, inner_other, case_lead, case_helper,
+    ) = people[:10]
+    slot = db.conn.execute(
+        "SELECT office_title, region_id FROM office_slots "
+        "WHERE region_id<>'' ORDER BY sort_order LIMIT 1"
+    ).fetchone()
+    slot_region = str(slot["region_id"] or "").strip()
+    other_region = db.conn.execute(
+        "SELECT id FROM regions WHERE id<>? ORDER BY id LIMIT 1", (slot_region,),
+    ).fetchone()["id"]
+    db.set_character_office(central_lead.name, "礼部尚书", office_type="礼部")
+    db.set_character_office(
+        slot_lead.name, slot["office_title"], office_type="地方", region_id=slot_region,
+    )
+    db.record_character_participation(
+        state, [central_lead.name], "private_matter", "私事", "PRIVATE_HISTORY_ONLY",
+    )
+    joint_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="JOINT_ADMIN_ARCHIVE",
+        target_kind="issue", target_id="joint-admin",
+        participants=[
+            {"character_id": central_lead.name, "tier": "主办"},
+            {"character_id": slot_lead.name, "tier": "主办"},
+        ],
+    )
+    db.set_character_office(central_lead.name, "闲住", office_type="未仕")
+    db.set_character_office(slot_lead.name, "闲住", office_type="未仕")
+    db.set_character_office(central_successor.name, "礼部尚书", office_type="礼部")
+    db.set_character_office(
+        slot_successor.name, slot["office_title"], office_type="地方", region_id=slot_region,
+    )
+    db.set_character_office(
+        outsider.name, "另一地方官", office_type="地方", region_id=other_region,
+    )
+    db.set_character_office(case_successor.name, "刑部尚书", office_type="刑部")
+    db.set_character_office(inner_lead.name, "内廷随侍", office_type="内廷")
+    db.set_character_office(inner_other.name, "内廷随侍", office_type="内廷")
+    inner_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="INNER_COURT_ARCHIVE",
+        target_kind="issue", target_id="inner-admin",
+        participants=[{"character_id": inner_lead.name, "tier": "主办"}],
+    )
+    db.set_character_office(case_lead.name, "刑部尚书", office_type="刑部")
+    db.set_character_office(case_helper.name, "锦衣卫指挥使", office_type="锦衣卫")
+    case_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="CASE_FILE_ARCHIVE",
+        target_kind="issue", target_id="criminal-case",
+        participants=[
+            {"character_id": case_lead.name, "tier": "主办"},
+            {"character_id": case_helper.name, "tier": "协办"},
+        ],
+    )
+    db.set_character_office(case_lead.name, "闲住", office_type="未仕")
+
+    turn = int(state.turn)
+    joint_id, inner_id, case_id = int(joint_id), int(inner_id), int(case_id)
+    for reader in (central_successor, slot_successor):
+        ids = _referenceable_dossier_ids(db, reader.name, turn)
+        assert joint_id in ids
+    assert joint_id not in _referenceable_dossier_ids(db, outsider.name, turn)
+    assert joint_id not in _referenceable_dossier_ids(db, case_successor.name, turn)
+    assert inner_id in _referenceable_dossier_ids(db, inner_lead.name, turn)
+    assert inner_id not in _referenceable_dossier_ids(db, inner_other.name, turn)
+    assert case_id in _referenceable_dossier_ids(db, case_helper.name, turn)
+    # 刑部 is a legal central yamen: successor shares archive identity with the lead.
+    assert case_id in _referenceable_dossier_ids(db, case_successor.name, turn)
+
+
+def test_central_ledgers_and_unbounded_household_history_reach_final_materials(game, tmp_path):
+    db, state, content = game
+    household = next(c for c in content.characters.values() if c.office_type == "户部")
+    war = next(c for c in content.characters.values() if c.office_type == "兵部")
+    personnel = next(c for c in content.characters.values() if c.office_type == "吏部")
+    for index in range(31):
+        db.record_issue_economy_move(
+            state, "国库", 1, "旧账", f"EARLY_LEDGER_{index}",
+        )
+    household_archive = _office_archive_from_materials(
+        db, state, household, tmp_path / "household",
+    )
+    assert "EARLY_LEDGER_0" in household_archive and "内库" not in household_archive
+    war_archive = _office_archive_from_materials(db, state, war, tmp_path / "war")
+    assert "兵籍在册" in war_archive and "军心" not in war_archive and "欠饷" not in war_archive
+    personnel_archive = _office_archive_from_materials(
+        db, state, personnel, tmp_path / "personnel",
+    )
+    assert "任免簿" in personnel_archive

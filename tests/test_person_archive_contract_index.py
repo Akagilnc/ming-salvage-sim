@@ -81,7 +81,8 @@ def test_active_title_kind_normalizes_appointment_via_person_delta(game):
         db, state,
         {"人物变更": [{
             "name": name_job, "origin_ref": "盘面自发", "动作": "任命",
-            "office": "陕西总督", "reason": "职名分改授",
+            "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi",
+            "reason": "职名分改授",
         }]},
         content=content,
     )

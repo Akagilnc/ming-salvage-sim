@@ -439,7 +439,7 @@ def test_non_ming_appointment_rejection_keeps_original_person_delta_item(game, m
     name = active_ming_character(db, content)
     ch = content.characters[name]
     old_power = ch.power_id
-    raw_item = {"name": name, "动作": "任命", "office": "陕西总督", "reason": "测试错授外臣"}
+    raw_item = {"name": name, "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "测试错授外臣"}
 
     try:
         ch.power_id = "houjin"

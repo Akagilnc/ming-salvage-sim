@@ -43,7 +43,10 @@ def _appointment_to_person_change(
         "name": item.get("name", ""),
         ACTION_KEY: "任命",
         "office": item.get("office", ""),
-        **_copy_present(item, "office_type", "faction", "reason", "origin_ref"),
+        **_copy_present(
+            item, "office_type", "faction", "reason", "origin_ref",
+            "region_id", "任所", "辖区",
+        ),
         "legacy_spillover": LEGACY_SPILLOVER,
     }, True
 
@@ -74,7 +77,10 @@ def _office_to_person_change(item: Mapping[str, object]) -> dict[str, object]:
         "name": item.get("name", ""),
         ACTION_KEY: "任命",
         "office": item.get("new_office", ""),
-        **_copy_present(item, "faction", "reason", "origin_ref"),
+        **_copy_present(
+            item, "faction", "reason", "origin_ref",
+            "region_id", "任所", "辖区",
+        ),
     }
     if "new_office_type" in item:
         translated["office_type"] = item["new_office_type"]

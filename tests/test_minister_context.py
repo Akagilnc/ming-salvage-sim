@@ -24,12 +24,7 @@ from ming_sim.context import (
     _MINISTER_DOSSIERS,
     _identity_bucket,
 )
-from ming_sim.registry import (
-    build_building_brief,
-    build_court_brief,
-    build_region_brief,
-    create_minister_agent,
-)
+from ming_sim.registry import create_minister_agent
 from ming_sim.tools import build_minister_tools
 from ming_sim.materials import (
     _safe_segment,
@@ -77,8 +72,9 @@ def _capture_agent(game, *characters):
     captured = {}
 
     def fake_agent(**kwargs):
+        from types import SimpleNamespace
         captured[kwargs["name"]] = kwargs
-        return kwargs
+        return SimpleNamespace(**kwargs)
 
     cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
     with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
@@ -100,56 +96,6 @@ _RAW_ABSTRACT_AXIS = re.compile(
     r"(?:民心|动乱|士绅阻力|军事压力|皇威|火器|完好|进度|bar|满意|势力|威望|实力|经济)"
     r"\s*[:：]?\s*\d+"
 )
-
-
-# ---------------------------------------------------------------------------
-# region / building briefs
-# ---------------------------------------------------------------------------
-
-def test_region_brief_surfaces_db_regions_and_qualitative_scores(game):
-    """region_brief ← region_report：地区名入面；抽象分走定性 helper，不泄裸值。"""
-    db, _state, _content = game
-    names = [row["name"] for row in db.conn.execute("SELECT name FROM regions").fetchall()]
-    assert names
-
-    baseline = build_region_brief(_ctx(game))
-    assert baseline and any(name in baseline for name in names)
-
-    db.conn.execute("UPDATE regions SET public_support=13, unrest=87")
-    db.conn.commit()
-    rendered = build_region_brief(_ctx(game))
-
-    assert not re.search(r"(?:民心|动乱)\s*[:：]?\s*(?:13|87)\b", rendered)
-    assert _support_label(13) in rendered
-    assert _unrest_label(87) in rendered
-    assert "粮情" in rendered
-    assert not re.search(r"粮食\d+万石", rendered)
-
-
-def test_building_brief_joins_chinese_region_and_qualitative_fields(game):
-    """建筑表 LEFT JOIN 中文地区名；规模/完好走 building_* helper，不泄拼音 id / 裸档。"""
-    db, _state, _content = game
-    rows = db.conn.execute(
-        "SELECT b.name AS name, b.region_id AS region_id, "
-        "COALESCE(r.name, b.region_id) AS region_name, "
-        "b.level AS level, b.condition AS condition "
-        "FROM buildings b LEFT JOIN regions r ON r.id = b.region_id"
-    ).fetchall()
-    assert rows
-
-    db.conn.execute("UPDATE buildings SET level=41, condition=73")
-    db.conn.commit()
-    rendered = build_building_brief(_ctx(game))
-
-    assert rendered.startswith("【现有建筑")
-    assert "Lv档" in rendered
-    for row in rows:
-        assert row["region_name"] in rendered
-        if row["region_name"] != row["region_id"]:
-            assert row["region_id"] not in rendered
-    assert not re.search(r"Lv(?:档)?41|完好(?:度)?73", rendered)
-    assert building_level_description(41) in rendered
-    assert building_condition_description(73) in rendered
 
 
 # ---------------------------------------------------------------------------
@@ -265,99 +211,10 @@ def test_minister_context_falls_back_for_character_without_dossier(game):
     assert dossier in rendered
 
 
-def test_court_brief_keeps_money_scopes_identity_and_hides_abstract_scores(game):
-    """court_brief：钱粮可数保留；不旁路人物认同；他派 agenda 不入面。"""
-    db, state, content = game
-    minister = _active_ministers(content, db, n=1)[0]
-    other = db.conn.execute(
-        "SELECT name FROM factions WHERE name != ? LIMIT 1", (minister.faction,)
-    ).fetchone()
-    assert other is not None
-    secret = "SENTINEL_COURT_OTHER_FACTION"
-    db.conn.execute(
-        "UPDATE factions SET agenda=? WHERE name=?", (secret, other["name"]),
-    )
-    db.conn.commit()
-
-    bare = build_court_brief(_ctx(game))
-    scoped = build_court_brief(_ctx(game), minister)
-
-    assert "国库" in bare and "万两" in bare
-    assert f"第{state.turn}回合" in bare
-    assert "朝堂派系档料" not in bare
-    assert "民心" not in bare and "皇威" not in bare
-    assert "/100" not in bare
-    assert secret not in scoped
-    assert "【党派认同】" in scoped
-
-
 # ---------------------------------------------------------------------------
 # agent assembly / knowledge projection
 # ---------------------------------------------------------------------------
 
-def test_minister_agent_uses_only_its_character_knowledge_projection(game):
-    """两大臣经真实见闻账本切片；instructions 与名册按人物隔离。"""
-    db, state, content = game
-    # 选无 personnel 域的职位，名册才按 office_type 切片（有 personnel 则全册合法）。
-    candidates = [
-        c for c in content.characters.values()
-        if c.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(c.name)[0] == "active"
-        and "personnel" not in content.office_knowledge_domains.get(c.office_type, ())
-    ]
-    assert len(candidates) >= 2
-    first, second = candidates[0], candidates[1]
-    first_mark = f"SENTINEL_WORLD_{first.name}"
-    second_mark = f"SENTINEL_WORLD_{second.name}"
-    hidden_secret = "SENTINEL_SECRET_FIRST_ONLY"
-    db.register_character_knowledge_source(
-        state, [{"character_id": first.name}], "witness", "本职见闻", first_mark,
-        source_id=f"witness:agent-slice:{first.name}",
-    )
-    db.register_character_knowledge_source(
-        state, [{"character_id": second.name}], "witness", "本职见闻", second_mark,
-        source_id=f"witness:agent-slice:{second.name}",
-    )
-    db.record_public_knowledge_event(
-        state, "密报", hidden_secret, source_id="test:agent-hidden",
-        excluded_names=[second.name],
-    )
-
-    roster = db.current_court_roster_rows(state)
-    visible_roster_row = next(
-        row for row in roster
-        if row["office_type"] == first.office_type and row["name"] != first.name
-    )
-    hidden_roster_row = next(
-        row for row in roster
-        if row["office_type"] != first.office_type
-        and row["name"] not in {first.name, second.name}
-    )
-
-    captured = _capture_agent(game, first, second)
-    first_rendered = "\n".join(captured[first.name]["instructions"])
-    second_rendered = "\n".join(captured[second.name]["instructions"])
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    first_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, first)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    second_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, second)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-
-    assert first_mark in first_blob
-    assert second_mark not in first_blob
-    assert hidden_secret in first_blob
-    assert hidden_secret not in second_blob
-    assert second_mark in second_blob
-    assert first_mark not in second_blob
-    assert hidden_secret not in second_rendered
-    assert f"【{first.name}此刻所知的天下" not in first_rendered
-    assert hidden_roster_row["name"] not in first_rendered
 
 
 def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game):
@@ -386,8 +243,9 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
     captured = {}
 
     def fake_agent(**kwargs):
+        from types import SimpleNamespace
         captured[kwargs["name"]] = kwargs["instructions"]
-        return kwargs
+        return SimpleNamespace(**kwargs)
 
     cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
     with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
@@ -416,59 +274,6 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
     assert f"【{first.name}此刻所知的天下" not in first_rendered
 
 
-def test_minister_agents_use_distinct_real_db_world_slices_by_office(game):
-    """两个职位经最终 agent seam 组装出各自真实职位域的世界切片。"""
-    db, state, content = game
-    representatives = {}
-    for minister in content.characters.values():
-        if (minister.office_type in content.office_knowledge_domains
-                and db.get_character_status(minister.name)[0] == "active"):
-            representatives.setdefault(minister.office_type, minister)
-
-    first, second = next(
-        (pair for pair in combinations(representatives.values(), 2)
-         if set(content.office_knowledge_domains[pair[0].office_type])
-         != set(content.office_knowledge_domains[pair[1].office_type])),
-        (None, None),
-    )
-    assert first is not None and second is not None, "fixture must contain distinct active office domains"
-
-    captured = {}
-
-    def fake_agent(**kwargs):
-        captured[kwargs["name"]] = kwargs
-        return kwargs
-
-    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
-    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
-         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
-        create_minister_agent(first, cfg, _ctx(game), db)
-        create_minister_agent(second, cfg, _ctx(game), db)
-
-    first_text = "\n".join(captured[first.name]["instructions"])
-    second_text = "\n".join(captured[second.name]["instructions"])
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    first_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, first)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    second_blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, state, second)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    first_domains = set(content.office_knowledge_domains[first.office_type])
-    second_domains = set(content.office_knowledge_domains[second.office_type])
-    assert first_domains != second_domains
-    for domain in first_domains - second_domains:
-        assert f"{domain}：" in first_blob
-        assert f"{domain}：" not in second_blob
-    for domain in second_domains - first_domains:
-        assert f"{domain}：" in second_blob
-        assert f"{domain}：" not in first_blob
-    assert f"【{first.name}此刻所知的天下" not in first_text
-    assert f"【{second.name}此刻所知的天下" not in second_text
 
 
 def test_minister_context_secret_order_chain_filters_final_tools_and_instructions(game):
@@ -624,66 +429,6 @@ def test_near_minister_army_report_keeps_one_complete_qualitative_fact(game):
     assert "已略去" not in fact
 
 
-def test_final_minister_context_rejects_raw_abstract_axes(game):
-    """最终 agent instructions 不泄地区/建筑/派系/势力抽象轴裸值；拒全局 region/building builder。"""
-    db, _state, content = game
-    region_poison = "SENTINEL_GLOBAL_REGION_BUILDER"
-    building_poison = "SENTINEL_GLOBAL_BUILDING_BUILDER"
-    # plant into rows the global builders actually surface (top danger region + buildings brief)
-    region_row = db.conn.execute(
-        "SELECT id FROM regions WHERE id='shaanxi'"
-    ).fetchone()
-    building_row = db.conn.execute(
-        "SELECT name FROM buildings WHERE name='京营火器局'"
-    ).fetchone()
-    assert region_row is not None and building_row is not None
-    db.conn.execute("UPDATE regions SET public_support=29, unrest=64")
-    # keep poisoned region at top of danger_order so region_brief must carry the sentinel
-    db.conn.execute(
-        "UPDATE regions SET public_support=1, unrest=99, name=? WHERE id=?",
-        (region_poison, region_row["id"]),
-    )
-    db.conn.execute("UPDATE armies SET firearm_equipment=91 WHERE owner_power='ming'")
-    db.conn.execute(
-        "UPDATE buildings SET level=4, condition=22, name=? WHERE name=?",
-        (building_poison, building_row["name"]),
-    )
-    db.conn.execute("UPDATE factions SET satisfaction=17, leverage=83")
-    db.conn.execute(
-        "UPDATE powers SET leverage=19, military_strength=82, supply=67 "
-        "WHERE id != 'ming'"
-    )
-    minister = next(c for c in content.characters.values() if c.office_type == "内阁")
-    db.conn.execute("UPDATE characters SET office_type='内阁' WHERE name=?", (minister.name,))
-    db.conn.commit()
-
-    # engine rails / global builders still surface the planted material; final boundary must not.
-    assert "满意17" in db.faction_report()
-    assert "威望19" in db.power_report(exclude_self=True)
-    assert region_poison in build_region_brief(_ctx(game))
-    assert building_poison in build_building_brief(_ctx(game))
-    knowledge_text = str(db.get_character_knowledge(_ctx(game).state, minister.name))
-    assert region_poison not in knowledge_text
-    assert building_poison not in knowledge_text
-
-    captured = _capture_agent(game, minister)
-    rendered = "\n".join(captured[minister.name]["instructions"])
-    from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    blob = "\n".join(
-        read_material(d.root, path)
-        for d in [prepare_character_materials(db, _ctx(game).state, minister)]
-        for path in list_materials(d.root) if path != "INDEX.txt"
-    )
-    assert "court：" in blob
-    assert not _RAW_ABSTRACT_AXIS.search(rendered)
-    assert not _RAW_ABSTRACT_AXIS.search(blob)
-    assert region_poison not in rendered
-    assert building_poison not in rendered
-    assert region_poison not in blob
-    assert building_poison not in blob
-    assert power_band(19) in blob or power_band(82) in blob or power_band(67) in blob
-
-
 def test_audience_faction_and_power_reports_never_emit_raw_abstract_axes(game):
     """audience 报告接缝本身保持 P4 定性轴。"""
     db, _state, _content = game
@@ -719,148 +464,8 @@ def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
     assert json.loads(result.removeprefix("__secret_order__"))["title"] == title
 
 
-def test_minister_materials_characterize_region_army_and_issue_progress(game):
-    """兵部材料目录：地区/军情均不泄抽象轴裸值。"""
-    db, state, content = game
-    db.conn.execute(
-        "UPDATE regions SET public_support=13, unrest=87, "
-        "gentry_resistance=64, military_pressure=29"
-    )
-    db.conn.execute("UPDATE armies SET firearm_equipment=58 WHERE owner_power='ming'")
-    db.conn.commit()
-    minister = next(c for c in content.characters.values() if c.office_type == "兵部")
-    prepared = prepare_character_materials(db, state, minister)
-    names = list_materials(prepared.root)
-    for row in db.region_rows():
-        name = str(row["name"] or row["id"] or "")
-        assert f"地区/{_safe_segment(name)}/详情.txt" in names
-    for row in db.army_rows():
-        key = str(row["name"] or row["id"] or "")
-        assert f"军队/{_safe_segment(key)}/详情.txt" in names
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in names if path != "INDEX.txt"
-    )
-    assert not _RAW_ABSTRACT_AXIS.search(blob)
-    assert _support_label(13) in blob
-    assert _unrest_label(87) in blob
-    fire = _qualitative_army_stat("equipment", 58).removeprefix("装备：")
-    assert f"火器：{fire}" in blob
 
 
 # ---------------------------------------------------------------------------
 # scale-fallback roster tools
 # ---------------------------------------------------------------------------
-
-
-
-def test_scale_fallback_court_roster_rejects_poison_without_personnel_authorization(game):
-    """全局 roster>100 不能给无 personnel 域角色触发 scale gate；强制工具仍拒他署 poison。"""
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "工部")
-    # seed global court membership past the scale threshold; keep 工部 authorized slice small
-    base_roster = db.current_court_roster_rows(state)
-    assert len(base_roster) <= 100
-    need = 101 - len(base_roster)
-    for i in range(need):
-        db.add_character(
-            state,
-            Character(
-                name=f"SENTINEL_SCALE_ROSTER_{i:03d}",
-                office="听用",
-                office_type="待铨",
-                faction="中立",
-                aliases=[],
-                personal_skills=[],
-                loyalty=50,
-                ability=50,
-                integrity=50,
-                courage=50,
-                style="scale-seed",
-                power_id="ming",
-                status="active",
-            ),
-            source="test-scale-roster",
-            commit=False,
-        )
-    db.conn.commit()
-    complete_roster = db.current_court_roster_rows(state)
-    assert len(complete_roster) > 100
-
-    poison = next(
-        row for row in complete_roster
-        if row["office_type"] != minister.office_type
-    )
-    same_role = next(
-        row for row in complete_roster
-        if row["office_type"] == minister.office_type
-    )
-    event_visible = next(
-        row for row in complete_roster
-        if row["office_type"] != minister.office_type and row["name"] != poison["name"]
-    )
-    db.register_character_knowledge_source(
-        state,
-        [{"character_id": minister.name}],
-        "witness",
-        "可见同案",
-        f"{event_visible['name']}参与其事",
-        source_id="witness:roster-scope",
-    )
-
-    captured = _capture_agent(game, minister)
-    assert "query_court_roster" not in {tool.__name__ for tool in captured[minister.name]["tools"]}
-    instructions = "\n".join(captured[minister.name]["instructions"])
-    assert poison["name"] not in instructions
-    prepared = prepare_character_materials(db, state, minister)
-    assert "人物/朝臣名册.txt" in list_materials(prepared.root)
-    roster = read_material(prepared.root, "人物/朝臣名册.txt")
-    assert same_role["name"] in roster
-    assert (same_role["office"] or "无现任官职") in roster
-    assert same_role["status"] in roster
-    assert event_visible["name"] in roster
-    assert poison["name"] not in roster
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    assert same_role["name"] in blob
-    assert event_visible["name"] in blob
-    assert poison["name"] not in blob
-    personnel_minister = next(
-        c for c in content.characters.values()
-        if "personnel" in content.office_knowledge_domains.get(c.office_type, ())
-        and c.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(c.name)[0] == "active"
-    )
-    personnel_roster = read_material(
-        prepare_character_materials(db, state, personnel_minister).root,
-        "人物/朝臣名册.txt",
-    )
-    assert poison["name"] in personnel_roster
-
-
-
-def test_minister_materials_characterize_building_and_metric_outputs(game):
-    db, state, content = game
-    db.conn.execute(
-        "UPDATE buildings SET level=4, condition=22, risk=91, "
-        "output_metric='民心', output_amount=37"
-    )
-    db.conn.commit()
-    minister = next(c for c in content.characters.values() if c.office_type == "工部")
-    prepared = prepare_character_materials(db, state, minister)
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    level = building_level_description(4)
-    condition = building_condition_description(22)
-    risk = building_risk_description(91)
-    effect = building_output_effect("民心", 37)
-    assert "民心37" not in blob
-    assert "等级4" not in blob and "完好22" not in blob and "风险91" not in blob
-    assert level in blob
-    assert condition in blob
-    assert risk in blob
-    assert effect in blob

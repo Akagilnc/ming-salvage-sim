@@ -8,7 +8,7 @@
       --minister 杨嗣昌
 
 调三类检索：
-  1. db.get_recent_event_memories(window=5)      —— build_memory_brief 路径
+  1. 材料目录历月邸报 / 见闻（#1833）
   2. _retrieve_memories_for_message(message)     —— chat 路径（带 LLM 抽词）
   3. db.get_memories_by_keywords(['流寇','陕西','王嘉胤'])  —— 月末 retrieval 路径
 """
@@ -25,8 +25,7 @@ sys.path.insert(0, str(ROOT))
 
 from ming_sim.session import GameSession
 from ming_sim.llm_config import load_llm_config
-from ming_sim.registry import build_memory_brief
-from ming_sim.models import CourtContext
+from ming_sim.materials import list_materials, prepare_character_materials, read_material
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--db", required=True)
     p.add_argument("--jump-turns", type=int, default=2, help="把当前 turn 往后推 N 月")
     p.add_argument("--message", required=True, help="模拟皇帝向大臣提问")
-    p.add_argument("--minister", default="杨嗣昌", help="召见大臣，用于 build_memory_brief")
+    p.add_argument("--minister", default="杨嗣昌", help="召见大臣，用于材料目录读取")
     p.add_argument("--keywords", default="陕西,流寇,王嘉胤,徐光启", help="逗号分隔关键词")
     return p.parse_args()
 
@@ -66,15 +65,18 @@ def main() -> int:
     snap = session.begin_turn()
     print(f"[turn] phase={snap.phase} year={snap.year} period={snap.period} turn={snap.turn}")
 
-    print("\n========== 1) build_memory_brief（大臣 prompt 月度块） ==========")
+    print("\n========== 1) 材料目录历月邸报 / 见闻 ==========")
     char = session._character(args.minister)
-    ctx = CourtContext(state=session.state, db=session.db)
-    brief = build_memory_brief(char, ctx)
-    print(f"[result] minister={args.minister} brief 字数={len(brief)}")
-    if brief:
-        print(brief)
-    else:
-        print("（空，window=1 拉不到上回合记忆）")
+    prepared = prepare_character_materials(session.db, session.state, char)
+    index = read_material(prepared.root, "INDEX.txt")
+    print(f"[result] minister={args.minister} index 行数={len(index.splitlines())}")
+    print(index)
+    gazette_rels = [p for p in list_materials(prepared.root) if p.startswith("公开说法/邸报/")]
+    print(f"[gazettes] {len(gazette_rels)} 份")
+    for rel in gazette_rels:
+        body = read_material(prepared.root, rel)
+        print(f"---- {rel} ({len(body)}字) ----")
+        print(body[:800])
 
     print("\n========== 2) _retrieve_memories_for_message（chat 路径，LLM 抽词） ==========")
     augmented = session._retrieve_memories_for_message(args.message)

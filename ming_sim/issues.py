@@ -6222,7 +6222,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         dict(row)
         for row in db.conn.execute(
             "SELECT character_name, office_title, office_type, source, dossier_id, "
-            "appointment_tenure, updated_at FROM character_offices"
+            "appointment_tenure, region_id, updated_at FROM character_offices"
         ).fetchall()
     ]
     office_change_rows = [
@@ -6315,7 +6315,7 @@ def _restore_person_write_state(
     db.conn.executemany(
         "INSERT INTO character_offices "
         "(character_name, office_title, office_type, source, dossier_id, "
-        "appointment_tenure, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "appointment_tenure, region_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 row["character_name"],
@@ -6324,6 +6324,7 @@ def _restore_person_write_state(
                 row["source"],
                 row.get("dossier_id"),
                 row["appointment_tenure"],
+                str(row.get("region_id") or ""),
                 row["updated_at"],
             )
             for row in office_rows
@@ -6439,6 +6440,32 @@ def _appointment_tenure_scope(db: GameDB, appointment_tenure: str):
         db.conn._appointment_tenure = previous_tenure
 
 
+def _office_appointment_failure(
+    name: str,
+    new_office: str,
+    exc: BaseException,
+    *,
+    kind: str = "",
+    reason_suffix: str = "",
+) -> Dict[str, object]:
+    """Map known appointment write failures to typed rejection categories.
+
+    Category comes only from typed exception attributes — never from message text.
+    """
+    result: Dict[str, object] = {
+        "name": name,
+        "new_office": new_office,
+        "rejected": True,
+        "reason": f"落库失败：{exc}{reason_suffix}",
+    }
+    if kind:
+        result["kind"] = kind
+    category = getattr(exc, "category", None)
+    if isinstance(category, str) and category:
+        result["category"] = category
+    return result
+
+
 def apply_office_appointment(
     db: GameDB,
     state: GameState,
@@ -6451,6 +6478,7 @@ def apply_office_appointment(
     new_office_type: str = "",
     faction: str = "中立",
     appointment_tenure: str = "真除",
+    region_id: str = "",
     llm_config: Any = None,
     commit: bool = True,
 ) -> Dict[str, object]:
@@ -6510,6 +6538,7 @@ def apply_office_appointment(
                     name, new_office, new_office_type,
                     source=reason[:60] or "诏书调任", llm_config=llm_config,
                     commit=commit,
+                    region_id=str(region_id or "").strip(),
                 )
             if cur_status == "active":
                 db.conn.execute(
@@ -6534,7 +6563,7 @@ def apply_office_appointment(
                     registry.refresh(dp.split(":")[0])
         except Exception as exc:
             _restore_person_write_state(db, content, snapshot, commit=commit)
-            return {"name": name, "new_office": new_office, "rejected": True, "reason": f"落库失败：{exc}"}
+            return _office_appointment_failure(name, new_office, exc)
         return {
             "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
             "kind": "transfer", "reason": reason,
@@ -6563,8 +6592,10 @@ def apply_office_appointment(
             },
             llm_config=llm_config or db.llm_config,
         )
+        seat = str(region_id or "").strip()
         appt = {"name": name, "office": new_office, "office_type": new_office_type,
-                "faction": faction, "reason": reason, "approved": True}
+                "faction": faction, "reason": reason, "approved": True,
+                "office_region": seat}
         with _appointment_tenure_scope(db, appointment_tenure):
             appointed, _ = apply_appointment(
                 db,
@@ -6591,8 +6622,10 @@ def apply_office_appointment(
                     **({"displaced": displaced_parts} if displaced_parts else {})}
     except Exception as exc:
         _restore_person_write_state(db, content, snapshot, commit=commit)
-        return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
-                "reason": f"落库失败：{exc}；原 status={cur_status or '不在册'}"}
+        return _office_appointment_failure(
+            name, new_office, exc, kind="appoint",
+            reason_suffix=f"；原 status={cur_status or '不在册'}",
+        )
     # apply_appointment 返回假值（查重拒/approved false/字段空——现均改库前早退）：防御性还原快照、
     # 与 except 路对称，确保此分支在任何 apply_appointment 行为下都不留半落库（P1 第一铁律，线上 gemini R3）。
     _restore_person_write_state(db, content, snapshot, commit=commit)
@@ -6636,6 +6669,22 @@ def _apply_person_changes(
         if status is not None:
             result["status"] = status
         return result
+
+    def project_appointment_result(
+        item: Dict[str, object],
+        result: Dict[str, object],
+    ) -> Dict[str, object]:
+        """Project typed appointment rejections onto ADR 0015 item/category shape."""
+        if not result.get("rejected"):
+            return result
+        category = str(result.get("category") or "")
+        if not category:
+            return result
+        shaped = rejected(item, str(result.get("reason") or ""), category)
+        for key, value in result.items():
+            if key not in shaped:
+                shaped[key] = value
+        return shaped
 
     def origin_rejected(item: Dict[str, object]) -> Dict[str, object] | None:
         error = db.effect_origin_rejection(origin_ref) if require_origin else None
@@ -6969,19 +7018,28 @@ def _apply_person_changes(
                     continue
                 result = {
                     "动作": effective_action,
-                    **apply_office_appointment(
-                        db,
-                        state,
-                        content,
-                        registry,
-                        name,
-                        new_office,
-                        reason=str(item.get("reason") or ""),
-                        new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
-                        faction=str(item.get("faction") or "中立"),
-                        appointment_tenure=appointment_tenure,
-                        llm_config=llm_config,
-                        commit=commit_person_change,
+                    **project_appointment_result(
+                        item,
+                        apply_office_appointment(
+                            db,
+                            state,
+                            content,
+                            registry,
+                            name,
+                            new_office,
+                            reason=str(item.get("reason") or ""),
+                            new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
+                            faction=str(item.get("faction") or "中立"),
+                            appointment_tenure=appointment_tenure,
+                            region_id=str(
+                                item.get("region_id")
+                                or item.get("任所")
+                                or item.get("辖区")
+                                or ""
+                            ).strip(),
+                            llm_config=llm_config,
+                            commit=commit_person_change,
+                        ),
                     ),
                 }
                 if transition.startswith("normalize:"):
@@ -7040,19 +7098,28 @@ def _apply_person_changes(
                     # 信用写端只消费 extractor 宣告本体行，禁盯 derived_from 文本特判。
                     "cascade_echo": True,
                 }
-            result = apply_office_appointment(
-                db,
-                state,
-                content,
-                registry,
-                name,
-                new_office,
-                reason=str(item.get("reason") or ""),
-                new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
-                faction=str(item.get("faction") or "中立"),
-                appointment_tenure=appointment_tenure,
-                llm_config=llm_config,
-                commit=False if derive_label else commit_person_change,
+            result = project_appointment_result(
+                item,
+                apply_office_appointment(
+                    db,
+                    state,
+                    content,
+                    registry,
+                    name,
+                    new_office,
+                    reason=str(item.get("reason") or ""),
+                    new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
+                    faction=str(item.get("faction") or "中立"),
+                    appointment_tenure=appointment_tenure,
+                    region_id=str(
+                        item.get("region_id")
+                        or item.get("任所")
+                        or item.get("辖区")
+                        or ""
+                    ).strip(),
+                    llm_config=llm_config,
+                    commit=False if derive_label else commit_person_change,
+                ),
             )
             wrapped = {"动作": effective_action, **result}
             if derive_label:

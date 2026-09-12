@@ -539,6 +539,7 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
             {"人物变更": [{
                 "name": successor, "动作": "任命",
                 "office": target_office, "office_type": "地方",
+                "region_id": "shaanxi",
                 "reason": "另简接任",
                 "origin_ref": f"dossier:{did_disp}",
             }]},

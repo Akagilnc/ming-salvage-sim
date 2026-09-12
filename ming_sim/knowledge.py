@@ -74,15 +74,6 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     return names
 
 
-def _visible_domains(db: Any, office_type: str) -> tuple[str, ...]:
-    """Return the validated content setting for this office's current-state rail."""
-    configured = getattr(getattr(db, "content", None), "office_knowledge_domains", {}).get(office_type, ())
-    # Unknown/malformed runtime roles get no private current-state rail.  The
-    # content loader validates every shipped office type, so silently assigning
-    # a hard-coded domain here would turn a missing setting into a data leak.
-    return tuple(configured)
-
-
 def knowledge_row_visible_to(
     db: Any, row: Any, character_name: str, *, target: Any = None,
 ) -> bool:
@@ -231,8 +222,9 @@ def render_character_knowledge(
     """Render one character's projected knowledge for an audience prompt.
 
     The projection has already enforced access control; this function only
-    de-duplicates and orders durable knowledge rows. Issue case material is
-    projected separately by ``project_issue_materials`` for the directory.
+    de-duplicates and orders durable knowledge rows without a feed cap.
+    Issue case material is projected separately by ``project_issue_materials``
+    for the directory.
     """
     lines = [f"【{character_name}此刻所知的天下（仅此人物见闻）】"]
     for key, value in (knowledge.get("world") or {}).items():
@@ -246,11 +238,11 @@ def render_character_knowledge(
             int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
         )
         by_source[key] = item
-    recent_items = sorted(
+    items = sorted(
         by_source.values(),
         key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
     )
-    for item in recent_items:
+    for item in items:
         title = str(item.get("title") or "旧闻")
         body = str(item.get("body") or "")
         if body:
@@ -280,6 +272,19 @@ def project_court_roster_rows(
         if str(row["office_type"] or "") == current_office_type
         or str(row["name"] or "") in visible_event_text
     ]
+
+
+def _appointment_register(db: Any, state: Any) -> str:
+    """吏部任免簿：当前在朝职名，不是派系底账。"""
+    if not hasattr(db, "current_court_roster_rows"):
+        return "任免簿：暂无。"
+    rows = db.current_court_roster_rows(state)
+    if not rows:
+        return "任免簿：暂无。"
+    return "任免簿：\n" + "\n".join(
+        f"{row['name']}：{row['office'] or '无现任官职'}"
+        for row in rows
+    )
 
 
 def _role_roster(db: Any, office_type: str, state: Any) -> str:
@@ -360,51 +365,92 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
     return projected
 
 
+def _household_ledger(db: Any, state: Any, character_name: str) -> str:
+    """户部太仓账：保留密支数额，按 typed 密令关联裁去案情语义。"""
+    balance = db.conn.execute(
+        "SELECT balance FROM economy_accounts WHERE account='国库'"
+    ).fetchone()
+    rows = db.conn.execute(
+        """SELECT e.year,e.period,e.delta,e.balance_after,e.category,e.reason,
+                  s.excluded_names
+           FROM economy_ledger e
+           LEFT JOIN decree_dossiers d ON d.id = CASE
+             WHEN e.origin_ref LIKE 'dossier:%' THEN CAST(substr(e.origin_ref,9) AS INTEGER)
+             ELSE e.dossier_id END
+           LEFT JOIN secret_orders s ON s.id=d.secret_order_id
+           WHERE e.account='国库' ORDER BY e.id DESC"""
+    ).fetchall()
+    lines = [f"太仓实存：{int(balance['balance'] if balance else state.metrics['国库'])}"]
+    for row in reversed(rows):
+        try:
+            excluded = set(json.loads(row["excluded_names"] or "[]"))
+        except (TypeError, ValueError):
+            excluded = set()
+        detail = "密支" if character_name in excluded else str(row["reason"] or row["category"] or "收支")
+        lines.append(
+            f"{int(row['year'])}年{int(row['period'])}月：{int(row['delta']):+d}，"
+            f"余额{int(row['balance_after'])}（{detail}）"
+        )
+    return "\n".join(lines)
+
+
+def _army_register(db: Any) -> str:
+    rows = db.conn.execute(
+        "SELECT name,manpower FROM armies WHERE owner_power='ming' ORDER BY name"
+    ).fetchall()
+    return "兵籍在册：\n" + "\n".join(
+        f"{row['name']}：{int(row['manpower'])}人" for row in rows
+    )
+
+
 def _world(
-    db: Any, state: Any, office_type: str,
-) -> Dict[str, str]:
-    # ``turn_reports`` is a rendered aggregate.  It has no item/source
-    # boundary, so reading it here would make a secret-bearing report a public
-    # event.  ``public`` is filled from the source-scoped event projection in
-    # build_character_knowledge after exclusions have been applied.
-    result: Dict[str, str] = {"public": "登基伊始，朝廷暂无前回合奏报。"}
-
-    visible_domains = _visible_domains(db, office_type)
-    from ming_sim.population_pressure import regional_displaced_pressure_brief
-
-    # Build only the current-state rails that this office is entitled to read.
-    # Besides keeping the returned projection scoped, this prevents a future
-    # report implementation from leaking a sensitive cross-domain payload via
-    # an intermediate all-world snapshot.
-    report_builders = {
-        "treasury": lambda: db.treasury_report(state),
-        "military": lambda: db.army_report(limit=30),
-        "regional": lambda: "\n".join((
-            db.region_report(limit=10),
-            f"省级流民态势：{regional_displaced_pressure_brief(db)}",
-        )),
-        "personnel": lambda: db.faction_report(audience=True),
-        "construction": lambda: db.buildings_report(qualitative=True),
-        "security": lambda: db.power_report(exclude_self=True, audience=True),
-        "court": lambda: "\n".join((
-            db.faction_report(audience=True),
-            db.power_report(exclude_self=True, audience=True),
-        )),
+    db: Any, state: Any, character_name: str, office_name: str, office_type: str,
+) -> tuple[Dict[str, str], Dict[str, tuple[str, ...]]]:
+    """Project current truth only through exact durable person relationships."""
+    result: Dict[str, str] = {
+        "public": "登基伊始，朝廷暂无前回合奏报。",
+        "role": _role_roster(db, office_type, state),
     }
-    facts = {
-        domain: _prose(report_builders[domain]())
-        for domain in visible_domains
-        if domain in report_builders
-    }
-    result["role"] = _role_roster(db, office_type, state)
-    for domain in visible_domains:
-        if domain in facts:
-            # The domain map is the semantic boundary.  Do not prepend an
-            # office label to manufacture a difference between otherwise
-            # identical reports; the value must remain an actual current-state
-            # fact selected by the content-owned domain mapping.
-            result[domain] = facts[domain]
-    return result
+    scope: Dict[str, tuple[str, ...]] = {"region_ids": (), "army_ids": ()}
+    if not hasattr(db, "conn"):
+        return result, scope
+
+    if office_type == "户部":
+        result["treasury"] = _household_ledger(db, state, character_name)
+    elif office_type == "兵部":
+        result["military"] = _army_register(db)
+    elif office_type == "吏部":
+        result["personnel"] = _appointment_register(db, state)
+
+    # Authoritative office→辖域 projection (shared with dossier archive keys).
+    # Region from the holder's appointment (character_offices.region_id) — never location.
+    projected = {}
+    if hasattr(db, "project_office_identity"):
+        projected = db.project_office_identity(
+            office_name, office_type, character_name=character_name,
+        ) or {}
+    region_ids = tuple(
+        str(rid) for rid in (projected.get("region_ids") or ()) if str(rid or "").strip()
+    )
+    if region_ids:
+        scope["region_ids"] = region_ids
+        # Materials/region detail use the primary jurisdiction when several.
+        primary = region_ids[0]
+        result["regional"] = _prose(db.region_detail(primary, qualitative=True))
+        result["construction"] = _prose(
+            db.buildings_report(region_id=primary, qualitative=True)
+        )
+
+    armies = db.conn.execute(
+        "SELECT id,name FROM armies WHERE commander=? OR controller=? ORDER BY name",
+        (character_name, character_name),
+    ).fetchall()
+    if armies:
+        ids = tuple(str(row["id"]) for row in armies)
+        scope["army_ids"] = ids
+        details = db.army_roster(filter_names=list(ids), qualitative_equipment=True)
+        result["command"] = _prose(details)
+    return result, scope
 
 
 def current_character_office(
@@ -428,7 +474,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     # The content object is the seed/in-memory roster and can lag behind a
     # restored save.  The characters table is the durable current-world source.
     office_name, office_type = current_character_office(db, character, character_name)
-    world = _world(db, state, office_type)
+    world, scope = _world(db, state, character_name, office_name, office_type)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
     public_events.extend(_source_archive_rows(db, character_name, int(state.turn)))
@@ -520,26 +566,25 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     # each aggregate archive.  Source rows redact restricted fragments from
     # the aggregate, while independently persisted public fragments remain
     # available to the character.
-    if hasattr(db, "list_turn_reports"):
-        for report in db.list_turn_reports():
-            # The opening gazette is seed material, not a prior played turn.
-            # Its separately persisted opening facts remain visible without
-            # turning the turn-zero aggregate into every role's public rail.
-            if int(report["turn"]) <= 0:
-                continue
-            report_turn = int(report["turn"])
-            body = source_projection(
-                report_turn, report.get("report"),
-                public_counterpart=f"turn_report:{report_turn}:public",
-            )
-            if body:
-                public_events.append({
-                    "turn": int(report["turn"]), "year": int(report["year"]),
-                    "period": int(report["period"]), "kind": "public",
-                    "title": "邸报", "body": body,
-                    "source_id": f"projection:turn_report:{report['turn']}",
-                    "excluded_names": "[]",
-                })
+    for report in db.list_turn_reports():
+        # The opening gazette is seed material, not a prior played turn.
+        # Its separately persisted opening facts remain visible without
+        # turning the turn-zero aggregate into every role's public rail.
+        if int(report["turn"]) <= 0:
+            continue
+        report_turn = int(report["turn"])
+        body = source_projection(
+            report_turn, report.get("report"),
+            public_counterpart=f"turn_report:{report_turn}:public",
+        )
+        if body:
+            public_events.append({
+                "turn": int(report["turn"]), "year": int(report["year"]),
+                "period": int(report["period"]), "kind": "public",
+                "title": "邸报", "body": body,
+                "source_id": f"projection:turn_report:{report['turn']}",
+                "excluded_names": "[]",
+            })
     if hasattr(db, "list_chapter_memories"):
         for chapter in db.list_chapter_memories(upto_turn=state.turn):
             chapter_turn = int(chapter["turn"])
@@ -739,44 +784,8 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         "office_type": office_type,
         "turn": int(state.turn),
         "world": world,
+        "scope": scope,
         "events": visible_events,
         "public_events": visible_public,
         "issues": visible_issues,
     }
-
-
-def build_character_treasury_ledger(
-    db: Any, state: Any, character_name: str, account: str, turns: int,
-) -> str:
-    """Render ledger history through the character's treasury projection.
-
-    This is intentionally part of the knowledge read model: callers must not
-    query ``economy_ledger`` before the office-domain gate has been applied.
-    Amounts and balances are qualitative in audience-facing text.
-    """
-    knowledge = build_character_knowledge(db, state, character_name)
-    if "treasury" not in (knowledge.get("world") or {}):
-        return ""
-    try:
-        window = max(1, min(24, int(turns)))
-    except (TypeError, ValueError):
-        window = 6
-    if not hasattr(db, "conn"):
-        return ""
-    start_turn = max(0, int(state.turn) - window + 1)
-    rows = db.conn.execute(
-        "SELECT year, period, delta, balance_after, category, reason "
-        "FROM economy_ledger WHERE account=? AND turn>=? AND turn<=? "
-        "ORDER BY turn DESC, id DESC",
-        (account, start_turn, int(state.turn)),
-    ).fetchall()
-    if not rows:
-        return f"见闻中未载{account}近{window}回合流水。"
-    lines = [f"【{account}近{window}回合流水】"]
-    for row in rows:
-        line = (
-            f"{row['year']}年{row['period']}月：{row['delta']:+d}（{row['reason'] or row['category']}；"
-            f"余额{row['balance_after']}）"
-        )
-        lines.append(_prose(line))
-    return "\n".join(lines)

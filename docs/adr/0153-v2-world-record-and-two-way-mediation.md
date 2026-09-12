@@ -1,10 +1,10 @@
 # 重构：账本记实况，中间层双向供料与记账，不裁判剧情
 
-Status: proposed（2026-09-09 owner 已拍方向；W1A #1829 已于 2026-09-11 落地公开说法分层，其余中间层与核算反馈仍待后续施工；本次游戏重构，非独立版本）
+Status: proposed（2026-09-09 owner 已拍方向；W1A #1829 已于 2026-09-11 落地公开说法分层，W1B #1832 / #1834 / #1835 已于 2026-09-12 落地身份隔离、世界材料供给及声明分派底座；转译调用与完整核算反馈仍待后续施工；本次游戏重构，非独立版本）
 
 沿用 [CLAUDE.md 的游戏总纲](../../CLAUDE.md)，重构后的中间层向外按 LLM 职责组织实况或角色见闻，向内承接推演 LLM 交代的结果，其中需要的语义理解与转译由 LLM 承担，代码只据明确的变更完成分派、规定核算及存储，不猜自然语言意图，也不另判剧情。
 理由是世界实况、公开说法和人物记忆必须能同时存在且互不冒充，否则假消息会改写真相、真实账本又会让所有人物全知，参见既有 [0034](0034-minister-audience-fed-perspectival-knowledge-not-omniscient.md) 与 [0073](0073-two-books-reported-vs-actual-rails.md)。
-[直接记录取舍](../design/game-v2-architecture.md#直接记录取舍)不排除中间层使用转译 LLM，职责澄清见 [语义转译仍归-llm](../design/game-v2-architecture.md#语义转译仍归-llm)；具体调用划分及存储格式尚未定，本轮只改设计、不改运行实现，多人同场供料取舍另见 [0155](0155-v2-single-scene-llm-with-complete-perspectives.md)。
+[直接记录取舍](../design/game-v2-architecture.md#直接记录取舍)不排除中间层使用转译 LLM，职责澄清见 [语义转译仍归-llm](../design/game-v2-architecture.md#语义转译仍归-llm)；W1B #1835 已落声明契约、暂存与分派底座，具体转译调用和完整核算仍待后续施工，多人同场供料取舍另见 [0155](0155-v2-single-scene-llm-with-complete-perspectives.md)。
 公开说法的归属（2026-09-09，决策票 [#1818](https://github.com/Akagilnc/ming-salvage-sim/issues/1818) owner 拍）：公开说法是独立的一类记录，可注明所涉人物或事务、不要求有事务起头（谣言亦可）；它进入 [0034](0034-minister-audience-fed-perspectival-knowledge-not-omniscient.md) 角色见闻的公开层，人人读到的是「有此说法」而非实况，信与疑由各人物演绎。未选：只作某件事务的附属字段。
 核算反馈与数值归属（2026-09-09，决策票 [#1820](https://github.com/Akagilnc/ming-salvage-sim/issues/1820) owner 逐题拍）：推演者交代一件事后，中间层转译、核算、记账，把实况事实（数额、经手、原因）回给**同一场**推演，推演者据实续演，续演里的新后果再走同一入口，交代几次由推演者定、不固定次数；无法承接的项（查无此人、库无此账）同样当事实回给推演者自行处置，代码不另加邸报提示句（[0008](0008-settlement-applier-contract-and-transaction-boundary.md) 决定 5 的机器提示与 [0015](0015-delta-apply-failure-per-item-rejection.md) 决定 3 的邸报提示由此被替代，拒收留痕不变）。数值归属：「能确定的，归引擎，不能确定的，归 llm」——判断（胜负、成色、查抄彻底否、人物选不选私吞）归 LLM，判断既定后能从账本存量与既定核算得出的数归引擎（库出、火耗、押解折损、到饷、兵额，以及抄没所得、缴获、斩获、伤亡），推演者交代里的数一律是名义；引擎没有依据可算的数才由 LLM 说、引擎 clamp 记账。沿途损耗归引擎核算，人物作为剧情动作的自选量（私吞几万、奏报几万、送几万）归 LLM，引擎只 clamp 不超所在账、奏报数不入核算（[0073](0073-two-books-reported-vs-actual-rails.md)）。未选：交代即结束、实况下月才见；固定两段续演；推演者说多少记多少；人物自选量按忠诚 / 贪腐算（现 `covert_progress` 地板形状，与 P6 反向，清理归 #1815）。逐笔落账与 0008 后半段原子边界、多事争一库的扣款顺序归 #1822；接口形状归 #1815；引擎新核算的公式接入时立票。
 

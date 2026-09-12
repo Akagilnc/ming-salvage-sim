@@ -19,11 +19,19 @@ from tests.dossier_test_helpers import rejected_verdict
 DOSSIER_REPORT_MONTHLY = "dossier-report:monthly_errand"
 
 
-def _add(db, state, name, office, office_type="布衣"):
+def _add(db, state, name, office, office_type="布衣", office_region=""):
+    # Shared fixture producer: new local seats carry typed office_region.
+    seat = str(office_region or "").strip()
+    if not seat and office_type in {"地方", "督抚", "边镇"}:
+        seat = {
+            "陕西按察使": "shaanxi",
+            "陕西巡抚": "shaanxi",
+        }.get(str(office or "").strip(), "shaanxi")
     db.add_character(state, Character(
         name=name, office=office, office_type=office_type, faction="中立",
         aliases=[], personal_skills=[], loyalty=50, ability=50, integrity=50,
         courage=50, style="", power_id="ming",
+        office_region=seat,
     ))
 
 
@@ -94,6 +102,7 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
         ],
         payload={
             "name": holder, "office": "陕西巡抚", "mode": "midzhi", "任别": "真除",
+            "region_id": "shaanxi",
         },
     )
     appt_payload = json.loads(db.get_decree_dossier(appt_id)["payload_json"])

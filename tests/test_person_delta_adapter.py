@@ -749,6 +749,7 @@ def test_apply_score_extraction_applies_person_change_office_action(game):
                         "origin_ref": "盘面自发", "动作": "调任",
                         "office": "测试巡抚",
                         "office_type": "督抚",
+                        "region_id": "shaanxi",
                         "reason": "移镇测试",
                     }
                 ]
@@ -818,7 +819,7 @@ def test_apply_score_extraction_rejects_trapped_prisoner_appointment(game):
             state,
             {
                 "人物变更": [
-                    {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "reason": "狱中拜将"}
+                    {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "狱中拜将"}
                 ]
             },
             content=content,
@@ -852,7 +853,7 @@ def test_apply_score_extraction_rejects_legacy_trapped_prisoner_office_change(ga
         applied = issues.apply_score_extraction(
             db,
             state,
-            {"office_changes": [{"name": name, "new_office": "陕西总督", "reason": "旧键狱中拜将"}]},
+            {"office_changes": [{"name": name, "new_office": "陕西总督", "new_office_type": "地方", "region_id": "shaanxi", "reason": "旧键狱中拜将"}]},
             content=content,
         )
 
@@ -891,6 +892,8 @@ def test_apply_score_extraction_materializes_derived_release_before_appointment(
                         "name": name,
                         "origin_ref": "盘面自发", "动作": "任命",
                         "office": "陕西总督",
+                        "office_type": "地方",
+                        "region_id": "shaanxi",
                         "reason": "查明旧案后起用",
                     }
                 ]
@@ -947,6 +950,7 @@ def test_rejected_derived_appointment_durably_restores_complete_person_state(gam
 
     issues.apply_score_extraction(db, state, {"人物变更": [{
         "name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督",
+        "office_type": "地方", "region_id": "shaanxi",
     }]}, content=content)
 
     path = db.conn.execute("PRAGMA database_list").fetchone()[2]
@@ -1010,6 +1014,8 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
                         "name": new_holder,
                         "origin_ref": "盘面自发", "动作": "调任",
                         "office": target_office,
+                        "office_type": "地方",
+                        "region_id": "shaanxi",
                         "reason": "顶替旧任",
                     }
                 ]
@@ -1101,7 +1107,7 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
         issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": new_holder, "origin_ref": "盘面自发", "动作": "调任", "office": target_office}]},
+            {"人物变更": [{"name": new_holder, "origin_ref": "盘面自发", "动作": "调任", "office": target_office, "office_type": "地方", "region_id": "shaanxi"}]},
             content=content,
         )
         displaced = db.conn.execute(
@@ -1124,6 +1130,8 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
                         "name": old_holder,
                         "origin_ref": "盘面自发", "动作": "任命",
                         "office": reappointed_office,
+                        "office_type": "地方",
+                        "region_id": "henan",
                         "reason": "重新授实职",
                     }
                 ]
@@ -1275,6 +1283,8 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
                         "name": name,
                         "origin_ref": "盘面自发", "动作": "任命",
                         "office": "陕西总督",
+                        "office_type": "地方",
+                        "region_id": "shaanxi",
                         "reason": "查明旧案后起用",
                     }
                 ]
@@ -1349,6 +1359,8 @@ def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
                             "name": second,
                             "origin_ref": "盘面自发", "动作": "任命",
                             "office": "陕西总督",
+                            "office_type": "地方",
+                            "region_id": "shaanxi",
                             "reason": "查明旧案后起用",
                         },
                     ]
@@ -1414,6 +1426,8 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
                         "name": name,
                         "origin_ref": "盘面自发", "动作": "任命",
                         "office": "陕西总督",
+                        "office_type": "地方",
+                        "region_id": "shaanxi",
                         "reason": "查明旧案后起用",
                     }
                 ]
@@ -1469,6 +1483,8 @@ def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointme
             "name": name,
             "origin_ref": "盘面自发", "动作": "任命",
             "office": "陕西总督",
+            "office_type": "地方",
+            "region_id": "shaanxi",
             "reason": "错误任明官",
         }
         applied = issues.apply_score_extraction(
@@ -1888,6 +1904,7 @@ def test_apply_score_extraction_treats_active_identity_title_as_unappointed(game
                         "origin_ref": "盘面自发", "动作": "任命",
                         "office": "陕西总督",
                         "office_type": "督抚",
+                        "region_id": "shaanxi",
                         "reason": "收叙任用",
                     }
                 ]
@@ -2312,20 +2329,10 @@ def test_talent_pool_excludes_prince_unfilled_and_future_debut(saved_game):
 
 
 def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
-    """registry.build_court_roster(_index) + tools.get_active_ministers / 材料目录
-    与 simulator/web 同口径排除 active 宗藩（cmr R3 cross-section，全 roster 面一致）。"""
-    from ming_sim.models import CourtContext
-    from ming_sim import registry as reg
+    """材料目录与 simulator/web 同口径排除 active 宗藩。"""
     from ming_sim.materials import list_materials, prepare_character_materials, read_material
-    from ming_sim.tools import build_board_query_tools
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
-    reg.bind_content(content)
-    ctx = CourtContext(state=state, db=db, previous_summary="")
-    assert name not in reg.build_court_roster(ctx)
-    assert name not in reg.build_court_roster_index(ctx)
-    board = {f.__name__: f for f in build_board_query_tools(ctx)}
-    assert name not in board["get_active_ministers"]()
     minister_name = next(
         n for n, c in content.characters.items()
         if getattr(c, "power_id", "ming") == "ming"
@@ -2903,7 +2910,7 @@ def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
 
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "起用"}]},
         content=content,
     )
 
@@ -2935,7 +2942,7 @@ def test_disposition_manual_rollback_restores_memory_reason_fields(game, monkeyp
 
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "起用"}]},
         content=content,
     )
 
@@ -2963,7 +2970,7 @@ def test_unified_appointment_resolves_alias_before_hallucinated_guard(game):
 
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": alias, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
+        {"人物变更": [{"name": alias, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "起用"}]},
         content=content,
     )
 
@@ -2992,7 +2999,8 @@ def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
     monkeypatch.setattr(_session, "apply_appointment", mutate_then_falsy)
 
     res = issues.apply_office_appointment(
-        db, state, content, None, "不在册新人甲", "陕西总督", reason="新任"
+        db, state, content, None, "不在册新人甲", "陕西总督",
+        reason="新任", new_office_type="地方", region_id="shaanxi",
     )
     assert res.get("rejected"), f"falsy-return 应兜成 rejected：{res}"
     now_office = db.conn.execute(
@@ -3380,10 +3388,15 @@ def test_yizhu_clears_status_reason_in_db(game):
 
 # ── ADR 0009 S2/S3/S4 派生链 end-to-end 验收（#97 验收骨架闭环；S1 已有 e2e，此补三派生）──
 
-def _appoint(db, state, content, name, office, reason):
+def _appoint(db, state, content, name, office, reason, *, office_type="", region_id=""):
+    item = {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": office, "reason": reason}
+    if office_type:
+        item["office_type"] = office_type
+    if region_id:
+        item["region_id"] = region_id
     return issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": office, "reason": reason}]},
+        {"人物变更": [item]},
         content=content,
     )
 
@@ -3399,7 +3412,7 @@ def test_s2_reappointment_derives_qifu_from_retired(game):
     try:
         db.set_character_status(state, name, "retired", "乞休归籍", reason_code="致仕")
         content.characters[name].status = "retired"
-        applied = _appoint(db, state, content, name, "蓟辽督师", "家居复出，起复督师")
+        applied = _appoint(db, state, content, name, "蓟辽督师", "家居复出，起复督师", office_type="边镇", region_id="liaodong")
         row = db.conn.execute("SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
         assert row["status"] == "active"
         assert row["office"] == "蓟辽督师"
@@ -3536,7 +3549,7 @@ def test_s15_amnesty_to_ming_then_appoint(game):
             {"人物变更": [
                 {"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "ming", "方式": "主动归附",
                  "反噬": {}, "reason": "受抚归明"},
-                {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "福建游击", "reason": "授游击"},
+                {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "福建游击", "office_type": "边镇", "region_id": "fujian", "reason": "授游击"},
             ]},
             content=content,
         )
@@ -3620,7 +3633,7 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression(game):
                         "反噬": {zhang_power: {"military_strength": -5, "reason": "谷城就抚拆散其股"}},
                         "reason": "谷城受抚归明",
                     },
-                    {"name": zhang, "origin_ref": "盘面自发", "动作": "任命", "office": "游击将军", "reason": "授武将名分"},
+                    {"name": zhang, "origin_ref": "盘面自发", "动作": "任命", "office": "游击将军", "office_type": "边镇", "region_id": "huguang", "reason": "授武将名分"},
                 ],
             },
             content=content,
@@ -3715,7 +3728,7 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression_when_backlash_e
                         "反噬": {},
                         "reason": "谷城受抚归明",
                     },
-                    {"name": zhang, "origin_ref": "盘面自发", "动作": "任命", "office": "游击将军", "reason": "授武将名分"},
+                    {"name": zhang, "origin_ref": "盘面自发", "动作": "任命", "office": "游击将军", "office_type": "边镇", "region_id": "huguang", "reason": "授武将名分"},
                 ],
             },
             content=content,
@@ -4036,7 +4049,7 @@ def test_s8_demotion_release_then_lower_appointment_derives_qifu(game):
             db, state,
             {"人物变更": [
                 {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage", "reason": "查明释放"},
-                {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "知县", "reason": "贬三级任用"},
+                {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "知县", "office_type": "地方", "region_id": "henan", "reason": "贬三级任用"},
             ]},
             content=content,
         )
