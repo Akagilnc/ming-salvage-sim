@@ -304,8 +304,17 @@ def extract_agent_text(run_output: object) -> str:
     # #1465 ④ / P7 / ADR 0046：玩家可见走系统层人话，禁固定戏内话术；
     # 机器横幅只进 provider_message（与 map_run_error_event 同权威）。
     if _run_output_status_is_error(run_output):
-        from ming_sim.llm_transport import ClassifiedFailure, transport_failure_unavailable
+        from ming_sim.llm_transport import (
+            ClassifiedFailure,
+            take_remembered_typed_failure,
+            transport_failure_unavailable,
+        )
 
+        remembered = take_remembered_typed_failure()
+        if remembered is not None:
+            raise transport_failure_unavailable(
+                remembered, attempts=1, exhausted=False,
+            )
         pmsg = text.strip() or "run status=ERROR"
         raise transport_failure_unavailable(
             ClassifiedFailure(

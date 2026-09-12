@@ -10,6 +10,7 @@ import threading
 
 import httpx
 import pytest
+from agno.models.openai import OpenAIChat
 from openai import APIStatusError, APITimeoutError
 
 import ming_sim.llm_model as llm_model
@@ -38,21 +39,34 @@ def _timeout_request() -> httpx.Request:
     return httpx.Request("POST", "https://api.example.com/v1/chat/completions")
 
 
+def _patch_openai_chat_invoke(monkeypatch, exc_factory, calls: dict) -> None:
+    """真实 Agent 留下；只在 OpenAIChat.invoke 注入 SDK typed 失败。"""
+
+    class RaisingChat(OpenAIChat):
+        def invoke(self, *args, **kwargs):
+            calls["n"] += 1
+            raise exc_factory()
+
+    monkeypatch.setattr(
+        llm_model,
+        "create_chat_model",
+        lambda *_a, **_k: RaisingChat(
+            id="gpt-main",
+            api_key="sk-test",
+            base_url="https://api.example.com/v1",
+        ),
+    )
+
+
 def test_api_verify_hang_retries_then_exhausts_with_stage(monkeypatch):
-    """注入：provider 永不响应（每次 attempt 以超时收场）→ 重试耗尽，账面带阶段名。"""
+    """注入：provider 永不响应（每次 attempt 以超时收场）→ 重试耗尽，账面带阶段名。
+
+    入口 = 真实 verify_llm_available → 真实 agno Agent → model.invoke 抛 APITimeoutError。
+    """
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    runs = {"n": 0}
+    calls = {"n": 0}
     req = _timeout_request()
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            self.model = kwargs["model"]
-
-        def run(self, prompt: str):
-            runs["n"] += 1
-            raise APITimeoutError(request=req)
-
-    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    _patch_openai_chat_invoke(monkeypatch, lambda: APITimeoutError(request=req), calls)
     with pytest.raises(LLMUnavailable) as ei:
         verify_llm_available(_api_cfg())
     err = ei.value
@@ -64,11 +78,14 @@ def test_api_verify_hang_retries_then_exhausts_with_stage(monkeypatch):
     assert [a.get("outcome") for a in attempts] == (
         ["retryable_fail"] * (TRANSPORT_DEFAULT_MAX_ATTEMPTS - 1) + ["terminal_fail"]
     )
-    assert runs["n"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
+    assert calls["n"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
 
 
 def test_api_verify_401_does_not_retry(monkeypatch):
-    """负：确定性 4xx 立即降级，不走瞬断重试。"""
+    """负：确定性 4xx 立即降级，不走瞬断重试。
+
+    入口 = 真实 verify_llm_available → 真实 agno Agent → model.invoke 抛 APIStatusError(401)。
+    """
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     req = _timeout_request()
     resp = httpx.Response(
@@ -76,26 +93,24 @@ def test_api_verify_401_does_not_retry(monkeypatch):
         json={"error": {"message": "Invalid API key", "code": "invalid_api_key"}},
         request=req,
     )
-    runs = {"n": 0}
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            self.model = kwargs["model"]
-
-        def run(self, prompt: str):
-            runs["n"] += 1
-            raise APIStatusError("Invalid API key", response=resp, body=None)
-
-    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    calls = {"n": 0}
+    _patch_openai_chat_invoke(
+        monkeypatch,
+        lambda: APIStatusError("Invalid API key", response=resp, body=None),
+        calls,
+    )
     with pytest.raises(LLMUnavailable) as ei:
         verify_llm_available(_api_cfg())
     err = ei.value
     assert err.status_code == 401
+    assert err.code == "llm_http_401"
     assert getattr(err, "stage", None) == "smoke-main"
-    assert runs["n"] == 1
+    assert calls["n"] == 1
     attempts = err.transport_attempts or []
     assert len(attempts) == 1
     assert attempts[0]["outcome"] == "terminal_fail"
+    assert attempts[0].get("status_code") == 401
+    assert attempts[0].get("code") == "llm_http_401"
 
 
 def test_api_verify_installs_sdk_attempt_clock(monkeypatch):

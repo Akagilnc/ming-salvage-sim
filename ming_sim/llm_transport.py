@@ -38,7 +38,7 @@ from ming_sim.models import (
 
 R = TypeVar("R")
 
-# 提供方 HTTP typed status 经流式 model 调用捕获，不从 RunErrorEvent.content 散文抠
+# 提供方 HTTP typed status 经 model 调用（invoke / invoke_stream）捕获，不从 content 散文抠
 # （ADR 0142）。只认 openai.APIStatusError 的 status_code；SDK 包装层的默认 status
 # （agno ModelProviderError=502 / AgnoError=500）不是提供方 HTTP 事实。
 _typed_provider_status: ContextVar[Optional[int]] = ContextVar(
@@ -390,6 +390,20 @@ def run_error_event_failure(
     )
 
 
+def take_remembered_typed_failure() -> Optional[ClassifiedFailure]:
+    """取出并清空本 attempt 在 model 调用边界记下的 typed 失败。无则 None。
+
+    流式 RunErrorEvent 与非流 extract_agent_text ERROR 同权威：SDK 把异常
+    吞成散文后，只按记忆还原，不从 content 再猜语义（ADR 0142）。
+    """
+    remembered = _typed_provider_failure.get()
+    if remembered is None:
+        return None
+    _typed_provider_failure.set(None)
+    _typed_provider_status.set(None)
+    return remembered
+
+
 def map_run_error_event(event: Any) -> Optional[BaseException]:
     """RunErrorEvent → LLMUnavailable 单真源（agents/web 三处同权威；#12/#14）。
 
@@ -402,10 +416,8 @@ def map_run_error_event(event: Any) -> Optional[BaseException]:
     """
     if type(event).__name__ != "RunErrorEvent":
         return None
-    remembered = _typed_provider_failure.get()
+    remembered = take_remembered_typed_failure()
     if remembered is not None:
-        _typed_provider_failure.set(None)
-        _typed_provider_status.set(None)
         return transport_failure_unavailable(
             remembered, attempts=1, exhausted=False,
         )
@@ -460,14 +472,15 @@ def check_idle_budget(
 
 @contextmanager
 def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterator[None]:
-    """仅在已迁移 API 召对接缝临时覆盖 SDK timeout/max_retries，并捕获 typed status。
+    """仅在已迁移接缝临时覆盖 SDK timeout/max_retries，并捕获 typed status。
 
     - timeout → attempt_timeout_seconds：SDK/httpx read 阻塞唯一接缝
     - max_retries → 0：attempt 计数归本模块，禁 SDK 双重点数
-    - 只包 invoke_stream（召对流唯一消费的 model 调用）：提供方 HTTP typed status
-      写入本 attempt 的 ContextVar，供 RunErrorEvent 映射（不解析 content 散文）
+    - 包 invoke_stream / invoke / ainvoke：提供方 HTTP typed status 写入本
+      attempt 的 ContextVar，供 RunErrorEvent 与非流 extract ERROR 映射
+      （不解析 content 散文）
     退出后恢复原值、清空 typed status 并丢弃缓存 client，
-    避免污染未迁移的同 model 非流路径。
+    避免污染未迁移的同 model 路径。
     """
     if model is None:
         yield
@@ -476,7 +489,7 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
     prev_retries = getattr(model, "max_retries", None)
     had_client = hasattr(model, "client")
     had_async = hasattr(model, "async_client")
-    prev_invoke_stream: Optional[Callable] = None
+    wrapped: dict[str, Callable] = {}
     try:
         if hasattr(model, "timeout"):
             model.timeout = policy.attempt_timeout_seconds
@@ -487,14 +500,15 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
             model.client = None
         if had_async:
             model.async_client = None
-        invoke_stream = getattr(model, "invoke_stream", None)
-        if callable(invoke_stream):
-            prev_invoke_stream = invoke_stream
-            model.invoke_stream = _capture_status_wrapper(invoke_stream)
+        for name in ("invoke_stream", "invoke", "ainvoke"):
+            method = getattr(model, name, None)
+            if callable(method):
+                wrapped[name] = method
+                setattr(model, name, _capture_status_wrapper(method))
         yield
     finally:
-        if prev_invoke_stream is not None:
-            model.invoke_stream = prev_invoke_stream
+        for name, method in wrapped.items():
+            setattr(model, name, method)
         if hasattr(model, "timeout"):
             model.timeout = prev_timeout
         if hasattr(model, "max_retries"):
