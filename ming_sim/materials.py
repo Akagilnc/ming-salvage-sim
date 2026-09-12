@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import re
 import shutil
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
@@ -69,10 +70,14 @@ def _resolve_inside(root: Path, rel: str) -> Path:
 def character_materials_root(db: Any, state: Any, character: Any) -> Path:
     from ming_sim.audience_night import get_open_night
 
-    parent = Path(str(getattr(db, "path", "") or ".")).resolve().parent
+    db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
+    parent = db_path.parent
     night = get_open_night(db)
     key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
-    return parent / "materials" / key / _safe_segment(getattr(character, "name", ""))
+    invocation = uuid.uuid4().hex
+    return parent / "materials" / _safe_segment(db_path.name) / key / invocation / _safe_segment(
+        getattr(character, "name", "")
+    )
 
 
 def list_materials(root: Path, path: str = "") -> List[str]:
@@ -247,14 +252,20 @@ def _write_textual_fact_files(
     name = str(getattr(character, "name", "") or "")
     if name:
         subjects.append(("character", name, name))
-    if _world_has_domain(knowledge, "regional") and hasattr(db, "region_rows"):
+    region_ids = set((knowledge.get("scope") or {}).get("region_ids") or ())
+    if region_ids and hasattr(db, "region_rows"):
         for row in db.region_rows():
+            if str(row["id"] or "") not in region_ids:
+                continue
             rid = str(row["id"] or "")
             rname = str(row["name"] or rid)
             if rid:
                 subjects.append(("region", rid, rname))
-    if _world_has_domain(knowledge, "military") and hasattr(db, "army_rows"):
+    army_ids = set((knowledge.get("scope") or {}).get("army_ids") or ())
+    if army_ids and hasattr(db, "army_rows"):
         for row in db.army_rows():
+            if str(row["id"] or "") not in army_ids:
+                continue
             aid = str(row["id"] or "")
             aname = str(row["name"] or aid)
             if aid:
@@ -283,10 +294,13 @@ def _write_textual_fact_files(
 
 
 def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
-    if not _world_has_domain(knowledge, "regional") or not hasattr(db, "region_rows"):
+    region_ids = set((knowledge.get("scope") or {}).get("region_ids") or ())
+    if not region_ids or not hasattr(db, "region_rows"):
         return []
     index: list[str] = []
     for row in db.region_rows():
+        if str(row["id"] or "") not in region_ids:
+            continue
         name = str(row["name"] or row["id"] or "")
         if not name:
             continue
@@ -298,10 +312,13 @@ def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]
 
 
 def _write_army_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
-    if not _world_has_domain(knowledge, "military") or not hasattr(db, "army_rows"):
+    army_ids = set((knowledge.get("scope") or {}).get("army_ids") or ())
+    if not army_ids or not hasattr(db, "army_rows"):
         return []
     index: list[str] = []
     for row in db.army_rows():
+        if str(row["id"] or "") not in army_ids:
+            continue
         name = str(row["name"] or "")
         army_id = str(row["id"] or "")
         key = name or army_id
@@ -319,8 +336,7 @@ def _write_army_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
 
 
 _LEDGER_KEYS = (
-    "treasury", "military", "personnel", "construction",
-    "security", "regional",
+    "treasury", "military", "personnel", "construction", "regional", "command",
 )
 
 
@@ -487,9 +503,7 @@ def prepare_character_materials(
 
     dest = Path(dest_root) if dest_root is not None else character_materials_root(db, state, character)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.parent / (dest.name + ".tmp")
-    if tmp.exists():
-        shutil.rmtree(tmp)
+    tmp = dest.parent / f"{dest.name}.{uuid.uuid4().hex}.tmp"
     tmp.mkdir(parents=True)
     try:
         index = _write_tree(tmp, db, state, character, knowledge, issue_materials)

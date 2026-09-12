@@ -1552,6 +1552,7 @@ class GameDB:
                 stigma_json TEXT NOT NULL DEFAULT '[]',
                 extension_json TEXT NOT NULL DEFAULT '{}',
                 participant_roster TEXT NOT NULL DEFAULT '[]',
+                office_archive_type TEXT NOT NULL DEFAULT '',
                 due_turn INTEGER NOT NULL DEFAULT 0,
                 execution_outcome TEXT NOT NULL DEFAULT '',
                 execution_note TEXT NOT NULL DEFAULT '',
@@ -2539,6 +2540,9 @@ class GameDB:
         self.ensure_column("fiscal_config", "sort_order", "INTEGER NOT NULL DEFAULT 9999")
         # economy_ledger 支出结构化标签：仅 extractor 抽出的 economy_moves 填这三列；
         # flows 月固定支出与所有收入留 NULL。purpose 受控枚举见 constants.ECONOMY_PURPOSES。
+        self.ensure_column(
+            "decree_dossiers", "office_archive_type", "TEXT NOT NULL DEFAULT ''"
+        )
         self.ensure_column("economy_ledger", "purpose", "TEXT")
         self.ensure_column("economy_ledger", "target_kind", "TEXT")
         self.ensure_column("economy_ledger", "target_id", "TEXT")
@@ -15309,15 +15313,27 @@ class GameDB:
                 raise ValueError("案卷 extension execution_signal 冲突")
             durable_extension["execution_signal"] = signal
         affair_id = self._resolve_affair_id_from_payload(state, canonical_payload)
+        lead_names = [
+            str(item.get("character_id") or "") for item in roster
+            if item.get("tier") == "主办"
+        ]
+        archive_type = ""
+        if action != "secret_order" and lead_names:
+            lead = self.conn.execute(
+                "SELECT office_type FROM characters WHERE name=?", (lead_names[0],),
+            ).fetchone()
+            candidate = str(lead["office_type"] or "") if lead is not None else ""
+            if candidate not in {"刑部", "都察院", "六科", "锦衣卫", "东厂"}:
+                archive_type = candidate
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
                 (action_type,target_kind,target_id,executor_kind,executor_id,
                  source_chat_turn_id,pending_action_id,
                  directive_id,secret_order_id,region_id,decree_text,payload_json,status,due_turn,
-                 extension_json,participant_roster,created_turn,created_year,created_period,
-                 affair_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 extension_json,participant_roster,office_archive_type,
+                 created_turn,created_year,created_period,affair_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 action, canonical_target_kind, canonical_target_id,
@@ -15329,7 +15345,7 @@ class GameDB:
                 text, json.dumps(canonical_payload, ensure_ascii=False), status,
                 max(0, int(due_turn or 0)),
                 json.dumps(durable_extension, ensure_ascii=False),
-                json.dumps(roster, ensure_ascii=False),
+                json.dumps(roster, ensure_ascii=False), archive_type,
                 int(state.turn), int(state.year), int(state.period),
                 int(affair_id),
             ),
@@ -15657,6 +15673,7 @@ class GameDB:
 
         name = str(character_name or "")
         known_secret_ids: set[int] = set()
+        known_dossier_ids: set[int] = set()
         knowledge_events = self._character_knowledge_events(name, include_exclusions=True)
         if name:
             knowledge_events += self._character_knowledge_events("", include_exclusions=True)
@@ -15667,6 +15684,13 @@ class GameDB:
             match = re.match(r"secret_order_(?:brief|disclosure):(\d+)(?::|$)", source_id)
             if match:
                 known_secret_ids.add(int(match.group(1)))
+            dossier_match = re.match(r"(?:decree_)?dossier:(\d+)(?::|$)", source_id)
+            if dossier_match:
+                known_dossier_ids.add(int(dossier_match.group(1)))
+        office_row = self.conn.execute(
+            "SELECT office_type FROM characters WHERE name=?", (name,),
+        ).fetchone()
+        current_office_type = str(office_row["office_type"] or "") if office_row else ""
         rows = self.conn.execute(
             """SELECT d.*,
                       s.title AS secret_title,
@@ -15688,6 +15712,11 @@ class GameDB:
                 and (
                     str(row["promulgation_decision"] or "") == "promulgated"
                     or bool(row["was_force_promulgated"])
+                    or int(row["id"]) in known_dossier_ids
+                    or (
+                        bool(current_office_type)
+                        and str(row["office_archive_type"] or "") == current_office_type
+                    )
                 )
             ) or (
                 row["secret_order_id"] is not None

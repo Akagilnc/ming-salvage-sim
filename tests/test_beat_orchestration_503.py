@@ -1244,26 +1244,6 @@ def test_assembly_never_calls_omniscient_builders(game, monkeypatch):
     assert "独有见闻#A" not in frame.opening_context
 
 
-def test_court_tension_routed_from_default_provider(game):
-    """当下朝局张力经默认见闻供给接口路由（security 域），定性口径、无裸数值（P4）。"""
-    db, state, content = game
-    # 都察院有 security 域见闻——朝局张力应被路由到位
-    grand = next(
-        n for n, ch in content.characters.items()
-        if ch.office_type == "都察院"
-        and db.get_character_status(n)[0] == "active"
-        and getattr(ch, "power_id", "ming") == "ming"
-    )
-    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
-    inputs = assemble_beat_inputs(
-        db, state, beat_kind=BEAT_ENTER, night_id=int(night["id"]),
-        person_name=grand, summon_method=an.METHOD_XUANRU,
-    )
-    security = str(
-        (db.get_character_knowledge(state, grand).get("world") or {}).get("security") or ""
-    ).strip()
-    assert security
-    assert inputs.court_tension == security
 
 
 def test_public_layer_excludes_private_whispers(game):
