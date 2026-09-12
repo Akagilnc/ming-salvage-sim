@@ -218,6 +218,7 @@ def build_minister_tools(character: Character, context: CourtContext):
         summary: str = "",
         source: str = "historical",
         summon_after: bool = True,
+        region_id: str = "",
     ) -> str:
         """登记名册外人物，使其进入本局可召见人物池。
 
@@ -227,6 +228,7 @@ def build_minister_tools(character: Character, context: CourtContext):
 
         不可用于正式升迁、外放或替换现任官缺；正式任官仍走吏部铨选或圣旨。
         aliases_json 填 JSON 数组字符串，如 ["李若璉","李若链","李若莲"]。
+        地方/督抚/边镇须显式填 region_id（任所英文 id，如 fujian）；不从官名推断。
         """
         nm = (name or "").strip()
         off = (office or "").strip()
@@ -239,19 +241,20 @@ def build_minister_tools(character: Character, context: CourtContext):
             aliases = []
         if not isinstance(aliases, list):
             aliases = []
-        payload = json.dumps(
-            {
-                "name": nm,
-                "office": off,
-                "office_type": kind,
-                "faction": (faction or "中立").strip(),
-                "aliases": [str(alias).strip() for alias in aliases if str(alias).strip()],
-                "summary": (summary or "").strip(),
-                "source": (source or "historical").strip(),
-                "summon_after": bool(summon_after),
-            },
-            ensure_ascii=False,
-        )
+        body = {
+            "name": nm,
+            "office": off,
+            "office_type": kind,
+            "faction": (faction or "中立").strip(),
+            "aliases": [str(alias).strip() for alias in aliases if str(alias).strip()],
+            "summary": (summary or "").strip(),
+            "source": (source or "historical").strip(),
+            "summon_after": bool(summon_after),
+        }
+        seat = str(region_id or "").strip()
+        if seat:
+            body["region_id"] = seat
+        payload = json.dumps(body, ensure_ascii=False)
         return f"__pending_unlisted_person__{payload}"
 
     def secret_order(

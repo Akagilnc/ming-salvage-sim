@@ -689,6 +689,97 @@ def test_registration_adds_new_person_to_roster_and_rejects_existing_name(game):
     assert "李若璉補" in db.content.characters
 
 
+def test_registration_typed_seat_lands_and_bad_local_item_isolates_sibling(game):
+    """入册共享写核吃 typed region_id；地方缺任所逐项拒收，不带走合法 sibling + textual_fact。
+
+    真实入口 = dispatch_declaration（与 #1835 AC3 同 tracer），不造 helper-only 平行测试。
+    """
+    db, state, _ = game
+    minister = _minister(db)
+
+    declaration = {
+        "registrations": [
+            {
+                "name": "地方缺任所甲",
+                "office": "福建巡抚",
+                "office_type": "督抚",
+                # 故意不给 region_id/任所——不得从官名推断 fujian。
+            },
+            {
+                "name": "福建补档乙",
+                "office": "福建巡抚",
+                "office_type": "督抚",
+                "region_id": "fujian",
+            },
+            {
+                "name": "未知任所丙",
+                "office": "河南巡抚",
+                "office_type": "地方",
+                "任所": "not_a_region",
+            },
+            {
+                "name": "中央补档丁",
+                "office": "锦衣卫百户",
+                "office_type": "武职",
+            },
+        ],
+        "textual_facts": [{
+            "subject_kind": "character", "subject_id": minister,
+            "body": "入册坏项旁的合法事实",
+        }],
+    }
+    result = dispatch_declaration(db, state, declaration)
+
+    applied_names = {row["name"] for row in result.registrations.applied}
+    assert applied_names == {"福建补档乙", "中央补档丁"}, result.registrations.applied
+    rejected_by_name = {
+        str((item.item or {}).get("name") or ""): item.category
+        for item in result.registrations.rejected
+    }
+    assert rejected_by_name.get("地方缺任所甲") == "missing_field", result.registrations.rejected
+    assert rejected_by_name.get("未知任所丙") == "missing_ref", result.registrations.rejected
+
+    # 坏项全回滚：无 characters 行、无内存 roster、无 character_offices。
+    for bad in ("地方缺任所甲", "未知任所丙"):
+        assert db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (bad,),
+        ).fetchone() is None
+        assert bad not in db.content.characters
+        assert db.conn.execute(
+            "SELECT 1 FROM character_offices WHERE character_name=?", (bad,),
+        ).fetchone() is None
+
+    # 合法地方入册：typed seat 落 character_offices.region_id 与内存 office_region。
+    assert db.character_office_region("福建补档乙") == "fujian"
+    assert db.content.characters["福建补档乙"].office_region == "fujian"
+    assert db.project_office_identity(
+        "福建巡抚", "督抚", character_name="福建补档乙",
+    )["archive_key"] == "slot:福建巡抚@fujian"
+
+    # 中央入册不要求 seat，空任所合法。
+    assert db.character_office_region("中央补档丁") == ""
+    assert "中央补档丁" in db.content.characters
+
+    # sibling textual_fact 不受入册坏项牵连。
+    assert result.textual_facts.rejected == []
+    facts = db.textual_facts.readable_materials(
+        subject_kind="character", subject_id=minister,
+    )
+    assert [f.body for f in facts] == ["入册坏项旁的合法事实"]
+
+    # 拒收进既有 durable 真源（不只活在返回值）。
+    durable = db.conn.execute(
+        "SELECT category, item_json FROM rejection_reports WHERE category IN ('missing_field', 'missing_ref')",
+    ).fetchall()
+    durable_cats = {
+        str(json.loads(row["item_json"]).get("name") or ""): row["category"]
+        for row in durable
+        if row["item_json"]
+    }
+    assert durable_cats.get("地方缺任所甲") == "missing_field", durable_cats
+    assert durable_cats.get("未知任所丙") == "missing_ref", durable_cats
+
+
 def test_registration_attaches_declared_affair(game):
     db, state, _ = game
     affair = db.affairs.open(

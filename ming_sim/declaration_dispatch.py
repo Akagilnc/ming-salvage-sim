@@ -997,9 +997,14 @@ def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provena
     那条历史工具路径按 source 归一的是 `loyalty`/`source_label`，不是
     `style`（见 `register_unlisted_person_record`）。
 
-    各自所属事务：事务引用在真正登记之前先校验，引用不存在事务的项在产生
-    副作用前就被拒收；新登记的人物是刚插入的行（`affair_id` 必为 0），绑定
-    不可能与已存在的事务冲突，故直接调用、不需要原子回滚兜底。"""
+    typed 任所（`region_id` / `任所` / `office_region`）原样传给共享写核，不从
+    官名或 location 推断。地方/督抚/边镇缺 seat 或未知 region 时，
+    `db.add_character` 抛 `OfficeAppointmentRejection`；本函数按项捕获其
+    `category` 记入拒收真源。每项落在 :func:`_item_savepoint_scope` 内：失败项的
+    characters / character_offices / 内存 roster 全回滚，合法 sibling 继续
+    （#1835 AC3）。事务引用在真正登记之前先校验，引用不存在事务的项在产生
+    副作用前就被拒收。"""
+    from ming_sim.exceptions import OfficeAppointmentRejection
     from ming_sim.session import register_unlisted_person_record
 
     items, rejected = _section_items(raw, label="入册声明", source=source)
@@ -1022,21 +1027,33 @@ def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provena
             loyalty = int(item.get("loyalty"))
         except (TypeError, ValueError):
             loyalty = 55
-        character = register_unlisted_person_record(
-            db, state, db.content,
-            name=name, office=office, office_type=office_type,
-            faction=str(item.get("faction") or ""),
-            aliases=[str(a) for a in (item.get("aliases") or ()) if isinstance(a, str)],
-            source_label="转译声明入册",
-            style=str(item.get("style") or ""),
-            loyalty=loyalty,
-            summary=str(item.get("summary") or ""),
-        )
-        if character is None:
-            # 字段已在上面校验过非空，到这里返回 None 只可能是姓名/别名已在册。
-            _reject(rejected, item, f"人物已在册：{name}", "invalid_state", source)
+        # Typed seat only — same keys as person-change appointment path.
+        seat = str(
+            item.get("region_id") or item.get("任所") or item.get("office_region") or ""
+        ).strip()
+        try:
+            with _item_savepoint_scope(db, f"registration_{int(state.turn)}_{id(item)}"):
+                character = register_unlisted_person_record(
+                    db, state, db.content,
+                    name=name, office=office, office_type=office_type,
+                    faction=str(item.get("faction") or ""),
+                    aliases=[str(a) for a in (item.get("aliases") or ()) if isinstance(a, str)],
+                    source_label="转译声明入册",
+                    style=str(item.get("style") or ""),
+                    loyalty=loyalty,
+                    summary=str(item.get("summary") or ""),
+                    region_id=seat,
+                )
+                if character is None:
+                    # 字段已在上面校验过非空，到这里返回 None 只可能是姓名/别名已在册。
+                    raise _ItemAtomicReject(f"人物已在册：{name}", "invalid_state")
+                if affair_id is not None:
+                    _attach_character_affair_pointer(db, character.name, affair_id)
+        except _ItemAtomicReject as exc:
+            _reject(rejected, item, exc.reason, exc.category, source)
             continue
-        if affair_id is not None:
-            _attach_character_affair_pointer(db, character.name, affair_id)
+        except OfficeAppointmentRejection as exc:
+            _reject(rejected, item, str(exc), str(exc.category), source)
+            continue
         applied.append({"name": character.name})
     return SectionResult(applied=applied, rejected=rejected)

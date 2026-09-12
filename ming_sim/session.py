@@ -39,7 +39,12 @@ from ming_sim.db import (
     normalize_office,
     resolve_office_type_preserving_title,
 )
-from ming_sim.applier import Provenance, atomic, register_runtime_outcome_callbacks
+from ming_sim.applier import (
+    Provenance,
+    atomic,
+    connection_owns_transaction,
+    register_runtime_outcome_callbacks,
+)
 from ming_sim.decree import (
     ResolveResult,
     _provenance_from_stored,
@@ -287,6 +292,7 @@ def register_unlisted_person_record(
     style: str = "",
     loyalty: int = 55,
     summary: str = "",
+    region_id: str = "",
     llm_config: Any = None,
 ) -> Optional[Character]:
     """登记名册外人物的唯一权威构档：查重（`_find_existing_minister`，姓名与
@@ -308,6 +314,12 @@ def register_unlisted_person_record(
     （`_dispatch_registrations`）则原样透传声明里的 `style`（LLM 自己写的），
     没有就留空，不落任何合成文案。
 
+    `region_id` 是调用方显式传入的 typed 任所（声明/工具 payload 的 `region_id`/
+    `任所`/`office_region`），原样写入 `Character.office_region` 供
+    `db.add_character` → `_require_local_office_region` 消费。不从官名、
+    location 或其它字段推断；地方/督抚/边镇缺 seat 由下游 typed
+    `OfficeAppointmentRejection` 拒收。
+
     返回新建的 `Character`；字段缺失或已在册（含别名命中）→ ``None``。
     """
     name = str(name or "").strip()
@@ -324,6 +336,7 @@ def register_unlisted_person_record(
     faction_value = str(faction or "中立").strip()
     if faction_value not in content.factions:
         faction_value = "中立"
+    seat = str(region_id or "").strip()
     character = Character(
         name=name,
         office=office,
@@ -339,6 +352,7 @@ def register_unlisted_person_record(
         power_id="ming",
         status="active",
         summary=str(summary or ""),
+        office_region=seat,
     )
     content.characters[name] = character
     added_name = name
@@ -350,11 +364,31 @@ def register_unlisted_person_record(
         bag.pop(target, None)
 
     register_runtime_outcome_callbacks(db, on_rollback=_drop_runtime_registration)
+    # SAVEPOINT：add_character 先 INSERT characters 再校验 seat；地方缺任所抛
+    # OfficeAppointmentRejection 时须整项回滚，避免后续外层 commit 把半写行落成孤儿。
+    # 外层已有 _item_savepoint_scope / atomic 时嵌套 SAVEPOINT 仍合法；无外层事务时
+    # 本 SAVEPOINT 自成一项原子域。commit 必须在 RELEASE 之后、且仅当本核拥有事务
+    # 时发生——否则 SAVEPOINT 期内 commit 会把整个事务（含 savepoint）提前提交，
+    # 随后 RELEASE 无点。
+    owns_transaction = connection_owns_transaction(db.conn)
+    savepoint = f"register_unlisted_{abs(id(character)) & 0xFFFFFFFF:x}"
+    db.conn.execute(f"SAVEPOINT {savepoint}")
     try:
-        db.add_character(state, character, source=str(source_label or "").strip(), llm_config=llm_config)
+        db.add_character(
+            state, character,
+            source=str(source_label or "").strip(),
+            llm_config=llm_config,
+            commit=False,
+        )
     except Exception:
+        db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         roster.pop(added_name, None)
         raise
+    else:
+        db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        if owns_transaction:
+            db.conn.commit()
     row = db.conn.execute(
         "SELECT portrait_id FROM characters WHERE name=?", (name,),
     ).fetchone()
@@ -2991,19 +3025,28 @@ class GameSession:
         # P7：style 只能原样来自 LLM 明确字段，零删改，不合成补文案（register_unlisted_person
         # 工具 schema 本就没给 LLM 开放 style 字段，故此路径目前恒为空，走下游既有缺省）。
         style = str(data.get("style") or "")
-        character = register_unlisted_person_record(
-            self.db, self.state, self.content,
-            name=str(data.get("name") or ""),
-            office=str(data.get("office") or ""),
-            office_type=str(data.get("office_type") or ""),
-            faction=str(data.get("faction") or ""),
-            aliases=aliases,
-            source_label=source_label,
-            style=style,
-            loyalty=loyalty,
-            summary=str(data.get("summary") or ""),
-            llm_config=self.llm_config,
-        )
+        # Typed 任所 only：region_id / 任所 / office_region；不从官名或 location 推断。
+        seat = str(
+            data.get("region_id") or data.get("任所") or data.get("office_region") or ""
+        ).strip()
+        from ming_sim.exceptions import OfficeAppointmentRejection
+        try:
+            character = register_unlisted_person_record(
+                self.db, self.state, self.content,
+                name=str(data.get("name") or ""),
+                office=str(data.get("office") or ""),
+                office_type=str(data.get("office_type") or ""),
+                faction=str(data.get("faction") or ""),
+                aliases=aliases,
+                source_label=source_label,
+                style=style,
+                loyalty=loyalty,
+                summary=str(data.get("summary") or ""),
+                region_id=seat,
+                llm_config=self.llm_config,
+            )
+        except OfficeAppointmentRejection:
+            return ("", False)
         if character is None:
             return ("", False)
         if self.registry is not None:

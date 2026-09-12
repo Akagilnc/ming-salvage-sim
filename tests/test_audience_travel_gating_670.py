@@ -1033,6 +1033,38 @@ def test_session_register_unlisted_summon_after_uses_admission(game, monkeypatch
         "SELECT office_type FROM characters WHERE name=?", (ineligible_name,),
     ).fetchone()["office_type"] == "宗藩"
 
+    # 同根：typed region_id 经 register_unlisted_person carrier → session 写核落 seat；
+    # 地方缺任所不从官名推断，整项拒收且不残留 characters 行。
+    local_ok = "补档巡抚有任所"
+    local_bad = "补档巡抚无任所"
+    ok_payload = json.dumps({
+        "name": local_ok,
+        "office": "河南巡抚",
+        "office_type": "地方",
+        "region_id": "henan",
+        "summon_after": False,
+    }, ensure_ascii=False)
+    bad_payload = json.dumps({
+        "name": local_bad,
+        "office": "福建巡抚",
+        "office_type": "督抚",
+        "summon_after": False,
+    }, ensure_ascii=False)
+    ok_result = _make_sess("register_unlisted_person", ok_payload).chat(
+        capital.name, f"补档{local_ok}",
+    )
+    bad_result = _make_sess("register_unlisted_person", bad_payload).chat(
+        capital.name, f"补档{local_bad}",
+    )
+    assert ok_result.registered_minister == local_ok
+    assert db.character_office_region(local_ok) == "henan"
+    assert content.characters[local_ok].office_region == "henan"
+    assert not bad_result.registered_minister
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", (local_bad,),
+    ).fetchone() is None
+    assert local_bad not in content.characters
+
 
 def test_web_register_unlisted_summon_after_uses_admission(game, monkeypatch):
     """#670：流式补档 summon_after 落 DB 后走共享 admission；不可召 office_type 不换人。"""
