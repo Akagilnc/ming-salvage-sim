@@ -34,10 +34,6 @@ def _api_cfg(**overrides) -> LLMConfig:
     return LLMConfig(**base)
 
 
-def _timeout_request() -> httpx.Request:
-    return httpx.Request("POST", "https://api.example.com/v1/chat/completions")
-
-
 def _openai_chat_with_mock_transport(handler, calls: dict) -> OpenAIChat:
     """真实 OpenAIChat（含 invoke 包装）；只在底层 http client 注入提供方失败。
 
