@@ -175,7 +175,7 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
     }
     fact_paths = [p for p in names if p.startswith("事实/")]
     assert any(p.startswith("事实/character-") for p in fact_paths)
-    assert any(p.startswith("事实/region-") or p.startswith("事实/") for p in fact_paths)
+    assert any(p.startswith("事实/region-") for p in fact_paths)
     assert set(fact_paths) <= index_lines
     # typed store still reachable for the written subjects
     assert db.textual_facts.readable_materials(subject_kind="character", subject_id=name)

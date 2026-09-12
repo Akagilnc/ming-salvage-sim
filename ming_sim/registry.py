@@ -244,72 +244,84 @@ def create_minister_agent(
     is_consort = character.office_type == "后宫"
     materials_root: MaterialsRoot | None = None
     minister_skills = None
-    if is_consort:
-        # 从 DB 取调教记录
-        cultivated = context.db.get_consort_traits(character.name)
-        extra_skills_str = ("、".join(cultivated["extra_skills"])) if cultivated["extra_skills"] else ""
-        extra_traits_str = ("、".join(cultivated["extra_traits"])) if cultivated["extra_traits"] else ""
-        cultivate_desc = ""
-        if extra_skills_str:
-            cultivate_desc += f"经皇帝调教后习得：{extra_skills_str}。"
-        if extra_traits_str:
-            cultivate_desc += f"性情逐渐变化：{extra_traits_str}。"
-        instructions = [
-            _minister_game_world_prompt(c.game_world_prompt),
-            c.consort_agent_prompt,
-            f"你当前扮演：{character.name}，{character.office}，性格{character.style}，"
-            f"人物特质：{'、'.join(character.personal_skills)}。个人简介：{character.summary}"
-            + (f"\n{cultivate_desc}" if cultivate_desc else ""),
-            f"你与皇帝的对话在后宫寝殿；同一回合复召时接续此前对话，不要重置记忆。",
-            f"当前为 {context.state.year} 年 {context.state.period} 月。",
-        ]
-        tools = [_make_cultivate_tool(character, context)]
-    else:
-        # 开场只带最小集；其余加工材料进目录，由 list/read 或 CLI cwd 自取（#1830）。
-        prepared = prepare_character_materials(context.db, context.state, character)
-        materials_root = MaterialsRoot(prepared.root)
-        if hasattr(model, "materials_dir"):
-            model.materials_dir = materials_root.root
-        monthly_block_parts = [
-            prepared.opening,
-        ]
-        instructions = [
-            _minister_game_world_prompt(c.game_world_prompt),
-            c.minister_agent_prompt,
-            f"你当前扮演：{character_context_with_db(character, context.db)}，"
-            f"任事处：{_duty_location(character.office, character.office_type, 'active')}。",
-            f"你与皇帝的多轮对话会持续到本{TURN_UNIT}退朝；同一{TURN_UNIT}复召时要接续此前奏对，不要重置记忆。",
-            "\n\n".join(monthly_block_parts),
-        ]
-        # API tools + CLI cwd share MaterialsRoot; model.materials_dir is optional.
-        tools = material_tools(materials_root) + build_minister_tools(
-            character, context,
+    try:
+        if is_consort:
+            # 从 DB 取调教记录
+            cultivated = context.db.get_consort_traits(character.name)
+            extra_skills_str = ("、".join(cultivated["extra_skills"])) if cultivated["extra_skills"] else ""
+            extra_traits_str = ("、".join(cultivated["extra_traits"])) if cultivated["extra_traits"] else ""
+            cultivate_desc = ""
+            if extra_skills_str:
+                cultivate_desc += f"经皇帝调教后习得：{extra_skills_str}。"
+            if extra_traits_str:
+                cultivate_desc += f"性情逐渐变化：{extra_traits_str}。"
+            instructions = [
+                _minister_game_world_prompt(c.game_world_prompt),
+                c.consort_agent_prompt,
+                f"你当前扮演：{character.name}，{character.office}，性格{character.style}，"
+                f"人物特质：{'、'.join(character.personal_skills)}。个人简介：{character.summary}"
+                + (f"\n{cultivate_desc}" if cultivate_desc else ""),
+                f"你与皇帝的对话在后宫寝殿；同一回合复召时接续此前对话，不要重置记忆。",
+                f"当前为 {context.state.year} 年 {context.state.period} 月。",
+            ]
+            tools = [_make_cultivate_tool(character, context)]
+        else:
+            # 开场只带最小集；其余加工材料进目录，由 list/read 或 CLI cwd 自取（#1830）。
+            prepared = prepare_character_materials(context.db, context.state, character)
+            materials_root = MaterialsRoot(prepared.root)
+            if hasattr(model, "materials_dir"):
+                model.materials_dir = materials_root.root
+            monthly_block_parts = [
+                prepared.opening,
+            ]
+            instructions = [
+                _minister_game_world_prompt(c.game_world_prompt),
+                c.minister_agent_prompt,
+                f"你当前扮演：{character_context_with_db(character, context.db)}，"
+                f"任事处：{_duty_location(character.office, character.office_type, 'active')}。",
+                f"你与皇帝的多轮对话会持续到本{TURN_UNIT}退朝；同一{TURN_UNIT}复召时要接续此前奏对，不要重置记忆。",
+                "\n\n".join(monthly_block_parts),
+            ]
+            # API tools + CLI cwd share MaterialsRoot; model.materials_dir is optional.
+            tools = material_tools(materials_root) + build_minister_tools(
+                character, context,
+            )
+            # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
+            if character.office_type in ("司礼监", "礼部"):
+                tools.append(_make_select_consort_tool(context))
+            minister_skills = _skills_for(character.office_type)
+        agent = Agent(
+            name=character.name,
+            id=f"minister-{character.name}",
+            session_id=session_id or f"minister-{character.name}-turn-{context.state.turn}",
+            db=agno_db,
+            model=model,
+            instructions=instructions,
+            tools=tools,
+            skills=minister_skills if not is_consort else None,
+            add_history_to_context=True,
+            num_history_runs=6,
+            markdown=False,
         )
-        # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
-        if character.office_type in ("司礼监", "礼部"):
-            tools.append(_make_select_consort_tool(context))
-        minister_skills = _skills_for(character.office_type)
-    agent = Agent(
-        name=character.name,
-        id=f"minister-{character.name}",
-        session_id=session_id or f"minister-{character.name}-turn-{context.state.turn}",
-        db=agno_db,
-        model=model,
-        instructions=instructions,
-        tools=tools,
-        skills=minister_skills if not is_consort else None,
-        add_history_to_context=True,
-        num_history_runs=6,
-        markdown=False,
-    )
-    if materials_root is not None:
-        try:
+        if materials_root is not None:
+            # Ownership must land on the live agent handle. Binding failure is not
+            # "tools still close over it" — release the tree and keep the original error.
             agent.materials_root = materials_root
-        except Exception:
-            # Construction doubles may return a plain mapping; tools already
-            # close over materials_root, so ownership still tracks the live path.
-            pass
-    return agent
+        return agent
+    except BaseException as primary:
+        if materials_root is not None:
+            root = materials_root.clear()
+            if hasattr(model, "materials_dir"):
+                model.materials_dir = ""
+            cleanup_err: BaseException | None = None
+            try:
+                if root:
+                    release_material_tree(root)
+            except BaseException as exc:
+                cleanup_err = exc
+            if cleanup_err is not None:
+                raise primary from cleanup_err
+        raise primary
 
 
 class MinisterRegistry:

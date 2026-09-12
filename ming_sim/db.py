@@ -15750,14 +15750,15 @@ class GameDB:
         """Authoritative office → archive_key + region_ids.
 
         Shared by character materials scope and decree-dossier succession.
-        Jurisdiction comes only from typed office relations. ``location`` is a
-        seat resolver after the office is confirmed local — never a way to hand
-        whole-province scope to 未仕/内廷 mere presence. Local archive keys carry
-        durable region identity so generic titles cannot collide across provinces.
+        Jurisdiction / local archive region comes only from the durable typed
+        ``office_slots`` posting→region relation. Character ``location`` is
+        physical presence (启程/抵达/移驻) and must never mint 辖域 or split
+        archive keys; free-text office titles are not parsed for region either.
+        ``location`` remains accepted for call-site stability and is ignored.
         """
+        del location  # physical presence ≠ posting jurisdiction
         title = normalize_office(str(office or ""))
         kind = str(office_type or "").strip()
-        location_id = str(location or "").strip()
 
         if kind and kind in self._central_archive_office_types():
             return {"archive_key": f"central:{kind}", "region_ids": ()}
@@ -15775,28 +15776,11 @@ class GameDB:
                 if rid:
                     region_ids = (rid,)
 
-        if not region_ids and title:
-            regions = getattr(self.content, "regions", None) or {}
-            if regions:
-                from ming_sim.matching import match_region_id_from_text
-                matched = match_region_id_from_text(title, regions)
-                if matched:
-                    region_ids = (matched,)
-
-        if not region_ids and location_id:
-            regions = getattr(self.content, "regions", None) or {}
-            if location_id in regions:
-                region_ids = (location_id,)
-            elif regions:
-                from ming_sim.matching import canonical_region_id_exact
-                resolved = canonical_region_id_exact(location_id, regions)
-                if resolved:
-                    region_ids = (resolved,)
-
         archive_key = ""
         if title and region_ids:
             archive_key = f"slot:{title}@{region_ids[0]}"
         elif title:
+            # Exact durable title identity only — no inferred province qualifier.
             archive_key = f"slot:{title}"
         return {"archive_key": archive_key, "region_ids": region_ids}
 

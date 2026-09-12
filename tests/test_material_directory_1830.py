@@ -191,6 +191,7 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     assert read_material(Path(api_agent.materials_root.root), "INDEX.txt").strip() == "live"
 
     # prepare failure must not leave empty UUID invocation parents behind.
+    # write_tree primary stays outward even when cleanup also fails.
     fail_parent = tmp_path / ("3" * 32)
     fail_dest = fail_parent / "leaf"
 
@@ -198,9 +199,25 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
         raise RuntimeError("prepare-write-boom")
 
     from ming_sim.materials import _publish_material_tree
-    with pytest.raises(RuntimeError, match="prepare-write-boom"):
+    with pytest.raises(RuntimeError, match="prepare-write-boom") as boom_exc:
         _publish_material_tree(None, fail_dest, _boom)
     assert not fail_parent.exists()
+    assert boom_exc.value.__cause__ is None
+
+    dual_parent = tmp_path / ("7" * 32)
+    dual_dest = dual_parent / "leaf"
+
+    def _boom_write(_tmp):
+        raise RuntimeError("ORIGINAL_WRITE")
+
+    def _rmtree_cleanup(path, *args, **kwargs):
+        raise OSError("CLEANUP_SECONDARY")
+
+    with patch("ming_sim.materials.shutil.rmtree", side_effect=_rmtree_cleanup):
+        with pytest.raises(RuntimeError, match="ORIGINAL_WRITE") as dual_exc:
+            _publish_material_tree(None, dual_dest, _boom_write)
+    assert isinstance(dual_exc.value.__cause__, OSError)
+    assert "CLEANUP_SECONDARY" in str(dual_exc.value.__cause__)
 
     registry.agents["other"] = _agent_with_materials(closed, with_cli_cwd=False)
     registry.close()
@@ -349,13 +366,19 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
 
     def fake_agent(**kwargs):
         captured.update(kwargs)
-        return kwargs
+        # Attribute-accepting double: materials_root binding must succeed so the
+        # prepared tree stays owned (plain dict would fail setattr and release).
+        return SimpleNamespace(**kwargs)
 
     cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    agent = None
     with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
          patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
-        create_minister_agent(character, cfg, _ctx(game), db)
+        agent = create_minister_agent(character, cfg, _ctx(game), db)
 
+    assert isinstance(agent.materials_root, MaterialsRoot)
+    assert agent.materials_root.root
+    assert Path(agent.materials_root.root).exists()
     tool_names = {getattr(fn, "__name__", "") for fn in captured["tools"]}
     assert "list_materials" in tool_names
     assert "read_material" in tool_names
@@ -373,6 +396,76 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
     rel = next(line for line in listing.splitlines() if line.endswith("经历.txt"))
     body = tools["read_material"](rel)
     assert body
+
+    # Real OpenAIChat API path (no model.materials_dir) still binds MaterialsRoot.
+    from agno.models.openai import OpenAIChat
+
+    api_model = OpenAIChat(id="gpt-4o-mini", api_key="sk-test-not-used")
+    assert not hasattr(api_model, "materials_dir")
+    real_captured = {}
+
+    def realish_agent(**kwargs):
+        real_captured.update(kwargs)
+        agent_obj = SimpleNamespace(**kwargs)
+        return agent_obj
+
+    cfg_api = LLMConfig(
+        api_key="sk-test-not-used", base_url="https://example.invalid/v1",
+        model="gpt-4o-mini", channel="api",
+    )
+    with patch("ming_sim.registry.Agent", side_effect=realish_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=api_model):
+        api_agent = create_minister_agent(character, cfg_api, _ctx(game), db)
+    assert isinstance(api_agent.materials_root, MaterialsRoot)
+    assert api_agent.materials_root.root
+    assert Path(api_agent.materials_root.root).exists()
+    assert not hasattr(api_agent.model, "materials_dir")
+    api_tools = material_tools(api_agent.materials_root)
+    assert "INDEX.txt" in api_tools[0]("")
+
+    # Agent construction failure releases the prepared tree and keeps primary error.
+    prepared_roots: list[str] = []
+
+    def tracking_prepare(*args, **kwargs):
+        prepared = prepare_character_materials(*args, **kwargs)
+        prepared_roots.append(str(prepared.root))
+        return prepared
+
+    def boom_agent(**_kwargs):
+        raise RuntimeError("agent-ctor-boom")
+
+    with patch("ming_sim.registry.Agent", side_effect=boom_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry.prepare_character_materials", side_effect=tracking_prepare):
+        with pytest.raises(RuntimeError, match="agent-ctor-boom"):
+            create_minister_agent(character, cfg, _ctx(game), db)
+    assert prepared_roots and not Path(prepared_roots[-1]).exists()
+    assert not Path(prepared_roots[-1]).parent.exists()
+
+    # materials_root binding failure likewise releases ownership — no silent pass.
+    bind_roots: list[str] = []
+
+    def tracking_prepare_bind(*args, **kwargs):
+        prepared = prepare_character_materials(*args, **kwargs)
+        bind_roots.append(str(prepared.root))
+        return prepared
+
+    class _NoMaterialsAttr:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                object.__setattr__(self, key, value)
+
+        def __setattr__(self, key, value):
+            if key == "materials_root":
+                raise AttributeError("materials_root frozen")
+            object.__setattr__(self, key, value)
+
+    with patch("ming_sim.registry.Agent", side_effect=lambda **kw: _NoMaterialsAttr(**kw)), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry.prepare_character_materials", side_effect=tracking_prepare_bind):
+        with pytest.raises(AttributeError, match="materials_root frozen"):
+            create_minister_agent(character, cfg, _ctx(game), db)
+    assert bind_roots and not Path(bind_roots[-1]).exists()
 
 
 def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):

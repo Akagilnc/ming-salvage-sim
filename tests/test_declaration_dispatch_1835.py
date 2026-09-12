@@ -443,15 +443,19 @@ def test_same_declaration_registration_establishes_target_before_dependent_facts
         subject_kind="character", subject_id="新入册人甲",
     )
     assert [f.body for f in facts] == ["同声明入册后事实"]
-    by_text = {
-        str((r.item or {}).get("text") or ""): r.category
-        for r in result.commissions.rejected
-    }
-    assert by_text.get("拨饷坏账户") == "invalid_enum"
-    assert by_text.get("拨饷坏用途") == "invalid_enum"
-    assert by_text.get("拨饷缺目标") == "invalid_shape"
-    assert by_text.get("拨饷坏数额") == "invalid_shape"
-    assert by_text.get("拨饷幽灵军") == "hallucinated_id"
+    # Case identity = declaration array order + typed grant fields, not free-text labels.
+    rejected = list(result.commissions.rejected)
+    assert len(rejected) == 5
+    assert rejected[0].category == "invalid_enum"
+    assert (rejected[0].item or {}).get("grant", {}).get("account") == "不是国库"
+    assert rejected[1].category == "invalid_enum"
+    assert (rejected[1].item or {}).get("grant", {}).get("purpose") == "不是补饷"
+    assert rejected[2].category == "invalid_shape"
+    assert (rejected[2].item or {}).get("grant", {}).get("target_id") == ""
+    assert rejected[3].category == "invalid_shape"
+    assert (rejected[3].item or {}).get("grant", {}).get("amount") == "not-a-number"
+    assert rejected[4].category == "hallucinated_id"
+    assert (rejected[4].item or {}).get("grant", {}).get("target_id") == "ghost-army-no-such"
 
 
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):

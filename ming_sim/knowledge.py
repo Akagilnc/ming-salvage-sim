@@ -423,18 +423,10 @@ def _world(
         result["personnel"] = _appointment_register(db, state)
 
     # Authoritative office→辖域 projection (shared with dossier archive keys).
-    # Never gate on the two-row 查访 office_slots catalog alone.
-    location = ""
-    loc_row = db.conn.execute(
-        "SELECT location FROM characters WHERE name=?", (character_name,),
-    ).fetchone()
-    if loc_row is not None:
-        location = str(loc_row["location"] or "")
+    # Region only from durable office_slots posting→region — never character location.
     projected = {}
     if hasattr(db, "project_office_identity"):
-        projected = db.project_office_identity(
-            office_name, office_type, location=location,
-        ) or {}
+        projected = db.project_office_identity(office_name, office_type) or {}
     region_ids = tuple(
         str(rid) for rid in (projected.get("region_ids") or ()) if str(rid or "").strip()
     )

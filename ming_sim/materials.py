@@ -163,23 +163,25 @@ def _publish_material_tree(
         if dest.exists():
             shutil.rmtree(dest)
         tmp.rename(dest)
-    except Exception:
-        primary: BaseException | None = None
+    except Exception as original:
+        # write_tree / rename primary must stay the outward exception; cleanup
+        # failures only trail (ADR 0005 / materials ownership).
+        cleanup_err: BaseException | None = None
         try:
             if tmp.exists():
                 shutil.rmtree(tmp)
         except BaseException as exc:
-            primary = exc
+            cleanup_err = exc
         parent = _empty_uuid_invocation_parent(dest)
         if parent is not None:
             try:
                 parent.rmdir()
             except BaseException as exc:
-                if primary is None:
-                    primary = exc
-        if primary is not None:
-            raise primary
-        raise
+                if cleanup_err is None:
+                    cleanup_err = exc
+        if cleanup_err is not None:
+            raise original from cleanup_err
+        raise original
     return dest, index
 
 
