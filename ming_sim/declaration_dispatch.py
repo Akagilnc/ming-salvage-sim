@@ -736,7 +736,7 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
         try:
             with _item_savepoint_scope(db, f"on_scene_fact_{int(state.turn)}_{id(item)}"):
                 outcome = apply_person_changes_only(
-                    db, state, [item], origin_ref="转译声明",
+                    db, state, [item], content=db.content, origin_ref="转译声明",
                 )
                 results = list(outcome.get("applied_person_changes") or ())
                 if not results:

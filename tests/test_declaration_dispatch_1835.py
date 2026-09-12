@@ -13,7 +13,9 @@ import json
 
 import pytest
 
+from ming_sim.content import GameContent
 from ming_sim.declaration_dispatch import dispatch_declaration
+import ming_sim.issues as issues_mod
 from ming_sim.public_sayings import list_public_sayings
 
 
@@ -319,46 +321,58 @@ def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_t
     冲突时连同人物变更一起回滚——不是「变更真落库、只是绑事务失败」的半写。
     跨层回滚：`apply_person_changes_only` 直接改了 `content.characters[name]`
     这个运行时对象（`db.set_character_status`），SAVEPOINT 只回滚 DB 行；
-    本项回滚必须连运行时对象也一并还原，否则 DB 与运行时盘面分叉。"""
+    本项回滚必须连运行时对象也一并还原，否则 DB 与运行时盘面分叉。
+
+    受控顺序污染：issues 全局绑定故意指向另一份 GameContent，而 db.content
+    仍是本局 fixture。人物写核必须用当前局 content，不得静默落到进程全局。"""
     db, state, content = game
-    minister = _minister(db)
-    affair_a = db.affairs.open(
-        name="宁远护送", origin="拨银、调将、派兵去宁远",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    affair_b = db.affairs.open(
-        name="蓟镇募兵", origin="募兵备边",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    first = dispatch_declaration(db, state, {
-        "on_scene_facts": [{
-            "name": minister, "动作": "处置", "status": "imprisoned", "reason": "下狱待勘",
-            "affair_declaration": {"attach": "existing", "affair_id": affair_a.id},
-        }],
-    })
-    assert len(first.on_scene_facts.applied) == 1
-    status_before, _ = db.get_character_status(minister)
-    assert status_before == "imprisoned"
+    # 全局绑定 ≠ db.content：复现 CI 顺序污染，不依赖前案偶然顺序。
+    polluted = GameContent.load()
+    assert polluted is not content
+    issues_mod.bind_content(polluted)
+    try:
+        minister = _minister(db)
+        affair_a = db.affairs.open(
+            name="宁远护送", origin="拨银、调将、派兵去宁远",
+            year=state.year, period=state.period, turn=state.turn,
+        )
+        affair_b = db.affairs.open(
+            name="蓟镇募兵", origin="募兵备边",
+            year=state.year, period=state.period, turn=state.turn,
+        )
+        first = dispatch_declaration(db, state, {
+            "on_scene_facts": [{
+                "name": minister, "动作": "处置", "status": "imprisoned", "reason": "下狱待勘",
+                "affair_declaration": {"attach": "existing", "affair_id": affair_a.id},
+            }],
+        })
+        assert len(first.on_scene_facts.applied) == 1
+        status_before, _ = db.get_character_status(minister)
+        assert status_before == "imprisoned"
 
-    conflicting = dispatch_declaration(db, state, {
-        "on_scene_facts": [{
-            "name": minister, "动作": "处置", "status": "dead", "reason": "另案牵连",
-            "affair_declaration": {"attach": "existing", "affair_id": affair_b.id},
-        }],
-    })
-    assert conflicting.on_scene_facts.applied == []
-    assert len(conflicting.on_scene_facts.rejected) == 1
-    assert conflicting.on_scene_facts.rejected[0].category == "invalid_state"
+        conflicting = dispatch_declaration(db, state, {
+            "on_scene_facts": [{
+                "name": minister, "动作": "处置", "status": "dead", "reason": "另案牵连",
+                "affair_declaration": {"attach": "existing", "affair_id": affair_b.id},
+            }],
+        })
+        assert conflicting.on_scene_facts.applied == []
+        assert len(conflicting.on_scene_facts.rejected) == 1
+        assert conflicting.on_scene_facts.rejected[0].category == "invalid_state"
 
-    status_after, _ = db.get_character_status(minister)
-    assert status_after == "imprisoned"  # 没有被冲突项的「dead」半写进去
-    row = db.conn.execute(
-        "SELECT affair_id FROM characters WHERE name=?", (minister,),
-    ).fetchone()
-    assert row["affair_id"] == affair_a.id  # 指针仍是最初绑的那个，没被改动
-    # DB 回滚必须连运行时对象一起还原：不能出现「DB 仍是 imprisoned、
-    # content.characters 却停在冲突项写过的 dead」这种跨层分叉。
-    assert content.characters[minister].status == "imprisoned"
+        status_after, _ = db.get_character_status(minister)
+        assert status_after == "imprisoned"  # 没有被冲突项的「dead」半写进去
+        row = db.conn.execute(
+            "SELECT affair_id FROM characters WHERE name=?", (minister,),
+        ).fetchone()
+        assert row["affair_id"] == affair_a.id  # 指针仍是最初绑的那个，没被改动
+        # DB 回滚必须连运行时对象一起还原：不能出现「DB 仍是 imprisoned、
+        # content.characters 却停在冲突项写过的 dead」这种跨层分叉。
+        # 三者一致：DB、事务指针、当前局 content（不是被污染的全局绑定）。
+        assert content.characters[minister].status == "imprisoned"
+        assert db.content.characters[minister].status == "imprisoned"
+    finally:
+        issues_mod.bind_content(content)
 
 
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
