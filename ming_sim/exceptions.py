@@ -28,6 +28,7 @@ class LLMUnavailable(Exception):
         provider_message: str = "",
         status_code: int | None = None,
         transport_attempts: list | None = None,
+        stage: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -36,6 +37,8 @@ class LLMUnavailable(Exception):
         self.status_code = status_code
         # #1465：结构化 attempt 账（可回指）；缺省 None＝未走统一 transport
         self.transport_attempts = transport_attempts
+        # #884：外呼阶段名（smoke-main / smoke-advanced）；缺省 None＝未标阶段
+        self.stage = stage
 
 
 class PromulgationHealEvidence(NamedTuple):

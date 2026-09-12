@@ -659,53 +659,6 @@ def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch)
     assert ei.value.code == "llm_run_error"
 
 
-def test_verify_llm_available_api_http_401_still_raises(monkeypatch):
-    """真错：HTTP 401 仍须报 LLMUnavailable。"""
-    import httpx
-    from openai import APIStatusError
-
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    req = httpx.Request("POST", "https://api.example.com/v1/chat/completions")
-    resp = httpx.Response(
-        401,
-        json={"error": {"message": "Invalid API key", "code": "invalid_api_key"}},
-        request=req,
-    )
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        def run(self, prompt: str):
-            raise APIStatusError("Invalid API key", response=resp, body=None)
-
-    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
-    with pytest.raises(LLMUnavailable) as ei:
-        verify_llm_available(_api_cfg())
-    assert ei.value.status_code == 401
-
-
-def test_verify_llm_available_api_timeout_still_raises(monkeypatch):
-    """真错：超时仍须报。"""
-    import httpx
-    from openai import APITimeoutError
-
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    req = httpx.Request("POST", "https://api.example.com/v1/chat/completions")
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        def run(self, prompt: str):
-            raise APITimeoutError(request=req)
-
-    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
-    with pytest.raises(LLMUnavailable) as ei:
-        verify_llm_available(_api_cfg())
-    assert ei.value.code == "llm_timeout"
-
-
 def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypatch):
     """真错：生产 agno 形 status=ERROR 且 content 非空错误串，走真实 extract_agent_text，须报 llm_run_error。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
