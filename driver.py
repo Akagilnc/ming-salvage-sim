@@ -159,7 +159,7 @@ def _merge_settle_simulator_payload(ctx, *, dossier_ids_at_input) -> dict:
 
 
 def run_prepare(db, state, content, *, registry=None, source: Provenance = Provenance.player_decree,
-                decree_text: str = "") -> list:
+                decree_text: str = "") -> dict:
     """前半段：共享 prepare seam → settling + ready=0 context。
 
     唯一 handoff 是已持久化的完整 ``simulator_payload``，其中 open_affairs

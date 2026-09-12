@@ -19935,6 +19935,9 @@ class GameDB:
                 (int(target_did), int(directive_id)),
             ).fetchone()
             if bound is not None:
+                self._attach_affair_from_payload(state, structured, int(target_did))
+                if commit:
+                    self._commit_dossier_write(True)
                 return [int(target_did)]
             from ming_sim.rescript_actions import apply_imperial_deliberation_push
             push_mode = self._normalize_dossier_mode(
@@ -19954,6 +19957,7 @@ class GameDB:
                 "WHERE id=? AND (directive_id IS NULL OR directive_id=0 OR directive_id=?)",
                 (int(directive_id), int(pushed), int(directive_id)),
             )
+            self._attach_affair_from_payload(state, structured, int(pushed))
             if commit:
                 self._commit_dossier_write(True)
             return [int(pushed)]

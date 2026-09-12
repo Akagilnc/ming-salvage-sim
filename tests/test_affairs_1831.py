@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 import ming_sim.audience_night as audience_night
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
@@ -12,7 +14,7 @@ import ming_sim.simulation as simulation
 from ming_sim.audience_extraction import parse_extraction_facts
 from ming_sim.db import GameDB
 from ming_sim import issues as issues_mod
-from ming_sim.issues import apply_score_extraction
+from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from ming_sim.session import GameSession
 from ming_sim.simulation import (
@@ -528,6 +530,50 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
     assert db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"] == issues_before + 1
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == affairs_before + 1
 
+    region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()["id"]
+    unrest_before = db.conn.execute(
+        "SELECT unrest FROM regions WHERE id=?", (region_id,),
+    ).fetchone()["unrest"]
+    region_denied = apply_score_extraction(
+        db, state,
+        {"region_delta": {
+            region_id: {
+                "origin_ref": db.affairs.origin_ref(second.id),
+                "unrest": 1,
+            },
+        }},
+        content=content, open_affair_ids_at_input={first.id},
+    )
+    assert any(row.get("rejected") for row in region_denied["region_changes"])
+    assert db.conn.execute(
+        "SELECT unrest FROM regions WHERE id=?", (region_id,),
+    ).fetchone()["unrest"] == unrest_before
+
+    treasury_before = state.metrics["国库"]
+    affairs_before_malformed = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    malformed = apply_score_extraction(
+        db, state,
+        {"economy_moves": [
+            {
+                "account": "国库", "delta": -1, "category": "善后", "reason": "坏声明",
+                "affair_declaration": True,
+            },
+            {
+                "account": "国库", "delta": -2, "category": "善后", "reason": "合法同批",
+                "affair_declaration": _declaration(identity="legal-sibling"),
+            },
+        ]},
+        content=content, open_affair_ids_at_input={first.id, second.id},
+    )
+    assert any(
+        row.get("report_section") == "economy_moves"
+        for row in malformed["validate_shape_rejections"]
+    )
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM affairs",
+    ).fetchone()["n"] == affairs_before_malformed + 1
+    assert state.metrics["国库"] == treasury_before - 2
+
 
 def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
     db, state, _ = game
@@ -566,6 +612,17 @@ def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
     else:
         raise AssertionError("expected birth close to fail")
     assert db.affairs.get(first.id).status == "open"
+    for bad_id in (True, 1.5):
+        closed = apply_score_extraction(
+            db, state,
+            {"affair_declarations": [{"attach": "close", "affair_id": bad_id}]},
+            open_affair_ids_at_input={first.id},
+        )
+        assert db.affairs.get(first.id).status == "open"
+        assert any(
+            row.get("report_section") == "affair_declarations"
+            for row in closed["validate_shape_rejections"]
+        )
 
 
 def test_translation_experience_marks_affair_without_dossier(game):
@@ -789,3 +846,32 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
     ]
     assert len(rejected_persons) == 1
     assert "事务不在本批" in str(rejected_persons[0].get("reason") or "")
+
+
+def test_new_issue_affair_attach_failure_leaves_no_partial_product(game, monkeypatch):
+    db, state, _ = game
+    issues_before = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
+    affairs_before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
+    pointers_before = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM issues WHERE affair_id > 0",
+    ).fetchone()["n"]
+
+    def boom(*_a, **_k):
+        raise RuntimeError("attach boom")
+
+    monkeypatch.setattr(db.affairs, "attach_from_declaration", boom)
+    with pytest.raises(RuntimeError, match="attach boom"):
+        apply_issue_tracker_output(
+            db, state,
+            {"new_issues": [{
+                "origin_kind": "decree",
+                "kind": "situation",
+                "title": "原子落库",
+                "affair_declaration": _declaration(identity="atomic-issue"),
+            }]},
+        )
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"] == issues_before
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == affairs_before
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM issues WHERE affair_id > 0",
+    ).fetchone()["n"] == pointers_before

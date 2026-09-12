@@ -1008,6 +1008,8 @@ def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
 
 
 def _open_affair_ids_from_payload(payload: object) -> set[int]:
+    from ming_sim.entities.affair import parse_positive_affair_id
+
     if not isinstance(payload, dict):
         return set()
     raw = payload.get("open_affairs")
@@ -1018,11 +1020,9 @@ def _open_affair_ids_from_payload(payload: object) -> set[int]:
         if not isinstance(item, dict):
             continue
         try:
-            affair_id = int(item.get("id"))
+            ids.add(parse_positive_affair_id(item.get("id")))
         except (TypeError, ValueError):
             continue
-        if affair_id > 0:
-            ids.add(affair_id)
     return ids
 
 

@@ -49,6 +49,12 @@ def _ctx(game):
 def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
+    db.textual_facts.append(
+        subject_kind="character",
+        subject_id=character.name,
+        body="本官亲见府库告罄。",
+        year=state.year, period=state.period, turn=state.turn,
+    )
     dest = tmp_path / "materials"
     prepared = prepare_character_materials(db, state, character, dest_root=dest)
 
@@ -57,8 +63,14 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert "人物/朝臣名册.txt" in names
     assert any(p.startswith("人物/") and p.endswith("/经历.txt") for p in names)
     assert any(p.startswith("人物/") and p.endswith("/公事档案.txt") for p in names)
+    assert any(p.startswith("密令/") for p in names)
+    assert any(p.startswith("荐人/") for p in names)
+    assert any(p.startswith("事实/") for p in names)
     index = read_material(prepared.root, "INDEX.txt")
     assert "人物/朝臣名册.txt" in index.splitlines()
+    assert any(line.startswith("密令/") for line in index.splitlines())
+    assert any(line.startswith("荐人/") for line in index.splitlines())
+    assert any(line.startswith("事实/") for line in index.splitlines())
     for line in index.splitlines():
         if line.strip():
             assert line.strip() in names

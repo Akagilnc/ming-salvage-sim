@@ -31,7 +31,12 @@ from ming_sim.registry import (
     create_minister_agent,
 )
 from ming_sim.tools import build_minister_tools
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
+from ming_sim.materials import (
+    _safe_segment,
+    list_materials,
+    prepare_character_materials,
+    read_material,
+)
 from ming_sim.qualitative import (
     INTRIGUE_QUALITATIVE_PLACEHOLDER,
     building_condition_description,
@@ -725,9 +730,16 @@ def test_minister_materials_characterize_region_army_and_issue_progress(game):
     db.conn.commit()
     minister = next(c for c in content.characters.values() if c.office_type == "兵部")
     prepared = prepare_character_materials(db, state, minister)
+    names = list_materials(prepared.root)
+    for row in db.region_rows():
+        name = str(row["name"] or row["id"] or "")
+        assert f"地区/{_safe_segment(name)}/详情.txt" in names
+    for row in db.army_rows():
+        key = str(row["name"] or row["id"] or "")
+        assert f"军队/{_safe_segment(key)}/详情.txt" in names
     blob = "\n".join(
         read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
+        for path in names if path != "INDEX.txt"
     )
     assert not _RAW_ABSTRACT_AXIS.search(blob)
     assert _support_label(13) in blob

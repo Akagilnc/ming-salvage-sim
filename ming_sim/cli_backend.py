@@ -700,12 +700,16 @@ def _cli_runner_command(
             "--output-format", "text",
         ]
         if materials_dir:
+            # Single native isolation group (verified on host Claude):
+            # --restricted ignores user/project/local settings, drops command
+            # tools, and confines file tools to cwd; empty mcpServers + strict
+            # blocks foreign MCP. Do not use --bare here — it skips keychain auth.
             cmd += [
+                "--restricted",
+                "--strict-mcp-config",
+                "--mcp-config", '{"mcpServers":{}}',
                 "--allowedTools", "Read", "Glob", "Grep",
-                "--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit",
-                "WebFetch", "WebSearch", "Task",
                 "--permission-mode", "dontAsk",
-                "--no-session-persistence",
             ]
         else:
             cmd += ["--disallowed-tools", *_CLAUDE_DISALLOWED]
@@ -3296,6 +3300,14 @@ def extract_draft_intent(
         push_mode = _directive_mode(obj.get("颁布方式"))
         if push_mode is not None:
             push_out["mode"] = push_mode
+        try:
+            push_declaration = _affair_declaration_from_draft_obj(obj)
+        except (TypeError, ValueError):
+            push_declaration = {}
+        if push_declaration:
+            push_out["affair_declaration"] = _stamp_split_birth_key(
+                push_declaration["affair_declaration"]
+            )
         return push_out
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
     if dossier_action == "acting_appointment":
@@ -3630,10 +3642,14 @@ def project_draft_extract_to_directive_payload(
     if kind == "push":
         push_id = imperial_push_target_dossier_id(payload)
         assert push_id is not None
-        return {
+        push_payload: Dict[str, object] = {
             "target_dossier_id": push_id,
             "mode": declared_mode,
         }
+        declaration = captured.get("affair_declaration")
+        if declaration not in (None, ""):
+            push_payload["affair_declaration"] = declaration
+        return push_payload
     if kind == "empty":
         return _manual_special_decree_payload(declared_mode)
     return payload

@@ -5757,51 +5757,65 @@ def apply_issue_tracker_output(
             else []
         )
         # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
-        issue_id = db.insert_issue(
-            state,
-            kind=kind,
-            title=title[:60] or "无名事项",
-            origin_kind="decree",
-            origin_ref=origin_ref,
-            bar_value=bar_value,
-            bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
-            bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
-            inertia=inertia,
-            stage_text=str(ni.get("stage_text") or "")[:120],
-            severity=severity,
-            region_hint=str(ni.get("region_hint") or ""),
-            faction_hint=str(ni.get("faction_hint") or ""),
-            tags=tags,
-            # Keep ADR 0053's structured roster intact.  insert_issue writes the
-            # compatibility name list and the durable roster together; reducing
-            # dict entries to str(dict) creates phantom character names.
-            participants=roster_input or [],
-            ongoing_effects=ongoing_eff,
-            cancellable="decree" if is_commitment else _normalize_cancellable(ni.get("cancellable")),
-            cancel_cost=cancel_cost,
-            effect_on_resolve=resolve_eff,
-            effect_on_fail=fail_eff,
-            resolve_condition=resolve_condition[:300],
-            fail_condition=str(ni.get("fail_condition") or "")[:300],
-            end_turn=end_turn,
-            stop_condition=stop_condition,
-            commitment_kind=commitment_kind,
-            stages_json=stages_norm,
-            commit=commit_now,
-        )
+        issue_commit = False if issue_affair is not None else commit_now
+        savepoint = None
         if issue_affair is not None:
-            db.affairs.attach_from_declaration(
-                "issues",
-                issue_id,
-                issue_affair,
-                year=int(state.year),
-                period=int(state.period),
-                turn=int(state.turn),
-                authorized_ids=(
-                    open_affair_ids_at_input
-                    if isinstance(open_affair_ids_at_input, set) else None
-                ),
+            savepoint = f"new_issue_affair_{len(applied_new)}"
+            db.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            issue_id = db.insert_issue(
+                state,
+                kind=kind,
+                title=title[:60] or "无名事项",
+                origin_kind="decree",
+                origin_ref=origin_ref,
+                bar_value=bar_value,
+                bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
+                bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
+                inertia=inertia,
+                stage_text=str(ni.get("stage_text") or "")[:120],
+                severity=severity,
+                region_hint=str(ni.get("region_hint") or ""),
+                faction_hint=str(ni.get("faction_hint") or ""),
+                tags=tags,
+                # Keep ADR 0053's structured roster intact.  insert_issue writes the
+                # compatibility name list and the durable roster together; reducing
+                # dict entries to str(dict) creates phantom character names.
+                participants=roster_input or [],
+                ongoing_effects=ongoing_eff,
+                cancellable="decree" if is_commitment else _normalize_cancellable(ni.get("cancellable")),
+                cancel_cost=cancel_cost,
+                effect_on_resolve=resolve_eff,
+                effect_on_fail=fail_eff,
+                resolve_condition=resolve_condition[:300],
+                fail_condition=str(ni.get("fail_condition") or "")[:300],
+                end_turn=end_turn,
+                stop_condition=stop_condition,
+                commitment_kind=commitment_kind,
+                stages_json=stages_norm,
+                commit=issue_commit,
             )
+            if issue_affair is not None:
+                db.affairs.attach_from_declaration(
+                    "issues",
+                    issue_id,
+                    issue_affair,
+                    year=int(state.year),
+                    period=int(state.period),
+                    turn=int(state.turn),
+                    authorized_ids=(
+                        open_affair_ids_at_input
+                        if isinstance(open_affair_ids_at_input, set) else None
+                    ),
+                )
+                db.conn.execute(f"RELEASE {savepoint}")
+                if commit_now:
+                    db.conn.commit()
+        except Exception:
+            if savepoint is not None:
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+            raise
         applied_item = {"issue_id": issue_id, "kind": kind, "title": title, "rejected": False}
         if commitment_kind:
             applied_item["commitment_kind"] = commitment_kind
@@ -8236,8 +8250,8 @@ def apply_score_extraction(
             return item, None
         try:
             parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
-        except (TypeError, ValueError):
-            return item, None
+        except (TypeError, ValueError) as exc:
+            return item, str(exc)
         if parsed is None or parsed.get("attach") != "new":
             return item, None
         identity = str(parsed.get("identity") or "").strip()
@@ -8285,6 +8299,17 @@ def apply_score_extraction(
             turn=int(state.turn),
             authorized_ids=authorized_open_affairs,
         )
+
+    def _unauthorized_affair_origin(origin_ref: object) -> Dict[str, object] | None:
+        from ming_sim.entities.affair import parse_origin_ref
+        kind, affair_id = parse_origin_ref(origin_ref)
+        if kind == "affair" and affair_id not in authorized_open_affairs:
+            return {
+                "rejected": True,
+                "category": "invalid_enum",
+                "reason": str(UnauthorizedAffairOriginRef()),
+            }
+        return None
 
     # #623：召对 extraction 真入口——反悔/坚持消费哭谏条（须先于 cancels 物化，
     # 使 persist 先结账，cancels 环看到已非 active 而跳过，防双路径）。
@@ -8755,17 +8780,35 @@ def apply_score_extraction(
     # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
     for army_item in ordinary_new_armies_raw:
         origin_ref = str(army_item.get("origin_ref") or "").strip()
+        unauthorized = _unauthorized_affair_origin(origin_ref)
+        if unauthorized:
+            created_armies.append({**unauthorized, "item": army_item})
+            continue
         created_armies.extend(db.create_armies_from_extraction(
             state, [army_item], actor="档房", commit=commit_now, origin_ref=origin_ref, require_origin=True,
         ))
     for region_id, raw_changes in ordinary_region_deltas_raw.items():
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+        unauthorized = _unauthorized_affair_origin(origin_ref)
+        if unauthorized:
+            region_changes.append({
+                "region": region_id, **unauthorized,
+                "item": {region_id: raw_changes},
+            })
+            continue
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
         region_changes.extend(db.apply_region_deltas(
             state, pseudo_event, None, "档房", {region_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
         ))
     for army_id, raw_changes in ordinary_army_deltas_raw.items():
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+        unauthorized = _unauthorized_affair_origin(origin_ref)
+        if unauthorized:
+            army_changes.append({
+                "army": army_id, **unauthorized,
+                "item": {army_id: raw_changes},
+            })
+            continue
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
         army_changes.extend(db.apply_army_deltas(
             state, pseudo_event, None, "档房", {army_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
@@ -8846,6 +8889,13 @@ def apply_score_extraction(
                 power_updates_to_apply.pop(power_id, None)
         for power_id, raw_changes in power_updates_to_apply.items():
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            unauthorized = _unauthorized_affair_origin(origin_ref)
+            if unauthorized:
+                power_changes.append({
+                    "power_id": power_id, **unauthorized,
+                    "item": {"power_id": power_id, "changes": raw_changes},
+                })
+                continue
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             power_changes.extend(db.apply_power_deltas(
                 state, {power_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
@@ -9072,6 +9122,10 @@ def apply_score_extraction(
         event_power_changes: List[Dict[str, object]] = []
         for item in event_new_armies:
             origin_ref = str(item.get("origin_ref") or "").strip()
+            unauthorized = _unauthorized_affair_origin(origin_ref)
+            if unauthorized:
+                event_created_armies.append({**unauthorized, "item": item})
+                continue
             event_created_armies.extend(db.create_armies_from_extraction(
                 state, [item], actor="档房", commit=commit_now,
                 origin_ref=origin_ref, require_origin=True,
@@ -9079,6 +9133,13 @@ def apply_score_extraction(
         created_armies.extend(event_created_armies)
         for region_id, raw_changes in event_region_deltas.items():
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            unauthorized = _unauthorized_affair_origin(origin_ref)
+            if unauthorized:
+                event_region_changes.append({
+                    "region": region_id, **unauthorized,
+                    "item": {region_id: raw_changes},
+                })
+                continue
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             event_region_changes.extend(db.apply_region_deltas(
                 state, pseudo_event, None, "档房", {region_id: payload},
@@ -9087,6 +9148,13 @@ def apply_score_extraction(
         region_changes.extend(event_region_changes)
         for army_id, raw_changes in event_army_deltas.items():
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            unauthorized = _unauthorized_affair_origin(origin_ref)
+            if unauthorized:
+                event_army_changes.append({
+                    "army": army_id, **unauthorized,
+                    "item": {army_id: raw_changes},
+                })
+                continue
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             event_army_changes.extend(db.apply_army_deltas(
                 state, pseudo_event, None, "档房", {army_id: payload},
@@ -9111,6 +9179,13 @@ def apply_score_extraction(
             ))
         for power_id, raw_changes in event_power_updates.items():
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            unauthorized = _unauthorized_affair_origin(origin_ref)
+            if unauthorized:
+                event_power_changes.append({
+                    "power_id": power_id, **unauthorized,
+                    "item": {"power_id": power_id, "changes": raw_changes},
+                })
+                continue
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             event_power_changes.extend(db.apply_power_deltas(
                 state, {power_id: payload}, commit=commit_now,

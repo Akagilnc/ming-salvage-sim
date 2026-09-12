@@ -256,12 +256,7 @@ def test_shared_consumers_still_surface_status(read_game):
         read_material(prepared.root, path)
         for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
-    projected_statuses = [
-        str(row["status"] or "").strip()
-        for row in db.conn.execute("SELECT status FROM armies ORDER BY id LIMIT 30").fetchall()
-        if str(row["status"] or "").strip()
-    ]
-    _assert_text_keeps_statuses(blob, projected_statuses, "materials.directory")
+    _assert_text_keeps_statuses(blob, all_statuses, "materials.directory")
 
     # DB 字段零改写
     assert _guanning_db_status(db) == seed_status

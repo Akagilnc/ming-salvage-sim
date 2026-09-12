@@ -21,6 +21,11 @@ _INDEX_NAME = "INDEX.txt"
 _PERSON_DIR = "人物"
 _AFFAIR_DIR = "事务"
 _PUBLIC_DIR = "公开说法"
+_REGION_DIR = "地区"
+_ARMY_DIR = "军队"
+_SECRET_DIR = "密令"
+_RECOMMEND_DIR = "荐人"
+_FACT_DIR = "事实"
 _COURT_ROSTER_REL = f"{_PERSON_DIR}/朝臣名册.txt"
 
 
@@ -174,13 +179,14 @@ def _carryover_drafts(db: Any, state: Any) -> list[dict]:
     ]
 
 
-def _opening_text(
+def minimal_opening_context(
     character: Any,
     state: Any,
     present: Sequence[str],
     affairs: Sequence[dict[str, object]],
     spoken: str,
 ) -> str:
+    """Canonical minimal opening: identity/office, present, date, affairs, spoken."""
     name = str(getattr(character, "name", "") or "")
     office = str(getattr(character, "office", "") or "")
     parts = [
@@ -200,6 +206,116 @@ def _opening_text(
     parts.append(spoken if spoken else "（尚无）")
     parts.append("材料在当前目录。根目录 INDEX 一行一项。其余想读自己读。")
     return "\n".join(parts)
+
+
+_opening_text = minimal_opening_context
+
+
+def _world_has_domain(knowledge: dict, domain: str) -> bool:
+    world = knowledge.get("world") or {}
+    return bool(str(world.get(domain) or "").strip())
+
+
+def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
+    from ming_sim.models import CourtContext
+    from ming_sim.registry import build_secret_order_brief
+
+    brief = build_secret_order_brief(character, CourtContext(state=state, db=db))
+    rel = f"{_SECRET_DIR}/进行中.txt"
+    _write_text(tmp / rel, brief or "（无进行中密令）")
+    return rel
+
+
+def _write_recommendation_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
+    from ming_sim.recommendations import build_recommendation_brief
+
+    brief = build_recommendation_brief(db, state, str(getattr(character, "name", "") or ""))
+    rel = f"{_RECOMMEND_DIR}/可荐人切片.txt"
+    _write_text(tmp / rel, brief or "【可荐人切片】本大臣眼下没有可据以具名荐人的人选。")
+    return rel
+
+
+def _write_textual_fact_files(
+    tmp: Path, db: Any, character: Any, knowledge: dict,
+    issue_materials: Sequence[dict[str, object]],
+) -> list[str]:
+    store = getattr(db, "textual_facts", None)
+    readable = getattr(store, "readable_materials", None)
+    if not callable(readable):
+        return []
+    subjects: list[tuple[str, str, str]] = []
+    name = str(getattr(character, "name", "") or "")
+    if name:
+        subjects.append(("character", name, name))
+    if _world_has_domain(knowledge, "regional") and hasattr(db, "region_rows"):
+        for row in db.region_rows():
+            rid = str(row["id"] or "")
+            rname = str(row["name"] or rid)
+            if rid:
+                subjects.append(("region", rid, rname))
+    if _world_has_domain(knowledge, "military") and hasattr(db, "army_rows"):
+        for row in db.army_rows():
+            aid = str(row["id"] or "")
+            aname = str(row["name"] or aid)
+            if aid:
+                subjects.append(("army", aid, aname))
+    for item in issue_materials:
+        affair_id = int(item.get("affair_id") or 0)
+        if affair_id > 0:
+            subjects.append(("affair", str(affair_id), str(item.get("title") or affair_id)))
+    index: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for kind, subject_id, label in subjects:
+        key = (kind, subject_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        facts = readable(subject_kind=kind, subject_id=subject_id)
+        if not facts:
+            continue
+        body = "\n".join(str(fact.body or "").strip() for fact in facts if str(fact.body or "").strip())
+        if not body:
+            continue
+        rel = f"{_FACT_DIR}/{kind}-{_safe_segment(label)}.txt"
+        _write_text(tmp / rel, body)
+        index.append(rel)
+    return index
+
+
+def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
+    if not _world_has_domain(knowledge, "regional") or not hasattr(db, "region_rows"):
+        return []
+    index: list[str] = []
+    for row in db.region_rows():
+        name = str(row["name"] or row["id"] or "")
+        if not name:
+            continue
+        detail = db.region_detail(name, qualitative=True)
+        rel = f"{_REGION_DIR}/{_safe_segment(name)}/详情.txt"
+        _write_text(tmp / rel, detail)
+        index.append(rel)
+    return index
+
+
+def _write_army_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
+    if not _world_has_domain(knowledge, "military") or not hasattr(db, "army_rows"):
+        return []
+    index: list[str] = []
+    for row in db.army_rows():
+        name = str(row["name"] or "")
+        army_id = str(row["id"] or "")
+        key = name or army_id
+        if not key:
+            continue
+        # army_detail leaks raw firearm numbers; qualitative roster is the P4-safe renderer.
+        detail = db.army_roster(
+            filter_names=[name or army_id, army_id],
+            qualitative_equipment=True,
+        )
+        rel = f"{_ARMY_DIR}/{_safe_segment(key)}/详情.txt"
+        _write_text(tmp / rel, detail or str(row["status"] or ""))
+        index.append(rel)
+    return index
 
 
 def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
@@ -310,6 +426,16 @@ def _write_tree(
         _write_text(tmp / _PUBLIC_DIR / fname, "\n".join(lines))
         index.append(f"{_PUBLIC_DIR}/{fname}")
 
+    secret_rel = _write_secret_order_file(tmp, db, state, character)
+    if secret_rel:
+        index.append(secret_rel)
+    recommend_rel = _write_recommendation_file(tmp, db, state, character)
+    if recommend_rel:
+        index.append(recommend_rel)
+    index.extend(_write_textual_fact_files(tmp, db, character, knowledge, issue_materials))
+    index.extend(_write_region_detail_files(tmp, db, knowledge))
+    index.extend(_write_army_detail_files(tmp, db, knowledge))
+
     _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")
     return index
 
@@ -357,7 +483,7 @@ def prepare_character_materials(
             "id": f"draft-{int(row['id'])}", "title": title,
             "situation": f"{body}（尚未入档）" if body else "尚未入档",
         })
-    opening = _opening_text(
+    opening = minimal_opening_context(
         character, state, _present_names(db, character), affairs, _spoken_this_scene(db, character),
     )
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))

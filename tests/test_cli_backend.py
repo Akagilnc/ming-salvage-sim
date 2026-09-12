@@ -725,14 +725,17 @@ def test_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path
     out, n = cb._run_claude("p", materials_dir=root)
     assert out == "ok" and n == 1
     assert captured["kw"].get("cwd") == root
-    assert "--restricted" not in captured["cmd"]
-    assert "--strict-mcp-config" not in captured["cmd"]
+    assert "--restricted" in captured["cmd"]
+    assert "--strict-mcp-config" in captured["cmd"]
+    assert "--bare" not in captured["cmd"]
     assert "--add-dir" not in captured["cmd"]
     assert "--allowedTools" in captured["cmd"]
-    assert "Read" in captured["cmd"] and "Glob" in captured["cmd"]
-    joined = " ".join(captured["cmd"])
-    disallowed_span = joined.split("--disallowedTools", 1)[-1]
-    assert "Read" not in disallowed_span.split("--", 1)[0]
+    assert "Read" in captured["cmd"] and "Glob" in captured["cmd"] and "Grep" in captured["cmd"]
+    mcp_at = captured["cmd"].index("--mcp-config")
+    assert captured["cmd"][mcp_at + 1] == '{"mcpServers":{}}'
+    assert "--permission-mode" in captured["cmd"]
+    assert "dontAsk" in captured["cmd"]
+    assert "--disallowedTools" not in captured["cmd"]
 
 
 def test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv(monkeypatch, tmp_path):

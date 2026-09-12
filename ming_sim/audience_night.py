@@ -1639,7 +1639,7 @@ def close_night(
                        MIN(d.id) AS dossier_id
                 FROM pending_actions pa
                 JOIN turn_directives td ON td.id = pa.committed_directive_id
-                LEFT JOIN decree_dossiers d ON d.pending_action_id = pa.id
+                JOIN decree_dossiers d ON d.pending_action_id = pa.id
                 WHERE pa.night_id = ? AND pa.kind = 'directive'
                   AND pa.status = 'committed' AND pa.committed_directive_id > 0
                 GROUP BY td.id, td.actor, td.text
@@ -1653,7 +1653,9 @@ def close_night(
                 if not _did_int or _did in already_ids:
                     continue
                 dossier_id = int(_pd["dossier_id"] or 0)
-                origin_ref = f"dossier:{dossier_id}" if dossier_id > 0 else ""
+                if dossier_id <= 0:
+                    continue
+                origin_ref = f"dossier:{dossier_id}"
                 append_ledger_entry(
                     db, night_id,
                     person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],

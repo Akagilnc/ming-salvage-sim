@@ -932,10 +932,12 @@ def test_prepare_crash_reopen_settle_no_second_tick(game, monkeypatch, tmp_path)
         assert state2.turn_phase == TurnPhase.SETTLING.value
         ticks_before = tick_calls["n"]
         assert state2.turn == turn
+        handoff = arrivals
+        ctx2 = db2.get_resolve_context(turn)
+        assert ctx2["simulator_payload"] == handoff
         run_settle(db2, state2, content, {}, narrative="恢复后续")
         assert tick_calls["n"] == ticks_before  # 不二次 tick
         assert state2.turn == turn + 1
-        assert isinstance(arrivals, dict)
     finally:
         db2.close()
 
@@ -958,6 +960,7 @@ def test_settle_authority_uses_prepare_frozen_open_affairs(game):
         year=state.year, period=state.period, turn=state.turn,
     )
     assert late.id not in frozen_ids
+    settle_turn = state.turn
 
     run_settle(
         db, state, content,
@@ -966,6 +969,53 @@ def test_settle_authority_uses_prepare_frozen_open_affairs(game):
     )
 
     assert db.affairs.get(late.id).status == "open"
+    rows = db.conn.execute(
+        "SELECT section, category, reason FROM rejection_reports "
+        "WHERE turn=? AND section='affair_declarations'",
+        (settle_turn,),
+    ).fetchall()
+    assert rows
+    assert str(rows[0]["category"] or "")
+    assert str(rows[0]["reason"] or "")
+
+
+@pytest.mark.parametrize("bad_id", [True, 1.5])
+def test_settle_rejects_non_integer_frozen_open_affair_ids(game, bad_id):
+    db, state, content = game
+    affair = db.affairs.open(
+        name="冻结事务", origin="prepare 前已开",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    turn = state.turn
+    run_prepare(db, state, content)
+    ctx = db.get_resolve_context(turn)
+    payload = dict(ctx["simulator_payload"])
+    payload["open_affairs"] = [{"id": bad_id}]
+    db.save_resolve_context(
+        turn,
+        ctx["decree_text"],
+        ctx["narrative"],
+        payload,
+        secret_orders=ctx.get("secret_orders"),
+        relevant_memories=ctx.get("relevant_memories"),
+        extracted=None,
+        source=ctx.get("source") or "system_simulation",
+        attendant_message=ctx.get("attendant_message") or "",
+    )
+    run_settle(
+        db, state, content,
+        {"affair_declarations": [{"attach": "close", "affair_id": affair.id}]},
+        source=Provenance.system_simulation,
+    )
+    assert db.affairs.get(affair.id).status == "open"
+    rows = db.conn.execute(
+        "SELECT section, category, reason FROM rejection_reports "
+        "WHERE turn=? AND section='affair_declarations'",
+        (turn,),
+    ).fetchall()
+    assert rows
+    assert str(rows[0]["category"] or "")
+    assert str(rows[0]["reason"] or "")
 
 
 def test_settle_without_prepare_fails_loud_zero_writes(game):

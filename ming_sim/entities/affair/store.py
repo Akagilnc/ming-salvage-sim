@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.strict_types import strict_int
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
@@ -449,6 +450,14 @@ class AffairStore:
         return tuple(out)
 
 
+def parse_positive_affair_id(raw: object) -> int:
+    """Affair identity: reject bool/float, keep integer-string compat, require >0."""
+    value = strict_int(raw, accept_numeric_strings=True)
+    if value <= 0:
+        raise ValueError("affair_id must be a positive integer")
+    return value
+
+
 def parse_affair_declaration(
     raw: object,
     *,
@@ -479,13 +488,11 @@ def parse_affair_declaration(
             out["identity"] = identity
         return out
     try:
-        affair_id = int(raw.get("affair_id"))
-    except (TypeError, ValueError):
-        affair_id = 0
-    if affair_id <= 0:
+        affair_id = parse_positive_affair_id(raw.get("affair_id"))
+    except (TypeError, ValueError) as exc:
         raise ValueError(
             "了结须有 affair_id" if attach == _ATTACH_CLOSE else "接到已开事务须有 affair_id"
-        )
+        ) from exc
     return {"attach": attach, "affair_id": affair_id}
 
 
