@@ -120,6 +120,9 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
             {"subject_kind": "character", "subject_id": "子虚乌有之人", "body": "凭空捏造"},
             {"subject_kind": "character", "subject_id": minister, "body": "如实记事"},
         ],
+        "registrations": [{
+            "name": "李若璉補", "office": "锦衣卫百户", "office_type": "武职",
+        }],
     }
 
     # flush 失败路径：制造 rejection_reports flush 失败，断言合法 sibling
@@ -140,6 +143,10 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
     assert db.conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
     ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", ("李若璉補",),
+    ).fetchone() is None
+    assert "李若璉補" not in db.content.characters
 
     # 恢复正常后，继续断成功路径：合法 sibling 落库、拒收落 durable（原有断言）。
     result = dispatch_declaration(db, state, declaration, minister_name=minister)
@@ -163,6 +170,10 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
     assert rows[0]["section"] == "textual_facts"
     assert rows[0]["category"] == "hallucinated_id"
     assert "子虚乌有之人" in rows[0]["item_json"]
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", ("李若璉補",),
+    ).fetchone() is not None
+    assert "李若璉補" in db.content.characters
 
 
 def test_unknown_top_level_section_is_rejected_durably_without_dropping_sibling(game):
@@ -614,6 +625,7 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
         settle_staged_declarations_in_decree_order,
         stage_declaration,
     )
+    from ming_sim.entities.staged_declaration import DecreeAlreadySettled
 
     db, state, _ = game
     minister = _minister(db)
@@ -647,6 +659,19 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
 
     discarded = discard_staged_declaration(db, "decree:2")
     assert discarded == 1
+    with pytest.raises(DecreeAlreadySettled):
+        stage_declaration(
+            db, decree_ref="decree:2",
+            declaration={"textual_facts": [{
+                "subject_kind": "character", "subject_id": minister, "body": "resurrected",
+            }]},
+            turn=int(state.turn),
+        )
+    restaged = db.conn.execute(
+        "SELECT COUNT(*) c FROM staged_declarations "
+        "WHERE decree_ref='decree:2' AND status='staged'",
+    ).fetchone()
+    assert restaged["c"] == 0
 
     # 刻意把 decree:3 排在 decree:1 之前——与暂存先后（1→2→3）相反，用来断言
     # 结算真的服从传入顺序，而不是暂存插入顺序。
@@ -723,3 +748,61 @@ def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
     assert row["c"] == 0
     facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
     assert [f.body for f in facts_after] == ["旨三：首次暂存"]
+
+
+def test_declared_free_prose_is_persisted_byte_for_byte(game):
+    db, state, _ = game
+    minister = _minister(db)
+    from ming_sim.audience_night import open_night
+
+    night = open_night(db, state)
+    night_id = int(night["id"])
+    presence_body = "  前后空格正文  \n"
+    scene_body = "  场景前后  "
+    commission_text = "  交办前后空白  \n"
+    result = dispatch_declaration(db, state, {
+        "presence": [{"person_name": minister, "effect": "enter", "body": presence_body}],
+        "scene_facts": [{
+            "body": scene_body, "audibility": "殿上公开", "person_names": [minister],
+        }],
+        "commissions": [{"text": commission_text}],
+    }, night_id=night_id)
+    assert result.presence.rejected == []
+    assert result.scene_facts.rejected == []
+    assert result.commissions.rejected == []
+    presence_row = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?",
+        (result.presence.applied[0]["id"],),
+    ).fetchone()
+    scene_row = db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE id=?",
+        (result.scene_facts.applied[0]["id"],),
+    ).fetchone()
+    payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()["payload_json"])
+    assert presence_row["body"] == presence_body
+    assert scene_row["body"] == scene_body
+    assert payload["text"] == commission_text
+
+
+@pytest.mark.parametrize("raw", [{}, "", 0])
+def test_present_falsy_section_is_durable_invalid_shape(game, raw):
+    db, state, _ = game
+    result = dispatch_declaration(db, state, {"textual_facts": raw})
+    assert result.textual_facts.applied == []
+    assert result.textual_facts.rejected
+    assert result.textual_facts.rejected[0].category == "invalid_shape"
+    rows = db.conn.execute(
+        "SELECT section, category FROM rejection_reports WHERE turn=?",
+        (int(state.turn),),
+    ).fetchall()
+    assert [(row["section"], row["category"]) for row in rows] == [
+        ("textual_facts", "invalid_shape"),
+    ]
+
+    empty_protagonist = dispatch_declaration(db, state, {"protagonist": {}})
+    assert empty_protagonist.protagonist.validated is None
+    assert empty_protagonist.protagonist.rejected
+    assert empty_protagonist.protagonist.rejected[0].category == "invalid_shape"

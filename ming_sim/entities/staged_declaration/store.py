@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Mapping
 
-from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.applier import atomic, connection_owns_transaction, sanitize_sqlite_text
 
 _STATUS_STAGED = "staged"
 _STATUS_DISCARDED = "discarded"
@@ -39,7 +40,7 @@ CREATE INDEX IF NOT EXISTS idx_staged_declarations_status
 class DecreeAlreadySettled(ValueError):
     """该 decree_ref 已经结算过，不能再暂存新声明（防止结算后悄悄多出永远不会
     被消费/拒绝的孤儿 staged 行——一个 decree_ref 的生命周期是单向的
-    staged → (discarded | settled)，settled 是终态）。
+    staged → (discarded | settled)，二者同为终态）。
 
     ADR 0157「改旨 = 作废后按新旨重起」：同一件事需要再来一轮，调用方应发一个
     新的 decree_ref，而不是向已终结的旧 ref 追加。"""
@@ -70,19 +71,21 @@ class StagedDeclarationStore:
             raise ValueError("decree_ref 不能为空")
         if not isinstance(declaration, Mapping):
             raise ValueError("声明须为对象")
-        if self.is_settled(ref):
-            raise DecreeAlreadySettled(
-                f"decree_ref 已结算，不能再暂存新声明：{ref}（如需再起该旨，请用新的 decree_ref）"
+        def write() -> int:
+            if self._is_closed(ref):
+                raise DecreeAlreadySettled(
+                    f"decree_ref 已作废或已结算，不能再暂存新声明：{ref}（如需再起该旨，请用新的 decree_ref）"
+                )
+            cur = self._conn.execute(
+                "INSERT INTO staged_declarations (decree_ref, declaration_json, status, created_turn) "
+                "VALUES (?, ?, 'staged', ?)",
+                (ref, sanitize_sqlite_text(json.dumps(declaration, ensure_ascii=False)), int(turn)),
             )
-        owns = connection_owns_transaction(self._conn)
-        cur = self._conn.execute(
-            "INSERT INTO staged_declarations (decree_ref, declaration_json, status, created_turn) "
-            "VALUES (?, ?, 'staged', ?)",
-            (ref, sanitize_sqlite_text(json.dumps(declaration, ensure_ascii=False)), int(turn)),
-        )
-        if owns:
-            self._conn.commit()
-        return int(cur.lastrowid)
+            return int(cur.lastrowid)
+        if connection_owns_transaction(self._conn):
+            with atomic(SimpleNamespace(conn=self._conn)):
+                return write()
+        return write()
 
     def discard(self, decree_ref: str) -> int:
         """撤旨 / 改旨作废该旨全部仍 staged 的暂存产物；已结算的不受影响。"""
@@ -105,6 +108,14 @@ class StagedDeclarationStore:
             (ref,),
         ).fetchall()
         return tuple(_row_to_staged(row) for row in rows)
+
+    def _is_closed(self, decree_ref: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM staged_declarations "
+            "WHERE decree_ref=? AND status IN ('settled','discarded') LIMIT 1",
+            (decree_ref,),
+        ).fetchone()
+        return row is not None
 
     def is_settled(self, decree_ref: str) -> bool:
         """幂等判据：该旨是否已有任一结算标记。"""

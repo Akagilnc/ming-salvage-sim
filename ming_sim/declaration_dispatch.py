@@ -299,10 +299,11 @@ def stage_declaration(
     步骤 1）。``decree_ref`` 是该旨自己的标识，落账顺序（下旨先后）与幂等判据
     都靠它——本函数不派生 decree_ref、不判定顺序，由调用方传入真实的旨标识。
 
-    一个 decree_ref 的生命周期单向终结于 settled：已结算的 decree_ref 再暂存
-    会响亮抛出 :class:`~ming_sim.entities.staged_declaration.DecreeAlreadySettled`
-    ——不静默接受、不产生永远无人消费的孤儿 staged 行；同一件事要再来一轮，
-    调用方发一个新的 decree_ref（ADR 0157「改旨 = 作废后按新旨重起」）。"""
+    一个 decree_ref 的生命周期单向终结于 discarded 或 settled：已作废或已结算
+    的 decree_ref 再暂存会响亮抛出
+    :class:`~ming_sim.entities.staged_declaration.DecreeAlreadySettled`
+    ——不静默接受、不复活作废行；同一件事要再来一轮，调用方发一个新的
+    decree_ref（ADR 0157「改旨 = 作废后按新旨重起」）。"""
     return db.staged_declarations.stage(decree_ref=decree_ref, declaration=declaration, turn=turn)
 
 
@@ -339,22 +340,23 @@ def settle_staged_declarations_in_decree_order(
     """
     results: Dict[str, DeclarationDispatchResult] = {}
     for decree_ref in decree_refs_in_order:
-        if db.staged_declarations.is_settled(decree_ref):
-            continue
-        staged = db.staged_declarations.staged_for(decree_ref)
-        if not staged:
-            continue
         collector = RejectionCollector()
+        merged: Optional[DeclarationDispatchResult] = None
         with atomic(db):
-            merged = _empty_dispatch_result()
-            for item in staged:
-                merged = merged.merge(_dispatch_declaration_sections(
-                    db, state, item.declaration,
-                    minister_name=minister_name, night_id=night_id, source=source,
-                    collector=collector,
-                ))
-            db.staged_declarations.mark_settled(decree_ref)
-            collector.flush_to_db(db)
+            if not db.staged_declarations.is_settled(decree_ref):
+                staged = db.staged_declarations.staged_for(decree_ref)
+                if staged:
+                    merged = _empty_dispatch_result()
+                    for item in staged:
+                        merged = merged.merge(_dispatch_declaration_sections(
+                            db, state, item.declaration,
+                            minister_name=minister_name, night_id=night_id, source=source,
+                            collector=collector,
+                        ))
+                    db.staged_declarations.mark_settled(decree_ref)
+                    collector.flush_to_db(db)
+        if merged is None:
+            continue
         mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
         results[decree_ref] = merged
     return results
@@ -367,7 +369,7 @@ def _section_items(
     单项单独拒收，只把合法 Mapping 项交回调用方（J4：容器拆分 + 形状归一
     收进一个入口，九个 section 分派器不再各自重复同一段
     `isinstance(item, Mapping)` 判断）。"""
-    if not raw:
+    if raw is None:
         return (), []
     if not (isinstance(raw, Sequence) and not isinstance(raw, (str, bytes))):
         return (), [RejectedItem(
@@ -385,6 +387,16 @@ def _section_items(
                 category="invalid_shape", source=source,
             ))
     return tuple(items), rejected
+
+
+def _declared_prose(value: object) -> Optional[str]:
+    """Keep declared free text byte-for-byte; emptiness is judged on a copy."""
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else str(value)
+    if not text.strip():
+        return None
+    return text
 
 
 def _reject(
@@ -478,7 +490,7 @@ def _dispatch_commissions(
                     cadence=grant.get("cadence", ""),
                 )
             else:
-                text = str(item.get("text") or "").strip()
+                text = _declared_prose(item.get("text"))
                 if not text:
                     raise DecreeMaterializationValidationError(
                         "交办声明缺正文（不猜散文）", failed_fields=("text",),
@@ -768,8 +780,8 @@ def _dispatch_presence(
     for item in items:
         name = str(item.get("person_name") or "").strip()
         effect = _PRESENCE_ITEM_EFFECTS.get(str(item.get("effect") or "").strip())
-        body = str(item.get("body") or "").strip()
-        if not name or effect is None or not body:
+        body = _declared_prose(item.get("body"))
+        if not name or effect is None or body is None:
             _reject(
                 rejected, item,
                 "在场进出声明须含 person_name、enter/exit 之一，以及转译给出的正文",
@@ -809,7 +821,7 @@ def _dispatch_scene_facts(
     items, rejected = _section_items(raw, label="说话人分段声明", source=source)
     applied: List[Any] = []
     for item in items:
-        body = str(item.get("body") or "").strip()
+        body = _declared_prose(item.get("body"))
         audibility = item.get("audibility") or AUDIBILITY_PUBLIC
         person_names = item.get("person_names") or []
         tags = item.get("tags") or []
@@ -909,9 +921,9 @@ def _dispatch_protagonist(db: Any, raw: object, *, source: Provenance) -> Protag
     projected 值原样交回调用方——不冒称 :class:`~ming_sim.applier.SectionResult`
     的 ``applied``（那意味着已落库），也不发明一张承接不了完整落库语义的
     全局主角表（J7）。"""
-    if not raw:
+    if raw is None:
         return ProtagonistResult(validated=None, rejected=[])
-    if not isinstance(raw, Mapping):
+    if not isinstance(raw, Mapping) or not raw:
         return ProtagonistResult(validated=None, rejected=[RejectedItem(
             item={"raw_value": raw}, reason="御前主角声明须为对象",
             category="invalid_shape", source=source,

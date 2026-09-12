@@ -39,7 +39,7 @@ from ming_sim.db import (
     normalize_office,
     resolve_office_type_preserving_title,
 )
-from ming_sim.applier import Provenance, atomic
+from ming_sim.applier import Provenance, atomic, register_runtime_outcome_callbacks
 from ming_sim.decree import (
     ResolveResult,
     _provenance_from_stored,
@@ -341,7 +341,20 @@ def register_unlisted_person_record(
         summary=str(summary or ""),
     )
     content.characters[name] = character
-    db.add_character(state, character, source=str(source_label or "").strip(), llm_config=llm_config)
+    added_name = name
+    roster = content.characters
+
+    def _drop_runtime_registration(
+        target: str = added_name, bag: Dict[str, Character] = roster,
+    ) -> None:
+        bag.pop(target, None)
+
+    register_runtime_outcome_callbacks(db, on_rollback=_drop_runtime_registration)
+    try:
+        db.add_character(state, character, source=str(source_label or "").strip(), llm_config=llm_config)
+    except Exception:
+        roster.pop(added_name, None)
+        raise
     row = db.conn.execute(
         "SELECT portrait_id FROM characters WHERE name=?", (name,),
     ).fetchone()
