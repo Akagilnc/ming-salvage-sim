@@ -1,0 +1,163 @@
+"""#884 — 点火冒烟装钟 + 主/高级并行 + 阶段名留痕。
+
+编排器已迁仓外；本仓残留接缝 = 设置页连通性 verify（点火冒烟）。
+验收：永不响应 → 超时→重试→耗尽，账面有阶段名（正负成对）；主+高级烟互不依赖则并行。
+"""
+
+from __future__ import annotations
+
+import threading
+
+import httpx
+import pytest
+from openai import APIStatusError, APITimeoutError
+
+import ming_sim.llm_model as llm_model
+import web_app
+from ming_sim.exceptions import LLMUnavailable
+from ming_sim.llm_model import verify_llm_available
+from ming_sim.models import (
+    LLMConfig,
+    TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
+    TRANSPORT_DEFAULT_MAX_ATTEMPTS,
+)
+
+
+def _api_cfg(**overrides) -> LLMConfig:
+    base = dict(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-main",
+        channel="api",
+    )
+    base.update(overrides)
+    return LLMConfig(**base)
+
+
+def _timeout_request() -> httpx.Request:
+    return httpx.Request("POST", "https://api.example.com/v1/chat/completions")
+
+
+def test_api_verify_hang_retries_then_exhausts_with_stage(monkeypatch):
+    """注入：provider 永不响应（每次 attempt 以超时收场）→ 重试耗尽，账面带阶段名。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    runs = {"n": 0}
+    req = _timeout_request()
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.model = kwargs["model"]
+
+        def run(self, prompt: str):
+            runs["n"] += 1
+            raise APITimeoutError(request=req)
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    with pytest.raises(LLMUnavailable) as ei:
+        verify_llm_available(_api_cfg())
+    err = ei.value
+    assert err.code == "llm_timeout"
+    assert getattr(err, "stage", None) == "smoke-main"
+    attempts = err.transport_attempts or []
+    assert len(attempts) == TRANSPORT_DEFAULT_MAX_ATTEMPTS
+    assert [a.get("code") for a in attempts] == ["llm_timeout"] * TRANSPORT_DEFAULT_MAX_ATTEMPTS
+    assert [a.get("outcome") for a in attempts] == (
+        ["retryable_fail"] * (TRANSPORT_DEFAULT_MAX_ATTEMPTS - 1) + ["terminal_fail"]
+    )
+    assert runs["n"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
+
+
+def test_api_verify_401_does_not_retry(monkeypatch):
+    """负：确定性 4xx 立即降级，不走瞬断重试。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    req = _timeout_request()
+    resp = httpx.Response(
+        401,
+        json={"error": {"message": "Invalid API key", "code": "invalid_api_key"}},
+        request=req,
+    )
+    runs = {"n": 0}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.model = kwargs["model"]
+
+        def run(self, prompt: str):
+            runs["n"] += 1
+            raise APIStatusError("Invalid API key", response=resp, body=None)
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    with pytest.raises(LLMUnavailable) as ei:
+        verify_llm_available(_api_cfg())
+    err = ei.value
+    assert err.status_code == 401
+    assert getattr(err, "stage", None) == "smoke-main"
+    assert runs["n"] == 1
+    attempts = err.transport_attempts or []
+    assert len(attempts) == 1
+    assert attempts[0]["outcome"] == "terminal_fail"
+
+
+def test_api_verify_installs_sdk_attempt_clock(monkeypatch):
+    """API 烟必须把 SDK timeout 绑到 attempt 钟，不得沿用未迁移的 180s 墙。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    seen = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.model = kwargs["model"]
+
+        def run(self, prompt: str) -> str:
+            seen["timeout"] = getattr(self.model, "timeout", None)
+            seen["max_retries"] = getattr(self.model, "max_retries", None)
+            return "ok"
+
+    monkeypatch.setattr(llm_model, "Agent", FakeAgent)
+    monkeypatch.setattr(llm_model, "extract_agent_text", lambda output: output)
+    verify_llm_available(_api_cfg())
+    assert seen["timeout"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
+    assert seen["max_retries"] == 0
+
+
+def test_verify_main_and_advanced_smoke_overlap(monkeypatch):
+    """主+高级烟互不依赖：必须并行起跑（串行会在 barrier 上睡死）。"""
+    barrier = threading.Barrier(2, timeout=1.0)
+    seen: list[LLMConfig] = []
+
+    def fake_verify(cfg, **_kwargs):
+        barrier.wait()
+        seen.append(cfg)
+
+    monkeypatch.setattr(web_app, "verify_llm_available", fake_verify)
+    cfg = _api_cfg(advanced_model="gpt-advanced")
+    web_app._verify_llm_configs_or_raise(cfg)
+    assert {item.model for item in seen} == {"gpt-main", "gpt-advanced"}
+
+
+def test_verify_stage_lines_are_attributable(monkeypatch, capsys):
+    """每进一阶段打一行，沉默可归因。"""
+    monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg, **_k: None)
+    web_app._verify_llm_configs_or_raise(_api_cfg(advanced_model="gpt-advanced"))
+    out = capsys.readouterr().out
+    assert "[llm:stage] smoke-main" in out
+    assert "[llm:stage] smoke-advanced" in out
+
+
+def test_verify_http_detail_carries_stage(monkeypatch):
+    """降级出口的 HTTP detail 带阶段名。"""
+
+    def boom(cfg, **_k):
+        err = LLMUnavailable(
+            "timeout",
+            code="llm_timeout",
+            transport_attempts=[{"index": 1, "outcome": "terminal_fail", "code": "llm_timeout"}],
+        )
+        err.stage = "smoke-main"
+        raise err
+
+    monkeypatch.setattr(web_app, "verify_llm_available", boom)
+    with pytest.raises(web_app.HTTPException) as ei:
+        web_app._verify_llm_configs_or_raise(_api_cfg())
+    assert ei.value.status_code == 400
+    assert ei.value.detail["stage"] == "smoke-main"
+    assert ei.value.detail["code"] == "llm_timeout"

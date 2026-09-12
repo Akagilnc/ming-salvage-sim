@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 import threading
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional
 
@@ -397,22 +397,12 @@ def _delete_sqlite_db_files_or_raise(db_path: str) -> None:
             ) from exc
 
 
-def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
-    """校验主模型；若配置了 advanced_model，也用其实际 base/key 单独校验。"""
-    try:
-        verify_llm_available(config)
-    except LLMUnavailable as e:
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "主模型连通性检查失败：")) from None
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "主模型连通性检查失败：")) from None
-
-    advanced_model = (config.advanced_model or "").strip()
-    if not advanced_model:
-        return
-    advanced_config = LLMConfig(
+def _advanced_llm_config_for_verify(config: LLMConfig) -> LLMConfig:
+    """主配置上的高级模型槽 → 单独烟测用的 LLMConfig。"""
+    return LLMConfig(
         api_key=real_api_key_or_empty(config.advanced_api_key) or real_api_key_or_empty(config.api_key),
         base_url=(config.advanced_base_url or "").strip() or config.base_url,
-        model=advanced_model,
+        model=(config.advanced_model or "").strip(),
         timeout_seconds=config.timeout_seconds,
         thinking_level="",
         advanced_model=config.advanced_model,
@@ -426,12 +416,54 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         cli_timeout_seconds=config.cli_timeout_seconds,
         default_headers=dict(config.default_headers or {}),
     )
+
+
+def _verify_smoke_leg(config: LLMConfig, *, stage: str, prefix: str) -> Optional[HTTPException]:
+    """单条点火烟。失败返回已包好的 HTTPException，成功返回 None。"""
     try:
-        verify_llm_available(advanced_config)
-    except LLMUnavailable as e:
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "高级模型连通性检查失败：")) from None
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "高级模型连通性检查失败：")) from None
+        verify_llm_available(config)
+        return None
+    except LLMUnavailable as exc:
+        exc.stage = stage
+        return HTTPException(status_code=400, detail=_llm_error_detail(exc, prefix))
+    except Exception as exc:  # noqa: BLE001
+        try:
+            exc.stage = stage
+        except (AttributeError, TypeError):
+            pass
+        return HTTPException(status_code=400, detail=_llm_error_detail(exc, prefix))
+
+
+def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
+    """校验主模型；若配置了 advanced_model，与主模型并行烟测（#884 / P5）。"""
+    legs: List[tuple[str, LLMConfig, str]] = [
+        ("smoke-main", config, "主模型连通性检查失败："),
+    ]
+    if (config.advanced_model or "").strip():
+        legs.append(
+            (
+                "smoke-advanced",
+                _advanced_llm_config_for_verify(config),
+                "高级模型连通性检查失败：",
+            )
+        )
+    for stage, _cfg, _prefix in legs:
+        tlog(f"[llm:stage] {stage}")
+    if len(legs) == 1:
+        err = _verify_smoke_leg(legs[0][1], stage=legs[0][0], prefix=legs[0][2])
+        if err is not None:
+            raise err
+        return
+    with ThreadPoolExecutor(max_workers=len(legs), thread_name_prefix="llm-smoke") as pool:
+        futures = [
+            pool.submit(_verify_smoke_leg, cfg, stage=stage, prefix=prefix)
+            for stage, cfg, prefix in legs
+        ]
+        errors = [fut.result() for fut in futures]
+    # 主腿优先 surface，避免并行把高级失败盖过主模型失败。
+    for err in errors:
+        if err is not None:
+            raise err
 
 
 def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
@@ -446,6 +478,10 @@ def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
     attempts = getattr(exc, "transport_attempts", None)
     if attempts is not None:
         detail["transport_attempts"] = attempts
+    # #884：外呼阶段名（有则透传；无键＝未标阶段）
+    stage = getattr(exc, "stage", None)
+    if stage:
+        detail["stage"] = stage
     return detail
 
 

@@ -322,19 +322,40 @@ def extract_agent_text(run_output: object) -> str:
     return text
 
 
-def verify_llm_available(llm_config: LLMConfig) -> None:
+def _stamp_verify_stage(error: BaseException, stage: str) -> None:
+    """#884：外呼失败账面带阶段名；不改已有 stage。"""
+    if getattr(error, "stage", None):
+        return
+    try:
+        error.stage = stage
+    except (AttributeError, TypeError):
+        return
+
+
+def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") -> None:
     """用户主动校验 LLM 配置是否可用（设置页提交等）：调用成功即过，不校验返回内容。"""
     # 仅服务配置校验入口；启动/新开/继续/重置路径不再调用本函数。
+    # #884：API 烟走统一 transport 钟（attempt timeout + 瞬断重试）；CLI 已在
+    # _run_backend_for_config 入口包 run_with_transport。失败账面带阶段名。
     from ming_sim.cli_backend import _run_backend_for_config, cli_backend_from_env
+    from ming_sim.llm_transport import (
+        bind_transport_sdk_budget,
+        resolve_transport_policy,
+        run_with_transport,
+    )
+
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
     if channel == "cli" or (channel != "api" and cli_backend_from_env() is not None):
         try:
             raw, _ = _run_backend_for_config("输出 ok", llm_config, tag="verify")
             fail_if_llm_error(str(raw), "LLM 连通性检查")
-        except LLMUnavailable:
+        except LLMUnavailable as error:
+            _stamp_verify_stage(error, stage)
             raise
         except Exception as error:
-            raise llm_unavailable_from_error(error) from error
+            wrapped = llm_unavailable_from_error(error)
+            _stamp_verify_stage(wrapped, stage)
+            raise wrapped from error
         return
     agent = Agent(
         name="LLM连通性检查",
@@ -344,7 +365,10 @@ def verify_llm_available(llm_config: LLMConfig) -> None:
         instructions=["只输出 ok。"],
         markdown=False,
     )
-    try:
+    policy = resolve_transport_policy()
+    model = getattr(agent, "model", None)
+
+    def _one_attempt() -> str:
         run_output = agent.run("输出 ok")
         try:
             extract_agent_text(run_output)
@@ -356,9 +380,17 @@ def verify_llm_available(llm_config: LLMConfig) -> None:
                 raise
             content = getattr(run_output, "content", None)
             if content is None or not str(content).strip():
-                return
+                return ""
             raise
-    except LLMUnavailable:
+        return "ok"
+
+    try:
+        with bind_transport_sdk_budget(model, policy):
+            run_with_transport(_one_attempt, policy=policy)
+    except LLMUnavailable as error:
+        _stamp_verify_stage(error, stage)
         raise
     except Exception as error:
-        raise llm_unavailable_from_error(error) from error
+        wrapped = llm_unavailable_from_error(error)
+        _stamp_verify_stage(wrapped, stage)
+        raise wrapped from error
