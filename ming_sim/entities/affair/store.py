@@ -244,6 +244,8 @@ class AffairStore:
             declaration, year=year, period=period, turn=turn,
             allowed=ATTACH_BIRTH,
         )
+        if authorized_ids is not None:
+            authorized_ids.add(int(affair_id))
         self.attach_pointer(table, row_id, affair_id)
         return affair_id
 
@@ -406,11 +408,13 @@ class AffairStore:
         if parsed["attach"] == _ATTACH_EXISTING and authorized_ids is not None:
             if int(parsed["affair_id"]) not in authorized_ids:
                 raise UnauthorizedAffairOriginRef()
-        return self.origin_ref(
-            self.resolve_declaration(
-                parsed, year=year, period=period, turn=turn, allowed=ATTACH_BIRTH,
-            )
+        affair_id = self.resolve_declaration(
+            parsed, year=year, period=period, turn=turn, allowed=ATTACH_BIRTH,
         )
+        # Same-batch births become authorized for later durable-effect carriers.
+        if authorized_ids is not None:
+            authorized_ids.add(int(affair_id))
+        return self.origin_ref(affair_id)
 
     def experiences(self, affair_id: int) -> tuple[dict[str, object], ...]:
         """Read-time projection: story-ledger rows whose origin_ref points at this affair."""

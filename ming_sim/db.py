@@ -6986,9 +6986,15 @@ class GameDB:
         )
 
     def effect_origin_rejection(self, origin_ref: str) -> Dict[str, object] | None:
-        """Authorize extractor provenance immediately before a durable write."""
+        """Authorize extractor provenance immediately before a durable write.
+
+        When apply_score_extraction arms ``_batch_authorized_open_affair_ids``,
+        ``affair:<id>`` must also sit in that frozen batch set — one authority
+        for every durable-effect carrier (fiscal included).
+        """
         value = str(origin_ref or "").strip()
         valid = value == "盘面自发"
+        unauthorized_batch = False
         if value.startswith("dossier:"):
             try:
                 dossier_id = int(value.split(":", 1)[1])
@@ -6998,17 +7004,34 @@ class GameDB:
                 valid = False
         elif value.startswith("affair:"):
             try:
-                from ming_sim.entities.affair.store import parse_origin_ref
+                from ming_sim.entities.affair.store import (
+                    UnauthorizedAffairOriginRef,
+                    parse_origin_ref,
+                )
                 kind, affair_id = parse_origin_ref(value)
                 if kind == "affair" and affair_id is not None:
                     self.affairs.get(int(affair_id))
-                    valid = True
+                    authorized = getattr(self, "_batch_authorized_open_affair_ids", None)
+                    if authorized is not None and affair_id not in authorized:
+                        valid = False
+                        unauthorized_batch = True
+                    else:
+                        valid = True
                 else:
                     valid = False
             except (KeyError, OverflowError, TypeError, ValueError):
                 valid = False
         if valid:
             return None
+        if unauthorized_batch:
+            from ming_sim.entities.affair.store import UnauthorizedAffairOriginRef
+            return {
+                "rejected": True,
+                # Distinct from missing/invalid existence — strategic preflight
+                # must not envelope-fail this; apply paths still reject itemwise.
+                "category": "unauthorized_affair_origin",
+                "reason": str(UnauthorizedAffairOriginRef()),
+            }
         return {
             "rejected": True,
             "category": "missing_origin_ref" if not value else "invalid_origin_ref",
@@ -20830,6 +20853,44 @@ class GameDB:
             commit=commit,
         )
         return int(cur.lastrowid)
+
+    def insert_issue_with_affair_declaration(
+        self,
+        state: GameState,
+        *,
+        affair_declaration: Mapping[str, object],
+        authorized_ids: set[int] | None = None,
+        commit: bool = True,
+        **issue_kwargs: object,
+    ) -> int:
+        """Issue row + affair pointer as one GameDB-owned write (ADR 0150-D3).
+
+        Outer atomic / suspended commit owns lifecycle when already in a batch
+        transaction; otherwise ``atomic`` pairs the two writes. Exceptions
+        propagate loud — no half product.
+        """
+        from ming_sim.applier import atomic
+
+        def _paired() -> int:
+            issue_id = self.insert_issue(state, commit=False, **issue_kwargs)  # type: ignore[arg-type]
+            self.affairs.attach_from_declaration(
+                "issues",
+                issue_id,
+                affair_declaration,
+                year=int(state.year),
+                period=int(state.period),
+                turn=int(state.turn),
+                authorized_ids=authorized_ids,
+            )
+            return issue_id
+
+        outer_owns = bool(
+            getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction
+        )
+        if outer_owns or not commit:
+            return _paired()
+        with atomic(self):
+            return _paired()
 
     def advance_issue(
         self,
