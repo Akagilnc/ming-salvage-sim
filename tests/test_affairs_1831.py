@@ -328,6 +328,62 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
         raise AssertionError("expected conflict")
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
 
+    # Dossier birth may authorize later effect carriers, but must not enlarge
+    # the immutable input authority used by existing attach or close.
+    frozen = {first.id}
+    working = set(frozen)
+    db._batch_frozen_open_affair_ids = frozen
+    db._batch_authorized_open_affair_ids = working
+    try:
+        born_dossier = db.create_decree_dossier(
+            state,
+            action_type="assignment",
+            decree_text="另起护送案",
+            target_kind="issue",
+            target_id="ningyuan-general",
+            executor_kind="character",
+            executor_id=minister,
+            pending_action_id=91003,
+            payload={
+                "assignee_id": minister,
+                "affair_declaration": _declaration(identity="dossier-born-batch"),
+            },
+        )
+        born_id = int(db.conn.execute(
+            "SELECT affair_id FROM decree_dossiers WHERE id = ?", (born_dossier,),
+        ).fetchone()["affair_id"])
+        assert db.affairs.origin_ref_from_result_item(
+            {"origin_ref": db.affairs.origin_ref(born_id)},
+            year=state.year, period=state.period, turn=state.turn,
+            authorized_ids=working,
+        ) == db.affairs.origin_ref(born_id)
+        with pytest.raises(ValueError):
+            db.affairs.close_from_declaration(
+                _declaration(attach="close", affair_id=born_id),
+                turn=state.turn, authorized_ids=frozen,
+            )
+        assert db.affairs.get(born_id).status == "open"
+        with pytest.raises(ValueError):
+            db.create_decree_dossiers(
+                state,
+                action_type="assignment",
+                decree_text="调洪承畴赴宁远",
+                target_kind="issue",
+                target_id="ningyuan-general",
+                executor_kind="character",
+                executor_id=minister,
+                pending_action_id=pending_id,
+                payload={
+                    "assignee_id": minister,
+                    "affair_declaration": _declaration(
+                        attach="existing", affair_id=born_id,
+                    ),
+                },
+            )
+    finally:
+        del db._batch_frozen_open_affair_ids
+        del db._batch_authorized_open_affair_ids
+
 
 def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypatch):
     db, state, content = game

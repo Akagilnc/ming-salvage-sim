@@ -15033,17 +15033,32 @@ class GameDB:
         self, state: GameState, payload: Mapping[str, object] | None,
     ) -> int:
         """Typed 拆旨声明 → 事务 id；无声明不自建；本阶段不消费了结。"""
-        from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+        from ming_sim.entities.affair import (
+            ATTACH_BIRTH,
+            UnauthorizedAffairOriginRef,
+            declaration_from_payload,
+        )
         declaration = declaration_from_payload(payload, allowed=ATTACH_BIRTH)
         if declaration is None:
             return 0
-        return int(self.affairs.resolve_declaration(
+        frozen = getattr(self, "_batch_frozen_open_affair_ids", None)
+        if (
+            declaration.get("attach") == "existing"
+            and frozen is not None
+            and int(declaration["affair_id"]) not in frozen
+        ):
+            raise UnauthorizedAffairOriginRef()
+        affair_id = int(self.affairs.resolve_declaration(
             declaration,
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),
             allowed=ATTACH_BIRTH,
         ))
+        working = getattr(self, "_batch_authorized_open_affair_ids", None)
+        if declaration.get("attach") == "new" and working is not None:
+            working.add(affair_id)
+        return affair_id
 
     def _attach_affair_from_payload(
         self, state: GameState, payload: Mapping[str, object] | None, dossier_id: int,
@@ -15052,6 +15067,11 @@ class GameDB:
         declaration = declaration_from_payload(payload)
         if declaration is None:
             return
+        authority = (
+            getattr(self, "_batch_frozen_open_affair_ids", None)
+            if declaration.get("attach") == "existing"
+            else getattr(self, "_batch_authorized_open_affair_ids", None)
+        )
         self.affairs.attach_from_declaration(
             "decree_dossiers",
             int(dossier_id),
@@ -15059,7 +15079,7 @@ class GameDB:
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),
-            authorized_ids=getattr(self, "_batch_frozen_open_affair_ids", None),
+            authorized_ids=authority,
         )
 
     def _create_decree_dossier_row(
