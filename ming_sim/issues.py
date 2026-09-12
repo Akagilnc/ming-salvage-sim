@@ -8223,12 +8223,15 @@ def apply_score_extraction(
     }
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
-    authorized_open_affairs = (
+    frozen_open_affairs = (
         set(open_affair_ids_at_input) if isinstance(open_affair_ids_at_input, set) else set()
     )
+    authorized_open_affairs = set(frozen_open_affairs)
     # Single origin authority for this batch (GameDB.effect_origin_rejection).
     _prev_batch_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+    _prev_batch_frozen = getattr(db, "_batch_frozen_open_affair_ids", None)
     db._batch_authorized_open_affair_ids = authorized_open_affairs
+    db._batch_frozen_open_affair_ids = frozen_open_affairs
     try:
         return _apply_score_extraction_body(
             db,
@@ -8242,6 +8245,7 @@ def apply_score_extraction(
             dossier_ids_at_input=dossier_ids_at_input,
             secret_dossier_ids_at_input=secret_dossier_ids_at_input,
             authorized_open_affairs=authorized_open_affairs,
+            frozen_open_affairs=frozen_open_affairs,
             caller_transaction=caller_transaction,
             commit_now=commit_now,
             relation_pre_roster=_relation_pre_roster,
@@ -8249,6 +8253,7 @@ def apply_score_extraction(
         )
     finally:
         db._batch_authorized_open_affair_ids = _prev_batch_authorized
+        db._batch_frozen_open_affair_ids = _prev_batch_frozen
 
 
 def _apply_score_extraction_body(
@@ -8264,6 +8269,7 @@ def _apply_score_extraction_body(
     dossier_ids_at_input: Optional[set[int]],
     secret_dossier_ids_at_input: Optional[set[int]],
     authorized_open_affairs: set[int],
+    frozen_open_affairs: set[int],
     caller_transaction: bool,
     commit_now: bool,
     relation_pre_roster: set[str],
@@ -8930,7 +8936,7 @@ def _apply_score_extraction_body(
             db.affairs.close_from_declaration(
                 raw,
                 turn=int(state.turn),
-                authorized_ids=authorized_open_affairs,
+                authorized_ids=frozen_open_affairs,
             )
         except (TypeError, ValueError, KeyError) as exc:
             validate_rejections.append(

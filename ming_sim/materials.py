@@ -99,16 +99,19 @@ def read_material(root: Path, path: str) -> str:
 def material_tools(root: Path) -> list:
     """API-channel list/read tools bound to one prepared directory."""
 
+    def project_error(operation: str, call: Any, *args: object) -> str:
+        try:
+            return call(*args)
+        except (ValueError, FileNotFoundError) as exc:
+            return f"无法{operation}：{exc}"
+
     def list_materials_tool(path: str = "") -> str:
         """列出当前材料目录中可读的文件（相对路径，一行一项）。"""
-        return "\n".join(list_materials(root, path))
+        return project_error("读取", lambda value: "\n".join(list_materials(root, value)), path)
 
     def read_material_tool(path: str) -> str:
         """读取材料目录中的一份人读文本。path 为相对路径，如 人物/某人/经历.txt。"""
-        try:
-            return read_material(root, path)
-        except (ValueError, FileNotFoundError) as exc:
-            return f"无法读取：{exc}"
+        return project_error("读取", read_material, root, path)
 
     list_materials_tool.__name__ = "list_materials"
     read_material_tool.__name__ = "read_material"
@@ -480,7 +483,13 @@ def prepare_character_materials(
             "id": f"draft-{int(row['id'])}", "title": title,
             "situation": f"{body}（尚未入档）" if body else "尚未入档",
         })
+    from types import SimpleNamespace
+    from ming_sim.knowledge import current_character_office
+
+    office, office_type = current_character_office(db, character, name)
+    current_character = SimpleNamespace(name=name, office=office, office_type=office_type)
     opening = minimal_opening_context(
-        character, state, _present_names(db, character), affairs, _spoken_this_scene(db, character),
+        current_character, state, _present_names(db, character), affairs,
+        _spoken_this_scene(db, character),
     )
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))

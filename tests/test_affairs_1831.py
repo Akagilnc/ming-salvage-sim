@@ -472,6 +472,28 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
         and row.get("category") == "invalid_transition"
         for row in batch_born["applied_person_changes"]
     )
+    # Closing authority remains the immutable input snapshot, not the expanded
+    # effect working set: a same-batch newborn without an active issue stays open.
+    close_born_id = int(
+        db.conn.execute("SELECT COALESCE(MAX(id), 0) AS n FROM affairs").fetchone()["n"]
+    ) + 1
+    close_born = apply_score_extraction(
+        db, state,
+        {
+            "economy_moves": [{
+                "account": "国库", "delta": -1, "category": "善后", "reason": "同批另起",
+                "affair_declaration": _declaration(identity="close-born-batch"),
+            }],
+            "affair_declarations": [
+                _declaration(attach="close", affair_id=close_born_id),
+            ],
+        },
+        content=content, open_affair_ids_at_input=caller_frozen,
+    )
+    assert db.affairs.get(close_born_id).status == "open"
+    assert any(row["report_section"] == "affair_declarations"
+               for row in close_born["validate_shape_rejections"])
+
     # subsequent call with the original frozen set still rejects that prior-batch newborn.
     follow = apply_score_extraction(
         db, state,
@@ -704,6 +726,8 @@ def test_translation_experience_marks_affair_without_dossier(game):
     assert len(rows) == 1
     assert minister in rows[0]["person_names"]
     assert str(rows[0]["origin_ref"]).startswith(f"affair:{affair.id}/")
+    knowledge = db.get_character_knowledge(state, minister)
+    assert any(event.get("source_id") == f"story_ledger:{rows[0]['id']}" for event in knowledge["events"])
     brief = build_extractor_shared_context(db, state, "宁远护送", "")
     row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
     assert "experiences" not in row

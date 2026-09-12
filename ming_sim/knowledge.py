@@ -407,25 +407,27 @@ def _world(
     return result
 
 
-def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[str, object]:
-    character = db.content.characters.get(character_name) if db.content else None
-    # The content object is the seed/in-memory roster and can lag behind a
-    # restored save.  The characters table is the durable current-world source
-    # for the position rail, so always prefer it when this is a real GameDB.
+def current_character_office(
+    db: Any, character: Any, character_name: str = "",
+) -> tuple[str, str]:
+    """Current durable (office, office_type), with seed fallback for lightweight callers."""
+    name = str(character_name or getattr(character, "name", "") or "")
     current = None
     if hasattr(db, "conn"):
         current = db.conn.execute(
-            "SELECT office, office_type FROM characters WHERE name = ?",
-            (character_name,),
+            "SELECT office, office_type FROM characters WHERE name = ?", (name,),
         ).fetchone()
-    office_type = str(
-        (current["office_type"] if current is not None else getattr(character, "office_type", ""))
-        or ""
+    return (
+        str((current["office"] if current is not None else getattr(character, "office", "")) or ""),
+        str((current["office_type"] if current is not None else getattr(character, "office_type", "")) or ""),
     )
-    office_name = str(
-        (current["office"] if current is not None else getattr(character, "office", ""))
-        or ""
-    )
+
+
+def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[str, object]:
+    character = db.content.characters.get(character_name) if db.content else None
+    # The content object is the seed/in-memory roster and can lag behind a
+    # restored save.  The characters table is the durable current-world source.
+    office_name, office_type = current_character_office(db, character, character_name)
     world = _world(db, state, office_type)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)

@@ -10436,6 +10436,7 @@ class GameDB:
         ).fetchone()
         if clock is None:
             raise ValueError("存档缺 game_state 时钟")
+        participation_state = self.load_state()
         accepted: List[Mapping[str, Any]] = []
         rejected: List[tuple[Mapping[str, Any], str]] = []
         # Validate model-owned items before opening the all-or-nothing application
@@ -10514,6 +10515,15 @@ class GameDB:
                     origin_ref=origin_ref,
                 )
                 new_ids.append(int(entry_id))
+                self.record_character_participation(
+                    state=participation_state,
+                    participants=persons,
+                    kind="story",
+                    title=str(fact.get("body") or "").strip(),
+                    body=str(fact.get("body") or ""),
+                    source_id=f"story_ledger:{int(entry_id)}",
+                    commit=False,
+                )
             self.conn.execute(
                 "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
                 (cid,),
@@ -15049,6 +15059,7 @@ class GameDB:
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),
+            authorized_ids=getattr(self, "_batch_frozen_open_affair_ids", None),
         )
 
     def _create_decree_dossier_row(

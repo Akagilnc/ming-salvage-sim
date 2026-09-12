@@ -85,6 +85,10 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
 def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
+    current_office = "当回合新任官职"
+    db.conn.execute(
+        "UPDATE characters SET office = ? WHERE name = ?", (current_office, character.name),
+    )
     knowledge = {"issues": [
         {"id": 101, "title": "经手事项", "participant_roster": json.dumps([
             {"character_id": character.name, "tier": "主办"},
@@ -100,6 +104,8 @@ def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, 
         )
     finally:
         db.get_character_knowledge = original_get
+    assert current_office in prepared.opening
+    assert character.office not in prepared.opening
     issue_paths = {line for line in prepared.index_lines if line.startswith("事务/issue-")}
     assert issue_paths == {
         "事务/issue-101/当前情况.txt", "事务/issue-102/当前情况.txt",
@@ -136,6 +142,8 @@ def test_read_material_stays_inside_directory(game, tmp_path):
         raise AssertionError("expected path confinement")
     except ValueError:
         pass
+    tools = {tool.__name__: tool for tool in material_tools(prepared.root)}
+    assert tools["list_materials"]("../outside") == tools["read_material"]("../outside")
 
 
 def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
