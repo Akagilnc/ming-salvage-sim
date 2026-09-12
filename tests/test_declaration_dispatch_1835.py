@@ -278,8 +278,9 @@ def test_on_scene_person_status_change_lands_and_rejects_nonexistent_person(game
 
 
 def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game):
-    """各自所属事务：on_scene_facts 落库后绑 characters.affair_id；引用不存在
-    事务的项在人物变更真正发生前就被拒收（不产生半成品状态变更）。"""
+    """各自所属事务：on_scene_facts 挂 person_logs.origin_ref（affair:<id>），
+    不写 characters 单例 affair_id；引用不存在事务的项在人物变更真正发生前
+    就被拒收（不产生半成品状态变更）。"""
     db, state, _ = game
     minister = _minister(db)
     affair = db.affairs.open(
@@ -295,10 +296,16 @@ def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game
     })
     assert len(ok.on_scene_facts.applied) == 1
     assert "affair_attach_error" not in ok.on_scene_facts.applied[0]
+    log = db.conn.execute(
+        "SELECT origin_ref FROM person_logs WHERE person_name=? ORDER BY id DESC LIMIT 1",
+        (minister,),
+    ).fetchone()
+    assert log["origin_ref"] == db.affairs.origin_ref(affair.id)
+    # characters.affair_id is not the person-change provenance.
     row = db.conn.execute(
         "SELECT affair_id FROM characters WHERE name=?", (minister,),
     ).fetchone()
-    assert row["affair_id"] == affair.id
+    assert int(row["affair_id"] or 0) == 0
 
     other_minister = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND name!=? ORDER BY name LIMIT 1",
@@ -316,17 +323,10 @@ def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game
     assert status != "imprisoned"  # 拒收在变更发生前，不留半成品
 
 
-def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_too(game):
-    """指针绑定与人物变更同一原子块：已挂事务 A 的人物再声明挂事务 B，指针
-    冲突时连同人物变更一起回滚——不是「变更真落库、只是绑事务失败」的半写。
-    跨层回滚：`apply_person_changes_only` 直接改了 `content.characters[name]`
-    这个运行时对象（`db.set_character_status`），SAVEPOINT 只回滚 DB 行；
-    本项回滚必须连运行时对象也一并还原，否则 DB 与运行时盘面分叉。
-
-    受控顺序污染：issues 全局绑定故意指向另一份 GameContent，而 db.content
-    仍是本局 fixture。人物写核必须用当前局 content，不得静默落到进程全局。"""
+def test_on_scene_fact_multi_affair_person_changes_keep_each_event_provenance(game):
+    """同一人物可先后参与多事务：每次人物变动挂各自 durable origin_ref，
+    后续真实变更不得因首个 affair_id 回滚。受控顺序污染仍须用当前局 content。"""
     db, state, content = game
-    # 全局绑定 ≠ db.content：复现 CI 顺序污染，不依赖前案偶然顺序。
     polluted = GameContent.load()
     assert polluted is not content
     issues_mod.bind_content(polluted)
@@ -350,29 +350,59 @@ def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_t
         status_before, _ = db.get_character_status(minister)
         assert status_before == "imprisoned"
 
-        conflicting = dispatch_declaration(db, state, {
+        second = dispatch_declaration(db, state, {
             "on_scene_facts": [{
                 "name": minister, "动作": "处置", "status": "dead", "reason": "另案牵连",
                 "affair_declaration": {"attach": "existing", "affair_id": affair_b.id},
             }],
         })
-        assert conflicting.on_scene_facts.applied == []
-        assert len(conflicting.on_scene_facts.rejected) == 1
-        assert conflicting.on_scene_facts.rejected[0].category == "invalid_state"
-
+        assert len(second.on_scene_facts.applied) == 1
         status_after, _ = db.get_character_status(minister)
-        assert status_after == "imprisoned"  # 没有被冲突项的「dead」半写进去
-        row = db.conn.execute(
-            "SELECT affair_id FROM characters WHERE name=?", (minister,),
-        ).fetchone()
-        assert row["affair_id"] == affair_a.id  # 指针仍是最初绑的那个，没被改动
-        # DB 回滚必须连运行时对象一起还原：不能出现「DB 仍是 imprisoned、
-        # content.characters 却停在冲突项写过的 dead」这种跨层分叉。
-        # 三者一致：DB、事务指针、当前局 content（不是被污染的全局绑定）。
-        assert content.characters[minister].status == "imprisoned"
-        assert db.content.characters[minister].status == "imprisoned"
+        assert status_after == "dead"
+        refs = [
+            row["origin_ref"]
+            for row in db.conn.execute(
+                "SELECT origin_ref FROM person_logs WHERE person_name=? ORDER BY id",
+                (minister,),
+            ).fetchall()
+        ]
+        assert db.affairs.origin_ref(affair_a.id) in refs
+        assert db.affairs.origin_ref(affair_b.id) in refs
+        assert content.characters[minister].status == "dead"
+        assert db.content.characters[minister].status == "dead"
     finally:
         issues_mod.bind_content(content)
+
+
+def test_same_declaration_registration_establishes_target_before_dependent_facts(game):
+    """同声明体内先入册再写依赖人物的文字事实；畸形 affair_declaration 进单项拒收。"""
+    db, state, _ = game
+    minister = _minister(db)
+    result = dispatch_declaration(db, state, {
+        "registrations": [{
+            "name": "新入册人甲", "office": "锦衣卫百户", "office_type": "锦衣卫",
+        }],
+        "textual_facts": [
+            {"subject_kind": "character", "subject_id": "新入册人甲", "body": "同声明入册后事实"},
+            {
+                "subject_kind": "character", "subject_id": minister, "body": "坏事务形状",
+                "affair_declaration": "bad",
+            },
+        ],
+    }, minister_name=minister)
+    assert result.registrations.applied == [{"name": "新入册人甲"}]
+    assert any(
+        isinstance(f, dict) and f.get("subject_id") == "新入册人甲"
+        for f in result.textual_facts.applied
+    )
+    assert any(
+        r.category == "invalid_shape" and r.item.get("subject_id") == minister
+        for r in result.textual_facts.rejected
+    )
+    facts = db.textual_facts.readable_materials(
+        subject_kind="character", subject_id="新入册人甲",
+    )
+    assert [f.body for f in facts] == ["同声明入册后事实"]
 
 
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
@@ -686,6 +716,18 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
         "WHERE decree_ref='decree:2' AND status='staged'",
     ).fetchone()
     assert restaged["c"] == 0
+
+    # discard-before-stage tombstone: no product row yet, late stage still rejected.
+    ghost = discard_staged_declaration(db, "decree:ghost")
+    assert ghost == 0
+    with pytest.raises(DecreeAlreadySettled):
+        stage_declaration(
+            db, decree_ref="decree:ghost",
+            declaration={"textual_facts": [{
+                "subject_kind": "character", "subject_id": minister, "body": "too late",
+            }]},
+            turn=int(state.turn),
+        )
 
     # 刻意把 decree:3 排在 decree:1 之前——与暂存先后（1→2→3）相反，用来断言
     # 结算真的服从传入顺序，而不是暂存插入顺序。

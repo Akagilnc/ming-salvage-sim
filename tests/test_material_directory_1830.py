@@ -138,14 +138,14 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
 def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
-    old_root = tmp_path / "old-materials"
-    new_root = tmp_path / "new-materials"
-    runtime_old = tmp_path / "runtime-old"
-    runtime_new = tmp_path / "runtime-new"
-    closed = tmp_path / "closed-materials"
-    session_old = tmp_path / "session-old"
+    old_root = tmp_path / "inv-old" / ("a" * 32) / "old-materials"
+    new_root = tmp_path / "inv-new" / ("b" * 32) / "new-materials"
+    runtime_old = tmp_path / "inv-rt-old" / ("c" * 32) / "runtime-old"
+    runtime_new = tmp_path / "inv-rt-new" / ("d" * 32) / "runtime-new"
+    closed = tmp_path / "inv-closed" / ("e" * 32) / "closed-materials"
+    session_old = tmp_path / "inv-session" / ("f" * 32) / "session-old"
     for path in (old_root, new_root, runtime_old, runtime_new, closed, session_old):
-        path.mkdir()
+        path.mkdir(parents=True)
     registry = object.__new__(MinisterRegistry)
     registry.content = content
     registry.context = SimpleNamespace(state=state)
@@ -158,6 +158,7 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     )
     registry.refresh(character.name)
     assert not old_root.exists() and new_root.exists()
+    assert not old_root.parent.exists()  # UUID parent released with the leaf
 
     registry.agents[character.name] = SimpleNamespace(
         model=SimpleNamespace(materials_dir=str(runtime_old))
@@ -167,12 +168,27 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     )
     registry.register_runtime(character)
     assert not runtime_old.exists() and runtime_new.exists()
+    assert not runtime_old.parent.exists()
+
+    # adopt_materials keeps API tools + CLI cwd on the same live root.
+    adopted = tmp_path / "inv-adopt" / ("1" * 32) / "adopted"
+    adopted.mkdir(parents=True)
+    (adopted / "INDEX.txt").write_text("live\n", encoding="utf-8")
+    model = registry.agents[character.name].model
+    from ming_sim.materials import material_tools, list_materials, read_material
+    tools = material_tools(lambda: str(getattr(model, "materials_dir", "") or ""))
+    registry.adopt_materials(character.name, adopted)
+    assert not runtime_new.exists() and adopted.exists()
+    listed = tools[0]("")
+    assert "INDEX.txt" in listed
+    assert "live" in tools[1]("INDEX.txt")
 
     registry.agents["other"] = SimpleNamespace(
         model=SimpleNamespace(materials_dir=str(closed))
     )
     registry.close()
-    assert not closed.exists() and not runtime_new.exists()
+    assert not closed.exists() and not adopted.exists()
+    assert not closed.parent.exists()
     assert registry.agents == {}
 
     session = object.__new__(GameSession)
@@ -180,20 +196,25 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     leftover.agents = {
         character.name: SimpleNamespace(model=SimpleNamespace(materials_dir=str(session_old)))
     }
+    leftover.close = MinisterRegistry.close.__get__(leftover, MinisterRegistry)
+    leftover._release_materials = MinisterRegistry._release_materials
     session.registry = leftover
     replacement = object.__new__(MinisterRegistry)
     replacement.agents = {}
     session._adopt_registry(replacement)
     assert session.registry is replacement
     assert not session_old.exists()
+    assert not session_old.parent.exists()
 
-    session_close_dir = tmp_path / "session-close"
-    session_close_dir.mkdir()
+    session_close_dir = tmp_path / "inv-close" / ("2" * 32) / "session-close"
+    session_close_dir.mkdir(parents=True)
     closing = object.__new__(GameSession)
     leftover_close = object.__new__(MinisterRegistry)
     leftover_close.agents = {
         character.name: SimpleNamespace(model=SimpleNamespace(materials_dir=str(session_close_dir)))
     }
+    leftover_close.close = MinisterRegistry.close.__get__(leftover_close, MinisterRegistry)
+    leftover_close._release_materials = MinisterRegistry._release_materials
     closing.registry = leftover_close
     closing._scene_registry = SimpleNamespace(abandon_all=lambda: None)
     closing.agno_db = None
@@ -202,6 +223,27 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     GameSession.close(closing)
     assert closing.registry is None
     assert not session_close_dir.exists()
+    assert not session_close_dir.parent.exists()
+
+    # Materials cleanup failure still releases db; error is surfaced honestly.
+    failing = object.__new__(GameSession)
+    bad_reg = object.__new__(MinisterRegistry)
+
+    def _boom(_agent=None):
+        raise RuntimeError("materials-cleanup-boom")
+
+    bad_reg.agents = {"x": SimpleNamespace(model=SimpleNamespace(materials_dir=str(tmp_path / "x")))}
+    bad_reg.close = lambda: (_boom())
+    failing.registry = bad_reg
+    failing._scene_registry = SimpleNamespace(abandon_all=lambda: None)
+    failing.agno_db = None
+    closed_db = {"done": False}
+    failing.db = SimpleNamespace(close=lambda: closed_db.__setitem__("done", True))
+    failing._close_epoch = 0
+    with pytest.raises(RuntimeError, match="materials-cleanup-boom"):
+        GameSession.close(failing)
+    assert closed_db["done"] is True
+    assert failing.registry is None
 
 
 def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):

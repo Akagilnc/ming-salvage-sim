@@ -211,38 +211,51 @@ def _dispatch_declaration_sections(
     """真正跑十个 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
     给定的收集器；只记不落库——落库时机与事务边界由调用方决定（J1 判词打回：
     直接分派与暂存结算两条路径共用同一段执行体，不复制两份分派逻辑）。"""
+    # Dependency order within one declaration body: first establish reference
+    # targets (registrations / commissions that may birth affairs), then facts
+    # and scene items that may point at those targets. One dispatcher only.
+    registrations = _dispatch_registrations(
+        db, state, declaration.get("registrations"), source=source,
+    )
+    commissions = _dispatch_commissions(
+        db, state, declaration.get("commissions"),
+        minister_name=minister_name, source=source,
+    )
+    promises = _dispatch_promises(
+        db, state, declaration.get("promises"), night_id=night_id, source=source,
+    )
+    textual_facts = _dispatch_textual_facts(
+        db, state, declaration.get("textual_facts"), source=source,
+    )
+    public_sayings = _dispatch_public_sayings(
+        db, state, declaration.get("public_sayings"), source=source,
+    )
+    on_scene_facts = _dispatch_on_scene_facts(
+        db, state, declaration.get("on_scene_facts"), source=source,
+    )
+    presence = _dispatch_presence(
+        db, declaration.get("presence"), night_id=night_id, source=source,
+    )
+    scene_facts = _dispatch_scene_facts(
+        db, declaration.get("scene_facts"), night_id=night_id, source=source,
+    )
+    edge_events = _dispatch_edge_events(
+        db, state, declaration.get("edge_events"), source=source,
+    )
+    protagonist = _dispatch_protagonist(
+        db, declaration.get("protagonist"), source=source,
+    )
     result = DeclarationDispatchResult(
-        commissions=_dispatch_commissions(
-            db, state, declaration.get("commissions"),
-            minister_name=minister_name, source=source,
-        ),
-        promises=_dispatch_promises(
-            db, state, declaration.get("promises"), night_id=night_id, source=source,
-        ),
-        textual_facts=_dispatch_textual_facts(
-            db, state, declaration.get("textual_facts"), source=source,
-        ),
-        public_sayings=_dispatch_public_sayings(
-            db, state, declaration.get("public_sayings"), source=source,
-        ),
-        on_scene_facts=_dispatch_on_scene_facts(
-            db, state, declaration.get("on_scene_facts"), source=source,
-        ),
-        presence=_dispatch_presence(
-            db, declaration.get("presence"), night_id=night_id, source=source,
-        ),
-        scene_facts=_dispatch_scene_facts(
-            db, declaration.get("scene_facts"), night_id=night_id, source=source,
-        ),
-        edge_events=_dispatch_edge_events(
-            db, state, declaration.get("edge_events"), source=source,
-        ),
-        protagonist=_dispatch_protagonist(
-            db, declaration.get("protagonist"), source=source,
-        ),
-        registrations=_dispatch_registrations(
-            db, state, declaration.get("registrations"), source=source,
-        ),
+        commissions=commissions,
+        promises=promises,
+        textual_facts=textual_facts,
+        public_sayings=public_sayings,
+        on_scene_facts=on_scene_facts,
+        presence=presence,
+        scene_facts=scene_facts,
+        edge_events=edge_events,
+        protagonist=protagonist,
+        registrations=registrations,
     )
     turn = int(state.turn)
     _record_unknown_sections(collector, declaration, turn, source)
@@ -502,9 +515,13 @@ def _dispatch_commissions(
                     continue
                 payload = {"text": text}
         except DecreeMaterializationValidationError as exc:
-            _reject(rejected, item, str(exc), "invalid_enum", source)
+            _reject(rejected, item, str(exc), _xiexang_reject_category(exc), source)
             continue
-        raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
+        try:
+            raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
+        except (TypeError, ValueError) as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
         if raw_affair is not None:
             try:
                 affair_id = db.affairs.resolve_declaration(
@@ -581,13 +598,34 @@ def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: 
         raise KeyError(f"{subject_kind} 不存在：{subject_id}")
 
 
+def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
+    """协饷失败按 typed 真因区分 shape / enum / missing entity，不统一冒称。"""
+    from ming_sim.action_materialize import IncompleteXiexangPayloadError
+
+    if isinstance(exc, IncompleteXiexangPayloadError):
+        return "invalid_shape"
+    failed = set(getattr(exc, "failed_fields", ()) or ())
+    message = str(exc)
+    if failed & {"target_id", "target_kind"} or "无法解析为军队" in message:
+        return "hallucinated_id"
+    if failed & {"account", "purpose", "cadence"}:
+        return "invalid_enum"
+    if failed & {"amount", "text"} or "缺少" in message:
+        return "invalid_shape"
+    return "invalid_enum"
+
+
 def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, str | None]:
     """把 item 里可选的 existing-only 事务声明解成事务 id；(affair_id, error_category)。
 
     无声明 → (None, None)；声明合法 → (affair_id, None)；引用不存在事务 →
     (None, "hallucinated_id")；声明本身形状坏 → (None, "invalid_shape")。
+    解析期异常进入本项拒收边界，不冒出分派器。
     """
-    raw_affair = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
+    try:
+        raw_affair = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
+    except (TypeError, ValueError):
+        return None, "invalid_shape"
     if raw_affair is None:
         return None, None
     try:
@@ -712,20 +750,12 @@ def _dispatch_public_sayings(db: Any, state: Any, raw: object, *, source: Proven
 
 
 def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
-    """当场实况：人物生死 / 下狱 / 革职等（既有 ADR 0009 人物变更核，动作字段沿用
-    既有 `PERSON_ACTIONS` 闭集词汇——如「处置」配 `status=dead/imprisoned`、
-    「罢黜」= 革职；既有核已做「非既有人物 → hallucinated_id」逐项拒收。
+    """当场实况：人物生死 / 下狱 / 革职等（既有 ADR 0009 人物变更核）。
 
-    各自所属事务：人物变更与事务指针绑定放进同一个 :func:`_item_savepoint_scope`
-    块逐项处理（不再整批调用 `apply_person_changes_only`）——指针绑定失败时
-    整块回滚，该项进 rejected、不产生任何副作用；`apply_person_changes_only`
-    在既有事务内运行时会自行注册运行时快照（`_register_runtime_rollback_snapshot`），
-    `_item_savepoint_scope` 在本项失败时手动回放该快照的 undo 闭包，回滚会
-    连带撤销它对 `content.characters` 做的内存态更改，不会出现「DB 已回滚、
-    内存态却留着」的半写状态（详见 :func:`_item_savepoint_scope` 文档）。用
-    SAVEPOINT 而非直接嵌套 `atomic(db)`：本函数可能被 `dispatch_declaration`
-    自己的外层事务（直接分派或暂存结算）调用，SAVEPOINT 才能在共享事务内做
-    本项独立回滚而不牵连同批 sibling。"""
+    事务挂在本次人物变动的 durable 事件（person_logs.origin_ref = affair:<id>），
+    不写 characters 单例 affair_id——同一人物可先后参与多事务，后续真实变更
+    不得因首个 affair_id 回滚。复用既有 person_logs 真源，不建第二套人物状态账。
+    """
     items, rejected = _section_items(raw, label="当场实况声明", source=source)
     applied: List[Any] = []
     for item in items:
@@ -733,10 +763,13 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
             continue
+        origin_ref = (
+            db.affairs.origin_ref(affair_id) if affair_id is not None else "转译声明"
+        )
         try:
             with _item_savepoint_scope(db, f"on_scene_fact_{int(state.turn)}_{id(item)}"):
                 outcome = apply_person_changes_only(
-                    db, state, [item], content=db.content, origin_ref="转译声明",
+                    db, state, [item], content=db.content, origin_ref=origin_ref,
                 )
                 results = list(outcome.get("applied_person_changes") or ())
                 if not results:
@@ -747,13 +780,6 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
                         str(result.get("reason") or ""),
                         str(result.get("category") or "invalid_enum"),
                     )
-                if affair_id is not None:
-                    name = str(result.get("name") or "").strip()
-                    try:
-                        _attach_character_affair_pointer(db, name, affair_id)
-                    except (ValueError, KeyError) as exc:
-                        category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
-                        raise _ItemAtomicReject(str(exc), category) from exc
         except _ItemAtomicReject as exc:
             _reject(rejected, item, exc.reason, exc.category, source)
             continue

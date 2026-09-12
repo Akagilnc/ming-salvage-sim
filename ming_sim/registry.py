@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -20,7 +19,7 @@ from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig
 from ming_sim.llm_model import create_chat_model
-from ming_sim.materials import material_tools, prepare_character_materials
+from ming_sim.materials import material_tools, prepare_character_materials, release_material_tree
 from ming_sim.tools import _duty_location, build_minister_tools
 
 _content: Optional[GameContent] = None
@@ -274,7 +273,11 @@ def create_minister_agent(
             f"你与皇帝的多轮对话会持续到本{TURN_UNIT}退朝；同一{TURN_UNIT}复召时要接续此前奏对，不要重置记忆。",
             "\n\n".join(monthly_block_parts),
         ]
-        tools = material_tools(prepared.root) + build_minister_tools(
+        # API tools read the live model.materials_dir so refresh keeps CLI cwd
+        # and list/read on the same latest snapshot.
+        tools = material_tools(
+            lambda m=model: str(getattr(m, "materials_dir", "") or prepared.root)
+        ) + build_minister_tools(
             character, context,
         )
         # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
@@ -342,9 +345,24 @@ class MinisterRegistry:
         root = str(getattr(model, "materials_dir", "") or "")
         if not root:
             return
-        path = Path(root)
-        if path.exists():
-            shutil.rmtree(path)
+        if model is not None and hasattr(model, "materials_dir"):
+            model.materials_dir = ""
+        release_material_tree(root)
+
+    def adopt_materials(self, character_name: str, root: Path | str) -> None:
+        """Point the live agent (if any) at a new materials root; release the old tree."""
+        new_root = str(root or "")
+        if not new_root:
+            return
+        agent = self.agents.get(character_name)
+        model = getattr(agent, "model", None) if agent is not None else None
+        if model is None or not hasattr(model, "materials_dir"):
+            release_material_tree(new_root)
+            return
+        old = str(getattr(model, "materials_dir", "") or "")
+        model.materials_dir = new_root
+        if old and old != new_root:
+            release_material_tree(old)
 
     def _replace_agent(self, name: str, agent: Agent) -> None:
         old = self.agents.get(name)
@@ -355,8 +373,14 @@ class MinisterRegistry:
     def close(self) -> None:
         agents = list(self.agents.values())
         self.agents.clear()
+        errors: list[BaseException] = []
         for agent in agents:
-            self._release_materials(agent)
+            try:
+                self._release_materials(agent)
+            except BaseException as exc:
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     def refresh(self, character_name: str) -> None:
         character = self.content.characters.get(character_name)

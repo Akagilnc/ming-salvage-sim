@@ -120,3 +120,41 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
         assert same_db != other_db
     finally:
         other.close()
+
+
+def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(game, tmp_path):
+    """世界目录直读权威文字事实；邸报只走 邸报/ 载体，不复制进月度公开说法。"""
+    db, state, content = game
+    name = next(iter(content.characters))
+    db.textual_facts.append(
+        subject_kind="character", subject_id=name, body="世界可见人物文字事实",
+        year=int(state.year), period=int(state.period), turn=int(state.turn),
+    )
+    region = db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 1").fetchone()
+    db.textual_facts.append(
+        subject_kind="region", subject_id=str(region["id"]), body="世界可见地方文字事实",
+        year=int(state.year), period=int(state.period), turn=int(state.turn),
+    )
+    past_year, past_period, past_turn = state.year, max(1, state.period - 1), max(0, state.turn - 1)
+    from ming_sim.models import GameState
+    past_state = GameState(
+        turn=past_turn, year=past_year, period=past_period, metrics=dict(state.metrics),
+    )
+    db.save_turn_report(past_state, "UNIQUE_WORLD_GAZETTE_BODY")
+
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-facts")
+    names = list_materials(prepared.root)
+    fact_paths = [p for p in names if p.startswith("事实/")]
+    assert fact_paths
+    fact_blob = "\n".join(read_material(prepared.root, p) for p in fact_paths)
+    assert "世界可见人物文字事实" in fact_blob
+    assert "世界可见地方文字事实" in fact_blob
+
+    gazette_paths = [p for p in names if p.startswith("邸报/")]
+    assert gazette_paths
+    gazette_blob = "\n".join(read_material(prepared.root, p) for p in gazette_paths)
+    assert gazette_blob.count("UNIQUE_WORLD_GAZETTE_BODY") == 1
+    public_paths = [p for p in names if p.startswith("公开说法/")]
+    if public_paths:
+        public_blob = "\n".join(read_material(prepared.root, p) for p in public_paths)
+        assert "UNIQUE_WORLD_GAZETTE_BODY" not in public_blob

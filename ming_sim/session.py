@@ -2028,18 +2028,27 @@ class GameSession:
                 )
             except Exception:
                 return "【近臣回奏暂不可用：查访未能持久留档；不得据此臆答事实。】\n\n" + message
-        from ming_sim.materials import prepare_character_materials
+        from ming_sim.materials import prepare_character_materials, release_material_tree
         try:
             prepared = prepare_character_materials(self.db, self.state, character)
         except Exception:
             return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
         registry = getattr(self, "registry", None)
-        agent = None
-        if registry is not None:
-            agent = getattr(registry, "agents", {}).get(character.name)
-        model = getattr(agent, "model", None) if agent is not None else None
-        if model is not None and hasattr(model, "materials_dir"):
-            model.materials_dir = str(prepared.root)
+        if registry is not None and hasattr(registry, "adopt_materials"):
+            registry.adopt_materials(character.name, prepared.root)
+        else:
+            agent = None
+            if registry is not None:
+                agent = getattr(registry, "agents", {}).get(character.name)
+            model = getattr(agent, "model", None) if agent is not None else None
+            if model is not None and hasattr(model, "materials_dir"):
+                old = str(getattr(model, "materials_dir", "") or "")
+                model.materials_dir = str(prepared.root)
+                if old and old != str(prepared.root):
+                    release_material_tree(old)
+            else:
+                # No live agent owns this snapshot — opening text is enough; do not leak.
+                release_material_tree(prepared.root)
         return prepared.opening + "\n\n" + message
 
     def apply_cli_conversation_actions(
@@ -4133,14 +4142,20 @@ class GameSession:
         主库与 agno 共路径；只关 GameDB 就归档/搬移文件时，agno 仍持 WAL 句柄，
         进程 fd 会钉在 drained_*.db 上，活局写路径可落到 readonly。
 
-        次序：先 registry 材料目录，再 scene，再 agno，最后 db。任一侧失败上抛（ADR 0005）。
+        次序：先 registry 材料目录，再 scene，再 agno，最后 db。材料清理失败不得
+        阻断后续 agno/db 释放，但必须诚实上抛（ADR 0005，不得 ignore_errors 洗白）。
         agno 失败则立即上抛、不碰 db（两侧仍完整可恢复）。
         agno 已成功后 ``_close_epoch`` 递增——此后即使 db.close 失败/conn 仍可探测，
         也不得恢复为活局（registry 已失 agno）。
         """
+        materials_error: BaseException | None = None
         registry = getattr(self, "registry", None)
         if registry is not None:
-            registry.close()
+            try:
+                registry.close()
+            except BaseException as exc:
+                materials_error = exc
+                logger.exception("GameSession.registry materials close failed")
             self.registry = None
         self._scene_registry.abandon_all()
         agno = getattr(self, "agno_db", None)
@@ -4159,3 +4174,5 @@ class GameSession:
             logger.exception("GameSession.db.close failed")
             raise
         self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
+        if materials_error is not None:
+            raise materials_error

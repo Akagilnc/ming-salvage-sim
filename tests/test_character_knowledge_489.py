@@ -1223,6 +1223,17 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert scoped["scope"]["region_ids"] == (slot["region_id"],)
     assert "regional" in scoped["world"] and "construction" in scoped["world"]
 
+    # Real local office outside the two-row 查访 vacancy catalog still gets 辖域.
+    natural = next(
+        c for c in content.characters.values()
+        if c.office_type in {"地方", "督抚", "边镇"}
+        and ("巡抚" in str(c.office) or "总督" in str(c.office))
+        and str(c.location or "") in (getattr(content, "regions", {}) or {})
+    )
+    natural_view = db.get_character_knowledge(state, natural.name)
+    assert natural.location in natural_view["scope"]["region_ids"]
+    assert "regional" in natural_view["world"]
+
     unscoped = next(c for c in content.characters.values() if c.office_type == "礼部")
     world = db.get_character_knowledge(state, unscoped.name)["world"]
     assert not ({"treasury", "military", "regional", "construction", "security"} & set(world))
@@ -1333,7 +1344,8 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     assert "CASE_FILE_ARCHIVE" in _office_archive_from_materials(
         db, state, case_helper, tmp_path / case_helper.name,
     )
-    assert "CASE_FILE_ARCHIVE" not in _office_archive_from_materials(
+    # 刑部 is a legal central yamen: successor shares archive identity with the lead.
+    assert "CASE_FILE_ARCHIVE" in _office_archive_from_materials(
         db, state, case_successor, tmp_path / f"{case_successor.name}-case",
     )
 

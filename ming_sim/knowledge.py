@@ -422,14 +422,30 @@ def _world(
     elif office_type == "吏部":
         result["personnel"] = _appointment_register(db, state)
 
-    slot = db.conn.execute(
-        "SELECT region_id FROM office_slots WHERE office_title=?", (office_name,),
+    # Authoritative office→辖域 projection (shared with dossier archive keys).
+    # Never gate on the two-row 查访 office_slots catalog alone.
+    location = ""
+    loc_row = db.conn.execute(
+        "SELECT location FROM characters WHERE name=?", (character_name,),
     ).fetchone()
-    region_id = str(slot["region_id"] or "") if slot is not None else ""
-    if region_id:
-        scope["region_ids"] = (region_id,)
-        result["regional"] = _prose(db.region_detail(region_id, qualitative=True))
-        result["construction"] = _prose(db.buildings_report(region_id=region_id, qualitative=True))
+    if loc_row is not None:
+        location = str(loc_row["location"] or "")
+    projected = {}
+    if hasattr(db, "project_office_identity"):
+        projected = db.project_office_identity(
+            office_name, office_type, location=location,
+        ) or {}
+    region_ids = tuple(
+        str(rid) for rid in (projected.get("region_ids") or ()) if str(rid or "").strip()
+    )
+    if region_ids:
+        scope["region_ids"] = region_ids
+        # Materials/region detail use the primary jurisdiction when several.
+        primary = region_ids[0]
+        result["regional"] = _prose(db.region_detail(primary, qualitative=True))
+        result["construction"] = _prose(
+            db.buildings_report(region_id=primary, qualitative=True)
+        )
 
     armies = db.conn.execute(
         "SELECT id,name FROM armies WHERE commander=? OR controller=? ORDER BY name",
@@ -781,18 +797,3 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     }
 
 
-def build_character_treasury_ledger(
-    db: Any, state: Any, character_name: str, account: str, turns: int,
-) -> str:
-    """Render ledger history through the character's treasury projection.
-
-    This is intentionally part of the knowledge read model: callers must not
-    query ``economy_ledger`` before the office-domain gate has been applied.
-    Amounts and balances are qualitative in audience-facing text.
-    """
-    knowledge = build_character_knowledge(db, state, character_name)
-    if "treasury" not in (knowledge.get("world") or {}):
-        return ""
-    if account != "国库" or not hasattr(db, "conn"):
-        return ""
-    return _household_ledger(db, state, character_name)

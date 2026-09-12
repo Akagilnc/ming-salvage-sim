@@ -15337,11 +15337,15 @@ class GameDB:
         if action != "secret_order":
             for lead_name in lead_names:
                 lead = self.conn.execute(
-                    "SELECT office,office_type FROM characters WHERE name=?", (lead_name,),
+                    "SELECT office,office_type,location FROM characters WHERE name=?",
+                    (lead_name,),
                 ).fetchone()
                 if lead is None:
                     continue
-                key = self._office_archive_key(lead["office"], lead["office_type"])
+                key = self._office_archive_key(
+                    lead["office"], lead["office_type"],
+                    location=lead["location"] if "location" in lead.keys() else "",
+                )
                 if key:
                     archive_keys.add(key)
         cur = self.conn.execute(
@@ -15578,9 +15582,41 @@ class GameDB:
         self._validate_dossier_delegations(merged)
         self._validate_participant_roster_references(merged)
         if added:
+            archive_keys: set[str] = set()
+            raw_keys_row = self.conn.execute(
+                "SELECT office_archive_keys FROM decree_dossiers WHERE id=?",
+                (int(dossier_id),),
+            ).fetchone()
+            try:
+                archive_keys = set(json.loads(
+                    (raw_keys_row["office_archive_keys"] if raw_keys_row else None) or "[]"
+                ))
+            except (TypeError, ValueError):
+                archive_keys = set()
+            if str(row["action_type"] or "") != "secret_order":
+                for item in added:
+                    if str(item.get("tier") or "") != "主办":
+                        continue
+                    lead = self.conn.execute(
+                        "SELECT office,office_type,location FROM characters WHERE name=?",
+                        (str(item.get("character_id") or ""),),
+                    ).fetchone()
+                    if lead is None:
+                        continue
+                    key = self._office_archive_key(
+                        lead["office"], lead["office_type"],
+                        location=lead["location"] if "location" in lead.keys() else "",
+                    )
+                    if key:
+                        archive_keys.add(key)
             self.conn.execute(
-                "UPDATE decree_dossiers SET participant_roster=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (json.dumps(merged, ensure_ascii=False), int(dossier_id)),
+                "UPDATE decree_dossiers SET participant_roster=?,office_archive_keys=?,"
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (
+                    json.dumps(merged, ensure_ascii=False),
+                    json.dumps(sorted(archive_keys), ensure_ascii=False),
+                    int(dossier_id),
+                ),
             )
             if state is not None and str(row["action_type"] or "") != "secret_order":
                 for item in added:
@@ -15685,19 +15721,81 @@ class GameDB:
             })
         return result
 
-    def _office_archive_key(self, office: object, office_type: object) -> str:
-        """Typed archive identity: exact local slot, otherwise an authorized central yamen."""
-        title = str(office or "")
-        kind = str(office_type or "")
-        if self.conn.execute(
-            "SELECT 1 FROM office_slots WHERE office_title=?", (title,),
-        ).fetchone() is not None:
-            return f"slot:{title}"
-        if kind in {
-            "内阁", "吏部", "户部", "兵部", "工部", "礼部", "翰林院", "司礼监",
-        }:
-            return f"central:{kind}"
-        return ""
+    # Single authority for central-yamen archive identity. Not a scattered
+    # whitelist patch list — knowledge materials and dossier succession share it.
+    _CENTRAL_ARCHIVE_OFFICE_TYPES = frozenset({
+        "内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部",
+        "都察院", "大理寺", "通政司", "司礼监", "东厂", "锦衣卫", "翰林院", "詹事府",
+    })
+    _LOCAL_ARCHIVE_OFFICE_TYPES = frozenset({"地方", "督抚", "边镇"})
+
+    def project_office_identity(
+        self,
+        office: object,
+        office_type: object,
+        *,
+        location: object = "",
+    ) -> Dict[str, object]:
+        """Authoritative office → archive_key + region_ids.
+
+        Shared by character materials scope and decree-dossier succession.
+        office_slots (查访 vacancy) is one region hint source, never the full
+        office catalog gate.
+        """
+        title = normalize_office(str(office or ""))
+        kind = str(office_type or "").strip()
+        location_id = str(location or "").strip()
+        region_ids: tuple[str, ...] = ()
+
+        if kind in self._CENTRAL_ARCHIVE_OFFICE_TYPES:
+            return {"archive_key": f"central:{kind}", "region_ids": ()}
+
+        if title and hasattr(self, "conn"):
+            slot = self.conn.execute(
+                "SELECT region_id FROM office_slots WHERE office_title=?", (title,),
+            ).fetchone()
+            if slot is not None:
+                rid = str(slot["region_id"] or "").strip()
+                if rid:
+                    region_ids = (rid,)
+
+        if not region_ids and title:
+            regions = getattr(self.content, "regions", None) or {}
+            if regions:
+                from ming_sim.matching import match_region_id_from_text
+                matched = match_region_id_from_text(title, regions)
+                if matched:
+                    region_ids = (matched,)
+
+        if not region_ids and location_id:
+            regions = getattr(self.content, "regions", None) or {}
+            if location_id in regions:
+                region_ids = (location_id,)
+            elif regions:
+                from ming_sim.matching import canonical_region_id_exact
+                resolved = canonical_region_id_exact(location_id, regions)
+                if resolved:
+                    region_ids = (resolved,)
+
+        # Archive succession identity is office-shaped, not “has a location”.
+        # Location may still supply region scope for materials without minting
+        # a slot key for 内廷/身名分 etc.
+        archive_key = ""
+        if title and (
+            kind in self._LOCAL_ARCHIVE_OFFICE_TYPES
+            or any(marker in title for marker in (
+                "巡抚", "总督", "巡按", "布政", "按察", "知府", "知县",
+            ))
+        ):
+            archive_key = f"slot:{title}"
+        return {"archive_key": archive_key, "region_ids": region_ids}
+
+    def _office_archive_key(
+        self, office: object, office_type: object, *, location: object = "",
+    ) -> str:
+        """Typed archive identity via :meth:`project_office_identity`."""
+        projected = self.project_office_identity(office, office_type, location=location)
+        return str(projected.get("archive_key") or "")
 
     def list_referenceable_dossiers(
         self, character_name: str, current_turn: int,
@@ -15722,10 +15820,13 @@ class GameDB:
             if dossier_match:
                 known_dossier_ids.add(int(dossier_match.group(1)))
         office_row = self.conn.execute(
-            "SELECT office,office_type FROM characters WHERE name=?", (name,),
+            "SELECT office,office_type,location FROM characters WHERE name=?", (name,),
         ).fetchone()
         reader_archive_key = (
-            self._office_archive_key(office_row["office"], office_row["office_type"])
+            self._office_archive_key(
+                office_row["office"], office_row["office_type"],
+                location=office_row["location"] if "location" in office_row.keys() else "",
+            )
             if office_row is not None else ""
         )
         rows = self.conn.execute(

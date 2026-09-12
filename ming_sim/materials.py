@@ -81,6 +81,29 @@ def _materials_invocation_dir(db: Any, state: Any) -> Path:
     )
 
 
+def release_material_tree(root: Optional[Path | str]) -> None:
+    """Release one prepared materials root and empty UUID invocation parents.
+
+    Fail-loud on cleanup errors (ADR 0005) — callers that must continue other
+    resource teardown catch and surface, never ignore_errors whitewash.
+    """
+    if root is None:
+        return
+    path = Path(root)
+    if path.exists():
+        shutil.rmtree(path)
+    parent = path.parent
+    name = parent.name
+    if (
+        parent.exists()
+        and parent.is_dir()
+        and len(name) == 32
+        and all(ch in "0123456789abcdef" for ch in name)
+        and not any(parent.iterdir())
+    ):
+        parent.rmdir()
+
+
 def _publish_material_tree(
     dest_root: Optional[Path],
     default_root: Path,
@@ -97,7 +120,7 @@ def _publish_material_tree(
         tmp.rename(dest)
     except Exception:
         if tmp.exists():
-            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(tmp)
         raise
     return dest, index
 
@@ -129,8 +152,16 @@ def read_material(root: Path, path: str) -> str:
     return target.read_text(encoding="utf-8")
 
 
-def material_tools(root: Path) -> list:
-    """API-channel list/read tools bound to one prepared directory."""
+def material_tools(root: Any) -> list:
+    """API-channel list/read tools bound to the live materials root.
+
+    ``root`` may be a Path/str or a zero-arg callable returning the current
+    path so refresh can point CLI cwd and API tools at the same latest tree.
+    """
+
+    def current_root() -> Path:
+        value = root() if callable(root) else root
+        return Path(value)
 
     def project_error(operation: str, call: Any, *args: object) -> str:
         try:
@@ -140,11 +171,15 @@ def material_tools(root: Path) -> list:
 
     def list_materials_tool(path: str = "") -> str:
         """列出当前材料目录中可读的文件（相对路径，一行一项）。"""
-        return project_error("读取", lambda value: "\n".join(list_materials(root, value)), path)
+        return project_error(
+            "读取",
+            lambda value: "\n".join(list_materials(current_root(), value)),
+            path,
+        )
 
     def read_material_tool(path: str) -> str:
         """读取材料目录中的一份人读文本。path 为相对路径，如 人物/某人/经历.txt。"""
-        return project_error("读取", read_material, root, path)
+        return project_error("读取", read_material, current_root(), path)
 
     list_materials_tool.__name__ = "list_materials"
     read_material_tool.__name__ = "read_material"
@@ -527,11 +562,26 @@ def _experience_text(knowledge: dict) -> str:
     return "\n".join(lines) or "（无）"
 
 
+def _is_gazette_public_event(item: dict) -> bool:
+    """Turn-report gazette rows have their own directory carrier; exclude from 公开说法."""
+    source_id = str(item.get("source_id") or "")
+    return (
+        source_id.startswith("projection:turn_report:")
+        or (source_id.startswith("turn_report:") and source_id.endswith(":public"))
+        or (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
+    )
+
+
 def _write_public_by_month(tmp: Path, public_events: list) -> list[str]:
-    """公开说法按月分文件（#1830 既有形态，供人物目录与推演者目录共用）。"""
+    """公开说法按月分文件（#1830 既有形态，供人物目录与推演者目录共用）。
+
+    邸报有独立目录载体，不在此再复制同一份 turn_report。
+    """
     index: list[str] = []
     public_by_month: dict[tuple[int, int], list[str]] = {}
     for item in public_events or []:
+        if _is_gazette_public_event(item):
+            continue
         year = int(item.get("year") or 0)
         period = int(item.get("period") or 0)
         title = str(item.get("title") or "").strip()
@@ -723,6 +773,51 @@ def _world_roster_names(db: Any) -> list[str]:
     ]
 
 
+def _world_experience_events(db: Any, name: str) -> list[dict]:
+    """Direct event projection for world 经历 — no per-person full knowledge rebuild."""
+    if hasattr(db, "_character_knowledge_events"):
+        return list(db._character_knowledge_events(name, include_exclusions=False) or ())
+    return []
+
+
+def _write_world_textual_fact_files(tmp: Path, db: Any) -> list[str]:
+    """World directory: character/army/region/affair textual facts once from store."""
+    store = getattr(db, "textual_facts", None)
+    if store is None or not hasattr(db, "conn"):
+        return []
+    rows = db.conn.execute(
+        "SELECT DISTINCT subject_kind, subject_id FROM textual_facts "
+        "ORDER BY subject_kind, subject_id"
+    ).fetchall()
+    index: list[str] = []
+    for row in rows:
+        kind = str(row["subject_kind"] or "").strip()
+        subject_id = str(row["subject_id"] or "").strip()
+        if not kind or not subject_id:
+            continue
+        facts = store.readable_materials(subject_kind=kind, subject_id=subject_id)
+        body = "\n".join(
+            str(fact.body or "").strip() for fact in facts if str(fact.body or "").strip()
+        )
+        if not body:
+            continue
+        label = subject_id
+        if kind == "region" and hasattr(db, "region_rows"):
+            for region in db.region_rows():
+                if str(region["id"] or "") == subject_id:
+                    label = str(region["name"] or subject_id)
+                    break
+        elif kind == "army" and hasattr(db, "army_rows"):
+            for army in db.army_rows():
+                if str(army["id"] or "") == subject_id:
+                    label = str(army["name"] or subject_id)
+                    break
+        rel = f"{_FACT_DIR}/{kind}-{_safe_segment(label)}.txt"
+        _write_text(tmp / rel, body)
+        index.append(rel)
+    return index
+
+
 def _write_world_tree(
     tmp: Path,
     db: Any,
@@ -731,8 +826,6 @@ def _write_world_tree(
     affair_lines: list[tuple[str, str, str, str]],
     board_text: str,
 ) -> list[str]:
-    from ming_sim.knowledge import build_character_knowledge
-
     index: list[str] = []
 
     board_rel = f"{_BOARD_DIR}/全局.txt"
@@ -743,12 +836,11 @@ def _write_world_tree(
     index.append(_COURT_ROSTER_REL)
 
     for name in _world_roster_names(db):
-        knowledge = (
-            db.get_character_knowledge(state, name) if hasattr(db, "get_character_knowledge")
-            else build_character_knowledge(db, state, name)
-        )
         rel = f"{_PERSON_DIR}/{_safe_segment(name)}/经历.txt"
-        _write_text(tmp / rel, _experience_text(knowledge))
+        _write_text(
+            tmp / rel,
+            _experience_text({"events": _world_experience_events(db, name)}),
+        )
         index.append(rel)
 
     for dir_key, title, directory_text, _opening_text in affair_lines:
@@ -758,6 +850,8 @@ def _write_world_tree(
         _write_text(tmp / rel, body)
         index.append(rel)
 
+    index.extend(_write_world_textual_fact_files(tmp, db))
+    # 公开说法 excludes gazette rows; 邸报 is the sole turn_report carrier.
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
         tmp, db.list_turn_reports() if hasattr(db, "list_turn_reports") else (),
@@ -789,13 +883,10 @@ def prepare_world_materials(
     """过月推演者材料目录：盘面全量 + 开着的事务清单进开场最小集；人物经历、
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
     在本函数职责内——本函数只组装可读材料，不提供任何写入口。"""
-    from ming_sim.knowledge import build_character_knowledge
-
-    # public_events 的既有投影与具体 character_name 无关（build_character_knowledge
-    # 里 public_events 恒取 `_character_knowledge_events("", ...)`）——借用同一投影，
-    # 不另建一套「世界公开说法」查询。
-    knowledge = build_character_knowledge(db, state, "")
-    public_events = knowledge.get("public_events") or []
+    # Direct world-record public events — not a full empty-name knowledge rebuild.
+    public_events = []
+    if hasattr(db, "_character_knowledge_events"):
+        public_events = list(db._character_knowledge_events("", include_exclusions=False) or ())
     affair_lines = _world_affair_lines(db)
     # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。

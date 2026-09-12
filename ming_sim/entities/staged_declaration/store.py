@@ -88,17 +88,38 @@ class StagedDeclarationStore:
         return write()
 
     def discard(self, decree_ref: str) -> int:
-        """撤旨 / 改旨作废该旨全部仍 staged 的暂存产物；已结算的不受影响。"""
+        """撤旨 / 改旨作废该旨全部仍 staged 的暂存产物；已结算的不受影响。
+
+        discard-before-stage 必须留下独立 durable tombstone：即便当时尚无 staged
+        行，也写入一条 discarded 终态，令迟到的同 ref stage 被拒绝（ADR 0157）。
+        """
         ref = str(decree_ref or "").strip()
-        owns = connection_owns_transaction(self._conn)
-        cur = self._conn.execute(
-            "UPDATE staged_declarations SET status='discarded' "
-            "WHERE decree_ref=? AND status='staged'",
-            (ref,),
-        )
-        if owns:
-            self._conn.commit()
-        return int(cur.rowcount or 0)
+        if not ref:
+            raise ValueError("decree_ref 不能为空")
+
+        def write() -> int:
+            if self.is_settled(ref):
+                return 0
+            cur = self._conn.execute(
+                "UPDATE staged_declarations SET status='discarded' "
+                "WHERE decree_ref=? AND status='staged'",
+                (ref,),
+            )
+            n = int(cur.rowcount or 0)
+            if n == 0 and not self._is_closed(ref):
+                # Tombstone: decree lifecycle is independent of product rows.
+                self._conn.execute(
+                    "INSERT INTO staged_declarations "
+                    "(decree_ref, declaration_json, status, created_turn) "
+                    "VALUES (?, '{}', 'discarded', 0)",
+                    (ref,),
+                )
+            return n
+
+        if connection_owns_transaction(self._conn):
+            with atomic(SimpleNamespace(conn=self._conn)):
+                return write()
+        return write()
 
     def staged_for(self, decree_ref: str) -> tuple[StagedDeclaration, ...]:
         ref = str(decree_ref or "").strip()
