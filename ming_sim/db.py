@@ -15721,9 +15721,8 @@ class GameDB:
             })
         return result
 
-    # Non-yamen types never mint central: archive keys. Central yamen types are
-    # derived from the durable office catalog (content + offices.json), not a
-    # hand-patched whitelist that drifts from 六科/刑部 etc.
+    # Central yamen archive identity: offices.json allowed_types minus non-yamen
+    # kinds. Never union characters.office_type (外臣/内臣/宗藩/未仕 would leak).
     _NON_CENTRAL_ARCHIVE_OFFICE_TYPES = frozenset({
         "地方", "督抚", "边镇", "内廷", "后宫",
         "生员", "乡绅", "富商", "布衣", "流寇", "待铨",
@@ -15731,15 +15730,12 @@ class GameDB:
     _LOCAL_ARCHIVE_OFFICE_TYPES = frozenset({"地方", "督抚", "边镇"})
 
     def _central_archive_office_types(self) -> frozenset[str]:
-        try:
-            catalog = self._canonical_office_types()
-        except Exception:
-            catalog = set(_offices_table().get("allowed_types") or ())
-        return frozenset(
+        catalog = {
             str(kind).strip()
-            for kind in catalog
-            if str(kind).strip() and str(kind).strip() not in self._NON_CENTRAL_ARCHIVE_OFFICE_TYPES
-        )
+            for kind in (_offices_table().get("allowed_types") or ())
+            if str(kind).strip()
+        }
+        return frozenset(catalog - self._NON_CENTRAL_ARCHIVE_OFFICE_TYPES)
 
     def project_office_identity(
         self,

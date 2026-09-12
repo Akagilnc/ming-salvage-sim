@@ -1260,6 +1260,27 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         for item in db.list_referenceable_dossiers(successor, state.turn)
     }
     assert "KEKE_ARCHIVE" in visible
+    # 外臣等人物 office_type 不得 mint central: 档案身份（朝鲜国王 ≠ 中央衙门）。
+    foreign = db.conn.execute(
+        "SELECT name FROM characters WHERE office_type='外臣' ORDER BY name LIMIT 2"
+    ).fetchall()
+    if len(foreign) >= 2:
+        assert db._office_archive_key("朝鲜国王", "外臣") == ""
+        db.create_decree_dossier(
+            state, action_type="assignment", decree_text="WAI_LEAK",
+            target_kind="issue", target_id="wai-admin",
+            participants=[{"character_id": foreign[0]["name"], "tier": "主办"}],
+        )
+        wai_keys = db.conn.execute(
+            "SELECT office_archive_keys FROM decree_dossiers "
+            "WHERE decree_text='WAI_LEAK' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert json.loads(wai_keys["office_archive_keys"] or "[]") == []
+        wai_visible = {
+            str(item.get("decree_text") or "")
+            for item in db.list_referenceable_dossiers(foreign[1]["name"], state.turn)
+        }
+        assert "WAI_LEAK" not in wai_visible
 
     unscoped = next(c for c in content.characters.values() if c.office_type == "礼部")
     world = db.get_character_knowledge(state, unscoped.name)["world"]
