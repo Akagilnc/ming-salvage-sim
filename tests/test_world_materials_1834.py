@@ -11,6 +11,8 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from ming_sim.db import GameDB
 from ming_sim.materials import (
     list_materials, prepare_world_materials, read_material, world_materials_root,
@@ -94,7 +96,7 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         restored.close()
 
 
-def test_world_materials_isolate_invocations_and_databases(game, tmp_path):
+def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monkeypatch):
     db, state, content = game
     requested = tmp_path / "world"
     first = prepare_world_materials(db, state, dest_root=requested)
@@ -103,10 +105,18 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path):
     assert read_material(first.root, "INDEX.txt")
     assert read_material(second.root, "INDEX.txt")
 
-    other = GameDB(str(tmp_path / "other.db"), content)
+    other = GameDB(str(Path(db.path).parent / "other.db"), content)
     try:
         other.seed_static_data()
         other_state = other.load_state()
-        assert world_materials_root(db, state) != world_materials_root(other, other_state)
+
+        class _Fixed:
+            hex = "a" * 32
+
+        monkeypatch.setattr("ming_sim.materials.uuid.uuid4", lambda: _Fixed())
+        same_db = world_materials_root(db, state)
+        assert same_db == world_materials_root(db, state)
+        other_db = world_materials_root(other, other_state)
+        assert same_db != other_db
     finally:
         other.close()
