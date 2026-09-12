@@ -15587,12 +15587,15 @@ class GameDB:
                 "SELECT office_archive_keys FROM decree_dossiers WHERE id=?",
                 (int(dossier_id),),
             ).fetchone()
-            try:
-                archive_keys = set(json.loads(
-                    (raw_keys_row["office_archive_keys"] if raw_keys_row else None) or "[]"
-                ))
-            except (TypeError, ValueError):
-                archive_keys = set()
+            raw_keys = (
+                raw_keys_row["office_archive_keys"] if raw_keys_row is not None else None
+            ) or "[]"
+            parsed_keys = json.loads(raw_keys)
+            if not isinstance(parsed_keys, list):
+                raise ValueError(
+                    f"office_archive_keys 须为 JSON 数组：dossier {int(dossier_id)}"
+                )
+            archive_keys = {str(item) for item in parsed_keys}
             if str(row["action_type"] or "") != "secret_order":
                 for item in added:
                     if str(item.get("tier") or "") != "主办":
@@ -15747,17 +15750,22 @@ class GameDB:
         """Authoritative office → archive_key + region_ids.
 
         Shared by character materials scope and decree-dossier succession.
-        office_slots (查访 vacancy) is one region hint source, never the full
-        office catalog gate.
+        Jurisdiction comes only from typed office relations. ``location`` is a
+        seat resolver after the office is confirmed local — never a way to hand
+        whole-province scope to 未仕/内廷 mere presence. Local archive keys carry
+        durable region identity so generic titles cannot collide across provinces.
         """
         title = normalize_office(str(office or ""))
         kind = str(office_type or "").strip()
         location_id = str(location or "").strip()
-        region_ids: tuple[str, ...] = ()
 
         if kind and kind in self._central_archive_office_types():
             return {"archive_key": f"central:{kind}", "region_ids": ()}
 
+        if kind not in self._LOCAL_ARCHIVE_OFFICE_TYPES:
+            return {"archive_key": "", "region_ids": ()}
+
+        region_ids: tuple[str, ...] = ()
         if title and hasattr(self, "conn"):
             slot = self.conn.execute(
                 "SELECT region_id FROM office_slots WHERE office_title=?", (title,),
@@ -15785,16 +15793,10 @@ class GameDB:
                 if resolved:
                     region_ids = (resolved,)
 
-        # Archive succession identity is office-shaped, not “has a location”.
-        # Location may still supply region scope for materials without minting
-        # a slot key for 内廷/身名分 etc.
         archive_key = ""
-        if title and (
-            kind in self._LOCAL_ARCHIVE_OFFICE_TYPES
-            or any(marker in title for marker in (
-                "巡抚", "总督", "巡按", "布政", "按察", "知府", "知县",
-            ))
-        ):
+        if title and region_ids:
+            archive_key = f"slot:{title}@{region_ids[0]}"
+        elif title:
             archive_key = f"slot:{title}"
         return {"archive_key": archive_key, "region_ids": region_ids}
 

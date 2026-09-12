@@ -2028,7 +2028,11 @@ class GameSession:
                 )
             except Exception:
                 return "【近臣回奏暂不可用：查访未能持久留档；不得据此臆答事实。】\n\n" + message
-        from ming_sim.materials import prepare_character_materials, release_material_tree
+        from ming_sim.materials import (
+            MaterialsRoot,
+            prepare_character_materials,
+            release_material_tree,
+        )
         try:
             prepared = prepare_character_materials(self.db, self.state, character)
         except Exception:
@@ -2040,10 +2044,20 @@ class GameSession:
             agent = None
             if registry is not None:
                 agent = getattr(registry, "agents", {}).get(character.name)
-            model = getattr(agent, "model", None) if agent is not None else None
-            if model is not None and hasattr(model, "materials_dir"):
-                old = str(getattr(model, "materials_dir", "") or "")
-                model.materials_dir = str(prepared.root)
+            handle = getattr(agent, "materials_root", None) if agent is not None else None
+            if not isinstance(handle, MaterialsRoot) and agent is not None:
+                handle = MaterialsRoot(
+                    getattr(getattr(agent, "model", None), "materials_dir", "") or ""
+                )
+                try:
+                    agent.materials_root = handle
+                except Exception:
+                    pass
+            if isinstance(handle, MaterialsRoot):
+                old = handle.set(prepared.root)
+                model = getattr(agent, "model", None)
+                if model is not None and hasattr(model, "materials_dir"):
+                    model.materials_dir = str(prepared.root)
                 if old and old != str(prepared.root):
                     release_material_tree(old)
             else:

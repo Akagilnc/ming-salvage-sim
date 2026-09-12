@@ -68,6 +68,7 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
+    IncompleteXiexangPayloadError,
     require_materializable_xiexang_payload,
 )
 from ming_sim.applier import (
@@ -599,23 +600,29 @@ def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: 
 
 
 def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
-    """协饷失败按 typed 真因区分 shape / enum / missing entity，不统一冒称。
+    """协饷失败只按 exception 类型与 failed_fields typed 数据分类。
 
-    IncompleteXiexangPayloadError 可同时带多种字段失败：枚举域（account/
-    purpose/cadence/target_kind）优先 invalid_enum；缺 amount/target_id/text
-    等形状问题走 invalid_shape；军队解析不到才 hallucinated_id。
+    IncompleteXiexangPayloadError（显式字段未齐）：枚举域（account/purpose/
+    cadence/target_kind）优先 invalid_enum，其余形状域 invalid_shape。
+    字段已齐后的物化失败（军队实体解析不到等）→ hallucinated_id；纯 text/
+    amount 等形状失败仍 invalid_shape。禁止解析异常文案 substring。
     """
-    failed = set(getattr(exc, "failed_fields", ()) or ())
-    message = str(exc)
-    if "无法解析为军队" in message:
-        return "hallucinated_id"
-    if failed & {"account", "purpose", "cadence", "target_kind"}:
-        return "invalid_enum"
-    if failed & {"amount", "text", "target_id"} or "缺少" in message:
+    failed = frozenset(str(field) for field in (getattr(exc, "failed_fields", ()) or ()))
+    enum_fields = frozenset({"account", "purpose", "cadence", "target_kind"})
+    shape_fields = frozenset({"amount", "text", "target_id"})
+    if isinstance(exc, IncompleteXiexangPayloadError):
+        if failed & enum_fields:
+            return "invalid_enum"
+        return "invalid_shape"
+    if failed and failed <= shape_fields:
         return "invalid_shape"
     if failed & {"target_id", "target_kind"}:
         return "hallucinated_id"
-    return "invalid_enum"
+    if failed & enum_fields:
+        return "invalid_enum"
+    if failed & shape_fields:
+        return "invalid_shape"
+    return "invalid_shape"
 
 
 def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, str | None]:

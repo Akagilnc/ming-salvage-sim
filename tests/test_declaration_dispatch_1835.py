@@ -401,10 +401,24 @@ def test_same_declaration_registration_establishes_target_before_dependent_facts
                 },
             },
             {
+                "text": "拨饷坏用途",
+                "grant": {
+                    "amount": 1000, "account": "国库", "purpose": "不是补饷",
+                    "target_kind": "army", "target_id": army_id,
+                },
+            },
+            {
                 "text": "拨饷缺目标",
                 "grant": {
                     "amount": 1000, "account": "国库", "purpose": "补饷",
                     "target_kind": "army", "target_id": "",
+                },
+            },
+            {
+                "text": "拨饷坏数额",
+                "grant": {
+                    "amount": "not-a-number", "account": "国库", "purpose": "补饷",
+                    "target_kind": "army", "target_id": army_id,
                 },
             },
             {
@@ -429,10 +443,15 @@ def test_same_declaration_registration_establishes_target_before_dependent_facts
         subject_kind="character", subject_id="新入册人甲",
     )
     assert [f.body for f in facts] == ["同声明入册后事实"]
-    cats = {r.category for r in result.commissions.rejected}
-    assert "invalid_enum" in cats  # bad account
-    assert "invalid_shape" in cats  # missing target_id
-    assert "hallucinated_id" in cats  # ghost army
+    by_text = {
+        str((r.item or {}).get("text") or ""): r.category
+        for r in result.commissions.rejected
+    }
+    assert by_text.get("拨饷坏账户") == "invalid_enum"
+    assert by_text.get("拨饷坏用途") == "invalid_enum"
+    assert by_text.get("拨饷缺目标") == "invalid_shape"
+    assert by_text.get("拨饷坏数额") == "invalid_shape"
+    assert by_text.get("拨饷幽灵军") == "hallucinated_id"
 
 
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):

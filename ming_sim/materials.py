@@ -81,17 +81,34 @@ def _materials_invocation_dir(db: Any, state: Any) -> Path:
     )
 
 
-def release_material_tree(root: Optional[Path | str]) -> None:
-    """Release one prepared materials root and empty UUID invocation parents.
+class MaterialsRoot:
+    """Mutable live materials root shared by API tools and optional CLI cwd.
 
-    Fail-loud on cleanup errors (ADR 0005) — callers that must continue other
-    resource teardown catch and surface, never ignore_errors whitewash.
+    Independent of whether the concrete model declares ``materials_dir``.
     """
-    if root is None:
-        return
-    path = Path(root)
-    if path.exists():
-        shutil.rmtree(path)
+
+    __slots__ = ("_root",)
+
+    def __init__(self, root: Optional[Path | str] = "") -> None:
+        self._root = str(root or "")
+
+    @property
+    def root(self) -> str:
+        return self._root
+
+    def set(self, root: Optional[Path | str]) -> str:
+        previous = self._root
+        self._root = str(root or "")
+        return previous
+
+    def clear(self) -> str:
+        return self.set("")
+
+    def __call__(self) -> str:
+        return self._root
+
+
+def _empty_uuid_invocation_parent(path: Path) -> Optional[Path]:
     parent = path.parent
     name = parent.name
     if (
@@ -101,7 +118,35 @@ def release_material_tree(root: Optional[Path | str]) -> None:
         and all(ch in "0123456789abcdef" for ch in name)
         and not any(parent.iterdir())
     ):
-        parent.rmdir()
+        return parent
+    return None
+
+
+def release_material_tree(root: Optional[Path | str]) -> None:
+    """Release one prepared materials root and empty UUID invocation parents.
+
+    Fail-loud on cleanup errors (ADR 0005) — callers that must continue other
+    resource teardown catch and surface, never ignore_errors whitewash.
+    Primary cleanup error is preserved if a secondary parent rmdir also fails.
+    """
+    if root is None:
+        return
+    path = Path(root)
+    primary: BaseException | None = None
+    try:
+        if path.exists():
+            shutil.rmtree(path)
+    except BaseException as exc:
+        primary = exc
+    parent = _empty_uuid_invocation_parent(path)
+    if parent is not None:
+        try:
+            parent.rmdir()
+        except BaseException as exc:
+            if primary is None:
+                primary = exc
+    if primary is not None:
+        raise primary
 
 
 def _publish_material_tree(
@@ -119,8 +164,21 @@ def _publish_material_tree(
             shutil.rmtree(dest)
         tmp.rename(dest)
     except Exception:
-        if tmp.exists():
-            shutil.rmtree(tmp)
+        primary: BaseException | None = None
+        try:
+            if tmp.exists():
+                shutil.rmtree(tmp)
+        except BaseException as exc:
+            primary = exc
+        parent = _empty_uuid_invocation_parent(dest)
+        if parent is not None:
+            try:
+                parent.rmdir()
+            except BaseException as exc:
+                if primary is None:
+                    primary = exc
+        if primary is not None:
+            raise primary
         raise
     return dest, index
 
@@ -888,9 +946,13 @@ def prepare_world_materials(
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
     在本函数职责内——本函数只组装可读材料，不提供任何写入口。"""
     # Direct world-record public events — not a full empty-name knowledge rebuild.
-    public_events = []
+    # Keep #1834 three layers: knowledge public rows + independent public_sayings.
+    from ming_sim.public_sayings import public_layer_events
+
+    public_events: list = []
     if hasattr(db, "_character_knowledge_events"):
         public_events = list(db._character_knowledge_events("", include_exclusions=False) or ())
+    public_events.extend(public_layer_events(db))
     affair_lines = _world_affair_lines(db)
     # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。

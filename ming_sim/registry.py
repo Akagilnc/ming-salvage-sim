@@ -19,7 +19,12 @@ from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig
 from ming_sim.llm_model import create_chat_model
-from ming_sim.materials import material_tools, prepare_character_materials, release_material_tree
+from ming_sim.materials import (
+    MaterialsRoot,
+    material_tools,
+    prepare_character_materials,
+    release_material_tree,
+)
 from ming_sim.tools import _duty_location, build_minister_tools
 
 _content: Optional[GameContent] = None
@@ -237,6 +242,8 @@ def create_minister_agent(
     # sessions (and lets a stale binding win over a restored context).
     c = context.db.content or _ctx()
     is_consort = character.office_type == "后宫"
+    materials_root: MaterialsRoot | None = None
+    minister_skills = None
     if is_consort:
         # 从 DB 取调教记录
         cultivated = context.db.get_consort_traits(character.name)
@@ -260,8 +267,9 @@ def create_minister_agent(
     else:
         # 开场只带最小集；其余加工材料进目录，由 list/read 或 CLI cwd 自取（#1830）。
         prepared = prepare_character_materials(context.db, context.state, character)
+        materials_root = MaterialsRoot(prepared.root)
         if hasattr(model, "materials_dir"):
-            model.materials_dir = str(prepared.root)
+            model.materials_dir = materials_root.root
         monthly_block_parts = [
             prepared.opening,
         ]
@@ -273,18 +281,15 @@ def create_minister_agent(
             f"你与皇帝的多轮对话会持续到本{TURN_UNIT}退朝；同一{TURN_UNIT}复召时要接续此前奏对，不要重置记忆。",
             "\n\n".join(monthly_block_parts),
         ]
-        # API tools read the live model.materials_dir so refresh keeps CLI cwd
-        # and list/read on the same latest snapshot.
-        tools = material_tools(
-            lambda m=model: str(getattr(m, "materials_dir", "") or prepared.root)
-        ) + build_minister_tools(
+        # API tools + CLI cwd share MaterialsRoot; model.materials_dir is optional.
+        tools = material_tools(materials_root) + build_minister_tools(
             character, context,
         )
         # 司礼监（内官管后宫）与礼部（议礼册封）可奉旨选妃：现场拟就秀女名单呈御览。
         if character.office_type in ("司礼监", "礼部"):
             tools.append(_make_select_consort_tool(context))
         minister_skills = _skills_for(character.office_type)
-    return Agent(
+    agent = Agent(
         name=character.name,
         id=f"minister-{character.name}",
         session_id=session_id or f"minister-{character.name}-turn-{context.state.turn}",
@@ -297,6 +302,14 @@ def create_minister_agent(
         num_history_runs=6,
         markdown=False,
     )
+    if materials_root is not None:
+        try:
+            agent.materials_root = materials_root
+        except Exception:
+            # Construction doubles may return a plain mapping; tools already
+            # close over materials_root, so ownership still tracks the live path.
+            pass
+    return agent
 
 
 class MinisterRegistry:
@@ -340,27 +353,51 @@ class MinisterRegistry:
         return agent
 
     @staticmethod
-    def _release_materials(agent: Agent | None) -> None:
+    def _materials_handle(agent: Agent | None) -> MaterialsRoot | None:
+        if agent is None:
+            return None
+        handle = getattr(agent, "materials_root", None)
+        if isinstance(handle, MaterialsRoot):
+            return handle
+        handle = MaterialsRoot()
         model = getattr(agent, "model", None)
-        root = str(getattr(model, "materials_dir", "") or "")
-        if not root:
-            return
+        if model is not None and hasattr(model, "materials_dir"):
+            handle.set(getattr(model, "materials_dir", "") or "")
+        try:
+            agent.materials_root = handle
+        except Exception:
+            pass
+        return handle
+
+    @staticmethod
+    def _release_materials(agent: Agent | None) -> None:
+        handle = MinisterRegistry._materials_handle(agent)
+        root = handle.clear() if handle is not None else ""
+        model = getattr(agent, "model", None) if agent is not None else None
+        if not root and model is not None:
+            root = str(getattr(model, "materials_dir", "") or "")
         if model is not None and hasattr(model, "materials_dir"):
             model.materials_dir = ""
-        release_material_tree(root)
+        if root:
+            release_material_tree(root)
 
     def adopt_materials(self, character_name: str, root: Path | str) -> None:
-        """Point the live agent (if any) at a new materials root; release the old tree."""
+        """Point the live agent (if any) at a new materials root; release the old tree.
+
+        Ownership is the agent MaterialsRoot handle — not optional model.materials_dir.
+        """
         new_root = str(root or "")
         if not new_root:
             return
         agent = self.agents.get(character_name)
-        model = getattr(agent, "model", None) if agent is not None else None
-        if model is None or not hasattr(model, "materials_dir"):
+        handle = self._materials_handle(agent)
+        if handle is None:
             release_material_tree(new_root)
             return
-        old = str(getattr(model, "materials_dir", "") or "")
-        model.materials_dir = new_root
+        old = handle.set(new_root)
+        model = getattr(agent, "model", None) if agent is not None else None
+        if model is not None and hasattr(model, "materials_dir"):
+            model.materials_dir = new_root
         if old and old != new_root:
             release_material_tree(old)
 

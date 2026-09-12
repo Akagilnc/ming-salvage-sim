@@ -1236,6 +1236,32 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     natural_view = db.get_character_knowledge(state, natural_row["name"])
     assert natural_row["location"] in natural_view["scope"]["region_ids"]
     assert "regional" in natural_view["world"]
+
+    # 未仕/内廷 mere location is not jurisdiction.
+    idle = next(c for c in content.characters.values() if c.office_type not in {"地方", "督抚", "边镇"})
+    regions = [str(r["id"]) for r in db.conn.execute("SELECT id FROM regions ORDER BY id").fetchall()]
+    assert len(regions) >= 2
+    db.conn.execute(
+        "UPDATE characters SET office=?, office_type=?, location=? WHERE name=?",
+        ("闲住", "未仕", regions[0], idle.name),
+    )
+    db.conn.commit()
+    idle_proj = db.project_office_identity("闲住", "未仕", location=regions[0])
+    assert idle_proj["region_ids"] == ()
+    assert idle_proj["archive_key"] == ""
+    assert db.get_character_knowledge(state, idle.name)["scope"]["region_ids"] == ()
+    inner_proj = db.project_office_identity("内廷随侍", "内廷", location=regions[1])
+    assert inner_proj["region_ids"] == ()
+    assert inner_proj["archive_key"] == ""
+
+    # Generic local title across provinces must not share one archive slot key.
+    key_a = db.project_office_identity("巡抚", "地方", location=regions[0])
+    key_b = db.project_office_identity("巡抚", "地方", location=regions[1])
+    assert key_a["region_ids"] == (regions[0],)
+    assert key_b["region_ids"] == (regions[1],)
+    assert key_a["archive_key"] != key_b["archive_key"]
+    assert regions[0] in str(key_a["archive_key"]) and regions[1] in str(key_b["archive_key"])
+
     # content 实有中央衙门（六科）进入权威投影，不是手补 whitelist 漏项。
     keke_lead = db.conn.execute(
         "SELECT name, office, office_type FROM characters "
@@ -1282,6 +1308,28 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         }
         assert "WAI_LEAK" not in wai_visible
 
+    # Malformed durable office_archive_keys fail loud on append participant.
+    broken = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="BROKEN_KEYS",
+        target_kind="issue", target_id="broken-keys",
+        participants=[{"character_id": official.name, "tier": "主办"}],
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET office_archive_keys=? WHERE id=?",
+        ("{not-a-list", int(broken)),
+    )
+    db.conn.commit()
+    helper = next(
+        c for c in content.characters.values()
+        if c.name != official.name and db.get_character_status(c.name)[0] == "active"
+    )
+    with pytest.raises((TypeError, ValueError, json.JSONDecodeError)):
+        db.append_decree_dossier_participants(
+            broken,
+            [{"character_id": helper.name, "tier": "协办"}],
+            state=state,
+        )
+
     unscoped = next(c for c in content.characters.values() if c.office_type == "礼部")
     world = db.get_character_knowledge(state, unscoped.name)["world"]
     assert not ({"treasury", "military", "regional", "construction", "security"} & set(world))
@@ -1323,6 +1371,13 @@ def _office_archive_from_materials(db, state, character, root):
     prepared = prepare_character_materials(db, state, character, dest_root=root)
     path = next(p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt"))
     return read_material(prepared.root, path)
+
+
+def _referenceable_decree_texts(db, character_name, turn) -> set[str]:
+    return {
+        str(item.get("decree_text") or "")
+        for item in db.list_referenceable_dossiers(character_name, turn)
+    }
 
 
 def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_path):
@@ -1373,29 +1428,18 @@ def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_pa
     )
     db.set_character_office(case_lead.name, "闲住", office_type="未仕")
 
+    turn = int(state.turn)
     for reader in (central_successor, slot_successor):
-        archive = _office_archive_from_materials(db, state, reader, tmp_path / reader.name)
-        assert "JOINT_ADMIN_ARCHIVE" in archive
-        assert "PRIVATE_HISTORY_ONLY" not in archive
-    assert "JOINT_ADMIN_ARCHIVE" not in _office_archive_from_materials(
-        db, state, outsider, tmp_path / outsider.name,
-    )
-    assert "JOINT_ADMIN_ARCHIVE" not in _office_archive_from_materials(
-        db, state, case_successor, tmp_path / case_successor.name,
-    )
-    assert "INNER_COURT_ARCHIVE" in _office_archive_from_materials(
-        db, state, inner_lead, tmp_path / f"{inner_lead.name}-inner",
-    )
-    assert "INNER_COURT_ARCHIVE" not in _office_archive_from_materials(
-        db, state, inner_other, tmp_path / inner_other.name,
-    )
-    assert "CASE_FILE_ARCHIVE" in _office_archive_from_materials(
-        db, state, case_helper, tmp_path / case_helper.name,
-    )
+        texts = _referenceable_decree_texts(db, reader.name, turn)
+        assert "JOINT_ADMIN_ARCHIVE" in texts
+        assert "PRIVATE_HISTORY_ONLY" not in texts
+    assert "JOINT_ADMIN_ARCHIVE" not in _referenceable_decree_texts(db, outsider.name, turn)
+    assert "JOINT_ADMIN_ARCHIVE" not in _referenceable_decree_texts(db, case_successor.name, turn)
+    assert "INNER_COURT_ARCHIVE" in _referenceable_decree_texts(db, inner_lead.name, turn)
+    assert "INNER_COURT_ARCHIVE" not in _referenceable_decree_texts(db, inner_other.name, turn)
+    assert "CASE_FILE_ARCHIVE" in _referenceable_decree_texts(db, case_helper.name, turn)
     # 刑部 is a legal central yamen: successor shares archive identity with the lead.
-    assert "CASE_FILE_ARCHIVE" in _office_archive_from_materials(
-        db, state, case_successor, tmp_path / f"{case_successor.name}-case",
-    )
+    assert "CASE_FILE_ARCHIVE" in _referenceable_decree_texts(db, case_successor.name, turn)
 
 
 def test_central_ledgers_and_unbounded_household_history_reach_final_materials(game, tmp_path):

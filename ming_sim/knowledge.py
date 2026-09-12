@@ -795,5 +795,3 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         "public_events": visible_public,
         "issues": visible_issues,
     }
-
-

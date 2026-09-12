@@ -21,12 +21,14 @@ from ming_sim.audience_night import (
     summon_enter,
 )
 from ming_sim.materials import (
+    MaterialsRoot,
     _handled_affair_lines,
     _visible_affair_lines,
     list_materials,
     material_tools,
     prepare_character_materials,
     read_material,
+    release_material_tree,
 )
 from ming_sim.models import CourtContext, LLMConfig
 from ming_sim.registry import MinisterRegistry, create_minister_agent
@@ -135,6 +137,15 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     assert "装备：52" not in army_text
 
 
+def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
+    """Minimal agent stand-in: MaterialsRoot always; materials_dir only for CLI."""
+    handle = MaterialsRoot(root)
+    model = SimpleNamespace()
+    if with_cli_cwd:
+        model.materials_dir = handle.root
+    return SimpleNamespace(model=model, materials_root=handle)
+
+
 def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
@@ -150,42 +161,48 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     registry.content = content
     registry.context = SimpleNamespace(state=state)
     registry.session_ids = {}
-    registry.agents = {
-        character.name: SimpleNamespace(model=SimpleNamespace(materials_dir=str(old_root)))
-    }
-    registry._create = lambda _character: SimpleNamespace(
-        model=SimpleNamespace(materials_dir=str(new_root))
-    )
+    # API OpenAIChat path: no model.materials_dir; ownership is MaterialsRoot.
+    registry.agents = {character.name: _agent_with_materials(old_root, with_cli_cwd=False)}
+    registry._create = lambda _character: _agent_with_materials(new_root, with_cli_cwd=False)
     registry.refresh(character.name)
     assert not old_root.exists() and new_root.exists()
     assert not old_root.parent.exists()  # UUID parent released with the leaf
 
-    registry.agents[character.name] = SimpleNamespace(
-        model=SimpleNamespace(materials_dir=str(runtime_old))
-    )
-    registry._create = lambda _character: SimpleNamespace(
-        model=SimpleNamespace(materials_dir=str(runtime_new))
-    )
+    registry.agents[character.name] = _agent_with_materials(runtime_old, with_cli_cwd=True)
+    registry._create = lambda _character: _agent_with_materials(runtime_new, with_cli_cwd=True)
     registry.register_runtime(character)
     assert not runtime_old.exists() and runtime_new.exists()
     assert not runtime_old.parent.exists()
 
-    # adopt_materials keeps API tools + CLI cwd on the same live root.
+    # adopt_materials keeps API tools + CLI cwd on the same live root even when
+    # the concrete model has no materials_dir (real API OpenAIChat).
     adopted = tmp_path / "inv-adopt" / ("1" * 32) / "adopted"
     adopted.mkdir(parents=True)
     (adopted / "INDEX.txt").write_text("live\n", encoding="utf-8")
-    model = registry.agents[character.name].model
-    from ming_sim.materials import material_tools, list_materials, read_material
-    tools = material_tools(lambda: str(getattr(model, "materials_dir", "") or ""))
+    api_agent = _agent_with_materials(runtime_new, with_cli_cwd=False)
+    registry.agents[character.name] = api_agent
+    tools = material_tools(api_agent.materials_root)
     registry.adopt_materials(character.name, adopted)
     assert not runtime_new.exists() and adopted.exists()
+    assert api_agent.materials_root.root == str(adopted)
+    assert not hasattr(api_agent.model, "materials_dir")
     listed = tools[0]("")
     assert "INDEX.txt" in listed
-    assert "live" in tools[1]("INDEX.txt")
+    assert read_material(Path(api_agent.materials_root.root), "INDEX.txt").strip() == "live"
 
-    registry.agents["other"] = SimpleNamespace(
-        model=SimpleNamespace(materials_dir=str(closed))
-    )
+    # prepare failure must not leave empty UUID invocation parents behind.
+    fail_parent = tmp_path / ("3" * 32)
+    fail_dest = fail_parent / "leaf"
+
+    def _boom(_tmp):
+        raise RuntimeError("prepare-write-boom")
+
+    from ming_sim.materials import _publish_material_tree
+    with pytest.raises(RuntimeError, match="prepare-write-boom"):
+        _publish_material_tree(None, fail_dest, _boom)
+    assert not fail_parent.exists()
+
+    registry.agents["other"] = _agent_with_materials(closed, with_cli_cwd=False)
     registry.close()
     assert not closed.exists() and not adopted.exists()
     assert not closed.parent.exists()
@@ -194,10 +211,11 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     session = object.__new__(GameSession)
     leftover = object.__new__(MinisterRegistry)
     leftover.agents = {
-        character.name: SimpleNamespace(model=SimpleNamespace(materials_dir=str(session_old)))
+        character.name: _agent_with_materials(session_old, with_cli_cwd=False)
     }
     leftover.close = MinisterRegistry.close.__get__(leftover, MinisterRegistry)
     leftover._release_materials = MinisterRegistry._release_materials
+    leftover._materials_handle = MinisterRegistry._materials_handle
     session.registry = leftover
     replacement = object.__new__(MinisterRegistry)
     replacement.agents = {}
@@ -211,10 +229,11 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     closing = object.__new__(GameSession)
     leftover_close = object.__new__(MinisterRegistry)
     leftover_close.agents = {
-        character.name: SimpleNamespace(model=SimpleNamespace(materials_dir=str(session_close_dir)))
+        character.name: _agent_with_materials(session_close_dir, with_cli_cwd=False)
     }
     leftover_close.close = MinisterRegistry.close.__get__(leftover_close, MinisterRegistry)
     leftover_close._release_materials = MinisterRegistry._release_materials
+    leftover_close._materials_handle = MinisterRegistry._materials_handle
     closing.registry = leftover_close
     closing._scene_registry = SimpleNamespace(abandon_all=lambda: None)
     closing.agno_db = None
@@ -229,11 +248,11 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     failing = object.__new__(GameSession)
     bad_reg = object.__new__(MinisterRegistry)
 
-    def _boom(_agent=None):
+    def _boom_close():
         raise RuntimeError("materials-cleanup-boom")
 
-    bad_reg.agents = {"x": SimpleNamespace(model=SimpleNamespace(materials_dir=str(tmp_path / "x")))}
-    bad_reg.close = lambda: (_boom())
+    bad_reg.agents = {"x": _agent_with_materials(tmp_path / "x", with_cli_cwd=False)}
+    bad_reg.close = lambda: (_boom_close())
     failing.registry = bad_reg
     failing._scene_registry = SimpleNamespace(abandon_all=lambda: None)
     failing.agno_db = None
@@ -244,6 +263,19 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
         GameSession.close(failing)
     assert closed_db["done"] is True
     assert failing.registry is None
+
+    # release keeps the primary cleanup error when parent rmdir also fails.
+    leaf = tmp_path / ("4" * 32) / "leaf-keep-primary"
+    leaf.mkdir(parents=True)
+    (leaf / "f.txt").write_text("x", encoding="utf-8")
+    real_rmtree = __import__("shutil").rmtree
+
+    def _rmtree_boom(path, *args, **kwargs):
+        raise RuntimeError("primary-rmtree")
+
+    with patch("ming_sim.materials.shutil.rmtree", side_effect=_rmtree_boom):
+        with pytest.raises(RuntimeError, match="primary-rmtree"):
+            release_material_tree(leaf)
 
 
 def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):
