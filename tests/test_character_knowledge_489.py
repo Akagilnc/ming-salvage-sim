@@ -1224,15 +1224,42 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert "regional" in scoped["world"] and "construction" in scoped["world"]
 
     # Real local office outside the two-row 查访 vacancy catalog still gets 辖域.
-    natural = next(
-        c for c in content.characters.values()
-        if c.office_type in {"地方", "督抚", "边镇"}
-        and ("巡抚" in str(c.office) or "总督" in str(c.office))
-        and str(c.location or "") in (getattr(content, "regions", {}) or {})
-    )
-    natural_view = db.get_character_knowledge(state, natural.name)
-    assert natural.location in natural_view["scope"]["region_ids"]
+    # Read durable characters row (content seed may lag restored/empty office).
+    natural_row = db.conn.execute(
+        "SELECT name, office, office_type, location FROM characters "
+        "WHERE office_type IN ('地方','督抚','边镇') "
+        "AND (office LIKE '%巡抚%' OR office LIKE '%总督%') "
+        "AND COALESCE(location,'') <> '' "
+        "ORDER BY name LIMIT 1"
+    ).fetchone()
+    assert natural_row is not None
+    natural_view = db.get_character_knowledge(state, natural_row["name"])
+    assert natural_row["location"] in natural_view["scope"]["region_ids"]
     assert "regional" in natural_view["world"]
+    # content 实有中央衙门（六科）进入权威投影，不是手补 whitelist 漏项。
+    keke_lead = db.conn.execute(
+        "SELECT name, office, office_type FROM characters "
+        "WHERE office_type='六科' ORDER BY name LIMIT 1"
+    ).fetchone()
+    assert keke_lead is not None
+    assert db._office_archive_key(
+        keke_lead["office"], keke_lead["office_type"],
+    ) == "central:六科"
+    db.create_decree_dossier(
+        state, action_type="assignment", decree_text="KEKE_ARCHIVE",
+        target_kind="issue", target_id="keke-admin",
+        participants=[{"character_id": keke_lead["name"], "tier": "主办"}],
+    )
+    successor = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND name!=? ORDER BY name LIMIT 1",
+        (keke_lead["name"],),
+    ).fetchone()["name"]
+    db.set_character_office(successor, "户科给事中", office_type="六科")
+    visible = {
+        str(item.get("decree_text") or "")
+        for item in db.list_referenceable_dossiers(successor, state.turn)
+    }
+    assert "KEKE_ARCHIVE" in visible
 
     unscoped = next(c for c in content.characters.values() if c.office_type == "礼部")
     world = db.get_character_knowledge(state, unscoped.name)["world"]

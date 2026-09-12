@@ -135,6 +135,15 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
         subject_kind="region", subject_id=str(region["id"]), body="世界可见地方文字事实",
         year=int(state.year), period=int(state.period), turn=int(state.turn),
     )
+    affair = db.affairs.open(
+        name="事实探针事务", origin="probe",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    db.textual_facts.append(
+        subject_kind="affair", subject_id=str(affair.id), body="PROBE_AFFAIR_FACT_ONLY_ONCE",
+        year=int(state.year), period=int(state.period), turn=int(state.turn),
+        origin_ref=db.affairs.origin_ref(affair.id),
+    )
     past_year, past_period, past_turn = state.year, max(1, state.period - 1), max(0, state.turn - 1)
     from ming_sim.models import GameState
     past_state = GameState(
@@ -149,6 +158,12 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
     fact_blob = "\n".join(read_material(prepared.root, p) for p in fact_paths)
     assert "世界可见人物文字事实" in fact_blob
     assert "世界可见地方文字事实" in fact_blob
+    # affair textual facts ride 事务/ only — not a second 事实/affair-* carrier.
+    assert not any(p.startswith("事实/affair-") for p in names)
+    affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
+    assert affair_paths
+    affair_blob = "\n".join(read_material(prepared.root, p) for p in affair_paths)
+    assert affair_blob.count("PROBE_AFFAIR_FACT_ONLY_ONCE") == 1
 
     gazette_paths = [p for p in names if p.startswith("邸报/")]
     assert gazette_paths

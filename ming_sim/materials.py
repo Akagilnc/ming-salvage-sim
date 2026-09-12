@@ -781,12 +781,16 @@ def _world_experience_events(db: Any, name: str) -> list[dict]:
 
 
 def _write_world_textual_fact_files(tmp: Path, db: Any) -> list[str]:
-    """World directory: character/army/region/affair textual facts once from store."""
+    """World directory: character/army/region textual facts once from store.
+
+    affair facts already ride 事务/*/当前情况.txt — do not mint a second carrier.
+    """
     store = getattr(db, "textual_facts", None)
     if store is None or not hasattr(db, "conn"):
         return []
     rows = db.conn.execute(
         "SELECT DISTINCT subject_kind, subject_id FROM textual_facts "
+        "WHERE subject_kind IN ('character', 'army', 'region') "
         "ORDER BY subject_kind, subject_id"
     ).fetchall()
     index: list[str] = []

@@ -15721,13 +15721,25 @@ class GameDB:
             })
         return result
 
-    # Single authority for central-yamen archive identity. Not a scattered
-    # whitelist patch list — knowledge materials and dossier succession share it.
-    _CENTRAL_ARCHIVE_OFFICE_TYPES = frozenset({
-        "内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部",
-        "都察院", "大理寺", "通政司", "司礼监", "东厂", "锦衣卫", "翰林院", "詹事府",
+    # Non-yamen types never mint central: archive keys. Central yamen types are
+    # derived from the durable office catalog (content + offices.json), not a
+    # hand-patched whitelist that drifts from 六科/刑部 etc.
+    _NON_CENTRAL_ARCHIVE_OFFICE_TYPES = frozenset({
+        "地方", "督抚", "边镇", "内廷", "后宫",
+        "生员", "乡绅", "富商", "布衣", "流寇", "待铨",
     })
     _LOCAL_ARCHIVE_OFFICE_TYPES = frozenset({"地方", "督抚", "边镇"})
+
+    def _central_archive_office_types(self) -> frozenset[str]:
+        try:
+            catalog = self._canonical_office_types()
+        except Exception:
+            catalog = set(_offices_table().get("allowed_types") or ())
+        return frozenset(
+            str(kind).strip()
+            for kind in catalog
+            if str(kind).strip() and str(kind).strip() not in self._NON_CENTRAL_ARCHIVE_OFFICE_TYPES
+        )
 
     def project_office_identity(
         self,
@@ -15747,7 +15759,7 @@ class GameDB:
         location_id = str(location or "").strip()
         region_ids: tuple[str, ...] = ()
 
-        if kind in self._CENTRAL_ARCHIVE_OFFICE_TYPES:
+        if kind and kind in self._central_archive_office_types():
             return {"archive_key": f"central:{kind}", "region_ids": ()}
 
         if title and hasattr(self, "conn"):

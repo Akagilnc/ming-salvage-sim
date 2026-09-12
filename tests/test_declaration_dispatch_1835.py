@@ -375,9 +375,12 @@ def test_on_scene_fact_multi_affair_person_changes_keep_each_event_provenance(ga
 
 
 def test_same_declaration_registration_establishes_target_before_dependent_facts(game):
-    """同声明体内先入册再写依赖人物的文字事实；畸形 affair_declaration 进单项拒收。"""
+    """同声明体内先入册再写依赖人物的文字事实；畸形 affair_declaration 进单项拒收；
+    协饷失败按 account/purpose 枚举 vs 缺字段 vs 不存在军队 分型。"""
     db, state, _ = game
     minister = _minister(db)
+    army = db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 1").fetchone()
+    army_id = str(army["id"]) if army is not None else "jingying"
     result = dispatch_declaration(db, state, {
         "registrations": [{
             "name": "新入册人甲", "office": "锦衣卫百户", "office_type": "锦衣卫",
@@ -387,6 +390,29 @@ def test_same_declaration_registration_establishes_target_before_dependent_facts
             {
                 "subject_kind": "character", "subject_id": minister, "body": "坏事务形状",
                 "affair_declaration": "bad",
+            },
+        ],
+        "commissions": [
+            {
+                "text": "拨饷坏账户",
+                "grant": {
+                    "amount": 1000, "account": "不是国库", "purpose": "补饷",
+                    "target_kind": "army", "target_id": army_id,
+                },
+            },
+            {
+                "text": "拨饷缺目标",
+                "grant": {
+                    "amount": 1000, "account": "国库", "purpose": "补饷",
+                    "target_kind": "army", "target_id": "",
+                },
+            },
+            {
+                "text": "拨饷幽灵军",
+                "grant": {
+                    "amount": 1000, "account": "国库", "purpose": "补饷",
+                    "target_kind": "army", "target_id": "ghost-army-no-such",
+                },
             },
         ],
     }, minister_name=minister)
@@ -403,6 +429,10 @@ def test_same_declaration_registration_establishes_target_before_dependent_facts
         subject_kind="character", subject_id="新入册人甲",
     )
     assert [f.body for f in facts] == ["同声明入册后事实"]
+    cats = {r.category for r in result.commissions.rejected}
+    assert "invalid_enum" in cats  # bad account
+    assert "invalid_shape" in cats  # missing target_id
+    assert "hallucinated_id" in cats  # ghost army
 
 
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):

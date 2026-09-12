@@ -599,19 +599,22 @@ def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: 
 
 
 def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
-    """协饷失败按 typed 真因区分 shape / enum / missing entity，不统一冒称。"""
-    from ming_sim.action_materialize import IncompleteXiexangPayloadError
+    """协饷失败按 typed 真因区分 shape / enum / missing entity，不统一冒称。
 
-    if isinstance(exc, IncompleteXiexangPayloadError):
-        return "invalid_shape"
+    IncompleteXiexangPayloadError 可同时带多种字段失败：枚举域（account/
+    purpose/cadence/target_kind）优先 invalid_enum；缺 amount/target_id/text
+    等形状问题走 invalid_shape；军队解析不到才 hallucinated_id。
+    """
     failed = set(getattr(exc, "failed_fields", ()) or ())
     message = str(exc)
-    if failed & {"target_id", "target_kind"} or "无法解析为军队" in message:
+    if "无法解析为军队" in message:
         return "hallucinated_id"
-    if failed & {"account", "purpose", "cadence"}:
+    if failed & {"account", "purpose", "cadence", "target_kind"}:
         return "invalid_enum"
-    if failed & {"amount", "text"} or "缺少" in message:
+    if failed & {"amount", "text", "target_id"} or "缺少" in message:
         return "invalid_shape"
+    if failed & {"target_id", "target_kind"}:
+        return "hallucinated_id"
     return "invalid_enum"
 
 
