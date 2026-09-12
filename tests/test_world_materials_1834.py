@@ -11,7 +11,10 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 
 from __future__ import annotations
 
-from ming_sim.materials import list_materials, prepare_world_materials, read_material
+from ming_sim.db import GameDB
+from ming_sim.materials import (
+    list_materials, prepare_world_materials, read_material, world_materials_root,
+)
 
 
 def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tmp_path):
@@ -89,3 +92,21 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
     finally:
         restored.close()
+
+
+def test_world_materials_isolate_invocations_and_databases(game, tmp_path):
+    db, state, content = game
+    requested = tmp_path / "world"
+    first = prepare_world_materials(db, state, dest_root=requested)
+    second = prepare_world_materials(db, state, dest_root=requested)
+    assert first.root != second.root
+    assert read_material(first.root, "INDEX.txt")
+    assert read_material(second.root, "INDEX.txt")
+
+    other = GameDB(str(tmp_path / "other.db"), content)
+    try:
+        other.seed_static_data()
+        other_state = other.load_state()
+        assert world_materials_root(db, state) != world_materials_root(other, other_state)
+    finally:
+        other.close()

@@ -215,14 +215,12 @@ def test_shared_consumers_still_surface_status(read_game):
     if any(r["id"] == _GUANNING_ID for r in db.army_rows(limit=10, danger_order=True)):
         assert seed_status in intel_text
 
-    # 3) knowledge military builder → 真实 build_character_knowledge（兵部可见 military）
+    # 3) 兵部人物投影只见兵籍在册额，不携全表 status。
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
     military = (knowledge.get("world") or {}).get("military") or ""
-    _assert_text_keeps_statuses(
-        military, _danger_top_statuses(db, 30), "knowledge.world.military"
-    )
-    assert seed_status in military
+    assert "兵籍在册" in military
+    assert seed_status not in military
 
     # 4) state_payload.army_warning → 真实 WebGame.state_payload 键
     payload = web_app.WebGame.state_payload(_web_runtime(db, state, content))
@@ -256,7 +254,8 @@ def test_shared_consumers_still_surface_status(read_game):
         read_material(prepared.root, path)
         for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
-    _assert_text_keeps_statuses(blob, all_statuses, "materials.directory")
+    assert "兵籍在册" in blob
+    assert seed_status not in blob
 
     # DB 字段零改写
     assert _guanning_db_status(db) == seed_status

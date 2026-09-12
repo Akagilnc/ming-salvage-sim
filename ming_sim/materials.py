@@ -69,15 +69,40 @@ def _resolve_inside(root: Path, rel: str) -> Path:
     return candidate
 
 
-def character_materials_root(db: Any, state: Any, character: Any) -> Path:
+def _materials_invocation_dir(db: Any, state: Any) -> Path:
     from ming_sim.audience_night import get_open_night
 
     db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
-    parent = db_path.parent
     night = get_open_night(db)
     key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
-    invocation = uuid.uuid4().hex
-    return parent / "materials" / _safe_segment(db_path.name) / key / invocation / _safe_segment(
+    return (
+        db_path.parent / "materials" / _safe_segment(db_path.name) / key / uuid.uuid4().hex
+    )
+
+
+def _publish_material_tree(
+    dest_root: Optional[Path],
+    default_root: Path,
+    write_tree,
+) -> tuple[Path, list[str]]:
+    dest = Path(dest_root) / uuid.uuid4().hex if dest_root is not None else Path(default_root)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.parent / f"{dest.name}.{uuid.uuid4().hex}.tmp"
+    tmp.mkdir(parents=True)
+    try:
+        index = write_tree(tmp)
+        if dest.exists():
+            shutil.rmtree(dest)
+        tmp.rename(dest)
+    except Exception:
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    return dest, index
+
+
+def character_materials_root(db: Any, state: Any, character: Any) -> Path:
+    return _materials_invocation_dir(db, state) / _safe_segment(
         getattr(character, "name", "")
     )
 
@@ -506,23 +531,11 @@ def prepare_character_materials(
         "issues": project_issue_materials(db, name, knowledge),
     })
 
-    dest = (
-        Path(dest_root) / uuid.uuid4().hex
-        if dest_root is not None
-        else character_materials_root(db, state, character)
+    dest, index = _publish_material_tree(
+        dest_root,
+        character_materials_root(db, state, character),
+        lambda tmp: _write_tree(tmp, db, state, character, knowledge, issue_materials),
     )
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.parent / f"{dest.name}.{uuid.uuid4().hex}.tmp"
-    tmp.mkdir(parents=True)
-    try:
-        index = _write_tree(tmp, db, state, character, knowledge, issue_materials)
-        if dest.exists():
-            shutil.rmtree(dest)
-        tmp.rename(dest)
-    except Exception:
-        if tmp.exists():
-            shutil.rmtree(tmp, ignore_errors=True)
-        raise
 
     affairs = _handled_affair_lines(db, state, name, issue_materials)
     for row in _carryover_drafts(db, state):
@@ -554,12 +567,7 @@ def prepare_character_materials(
 
 
 def world_materials_root(db: Any, state: Any) -> Path:
-    from ming_sim.audience_night import get_open_night
-
-    parent = Path(str(getattr(db, "path", "") or ".")).resolve().parent
-    night = get_open_night(db)
-    key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
-    return parent / "materials" / key / "世界推演"
+    return _materials_invocation_dir(db, state) / "世界推演"
 
 
 def _world_board_text(db: Any, state: Any) -> str:
@@ -723,21 +731,11 @@ def prepare_world_materials(
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
     board_text = _world_board_text(db, state)
 
-    dest = Path(dest_root) if dest_root is not None else world_materials_root(db, state)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.parent / (dest.name + ".tmp")
-    if tmp.exists():
-        shutil.rmtree(tmp)
-    tmp.mkdir(parents=True)
-    try:
-        index = _write_world_tree(tmp, db, state, public_events, affair_lines, board_text)
-        if dest.exists():
-            shutil.rmtree(dest)
-        tmp.rename(dest)
-    except Exception:
-        if tmp.exists():
-            shutil.rmtree(tmp, ignore_errors=True)
-        raise
+    dest, index = _publish_material_tree(
+        dest_root,
+        world_materials_root(db, state),
+        lambda tmp: _write_world_tree(tmp, db, state, public_events, affair_lines, board_text),
+    )
 
     opening = _world_opening_text(state, board_text, affair_lines)
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
