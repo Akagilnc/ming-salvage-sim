@@ -359,27 +359,33 @@ def test_read_material_stays_inside_directory(game, tmp_path):
     assert tools["list_materials"]("../outside") == tools["read_material"]("../outside")
 
 
-def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
+def test_audience_agent_exposes_directory_tools_and_min_instructions(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
-    captured = {}
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIChat
 
-    def fake_agent(**kwargs):
-        captured.update(kwargs)
-        # Attribute-accepting double: materials_root binding must succeed so the
-        # prepared tree stays owned (plain dict would fail setattr and release).
-        return SimpleNamespace(**kwargs)
-
-    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
-    agent = None
-    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
-         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
-        agent = create_minister_agent(character, cfg, _ctx(game), db)
-
+    # Real Agent + real OpenAIChat API path (no model.materials_dir): prove handle
+    # from the production construction entrance — do not stand in with SimpleNamespace.
+    api_model = OpenAIChat(id="gpt-4o-mini", api_key="sk-test-not-used")
+    assert not hasattr(api_model, "materials_dir")
+    cfg_api = LLMConfig(
+        api_key="sk-test-not-used", base_url="https://example.invalid/v1",
+        model="gpt-4o-mini", channel="api",
+    )
+    agno_db = SqliteDb(db_file=str(tmp_path / "agno-materials.db"))
+    with patch("ming_sim.registry.create_chat_model", return_value=api_model):
+        agent = create_minister_agent(character, cfg_api, _ctx(game), agno_db)
+    assert isinstance(agent, Agent)
     assert isinstance(agent.materials_root, MaterialsRoot)
     assert agent.materials_root.root
     assert Path(agent.materials_root.root).exists()
-    tool_names = {getattr(fn, "__name__", "") for fn in captured["tools"]}
+    assert agent.model is api_model
+    assert not hasattr(agent.model, "materials_dir")
+    tool_names = {
+        getattr(fn, "__name__", "") for fn in (agent.tools or [])
+    }
     assert "list_materials" in tool_names
     assert "read_material" in tool_names
     assert "propose_directive" in tool_names
@@ -391,39 +397,14 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
         "allocate_payroll", "audit_tax_arrears",
     }
     assert not (tool_names & retired_reads)
-    tools = {fn.__name__: fn for fn in captured["tools"]}
+    tools = {fn.__name__: fn for fn in agent.tools if hasattr(fn, "__name__")}
     listing = tools["list_materials"]()
     rel = next(line for line in listing.splitlines() if line.endswith("经历.txt"))
     body = tools["read_material"](rel)
     assert body
+    assert "INDEX.txt" in material_tools(agent.materials_root)[0]("")
 
-    # Real OpenAIChat API path (no model.materials_dir) still binds MaterialsRoot.
-    from agno.models.openai import OpenAIChat
-
-    api_model = OpenAIChat(id="gpt-4o-mini", api_key="sk-test-not-used")
-    assert not hasattr(api_model, "materials_dir")
-    real_captured = {}
-
-    def realish_agent(**kwargs):
-        real_captured.update(kwargs)
-        agent_obj = SimpleNamespace(**kwargs)
-        return agent_obj
-
-    cfg_api = LLMConfig(
-        api_key="sk-test-not-used", base_url="https://example.invalid/v1",
-        model="gpt-4o-mini", channel="api",
-    )
-    with patch("ming_sim.registry.Agent", side_effect=realish_agent), \
-         patch("ming_sim.registry.create_chat_model", return_value=api_model):
-        api_agent = create_minister_agent(character, cfg_api, _ctx(game), db)
-    assert isinstance(api_agent.materials_root, MaterialsRoot)
-    assert api_agent.materials_root.root
-    assert Path(api_agent.materials_root.root).exists()
-    assert not hasattr(api_agent.model, "materials_dir")
-    api_tools = material_tools(api_agent.materials_root)
-    assert "INDEX.txt" in api_tools[0]("")
-
-    # Agent construction failure releases the prepared tree and keeps primary error.
+    # Failure injection only: Agent ctor boom releases prepared tree, keeps primary.
     prepared_roots: list[str] = []
 
     def tracking_prepare(*args, **kwargs):
@@ -434,11 +415,12 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
     def boom_agent(**_kwargs):
         raise RuntimeError("agent-ctor-boom")
 
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
     with patch("ming_sim.registry.Agent", side_effect=boom_agent), \
          patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
          patch("ming_sim.registry.prepare_character_materials", side_effect=tracking_prepare):
         with pytest.raises(RuntimeError, match="agent-ctor-boom"):
-            create_minister_agent(character, cfg, _ctx(game), db)
+            create_minister_agent(character, cfg, _ctx(game), agno_db)
     assert prepared_roots and not Path(prepared_roots[-1]).exists()
     assert not Path(prepared_roots[-1]).parent.exists()
 
@@ -464,7 +446,7 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
          patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
          patch("ming_sim.registry.prepare_character_materials", side_effect=tracking_prepare_bind):
         with pytest.raises(AttributeError, match="materials_root frozen"):
-            create_minister_agent(character, cfg, _ctx(game), db)
+            create_minister_agent(character, cfg, _ctx(game), agno_db)
     assert bind_roots and not Path(bind_roots[-1]).exists()
 
 
