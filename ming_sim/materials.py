@@ -28,7 +28,8 @@ _SECRET_DIR = "密令"
 _RECOMMEND_DIR = "荐人"
 _FACT_DIR = "事实"
 _BOARD_DIR = "盘面"
-_GAZETTE_DIR = "邸报"
+_WORLD_GAZETTE_DIR = "邸报"
+_CHARACTER_GAZETTE_DIR = f"{_PUBLIC_DIR}/邸报"
 _COURT_ROSTER_REL = f"{_PERSON_DIR}/朝臣名册.txt"
 
 
@@ -246,14 +247,12 @@ def minimal_opening_context(
 def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
     """Directory copy of the minister's active secret-order reminder.
 
-    Logic lives here after #1833 retired the registry brief builder; content
-    matches the former ``build_secret_order_brief`` projection.
+    Logic lives here after #1833 retired the registry brief builder. Full task
+    text is kept for on-demand read — no replacement length cap (#1833 AC).
+    DB/read failures raise; they are not washed into an empty-business result.
     """
     name = str(getattr(character, "name", "") or "")
-    try:
-        orders = db.get_active_secret_orders_for_minister(name) if name else []
-    except Exception:
-        orders = []
+    orders = db.get_active_secret_orders_for_minister(name) if name else []
     if orders:
         lines = [
             "【你身上还在办的密令】",
@@ -274,9 +273,9 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> 
                 f"；御限剩 {max(0, due_turn - int(state.turn))} 月" if due_turn else ""
             )
             lines.append(f"  - #{o['id']}「{o['title']}」 {tag}{due_text}")
-            content_brief = (o.get("content") or "")[:80].replace("\n", " ")
-            if content_brief:
-                lines.append(f"    （任务摘要：{content_brief}…）")
+            content = str(o.get("content") or "")
+            if content:
+                lines.append(content)
         brief = "\n".join(lines)
     else:
         brief = ""
@@ -492,8 +491,11 @@ def _write_tree(
         _write_text(affair_dir / "当前情况.txt", "\n".join(x for x in details if x))
         index.append(f"{_AFFAIR_DIR}/{segment}/当前情况.txt")
 
-    index.extend(_write_public_by_month(tmp, knowledge.get("public_events") or []))
-    index.extend(_write_gazette_index(tmp, db))
+    public_events = knowledge.get("public_events") or []
+    index.extend(_write_public_by_month(tmp, public_events))
+    index.extend(_write_gazette_index(
+        tmp, _character_gazette_rows(public_events), prefix=_CHARACTER_GAZETTE_DIR,
+    ))
 
     secret_rel = _write_secret_order_file(tmp, db, state, character)
     if secret_rel:
@@ -656,17 +658,51 @@ def _world_affair_lines(db: Any) -> list[tuple[str, str, str, str]]:
     return lines
 
 
-def _write_gazette_index(tmp: Path, db: Any) -> list[str]:
+def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, object]]:
+    """Person gazette rows come only from that person's typed public projection.
+
+    Raw ``turn_reports`` aggregates are not an authorization boundary (#883 / #1832).
+    """
+    rows: list[dict[str, object]] = []
+    for item in public_events or []:
+        source_id = str(item.get("source_id") or "")
+        if not (
+            source_id.startswith("projection:turn_report:")
+            or (source_id.startswith("turn_report:") and source_id.endswith(":public"))
+        ):
+            continue
+        body = str(item.get("body") or "")
+        if not body.strip():
+            continue
+        rows.append({
+            "year": int(item.get("year") or 0),
+            "period": int(item.get("period") or 0),
+            "turn": int(item.get("turn") or 0),
+            "body": body,
+        })
+    return rows
+
+
+def _write_gazette_index(
+    tmp: Path, rows: Sequence[dict[str, object]], *, prefix: str,
+) -> list[str]:
     """历月邸报一行索引入目录（章节记忆退役，M3；0155/0157 后出注记）：每回合一份
-    全文文件，根 INDEX 里天然是一行一项——不再压缩/摘要成第二套机制。"""
+    全文文件，根 INDEX 里天然是一行一项——不再压缩/摘要成第二套机制。
+
+    ``prefix`` differs by reader: characters use ``公开说法/邸报``; world simulation
+    keeps top-level ``邸报`` (#1833 docs / #1834 world directory).
+    """
     index: list[str] = []
-    for row in db.list_turn_reports():
+    for row in rows:
         year = int(row.get("year") or 0)
         period = int(row.get("period") or 0)
         turn = int(row.get("turn") or 0)
         fname = f"{year}年{period}月.txt" if year and period else f"turn-{turn}.txt"
-        rel = f"{_GAZETTE_DIR}/{fname}"
-        _write_text(tmp / rel, str(row.get("report") or ""))
+        body = str(row.get("body") or row.get("report") or "")
+        if not body.strip():
+            continue
+        rel = f"{prefix}/{fname}"
+        _write_text(tmp / rel, body)
         index.append(rel)
     return index
 
@@ -723,7 +759,10 @@ def _write_world_tree(
         index.append(rel)
 
     index.extend(_write_public_by_month(tmp, public_events))
-    index.extend(_write_gazette_index(tmp, db))
+    index.extend(_write_gazette_index(
+        tmp, db.list_turn_reports() if hasattr(db, "list_turn_reports") else (),
+        prefix=_WORLD_GAZETTE_DIR,
+    ))
 
     _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")
     return index

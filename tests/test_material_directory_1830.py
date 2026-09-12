@@ -11,6 +11,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+from tests.dossier_test_helpers import create_test_secret_order
+
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
     append_ledger_entry,
@@ -364,3 +367,79 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
         assert tools["read_material"](rel)
     finally:
         restored.close()
+
+
+def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gazettes(
+    game, tmp_path,
+):
+    """#883/#1832: raw turn_reports do not authorize person gazette files.
+
+    Typed public counterparts still land under 公开说法/邸报/.
+    """
+    db, state, content = game
+    character = _active_minister(db, content)
+    legacy_marker = "LEGACY_RAW_GAZETTE_SHOULD_NOT_LEAK"
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report, attendant_message) "
+        "VALUES (?, ?, ?, ?, '')",
+        (max(1, int(state.turn) + 7), 1628, 1, legacy_marker),
+    )
+    db.conn.commit()
+
+    from ming_sim.models import GameState
+
+    for month in range(1, 8):
+        past = GameState(
+            turn=month, year=1627, period=month, metrics=dict(state.metrics),
+        )
+        body = f"PUBLIC_GAZETTE_MONTH_{month}"
+        db.record_public_knowledge_event(
+            past, "邸报", body, source_id=f"turn_report:{month}:public",
+        )
+        db.conn.execute(
+            "INSERT OR REPLACE INTO turn_reports (turn, year, period, report, attendant_message) "
+            "VALUES (?, ?, ?, ?, '')",
+            (month, 1627, month, body),
+        )
+    db.conn.commit()
+
+    prepared = prepare_character_materials(
+        db, state, character, dest_root=tmp_path / "char-gaz",
+    )
+    names = list_materials(prepared.root)
+    gazette_paths = [p for p in names if p.startswith("公开说法/邸报/")]
+    assert len(gazette_paths) == 7
+    blob = "\n".join(read_material(prepared.root, p) for p in names if p != "INDEX.txt")
+    assert legacy_marker not in blob
+    assert not any(p.startswith("邸报/") and not p.startswith("公开说法/") for p in names)
+    for month in range(1, 8):
+        assert any(f"1627年{month}月.txt" in p for p in gazette_paths)
+        assert f"PUBLIC_GAZETTE_MONTH_{month}" in blob
+
+
+def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
+    game, tmp_path, monkeypatch,
+):
+    db, state, content = game
+    character = _active_minister(db, content)
+    long_body = ("密令长正文-" * 20) + "-TAIL"
+    assert len(long_body) > 80
+    create_test_secret_order(
+        db, state, character.name, "长密令", long_body, [], deadline_months=6,
+    )
+    prepared = prepare_character_materials(
+        db, state, character, dest_root=tmp_path / "secret-ok",
+    )
+    secret_path = next(p for p in list_materials(prepared.root) if p.startswith("密令/"))
+    secret_text = read_material(prepared.root, secret_path)
+    assert "-TAIL" in secret_text
+    assert long_body in secret_text
+
+    def boom(_name):
+        raise RuntimeError("secret-order-db-boom")
+
+    monkeypatch.setattr(db, "get_active_secret_orders_for_minister", boom)
+    with pytest.raises(RuntimeError, match="secret-order-db-boom"):
+        prepare_character_materials(
+            db, state, character, dest_root=tmp_path / "secret-fail",
+        )
