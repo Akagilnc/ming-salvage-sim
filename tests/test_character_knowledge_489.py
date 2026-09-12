@@ -5,6 +5,7 @@ import json
 from ming_sim.models import Character
 import pytest
 from ming_sim.knowledge import build_character_knowledge
+from ming_sim.materials import prepare_character_materials
 from tests.dossier_test_helpers import create_test_secret_order
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -51,8 +52,13 @@ def test_every_supported_office_type_has_a_role_specific_current_world_slice(gam
         if character is None:
             continue
         world = db.get_character_knowledge(state, character.name)["world"]
-        assert domains[0] in world, office_type
-        assert len(world) > 1, office_type
+        if domains:
+            assert domains[0] in world, office_type
+        else:
+            assert "treasury" not in world, office_type
+            assert "military" not in world, office_type
+            assert "personnel" not in world, office_type
+        assert "public" in world, office_type
 
 def test_every_character_office_type_has_a_content_knowledge_mapping(game):
     _db, _state, content = game
@@ -68,26 +74,24 @@ def test_every_character_office_type_has_a_content_knowledge_mapping(game):
 def test_generic_offices_receive_distinct_current_world_slices(game):
     db, state, content = game
 
-    expected_domains = {
-        # These offices have no dedicated numeric/report rail yet.  Their
-        # closest current-state rails are still better than a public-only view.
-        "礼部": {"personnel"},
-        "刑部": {"security"},
-        "翰林院": {"personnel"},
-        "都察院": {"personnel", "security"},
-    }
     views = {
         office_type: db.get_character_knowledge(
             state,
             next(c.name for c in content.characters.values()
                  if c.office_type == office_type),
         )["world"]
-        for office_type in expected_domains
+        for office_type in ("礼部", "刑部", "翰林院", "都察院", "吏部")
     }
 
-    for office_type, domains in expected_domains.items():
-        assert domains <= views[office_type].keys(), office_type
-        assert views[office_type]["public"]
+    assert "personnel" not in views["礼部"]
+    assert "treasury" not in views["礼部"]
+    assert "military" not in views["礼部"]
+    assert views["礼部"]["public"]
+    assert views["刑部"]["security"]
+    assert "personnel" not in views["翰林院"]
+    assert views["都察院"]["security"]
+    assert "personnel" not in views["都察院"]
+    assert "personnel" in views["吏部"]
     assert views["礼部"] != views["刑部"]
     assert views["刑部"] != views["都察院"]
 
@@ -103,9 +107,27 @@ def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatc
 
     view = db.get_character_knowledge(state, minister.name)
 
-    assert "personnel" in view["world"]
+    assert "personnel" not in view["world"]
     assert "military" not in view["world"]
     assert "treasury" not in view["world"]
+
+def test_inner_court_materials_do_not_read_faction_report(game, tmp_path, monkeypatch):
+    db, state, content = game
+
+    def forbidden(*_a, **_k):
+        raise AssertionError("unauthorised faction_report")
+
+    monkeypatch.setattr(db, "faction_report", forbidden)
+    previous = content.characters["王承恩"]
+    messenger = content.characters["曹化淳"]
+    db.set_character_office(previous.name, "内廷随侍", "内廷")
+    db.set_character_office(messenger.name, "御前近臣", "内廷")
+    for person in (previous, messenger):
+        world = db.get_character_knowledge(state, person.name)["world"]
+        assert "court" not in world
+        prepare_character_materials(
+            db, state, person, dest_root=tmp_path / person.name,
+        )
 
 def test_every_distinct_office_type_gets_a_distinct_current_world_slice(game):
     db, state, content = game
@@ -184,15 +206,18 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     game, monkeypatch
 ):
     db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    monkeypatch.setattr(db, "faction_report", lambda **_: "当前派系事实")
+    minister = next(c for c in content.characters.values() if c.office_type == "吏部")
     monkeypatch.setattr(db, "army_report", lambda **_: "不应读取的军情")
     monkeypatch.setattr(db, "treasury_report", lambda *_args, **_: "不应读取的账目")
+    monkeypatch.setattr(db, "faction_report", lambda **_: "不应读取的派系底账")
 
     view = db.get_character_knowledge(state, minister.name)["world"]
-
-    assert view["personnel"] == "当前派系事实"
-    assert "礼部本职所涉" not in view["personnel"]
+    roster = db.current_court_roster_rows(state)
+    assert roster
+    assert "personnel" in view
+    assert roster[0]["name"] in view["personnel"]
+    assert (roster[0]["office"] or "无现任官职") in view["personnel"]
+    assert "不应读取的派系底账" not in view["personnel"]
     assert "military" not in view
     assert "treasury" not in view
 
@@ -740,15 +765,15 @@ def test_participant_roster_is_discovered_from_persistent_record_without_adapter
 
 def test_office_blacklist_preserves_unrelated_court_domain_fact(game):
     db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "内阁")
+    minister = next(c for c in content.characters.values() if c.office_type == "兵部")
     create_test_secret_order(db,
         state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"]
     )
 
     view = db.get_character_knowledge(state, minister.name)
 
-    assert view["world"].get("personnel")
-    assert view["world"].get("treasury")
+    assert view["world"].get("military")
+    assert "treasury" not in view["world"]
 
 def test_event_office_blacklist_matches_current_office_name(game):
     db, state, content = game

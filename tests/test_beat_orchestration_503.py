@@ -1245,12 +1245,12 @@ def test_assembly_never_calls_omniscient_builders(game, monkeypatch):
 
 
 def test_court_tension_routed_from_default_provider(game):
-    """当下朝局张力经默认见闻供给接口路由（court/security 域），定性口径、无裸数值（P4）。"""
+    """当下朝局张力经默认见闻供给接口路由（security 域），定性口径、无裸数值（P4）。"""
     db, state, content = game
-    # 内阁大臣有 court 域见闻——朝局张力应被路由到位
+    # 都察院有 security 域见闻——朝局张力应被路由到位
     grand = next(
         n for n, ch in content.characters.items()
-        if ch.office_type == "内阁"
+        if ch.office_type == "都察院"
         and db.get_character_status(n)[0] == "active"
         and getattr(ch, "power_id", "ming") == "ming"
     )
@@ -1259,9 +1259,11 @@ def test_court_tension_routed_from_default_provider(game):
         db, state, beat_kind=BEAT_ENTER, night_id=int(night["id"]),
         person_name=grand, summon_method=an.METHOD_XUANRU,
     )
-    assert inputs.court_tension  # 非空：真被路由
-    # 定性口径（满意/势力档），走 audience=True 定性轨——非裸抽象数值（P4）
-    assert "满意" in inputs.court_tension or "势力" in inputs.court_tension
+    security = str(
+        (db.get_character_knowledge(state, grand).get("world") or {}).get("security") or ""
+    ).strip()
+    assert security
+    assert inputs.court_tension == security
 
 
 def test_public_layer_excludes_private_whispers(game):
