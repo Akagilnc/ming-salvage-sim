@@ -766,8 +766,8 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
             },
             "人物变更": [{
                 "name": "卢象升",
-                "动作": "评定",
-                "loyalty": 1,
+                "动作": "处置",
+                "status": "dead",
                 "origin_ref": db.affairs.origin_ref(unauthorized.id),
                 "reason": "戊寅虏变软判主帅功过",
             }],
@@ -780,6 +780,9 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",),
     ).fetchone()["military_pressure"] == 35
+    assert db.conn.execute(
+        "SELECT status FROM characters WHERE name = ?", ("卢象升",),
+    ).fetchone()["status"] == "active"
     rejected_persons = [
         row for row in out["applied_person_changes"]
         if row.get("rejected") and row.get("name") == "卢象升"
