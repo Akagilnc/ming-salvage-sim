@@ -328,62 +328,6 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
         raise AssertionError("expected conflict")
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
 
-    # Dossier birth may authorize later effect carriers, but must not enlarge
-    # the immutable input authority used by existing attach or close.
-    frozen = {first.id}
-    working = set(frozen)
-    db._batch_frozen_open_affair_ids = frozen
-    db._batch_authorized_open_affair_ids = working
-    try:
-        born_dossier = db.create_decree_dossier(
-            state,
-            action_type="assignment",
-            decree_text="另起护送案",
-            target_kind="issue",
-            target_id="ningyuan-general",
-            executor_kind="character",
-            executor_id=minister,
-            pending_action_id=91003,
-            payload={
-                "assignee_id": minister,
-                "affair_declaration": _declaration(identity="dossier-born-batch"),
-            },
-        )
-        born_id = int(db.conn.execute(
-            "SELECT affair_id FROM decree_dossiers WHERE id = ?", (born_dossier,),
-        ).fetchone()["affair_id"])
-        assert db.affairs.origin_ref_from_result_item(
-            {"origin_ref": db.affairs.origin_ref(born_id)},
-            year=state.year, period=state.period, turn=state.turn,
-            authorized_ids=working,
-        ) == db.affairs.origin_ref(born_id)
-        with pytest.raises(ValueError):
-            db.affairs.close_from_declaration(
-                _declaration(attach="close", affair_id=born_id),
-                turn=state.turn, authorized_ids=frozen,
-            )
-        assert db.affairs.get(born_id).status == "open"
-        with pytest.raises(ValueError):
-            db.create_decree_dossiers(
-                state,
-                action_type="assignment",
-                decree_text="调洪承畴赴宁远",
-                target_kind="issue",
-                target_id="ningyuan-general",
-                executor_kind="character",
-                executor_id=minister,
-                pending_action_id=pending_id,
-                payload={
-                    "assignee_id": minister,
-                    "affair_declaration": _declaration(
-                        attach="existing", affair_id=born_id,
-                    ),
-                },
-            )
-    finally:
-        del db._batch_frozen_open_affair_ids
-        del db._batch_authorized_open_affair_ids
-
 
 def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypatch):
     db, state, content = game
@@ -492,6 +436,49 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
 
     caller_frozen = {first.id, second.id}
     frozen_snapshot = set(caller_frozen)
+
+    pending_id = 91003
+    db.create_decree_dossier(
+        state, action_type="assignment", decree_text="另起护送案",
+        target_kind="issue", target_id="ningyuan-general",
+        executor_kind="character", executor_id=minister,
+        pending_action_id=pending_id, payload={"assignee_id": minister},
+    )
+    dossier_born_id = int(
+        db.conn.execute("SELECT COALESCE(MAX(id), 0) AS n FROM affairs").fetchone()["n"]
+    ) + 1
+    original_body = issues_mod._apply_score_extraction_body
+
+    def reuse_dossier_then_apply(*args, **kwargs):
+        db.create_decree_dossiers(
+            state, action_type="assignment", decree_text="另起护送案",
+            target_kind="issue", target_id="ningyuan-general",
+            executor_kind="character", executor_id=minister,
+            pending_action_id=pending_id,
+            payload={
+                "assignee_id": minister,
+                "affair_declaration": _declaration(identity="dossier-born-batch"),
+            },
+        )
+        extracted = args[2]
+        extracted["economy_moves"] = [{
+            "account": "国库", "delta": -1, "category": "善后", "reason": "案卷同批后果",
+            "origin_ref": db.affairs.origin_ref(dossier_born_id),
+        }]
+        extracted["affair_declarations"] = [
+            _declaration(attach="close", affair_id=dossier_born_id),
+        ]
+        return original_body(*args, **kwargs)
+
+    monkeypatch.setattr(issues_mod, "_apply_score_extraction_body", reuse_dossier_then_apply)
+    dossier_batch = apply_score_extraction(
+        db, state, {}, content=content, open_affair_ids_at_input=caller_frozen,
+    )
+    monkeypatch.setattr(issues_mod, "_apply_score_extraction_body", original_body)
+    assert db.affairs.get(dossier_born_id).status == "open"
+    assert not dossier_batch["economy_moves_rejections"]
+    assert any(row["report_section"] == "affair_declarations"
+               for row in dossier_batch["validate_shape_rejections"])
     # new_issues birth must expand the single internal working set so a later
     # post-issue carrier (explicit origin_ref, no re-add) can use that newborn.
     expected_born_id = int(
