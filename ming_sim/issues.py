@@ -5086,9 +5086,9 @@ def apply_issue_tracker_output(
     defer_event_trigger_ids: Optional[set[str]] = None,
     open_affair_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
-    # Working copy only: same-batch births may expand this set; caller frozen input stays intact.
-    if isinstance(open_affair_ids_at_input, set):
-        open_affair_ids_at_input = set(open_affair_ids_at_input)
+    # Do not re-copy open_affair_ids_at_input: settle path already hands the single
+    # internal working set from apply_score_extraction; a second copy would drop
+    # same-batch new_issues births from later carriers (close / durable origin).
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
     pairing_warnings: List[str] = []  # #45/#46 国策结案实体后果强制配对告警（warn-only）

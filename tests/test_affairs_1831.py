@@ -418,8 +418,6 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
     ).fetchone() is None
 
     before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    caller_frozen = {first.id, second.id}
-    frozen_snapshot = set(caller_frozen)
     apply_score_extraction(
         db, state,
         {
@@ -432,22 +430,54 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
                 "affair_declaration": _declaration(identity="escort-b"),
             }],
         },
+        content=content, open_affair_ids_at_input={first.id, second.id},
+    )
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before + 2
+
+    caller_frozen = {first.id, second.id}
+    frozen_snapshot = set(caller_frozen)
+    # new_issues birth must expand the single internal working set so a later
+    # post-issue carrier (explicit origin_ref, no re-add) can use that newborn.
+    expected_born_id = int(
+        db.conn.execute("SELECT COALESCE(MAX(id), 0) AS n FROM affairs").fetchone()["n"]
+    ) + 1
+    batch_born = apply_score_extraction(
+        db, state,
+        {
+            "new_issues": [{
+                "origin_kind": "decree", "origin_ref": origin,
+                "kind": "situation", "title": "同批新生局势",
+                "affair_declaration": _declaration(identity="issue-born-batch"),
+            }],
+            # 处置 is post-issue; explicit origin_ref checks membership without add().
+            "人物变更": [{
+                "name": minister, "动作": "处置", "status": "active",
+                "origin_ref": f"affair:{expected_born_id}",
+                "reason": "同批引用新生",
+            }],
+        },
         content=content, open_affair_ids_at_input=caller_frozen,
     )
-    # same-batch birth expands only the internal working set; caller frozen input stays intact.
     assert caller_frozen == frozen_snapshot == {first.id, second.id}
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before + 2
-    newborns = [
-        int(row["id"]) for row in db.conn.execute("SELECT id FROM affairs ORDER BY id").fetchall()
-        if int(row["id"]) not in frozen_snapshot
-    ]
-    assert len(newborns) >= 2
-    # subsequent call with the original frozen set still rejects a prior-batch newborn origin.
+    created = batch_born["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is False
+    born_id = int(db.affairs.affair_id_for_issue(int(created["issue_id"])))
+    assert born_id == expected_born_id
+    assert born_id not in frozen_snapshot
+    # Post-issue carrier resolved origin_ref against the expanded working set
+    # (explicit origin_ref checks membership without add). Auth passed the gate:
+    # business invalid_transition for 处置→active, not unauthorized-origin reject.
+    assert any(
+        str(row.get("origin_ref") or "") == db.affairs.origin_ref(born_id)
+        and row.get("category") == "invalid_transition"
+        for row in batch_born["applied_person_changes"]
+    )
+    # subsequent call with the original frozen set still rejects that prior-batch newborn.
     follow = apply_score_extraction(
         db, state,
         {"economy_moves": [{
             "account": "国库", "delta": -1, "category": "善后", "reason": "跨批越权",
-            "origin_ref": db.affairs.origin_ref(newborns[-1]),
+            "origin_ref": db.affairs.origin_ref(born_id),
         }]},
         content=content, open_affair_ids_at_input=caller_frozen,
     )
@@ -455,7 +485,7 @@ def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypat
     assert follow["economy_moves_rejections"][0]["rejected"] is True
     assert db.conn.execute(
         "SELECT 1 FROM economy_ledger WHERE origin_ref=?",
-        (db.affairs.origin_ref(newborns[-1]),),
+        (db.affairs.origin_ref(born_id),),
     ).fetchone() is None
 
     planted = _declaration(birth_key="result:planted-key")
