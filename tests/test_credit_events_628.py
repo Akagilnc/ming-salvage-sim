@@ -522,14 +522,19 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
         content.characters[successor].office_type,
     )
     try:
+        # 新正形：地方在任须有 character_offices.region_id，与接任同 seat 才互挤。
         db.conn.execute(
             "UPDATE characters SET status='active', office=?, office_type=? WHERE name=?",
             (target_office, "地方", displaced_host),
+        )
+        db._record_character_office(
+            displaced_host, target_office, "地方", "test-fixture", region_id="shaanxi",
         )
         db.conn.commit()
         content.characters[displaced_host].status = "active"
         content.characters[displaced_host].office = target_office
         content.characters[displaced_host].office_type = "地方"
+        content.characters[displaced_host].office_region = "shaanxi"
         before_back_disp = [
             e for e in _credit_edges(db, event_kind=KIND_BACK, target=displaced_host)
             if f"dossier:{did_disp}:credit:cover" in str(e["origin"])
@@ -539,6 +544,7 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
             {"人物变更": [{
                 "name": successor, "动作": "任命",
                 "office": target_office, "office_type": "地方",
+                "region_id": "shaanxi",
                 "reason": "另简接任",
                 "origin_ref": f"dossier:{did_disp}",
             }]},

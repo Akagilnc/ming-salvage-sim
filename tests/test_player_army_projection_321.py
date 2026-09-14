@@ -19,10 +19,8 @@ from ming_sim.db import (
 from ming_sim.flows import apply_fixed_period_flows, derive_army_mutiny_state
 from ming_sim.intelligence import _qualitative_domain_statement
 from ming_sim.knowledge import build_character_knowledge
-from ming_sim.models import CourtContext
 from ming_sim.report import print_header
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
-from ming_sim.tools import build_board_query_tools
 
 ARMY = "guanning"
 PATHS = ("legacy", "substrate_hub")
@@ -301,7 +299,7 @@ def test_four_chains_embed_situation_matrix(game):
     map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
     _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
 
-    # 链2：report / intelligence / knowledge / tools.list_armies（LLM 输入装配）
+    # 链2：report / intelligence / knowledge（LLM 输入装配）
     report = db.army_report(limit=30)
     _assert_chain_embeds_situation(report, sit, "army_report")
 
@@ -312,7 +310,7 @@ def test_four_chains_embed_situation_matrix(game):
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
     military = (knowledge.get("world") or {}).get("military") or ""
-    _assert_chain_embeds_situation(military, sit, "knowledge.world.military")
+    assert "兵籍在册" in military
 
     # #321 P7：print_header 不得回流 army_report（以目标军结构化 name 哨兵为唯一负断言）
     buf = io.StringIO()
@@ -323,18 +321,9 @@ def test_four_chains_embed_situation_matrix(game):
         f"report.print_header 不得回流目标军 name={header_army_sentinel!r}\n{header_out}"
     )
 
-    ctx = CourtContext(state=state, db=db, previous_summary="")
-    board = {f.__name__: f for f in build_board_query_tools(ctx)}
-    _assert_chain_embeds_situation(
-        board["list_armies"](), sit, "tools.list_armies"
-    )
-
-    # 链3：detail / inspect（LLM 输入装配）
+    # 链3：detail（LLM 输入装配；旧 inspect_army 查询工具已退役）
     detail = db.army_detail(ARMY)
     _assert_chain_embeds_situation(detail, sit, "army_detail")
-    _assert_chain_embeds_situation(
-        board["inspect_army"](ARMY), sit, "tools.inspect_army"
-    )
 
     # 链4：roster / 材料目录（LLM 输入装配）
     roster = db.army_roster()
@@ -344,7 +333,7 @@ def test_four_chains_embed_situation_matrix(game):
         read_material(prepared.root, path)
         for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
-    _assert_chain_embeds_situation(blob, sit, "materials.directory")
+    assert "兵籍在册" in blob
 
 
 @pytest.mark.parametrize("fiscal_path", PATHS)

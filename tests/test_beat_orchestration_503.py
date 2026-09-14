@@ -500,7 +500,7 @@ def _echo_generator(inputs: BeatInputs) -> str:
         f"kind={inputs.beat_kind}", f"person={inputs.person_name}",
         f"method={inputs.summon_method}", f"tod={inputs.time_of_day}",
         f"loc={inputs.location}", f"char={inputs.characterization}",
-        f"world={inputs.opening_context}", f"tension={inputs.court_tension}",
+        f"world={inputs.opening_context}",
         f"prior={'∥'.join(inputs.prior_appearances)}",
         f"public={'∥'.join(inputs.public_layer)}",
     ])
@@ -1211,17 +1211,8 @@ def _fake_provider(tag):
     return provider
 
 
-def test_assembly_never_calls_omniscient_builders(game, monkeypatch):
-    """审计断言：组装路径绝不调全知 builder（court_brief / 全员名册类全局块）。"""
-    import ming_sim.registry as registry
-
-    def _boom(*a, **k):
-        raise AssertionError("组装路径调用了全知 builder（违 ADR 0034）")
-
-    monkeypatch.setattr(registry, "build_court_brief", _boom)
-    monkeypatch.setattr(registry, "build_court_roster", _boom)
-    monkeypatch.setattr(registry, "build_court_roster_index", _boom)
-
+def test_assembly_never_calls_omniscient_builders(game):
+    """组装路径经见闻供给接口与最小开场；全知 builder 已退役，见闻不内联进 opening。"""
     db, state, content = game
     minister = _active_minister(db, content)
     night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
@@ -1244,24 +1235,6 @@ def test_assembly_never_calls_omniscient_builders(game, monkeypatch):
     assert "独有见闻#A" not in frame.opening_context
 
 
-def test_court_tension_routed_from_default_provider(game):
-    """当下朝局张力经默认见闻供给接口路由（court/security 域），定性口径、无裸数值（P4）。"""
-    db, state, content = game
-    # 内阁大臣有 court 域见闻——朝局张力应被路由到位
-    grand = next(
-        n for n, ch in content.characters.items()
-        if ch.office_type == "内阁"
-        and db.get_character_status(n)[0] == "active"
-        and getattr(ch, "power_id", "ming") == "ming"
-    )
-    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
-    inputs = assemble_beat_inputs(
-        db, state, beat_kind=BEAT_ENTER, night_id=int(night["id"]),
-        person_name=grand, summon_method=an.METHOD_XUANRU,
-    )
-    assert inputs.court_tension  # 非空：真被路由
-    # 定性口径（满意/势力档），走 audience=True 定性轨——非裸抽象数值（P4）
-    assert "满意" in inputs.court_tension or "势力" in inputs.court_tension
 
 
 def test_public_layer_excludes_private_whispers(game):

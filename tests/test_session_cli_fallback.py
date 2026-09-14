@@ -1286,6 +1286,46 @@ def test_propose_appointment_tool_mode_contract(game, tool_mode, expected):
     assert staged["mode"] == expected
 
 
+def test_propose_appointment_tool_region_id_stages_same_seat(game):
+    """#1812：真工具 region_id → marker body → pending 同一 seat；不从官名推断。"""
+    db, state, content = game
+    minister = "毕自严"
+    appointee = "工具任所候选甲"
+    character = content.characters[minister]
+    propose = _propose_appointment_tool(character, db, state)
+    marker = propose(
+        name=appointee, office="陕西巡抚", faction="中立",
+        reason="试任所", region_id="shaanxi",
+    )
+    assert marker.startswith("__pending_appointment__")
+    body = json.loads(marker.removeprefix("__pending_appointment__"))
+    assert body["region_id"] == "shaanxi"
+    assert "陕西" not in body.get("region_id", "")
+
+    # 省略 region_id 不得从官名推断任所
+    bare = propose(name=appointee, office="河南巡抚", reason="无任所")
+    bare_body = json.loads(bare.removeprefix("__pending_appointment__"))
+    assert "region_id" not in bare_body
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    pending_id = sess._stage_appointment_candidate(
+        json.dumps(body, ensure_ascii=False), character,
+    )
+    assert pending_id
+    staged = json.loads(
+        next(p for p in db.list_pending_actions(state.turn) if p["id"] == pending_id)[
+            "payload_json"
+        ]
+    )
+    assert staged["region_id"] == "shaanxi"
+    assert staged["name"] == appointee
+    assert staged["office"] == "陕西巡抚"
+
+
 @pytest.mark.parametrize(
     ("appointee", "seed_modes", "continue_mode", "expected_id_relation", "expected_modes"),
     [
@@ -2462,6 +2502,7 @@ def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
         previous_turn_summary=lambda state: "",
         save_state=lambda state: None,
     )
+    released = []
     fake = SimpleNamespace(
         state=state,
         db=fake_db,
@@ -2469,13 +2510,14 @@ def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
         llm_config=cfg,
         agno_db=SimpleNamespace(),
         previous_summary="",
-        registry=None,
+        registry=SimpleNamespace(close=lambda: released.append("old")),
         last_decree="",
         last_report="",
         _begun=False,
         auto_save=lambda label: None,
         turn_snapshot=lambda: SimpleNamespace(ok=True),
     )
+    fake._adopt_registry = types.MethodType(GameSession._adopt_registry, fake)
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl",
                         lambda content, db, llm_config=None: seen.append(llm_config))
     monkeypatch.setattr(session_mod, "MinisterRegistry",
@@ -2484,6 +2526,7 @@ def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
     GameSession.begin_turn(fake)
 
     assert seen == [cfg]
+    assert released == ["old"]
 
 
 def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch):
@@ -2491,6 +2534,7 @@ def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch
     cfg = SimpleNamespace(channel="api")
     state = SimpleNamespace(turn_phase="summoning")
     fake_db = SimpleNamespace(load_state=lambda: state)
+    released = []
     fake = SimpleNamespace(
         state=state,
         db=fake_db,
@@ -2498,8 +2542,9 @@ def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch
         llm_config=cfg,
         agno_db=SimpleNamespace(),
         previous_summary="",
-        registry=SimpleNamespace(),
+        registry=SimpleNamespace(close=lambda: released.append("old")),
     )
+    fake._adopt_registry = types.MethodType(GameSession._adopt_registry, fake)
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl",
                         lambda content, db, llm_config=None: seen.append(llm_config))
     monkeypatch.setattr(session_mod, "MinisterRegistry",
@@ -2508,6 +2553,7 @@ def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch
     GameSession.refresh_runtime_after_chat_rollback(fake)
 
     assert seen == [cfg]
+    assert released == ["old"]
 
 
 def test_no_backend_is_noop(read_game, monkeypatch):

@@ -241,3 +241,86 @@ def test_sync_preserves_persisted_court_office_type_on_table_miss(tmp_path):
     _sync_offices_from_db_impl(content, db, _cli_cfg())
     assert content.characters["刘鸿训"].office_type == "礼部", \
         "sync 不得把 DB 持久化的朝堂类 office_type 在表查不中时降级成待铨"
+
+
+def test_sync_restores_office_region_from_character_offices(tmp_path):
+    """DB→Character 重建必须带回 character_offices.region_id 任所（#1812）。"""
+    from ming_sim.session import _sync_offices_from_db_impl
+
+    content = GameContent.load()
+    bind_content(content)
+    issues_mod.bind_content(content)
+    db = GameDB(str(tmp_path / "sync-region.db"), content=content, llm_config=_cli_cfg())
+    db.seed_static_data()
+    name = next(
+        n for n, ch in content.characters.items()
+        if ch.office_type not in {"后宫", "宗藩"}
+        and db.get_character_status(n)[0] == "active"
+    )
+    db.conn.execute(
+        "UPDATE characters SET office=?, office_type=? WHERE name=?",
+        ("河南巡抚", "地方", name),
+    )
+    db._record_character_office(name, "河南巡抚", "地方", "test-sync", region_id="henan")
+    db.conn.commit()
+    # Wipe runtime projection then rebuild from DB only.
+    content.characters = {}
+    _sync_offices_from_db_impl(content, db, _cli_cfg())
+    assert name in content.characters
+    assert content.characters[name].office_region == "henan"
+    assert db.character_office_region(name) == "henan"
+
+
+def test_appointment_seat_identity_reuses_local_and_strips_central(game):
+    """一次任职 resolved seat：地方同职省略 region 续任不跨省挤位；中央夹带 region 归一空。"""
+    from ming_sim.issues import (
+        _canonical_appointment_fields,
+        apply_office_appointment,
+    )
+
+    db, state, content = game
+    rows = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND office_type NOT IN ('后宫','宗藩') ORDER BY name LIMIT 2"
+    ).fetchall()
+    a, b = str(rows[0]["name"]), str(rows[1]["name"])
+
+    r1 = apply_office_appointment(
+        db, state, content, None, a, "巡抚",
+        new_office_type="督抚", region_id="shaanxi", reason="seat-a",
+    )
+    assert not r1.get("rejected")
+    r2 = apply_office_appointment(
+        db, state, content, None, b, "巡抚",
+        new_office_type="督抚", region_id="henan", reason="seat-b",
+    )
+    assert not r2.get("rejected")
+    assert db.character_office_region(a) == "shaanxi"
+    assert db.character_office_region(b) == "henan"
+
+    # Same-office local continuation omits region → reuse shaanxi; henan intact.
+    r3 = apply_office_appointment(
+        db, state, content, None, a, "巡抚",
+        new_office_type="督抚", region_id="", reason="reappoint-omit-region",
+    )
+    assert not r3.get("rejected")
+    assert not r3.get("displaced"), r3
+    assert content.characters[a].office == "巡抚"
+    assert content.characters[a].office_region == "shaanxi"
+    assert db.character_office_region(a) == "shaanxi"
+    assert content.characters[b].office == "巡抚"
+    assert content.characters[b].office_region == "henan"
+    assert db.character_office_region(b) == "henan"
+
+    # Central identity ignores caller-stuffed region on canonical tuple + write.
+    canon = _canonical_appointment_fields({
+        "office": "户部尚书", "office_type": "户部", "region_id": "henan",
+    })
+    assert canon == ("户部尚书", "户部", "真除", "")
+    r4 = apply_office_appointment(
+        db, state, content, None, a, "户部尚书",
+        new_office_type="户部", region_id="henan", reason="central-noise-region",
+    )
+    assert not r4.get("rejected")
+    assert db.character_office_region(a) == ""
+    assert content.characters[a].office_region == ""

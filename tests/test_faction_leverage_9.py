@@ -146,7 +146,8 @@ def test_restore_uses_new_office_weight_not_old(game):
 
     # name_lo 起复到地方(低权)
     result_lo = apply_office_appointment(
-        db, state, content, None, name_lo, "某府知府", reason="起复地方", faction="阉党"
+        db, state, content, None, name_lo, "某府知府",
+        reason="起复地方", faction="阉党", region_id="henan",
     )
     after_low = db.faction_leverage("阉党")
 

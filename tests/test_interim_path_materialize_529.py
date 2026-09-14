@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import ming_sim.action_materialize  # noqa: F401 -- installs catalog
 import ming_sim.audience_night as an
+import ming_sim.cli_backend as cb
 import pytest
 from ming_sim.action_clusters import (
     candidates_from_classifier_payload,
@@ -168,6 +169,151 @@ def test_beat12_13_special_decree_annotates_existing_appointment_in_place(game):
         "特旨" in tags_ and (f"pending:{pending_id}" in tags_ or str(pending_id) in body)
         for tags_, body in tags
     )
+
+
+def test_appointment_merge_backfills_region_id_and_keeps_cross_seat_distinct(game, monkeypatch):
+    """同名同职合并后补 region_id；不同任所不得误并成一条。"""
+    db, state, _content = game
+    actor = _minister(db)
+    name = "洪承畴"
+    office = "巡抚"
+
+    first = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": name,
+            "office": office,
+        },
+        actor=actor,
+        message=f"任命{name}为{office}。",
+    )
+    pending_id = first.out.get("pending_action_id")
+    assert pending_id
+    assert not _payload(db, pending_id).get("region_id")
+
+    merged = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": name,
+            "office": office,
+            "region_id": "shaanxi",
+        },
+        actor=actor,
+        message=f"任{name}巡抚陕西。",
+        pend=_office_pendings(db, state.turn),
+    )
+    assert merged.out.get("pending_action_id") == pending_id
+    assert len(_office_pendings(db, state.turn)) == 1
+    assert _payload(db, pending_id).get("region_id") == "shaanxi"
+
+    other = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": name,
+            "office": office,
+            "region_id": "henan",
+        },
+        actor=actor,
+        message=f"改任{name}巡抚河南。",
+        pend=_office_pendings(db, state.turn),
+    )
+    other_id = other.out.get("pending_action_id")
+    assert other_id and other_id != pending_id
+    rows = _office_pendings(db, state.turn)
+    assert len(rows) == 2
+    seats = {
+        str((_payload(db, int(r["id"])).get("region_id") or "")).strip()
+        for r in rows
+    }
+    assert seats == {"shaanxi", "henan"}
+
+    # Parallel multi-intent merge must also backfill region (annotate_existing=False path).
+    # Real pipeline entry: draft path takes effect → parallel_stage_office_from_appointment_intent
+    # selects structured appointment and merges; main appointment materialize is not the merger.
+    bare = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "孙传庭",
+            "office": "总督",
+        },
+        actor=actor,
+        message="任命孙传庭为总督。",
+    )
+    bare_id = bare.out.get("pending_action_id")
+    assert bare_id
+    assert not _payload(db, bare_id).get("region_id")
+    before_sun = [
+        int(p["id"]) for p in _office_pendings(db, state.turn)
+        if _payload(db, int(p["id"])).get("name") == "孙传庭"
+    ]
+    assert before_sun == [int(bare_id)]
+
+    # Draft extract is external LLM; pin deterministic dossier so pipeline stays local.
+    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
+        "draft_action": "拟旨",
+        "draft_text": "着吏部议任孙传庭总督陕西。",
+        "target_candidate": "",
+        "dossier_action_type": "policy",
+        "target_kind": "issue",
+        "target_id": "parallel-seat-backfill",
+    })
+    monkeypatch.setattr(
+        cb, "extract_appointment_action",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("parallel must use structured appointment, not serial extract")
+        ),
+    )
+
+    # Draft-path candidate carries appointment structure → parallel seam stages/merges
+    # with annotate_existing=False (main appointment handler does not own this merge).
+    _stage_appt(
+        db, state.turn,
+        {
+            "kind": "draft",
+            "appoint_action": "任命",
+            "name": "孙传庭",
+            "office": "总督",
+            "region_id": "shaanxi",
+        },
+        actor=actor,
+        message="拟旨任孙传庭总督陕西。",
+        reply="臣遵旨。请陛下定夺准驳。",
+        pend=_office_pendings(db, state.turn),
+    )
+    assert _payload(db, bare_id).get("region_id") == "shaanxi"
+    after_sun = [
+        int(p["id"]) for p in _office_pendings(db, state.turn)
+        if _payload(db, int(p["id"])).get("name") == "孙传庭"
+    ]
+    assert after_sun == [int(bare_id)], "parallel merge must not insert a duplicate office candidate"
+
+    # Path multi-candidate via real pipeline: region disambiguates same name+office.
+    shaanxi_mode_before = _payload(db, pending_id).get("mode")
+    path = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "无",
+            "mode": "midzhi",
+            "name": name,
+            "office": office,
+            "region_id": "henan",
+        },
+        actor=actor,
+        message="特旨钦命河南巡抚那道。",
+        pend=_office_pendings(db, state.turn),
+    )
+    assert path.out.get("pending_action_id") == other_id
+    assert _payload(db, other_id).get("mode") == "midzhi"
+    assert _payload(db, pending_id).get("mode") == shaanxi_mode_before
 
 
 def test_acting_path_writes_tenure_only(game):

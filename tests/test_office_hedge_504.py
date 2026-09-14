@@ -55,15 +55,19 @@ def _office_pendings(db, turn):
     return [p for p in db.list_pending_actions(turn) if p["kind"] == "office"]
 
 
-def _stage_office(sess, summoner, *, action, name, office, message):
+def _stage_office(sess, summoner, *, action, name, office, message, region_id=""):
+    intent = {
+        "kind": "appointment", "appoint_action": action,
+        "name": name, "office": office,
+    }
+    seat = str(region_id or "").strip()
+    if seat:
+        intent["region_id"] = seat
     return sess.apply_cli_conversation_actions(
         SimpleNamespace(name=summoner.name, office_type=summoner.office_type),
         message, "臣领旨。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent={
-            "kind": "appointment", "appoint_action": action,
-            "name": name, "office": office,
-        },
+        preclassified_intent=intent,
     )
 
 
@@ -146,6 +150,49 @@ def test_cancellation_cancels_staged_appointment(game):
     assert not res.get("pending_action_id")
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (newname,)).fetchone() is None
+
+
+def test_cross_seat_typed_cancel_does_not_hedge(game):
+    """双方 typed 且 region 不同 → 跨 seat 不对冲；空 office 反悔仍按人接住。"""
+    db, state, content = game
+    summoner = _active_ming_minister(db, content)
+    newname = "跨省对冲乙"
+    content.characters.pop(newname, None)
+
+    sess = _session(db, state, content)
+    _stage_office(
+        sess, summoner, action="任命", name=newname, office="巡抚",
+        region_id="shaanxi", message=f"着{newname}任陕西巡抚。",
+    )
+    staged = _office_pendings(db, state.turn)
+    assert len(staged) == 1
+    assert json.loads(staged[0]["payload_json"])["region_id"] == "shaanxi"
+
+    # 双方 typed 不同 seat：不得撤陕西 pending
+    res = _stage_office(
+        sess, summoner, action="罢免", name=newname, office="",
+        region_id="henan", message=f"免去{newname}河南之任。",
+    )
+    remaining = _office_pendings(db, state.turn)
+    assert len(remaining) == 2
+    actions = {p["action"] for p in remaining}
+    assert actions == {"任命", "罢免"}
+    by_action = {
+        p["action"]: json.loads(p["payload_json"]) for p in remaining
+    }
+    assert by_action["任命"]["region_id"] == "shaanxi"
+    assert by_action["罢免"]["region_id"] == "henan"
+    assert res.get("pending_action_id")
+
+    # ADR 0028：空 office / 空任所反悔仍按人撤掉陕西任命
+    res2 = _stage_office(
+        sess, summoner, action="罢免", name=newname, office="",
+        message=f"不任了，免去{newname}。",
+    )
+    left = _office_pendings(db, state.turn)
+    assert [p["action"] for p in left] == ["罢免"]
+    assert json.loads(left[0]["payload_json"])["region_id"] == "henan"
+    assert not res2.get("pending_action_id")
 
 
 # ── 负向：无相抵暂存时，罢免照常 stage，绝不被对冲误吞 ────────────────────────

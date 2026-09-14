@@ -20,6 +20,7 @@ _ORIGIN_DOSSIER = "dossier"
 _POINTER_TABLES = {
     "decree_dossiers": "案卷",
     "issues": "局势",
+    "relation_edge_events": "边事件",
 }
 _UNAUTHORIZED_AFFAIR_ORIGIN = "事务不在本批可见输入"
 
