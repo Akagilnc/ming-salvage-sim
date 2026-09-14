@@ -232,6 +232,74 @@ def test_appointment_merge_backfills_region_id_and_keeps_cross_seat_distinct(gam
     }
     assert seats == {"shaanxi", "henan"}
 
+    # Parallel multi-intent merge must also backfill region (annotate_existing=False path).
+    bare = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "孙传庭",
+            "office": "总督",
+        },
+        actor=actor,
+        message="任命孙传庭为总督。",
+    )
+    bare_id = bare.out.get("pending_action_id")
+    assert bare_id
+    assert not _payload(db, bare_id).get("region_id")
+
+    # Simulate multi-intent: appointment already staged, parallel seam re-enters.
+    parallel_ctx = _ctx(
+        db, actor,
+        candidates_from_classifier_payload(
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": "孙传庭",
+                "office": "总督",
+                "region_id": "shaanxi",
+            },
+            soft=False,
+        ),
+        state.turn,
+        message="任孙传庭总督陕西。",
+        reply="臣遵旨。",
+        pend=_office_pendings(db, state.turn),
+    )
+    # intent_kind not appointment so parallel seam is allowed.
+    parallel_ctx.intent_kind = "none"
+    # Drive via core helper with annotate_existing=False (parallel default).
+    from ming_sim.action_materialize import _stage_office_pending_core
+    hit = _stage_office_pending_core(
+        parallel_ctx,
+        {
+            "appoint_action": "任命",
+            "name": "孙传庭",
+            "office": "总督",
+            "region_id": "shaanxi",
+        },
+        annotate_existing=False,
+        require_office_for_appoint=True,
+        write_primary_pending_id=False,
+    )
+    assert hit == bare_id
+    assert _payload(db, bare_id).get("region_id") == "shaanxi"
+
+    # Path multi-candidate: region disambiguates same name+office across seats.
+    from ming_sim.action_materialize import _select_pending_office_for_path
+    path_rows = _office_pendings(db, state.turn)
+    # Ensure both 巡抚 seats still present for path select.
+    assert {str((_payload(db, int(r["id"])).get("region_id") or "")).strip()
+            for r in path_rows if _payload(db, int(r["id"])).get("office") == office
+            } >= {"shaanxi", "henan"}
+    hit_row, status = _select_pending_office_for_path(
+        db, state.turn,
+        name=name, office=office, region_id="henan",
+        pend_for_minister=path_rows,
+    )
+    assert status == "hit" and hit_row is not None
+    assert int(hit_row["id"]) == other_id
+
 
 def test_acting_path_writes_tenure_only(game):
     """署理应答只写 appointment_tenure/任别=署理，不写中旨。"""

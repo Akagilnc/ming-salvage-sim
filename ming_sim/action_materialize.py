@@ -1780,7 +1780,9 @@ def _stage_office_pending_core(
             existing_hits[0],
             extracted_mode=appt.get("mode") or mode_mark,
             tenure_mark=tenure_mark if annotate_existing else None,
-            region_id=appt_region if annotate_existing else "",
+            # Seat identity always backfills on hit — parallel multi-intent must
+            # not drop a later typed region just because annotate_existing is off.
+            region_id=appt_region,
             minister_name=minister_name,
             turn=int(session.state.turn),
             person_name=appt_name,
@@ -4225,6 +4227,7 @@ def _select_pending_office_for_path(
     *,
     name: str = "",
     office: str = "",
+    region_id: str = "",
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
     content: Any = None,
@@ -4232,7 +4235,8 @@ def _select_pending_office_for_path(
     """在本夜 pending 人事候选上选对应条。
 
     返回 (row|None, status)：hit / ambiguous / miss / 含糊。
-    单条直取；多条仅人+职联合唯一命中；禁姓名-only/纯数字 id 旁路；含糊/歧义零改。
+    单条直取；多条人+职(+任所)联合唯一命中；禁姓名-only/纯数字 id 旁路；含糊/歧义零改。
+    两省同名同职靠 region_id 消歧——有 typed 任所时不得把跨 seat 候选并成歧义/错并。
     """
     pointed = str(target_candidate or "").strip()
     if pointed == "含糊":
@@ -4249,6 +4253,7 @@ def _select_pending_office_for_path(
 
     want_name = str(name or "").strip()
     want_office = str(office or "").strip()
+    want_region = str(region_id or "").strip()
 
     if len(rows) == 1:
         # #529：完全省略 name+office 的路径应答 → 唯一候选直取。
@@ -4258,7 +4263,12 @@ def _select_pending_office_for_path(
         if not want_name or not want_office:
             return None, "miss"
         hits = _match_office_row_by_name_office(
-            rows, name=want_name, office=want_office, content=content, db=db,
+            rows,
+            name=want_name,
+            office=want_office,
+            region_id=want_region,
+            content=content,
+            db=db,
         )
         if len(hits) == 1:
             return hits[0], "hit"
@@ -4269,7 +4279,12 @@ def _select_pending_office_for_path(
         return None, "ambiguous"
 
     hits = _match_office_row_by_name_office(
-        rows, name=want_name, office=want_office, content=content, db=db,
+        rows,
+        name=want_name,
+        office=want_office,
+        region_id=want_region,
+        content=content,
+        db=db,
     )
     if len(hits) == 1:
         return hits[0], "hit"
@@ -4482,11 +4497,15 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 pend_for_minister=ctx.pend_for_minister,
             )
             return
+        path_region = str(
+            appt.get("region_id") or appt.get("任所") or appt.get("辖区") or ""
+        ).strip()
         row, status = _select_pending_office_for_path(
             session.db,
             int(session.state.turn),
             name=appt_name,
             office=appt_office,
+            region_id=path_region,
             target_candidate=target_candidate,
             pend_for_minister=ctx.pend_for_minister,
             content=content_ref,
@@ -4511,9 +4530,6 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 _office_payload(row).get("name") or ""
             ).strip()
             row_is_appoint = str(row.get("action") or "") == "任命"
-            path_region = str(
-                appt.get("region_id") or appt.get("任所") or appt.get("辖区") or ""
-            ).strip()
             # 合并点吃原始 mode（含 ordinary）；禁止传过滤后的 midzhi-only 标记
             resolved = _apply_existing_appointment_hit(
                 session,
@@ -4538,6 +4554,7 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
             if appt.get("appoint_action") in ("任命", "罢免") and appt_name:
                 same = _match_office_row_by_name_office(
                     [row], name=appt_name, office=appt_office,
+                    region_id=path_region,
                     content=content_ref, db=session.db,
                 )
                 if same or not appt_name:

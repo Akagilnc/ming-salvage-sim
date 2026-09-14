@@ -269,3 +269,58 @@ def test_sync_restores_office_region_from_character_offices(tmp_path):
     assert name in content.characters
     assert content.characters[name].office_region == "henan"
     assert db.character_office_region(name) == "henan"
+
+
+def test_appointment_seat_identity_reuses_local_and_strips_central(game):
+    """一次任职 resolved seat：地方同职省略 region 续任不跨省挤位；中央夹带 region 归一空。"""
+    from ming_sim.issues import (
+        _canonical_appointment_fields,
+        apply_office_appointment,
+    )
+
+    db, state, content = game
+    rows = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND office_type NOT IN ('后宫','宗藩') ORDER BY name LIMIT 2"
+    ).fetchall()
+    a, b = str(rows[0]["name"]), str(rows[1]["name"])
+
+    r1 = apply_office_appointment(
+        db, state, content, None, a, "巡抚",
+        new_office_type="督抚", region_id="shaanxi", reason="seat-a",
+    )
+    assert not r1.get("rejected")
+    r2 = apply_office_appointment(
+        db, state, content, None, b, "巡抚",
+        new_office_type="督抚", region_id="henan", reason="seat-b",
+    )
+    assert not r2.get("rejected")
+    assert db.character_office_region(a) == "shaanxi"
+    assert db.character_office_region(b) == "henan"
+
+    # Same-office local continuation omits region → reuse shaanxi; henan intact.
+    r3 = apply_office_appointment(
+        db, state, content, None, a, "巡抚",
+        new_office_type="督抚", region_id="", reason="reappoint-omit-region",
+    )
+    assert not r3.get("rejected")
+    assert not r3.get("displaced"), r3
+    assert content.characters[a].office == "巡抚"
+    assert content.characters[a].office_region == "shaanxi"
+    assert db.character_office_region(a) == "shaanxi"
+    assert content.characters[b].office == "巡抚"
+    assert content.characters[b].office_region == "henan"
+    assert db.character_office_region(b) == "henan"
+
+    # Central identity ignores caller-stuffed region on canonical tuple + write.
+    canon = _canonical_appointment_fields({
+        "office": "户部尚书", "office_type": "户部", "region_id": "henan",
+    })
+    assert canon == ("户部尚书", "户部", "真除", "")
+    r4 = apply_office_appointment(
+        db, state, content, None, a, "户部尚书",
+        new_office_type="户部", region_id="henan", reason="central-noise-region",
+    )
+    assert not r4.get("rejected")
+    assert db.character_office_region(a) == ""
+    assert content.characters[a].office_region == ""
