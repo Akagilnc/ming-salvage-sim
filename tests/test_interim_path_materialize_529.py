@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import ming_sim.action_materialize  # noqa: F401 -- installs catalog
 import ming_sim.audience_night as an
+import ming_sim.cli_backend as cb
 import pytest
 from ming_sim.action_clusters import (
     candidates_from_classifier_payload,
@@ -170,7 +171,7 @@ def test_beat12_13_special_decree_annotates_existing_appointment_in_place(game):
     )
 
 
-def test_appointment_merge_backfills_region_id_and_keeps_cross_seat_distinct(game):
+def test_appointment_merge_backfills_region_id_and_keeps_cross_seat_distinct(game, monkeypatch):
     """同名同职合并后补 region_id；不同任所不得误并成一条。"""
     db, state, _content = game
     actor = _minister(db)
@@ -233,6 +234,8 @@ def test_appointment_merge_backfills_region_id_and_keeps_cross_seat_distinct(gam
     assert seats == {"shaanxi", "henan"}
 
     # Parallel multi-intent merge must also backfill region (annotate_existing=False path).
+    # Real pipeline entry: draft path takes effect → parallel_stage_office_from_appointment_intent
+    # selects structured appointment and merges; main appointment materialize is not the merger.
     bare = _stage_appt(
         db, state.turn,
         {
@@ -247,43 +250,50 @@ def test_appointment_merge_backfills_region_id_and_keeps_cross_seat_distinct(gam
     bare_id = bare.out.get("pending_action_id")
     assert bare_id
     assert not _payload(db, bare_id).get("region_id")
+    before_sun = [
+        int(p["id"]) for p in _office_pendings(db, state.turn)
+        if _payload(db, int(p["id"])).get("name") == "孙传庭"
+    ]
+    assert before_sun == [int(bare_id)]
 
-    # Simulate multi-intent: appointment already staged, parallel seam re-enters.
-    parallel_ctx = _ctx(
-        db, actor,
-        candidates_from_classifier_payload(
-            {
-                "kind": "appointment",
-                "appoint_action": "任命",
-                "name": "孙传庭",
-                "office": "总督",
-                "region_id": "shaanxi",
-            },
-            soft=False,
+    # Draft extract is external LLM; pin deterministic dossier so pipeline stays local.
+    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
+        "draft_action": "拟旨",
+        "draft_text": "着吏部议任孙传庭总督陕西。",
+        "target_candidate": "",
+        "dossier_action_type": "policy",
+        "target_kind": "issue",
+        "target_id": "parallel-seat-backfill",
+    })
+    monkeypatch.setattr(
+        cb, "extract_appointment_action",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("parallel must use structured appointment, not serial extract")
         ),
-        state.turn,
-        message="任孙传庭总督陕西。",
-        reply="臣遵旨。",
-        pend=_office_pendings(db, state.turn),
     )
-    # intent_kind not appointment so parallel seam is allowed.
-    parallel_ctx.intent_kind = "none"
-    # Drive via core helper with annotate_existing=False (parallel default).
-    from ming_sim.action_materialize import _stage_office_pending_core
-    hit = _stage_office_pending_core(
-        parallel_ctx,
+
+    # Draft-path candidate carries appointment structure → parallel seam stages/merges
+    # with annotate_existing=False (main appointment handler does not own this merge).
+    _stage_appt(
+        db, state.turn,
         {
+            "kind": "draft",
             "appoint_action": "任命",
             "name": "孙传庭",
             "office": "总督",
             "region_id": "shaanxi",
         },
-        annotate_existing=False,
-        require_office_for_appoint=True,
-        write_primary_pending_id=False,
+        actor=actor,
+        message="拟旨任孙传庭总督陕西。",
+        reply="臣遵旨。请陛下定夺准驳。",
+        pend=_office_pendings(db, state.turn),
     )
-    assert hit == bare_id
     assert _payload(db, bare_id).get("region_id") == "shaanxi"
+    after_sun = [
+        int(p["id"]) for p in _office_pendings(db, state.turn)
+        if _payload(db, int(p["id"])).get("name") == "孙传庭"
+    ]
+    assert after_sun == [int(bare_id)], "parallel merge must not insert a duplicate office candidate"
 
     # Path multi-candidate via real pipeline: region disambiguates same name+office.
     shaanxi_mode_before = _payload(db, pending_id).get("mode")
