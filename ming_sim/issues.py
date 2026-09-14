@@ -51,7 +51,7 @@ from ming_sim.decree_vocabulary import (
     format_public_progress_disclosure,
     terminal_report_facade,
 )
-from ming_sim.exceptions import SettlementAbort
+from ming_sim.exceptions import OfficeAppointmentRejection, SettlementAbort
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
     ISSUE_METRIC_LOCK_CAPS,
@@ -348,8 +348,8 @@ def _payload_owned_person_duplicate(
                 office_type=office_type,
                 region_id=raw_seat,
             )
-        except Exception:
-            # Dedup identity only: unresolved seat keeps raw typed region.
+        except OfficeAppointmentRejection:
+            # Typed seat reject only: missing/unknown region keeps raw for identity compare.
             seat = raw_seat
         return office, office_type, tenure, seat
 

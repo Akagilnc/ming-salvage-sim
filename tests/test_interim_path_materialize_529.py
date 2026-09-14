@@ -285,20 +285,25 @@ def test_appointment_merge_backfills_region_id_and_keeps_cross_seat_distinct(gam
     assert hit == bare_id
     assert _payload(db, bare_id).get("region_id") == "shaanxi"
 
-    # Path multi-candidate: region disambiguates same name+office across seats.
-    from ming_sim.action_materialize import _select_pending_office_for_path
-    path_rows = _office_pendings(db, state.turn)
-    # Ensure both 巡抚 seats still present for path select.
-    assert {str((_payload(db, int(r["id"])).get("region_id") or "")).strip()
-            for r in path_rows if _payload(db, int(r["id"])).get("office") == office
-            } >= {"shaanxi", "henan"}
-    hit_row, status = _select_pending_office_for_path(
+    # Path multi-candidate via real pipeline: region disambiguates same name+office.
+    shaanxi_mode_before = _payload(db, pending_id).get("mode")
+    path = _stage_appt(
         db, state.turn,
-        name=name, office=office, region_id="henan",
-        pend_for_minister=path_rows,
+        {
+            "kind": "appointment",
+            "appoint_action": "无",
+            "mode": "midzhi",
+            "name": name,
+            "office": office,
+            "region_id": "henan",
+        },
+        actor=actor,
+        message="特旨钦命河南巡抚那道。",
+        pend=_office_pendings(db, state.turn),
     )
-    assert status == "hit" and hit_row is not None
-    assert int(hit_row["id"]) == other_id
+    assert path.out.get("pending_action_id") == other_id
+    assert _payload(db, other_id).get("mode") == "midzhi"
+    assert _payload(db, pending_id).get("mode") == shaanxi_mode_before
 
 
 def test_acting_path_writes_tenure_only(game):
