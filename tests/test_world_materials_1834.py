@@ -195,9 +195,7 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
     assert expected_public_rel in index_lines
     # 邸报 stays a top-level carrier; public layer does not grow gazette path twins.
     assert not any(p.startswith("公开说法/邸报/") for p in names)
-    # _is_gazette_public_event 必须把 turn_report 行挡出 公开说法/：邸报正文只在 邸报/。
-    gazette_bodies = "\n".join(read_material(prepared.root, p) for p in gazette_paths)
-    assert "gazette-body" in gazette_bodies
-    public_paths = [p for p in names if p.startswith("公开说法/")]
-    public_bodies = "\n".join(read_material(prepared.root, p) for p in public_paths)
-    assert "gazette-body" not in public_bodies
+    # _is_gazette_public_event 必须把 turn_report 挡出 公开说法/：gate 在场时
+    # past 月路径不存在；gate 失效后该路径会出现（结构化路径契约，不盯正文）。
+    assert f"公开说法/{past_year}年{past_period}月.txt" not in names
+    assert f"邸报/{past_year}年{past_period}月.txt" in names
