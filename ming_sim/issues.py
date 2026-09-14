@@ -6244,6 +6244,11 @@ def _displace_duplicate_offices(
             if fully_displaced
             else infer_office_type_from_office(new_holder_office, old_type, db.llm_config)
         )
+        # 排挤后 character_offices / 内存 office_region 与 characters 同事务同步：
+        # 全顶替 → 名分，备档删除、任所清空；部分保留 → 余职 + 原 seat。
+        retained_seat = "" if fully_displaced else str(
+            db.character_office_region(row["name"]) or ""
+        ).strip()
         if fully_displaced:
             db.conn.execute(
                 "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? WHERE name=?",
@@ -6255,10 +6260,14 @@ def _displace_duplicate_offices(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
                 (new_holder_office, new_type, row["name"]),
             )
+        db._record_character_office(
+            row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
+        )
         if content is not None and row["name"] in content.characters:
             ch = content.characters[row["name"]]
             ch.office = new_holder_office
             ch.office_type = new_type
+            ch.office_region = retained_seat
             if fully_displaced:
                 ch.status_reason = "被顶替"
                 ch.reason_code = "被顶替"

@@ -1802,6 +1802,7 @@ def _stage_office_pending_core(
         hedged = _cancel_staged_opposing_office(
             session.db, "罢免", appt_name, int(session.state.turn),
             content=content_ref,
+            region_id=appt_region,
         )
         if hedged:
             return None
@@ -1828,6 +1829,7 @@ def _stage_office_pending_core(
         cancelled = _cancel_staged_opposing_office(
             session.db, "任命", appt_name, int(session.state.turn),
             content=content_ref,
+            region_id=appt_region,
         )
         if cancelled and not _target_active_officeholder(
             session.db, appt_name, content=content_ref,

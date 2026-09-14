@@ -997,13 +997,18 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
 
     try:
+        # 新正形：地方在任须有 character_offices.region_id，不得靠空任所 wildcard 互挤。
         db.conn.execute(
             "UPDATE characters SET office=?, office_type=? WHERE name=?",
             (target_office, "地方", old_holder),
         )
+        db._record_character_office(
+            old_holder, target_office, "地方", "test-fixture", region_id="shaanxi",
+        )
         db.conn.commit()
         content.characters[old_holder].office = target_office
         content.characters[old_holder].office_type = "地方"
+        content.characters[old_holder].office_region = "shaanxi"
 
         applied = issues.apply_score_extraction(
             db,
@@ -1096,13 +1101,18 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
     reappointed_office = "测试巡抚"
 
     try:
+        # 新正形：地方在任须有 character_offices.region_id，与接任同 seat 才互挤。
         db.conn.execute(
             "UPDATE characters SET office=?, office_type=? WHERE name=?",
             (target_office, "地方", old_holder),
         )
+        db._record_character_office(
+            old_holder, target_office, "地方", "test-fixture", region_id="shaanxi",
+        )
         db.conn.commit()
         content.characters[old_holder].office = target_office
         content.characters[old_holder].office_type = "地方"
+        content.characters[old_holder].office_region = "shaanxi"
 
         issues.apply_score_extraction(
             db,

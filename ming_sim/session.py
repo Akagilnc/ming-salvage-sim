@@ -522,19 +522,22 @@ def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool
 
 def _cancel_staged_opposing_office(
     db: Any, opposing_action: str, target_name: str, turn: int, content: Any = None,
+    region_id: str = "",
 ) -> Optional[int]:
     """撤销同回合针对同一人的一条【反向暂存任免】，返回其 id；无则 None（对冲，ADR 0028
     R1/R2 双向对称）。
 
     这是「名册 ⊕ 暂存」比对真基准的落地：暂存免职/任命未提交时名册仍是旧态，皇帝反悔
     （留任冲免职、免去冲任命）若只比名册会被误判 no-op 丢弃或另 stage 孤儿。姓名按 canonical
-    口径归一，别名/新候选按同一原名兜底比对，两侧同名即相抵。撤销走 withdraw_pending_action
-    （只删 pending，已 committed 不动），night_approved 但未收夜提交的暂存仍属 pending、照样对冲。"""
+    口径归一，别名/新候选按同一原名兜底比对；两侧都带 typed 任所且不同 → 不是同一职缺身份，
+    不对冲。撤销走 withdraw_pending_action（只删 pending，已 committed 不动），night_approved
+    但未收夜提交的暂存仍属 pending、照样对冲。"""
     conn = getattr(db, "conn", None)
     clean = str(target_name or "").strip()
     if conn is None or not clean or opposing_action not in ("任命", "罢免"):
         return None
     target_key = _canonical_minister_key(content, clean, db)
+    want_region = str(region_id or "").strip()
     for pa in db.list_pending_actions(int(turn)):
         if pa.get("kind") != "office" or pa.get("action") != opposing_action:
             continue
@@ -545,9 +548,16 @@ def _cancel_staged_opposing_office(
         if not isinstance(payload, dict):
             continue
         staged = str(payload.get("name") or "").strip()
-        if staged and _canonical_minister_key(content, staged, db) == target_key:
-            if db.withdraw_pending_action(int(pa["id"]), int(turn)):
-                return int(pa["id"])
+        if not staged or _canonical_minister_key(content, staged, db) != target_key:
+            continue
+        staged_region = str(
+            payload.get("region_id") or payload.get("任所") or payload.get("辖区") or ""
+        ).strip()
+        # 人+任所身份：双方都 typed 且不同 seat → 跨省同名职，不对冲。
+        if want_region and staged_region and want_region != staged_region:
+            continue
+        if db.withdraw_pending_action(int(pa["id"]), int(turn)):
+            return int(pa["id"])
     return None
 
 
@@ -2939,6 +2949,10 @@ class GameSession:
             return 0
         if action == "任命" and not office:
             return 0
+        # Typed 任所 only：region_id / 任所 / office_region；不从官名或 location 推断。
+        seat = str(
+            data.get("region_id") or data.get("任所") or data.get("office_region") or ""
+        ).strip()
         from ming_sim.action_materialize import (
             _apply_existing_appointment_hit,
             _same_direction_office_hits,
@@ -2952,6 +2966,7 @@ class GameSession:
             name=name,
             office=office,
             action=action,
+            region_id=seat,
             content=getattr(self, "content", None),
         )
         if len(existing_hits) > 1:
@@ -2962,6 +2977,7 @@ class GameSession:
                 self,
                 existing_hits[0],
                 extracted_mode=extracted_mode,
+                region_id=seat,
                 minister_name=appointer.name,
                 turn=int(self.state.turn),
                 person_name=name,
@@ -2971,6 +2987,8 @@ class GameSession:
             "name": name, "office": office, "appointer": appointer.name,
             "mode": resolve_directive_mode(extracted=extracted_mode),
         }
+        if seat:
+            staged_payload["region_id"] = seat
         metadata_aliases = {
             "office_type": "官署类别",
             "faction": "派系",

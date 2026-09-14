@@ -365,6 +365,42 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
     return projected
 
 
+def _household_secret_case_hidden(
+    row: Any, character_name: str, reader: Any,
+) -> bool:
+    """户部流水密令案情是否对读者隐藏：复用 typed 密令 excluded_names / excluded_targets。"""
+    try:
+        excluded_names = {
+            str(name) for name in json.loads(row["excluded_names"] or "[]")
+        }
+    except (TypeError, ValueError, KeyError, IndexError):
+        excluded_names = set()
+    if character_name in excluded_names:
+        return True
+    targets: object = {}
+    try:
+        raw_targets = row["excluded_targets"]
+    except (KeyError, IndexError, TypeError):
+        raw_targets = None
+    if raw_targets:
+        try:
+            targets = json.loads(raw_targets or "{}")
+        except (TypeError, ValueError):
+            targets = {}
+    if not isinstance(targets, dict) or not targets:
+        return False
+    people = {str(name) for name in (targets.get("people") or [])}
+    offices = {str(name) for name in (targets.get("offices") or [])}
+    if character_name in people:
+        return True
+    try:
+        office_type = str(reader["office_type"] or "") if reader is not None else ""
+        office = str(reader["office"] or "") if reader is not None else ""
+    except (KeyError, IndexError, TypeError):
+        office_type, office = "", ""
+    return office_type in offices or office in offices
+
+
 def _household_ledger(db: Any, state: Any, character_name: str) -> str:
     """户部太仓账：保留密支数额，按 typed 密令关联裁去案情语义。"""
     balance = db.conn.execute(
@@ -372,7 +408,7 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
     ).fetchone()
     rows = db.conn.execute(
         """SELECT e.year,e.period,e.delta,e.balance_after,e.category,e.reason,
-                  s.excluded_names
+                  s.excluded_names, s.excluded_targets
            FROM economy_ledger e
            LEFT JOIN decree_dossiers d ON d.id = CASE
              WHEN e.origin_ref LIKE 'dossier:%' THEN CAST(substr(e.origin_ref,9) AS INTEGER)
@@ -380,13 +416,17 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
            LEFT JOIN secret_orders s ON s.id=d.secret_order_id
            WHERE e.account='国库' ORDER BY e.id DESC"""
     ).fetchall()
+    try:
+        reader = db.conn.execute(
+            "SELECT name, office, office_type FROM characters WHERE name=?",
+            (character_name,),
+        ).fetchone()
+    except (AttributeError, TypeError):
+        reader = None
     lines = [f"太仓实存：{int(balance['balance'] if balance else state.metrics['国库'])}"]
     for row in reversed(rows):
-        try:
-            excluded = set(json.loads(row["excluded_names"] or "[]"))
-        except (TypeError, ValueError):
-            excluded = set()
-        detail = "密支" if character_name in excluded else str(row["reason"] or row["category"] or "收支")
+        hide = _household_secret_case_hidden(row, character_name, reader)
+        detail = "密支" if hide else str(row["reason"] or row["category"] or "收支")
         lines.append(
             f"{int(row['year'])}年{int(row['period'])}月：{int(row['delta']):+d}，"
             f"余额{int(row['balance_after'])}（{detail}）"
