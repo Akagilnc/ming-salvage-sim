@@ -201,6 +201,13 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     assert "INDEX.txt" in listed
     assert read_material(Path(api_agent.materials_root.root), "INDEX.txt").strip() == "live"
 
+    # Empty/cleared MaterialsRoot must not resolve Path("") → CWD.
+    empty_tools = material_tools(MaterialsRoot())
+    empty_listed = empty_tools[0]("")
+    assert "材料目录未就绪" in empty_listed
+    assert ".agno_skills" not in empty_listed
+    assert empty_tools[1]("INDEX.txt").startswith("无法读取：")
+
     # prepare failure must not leave empty UUID invocation parents behind.
     # write_tree primary stays outward even when cleanup also fails.
     fail_parent = tmp_path / ("3" * 32)
@@ -230,9 +237,32 @@ def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
     assert isinstance(dual_exc.value.__cause__, OSError)
     assert "CLEANUP_SECONDARY" in str(dual_exc.value.__cause__)
 
+    # adopt installs new root first; old-tree cleanup failure must keep new root
+    # and must not interrupt the handoff (separate agent so close chain stays intact).
+    keep_new = tmp_path / "inv-keep" / ("9" * 32) / "kept"
+    keep_new.mkdir(parents=True)
+    (keep_new / "INDEX.txt").write_text("kept\n", encoding="utf-8")
+    doomed_old = tmp_path / "inv-doom" / ("8" * 32) / "doomed"
+    doomed_old.mkdir(parents=True)
+    boom_agent = _agent_with_materials(doomed_old, with_cli_cwd=False)
+    registry.agents["handoff-resilience"] = boom_agent
+    real_rmtree = __import__("shutil").rmtree
+
+    def _rmtree_adopt_boom(path, *args, **kwargs):
+        if Path(path) == doomed_old or str(path) == str(doomed_old):
+            raise OSError("old-tree-cleanup-boom")
+        return real_rmtree(path, *args, **kwargs)
+
+    with patch("ming_sim.materials.shutil.rmtree", side_effect=_rmtree_adopt_boom):
+        registry.adopt_materials("handoff-resilience", keep_new)
+    assert boom_agent.materials_root.root == str(keep_new)
+    assert keep_new.exists()
+    assert "INDEX.txt" in material_tools(boom_agent.materials_root)[0]("")
+
     registry.agents["other"] = _agent_with_materials(closed, with_cli_cwd=False)
     registry.close()
     assert not closed.exists() and not adopted.exists()
+    assert not keep_new.exists()
     assert not closed.parent.exists()
     assert registry.agents == {}
 

@@ -215,14 +215,21 @@ def test_promise_refuse_withdraws_staged_action_and_missing_action_id_is_rejecte
         "promises": [
             {"action_id": staged_id, "decision": "拒绝"},
             {"action_id": staged_id + 100000, "decision": "应允"},
+            # bool/float/numeric-string must not coerce into another pending id.
+            {"action_id": True, "decision": "应允"},
+            {"action_id": 1.9, "decision": "应允"},
+            {"action_id": str(staged_id), "decision": "应允"},
         ],
     }
     result = dispatch_declaration(db, state, declaration, minister_name=minister)
 
     assert len(result.promises.applied) == 1
     assert result.promises.applied[0] == {"action_id": staged_id, "decision": "拒绝"}
-    assert len(result.promises.rejected) == 1
-    assert result.promises.rejected[0].category == "missing_ref"
+    assert len(result.promises.rejected) == 4
+    assert {item.category for item in result.promises.rejected} == {
+        "missing_ref", "invalid_shape",
+    }
+    assert sum(1 for item in result.promises.rejected if item.category == "invalid_shape") == 3
 
     row = db.conn.execute(
         "SELECT id FROM pending_actions WHERE id=?", (staged_id,),
@@ -669,16 +676,43 @@ def test_registration_adds_new_person_to_roster_and_rejects_existing_name(game):
 
     declaration = {
         "registrations": [
-            {"name": "李若璉補", "office": "锦衣卫百户", "office_type": "武职", "source": "historical"},
+            {
+                "name": "李若璉補", "office": "锦衣卫百户", "office_type": "武职",
+                "source": "historical", "aliases": ["李补"],
+            },
             {"name": minister, "office": "户部尚书", "office_type": "文职"},
+            # aliases shape: string/mapping/mixed → invalid_shape, not char/key iteration.
+            {
+                "name": "别名串人", "office": "锦衣卫百户", "office_type": "武职",
+                "aliases": "甲乙",
+            },
+            {
+                "name": "别名表人", "office": "锦衣卫百户", "office_type": "武职",
+                "aliases": {"甲": 1},
+            },
+            {
+                "name": "别名混人", "office": "锦衣卫百户", "office_type": "武职",
+                "aliases": ["甲", 2],
+            },
         ],
     }
     result = dispatch_declaration(db, state, declaration)
 
     assert len(result.registrations.applied) == 1
     assert result.registrations.applied[0] == {"name": "李若璉補"}
-    assert len(result.registrations.rejected) == 1
-    assert result.registrations.rejected[0].category == "invalid_state"
+    assert db.content.characters["李若璉補"].aliases == ["李补"]
+    rejected_by_name = {
+        str((item.item or {}).get("name") or ""): item.category
+        for item in result.registrations.rejected
+    }
+    assert rejected_by_name.get(minister) == "invalid_state"
+    assert rejected_by_name.get("别名串人") == "invalid_shape"
+    assert rejected_by_name.get("别名表人") == "invalid_shape"
+    assert rejected_by_name.get("别名混人") == "invalid_shape"
+    for bad in ("别名串人", "别名表人", "别名混人"):
+        assert db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (bad,),
+        ).fetchone() is None
 
     row = db.conn.execute(
         "SELECT status, office FROM characters WHERE name=?", ("李若璉補",),

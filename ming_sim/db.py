@@ -6366,6 +6366,7 @@ class GameDB:
         if name in self.content.characters:
             self.content.characters[name].office = office
             self.content.characters[name].office_type = eff_type
+            self.content.characters[name].office_region = seat
 
     def apply_historical_deaths(self, state: GameState) -> List[Dict[str, str]]:
         """月初 tick：只有仍 active 的人到点自然死。被玩家提前罢/狱/流/杀的不走此分支。
@@ -6591,6 +6592,16 @@ class GameDB:
             portrait_id = self.next_pool_portrait_id(prefix)
         source_label = source or ("吏部铨选任命" if character.office_type != "后宫" else "诏书纳妃")
         office_source = source or ("吏部任命" if character.office_type != "后宫" else "诏书纳妃")
+        # Seat resolve/validate BEFORE characters INSERT — callers that catch
+        # OfficeAppointmentRejection must not inherit an orphan character row
+        # waiting on a later outer commit. SAVEPOINT isolation is complementary,
+        # not a substitute for write order.
+        seat = self._require_local_office_region(
+            name=character.name,
+            office=character.office,
+            office_type=character.office_type,
+            region_id=str(getattr(character, "office_region", "") or ""),
+        )
         self.conn.execute(
             """
             INSERT INTO characters
@@ -6627,12 +6638,6 @@ class GameDB:
                 getattr(character, "transit_to", "") or "",
                 getattr(character, "summary", "") or "",
             ),
-        )
-        seat = self._require_local_office_region(
-            name=character.name,
-            office=character.office,
-            office_type=character.office_type,
-            region_id=str(getattr(character, "office_region", "") or ""),
         )
         self._record_character_office(
             character.name, character.office, character.office_type, office_source,

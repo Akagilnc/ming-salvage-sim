@@ -241,3 +241,31 @@ def test_sync_preserves_persisted_court_office_type_on_table_miss(tmp_path):
     _sync_offices_from_db_impl(content, db, _cli_cfg())
     assert content.characters["刘鸿训"].office_type == "礼部", \
         "sync 不得把 DB 持久化的朝堂类 office_type 在表查不中时降级成待铨"
+
+
+def test_sync_restores_office_region_from_character_offices(tmp_path):
+    """DB→Character 重建必须带回 character_offices.region_id 任所（#1812）。"""
+    from ming_sim.session import _sync_offices_from_db_impl
+
+    content = GameContent.load()
+    bind_content(content)
+    issues_mod.bind_content(content)
+    db = GameDB(str(tmp_path / "sync-region.db"), content=content, llm_config=_cli_cfg())
+    db.seed_static_data()
+    name = next(
+        n for n, ch in content.characters.items()
+        if ch.office_type not in {"后宫", "宗藩"}
+        and db.get_character_status(n)[0] == "active"
+    )
+    db.conn.execute(
+        "UPDATE characters SET office=?, office_type=? WHERE name=?",
+        ("河南巡抚", "地方", name),
+    )
+    db._record_character_office(name, "河南巡抚", "地方", "test-sync", region_id="henan")
+    db.conn.commit()
+    # Wipe runtime projection then rebuild from DB only.
+    content.characters = {}
+    _sync_offices_from_db_impl(content, db, _cli_cfg())
+    assert name in content.characters
+    assert content.characters[name].office_region == "henan"
+    assert db.character_office_region(name) == "henan"

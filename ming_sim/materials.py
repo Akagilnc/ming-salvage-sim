@@ -149,6 +149,34 @@ def release_material_tree(root: Optional[Path | str]) -> None:
         raise primary
 
 
+def release_previous_material_tree(
+    old_root: Optional[Path | str],
+    new_root: Optional[Path | str],
+) -> None:
+    """After a live root handoff: best-effort release of the previous tree.
+
+    The new root is already installed. Cleanup failure is logged with the real
+    exception and must not revoke the new root or interrupt the caller
+    (audience handoff). close/teardown paths call :func:`release_material_tree`
+    directly and re-raise after other resources are released.
+    """
+    import logging
+
+    if old_root is None:
+        return
+    old = str(old_root or "").strip()
+    new = str(new_root or "").strip()
+    if not old or old == new:
+        return
+    try:
+        release_material_tree(old)
+    except BaseException:
+        logging.getLogger(__name__).exception(
+            "previous materials tree cleanup failed; live root retained: %s",
+            new or "(none)",
+        )
+
+
 def _publish_material_tree(
     dest_root: Optional[Path],
     default_root: Path,
@@ -221,7 +249,11 @@ def material_tools(root: Any) -> list:
 
     def current_root() -> Path:
         value = root() if callable(root) else root
-        return Path(value)
+        text = str(value or "").strip()
+        if not text:
+            # Empty/cleared MaterialsRoot must not resolve Path("") → CWD.
+            raise ValueError("材料目录未就绪")
+        return Path(text)
 
     def project_error(operation: str, call: Any, *args: object) -> str:
         try:
@@ -231,6 +263,8 @@ def material_tools(root: Any) -> list:
 
     def list_materials_tool(path: str = "") -> str:
         """列出当前材料目录中可读的文件（相对路径，一行一项）。"""
+        # current_root() must run inside project_error so empty-root ValueError
+        # projects as structured text (never Path("") → CWD).
         return project_error(
             "读取",
             lambda value: "\n".join(list_materials(current_root(), value)),
@@ -239,7 +273,11 @@ def material_tools(root: Any) -> list:
 
     def read_material_tool(path: str) -> str:
         """读取材料目录中的一份人读文本。path 为相对路径，如 人物/某人/经历.txt。"""
-        return project_error("读取", read_material, current_root(), path)
+        return project_error(
+            "读取",
+            lambda value: read_material(current_root(), value),
+            path,
+        )
 
     list_materials_tool.__name__ = "list_materials"
     read_material_tool.__name__ = "read_material"

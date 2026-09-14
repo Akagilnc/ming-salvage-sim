@@ -546,11 +546,17 @@ def _dispatch_commissions(
 def _dispatch_promises(
     db: Any, state: Any, raw: object, *, night_id: int, source: Provenance,
 ) -> SectionResult:
+    from ming_sim.strict_types import strict_int
+
     items, rejected = _section_items(raw, label="应允/拒绝声明", source=source)
     applied: List[Any] = []
     for item in items:
         try:
-            action_id = int(item.get("action_id"))
+            # Strict positive int only — bool/float/numeric strings must not
+            # coerce via bare int() into another night's pending id.
+            action_id = strict_int(
+                item.get("action_id"), accept_numeric_strings=False,
+            )
         except (TypeError, ValueError):
             action_id = 0
         decision = str(item.get("decision") or "").strip()
@@ -1031,13 +1037,28 @@ def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provena
         seat = str(
             item.get("region_id") or item.get("任所") or item.get("office_region") or ""
         ).strip()
+        # aliases: non-string sequence of strings only. A bare str/mapping would
+        # iterate characters/keys; mixed elements are also invalid_shape.
+        aliases_raw = item.get("aliases", ())
+        if aliases_raw is None:
+            aliases_raw = ()
+        if (
+            isinstance(aliases_raw, (str, bytes))
+            or not isinstance(aliases_raw, Sequence)
+            or not all(isinstance(a, str) for a in aliases_raw)
+        ):
+            _reject(
+                rejected, item, "入册声明 aliases 须为字符串数组",
+                "invalid_shape", source,
+            )
+            continue
         try:
             with _item_savepoint_scope(db, f"registration_{int(state.turn)}_{id(item)}"):
                 character = register_unlisted_person_record(
                     db, state, db.content,
                     name=name, office=office, office_type=office_type,
                     faction=str(item.get("faction") or ""),
-                    aliases=[str(a) for a in (item.get("aliases") or ()) if isinstance(a, str)],
+                    aliases=list(aliases_raw),
                     source_label="转译声明入册",
                     style=str(item.get("style") or ""),
                     loyalty=loyalty,

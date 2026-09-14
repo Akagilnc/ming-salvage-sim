@@ -1620,10 +1620,15 @@ def _same_direction_office_hits(
     name: str,
     office: str,
     action: str,
+    region_id: str = "",
     content: Any = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
-    """同名同职同向 pending 命中列表（调用方解释 0/1/多）。"""
+    """同名同职同向 pending 命中列表（调用方解释 0/1/多）。
+
+    region_id 纳入任所身份：两省同名官不得误并；缺 region 的既有候选仍可命中
+    以便字段后补。
+    """
     return [
         r for r in _match_office_row_by_name_office(
             _list_pending_office_rows(
@@ -1631,6 +1636,7 @@ def _same_direction_office_hits(
             ),
             name=name,
             office=office,
+            region_id=region_id,
             content=content,
             db=db,
         )
@@ -1644,6 +1650,7 @@ def _apply_existing_appointment_hit(
     *,
     extracted_mode: object = None,
     tenure_mark: Optional[str] = None,
+    region_id: str = "",
     minister_name: str = "",
     turn: int = 0,
     person_name: str = "",
@@ -1655,7 +1662,7 @@ def _apply_existing_appointment_hit(
 
     mode 唯一规则 resolve_directive_mode(extracted→existing→ordinary)；
     调用方只传原始 extracted_mode，禁止各出口自行预过滤/只升不降。
-    tenure 等字段标记原样补写。summon_after 与 annotate 同原子。
+    tenure / region_id 等字段标记原样补写。summon_after 与 annotate 同原子。
     """
     from ming_sim.applier import atomic
     from ming_sim.cli_backend import resolve_directive_mode
@@ -1672,6 +1679,7 @@ def _apply_existing_appointment_hit(
                 row,
                 mode_mark=mode_mark,
                 tenure_mark=tenure_mark,
+                region_id=region_id,
                 minister_name=minister_name,
                 turn=turn,
             )
@@ -1741,10 +1749,14 @@ def _stage_office_pending_core(
     if action == "任命" and require_office_for_appoint and not appt_office:
         return None
 
+    appt_region = str(
+        appt.get("region_id") or appt.get("任所") or appt.get("辖区") or ""
+    ).strip()
+
     def consume_same_direction_hit(office_for_match: str) -> Tuple[bool, Optional[int]]:
         """同名同职同向命中消费：唯一 → 合并点原地更新；多命中禁插；零命中放行。
 
-        返回 (consumed, pending_id|None)。mode/tenure 责任只在合并点。
+        返回 (consumed, pending_id|None)。mode/tenure/region 责任只在合并点。
         """
         if not appt_name or not office_for_match:
             return False, None
@@ -1754,6 +1766,7 @@ def _stage_office_pending_core(
             name=appt_name,
             office=office_for_match,
             action=action,
+            region_id=appt_region,
             content=content_ref,
             pend_for_minister=ctx.pend_for_minister,
         )
@@ -1767,6 +1780,7 @@ def _stage_office_pending_core(
             existing_hits[0],
             extracted_mode=appt.get("mode") or mode_mark,
             tenure_mark=tenure_mark if annotate_existing else None,
+            region_id=appt_region if annotate_existing else "",
             minister_name=minister_name,
             turn=int(session.state.turn),
             person_name=appt_name,
@@ -1826,11 +1840,8 @@ def _stage_office_pending_core(
         "mode": resolve_directive_mode(extracted=appt.get("mode") or mode_mark),
         "summon_after": "是" if want_summon else "否",
     }
-    seat = str(
-        appt.get("region_id") or appt.get("任所") or appt.get("辖区") or ""
-    ).strip()
-    if seat:
-        payload["region_id"] = seat
+    if appt_region:
+        payload["region_id"] = appt_region
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
     if tenure_mark == "署理":
         payload["任别"] = "署理"
@@ -4168,14 +4179,20 @@ def _match_office_row_by_name_office(
     *,
     name: str,
     office: str,
+    region_id: str = "",
     content: Any = None,
     db: Any = None,
 ) -> List[Dict[str, Any]]:
-    """人+职联合匹配；姓名或官职缺一则零命中（禁姓名-only 旁路）。"""
+    """人+职(+任所)联合匹配；姓名或官职缺一则零命中（禁姓名-only 旁路）。
+
+    两省同名官：双方都带 region 且不同 → 不命中。既有缺 region、后来补上 →
+    仍命中，供合并点后补字段。中央无 region 身份两边皆空，照常匹配。
+    """
     from ming_sim.session import _canonical_minister_key
 
     want_name = str(name or "").strip()
     want_office = str(office or "").strip()
+    want_region = str(region_id or "").strip()
     if not want_name or not want_office:
         return []
     key = _canonical_minister_key(content, want_name, db) if want_name else ""
@@ -4192,6 +4209,11 @@ def _match_office_row_by_name_office(
             continue
         staged_office = str(payload.get("office") or "").strip()
         if staged_office != want_office:
+            continue
+        staged_region = str(
+            payload.get("region_id") or payload.get("任所") or payload.get("辖区") or ""
+        ).strip()
+        if want_region and staged_region and want_region != staged_region:
             continue
         hits.append(row)
     return hits
@@ -4307,15 +4329,18 @@ def _annotate_office_pending_path(
     *,
     mode_mark: Optional[str] = None,
     tenure_mark: Optional[str] = None,
+    region_id: str = "",
     minister_name: str = "",
     turn: int = 0,
 ) -> int:
-    """原地改写 office pending：typed mode 可升可降；署理只写 任别。返回 pending id。
+    """原地改写 office pending：typed mode 可升可降；署理只写 任别；任所可后补。
 
     mode 唯一规则同 resolve_directive_mode：调用方传入已 resolve 的
     midzhi|ordinary；此处负责落到 payload（含既有 midzhi 被显式 ordinary 降级）。
+    region_id 后补：命中既有候选后把后来的 typed 任所写入，不得吞掉。
     """
-    if not mode_mark and not tenure_mark:
+    seat = str(region_id or "").strip()
+    if not mode_mark and not tenure_mark and not seat:
         return 0
     pending_id = int(row["id"])
     payload = dict(_office_payload(row))
@@ -4327,9 +4352,16 @@ def _annotate_office_pending_path(
         payload["任别"] = "署理"
         payload.pop("appointment_tenure", None)
         changed = True
+    existing_seat = str(
+        payload.get("region_id") or payload.get("任所") or payload.get("辖区") or ""
+    ).strip()
+    if seat and not existing_seat:
+        payload["region_id"] = seat
+        changed = True
     if not changed and (
         (mode_mark in {"midzhi", "ordinary"} and payload.get("mode") == mode_mark)
         or (tenure_mark == "署理" and payload.get("任别") == "署理")
+        or (seat and existing_seat == seat)
     ):
         # 语义已在：仍回 id（no-op 去重存活），可补留痕
         _write_path_nature_ledger(
@@ -4479,12 +4511,16 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 _office_payload(row).get("name") or ""
             ).strip()
             row_is_appoint = str(row.get("action") or "") == "任命"
+            path_region = str(
+                appt.get("region_id") or appt.get("任所") or appt.get("辖区") or ""
+            ).strip()
             # 合并点吃原始 mode（含 ordinary）；禁止传过滤后的 midzhi-only 标记
             resolved = _apply_existing_appointment_hit(
                 session,
                 row,
                 extracted_mode=appt.get("mode") or mode_mark,
                 tenure_mark=tenure_mark,
+                region_id=path_region,
                 minister_name=minister_name,
                 turn=int(session.state.turn),
                 person_name=person_for_summon,

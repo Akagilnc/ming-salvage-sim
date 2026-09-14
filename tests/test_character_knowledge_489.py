@@ -1285,6 +1285,14 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert a2 and not a2[0].get("rejected"), a2
     assert db.character_office_region("练国事") == "shaanxi"
     assert db.character_office_region(other.name) == "henan"
+    # Cross-province same bare title must not exclusive-displace each other.
+    assert db.get_character_status("练国事")[0] == "active"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", ("练国事",),
+    ).fetchone()["office"] == "巡抚"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (other.name,),
+    ).fetchone()["office"] == "巡抚"
     key_sx = db.project_office_identity("巡抚", "地方", character_name="练国事")
     key_hn = db.project_office_identity("巡抚", "地方", character_name=other.name)
     assert key_sx["archive_key"] == "slot:巡抚@shaanxi"

@@ -24,6 +24,7 @@ from ming_sim.materials import (
     material_tools,
     prepare_character_materials,
     release_material_tree,
+    release_previous_material_tree,
 )
 from ming_sim.tools import _duty_location, build_minister_tools
 
@@ -397,6 +398,8 @@ class MinisterRegistry:
         """Point the live agent (if any) at a new materials root; release the old tree.
 
         Ownership is the agent MaterialsRoot handle — not optional model.materials_dir.
+        Installs the new root first; old-tree cleanup failure is logged and does
+        not revoke the live root or abort the caller (audience handoff).
         """
         new_root = str(root or "")
         if not new_root:
@@ -410,8 +413,7 @@ class MinisterRegistry:
         model = getattr(agent, "model", None) if agent is not None else None
         if model is not None and hasattr(model, "materials_dir"):
             model.materials_dir = new_root
-        if old and old != new_root:
-            release_material_tree(old)
+        release_previous_material_tree(old, new_root)
 
     def _replace_agent(self, name: str, agent: Agent) -> None:
         old = self.agents.get(name)

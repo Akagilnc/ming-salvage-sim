@@ -251,10 +251,25 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     return {**row, "payload": payload}
 
 
+def _appointment_region_id(payload: Dict[str, object]) -> str:
+    """Typed 任所 from appointment payload keys; never inferred from title/location."""
+    return str(
+        payload.get("region_id")
+        or payload.get("任所")
+        or payload.get("辖区")
+        or payload.get("office_region")
+        or ""
+    ).strip()
+
+
 def _canonical_appointment_fields(
     payload: Dict[str, object], *, current_office_type: str = "", llm_config=None,
-) -> tuple[str, str, str]:
-    """Canonical fields consumed by both appointment apply and payload dedup."""
+) -> tuple[str, str, str, str]:
+    """Canonical fields consumed by both appointment apply and payload dedup.
+
+    Fourth element is normalized region_id (empty for central seats). Same bare
+    title in two provinces must not collide on dedup.
+    """
     office = normalize_office(str(payload.get("office") or payload.get("new_office") or ""))
     office_type = resolve_office_type_preserving_title(
         office,
@@ -262,7 +277,7 @@ def _canonical_appointment_fields(
         current_office_type,
         llm_config,
     )
-    return office, office_type, appointment_tenure_from(payload)
+    return office, office_type, appointment_tenure_from(payload), _appointment_region_id(payload)
 
 
 def _payload_owned_person_duplicate(
@@ -6135,14 +6150,19 @@ def _displace_duplicate_offices(
     new_holder: str,
     new_office: str,
     *,
+    region_id: str = "",
     commit: bool = True,
 ) -> List[str]:
     """新任者 new_holder 拿到 new_office 后，把其中每个独占实职分项从其他 active 官员
     office 里剔除，避免双缺官。返回被腾出的 (旧任者:职) 描述列表。
-    纯按 office 文字匹配——不依赖 court_role，对存量档同样生效。"""
+
+    中央独占（无 region）仍按 office 文字匹配；地方独占缺位把规范化 region_id
+    纳入身份——同名同职不同任所互不挤位（复用 character_offices.region_id）。
+    """
     new_parts = [p for p in normalize_office(new_office).split(",") if _is_exclusive_office(p)]
     if not new_parts:
         return []
+    new_seat = str(region_id or "").strip()
     displaced: List[str] = []
     displaced_names: set[str] = set()  # #9 cmr R1：被顶替者去重，循环后逐派系重算 leverage。
     rows = db.conn.execute(
@@ -6151,11 +6171,19 @@ def _displace_duplicate_offices(
     ).fetchall()
     for row in rows:
         holder_parts = [p.strip() for p in str(row["office"]).split(",") if p.strip()]
-        kept = [p for p in holder_parts if p not in new_parts]
-        if len(kept) == len(holder_parts):
+        # Local seat identity: when the new appointment carries a typed 任所,
+        # exclusive title collides only on the same seat. Central / no-seat
+        # appointments keep pure office-text comparison.
+        if new_seat:
+            holder_seat = db.character_office_region(row["name"])
+            if holder_seat != new_seat:
+                continue
+        conflicting = [p for p in holder_parts if p in new_parts]
+        if not conflicting:
             continue  # 此人不占同名独缺
+        kept = [p for p in holder_parts if p not in conflicting]
         displaced_names.add(row["name"])
-        for lost in (p for p in holder_parts if p in new_parts):
+        for lost in conflicting:
             displaced.append(f"{row['name']}:{lost}")
         fully_displaced = not kept
         new_holder_office = "听用候铨" if fully_displaced else ",".join(kept)
@@ -6515,15 +6543,20 @@ def apply_office_appointment(
         old_office = content.characters[name].office
         snapshot = _snapshot_person_write_state(db, content)
         try:
-            new_office, new_office_type, appointment_tenure = _canonical_appointment_fields(
-                {
-                    "office": new_office,
-                    "office_type": new_office_type,
-                    "任别": appointment_tenure,
-                },
-                current_office_type=current_office_type,
-                llm_config=llm_config or db.llm_config,
+            new_office, new_office_type, appointment_tenure, _canon_seat = (
+                _canonical_appointment_fields(
+                    {
+                        "office": new_office,
+                        "office_type": new_office_type,
+                        "任别": appointment_tenure,
+                        "region_id": region_id,
+                    },
+                    current_office_type=current_office_type,
+                    llm_config=llm_config or db.llm_config,
+                )
             )
+            if not str(region_id or "").strip() and _canon_seat:
+                region_id = _canon_seat
             if cur_status != "active":
                 db.set_character_status(
                     state,
@@ -6533,12 +6566,13 @@ def apply_office_appointment(
                     content=content,
                     commit=commit,
                 )
+            seat = str(region_id or "").strip()
             with _appointment_tenure_scope(db, appointment_tenure):
                 db.set_character_office(
                     name, new_office, new_office_type,
                     source=reason[:60] or "诏书调任", llm_config=llm_config,
                     commit=commit,
-                    region_id=str(region_id or "").strip(),
+                    region_id=seat,
                 )
             if cur_status == "active":
                 db.conn.execute(
@@ -6551,11 +6585,12 @@ def apply_office_appointment(
                 if commit:
                     db.conn.commit()
             displaced_parts = _displace_duplicate_offices(
-                db, content, name, new_office, commit=commit
+                db, content, name, new_office, region_id=seat, commit=commit,
             )
             ch = content.characters[name]
             ch.office = new_office
             ch.office_type = new_office_type
+            ch.office_region = db.character_office_region(name) or seat
             if registry is not None:
                 registry.refresh(name)
                 # 被顶替者 office/office_type 也变了,一并刷 Agent,免本回合后续用陈旧身份/工具(线上 gemini)。
@@ -6584,15 +6619,18 @@ def apply_office_appointment(
     # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
     snapshot = _snapshot_person_write_state(db, content)
     try:
-        new_office, new_office_type, appointment_tenure = _canonical_appointment_fields(
-            {
-                "office": new_office,
-                "office_type": new_office_type,
-                "任别": appointment_tenure,
-            },
-            llm_config=llm_config or db.llm_config,
+        new_office, new_office_type, appointment_tenure, _canon_seat = (
+            _canonical_appointment_fields(
+                {
+                    "office": new_office,
+                    "office_type": new_office_type,
+                    "任别": appointment_tenure,
+                    "region_id": region_id,
+                },
+                llm_config=llm_config or db.llm_config,
+            )
         )
-        seat = str(region_id or "").strip()
+        seat = str(region_id or "").strip() or _canon_seat
         appt = {"name": name, "office": new_office, "office_type": new_office_type,
                 "faction": faction, "reason": reason, "approved": True,
                 "office_region": seat}
@@ -6607,12 +6645,12 @@ def apply_office_appointment(
                 commit=commit,
             )
         if appointed:
-            # 新任也按 office 文字去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
+            # 新任也按 office+任所 去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
             # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
             # displaced 统一取 _displace_duplicate_offices 的 List[str](apply_appointment 的单名
             # displaced 在去 replaces 后恒空,留着会让本字段时而 str 时而 list,故弃)(线上 gemini)。
             displaced_parts = _displace_duplicate_offices(
-                db, content, appointed, new_office, commit=commit
+                db, content, appointed, new_office, region_id=seat, commit=commit,
             )
             # 被顶替者一并刷 Agent(新任者 apply_appointment 内已注册)(线上 gemini)。
             if registry is not None:

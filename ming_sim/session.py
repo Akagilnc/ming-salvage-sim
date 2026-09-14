@@ -364,12 +364,10 @@ def register_unlisted_person_record(
         bag.pop(target, None)
 
     register_runtime_outcome_callbacks(db, on_rollback=_drop_runtime_registration)
-    # SAVEPOINT：add_character 先 INSERT characters 再校验 seat；地方缺任所抛
-    # OfficeAppointmentRejection 时须整项回滚，避免后续外层 commit 把半写行落成孤儿。
-    # 外层已有 _item_savepoint_scope / atomic 时嵌套 SAVEPOINT 仍合法；无外层事务时
-    # 本 SAVEPOINT 自成一项原子域。commit 必须在 RELEASE 之后、且仅当本核拥有事务
-    # 时发生——否则 SAVEPOINT 期内 commit 会把整个事务（含 savepoint）提前提交，
-    # 随后 RELEASE 无点。
+    # SAVEPOINT：add_character 写前已完成 seat 校验，但 characters + character_offices
+    # 仍须整项原子；外层 _item_savepoint_scope / atomic 嵌套仍合法。commit 必须在
+    # RELEASE 之后、且仅当本核拥有事务时发生——否则 SAVEPOINT 期内 commit 会把
+    # 整个事务提前提交，随后 RELEASE 无点。
     owns_transaction = connection_owns_transaction(db.conn)
     savepoint = f"register_unlisted_{abs(id(character)) & 0xFFFFFFFF:x}"
     db.conn.execute(f"SAVEPOINT {savepoint}")
@@ -877,13 +875,16 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
     DB 是持久化真相；不要在这里修写 DB。"""
     rows = db.conn.execute(
         """
-        SELECT name, office, office_type, faction, aliases, personal_skills,
-               loyalty, ability, integrity, courage, style, identity, seed_guilt,
-               birth_year, historical_death_year, historical_death_month,
-               debut_year, debut_month, status, status_reason, reason_code,
-               portrait_id, power_id, location, transit_to,
-               transit_distance_remaining, transit_speed_factor, transit_start_turn, summary
-        FROM characters
+        SELECT c.name, c.office, c.office_type, c.faction, c.aliases, c.personal_skills,
+               c.loyalty, c.ability, c.integrity, c.courage, c.style, c.identity, c.seed_guilt,
+               c.birth_year, c.historical_death_year, c.historical_death_month,
+               c.debut_year, c.debut_month, c.status, c.status_reason, c.reason_code,
+               c.portrait_id, c.power_id, c.location, c.transit_to,
+               c.transit_distance_remaining, c.transit_speed_factor, c.transit_start_turn,
+               c.summary,
+               COALESCE(co.region_id, '') AS office_region
+        FROM characters c
+        LEFT JOIN character_offices co ON co.character_name = c.name
         """
     ).fetchall()
     characters: Dict[str, Character] = {}
@@ -947,6 +948,9 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             summary=row["summary"],
             identity=int(row["identity"]),
             seed_guilt={str(key): str(value) for key, value in seed_guilt.items()},
+            # 任所 thrives only on character_offices; restore into Character for
+            # runtime projection (materials scope / travel gate / seat identity).
+            office_region=str(row["office_region"] or "").strip(),
         )
     content.characters = characters
 
@@ -2069,6 +2073,7 @@ class GameSession:
             MaterialsRoot,
             prepare_character_materials,
             release_material_tree,
+            release_previous_material_tree,
         )
         try:
             prepared = prepare_character_materials(self.db, self.state, character)
@@ -2076,6 +2081,8 @@ class GameSession:
             return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
         registry = getattr(self, "registry", None)
         if registry is not None and hasattr(registry, "adopt_materials"):
+            # adopt installs the new root first; old-tree cleanup failure must
+            # not revoke it or abort the audience turn (logged inside helper).
             registry.adopt_materials(character.name, prepared.root)
         else:
             agent = None
@@ -2095,8 +2102,7 @@ class GameSession:
                 model = getattr(agent, "model", None)
                 if model is not None and hasattr(model, "materials_dir"):
                     model.materials_dir = str(prepared.root)
-                if old and old != str(prepared.root):
-                    release_material_tree(old)
+                release_previous_material_tree(old, prepared.root)
             else:
                 # No live agent owns this snapshot — opening text is enough; do not leak.
                 release_material_tree(prepared.root)

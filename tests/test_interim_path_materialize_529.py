@@ -170,6 +170,69 @@ def test_beat12_13_special_decree_annotates_existing_appointment_in_place(game):
     )
 
 
+def test_appointment_merge_backfills_region_id_and_keeps_cross_seat_distinct(game):
+    """同名同职合并后补 region_id；不同任所不得误并成一条。"""
+    db, state, _content = game
+    actor = _minister(db)
+    name = "洪承畴"
+    office = "巡抚"
+
+    first = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": name,
+            "office": office,
+        },
+        actor=actor,
+        message=f"任命{name}为{office}。",
+    )
+    pending_id = first.out.get("pending_action_id")
+    assert pending_id
+    assert not _payload(db, pending_id).get("region_id")
+
+    merged = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": name,
+            "office": office,
+            "region_id": "shaanxi",
+        },
+        actor=actor,
+        message=f"任{name}巡抚陕西。",
+        pend=_office_pendings(db, state.turn),
+    )
+    assert merged.out.get("pending_action_id") == pending_id
+    assert len(_office_pendings(db, state.turn)) == 1
+    assert _payload(db, pending_id).get("region_id") == "shaanxi"
+
+    other = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": name,
+            "office": office,
+            "region_id": "henan",
+        },
+        actor=actor,
+        message=f"改任{name}巡抚河南。",
+        pend=_office_pendings(db, state.turn),
+    )
+    other_id = other.out.get("pending_action_id")
+    assert other_id and other_id != pending_id
+    rows = _office_pendings(db, state.turn)
+    assert len(rows) == 2
+    seats = {
+        str((_payload(db, int(r["id"])).get("region_id") or "")).strip()
+        for r in rows
+    }
+    assert seats == {"shaanxi", "henan"}
+
+
 def test_acting_path_writes_tenure_only(game):
     """署理应答只写 appointment_tenure/任别=署理，不写中旨。"""
     db, state, _content = game
