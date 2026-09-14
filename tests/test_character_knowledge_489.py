@@ -1501,6 +1501,48 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
     assert "秘密分类" not in ledger and "秘密流水原因" not in ledger
 
 
+def test_household_secret_ledger_hides_case_by_excluded_office(game):
+    """#1812：户部流水按 excluded_targets.offices 现职/继任排挤，数额仍可见。"""
+    db, state, content = game
+    clerk = next(c for c in content.characters.values() if c.office_type == "户部")
+    successor = next(
+        c for c in content.characters.values()
+        if c.name != clerk.name and getattr(c, "office_type", "") not in {"", "后宫"}
+    )
+    order_id = create_test_secret_order(
+        db, state, "毕自严", "密查太仓职", "职署排挤案情", [],
+        excluded_offices=[clerk.office_type],
+    )
+    dossier = next(d for d in db.list_decree_dossiers() if d["secret_order_id"] == order_id)
+    db.record_issue_economy_move(
+        state, "国库", -2, "职署秘密分类", "职署秘密流水",
+        origin_ref=f"dossier:{dossier['id']}",
+    )
+    # 现职户部：数额可见、案情隐藏
+    hidden = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
+    assert "-2" in hidden and "密支" in hidden
+    assert "职署秘密分类" not in hidden and "职署秘密流水" not in hidden
+
+    # 继任入户部：仍按当前 office_type 排挤（不靠签发时人名快照）
+    clerk_office, clerk_type = clerk.office, clerk.office_type
+    prior_office, prior_type = successor.office, successor.office_type
+    db.set_character_office(clerk.name, "闲住", office_type="未仕")
+    db.set_character_office(successor.name, clerk_office, office_type="户部")
+    clerk.office, clerk.office_type = "闲住", "未仕"
+    successor.office, successor.office_type = clerk_office, "户部"
+    try:
+        successor_view = db.get_character_knowledge(
+            state, successor.name,
+        )["world"]["treasury"]
+        assert "-2" in successor_view and "密支" in successor_view
+        assert "职署秘密流水" not in successor_view
+    finally:
+        db.set_character_office(clerk.name, clerk_office, office_type=clerk_type)
+        db.set_character_office(successor.name, prior_office, office_type=prior_type)
+        clerk.office, clerk.office_type = clerk_office, clerk_type
+        successor.office, successor.office_type = prior_office, prior_type
+
+
 def _office_archive_from_materials(db, state, character, root):
     prepared = prepare_character_materials(db, state, character, dest_root=root)
     path = next(p for p in list_materials(prepared.root) if p.endswith("/公事档案.txt"))

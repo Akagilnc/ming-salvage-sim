@@ -1286,6 +1286,46 @@ def test_propose_appointment_tool_mode_contract(game, tool_mode, expected):
     assert staged["mode"] == expected
 
 
+def test_propose_appointment_tool_region_id_stages_same_seat(game):
+    """#1812：真工具 region_id → marker body → pending 同一 seat；不从官名推断。"""
+    db, state, content = game
+    minister = "毕自严"
+    appointee = "工具任所候选甲"
+    character = content.characters[minister]
+    propose = _propose_appointment_tool(character, db, state)
+    marker = propose(
+        name=appointee, office="陕西巡抚", faction="中立",
+        reason="试任所", region_id="shaanxi",
+    )
+    assert marker.startswith("__pending_appointment__")
+    body = json.loads(marker.removeprefix("__pending_appointment__"))
+    assert body["region_id"] == "shaanxi"
+    assert "陕西" not in body.get("region_id", "")
+
+    # 省略 region_id 不得从官名推断任所
+    bare = propose(name=appointee, office="河南巡抚", reason="无任所")
+    bare_body = json.loads(bare.removeprefix("__pending_appointment__"))
+    assert "region_id" not in bare_body
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    pending_id = sess._stage_appointment_candidate(
+        json.dumps(body, ensure_ascii=False), character,
+    )
+    assert pending_id
+    staged = json.loads(
+        next(p for p in db.list_pending_actions(state.turn) if p["id"] == pending_id)[
+            "payload_json"
+        ]
+    )
+    assert staged["region_id"] == "shaanxi"
+    assert staged["name"] == appointee
+    assert staged["office"] == "陕西巡抚"
+
+
 @pytest.mark.parametrize(
     ("appointee", "seed_modes", "continue_mode", "expected_id_relation", "expected_modes"),
     [

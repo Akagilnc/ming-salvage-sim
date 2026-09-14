@@ -74,6 +74,56 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     return names
 
 
+def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
+    """Parse excluded_names and excluded_targets.people/offices from one row."""
+    try:
+        excluded_names = {
+            str(name) for name in json.loads(row["excluded_names"] or "[]")
+        }
+    except (TypeError, ValueError, KeyError, IndexError):
+        excluded_names = set()
+    targets: object = {}
+    try:
+        raw_targets = row["excluded_targets"]
+    except (KeyError, IndexError, TypeError):
+        raw_targets = None
+    if raw_targets:
+        try:
+            targets = json.loads(raw_targets or "{}")
+        except (TypeError, ValueError):
+            targets = {}
+    if not isinstance(targets, dict):
+        targets = {}
+    people = {str(name) for name in (targets.get("people") or [])}
+    offices = {str(name) for name in (targets.get("offices") or [])}
+    return excluded_names, people, offices
+
+
+def _subject_matches_exclusion(
+    subject: Any,
+    fallback_name: str,
+    *,
+    excluded_names: set[str],
+    people: set[str],
+    offices: set[str],
+) -> bool:
+    """True when person name or current office/office_type hits exclusion lists."""
+    if subject is None:
+        name, office_type, office = fallback_name, "", ""
+    else:
+        try:
+            name = str(subject["name"] or fallback_name)
+            office_type = str(subject["office_type"] or "")
+            office = str(subject["office"] or "")
+        except (KeyError, IndexError, TypeError):
+            name, office_type, office = fallback_name, "", ""
+    if name in excluded_names or name in people:
+        return True
+    return bool(office_type and office_type in offices) or bool(
+        office and office in offices
+    )
+
+
 def knowledge_row_visible_to(
     db: Any, row: Any, character_name: str, *, target: Any = None,
 ) -> bool:
@@ -99,42 +149,21 @@ def knowledge_row_visible_to(
             return None
 
     target_name = str(target_value("name") or target_value("character_id") or character_name)
-    target_office_type = str(target_value("office_type") or "")
-    target_office = str(target_value("office") or "")
-    try:
-        excluded_names = json.loads(row["excluded_names"] or "[]")
-    except (TypeError, ValueError, KeyError, IndexError):
-        excluded_names = []
-    excluded = {str(name) for name in excluded_names}
-    if character_name in excluded or target_name in excluded:
-        return False
-    targets: object = {}
-    try:
-        raw_targets = row["excluded_targets"]
-    except (KeyError, IndexError, TypeError):
-        raw_targets = None
-    if raw_targets:
-        try:
-            targets = json.loads(raw_targets or "{}")
-        except (TypeError, ValueError):
-            targets = {}
-    if not isinstance(targets, dict) or not targets:
+    excluded_names, people, offices = _exclusion_lists_from_row(row)
+    if not people and not offices:
         source_id = str(row["source_id"] or "")
         if hasattr(db, "knowledge_exclusion_targets_for_source"):
-            targets = db.knowledge_exclusion_targets_for_source(source_id)
-    people = {str(name) for name in (targets.get("people", []) if isinstance(targets, dict) else [])}
-    offices = {str(name) for name in (targets.get("offices", []) if isinstance(targets, dict) else [])}
-    def excluded_subject(subject: Any, fallback_name: str) -> bool:
-        if subject is None:
-            return fallback_name in people
-        try:
-            name = str(subject["name"] or fallback_name)
-            office_type = str(subject["office_type"] or "")
-            office = str(subject["office"] or "")
-        except (KeyError, IndexError, TypeError):
-            name, office_type, office = fallback_name, "", ""
-        return name in people or office_type in offices or office in offices
-    if excluded_subject(reader, character_name) or excluded_subject(target, target_name):
+            fallback = db.knowledge_exclusion_targets_for_source(source_id)
+            if isinstance(fallback, dict):
+                people = {str(name) for name in (fallback.get("people") or [])}
+                offices = {str(name) for name in (fallback.get("offices") or [])}
+    if _subject_matches_exclusion(
+        reader, character_name,
+        excluded_names=excluded_names, people=people, offices=offices,
+    ) or _subject_matches_exclusion(
+        target, target_name,
+        excluded_names=excluded_names, people=people, offices=offices,
+    ):
         return False
     # A private source's roster is a positive capability, not a deny-list
     # snapshot.  Enforce it at read time so characters created after archival
@@ -369,36 +398,11 @@ def _household_secret_case_hidden(
     row: Any, character_name: str, reader: Any,
 ) -> bool:
     """户部流水密令案情是否对读者隐藏：复用 typed 密令 excluded_names / excluded_targets。"""
-    try:
-        excluded_names = {
-            str(name) for name in json.loads(row["excluded_names"] or "[]")
-        }
-    except (TypeError, ValueError, KeyError, IndexError):
-        excluded_names = set()
-    if character_name in excluded_names:
-        return True
-    targets: object = {}
-    try:
-        raw_targets = row["excluded_targets"]
-    except (KeyError, IndexError, TypeError):
-        raw_targets = None
-    if raw_targets:
-        try:
-            targets = json.loads(raw_targets or "{}")
-        except (TypeError, ValueError):
-            targets = {}
-    if not isinstance(targets, dict) or not targets:
-        return False
-    people = {str(name) for name in (targets.get("people") or [])}
-    offices = {str(name) for name in (targets.get("offices") or [])}
-    if character_name in people:
-        return True
-    try:
-        office_type = str(reader["office_type"] or "") if reader is not None else ""
-        office = str(reader["office"] or "") if reader is not None else ""
-    except (KeyError, IndexError, TypeError):
-        office_type, office = "", ""
-    return office_type in offices or office in offices
+    excluded_names, people, offices = _exclusion_lists_from_row(row)
+    return _subject_matches_exclusion(
+        reader, character_name,
+        excluded_names=excluded_names, people=people, offices=offices,
+    )
 
 
 def _household_ledger(db: Any, state: Any, character_name: str) -> str:

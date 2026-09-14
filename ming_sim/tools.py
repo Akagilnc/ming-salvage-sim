@@ -186,11 +186,13 @@ def build_minister_tools(character: Character, context: CourtContext):
     def propose_appointment(
         name: str, office: str, faction: str = "中立", reason: str = "",
         replaces: str = "", mode: Optional[str] = None,
+        region_id: str = "",
     ) -> str:
         """吏部铨选拟任。
 
         mode 是 LLM 对皇帝本意的新 typed 判定：确为中旨时填 midzhi，
         确为普通旨时填 ordinary；没有新判断时不填（#1731 None=沉默）。
+        地方/督抚/边镇须显式填 region_id（任所英文 id，如 shaanxi）；不从官名推断。
         """
         nm = (name or "").strip()
         off = (office or "").strip()
@@ -206,6 +208,9 @@ def build_minister_tools(character: Character, context: CourtContext):
         raw_mode = str(mode or "").strip()
         if raw_mode:
             body["mode"] = "midzhi" if raw_mode == "midzhi" else "ordinary"
+        seat = str(region_id or "").strip()
+        if seat:
+            body["region_id"] = seat
         payload = _json.dumps(body, ensure_ascii=False)
         return f"__pending_appointment__{payload}"
 
