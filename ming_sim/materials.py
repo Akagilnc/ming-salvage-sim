@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import re
 import shutil
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Callable, List, Optional, Sequence
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -884,6 +884,95 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
     return rows
 
 
+def _json_list_field(raw: object) -> list[str]:
+    try:
+        value = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _character_projection_from_db_row(row: Any) -> Any:
+    """DB characters 行 → 档料投影用 Character（字段齐整，供 character_context_with_db）。"""
+    from ming_sim.models import Character
+
+    def _int(key: str, default: int = 0) -> int:
+        try:
+            return int(row[key])
+        except (KeyError, TypeError, ValueError):
+            return default
+
+    def _str(key: str, default: str = "") -> str:
+        try:
+            value = row[key]
+        except (KeyError, IndexError, TypeError):
+            return default
+        return default if value is None else str(value)
+
+    return Character(
+        name=_str("name"),
+        office=_str("office"),
+        office_type=_str("office_type"),
+        faction=_str("faction"),
+        aliases=_json_list_field(row["aliases"]),
+        personal_skills=_json_list_field(row["personal_skills"]),
+        loyalty=_int("loyalty"),
+        ability=_int("ability"),
+        integrity=_int("integrity"),
+        courage=_int("courage"),
+        style=_str("style"),
+        power_id=_str("power_id", "ming") or "ming",
+        summary=_str("summary"),
+        identity=_int("identity", 50),
+    )
+
+
+def _resolve_present_character(
+    db: Any,
+    name: str,
+    office: str,
+    characters: dict,
+) -> Any:
+    """在场者 → 档料投影：content 优先，否则 DB 行，再否则空字段 Character（既有缺省语义）。
+
+    不得回退成缺 personal_skills/faction 的残壳——character_context_with_db 会崩
+    （#1836 返修）。不合成占位文案（P7）。
+    """
+    hit = characters.get(name)
+    if hit is not None:
+        return hit
+    if hasattr(db, "conn"):
+        row = db.conn.execute(
+            """
+            SELECT name, office, office_type, faction, aliases, personal_skills,
+                   loyalty, ability, integrity, courage, style, identity,
+                   summary, power_id
+            FROM characters WHERE name=?
+            """,
+            (name,),
+        ).fetchone()
+        if row is not None:
+            return _character_projection_from_db_row(row)
+    from ming_sim.models import Character
+
+    return Character(
+        name=name,
+        office=office or "",
+        office_type="",
+        faction="",
+        aliases=[],
+        personal_skills=[],
+        loyalty=0,
+        ability=0,
+        integrity=0,
+        courage=0,
+        style="",
+        power_id="ming",
+    )
+
+
 def _scene_spoken_text(db: Any) -> str:
     """本场已说的话：按夜持久化对话轮（皇帝原话 + 场景戏文）重建。"""
     from ming_sim.audience_night import get_open_night, list_chat_turns_for_night
@@ -1075,9 +1164,7 @@ def prepare_scene_materials(
     person_payloads: list[tuple[Any, dict, list]] = []
     handling_by_person: list[tuple[str, list[tuple[str, str]]]] = []
     for name, office in present_rows:
-        character = characters.get(name)
-        if character is None:
-            character = SimpleNamespace(name=name, office=office, office_type="")
+        character = _resolve_present_character(db, name, office, characters)
         if hasattr(db, "get_character_knowledge"):
             knowledge = db.get_character_knowledge(state, name)
         else:
