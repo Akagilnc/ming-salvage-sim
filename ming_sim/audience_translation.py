@@ -26,11 +26,13 @@ from ming_sim.declaration_dispatch import (
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
 
 # 进程级：按夜串行（同一夜 FIFO）；跨夜可并行。
+# 源轮 Future 另按 turn-key 索引，供撤回终结在飞转译（ADR 0038 / 0155）。
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="audience-translate")
 _night_serial_guard = threading.Lock()
 _night_serial_locks: Dict[int, threading.Lock] = {}
 _night_inflight_guard = threading.Lock()
 _night_inflight: Dict[int, List[Future]] = {}
+_turn_inflight: Dict[int, Future] = {}
 
 
 def apply_audience_round_translation(
@@ -110,12 +112,17 @@ def _night_lock(night_id: int) -> threading.Lock:
         return lock
 
 
-def _track_future(night_id: int, fut: Future) -> None:
+def _track_future(night_id: int, fut: Future, *, chat_turn_id: int = 0) -> None:
     nid = int(night_id or 0)
+    ctid = int(chat_turn_id or 0)
     with _night_inflight_guard:
         _night_inflight.setdefault(nid, []).append(fut)
+        if ctid > 0:
+            _turn_inflight[ctid] = fut
 
-        def _cleanup(_f: Future, *, _nid: int = nid, _fut: Future = fut) -> None:
+        def _cleanup(
+            _f: Future, *, _nid: int = nid, _fut: Future = fut, _ctid: int = ctid,
+        ) -> None:
             with _night_inflight_guard:
                 bucket = _night_inflight.get(_nid) or []
                 try:
@@ -124,8 +131,35 @@ def _track_future(night_id: int, fut: Future) -> None:
                     pass
                 if not bucket:
                     _night_inflight.pop(_nid, None)
+                if _ctid > 0 and _turn_inflight.get(_ctid) is _fut:
+                    _turn_inflight.pop(_ctid, None)
 
         fut.add_done_callback(_cleanup)
+
+
+def cancel_turn_translation(chat_turn_id: int) -> int:
+    """撤回本轮：取消/失效该源轮在飞转译 Future（ADR 0038 / 0155）。
+
+    返回触及的 Future 数（0/1）。已跑到 write-gate 落账前的 worker 仍靠源轮
+    存活复查挡写；pending/retry 真源随 chat_turns.status=undone 自然出窗。
+    """
+    ctid = int(chat_turn_id or 0)
+    if ctid <= 0:
+        return 0
+    with _night_inflight_guard:
+        fut = _turn_inflight.pop(ctid, None)
+        if fut is None:
+            return 0
+        for nid, bucket in list(_night_inflight.items()):
+            try:
+                bucket.remove(fut)
+            except ValueError:
+                continue
+            if not bucket:
+                _night_inflight.pop(nid, None)
+            break
+    fut.cancel()
+    return 1
 
 
 def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> None:
@@ -230,8 +264,11 @@ def run_turn_translation_job(
             translate_audience_turn,
         )
         # 读上下文：有 gate 则短持（共享 conn）；无 gate 直接读。
+        # said-so-far 按本源轮截止，不读后续轮、不重复本轮（ADR 0155）。
         with _gate_cm():
-            night_said = build_night_said_so_far(db, nid)
+            night_said = build_night_said_so_far(
+                db, nid, until_chat_turn_id=ctid,
+            )
             pending = build_pending_summaries(db, int(state.turn), night_id=nid)
         declaration = translate_audience_turn(
             emperor_message=emperor_message,
@@ -242,6 +279,16 @@ def run_turn_translation_job(
             translate_fn=translate_fn,
         )
         with _gate_cm():
+            # 落账临界区复查源轮仍存活（ADR 0038：后台写入前须校验目标轮仍存活）。
+            if ctid > 0 and hasattr(db, "conn"):
+                live = db.conn.execute(
+                    "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+                ).fetchone()
+                if live is None or str(live["status"] or "") in {"failed", "undone"}:
+                    from ming_sim.audience_translate import AudienceTranslateError
+                    raise AudienceTranslateError(
+                        f"源轮已死（落账前复查）：chat_turn_id={ctid}"
+                    )
             return apply_audience_round_translation(
                 db, state, declaration,
                 night_id=nid, chat_turn_id=ctid,
@@ -292,7 +339,7 @@ def schedule_audience_turn_translation(
             )
 
     fut = _executor.submit(_worker)
-    _track_future(nid, fut)
+    _track_future(nid, fut, chat_turn_id=ctid)
     return fut
 
 

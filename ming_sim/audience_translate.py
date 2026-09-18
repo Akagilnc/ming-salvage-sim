@@ -76,20 +76,51 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     return out
 
 
-def build_night_said_so_far(db: Any, night_id: int) -> List[str]:
+def build_night_said_so_far(
+    db: Any, night_id: int, *, until_chat_turn_id: int = 0,
+) -> List[str]:
     """本场已说的话：按夜持久化对话轮 + 故事账，正文从 chat_messages 取。
 
     chat_turns 只有 user_message_id / minister_message_id，没有 user_text 列；
     与 materials._scene_spoken_text / read_night_scroll 同口径，不另造假键。
+
+    ``until_chat_turn_id``（ADR 0155）：按源轮 night_seq/id 截止——只含严格早于
+    该轮的已说；本轮正文只走【本轮皇帝】【本轮回话】，不在此重复；亦不读后续
+    已持久化轮（下一句不等转译时可能已落库）。
     """
     if int(night_id or 0) <= 0 or not hasattr(db, "conn"):
         return []
     from ming_sim.audience_night import list_chat_turns_for_night, list_ledger
 
+    cutoff_id = int(until_chat_turn_id or 0)
+    cutoff_seq: Optional[int] = None
+    if cutoff_id > 0:
+        crow = db.conn.execute(
+            "SELECT night_seq FROM chat_turns WHERE id=?", (cutoff_id,),
+        ).fetchone()
+        if crow is not None:
+            cutoff_seq = int(crow["night_seq"] or 0)
+
+    def _before_cutoff(seq: int, turn_id: int) -> bool:
+        if cutoff_id <= 0 or cutoff_seq is None:
+            return True
+        if int(seq) < int(cutoff_seq):
+            return True
+        if int(seq) > int(cutoff_seq):
+            return False
+        return int(turn_id) < int(cutoff_id)
+
     lines: List[str] = []
     # 故事账（入殿等）按夜序；对话轮按 night_seq。两者分列后按既有材料口径
-    # 先对话再穿插非必要——转译只要「已说」全集，顺序以对话轮为主、账文附后。
+    # 先对话再穿插非必要——转译只要「已说」截止集，顺序以对话轮为主、账文附后。
+    prior_turn_ids: set[int] = set()
     for turn in list_chat_turns_for_night(db, int(night_id)):
+        tid = int(turn.get("id") or 0)
+        tseq = int(turn.get("night_seq") or 0)
+        if not _before_cutoff(tseq, tid):
+            continue
+        if tid > 0:
+            prior_turn_ids.add(tid)
         minister = str(turn.get("minister_name") or "").strip() or "殿上"
         for mid, role_label in (
             (turn.get("user_message_id"), "皇帝"),
@@ -107,6 +138,22 @@ def build_night_said_so_far(db: Any, night_id: int) -> List[str]:
                 continue
             lines.append(f"{role_label}：{body}")
     for entry in list_ledger(db, int(night_id)):
+        src = int(entry.get("source_chat_turn_id") or 0)
+        origin = int(entry.get("origin_chat_turn_id") or 0)
+        if cutoff_id > 0 and cutoff_seq is not None:
+            # 本轮/后续轮声明账不入；框架账（双 0）按 seq 截止到本轮之前。
+            if src == cutoff_id or origin == cutoff_id:
+                continue
+            if src > 0 and src not in prior_turn_ids:
+                continue
+            if src <= 0 and origin > 0 and origin not in prior_turn_ids:
+                continue
+            if src <= 0 and origin <= 0:
+                entry_seq = entry.get("order_key")
+                if entry_seq is None:
+                    entry_seq = entry.get("seq") or 0
+                if float(entry_seq) >= float(cutoff_seq):
+                    continue
         body = str(entry.get("body") or "")
         if body.strip():
             lines.append(body)
@@ -306,7 +353,10 @@ def run_audience_turn_translation(
 
     ``chat_turn_id`` 原样下传（不另造平行快照）；过月/无源轮传 0。
     """
-    night_said = build_night_said_so_far(db, int(night_id or 0))
+    ctid = int(chat_turn_id or 0)
+    night_said = build_night_said_so_far(
+        db, int(night_id or 0), until_chat_turn_id=ctid,
+    )
     pending = build_pending_summaries(db, int(state.turn), night_id=int(night_id or 0))
     declaration = translate_audience_turn(
         emperor_message=emperor_message,
@@ -321,7 +371,7 @@ def run_audience_turn_translation(
         state,
         declaration,
         night_id=int(night_id or 0),
-        chat_turn_id=int(chat_turn_id or 0),
+        chat_turn_id=ctid,
         minister_name=minister_name,
         source=source,
     )

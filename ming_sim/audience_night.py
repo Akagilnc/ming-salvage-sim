@@ -1321,9 +1321,6 @@ def close_night(
 
     with gate:
         night = get_night(db, night_id)
-        source_night_roster = {
-            row["name"] for row in db.current_court_roster_rows(state)
-        }
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
     if night["status"] == NIGHT_STATUS_CLOSED:
@@ -1469,44 +1466,8 @@ def close_night(
             _cleanup_close_scene_early(early_exc)
         raise
 
-    # Prepare on the owner thread; only the gate-free provider call enters the
-    # existing close bucket. Finalization happens after that bucket is joined.
-    from ming_sim.relation_judge import (
-        PreparedRelationJudge, abandon_summon_relation_judge,
-        finalize_summon_relation_judge, invoke_summon_relation_judge_provider,
-        prepare_summon_relation_judge,
-    )
-    judge_prepared = prepare_summon_relation_judge(
-        db, state, write_gate=write_gate, night_id=int(night_id),
-        allowed_endpoint_names=source_night_roster,
-    )
-    judge_future = None
-    if isinstance(judge_prepared, PreparedRelationJudge):
-        if not close_ctid and reg is not None:
-            with gate:
-                close_ctid = int(db.create_chat_turn(
-                    state, "收夜", "close-judge", 0, night_id=int(night_id),
-                ))
-                close_scaffold_owned = True
-                close_started = True
-        if reg is not None and hasattr(reg, "start_relation_judge_provider"):
-            judge_future = reg.start_relation_judge_provider(
-                int(close_ctid),
-                lambda: invoke_summon_relation_judge_provider(
-                    judge_prepared, llm_config=llm_config,
-                ),
-            )
-        else:
-            # Library callers without a session registry still use the split phases;
-            # importantly, only the provider call runs gate-free here.
-            judge_provider_result = invoke_summon_relation_judge_provider(
-                judge_prepared, llm_config=llm_config,
-            )
-            judge_result = finalize_summon_relation_judge(
-                judge_prepared, judge_provider_result, write_gate=write_gate,
-            )
-            judge_prepared = judge_result
-
+    # #1842 / ADR 0155：收夜旧边事件判官退役——转译已在场中声明边事件并落账；
+    # 不再 prepare/invoke/finalize relation judge，也不为判官另建 scaffold 轮。
     # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
     # Ordinary story drain (LLM outside settle lock). CLOSING restore drain =
     # ADR 0036 崩溃恢复口；OPEN 期 join 已汇合在飞 owner，此处只清真欠账。
@@ -1519,9 +1480,6 @@ def close_night(
         )
     except Exception as drain_exc:
         from ming_sim.exceptions import LLMUnavailable
-        if isinstance(judge_prepared, PreparedRelationJudge):
-            abandon_summon_relation_judge(judge_prepared)
-
         cleanup_exc: BaseException | None = None
         if close_started and reg is not None:
             try:
@@ -1600,20 +1558,6 @@ def close_night(
                 close_body = str(joined_body)
         except Exception as exc:
             join_exc = exc
-
-    if judge_future is not None and join_exc is not None:
-        abandon_summon_relation_judge(judge_prepared)
-
-    if judge_future is not None and join_exc is None:
-        _marker, judge_provider_result = judge_future.result()
-        judge_result = finalize_summon_relation_judge(
-            judge_prepared, judge_provider_result, write_gate=write_gate,
-        )
-        if judge_result.get("degraded"):
-            logger.warning(
-                "relation judge sweep degraded night_id=%s: %s",
-                night_id, judge_result["degraded"],
-            )
 
     if primary_exc is not None or join_exc is not None:
         with gate:

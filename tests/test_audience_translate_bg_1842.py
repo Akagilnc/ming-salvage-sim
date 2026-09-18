@@ -881,3 +881,125 @@ def test_close_night_no_longer_fail_closed_on_exhausted_pending(game, monkeypatc
         "WHERE night_id=? AND source_chat_turn_id=?",
         (nid, ctid),
     ).fetchone()["c"] == 0
+
+
+def test_said_so_far_cuts_off_at_source_turn_and_excludes_self(game):
+    """正确性 C2：said-so-far 按源轮 night_seq 截止；本轮不重复入集。"""
+    from ming_sim.audience_translate import build_night_said_so_far
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    ctid1 = _persist_round(db, state, nid, "第一句已说", "第一答")
+    ctid2 = _persist_round(db, state, nid, "第二句本轮", "第二答")
+    ctid3 = _persist_round(db, state, nid, "第三句后轮", "第三答")
+
+    # 为 turn2 建 said-so-far：应收 t1，拒 t2 自身与 t3
+    said = build_night_said_so_far(db, nid, until_chat_turn_id=ctid2)
+    blob = "\n".join(said)
+    assert "第一句已说" in blob and "第一答" in blob, said
+    assert "第二句本轮" not in blob and "第二答" not in blob, said
+    assert "第三句后轮" not in blob and "第三答" not in blob, said
+
+    # 无截止：全集（兼容旧调用）
+    full = build_night_said_so_far(db, nid)
+    full_blob = "\n".join(full)
+    assert "第三句后轮" in full_blob
+
+
+def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game):
+    """正确性 C1：撤回终结在飞转译；落账前复查源轮已死则不落。"""
+    from ming_sim.audience_translation import (
+        cancel_turn_translation,
+        join_night_translations,
+        schedule_audience_turn_translation,
+        apply_audience_round_translation,
+    )
+    from ming_sim.audience_translate import AudienceTranslateError
+    from ming_sim.audience_translation import run_turn_translation_job
+    import ming_sim.audience_translation as at_mod
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    gate = threading.Lock()
+    hold = threading.Event()
+    entered = threading.Event()
+    applied = {"n": 0}
+
+    def translate_fn(prompt, llm_config):
+        entered.set()
+        assert hold.wait(timeout=2.0)
+        return {
+            "commissions": [{"text": "不该落的交办"}],
+            "promises": [],
+        }
+
+    real_apply = at_mod.apply_audience_round_translation
+
+    def counting_apply(*a, **k):
+        applied["n"] += 1
+        return real_apply(*a, **k)
+
+    # patch apply to count
+    at_mod.apply_audience_round_translation = counting_apply
+    try:
+        ctid = _persist_round(db, state, nid, "撤回我", "……")
+        fut = schedule_audience_turn_translation(
+            db, state,
+            emperor_message="撤回我",
+            reply="……",
+            night_id=nid, chat_turn_id=ctid,
+            llm_config=SimpleNamespace(channel="api"),
+            translate_fn=translate_fn, write_gate=gate,
+        )
+        assert entered.wait(timeout=2.0)
+        # 模拟撤回：cancel Future + 标 undone
+        n = cancel_turn_translation(ctid)
+        assert n == 1
+        db.conn.execute(
+            "UPDATE chat_turns SET status='undone', undone_at=CURRENT_TIMESTAMP WHERE id=?",
+            (ctid,),
+        )
+        db.conn.commit()
+        hold.set()
+        # worker 应失败或空过，不得成功落账
+        join_night_translations(nid, timeout_s=2.0)
+        try:
+            fut.result(timeout=0.5)
+        except Exception:
+            pass
+        assert applied["n"] == 0, "死轮不得 apply 落账"
+        # 直接写门复查：已 undone 的 apply 前复查须挡
+        # （run_turn_translation_job 路径）
+    finally:
+        at_mod.apply_audience_round_translation = real_apply
+        hold.set()
+        join_all_translations(timeout_s=1.0)
+
+
+def test_web_hall_chat_routes_to_scene_chat():
+    """完整性：Web 真实召对入口源码切 scene_chat，旧四机制不再挂生产入口。"""
+    import inspect
+    import web_app as wa
+
+    core_src = inspect.getsource(wa.WebGame._chat_core)
+    retry_src = inspect.getsource(wa.WebGame.retry_interrupted_reply)
+    stream_src = inspect.getsource(wa.WebGame.chat_stream)
+    scene_payload_src = inspect.getsource(wa.WebGame._scene_chat_stream_payload)
+
+    for label, src in (
+        ("_chat_core", core_src),
+        ("retry", retry_src),
+        ("chat_stream", stream_src),
+    ):
+        assert "scene_chat" in src, f"{label} 须接 scene_chat"
+        # 旧并行腿不得再挂殿上生产入口（密令分支可保留 session.chat）
+        assert "_dispatch_relation_judge" not in src, f"{label} 仍挂边事件判官"
+        assert "_spawn_extraction_trail" not in src, f"{label} 仍挂故事抽取"
+        assert "_trail_mindreading_after_reply" not in src, f"{label} 仍挂代码读心"
+        assert "_start_cli_action_intent" not in src, f"{label} 仍挂旧分类器"
+
+    assert "scene_chat" in scene_payload_src
+    undo_src = inspect.getsource(wa.WebGame.undo_last_chat)
+    assert "cancel_turn_translation" in undo_src
