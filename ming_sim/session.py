@@ -1737,11 +1737,13 @@ class GameSession:
         # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
         xuan_fragment = recognize_xuan_command(message_text)
         if xuan_fragment:
-            target = match_minister_from_text(xuan_fragment)
+            fragment = str(xuan_fragment).strip()
+            chars = getattr(getattr(self, "content", None), "characters", None) or {}
+            target = chars.get(fragment) or match_minister_from_text(fragment)
             if target is None:
                 try:
                     target, _tmp = self.summon_character(
-                        xuan_fragment, allow_temporary=False,
+                        fragment, allow_temporary=False,
                     )
                 except ValueError:
                     target = None
