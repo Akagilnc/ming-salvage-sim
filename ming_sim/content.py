@@ -779,6 +779,7 @@ class GameContent:
     # 提示词
     game_world_prompt: str = ""
     minister_agent_prompt: str = ""
+    scene_agent_prompt: str = ""
     consort_agent_prompt: str = ""
 
     decree_writer_prompt: str = ""
@@ -861,6 +862,7 @@ class GameContent:
             skill_tool_templates=dict_of_strings(load_json_asset("skill_tools.json"), "skill_tools.json"),
             game_world_prompt=load_text_asset("prompts/game_world.md"),
             minister_agent_prompt=load_text_asset("prompts/minister_agent.md"),
+            scene_agent_prompt=load_text_asset("prompts/scene_agent.md"),
             consort_agent_prompt=load_text_asset("prompts/consort_agent.md"),
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             season_simulator_prompt=load_text_asset("prompts/season_simulator.md"),
