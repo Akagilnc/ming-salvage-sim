@@ -3106,6 +3106,10 @@ class GameSession:
         raw_reason = data.get("reason") or data.get(metadata_aliases["reason"])
         if isinstance(raw_reason, str) and raw_reason.strip():
             staged_payload["reason"] = raw_reason
+        # 成案核优先 payload 原样 text：工具路若显式给了正文则原样带入（荐词≠正文）。
+        raw_text = data.get("text")
+        if isinstance(raw_text, str) and raw_text.strip():
+            staged_payload["text"] = raw_text
         for key in ("office_type", "faction", "replaces"):
             value = str(data.get(key) or data.get(metadata_aliases[key]) or "").strip()
             if value:

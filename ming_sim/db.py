@@ -19302,10 +19302,11 @@ class GameDB:
         staged_payload["name"] = name
         staged_payload["_office_action"] = action
         staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
-        # 纯 office 与组合路径同核：优先声明/payload 原样 text（P7：不拼模板）。
+        # 纯 office 与组合路径同核：优先声明/payload 原样 text（P7）。
+        # legacy 会话/荐举暂存可不带 text；缺文时回落旧形题名，避免 commit 整单 failed。
         text = str(decree_text or staged_payload.get("text") or "").strip()
         if not text:
-            return False
+            text = f"{action}{name}" + (f"为{office}" if office else "")
         dossier_id = self.create_decree_dossier(
             state,
             action_type=(

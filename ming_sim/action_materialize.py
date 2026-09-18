@@ -1826,6 +1826,10 @@ def _stage_office_pending_core(
         "mode": resolve_directive_mode(extracted=appt.get("mode") or mode_mark),
         "summon_after": "是" if want_summon else "否",
     }
+    # 成案核优先 payload 原样 text：会话任免把玩家原话带入，免 commit 回落题名。
+    player_text = str(ctx.player_message or "").strip()
+    if player_text:
+        payload["text"] = player_text
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
     if tenure_mark == "署理":
         payload["任别"] = "署理"
