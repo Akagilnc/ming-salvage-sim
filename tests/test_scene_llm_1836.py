@@ -248,7 +248,7 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
             return SimpleNamespace(content=script, tools=[])
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
-    # 分类器不跑真 LLM：channel 非 cli/api 且无 backend → _start_scene_action_intent 早退 None。
+    # #1837：转译可注入空声明，不跑真 LLM。
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
     result = sess.scene_chat("洪承畴可堪大任？")
 
@@ -337,8 +337,8 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     assert int(turns_after[-1].get("minister_message_id") or 0) == minister_mid
 
 
-def test_scene_chat_transition_classifier_reads_player_message_only(game, monkeypatch):
-    """过渡：分类器只读玩家话；经 _start_scene_action_intent 真缝调用，不绑假大臣。"""
+def test_scene_chat_no_longer_calls_parallel_classifier(game, monkeypatch):
+    """#1837：场景入口退役并行分类器；回话后走转译（本测桩空声明）。"""
     db, state, content = game
     open_night(db, state)
 
@@ -348,46 +348,19 @@ def test_scene_chat_transition_classifier_reads_player_message_only(game, monkey
         def run(self, message):
             return SimpleNamespace(content="臣领旨。", tools=[])
 
-    seen_messages: list[str] = []
-    seen_kwargs: list[dict] = []
+    import ming_sim.cli_backend as cb
 
-    def fake_classify(text, *args, **kwargs):
-        seen_messages.append(text)
-        # classify_cli_action_intent positional: text, active_orders, is_consort, ...
-        seen_kwargs.append({"args": args, "kwargs": kwargs})
-        return {"kind": "none"}
+    def boom(*a, **k):
+        raise AssertionError("scene_chat 不得再调 classify_cli_action_intent")
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
-    import ming_sim.cli_backend as cb
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    monkeypatch.setattr(cb, "classify_cli_action_intent", boom)
 
     sess = _sess(
         db, state, content,
         llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
     )
-    # 同步跑分类器（不经线程池），仍走 _start_scene_action_intent 生产装配。
-    def sync_start(message):
-        fut = sess._start_scene_action_intent.__get__(sess, GameSession)(message)
-        # Replace executor future with immediate result by joining.
-        return fut
-
-    # 直接让 _start_scene_action_intent 走真代码，但 executor 同步。
-    from concurrent.futures import Future
-
-    def immediate_submit(fn, *a, **k):
-        f = Future()
-        try:
-            f.set_result(fn(*a, **k))
-        except Exception as exc:
-            f.set_exception(exc)
-        return f
-
-    monkeypatch.setattr(
-        "ming_sim.session._CLI_ACTION_INTENT_EXECUTOR",
-        SimpleNamespace(submit=immediate_submit),
-    )
-
-    sess.scene_chat("着户部拨银三十万两赈灾")
-    assert seen_messages == ["着户部拨银三十万两赈灾"]
-    # 第二参 active_orders 必须是空列表（无假大臣密令锚）。
-    assert seen_kwargs and seen_kwargs[0]["args"][0] == []
+    sess._audience_translate_fn = lambda prompt, cfg: {"commissions": [], "promises": []}
+    result = sess.scene_chat("着户部拨银三十万两赈灾")
+    assert result.answer == "臣领旨。"
+    assert result.pending_action_id == 0

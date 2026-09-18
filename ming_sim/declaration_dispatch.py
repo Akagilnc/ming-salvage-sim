@@ -12,18 +12,12 @@ ADR 0028 后出注记）、既有暂存的应允 / 拒绝、当场实况（人�
 合成替代玩家可感的自由文本（P6/P7：文字模板与删改 LLM 原文均违宪——例如
 「在场进出」落账用的正是声明自带的正文，代码不拼「某某入殿」这类固定句）。
 
-召对（C1a / C1b）与过月（C3）在各自真实上线时都调 :func:`dispatch_declaration`
-这一个入口，不各自另写一份同构分派逻辑；本票内演示两种真实但不同的调用形态：
-:func:`dispatch_declaration`（连 `night_id` 直接落账，召对场中承接的形态，
-ADR 0155）与 :func:`stage_declaration` + :func:`settle_staged_declarations_in_decree_order`
-（先暂存、过月按下旨先后幂等结算，ADR 0157 步骤 1-2 的形态）——**但 C1a
-（#1837）/ C1b（#1838）/ C3（#1840）三票截至本次提交仍是 OPEN、未实现**：
-它们是把「转译 LLM 读一轮回话 / 一个推演段」接到本模块输入端的那一步，
-0155/0157 描述的召对整场单 LLM 会话与过月推演段调用本身在这个代码库里
-还不存在任何实现可挂。把那一步做进 #1835 等同于把 C1a/C1b/C3 的票面判定
-提前抢答——三票各自的验收与设计取舍应在各自票内定，不该被 #1835 的施工
-腿单方面决定。若判定 #1835 必须把三票工作量并入才算完成，这是需要 owner /
-票庭裁定的边界问题（是否合并票面），不是本票施工腿能自行决定的实现细节。
+召对与过月都调 :func:`dispatch_declaration` 这一个入口，不各自另写一份同构
+分派逻辑；两种真实调用形态：:func:`dispatch_declaration`（连 `night_id` 直接
+落账，召对场中承接，ADR 0155）与 :func:`stage_declaration` +
+:func:`settle_staged_declarations_in_decree_order`（先暂存、过月按下旨先后幂等
+结算，ADR 0157 步骤 1-2）。C1a（#1837）已把召对转译接到本入口（交办 / 应允）；
+C1b（分段 / 在场 / 边事件）与 C3（过月段）仍在各自票内接线。
 
 任一项引用不存在实体（事务 / 人物 / 军队 / 暂存动作 / 夜）单独拒收、留痕于
 对应 ``SectionResult.rejected``，不牵连同批其余合法项（ADR 0015 per-item
@@ -454,58 +448,281 @@ def _item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
             db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
 
 
+def _commission_appointment_fields(
+    appointment: object, *, source: Provenance,
+) -> Tuple[Optional[Dict[str, Any]], Optional[RejectedItem]]:
+    """交办上的任免载荷；缺 name/office（任命）→ invalid_shape。"""
+    if not appointment:
+        return None, None
+    if not isinstance(appointment, Mapping):
+        return None, RejectedItem(
+            item={"raw_value": appointment}, reason="任免载荷须为对象",
+            category="invalid_shape", source=source,
+        )
+    action = str(
+        appointment.get("appoint_action") or appointment.get("action") or "任命"
+    ).strip() or "任命"
+    if action not in {"任命", "罢免"}:
+        return None, RejectedItem(
+            item=dict(appointment), reason=f"任免动作非法：{action}",
+            category="invalid_enum", source=source,
+        )
+    name = str(appointment.get("name") or "").strip()
+    office = str(appointment.get("office") or appointment.get("new_office") or "").strip()
+    if not name:
+        return None, RejectedItem(
+            item=dict(appointment), reason="任免声明缺 name",
+            category="invalid_shape", source=source,
+        )
+    if action == "任命" and not office:
+        return None, RejectedItem(
+            item=dict(appointment), reason="任命声明缺 office",
+            category="invalid_shape", source=source,
+        )
+    payload: Dict[str, Any] = {"name": name, "office": office, "appoint_action": action}
+    tenure = str(
+        appointment.get("appointment_tenure") or appointment.get("任别") or ""
+    ).strip()
+    if tenure:
+        payload["appointment_tenure"] = tenure
+    return payload, None
+
+
+def _commission_grant_payload(
+    db: Any, *, text: object, grant: Mapping[str, object],
+) -> Dict[str, Any]:
+    """交办上的拨帑载荷；协饷走 #1503 单轨，其余走 grant_allocation shape。"""
+    from ming_sim.action_materialize import (
+        GRANT_ACTIONS,
+        require_grant_allocation_shape,
+        resolve_grant_account,
+        write_locality_scope_for_target_kind,
+    )
+
+    grant_action = str(grant.get("grant_action") or grant.get("action") or "").strip()
+    # 兼容 C0 旧形：未写 grant_action 但给了协饷五字段 → 视作协饷。
+    if not grant_action:
+        if any(grant.get(k) not in (None, "") for k in (
+            "amount", "account", "purpose", "target_kind", "target_id",
+        )):
+            grant_action = "协饷"
+    if grant_action not in (GRANT_ACTIONS - {"无"}):
+        raise DecreeMaterializationValidationError(
+            f"拨帑 grant_action 非法或缺失：{grant_action!r}",
+            failed_fields=("grant_action",),
+        )
+    body = str(text or "")
+    if not body.strip():
+        raise DecreeMaterializationValidationError(
+            "交办声明缺正文（不猜散文）", failed_fields=("text",),
+        )
+    if grant_action == "协饷":
+        payload = require_materializable_xiexang_payload(
+            db,
+            text=body,
+            amount=grant.get("amount", 0),
+            account=grant.get("account", ""),
+            purpose=grant.get("purpose", ""),
+            target_kind=grant.get("target_kind", ""),
+            target_id=grant.get("target_id", ""),
+            cadence=grant.get("cadence", ""),
+        )
+        payload["grant_action"] = "协饷"
+        payload["dossier_action_type"] = "grant_allocation"
+        payload["execution_surface"] = "immediate"
+        return payload
+
+    shaped = require_grant_allocation_shape(
+        grant_action=grant_action,
+        amount=grant.get("amount"),
+        account=grant.get("account"),
+    )
+    target_kind = str(grant.get("target_kind") or "").strip()
+    target_id = str(grant.get("target_id") or "").strip()
+    if not target_kind or not target_id:
+        raise DecreeMaterializationValidationError(
+            "拨帑声明缺 target_kind/target_id", failed_fields=("target_kind", "target_id"),
+        )
+    account = str(shaped.get("account") or resolve_grant_account(
+        grant_action=grant_action, account=grant.get("account"),
+    ))
+    cadence = str(grant.get("cadence") or "").strip() or "一次性"
+    if cadence not in {"一次性", "每月"}:
+        raise DecreeMaterializationValidationError(
+            f"拨帑 cadence 非法：{cadence!r}", failed_fields=("cadence",),
+        )
+    surface = str(grant.get("execution_surface") or "in_transit").strip() or "in_transit"
+    if surface not in {"immediate", "in_transit"}:
+        raise DecreeMaterializationValidationError(
+            f"拨帑 execution_surface 非法：{surface!r}",
+            failed_fields=("execution_surface",),
+        )
+    payload = {
+        "text": body,
+        "dossier_action_type": "grant_allocation",
+        "grant_action": grant_action,
+        "amount": int(shaped["amount"]),
+        "account": account,
+        "target_kind": target_kind,
+        "target_id": target_id,
+        "cadence": cadence,
+        "execution_surface": surface,
+        "locality_scope": write_locality_scope_for_target_kind(target_kind),
+        "mode": "ordinary",
+    }
+    purpose = str(grant.get("purpose") or "").strip()
+    if purpose:
+        payload["purpose"] = purpose
+    return payload
+
+
+def _attach_commission_affair(
+    db: Any, state: Any, item: Mapping[str, object], payload: Dict[str, Any],
+    *, rejected: List[RejectedItem], source: Provenance,
+) -> bool:
+    """可选事务声明挂到载荷；失败时已写入 rejected，返回 False。"""
+    raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
+    if raw_affair is None:
+        return True
+    try:
+        affair_id = db.affairs.resolve_declaration(
+            raw_affair, year=state.year, period=state.period,
+            turn=state.turn, allowed=ATTACH_BIRTH,
+        )
+    except KeyError as exc:
+        _reject(rejected, item, str(exc), "hallucinated_id", source)
+        return False
+    except ValueError as exc:
+        _reject(rejected, item, str(exc), "invalid_shape", source)
+        return False
+    payload["affair_id"] = affair_id
+    return True
+
+
 def _dispatch_commissions(
     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance,
 ) -> SectionResult:
+    """交办声明 → 既有 pending 暂存。
+
+    一句话同时含拟旨 + 拨帑 + 任免时由声明本身合成**一件事一份载荷**
+    （ADR 0028 后出注记 / C0 AC2 / C1a AC1）：
+    - 有拨帑 → kind=directive，typed grant 入同一 payload；任免字段若有亦挂同一份
+    - 仅任免 → kind=office（收夜成 appointment 案卷）
+    - 仅正文 → kind=directive 普通拟旨
+    """
     items, rejected = _section_items(raw, label="交办声明", source=source)
     applied: List[Any] = []
     for item in items:
-        grant = item.get("grant") or {}
-        if not isinstance(grant, Mapping):
+        grant_raw = item.get("grant") or {}
+        if grant_raw and not isinstance(grant_raw, Mapping):
             _reject(rejected, item, "拨帑载荷须为对象", "invalid_shape", source)
             continue
+        appointment_fields, appt_rejected = _commission_appointment_fields(
+            item.get("appointment"), source=source,
+        )
+        if appt_rejected is not None:
+            rejected.append(appt_rejected)
+            continue
+
+        text = item.get("text")
         try:
-            if grant:
-                # 一句话同时含拟旨 + 拨帑：一次校验、合成一份载荷（AC2）。
-                payload = require_materializable_xiexang_payload(
-                    db,
-                    text=item.get("text"),
-                    amount=grant.get("amount", 0),
-                    account=grant.get("account", ""),
-                    purpose=grant.get("purpose", ""),
-                    target_kind=grant.get("target_kind", ""),
-                    target_id=grant.get("target_id", ""),
-                    cadence=grant.get("cadence", ""),
+            if grant_raw:
+                # 拟旨 + 拨帑（±任免）→ 一份 directive 载荷。
+                payload = _commission_grant_payload(
+                    db, text=text, grant=grant_raw,  # type: ignore[arg-type]
                 )
             else:
-                text = str(item.get("text") or "")
-                if not text.strip():
+                body = str(text or "")
+                if not body.strip() and not appointment_fields:
                     raise DecreeMaterializationValidationError(
                         "交办声明缺正文（不猜散文）", failed_fields=("text",),
                     )
-                payload = {"text": text}
+                if appointment_fields and not body.strip():
+                    body = (
+                        f"{appointment_fields['appoint_action']}"
+                        f"{appointment_fields['name']}"
+                        + (
+                            f"为{appointment_fields['office']}"
+                            if appointment_fields.get("office") else ""
+                        )
+                    )
+                # 收夜成案需要 ordinary triad；纯正文走 special_decree 最小结构
+                # （与 _ensure_directive_dossier 无结构回退同形，声明侧一次给齐）。
+                # target_id 按本批已落条数区分，避免同回合多条纯正文互撞。
+                payload = {
+                    "text": body,
+                    "dossier_action_type": "special_decree",
+                    "target_kind": "policy",
+                    "target_id": f"commission-text:{int(state.turn)}:{len(applied)}",
+                    "locality_scope": "none",
+                    "mode": "ordinary",
+                }
         except DecreeMaterializationValidationError as exc:
             _reject(rejected, item, str(exc), "invalid_enum", source)
             continue
-        raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
-        if raw_affair is not None:
-            try:
-                affair_id = db.affairs.resolve_declaration(
-                    raw_affair, year=state.year, period=state.period,
-                    turn=state.turn, allowed=ATTACH_BIRTH,
-                )
-            except KeyError as exc:
-                _reject(rejected, item, str(exc), "hallucinated_id", source)
-                continue
-            except ValueError as exc:
-                _reject(rejected, item, str(exc), "invalid_shape", source)
-                continue
-            payload["affair_id"] = affair_id
+        except ValueError as exc:
+            # require_grant_allocation_shape 等权威缝的裸 ValueError → 单项拒收。
+            _reject(rejected, item, str(exc), "invalid_enum", source)
+            continue
+
+        if appointment_fields:
+            payload.update(appointment_fields)
+
+        if not _attach_commission_affair(
+            db, state, item, payload, rejected=rejected, source=source,
+        ):
+            continue
+
+        def _stage_office(shared_text: str) -> Dict[str, Any]:
+            # office 成案链只吃任免字段；禁把 grant 的 execution_surface 等带进
+            # appointment 案卷（会撞「execution_surface 与案卷动作策略不符」）。
+            office_payload = dict(appointment_fields or {})
+            office_payload["text"] = shared_text
+            if "affair_id" in payload:
+                office_payload["affair_id"] = payload["affair_id"]
+            oid = db.stage_pending_action(
+                int(state.turn),
+                "office",
+                str(office_payload["appoint_action"]),
+                minister_name,
+                office_payload,
+            )
+            return {"id": oid, "payload": office_payload, "kind": "office"}
+
+        # 仅任免 → office 成案链（收夜 → appointment 案卷 → 过月落职）。
+        if appointment_fields and not grant_raw:
+            applied.append(_stage_office(str(payload.get("text") or "")))
+            continue
+
+        # 有拨帑（±任免）或纯正文拟旨：directive 成案。actor 必须是 characters 真名
+        # （turn_directives.actor FK）；场景入口无单人锚时用殿前常在，禁空串撞外键。
+        actor = str(minister_name or payload.get("actor") or "").strip()
+        if not actor:
+            actor = _commission_fallback_actor(db)
+        if actor:
+            payload["actor"] = actor
         row_id = db.stage_pending_action(
-            int(state.turn), "directive", "拟旨", minister_name, payload,
+            int(state.turn), "directive", "拟旨", actor, payload,
         )
-        applied.append({"id": row_id, "payload": payload})
+        applied.append({"id": row_id, "payload": payload, "kind": "directive"})
+        if appointment_fields:
+            applied.append(_stage_office(str(payload.get("text") or "")))
     return SectionResult(applied=applied, rejected=rejected)
+
+
+def _commission_fallback_actor(db: Any) -> str:
+    """场景整场入口无单人大臣锚时，directive.actor 回落殿前常在（王承恩优先）。"""
+    for name in ("王承恩", "曹化淳"):
+        row = db.conn.execute(
+            "SELECT name FROM characters WHERE name=? LIMIT 1", (name,),
+        ).fetchone()
+        if row is not None:
+            return str(row["name"])
+    row = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' "
+        "AND power_id='ming' ORDER BY name LIMIT 1"
+    ).fetchone()
+    return str(row["name"]) if row is not None else ""
 
 
 def _dispatch_promises(
