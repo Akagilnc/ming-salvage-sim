@@ -1568,8 +1568,11 @@ class GameDB:
                 FOREIGN KEY(secret_order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
             );
             -- #654：fan-out 幂等键＝(source_id, region_id)；单行 region_id='' 与旧语义等价
+            -- #1837：幂等键含 action_type，一份 pending 可同时产拨帑+任免两类案卷
+            -- （非属地 grant 的 region_id='' 不再把 appointment 短路成既有 grant 行）。
             CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action
-                ON decree_dossiers(pending_action_id, region_id) WHERE pending_action_id > 0;
+                ON decree_dossiers(pending_action_id, region_id, action_type)
+                WHERE pending_action_id > 0;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive
                 ON decree_dossiers(directive_id, region_id) WHERE directive_id > 0;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_secret_order
@@ -3458,12 +3461,14 @@ class GameDB:
         return False
 
     def _ensure_decree_dossier_locality_indexes(self) -> None:
-        """#654：把旧单列 UNIQUE 换成 (source_id, region_id) 复合键；secret_order 不动。"""
+        """#654 / #1837：pending 幂等键＝(pending_action_id, region_id, action_type)；
+        directive 仍 (directive_id, region_id)；secret_order 不动。"""
         self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_pending_action")
         self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_directive")
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action "
-            "ON decree_dossiers(pending_action_id, region_id) WHERE pending_action_id > 0"
+            "ON decree_dossiers(pending_action_id, region_id, action_type) "
+            "WHERE pending_action_id > 0"
         )
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive "
@@ -15157,9 +15162,10 @@ class GameDB:
                 (int(directive_id), region_id),
             )
         elif int(pending_action_id or 0) > 0:
+            # #1837：同 pending 可挂多 action_type（组合拨帑+任免）；幂等按三类键查。
             lookup_sql, lookup_params = (
-                "pending_action_id = ? AND region_id = ?",
-                (int(pending_action_id), region_id),
+                "pending_action_id = ? AND region_id = ? AND action_type = ?",
+                (int(pending_action_id), region_id, action),
             )
         if lookup_sql:
             existing = self.conn.execute(

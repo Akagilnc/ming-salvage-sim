@@ -124,45 +124,48 @@ def test_build_night_said_reads_chat_messages_not_missing_turn_columns(game):
 
 
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
-    """AC1：scene_chat 转译 → typed 暂存 → 应允收夜成案 → 过月落账。"""
+    """AC1：scene_chat 转译 → 一条组合暂存 → 应允收夜 → 任免与拨帑两类效果全。
+
+    同入口覆盖属地赈灾与非属地赏赉：后者 region_id=''，咬住案卷幂等键须含
+    action_type（否则 appointment 会被既有 grant 行短路吞掉）。
+    """
     db, state, content = game
-    open_night(db, state, location="乾清宫", time_of_day="夜")
     person = _hong_name(db, content)
     region = _region_id(db)
-    edict = f"任命{person}为陕西巡抚，调银三十万两赈灾"
-
-    commission = {
-        "text": edict,
-        "appointment": {
-            "name": person, "office": "陕西巡抚", "appoint_action": "任命",
+    # 赏赉目标用人名（非 region），region_id 落 ''——与 appointment 同键碰撞面。
+    grant_cases = (
+        {
+            "label": "region_relief",
+            "edict": f"任命{person}为陕西巡抚，调银三十万两赈灾",
+            "grant": {
+                "grant_action": "赈灾",
+                "amount": 30,
+                "account": "国库",
+                "target_kind": "region",
+                "target_id": region,
+                "cadence": "一次性",
+                "execution_surface": "immediate",
+            },
+            "grant_target_id": region,
+            "ledger_target_id": region,
+            "ledger_delta": -30,
         },
-        "grant": {
-            "grant_action": "赈灾",
-            "amount": 30,
-            "account": "国库",
-            "target_kind": "region",
-            "target_id": region,
-            "cadence": "一次性",
-            "execution_surface": "immediate",
+        {
+            "label": "character_reward",
+            "edict": f"任命{person}为陕西巡抚，赏银二十万两",
+            "grant": {
+                "grant_action": "赏赉",
+                "amount": 20,
+                "account": "国库",
+                "target_kind": "character",
+                "target_id": person,
+                "execution_surface": "immediate",
+            },
+            "grant_target_id": person,
+            "ledger_target_id": person,
+            "ledger_delta": -20,
         },
-    }
-    # 第一轮：交办；第二轮：「准」应允上一轮全部 pending
-    calls = {"n": 0}
-
-    def translate_fn(prompt, llm_config):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return {"commissions": [commission], "promises": []}
-        # 应允本夜全部 pending（组合载荷只一条）
-        rows = db.conn.execute(
-            "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
-        ).fetchall()
-        return {
-            "commissions": [],
-            "promises": [
-                {"action_id": int(r["id"]), "decision": "应允"} for r in rows
-            ],
-        }
+    )
 
     class FakeAgent:
         def run(self, message):
@@ -171,79 +174,121 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
-    sess = _sess(db, state, content, translate_fn=translate_fn)
 
-    r1 = sess.scene_chat(edict)
-    assert r1.pending_action_id > 0
-    pending = [
-        dict(r) for r in db.conn.execute(
-            "SELECT id, kind, action, payload_json, night_approved "
-            "FROM pending_actions WHERE status='pending' ORDER BY id"
+    for case in grant_cases:
+        open_night(db, state, location="乾清宫", time_of_day="夜")
+        edict = case["edict"]
+        commission = {
+            "text": edict,
+            "appointment": {
+                "name": person, "office": "陕西巡抚", "appoint_action": "任命",
+            },
+            "grant": case["grant"],
+        }
+        calls = {"n": 0}
+
+        def translate_fn(prompt, llm_config, _c=commission, _db=db):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"commissions": [_c], "promises": []}
+            rows = _db.conn.execute(
+                "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
+            ).fetchall()
+            return {
+                "commissions": [],
+                "promises": [
+                    {"action_id": int(r["id"]), "decision": "应允"} for r in rows
+                ],
+            }
+
+        sess = _sess(db, state, content, translate_fn=translate_fn)
+        r1 = sess.scene_chat(edict)
+        assert r1.pending_action_id > 0, case["label"]
+        pending = [
+            dict(r) for r in db.conn.execute(
+                "SELECT id, kind, action, payload_json, night_approved "
+                "FROM pending_actions WHERE status='pending' ORDER BY id"
+            ).fetchall()
+        ]
+        # ADR 0028 / #1837：任免+拨帑只落一条组合 directive，不拆 office 第二条。
+        assert len(pending) == 1, (case["label"], pending)
+        assert pending[0]["kind"] == "directive", case["label"]
+        payload = json.loads(pending[0]["payload_json"])
+        assert payload["text"] == edict, case["label"]
+        assert payload["grant_action"] == case["grant"]["grant_action"], case["label"]
+        assert int(payload["amount"]) == int(case["grant"]["amount"]), case["label"]
+        assert payload["name"] == person, case["label"]
+        assert payload["office"] == "陕西巡抚", case["label"]
+        assert payload["appoint_action"] == "任命", case["label"]
+        assert int(pending[0]["night_approved"] or 0) == 0, case["label"]
+
+        r2 = sess.scene_chat("准")
+        assert r2.answer == "臣等遵旨。", case["label"]
+        approved = db.conn.execute(
+            "SELECT id, kind, night_approved FROM pending_actions "
+            "WHERE id IN ({})".format(",".join(str(p["id"]) for p in pending))
         ).fetchall()
-    ]
-    # ADR 0028 / #1837：任免+拨帑只落一条组合 directive，不拆 office 第二条。
-    assert len(pending) == 1, pending
-    assert pending[0]["kind"] == "directive"
-    payload = json.loads(pending[0]["payload_json"])
-    assert payload["text"] == edict
-    assert payload["grant_action"] == "赈灾"
-    assert int(payload["amount"]) == 30
-    assert payload["name"] == person
-    assert payload["office"] == "陕西巡抚"
-    assert payload["appoint_action"] == "任命"
-    assert int(pending[0]["night_approved"] or 0) == 0
+        assert all(int(r["night_approved"] or 0) == 1 for r in approved), (
+            case["label"], approved,
+        )
 
-    r2 = sess.scene_chat("准")
-    assert r2.answer == "臣等遵旨。"
-    approved = db.conn.execute(
-        "SELECT id, kind, night_approved FROM pending_actions "
-        "WHERE id IN ({})".format(",".join(str(p["id"]) for p in pending))
-    ).fetchall()
-    assert all(int(r["night_approved"] or 0) == 1 for r in approved), approved
+        close_night(db, state, content=content, registry=None, wait_timeout_s=0.0)
+        for p in pending:
+            row = db.conn.execute(
+                "SELECT status FROM pending_actions WHERE id=?", (int(p["id"]),),
+            ).fetchone()
+            assert row["status"] == "committed", (case["label"], p["kind"], row["status"])
 
-    close_night(db, state, content=content, registry=None, wait_timeout_s=0.0)
-    for p in pending:
-        row = db.conn.execute(
-            "SELECT status FROM pending_actions WHERE id=?", (int(p["id"]),),
+        # 同一 pending 必须同时产 appointment 与 grant_allocation（非靠 region_id 碰巧分键）。
+        paired = db.conn.execute(
+            "SELECT action_type FROM decree_dossiers WHERE pending_action_id=? "
+            "ORDER BY action_type",
+            (int(pending[0]["id"]),),
+        ).fetchall()
+        paired_types = {str(r["action_type"]) for r in paired}
+        assert "appointment" in paired_types and "grant_allocation" in paired_types, (
+            case["label"], paired_types,
+        )
+
+        appt = db.conn.execute(
+            "SELECT id, status, action_type FROM decree_dossiers "
+            "WHERE action_type='appointment' AND target_id=? "
+            "ORDER BY id DESC LIMIT 1",
+            (person,),
         ).fetchone()
-        assert row["status"] == "committed", (p["kind"], row["status"])
+        assert appt is not None, case["label"]
 
-    appt = db.conn.execute(
-        "SELECT id, status, action_type FROM decree_dossiers "
-        "WHERE action_type='appointment' AND target_id=? "
-        "ORDER BY id DESC LIMIT 1",
-        (person,),
-    ).fetchone()
-    assert appt is not None
+        grant_dossiers = [
+            d for d in db.list_decree_dossiers()
+            if d["action_type"] == "grant_allocation"
+            and str(d.get("target_id") or "") == case["grant_target_id"]
+            and int(d.get("pending_action_id") or 0) == int(pending[0]["id"])
+        ]
+        assert grant_dossiers, case["label"]
 
-    grant_dossiers = [
-        d for d in db.list_decree_dossiers()
-        if d["action_type"] == "grant_allocation"
-        and str(d.get("target_id") or "") == region
-    ]
-    assert grant_dossiers
+        state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
+        db.save_state(state)
+        for d in grant_dossiers:
+            db.apply_dossier_promulgation(
+                state, int(d["id"]), decision="promulgated", content=content,
+            )
+        if str(appt["status"]) == "proposed":
+            db.apply_dossier_promulgation(
+                state, int(appt["id"]), decision="promulgated", content=content,
+            )
 
-    state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
-    db.save_state(state)
-    for d in grant_dossiers:
-        db.apply_dossier_promulgation(
-            state, int(d["id"]), decision="promulgated", content=content,
+        char = db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (person,),
+        ).fetchone()
+        assert "陕西巡抚" in str(char["office"] or ""), case["label"]
+        moved = db.conn.execute(
+            "SELECT delta FROM economy_ledger WHERE account='国库' "
+            "AND target_id=? AND delta < 0 ORDER BY id DESC LIMIT 1",
+            (case["ledger_target_id"],),
+        ).fetchone()
+        assert moved is not None and int(moved["delta"]) == case["ledger_delta"], (
+            case["label"], moved,
         )
-    if str(appt["status"]) == "proposed":
-        db.apply_dossier_promulgation(
-            state, int(appt["id"]), decision="promulgated", content=content,
-        )
-
-    char = db.conn.execute(
-        "SELECT office FROM characters WHERE name=?", (person,),
-    ).fetchone()
-    assert "陕西巡抚" in str(char["office"] or "")
-    moved = db.conn.execute(
-        "SELECT delta FROM economy_ledger WHERE account='国库' "
-        "AND target_id=? AND delta < 0 ORDER BY id DESC LIMIT 1",
-        (region,),
-    ).fetchone()
-    assert moved is not None and int(moved["delta"]) == -30
 
 
 def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, monkeypatch):
