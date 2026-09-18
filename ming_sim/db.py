@@ -1417,6 +1417,8 @@ class GameDB:
                 -- #1566/#1716：typed route（'' / offsite / secret_order / secret_order_offsite）；
                 -- 中断重试经 decode_chat_turn_route 恢复 explicit_secret_order / 殿上 scene。
                 route TEXT NOT NULL DEFAULT '',
+                -- #1838：本轮转译声明的御前主角（按源轮；空=本轮未声明）
+                protagonist_name TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 undone_at TEXT
             );
@@ -1439,6 +1441,8 @@ class GameDB:
                 close_commit_cursor INTEGER NOT NULL DEFAULT 0,
                 -- 夜内事件单调序源：账本 seq 与 chat night_seq 同桶递增
                 next_event_seq INTEGER NOT NULL DEFAULT 0,
+                -- #1838：本夜当前御前主角（转译判；宣 X 当场先切）
+                protagonist_name TEXT NOT NULL DEFAULT '',
                 opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 closed_at TEXT
             );
@@ -2508,6 +2512,10 @@ class GameDB:
         self.ensure_column("chat_turns", "undone_at", "TEXT")
         # #1566：typed 密令 route 旧档补列（中断重试恢复 explicit_secret_order / 殿上 scene）。
         self.ensure_column("chat_turns", "route", "TEXT NOT NULL DEFAULT ''")
+        # #1838 C1b：本轮转译声明的御前主角（按源轮持久化；夜当前值在 audience_nights）。
+        self.ensure_column("chat_turns", "protagonist_name", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "audience_nights", "protagonist_name", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
             "story_ledger_entries", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
         # #506 轮级撤销：口令账（入殿/告退等，source_chat_turn_id==0）由某一轮 attach 创建时
@@ -10829,6 +10837,27 @@ class GameDB:
                 """,
                 (int(chat_turn_id),),
             )
+            # #1838 / ADR 0155：夜当前主角是投影，不是独立真源。撤本轮后按该夜
+            # 仍存活轮（status 非 undone/failed）最近一条非空 chat_turns.protagonist_name
+            # 重投影 audience_nights.protagonist_name；无存活声明则回初态空值。
+            # 覆盖转译绑定与宣 X 先切两个写口（二者都写同一夜级缓存）。
+            if night_id > 0:
+                prev = self.conn.execute(
+                    """
+                    SELECT protagonist_name FROM chat_turns
+                    WHERE night_id = ?
+                      AND status NOT IN ('undone', 'failed')
+                      AND protagonist_name != ''
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (night_id,),
+                ).fetchone()
+                restored = str(prev["protagonist_name"] or "") if prev is not None else ""
+                self.conn.execute(
+                    "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
+                    (restored, night_id),
+                )
             self._truncate_agno_runs_in_tx(
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),

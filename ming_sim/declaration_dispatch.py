@@ -89,6 +89,7 @@ from ming_sim.audience_night import (
 )
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.error_pack import rejections_jsonl_path
+from ming_sim.relation_judge import summon_edge_origin
 from ming_sim.issues import apply_person_changes_only
 from ming_sim.public_sayings import record_public_saying
 from ming_sim.relations import validate_edge_kind
@@ -208,6 +209,7 @@ def _dispatch_declaration_sections(
     source: Provenance,
     collector: RejectionCollector,
     chat_turn_id: int = 0,
+    source_chat_turn_id: int = 0,
 ) -> DeclarationDispatchResult:
     """真正跑十个 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
     给定的收集器；只记不落库——落库时机与事务边界由调用方决定（J1 判词打回：
@@ -219,8 +221,11 @@ def _dispatch_declaration_sections(
     夜上下文（night_id>0）下源轮须为正且属本夜，否则第四类夜绑定 section
     逐项 missing_ref 拒收，不得落 origin=0 / turn:N 孤儿账。
     """
+    # #1838 的场中承接入口沿用 source_chat_turn_id；#1839 的直接分派入口使用
+    # chat_turn_id。两者是同一个源轮，统一后再做 #1839 的属夜校验。
     origin_ctid, source_turn_err = _resolve_night_source_chat_turn(
-        db, night_id=night_id, chat_turn_id=chat_turn_id,
+        db, night_id=night_id,
+        chat_turn_id=int(chat_turn_id or source_chat_turn_id or 0),
     )
     result = DeclarationDispatchResult(
         commissions=_dispatch_commissions(
@@ -273,6 +278,7 @@ def dispatch_declaration(
     night_id: int = 0,
     chat_turn_id: int = 0,
     source: Provenance = Provenance.system_simulation,
+    source_chat_turn_id: int = 0,
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
     承接（ADR 0155）直接分派单条声明时用的公开入口，唯一契约：始终原子、始终
@@ -305,7 +311,8 @@ def dispatch_declaration(
         result = _dispatch_declaration_sections(
             db, state, declaration,
             minister_name=minister_name, night_id=night_id, source=source,
-            collector=collector, chat_turn_id=int(chat_turn_id or 0),
+            collector=collector,
+            chat_turn_id=int(chat_turn_id or source_chat_turn_id or 0),
         )
         collector.flush_to_db(db)
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
@@ -845,6 +852,7 @@ def _dispatch_presence(
                 person_names=[name], audibility=AUDIBILITY_PUBLIC,
                 body=body, tags=[effect], presence_effect=effect,
                 check_dead=(effect == PRESENCE_ENTER), origin_ref=origin_ref,
+                source_chat_turn_id=origin_ctid,
                 origin_chat_turn_id=origin_ctid,
             )
         except AudienceNightError as exc:
@@ -904,6 +912,7 @@ def _dispatch_scene_facts(
                 db, int(night_id),
                 person_names=list(person_names), audibility=str(audibility),
                 body=body, tags=list(tags), check_dead=False, origin_ref=origin_ref,
+                source_chat_turn_id=origin_ctid,
                 origin_chat_turn_id=origin_ctid,
             )
         except AudienceNightError as exc:
@@ -918,7 +927,7 @@ def _translation_edge_origin(chat_turn_id: int, turn: int) -> str:
     （``前缀|chat_turn:{id}``，写口再附 ``|round:N``）；无轮（过月）回退 turn 段。"""
     ctid = int(chat_turn_id or 0)
     if ctid > 0:
-        return f"转译声明|chat_turn:{ctid}"
+        return summon_edge_origin(ctid)
     return f"转译声明|turn:{int(turn)}"
 
 
