@@ -3517,7 +3517,9 @@ class GameSession:
         回合已结算推进，置 issued 态。
         """
         # #1842 / ADR 0155：过月前 join 全部后台转译；未完成与耗尽两态分治。
-        # ① join 超时 = 在飞未清空 =「未完成则过月等」——不得进结算（非 0157 耗尽）。
+        # ① join 未清空 =「未完成则过月等」——在 join 缝上系统内等到清空后自动续跑
+        #    （CONTEXT 核账期／0149：未了之事办完后自动往下走）。不得 SettlementAbort/409，
+        #    不得进会阻塞同一夜串行锁的 catch-up（hang 切断保留）。
         # ② join 清空后 catch-up，仍 pending = 真耗尽 → 0157（错误包 + 停步 + 重试）。
         from ming_sim.audience_translation import (
             catch_up_pending_translations,
@@ -3527,16 +3529,11 @@ class GameSession:
         from ming_sim.error_pack import settlement_abort_message, write_error_pack
         from ming_sim.exceptions import SettlementAbort
 
-        joined = join_all_translations(timeout_s=120.0)
-        if not joined:
-            # 未完成：过月等。无错误包（不是 0157 耗尽形态）；重试 = 再 join。
-            raise SettlementAbort(
-                "召对转译尚未完成，过月等待中。",
-                turn=int(self.state.turn),
-                stage="audience_translation_incomplete",
-                error_pack_path=None,
-            )
+        # ① 等待仍在 join 缝上：timeout 仅单次轮询上限，未清空则继续等，不清空不往下。
+        while not join_all_translations(timeout_s=120.0):
+            pass
         # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
+        # 仅 join 已清空后才进入——避免与在飞 worker 争同一夜串行锁挂死。
         catch_up_pending_translations(
             self.db, self.state,
             llm_config=getattr(self, "llm_config", None),

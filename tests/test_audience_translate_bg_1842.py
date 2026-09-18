@@ -527,15 +527,29 @@ def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch)
     assert status == "imprisoned"
 
 
-def test_resolve_turn_incomplete_join_does_not_use_exhausted_form(game, monkeypatch):
-    """类1：join 超时=未完成 → 过月等；月份不推进；非 0157 耗尽（无错误包）。"""
-    from ming_sim.exceptions import SettlementAbort
-
+def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
+    """类1①：join 先未完成再完成 → 系统内等待后自动续跑；非 SettlementAbort/409。"""
     db, state, content = game
     before_turn = int(state.turn)
     import ming_sim.audience_translation as at
 
-    monkeypatch.setattr(at, "join_all_translations", lambda *, timeout_s=120.0: False)
+    calls = {"n": 0}
+
+    def flaky_join(*, timeout_s=120.0):
+        calls["n"] += 1
+        # 第一次未清空（未完成），第二次清空 → 等待后自动续跑
+        return calls["n"] >= 2
+
+    monkeypatch.setattr(at, "join_all_translations", flaky_join)
+
+    class _StopAfterWait(Exception):
+        pass
+
+    def catch_then_stop(*a, **k):
+        raise _StopAfterWait()
+
+    # join 清空后才进 catch-up；此处截断以证「等完后续跑」，不进整月结算
+    monkeypatch.setattr(at, "catch_up_pending_translations", catch_then_stop)
 
     sess = _sess(db, state, content)
     sess._begun = True
@@ -546,11 +560,10 @@ def test_resolve_turn_incomplete_join_does_not_use_exhausted_form(game, monkeypa
     sess.previous_summary = ""
     sess.agno_db = None
 
-    with pytest.raises(SettlementAbort) as ei:
+    with pytest.raises(_StopAfterWait):
         sess.resolve_turn(allow_empty_decree=True)
 
-    assert ei.value.stage == "audience_translation_incomplete"
-    assert ei.value.error_pack_path is None
+    assert calls["n"] >= 2, "未完成须在 join 缝上继续等，不得一次 False 就中止"
     assert int(state.turn) == before_turn
 
 
