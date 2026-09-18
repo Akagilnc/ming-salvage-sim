@@ -207,10 +207,16 @@ def _dispatch_declaration_sections(
     night_id: int,
     source: Provenance,
     collector: RejectionCollector,
+    chat_turn_id: int = 0,
 ) -> DeclarationDispatchResult:
     """真正跑十个 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
     给定的收集器；只记不落库——落库时机与事务边界由调用方决定（J1 判词打回：
-    直接分派与暂存结算两条路径共用同一段执行体，不复制两份分派逻辑）。"""
+    直接分派与暂存结算两条路径共用同一段执行体，不复制两份分派逻辑）。
+
+    ``chat_turn_id``（#1839）：召对当场实况的源轮。在场进出 / 说话人分段绑
+    ``origin_chat_turn_id``；边事件 origin 拼 ``转译声明|chat_turn:{id}``——撤回
+    本轮按此前像 / 源轮逆转（ADR 0038 第四类）。过月结算无对话轮，传 0。
+    """
     result = DeclarationDispatchResult(
         commissions=_dispatch_commissions(
             db, state, declaration.get("commissions"),
@@ -230,12 +236,15 @@ def _dispatch_declaration_sections(
         ),
         presence=_dispatch_presence(
             db, declaration.get("presence"), night_id=night_id, source=source,
+            chat_turn_id=chat_turn_id,
         ),
         scene_facts=_dispatch_scene_facts(
             db, declaration.get("scene_facts"), night_id=night_id, source=source,
+            chat_turn_id=chat_turn_id,
         ),
         edge_events=_dispatch_edge_events(
             db, state, declaration.get("edge_events"), source=source,
+            chat_turn_id=chat_turn_id,
         ),
         protagonist=_dispatch_protagonist(
             db, declaration.get("protagonist"), source=source,
@@ -257,6 +266,7 @@ def dispatch_declaration(
     *,
     minister_name: str = "",
     night_id: int = 0,
+    chat_turn_id: int = 0,
     source: Provenance = Provenance.system_simulation,
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
@@ -274,6 +284,10 @@ def dispatch_declaration(
     可闻性」同样挂在这一夜的账本上，无夜（night_id<=0）时整批拒收，不落成
     孤儿账。
 
+    ``chat_turn_id``（#1839 C2）：当场实况的源轮。召对场中承接传入本轮
+    ``chat_turns.id``，在场账 / 边事件带源轮绑定，撤回本轮以前像日志逆转；
+    过月路径传 0。交办仍只落暂存，不因源轮而绕过颁布关。
+
     :func:`settle_staged_declarations_in_decree_order` 结算一旨下多条暂存
     声明时不走这个入口——它需要把同旨下每条声明的分派副作用、拒收与该旨的
     `mark_settled` 落在同一次提交里，因此直接在自己的旨级 `atomic(db)` 内
@@ -285,7 +299,7 @@ def dispatch_declaration(
         result = _dispatch_declaration_sections(
             db, state, declaration,
             minister_name=minister_name, night_id=night_id, source=source,
-            collector=collector,
+            collector=collector, chat_turn_id=int(chat_turn_id or 0),
         )
         collector.flush_to_db(db)
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
@@ -762,13 +776,18 @@ def _category_for_audience_night_error(exc: AudienceNightError) -> str:
 
 def _dispatch_presence(
     db: Any, raw: object, *, night_id: int, source: Provenance,
+    chat_turn_id: int = 0,
 ) -> SectionResult:
     """在场进出：落既有召对夜账本（`append_ledger_entry`）。正文必须是转译声明
     自己带的自由文本——代码不合成「某某入殿/退下」模板句（P6/P7：玩家可感文字
     零模板、LLM 自由文本零删改）。落账前先校验人物存在，无夜上下文或人物不存在
-    的项单独拒收，不落孤儿账（AC3）。"""
+    的项单独拒收，不落孤儿账（AC3）。
+
+    ``chat_turn_id``（#1839）：源轮绑定到 ``origin_chat_turn_id``，撤回本轮删该账。
+    """
     items, rejected = _section_items(raw, label="在场进出声明", source=source)
     applied: List[Any] = []
+    origin_ctid = int(chat_turn_id or 0)
     for item in items:
         name = str(item.get("person_name") or "").strip()
         effect = _PRESENCE_ITEM_EFFECTS.get(str(item.get("effect") or "").strip())
@@ -795,6 +814,7 @@ def _dispatch_presence(
                 person_names=[name], audibility=AUDIBILITY_PUBLIC,
                 body=body, tags=[effect], presence_effect=effect,
                 check_dead=(effect == PRESENCE_ENTER), origin_ref=origin_ref,
+                origin_chat_turn_id=origin_ctid,
             )
         except AudienceNightError as exc:
             _reject(rejected, item, str(exc), _category_for_audience_night_error(exc), source)
@@ -805,13 +825,18 @@ def _dispatch_presence(
 
 def _dispatch_scene_facts(
     db: Any, raw: object, *, night_id: int, source: Provenance,
+    chat_turn_id: int = 0,
 ) -> SectionResult:
     """说话人分段与可闻性：转译声明自带的一段戏文正文 + 可闻性 + 涉及人物，
     原样落既有召对夜账本，代码不改写、不合成替代文本（P6/P7）。落账前校验涉及
     人物全部存在；纯提及不拦死人（同既有 `settle_story_extraction` 口径：死账
-    仅对「进」效果校验），故 `check_dead=False`。"""
+    仅对「进」效果校验），故 `check_dead=False`。
+
+    ``chat_turn_id``（#1839）：源轮绑定到 ``origin_chat_turn_id``，撤回本轮删该账。
+    """
     items, rejected = _section_items(raw, label="说话人分段声明", source=source)
     applied: List[Any] = []
+    origin_ctid = int(chat_turn_id or 0)
     for item in items:
         body = str(item.get("body") or "")
         audibility = item.get("audibility") or AUDIBILITY_PUBLIC
@@ -844,6 +869,7 @@ def _dispatch_scene_facts(
                 db, int(night_id),
                 person_names=list(person_names), audibility=str(audibility),
                 body=body, tags=list(tags), check_dead=False, origin_ref=origin_ref,
+                origin_chat_turn_id=origin_ctid,
             )
         except AudienceNightError as exc:
             _reject(rejected, item, str(exc), _category_for_audience_night_error(exc), source)
@@ -852,7 +878,19 @@ def _dispatch_scene_facts(
     return SectionResult(applied=applied, rejected=rejected)
 
 
-def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+def _translation_edge_origin(chat_turn_id: int, turn: int) -> str:
+    """#1839：转译声明边事件的源轮 origin。有 chat_turn 时与召对判官同形
+    （``前缀|chat_turn:{id}``，写口再附 ``|round:N``）；无轮（过月）回退 turn 段。"""
+    ctid = int(chat_turn_id or 0)
+    if ctid > 0:
+        return f"转译声明|chat_turn:{ctid}"
+    return f"转译声明|turn:{int(turn)}"
+
+
+def _dispatch_edge_events(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    chat_turn_id: int = 0,
+) -> SectionResult:
     """边事件：既有唯一写口 `record_relation_edge_event`。三类失败各自准确归类：
     未知 event_kind = invalid_enum；source/target 非在册人物 = hallucinated_id；
     空 source/target/context 等形状问题 = invalid_shape——不拿宽 catch 一律
@@ -860,9 +898,13 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
     复用 AffairStore 通用指针（`attach_pointer`）；写事件与绑指针放进同一个
     :func:`_item_savepoint_scope` 块，指针冲突时整块回滚（该项进 rejected，
     不留半写的「有边事件没有所属事务」状态）；用 SAVEPOINT 而非直接嵌套
-    `atomic(db)`，理由同 :func:`_dispatch_on_scene_facts`。"""
+    `atomic(db)`，理由同 :func:`_dispatch_on_scene_facts`。
+
+    ``chat_turn_id``（#1839）：源轮写进 origin，撤回按轮删。
+    """
     items, rejected = _section_items(raw, label="边事件声明", source=source)
     applied: List[Any] = []
+    origin = _translation_edge_origin(chat_turn_id, int(state.turn))
     for item in items:
         source_name = str(item.get("source") or "").strip()
         target_name = str(item.get("target") or "").strip()
@@ -889,7 +931,7 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
                 try:
                     event_id = db.record_relation_edge_event(
                         source=source_name, target=target_name, event_kind=event_kind,
-                        context=context, origin=f"转译声明:turn{int(state.turn)}",
+                        context=context, origin=origin,
                         turn=int(state.turn), year=int(state.year), period=int(state.period),
                     )
                 except ValueError as exc:

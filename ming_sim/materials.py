@@ -1058,13 +1058,22 @@ def _write_one_present_person(
 
     # ADR 0033 / 0155：人物+派系+认同度客观特征化；单一真源 character_context_with_db
     # （单人链 registry 已用同一投影）。不另造第二套描述规则。
+    # #1839：当场实况（生死/下狱/革职）已落 characters.status 时，档料附当前状态一行，
+    # 下一句场景目录可见——不另造第二套状态投影，只读 DB 真源。
     from ming_sim.context import character_context_with_db
 
+    dossier_body = character_context_with_db(character, db, turn=int(state.turn))
+    if hasattr(db, "get_character_status"):
+        status, reason = db.get_character_status(name)
+        status_text = str(status or "").strip()
+        reason_text = str(reason or "")
+        if status_text and status_text != "active":
+            line = f"当前状态：{status_text}"
+            if reason_text.strip():
+                line = f"{line}（{reason_text}）"
+            dossier_body = f"{dossier_body}\n{line}"
     dossier_rel = f"{base}/人物档料.txt"
-    _write_text(
-        tmp / dossier_rel,
-        character_context_with_db(character, db, turn=int(state.turn)),
-    )
+    _write_text(tmp / dossier_rel, dossier_body)
     index.append(dossier_rel)
 
     roster_rel = f"{base}/朝臣名册.txt"
@@ -1074,6 +1083,18 @@ def _write_one_present_person(
     exp_rel = f"{base}/经历.txt"
     _write_text(tmp / exp_rel, _experience_text(knowledge))
     index.append(exp_rel)
+
+    # #1839 / ADR 0156：文字事实当场落账后须进本夜场景目录（下一句可见）。
+    # 与世界目录同形（按月实况），投影复用 _textual_facts_text，不另造读口。
+    facts_rel = f"{base}/按月实况.txt"
+    _write_text(
+        tmp / facts_rel,
+        _textual_facts_text(
+            getattr(db, "textual_facts", None),
+            subject_kind="character", subject_id=name,
+        ),
+    )
+    index.append(facts_rel)
 
     office_rel = f"{base}/公事档案.txt"
     _write_text(
