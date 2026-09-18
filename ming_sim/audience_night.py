@@ -174,18 +174,27 @@ _CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
 _CLOSE_COMMIT_KINDS_FINAL = frozenset({"consort"})
 
-# ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3）───────────────────────
-# 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**这可枚举的两项，其余结构化
+# ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3；#1839 第四类）────────
+# 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**本表可枚举项，其余结构化
 # 后果一律走 ADR 0006 待确认暂存、收夜才提交。每项映射其直写落地的真实盘面表；新增任何
-# 夜内直写必须过设计审、显式扩本表，否则撤回逆转不净。〔白名单第三项「召对口关系边事件」
-# 随 #479/ADR 0082 另片过审，不在本片。〕
-# 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3）。第三项「召对口关系边
-# 事件」随 #634/ADR 0082 落地：判官拍与收夜扫尾当场落库，边事件带源轮绑定
-# （origin chat_turn 段），撤回按轮删＋水位回退，逆转干净。
+# 夜内直写必须过设计审、显式扩本表，否则撤回逆转不净。
+#
+# ① 密令落地（应允即落地）。
+# ② 转译声明的当场实况（#1821 / ADR 0038 后出注记第四类；原「未在册人物入册」与
+#    「召对口关系边事件」并入此类）：人物生死/下狱/革职/在场、文字事实、公开说法、
+#    边事件、入册；均带源轮，撤回以前像日志逆转。交办（任免/拨帑/明发）不在此列。
 NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
     "密令落地": frozenset({"secret_orders", "secret_order_briefs"}),
-    "未在册人物入册": frozenset({"characters", "character_offices"}),
-    "召对口关系边事件": frozenset({"relation_edge_events"}),
+    "转译声明的当场实况": frozenset({
+        "characters", "character_offices",  # 入册 + 生死/下狱/革职
+        # set_character_status 的 leverage 重算副作用（#9）；前像快照已含 factions，
+        # 撤回与人物状态同逆转——不把副作用另立直写类。
+        "factions",
+        "relation_edge_events",             # 边事件（含原召对口判官路径）
+        "textual_facts",                   # 文字事实（ADR 0156）
+        "public_sayings",                  # 公开说法（ADR 0153）
+        "story_ledger_entries",            # 在场进出 / 说话人分段
+    }),
 }
 
 # 夜内结构化写可能触及、且属真实盘面（非暂存/候选层）的表全集——审计据此判越权：落在此集
@@ -194,6 +203,7 @@ NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
 _REAL_BOARD_TABLES = frozenset({
     "characters", "character_offices", "consort_traits", "factions",
     "secret_orders", "secret_order_briefs", "relation_edge_events",
+    "textual_facts", "public_sayings", "story_ledger_entries",
 })
 
 
@@ -717,12 +727,13 @@ def _night_direct_write_allowed_tables() -> frozenset:
 def audit_night_direct_writes(db: Any, night_id: int) -> set[str]:
     """审计一夜内对真实盘面的直写全部落在可枚举白名单内（ADR 0038 防坑不变式，#506 AC3）。
 
-    撤回逆转干净的前提 = 夜内对真实盘面的直写只有白名单两项（密令落地、未在册人物入册），
-    其余结构化后果全走待确认暂存、收夜才提交。经该夜各未撤/未失败轮的前像撤销日志
-    （chat_turn_rollback_items 记录本轮触碰过的业务表）核真：任一真实盘面表被直写、却不属
-    白名单授权 → 越权夜内直写，写错误包并响亮咬住（此类直写撤回逆转不净，是设计洞）。
+    撤回逆转干净的前提 = 夜内对真实盘面的直写只落白名单（①密令落地；②转译声明的
+    当场实况——#1839 第四类，含原入册/边事件），其余结构化后果全走待确认暂存、收夜
+    才提交。经该夜各未撤/未失败轮的前像撤销日志（chat_turn_rollback_items 记录本轮
+    触碰过的业务表）核真：任一真实盘面表被直写、却不属白名单授权 → 越权夜内直写，
+    写错误包并响亮咬住（此类直写撤回逆转不净，是设计洞）。
 
-    返回观测到的白名单操作名集（合法夜用于确认「密令落地/入册」确经白名单落地）。
+    返回观测到的白名单操作名集（合法夜用于确认授权项确经白名单落地）。
     """
     allowed = _night_direct_write_allowed_tables()
     rows = db.conn.execute(

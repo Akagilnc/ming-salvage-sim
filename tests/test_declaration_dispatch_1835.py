@@ -369,13 +369,16 @@ def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
 
     night = open_night(db, state)
     night_id = int(night["id"])
+    chat_turn_id = db.create_chat_turn(state, minister, "t1835:presence", 0, night_id=night_id)
     # 首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账
     declared_body = "  内侍高唱，乔尚书趋步入殿，绯袍犹带风尘。  \n"
 
     declaration = {
         "presence": [{"person_name": minister, "effect": "enter", "body": declared_body}],
     }
-    result = dispatch_declaration(db, state, declaration, night_id=night_id)
+    result = dispatch_declaration(
+        db, state, declaration, night_id=night_id, chat_turn_id=chat_turn_id,
+    )
     assert result.presence.rejected == []
     assert len(result.presence.applied) == 1
 
@@ -389,10 +392,12 @@ def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
 def test_presence_rejects_nonexistent_person_without_polluting_ledger(game):
     """AC3：有效夜下引用不存在的人物一样要逐项拒收，不能真落进 story_ledger_entries。"""
     db, state, _ = game
+    minister = _minister(db)
     from ming_sim.audience_night import open_night
 
     night = open_night(db, state)
     night_id = int(night["id"])
+    chat_turn_id = db.create_chat_turn(state, minister, "t1835:ghost", 0, night_id=night_id)
     before = db.conn.execute(
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
     ).fetchone()["c"]
@@ -400,7 +405,9 @@ def test_presence_rejects_nonexistent_person_without_polluting_ledger(game):
     declaration = {
         "presence": [{"person_name": "子虚乌有之人", "effect": "enter", "body": "凭空捏造之人入殿。"}],
     }
-    result = dispatch_declaration(db, state, declaration, night_id=night_id)
+    result = dispatch_declaration(
+        db, state, declaration, night_id=night_id, chat_turn_id=chat_turn_id,
+    )
 
     assert result.presence.applied == []
     assert len(result.presence.rejected) == 1
@@ -431,6 +438,7 @@ def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_an
 
     night = open_night(db, state)
     night_id = int(night["id"])
+    chat_turn_id = db.create_chat_turn(state, minister, "t1835:scene", 0, night_id=night_id)
 
     # 首项首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账
     declaration = {
@@ -443,7 +451,9 @@ def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_an
     before = db.conn.execute(
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
     ).fetchone()["c"]
-    result = dispatch_declaration(db, state, declaration, night_id=night_id)
+    result = dispatch_declaration(
+        db, state, declaration, night_id=night_id, chat_turn_id=chat_turn_id,
+    )
     after = db.conn.execute(
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
     ).fetchone()["c"]

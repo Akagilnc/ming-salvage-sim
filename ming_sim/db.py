@@ -9382,6 +9382,12 @@ class GameDB:
         # 被还原而 factions leverage 留脏。快照 SELECT * 含 leverage+offset，原位 UPDATE
         # 全列覆盖、二者同还原。
         "factions": "name",
+        # #1839 C2 / ADR 0038 第四类：转译声明当场实况的前像表——文字事实 / 公开说法 /
+        # 边事件。人物 status 变更走 characters；在场账走 origin_chat_turn_id 删（undo
+        # 既有路径），不进本快照。
+        "textual_facts": "id",
+        "public_sayings": "id",
+        "relation_edge_events": "id",
     }
 
     def _delete_turn_scoped_knowledge_sources_in_tx(self, chat_turn_id: int) -> None:
@@ -10147,16 +10153,22 @@ class GameDB:
         self.conn.commit()
 
     def delete_relation_edge_events_for_chat_turn(self, chat_turn_id: int) -> int:
-        """撤回联动（ADR 0038 白名单③）：删该轮源绑定的召对边事件行，返回删除数。
+        """撤回联动（ADR 0038 白名单③ / #1839 第四类）：删该轮源绑定的边事件行。
 
         事务归属调用方：undo_chat_turn 在其原子块内调（禁提前 commit）；origin 的
-        chat_turn 段是唯一的源轮绑定真源（relation_judge.summon_edge_origin 拼装）。
+        chat_turn 段是唯一的源轮绑定真源——召对判官路径（relation_judge.
+        summon_edge_origin）与转译声明路径（declaration_dispatch 拼装
+        ``转译声明|chat_turn:{id}``）共用同一段形态。
         """
-        cur = self.conn.execute(
-            "DELETE FROM relation_edge_events WHERE origin LIKE ?",
-            (f"{SUMMON_EDGE_ORIGIN_PREFIX}|chat_turn:{int(chat_turn_id)}|%",),
-        )
-        return int(cur.rowcount)
+        cid = int(chat_turn_id)
+        total = 0
+        for prefix in (SUMMON_EDGE_ORIGIN_PREFIX, "转译声明"):
+            cur = self.conn.execute(
+                "DELETE FROM relation_edge_events WHERE origin LIKE ?",
+                (f"{prefix}|chat_turn:{cid}|%",),
+            )
+            total += int(cur.rowcount)
+        return total
 
     # ----- #501 叙事抽取落账（水位 + 原子落账 + 补跑真源）-----
 
@@ -10666,6 +10678,14 @@ class GameDB:
             target_id = str(item["target_id"])
             if strategy == "delete_inserted_row":
                 self._delete_row_in_tx(table, target_id)
+                # #1839：公开说法写口附带 character_knowledge_sources（source_id=
+                # public_saying:<id>，仅承载排除名单）；前像删行时同步清掉，避免
+                # 孤儿 exclusion 源在说法已撤回后仍挡见闻。
+                if table == "public_sayings":
+                    self.conn.execute(
+                        "DELETE FROM character_knowledge_sources WHERE source_id = ?",
+                        (f"public_saying:{target_id}",),
+                    )
             elif strategy in {"restore_row", "restore_deleted_row"}:
                 before_row = self._json_load_row(item["before_json"])
                 self._restore_row_in_tx(table, before_row)
