@@ -884,39 +884,49 @@ def test_close_night_no_longer_fail_closed_on_exhausted_pending(game, monkeypatc
 
 
 def test_said_so_far_cuts_off_at_source_turn_and_excludes_self(game):
-    """正确性 C2：said-so-far 按源轮 night_seq 截止；本轮不重复入集。"""
-    from ming_sim.audience_translate import build_night_said_so_far
-
+    """正确性 C2：生产 worker 路径 — 后轮已落库时，源轮转译 prompt 不含后轮/本轮正文。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
+    gate = threading.Lock()
     ctid1 = _persist_round(db, state, nid, "第一句已说", "第一答")
     ctid2 = _persist_round(db, state, nid, "第二句本轮", "第二答")
     ctid3 = _persist_round(db, state, nid, "第三句后轮", "第三答")
 
-    # 为 turn2 建 said-so-far：应收 t1，拒 t2 自身与 t3
-    said = build_night_said_so_far(db, nid, until_chat_turn_id=ctid2)
-    blob = "\n".join(said)
-    assert "第一句已说" in blob and "第一答" in blob, said
-    assert "第二句本轮" not in blob and "第二答" not in blob, said
-    assert "第三句后轮" not in blob and "第三答" not in blob, said
+    seen: list[str] = []
 
-    # 无截止：全集（兼容旧调用）
-    full = build_night_said_so_far(db, nid)
-    full_blob = "\n".join(full)
-    assert "第三句后轮" in full_blob
+    def translate_fn(prompt, llm_config):
+        seen.append(prompt)
+        return {"commissions": [], "promises": []}
+
+    # 后轮已在库；调度本轮转译（生产 schedule→worker 缝，非直调 build_*）。
+    fut = schedule_audience_turn_translation(
+        db, state,
+        emperor_message="第二句本轮",
+        reply="第二答",
+        night_id=nid, chat_turn_id=ctid2,
+        llm_config=SimpleNamespace(channel="api"),
+        translate_fn=translate_fn, write_gate=gate,
+    )
+    assert join_night_translations(nid, timeout_s=2.0)
+    fut.result(timeout=0.5)
+    assert seen, "worker 须调用 translate_fn"
+    prompt = seen[0]
+    # 本轮只走【本轮皇帝】【本轮回话】
+    assert "【本轮皇帝】第二句本轮" in prompt
+    assert "【本轮回话】第二答" in prompt
+    # 先前轮可在已说
+    assert "第一句已说" in prompt or "第一答" in prompt
+    # 后轮不得入已说；本轮正文不得在已说区重复（只在本轮字段）
+    said_block = prompt.split("【本夜暂存清单】")[0]
+    assert "第三句后轮" not in said_block and "第三答" not in said_block, said_block
+    # 已说区不得再抄本轮（防与本轮字段双挂）
+    assert "第二句本轮" not in said_block.split("【本场已说的话】")[-1].split("【本轮皇帝】")[0]
 
 
 def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game):
     """正确性 C1：撤回终结在飞转译；落账前复查源轮已死则不落。"""
-    from ming_sim.audience_translation import (
-        cancel_turn_translation,
-        join_night_translations,
-        schedule_audience_turn_translation,
-        apply_audience_round_translation,
-    )
-    from ming_sim.audience_translate import AudienceTranslateError
-    from ming_sim.audience_translation import run_turn_translation_job
+    from ming_sim.audience_translation import cancel_turn_translation
     import ming_sim.audience_translation as at_mod
 
     db, state, content = game
@@ -941,7 +951,6 @@ def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game)
         applied["n"] += 1
         return real_apply(*a, **k)
 
-    # patch apply to count
     at_mod.apply_audience_round_translation = counting_apply
     try:
         ctid = _persist_round(db, state, nid, "撤回我", "……")
@@ -954,7 +963,6 @@ def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game)
             translate_fn=translate_fn, write_gate=gate,
         )
         assert entered.wait(timeout=2.0)
-        # 模拟撤回：cancel Future + 标 undone
         n = cancel_turn_translation(ctid)
         assert n == 1
         db.conn.execute(
@@ -963,43 +971,170 @@ def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game)
         )
         db.conn.commit()
         hold.set()
-        # worker 应失败或空过，不得成功落账
         join_night_translations(nid, timeout_s=2.0)
         try:
             fut.result(timeout=0.5)
         except Exception:
             pass
         assert applied["n"] == 0, "死轮不得 apply 落账"
-        # 直接写门复查：已 undone 的 apply 前复查须挡
-        # （run_turn_translation_job 路径）
     finally:
         at_mod.apply_audience_round_translation = real_apply
         hold.set()
         join_all_translations(timeout_s=1.0)
 
 
-def test_web_hall_chat_routes_to_scene_chat():
-    """完整性：Web 真实召对入口源码切 scene_chat，旧四机制不再挂生产入口。"""
-    import inspect
+def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch):
+    """完整性：Web 非流/重试/流式真实入口 → scene_chat，外部结果可见；旧四机制零调用。"""
     import web_app as wa
+    from types import SimpleNamespace as NS
+    from ming_sim.audience_night import open_night
 
-    core_src = inspect.getsource(wa.WebGame._chat_core)
-    retry_src = inspect.getsource(wa.WebGame.retry_interrupted_reply)
-    stream_src = inspect.getsource(wa.WebGame.chat_stream)
-    scene_payload_src = inspect.getsource(wa.WebGame._scene_chat_stream_payload)
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    name = next(iter(content.characters))
+    calls = {"scene": 0, "chat": 0, "judge": 0, "extract": 0, "mind": 0, "intent": 0}
 
-    for label, src in (
-        ("_chat_core", core_src),
-        ("retry", retry_src),
-        ("chat_stream", stream_src),
+    class FakeResult:
+        answer = "殿上戏文"
+        court_action = ""
+        next_minister = ""
+        proposed_directive = None
+        appointed_minister = ""
+        registered_minister = ""
+        displaced_minister = ""
+        secret_order_id = 0
+        pending_action_id = 0
+        pending_action_failures = []
+        directive_confirmation_ambiguous = None
+        decree_validation_failure = None
+        secret_order_landing_recovery = None
+
+    # 真 WebGame 生命周期方法；session.scene_chat 计数
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = NS(get=lambda *a, **k: NS(run=lambda *a, **k: NS(content="x", tools=[])), session_ids={})
+    sess.llm_config = NS(channel="api", base_url="", model="t", api_key="")
+    sess.temporary_characters = set()
+    sess.agno_db = None
+    sess._beat_generator = None
+    sess._scene_registry = None
+    sess._write_gate = threading.Lock()
+    sess._audience_translate_fn = lambda p, c: {"commissions": [], "promises": []}
+
+    def _scene_chat(message, *, chat_turn_id=0):
+        calls["scene"] += 1
+        return FakeResult()
+
+    def _chat(*a, **k):
+        calls["chat"] += 1
+        return FakeResult()
+
+    sess.scene_chat = _scene_chat
+    sess.chat = _chat
+    sess._character = lambda n: content.characters[n]
+    sess.consume_audience_admission = lambda *a, **k: NS(allowed=True, reason="", result=None)
+    sess.admit_audience = lambda *a, **k: NS(allowed=True, reason="", result=None)
+    sess.join_chat_turn_scene = lambda *a, **k: []
+    sess.persist_chat_turn_scene = lambda *a, **k: None
+    sess.abandon_chat_turn_scene = lambda *a, **k: None
+    sess.close_night_after_chat_if_needed = lambda *a, **k: None
+    sess.start_chat_turn_scene = lambda *a, **k: None
+    sess.note_chat_rollback = lambda **k: None
+    sess.refresh_runtime_after_chat_rollback = lambda: None
+    sess._start_cli_action_intent = lambda *a, **k: calls.__setitem__("intent", calls["intent"] + 1)
+
+    wg = wa.WebGame.__new__(wa.WebGame)
+    wg.session = sess
+    wg.chat_history = {n: [] for n in content.characters}
+    from ming_sim.session_write_queue import SessionWriteQueue
+    wg._write_queue = SessionWriteQueue()
+    wg._write_gate = wg._write_queue.write_gate
+    wg._runtime_write_queue = lambda: wg._write_queue
+    wg._runtime_write_gate = lambda: wg._write_gate
+    wg._ticketed_write_gate = lambda ticket=None: wg._write_gate
+    wg._mark_pending_write = lambda key=None: wg._write_queue.claim(key=key or ("pending",))
+    wg._complete_pending_write = lambda ticket=None: wg._write_queue.complete(ticket)
+    wg._reject_if_settlement_phase = lambda: None
+    wg._audience_turn_in_flight = lambda *a, **k: False
+    wg._persistent_chat_minister = lambda n: True
+    wg._message_is_formal_secret_order = lambda t: False
+    wg._open_night_court_break = lambda t: False
+    wg.favorites = set()
+    wg.suggestions_for = lambda _c: []
+    wg._trail_highlight_judge_after_reply = lambda *a, **k: []
+    wg._spawn_pending_write_thread = lambda *a, **k: None
+    # 旧四机制：若生产仍调用则计数
+    wg._dispatch_relation_judge = lambda *a, **k: calls.__setitem__("judge", calls["judge"] + 1)
+    wg._spawn_extraction_trail = lambda *a, **k: calls.__setitem__("extract", calls["extract"] + 1) or None
+    wg._trail_mindreading_after_reply = lambda *a, **k: calls.__setitem__("mind", calls["mind"] + 1)
+    wg._finish_offsite_summon_scene = lambda *a, **k: None
+    wg._summon_admission_success_payload = lambda *a, **k: {}
+    # 用真 _start_chat_turn / _chat_payload / chat 方法
+    import types
+    for meth in (
+        "_start_chat_turn", "_chat_payload", "_chat_core", "chat",
+        "_record_chat_rollback_items", "_scene_chat_stream_payload",
+        "chat_projection", "can_undo_last_chat", "pending_action_failures_for",
+        "directive_rows", "directive_payload", "pending_directive_count",
+        "_minister_agno_session_id", "_fail_chat_turn_and_reload",
     ):
-        assert "scene_chat" in src, f"{label} 须接 scene_chat"
-        # 旧并行腿不得再挂殿上生产入口（密令分支可保留 session.chat）
-        assert "_dispatch_relation_judge" not in src, f"{label} 仍挂边事件判官"
-        assert "_spawn_extraction_trail" not in src, f"{label} 仍挂故事抽取"
-        assert "_trail_mindreading_after_reply" not in src, f"{label} 仍挂代码读心"
-        assert "_start_cli_action_intent" not in src, f"{label} 仍挂旧分类器"
+        if hasattr(wa.WebGame, meth):
+            setattr(wg, meth, types.MethodType(getattr(wa.WebGame, meth), wg))
 
-    assert "scene_chat" in scene_payload_src
-    undo_src = inspect.getsource(wa.WebGame.undo_last_chat)
-    assert "cancel_turn_translation" in undo_src
+    # 1) 非流式真实入口
+    calls["scene"] = calls["chat"] = calls["judge"] = calls["extract"] = calls["mind"] = 0
+    out = wg.chat(name, "边事如何？")
+    assert calls["scene"] == 1, calls
+    assert calls["chat"] == 0, calls
+    assert calls["judge"] == 0 and calls["extract"] == 0 and calls["mind"] == 0, calls
+    assert out.get("answer") == "殿上戏文"
+
+    # 2) 流式 payload 入口（chat_stream worker 同核）
+    calls["scene"] = 0
+    deltas: list[str] = []
+    payload = wg._scene_chat_stream_payload(
+        name, "再问一句", 0, {}, int(state.turn),
+        lambda d, replace=False: deltas.append(d),
+        write_gate=wg._write_gate,
+    )
+    assert calls["scene"] == 1
+    assert payload.get("answer") == "殿上戏文"
+    assert "殿上戏文" in "".join(deltas)
+
+    # 3) 重试入口：造 interrupted 轮后走 retry_interrupted_reply
+    from ming_sim.audience_night import attach_chat_turn_to_night
+    # 建一条 interrupted 轮（有问无答）
+    agno = "s"
+    uid = int(db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
+        "VALUES (?, ?, 'user', ?, 'held')",
+        (name, int(state.turn), "中断问话"),
+    ).lastrowid)
+    ctid = int(db.create_chat_turn(
+        state, name, agno, 0, night_id=int(night["id"]), status="generating",
+    ))
+    db.conn.execute(
+        "UPDATE chat_turns SET user_message_id=?, minister_message_id=NULL, "
+        "status='interrupted' WHERE id=?",
+        (uid, ctid),
+    )
+    db.conn.commit()
+    # bind retry method
+    wg.retry_interrupted_reply = types.MethodType(wa.WebGame.retry_interrupted_reply, wg)
+    wg.interrupted_reply_retries = types.MethodType(wa.WebGame.interrupted_reply_retries, wg)
+    if hasattr(db, "reopen_interrupted_chat_turn_for_retry"):
+        # 某些实现要 CAS
+        pass
+    calls["scene"] = calls["chat"] = calls["judge"] = calls["extract"] = calls["mind"] = 0
+    try:
+        rout = wg.retry_interrupted_reply(name)
+        assert calls["scene"] == 1, calls
+        assert calls["chat"] == 0, calls
+        assert calls["judge"] == 0 and calls["extract"] == 0 and calls["mind"] == 0, calls
+        assert rout.get("answer") == "殿上戏文"
+    except Exception as exc:
+        # 若 interrupted 列表空或 CAS 失败，至少非流+stream 已证入口
+        # 但本构造应成功；失败则响亮
+        raise AssertionError(f"retry 入口未接通 scene_chat: {exc}") from exc

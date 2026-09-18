@@ -1028,7 +1028,7 @@ def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkeypatch):
-    """scene_chat + 转译路径：第二轮改写交办后撤回，前像回到第一轮。"""
+    """scene_chat + 转译：第二轮新交办后撤回，第一轮 pending 前像必须仍在（ADR 0038）。"""
     from ming_sim.audience_translation import join_all_translations
 
     db, state, content = game
@@ -1045,14 +1045,8 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
             return SimpleNamespace(content=text, tools=[])
 
     def translate_fn(prompt, llm_config):
-        # 第二轮：声明改写已有交办正文（commissions 新条 + 旧条由分派器按文本承接）
-        if "五十万" in prompt or "改成" in prompt:
-            rows = db.list_pending_actions(int(state.turn))
-            if rows:
-                return {
-                    "commissions": [{"text": updated}],
-                    "promises": [],
-                }
+        # 每轮各声明一条新交办（不改写既有行），使撤回第二轮只逆转第二轮产物。
+        if "【本轮皇帝】把赈银改成五十万两" in prompt or "五十万两" in prompt and "改成" in prompt:
             return {"commissions": [{"text": updated}], "promises": []}
         return {"commissions": [{"text": original}], "promises": []}
 
@@ -1064,30 +1058,39 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
     assert join_all_translations(timeout_s=2.0)
     rows = [
         p for p in db.list_pending_actions(int(state.turn))
-        if p["kind"] == "directive"
+        if p["kind"] == "directive" and p.get("status") == "pending"
     ]
-    assert len(rows) >= 1
+    assert len(rows) == 1, rows
     pid = int(rows[0]["id"])
     original_text = json.loads(rows[0]["payload_json"])["text"]
+    assert original_text == original
 
     wg.chat(minister.name, "把赈银改成五十万两。")
     assert join_all_translations(timeout_s=2.0)
-    # 第二轮可能新插一条或改写——撤回第二轮后第一轮正文须可核
-    live = db.conn.execute(
-        "SELECT id, payload_json, status FROM pending_actions WHERE turn=? AND status='pending'",
-        (int(state.turn),),
-    ).fetchall()
-    assert live, "第二轮后须仍有 pending"
+    after = [
+        p for p in db.list_pending_actions(int(state.turn))
+        if p["kind"] == "directive" and p.get("status") == "pending"
+    ]
+    assert len(after) == 2, after
+    assert any(int(p["id"]) == pid for p in after)
 
     wg.undo_last_chat(minister.name)
-    restored_rows = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=? AND status='pending'",
+    # ADR 0038：撤第二轮须留下第一轮前像——pid 行必须仍 pending 且正文不变。
+    restored_row = db.conn.execute(
+        "SELECT payload_json, status FROM pending_actions WHERE id=?",
         (pid,),
     ).fetchone()
-    # 若第一轮行仍在，正文回到 original；若被第二轮替换则至少不得残留第二轮独占态
-    if restored_rows is not None:
-        restored = json.loads(restored_rows["payload_json"])["text"]
-        assert restored == original_text or original in restored
+    assert restored_row is not None, "第一轮 pending 被误删"
+    assert str(restored_row["status"] or "") == "pending"
+    restored = json.loads(restored_row["payload_json"])["text"]
+    assert restored == original_text
+    # 第二轮产物须随撤回消失
+    remaining = [
+        p for p in db.list_pending_actions(int(state.turn))
+        if p["kind"] == "directive" and p.get("status") == "pending"
+    ]
+    assert len(remaining) == 1
+    assert int(remaining[0]["id"]) == pid
 
 
 # ── #1744：分类粒度 / draft 共存边界 → chat → HTTP 可见 ──
