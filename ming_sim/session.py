@@ -1690,13 +1690,13 @@ class GameSession:
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,
     ) -> ChatTurnResult:
-        """#1836 T1：一夜一场入口——一个场景 LLM 演整场。
+        """#1836 T1 / #1837 C1a：一夜一场入口——一个场景 LLM 演整场。
 
         - 皇帝「宣 X」→ 引擎落入殿账（ADR 0037）→ 起一次场景调用
         - 「退朝」口令 → 收夜（与既有 command-verdict 同缝）
         - 一条对话轮 = 整段自由戏文（可含多人）；生成链零动作工具
-        - 过渡：交办仍走现状只读玩家话的分类器（转译 C1a 接上）；
-          不绑假大臣人物锚（分类器只吃玩家原话 + 夜级暂存清单）
+        - 回话落定后一次转译（C1a）：交办载荷与应允 → 统一分派器；
+          退役与回话并行的意图分类器 / 应允判读；CLI/API 同形
         - 旧按大臣 chat() 入口暂留（收口在 X1）
         """
         from ming_sim.audience_night import (
@@ -1812,95 +1812,85 @@ class GameSession:
             session_id=f"scene-night-{night_id}",
         )
 
-        # 过渡：分类器只读玩家话 + 夜级暂存清单，不绑假大臣（C1a 转译接上后退役）。
-        action_intent_future = self._start_scene_action_intent(message_text)
-
         run_output = agent.run(prepared.opening + "\n\n" + message_text)
         _dump_llm_messages(run_output, f"场景召对/{SCENE_CHAT_SPEAKER}")
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
 
-        # 过渡：分类器结果暂存；物化不经单人 minister fallback（无人物锚）。
-        # pending 以空 minister_name 落，收夜/转译再认领。
-        preclassified_intent = self._finish_cli_action_intent(action_intent_future)
-        if preclassified_intent:
-            self._stage_scene_transition_intents(
-                result, message_text, preclassified_intent,
-                chat_turn_id=int(chat_turn_id or 0),
-            )
+        # C1a：回话落定后一次转译 → 统一分派（交办 / 应允）；不跑并行分类器。
+        # T2 再把本调用后台化并在封夜 join；本票同步落定即可验收载荷与应允链。
+        self._apply_scene_turn_translation(
+            result, message_text, answer, night_id=night_id,
+            chat_turn_id=int(chat_turn_id or 0),
+        )
         return result
 
-    def _start_scene_action_intent(self, message: str) -> Optional[Future]:
-        """#1836 过渡：场景入口分类器只读玩家话，夜级暂存清单，不绑单人大臣。"""
-        from ming_sim.cli_backend import (
-            _SECRET_PREFIXES,
-            classify_cli_action_intent,
-            cli_backend_from_env,
-        )
-
-        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
-        if channel not in {"cli", "api"} and cli_backend_from_env() is None:
-            return None
-        text = (message or "").strip()
-        if text.startswith(_SECRET_PREFIXES):
-            return None
-        if GameSession._proposal_blocked(self.state):
-            return None
-        # 夜级 / 本回合全部暂存（不按假大臣过滤）。
-        pend = self.db.list_pending_actions(self.state.turn) if hasattr(self.db, "list_pending_actions") else []
-        summaries = [f"#{int(p['id'])} {_pending_action_brief(p)}" for p in pend]
-        has_pending_draft = any(p.get("kind") == "directive" for p in pend)
-        backing_candidates = (
-            self.db.list_endorsed_dossier_candidates(int(self.state.turn))
-            if hasattr(self.db, "list_endorsed_dossier_candidates") else []
-        )
-        return _CLI_ACTION_INTENT_EXECUTOR.submit(
-            classify_cli_action_intent,
-            text,
-            [],  # 无单人密令锚
-            False,
-            has_pending_draft,
-            summaries,
-            getattr(self, "llm_config", None),
-            "",
-            int(self.state.turn),
-            backing_candidates,
-        )
-
-    def _stage_scene_transition_intents(
+    def _apply_scene_turn_translation(
         self,
         result: "ChatTurnResult",
-        message: str,
-        intent_candidates: Any,
+        emperor_message: str,
+        reply: str,
         *,
+        night_id: int,
         chat_turn_id: int = 0,
     ) -> None:
-        """过渡物化：只把分类器已声明的交办类候选落入 pending，minister_name 空串。
+        """#1837：场景入口转译交办/应允，经 C0 分派器落入既有暂存链。"""
+        from ming_sim.audience_translate import (
+            AudienceTranslateError,
+            run_audience_turn_translation,
+        )
+        from ming_sim.token_stats import tlog
 
-        不走 _cli_backend_fallback_actions（那条路要求 Character 锚）。
-        转译 C1a 接上后本缝退役。
-        """
-        from ming_sim.action_clusters import normalize_intent_candidates, resolve_primary_intent
-
-        candidates = normalize_intent_candidates(intent_candidates)
-        primary = resolve_primary_intent(candidates) or {}
-        kind = str(primary.get("kind") or "none")
-        if kind in ("", "none"):
+        if GameSession._proposal_blocked(self.state):
             return
-        if not hasattr(self.db, "stage_pending_action"):
-            return
-        # 只把带正文的拟旨类先落；其余等 C1a。
-        text = str(primary.get("text") or primary.get("decree_text") or message or "")
-        if kind in ("directive", "special_decree", "grant_allocation") and text.strip():
-            pid = self.db.stage_pending_action(
-                int(self.state.turn),
-                kind="directive",
-                action="拟旨",
+        translate_fn = getattr(self, "_audience_translate_fn", None)
+        try:
+            dispatch = run_audience_turn_translation(
+                self.db,
+                self.state,
+                emperor_message=emperor_message,
+                reply=reply,
+                night_id=int(night_id or 0),
                 minister_name="",
-                payload={"text": text, "source": "scene_transition_classifier",
-                         "chat_turn_id": int(chat_turn_id or 0)},
+                llm_config=getattr(self, "llm_config", None),
+                translate_fn=translate_fn,
             )
-            result.pending_action_id = int(pid or 0)
+        except AudienceTranslateError as exc:
+            # 失败诚实：真因落痕 + 既有 pending_action_failures 显眼回场；
+            # 不进 dispatch、不洗成成功空声明。后台待补/重试归 T2。
+            tlog(f"[audience_translate] 转译失败：{exc}")
+            result.pending_action_failures.append({
+                "id": 0,
+                "kind": "audience_translate",
+                "action": "转译",
+                "minister_name": "",
+                "message": f"召对转译失败：{exc}",
+                "category": "translate_failed",
+                "source": "audience_translate",
+                "chat_turn_id": int(chat_turn_id or 0),
+            })
+            return
+        # 呈现用：本轮新交办的首条 id（若有）；应允不另占 pending_action_id。
+        if dispatch.commissions.applied:
+            first = dispatch.commissions.applied[0]
+            result.pending_action_id = int(first.get("id") or 0)
+        # 拒收当事实回场（挂既有 pending_action_failures）；不做「所指未明 → 强制追问」。
+        for section_name in ("commissions", "promises"):
+            section = getattr(dispatch, section_name)
+            for item in section.rejected:
+                reason = getattr(item, "reason", str(item))
+                result.pending_action_failures.append({
+                    "id": 0,
+                    "kind": "audience_translate",
+                    "action": section_name,
+                    "minister_name": "",
+                    "message": str(reason),
+                    "section": section_name,
+                    "reason": reason,
+                    "category": getattr(item, "category", ""),
+                    "source": "audience_translate",
+                    "chat_turn_id": int(chat_turn_id or 0),
+                })
 
     def chat(
         self, minister_name: str, message: str, *, chat_turn_id: int = 0,
