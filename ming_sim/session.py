@@ -1851,6 +1851,7 @@ class GameSession:
                 emperor_message=emperor_message,
                 reply=reply,
                 night_id=int(night_id or 0),
+                chat_turn_id=int(chat_turn_id or 0),
                 minister_name="",
                 llm_config=getattr(self, "llm_config", None),
                 translate_fn=translate_fn,

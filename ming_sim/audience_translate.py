@@ -212,16 +212,23 @@ def apply_audience_turn_translation(
     declaration: Mapping[str, object],
     *,
     night_id: int,
+    chat_turn_id: int = 0,
     minister_name: str = "",
     source: Provenance = Provenance.system_simulation,
 ) -> DeclarationDispatchResult:
-    """把转译声明交给 C0 统一分派器；召对与过月同入口。"""
+    """把转译声明交给 C0 统一分派器；召对与过月同入口。
+
+    ``chat_turn_id``：当场实况源轮。>0 时由 :func:`dispatch_declaration` 自记
+    前像，使本轮暂存新增/应允/拒绝可经 undo_chat_turn 逆转
+    （ADR 0038；与 #1838/#1839 第四类同源）。过月或无生命周期传 0。
+    """
     return dispatch_declaration(
         db,
         state,
         declaration,
         minister_name=minister_name,
         night_id=int(night_id or 0),
+        chat_turn_id=int(chat_turn_id or 0),
         source=source,
     )
 
@@ -233,6 +240,7 @@ def run_audience_turn_translation(
     emperor_message: str,
     reply: str,
     night_id: int,
+    chat_turn_id: int = 0,
     minister_name: str = "",
     llm_config: Any = None,
     translate_fn: Optional[TranslateFn] = None,
@@ -242,6 +250,8 @@ def run_audience_turn_translation(
 
     转译调用失败抛 :class:`AudienceTranslateError`，不进入
     :func:`dispatch_declaration`（失败≠成功空声明）。
+
+    ``chat_turn_id`` 原样下传分派入口（不另造平行快照）；过月/无源轮传 0。
     """
     night_said = build_night_said_so_far(db, int(night_id or 0))
     pending = build_pending_summaries(db, int(state.turn), night_id=int(night_id or 0))
@@ -258,6 +268,7 @@ def run_audience_turn_translation(
         state,
         declaration,
         night_id=int(night_id or 0),
+        chat_turn_id=int(chat_turn_id or 0),
         minister_name=minister_name,
         source=source,
     )

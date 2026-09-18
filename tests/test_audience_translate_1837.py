@@ -542,6 +542,169 @@ def test_appointment_without_text_is_rejected_not_templated(game):
         assert f"任命{person}为陕西巡抚" != str(payload.get("text") or "")
 
 
+def _active_chat_turn(db, state, night_id: int) -> int:
+    """建可撤回的存活轮（status=active；挂夜默认 generating 不可 undo）。"""
+    return int(db.create_chat_turn(
+        state, "殿上", "s", 0, night_id=int(night_id), status="active",
+    ))
+
+
+def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
+    game, monkeypatch,
+):
+    """源轮贯穿 scene_chat→转译链：pending 新增/应允/拒绝三向真 undo 可逆。
+
+    不另造平行快照；ctid 下传 dispatch_declaration 入口自记前像（#1839 C2）。
+    """
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣等遵旨。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+    )
+
+    # ── 1) 新增：转译落 pending → undo 删行 ──
+    ctid_create = _active_chat_turn(db, state, night_id)
+    create_text = "着户部备陕西赈灾银UNIQUE-CREATE"
+    sess = _sess(
+        db, state, content,
+        translate_fn=lambda p, c: {
+            "commissions": [{"text": create_text}],
+            "promises": [],
+        },
+    )
+    r = sess.scene_chat("拟赈灾", chat_turn_id=ctid_create)
+    assert r.pending_action_id > 0
+    created_id = int(r.pending_action_id)
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM pending_actions WHERE id=? AND status='pending'",
+        (created_id,),
+    ).fetchone()["n"] == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM chat_turn_rollback_items WHERE chat_turn_id=?",
+        (ctid_create,),
+    ).fetchone()["n"] > 0
+    db.undo_chat_turn(ctid_create)
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM pending_actions WHERE id=?",
+        (created_id,),
+    ).fetchone()["n"] == 0
+
+    # ── 2) 应允：night_approved 0→1 → undo 回 0 ──
+    baseline = dispatch_declaration(
+        db, state,
+        {"commissions": [{"text": "旧暂存待应允UNIQUE-APPROVE"}]},
+        minister_name="", night_id=night_id,
+    )
+    approve_id = int(baseline.commissions.applied[0]["id"])
+    assert int(db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
+    ).fetchone()["night_approved"] or 0) == 0
+
+    ctid_approve = _active_chat_turn(db, state, night_id)
+    sess = _sess(
+        db, state, content,
+        translate_fn=lambda p, c: {
+            "commissions": [],
+            "promises": [{"action_id": approve_id, "decision": "应允"}],
+        },
+    )
+    sess.scene_chat("准", chat_turn_id=ctid_approve)
+    assert int(db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
+    ).fetchone()["night_approved"] or 0) == 1
+    db.undo_chat_turn(ctid_approve)
+    assert int(db.conn.execute(
+        "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
+    ).fetchone()["night_approved"] or 0) == 0
+
+    # ── 3) 拒绝：删 pending 行 → undo 复原 ──
+    reject_base = dispatch_declaration(
+        db, state,
+        {"commissions": [{"text": "旧暂存待拒绝UNIQUE-REJECT"}]},
+        minister_name="", night_id=night_id,
+    )
+    reject_id = int(reject_base.commissions.applied[0]["id"])
+    before_payload = db.conn.execute(
+        "SELECT payload_json, kind, action, status FROM pending_actions WHERE id=?",
+        (reject_id,),
+    ).fetchone()
+    assert before_payload is not None
+
+    ctid_reject = _active_chat_turn(db, state, night_id)
+    sess = _sess(
+        db, state, content,
+        translate_fn=lambda p, c: {
+            "commissions": [],
+            "promises": [{"action_id": reject_id, "decision": "拒绝"}],
+        },
+    )
+    sess.scene_chat("不准", chat_turn_id=ctid_reject)
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM pending_actions WHERE id=?", (reject_id,),
+    ).fetchone()["n"] == 0
+    db.undo_chat_turn(ctid_reject)
+    restored = db.conn.execute(
+        "SELECT payload_json, kind, action, status FROM pending_actions WHERE id=?",
+        (reject_id,),
+    ).fetchone()
+    assert restored is not None
+    assert restored["status"] == before_payload["status"]
+    assert restored["kind"] == before_payload["kind"]
+    assert restored["action"] == before_payload["action"]
+    assert restored["payload_json"] == before_payload["payload_json"]
+
+
+def test_pure_office_dossier_uses_payload_text_not_template(game):
+    """纯任免成案核消费 payload 原样 text，不拼「任命X为Y」模板。"""
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    person = _hong_name(db, content)
+    edict = f"着以{person}巡抚陕西，专办边饷UNIQUE-OFFICE-TEXT"
+    staged = dispatch_declaration(
+        db, state,
+        {"commissions": [{
+            "text": edict,
+            "appointment": {
+                "name": person, "office": "陕西巡抚", "appoint_action": "任命",
+            },
+        }]},
+        minister_name="", night_id=night_id,
+    )
+    assert len(staged.commissions.applied) == 1
+    pa = staged.commissions.applied[0]
+    assert pa["kind"] == "office"
+    pending_id = int(pa["id"])
+    payload = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+        ).fetchone()["payload_json"]
+    )
+    assert payload["text"] == edict
+
+    db.mark_pending_night_approved([pending_id], night_id=night_id)
+    close_night(db, state, content=content, registry=None, wait_timeout_s=0.0)
+
+    dossier = db.conn.execute(
+        "SELECT decree_text, payload_json, action_type, status "
+        "FROM decree_dossiers WHERE pending_action_id=? "
+        "AND action_type='appointment' ORDER BY id DESC LIMIT 1",
+        (pending_id,),
+    ).fetchone()
+    assert dossier is not None, "纯任免应收夜成 appointment 案卷"
+    assert dossier["decree_text"] == edict
+    template = f"任命{person}为陕西巡抚"
+    assert dossier["decree_text"] != template
+    dossier_payload = json.loads(dossier["payload_json"] or "{}")
+    assert dossier_payload.get("text") == edict
+
+
 def test_scene_chat_translate_prompt_carries_pending_and_spoken(game, monkeypatch):
     """转译 prompt 含本轮皇帝原话区、回话、本夜暂存 id。"""
     db, state, content = game
