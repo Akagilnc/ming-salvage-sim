@@ -1778,6 +1778,11 @@ class GameSession:
                         origin_chat_turn_id=int(chat_turn_id or 0),
                         empty_scaffold=True,
                     )
+                    # #1838 / ADR 0158：宣 X 当场先切御前主角（不等转译）。
+                    from ming_sim.audience_night import set_night_protagonist
+                    set_night_protagonist(
+                        self.db, night_id, target.name, reason="xuan",
+                    )
 
         # 材料目录：在场诸人各一份；开场最小集 + 只读工具。
         prepared = prepare_scene_materials(self.db, self.state)

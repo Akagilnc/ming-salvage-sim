@@ -364,6 +364,7 @@ def _hydrate_night(raw: Dict[str, Any]) -> Dict[str, Any]:
         "status": str(raw.get("status") or ""),
         "close_commit_cursor": int(raw.get("close_commit_cursor") or 0),
         "next_event_seq": int(raw.get("next_event_seq") or 0),
+        "protagonist_name": str(raw.get("protagonist_name") or ""),
         "opened_at": raw.get("opened_at"),
         "closed_at": raw.get("closed_at"),
     }
@@ -2490,6 +2491,58 @@ def audible_entries_for(
         if name in present and entry.get("audibility") == AUDIBILITY_PUBLIC:
             out.append(entry)
     return out
+
+
+def person_night_experience(
+    db: Any, night_id: int, person_name: str,
+) -> List[Dict[str, Any]]:
+    """人物经历读时投影（#1838）：按转译标记的在场进出与可闻性取本夜所闻。
+
+    单一真源 = :func:`audible_entries_for`——殿上公开且在场区间内；御前低语
+    （私密）不进不在场者 / 非当事人的经历。不另立第二套可闻性规则。
+    """
+    return audible_entries_for(db, int(night_id), person_name)
+
+
+def set_night_protagonist(
+    db: Any,
+    night_id: int,
+    person_name: str,
+    *,
+    reason: str = "translation",
+    commit: bool = True,
+) -> str:
+    """写下本夜御前主角（#1838 / ADR 0158 决定 4）。
+
+    ``reason`` 仅作调用语义标注（``xuan`` = 皇帝亲口宣 X 当场先切；
+    ``translation`` = 转译声明），不进库、不驱动规则。代码只存声明/口令给出
+    的人名，不从戏文散文解析（ADR 0142）。
+    """
+    name = str(person_name or "").strip()
+    if not name:
+        raise AudienceNightError("御前主角人名不能为空", code="empty_protagonist")
+    nid = int(night_id)
+    night = get_night(db, nid)
+    if night is None:
+        raise AudienceNightError(f"夜不存在：{nid}", code="night_not_found")
+    db.conn.execute(
+        "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
+        (name, nid),
+    )
+    if commit and _should_commit(db):
+        db.conn.commit()
+    return name
+
+
+def get_night_protagonist(db: Any, night_id: int) -> str:
+    """读本夜当前御前主角；未声明则空串。"""
+    row = db.conn.execute(
+        "SELECT protagonist_name FROM audience_nights WHERE id=?",
+        (int(night_id),),
+    ).fetchone()
+    if row is None:
+        return ""
+    return str(row["protagonist_name"] or "")
 
 
 SCENE_RECAP_HEADER = "【殿上先前所闻】"

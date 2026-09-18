@@ -12,18 +12,15 @@ ADR 0028 后出注记）、既有暂存的应允 / 拒绝、当场实况（人�
 合成替代玩家可感的自由文本（P6/P7：文字模板与删改 LLM 原文均违宪——例如
 「在场进出」落账用的正是声明自带的正文，代码不拼「某某入殿」这类固定句）。
 
-召对（C1a / C1b）与过月（C3）在各自真实上线时都调 :func:`dispatch_declaration`
-这一个入口，不各自另写一份同构分派逻辑；本票内演示两种真实但不同的调用形态：
-:func:`dispatch_declaration`（连 `night_id` 直接落账，召对场中承接的形态，
-ADR 0155）与 :func:`stage_declaration` + :func:`settle_staged_declarations_in_decree_order`
-（先暂存、过月按下旨先后幂等结算，ADR 0157 步骤 1-2 的形态）——**但 C1a
-（#1837）/ C1b（#1838）/ C3（#1840）三票截至本次提交仍是 OPEN、未实现**：
-它们是把「转译 LLM 读一轮回话 / 一个推演段」接到本模块输入端的那一步，
-0155/0157 描述的召对整场单 LLM 会话与过月推演段调用本身在这个代码库里
-还不存在任何实现可挂。把那一步做进 #1835 等同于把 C1a/C1b/C3 的票面判定
-提前抢答——三票各自的验收与设计取舍应在各自票内定，不该被 #1835 的施工
-腿单方面决定。若判定 #1835 必须把三票工作量并入才算完成，这是需要 owner /
-票庭裁定的边界问题（是否合并票面），不是本票施工腿能自行决定的实现细节。
+召对与过月都调 :func:`dispatch_declaration` 这一个入口，不各自另写一份同构
+分派逻辑；两种真实但不同的调用形态：:func:`dispatch_declaration`（连
+`night_id` 直接落账，召对场中承接，ADR 0155）与 :func:`stage_declaration` +
+:func:`settle_staged_declarations_in_decree_order`（先暂存、过月按下旨先后
+幂等结算，ADR 0157 步骤 1-2）。召对源轮绑定（说话人分段 / 在场进出的
+`source_chat_turn_id`、御前主角按轮持久化、抽取/判官水位）由 #1838
+:func:`~ming_sim.audience_translation.apply_audience_round_translation` 在分派
+之上接线；交办载荷与应允的转译 LLM 调用归 C1a（#1837）；过月推演段调用
+归 C3（#1840）。
 
 任一项引用不存在实体（事务 / 人物 / 军队 / 暂存动作 / 夜）单独拒收、留痕于
 对应 ``SectionResult.rejected``，不牵连同批其余合法项（ADR 0015 per-item
@@ -40,10 +37,12 @@ textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 通用指针 `attach_pointer`）、on_scene_facts / registrations（`characters`
 主键是 name 非整数 id，AffairStore 通用指针 `attach_pointer` 现按表配置主键
 列——`characters` 配置为 `name`——同样直接复用，不再另实现一份，#1831）。
-只有 **protagonist** 未接入：它不是一条带来源的记录，而是「谁在
-御前」这个选择性指针本身，且本轮已校验其指向的人物真实存在——「所属事务」
-对一个选择指针没有独立于其已校验存在性之外的意义，故未强行给它挂一个不
-对应任何落库行为的事务字段。edge_events 与 on_scene_facts 的「动作本身 +
+**protagonist** 不是带来源的记录行，而是「谁在御前」的选择性指针——本模块
+只做存在性校验；按源轮持久化与夜当前值由 #1838
+:func:`~ming_sim.audience_translation.apply_audience_round_translation` 接线
+（``audience_nights.protagonist_name`` / ``chat_turns.protagonist_name``），不在
+分派器内发明第二套主角表。「所属事务」对选择指针无独立意义，故不挂事务字段。
+edge_events 与 on_scene_facts 的「动作本身 +
 事务指针绑定」放在同一个 `atomic(db)` 块逐项处理，指针冲突时整块回滚——不
 会出现「动作已落库、只是没绑上事务」的半写状态；registrations 的指针绑定
 对象是刚插入的新行（`affair_id` 恒为 0），绑定不会与既有事务冲突，因此不需
@@ -104,12 +103,11 @@ _PRESENCE_ITEM_EFFECTS = {"enter": PRESENCE_ENTER, "exit": PRESENCE_EXIT}
 
 @dataclass(frozen=True)
 class ProtagonistResult:
-    """本轮御前主角声明的校验结果——不是落库结果（J7）：``protagonist`` 目前
-    无既有落库口（呈现侧归 F3 #1851，真正按源轮持久化与恢复由 #1838 接线），
+    """本轮御前主角声明的校验结果——不是落库结果（J7）：分派器只校验存在性，
     冒称 ``SectionResult.applied``（其契约明定「已落库」）会让调用方误信已
-    持久化。``validated`` 是已校验存在的主角人物名投影，供后续调用方（C1a/
-    C1b/C3）在真正接线落库前先拿到一个诚实的中间结果；为空表示本声明未含
-    主角或被拒收。"""
+    持久化。``validated`` 是已校验存在的主角人物名投影；按源轮 / 夜当前值
+    落库由 :func:`~ming_sim.audience_translation.apply_audience_round_translation`
+    在同一事务内完成（#1838）。为空表示本声明未含主角或被拒收。"""
 
     validated: Optional[Dict[str, Any]]
     rejected: List[RejectedItem]
@@ -207,10 +205,15 @@ def _dispatch_declaration_sections(
     night_id: int,
     source: Provenance,
     collector: RejectionCollector,
+    source_chat_turn_id: int = 0,
 ) -> DeclarationDispatchResult:
     """真正跑十个 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
     给定的收集器；只记不落库——落库时机与事务边界由调用方决定（J1 判词打回：
-    直接分派与暂存结算两条路径共用同一段执行体，不复制两份分派逻辑）。"""
+    直接分派与暂存结算两条路径共用同一段执行体，不复制两份分派逻辑）。
+
+    ``source_chat_turn_id``（#1838）：召对场中转译的源对话轮；在场进出与说话人
+    分段落账时写入 ledger，供撤回按轮逆转。过月 / 无源轮路径保持 0。
+    """
     result = DeclarationDispatchResult(
         commissions=_dispatch_commissions(
             db, state, declaration.get("commissions"),
@@ -230,9 +233,11 @@ def _dispatch_declaration_sections(
         ),
         presence=_dispatch_presence(
             db, declaration.get("presence"), night_id=night_id, source=source,
+            source_chat_turn_id=source_chat_turn_id,
         ),
         scene_facts=_dispatch_scene_facts(
             db, declaration.get("scene_facts"), night_id=night_id, source=source,
+            source_chat_turn_id=source_chat_turn_id,
         ),
         edge_events=_dispatch_edge_events(
             db, state, declaration.get("edge_events"), source=source,
@@ -258,6 +263,7 @@ def dispatch_declaration(
     minister_name: str = "",
     night_id: int = 0,
     source: Provenance = Provenance.system_simulation,
+    source_chat_turn_id: int = 0,
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
     承接（ADR 0155）直接分派单条声明时用的公开入口，唯一契约：始终原子、始终
@@ -286,6 +292,7 @@ def dispatch_declaration(
             db, state, declaration,
             minister_name=minister_name, night_id=night_id, source=source,
             collector=collector,
+            source_chat_turn_id=int(source_chat_turn_id or 0),
         )
         collector.flush_to_db(db)
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
@@ -762,11 +769,13 @@ def _category_for_audience_night_error(exc: AudienceNightError) -> str:
 
 def _dispatch_presence(
     db: Any, raw: object, *, night_id: int, source: Provenance,
+    source_chat_turn_id: int = 0,
 ) -> SectionResult:
     """在场进出：落既有召对夜账本（`append_ledger_entry`）。正文必须是转译声明
     自己带的自由文本——代码不合成「某某入殿/退下」模板句（P6/P7：玩家可感文字
     零模板、LLM 自由文本零删改）。落账前先校验人物存在，无夜上下文或人物不存在
-    的项单独拒收，不落孤儿账（AC3）。"""
+    的项单独拒收，不落孤儿账（AC3）。源轮 ``source_chat_turn_id`` 供撤回逆转
+    （#1838 / ADR 0038）。"""
     items, rejected = _section_items(raw, label="在场进出声明", source=source)
     applied: List[Any] = []
     for item in items:
@@ -795,6 +804,7 @@ def _dispatch_presence(
                 person_names=[name], audibility=AUDIBILITY_PUBLIC,
                 body=body, tags=[effect], presence_effect=effect,
                 check_dead=(effect == PRESENCE_ENTER), origin_ref=origin_ref,
+                source_chat_turn_id=int(source_chat_turn_id or 0),
             )
         except AudienceNightError as exc:
             _reject(rejected, item, str(exc), _category_for_audience_night_error(exc), source)
@@ -805,11 +815,13 @@ def _dispatch_presence(
 
 def _dispatch_scene_facts(
     db: Any, raw: object, *, night_id: int, source: Provenance,
+    source_chat_turn_id: int = 0,
 ) -> SectionResult:
     """说话人分段与可闻性：转译声明自带的一段戏文正文 + 可闻性 + 涉及人物，
     原样落既有召对夜账本，代码不改写、不合成替代文本（P6/P7）。落账前校验涉及
     人物全部存在；纯提及不拦死人（同既有 `settle_story_extraction` 口径：死账
-    仅对「进」效果校验），故 `check_dead=False`。"""
+    仅对「进」效果校验），故 `check_dead=False`。源轮 ``source_chat_turn_id``
+    供撤回与经历读时投影溯源（#1838）。"""
     items, rejected = _section_items(raw, label="说话人分段声明", source=source)
     applied: List[Any] = []
     for item in items:
@@ -844,6 +856,7 @@ def _dispatch_scene_facts(
                 db, int(night_id),
                 person_names=list(person_names), audibility=str(audibility),
                 body=body, tags=list(tags), check_dead=False, origin_ref=origin_ref,
+                source_chat_turn_id=int(source_chat_turn_id or 0),
             )
         except AudienceNightError as exc:
             _reject(rejected, item, str(exc), _category_for_audience_night_error(exc), source)
@@ -908,11 +921,11 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
 
 
 def _dispatch_protagonist(db: Any, raw: object, *, source: Provenance) -> ProtagonistResult:
-    """本轮御前主角：目前无既有落库口（呈现侧归 F3 #1851，真正按源轮持久化与
-    恢复由 #1838 接线），本函数只做既有人物存在性校验，把校验结果作为
-    projected 值原样交回调用方——不冒称 :class:`~ming_sim.applier.SectionResult`
-    的 ``applied``（那意味着已落库），也不发明一张承接不了完整落库语义的
-    全局主角表（J7）。"""
+    """本轮御前主角：只做既有人物存在性校验，把校验结果作为 projected 值原样
+    交回调用方——不冒称 :class:`~ming_sim.applier.SectionResult` 的 ``applied``
+    （那意味着已落库）。按源轮 / 夜当前值持久化由 #1838
+    :func:`~ming_sim.audience_translation.apply_audience_round_translation` 接线
+    （J7：不在分派器内发明第二套主角表）。"""
     if not raw:
         return ProtagonistResult(validated=None, rejected=[])
     if not isinstance(raw, Mapping):
