@@ -528,30 +528,60 @@ def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch)
 
 
 def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
-    """类1①：join 先未完成再完成 → 系统内等待后自动续跑；非 SettlementAbort/409。"""
+    """类1①：真实在飞 + 调用方持闸 → 闸外等完自动续跑；非 Abort/409、不自锁。"""
     db, state, content = game
     before_turn = int(state.turn)
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    gate = threading.Lock()
+    release_llm = threading.Event()
+    name = _active_name(db, content)
     import ming_sim.audience_translation as at
 
-    calls = {"n": 0}
+    def translate_fn(prompt, llm_config):
+        # LLM 窗无锁；落账须拿 write_gate——若 resolve 持闸死等则自锁。
+        # 略延迟：单次短 join 可能先 False，逼出「等」而非一次 Abort。
+        release_llm.wait(timeout=2.0)
+        time.sleep(0.55)
+        return {
+            "on_scene_facts": [{
+                "name": name, "动作": "处置", "status": "imprisoned",
+                "reason": "持闸等待后自动续跑",
+            }],
+        }
 
-    def flaky_join(*, timeout_s=120.0):
-        calls["n"] += 1
-        # 第一次未清空（未完成），第二次清空 → 等待后自动续跑
-        return calls["n"] >= 2
+    ctid = _persist_round(db, state, nid, "拿下", "遵旨。")
+    schedule_audience_turn_translation(
+        db, state,
+        emperor_message="拿下",
+        reply="遵旨。",
+        night_id=nid, chat_turn_id=ctid,
+        llm_config=SimpleNamespace(channel="api"),
+        translate_fn=translate_fn, write_gate=gate,
+    )
+    assert db.get_story_extract_status(ctid) == "pending"
 
-    monkeypatch.setattr(at, "join_all_translations", flaky_join)
+    # 测秒级：join 单次上限收窄；生产仍 120s。死等变异不会拖满 120s。
+    real_join = at.join_all_translations
 
-    class _StopAfterWait(Exception):
+    def join_short(*, timeout_s=120.0):
+        return real_join(timeout_s=min(float(timeout_s), 0.4))
+
+    monkeypatch.setattr(at, "join_all_translations", join_short)
+
+    class _StopAfterCatch(Exception):
         pass
 
-    def catch_then_stop(*a, **k):
-        raise _StopAfterWait()
+    real_catch = at.catch_up_pending_translations
 
-    # join 清空后才进 catch-up；此处截断以证「等完后续跑」，不进整月结算
+    def catch_then_stop(*a, **k):
+        out = real_catch(*a, **k)
+        raise _StopAfterCatch()
+
+    # 截断在 catch-up 后，证等完后续跑，不进整月结算
     monkeypatch.setattr(at, "catch_up_pending_translations", catch_then_stop)
 
-    sess = _sess(db, state, content)
+    sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
     sess._begun = True
     sess.last_decree = ""
     sess._decree_draft_fingerprint = ()
@@ -560,10 +590,41 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
     sess.previous_summary = ""
     sess.agno_db = None
 
-    with pytest.raises(_StopAfterWait):
-        sess.resolve_turn(allow_empty_decree=True)
+    outcome = {"err": None}
 
-    assert calls["n"] >= 2, "未完成须在 join 缝上继续等，不得一次 False 就中止"
+    def run_under_held_gate():
+        # 生产形：web issue/advance body 整段持非重入 write_gate 再调 resolve_turn
+        with gate:
+            try:
+                sess.resolve_turn(allow_empty_decree=True)
+            except _StopAfterCatch:
+                outcome["err"] = "stop"
+            except Exception as exc:  # noqa: BLE001
+                outcome["err"] = exc
+
+    # daemon：持闸死等变异时不拖住进程退出
+    worker = threading.Thread(target=run_under_held_gate, daemon=True)
+    worker.start()
+    # 给 resolve 进入 join 等待并放闸的时间，再放行 LLM
+    time.sleep(0.05)
+    release_llm.set()
+    worker.join(timeout=3.0)
+    hung = worker.is_alive()
+    if hung:
+        # 失败形解毒：放闸让在飞 worker 落完，避免夹具/后续测被串行锁拖住
+        try:
+            if gate.locked():
+                gate.release()
+        except RuntimeError:
+            pass
+        real_join(timeout_s=1.0)
+        worker.join(timeout=1.0)
+
+    assert not hung, "持闸等 join 不得自锁；须放闸让 worker 落账后自动续跑"
+    assert outcome["err"] == "stop", f"须等完进 catch-up 后续跑，得 {outcome['err']!r}"
+    assert db.get_story_extract_status(ctid) == "done"
+    status, _ = db.get_character_status(name)
+    assert status == "imprisoned"
     assert int(state.turn) == before_turn
 
 
