@@ -528,7 +528,7 @@ def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch)
 
 
 def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
-    """类1①：真实在飞 + 调用方持闸 → 闸外等完自动续跑；非 Abort/409、不自锁。"""
+    """类1①：真实在飞 → 闸外等完自动续跑；持闸只在 join 清空后（生产 entry 形）。"""
     db, state, content = game
     before_turn = int(state.turn)
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
@@ -539,14 +539,13 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
     import ming_sim.audience_translation as at
 
     def translate_fn(prompt, llm_config):
-        # LLM 窗无锁；落账须拿 write_gate——若 resolve 持闸死等则自锁。
-        # 略延迟：单次短 join 可能先 False，逼出「等」而非一次 Abort。
+        # LLM 窗无锁；落账短持 write_gate。
         release_llm.wait(timeout=2.0)
-        time.sleep(0.55)
+        time.sleep(0.55)  # 单次短 join 可能先 False → 须 while 等，非一次 Abort
         return {
             "on_scene_facts": [{
                 "name": name, "动作": "处置", "status": "imprisoned",
-                "reason": "持闸等待后自动续跑",
+                "reason": "闸外等待后自动续跑",
             }],
         }
 
@@ -561,7 +560,6 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
     )
     assert db.get_story_extract_status(ctid) == "pending"
 
-    # 测秒级：join 单次上限收窄；生产仍 120s。死等变异不会拖满 120s。
     real_join = at.join_all_translations
 
     def join_short(*, timeout_s=120.0):
@@ -573,13 +571,17 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
         pass
 
     real_catch = at.catch_up_pending_translations
+    catch_calls = {"n": 0}
 
-    def catch_then_stop(*a, **k):
+    def catch_maybe_stop(*a, **k):
+        # 第一次：闸外 await 真实 catch-up；第二次：持闸 resolve 内截断
+        catch_calls["n"] += 1
         out = real_catch(*a, **k)
-        raise _StopAfterCatch()
+        if catch_calls["n"] >= 2:
+            raise _StopAfterCatch()
+        return out
 
-    # 截断在 catch-up 后，证等完后续跑，不进整月结算
-    monkeypatch.setattr(at, "catch_up_pending_translations", catch_then_stop)
+    monkeypatch.setattr(at, "catch_up_pending_translations", catch_maybe_stop)
 
     sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
     sess._begun = True
@@ -592,26 +594,25 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
 
     outcome = {"err": None}
 
-    def run_under_held_gate():
-        # 生产形：web issue/advance body 整段持非重入 write_gate 再调 resolve_turn
-        with gate:
-            try:
+    def run_production_shape():
+        # 生产形（_settlement_period_entry）：闸外 await → 再持闸跑 body/resolve
+        try:
+            sess.await_translations_before_month()
+            with gate:
+                # 持闸下再 resolve：join 已清空，立即续跑；不得自锁/Abort
                 sess.resolve_turn(allow_empty_decree=True)
-            except _StopAfterCatch:
-                outcome["err"] = "stop"
-            except Exception as exc:  # noqa: BLE001
-                outcome["err"] = exc
+        except _StopAfterCatch:
+            outcome["err"] = "stop"
+        except Exception as exc:  # noqa: BLE001
+            outcome["err"] = exc
 
-    # daemon：持闸死等变异时不拖住进程退出
-    worker = threading.Thread(target=run_under_held_gate, daemon=True)
+    worker = threading.Thread(target=run_production_shape, daemon=True)
     worker.start()
-    # 给 resolve 进入 join 等待并放闸的时间，再放行 LLM
     time.sleep(0.05)
     release_llm.set()
-    worker.join(timeout=3.0)
+    worker.join(timeout=4.0)
     hung = worker.is_alive()
     if hung:
-        # 失败形解毒：放闸让在飞 worker 落完，避免夹具/后续测被串行锁拖住
         try:
             if gate.locked():
                 gate.release()
@@ -620,12 +621,80 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
         real_join(timeout_s=1.0)
         worker.join(timeout=1.0)
 
-    assert not hung, "持闸等 join 不得自锁；须放闸让 worker 落账后自动续跑"
+    assert not hung, "闸外等 join 后持闸 resolve 不得自锁"
     assert outcome["err"] == "stop", f"须等完进 catch-up 后续跑，得 {outcome['err']!r}"
     assert db.get_story_extract_status(ctid) == "done"
     status, _ = db.get_character_status(name)
     assert status == "imprisoned"
     assert int(state.turn) == before_turn
+    assert not gate.locked(), "不得悬持 write_gate"
+
+
+def test_await_translations_does_not_steal_worker_write_gate(game, monkeypatch):
+    """反案：调用方未持闸 + worker 落账持闸 → 不得 release 偷放后悬持。"""
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    gate = threading.Lock()
+    import ming_sim.audience_translation as at
+
+    def translate_fn(prompt, llm_config):
+        return {"commissions": [], "promises": []}
+
+    real_apply = at.apply_audience_round_translation
+
+    def slow_apply(*a, **k):
+        # 已在 run_turn_translation_job 的 with write_gate 内；拖住持闸窗。
+        time.sleep(0.8)
+        return real_apply(*a, **k)
+
+    monkeypatch.setattr(at, "apply_audience_round_translation", slow_apply)
+
+    ctid = _persist_round(db, state, nid, "反偷放", "……")
+    schedule_audience_turn_translation(
+        db, state,
+        emperor_message="反偷放",
+        reply="……",
+        night_id=nid, chat_turn_id=ctid,
+        llm_config=SimpleNamespace(channel="api"),
+        translate_fn=translate_fn, write_gate=gate,
+    )
+
+    # 等 worker 进入 apply 持闸
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not gate.locked():
+        time.sleep(0.01)
+    assert gate.locked(), "worker 应正在持 write_gate 落账"
+
+    sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
+    sess._begun = True
+    sess.last_decree = ""
+    sess._decree_draft_fingerprint = ()
+    sess.deaths_this_turn = []
+    sess.debuts_this_turn = []
+    sess.previous_summary = ""
+    sess.agno_db = None
+
+    class _Stop(Exception):
+        pass
+
+    def catch_stop(*a, **k):
+        raise _Stop()
+
+    monkeypatch.setattr(at, "catch_up_pending_translations", catch_stop)
+
+    # 调用方不持闸（CLI/直调形）；等待期间 worker 持闸——不得偷放
+    err = None
+    try:
+        sess.await_translations_before_month()
+    except _Stop:
+        err = "stop"
+    except Exception as exc:  # noqa: BLE001
+        err = exc
+
+    assert err == "stop"
+    assert not gate.locked(), "await 返回后 write_gate 不得被偷放后悬持"
+    assert db.get_story_extract_status(ctid) == "done"
 
 
 def test_resolve_turn_exhausted_pending_uses_0157_form(game, monkeypatch, tmp_path):

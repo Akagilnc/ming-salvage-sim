@@ -3502,6 +3502,57 @@ class GameSession:
                 ) from write_exc
         return next_carry
 
+    def await_translations_before_month(self) -> None:
+        """过月前转译：join 等到清空 → catch-up → 真耗尽走 0157。
+
+        #1842 / ADR 0155 两态：① 未完成则过月等（join 缝系统内等待后自动续跑，
+        不得 SettlementAbort/409）；② 耗尽才 write_error_pack+SettlementAbort。
+        hang 切断：join 未清空不进阻塞 catch-up。
+
+        **闸外契约**（同 close_night「join 在闸外」、HITL「禁整段 gate 盖 join」）：
+        调用方不得在持非重入 write_gate 时进入本方法的等待路径。web 受理样板在
+        hold_write_for_body 之前调用本方法；resolve_turn 再调一次时 join 已清空、
+        立即放行。本方法**绝不** release/acquire write_gate（不猜锁所有权、不偷放）。
+        catch-up 仅在闸空闲时传入 write_gate，避免调用方已持闸时同线程嵌套自锁。
+        """
+        from ming_sim.audience_translation import (
+            catch_up_pending_translations,
+            join_all_translations,
+            list_pending_translations,
+        )
+        from ming_sim.error_pack import settlement_abort_message, write_error_pack
+        from ming_sim.exceptions import SettlementAbort
+
+        # ① 等待仍在 join 缝上：timeout 仅单次轮询上限，未清空则继续等，不清空不往下。
+        while not join_all_translations(timeout_s=120.0):
+            pass
+        # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
+        # 仅 join 已清空后才进入——避免与在飞 worker 争同一夜串行锁挂死。
+        gate = getattr(self, "_write_gate", None)
+        # 闸忙（调用方持闸或他者短持）→ 不传入，避免非重入嵌套自锁；不 release。
+        catch_gate = self._write_gate_if_free() if gate is not None else None
+        catch_up_pending_translations(
+            self.db, self.state,
+            llm_config=getattr(self, "llm_config", None),
+            translate_fn=getattr(self, "_audience_translate_fn", None),
+            write_gate=catch_gate,
+        )
+        still_pending = list_pending_translations(self.db)
+        if still_pending:
+            # 真耗尽：0157 形态——停步 + 错误包 + 系统提示行 + 重试，重开同态。
+            exc = RuntimeError(
+                f"召对转译重试耗尽，待补 {len(still_pending)} 轮"
+            )
+            pack_path = write_error_pack(
+                self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+            )
+            raise SettlementAbort(
+                settlement_abort_message(pack_path),
+                turn=int(self.state.turn),
+                stage="audience_translation_exhausted",
+                error_pack_path=pack_path,
+            ) from exc
+
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None,
                      *, allow_empty_decree: bool = False) -> ResolveResult:
@@ -3516,59 +3567,8 @@ class GameSession:
         调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
         回合已结算推进，置 issued 态。
         """
-        # #1842 / ADR 0155：过月前 join 全部后台转译；未完成与耗尽两态分治。
-        # ① join 未清空 =「未完成则过月等」——在 join 缝上系统内等到清空后自动续跑
-        #    （CONTEXT 核账期／0149：未了之事办完后自动往下走）。不得 SettlementAbort/409。
-        #    join/catch-up 必须闸外：web issue/advance 以 hold_write_for_body 整段持
-        #    非重入 write_gate；在飞 worker 落账/_mark_pending 同锁——持闸死等=自锁。
-        #    口径同 close_night「join 在闸外」与 HITL「禁整段 gate 盖 join」：若调用方
-        #    已持闸，本前缀临时放闸等完再取回，不新增第二锁。
-        #    hang 切断保留：join 未清空不进会阻塞同一夜串行锁的 catch-up。
-        # ② join 清空后 catch-up，仍 pending = 真耗尽 → 0157（错误包 + 停步 + 重试）。
-        from ming_sim.audience_translation import (
-            catch_up_pending_translations,
-            join_all_translations,
-            list_pending_translations,
-        )
-        from ming_sim.error_pack import settlement_abort_message, write_error_pack
-        from ming_sim.exceptions import SettlementAbort
-
-        gate = getattr(self, "_write_gate", None)
-        # 调用方已持非重入闸（_write_gate_if_free 为 None）→ 临时放闸，让 worker 能落账。
-        released_for_join = False
-        if gate is not None and self._write_gate_if_free() is None:
-            gate.release()
-            released_for_join = True
-        try:
-            # ① 等待仍在 join 缝上（闸外）：timeout 仅单次轮询上限，未清空则继续等。
-            while not join_all_translations(timeout_s=120.0):
-                pass
-            # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
-            # 仅 join 已清空后才进入——避免与在飞 worker 争同一夜串行锁挂死。
-            catch_up_pending_translations(
-                self.db, self.state,
-                llm_config=getattr(self, "llm_config", None),
-                translate_fn=getattr(self, "_audience_translate_fn", None),
-                write_gate=gate,
-            )
-            still_pending = list_pending_translations(self.db)
-            if still_pending:
-                # 真耗尽：0157 形态——停步 + 错误包 + 系统提示行 + 重试，重开同态。
-                exc = RuntimeError(
-                    f"召对转译重试耗尽，待补 {len(still_pending)} 轮"
-                )
-                pack_path = write_error_pack(
-                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
-                )
-                raise SettlementAbort(
-                    settlement_abort_message(pack_path),
-                    turn=int(self.state.turn),
-                    stage="audience_translation_exhausted",
-                    error_pack_path=pack_path,
-                ) from exc
-        finally:
-            if released_for_join:
-                gate.acquire()
+        # #1842：过月前转译 join/catch-up/耗尽判定（闸外契约，见 await_translations_before_month）。
+        self.await_translations_before_month()
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))
             or any(

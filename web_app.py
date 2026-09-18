@@ -4496,6 +4496,12 @@ def _settlement_period_entry(
                 from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
                 clear_orphan_month_open_snapshot(db, state)
 
+        # #1842：过月转译 join/catch-up 在持 write_cm 之前闸外完成（close_night/
+        # HITL 同口径）。持闸后再等会与在飞 worker 争非重入 write_gate 自锁。
+        sess = getattr(game, "session", None)
+        if sess is not None and hasattr(sess, "await_translations_before_month"):
+            sess.await_translations_before_month()
+
         if hold_write_for_body:
             with write_cm(game):
                 yield
