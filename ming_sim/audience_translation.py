@@ -56,16 +56,18 @@ def apply_audience_round_translation(
     """
     nid = int(night_id or 0)
     ctid = int(chat_turn_id or 0)
+    # 单轮转译权威事务：section 副作用 + 拒收 flush + 撤回前像（dispatch 内）
+    # + 主角/水位共处同一 atomic（嵌套 flat）；不另开第二段提交。
     # 复用公开入口的前像自足机制；不直调私有执行体绕过 capture/record。
-    result = dispatch_declaration(
-        db, state, declaration,
-        minister_name=minister_name,
-        night_id=nid,
-        chat_turn_id=ctid,
-        source=source,
-    )
-    # 主角持久化 + 抽取/判官水位：chat_turns 不在前像表，undo 走重投影。
     with atomic(db):
+        result = dispatch_declaration(
+            db, state, declaration,
+            minister_name=minister_name,
+            night_id=nid,
+            chat_turn_id=ctid,
+            source=source,
+        )
+        # 主角持久化 + 抽取/判官水位：chat_turns 不在前像表，undo 走重投影。
         _bind_round_after_dispatch(db, nid, ctid, result)
     return result
 
@@ -136,12 +138,31 @@ def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> No
 
 
 def list_pending_translations(
-    db: Any, *, night_id: Optional[int] = None,
+    db: Any, *, night_id: Optional[int] = None, chat_turn_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """转译待补真源：复用 list_unextracted_replies（extract_status ''/'pending'）。"""
+    """转译待补真源：复用 list_unextracted_replies（extract_status ''/'pending'）。
+
+    可按夜 / 源轮收窄。返回行附结构化系统提示态（供 0158 决定 6 投影，不做页面）。
+    """
     if not hasattr(db, "list_unextracted_replies"):
         return []
-    return list(db.list_unextracted_replies(night_id=night_id) or [])
+    rows = list(db.list_unextracted_replies(night_id=night_id) or [])
+    want = int(chat_turn_id) if chat_turn_id is not None else None
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        ctid = int(row.get("chat_turn_id") or 0)
+        if want is not None and ctid != want:
+            continue
+        item = dict(row)
+        item["chat_turn_id"] = ctid
+        item["night_id"] = int(row.get("night_id") or 0)
+        item["minister_name"] = str(row.get("minister_name") or "")
+        # 结构化系统提示状态（前端渲染提示行 + 重试钮；本层只交能力）
+        item["kind"] = "translation_pending"
+        item["retryable"] = True
+        item["extract_status"] = str(row.get("extract_status") or "pending") or "pending"
+        out.append(item)
+    return out
 
 
 def run_turn_translation_job(
@@ -326,6 +347,7 @@ def catch_up_pending_translations(
     state: Any,
     *,
     night_id: Optional[int] = None,
+    chat_turn_id: Optional[int] = None,
     llm_config: Any = None,
     translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
@@ -333,9 +355,12 @@ def catch_up_pending_translations(
 ) -> Dict[str, int]:
     """补跑转译待补：已持久化回话但 extract_status 未 done 的轮，按夜序串行重试。
 
+    可按 night_id / chat_turn_id 收窄（源轮重试入口复用本函数，不复用已退役故事抽取）。
     **从不抛**——单轮失败保持 pending，继续后续轮。
     """
-    rows = list_pending_translations(db, night_id=night_id)
+    rows = list_pending_translations(
+        db, night_id=night_id, chat_turn_id=chat_turn_id,
+    )
     extracted = 0
     pending = 0
     scanned = 0

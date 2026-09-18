@@ -3516,12 +3516,26 @@ class GameSession:
         调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
         回合已结算推进，置 issued 态。
         """
-        # #1842 / ADR 0155：过月前 join 全部后台转译；再 catch-up 待补一次。
+        # #1842 / ADR 0155：过月前 join 全部后台转译；未完成与耗尽两态分治。
+        # ① join 超时 = 在飞未清空 =「未完成则过月等」——不得进结算（非 0157 耗尽）。
+        # ② join 清空后 catch-up，仍 pending = 真耗尽 → 0157（错误包 + 停步 + 重试）。
         from ming_sim.audience_translation import (
             catch_up_pending_translations,
             join_all_translations,
+            list_pending_translations,
         )
-        join_all_translations(timeout_s=120.0)
+        from ming_sim.error_pack import settlement_abort_message, write_error_pack
+        from ming_sim.exceptions import SettlementAbort
+
+        joined = join_all_translations(timeout_s=120.0)
+        if not joined:
+            # 未完成：过月等。无错误包（不是 0157 耗尽形态）；重试 = 再 join。
+            raise SettlementAbort(
+                "召对转译尚未完成，过月等待中。",
+                turn=int(self.state.turn),
+                stage="audience_translation_incomplete",
+                error_pack_path=None,
+            )
         # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
         catch_up_pending_translations(
             self.db, self.state,
@@ -3529,6 +3543,21 @@ class GameSession:
             translate_fn=getattr(self, "_audience_translate_fn", None),
             write_gate=getattr(self, "_write_gate", None),
         )
+        still_pending = list_pending_translations(self.db)
+        if still_pending:
+            # 真耗尽：0157 形态——停步 + 错误包 + 系统提示行 + 重试，重开同态。
+            exc = RuntimeError(
+                f"召对转译重试耗尽，待补 {len(still_pending)} 轮"
+            )
+            pack_path = write_error_pack(
+                self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+            )
+            raise SettlementAbort(
+                settlement_abort_message(pack_path),
+                turn=int(self.state.turn),
+                stage="audience_translation_exhausted",
+                error_pack_path=pack_path,
+            ) from exc
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))
             or any(

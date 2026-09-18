@@ -328,11 +328,13 @@ def dispatch_declaration(
             chat_turn_id=origin_ctid,
         )
         collector.flush_to_db(db)
+        # 前像与 section/拒收同权威事务提交前写入（0036 R3 / 0038）；
+        # 提交后才记前像会在崩溃窗口丢撤回完整性。atomic 内 conn.commit 为 no-op。
+        if before is not None and hasattr(db, "record_chat_turn_rollback_diffs"):
+            db.record_chat_turn_rollback_diffs(
+                origin_ctid, before, db.capture_chat_rollback_snapshot(),
+            )
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
-    if before is not None and hasattr(db, "record_chat_turn_rollback_diffs"):
-        db.record_chat_turn_rollback_diffs(
-            origin_ctid, before, db.capture_chat_rollback_snapshot(),
-        )
     return result
 
 

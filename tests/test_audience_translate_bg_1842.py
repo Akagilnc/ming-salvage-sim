@@ -527,6 +527,169 @@ def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch)
     assert status == "imprisoned"
 
 
+def test_resolve_turn_incomplete_join_does_not_use_exhausted_form(game, monkeypatch):
+    """类1：join 超时=未完成 → 过月等；月份不推进；非 0157 耗尽（无错误包）。"""
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    before_turn = int(state.turn)
+    import ming_sim.audience_translation as at
+
+    monkeypatch.setattr(at, "join_all_translations", lambda *, timeout_s=120.0: False)
+
+    sess = _sess(db, state, content)
+    sess._begun = True
+    sess.last_decree = ""
+    sess._decree_draft_fingerprint = ()
+    sess.deaths_this_turn = []
+    sess.debuts_this_turn = []
+    sess.previous_summary = ""
+    sess.agno_db = None
+
+    with pytest.raises(SettlementAbort) as ei:
+        sess.resolve_turn(allow_empty_decree=True)
+
+    assert ei.value.stage == "audience_translation_incomplete"
+    assert ei.value.error_pack_path is None
+    assert int(state.turn) == before_turn
+
+
+def test_resolve_turn_exhausted_pending_uses_0157_form(game, monkeypatch, tmp_path):
+    """类1：catch-up 后仍 pending=真耗尽 → 0157（错误包+停步）；月份不推进。"""
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    before_turn = int(state.turn)
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    gate = threading.Lock()
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+
+    def boom(prompt, llm_config):
+        raise RuntimeError("model exhausted")
+
+    ctid = _persist_round(db, state, nid, "耗尽句", "……")
+    schedule_audience_turn_translation(
+        db, state,
+        emperor_message="耗尽句",
+        reply="……",
+        night_id=nid, chat_turn_id=ctid,
+        llm_config=SimpleNamespace(channel="api"),
+        translate_fn=boom, write_gate=gate,
+    )
+    assert join_night_translations(nid, timeout_s=2.0)
+    assert db.get_story_extract_status(ctid) == "pending"
+
+    import ming_sim.audience_translation as at
+    monkeypatch.setattr(at, "join_all_translations", lambda *, timeout_s=120.0: True)
+    # catch-up 仍失败 → pending 残留
+    monkeypatch.setattr(
+        at, "catch_up_pending_translations",
+        lambda *a, **k: {"extracted": 0, "pending": 1, "scanned": 1},
+    )
+
+    sess = _sess(db, state, content, translate_fn=boom, write_gate=gate)
+    sess._begun = True
+    sess.last_decree = ""
+    sess._decree_draft_fingerprint = ()
+    sess.deaths_this_turn = []
+    sess.debuts_this_turn = []
+    sess.previous_summary = ""
+    sess.agno_db = None
+
+    with pytest.raises(SettlementAbort) as ei:
+        sess.resolve_turn(allow_empty_decree=True)
+
+    assert ei.value.stage == "audience_translation_exhausted"
+    assert ei.value.error_pack_path
+    assert int(state.turn) == before_turn
+
+
+def test_pending_translation_structured_status_and_source_retry(game):
+    """类2：待补可投影结构化系统提示态；按源轮收窄 catch-up 重试。"""
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    gate = threading.Lock()
+
+    def boom(prompt, llm_config):
+        raise RuntimeError("exhausted")
+
+    def ok(prompt, llm_config):
+        return {"commissions": [], "promises": []}
+
+    ctid1 = _persist_round(db, state, nid, "失败轮", "……")
+    ctid2 = _persist_round(db, state, nid, "另一失败", "……")
+    for ctid, msg in ((ctid1, "失败轮"), (ctid2, "另一失败")):
+        schedule_audience_turn_translation(
+            db, state,
+            emperor_message=msg, reply="……",
+            night_id=nid, chat_turn_id=ctid,
+            llm_config=SimpleNamespace(channel="api"),
+            translate_fn=boom, write_gate=gate,
+        )
+    assert join_night_translations(nid, timeout_s=2.0)
+
+    rows = list_pending_translations(db, night_id=nid)
+    assert len(rows) >= 2
+    for r in rows:
+        assert r["kind"] == "translation_pending"
+        assert r["retryable"] is True
+        assert r["extract_status"] == "pending"
+        assert int(r["chat_turn_id"]) in {ctid1, ctid2}
+
+    # 只补 ctid1
+    summary = catch_up_pending_translations(
+        db, state,
+        chat_turn_id=ctid1,
+        llm_config=SimpleNamespace(channel="api"),
+        translate_fn=ok,
+        write_gate=gate,
+    )
+    assert summary.get("scanned", 0) == 1
+    assert db.get_story_extract_status(ctid1) == "done"
+    assert db.get_story_extract_status(ctid2) == "pending"
+    only2 = list_pending_translations(db, chat_turn_id=ctid2)
+    assert len(only2) == 1 and int(only2[0]["chat_turn_id"]) == ctid2
+
+
+def test_apply_round_translation_bind_failure_rolls_back_sections(game, monkeypatch):
+    """类3：主角/水位与 section 同权威事务——bind 失败则 section 一并回滚。"""
+    from ming_sim.audience_translation import apply_audience_round_translation
+    import ming_sim.audience_translation as at
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    name = _active_name(db, content)
+    ctid = _persist_round(db, state, nid, "当场处置", "遵旨。")
+
+    def boom_bind(db_, night_id, chat_turn_id, result):
+        raise RuntimeError("bind boom")
+
+    monkeypatch.setattr(at, "_bind_round_after_dispatch", boom_bind)
+
+    with pytest.raises(RuntimeError, match="bind boom"):
+        apply_audience_round_translation(
+            db, state,
+            {
+                "on_scene_facts": [{
+                    "name": name, "动作": "处置", "status": "imprisoned",
+                    "reason": "原子回滚验证",
+                }],
+            },
+            night_id=nid, chat_turn_id=ctid,
+        )
+
+    status, _ = db.get_character_status(name)
+    assert status == "active", "section 须与 bind 同事务回滚"
+    assert db.get_story_extract_status(ctid) != "done"
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM chat_turn_rollback_items WHERE chat_turn_id=?",
+        (ctid,),
+    ).fetchone()["c"] == 0
+
+
 def test_close_night_no_longer_fail_closed_on_exhausted_pending(game, monkeypatch):
     """0036 修订：待补不 fail-closed；生产同形（llm_config+write_gate）旧抽取不得抢水位。"""
     db, state, content = game
