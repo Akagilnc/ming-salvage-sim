@@ -327,3 +327,36 @@ def test_edge_event_undo_deletes_via_source_turn(game):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM relation_edge_events WHERE id=?", (edge_id,),
     ).fetchone()["n"] == 0
+
+
+def test_on_scene_fact_undo_via_translation_entry(game):
+    """#1839 类二姊妹缝：apply 入口委托公开分派自记前像 → undo 逆转人物处置。
+
+    本入口是 #1842 后台 worker 的真实落账核；不另建平行前像机制。
+    """
+    db, state, _ = game
+    _activate(db, state, "王绍徽", "毕自严")
+    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    ctid = _active_chat_turn(db, state, nid)
+
+    result = apply_audience_round_translation(
+        db, state,
+        {
+            "on_scene_facts": [{
+                "name": "王绍徽", "动作": "处置", "status": "dead",
+                "reason": "殿前斩杀",
+            }],
+        },
+        night_id=nid, chat_turn_id=ctid, minister_name="毕自严",
+    )
+    assert len(result.on_scene_facts.applied) == 1
+    assert result.on_scene_facts.rejected == []
+    assert db.get_character_status("王绍徽")[0] == "dead"
+
+    db.undo_chat_turn(ctid)
+    assert db.get_character_status("王绍徽")[0] == "active"
+    turn_row = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()
+    assert turn_row["status"] == "undone"

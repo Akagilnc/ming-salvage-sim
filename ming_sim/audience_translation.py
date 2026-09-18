@@ -14,13 +14,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from ming_sim.applier import Provenance, RejectionCollector, atomic, mirror_rejections_after_commit
+from ming_sim.applier import Provenance, atomic
 from ming_sim.audience_night import set_night_protagonist
 from ming_sim.declaration_dispatch import (
     DeclarationDispatchResult,
-    _dispatch_declaration_sections,
+    dispatch_declaration,
 )
-from ming_sim.error_pack import rejections_jsonl_path
 
 
 def apply_audience_round_translation(
@@ -39,22 +38,24 @@ def apply_audience_round_translation(
     - ``chat_turn_id``：源对话轮；>0 时 ledger 写 ``source_chat_turn_id``、主角
       写到该轮与夜当前值，并把 ``extract_status`` / ``relation_judge_status``
       标 ``done``（转译已承接，收夜不再跑故事抽取 / 边事件判官）
+
+    第四类落账委托公开入口 :func:`dispatch_declaration`——入口自记撤回前像，
+    后台 worker 直接调用本函数时 undo 亦可逆转，不另造第二份 capture/record。
+    主角 / 水位写仍由本入口在分派后执行（chat_turns 不在前像表，属 #1838 语义）。
     """
     nid = int(night_id or 0)
     ctid = int(chat_turn_id or 0)
-    collector = RejectionCollector()
+    # 复用公开入口的前像自足机制；不直调私有执行体绕过 capture/record。
+    result = dispatch_declaration(
+        db, state, declaration,
+        minister_name=minister_name,
+        night_id=nid,
+        chat_turn_id=ctid,
+        source=source,
+    )
+    # 主角持久化 + 抽取/判官水位：chat_turns 不在前像表，undo 走重投影。
     with atomic(db):
-        result = _dispatch_declaration_sections(
-            db, state, declaration,
-            minister_name=minister_name,
-            night_id=nid,
-            source=source,
-            collector=collector,
-            source_chat_turn_id=ctid,
-        )
         _bind_round_after_dispatch(db, nid, ctid, result)
-        collector.flush_to_db(db)
-    mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return result
 
 
