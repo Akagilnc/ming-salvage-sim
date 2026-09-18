@@ -483,7 +483,11 @@ def create_scene_agent(
         prepared.opening,
     ]
     instructions = [part for part in instructions if part]
-    return Agent(
+    # ADR 0155：本夜全量 runs 入上下文，不得设票面未授权的固定 run 裁切。
+    # agno 3.0.9 Agent.__init__ 在 num_history_runs 与 num_history_messages 皆
+    # 为 None 时会归一 num_history_runs=3；session.get_messages(last_n_runs=None)
+    # 才是全量。故构造后显式放开，不换另一个固定正整数。
+    agent = Agent(
         name="殿上",
         id="scene-audience",
         session_id=session_id or f"scene-turn-{id(prepared)}",
@@ -492,9 +496,10 @@ def create_scene_agent(
         instructions=instructions,
         tools=material_tools(prepared.root),
         add_history_to_context=True,
-        num_history_runs=12,
         markdown=False,
     )
+    agent.num_history_runs = None
+    return agent
 
 
 def create_minister_agent(

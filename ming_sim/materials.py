@@ -943,7 +943,7 @@ def _scene_opening_text(
     parts.append("本场已说的话：")
     parts.append(spoken if spoken.strip() else "（尚无）")
     parts.append(
-        "在场诸人各自材料在 人物/<名>/ 下（经历、公事档案、朝臣名册、事务、公开说法）。"
+        "在场诸人各自材料在 人物/<名>/ 下（人物档料、经历、公事档案、朝臣名册、事务、公开说法）。"
         "根目录 INDEX 一行一项。其余想读自己读。"
     )
     return "\n".join(parts)
@@ -966,6 +966,17 @@ def _write_one_present_person(
     seg = _safe_segment(name)
     base = f"{_PERSON_DIR}/{seg}"
     index: list[str] = []
+
+    # ADR 0033 / 0155：人物+派系+认同度客观特征化；单一真源 character_context_with_db
+    # （单人链 registry 已用同一投影）。不另造第二套描述规则。
+    from ming_sim.context import character_context_with_db
+
+    dossier_rel = f"{base}/人物档料.txt"
+    _write_text(
+        tmp / dossier_rel,
+        character_context_with_db(character, db, turn=int(state.turn)),
+    )
+    index.append(dossier_rel)
 
     roster_rel = f"{base}/朝臣名册.txt"
     _write_text(tmp / roster_rel, _court_roster_text(db, state, character, knowledge))
@@ -1048,9 +1059,10 @@ def prepare_scene_materials(
 ) -> PreparedMaterials:
     """#1836 / ADR 0155：整场场景 LLM 材料目录。
 
-    在场诸人（含递话人）各有自己的人物/事务/公开说法材料（每人一棵
-    人物/<名>/ 子树，互不覆盖）；开场最小集 = 在场身份职位、日期、
-    各人正经手事务一句、本场已说的话。CLI cwd / API list-read 同树。
+    在场诸人（含递话人）各有自己的人物档料/事务/公开说法材料（每人一棵
+    人物/<名>/ 子树，互不覆盖；人物档料复用 character_context_with_db）；
+    开场最小集 = 在场身份职位、日期、各人正经手事务一句、本场已说的话。
+    CLI cwd / API list-read 同树。
     """
     from ming_sim.knowledge import build_character_knowledge
 

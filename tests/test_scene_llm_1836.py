@@ -75,11 +75,25 @@ def test_prepare_scene_materials_no_cross_person_overwrite(game, tmp_path):
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
     listed = list_materials(prepared.root)
 
-    # 每人一棵子树：经历/公事档案/朝臣名册 都在 人物/<名>/ 下。
+    # 每人一棵子树：人物档料/经历/公事档案/朝臣名册 都在 人物/<名>/ 下。
     for name in ("毕自严", "王绍徽", "王承恩"):
         assert any(
             p.startswith(f"人物/{name}/") and p.endswith("/经历.txt") for p in listed
         ), f"{name} 须有私有经历"
+        # ADR 0033/0155：人物+派系档料入私有子树；确定性字段（派系名）可核，不锁措辞。
+        dossier_rel = next(
+            (
+                p for p in listed
+                if p.startswith(f"人物/{name}/") and p.endswith("人物档料.txt")
+            ),
+            None,
+        )
+        assert dossier_rel, f"{name} 须有人物档料文件"
+        dossier_body = read_material(prepared.root, dossier_rel)
+        faction = str(getattr(content.characters[name], "faction", "") or "")
+        assert faction and faction in dossier_body, (
+            f"{name} 人物档料须含派系名 {faction!r}（character_context_with_db 投影）"
+        )
         roster_rel = next(
             p for p in listed
             if p.startswith(f"人物/{name}/") and p.endswith("朝臣名册.txt")
@@ -125,6 +139,11 @@ def test_scene_agent_has_only_material_read_tools(game, tmp_path, monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
             self.tools = kwargs.get("tools") or []
+            # 摹 agno 3.0.9：两者皆空时 num_history_runs 归一为 3。
+            self.num_history_runs = kwargs.get("num_history_runs")
+            self.num_history_messages = kwargs.get("num_history_messages")
+            if self.num_history_messages is None and self.num_history_runs is None:
+                self.num_history_runs = 3
 
     monkeypatch.setattr("ming_sim.registry.Agent", FakeAgent)
     monkeypatch.setattr(
@@ -143,6 +162,14 @@ def test_scene_agent_has_only_material_read_tools(game, tmp_path, monkeypatch):
     }
     assert banned.isdisjoint(tool_names)
     assert captured.get("skills") in (None, [])
+    # ADR 0155：本夜全量 runs；不得留固定正整数硬截断（含 agno 默认 3）。
+    assert captured.get("add_history_to_context") is True
+    assert agent.num_history_runs is None, (
+        f"create_scene_agent 须放开本夜历史，得 num_history_runs={agent.num_history_runs!r}"
+    )
+    # 构造入参也不得夹带未授权固定裁切；全量靠构造后显式 None。
+    init_runs = captured.get("num_history_runs", None)
+    assert init_runs is None, f"不得传入固定 num_history_runs={init_runs!r}"
 
 
 def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
