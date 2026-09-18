@@ -685,54 +685,86 @@ def test_dead_actor_open_tag_enter_does_not_bypass_dead_check(game):
 
 # ── L1 引擎侧 close_night drain 闸（不只挂 web 前门）──────────────────────
 def test_engine_close_night_drains_pending_success(game, monkeypatch):
+    """#1842：收夜 join 转译 catch-up 清待补；不再走旧故事抽取 drain 抢水位。"""
     db, state, content = game
     monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda *a, **k: _FactsAgent(_STAGE_FACT_JSON))
+        "ming_sim.audience_extraction.extract_endorsements_for_night",
+        lambda **k: [],
+    )
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister, reply="臣作保。")
     assert db.count_pending_story_extractions(night_id=nid) == 1
-    # 带 llm/write_gate → 引擎 close 强制 drain（显式 allow_closing）→ 收夜成功、水位 done
+
+    def translate_fn(prompt, llm_config):
+        return {
+            "scene_facts": [{
+                "body": "臣作保。",
+                "audibility": "殿上公开",
+                "person_names": [minister],
+                "tags": [],
+            }],
+        }
+
+    gate = threading.Lock()
+    # 生产同形：close_night 带 llm_config+write_gate+translate_fn → OPEN catch-up 清待补
     result = an.close_night(
-        db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock())
+        db, state, night_id=nid, llm_config=object(), write_gate=gate,
+        translate_fn=translate_fn,
+    )
     assert result["closed"] is True
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
     assert db.get_story_extract_status(ctid) == "done"
-    # close-owned drain 落出的抽取账真实存在（非跳过）。
+    # 转译 scene_facts 落账（非旧故事抽取抢水位）
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM story_ledger_entries "
         "WHERE night_id=? AND source_chat_turn_id=?",
         (nid, ctid),
     ).fetchone()["c"] >= 1
+    del seq
 
 
-def test_engine_close_night_fail_closed_on_boom(game, monkeypatch, tmp_path):
+def test_engine_close_night_keeps_pending_after_boom_no_fail_closed(
+    game, monkeypatch, tmp_path,
+):
+    """#1842 / 0036 修订：抽取持续失败不再 fail-closed 中止收夜；待补可查。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent())
+    monkeypatch.setattr(
+        "ming_sim.audience_extraction.extract_endorsements_for_night",
+        lambda **k: [],
+    )
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-    # 持续失败 → 引擎 close 失败单源中止收夜、夜保持开
-    with pytest.raises(LLMUnavailable) as ei:
-        an.close_night(
-            db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock())
-    assert ei.value.code == "pending_extraction"
-    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
-    assert an.get_night(db, nid)["status"] != an.NIGHT_STATUS_CLOSED
+    an.close_night(
+        db, state, night_id=nid,
+        llm_config=SimpleNamespace(
+            channel="api", model="x", base_url="", api_key="",
+            advanced_model="x",
+        ),
+        write_gate=threading.Lock(),
+    )
+    # 待补仍在；收夜可成（不因 pending_extraction 中止）
+    assert db.get_story_extract_status(ctid) in ("", "pending")
+    assert db.count_pending_story_extractions(night_id=nid) >= 1
 
 
-def test_engine_close_night_fail_closed_without_deps(game, tmp_path, monkeypatch):
+def test_engine_close_night_without_deps_keeps_pending_no_fail_closed(
+    game, tmp_path, monkeypatch,
+):
+    """#1842 / 0036 修订：无 llm/write_gate 时待补保留，不 fail-closed。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setattr(
+        "ming_sim.audience_extraction.extract_endorsements_for_night",
+        lambda **k: [],
+    )
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-    # 无 llm/write_gate 又带待补 = 无从清空又不得带待补收夜 → 失败单源（不静默跳过）
-    with pytest.raises(LLMUnavailable) as ei:
-        an.close_night(db, state, night_id=nid)
-    assert ei.value.code == "pending_extraction"
-    assert ei.value.message == CLI_RUNNER_PLAYER_MESSAGE
-    assert an.get_night(db, nid)["status"] != an.NIGHT_STATUS_CLOSED
+    an.close_night(db, state, night_id=nid)
+    assert db.count_pending_story_extractions(night_id=nid) >= 1
+    assert str(db.get_story_extract_status(ctid) or "") in ("", "pending")
 
 
 # ── L3 settle 抛不穿 catch_up：pack + pending（补跑从不抛）──────────────────

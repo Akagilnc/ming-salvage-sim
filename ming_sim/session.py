@@ -1432,6 +1432,7 @@ class GameSession:
             llm_config=getattr(self, "llm_config", None),
             write_gate=getattr(self, "_write_gate", None),
             scene_registry=getattr(self, "_scene_registry", None),
+            translate_fn=getattr(self, "_audience_translate_fn", None),
         )
         result.court_action = "court_break"
 
@@ -1516,6 +1517,7 @@ class GameSession:
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=gate,
                     scene_registry=getattr(self, "_scene_registry", None),
+                    translate_fn=getattr(self, "_audience_translate_fn", None),
                 )
 
             # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
@@ -1690,14 +1692,15 @@ class GameSession:
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,
     ) -> ChatTurnResult:
-        """#1836 T1 / #1837 C1a：一夜一场入口——一个场景 LLM 演整场。
+        """#1836 T1 / #1837 C1a / #1842 T2：一夜一场入口——一个场景 LLM 演整场。
 
         - 皇帝「宣 X」→ 引擎落入殿账（ADR 0037）→ 起一次场景调用
         - 「退朝」口令 → 收夜（与既有 command-verdict 同缝）
         - 一条对话轮 = 整段自由戏文（可含多人）；生成链零动作工具
-        - 回话落定后一次转译（C1a）：交办载荷与应允 → 统一分派器；
-          退役与回话并行的意图分类器 / 应允判读；CLI/API 同形
-        - 旧按大臣 chat() 入口暂留（收口在 X1）
+        - 回话落定后一次转译（完整声明）；ctid>0 时后台按轮串行、前台不等
+          （#1842）；ctid==0 同步落定（无生命周期测/直调）
+        - 退役与回话并行的意图分类器 / 应允判读 / 故事抽取 / 边事件判官 /
+          代码触发读心（转译承接）；旧按大臣 chat() 入口暂留（收口在 X1）
         """
         from ming_sim.audience_night import (
             CMD_AMBIGUOUS_CLOSE,
@@ -1749,6 +1752,7 @@ class GameSession:
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=getattr(self, "_write_gate", None),
                     scene_registry=getattr(self, "_scene_registry", None),
+                    translate_fn=getattr(self, "_audience_translate_fn", None),
                 )
                 result.court_action = "court_break"
                 return result
@@ -1817,8 +1821,8 @@ class GameSession:
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
 
-        # C1a：回话落定后一次转译 → 统一分派（交办 / 应允）；不跑并行分类器。
-        # T2 再把本调用后台化并在封夜 join；本票同步落定即可验收载荷与应允链。
+        # #1842：ctid>0 → 后台转译（前台不等）；ctid==0 → 同步落定（直调/单测）。
+        # 不跑并行分类器 / 故事抽取 / 边事件判官 / 读心——转译一次承接。
         self._apply_scene_turn_translation(
             result, message_text, answer, night_id=night_id,
             chat_turn_id=int(chat_turn_id or 0),
@@ -1834,31 +1838,52 @@ class GameSession:
         night_id: int,
         chat_turn_id: int = 0,
     ) -> None:
-        """#1837：场景入口转译交办/应允，经 C0 分派器落入既有暂存链。"""
+        """#1837/#1842：场景入口转译完整声明；ctid>0 后台串行，否则同步。"""
         from ming_sim.audience_translate import (
             AudienceTranslateError,
             run_audience_turn_translation,
         )
+        from ming_sim.audience_translation import schedule_audience_turn_translation
         from ming_sim.token_stats import tlog
 
         if GameSession._proposal_blocked(self.state):
             return
         translate_fn = getattr(self, "_audience_translate_fn", None)
+        ctid = int(chat_turn_id or 0)
+        nid = int(night_id or 0)
+        write_gate = getattr(self, "_write_gate", None)
+
+        if ctid > 0:
+            # 生产路径：调度后立即返回；封夜/过月 join；失败由 worker 标 pending。
+            schedule_audience_turn_translation(
+                self.db,
+                self.state,
+                emperor_message=emperor_message,
+                reply=reply,
+                night_id=nid,
+                chat_turn_id=ctid,
+                minister_name="",
+                llm_config=getattr(self, "llm_config", None),
+                translate_fn=translate_fn,
+                write_gate=write_gate,
+            )
+            return
+
         try:
             dispatch = run_audience_turn_translation(
                 self.db,
                 self.state,
                 emperor_message=emperor_message,
                 reply=reply,
-                night_id=int(night_id or 0),
-                chat_turn_id=int(chat_turn_id or 0),
+                night_id=nid,
+                chat_turn_id=0,
                 minister_name="",
                 llm_config=getattr(self, "llm_config", None),
                 translate_fn=translate_fn,
             )
         except AudienceTranslateError as exc:
             # 失败诚实：真因落痕 + 既有 pending_action_failures 显眼回场；
-            # 不进 dispatch、不洗成成功空声明。后台待补/重试归 T2。
+            # 不进 dispatch、不洗成成功空声明。
             tlog(f"[audience_translate] 转译失败：{exc}")
             result.pending_action_failures.append({
                 "id": 0,
@@ -1868,7 +1893,7 @@ class GameSession:
                 "message": f"召对转译失败：{exc}",
                 "category": "translate_failed",
                 "source": "audience_translate",
-                "chat_turn_id": int(chat_turn_id or 0),
+                "chat_turn_id": ctid,
             })
             return
         # 呈现用：本轮新交办的首条 id（若有）；应允不另占 pending_action_id。
@@ -1890,7 +1915,7 @@ class GameSession:
                     "reason": reason,
                     "category": getattr(item, "category", ""),
                     "source": "audience_translate",
-                    "chat_turn_id": int(chat_turn_id or 0),
+                    "chat_turn_id": ctid,
                 })
 
     def chat(
@@ -3481,6 +3506,57 @@ class GameSession:
                 ) from write_exc
         return next_carry
 
+    def await_translations_before_month(self) -> None:
+        """过月前转译：join 等到清空 → catch-up → 真耗尽走 0157。
+
+        #1842 / ADR 0155 两态：① 未完成则过月等（join 缝系统内等待后自动续跑，
+        不得 SettlementAbort/409）；② 耗尽才 write_error_pack+SettlementAbort。
+        hang 切断：join 未清空不进阻塞 catch-up。
+
+        **闸外契约**（同 close_night「join 在闸外」、HITL「禁整段 gate 盖 join」）：
+        调用方不得在持非重入 write_gate 时进入本方法的等待路径。web 受理样板在
+        hold_write_for_body 之前调用本方法；resolve_turn 再调一次时 join 已清空、
+        立即放行。本方法**绝不** release/acquire write_gate（不猜锁所有权、不偷放）。
+        catch-up 仅在闸空闲时传入 write_gate，避免调用方已持闸时同线程嵌套自锁。
+        """
+        from ming_sim.audience_translation import (
+            catch_up_pending_translations,
+            join_all_translations,
+            list_pending_translations,
+        )
+        from ming_sim.error_pack import settlement_abort_message, write_error_pack
+        from ming_sim.exceptions import SettlementAbort
+
+        # ① 等待仍在 join 缝上：timeout 仅单次轮询上限，未清空则继续等，不清空不往下。
+        while not join_all_translations(timeout_s=120.0):
+            pass
+        # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
+        # 仅 join 已清空后才进入——避免与在飞 worker 争同一夜串行锁挂死。
+        gate = getattr(self, "_write_gate", None)
+        # 闸忙（调用方持闸或他者短持）→ 不传入，避免非重入嵌套自锁；不 release。
+        catch_gate = self._write_gate_if_free() if gate is not None else None
+        catch_up_pending_translations(
+            self.db, self.state,
+            llm_config=getattr(self, "llm_config", None),
+            translate_fn=getattr(self, "_audience_translate_fn", None),
+            write_gate=catch_gate,
+        )
+        still_pending = list_pending_translations(self.db)
+        if still_pending:
+            # 真耗尽：0157 形态——停步 + 错误包 + 系统提示行 + 重试，重开同态。
+            exc = RuntimeError(
+                f"召对转译重试耗尽，待补 {len(still_pending)} 轮"
+            )
+            pack_path = write_error_pack(
+                self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+            )
+            raise SettlementAbort(
+                settlement_abort_message(pack_path),
+                turn=int(self.state.turn),
+                stage="audience_translation_exhausted",
+                error_pack_path=pack_path,
+            ) from exc
+
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None,
                      *, allow_empty_decree: bool = False) -> ResolveResult:
@@ -3495,6 +3571,8 @@ class GameSession:
         调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
         回合已结算推进，置 issued 态。
         """
+        # #1842：过月前转译 join/catch-up/耗尽判定（闸外契约，见 await_translations_before_month）。
+        self.await_translations_before_month()
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))
             or any(

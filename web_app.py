@@ -3526,28 +3526,29 @@ class WebGame:
         """#501/#1353：待补抽取只读诊断（本开夜 turn ids + 大臣名 + 计数）。
 
         与 close_night drain 挡收夜判定同一真源（list_unextracted via helper）。
-        欠账唯一处理路=过月/收夜内部 drain；本接口不承载玩家手动补写 CTA。
+        #1842：转译承接后水位同表；本接口亦投影转译待补的结构化系统提示态
+        （kind/retryable），供 0158 决定 6；玩家手动补写 CTA 走 translation/retry。
         无开夜则回全库待补。测试替身无 conn 时空。
         """
         if not hasattr(self.db, "conn"):
             return {"night_id": 0, "count": 0, "pending": []}
-        from ming_sim.audience_night import (
-            _pending_extraction_rows,
-            get_open_night,
-        )
+        from ming_sim.audience_night import get_open_night
+        from ming_sim.audience_translation import list_pending_translations
 
         open_n = get_open_night(self.db)
         nid = int(open_n["id"]) if open_n else None
         night_status = str((open_n or {}).get("status") or "")
-        if nid is not None and int(nid) > 0:
-            rows = _pending_extraction_rows(self.db, int(nid))
-        else:
-            rows = self.db.list_unextracted_replies(night_id=nid)
+        rows = list_pending_translations(
+            self.db, night_id=int(nid) if nid else None,
+        )
         pending = [
             {
                 "chat_turn_id": int(r.get("chat_turn_id") or 0),
                 "minister_name": str(r.get("minister_name") or ""),
                 "night_id": int(r.get("night_id") or 0),
+                "kind": str(r.get("kind") or "translation_pending"),
+                "retryable": bool(r.get("retryable", True)),
+                "extract_status": str(r.get("extract_status") or "pending"),
             }
             for r in rows
         ]
@@ -3559,6 +3560,60 @@ class WebGame:
         if night_status:
             out["night_status"] = night_status
         return out
+
+    def pending_translation_retries(
+        self, *, night_id: Optional[int] = None, chat_turn_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """#1842：转译待补的结构化系统提示态（源轮可查 + 可重试），不做页面。"""
+        if not hasattr(self.db, "conn"):
+            return []
+        from ming_sim.audience_translation import list_pending_translations
+
+        return list_pending_translations(
+            self.db, night_id=night_id, chat_turn_id=chat_turn_id,
+        )
+
+    def retry_pending_translation(self, chat_turn_id: int) -> Dict[str, Any]:
+        """#1842：只补对应源轮的转译重试入口；复用 catch_up_pending_translations 按轮收窄。
+
+        不复用已退役故事抽取。成功 → extract_status=done；仍失败 → 保持 pending 可再试。
+        """
+        ctid = int(chat_turn_id or 0)
+        if ctid <= 0:
+            raise HTTPException(status_code=400, detail="chat_turn_id 无效")
+        from ming_sim.audience_translation import (
+            catch_up_pending_translations,
+            list_pending_translations,
+        )
+
+        pending_before = list_pending_translations(self.db, chat_turn_id=ctid)
+        if not pending_before:
+            raise HTTPException(
+                status_code=404,
+                detail=f"chat_turn_id={ctid} 没有待补转译。",
+            )
+        self._reject_if_settlement_phase()
+        write_gate = self._runtime_write_gate()
+        summary = catch_up_pending_translations(
+            self.db, self.state,
+            chat_turn_id=ctid,
+            llm_config=getattr(self.session, "llm_config", None),
+            translate_fn=getattr(self.session, "_audience_translate_fn", None),
+            write_gate=write_gate,
+        )
+        still = list_pending_translations(self.db, chat_turn_id=ctid)
+        status = (
+            self.db.get_story_extract_status(ctid)
+            if hasattr(self.db, "get_story_extract_status")
+            else ("pending" if still else "done")
+        )
+        return {
+            "chat_turn_id": ctid,
+            "extract_status": status,
+            "retryable": bool(still),
+            "kind": "translation_pending" if still else "translation_done",
+            "summary": summary,
+        }
 
     def chat_stream(self, minister_name: str, message: str, intent: Optional[str] = None) -> Iterator[Dict[str, Any]]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
@@ -4440,6 +4495,12 @@ def _settlement_period_entry(
             if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
                 from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
                 clear_orphan_month_open_snapshot(db, state)
+
+        # #1842：过月转译 join/catch-up 在持 write_cm 之前闸外完成（close_night/
+        # HITL 同口径）。持闸后再等会与在飞 worker 争非重入 write_gate 自锁。
+        sess = getattr(game, "session", None)
+        if sess is not None and hasattr(sess, "await_translations_before_month"):
+            sess.await_translations_before_month()
 
         if hold_write_for_body:
             with write_cm(game):
@@ -6337,6 +6398,14 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         "pending_turn_ids": mind["pending_turn_ids"],
         # #505：重开后崩溃遗留的中断轮 → 最后一句上给「重新生成回话」重试（系统层恢复动作）。
         "reply_retry": (game.interrupted_reply_retries(minister_name) or [None])[-1],
+        # #1842 / 0158 决定 6：转译待补 → 源轮结构化系统提示态（提示行 + 重试能力；页面归 #1826）。
+        "translation_retries": [
+            r for r in game.pending_translation_retries(
+                night_id=int(open_night["id"]) if open_night else None,
+            )
+            if not minister_name
+            or str(r.get("minister_name") or "") in {minister_name, "", "殿上"}
+        ],
     }
 
 
@@ -6365,8 +6434,23 @@ async def api_chat_mindreading(minister_name: str, chat_turn_id: int = 0) -> Dic
 
 @app.get("/api/audience/extraction/pending")
 async def api_pending_story_extractions() -> Dict[str, Any]:
-    """#501/#1353：本开夜待补叙事抽取只读诊断（无玩家手动补写入口）。"""
+    """#501/#1353/#1842：本开夜转译待补只读投影（含 kind/retryable 系统提示态）。"""
     return get_game().pending_story_extractions()
+
+
+class TranslationRetryRequest(BaseModel):
+    chat_turn_id: int
+
+
+@app.post("/api/audience/translation/retry")
+async def api_retry_pending_translation(
+    request: TranslationRetryRequest,
+) -> Dict[str, Any]:
+    """#1842：只补对应源轮的转译重试（catch_up 按轮收窄；不做页面）。"""
+    game = get_game()
+    return await run_in_threadpool(
+        game.retry_pending_translation, int(request.chat_turn_id),
+    )
 
 
 @app.post("/api/ministers/{minister_name}/secret_order")

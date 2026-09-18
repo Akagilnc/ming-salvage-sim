@@ -1,15 +1,14 @@
-"""召对转译：交办载荷与应允（C1a，#1837）。
+"""召对转译：每轮一次完整声明（C1a/C1b/C2；后台化归 T2 #1842）。
 
 每轮回话落定后起一次转译 LLM，读本轮（皇帝原话 + 回话 + 本场已说的话 +
-本夜暂存清单），一次声明新交办及其载荷、哪条暂存已应允或被拒；代码只把声明
-交给既有 :func:`ming_sim.declaration_dispatch.dispatch_declaration` 分派到
-暂存与收夜成案链（ADR 0155 场中承接；ADR 0028 后出注记）。
+本夜暂存清单），一次声明本轮全部记录——交办载荷与应允、当场实况（生死 /
+下狱 / 革职）、文字事实、公开说法、在场进出、说话人分段、边事件、御前主角、
+入册；代码只把声明交给 :func:`ming_sim.audience_translation.apply_audience_round_translation`
+（经 C0 分派器）落账（ADR 0155 场中承接）。
 
-本票只接交办（commissions）与应允/拒绝（promises）；分段 / 在场 / 边事件等
-归 C1b，当场实况归 C2，后台化与封夜 join 归 T2。场景 LLM 零动作工具、零格式
-约束（生成链不声明）；两通道（CLI / API）共用本入口同一形状，退役与回话并行
-的意图分类器与应允判读。承接不了的交办由分派器逐项拒收当事实回场，代码不做
-「所指未明 → 强制追问」闸。
+生产上转译是后台任务（#1842）：按轮串行、前台不等；封夜提交 join 最后一轮；
+耗尽 = 该轮待补，不挡下一句。场景 LLM 零动作工具、零格式约束；两通道同形。
+承接不了的交办由分派器逐项拒收当事实回场，代码不做「所指未明 → 强制追问」闸。
 """
 
 from __future__ import annotations
@@ -18,12 +17,24 @@ import json
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.applier import Provenance
-from ming_sim.declaration_dispatch import (
-    DeclarationDispatchResult,
-    dispatch_declaration,
-)
+from ming_sim.declaration_dispatch import DeclarationDispatchResult
 
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
+
+# C0 全 section + 主角；normalize 只放行这些键。
+_DECLARATION_KEYS: tuple[str, ...] = (
+    "commissions",
+    "promises",
+    "textual_facts",
+    "public_sayings",
+    "on_scene_facts",
+    "presence",
+    "scene_facts",
+    "edge_events",
+    "protagonist",
+    "registrations",
+)
+_ARRAY_SECTIONS = frozenset(k for k in _DECLARATION_KEYS if k != "protagonist")
 
 
 class AudienceTranslateError(RuntimeError):
@@ -111,14 +122,14 @@ def build_audience_translate_prompt(
 ) -> str:
     """转译输入：本轮皇帝原话 + 回话 + 本场已说 + 本夜暂存清单。
 
-    产出契约只声明 commissions / promises（C1a）；其余 section 留给后续票。
-    不解析自由散文——模型直接给结构化声明。
+    产出契约 = C0 全 section（交办/应允/当场实况/文字事实/公开说法/在场/
+    分段/边事件/主角/入册）。不解析自由散文——模型直接给结构化声明。
     """
     said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
-        "一次声明本轮全部交办与应允/拒绝。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
+        "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
         "形状：\n"
         "{\n"
         '  "commissions": [\n'
@@ -134,8 +145,38 @@ def build_audience_translate_prompt(
         "      }\n"
         "    }\n"
         "  ],\n"
-        '  "promises": [\n'
-        '    {"action_id": 正整数, "decision": "应允|拒绝"}\n'
+        '  "promises": [{"action_id": 正整数, "decision": "应允|拒绝"}],\n'
+        '  "on_scene_facts": [\n'
+        "    {\n"
+        '      "name": "人名",\n'
+        '      "动作": "处置|罢黜|…（人物变更闭集）",\n'
+        '      "status": "dead|imprisoned|active|…",\n'
+        '      "reason": "当场原因原文"\n'
+        "    }\n"
+        "  ],\n"
+        '  "textual_facts": [\n'
+        '    {"subject_kind": "character|army|region", "subject_id": "id", "body": "文字事实"}\n'
+        "  ],\n"
+        '  "public_sayings": [\n'
+        '    {"body": "公开说法", "involved_characters": ["人名"]}\n'
+        "  ],\n"
+        '  "presence": [\n'
+        '    {"person_name": "人名", "effect": "enter|exit", "body": "入见/告退正文"}\n'
+        "  ],\n"
+        '  "scene_facts": [\n'
+        "    {\n"
+        '      "body": "本段戏文原样",\n'
+        '      "audibility": "殿上公开|御前低语",\n'
+        '      "person_names": ["说话/涉及人名"],\n'
+        '      "tags": []\n'
+        "    }\n"
+        "  ],\n"
+        '  "edge_events": [\n'
+        '    {"source": "人名", "target": "人名", "event_kind": "结怨|撑腰|…", "context": "缘由"}\n'
+        "  ],\n"
+        '  "protagonist": {"person_name": "本轮御前主角"},\n'
+        '  "registrations": [\n'
+        '    {"name": "新人名", "office": "官职", "office_type": "文|武|…"}\n'
         "  ]\n"
         "}\n"
         "规则：\n"
@@ -143,7 +184,9 @@ def build_audience_translate_prompt(
         "不要拆成拟旨 / 拨帑 / 交办三道。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
         "「不准」「作罢」→ 拒绝。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
-        "- 无新交办、无应允/拒绝时输出空数组，不要编造。\n"
+        "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
+        "presence / public_sayings / edge_events，不要写成交办。\n"
+        "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"
@@ -163,12 +206,22 @@ def _default_translate_runner(prompt: str, llm_config: Any) -> Mapping[str, obje
 
 
 def normalize_audience_declaration(raw: object) -> Dict[str, object]:
-    """转译 JSON → 只保留 C1a 两个 section；其它键原样忽略（C1b/C2 另票）。"""
+    """转译 JSON → 只保留 C0 声明键；未知顶层键丢弃（分派器另有 unknown 留痕）。"""
+    empty: Dict[str, object] = {k: [] for k in _ARRAY_SECTIONS}
     if not isinstance(raw, Mapping):
-        return {"commissions": [], "promises": []}
+        return empty
     declaration: Dict[str, object] = {}
-    for key in ("commissions", "promises"):
+    for key in _DECLARATION_KEYS:
+        if key not in raw:
+            if key in _ARRAY_SECTIONS:
+                declaration[key] = []
+            continue
         value = raw.get(key)
+        if key == "protagonist":
+            if value is None:
+                continue
+            declaration[key] = value
+            continue
         if value is None:
             declaration[key] = []
         else:
@@ -185,10 +238,10 @@ def translate_audience_turn(
     llm_config: Any = None,
     translate_fn: Optional[TranslateFn] = None,
 ) -> Dict[str, object]:
-    """一次转译 → commissions/promises 声明。
+    """一次转译 → 完整声明（C0 全 section）。
 
     调用失败抛 :class:`AudienceTranslateError`（与成功空声明可区分）；
-    不挡回话、不洗成「本轮无动作」。后台待补/重试归 T2。
+    不挡回话、不洗成「本轮无动作」。后台待补/重试见 schedule 入口。
     """
     prompt = build_audience_translate_prompt(
         emperor_message=emperor_message,
@@ -216,19 +269,19 @@ def apply_audience_turn_translation(
     minister_name: str = "",
     source: Provenance = Provenance.system_simulation,
 ) -> DeclarationDispatchResult:
-    """把转译声明交给 C0 统一分派器；召对与过月同入口。
+    """把转译声明交给场中承接落账核（C0 分派 + 源轮/水位）。
 
-    ``chat_turn_id``：当场实况源轮。>0 时由 :func:`dispatch_declaration` 自记
-    前像，使本轮暂存新增/应允/拒绝可经 undo_chat_turn 逆转
-    （ADR 0038；与 #1838/#1839 第四类同源）。过月或无生命周期传 0。
+    ``chat_turn_id`` 是当场实况源轮；落账核经统一分派器自记撤回前像。
     """
-    return dispatch_declaration(
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    return apply_audience_round_translation(
         db,
         state,
         declaration,
-        minister_name=minister_name,
         night_id=int(night_id or 0),
         chat_turn_id=int(chat_turn_id or 0),
+        minister_name=minister_name,
         source=source,
     )
 
@@ -246,12 +299,12 @@ def run_audience_turn_translation(
     translate_fn: Optional[TranslateFn] = None,
     source: Provenance = Provenance.system_simulation,
 ) -> DeclarationDispatchResult:
-    """组装本轮上下文 → 转译 → 分派。scene_chat 与其它通道共用。
+    """组装本轮上下文 → 转译 → 落账。scene_chat 同步路径与后台 worker 共用。
 
-    转译调用失败抛 :class:`AudienceTranslateError`，不进入
-    :func:`dispatch_declaration`（失败≠成功空声明）。
+    转译调用失败抛 :class:`AudienceTranslateError`，不进入落账核
+    （失败≠成功空声明）。
 
-    ``chat_turn_id`` 原样下传分派入口（不另造平行快照）；过月/无源轮传 0。
+    ``chat_turn_id`` 原样下传（不另造平行快照）；过月/无源轮传 0。
     """
     night_said = build_night_said_so_far(db, int(night_id or 0))
     pending = build_pending_summaries(db, int(state.turn), night_id=int(night_id or 0))
