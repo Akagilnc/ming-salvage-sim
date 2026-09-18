@@ -916,8 +916,9 @@ def _scene_opening_text(
     state: Any,
     present_rows: Sequence[tuple[str, str]],
     spoken: str,
+    handling_by_person: Sequence[tuple[str, Sequence[tuple[str, str]]]],
 ) -> str:
-    """场景 LLM 开场最小集：在场诸人、日期、本场已说的话；其余按需自读。"""
+    """场景 LLM 开场最小集（ADR 0155）：在场诸人身份职位、日期、各人正经手事务一句、本场已说的话。"""
     if present_rows:
         present_line = "、".join(
             f"{name}（{office}）" if office else name for name, office in present_rows
@@ -927,12 +928,90 @@ def _scene_opening_text(
     parts = [
         f"在场：{present_line}",
         f"日期：{int(state.year)}年{int(state.period)}月",
-        "本场已说的话：",
-        spoken if spoken.strip() else "（尚无）",
-        "在场诸人各自材料在 人物/<名>/ 下。根目录 INDEX 一行一项。其余想读自己读。",
-        "以整段自由戏文回应：可含多人答话、插话、递话人低语；不填表、不调动作工具。",
     ]
+    # 各在场人正经手事务（名字 + 当前情况一句）；无人经手则标（无）。
+    parts.append("正经手事务：")
+    any_handling = False
+    for name, affairs in handling_by_person:
+        if not affairs:
+            continue
+        any_handling = True
+        parts.append(f"{name}：")
+        parts.extend(f"- {title}：{situation}" for title, situation in affairs)
+    if not any_handling:
+        parts.append("（无）")
+    parts.append("本场已说的话：")
+    parts.append(spoken if spoken.strip() else "（尚无）")
+    parts.append(
+        "在场诸人各自材料在 人物/<名>/ 下（经历、公事档案、朝臣名册、事务、公开说法）。"
+        "根目录 INDEX 一行一项。其余想读自己读。"
+    )
     return "\n".join(parts)
+
+
+def _write_one_present_person(
+    tmp: Path,
+    db: Any,
+    state: Any,
+    character: Any,
+    knowledge: dict,
+    matter_lines: list[tuple[str, str, str, str, bool]],
+) -> list[str]:
+    """把一人的可读材料全部写在 人物/<名>/ 之下，不与他人共享路径。
+
+    #1830 _write_tree 会把朝臣名册 / 事务 / 公开说法写到 scene 根下共享位置，
+    多人叠写会后写覆盖先写（#1836 审回）。场景目录改为每人一棵私有子树。
+    """
+    name = str(getattr(character, "name", "") or "")
+    seg = _safe_segment(name)
+    base = f"{_PERSON_DIR}/{seg}"
+    index: list[str] = []
+
+    roster_rel = f"{base}/朝臣名册.txt"
+    _write_text(tmp / roster_rel, _court_roster_text(db, state, character, knowledge))
+    index.append(roster_rel)
+
+    exp_rel = f"{base}/经历.txt"
+    _write_text(tmp / exp_rel, _experience_text(knowledge))
+    index.append(exp_rel)
+
+    office_rel = f"{base}/公事档案.txt"
+    _write_text(
+        tmp / office_rel,
+        character_office_archive_text(db, state, character, knowledge),
+    )
+    index.append(office_rel)
+
+    for dir_key, title, directory_text, _opening_text, _is_handling in matter_lines:
+        matter_seg = _safe_segment(dir_key)
+        if title and "\n" in directory_text:
+            body = f"{title}\n{directory_text}"
+        elif title and directory_text:
+            body = f"{title}：{directory_text}"
+        else:
+            body = title or directory_text
+        rel = f"{base}/事务/{matter_seg}/当前情况.txt"
+        _write_text(tmp / rel, body)
+        index.append(rel)
+
+    public_events = knowledge.get("public_events") or []
+    public_by_month: dict[tuple[int, int], list[str]] = {}
+    for item in public_events:
+        year = int(item.get("year") or 0)
+        period = int(item.get("period") or 0)
+        title = str(item.get("title") or "")
+        body = str(item.get("body") or "")
+        if not (title.strip() or body.strip()):
+            continue
+        line = f"{title}：{body}" if title and body else (title or body)
+        public_by_month.setdefault((year, period), []).append(line)
+    for (year, period), lines in sorted(public_by_month.items()):
+        fname = f"{year}年{period}月.txt" if year and period else "未标年月.txt"
+        rel = f"{base}/公开说法/{fname}"
+        _write_text(tmp / rel, "\n".join(lines))
+        index.append(rel)
+
+    return index
 
 
 def _write_scene_tree(
@@ -940,10 +1019,9 @@ def _write_scene_tree(
     db: Any,
     state: Any,
     present_rows: Sequence[tuple[str, str]],
+    person_payloads: Sequence[tuple[Any, dict, list]],
 ) -> list[str]:
-    """为每位在场人物写入其可读材料（#1830 人物树复用），合并 INDEX。"""
-    from ming_sim.knowledge import build_character_knowledge
-
+    """为每位在场人物写入互不覆盖的私有材料子树，合并 INDEX。"""
     index: list[str] = []
     seen_rel: set[str] = set()
 
@@ -952,22 +1030,10 @@ def _write_scene_tree(
             seen_rel.add(rel)
             index.append(rel)
 
-    content = getattr(db, "content", None)
-    characters = getattr(content, "characters", None) or {}
-
-    for name, office in present_rows:
-        character = characters.get(name)
-        if character is None:
-            # 最低投影：_write_tree 只读 name/office/office_type。
-            character = SimpleNamespace(name=name, office=office, office_type="")
-        knowledge: dict = {}
-        if hasattr(db, "get_character_knowledge"):
-            knowledge = db.get_character_knowledge(state, name)
-        else:
-            knowledge = build_character_knowledge(db, state, name)
-        matter_lines = _character_affair_lines(db, state, name, knowledge)
-        # 每人一棵子树写到同一 scene root；_write_tree 已按 人物/<名>/ 分列。
-        for rel in _write_tree(tmp, db, state, character, knowledge, matter_lines):
+    for character, knowledge, matter_lines in person_payloads:
+        for rel in _write_one_present_person(
+            tmp, db, state, character, knowledge, matter_lines,
+        ):
             _add(rel)
 
     _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")
@@ -982,16 +1048,40 @@ def prepare_scene_materials(
 ) -> PreparedMaterials:
     """#1836 / ADR 0155：整场场景 LLM 材料目录。
 
-    在场诸人（含递话人）各有自己的人物/事务/公开说法材料；开场只带最小集
-    （在场、日期、本场已说的话）。CLI cwd / API list-read 同树。
+    在场诸人（含递话人）各有自己的人物/事务/公开说法材料（每人一棵
+    人物/<名>/ 子树，互不覆盖）；开场最小集 = 在场身份职位、日期、
+    各人正经手事务一句、本场已说的话。CLI cwd / API list-read 同树。
     """
+    from ming_sim.knowledge import build_character_knowledge
+
     present_rows = _scene_present_rows(db, state)
     spoken = _scene_spoken_text(db)
+    content = getattr(db, "content", None)
+    characters = getattr(content, "characters", None) or {}
+
+    # 一次 prepare 冻结每人 knowledge + matter_lines，目录与 opening 共用。
+    person_payloads: list[tuple[Any, dict, list]] = []
+    handling_by_person: list[tuple[str, list[tuple[str, str]]]] = []
+    for name, office in present_rows:
+        character = characters.get(name)
+        if character is None:
+            character = SimpleNamespace(name=name, office=office, office_type="")
+        if hasattr(db, "get_character_knowledge"):
+            knowledge = db.get_character_knowledge(state, name)
+        else:
+            knowledge = build_character_knowledge(db, state, name)
+        matter_lines = _character_affair_lines(db, state, name, knowledge)
+        person_payloads.append((character, knowledge, matter_lines))
+        handling_by_person.append(
+            (name, _opening_affair_lines(db, name, matter_lines)),
+        )
+
     dest = Path(dest_root) if dest_root is not None else scene_materials_root(db, state)
     index = _rebuild_tree_atomically(
-        dest, lambda tmp: _write_scene_tree(tmp, db, state, present_rows),
+        dest,
+        lambda tmp: _write_scene_tree(tmp, db, state, present_rows, person_payloads),
     )
-    opening = _scene_opening_text(state, present_rows, spoken)
+    opening = _scene_opening_text(state, present_rows, spoken, handling_by_person)
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
 
 

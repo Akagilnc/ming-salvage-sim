@@ -1695,12 +1695,17 @@ class GameSession:
         - 皇帝「宣 X」→ 引擎落入殿账（ADR 0037）→ 起一次场景调用
         - 「退朝」口令 → 收夜（与既有 command-verdict 同缝）
         - 一条对话轮 = 整段自由戏文（可含多人）；生成链零动作工具
-        - 过渡：交办仍走现状只读玩家话的分类器（转译 C1a 接上）
+        - 过渡：交办仍走现状只读玩家话的分类器（转译 C1a 接上）；
+          不绑假大臣人物锚（分类器只吃玩家原话 + 夜级暂存清单）
         - 旧按大臣 chat() 入口暂留（收口在 X1）
         """
         from ming_sim.audience_night import (
+            CMD_AMBIGUOUS_CLOSE,
+            CMD_CLOSE_NIGHT,
             CMD_NONE,
+            CMD_STAY_ATTEND,
             SCENE_CHAT_SPEAKER,
+            close_night,
             ensure_open_night_for_audience,
             ensure_summon_enter,
             get_open_night,
@@ -1718,21 +1723,35 @@ class GameSession:
         )
         night_id = int(night["id"])
 
-        # 收夜 / 留侍口令——与 chat 同缝；chat_turn_id==0 当场收夜。
-        # CMD_NONE="none" 是真值字符串，必须显式排除，否则每句都早退。
+        # 收夜 / 留侍口令。场景入口无单人主角：
+        # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
+        # - 留侍：无锚不落 stay_attend 账（等转译声明在场），只回 court_action
+        # - 含糊收夜：回确认 cue，不收夜
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
         if audience_command_verdict and audience_command_verdict != CMD_NONE:
-            # 退朝不跑场景 LLM；口令机械面落在 verdict 处理。
-            self._apply_audience_command_verdict(
-                result,
-                # stay_attend 需要人名；场景入口无单人主角时用常在员额首位或「殿上」。
-                self._scene_command_character(),
-                message_text,
-                verdict=audience_command_verdict,
-                chat_turn_id=int(chat_turn_id or 0),
-            )
-            return result
+            if audience_command_verdict == CMD_AMBIGUOUS_CLOSE:
+                result.answer = GameSession._ensure_close_night_confirm_cue("")
+                return result
+            if audience_command_verdict == CMD_STAY_ATTEND:
+                result.court_action = "stay_attend"
+                return result
+            if audience_command_verdict == CMD_CLOSE_NIGHT:
+                if int(chat_turn_id or 0) != 0:
+                    result.court_action = "court_break"
+                    return result
+                close_night(
+                    self.db, self.state,
+                    content=getattr(self, "content", None),
+                    registry=getattr(self, "registry", None),
+                    wait_timeout_s=0.0,
+                    beat_generator=getattr(self, "_beat_generator", None),
+                    llm_config=getattr(self, "llm_config", None),
+                    write_gate=getattr(self, "_write_gate", None),
+                    scene_registry=getattr(self, "_scene_registry", None),
+                )
+                result.court_action = "court_break"
+                return result
 
         # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
         xuan_fragment = recognize_xuan_command(message_text)
@@ -1748,7 +1767,6 @@ class GameSession:
                 except ValueError:
                     target = None
             if target is not None:
-                # 在京 admission：场外记召仍走既有 consume（本入口首期只落在京入殿）。
                 decision = self.consume_audience_admission(
                     target,
                     origin_id=f"scene:xuan:{int(self.state.turn)}:{target.name}",
@@ -1774,54 +1792,95 @@ class GameSession:
             session_id=f"scene-night-{night_id}",
         )
 
-        # 过渡：交办分类器只读玩家话，与场景生成可并行（同 chat 的 CLI 路径）。
-        action_intent_future = self._start_cli_action_intent(
-            self._scene_command_character(), message_text,
-        )
+        # 过渡：分类器只读玩家话 + 夜级暂存清单，不绑假大臣（C1a 转译接上后退役）。
+        action_intent_future = self._start_scene_action_intent(message_text)
 
         run_output = agent.run(prepared.opening + "\n\n" + message_text)
         _dump_llm_messages(run_output, f"场景召对/{SCENE_CHAT_SPEAKER}")
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
 
+        # 过渡：分类器结果暂存；物化不经单人 minister fallback（无人物锚）。
+        # pending 以空 minister_name 落，收夜/转译再认领。
         preclassified_intent = self._finish_cli_action_intent(action_intent_future)
-        # 过渡物化：仍走既有 CLI fallback（只读玩家话 + 回话），不经场景动作工具。
-        if preclassified_intent is not None:
-            self._cli_backend_fallback_actions(
-                result,
-                self._scene_command_character(),
-                message_text,
-                preclassified_intent=preclassified_intent,
+        if preclassified_intent:
+            self._stage_scene_transition_intents(
+                result, message_text, preclassified_intent,
                 chat_turn_id=int(chat_turn_id or 0),
             )
         return result
 
-    def _scene_command_character(self) -> Character:
-        """场景入口口令/分类器用的人物锚：常在员额首位，否则任意在册朝臣。"""
-        from ming_sim.audience_night import resolve_standing_roster
+    def _start_scene_action_intent(self, message: str) -> Optional[Future]:
+        """#1836 过渡：场景入口分类器只读玩家话，夜级暂存清单，不绑单人大臣。"""
+        from ming_sim.cli_backend import (
+            _SECRET_PREFIXES,
+            classify_cli_action_intent,
+            cli_backend_from_env,
+        )
 
-        chars = getattr(getattr(self, "content", None), "characters", None) or {}
-        for name in resolve_standing_roster(self.db):
-            ch = chars.get(name)
-            if ch is not None:
-                return ch
-            try:
-                return self._character(name)
-            except Exception:
-                continue
-        for name, ch in chars.items():
-            if getattr(ch, "office_type", "") in ("后宫", "宗藩"):
-                continue
-            try:
-                if self.db.get_character_status(name)[0] == "active":
-                    return ch
-            except Exception:
-                continue
-        # 最后兜底：content 里第一个非后宫人物（测试替身可能无 status 列）。
-        for ch in chars.values():
-            if getattr(ch, "office_type", "") not in ("后宫", "宗藩"):
-                return ch
-        raise RuntimeError("scene_chat 无可用人物锚。")
+        channel = (getattr(getattr(self, "llm_config", None), "channel", "") or "").strip().lower()
+        if channel not in {"cli", "api"} and cli_backend_from_env() is None:
+            return None
+        text = (message or "").strip()
+        if text.startswith(_SECRET_PREFIXES):
+            return None
+        if GameSession._proposal_blocked(self.state):
+            return None
+        # 夜级 / 本回合全部暂存（不按假大臣过滤）。
+        pend = self.db.list_pending_actions(self.state.turn) if hasattr(self.db, "list_pending_actions") else []
+        summaries = [f"#{int(p['id'])} {_pending_action_brief(p)}" for p in pend]
+        has_pending_draft = any(p.get("kind") == "directive" for p in pend)
+        backing_candidates = (
+            self.db.list_endorsed_dossier_candidates(int(self.state.turn))
+            if hasattr(self.db, "list_endorsed_dossier_candidates") else []
+        )
+        return _CLI_ACTION_INTENT_EXECUTOR.submit(
+            classify_cli_action_intent,
+            text,
+            [],  # 无单人密令锚
+            False,
+            has_pending_draft,
+            summaries,
+            getattr(self, "llm_config", None),
+            "",
+            int(self.state.turn),
+            backing_candidates,
+        )
+
+    def _stage_scene_transition_intents(
+        self,
+        result: "ChatTurnResult",
+        message: str,
+        intent_candidates: Any,
+        *,
+        chat_turn_id: int = 0,
+    ) -> None:
+        """过渡物化：只把分类器已声明的交办类候选落入 pending，minister_name 空串。
+
+        不走 _cli_backend_fallback_actions（那条路要求 Character 锚）。
+        转译 C1a 接上后本缝退役。
+        """
+        from ming_sim.action_clusters import normalize_intent_candidates, resolve_primary_intent
+
+        candidates = normalize_intent_candidates(intent_candidates)
+        primary = resolve_primary_intent(candidates) or {}
+        kind = str(primary.get("kind") or "none")
+        if kind in ("", "none"):
+            return
+        if not hasattr(self.db, "stage_pending_action"):
+            return
+        # 只把带正文的拟旨类先落；其余等 C1a。
+        text = str(primary.get("text") or primary.get("decree_text") or message or "")
+        if kind in ("directive", "special_decree", "grant_allocation") and text.strip():
+            pid = self.db.stage_pending_action(
+                int(self.state.turn),
+                kind="directive",
+                action="拟旨",
+                minister_name="",
+                payload={"text": text, "source": "scene_transition_classifier",
+                         "chat_turn_id": int(chat_turn_id or 0)},
+            )
+            result.pending_action_id = int(pid or 0)
 
     def chat(
         self, minister_name: str, message: str, *, chat_turn_id: int = 0,
