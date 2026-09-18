@@ -5,9 +5,9 @@
 交办仍走暂存 → 应允 → 收夜成案 → 颁布关。
 
 Seams:
-- dispatch_declaration（C0 分派入口 + 源轮 chat_turn_id）
+- dispatch_declaration（C0 分派入口 + 源轮 chat_turn_id；入口自记撤回前像）
 - NIGHT_DIRECT_WRITE_WHITELIST 第四类
-- capture_chat_rollback_snapshot / record_chat_turn_rollback_diffs / undo_chat_turn
+- undo_chat_turn（逆转入口自记的前像）
 - prepare_scene_materials（下一句目录可见实况）
 """
 
@@ -36,8 +36,7 @@ def _active_minister(db, *, exclude: set[str] | None = None) -> str:
 
 
 def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, night_id: int = 0):
-    """一轮窗口：前像 → 对话轮 → 分派声明（源轮绑定）→ 后像 → 记 diff。"""
-    before = db.capture_chat_rollback_snapshot()
+    """一轮窗口：搭建对话轮 → 公开入口分派（入口自记前像）→ 标抽取水位。"""
     if night_id <= 0 and an.get_open_night(db) is None:
         an.open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id, chat_id = an.attach_chat_turn_to_night(db, state, minister)
@@ -55,6 +54,7 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
     db.update_chat_turn_messages(
         int(chat_id), user_message_id=int(uid), minister_message_id=int(mid),
     )
+    # 前像由 dispatch_declaration 公开入口自记，helper 不再代行生产机制。
     result = dispatch_declaration(
         db, state, declaration,
         minister_name=minister, night_id=int(night_id), chat_turn_id=int(chat_id),
@@ -63,8 +63,6 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
         "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?", (int(chat_id),),
     )
     db.conn.commit()
-    after = db.capture_chat_rollback_snapshot()
-    db.record_chat_turn_rollback_diffs(int(chat_id), before, after)
     return int(night_id), int(chat_id), result
 
 
@@ -241,9 +239,8 @@ def test_undo_reverses_round_on_scene_writes(game):
 
 
 def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
-    """#1839 AC3：夜上下文第四类（presence/scene_facts/edge_events）须带属本夜
-    的正源轮；缺失或不属本夜 → missing_ref，不落 origin=0 / turn:N 孤儿账。
-    过月无夜路径（night_id=0）不在本案。"""
+    """#1839 AC3：夜上下文第四类全部 section 须带属本夜的正源轮；缺失或不属
+    本夜 → missing_ref，零落账。过月无夜路径（night_id=0）不在本案。"""
     db, state, _ = game
     minister = _active_minister(db)
     other = _active_minister(db, exclude={minister})
@@ -267,6 +264,20 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
             "source": minister, "target": other, "event_kind": "撑腰",
             "context": "当殿举荐",
         }],
+        "on_scene_facts": [{
+            "name": other, "动作": "处置", "status": "dead",
+            "reason": "当场处斩",
+        }],
+        "textual_facts": [{
+            "subject_kind": "character", "subject_id": minister,
+            "body": "左臂中箭",
+        }],
+        "public_sayings": [{
+            "body": "坊间盛传某尚书已死", "involved_characters": [other],
+        }],
+        "registrations": [{
+            "name": "李若璉夜測", "office": "行人", "office_type": "文官",
+        }],
     }
     before_ledger = db.conn.execute(
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
@@ -274,6 +285,16 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     before_edges = db.conn.execute(
         "SELECT COUNT(*) c FROM relation_edge_events"
     ).fetchone()["c"]
+    before_facts = db.conn.execute(
+        "SELECT COUNT(*) c FROM textual_facts"
+    ).fetchone()["c"]
+    before_sayings = db.conn.execute(
+        "SELECT COUNT(*) c FROM public_sayings"
+    ).fetchone()["c"]
+    before_status = db.get_character_status(other)[0]
+    before_listed = db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
+    ).fetchone()
 
     missing = dispatch_declaration(
         db, state, declaration, night_id=night_id, chat_turn_id=0,
@@ -282,16 +303,16 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
         db, state, declaration, night_id=night_id, chat_turn_id=int(foreign_ctid),
     )
 
+    fourth = (
+        "presence", "scene_facts", "edge_events",
+        "on_scene_facts", "textual_facts", "public_sayings", "registrations",
+    )
     for result in (missing, foreign):
-        assert result.presence.applied == []
-        assert result.scene_facts.applied == []
-        assert result.edge_events.applied == []
-        assert len(result.presence.rejected) == 1
-        assert len(result.scene_facts.rejected) == 1
-        assert len(result.edge_events.rejected) == 1
-        assert result.presence.rejected[0].category == "missing_ref"
-        assert result.scene_facts.rejected[0].category == "missing_ref"
-        assert result.edge_events.rejected[0].category == "missing_ref"
+        for name in fourth:
+            section = getattr(result, name)
+            assert section.applied == [], name
+            assert len(section.rejected) == 1, name
+            assert section.rejected[0].category == "missing_ref", name
 
     after_ledger = db.conn.execute(
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
@@ -299,8 +320,20 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     after_edges = db.conn.execute(
         "SELECT COUNT(*) c FROM relation_edge_events"
     ).fetchone()["c"]
+    after_facts = db.conn.execute(
+        "SELECT COUNT(*) c FROM textual_facts"
+    ).fetchone()["c"]
+    after_sayings = db.conn.execute(
+        "SELECT COUNT(*) c FROM public_sayings"
+    ).fetchone()["c"]
     assert after_ledger == before_ledger
     assert after_edges == before_edges
+    assert after_facts == before_facts
+    assert after_sayings == before_sayings
+    assert db.get_character_status(other)[0] == before_status
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
+    ).fetchone() is before_listed
 
 
 def test_commission_stays_staged_not_bypassing_promulgation(game):

@@ -216,10 +216,11 @@ def _dispatch_declaration_sections(
     直接分派与暂存结算两条路径共用同一段执行体，不复制两份分派逻辑）。
 
     ``chat_turn_id``（#1839）：召对当场实况的源轮。在场进出 / 说话人分段绑
-    ``origin_chat_turn_id``；边事件 origin 拼 ``转译声明|chat_turn:{id}``——撤回
-    本轮按此前像 / 源轮逆转（ADR 0038 第四类）。过月结算无对话轮，传 0。
-    夜上下文（night_id>0）下源轮须为正且属本夜，否则第四类夜绑定 section
-    逐项 missing_ref 拒收，不得落 origin=0 / turn:N 孤儿账。
+    ``origin_chat_turn_id``；边事件 origin 拼 ``转译声明|chat_turn:{id}``；
+    人物变更 / 文字事实 / 公开说法 / 入册走前像日志——撤回本轮按此前像 /
+    源轮逆转（ADR 0038 第四类）。过月结算无对话轮，传 0。夜上下文
+    （night_id>0）下源轮须为正且属本夜，否则第四类全部 section 逐项
+    missing_ref 拒收，不得落 origin=0 / turn:N 孤儿账。
     """
     # #1838 的场中承接入口沿用 source_chat_turn_id；#1839 的直接分派入口使用
     # chat_turn_id。两者是同一个源轮，统一后再做 #1839 的属夜校验。
@@ -235,14 +236,19 @@ def _dispatch_declaration_sections(
         promises=_dispatch_promises(
             db, state, declaration.get("promises"), night_id=night_id, source=source,
         ),
+        # 第四类夜绑定 section 统一消费源轮校验（ADR 0038 / #1839 AC3）：
+        # 缺源轮或不属本夜 → 逐项 missing_ref，零落账；过月 night_id<=0 不拦。
         textual_facts=_dispatch_textual_facts(
             db, state, declaration.get("textual_facts"), source=source,
+            source_turn_error=source_turn_err,
         ),
         public_sayings=_dispatch_public_sayings(
             db, state, declaration.get("public_sayings"), source=source,
+            source_turn_error=source_turn_err,
         ),
         on_scene_facts=_dispatch_on_scene_facts(
             db, state, declaration.get("on_scene_facts"), source=source,
+            source_turn_error=source_turn_err,
         ),
         presence=_dispatch_presence(
             db, declaration.get("presence"), night_id=night_id, source=source,
@@ -261,6 +267,7 @@ def _dispatch_declaration_sections(
         ),
         registrations=_dispatch_registrations(
             db, state, declaration.get("registrations"), source=source,
+            source_turn_error=source_turn_err,
         ),
     )
     turn = int(state.turn)
@@ -296,9 +303,14 @@ def dispatch_declaration(
     孤儿账。
 
     ``chat_turn_id``（#1839 C2）：当场实况的源轮。召对场中承接传入本轮
-    ``chat_turns.id``，在场账 / 边事件带源轮绑定，撤回本轮以前像日志逆转；
-    夜上下文须为正且属本夜，否则 presence / scene_facts / edge_events 逐项
-    missing_ref 拒收。过月路径传 0。交办仍只落暂存，不因源轮而绕过颁布关。
+    ``chat_turns.id``，第四类全部 section 带源轮绑定，撤回本轮以前像日志
+    逆转；夜上下文须为正且属本夜，否则第四类逐项 missing_ref 拒收。过月
+    路径传 0。交办仍只落暂存，不因源轮而绕过颁布关。
+
+    本入口自足记录撤回前像：``chat_turn_id>0`` 时在分派前后截快照并写入
+    ``chat_turn_rollback_items``，调用方（含测试 helper）不必手工
+    capture/record——#1842 后台转译形态下回话窗口的 caller 快照覆盖不到
+    分派写入，前像必须随分派执行走。
 
     :func:`settle_staged_declarations_in_decree_order` 结算一旨下多条暂存
     声明时不走这个入口——它需要把同旨下每条声明的分派副作用、拒收与该旨的
@@ -307,15 +319,26 @@ def dispatch_declaration(
     函数另开的事务。
     """
     collector = RejectionCollector()
+    origin_ctid = int(chat_turn_id or source_chat_turn_id or 0)
+    # 有源轮则入口自记前像：后台/直接调用都不必依赖 caller 窗口快照。
+    before = (
+        db.capture_chat_rollback_snapshot()
+        if origin_ctid > 0 and hasattr(db, "capture_chat_rollback_snapshot")
+        else None
+    )
     with atomic(db):
         result = _dispatch_declaration_sections(
             db, state, declaration,
             minister_name=minister_name, night_id=night_id, source=source,
             collector=collector,
-            chat_turn_id=int(chat_turn_id or source_chat_turn_id or 0),
+            chat_turn_id=origin_ctid,
         )
         collector.flush_to_db(db)
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
+    if before is not None and hasattr(db, "record_chat_turn_rollback_diffs"):
+        db.record_chat_turn_rollback_diffs(
+            origin_ctid, before, db.capture_chat_rollback_snapshot(),
+        )
     return result
 
 
@@ -629,10 +652,16 @@ def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None
     db.affairs.attach_pointer("characters", name, affair_id)
 
 
-def _dispatch_textual_facts(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+def _dispatch_textual_facts(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
     items, rejected = _section_items(raw, label="文字事实声明", source=source)
     applied: List[Any] = []
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         subject_kind = str(item.get("subject_kind") or "").strip()
         subject_id = str(item.get("subject_id") or "").strip()
         try:
@@ -682,14 +711,23 @@ def _string_array_field(item: Mapping[str, object], key: str) -> Optional[List[s
     return list(value)
 
 
-def _dispatch_public_sayings(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+def _dispatch_public_sayings(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
     """公开说法：R3 记录 + 进公开层。声明可带 `excluded_names`/`excluded_offices`
     ——密令『瞒某人』这类显式排除黑名单随说法一起落进它自己的 source
     （`public_saying:<id>`），一票否决压过公开层与职位桶（既有
-    `knowledge_row_visible_to` 读口，本节只补上一直缺失的写口，#1829/#1832）。"""
+    `knowledge_row_visible_to` 读口，本节只补上一直缺失的写口，#1829/#1832）。
+
+    夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
+    """
     items, rejected = _section_items(raw, label="公开说法声明", source=source)
     applied: List[Any] = []
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         involved = _string_array_field(item, "involved_characters")
         if involved is None:
             _reject(rejected, item, "所涉人物须为字符串数组", "invalid_shape", source)
@@ -725,10 +763,15 @@ def _dispatch_public_sayings(db: Any, state: Any, raw: object, *, source: Proven
     return SectionResult(applied=applied, rejected=rejected)
 
 
-def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+def _dispatch_on_scene_facts(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
     """当场实况：人物生死 / 下狱 / 革职等（既有 ADR 0009 人物变更核，动作字段沿用
     既有 `PERSON_ACTIONS` 闭集词汇——如「处置」配 `status=dead/imprisoned`、
     「罢黜」= 革职；既有核已做「非既有人物 → hallucinated_id」逐项拒收。
+
+    夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
 
     各自所属事务：人物变更与事务指针绑定放进同一个 :func:`_item_savepoint_scope`
     块逐项处理（不再整批调用 `apply_person_changes_only`）——指针绑定失败时
@@ -743,6 +786,9 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
     items, rejected = _section_items(raw, label="当场实况声明", source=source)
     applied: List[Any] = []
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         affair_id, error_category = _peek_affair_id(db, item)
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
@@ -792,7 +838,8 @@ def _resolve_night_source_chat_turn(
 ) -> Tuple[int, Optional[str]]:
     """夜上下文源轮核（#1839 AC3 / ADR 0038 第四类）：night_id>0 时须带正
     ``chat_turn_id`` 且 ``chat_turns.night_id`` 属本夜；缺失或不属本夜返回
-    拒收原因（调用方逐项 missing_ref）。过月无夜（night_id<=0）保留 0，不拦。
+    拒收原因，由第四类全部 section 逐项 missing_ref。过月无夜（night_id<=0）
+    保留 0，不拦。
     """
     nid = int(night_id or 0)
     ctid = int(chat_turn_id or 0)
@@ -1026,13 +1073,18 @@ def _dispatch_protagonist(db: Any, raw: object, *, source: Provenance) -> Protag
     return ProtagonistResult(validated={"person_name": name}, rejected=[])
 
 
-def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+def _dispatch_registrations(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
     """入册：登记名册外人物进入本局可召见人物池。构档的唯一权威实现是
     `ming_sim.session.register_unlisted_person_record`——`GameSession.
     _apply_unlisted_person_registration`（召对场景 LLM 工具触发）与本函数
     共用它，查重规则、落库都不在两处各写一份。「登记之后随手把他召上殿」是
     召对专属的 UI 便利动作，留给召对侧自己决定要不要做；入册本身与是否立刻
     传召是两件事，本分派器只管前者。
+
+    夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
 
     `style`（人物材料上的可感文字）原样取声明自带的值、零删改地传给共享写核，
     不合成任何占位文案（P7）——声明没给就留空。`_apply_unlisted_person_registration`
@@ -1047,6 +1099,9 @@ def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provena
     items, rejected = _section_items(raw, label="入册声明", source=source)
     applied: List[Any] = []
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         name = str(item.get("name") or "").strip()
         office = str(item.get("office") or "").strip()
         office_type = str(item.get("office_type") or "").strip()
