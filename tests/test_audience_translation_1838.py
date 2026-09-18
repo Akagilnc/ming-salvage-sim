@@ -11,16 +11,21 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from ming_sim.audience_night import (
     AUDIBILITY_PRIVATE,
     AUDIBILITY_PUBLIC,
+    get_night_protagonist,
+    list_ledger,
     open_night,
     person_night_experience,
     present_names_at,
-    set_night_protagonist,
 )
 from ming_sim.audience_translation import apply_audience_round_translation
+from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
+from ming_sim.session import GameSession
 
 
 def _activate(db, state, *names: str) -> None:
@@ -75,9 +80,21 @@ def test_three_speaker_segments_private_whisper_not_in_other_experience(game):
 
     assert len(result.scene_facts.applied) == 3
     assert result.scene_facts.rejected == []
-    assert {r["audibility"] for r in result.scene_facts.applied} == {
-        AUDIBILITY_PUBLIC, AUDIBILITY_PRIVATE,
-    }
+
+    # 外部可见：按源轮从 ledger 读回三段说话人 + 可闻性（不靠 applied 投影凑数）
+    segments = [
+        e for e in list_ledger(db, nid)
+        if int(e.get("source_chat_turn_id") or 0) == ctid
+        and not e.get("presence_effect")
+    ]
+    assert len(segments) == 3
+    by_body = {e["body"]: e for e in segments}
+    assert by_body[wang_reply]["person_names"] == ["王绍徽"]
+    assert by_body[wang_reply]["audibility"] == AUDIBILITY_PUBLIC
+    assert by_body[bi_interject]["person_names"] == ["毕自严"]
+    assert by_body[bi_interject]["audibility"] == AUDIBILITY_PUBLIC
+    assert by_body[wang_whisper]["person_names"] == ["王承恩"]
+    assert by_body[wang_whisper]["audibility"] == AUDIBILITY_PRIVATE
 
     # 王绍徽在场期间可闻殿上公开；御前低语不进其经历投影
     wang_exp = person_night_experience(db, nid, "王绍徽")
@@ -134,18 +151,36 @@ def test_presence_enter_exit_from_translation(game):
     ]
 
 
-def test_protagonist_follows_translation_and_xuan_cut(game):
-    """AC3：御前主角随转译声明变化；宣 X 当场先切。"""
-    db, state, _ = game
+def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
+    """AC3：御前主角随转译声明变化；宣 X 经 scene_chat 真入口当场先切。"""
+    db, state, content = game
     _activate(db, state, "王绍徽", "王承恩")
     night = open_night(db, state, location="乾清宫", time_of_day="戌时")
     nid = int(night["id"])
+    assert get_night_protagonist(db, nid) == ""
 
-    # 宣 X 当场先切（引擎，不等转译）
-    set_night_protagonist(db, nid, "王绍徽", reason="xuan")
-    assert db.conn.execute(
-        "SELECT protagonist_name FROM audience_nights WHERE id=?", (nid,),
-    ).fetchone()["protagonist_name"] == "王绍徽"
+    class FakeAgent:
+        tools = []
+
+        def run(self, message):
+            return SimpleNamespace(content="王绍徽入殿叩见。", tools=[])
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = SimpleNamespace(channel="")
+    sess.temporary_characters = {}
+    sess.agno_db = None
+    sess._beat_generator = None
+    sess._scene_registry = None
+    sess._write_gate = None
+
+    # 真入口：scene_chat("宣王绍徽") 当场先切，不经 set_night_protagonist 直调
+    sess.scene_chat("宣王绍徽")
+    assert get_night_protagonist(db, nid) == "王绍徽"
 
     # 王承恩独自回奏一轮 → 转译声明主角是他
     ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=nid)
@@ -155,9 +190,7 @@ def test_protagonist_follows_translation_and_xuan_cut(game):
         night_id=nid, chat_turn_id=ctid,
     )
     assert result.protagonist.validated == {"person_name": "王承恩"}
-    assert db.conn.execute(
-        "SELECT protagonist_name FROM audience_nights WHERE id=?", (nid,),
-    ).fetchone()["protagonist_name"] == "王承恩"
+    assert get_night_protagonist(db, nid) == "王承恩"
     assert db.conn.execute(
         "SELECT protagonist_name FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()["protagonist_name"] == "王承恩"
@@ -206,6 +239,6 @@ def test_edge_event_and_public_saying_attach_affair(game):
 
     assert len(result.public_sayings.applied) == 1
     sayings = list_public_sayings(db, involved_character="毕自严")
-    assert any(s["body"] == saying_body for s in sayings)
     matched = next(s for s in sayings if s["body"] == saying_body)
-    assert str(affair.id) in str(matched.get("affair_ref") or "") or matched.get("affair_ref")
+    # 与边事件侧同严：affair_ref 必须精确等于该事务 origin_ref
+    assert matched["affair_ref"] == AffairStore.origin_ref(affair.id)
