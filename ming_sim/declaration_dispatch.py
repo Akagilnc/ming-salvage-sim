@@ -488,6 +488,37 @@ def _commission_appointment_fields(
     return payload, None
 
 
+def _assert_commission_grant_target_exists(
+    db: Any, target_kind: str, target_id: str,
+) -> None:
+    """拨帑目标必须是账上真实体；查无 → KeyError（hallucinated_id）。"""
+    kind = str(target_kind or "").strip()
+    tid = str(target_id or "").strip()
+    if kind == "region":
+        row = db.conn.execute("SELECT 1 FROM regions WHERE id=?", (tid,)).fetchone()
+        if row is None:
+            raise KeyError(f"地区不存在：{tid}")
+        return
+    if kind == "character":
+        _assert_characters_exist(db, [tid])
+        return
+    if kind == "army":
+        row = db.conn.execute("SELECT 1 FROM armies WHERE id=?", (tid,)).fetchone()
+        if row is None:
+            raise KeyError(f"军队不存在：{tid}")
+        return
+    if kind == "issue":
+        try:
+            iid = int(tid)
+        except (TypeError, ValueError) as exc:
+            raise KeyError(f"事项不存在：{tid}") from exc
+        row = db.conn.execute("SELECT 1 FROM issues WHERE id=?", (iid,)).fetchone()
+        if row is None:
+            raise KeyError(f"事项不存在：{tid}")
+        return
+    # 未知 kind 留给成案/物化缝；此处不放行空目标（调用方已要求非空）。
+
+
 def _commission_grant_payload(
     db: Any, *, text: object, grant: Mapping[str, object],
 ) -> Dict[str, Any]:
@@ -543,6 +574,7 @@ def _commission_grant_payload(
         raise DecreeMaterializationValidationError(
             "拨帑声明缺 target_kind/target_id", failed_fields=("target_kind", "target_id"),
         )
+    _assert_commission_grant_target_exists(db, target_kind, target_id)
     account = str(shaped.get("account") or resolve_grant_account(
         grant_action=grant_action, account=grant.get("account"),
     ))
@@ -633,18 +665,10 @@ def _dispatch_commissions(
                 )
             else:
                 body = str(text or "")
-                if not body.strip() and not appointment_fields:
+                # P7：正文必须由声明给出；缺正文不猜、不拼「任命X为Y」模板。
+                if not body.strip():
                     raise DecreeMaterializationValidationError(
                         "交办声明缺正文（不猜散文）", failed_fields=("text",),
-                    )
-                if appointment_fields and not body.strip():
-                    body = (
-                        f"{appointment_fields['appoint_action']}"
-                        f"{appointment_fields['name']}"
-                        + (
-                            f"为{appointment_fields['office']}"
-                            if appointment_fields.get("office") else ""
-                        )
                     )
                 # 收夜成案需要 ordinary triad；纯正文走 special_decree 最小结构
                 # （与 _ensure_directive_dossier 无结构回退同形，声明侧一次给齐）。
@@ -660,12 +684,21 @@ def _dispatch_commissions(
         except DecreeMaterializationValidationError as exc:
             _reject(rejected, item, str(exc), "invalid_enum", source)
             continue
+        except KeyError as exc:
+            # 查无此人 / 幻影地区 / 无此军 → 单项拒收当事实回场（AC4）。
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
         except ValueError as exc:
             # require_grant_allocation_shape 等权威缝的裸 ValueError → 单项拒收。
             _reject(rejected, item, str(exc), "invalid_enum", source)
             continue
 
         if appointment_fields:
+            try:
+                _assert_characters_exist(db, [str(appointment_fields["name"])])
+            except KeyError as exc:
+                _reject(rejected, item, str(exc), "hallucinated_id", source)
+                continue
             payload.update(appointment_fields)
 
         if not _attach_commission_affair(

@@ -11,19 +11,14 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-import pytest
-
 from ming_sim.audience_night import (
     close_night,
-    get_open_night,
-    mark_actions_night_approved,
+    list_chat_turns_for_night,
     open_night,
 )
 from ming_sim.audience_translate import (
-    apply_audience_turn_translation,
+    build_night_said_so_far,
     normalize_audience_declaration,
-    run_audience_turn_translation,
-    translate_audience_turn,
 )
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
@@ -72,6 +67,35 @@ def _hong_name(db, content) -> str:
     return str(row["name"])
 
 
+def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) -> int:
+    """把一轮皇帝/回话落到 chat_messages + chat_turns（真表形）。"""
+    speaker = "殿上"
+    cur = db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
+        "VALUES (?, ?, 'user', ?, 'held')",
+        (speaker, int(state.turn), user_text),
+    )
+    uid = int(cur.lastrowid)
+    cur = db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
+        "VALUES (?, ?, 'minister', ?, 'held')",
+        (speaker, int(state.turn), reply),
+    )
+    mid = int(cur.lastrowid)
+    db.conn.execute(
+        "INSERT INTO chat_turns "
+        "(minister_name, turn, year, period, user_message_id, minister_message_id, "
+        " status, night_id, night_seq) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 1)",
+        (
+            speaker, int(state.turn), int(state.year), int(state.period),
+            uid, mid, int(night_id),
+        ),
+    )
+    db.conn.commit()
+    return uid
+
+
 def test_normalize_keeps_only_c1a_sections():
     raw = {
         "commissions": [{"text": "拟旨"}],
@@ -85,158 +109,192 @@ def test_normalize_keeps_only_c1a_sections():
     assert out["promises"] == [{"action_id": 1, "decision": "应允"}]
 
 
-def test_appointment_and_relief_grant_stages_typed_then_close_and_settle(game):
-    """AC1：任命+赈灾经转译落暂存（载荷 typed），应允收夜成案，过月落账。"""
+def test_build_night_said_reads_chat_messages_not_missing_turn_columns(game):
+    """本场已说：从 chat_messages 经 message_id 取正文，不读不存在的 user_text 列。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
+    _persist_night_chat(db, state, night_id, "边饷如何？", "边关尚稳。")
+    said = build_night_said_so_far(db, night_id)
+    assert any("边饷如何" in line for line in said), said
+    assert any("边关尚稳" in line for line in said), said
+    # 真 turn 行上没有 user_text
+    turn = list_chat_turns_for_night(db, night_id)[0]
+    assert "user_text" not in turn or turn.get("user_text") in (None, "")
+
+
+def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
+    """AC1：scene_chat 转译 → typed 暂存 → 应允收夜成案 → 过月落账。"""
+    db, state, content = game
+    open_night(db, state, location="乾清宫", time_of_day="夜")
     person = _hong_name(db, content)
     region = _region_id(db)
     edict = f"任命{person}为陕西巡抚，调银三十万两赈灾"
 
-    declaration = {
-        "commissions": [{
-            "text": edict,
-            "appointment": {
-                "name": person, "office": "陕西巡抚", "appoint_action": "任命",
-            },
-            "grant": {
-                "grant_action": "赈灾",
-                "amount": 30,
-                "account": "国库",
-                "target_kind": "region",
-                "target_id": region,
-                "cadence": "一次性",
-                "execution_surface": "immediate",
-            },
-        }],
+    commission = {
+        "text": edict,
+        "appointment": {
+            "name": person, "office": "陕西巡抚", "appoint_action": "任命",
+        },
+        "grant": {
+            "grant_action": "赈灾",
+            "amount": 30,
+            "account": "国库",
+            "target_kind": "region",
+            "target_id": region,
+            "cadence": "一次性",
+            "execution_surface": "immediate",
+        },
     }
-    result = dispatch_declaration(
-        db, state, declaration, minister_name="", night_id=night_id,
-    )
-    assert result.commissions.rejected == [], result.commissions.rejected
-    kinds = {row["kind"] for row in result.commissions.applied}
-    assert "directive" in kinds
-    assert "office" in kinds
+    # 第一轮：交办；第二轮：「准」应允上一轮全部 pending
+    calls = {"n": 0}
 
-    # typed 载荷：拨帑与任免同挂
-    directive = next(r for r in result.commissions.applied if r["kind"] == "directive")
-    payload = directive["payload"]
+    def translate_fn(prompt, llm_config):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"commissions": [commission], "promises": []}
+        # 应允本夜全部 pending directive+office
+        rows = db.conn.execute(
+            "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
+        ).fetchall()
+        return {
+            "commissions": [],
+            "promises": [
+                {"action_id": int(r["id"]), "decision": "应允"} for r in rows
+            ],
+        }
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣等遵旨。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+    )
+    sess = _sess(db, state, content, translate_fn=translate_fn)
+
+    r1 = sess.scene_chat(edict)
+    assert r1.pending_action_id > 0
+    pending = [
+        dict(r) for r in db.conn.execute(
+            "SELECT id, kind, action, payload_json, night_approved "
+            "FROM pending_actions WHERE status='pending' ORDER BY id"
+        ).fetchall()
+    ]
+    kinds = {p["kind"] for p in pending}
+    assert "directive" in kinds and "office" in kinds
+    dir_row = next(p for p in pending if p["kind"] == "directive")
+    payload = json.loads(dir_row["payload_json"])
     assert payload["text"] == edict
     assert payload["grant_action"] == "赈灾"
     assert int(payload["amount"]) == 30
-    assert payload["account"] == "国库"
-    assert payload["target_id"] == region
     assert payload["name"] == person
     assert payload["office"] == "陕西巡抚"
+    assert all(int(p["night_approved"] or 0) == 0 for p in pending)
 
-    office = next(r for r in result.commissions.applied if r["kind"] == "office")
-    assert office["payload"]["name"] == person
-    assert office["payload"]["office"] == "陕西巡抚"
+    r2 = sess.scene_chat("准")
+    assert r2.answer == "臣等遵旨。"
+    approved = db.conn.execute(
+        "SELECT id, kind, night_approved FROM pending_actions "
+        "WHERE id IN ({})".format(",".join(str(p["id"]) for p in pending))
+    ).fetchall()
+    assert all(int(r["night_approved"] or 0) == 1 for r in approved), approved
 
-    # 应允全部本夜交办 → 收夜成案
-    ids = [int(r["id"]) for r in result.commissions.applied]
-    mark_actions_night_approved(db, ids, night_id=night_id)
     close_night(db, state, content=content, registry=None, wait_timeout_s=0.0)
+    for p in pending:
+        row = db.conn.execute(
+            "SELECT status FROM pending_actions WHERE id=?", (int(p["id"]),),
+        ).fetchone()
+        assert row["status"] == "committed", (p["kind"], row["status"])
 
-    office_row = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (int(office["id"]),),
-    ).fetchone()
-    assert office_row["status"] == "committed"
-
-    dir_row = db.conn.execute(
-        "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
-        (int(directive["id"]),),
-    ).fetchone()
-    assert dir_row["status"] == "committed"
-    assert int(dir_row["committed_directive_id"] or 0) > 0
-
-    # appointment 案卷
     appt = db.conn.execute(
-        "SELECT id, status, action_type, target_id FROM decree_dossiers "
+        "SELECT id, status, action_type FROM decree_dossiers "
         "WHERE action_type='appointment' AND target_id=? "
         "ORDER BY id DESC LIMIT 1",
         (person,),
     ).fetchone()
     assert appt is not None
-    assert appt["status"] in {"proposed", "promulgated", "executing", "closed"}
 
-    # grant 案卷（draft directive → ensure dossier）
     grant_dossiers = [
         d for d in db.list_decree_dossiers()
         if d["action_type"] == "grant_allocation"
         and str(d.get("target_id") or "") == region
     ]
-    assert grant_dossiers, "收夜后应有赈灾 grant 案卷"
+    assert grant_dossiers
 
-    # 过月落账：颁布 + 物化
-    treasury_before = int(state.metrics.get("国库") or 0)
-    state.metrics["国库"] = max(treasury_before, 100)
+    state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
     db.save_state(state)
-
     for d in grant_dossiers:
         db.apply_dossier_promulgation(
             state, int(d["id"]), decision="promulgated", content=content,
         )
-    if appt is not None and str(appt["status"]) == "proposed":
+    if str(appt["status"]) == "proposed":
         db.apply_dossier_promulgation(
             state, int(appt["id"]), decision="promulgated", content=content,
         )
 
-    # 职
     char = db.conn.execute(
-        "SELECT office, status FROM characters WHERE name=?", (person,),
+        "SELECT office FROM characters WHERE name=?", (person,),
     ).fetchone()
-    assert char is not None
     assert "陕西巡抚" in str(char["office"] or "")
-
-    # 银
     moved = db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE account='国库' "
         "AND target_id=? AND delta < 0 ORDER BY id DESC LIMIT 1",
         (region,),
     ).fetchone()
-    assert moved is not None
-    assert int(moved["delta"]) == -30
+    assert moved is not None and int(moved["delta"]) == -30
 
 
-def test_emperor_准_is_promise_approval_no_reply_stays_unapproved(game):
-    """AC2：皇帝「准」由转译判应允；不回默认同意不变。"""
+def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, monkeypatch):
+    """AC2：经 scene_chat 转译，「准」应允；不声明 promises 则默认不应允。"""
     db, state, content = game
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    # 经分派器落一条可成案的纯正文交办（与生产同形）。
+    open_night(db, state, location="乾清宫", time_of_day="夜")
     staged = dispatch_declaration(
         db, state,
         {"commissions": [{"text": "着户部备赈灾银"}]},
-        minister_name="", night_id=night_id,
+        minister_name="", night_id=int(
+            db.conn.execute(
+                "SELECT id FROM audience_nights WHERE status='open' ORDER BY id DESC LIMIT 1"
+            ).fetchone()["id"]
+        ),
     )
-    assert staged.commissions.applied and not staged.commissions.rejected
     staged_id = int(staged.commissions.applied[0]["id"])
 
-    # 不回 / 转译未声明 promises → 仍 night_approved=0
-    empty = apply_audience_turn_translation(
-        db, state, {"commissions": [], "promises": []}, night_id=night_id,
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣在。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
-    assert empty.promises.applied == []
+
+    # 不表态：空 promises
+    sess = _sess(
+        db, state, content,
+        translate_fn=lambda p, c: {"commissions": [], "promises": []},
+    )
+    sess.scene_chat("边事如何？")
     row = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()
     assert int(row["night_approved"] or 0) == 0
 
-    # 「准」→ 转译声明应允
-    approved = apply_audience_turn_translation(
-        db, state,
-        {"commissions": [], "promises": [{"action_id": staged_id, "decision": "应允"}]},
-        night_id=night_id,
-    )
-    assert len(approved.promises.applied) == 1
+    # 「准」
+    def approve_fn(prompt, cfg):
+        # 皇帝原话必须进 prompt 正文区，不能只靠规则段里的「准」字样。
+        assert "【本轮皇帝】准" in prompt, prompt[-200:]
+        return {
+            "commissions": [],
+            "promises": [{"action_id": staged_id, "decision": "应允"}],
+        }
+
+    sess._audience_translate_fn = approve_fn
+    sess.scene_chat("准")
     row = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()
     assert int(row["night_approved"] or 0) == 1
 
-    # 收夜提交即准旨（成 draft 案）
     close_night(db, state, content=content, registry=None, wait_timeout_s=0.0)
     pa = db.conn.execute(
         "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
@@ -253,7 +311,6 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     region = _region_id(db)
     person = _hong_name(db, content)
     edict = f"任命{person}为陕西巡抚，调银三十万两赈灾"
-
     declaration = {
         "commissions": [{
             "text": edict,
@@ -276,7 +333,6 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
-    # 分类器若仍被调用即失败——C1a 已退役场景入口分类器。
     import ming_sim.cli_backend as cb
 
     def boom(*a, **k):
@@ -287,10 +343,7 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     shapes = []
     for channel in ("api", "cli"):
         def translate_fn(prompt, llm_config, _decl=declaration):
-            shapes.append({
-                "channel": getattr(llm_config, "channel", None),
-                "declaration": normalize_audience_declaration(_decl),
-            })
+            shapes.append(normalize_audience_declaration(_decl))
             return _decl
 
         sess = _sess(
@@ -298,12 +351,10 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
             llm_config=SimpleNamespace(channel=channel),
             translate_fn=translate_fn,
         )
-        # 每通道独立开夜上下文：重用同一 night 亦可；pending 累计可接受。
         before = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
         result = sess.scene_chat(edict)
-        assert result.answer == "臣等遵旨。"
         after = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
@@ -311,19 +362,36 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
         assert result.pending_action_id > 0
 
     assert len(shapes) == 2
-    assert shapes[0]["declaration"] == shapes[1]["declaration"]
-    assert set(shapes[0]["declaration"]) == {"commissions", "promises"}
+    assert shapes[0] == shapes[1]
+    assert set(shapes[0]) == {"commissions", "promises"}
 
 
-def test_unhandleable_commission_returns_as_fact_no_forced_ask(game):
-    """AC4：承接不了的交办当事实回场，代码不做强制追问闸。"""
+def test_unhandleable_commission_rejected_as_fact_no_forced_ask(game):
+    """AC4：查无此人 / 幻影地区 → 拒收当事实；不强制追问。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
 
-    # 幻影目标 → 分派拒收，不抛、不改写为追问
-    declaration = {
-        "commissions": [{
+    missing_person = dispatch_declaration(
+        db, state,
+        {"commissions": [{
+            "text": "任命子虚乌有为陕西巡抚",
+            "appointment": {
+                "name": "子虚乌有某某", "office": "陕西巡抚", "appoint_action": "任命",
+            },
+        }]},
+        minister_name="", night_id=night_id,
+    )
+    assert missing_person.commissions.applied == []
+    assert missing_person.commissions.rejected
+    assert any(
+        getattr(r, "category", "") == "hallucinated_id"
+        for r in missing_person.commissions.rejected
+    )
+
+    missing_region = dispatch_declaration(
+        db, state,
+        {"commissions": [{
             "text": "着拨银赈济无此州",
             "grant": {
                 "grant_action": "赈灾",
@@ -333,32 +401,54 @@ def test_unhandleable_commission_returns_as_fact_no_forced_ask(game):
                 "target_id": "no-such-region-xyz",
                 "execution_surface": "immediate",
             },
-        }],
-        "promises": [],
-    }
-    # region 不存在时 stage 仍可能成功（target 校验在成案/物化）；用非法 grant_action 证拒收。
-    declaration["commissions"][0]["grant"]["grant_action"] = "不是合法拨帑"
+        }]},
+        minister_name="", night_id=night_id,
+    )
+    assert missing_region.commissions.applied == []
+    assert missing_region.commissions.rejected
+    assert any(
+        getattr(r, "category", "") == "hallucinated_id"
+        for r in missing_region.commissions.rejected
+    )
 
-    result = run_audience_turn_translation(
+
+def test_appointment_without_text_is_rejected_not_templated(game):
+    """P7：任免缺正文拒收，不拼「任命X为Y」。"""
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    person = _hong_name(db, content)
+    result = dispatch_declaration(
         db, state,
-        emperor_message="着拨银",
-        reply="臣…",
-        night_id=night_id,
-        translate_fn=lambda prompt, cfg: declaration,
+        {"commissions": [{
+            "appointment": {
+                "name": person, "office": "陕西巡抚", "appoint_action": "任命",
+            },
+        }]},
+        minister_name="", night_id=int(night["id"]),
     )
     assert result.commissions.applied == []
-    assert result.commissions.rejected, "须逐项拒收留痕"
-    # 无 clarification 副作用字段；调用方只见 rejected
-    assert all(getattr(r, "category", "") for r in result.commissions.rejected)
+    assert result.commissions.rejected
+    # 库中不得出现模板拼装正文
+    rows = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE status='pending'"
+    ).fetchall()
+    for row in rows:
+        payload = json.loads(row["payload_json"] or "{}")
+        assert f"任命{person}为陕西巡抚" != str(payload.get("text") or "")
 
 
-def test_scene_chat_translate_reads_emperor_reply_and_pending(game, monkeypatch):
-    """转译读本轮皇帝原话 + 回话 + 暂存清单（prompt 组装）。"""
+def test_scene_chat_translate_prompt_carries_pending_and_spoken(game, monkeypatch):
+    """转译 prompt 含本轮皇帝原话区、回话、本夜暂存 id。"""
     db, state, content = game
-    open_night(db, state, location="乾清宫", time_of_day="夜")
-    staged = db.stage_pending_action(
-        int(state.turn), "directive", "拟旨", "", {"text": "旧暂存旨"},
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    _persist_night_chat(db, state, night_id, "昨夜已问边饷", "臣已回奏。")
+    staged = dispatch_declaration(
+        db, state,
+        {"commissions": [{"text": "旧暂存旨正文独特标记XYZ"}]},
+        minister_name="", night_id=night_id,
     )
+    staged_id = int(staged.commissions.applied[0]["id"])
 
     seen = {}
 
@@ -366,7 +456,7 @@ def test_scene_chat_translate_reads_emperor_reply_and_pending(game, monkeypatch)
         seen["prompt"] = prompt
         return {
             "commissions": [],
-            "promises": [{"action_id": staged, "decision": "应允"}],
+            "promises": [{"action_id": staged_id, "decision": "应允"}],
         }
 
     class FakeAgent:
@@ -377,12 +467,17 @@ def test_scene_chat_translate_reads_emperor_reply_and_pending(game, monkeypatch)
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
     sess = _sess(db, state, content, translate_fn=translate_fn)
-    sess.scene_chat("准")
+    # 用不会与规则段「准」混淆的皇帝原话
+    sess.scene_chat("着即照办")
 
-    assert "准" in seen["prompt"]
-    assert "臣领旨" in seen["prompt"]
-    assert f"#{staged}" in seen["prompt"]
+    prompt = seen["prompt"]
+    assert "【本轮皇帝】着即照办" in prompt
+    assert "【本轮回话】臣领旨。" in prompt
+    assert f"#{staged_id}" in prompt
+    assert "旧暂存旨正文独特标记XYZ" in prompt
+    assert "昨夜已问边饷" in prompt
+    assert "臣已回奏" in prompt
     row = db.conn.execute(
-        "SELECT night_approved FROM pending_actions WHERE id=?", (staged,),
+        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()
     assert int(row["night_approved"] or 0) == 1

@@ -62,28 +62,39 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
 
 
 def build_night_said_so_far(db: Any, night_id: int) -> List[str]:
-    """本场已说的话（对话轮 + 故事账），按夜时序。"""
-    if int(night_id or 0) <= 0:
+    """本场已说的话：按夜持久化对话轮 + 故事账，正文从 chat_messages 取。
+
+    chat_turns 只有 user_message_id / minister_message_id，没有 user_text 列；
+    与 materials._scene_spoken_text / read_night_scroll 同口径，不另造假键。
+    """
+    if int(night_id or 0) <= 0 or not hasattr(db, "conn"):
         return []
-    from ming_sim.audience_night import list_night_timeline
+    from ming_sim.audience_night import list_chat_turns_for_night, list_ledger
 
     lines: List[str] = []
-    for event in list_night_timeline(db, int(night_id)):
-        payload = event.get("payload") or {}
-        kind = str(event.get("kind") or "")
-        if kind == "chat_turn":
-            user = str(payload.get("user_text") or payload.get("message") or "").strip()
-            reply = str(payload.get("assistant_text") or payload.get("reply") or "").strip()
-            minister = str(payload.get("minister_name") or "").strip()
-            if user:
-                lines.append(f"皇帝：{user}")
-            if reply:
-                who = minister or "殿上"
-                lines.append(f"{who}：{reply}")
-        elif kind == "ledger":
-            body = str(payload.get("body") or "").strip()
-            if body:
-                lines.append(body)
+    # 故事账（入殿等）按夜序；对话轮按 night_seq。两者分列后按既有材料口径
+    # 先对话再穿插非必要——转译只要「已说」全集，顺序以对话轮为主、账文附后。
+    for turn in list_chat_turns_for_night(db, int(night_id)):
+        minister = str(turn.get("minister_name") or "").strip() or "殿上"
+        for mid, role_label in (
+            (turn.get("user_message_id"), "皇帝"),
+            (turn.get("minister_message_id"), minister),
+        ):
+            if not mid:
+                continue
+            row = db.conn.execute(
+                "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
+            ).fetchone()
+            if row is None:
+                continue
+            body = str(row["content"] or "")
+            if not body.strip():
+                continue
+            lines.append(f"{role_label}：{body}")
+    for entry in list_ledger(db, int(night_id)):
+        body = str(entry.get("body") or "")
+        if body.strip():
+            lines.append(body)
     return lines
 
 
