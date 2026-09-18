@@ -1690,14 +1690,15 @@ class GameSession:
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,
     ) -> ChatTurnResult:
-        """#1836 T1 / #1837 C1a：一夜一场入口——一个场景 LLM 演整场。
+        """#1836 T1 / #1837 C1a / #1842 T2：一夜一场入口——一个场景 LLM 演整场。
 
         - 皇帝「宣 X」→ 引擎落入殿账（ADR 0037）→ 起一次场景调用
         - 「退朝」口令 → 收夜（与既有 command-verdict 同缝）
         - 一条对话轮 = 整段自由戏文（可含多人）；生成链零动作工具
-        - 回话落定后一次转译（C1a）：交办载荷与应允 → 统一分派器；
-          退役与回话并行的意图分类器 / 应允判读；CLI/API 同形
-        - 旧按大臣 chat() 入口暂留（收口在 X1）
+        - 回话落定后一次转译（完整声明）；ctid>0 时后台按轮串行、前台不等
+          （#1842）；ctid==0 同步落定（无生命周期测/直调）
+        - 退役与回话并行的意图分类器 / 应允判读 / 故事抽取 / 边事件判官 /
+          代码触发读心（转译承接）；旧按大臣 chat() 入口暂留（收口在 X1）
         """
         from ming_sim.audience_night import (
             CMD_AMBIGUOUS_CLOSE,
@@ -1817,8 +1818,8 @@ class GameSession:
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
 
-        # C1a：回话落定后一次转译 → 统一分派（交办 / 应允）；不跑并行分类器。
-        # T2 再把本调用后台化并在封夜 join；本票同步落定即可验收载荷与应允链。
+        # #1842：ctid>0 → 后台转译（前台不等）；ctid==0 → 同步落定（直调/单测）。
+        # 不跑并行分类器 / 故事抽取 / 边事件判官 / 读心——转译一次承接。
         self._apply_scene_turn_translation(
             result, message_text, answer, night_id=night_id,
             chat_turn_id=int(chat_turn_id or 0),
@@ -1834,30 +1835,52 @@ class GameSession:
         night_id: int,
         chat_turn_id: int = 0,
     ) -> None:
-        """#1837：场景入口转译交办/应允，经 C0 分派器落入既有暂存链。"""
+        """#1837/#1842：场景入口转译完整声明；ctid>0 后台串行，否则同步。"""
         from ming_sim.audience_translate import (
             AudienceTranslateError,
             run_audience_turn_translation,
         )
+        from ming_sim.audience_translation import schedule_audience_turn_translation
         from ming_sim.token_stats import tlog
 
         if GameSession._proposal_blocked(self.state):
             return
         translate_fn = getattr(self, "_audience_translate_fn", None)
+        ctid = int(chat_turn_id or 0)
+        nid = int(night_id or 0)
+        write_gate = getattr(self, "_write_gate", None)
+
+        if ctid > 0:
+            # 生产路径：调度后立即返回；封夜/过月 join；失败由 worker 标 pending。
+            schedule_audience_turn_translation(
+                self.db,
+                self.state,
+                emperor_message=emperor_message,
+                reply=reply,
+                night_id=nid,
+                chat_turn_id=ctid,
+                minister_name="",
+                llm_config=getattr(self, "llm_config", None),
+                translate_fn=translate_fn,
+                write_gate=write_gate,
+            )
+            return
+
         try:
             dispatch = run_audience_turn_translation(
                 self.db,
                 self.state,
                 emperor_message=emperor_message,
                 reply=reply,
-                night_id=int(night_id or 0),
+                night_id=nid,
+                chat_turn_id=0,
                 minister_name="",
                 llm_config=getattr(self, "llm_config", None),
                 translate_fn=translate_fn,
             )
         except AudienceTranslateError as exc:
             # 失败诚实：真因落痕 + 既有 pending_action_failures 显眼回场；
-            # 不进 dispatch、不洗成成功空声明。后台待补/重试归 T2。
+            # 不进 dispatch、不洗成成功空声明。
             tlog(f"[audience_translate] 转译失败：{exc}")
             result.pending_action_failures.append({
                 "id": 0,
@@ -1867,7 +1890,7 @@ class GameSession:
                 "message": f"召对转译失败：{exc}",
                 "category": "translate_failed",
                 "source": "audience_translate",
-                "chat_turn_id": int(chat_turn_id or 0),
+                "chat_turn_id": ctid,
             })
             return
         # 呈现用：本轮新交办的首条 id（若有）；应允不另占 pending_action_id。
@@ -1889,7 +1912,7 @@ class GameSession:
                     "reason": reason,
                     "category": getattr(item, "category", ""),
                     "source": "audience_translate",
-                    "chat_turn_id": int(chat_turn_id or 0),
+                    "chat_turn_id": ctid,
                 })
 
     def chat(
@@ -3490,6 +3513,21 @@ class GameSession:
         调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
         回合已结算推进，置 issued 态。
         """
+        # #1842 / ADR 0155：过月前 join 全部后台转译；再 catch-up 待补一次。
+        from ming_sim.audience_translation import (
+            catch_up_pending_translations,
+            join_all_translations,
+        )
+        join_all_translations(timeout_s=120.0)
+        try:
+            catch_up_pending_translations(
+                self.db, self.state,
+                llm_config=getattr(self, "llm_config", None),
+                translate_fn=getattr(self, "_audience_translate_fn", None),
+                write_gate=getattr(self, "_write_gate", None),
+            )
+        except Exception:
+            pass
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))
             or any(

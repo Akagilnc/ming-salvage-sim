@@ -1230,37 +1230,56 @@ def _raise_pending_extraction(
 def _drain_story_extraction_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
     extractor_agent: Any = None,
+    translate_fn: Any = None,
+    game_state: Any = None,
 ) -> None:
-    """收夜前清空普通待补抽取（ADR 0036）——并入过月/收夜流，玩家无感。
+    """收夜 phase-2：转译已在 OPEN 期 join；此处再 catch-up + 尽力旧抽取。
 
-    只补 story/presence；不含 endorsement batch。有待补 → 强制同步补跑（内部静默，
-    不推玩家可见 stage）；仍有 → 失败单源（LLMUnavailable）。LLM 在 write_gate
-    外跑（drain 内 settle 才短持锁）。
+    ADR 0036 后出注记 / #1842：待补不再 fail-closed 中止收夜。join/补跑后仍
+    pending 的留给过月 join / 原地重试（0157）。旧 ``drain_pending_before_close``
+    的 raise 契约保留给直接调用方；本收夜入口吞掉它，不阻断成案。
 
-    write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)，
-    否则 `write_gate is None` 卫兵被架空（#1353 嫌疑缝②）。
+    write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)。
     """
+    nid = int(night_id)
+    # OPEN 期已 join；CLOSING restore 再 join 一次（崩溃恢复口，空则秒回）。
+    from ming_sim.audience_translation import (
+        catch_up_pending_translations,
+        join_night_translations,
+    )
+    join_night_translations(nid, timeout_s=120.0)
+    if game_state is not None:
+        try:
+            catch_up_pending_translations(
+                db, game_state,
+                night_id=nid,
+                llm_config=llm_config,
+                translate_fn=translate_fn,
+                write_gate=write_gate,
+            )
+        except Exception:
+            pass
+
     if not hasattr(db, "count_pending_story_extractions"):
         return
-    # #1353 r10：pending 计数与缺依赖时的 list 同持 gate（禁二相锁外裸读）。
     gate = _gate_cm(write_gate)
     with gate:
-        pending = int(db.count_pending_story_extractions(night_id=int(night_id)) or 0)
+        pending = int(db.count_pending_story_extractions(night_id=nid) or 0)
         if pending <= 0:
             return
-        missing_rows: Optional[List[Dict[str, Any]]] = None
         if llm_config is None or write_gate is None:
-            missing_rows = _pending_extraction_rows(db, int(night_id))
-    if missing_rows is not None:
-        _raise_pending_extraction(
-            db, int(night_id), rows=missing_rows, missing_deps=True,
-        )
+            # 0036 修订：缺依赖不清空 → 不 fail-closed，待补保留。
+            return
     from ming_sim.audience_extraction import drain_pending_before_close
 
-    drain_pending_before_close(
-        db=db, llm_config=llm_config, write_gate=write_gate, night_id=int(night_id),
-        extractor_agent=extractor_agent,
-    )
+    try:
+        drain_pending_before_close(
+            db=db, llm_config=llm_config, write_gate=write_gate, night_id=nid,
+            extractor_agent=extractor_agent,
+        )
+    except Exception:
+        # 0036 修订：drain 失败不中止收夜；待补可查可重试。
+        return
 
 
 def _gate_cm(write_gate: Any):
@@ -1388,6 +1407,23 @@ def close_night(
             wait_in_flight_clear(
                 db, night_id, timeout_s=wait_timeout_s, write_gate=write_gate,
             )
+            # #1842：封夜提交 join 最后一轮转译须在 OPEN 期完成——CLOSING 会拒
+            # mark_pending_night_approved（「本夜收夜中，暂不能应允暂存」）。
+            # join / catch-up 在闸外（LLM + 串行锁）；落账自持 write_gate。
+            from ming_sim.audience_translation import (
+                catch_up_pending_translations,
+                join_night_translations,
+            )
+            join_night_translations(int(night_id), timeout_s=120.0)
+            try:
+                catch_up_pending_translations(
+                    db, state,
+                    night_id=int(night_id),
+                    llm_config=llm_config,
+                    write_gate=write_gate,
+                )
+            except Exception:
+                pass
             # #1353：start_close 的 assemble/知识短读与置 CLOSING 同持 write_gate。
             # 禁闸外知识链读共享 conn——后于屏障领票的尾随若尚未 wait_prior，
             # 并发 SELECT 会 sqlite3.Row IndexError（tuple index out of range）。
@@ -1496,7 +1532,7 @@ def close_night(
     try:
         _drain_story_extraction_or_fail_closed(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-            extractor_agent=extractor_agent,
+            extractor_agent=extractor_agent, game_state=state,
         )
     except Exception as drain_exc:
         from ming_sim.exceptions import LLMUnavailable

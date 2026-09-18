@@ -96,17 +96,20 @@ def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) ->
     return uid
 
 
-def test_normalize_keeps_only_c1a_sections():
+def test_normalize_keeps_declaration_sections_drops_noise():
     raw = {
         "commissions": [{"text": "拟旨"}],
         "promises": [{"action_id": 1, "decision": "应允"}],
-        "presence": [{"name": "王绍徽", "effect": "enter"}],
+        "presence": [{"person_name": "王绍徽", "effect": "enter", "body": "入"}],
         "noise": 1,
     }
     out = normalize_audience_declaration(raw)
-    assert set(out) == {"commissions", "promises"}
+    assert "noise" not in out
     assert out["commissions"] == [{"text": "拟旨"}]
     assert out["promises"] == [{"action_id": 1, "decision": "应允"}]
+    assert out["presence"] == [{"person_name": "王绍徽", "effect": "enter", "body": "入"}]
+    # 未给的数组 section 补空，便于分派器统一消费
+    assert out["on_scene_facts"] == []
 
 
 def test_build_night_said_reads_chat_messages_not_missing_turn_columns(game):
@@ -409,7 +412,8 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
 
     assert len(shapes) == 2
     assert shapes[0] == shapes[1]
-    assert set(shapes[0]) == {"commissions", "promises"}
+    assert "commissions" in shapes[0] and "promises" in shapes[0]
+    assert "noise" not in shapes[0]
 
 
 def test_unhandleable_commission_rejected_as_fact_no_forced_ask(game):
