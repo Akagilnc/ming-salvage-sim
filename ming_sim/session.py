@@ -1815,21 +1815,41 @@ class GameSession:
         chat_turn_id: int = 0,
     ) -> None:
         """#1837：场景入口转译交办/应允，经 C0 分派器落入既有暂存链。"""
-        from ming_sim.audience_translate import run_audience_turn_translation
+        from ming_sim.audience_translate import (
+            AudienceTranslateError,
+            run_audience_turn_translation,
+        )
+        from ming_sim.token_stats import tlog
 
         if GameSession._proposal_blocked(self.state):
             return
         translate_fn = getattr(self, "_audience_translate_fn", None)
-        dispatch = run_audience_turn_translation(
-            self.db,
-            self.state,
-            emperor_message=emperor_message,
-            reply=reply,
-            night_id=int(night_id or 0),
-            minister_name="",
-            llm_config=getattr(self, "llm_config", None),
-            translate_fn=translate_fn,
-        )
+        try:
+            dispatch = run_audience_turn_translation(
+                self.db,
+                self.state,
+                emperor_message=emperor_message,
+                reply=reply,
+                night_id=int(night_id or 0),
+                minister_name="",
+                llm_config=getattr(self, "llm_config", None),
+                translate_fn=translate_fn,
+            )
+        except AudienceTranslateError as exc:
+            # 失败诚实：真因落痕 + 既有 pending_action_failures 显眼回场；
+            # 不进 dispatch、不洗成成功空声明。后台待补/重试归 T2。
+            tlog(f"[audience_translate] 转译失败：{exc}")
+            result.pending_action_failures.append({
+                "id": 0,
+                "kind": "audience_translate",
+                "action": "转译",
+                "minister_name": "",
+                "message": f"召对转译失败：{exc}",
+                "category": "translate_failed",
+                "source": "audience_translate",
+                "chat_turn_id": int(chat_turn_id or 0),
+            })
+            return
         # 呈现用：本轮新交办的首条 id（若有）；应允不另占 pending_action_id。
         if dispatch.commissions.applied:
             first = dispatch.commissions.applied[0]
@@ -1838,9 +1858,15 @@ class GameSession:
         for section_name in ("commissions", "promises"):
             section = getattr(dispatch, section_name)
             for item in section.rejected:
+                reason = getattr(item, "reason", str(item))
                 result.pending_action_failures.append({
+                    "id": 0,
+                    "kind": "audience_translate",
+                    "action": section_name,
+                    "minister_name": "",
+                    "message": str(reason),
                     "section": section_name,
-                    "reason": getattr(item, "reason", str(item)),
+                    "reason": reason,
                     "category": getattr(item, "category", ""),
                     "source": "audience_translate",
                     "chat_turn_id": int(chat_turn_id or 0),

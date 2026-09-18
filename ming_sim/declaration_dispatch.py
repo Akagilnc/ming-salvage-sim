@@ -727,8 +727,9 @@ def _dispatch_commissions(
             applied.append(_stage_office(str(payload.get("text") or "")))
             continue
 
-        # 有拨帑（±任免）或纯正文拟旨：directive 成案。actor 必须是 characters 真名
-        # （turn_directives.actor FK）；场景入口无单人锚时用殿前常在，禁空串撞外键。
+        # 有拨帑（±任免）或纯正文拟旨：一份 directive 载荷。任免字段已挂同一 payload
+        # （ADR 0028 一份载荷）；收夜物化缝从这份同时产出拨帑案卷与任免案卷，
+        # 不再另 stage 第二条 office pending（半准半驳病）。
         actor = str(minister_name or payload.get("actor") or "").strip()
         if not actor:
             actor = _commission_fallback_actor(db)
@@ -738,8 +739,6 @@ def _dispatch_commissions(
             int(state.turn), "directive", "拟旨", actor, payload,
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
-        if appointment_fields:
-            applied.append(_stage_office(str(payload.get("text") or "")))
     return SectionResult(applied=applied, rejected=rejected)
 
 

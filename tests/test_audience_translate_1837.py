@@ -153,7 +153,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         calls["n"] += 1
         if calls["n"] == 1:
             return {"commissions": [commission], "promises": []}
-        # 应允本夜全部 pending directive+office
+        # 应允本夜全部 pending（组合载荷只一条）
         rows = db.conn.execute(
             "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
         ).fetchall()
@@ -181,16 +181,17 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
             "FROM pending_actions WHERE status='pending' ORDER BY id"
         ).fetchall()
     ]
-    kinds = {p["kind"] for p in pending}
-    assert "directive" in kinds and "office" in kinds
-    dir_row = next(p for p in pending if p["kind"] == "directive")
-    payload = json.loads(dir_row["payload_json"])
+    # ADR 0028 / #1837：任免+拨帑只落一条组合 directive，不拆 office 第二条。
+    assert len(pending) == 1, pending
+    assert pending[0]["kind"] == "directive"
+    payload = json.loads(pending[0]["payload_json"])
     assert payload["text"] == edict
     assert payload["grant_action"] == "赈灾"
     assert int(payload["amount"]) == 30
     assert payload["name"] == person
     assert payload["office"] == "陕西巡抚"
-    assert all(int(p["night_approved"] or 0) == 0 for p in pending)
+    assert payload["appoint_action"] == "任命"
+    assert int(pending[0]["night_approved"] or 0) == 0
 
     r2 = sess.scene_chat("准")
     assert r2.answer == "臣等遵旨。"
@@ -409,6 +410,65 @@ def test_unhandleable_commission_rejected_as_fact_no_forced_ask(game):
     assert any(
         getattr(r, "category", "") == "hallucinated_id"
         for r in missing_region.commissions.rejected
+    )
+
+
+def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch):
+    """转译调用失败 ≠ 成功空声明：不进分派、真因经 pending_action_failures 回场。"""
+    db, state, content = game
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    before = db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
+    ).fetchone()["c"]
+
+    def boom(prompt, llm_config):
+        raise RuntimeError("simulated translate transport failure")
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣在。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+    )
+    sess = _sess(db, state, content, translate_fn=boom)
+    result = sess.scene_chat("边饷如何？")
+    assert result.answer == "臣在。"
+    after = db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
+    ).fetchone()["c"]
+    assert after == before  # 失败不得当分派成功写库
+    assert result.pending_action_id == 0
+    failures = list(result.pending_action_failures or [])
+    assert failures, failures
+    assert any(
+        f.get("category") == "translate_failed"
+        and "simulated translate transport failure" in str(f.get("message") or "")
+        for f in failures
+    ), failures
+
+
+def test_translate_empty_success_still_dispatches_without_failure(game, monkeypatch):
+    """成功空声明仍可分派（零写），与调用失败可区分。"""
+    db, state, content = game
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+
+    class FakeAgent:
+        def run(self, message):
+            return SimpleNamespace(content="臣在。", tools=[])
+
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
+    )
+    sess = _sess(
+        db, state, content,
+        translate_fn=lambda p, c: {"commissions": [], "promises": []},
+    )
+    result = sess.scene_chat("边事如何？")
+    assert result.answer == "臣在。"
+    assert not any(
+        f.get("category") == "translate_failed"
+        for f in (result.pending_action_failures or [])
     )
 
 

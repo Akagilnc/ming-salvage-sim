@@ -26,6 +26,10 @@ from ming_sim.declaration_dispatch import (
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
 
 
+class AudienceTranslateError(RuntimeError):
+    """转译 LLM 调用失败（与成功空声明可区分；不得洗成无动作）。"""
+
+
 def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[str]:
     """本夜（或本回合）暂存清单摘要，供转译读。
 
@@ -181,7 +185,11 @@ def translate_audience_turn(
     llm_config: Any = None,
     translate_fn: Optional[TranslateFn] = None,
 ) -> Dict[str, object]:
-    """一次转译 → commissions/promises 声明。失败 → 空声明（零写，不挡回话）。"""
+    """一次转译 → commissions/promises 声明。
+
+    调用失败抛 :class:`AudienceTranslateError`（与成功空声明可区分）；
+    不挡回话、不洗成「本轮无动作」。后台待补/重试归 T2。
+    """
     prompt = build_audience_translate_prompt(
         emperor_message=emperor_message,
         reply=reply,
@@ -191,8 +199,10 @@ def translate_audience_turn(
     runner = translate_fn or _default_translate_runner
     try:
         raw = runner(prompt, llm_config)
-    except Exception:
-        return {"commissions": [], "promises": []}
+    except AudienceTranslateError:
+        raise
+    except Exception as exc:
+        raise AudienceTranslateError(str(exc) or exc.__class__.__name__) from exc
     return normalize_audience_declaration(raw)
 
 
@@ -228,7 +238,11 @@ def run_audience_turn_translation(
     translate_fn: Optional[TranslateFn] = None,
     source: Provenance = Provenance.system_simulation,
 ) -> DeclarationDispatchResult:
-    """组装本轮上下文 → 转译 → 分派。scene_chat 与其它通道共用。"""
+    """组装本轮上下文 → 转译 → 分派。scene_chat 与其它通道共用。
+
+    转译调用失败抛 :class:`AudienceTranslateError`，不进入
+    :func:`dispatch_declaration`（失败≠成功空声明）。
+    """
     night_said = build_night_said_so_far(db, int(night_id or 0))
     pending = build_pending_summaries(db, int(state.turn), night_id=int(night_id or 0))
     declaration = translate_audience_turn(

@@ -18920,75 +18920,9 @@ class GameDB:
         commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。
         office(任免)落库需 content/registry(注册新臣);缺则返 False(标 failed,不静默)。"""
         if pa["kind"] == "office":
-            name = str(payload.get("name") or "").strip()
-            office = str(payload.get("office") or "").strip()
-            if not name or (pa["action"] == "任命" and not office):
-                return False
-            if content is None:
-                return False
-            from ming_sim.session import _find_existing_minister
-            canonical = _find_existing_minister(content, name, self)
-            if canonical:
-                row = self.conn.execute(
-                    "SELECT status,power_id FROM characters WHERE name=?",
-                    (canonical,),
-                ).fetchone()
-                if row is None or str(row["power_id"] or "ming") != "ming":
-                    return False
-                if pa["action"] == "任命" and row["status"] == "dead":
-                    return False
-                if pa["action"] == "罢免" and row["status"] != "active":
-                    return False
-            elif pa["action"] == "罢免":
-                return False
-            if canonical:
-                name = canonical
-            elif (
-                pa["action"] == "任命"
-                and infer_office_type_from_office(office, "", self.llm_config) != "后宫"
-            ):
-                # 任命准旨成案前只登记朝臣身份；后宫仍走既有纳妃核。
-                # 授官/激活仍只由顺颁后的
-                # _commit_office_action -> apply_office_appointment 完成。
-                from ming_sim.models import Character
-                from ming_sim.session import canonical_new_appointment_person_fields
-                character = Character(
-                    name=name, office="待选", office_type="未仕",
-                    aliases=[], personal_skills=[], power_id="ming",
-                    status="offstage",
-                    **canonical_new_appointment_person_fields(
-                        content, payload.get("faction"),
-                    ),
-                )
-                content.characters[name] = character
-                self.add_character(
-                    state, character,
-                    source="任命准旨身份登记", commit=False,
-                )
-            staged_payload = dict(payload)
-            staged_payload["name"] = name
-            staged_payload["_office_action"] = str(pa["action"])
-            staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
-            dossier_id = self.create_decree_dossier(
-                state,
-                action_type=(
-                    "dismiss_assignment"
-                    if pa["action"] == "罢免" else "appointment"
-                ),
-                decree_text=(
-                    f"{pa['action']}{name}"
-                    + (f"为{office}" if office else "")
-                ),
-                target_kind="character",
-                target_id=name,
-                executor_kind="character",
-                executor_id=name,
-                pending_action_id=int(pa["id"]),
-                payload=staged_payload,
-                status="proposed",
-                commit=False,
+            return self._materialize_office_appointment_dossier(
+                state, pa, payload, content=content,
             )
-            return dossier_id != 0
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
@@ -19199,8 +19133,140 @@ class GameDB:
                     "OR pending_action_id=0 OR pending_action_id=?)",
                     (int(pa["id"]), int(did), int(pa["id"])),
                 )
+                # ADR 0028 / #1837：组合载荷（拨帑±任免）同一份 pending 同时产任免案卷；
+                # 任免字段只进 appointment 案卷，禁把 grant 的 execution_surface 带过去。
+                if not self._materialize_combined_appointment_from_directive(
+                    state, pa, payload, content=content,
+                ):
+                    return False
             return True
         return False
+
+    @staticmethod
+    def _appointment_slice_from_combined_payload(
+        payload: Dict[str, object],
+    ) -> Optional[Dict[str, object]]:
+        """从组合 directive 载荷抽出任免字段；无任免声明返 None。
+
+        只保留任免成案所需键，剥离 grant 的 execution_surface / amount 等，
+        避免 appointment 案卷撞「execution_surface 与案卷动作策略不符」。
+        """
+        action = str(payload.get("appoint_action") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        if action not in {"任命", "罢免"} or not name:
+            return None
+        office = str(payload.get("office") or "").strip()
+        if action == "任命" and not office:
+            return None
+        sliced: Dict[str, object] = {
+            "name": name, "office": office, "appoint_action": action,
+        }
+        for key in (
+            "appointment_tenure", "任别", "faction", "summon_after",
+            "text", "affair_id",
+        ):
+            value = payload.get(key)
+            if value not in (None, ""):
+                sliced[key] = value
+        return sliced
+
+    def _materialize_combined_appointment_from_directive(
+        self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
+        *, content=None,
+    ) -> bool:
+        """组合 directive 载荷上的任免 → 既有 office 成案核；无任免字段则 no-op 成功。"""
+        sliced = self._appointment_slice_from_combined_payload(payload)
+        if sliced is None:
+            return True
+        office_pa = {
+            "id": pa["id"],
+            "kind": "office",
+            "action": str(sliced["appoint_action"]),
+            "minister_name": str(
+                pa.get("minister_name") or payload.get("actor") or ""
+            ),
+        }
+        decree_text = str(payload.get("text") or sliced.get("text") or "").strip()
+        return self._materialize_office_appointment_dossier(
+            state, office_pa, sliced, content=content,
+            decree_text=decree_text or None,
+        )
+
+    def _materialize_office_appointment_dossier(
+        self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
+        *, content=None, decree_text: Optional[str] = None,
+    ) -> bool:
+        """任免案卷唯一成案核：kind=office 与组合 directive 同伴共用，不平行第二套。"""
+        name = str(payload.get("name") or "").strip()
+        office = str(payload.get("office") or "").strip()
+        action = str(pa.get("action") or payload.get("appoint_action") or "").strip()
+        if not name or (action == "任命" and not office):
+            return False
+        if content is None:
+            return False
+        from ming_sim.session import _find_existing_minister
+        canonical = _find_existing_minister(content, name, self)
+        if canonical:
+            row = self.conn.execute(
+                "SELECT status,power_id FROM characters WHERE name=?",
+                (canonical,),
+            ).fetchone()
+            if row is None or str(row["power_id"] or "ming") != "ming":
+                return False
+            if action == "任命" and row["status"] == "dead":
+                return False
+            if action == "罢免" and row["status"] != "active":
+                return False
+        elif action == "罢免":
+            return False
+        if canonical:
+            name = canonical
+        elif (
+            action == "任命"
+            and infer_office_type_from_office(office, "", self.llm_config) != "后宫"
+        ):
+            # 任命准旨成案前只登记朝臣身份；后宫仍走既有纳妃核。
+            # 授官/激活仍只由顺颁后的
+            # _commit_office_action -> apply_office_appointment 完成。
+            from ming_sim.models import Character
+            from ming_sim.session import canonical_new_appointment_person_fields
+            character = Character(
+                name=name, office="待选", office_type="未仕",
+                aliases=[], personal_skills=[], power_id="ming",
+                status="offstage",
+                **canonical_new_appointment_person_fields(
+                    content, payload.get("faction"),
+                ),
+            )
+            content.characters[name] = character
+            self.add_character(
+                state, character,
+                source="任命准旨身份登记", commit=False,
+            )
+        staged_payload = dict(payload)
+        staged_payload["name"] = name
+        staged_payload["_office_action"] = action
+        staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
+        # 组合载荷正文优先（P7：不另拼「任命X为Y」模板）；纯 office 暂存仍走旧形。
+        text = str(decree_text or "").strip()
+        if not text:
+            text = f"{action}{name}" + (f"为{office}" if office else "")
+        dossier_id = self.create_decree_dossier(
+            state,
+            action_type=(
+                "dismiss_assignment" if action == "罢免" else "appointment"
+            ),
+            decree_text=text,
+            target_kind="character",
+            target_id=name,
+            executor_kind="character",
+            executor_id=name,
+            pending_action_id=int(pa["id"]),
+            payload=staged_payload,
+            status="proposed",
+            commit=False,
+        )
+        return dossier_id != 0
 
     def _recommendation_snapshot_ready(
         self, state: GameState, payload: Dict[str, object], *, minister_name: str = "",
