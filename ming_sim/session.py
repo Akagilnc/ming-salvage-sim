@@ -25,6 +25,8 @@ from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
+from ming_sim.materials import prepare_scene_materials
+from ming_sim.registry import create_scene_agent
 from ming_sim.context import (
     bind_content as _bind_context,
     character_from_name,
@@ -1684,6 +1686,140 @@ class GameSession:
     def abandon_chat_turn_scene(self, chat_turn_id: int) -> None:
         """委托编排层排空本轮 scene（cancel 或 join drain，不落库）。"""
         self._scene_registry.abandon(int(chat_turn_id or 0))
+
+    def scene_chat(
+        self, message: str, *, chat_turn_id: int = 0,
+    ) -> ChatTurnResult:
+        """#1836 T1：一夜一场入口——一个场景 LLM 演整场。
+
+        - 皇帝「宣 X」→ 引擎落入殿账（ADR 0037）→ 起一次场景调用
+        - 「退朝」口令 → 收夜（与既有 command-verdict 同缝）
+        - 一条对话轮 = 整段自由戏文（可含多人）；生成链零动作工具
+        - 过渡：交办仍走现状只读玩家话的分类器（转译 C1a 接上）
+        - 旧按大臣 chat() 入口暂留（收口在 X1）
+        """
+        from ming_sim.audience_night import (
+            CMD_NONE,
+            SCENE_CHAT_SPEAKER,
+            ensure_open_night_for_audience,
+            ensure_summon_enter,
+            get_open_night,
+            recognize_xuan_command,
+        )
+        from ming_sim.llm_model import extract_agent_text
+
+        message_text = str(message or "").strip()
+        if not message_text:
+            raise ValueError("问话不能为空。")
+
+        # 开夜（若需）；一夜一场不绑单人 minister 入口。
+        night = get_open_night(self.db) or ensure_open_night_for_audience(
+            self.db, self.state,
+        )
+        night_id = int(night["id"])
+
+        # 收夜 / 留侍口令——与 chat 同缝；chat_turn_id==0 当场收夜。
+        # CMD_NONE="none" 是真值字符串，必须显式排除，否则每句都早退。
+        audience_command_verdict = self._recognize_audience_command_verdict(message_text)
+        result = ChatTurnResult(answer="")
+        if audience_command_verdict and audience_command_verdict != CMD_NONE:
+            # 退朝不跑场景 LLM；口令机械面落在 verdict 处理。
+            self._apply_audience_command_verdict(
+                result,
+                # stay_attend 需要人名；场景入口无单人主角时用常在员额首位或「殿上」。
+                self._scene_command_character(),
+                message_text,
+                verdict=audience_command_verdict,
+                chat_turn_id=int(chat_turn_id or 0),
+            )
+            return result
+
+        # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
+        xuan_fragment = recognize_xuan_command(message_text)
+        if xuan_fragment:
+            target = match_minister_from_text(xuan_fragment)
+            if target is None:
+                try:
+                    target, _tmp = self.summon_character(
+                        xuan_fragment, allow_temporary=False,
+                    )
+                except ValueError:
+                    target = None
+            if target is not None:
+                # 在京 admission：场外记召仍走既有 consume（本入口首期只落在京入殿）。
+                decision = self.consume_audience_admission(
+                    target,
+                    origin_id=f"scene:xuan:{int(self.state.turn)}:{target.name}",
+                    origin_chat_turn_id=int(chat_turn_id or 0),
+                )
+                if decision.allowed:
+                    ensure_summon_enter(
+                        self.db, night_id, target.name,
+                        origin_chat_turn_id=int(chat_turn_id or 0),
+                        empty_scaffold=True,
+                    )
+
+        # 材料目录：在场诸人各一份；开场最小集 + 只读工具。
+        prepared = prepare_scene_materials(self.db, self.state)
+        llm_config = getattr(self, "llm_config", None)
+        if llm_config is None:
+            raise RuntimeError("scene_chat 需要 llm_config。")
+        agent = create_scene_agent(
+            llm_config,
+            prepared,
+            agno_db=getattr(self, "agno_db", None),
+            content=getattr(self, "content", None),
+            session_id=f"scene-night-{night_id}",
+        )
+
+        # 过渡：交办分类器只读玩家话，与场景生成可并行（同 chat 的 CLI 路径）。
+        action_intent_future = self._start_cli_action_intent(
+            self._scene_command_character(), message_text,
+        )
+
+        run_output = agent.run(prepared.opening + "\n\n" + message_text)
+        _dump_llm_messages(run_output, f"场景召对/{SCENE_CHAT_SPEAKER}")
+        answer = extract_agent_text(run_output)
+        result = ChatTurnResult(answer=answer)
+
+        preclassified_intent = self._finish_cli_action_intent(action_intent_future)
+        # 过渡物化：仍走既有 CLI fallback（只读玩家话 + 回话），不经场景动作工具。
+        if preclassified_intent is not None:
+            self._cli_backend_fallback_actions(
+                result,
+                self._scene_command_character(),
+                message_text,
+                preclassified_intent=preclassified_intent,
+                chat_turn_id=int(chat_turn_id or 0),
+            )
+        return result
+
+    def _scene_command_character(self) -> Character:
+        """场景入口口令/分类器用的人物锚：常在员额首位，否则任意在册朝臣。"""
+        from ming_sim.audience_night import resolve_standing_roster
+
+        chars = getattr(getattr(self, "content", None), "characters", None) or {}
+        for name in resolve_standing_roster(self.db):
+            ch = chars.get(name)
+            if ch is not None:
+                return ch
+            try:
+                return self._character(name)
+            except Exception:
+                continue
+        for name, ch in chars.items():
+            if getattr(ch, "office_type", "") in ("后宫", "宗藩"):
+                continue
+            try:
+                if self.db.get_character_status(name)[0] == "active":
+                    return ch
+            except Exception:
+                continue
+        # 最后兜底：content 里第一个非后宫人物（测试替身可能无 status 列）。
+        for ch in chars.values():
+            if getattr(ch, "office_type", "") not in ("后宫", "宗藩"):
+                return ch
+        raise RuntimeError("scene_chat 无可用人物锚。")
 
     def chat(
         self, minister_name: str, message: str, *, chat_turn_id: int = 0,

@@ -13,6 +13,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, List, Optional, Sequence
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -849,6 +850,149 @@ def _world_opening_text(state: Any, board_text: str, affair_lines: list[tuple[st
     parts.extend(f"- {title}：{opening_text}" for _key, title, _directory_text, opening_text in affair_lines)
     parts.append("人物经历、公开说法、历月邸报在当前目录，按需自读。根目录 INDEX 一行一项。")
     return "\n".join(parts)
+
+
+def scene_materials_root(db: Any, state: Any) -> Path:
+    """#1836：整场场景 LLM 的材料目录根（一夜一份，不按单人拆）。"""
+    from ming_sim.audience_night import get_open_night
+
+    parent = Path(str(getattr(db, "path", "") or ".")).resolve().parent
+    night = get_open_night(db)
+    key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
+    return parent / "materials" / key / "scene"
+
+
+def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
+    """在场诸人（含常在员额）→ (name, office) 列表，按姓名排序。"""
+    from ming_sim.audience_night import get_open_night, present_names_at, resolve_standing_roster
+
+    night = get_open_night(db)
+    if night is not None:
+        names = sorted(present_names_at(db, int(night["id"])))
+    else:
+        names = sorted(resolve_standing_roster(db))
+    rows: list[tuple[str, str]] = []
+    for name in names:
+        office = ""
+        if hasattr(db, "conn"):
+            row = db.conn.execute(
+                "SELECT office FROM characters WHERE name=?", (name,),
+            ).fetchone()
+            if row is not None:
+                office = str(row["office"] or "")
+        rows.append((name, office))
+    return rows
+
+
+def _scene_spoken_text(db: Any) -> str:
+    """本场已说的话：按夜持久化对话轮（皇帝原话 + 场景戏文）重建。"""
+    from ming_sim.audience_night import get_open_night, list_chat_turns_for_night
+
+    night = get_open_night(db)
+    if night is None or not hasattr(db, "conn"):
+        return ""
+    lines: list[str] = []
+    for turn in list_chat_turns_for_night(db, int(night["id"])):
+        for mid, role_label in (
+            (turn.get("user_message_id"), "朕"),
+            (turn.get("minister_message_id"), "殿上"),
+        ):
+            if not mid:
+                continue
+            row = db.conn.execute(
+                "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
+            ).fetchone()
+            if row is None:
+                continue
+            # #1812 P6：对话正文是自由文本，判空用局部 stripped 副本，写出用原文。
+            body = str(row["content"] or "")
+            if not body.strip():
+                continue
+            lines.append(f"{role_label}：{body}")
+    return "\n".join(lines)
+
+
+def _scene_opening_text(
+    state: Any,
+    present_rows: Sequence[tuple[str, str]],
+    spoken: str,
+) -> str:
+    """场景 LLM 开场最小集：在场诸人、日期、本场已说的话；其余按需自读。"""
+    if present_rows:
+        present_line = "、".join(
+            f"{name}（{office}）" if office else name for name, office in present_rows
+        )
+    else:
+        present_line = "（尚无）"
+    parts = [
+        f"在场：{present_line}",
+        f"日期：{int(state.year)}年{int(state.period)}月",
+        "本场已说的话：",
+        spoken if spoken.strip() else "（尚无）",
+        "在场诸人各自材料在 人物/<名>/ 下。根目录 INDEX 一行一项。其余想读自己读。",
+        "以整段自由戏文回应：可含多人答话、插话、递话人低语；不填表、不调动作工具。",
+    ]
+    return "\n".join(parts)
+
+
+def _write_scene_tree(
+    tmp: Path,
+    db: Any,
+    state: Any,
+    present_rows: Sequence[tuple[str, str]],
+) -> list[str]:
+    """为每位在场人物写入其可读材料（#1830 人物树复用），合并 INDEX。"""
+    from ming_sim.knowledge import build_character_knowledge
+
+    index: list[str] = []
+    seen_rel: set[str] = set()
+
+    def _add(rel: str) -> None:
+        if rel and rel not in seen_rel:
+            seen_rel.add(rel)
+            index.append(rel)
+
+    content = getattr(db, "content", None)
+    characters = getattr(content, "characters", None) or {}
+
+    for name, office in present_rows:
+        character = characters.get(name)
+        if character is None:
+            # 最低投影：_write_tree 只读 name/office/office_type。
+            character = SimpleNamespace(name=name, office=office, office_type="")
+        knowledge: dict = {}
+        if hasattr(db, "get_character_knowledge"):
+            knowledge = db.get_character_knowledge(state, name)
+        else:
+            knowledge = build_character_knowledge(db, state, name)
+        matter_lines = _character_affair_lines(db, state, name, knowledge)
+        # 每人一棵子树写到同一 scene root；_write_tree 已按 人物/<名>/ 分列。
+        for rel in _write_tree(tmp, db, state, character, knowledge, matter_lines):
+            _add(rel)
+
+    _write_text(tmp / _INDEX_NAME, "\n".join(index) if index else "")
+    return index
+
+
+def prepare_scene_materials(
+    db: Any,
+    state: Any,
+    *,
+    dest_root: Optional[Path] = None,
+) -> PreparedMaterials:
+    """#1836 / ADR 0155：整场场景 LLM 材料目录。
+
+    在场诸人（含递话人）各有自己的人物/事务/公开说法材料；开场只带最小集
+    （在场、日期、本场已说的话）。CLI cwd / API list-read 同树。
+    """
+    present_rows = _scene_present_rows(db, state)
+    spoken = _scene_spoken_text(db)
+    dest = Path(dest_root) if dest_root is not None else scene_materials_root(db, state)
+    index = _rebuild_tree_atomically(
+        dest, lambda tmp: _write_scene_tree(tmp, db, state, present_rows),
+    )
+    opening = _scene_opening_text(state, present_rows, spoken)
+    return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
 
 
 def prepare_world_materials(

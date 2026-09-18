@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -2388,6 +2389,35 @@ def recognize_audience_command(message: str) -> str:
     if text in AMBIGUOUS_CLOSE_COMMANDS or lowered in AMBIGUOUS_CLOSE_COMMANDS:
         return CMD_AMBIGUOUS_CLOSE
     return CMD_NONE
+
+
+# #1836：一夜一场入口的「宣 X」口令——封闭前缀 + 人名片段；引擎落入殿账（ADR 0037），
+# 不另立 summon 动作类型。后缀可有可无（「宣王绍徽」与「宣王绍徽来」同形）。
+_XUAN_COMMAND_RE = re.compile(
+    r"^(?:传召|传|召|宣|叫|带)(.{1,12}?)(?:来|到|入殿|上殿|面圣|见我)?$"
+)
+
+# 场景对话轮挂名：整场戏文不绑单人；归档 involved_people 投影会滤非人（#1331）。
+SCENE_CHAT_SPEAKER = "殿上"
+
+
+def recognize_xuan_command(message: str) -> Optional[str]:
+    """解析皇帝「宣 X」口令，返回人名片段；非宣召口令 → None。
+
+    #1836 / ADR 0035 / 0037：玩家口令确定性落账的前半——只认封闭前缀形状，
+    不靠自由散文启发；人名解析交给调用方 match。
+    """
+    text = str(message or "").strip()
+    if not text:
+        return None
+    # 收夜/留侍口令优先，避免「退下」等被宣召形状误吞。
+    if recognize_audience_command(text) != CMD_NONE:
+        return None
+    m = _XUAN_COMMAND_RE.match(text)
+    if not m:
+        return None
+    name = str(m.group(1) or "").strip()
+    return name or None
 
 
 def _presence_delta(entry: Dict[str, Any]) -> Optional[str]:
