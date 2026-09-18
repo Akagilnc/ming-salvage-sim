@@ -456,8 +456,79 @@ def test_scene_chat_sync_without_chat_turn_still_applies(game, monkeypatch):
     assert result.pending_action_id > 0
 
 
+def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch):
+    """AC4：过月 resolve_turn 真入口 join 全部后台转译后再继续。"""
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    gate = threading.Lock()
+    release = threading.Event()
+    name = _active_name(db, content)
+    saw_join = threading.Event()
+
+    def translate_fn(prompt, llm_config):
+        release.wait(timeout=2.0)
+        return {
+            "on_scene_facts": [{
+                "name": name, "动作": "处置", "status": "imprisoned",
+                "reason": "过月前 join 落定",
+            }],
+        }
+
+    ctid = _persist_round(db, state, nid, "拿下", "遵旨。")
+    schedule_audience_turn_translation(
+        db, state,
+        emperor_message="拿下",
+        reply="遵旨。",
+        night_id=nid, chat_turn_id=ctid,
+        llm_config=SimpleNamespace(channel="api"),
+        translate_fn=translate_fn, write_gate=gate,
+    )
+    assert db.get_story_extract_status(ctid) == "pending"
+
+    import ming_sim.audience_translation as at
+    real_join = at.join_all_translations
+
+    def tracking_join(*, timeout_s=120.0):
+        ok = real_join(timeout_s=timeout_s)
+        saw_join.set()
+        return ok
+
+    monkeypatch.setattr(at, "join_all_translations", tracking_join)
+
+    sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
+    sess._begun = True
+    sess.last_decree = ""
+    sess._decree_draft_fingerprint = ()
+    sess.deaths_this_turn = []
+    sess.debuts_this_turn = []
+    sess.previous_summary = ""
+    sess.agno_db = None
+
+    # resolve_turn 跑完 join 前缀后立刻停（不进整月结算 LLM）
+    class _StopAfterJoin(Exception):
+        pass
+
+    real_catch = at.catch_up_pending_translations
+
+    def catch_then_stop(*a, **k):
+        out = real_catch(*a, **k)
+        raise _StopAfterJoin()
+
+    monkeypatch.setattr(at, "catch_up_pending_translations", catch_then_stop)
+    threading.Timer(0.1, release.set).start()
+
+    with pytest.raises(_StopAfterJoin):
+        sess.resolve_turn(allow_empty_decree=True)
+
+    assert saw_join.is_set(), "resolve_turn 必须调用 join_all_translations"
+    assert db.get_story_extract_status(ctid) == "done"
+    status, _ = db.get_character_status(name)
+    assert status == "imprisoned"
+
+
 def test_close_night_no_longer_fail_closed_on_exhausted_pending(game, monkeypatch):
-    """0036 修订：待补不 fail-closed 中止收夜；join 在飞后收夜可成。"""
+    """0036 修订：待补不 fail-closed；生产同形（llm_config+write_gate）旧抽取不得抢水位。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
@@ -469,6 +540,11 @@ def test_close_night_no_longer_fail_closed_on_exhausted_pending(game, monkeypatc
     monkeypatch.setattr(
         "ming_sim.audience_extraction.extract_endorsements_for_night",
         lambda **k: [],
+    )
+    # 若旧 drain 仍被调用，FactsAgent 会把水位标 done——本测咬住「不得抢」。
+    monkeypatch.setattr(
+        "ming_sim.agents.create_audience_extractor_agent",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("旧故事抽取不得被收夜调用")),
     )
 
     ctid = _persist_round(db, state, nid, "这句转译会耗尽", "……")
@@ -483,12 +559,19 @@ def test_close_night_no_longer_fail_closed_on_exhausted_pending(game, monkeypatc
     assert join_night_translations(nid, timeout_s=2.0)
     assert db.get_story_extract_status(ctid) == "pending"
 
-    # 收夜不得因待补抛 pending_extraction
+    # 生产同形：必传 llm_config + write_gate（旧路径会借此跑故事 drain）
     result = close_night(
         db, state, content=content, registry=None,
         wait_timeout_s=0.0, write_gate=gate,
+        llm_config=SimpleNamespace(channel="api", model="x", base_url="", api_key=""),
+        translate_fn=boom,
     )
     assert result.get("closed") is True or get_open_night(db) is None
-    # 待补仍可查
+    # 待补仍可查可重试——旧抽取未抢水位
     assert db.get_story_extract_status(ctid) == "pending"
-    assert list_pending_translations(db, night_id=nid)
+    assert any(int(r["chat_turn_id"]) == ctid for r in list_pending_translations(db, night_id=nid))
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries "
+        "WHERE night_id=? AND source_chat_turn_id=?",
+        (nid, ctid),
+    ).fetchone()["c"] == 0

@@ -1432,6 +1432,7 @@ class GameSession:
             llm_config=getattr(self, "llm_config", None),
             write_gate=getattr(self, "_write_gate", None),
             scene_registry=getattr(self, "_scene_registry", None),
+            translate_fn=getattr(self, "_audience_translate_fn", None),
         )
         result.court_action = "court_break"
 
@@ -1516,6 +1517,7 @@ class GameSession:
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=gate,
                     scene_registry=getattr(self, "_scene_registry", None),
+                    translate_fn=getattr(self, "_audience_translate_fn", None),
                 )
 
             # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
@@ -1750,6 +1752,7 @@ class GameSession:
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=getattr(self, "_write_gate", None),
                     scene_registry=getattr(self, "_scene_registry", None),
+                    translate_fn=getattr(self, "_audience_translate_fn", None),
                 )
                 result.court_action = "court_break"
                 return result
@@ -3519,15 +3522,13 @@ class GameSession:
             join_all_translations,
         )
         join_all_translations(timeout_s=120.0)
-        try:
-            catch_up_pending_translations(
-                self.db, self.state,
-                llm_config=getattr(self, "llm_config", None),
-                translate_fn=getattr(self, "_audience_translate_fn", None),
-                write_gate=getattr(self, "_write_gate", None),
-            )
-        except Exception:
-            pass
+        # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
+        catch_up_pending_translations(
+            self.db, self.state,
+            llm_config=getattr(self, "llm_config", None),
+            translate_fn=getattr(self, "_audience_translate_fn", None),
+            write_gate=getattr(self, "_write_gate", None),
+        )
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))
             or any(

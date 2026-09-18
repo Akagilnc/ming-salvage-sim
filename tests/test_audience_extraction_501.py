@@ -685,25 +685,42 @@ def test_dead_actor_open_tag_enter_does_not_bypass_dead_check(game):
 
 # ── L1 引擎侧 close_night drain 闸（不只挂 web 前门）──────────────────────
 def test_engine_close_night_drains_pending_success(game, monkeypatch):
+    """#1842：收夜 join 转译 catch-up 清待补；不再走旧故事抽取 drain 抢水位。"""
     db, state, content = game
     monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda *a, **k: _FactsAgent(_STAGE_FACT_JSON))
+        "ming_sim.audience_extraction.extract_endorsements_for_night",
+        lambda **k: [],
+    )
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister, reply="臣作保。")
     assert db.count_pending_story_extractions(night_id=nid) == 1
-    # 带 llm/write_gate → 引擎 close 强制 drain（显式 allow_closing）→ 收夜成功、水位 done
+
+    def translate_fn(prompt, llm_config):
+        return {
+            "scene_facts": [{
+                "body": "臣作保。",
+                "audibility": "殿上公开",
+                "person_names": [minister],
+                "tags": [],
+            }],
+        }
+
+    gate = threading.Lock()
+    # 生产同形：close_night 带 llm_config+write_gate+translate_fn → OPEN catch-up 清待补
     result = an.close_night(
-        db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock())
+        db, state, night_id=nid, llm_config=object(), write_gate=gate,
+        translate_fn=translate_fn,
+    )
     assert result["closed"] is True
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
     assert db.get_story_extract_status(ctid) == "done"
-    # close-owned drain 落出的抽取账真实存在（非跳过）。
+    # 转译 scene_facts 落账（非旧故事抽取抢水位）
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM story_ledger_entries "
         "WHERE night_id=? AND source_chat_turn_id=?",
         (nid, ctid),
     ).fetchone()["c"] >= 1
+    del seq
 
 
 def test_engine_close_night_keeps_pending_after_boom_no_fail_closed(

@@ -205,7 +205,7 @@ def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypa
 def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
     game, tmp_path, monkeypatch,
 ):
-    """#1842：收夜不再走 drain fail→reopen→close_retry；signature 仍无 _healed_drain_retry。"""
+    """#1842：转译 catch-up 失败后收夜不 fail-closed；待补水位仍可查。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setattr(
@@ -215,22 +215,19 @@ def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
     minister = _minister(db, content)
     nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
 
-    def always_pending(**kwargs):
-        cid = int(kwargs.get("chat_turn_id") or 0)
-        with kwargs["write_gate"]:
-            db.mark_story_extraction_pending(cid)
-        return {"status": "pending", "chat_turn_id": cid}
-
-    monkeypatch.setattr(ae, "run_extraction_for_turn", always_pending)
+    def boom_translate(prompt, llm_config):
+        raise RuntimeError("translate exhausted")
 
     an.close_night(
         db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
+        translate_fn=boom_translate,
     )
-    # 无递归旗：signature 不得再收 _healed_drain_retry
-    import inspect
-    assert "_healed_drain_retry" not in inspect.signature(an.close_night).parameters
-    # 待补可查（always_pending 路径）
-    assert db.get_story_extract_status(ctid) in ("", "pending") or True
+    # 外部可见：待补仍在；旧抽取未把水位标 done
+    assert db.get_story_extract_status(ctid) in ("", "pending")
+    assert int(_pending_api(db)["count"]) >= 1
+    assert any(
+        int(p["chat_turn_id"]) == ctid for p in (_pending_api(db).get("pending") or [])
+    )
 
 
 def test_write_gate_none_not_defeated_by_nullcontext(game, tmp_path, monkeypatch):
