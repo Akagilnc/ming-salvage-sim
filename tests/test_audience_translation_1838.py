@@ -25,6 +25,7 @@ from ming_sim.audience_night import (
 from ming_sim.audience_translation import apply_audience_round_translation
 from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
+from ming_sim.relation_judge import summon_edge_origin
 from ming_sim.session import GameSession
 
 
@@ -151,19 +152,14 @@ def test_presence_enter_exit_from_translation(game):
     ]
 
 
-def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
-    """AC3：御前主角随转译声明变化；宣 X 经 scene_chat 真入口当场先切。"""
-    db, state, content = game
-    _activate(db, state, "王绍徽", "王承恩")
-    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(night["id"])
-    assert get_night_protagonist(db, nid) == ""
+def _scene_session(db, state, content, monkeypatch):
+    """搭 scene_chat 最小壳：挡真实 LLM，保留宣 X 确定性写口。"""
 
     class FakeAgent:
         tools = []
 
         def run(self, message):
-            return SimpleNamespace(content="王绍徽入殿叩见。", tools=[])
+            return SimpleNamespace(content="殿上应对。", tools=[])
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
     sess = GameSession.__new__(GameSession)
@@ -177,13 +173,35 @@ def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
     sess._beat_generator = None
     sess._scene_registry = None
     sess._write_gate = None
+    return sess
 
-    # 真入口：scene_chat("宣王绍徽") 当场先切，不经 set_night_protagonist 直调
-    sess.scene_chat("宣王绍徽")
+
+def _active_chat_turn(db, state, night_id: int) -> int:
+    """建可撤回的存活轮（status=active；挂夜默认 generating 不可 undo）。"""
+    return int(db.create_chat_turn(
+        state, "殿上", "s", 0, night_id=int(night_id), status="active",
+    ))
+
+
+def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
+    """AC3：御前主角随转译声明变化；宣 X 经 scene_chat 真入口当场先切并绑源轮。"""
+    db, state, content = game
+    _activate(db, state, "王绍徽", "王承恩")
+    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    assert get_night_protagonist(db, nid) == ""
+
+    sess = _scene_session(db, state, content, monkeypatch)
+    t1 = _active_chat_turn(db, state, nid)
+    # 真入口：scene_chat("宣王绍徽", chat_turn_id=t1) 当场先切并绑源轮
+    sess.scene_chat("宣王绍徽", chat_turn_id=t1)
     assert get_night_protagonist(db, nid) == "王绍徽"
+    assert db.conn.execute(
+        "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
+    ).fetchone()["protagonist_name"] == "王绍徽"
 
     # 王承恩独自回奏一轮 → 转译声明主角是他
-    ctid = db.create_chat_turn(state, "殿上", "s", 0, night_id=nid)
+    ctid = _active_chat_turn(db, state, nid)
     result = apply_audience_round_translation(
         db, state,
         {"protagonist": {"person_name": "王承恩"}},
@@ -194,6 +212,38 @@ def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
     assert db.conn.execute(
         "SELECT protagonist_name FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()["protagonist_name"] == "王承恩"
+
+
+def test_protagonist_undo_reprojects_night_current(game, monkeypatch):
+    """御前主角夜当前值：宣 X → 转译覆盖 → undo 真入口按存活最近轮重投影。"""
+    db, state, content = game
+    _activate(db, state, "王绍徽", "王承恩")
+    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    sess = _scene_session(db, state, content, monkeypatch)
+
+    t1 = _active_chat_turn(db, state, nid)
+    sess.scene_chat("宣王绍徽", chat_turn_id=t1)
+    assert get_night_protagonist(db, nid) == "王绍徽"
+    assert db.conn.execute(
+        "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
+    ).fetchone()["protagonist_name"] == "王绍徽"
+
+    t2 = _active_chat_turn(db, state, nid)
+    apply_audience_round_translation(
+        db, state,
+        {"protagonist": {"person_name": "王承恩"}},
+        night_id=nid, chat_turn_id=t2,
+    )
+    assert get_night_protagonist(db, nid) == "王承恩"
+
+    # 全局最后存活轮先撤 t2 → 夜主角回到 t1 的王绍徽
+    db.undo_chat_turn(t2)
+    assert get_night_protagonist(db, nid) == "王绍徽"
+
+    # 再撤 t1 → 无存活声明，夜主角回初态空值
+    db.undo_chat_turn(t1)
+    assert get_night_protagonist(db, nid) == ""
 
 
 def test_edge_event_and_public_saying_attach_affair(game):
@@ -230,15 +280,50 @@ def test_edge_event_and_public_saying_attach_affair(game):
 
     assert len(result.edge_events.applied) == 1
     assert result.edge_events.rejected == []
+    edge_id = int(result.edge_events.applied[0]["id"])
     edge_row = db.conn.execute(
-        "SELECT affair_id, context FROM relation_edge_events WHERE id=?",
-        (result.edge_events.applied[0]["id"],),
+        "SELECT affair_id, context, origin FROM relation_edge_events WHERE id=?",
+        (edge_id,),
     ).fetchone()
     assert edge_row["affair_id"] == affair.id
     assert edge_row["context"] == "当殿为赈灾站台"
+    # 源轮绑定复用 summon_edge_origin，接入既有撤回删口（ADR 0082）
+    assert str(edge_row["origin"]).startswith(summon_edge_origin(ctid))
 
     assert len(result.public_sayings.applied) == 1
     sayings = list_public_sayings(db, involved_character="毕自严")
     matched = next(s for s in sayings if s["body"] == saying_body)
     # 与边事件侧同严：affair_ref 必须精确等于该事务 origin_ref
     assert matched["affair_ref"] == AffairStore.origin_ref(affair.id)
+
+
+def test_edge_event_undo_deletes_via_source_turn(game):
+    """转译边事件 ctid>0 绑源轮 → undo_chat_turn 真入口删该事件。"""
+    db, state, _ = game
+    _activate(db, state, "王绍徽", "毕自严")
+    night = open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    ctid = _active_chat_turn(db, state, nid)
+
+    result = apply_audience_round_translation(
+        db, state,
+        {
+            "edge_events": [{
+                "source": "毕自严",
+                "target": "王绍徽",
+                "event_kind": "撑腰",
+                "context": "当殿为赈灾站台",
+            }],
+        },
+        night_id=nid, chat_turn_id=ctid,
+    )
+    assert len(result.edge_events.applied) == 1
+    edge_id = int(result.edge_events.applied[0]["id"])
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM relation_edge_events WHERE id=?", (edge_id,),
+    ).fetchone()["n"] == 1
+
+    db.undo_chat_turn(ctid)
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM relation_edge_events WHERE id=?", (edge_id,),
+    ).fetchone()["n"] == 0

@@ -90,6 +90,7 @@ from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaratio
 from ming_sim.error_pack import rejections_jsonl_path
 from ming_sim.issues import apply_person_changes_only
 from ming_sim.public_sayings import record_public_saying
+from ming_sim.relation_judge import summon_edge_origin
 from ming_sim.relations import validate_edge_kind
 
 _TEXTUAL_FACT_EXISTENCE_TABLES = {
@@ -241,6 +242,7 @@ def _dispatch_declaration_sections(
         ),
         edge_events=_dispatch_edge_events(
             db, state, declaration.get("edge_events"), source=source,
+            source_chat_turn_id=source_chat_turn_id,
         ),
         protagonist=_dispatch_protagonist(
             db, declaration.get("protagonist"), source=source,
@@ -865,7 +867,10 @@ def _dispatch_scene_facts(
     return SectionResult(applied=applied, rejected=rejected)
 
 
-def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+def _dispatch_edge_events(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_chat_turn_id: int = 0,
+) -> SectionResult:
     """边事件：既有唯一写口 `record_relation_edge_event`。三类失败各自准确归类：
     未知 event_kind = invalid_enum；source/target 非在册人物 = hallucinated_id；
     空 source/target/context 等形状问题 = invalid_shape——不拿宽 catch 一律
@@ -873,9 +878,23 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
     复用 AffairStore 通用指针（`attach_pointer`）；写事件与绑指针放进同一个
     :func:`_item_savepoint_scope` 块，指针冲突时整块回滚（该项进 rejected，
     不留半写的「有边事件没有所属事务」状态）；用 SAVEPOINT 而非直接嵌套
-    `atomic(db)`，理由同 :func:`_dispatch_on_scene_facts`。"""
+    `atomic(db)`，理由同 :func:`_dispatch_on_scene_facts`。
+
+    源轮 ``source_chat_turn_id``（#1838 / ADR 0082 后出注记）：ctid>0 时复用
+    :func:`~ming_sim.relation_judge.summon_edge_origin` 唯一源轮形状，使既有
+    :meth:`~ming_sim.db.GameDB.delete_relation_edge_events_for_chat_turn` 撤回即删。
+    ctid==0 只允许无源轮受控场景（过月 / 桩）；其 origin 不带 chat_turn 段、不参与
+    撤回联动——转译真实路径按 ADR 0155 必有所属轮，绝不得让真实轮产出删不掉的行。
+    """
     items, rejected = _section_items(raw, label="边事件声明", source=source)
     applied: List[Any] = []
+    ctid = int(source_chat_turn_id or 0)
+    # ctid>0：召对源轮绑定，接入既有撤回删口；ctid==0：无源轮场景，不参与撤回联动。
+    if ctid > 0:
+        edge_origin = summon_edge_origin(ctid)
+    else:
+        # 无源轮受控调用专用形状；真实转译路径不得落到此分支。
+        edge_origin = f"转译声明:no_source_turn:turn{int(state.turn)}"
     for item in items:
         source_name = str(item.get("source") or "").strip()
         target_name = str(item.get("target") or "").strip()
@@ -902,7 +921,7 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
                 try:
                     event_id = db.record_relation_edge_event(
                         source=source_name, target=target_name, event_kind=event_kind,
-                        context=context, origin=f"转译声明:turn{int(state.turn)}",
+                        context=context, origin=edge_origin,
                         turn=int(state.turn), year=int(state.year), period=int(state.period),
                     )
                 except ValueError as exc:

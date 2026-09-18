@@ -1779,10 +1779,25 @@ class GameSession:
                         empty_scaffold=True,
                     )
                     # #1838 / ADR 0158：宣 X 当场先切御前主角（不等转译）。
+                    # 夜当前值是投影；ctid>0 时同步写 chat_turns.protagonist_name
+                    # 作按源轮真源，供 undo 按存活最近轮重投影（ADR 0038 / 0155）。
+                    # ctid==0：无源轮场景（单测/无生命周期），只写夜表、不参与撤回联动
+                    # ——与入殿账 origin_chat_turn_id==0 框架账不随轮撤同语义。
                     from ming_sim.audience_night import set_night_protagonist
                     set_night_protagonist(
                         self.db, night_id, target.name, reason="xuan",
                     )
+                    xuan_ctid = int(chat_turn_id or 0)
+                    if xuan_ctid > 0:
+                        self.db.conn.execute(
+                            "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
+                            (target.name, xuan_ctid),
+                        )
+                        if (
+                            not bool(getattr(self.db.conn, "_commit_suspended", False))
+                            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
+                        ):
+                            self.db.conn.commit()
 
         # 材料目录：在场诸人各一份；开场最小集 + 只读工具。
         prepared = prepare_scene_materials(self.db, self.state)
