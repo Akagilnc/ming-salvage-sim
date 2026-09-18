@@ -240,6 +240,69 @@ def test_undo_reverses_round_on_scene_writes(game):
     assert turn_row["status"] == "undone"
 
 
+def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
+    """#1839 AC3：夜上下文第四类（presence/scene_facts/edge_events）须带属本夜
+    的正源轮；缺失或不属本夜 → missing_ref，不落 origin=0 / turn:N 孤儿账。
+    过月无夜路径（night_id=0）不在本案。"""
+    db, state, _ = game
+    minister = _active_minister(db)
+    other = _active_minister(db, exclude={minister})
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    # night_id=0 的对话轮＝不属本夜的源轮。
+    foreign_ctid = db.create_chat_turn(
+        state, minister, "t1839:foreign", 0, night_id=0,
+    )
+
+    declaration = {
+        "presence": [{
+            "person_name": minister, "effect": "enter",
+            "body": "内侍宣入。",
+        }],
+        "scene_facts": [{
+            "body": "臣领旨。", "audibility": "殿上公开",
+            "person_names": [minister],
+        }],
+        "edge_events": [{
+            "source": minister, "target": other, "event_kind": "撑腰",
+            "context": "当殿举荐",
+        }],
+    }
+    before_ledger = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+    before_edges = db.conn.execute(
+        "SELECT COUNT(*) c FROM relation_edge_events"
+    ).fetchone()["c"]
+
+    missing = dispatch_declaration(
+        db, state, declaration, night_id=night_id, chat_turn_id=0,
+    )
+    foreign = dispatch_declaration(
+        db, state, declaration, night_id=night_id, chat_turn_id=int(foreign_ctid),
+    )
+
+    for result in (missing, foreign):
+        assert result.presence.applied == []
+        assert result.scene_facts.applied == []
+        assert result.edge_events.applied == []
+        assert len(result.presence.rejected) == 1
+        assert len(result.scene_facts.rejected) == 1
+        assert len(result.edge_events.rejected) == 1
+        assert result.presence.rejected[0].category == "missing_ref"
+        assert result.scene_facts.rejected[0].category == "missing_ref"
+        assert result.edge_events.rejected[0].category == "missing_ref"
+
+    after_ledger = db.conn.execute(
+        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+    after_edges = db.conn.execute(
+        "SELECT COUNT(*) c FROM relation_edge_events"
+    ).fetchone()["c"]
+    assert after_ledger == before_ledger
+    assert after_edges == before_edges
+
+
 def test_commission_stays_staged_not_bypassing_promulgation(game):
     """AC4：任洪承畴、拨三十万仍是暂存交办，不因「当场」绕过颁布关。"""
     db, state, _ = game

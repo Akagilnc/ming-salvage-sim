@@ -216,7 +216,12 @@ def _dispatch_declaration_sections(
     ``chat_turn_id``（#1839）：召对当场实况的源轮。在场进出 / 说话人分段绑
     ``origin_chat_turn_id``；边事件 origin 拼 ``转译声明|chat_turn:{id}``——撤回
     本轮按此前像 / 源轮逆转（ADR 0038 第四类）。过月结算无对话轮，传 0。
+    夜上下文（night_id>0）下源轮须为正且属本夜，否则第四类夜绑定 section
+    逐项 missing_ref 拒收，不得落 origin=0 / turn:N 孤儿账。
     """
+    origin_ctid, source_turn_err = _resolve_night_source_chat_turn(
+        db, night_id=night_id, chat_turn_id=chat_turn_id,
+    )
     result = DeclarationDispatchResult(
         commissions=_dispatch_commissions(
             db, state, declaration.get("commissions"),
@@ -236,15 +241,15 @@ def _dispatch_declaration_sections(
         ),
         presence=_dispatch_presence(
             db, declaration.get("presence"), night_id=night_id, source=source,
-            chat_turn_id=chat_turn_id,
+            chat_turn_id=origin_ctid, source_turn_error=source_turn_err,
         ),
         scene_facts=_dispatch_scene_facts(
             db, declaration.get("scene_facts"), night_id=night_id, source=source,
-            chat_turn_id=chat_turn_id,
+            chat_turn_id=origin_ctid, source_turn_error=source_turn_err,
         ),
         edge_events=_dispatch_edge_events(
             db, state, declaration.get("edge_events"), source=source,
-            chat_turn_id=chat_turn_id,
+            chat_turn_id=origin_ctid, source_turn_error=source_turn_err,
         ),
         protagonist=_dispatch_protagonist(
             db, declaration.get("protagonist"), source=source,
@@ -286,7 +291,8 @@ def dispatch_declaration(
 
     ``chat_turn_id``（#1839 C2）：当场实况的源轮。召对场中承接传入本轮
     ``chat_turns.id``，在场账 / 边事件带源轮绑定，撤回本轮以前像日志逆转；
-    过月路径传 0。交办仍只落暂存，不因源轮而绕过颁布关。
+    夜上下文须为正且属本夜，否则 presence / scene_facts / edge_events 逐项
+    missing_ref 拒收。过月路径传 0。交办仍只落暂存，不因源轮而绕过颁布关。
 
     :func:`settle_staged_declarations_in_decree_order` 结算一旨下多条暂存
     声明时不走这个入口——它需要把同旨下每条声明的分派副作用、拒收与该旨的
@@ -774,9 +780,30 @@ def _category_for_audience_night_error(exc: AudienceNightError) -> str:
     return "invalid_enum"  # bad_audibility / bad_presence_effect 等既有枚举校验
 
 
+def _resolve_night_source_chat_turn(
+    db: Any, *, night_id: int, chat_turn_id: int,
+) -> Tuple[int, Optional[str]]:
+    """夜上下文源轮核（#1839 AC3 / ADR 0038 第四类）：night_id>0 时须带正
+    ``chat_turn_id`` 且 ``chat_turns.night_id`` 属本夜；缺失或不属本夜返回
+    拒收原因（调用方逐项 missing_ref）。过月无夜（night_id<=0）保留 0，不拦。
+    """
+    nid = int(night_id or 0)
+    ctid = int(chat_turn_id or 0)
+    if nid <= 0:
+        return ctid, None
+    if ctid <= 0:
+        return 0, "召对夜上下文的当场实况须带正源轮 chat_turn_id"
+    row = db.conn.execute(
+        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()
+    if row is None or int(row["night_id"] or 0) != nid:
+        return 0, f"源轮不属于本夜：chat_turn_id={ctid}"
+    return ctid, None
+
+
 def _dispatch_presence(
     db: Any, raw: object, *, night_id: int, source: Provenance,
-    chat_turn_id: int = 0,
+    chat_turn_id: int = 0, source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """在场进出：落既有召对夜账本（`append_ledger_entry`）。正文必须是转译声明
     自己带的自由文本——代码不合成「某某入殿/退下」模板句（P6/P7：玩家可感文字
@@ -784,11 +811,15 @@ def _dispatch_presence(
     的项单独拒收，不落孤儿账（AC3）。
 
     ``chat_turn_id``（#1839）：源轮绑定到 ``origin_chat_turn_id``，撤回本轮删该账。
+    夜上下文下源轮缺失/不属本夜时整项 missing_ref，不落 origin=0 孤儿账。
     """
     items, rejected = _section_items(raw, label="在场进出声明", source=source)
     applied: List[Any] = []
     origin_ctid = int(chat_turn_id or 0)
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         name = str(item.get("person_name") or "").strip()
         effect = _PRESENCE_ITEM_EFFECTS.get(str(item.get("effect") or "").strip())
         body = str(item.get("body") or "")
@@ -825,7 +856,7 @@ def _dispatch_presence(
 
 def _dispatch_scene_facts(
     db: Any, raw: object, *, night_id: int, source: Provenance,
-    chat_turn_id: int = 0,
+    chat_turn_id: int = 0, source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """说话人分段与可闻性：转译声明自带的一段戏文正文 + 可闻性 + 涉及人物，
     原样落既有召对夜账本，代码不改写、不合成替代文本（P6/P7）。落账前校验涉及
@@ -833,11 +864,15 @@ def _dispatch_scene_facts(
     仅对「进」效果校验），故 `check_dead=False`。
 
     ``chat_turn_id``（#1839）：源轮绑定到 ``origin_chat_turn_id``，撤回本轮删该账。
+    夜上下文下源轮缺失/不属本夜时整项 missing_ref，不落 origin=0 孤儿账。
     """
     items, rejected = _section_items(raw, label="说话人分段声明", source=source)
     applied: List[Any] = []
     origin_ctid = int(chat_turn_id or 0)
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         body = str(item.get("body") or "")
         audibility = item.get("audibility") or AUDIBILITY_PUBLIC
         person_names = item.get("person_names") or []
@@ -889,7 +924,7 @@ def _translation_edge_origin(chat_turn_id: int, turn: int) -> str:
 
 def _dispatch_edge_events(
     db: Any, state: Any, raw: object, *, source: Provenance,
-    chat_turn_id: int = 0,
+    chat_turn_id: int = 0, source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """边事件：既有唯一写口 `record_relation_edge_event`。三类失败各自准确归类：
     未知 event_kind = invalid_enum；source/target 非在册人物 = hallucinated_id；
@@ -900,12 +935,17 @@ def _dispatch_edge_events(
     不留半写的「有边事件没有所属事务」状态）；用 SAVEPOINT 而非直接嵌套
     `atomic(db)`，理由同 :func:`_dispatch_on_scene_facts`。
 
-    ``chat_turn_id``（#1839）：源轮写进 origin，撤回按轮删。
+    ``chat_turn_id``（#1839）：源轮写进 origin，撤回按轮删。夜上下文下源轮
+    缺失/不属本夜时整项 missing_ref，不落 turn:N 孤儿 origin；过月无夜保留
+    turn 回退。
     """
     items, rejected = _section_items(raw, label="边事件声明", source=source)
     applied: List[Any] = []
     origin = _translation_edge_origin(chat_turn_id, int(state.turn))
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         source_name = str(item.get("source") or "").strip()
         target_name = str(item.get("target") or "").strip()
         context = item.get("context")
