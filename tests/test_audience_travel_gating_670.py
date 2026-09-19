@@ -1612,7 +1612,7 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
     s.registry = SimpleNamespace(get=lambda _ch, **_kw: agent, session_ids={})
     s.llm_config = SimpleNamespace(channel="api")
     s._audience_prompt_for_message = (
-        lambda msg, character=None, chat_turn_id=0: msg
+        lambda msg, character=None, chat_turn_id=0, **_kw: msg
     )
     s._start_cli_action_intent = lambda *_a, **_k: None
     s._finish_cli_action_intent = lambda *_a, **_k: None

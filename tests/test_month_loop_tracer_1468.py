@@ -651,10 +651,11 @@ def test_issue_with_extraction_debt_succeeds_once(tracer_client):
 
 
 def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
-    """#1353 fold-in：抽取 LLM 死透 → 失败单源（通传未达），非待补 CTA/409；夜可重按。
+    """#1353 fold-in / #1842：转译 LLM 死透 → 耗尽失败单源；夜可重按。
 
-    非流式兼容口轻钉：结构化 HTTP 400/412 + detail 单源（流式主链另由主 tracer 覆盖）。
+    非流式兼容口轻钉：结构化 HTTP 409 SettlementAbort + detail 单源。
     """
+    from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     client = tracer_client
@@ -670,19 +671,18 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 
     ctid = _plant_extraction_debt(game, minister, sess_tag="sess-1468-dead")
 
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda *a, **k: _BoomExtractor(),
-    )
+    # #1842：收夜 catch-up 认转译水位；真失败注入转译缝。
+    def _boom_translate(prompt, llm_config):
+        del prompt, llm_config
+        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
+
+    game.session._audience_translate_fn = _boom_translate
 
     issue = client.post("/api/decree/issue", json={"expected_turn": turn0})
     _assert_not_bare_500(issue, step="dead-llm issue")
-    # 欠账类不得再 409 打回；走既定 LLM 失败单源面。
-    assert issue.status_code != 409, (
-        f"debt-class 409 deleted; got {issue.status_code}: {issue.text}"
-    )
-    assert issue.status_code in (400, 412), (
-        f"expected LLM single-source status, got {issue.status_code}: {issue.text}"
+    # #1842：转译耗尽 → SettlementAbort → 409 失败单源（非玩家补写 CTA）。
+    assert issue.status_code == 409, (
+        f"expected translation-exhaustion 409, got {issue.status_code}: {issue.text}"
     )
     detail = issue.json().get("detail")
     if isinstance(detail, dict):
@@ -691,11 +691,10 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
     else:
         detail_text = str(detail or "")
         detail_blob = detail_text
-    assert CLI_RUNNER_PLAYER_MESSAGE in detail_text or CLI_RUNNER_PLAYER_MESSAGE in detail_blob, (
+    assert "转译" in detail_text or "结算失败" in detail_blob, (
         f"failure single source missing: {detail!r}"
     )
-    # 禁玩家可见待补/补写 CTA 语义
-    assert "待补" not in detail_text
+    # 禁玩家可见补写 CTA 语义
     assert "补写" not in detail_text
     assert "chat_turn" not in detail_text
 

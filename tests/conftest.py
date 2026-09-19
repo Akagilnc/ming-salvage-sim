@@ -307,6 +307,19 @@ class _OfflineSceneRegistry:
         return False
 
 
+def offline_empty_audience_translate(prompt, llm_config):
+    """#1842 离线转译边界：空声明，禁 sk-test 真网。"""
+    del prompt, llm_config
+    return {"commissions": [], "promises": []}
+
+
+class _OfflineAudienceTranslateAttr:
+    """类属性描述符：getattr(session, ...) 得到裸函数，禁绑成 bound method。"""
+
+    def __get__(self, obj, objtype=None):
+        return offline_empty_audience_translate
+
+
 @pytest.fixture
 def _offline_scene_beat_generator():
     """#542：轻壳测试显式 opt-in 的 offline scene / beat 双缝（非 autouse）。
@@ -317,6 +330,7 @@ def _offline_scene_beat_generator():
     - factory 缝：create_llm_beat_generator → 确定性假 generator
     - 类属性缝：GameSession._beat_generator / _scene_registry 默认假
       （覆盖 __new__ 轻壳 resolve_turn / start_chat_turn_scene）
+    - #1842：类属性 `_audience_translate_fn` 空声明（收夜 catch-up / 后台转译禁 sk-test）
     实例赋值（dual-fail / 503 e2e / 竞态）仍优先于类属性。不改生产。
     独立 MonkeyPatch：测试内 monkeypatch.undo() 不会撤掉本兜底。
     """
@@ -333,6 +347,9 @@ def _offline_scene_beat_generator():
     )
     mp.setattr(
         GameSession, "_scene_registry", _OfflineSceneRegistry(), raising=False,
+    )
+    mp.setattr(
+        GameSession, "_audience_translate_fn", _OfflineAudienceTranslateAttr(), raising=False,
     )
     yield
     mp.undo()

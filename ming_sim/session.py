@@ -2217,6 +2217,19 @@ class GameSession:
             chat_turn_id=int(chat_turn_id or 0),
             explicit_secret_order=explicit_secret_order,
         )
+        # #1842：大臣级 chat 与 scene_chat 同水位——ctid>0 回话后调度转译，
+        # 收夜 join/catch-up 认 Future，不把 extract_status 留给并发屏障竞态。
+        answer_text = str(getattr(result, "answer", "") or "")
+        ctid = int(chat_turn_id or 0)
+        if ctid > 0 and answer_text.strip() and not explicit_secret_order:
+            from ming_sim.audience_night import get_open_night
+            night = get_open_night(self.db)
+            if night is not None:
+                self._apply_scene_turn_translation(
+                    result, message, answer_text,
+                    night_id=int(night["id"]),
+                    chat_turn_id=ctid,
+                )
         return result
 
     def _audience_prompt_for_message(

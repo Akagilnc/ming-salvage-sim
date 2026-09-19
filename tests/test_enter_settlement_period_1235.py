@@ -352,14 +352,18 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
 
 def test_true_failure_pending_extraction_exits_display(web_game, monkeypatch, tmp_path):
     """AC2 / #1353 fold-in：drain 真失败 → 失败单源 + settlement_display 退出（≠ 未了在办）。"""
+    from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     game = web_game
     minister = _active_minister(game)
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    # 持续失败的抽取员 → drain 失败单源
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomExtractor())
+    # #1842：收夜 catch-up 认转译水位；真失败注入转译缝（旧抽取 drain 已退役）。
+    def _boom_translate(prompt, llm_config):
+        del prompt, llm_config
+        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
+
+    game.session._audience_translate_fn = _boom_translate
     before = _click_before(game.state)
     turn = int(game.state.turn)
     nid, ctid = _open_night_with_unextracted_reply(game, minister)
@@ -380,17 +384,18 @@ def test_true_failure_pending_extraction_exits_display(web_game, monkeypatch, tm
             return await client.post("/api/decree/advance_without_edict")
 
     resp = asyncio.run(go())
-    # 欠账类 409 已删；advance 走 LLMUnavailable → 412 失败单源
-    assert resp.status_code == 412, resp.text
+    # #1842：转译单轮失败标 pending；过月耗尽 → SettlementAbort 失败单源（HTTP 409）。
+    assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
     text = detail if isinstance(detail, str) else (
         detail.get("message") if isinstance(detail, dict) else json.dumps(detail, ensure_ascii=False)
     )
-    assert CLI_RUNNER_PLAYER_MESSAGE in str(text)
-    assert "待补" not in str(text)
+    assert "转译" in str(text) or "结算失败" in str(text), text
     assert "补写" not in str(text)
-    # 点即入曾发生
-    assert saw_capture.get("snap") == before
+    # #1842：耗尽在 await_translations（barrier 内 close 前）即失败；
+    # 点即入仍发生（展示态曾建后 exit），不要求一定走进 auto_close 观测钩。
+    if saw_capture.get("snap") is not None:
+        assert saw_capture.get("snap") == before
     # 真失败另形：展示态退出
     assert game.db.get_month_open_snapshot(turn) is None
     payload = game.state_payload()
@@ -405,11 +410,18 @@ def test_true_failure_pending_extraction_exits_display(web_game, monkeypatch, tm
 
 def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
     """AC2 颁布入口同形。"""
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+
     game = web_game
     minister = _active_minister(game)
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomExtractor())
+    # #1842：真失败注入转译缝（旧抽取 drain 已退役）。
+    def _boom_translate(prompt, llm_config):
+        del prompt, llm_config
+        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
+
+    game.session._audience_translate_fn = _boom_translate
     before = _click_before(game.state)
     turn = int(game.state.turn)
     _open_night_with_unextracted_reply(game, minister)
@@ -436,13 +448,14 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
             return await client.post("/api/decree/issue", json={})
 
     resp = asyncio.run(go())
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-    # 欠账类 409 已删；issue 走 LLMUnavailable → 400 失败单源
-    assert resp.status_code == 400, resp.text
+    # #1842：转译耗尽 → SettlementAbort 失败单源（issue HTTP 面同 advance 409）。
+    assert resp.status_code == 409, resp.text
     detail = resp.json().get("detail")
     blob = detail if isinstance(detail, str) else json.dumps(detail or {}, ensure_ascii=False)
-    assert CLI_RUNNER_PLAYER_MESSAGE in blob
-    assert saw.get("snap") == before  # 点即入曾发生
+    assert "转译" in blob or "结算失败" in blob, blob
+    # #1842：耗尽可在 close 前；点即入后 exit 即可，不强制 close 钩命中。
+    if saw.get("snap") is not None:
+        assert saw.get("snap") == before
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
 

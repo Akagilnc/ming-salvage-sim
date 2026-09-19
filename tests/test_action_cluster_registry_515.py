@@ -917,13 +917,17 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     sess.last_decree = ""
     sess.agno_db = None
     sess._beat_generator = None
-    sess._scene_registry = None
+    # 大臣级 Web 入口恢复 start_chat_turn_scene；离线 registry 禁 None 崩。
+    from tests.conftest import _OfflineSceneRegistry
+    sess._scene_registry = _OfflineSceneRegistry()
     sess._write_gate = threading.Lock()
     sess._retrieve_memories_for_message = lambda message: message
     sess._audience_translate_fn = translate_fn
     # bind production methods used by WebGame.chat / undo_last_chat / scene_chat
     for name in (
         "chat", "scene_chat", "_apply_scene_turn_translation",
+        "start_chat_turn_scene", "join_chat_turn_scene",
+        "persist_chat_turn_scene", "abandon_chat_turn_scene",
         "_start_cli_action_intent", "_finish_cli_action_intent",
         "_confirmation_intent_for_preexisting_pending",
         "_cli_backend_fallback_actions", "apply_cli_conversation_actions",
@@ -940,6 +944,11 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     # undo 后 registry 重建需要完整 Agno 环境；本 tracer 只验 pending 前像，跳过 registry 重建。
     sess.refresh_runtime_after_chat_rollback = lambda: None
     sess.note_chat_rollback = lambda **kw: None
+    # 本区只验转译交办水位；禁 CLI 拟旨前缀双 stage（与 translate_fn 抢 pending）。
+    sess._cli_backend_fallback_actions = lambda *a, **k: None
+    sess.apply_cli_conversation_actions = lambda *a, **k: {
+        "directive": None, "secret_order_id": None, "pending_action_id": 0,
+    }
 
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
     # scene_chat 用 create_scene_agent；挡真实 LLM，回放 agent 正文。

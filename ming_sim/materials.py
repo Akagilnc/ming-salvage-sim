@@ -339,7 +339,8 @@ def _character_affair_lines(
         seen.add(dir_key)
         title = f"尚未入档旨稿#{int(row['id'])}"
         # #1812 P6：raw body 是草稿自由正文，判空只用局部 stripped 副本。
-        body = str(row.get("text") or "")
+        # sqlite3.Row / dict 同形：下标读取，禁 .get（Row 无此方法）。
+        body = str(row["text"] if "text" in row.keys() else "")
         text = f"{body}（尚未入档）" if body.strip() else "尚未入档"
         lines.append((dir_key, title, text, text, True))
     for dir_key, title, directory_text, opening_text, is_handling in _own_affair_lines(
