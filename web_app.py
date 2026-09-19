@@ -449,6 +449,22 @@ def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
     return detail
 
 
+def _settlement_abort_http_detail(
+    exc: "SettlementAbort",
+    failure_snapshot: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """SettlementAbort → 结构化 HTTP detail（stage/error_pack_path 为 typed 键）。"""
+    detail: Dict[str, Any] = {
+        "message": str(exc),
+        "stage": str(getattr(exc, "stage", "") or ""),
+        "error_pack_path": getattr(exc, "error_pack_path", None),
+        "turn": getattr(exc, "turn", None),
+    }
+    if failure_snapshot:
+        detail["pending_action_failures"] = failure_snapshot
+    return detail
+
+
 def _settlement_sse_error_data(
     exc: BaseException,
     failure_snapshot: Optional[List[Dict[str, Any]]] = None,
@@ -483,6 +499,8 @@ def _settlement_sse_error_data(
         }
         if "transport_attempts" in detail:
             payload["transport_attempts"] = detail["transport_attempts"]
+    elif isinstance(exc, SettlementAbort):
+        payload = _settlement_abort_http_detail(exc)
     if payload is None:
         # 非 LLM 终失败：保持既有「无 snapshot → 标量；有 snapshot → {message, failures}」
         if failure_snapshot:
@@ -4501,8 +4519,9 @@ def _settlement_period_entry(
         # 欠账抽取并入同一次过月动作（内部静默），不再 409 打回玩家补写。
         def _join_translations_then_close() -> None:
             sess = getattr(game, "session", None)
-            if sess is not None and hasattr(sess, "await_translations_before_month"):
-                sess.await_translations_before_month()
+            if sess is None:
+                raise RuntimeError("settlement entry 缺 session")
+            sess.await_translations_before_month()
             _auto_close_open_night_gate_free(
                 game, inflight_wait_s=0.0, write_gate=close_gate,
             )
@@ -6760,11 +6779,10 @@ def api_advance_without_edict(
         )
         raise HTTPException(status_code=400, detail=detail) from None
     except SettlementAbort as e:
-        detail = (
-            {"message": str(e), "pending_action_failures": failure_snapshot}
-            if failure_snapshot else str(e)
-        )
-        raise HTTPException(status_code=409, detail=detail) from None
+        raise HTTPException(
+            status_code=409,
+            detail=_settlement_abort_http_detail(e, failure_snapshot),
+        ) from None
     except (AudienceNightError, ExceptionGroup) as e:
         # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
         raise _retryable_audience_close_http(e) from None
@@ -6900,14 +6918,11 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
         )
         raise HTTPException(status_code=400, detail=detail) from None
     except SettlementAbort as e:
-        # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试，detail 即玩家指引
-        # （含错误包路径+「请发给作者」）。非 500——这是已处理的可重试态，不是服务器 bug。
-        # settling 已落则 helper 保留交恢复。
-        detail = (
-            {"message": str(e), "pending_action_failures": failure_snapshot}
-            if failure_snapshot else str(e)
-        )
-        raise HTTPException(status_code=409, detail=detail) from None
+        # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试；typed stage/error_pack_path。
+        raise HTTPException(
+            status_code=409,
+            detail=_settlement_abort_http_detail(e, failure_snapshot),
+        ) from None
     except LLMUnavailable as e:
         # #1452：非流式颁诏 LLM 死 → 结构化错误，禁裸 500（对齐 _llm_error_detail）。
         # 注意：本入口 LLM 仍走 400（不是 advance 的 412）。

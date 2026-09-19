@@ -440,7 +440,7 @@ def test_worker_postprocess_exception_emits_error_end():
     err_idx = types.index("error")
     assert types[err_idx + 1] == "end", types
     err = next(e for e in events if e.get("type") == "error")
-    assert "trail boom" in str(err.get("message") or "") or "highlight" in str(err.get("message") or "")
+    assert "highlight trail boom" in str(err.get("message") or ""), err
     _assert_write_path_free(runtime)
 
 
@@ -678,6 +678,7 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
         resolve_turn=_boom_resolve,
         last_decree="",
         current_phase=lambda: state.turn_phase,
+        await_translations_before_month=lambda: None,
     )
     runtime = SimpleNamespace(
         db=db,
@@ -1068,9 +1069,10 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     assert fail_row is not None
     assert str(fail_row["status"]) == "failed"
 
-    # 实际重发：换可成功 agent，同夜可再召并读回轮状态（重发成功即证写路径已释放）
+    # 实际重发：换可成功 agent（#1842 双桩缝 = _scene_agent_double）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
     web_game.session.registry.agent = ok_agent
+    web_game.session._scene_agent_double = ok_agent
     response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
     events2 = _parse_sse(response2.text)
     assert "done" in [e[0] for e in events2], events2
@@ -1548,6 +1550,7 @@ def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
     # 夜开 + 可重发（写路径已释放；重发会再走入殿）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
     web_game.session.registry.agent = ok_agent
+    web_game.session._scene_agent_double = ok_agent
     response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
     events2 = _parse_sse(response2.text)
     assert "done" in [e[0] for e in events2], events2

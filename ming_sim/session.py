@@ -1826,37 +1826,8 @@ class GameSession:
             )
         else:
             run_output = agent.run(agent_prompt)
-            # 双桩 FakeAgent 可能返回 generator（与 stream 同形）
-            import inspect as _inspect
-            if _inspect.isgenerator(run_output):
-                parts: list[str] = []
-                final = None
-                for ev in run_output:
-                    en = type(ev).__name__
-                    if en == "RunContent" or getattr(ev, "event", None) == "RunContent":
-                        parts.append(str(getattr(ev, "content", "") or ""))
-                    if en in ("RunOutput", "RunCompletedEvent"):
-                        final = ev
-                    if en == "ToolCallCompletedEvent":
-                        tool = getattr(ev, "tool", None)
-                        tname = str(getattr(tool, "tool_name", "") or "")
-                        tres = str(getattr(tool, "result", "") or "")
-                        if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
-                            side_effects["court_action"] = "dismiss"
-                answer = "".join(parts).strip()
-                if not answer and final is not None:
-                    answer = extract_agent_text(final)
-                run_output = final
-            else:
-                _dump_llm_messages(run_output, f"场景召对/{SCENE_CHAT_SPEAKER}")
-                answer = extract_agent_text(run_output)
-            # 非流：扫 tools 退场（双桩 dismiss）
-            tools = list(getattr(run_output, "tools", None) or [])
-            for tool in tools:
-                tname = str(getattr(tool, "tool_name", "") or "")
-                tres = str(getattr(tool, "result", "") or "")
-                if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
-                    side_effects["court_action"] = "dismiss"
+            _dump_llm_messages(run_output, f"场景召对/{SCENE_CHAT_SPEAKER}")
+            answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
         if side_effects.get("court_action"):
             result.court_action = str(side_effects["court_action"])
@@ -1873,22 +1844,10 @@ class GameSession:
         return result
 
     def _resolve_scene_agent(self, prepared: Any, *, night_id: int) -> Any:
-        """生产 create_scene_agent；双桩优先 _scene_agent_double 或 registry 同注入无 model agent。"""
+        """生产 create_scene_agent；双桩只认显式 _scene_agent_double（禁 registry 嗅探）。"""
         double = getattr(self, "_scene_agent_double", None)
         if double is not None:
             return double
-        reg = getattr(self, "registry", None)
-        chars = getattr(getattr(self, "content", None), "characters", None) or {}
-        if reg is not None and hasattr(reg, "get") and chars:
-            names = list(chars.keys())
-            try:
-                a0 = reg.get(chars[names[0]])
-                a1 = reg.get(chars[names[-1]]) if len(names) > 1 else a0
-            except Exception:
-                a0 = a1 = None
-            # 同一注入 double、且无生产 model → 双桩 stand-in（FakeAgent / CountingFail…）
-            if a0 is not None and a0 is a1 and getattr(a0, "model", None) is None:
-                return a0
         llm_config = getattr(self, "llm_config", None)
         return create_scene_agent(
             llm_config,
@@ -1945,15 +1904,12 @@ class GameSession:
                     start_exit = getattr(
                         self, "start_exit_scene_from_dismiss_tools", None,
                     )
-                    if start_exit is not None and int(chat_turn_id or 0) > 0:
-                        try:
-                            start_exit(
-                                str(minister_name or ""),
-                                int(chat_turn_id),
-                                [tool],
-                            )
-                        except Exception:
-                            pass
+                    if callable(start_exit) and int(chat_turn_id or 0) > 0:
+                        start_exit(
+                            str(minister_name or ""),
+                            int(chat_turn_id),
+                            [tool],
+                        )
             if name in ("RunOutput", "RunCompletedEvent"):
                 run_output_box.clear()
                 run_output_box.append(event)
@@ -1985,20 +1941,13 @@ class GameSession:
             chunks.clear()
             run_output_box.clear()
             if stream_attempt_n["n"] > 0:
-                try:
-                    stream_emit("", replace=True)
-                except TypeError:
-                    stream_emit("")
-                if chat_turn_id and hasattr(self.db, "truncate_chat_turn_agno_runs"):
+                stream_emit("", replace=True)
+                if int(chat_turn_id or 0) > 0:
                     self.db.truncate_chat_turn_agno_runs(int(chat_turn_id))
             stream_attempt_n["n"] += 1
-            # 双桩兼容：FakeAgent.run 可能不接受 stream 旗。
-            try:
-                return agent.run(
-                    agent_prompt, stream=True, stream_events=True, yield_run_output=True,
-                )
-            except TypeError:
-                return agent.run(agent_prompt)
+            return agent.run(
+                agent_prompt, stream=True, stream_events=True, yield_run_output=True,
+            )
 
         with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
             (answer, _run_output), attempts_box = run_transport_stream(

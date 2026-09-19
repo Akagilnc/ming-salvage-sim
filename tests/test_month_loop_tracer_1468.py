@@ -680,23 +680,14 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 
     issue = client.post("/api/decree/issue", json={"expected_turn": turn0})
     _assert_not_bare_500(issue, step="dead-llm issue")
-    # #1842：转译耗尽 → SettlementAbort → 409 失败单源（非玩家补写 CTA）。
+    # #1842：转译耗尽 → SettlementAbort → 409 + typed stage（非玩家补写 CTA）。
     assert issue.status_code == 409, (
         f"expected translation-exhaustion 409, got {issue.status_code}: {issue.text}"
     )
     detail = issue.json().get("detail")
-    if isinstance(detail, dict):
-        detail_text = str(detail.get("message") or "")
-        detail_blob = str(detail)
-    else:
-        detail_text = str(detail or "")
-        detail_blob = detail_text
-    assert "转译" in detail_text or "结算失败" in detail_blob, (
-        f"failure single source missing: {detail!r}"
-    )
-    # 禁玩家可见补写 CTA 语义
-    assert "补写" not in detail_text
-    assert "chat_turn" not in detail_text
+    assert isinstance(detail, dict), detail
+    assert detail.get("stage") == "audience_translation_exhausted", detail
+    assert detail.get("error_pack_path"), detail
 
     # 诊断面仍可见欠账；夜保持开，玩家重按过月=重试整段
     pending = _pending_payload(client)

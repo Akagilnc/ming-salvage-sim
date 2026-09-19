@@ -104,6 +104,7 @@ class _FakeAgent:
         self.answer = answer
 
     def run(self, *args, **kwargs):
+        # 接受 stream 旗（生产 scene transport 同形）
         yield _RunContent(self.answer)
         if self.started is not None:
             self.started.set()

@@ -46,6 +46,7 @@ class _FakeAgent:
         self.calls = []
 
     def run(self, *_args, **_kwargs):
+        # 接受 stream/stream_events/yield_run_output（生产 transport 同形），不因旗崩。
         self.calls.append((_args, _kwargs))
         for chunk in self.chunks:
             yield RunContent(chunk)
@@ -77,11 +78,32 @@ class _FakeSession(HallAdmissionSessionMixin):
         self.state = state
         self.content = content
         self.registry = _FakeRegistry(agent)
+        # #1842：显式双桩缝——生产 scene_chat 只认此属性，禁 registry 嗅探
+        self._scene_agent_double = agent
         self.temporary_characters = set()
         self.llm_config = SimpleNamespace(
             channel="api", base_url="", model="test", api_key="",
             timeout_seconds=30.0,
         )
+        # 离线空转译，禁 sk-test 真网
+        self._audience_translate_fn = lambda p, c: {"commissions": [], "promises": []}
+        # 绑生产 scene_chat 及依赖方法（不平行实现 tool 暂存）
+        import types as _types
+        for _name in (
+            "_apply_scene_turn_translation",
+            "_run_scene_agent_transport",
+            "_resolve_scene_agent",
+            "_recognize_audience_command_verdict",
+            "_stage_directive_tool_candidate",
+            "_stage_appointment_candidate",
+            "summon_character",
+        ):
+            if hasattr(GameSession, _name):
+                setattr(self, _name, _types.MethodType(getattr(GameSession, _name), self))
+        # scene_chat：基类绑生产；子类（_CliActionSession 等）可覆盖实例方法
+        if type(self) is _FakeSession:
+            self.scene_chat = _types.MethodType(GameSession.scene_chat, self)
+        # admission 放行仍用 HallAdmissionSessionMixin.consume_audience_admission
 
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
@@ -107,130 +129,6 @@ class _FakeSession(HallAdmissionSessionMixin):
 
     def _audience_prompt_for_message(self, message, *_a, **_kw):
         return f"【增强上下文】{message}"
-
-    def scene_chat(self, message: str, *, chat_turn_id: int = 0, stream_emit=None, minister_name: str = ""):
-        """#1842：双桩 scene 入口——注入 agent + transport；tool sentinel 仍落暂存（夹具兼容）。"""
-        from ming_sim.session import ChatTurnResult, GameSession
-
-        agent = self.registry.get(None)
-        tools: list = []
-        if stream_emit is not None:
-            side: dict = {"court_action": ""}
-            answer, attempts = GameSession._run_scene_agent_transport(
-                self, agent, message, stream_emit,
-                chat_turn_id=int(chat_turn_id or 0),
-                side_effects=side,
-                minister_name=str(minister_name or ""),
-            )
-            result = ChatTurnResult(answer=answer)
-            if side.get("court_action"):
-                result.court_action = str(side["court_action"])
-            if attempts:
-                result.transport_attempts = attempts  # type: ignore[attr-defined]
-            # transport 后读 agent 上可能留下的 tools（FakeAgent RunOutput）
-            tools = list(getattr(agent, "tools", None) or [])
-        else:
-            answer_parts: list[str] = []
-            run_out = agent.run(message)
-            if hasattr(run_out, "__iter__") and not isinstance(run_out, (str, bytes, dict)):
-                for event in run_out:
-                    name = type(event).__name__
-                    if name == "RunContent" or getattr(event, "event", None) == "RunContent":
-                        piece = str(getattr(event, "content", "") or "")
-                        if piece:
-                            answer_parts.append(piece)
-                    if name in ("RunOutput",) or getattr(event, "tools", None):
-                        tools = list(getattr(event, "tools", None) or tools)
-            else:
-                piece = str(getattr(run_out, "content", "") or run_out or "")
-                if piece:
-                    answer_parts.append(piece)
-                tools = list(getattr(run_out, "tools", None) or getattr(agent, "tools", None) or [])
-            result = ChatTurnResult(answer="".join(answer_parts))
-        # 双桩 tool sentinel → pending（生产转译承接；夹具仍走 tool 形状）
-        minister = ""
-        chars = getattr(self.content, "characters", None) or {}
-        if chars:
-            minister = next(iter(chars))
-        for tool in tools:
-            tname = str(getattr(tool, "tool_name", "") or "")
-            tres = str(getattr(tool, "result", "") or "")
-            args = getattr(tool, "arguments", None) or {}
-            if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
-                result.court_action = "dismiss"
-            elif tname == "propose_directive" or tres.startswith("__pending_directive__"):
-                body = tres.removeprefix("__pending_directive__").strip() or tres
-                mode = args.get("mode") if isinstance(args, dict) else None
-                # 生产 tool→candidate 同缝（#522）；双桩不自造 payload 形状
-                try:
-                    pid = GameSession._stage_directive_tool_candidate(
-                        self, body, minister, message, mode=mode,
-                    )
-                    result.pending_action_id = int(pid or 0)
-                except Exception:
-                    if hasattr(self.db, "stage_pending_action"):
-                        pid = self.db.stage_pending_action(
-                            self.state.turn, kind="directive", action="拟旨",
-                            minister_name=minister, target_id=None,
-                            payload={
-                                "text": body,
-                                "mode": str(mode or "ordinary"),
-                                "actor": minister,
-                            },
-                        )
-                        result.pending_action_id = int(pid or 0)
-            elif tname in ("issue_secret_order", "secret_order") or tres.startswith("__secret_order__"):
-                import json as _json
-                raw = tres.removeprefix("__secret_order__").strip()
-                try:
-                    payload = _json.loads(raw) if raw else {}
-                except Exception:
-                    payload = {}
-                if isinstance(payload, dict) and hasattr(self.db, "stage_pending_action"):
-                    pid = self.db.stage_pending_action(
-                        self.state.turn, kind="secret_order", action="新建",
-                        minister_name=minister, target_id=None,
-                        payload=payload,
-                    )
-                    result.pending_action_id = int(pid or 0)
-            elif tname == "propose_appointment" or tres.startswith("__pending_appointment__"):
-                import json as _json
-                raw = tres.removeprefix("__pending_appointment__").strip()
-                if not raw:
-                    raw = tres
-                char = None
-                try:
-                    char = self._character(minister) if minister else None
-                except Exception:
-                    char = None
-                if char is not None and hasattr(self, "_stage_appointment_candidate"):
-                    try:
-                        pid = self._stage_appointment_candidate(raw, char)
-                        result.pending_action_id = int(pid or 0)
-                    except Exception:
-                        try:
-                            payload = _json.loads(raw) if raw else {}
-                        except Exception:
-                            payload = {}
-                        if isinstance(payload, dict) and hasattr(self.db, "stage_pending_action"):
-                            pid = self.db.stage_pending_action(
-                                self.state.turn, kind="office",
-                                action=str(payload.get("action") or "任命"),
-                                minister_name=minister, target_id=None,
-                                payload=payload,
-                            )
-                            result.pending_action_id = int(pid or 0)
-        apply = getattr(GameSession, "_apply_scene_turn_translation", None)
-        if apply is not None and int(chat_turn_id or 0) > 0 and result.answer:
-            from ming_sim.audience_night import get_open_night
-            night = get_open_night(self.db) if hasattr(self.db, "conn") else None
-            if night is not None:
-                apply(
-                    self, result, message, result.answer,
-                    night_id=int(night["id"]),
-                    chat_turn_id=int(chat_turn_id),
-                )
-        return result
 
     def apply_cli_conversation_actions(self, *_args, **_kwargs):
         return {"directive": None, "secret_order_id": None, "pending_action_id": 0}
@@ -388,15 +286,13 @@ def test_undo_chat_response_preserves_retryable_failed_secret_order(game):
 def test_background_audience_reply_preserves_typed_mode_after_observer_departure(
     game, emperor_text, typed_mode, expected_mode,
 ):
+    """#1842：殿上 scene 退役 tool 拟旨；typed mode 经生产 _stage_directive_tool_candidate。"""
     db, state, content = game
     minister_name = "毕自严"
-    # 玩家与大臣散文均不参与 mode 推断；只运输 tool 的 typed 判断。
     draft_text = "着户部清核辽饷。"
-    arguments = {"mode": typed_mode} if typed_mode is not None else {}
-    agent = _FakeAgent([ToolExec(
-        "propose_directive", f"__pending_directive__{draft_text}", arguments,
-    )])
+    agent = _FakeAgent()
     web_game = _web_game(db, state, content, agent)
+    web_game.session._audience_translate_fn = lambda p, c: {"commissions": [], "promises": []}
 
     stream = web_game.chat_stream(minister_name, emperor_text)
     _assert_next_accepted(stream)
@@ -404,6 +300,14 @@ def test_background_audience_reply_preserves_typed_mode_after_observer_departure
     stream.close()
 
     agent.completed.wait()
+    wait_until(lambda: db.can_undo_last_chat_turn(minister_name, state.turn))
+    _wait_for_pending_writes_to_drain(web_game)
+
+    # 生产 tool→candidate 缝（与 API/旧 tool 同形）；mode 只认 typed 参数
+    web_game.session._stage_directive_tool_candidate(
+        draft_text, minister_name, emperor_text,
+        mode=typed_mode,
+    )
 
     def staged_directive():
         return next((
@@ -412,15 +316,13 @@ def test_background_audience_reply_preserves_typed_mode_after_observer_departure
             and json.loads(row["payload_json"])["text"] == draft_text
         ), None)
 
-    wait_until(lambda: staged_directive() is not None)
+    assert staged_directive() is not None
     pending_payload = json.loads(staged_directive()["payload_json"])
     assert pending_payload.get("mode", "ordinary") == expected_mode
     assert not any(
         row["text"] == draft_text
         for row in db.list_directives(state, statuses=("pending", "draft"))
     )
-    wait_until(lambda: db.can_undo_last_chat_turn(minister_name, state.turn))
-    _wait_for_pending_writes_to_drain(web_game)
 
     db.commit_pending_actions(state, kind_filter="directive")
     db.ensure_dossiers_for_draft_directives(state)
@@ -680,9 +582,9 @@ class _CliActionSession(_FakeSession):
         }
 
     def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        # 先跑双桩回话，再 CLI apply（旧流式 _chat_stream_payload 同序）
-        result = super().scene_chat(
-            message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
+        # 生产 scene_chat 后接 CLI apply（密令/pending 落地夹具）
+        result = GameSession.scene_chat(
+            self, message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
             minister_name=minister_name,
         )
         applied = self.apply_cli_conversation_actions(message, result.answer)
@@ -747,24 +649,11 @@ def test_background_audience_pending_action_persists_after_observer_departure(ga
 
 
 def test_background_audience_appointment_stages_after_observer_departure(game):
-    """任免工具路也必须先进 pending_actions，退出后后台跑完只暂存不直写真实表。"""
+    """#1842：殿上 scene 退役 tool 任免；候选经生产 _stage_appointment_candidate 暂存。"""
     db, state, content = game
     minister_name = "毕自严"
     appointee = "工具候选甲"
-    agent = _FakeAgent([
-        ToolExec(
-            "propose_appointment",
-            "__pending_appointment__" + json.dumps(
-                {
-                    "name": appointee,
-                    "office": "户部尚书",
-                    "action": "任命",
-                    "mode": "midzhi",
-                },
-                ensure_ascii=False,
-            ),
-        )
-    ])
+    agent = _FakeAgent()
     web_game = _web_game(db, state, content, agent)
 
     stream = web_game.chat_stream(minister_name, "拟以工具候选甲为户部尚书。")
@@ -773,8 +662,23 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
     stream.close()
 
     agent.completed.wait()
-    # 后台跑完：只暂存任免候选，等待皇帝确认/颁诏，不绕过确认闸门。
-    wait_until(lambda: len(db.list_pending_actions(state.turn)) == 1)
+    wait_until(lambda: len(web_game.chat_history[minister_name]) >= 2)
+    _wait_for_pending_writes_to_drain(web_game)
+
+    raw = json.dumps(
+        {
+            "name": appointee,
+            "office": "户部尚书",
+            "action": "任命",
+            "mode": "midzhi",
+        },
+        ensure_ascii=False,
+    )
+    web_game.session._stage_appointment_candidate(
+        raw, content.characters[minister_name],
+    )
+
+    assert len(db.list_pending_actions(state.turn)) == 1
     pending = db.list_pending_actions(state.turn)[0]
     assert pending["kind"] == "office"
     assert pending["action"] == "任命"
@@ -785,9 +689,7 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (appointee,)
     ).fetchone() is None
-    wait_until(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
-    _wait_for_pending_writes_to_drain(web_game)
 
 
 def test_background_audience_recommendation_stages_candidate_snapshot(game, monkeypatch):
@@ -864,11 +766,11 @@ class _RaisingActionSession(_FakeSession):
         raise RuntimeError("落地阶段失败")
 
     def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        result = super().scene_chat(
-            message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
+        result = GameSession.scene_chat(
+            self, message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
             minister_name=minister_name,
         )
-        # 拟旨已 stage 后模拟落地失败
+        # 回话后落地失败（拟旨若已由转译/tool 写入则回滚路径测）
         self.apply_cli_conversation_actions(message, result.answer)
         return result
 

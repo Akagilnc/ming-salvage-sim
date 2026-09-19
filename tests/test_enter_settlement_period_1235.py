@@ -384,19 +384,16 @@ def test_true_failure_pending_extraction_exits_display(web_game, monkeypatch, tm
             return await client.post("/api/decree/advance_without_edict")
 
     resp = asyncio.run(go())
-    # #1842：转译单轮失败标 pending；过月耗尽 → SettlementAbort 失败单源（HTTP 409）。
+    # #1842：转译单轮失败标 pending；过月耗尽 → SettlementAbort（HTTP 409 + typed stage）。
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
-    text = detail if isinstance(detail, str) else (
-        detail.get("message") if isinstance(detail, dict) else json.dumps(detail, ensure_ascii=False)
-    )
-    assert "转译" in str(text) or "结算失败" in str(text), text
-    assert "补写" not in str(text)
-    # #1842：耗尽在 await_translations（barrier 内 close 前）即失败；
-    # 点即入仍发生（展示态曾建后 exit），不要求一定走进 auto_close 观测钩。
-    if saw_capture.get("snap") is not None:
-        assert saw_capture.get("snap") == before
-    # 真失败另形：展示态退出
+    assert isinstance(detail, dict), detail
+    assert detail.get("stage") == "audience_translation_exhausted", detail
+    pack = detail.get("error_pack_path")
+    assert pack, detail
+    # join-before-close：耗尽在 auto_close 前 → close 钩未跑
+    assert saw_capture == {}, saw_capture
+    # 真失败另形：展示态退出（点即入曾发生后 exit）
     assert game.db.get_month_open_snapshot(turn) is None
     payload = game.state_payload()
     assert payload["turn"]["settlement_display"] is False
@@ -448,14 +445,14 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
             return await client.post("/api/decree/issue", json={})
 
     resp = asyncio.run(go())
-    # #1842：转译耗尽 → SettlementAbort 失败单源（issue HTTP 面同 advance 409）。
+    # #1842：转译耗尽 → SettlementAbort（HTTP 409 + typed stage）；issue 与 advance 同形。
     assert resp.status_code == 409, resp.text
     detail = resp.json().get("detail")
-    blob = detail if isinstance(detail, str) else json.dumps(detail or {}, ensure_ascii=False)
-    assert "转译" in blob or "结算失败" in blob, blob
-    # #1842：耗尽可在 close 前；点即入后 exit 即可，不强制 close 钩命中。
-    if saw.get("snap") is not None:
-        assert saw.get("snap") == before
+    assert isinstance(detail, dict), detail
+    assert detail.get("stage") == "audience_translation_exhausted", detail
+    assert detail.get("error_pack_path"), detail
+    # join-before-close：close 钩未跑
+    assert saw == {}, saw
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
 
