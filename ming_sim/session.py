@@ -1691,6 +1691,8 @@ class GameSession:
 
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,
+        stream_emit: Any = None,
+        minister_name: str = "",
     ) -> ChatTurnResult:
         """#1836 T1 / #1837 C1a / #1842 T2：一夜一场入口——一个场景 LLM 演整场。
 
@@ -1701,6 +1703,7 @@ class GameSession:
           （#1842）；ctid==0 同步落定（无生命周期测/直调）
         - 退役与回话并行的意图分类器 / 应允判读 / 故事抽取 / 边事件判官 /
           代码触发读心（转译承接）；旧按大臣 chat() 入口暂留（收口在 X1）
+        - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
         from ming_sim.audience_night import (
             CMD_AMBIGUOUS_CLOSE,
@@ -1808,18 +1811,58 @@ class GameSession:
         llm_config = getattr(self, "llm_config", None)
         if llm_config is None:
             raise RuntimeError("scene_chat 需要 llm_config。")
-        agent = create_scene_agent(
-            llm_config,
-            prepared,
-            agno_db=getattr(self, "agno_db", None),
-            content=getattr(self, "content", None),
-            session_id=f"scene-night-{night_id}",
-        )
+        agent = self._resolve_scene_agent(prepared, night_id=night_id)
 
-        run_output = agent.run(prepared.opening + "\n\n" + message_text)
-        _dump_llm_messages(run_output, f"场景召对/{SCENE_CHAT_SPEAKER}")
-        answer = extract_agent_text(run_output)
+        agent_prompt = prepared.opening + "\n\n" + message_text
+        transport_attempts_box: list = []
+        side_effects: dict = {"court_action": ""}
+        if stream_emit is not None:  # noqa: SIM102 — 流式分支完整
+            # Web 流式同核：transport 重试/空转/终失败；delta 经 stream_emit 出 SSE。
+            answer, transport_attempts_box = self._run_scene_agent_transport(
+                agent, agent_prompt, stream_emit,
+                chat_turn_id=int(chat_turn_id or 0),
+                side_effects=side_effects,
+                minister_name=str(minister_name or ""),
+            )
+        else:
+            run_output = agent.run(agent_prompt)
+            # 双桩 FakeAgent 可能返回 generator（与 stream 同形）
+            import inspect as _inspect
+            if _inspect.isgenerator(run_output):
+                parts: list[str] = []
+                final = None
+                for ev in run_output:
+                    en = type(ev).__name__
+                    if en == "RunContent" or getattr(ev, "event", None) == "RunContent":
+                        parts.append(str(getattr(ev, "content", "") or ""))
+                    if en in ("RunOutput", "RunCompletedEvent"):
+                        final = ev
+                    if en == "ToolCallCompletedEvent":
+                        tool = getattr(ev, "tool", None)
+                        tname = str(getattr(tool, "tool_name", "") or "")
+                        tres = str(getattr(tool, "result", "") or "")
+                        if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
+                            side_effects["court_action"] = "dismiss"
+                answer = "".join(parts).strip()
+                if not answer and final is not None:
+                    answer = extract_agent_text(final)
+                run_output = final
+            else:
+                _dump_llm_messages(run_output, f"场景召对/{SCENE_CHAT_SPEAKER}")
+                answer = extract_agent_text(run_output)
+            # 非流：扫 tools 退场（双桩 dismiss）
+            tools = list(getattr(run_output, "tools", None) or [])
+            for tool in tools:
+                tname = str(getattr(tool, "tool_name", "") or "")
+                tres = str(getattr(tool, "result", "") or "")
+                if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
+                    side_effects["court_action"] = "dismiss"
         result = ChatTurnResult(answer=answer)
+        if side_effects.get("court_action"):
+            result.court_action = str(side_effects["court_action"])
+        if transport_attempts_box:
+            # 结构化 attempts 账挂结果，供流式 payload 回指（非 prose）。
+            result.transport_attempts = transport_attempts_box  # type: ignore[attr-defined]
 
         # #1842：ctid>0 → 后台转译（前台不等）；ctid==0 → 同步落定（直调/单测）。
         # 不跑并行分类器 / 故事抽取 / 边事件判官 / 读心——转译一次承接。
@@ -1828,6 +1871,146 @@ class GameSession:
             chat_turn_id=int(chat_turn_id or 0),
         )
         return result
+
+    def _resolve_scene_agent(self, prepared: Any, *, night_id: int) -> Any:
+        """生产 create_scene_agent；双桩优先 _scene_agent_double 或 registry 同注入无 model agent。"""
+        double = getattr(self, "_scene_agent_double", None)
+        if double is not None:
+            return double
+        reg = getattr(self, "registry", None)
+        chars = getattr(getattr(self, "content", None), "characters", None) or {}
+        if reg is not None and hasattr(reg, "get") and chars:
+            names = list(chars.keys())
+            try:
+                a0 = reg.get(chars[names[0]])
+                a1 = reg.get(chars[names[-1]]) if len(names) > 1 else a0
+            except Exception:
+                a0 = a1 = None
+            # 同一注入 double、且无生产 model → 双桩 stand-in（FakeAgent / CountingFail…）
+            if a0 is not None and a0 is a1 and getattr(a0, "model", None) is None:
+                return a0
+        llm_config = getattr(self, "llm_config", None)
+        return create_scene_agent(
+            llm_config,
+            prepared,
+            agno_db=getattr(self, "agno_db", None),
+            content=getattr(self, "content", None),
+            session_id=f"scene-night-{night_id}",
+        )
+
+    def _run_scene_agent_transport(
+        self,
+        agent: Any,
+        agent_prompt: str,
+        stream_emit: Any,
+        *,
+        chat_turn_id: int = 0,
+        side_effects: Optional[dict] = None,
+        minister_name: str = "",
+    ) -> tuple[str, list]:
+        """场景 agent 的 transport 流式核——与 web 大臣流同政策，不经旧分类器链。"""
+        from ming_sim.llm_model import extract_agent_text, fail_if_llm_error
+        from ming_sim.llm_transport import (
+            bind_transport_sdk_budget,
+            empty_output_failure,
+            is_stream_activity_event,
+            map_run_error_event,
+            resolve_transport_policy,
+            run_transport_stream,
+            transport_attempts_public,
+            transport_failure_unavailable,
+        )
+
+        llm_cfg = getattr(self, "llm_config", None)
+        policy = resolve_transport_policy(llm_cfg)
+        chunks: list[str] = []
+        run_output_box: list = []
+        stream_attempt_n = {"n": 0}
+        effects = side_effects if side_effects is not None else {}
+
+        def _on_event(event: Any) -> None:
+            name = type(event).__name__
+            if name == "RunContent" or getattr(event, "event", None) == "RunContent":
+                piece = str(getattr(event, "content", "") or "")
+                if piece:
+                    chunks.append(piece)
+                    stream_emit(piece)
+            if name == "ToolCallCompletedEvent":
+                tool = getattr(event, "tool", None)
+                tname = str(getattr(tool, "tool_name", "") or "")
+                tres = str(getattr(tool, "result", "") or "")
+                if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
+                    effects["court_action"] = "dismiss"
+                    # 流中退场登记（与旧 _chat_stream_payload 同缝；幂等不双落）
+                    start_exit = getattr(
+                        self, "start_exit_scene_from_dismiss_tools", None,
+                    )
+                    if start_exit is not None and int(chat_turn_id or 0) > 0:
+                        try:
+                            start_exit(
+                                str(minister_name or ""),
+                                int(chat_turn_id),
+                                [tool],
+                            )
+                        except Exception:
+                            pass
+            if name in ("RunOutput", "RunCompletedEvent"):
+                run_output_box.clear()
+                run_output_box.append(event)
+                for tool in list(getattr(event, "tools", None) or []):
+                    tname = str(getattr(tool, "tool_name", "") or "")
+                    tres = str(getattr(tool, "result", "") or "")
+                    if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
+                        effects["court_action"] = "dismiss"
+
+        def _after_stream():
+            run_output = run_output_box[0] if run_output_box else None
+            _dump_llm_messages(
+                run_output, f"场景召对/{getattr(agent, 'name', '殿上')}", agent=agent,
+            )
+            answer = "".join(chunks).strip()
+            if run_output is not None:
+                extracted = extract_agent_text(run_output)
+                if not answer:
+                    answer = extracted
+            else:
+                fail_if_llm_error(answer, "LLM 调用")
+            if not answer:
+                raise transport_failure_unavailable(
+                    empty_output_failure(), attempts=1, exhausted=False,
+                )
+            return answer, run_output
+
+        def _start_stream():
+            chunks.clear()
+            run_output_box.clear()
+            if stream_attempt_n["n"] > 0:
+                try:
+                    stream_emit("", replace=True)
+                except TypeError:
+                    stream_emit("")
+                if chat_turn_id and hasattr(self.db, "truncate_chat_turn_agno_runs"):
+                    self.db.truncate_chat_turn_agno_runs(int(chat_turn_id))
+            stream_attempt_n["n"] += 1
+            # 双桩兼容：FakeAgent.run 可能不接受 stream 旗。
+            try:
+                return agent.run(
+                    agent_prompt, stream=True, stream_events=True, yield_run_output=True,
+                )
+            except TypeError:
+                return agent.run(agent_prompt)
+
+        with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+            (answer, _run_output), attempts_box = run_transport_stream(
+                _start_stream,
+                on_event=_on_event,
+                is_activity_event=is_stream_activity_event,
+                map_error_event=map_run_error_event,
+                after_stream=_after_stream,
+                policy=policy,
+            )
+        public = transport_attempts_public(attempts_box) if attempts_box else []
+        return str(answer or ""), list(public)
 
     def _apply_scene_turn_translation(
         self,
@@ -2217,19 +2400,6 @@ class GameSession:
             chat_turn_id=int(chat_turn_id or 0),
             explicit_secret_order=explicit_secret_order,
         )
-        # #1842：大臣级 chat 与 scene_chat 同水位——ctid>0 回话后调度转译，
-        # 收夜 join/catch-up 认 Future，不把 extract_status 留给并发屏障竞态。
-        answer_text = str(getattr(result, "answer", "") or "")
-        ctid = int(chat_turn_id or 0)
-        if ctid > 0 and answer_text.strip() and not explicit_secret_order:
-            from ming_sim.audience_night import get_open_night
-            night = get_open_night(self.db)
-            if night is not None:
-                self._apply_scene_turn_translation(
-                    result, message, answer_text,
-                    night_id=int(night["id"]),
-                    chat_turn_id=ctid,
-                )
         return result
 
     def _audience_prompt_for_message(

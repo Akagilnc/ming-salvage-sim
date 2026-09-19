@@ -1023,8 +1023,14 @@ def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch):
     sess._write_gate = threading.Lock()
     sess._audience_translate_fn = lambda p, c: {"commissions": [], "promises": []}
 
-    def _scene_chat(message, *, chat_turn_id=0):
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         calls["scene"] += 1
+        # 流式入口可经 stream_emit 推 delta；契约只计 scene 调用与 answer。
+        if stream_emit is not None:
+            try:
+                stream_emit(FakeResult.answer)
+            except TypeError:
+                stream_emit(FakeResult.answer)
         return FakeResult()
 
     def _chat(*a, **k):

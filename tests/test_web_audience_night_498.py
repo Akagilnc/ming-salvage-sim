@@ -286,7 +286,10 @@ async def _start_hanging_chat(game, client, minister):
     故本 helper 在 raise 前 release+drain，不把半移交资源留给调用方。
     """
     started, allow = threading.Event(), threading.Event()
-    game.session.registry.get = lambda ch, **_kw: _FakeAgent(started=started, allow=allow)
+    agent = _FakeAgent(started=started, allow=allow)
+    game.session.registry.get = lambda ch, **_kw: agent
+    # #1842：殿上 scene_chat 双桩——与 registry 同注入 agent
+    game.session._scene_agent_double = agent
     task = asyncio.create_task(
         client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
     try:
@@ -502,7 +505,9 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
         lambda *a, **k: _TracingEndorsementExtractor(),
     )
     # Real chat path uses registry agent; keep canned so freeze is the only outcome.
-    game.session.registry.get = lambda ch, **_kw: _FakeAgent(answer="臣另有奏。")
+    _agent = _FakeAgent(answer="臣另有奏。")
+    game.session.registry.get = lambda ch, **_kw: _agent
+    game.session._scene_agent_double = _agent
 
     async def first_fail_scenario():
         async with _client() as issue_client, _client() as chat_client:
@@ -612,11 +617,12 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     # no LLM); CAS reopen + persist succeed only after OPEN. Suppress trail workers so
     # dual-fail close does not race the shared SQLite conn.
     assert game.db.get_interrupted_reply_retries(minister)
-    real_chat = game.session.chat
+    real_scene = game.session.scene_chat
     real_spawn = game._spawn_pending_write_thread
     canned_retry_answer = "臣重奏：边饷当清。"
-    game.session.chat = (
-        lambda minister_name, message, *, chat_turn_id=0, explicit_secret_order=False: ChatTurnResult(
+    # #1842：殿上重试走 scene_chat
+    game.session.scene_chat = (
+        lambda message, *, chat_turn_id=0, stream_emit=None, minister_name="": ChatTurnResult(
             answer=canned_retry_answer,
         )
     )
@@ -624,7 +630,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     try:
         retry_payload = game.retry_interrupted_reply(minister)
     finally:
-        game.session.chat = real_chat
+        game.session.scene_chat = real_scene
         game._spawn_pending_write_thread = real_spawn
     # canned 无损透传（等值，非文案分类）；队列清空证 OPEN 恢复。
     assert retry_payload.get("answer") == canned_retry_answer
@@ -889,7 +895,9 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
     game = web_game
     minister = _active_minister(game)
     # 装好 fake LLM：删掉持锁内复查时，失败只会因非法开夜/建轮（而非缺 API key 401）。
-    game.session.registry.get = lambda ch, **_kw: _FakeAgent()
+    _agent = _FakeAgent()
+    game.session.registry.get = lambda ch, **_kw: _agent
+    game.session._scene_agent_double = _agent
     game.state.turn_phase = TurnPhase.SUMMONING.value  # 锁前快速查通过
     nights0, turns0 = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")
 

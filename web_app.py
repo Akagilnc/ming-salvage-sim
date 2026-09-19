@@ -2339,16 +2339,18 @@ class WebGame:
                         return self._summon_admission_success_payload(
                             summon_name, summon_result,
                         )
-                # #634 P5：判官拍与回话并行发出（先于回话生成，TD-9 零额外等待）。
-                self._dispatch_relation_judge(chat_turn_id)
-                # #1566：生产契约直调（chat_turn_id + explicit_secret_order）；禁签名探测降级。
-                # 殿上/密令均走 session.chat：保 registry 双桩、同步失败路径与既有 UX。
-                # scene_chat 仍作一夜一场直调入口；大臣级 Web 入口不绕开 transport 语义。
-                result = self.session.chat(
-                    minister_name, text,
-                    chat_turn_id=chat_turn_id,
-                    explicit_secret_order=explicit_secret_order,
-                )
+                # #1842：殿上真实召对入口切 scene_chat；密令仍走旧 session.chat。
+                # 退役：旧分类器 / 故事抽取 / 边事件判官 / 代码触发读心（转译承接）。
+                if explicit_secret_order:
+                    result = self.session.chat(
+                        minister_name, text,
+                        chat_turn_id=chat_turn_id,
+                        explicit_secret_order=True,
+                    )
+                else:
+                    result = self.session.scene_chat(
+                        text, chat_turn_id=chat_turn_id,
+                    )
                 proposed = None
                 if result.proposed_directive is not None:
                     d = result.proposed_directive
@@ -2358,7 +2360,6 @@ class WebGame:
                     # 慢 scene 等待在 gate 外；短事务内与回话全有或全无。
                     with atomic(self.db):
                         self.session.persist_chat_turn_scene(scene_generated)
-                        # _chat_payload 持久化 minister 消息 + 更新 chat_turn。
                         payload = self._chat_payload(
                         minister_name, result.answer,
                         court_action=result.court_action, next_minister=result.next_minister,
@@ -2381,23 +2382,10 @@ class WebGame:
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 answer_text = str(getattr(result, "answer", "") or "")
                 message_id = int(payload.get("minister_message_id") or 0)
-                # P5：先 spawn 读心/抽取，再折进判官等待窗——折窗期内后处理已在跑。
-                # #1353：非持闸路尾随领 turn 票后立刻放行整轮票——否则 ticketed write 等整轮票
-                # 而主线程持整轮票等尾随 = 自锁。持闸兼容路整轮票覆盖高亮写（禁无票裸写）。
-                if chat_turn_id and answer_text:
-                    self._spawn_pending_write_thread(
-                        self._trail_mindreading_after_reply,
-                        (minister_name, answer_text, chat_turn_id),
-                        "audience-p5-mindreading",
-                        ticket_key=("turn", int(chat_turn_id)),
-                    )
-                    # #501：叙事抽取落账与读心并行尾随（各自队列票据，P5）。
-                    self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
-                    if not gate_already_held:
-                        self._complete_pending_write(pending_ticket)
-                        pending_ticket = None
-                # #544：非流式折进等待窗——判官以超时封顶后与回话同到；超时则空清单先行。
-                # 持闸路须把已持闸态传到判官写库缝，禁同线程二次 acquire 非可重入 Lock。
+                # #1842：转译后台承接记录；旧读心/抽取/判官尾随退役。高亮仍可跑（呈现腿）。
+                if chat_turn_id and answer_text and not gate_already_held:
+                    self._complete_pending_write(pending_ticket)
+                    pending_ticket = None
                 if message_id and answer_text:
                     held_ticket = pending_ticket if gate_already_held else None
                     self._trail_highlight_judge_after_reply(
@@ -2519,14 +2507,17 @@ class WebGame:
                     before_snapshot = self.db.capture_chat_rollback_snapshot()
                     if retry_route["start_hall_scene"]:
                         self.session.start_chat_turn_scene(minister_name, chat_turn_id)
-                # #634 P5：重试同形——判官拍与回话并行发出（不依赖本轮回话）。
-                self._dispatch_relation_judge(chat_turn_id)
-                # #1566：生产契约直调（chat_turn_id + explicit_secret_order）；禁签名探测降级。
-                result = self.session.chat(
-                    minister_name, question,
-                    chat_turn_id=chat_turn_id,
-                    explicit_secret_order=retry_route["explicit_secret_order"],
-                )
+                # #1842：重试入口同切 scene_chat（密令 route 仍走 session.chat）。
+                if retry_route["explicit_secret_order"]:
+                    result = self.session.chat(
+                        minister_name, question,
+                        chat_turn_id=chat_turn_id,
+                        explicit_secret_order=True,
+                    )
+                else:
+                    result = self.session.scene_chat(
+                        question, chat_turn_id=chat_turn_id,
+                    )
                 proposed = None
                 if result.proposed_directive is not None:
                     d = result.proposed_directive
@@ -2557,16 +2548,8 @@ class WebGame:
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 answer_text = str(getattr(result, "answer", "") or "")
                 message_id = int(payload.get("minister_message_id") or 0)
-                # P5：重试同形——先 spawn 读心/抽取，再折判官窗。
-                # #1353：尾随领票后立刻放行整轮票，禁 ticketed write 与主线程互相等待。
+                # #1842：旧读心/抽取/判官退役；放行整轮票后高亮仍可跑。
                 if chat_turn_id and answer_text:
-                    self._spawn_pending_write_thread(
-                        self._trail_mindreading_after_reply,
-                        (minister_name, answer_text, chat_turn_id),
-                        "audience-p5-mindreading",
-                        ticket_key=("turn", int(chat_turn_id)),
-                    )
-                    self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
                     self._complete_pending_write(pending_ticket)
                     pending_ticket = None
                 if message_id and answer_text:
@@ -2656,6 +2639,79 @@ class WebGame:
             "mindreading_pending": pending,
             "pending_turn_ids": pending_turn_ids,
         }
+
+    def _scene_chat_stream_payload(
+        self,
+        minister_name: str,
+        text: str,
+        chat_turn_id: int,
+        before_snapshot: Dict[str, Any],
+        accepted_turn: int,
+        emit_delta,
+        write_gate: Optional[threading.Lock] = None,
+    ) -> Dict[str, Any]:
+        """#1842：流式殿上入口——scene_chat + transport 流式，保 SSE/重试/失败路径。
+
+        不跑旧分类器 / 故事抽取 / 边事件判官 / 代码触发读心；转译由 scene_chat 后台承接。
+        """
+        emitted = {"n": 0}
+
+        def _emit(delta: str, replace: bool = False) -> None:
+            if delta:
+                emitted["n"] += 1
+            try:
+                emit_delta(delta, replace=replace)
+            except TypeError:
+                emit_delta(delta)
+
+        result = self.session.scene_chat(
+            text,
+            chat_turn_id=int(chat_turn_id or 0),
+            stream_emit=_emit,
+            minister_name=str(minister_name or ""),
+        )
+        answer = str(getattr(result, "answer", "") or "")
+        # 非流式 agent 回整段时 transport 可能未分片 emit——补一次 delta 保 SSE 契约。
+        if answer and emitted["n"] == 0:
+            _emit(answer)
+        proposed = None
+        if result.proposed_directive is not None:
+            d = result.proposed_directive
+            proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+        # opening/enter beat：慢 join 在 gate 外；短事务内与回话全有或全无。
+        scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
+        cm = write_gate if write_gate is not None else contextlib.nullcontext()
+        with cm:
+            with atomic(self.db):
+                self.session.persist_chat_turn_scene(scene_generated or [])
+                payload = self._chat_payload(
+                    minister_name,
+                    answer,
+                    court_action=getattr(result, "court_action", "") or "",
+                    next_minister=getattr(result, "next_minister", "") or "",
+                    proposed_directive=proposed,
+                    appointed_minister=getattr(result, "appointed_minister", "") or "",
+                    registered_minister=getattr(result, "registered_minister", "") or "",
+                    displaced_minister=getattr(result, "displaced_minister", "") or "",
+                    secret_order_id=int(getattr(result, "secret_order_id", 0) or 0),
+                    pending_action_id=int(getattr(result, "pending_action_id", 0) or 0),
+                    pending_action_failures=list(
+                        getattr(result, "pending_action_failures", []) or []
+                    ),
+                    chat_turn_id=chat_turn_id,
+                    accepted_turn=accepted_turn,
+                    directive_confirmation_ambiguous=getattr(
+                        result, "directive_confirmation_ambiguous", None),
+                    decree_validation_failure=getattr(
+                        result, "decree_validation_failure", None),
+                    secret_order_landing_recovery=getattr(
+                        result, "secret_order_landing_recovery", None),
+                )
+                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+        attempts = getattr(result, "transport_attempts", None)
+        if attempts:
+            payload["transport_attempts"] = attempts
+        return payload
 
     def _chat_stream_payload(
         self,
@@ -2811,27 +2867,6 @@ class WebGame:
                         "secret_order_landing_recovery"),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        # #1842：流式殿上同 session.chat——回话落后调度转译，收夜 join 认 Future。
-        # 密令 route 不走殿上转译水位。
-        answer_text = str((payload or {}).get("answer") or interpreted.get("answer") or "")
-        if (
-            int(chat_turn_id or 0) > 0
-            and answer_text.strip()
-            and not explicit_secret_order
-        ):
-            apply_tr = getattr(self.session, "_apply_scene_turn_translation", None)
-            if apply_tr is not None:
-                from ming_sim.audience_night import get_open_night
-                from ming_sim.session import ChatTurnResult
-                night = get_open_night(self.db) if hasattr(self.db, "conn") else None
-                if night is not None:
-                    apply_tr(
-                        ChatTurnResult(answer=answer_text),
-                        text,
-                        answer_text,
-                        night_id=int(night["id"]),
-                        chat_turn_id=int(chat_turn_id),
-                    )
         # #1465：attempts 账可回指（结构化；非 prose）
         if transport_attempts_box:
             payload["transport_attempts"] = transport_attempts_public(transport_attempts_box)
@@ -3896,49 +3931,34 @@ class WebGame:
             reply_done_emitted = False
             try:
                 try:
-                    # P5：唯一不依赖回话输出的独立调用 = CLI 动作意图分类（只读皇帝消息）。
-                    # 先于回话在其自有 executor 上发出，跨越回话流式在飞，回话后消费一次。
-                    # 回奏（return_report）须先写见闻再组回话 prompt，是回话前置依赖、非并行调用，
-                    # 由 _audience_prompt_for_message 单次落地，不在此重复发起。
-                    character = self.session._character(minister_name)
-                    action_intent_future = (
-                        None if explicit_secret_order
-                        else self.session._start_cli_action_intent(character, text)
-                    )
-
-                    # #634 P5：召对判官拍——唯一不依赖本轮回话输出的记账腿，与回话
-                    # 生成并行发出（TD-9 零额外等待）；写库经自有票据，join 于收夜前。
-                    self._dispatch_relation_judge(chat_turn_id)
-
-                    # LLM 在无锁窗口跑；落库/会话动作再抢 write_gate（#498 AC10）
-                    # 大臣级 Web 流式入口统一走 _chat_stream_payload（transport/双桩/SSE）。
-                    payload = self._chat_stream_payload(
-                        minister_name, text, chat_turn_id, before_snapshot,
-                        accepted_turn, emit_delta,
-                        write_gate=write_gate,
-                        action_intent_future=action_intent_future,
-                        explicit_secret_order=explicit_secret_order,
-                    )
+                    # #1842：殿上真实流式入口切 scene_chat（transport 同核）；密令仍走旧流式 payload。
+                    # 退役：旧分类器 / 故事抽取 / 边事件判官 / 代码触发读心。
+                    # SSE 契约保持 accepted/delta/done/end。
+                    if explicit_secret_order:
+                        payload = self._chat_stream_payload(
+                            minister_name, text, chat_turn_id, before_snapshot,
+                            accepted_turn, emit_delta,
+                            write_gate=write_gate,
+                            action_intent_future=None,
+                            explicit_secret_order=True,
+                        )
+                    else:
+                        payload = self._scene_chat_stream_payload(
+                            minister_name, text, chat_turn_id, before_snapshot,
+                            accepted_turn, emit_delta,
+                            write_gate=write_gate,
+                        )
 
                     answer = str((payload or {}).get("answer") or "")
                     message_id = int((payload or {}).get("minister_message_id") or 0)
                     court_action = str((payload or {}).get("court_action") or "")
-                    # #1353：三腿统一经 _spawn_pending_write_thread（claim→try callee→finally 归还）；
-                    # seal/claim 拒绝 → 不起线程、零 LLM 零写。整轮票在 spawn 后空放行。
+                    # #1353：高亮仍经 _spawn_pending_write_thread；旧抽取/读心退役。
                     turn_key = ("turn", int(chat_turn_id)) if chat_turn_id else None
-                    extraction_thread: Optional[threading.Thread] = None
                     highlight_thread: Optional[threading.Thread] = None
-                    mind_thread: Optional[threading.Thread] = None
                     highlight_box: List[str] = []
-                    mind_box: List[Optional[Dict[str, Any]]] = []
-                    # #1727：court_break 预领屏障票——须在尾随领票之后、done 之前，
-                    # 使 has_open_barrier 对玩家写入口立刻可见；尾随 seq 更低仍可写。
+                    # #1727：court_break 预领屏障票——须在尾随领票之后、done 之前。
 
                     if chat_turn_id and answer:
-                        extraction_thread = self._spawn_extraction_trail(
-                            minister_name, answer, chat_turn_id,
-                        )
-
                         if message_id and answer:
                             def _highlight_worker(
                                 reply: str,
@@ -3962,30 +3982,6 @@ class WebGame:
                                 "audience-p5-highlight",
                                 ticket_key=turn_key,
                             )
-
-                        def _mind_worker(
-                            mname: str,
-                            reply: str,
-                            ctid: int,
-                            *,
-                            pending_ticket: Optional[WriteTicket] = None,
-                        ) -> None:
-                            try:
-                                mind_box.append(
-                                    self._trail_mindreading_after_reply(
-                                        mname, reply, ctid,
-                                        pending_ticket=pending_ticket,
-                                    )
-                                )
-                            except Exception:
-                                mind_box.append(None)
-
-                        mind_thread = self._spawn_pending_write_thread(
-                            _mind_worker,
-                            (minister_name, answer, chat_turn_id),
-                            "audience-p5-mindreading",
-                            ticket_key=turn_key,
-                        )
                         # 整轮票在尾随已领票后放行——屏障盯尾随票。
                         self._complete_pending_write(pending_ticket)
                         pending_ticket = None
@@ -3997,20 +3993,11 @@ class WebGame:
                             pending_ticket = None
                         close_barrier_ticket = self._runtime_write_queue().claim_barrier()
 
-                    # P5：先 done（回话可见），再 join 尾随 / 收夜 / end——玩家无「为后处理黑屏」。
+                    # P5：先 done（回话可见），再 join 尾随 / 收夜 / end。
                     # #1727：court_break 时 done 前已领屏障，召对写入口不再全活。
                     ev_queue.put({"type": "done", "payload": payload or {}})
                     reply_done_emitted = True
 
-                    if mind_thread is not None:
-                        mind_thread.join()
-                    mind_payload = mind_box[0] if mind_box else None
-                    if mind_payload:
-                        ev_queue.put({
-                            "type": "mindreading",
-                            "payload": mind_payload,
-                            "chat_turn_id": chat_turn_id,
-                        })
                     # #544：流式不挡流——done 后补挂高亮（超时封顶）；有清单才发事件。
                     if highlight_thread is not None:
                         highlight_thread.join()
@@ -4021,8 +4008,6 @@ class WebGame:
                             "chat_turn_id": chat_turn_id,
                             "message_id": message_id,
                         })
-                    if extraction_thread is not None:
-                        extraction_thread.join()
 
                     # #526/#1353：尾随票已清后收夜。整轮票已 complete 时 ticketed gate 会
                     # TicketCancelled——收夜短写改走裸 runtime write_gate（腿已终态，无越屏障窗）。

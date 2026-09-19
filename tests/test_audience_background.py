@@ -78,7 +78,10 @@ class _FakeSession(HallAdmissionSessionMixin):
         self.content = content
         self.registry = _FakeRegistry(agent)
         self.temporary_characters = set()
-        self.llm_config = SimpleNamespace(channel="api")
+        self.llm_config = SimpleNamespace(
+            channel="api", base_url="", model="test", api_key="",
+            timeout_seconds=30.0,
+        )
 
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
@@ -104,6 +107,130 @@ class _FakeSession(HallAdmissionSessionMixin):
 
     def _audience_prompt_for_message(self, message, *_a, **_kw):
         return f"【增强上下文】{message}"
+
+    def scene_chat(self, message: str, *, chat_turn_id: int = 0, stream_emit=None, minister_name: str = ""):
+        """#1842：双桩 scene 入口——注入 agent + transport；tool sentinel 仍落暂存（夹具兼容）。"""
+        from ming_sim.session import ChatTurnResult, GameSession
+
+        agent = self.registry.get(None)
+        tools: list = []
+        if stream_emit is not None:
+            side: dict = {"court_action": ""}
+            answer, attempts = GameSession._run_scene_agent_transport(
+                self, agent, message, stream_emit,
+                chat_turn_id=int(chat_turn_id or 0),
+                side_effects=side,
+                minister_name=str(minister_name or ""),
+            )
+            result = ChatTurnResult(answer=answer)
+            if side.get("court_action"):
+                result.court_action = str(side["court_action"])
+            if attempts:
+                result.transport_attempts = attempts  # type: ignore[attr-defined]
+            # transport 后读 agent 上可能留下的 tools（FakeAgent RunOutput）
+            tools = list(getattr(agent, "tools", None) or [])
+        else:
+            answer_parts: list[str] = []
+            run_out = agent.run(message)
+            if hasattr(run_out, "__iter__") and not isinstance(run_out, (str, bytes, dict)):
+                for event in run_out:
+                    name = type(event).__name__
+                    if name == "RunContent" or getattr(event, "event", None) == "RunContent":
+                        piece = str(getattr(event, "content", "") or "")
+                        if piece:
+                            answer_parts.append(piece)
+                    if name in ("RunOutput",) or getattr(event, "tools", None):
+                        tools = list(getattr(event, "tools", None) or tools)
+            else:
+                piece = str(getattr(run_out, "content", "") or run_out or "")
+                if piece:
+                    answer_parts.append(piece)
+                tools = list(getattr(run_out, "tools", None) or getattr(agent, "tools", None) or [])
+            result = ChatTurnResult(answer="".join(answer_parts))
+        # 双桩 tool sentinel → pending（生产转译承接；夹具仍走 tool 形状）
+        minister = ""
+        chars = getattr(self.content, "characters", None) or {}
+        if chars:
+            minister = next(iter(chars))
+        for tool in tools:
+            tname = str(getattr(tool, "tool_name", "") or "")
+            tres = str(getattr(tool, "result", "") or "")
+            args = getattr(tool, "arguments", None) or {}
+            if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
+                result.court_action = "dismiss"
+            elif tname == "propose_directive" or tres.startswith("__pending_directive__"):
+                body = tres.removeprefix("__pending_directive__").strip() or tres
+                mode = args.get("mode") if isinstance(args, dict) else None
+                # 生产 tool→candidate 同缝（#522）；双桩不自造 payload 形状
+                try:
+                    pid = GameSession._stage_directive_tool_candidate(
+                        self, body, minister, message, mode=mode,
+                    )
+                    result.pending_action_id = int(pid or 0)
+                except Exception:
+                    if hasattr(self.db, "stage_pending_action"):
+                        pid = self.db.stage_pending_action(
+                            self.state.turn, kind="directive", action="拟旨",
+                            minister_name=minister, target_id=None,
+                            payload={
+                                "text": body,
+                                "mode": str(mode or "ordinary"),
+                                "actor": minister,
+                            },
+                        )
+                        result.pending_action_id = int(pid or 0)
+            elif tname in ("issue_secret_order", "secret_order") or tres.startswith("__secret_order__"):
+                import json as _json
+                raw = tres.removeprefix("__secret_order__").strip()
+                try:
+                    payload = _json.loads(raw) if raw else {}
+                except Exception:
+                    payload = {}
+                if isinstance(payload, dict) and hasattr(self.db, "stage_pending_action"):
+                    pid = self.db.stage_pending_action(
+                        self.state.turn, kind="secret_order", action="新建",
+                        minister_name=minister, target_id=None,
+                        payload=payload,
+                    )
+                    result.pending_action_id = int(pid or 0)
+            elif tname == "propose_appointment" or tres.startswith("__pending_appointment__"):
+                import json as _json
+                raw = tres.removeprefix("__pending_appointment__").strip()
+                if not raw:
+                    raw = tres
+                char = None
+                try:
+                    char = self._character(minister) if minister else None
+                except Exception:
+                    char = None
+                if char is not None and hasattr(self, "_stage_appointment_candidate"):
+                    try:
+                        pid = self._stage_appointment_candidate(raw, char)
+                        result.pending_action_id = int(pid or 0)
+                    except Exception:
+                        try:
+                            payload = _json.loads(raw) if raw else {}
+                        except Exception:
+                            payload = {}
+                        if isinstance(payload, dict) and hasattr(self.db, "stage_pending_action"):
+                            pid = self.db.stage_pending_action(
+                                self.state.turn, kind="office",
+                                action=str(payload.get("action") or "任命"),
+                                minister_name=minister, target_id=None,
+                                payload=payload,
+                            )
+                            result.pending_action_id = int(pid or 0)
+        apply = getattr(GameSession, "_apply_scene_turn_translation", None)
+        if apply is not None and int(chat_turn_id or 0) > 0 and result.answer:
+            from ming_sim.audience_night import get_open_night
+            night = get_open_night(self.db) if hasattr(self.db, "conn") else None
+            if night is not None:
+                apply(
+                    self, result, message, result.answer,
+                    night_id=int(night["id"]),
+                    chat_turn_id=int(chat_turn_id),
+                )
+        return result
 
     def apply_cli_conversation_actions(self, *_args, **_kwargs):
         return {"directive": None, "secret_order_id": None, "pending_action_id": 0}
@@ -552,6 +679,17 @@ class _CliActionSession(_FakeSession):
             "pending_action_id": self._pending_action_id,
         }
 
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        # 先跑双桩回话，再 CLI apply（旧流式 _chat_stream_payload 同序）
+        result = super().scene_chat(
+            message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
+            minister_name=minister_name,
+        )
+        applied = self.apply_cli_conversation_actions(message, result.answer)
+        result.secret_order_id = int(applied.get("secret_order_id") or 0)
+        result.pending_action_id = int(applied.get("pending_action_id") or 0)
+        return result
+
 
 def _cli_web_game(db, state, content, agent, **kwargs) -> WebGame:
     bind_skills_content(content)
@@ -724,6 +862,15 @@ class _RaisingActionSession(_FakeSession):
 
     def apply_cli_conversation_actions(self, *_args, **_kwargs):
         raise RuntimeError("落地阶段失败")
+
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        result = super().scene_chat(
+            message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
+            minister_name=minister_name,
+        )
+        # 拟旨已 stage 后模拟落地失败
+        self.apply_cli_conversation_actions(message, result.answer)
+        return result
 
 
 def test_background_audience_failure_after_action_rolls_back_cleanly(game):

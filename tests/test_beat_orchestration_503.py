@@ -150,6 +150,9 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
             release_drain.wait()
         def chat(self, *_a, **_k):
             raise RuntimeError("retry llm failed")
+        def scene_chat(self, *_a, **_k):
+            # #1842：殿上重试走 scene_chat
+            raise RuntimeError("retry llm failed")
 
     rt = object.__new__(web_app.WebGame)
     rt.session = _Session()
@@ -1582,6 +1585,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
                 "pending_action_failures": [],
                 "directive_confirmation_ambiguous": None,
             }
+            self.llm_config = SimpleNamespace(channel="api")
 
         def start_chat_turn_scene(self, *_a, **_k):
             return None
@@ -1597,6 +1601,25 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
         def abandon_chat_turn_scene(self, _ctid):
             abandon_entered.set()
             release_abandon.wait()
+
+        def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+            from ming_sim.session import ChatTurnResult, GameSession
+            agent = self.registry.get(None)
+            if stream_emit is not None:
+                answer, _att = GameSession._run_scene_agent_transport(
+                    self, agent, message, stream_emit,
+                    chat_turn_id=int(chat_turn_id or 0),
+                )
+                return ChatTurnResult(answer=answer)
+            # boom agent raises
+            run = agent.run(message)
+            if hasattr(run, "__iter__") and not isinstance(run, (str, bytes)):
+                parts = []
+                for ev in run:
+                    if getattr(ev, "event", None) == "RunContent" or type(ev).__name__ == "RunContent":
+                        parts.append(str(getattr(ev, "content", "") or ""))
+                return ChatTurnResult(answer="".join(parts) or "臣遵旨。")
+            return ChatTurnResult(answer=str(getattr(run, "content", "") or "臣遵旨。"))
 
     class _DB:
         def create_chat_turn(self, *a, **k):
