@@ -1,12 +1,12 @@
 """#1376 密令确认闸验证矩阵：3 入口 × 3 语义 = 9 格。
 
 接缝（票面钉）：
-- E1=`POST /api/ministers/毕自严/chat` 正文「密令如下：…」
-- E2=`POST /api/ministers/毕自严/secret_order` 结构化载荷
-- E3=`POST .../chat` 无前缀 + 分类器 stub 结构化密令判词
+- E1=`POST /api/ministers/…/chat` 正文「密令如下：…」
+- E2=`POST /api/ministers/…/secret_order` 结构化载荷
+- E3=`POST .../chat` + `intent=secret_order`（#1842：殿上无前缀不再走 classifier）
 - S1 过月默认准 / S2 修改后准或过月 / S3 拒绝后过月不复活
 - settle=`POST /api/decree/issue/stream` 消费到终态
-- LLM 全 stub；确认/抽取/分类器只消费用例显式灌入的 typed 结果
+- LLM 全 stub；创建走密令 session.chat；确认/修改/拒绝经 `_audience_translate_fn` 双桩
 - 行定位：调用前后 order-id 集差、pending id、候选 payload→落地 payload 动态传递
 
 零写：复用 conftest 的 user-data 隔离，并将每例 HOME/DB 定向到 tmp_path。
@@ -197,6 +197,10 @@ class _ConfirmStub:
 
     #1376：修改判词携带 typed new_content 作为唯一权威正文。push 接收
     (confirmation, new_content="")；new_content 仅修改判词时填写。
+
+    #1842：殿上确认轮走 scene_chat，不再调 extract_confirmation_intent；
+    本 stub 仍保留给旧 CLI 缝 monkeypatch，确认语义由
+    `_wire_confirm_translate` 灌进 `_audience_translate_fn`。
     """
 
     def __init__(self) -> None:
@@ -204,6 +208,11 @@ class _ConfirmStub:
 
     def push(self, confirmation: str, new_content: str = "") -> None:
         self.queue.append((confirmation, new_content))
+
+    def pop(self) -> Tuple[str, str]:
+        if self.queue:
+            return self.queue.pop(0)
+        return "无", ""
 
     def __call__(
         self,
@@ -213,11 +222,44 @@ class _ConfirmStub:
         llm_config: Any = None,
     ) -> Dict[str, Any]:
         del player_message, minister_reply, pending_summaries, llm_config
-        if self.queue:
-            confirmation, new_content = self.queue.pop(0)
-        else:
-            confirmation, new_content = "无", ""
+        confirmation, new_content = self.pop()
         return {"confirmation": confirmation, "target_ids": [], "new_content": new_content}
+
+
+def _wire_confirm_translate(game, confirm: _ConfirmStub) -> None:
+    """#1842：把 ConfirmStub 队列桥到 scene_chat 离线转译。
+
+    应允/拒绝 → promises；修改 → 原地更新同一 pending 候选 content（typed
+    new_content 权威）后空声明。创建创建/抽取仍走旧 session.chat 密令缝。
+    """
+
+    def translate_fn(prompt, llm_config):
+        del prompt, llm_config
+        confirmation, new_content = confirm.pop()
+        pending = _db_pending_secret_new(game)
+        if confirmation == "修改":
+            for row in pending:
+                payload = _payload_of(row)
+                payload["content"] = new_content
+                game.db.conn.execute(
+                    "UPDATE pending_actions SET payload_json=? "
+                    "WHERE id=? AND status='pending'",
+                    (json.dumps(payload, ensure_ascii=False), int(row["id"])),
+                )
+            if pending:
+                game.db.conn.commit()
+            return {"commissions": [], "promises": []}
+        if confirmation in {"应允", "拒绝"} and pending:
+            return {
+                "commissions": [],
+                "promises": [{
+                    "action_id": int(pending[0]["id"]),
+                    "decision": confirmation,
+                }],
+            }
+        return {"commissions": [], "promises": []}
+
+    game.session._audience_translate_fn = translate_fn
 
 
 class _ExtractStub:
@@ -334,7 +376,10 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     game = web_app.web_game
     assert game is not None
 
-    game.session.registry.get = lambda _ch, **_kw: _CannedAgent()
+    agent = _CannedAgent()
+    game.session.registry.get = lambda _ch, **_kw: agent
+    game.session._scene_agent_double = agent
+    _wire_confirm_translate(game, confirm)
     cfg = game.session.llm_config
     if getattr(cfg, "channel", None) != "cli":
         try:
@@ -461,31 +506,40 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
             },
         )
     elif entry == "E3":
-        # E3：无前缀 + classifier stub 返回 secret_new 判词
-        classifier.mode = "secret_new"
+        # E3：#1842 殿上无前缀不再走 classifier；显式 intent 走密令 session.chat。
+        classifier.mode = "fail_if_called"
         resp = client.post(
             f"/api/ministers/{MINISTER}/chat",
-            json={"message": E3_MESSAGE},
+            json={"message": E3_MESSAGE, "intent": "secret_order"},
         )
     else:
         raise AssertionError(f"unknown entry {entry}")
 
     assert resp.status_code == 200, f"{entry} inject → {resp.status_code}: {resp.text}"
     _wait_pending_writes(game)
-    game.session.registry.get = lambda _ch, **_kw: _CannedAgent()
+    agent = _CannedAgent()
+    game.session.registry.get = lambda _ch, **_kw: agent
+    game.session._scene_agent_double = agent
+    _wire_confirm_translate(game, env["confirm"])
     return resp.json() or {}
 
 
 def _chat(env: dict, message: str) -> dict:
+    from ming_sim.audience_translation import join_all_translations
+
     client: TestClient = env["client"]
     game = env["game"]
-    game.session.registry.get = lambda _ch, **_kw: _CannedAgent()
+    agent = _CannedAgent()
+    game.session.registry.get = lambda _ch, **_kw: agent
+    game.session._scene_agent_double = agent
+    _wire_confirm_translate(game, env["confirm"])
     resp = client.post(
         f"/api/ministers/{MINISTER}/chat",
         json={"message": message},
     )
     assert resp.status_code == 200, f"chat {message!r} → {resp.status_code}: {resp.text}"
     _wait_pending_writes(game)
+    assert join_all_translations(timeout_s=5.0)
     return resp.json() or {}
 
 
@@ -547,7 +601,9 @@ def _settle_month(env: dict) -> dict:
     _wait_pending_writes(game)
     open_n = an.get_open_night(game.db)
     assert open_n is None or str(open_n.get("status")) == an.NIGHT_STATUS_CLOSED, open_n
-    game.session.registry.get = lambda _ch, **_kw: _CannedAgent()
+    agent = _CannedAgent()
+    game.session.registry.get = lambda _ch, **_kw: agent
+    game.session._scene_agent_double = agent
     return data if isinstance(data, dict) else {}
 
 
@@ -659,10 +715,12 @@ def test_matrix_S2_modify_then_land(matrix_env, cell, entry, via_approve):
     )
 
     if via_approve:
+        from tests.wait_utils import wait_until
+
         confirm.push("应允")
-        out = _chat(env, S2_APPROVE_MESSAGE)
-        oid = int(out.get("secret_order_id") or 0)
-        assert oid > 0, f"{cell} 准后 secret_order_id 须>0: {out!r}"
+        _chat(env, S2_APPROVE_MESSAGE)
+        # #1842：ctid>0 同步包 secret_order_id 可仍为 0；以列表可见性验收落地。
+        wait_until(lambda: bool(_order_ids(client) - ids_before))
     else:
         _settle_month(env)
 

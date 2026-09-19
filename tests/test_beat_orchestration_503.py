@@ -1777,7 +1777,9 @@ def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
             yield SimpleNamespace(event="RunContent", content="臣告退。")
             yield RunOutput()
 
-    game.session.registry.get = lambda _c, **_kw: _DismissAgent()
+    agent = _DismissAgent()
+    game.session.registry.get = lambda _c, **_kw: agent
+    game.session._scene_agent_double = agent
 
     ctid, snap = game._start_chat_turn(minister)
     night_id = int(game.db.conn.execute(
@@ -1884,7 +1886,9 @@ def test_web_stream_exit_overlaps_unfinished_reply_after_dismiss_tool(web_game):
             yield SimpleNamespace(event="RunContent", content="告退。")
             yield RunOutput()
 
-    game.session.registry.get = lambda _c, **_kw: _OverlapDismissAgent()
+    agent = _OverlapDismissAgent()
+    game.session.registry.get = lambda _c, **_kw: agent
+    game.session._scene_agent_double = agent
 
     ctid, snap = game._start_chat_turn(minister)
     night_id = int(game.db.conn.execute(

@@ -415,33 +415,65 @@ def test_undo_deletes_bound_edges_and_rejudging_after_resend_is_clean(game):
     assert _judge_status(db, ctid2) == "done"
 
 
-# ── 收夜扫尾覆盖 ─────────────────────────────────────────────────────
+# ── 收夜 × 场中转译（#1842：收夜不再跑边事件判官）─────────────────────
 
 
-def test_close_night_sweep_covers_residual_before_closed(game, monkeypatch):
-    """回话内新生事件在召对结束前完成落库（收夜扫尾只补残段）。"""
-    db, state, content = game
+def test_close_night_does_not_invoke_retired_relation_judge(game, monkeypatch):
+    """#1842 / ADR 0155：收夜退役 prepare/invoke/finalize 判官；canned 不得被调。"""
+    db, state, _ = game
     a, b = _roster_names(db, state)
     night = an.open_night(db, state)
     nid = int(night["id"])
     ctid = _make_turn(db, state, a, "卿还有何奏？", "臣附议。", night_id=nid)
-    # 抽取腿离线中和（本片不涉）：标 done 防抽取 drain 挡在扫尾之前。
     db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' WHERE id=?", (int(ctid),),
     )
     db.conn.commit()
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent",
-        lambda cfg: _CannedJudge(_event_items(a, b, "协作", f"{a}答话里当场与{b}结成协作。")),
-    )
+    calls = {"n": 0}
+
+    def _boom(_cfg):
+        calls["n"] += 1
+        raise AssertionError("close_night must not create relation_judge agent")
+
+    monkeypatch.setattr(agents_mod, "create_relation_judge_agent", _boom)
     result = an.close_night(
         db, state, night_id=nid, body="退朝。", llm_config=object(),
     )
     assert result["closed"] is True
-    final = an.get_night(db, nid)
-    assert final["status"] == an.NIGHT_STATUS_CLOSED
+    assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
+    assert calls["n"] == 0
+    assert db.get_relation_edge_events(source=a, target=b) == []
+    # 未场中转译 → 水位仍空（收夜不再代判）
+    assert _judge_status(db, ctid) == ""
+
+
+def test_on_scene_translation_edges_survive_close_night(game):
+    """场中转译落边 + 水位 done 后，收夜只关夜、不丢已落边。"""
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    db, state, _ = game
+    a, b = _roster_names(db, state)
+    night = an.open_night(db, state)
+    nid = int(night["id"])
+    ctid = _make_turn(db, state, a, "卿还有何奏？", "臣附议。", night_id=nid)
+    applied = apply_audience_round_translation(
+        db, state,
+        {"edge_events": [{
+            "source": a, "target": b, "event_kind": "协作",
+            "context": f"{a}答话里当场与{b}结成协作。",
+        }]},
+        night_id=nid, chat_turn_id=int(ctid),
+    )
+    assert len(applied.edge_events.applied) == 1
+    assert _judge_status(db, ctid) == "done"
+
+    result = an.close_night(
+        db, state, night_id=nid, body="退朝。", llm_config=object(),
+    )
+    assert result["closed"] is True
     rows = db.get_relation_edge_events(source=a, target=b)
     assert [(r["event_kind"],) for r in rows] == [("协作",)]
+    assert str(rows[0]["origin"]).startswith(summon_edge_origin(ctid))
     assert _judge_status(db, ctid) == "done"
 
 
@@ -501,17 +533,21 @@ def test_late_judgment_writes_source_turn_calendar_not_live_calendar(game):
     assert (row["year"], row["period"], row["turn"]) == (source_year, source_period, source_turn)
 
 
-def test_close_judge_result_cannot_become_player_facing_close_body(game, monkeypatch):
-    """同桶判官结果只供 finalize；无 scene 时收夜账仍走既有 fallback。"""
+def test_close_night_player_body_unaffected_by_on_scene_edges(game):
+    """场中已落边不影响玩家面收夜账正文（fallback 文案）。"""
+    from ming_sim.audience_translation import apply_audience_round_translation
+
     db, state, _ = game
     a, b = _roster_names(db, state)
     night_id = int(an.open_night(db, state)["id"])
     ctid = _make_turn(db, state, a, "退朝前", "为同僚站台", night_id=night_id)
-    db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ctid,))
-    db.conn.commit()
-    events = _event_items(a, b, "站台", "源夜当面站台")
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent", lambda _cfg: _CannedJudge(events),
+    apply_audience_round_translation(
+        db, state,
+        {"edge_events": [{
+            "source": a, "target": b, "event_kind": "站台",
+            "context": "源夜当面站台",
+        }]},
+        night_id=night_id, chat_turn_id=int(ctid),
     )
     with ThreadPoolExecutor(max_workers=2) as executor:
         registry = beats.ChatTurnSceneRegistry(executor)
@@ -528,34 +564,23 @@ def test_close_judge_result_cannot_become_player_facing_close_body(game, monkeyp
     assert "events" not in close_entry["body"] and "[" not in close_entry["body"]
 
 
-def test_close_waits_for_overlapping_judge_provider_before_closed(game, monkeypatch):
-    """判官 provider 复用 close 桶并与 scene sibling 重叠，统一 join 后才 CLOSED。"""
+def test_close_night_joins_close_scene_without_relation_judge(game):
+    """收夜只 join close scene；不再等退役判官 provider。"""
     db, state, _ = game
     a, _ = _roster_names(db, state)
     night_id = int(an.open_night(db, state)["id"])
     ctid = _make_turn(db, state, a, "问", "答", night_id=night_id)
     db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ctid,))
     db.conn.commit()
-    judge_entered = threading.Event()
     scene_entered = threading.Event()
-    release_judge = threading.Event()
+    release_scene = threading.Event()
     closing_seen = threading.Event()
-
-    class _BlockingJudge:
-        def run(self, _prompt):
-            judge_entered.set()
-            scene_entered.wait()
-            release_judge.wait()
-            return SimpleNamespace(content='{"events":[]}')
 
     def close_scene(_inputs):
         scene_entered.set()
-        judge_entered.wait()
+        release_scene.wait()
         return "诸臣退殿。"
 
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent", lambda _cfg: _BlockingJudge(),
-    )
     box = {}
     with ThreadPoolExecutor(max_workers=2) as executor:
         registry = beats.ChatTurnSceneRegistry(executor)
@@ -566,34 +591,38 @@ def test_close_waits_for_overlapping_judge_provider_before_closed(game, monkeypa
         )))
         worker.start()
         closing_seen.wait()
-        judge_entered.wait()
         scene_entered.wait()
         assert worker.is_alive()
-        release_judge.set()
+        release_scene.set()
         worker.join()
         assert not worker.is_alive()
     assert box["result"]["closed"] is True
     assert an.get_night(db, night_id)["status"] == an.NIGHT_STATUS_CLOSED
 
 
-def test_source_night_roster_survives_phase1_live_roster_change(game, monkeypatch):
+def test_source_night_translation_edges_survive_phase1_roster_change(game):
+    """场中转译边在源夜落定后，收夜 phase1 罢免端点不得抹掉已落边。"""
+    from ming_sim.audience_translation import apply_audience_round_translation
+
     db, state, content = game
     a, b = _roster_names(db, state)
     night_id = int(an.open_night(db, state)["id"])
     ctid = _make_turn(db, state, a, "任免前", "为同僚站台", night_id=night_id)
-    db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ctid,))
+    apply_audience_round_translation(
+        db, state,
+        {"edge_events": [{
+            "source": a, "target": b, "event_kind": "站台",
+            "context": "源夜在场",
+        }]},
+        night_id=night_id, chat_turn_id=int(ctid),
+    )
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="罢免", minister_name=b,
         payload={"name": b},
     )
     db.mark_pending_night_approved([pending_id], night_id=night_id)
     db.conn.commit()
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent",
-        lambda _cfg: _CannedJudge({"events": [{
-            "源轮": ctid, "施动者": a, "受动者": b, "类目": "站台", "语境": "源夜在场",
-        }]}),
-    )
+
     class _NoEndorsements:
         def run(self, _materials):
             return '{"endorsements":[]}'
@@ -604,8 +633,6 @@ def test_source_night_roster_survives_phase1_live_roster_change(game, monkeypatc
                 "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
             ).fetchone()
             assert row["status"] == "committed"
-            # Model the same-night office verdict taking the endpoint off the live
-            # roster after close_night has captured its source-night eligibility.
             db.set_character_status(state, b, "dismissed", reason="奉旨罢黜")
             content.characters[b].status = "dismissed"
             content.characters[b].office = ""

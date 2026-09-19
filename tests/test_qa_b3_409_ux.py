@@ -142,6 +142,10 @@ class _PhaseSession:
     def current_phase(self):
         return TurnPhase(self.state.turn_phase)
 
+    def await_translations_before_month(self):
+        # #1842：过月入口在 auto_close 前闸外 join 转译；桩无在飞 Future。
+        return None
+
     def submit_hitl_choices(self, *_a, write_gate=None, **_k):
         self._submit_called = True
         raise AssertionError("wrong-phase must not reach submit_hitl_choices")

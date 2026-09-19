@@ -9,9 +9,11 @@ live agent session.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
-import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence
@@ -40,6 +42,18 @@ def _safe_segment(name: object) -> str:
     return _UNSAFE.sub("_", text)[:80]
 
 
+def _materials_campaign_dir(db: Any) -> Path:
+    """每档 DB 一份材料树根，避免同父目录多 .db 互踩。
+
+    测试 `mkstemp` 与生产 `saves/*.db` 都把多档放在同一 parent；若材料只按
+    night-/turn- 键挂在 parent/materials/ 下，并行 prepare 会抢同一 scene.tmp
+    （Errno 2/17/66）。按 db stem 再隔一层后，各档原子重建互不影响。
+    """
+    db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
+    stem = _safe_segment(db_path.stem if db_path.suffix else db_path.name)
+    return db_path.parent / "materials" / stem
+
+
 def _write_text(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # #1812 P6：raw body 是材料自由正文，不得 rstrip——只补齐末尾换行，不削内容。
@@ -65,10 +79,11 @@ def _resolve_inside(root: Path, rel: str) -> Path:
 def character_materials_root(db: Any, state: Any, character: Any) -> Path:
     from ming_sim.audience_night import get_open_night
 
-    parent = Path(str(getattr(db, "path", "") or ".")).resolve().parent
     night = get_open_night(db)
     key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
-    return parent / "materials" / key / _safe_segment(getattr(character, "name", ""))
+    return (
+        _materials_campaign_dir(db) / key / _safe_segment(getattr(character, "name", ""))
+    )
 
 
 def list_materials(root: Path, path: str = "") -> List[str]:
@@ -597,11 +612,12 @@ def _write_public_by_month(tmp: Path, public_events: list) -> list[str]:
 def _rebuild_tree_atomically(dest: Path, write_tree: Callable[[Path], List[str]]) -> List[str]:
     """一个局部原子目录重建接缝：建 tmp、写树成功才整体替换 dest；写入失败清
     tmp、异常原样上抛，绝不留半成品目录——人物目录与世界目录共用同一份实现
-    （#1812/#1830/#1834，大理寺 Low：删除两处重复的 tmp 建/替/清逻辑）。"""
+    （#1812/#1830/#1834，大理寺 Low：删除两处重复的 tmp 建/替/清逻辑）。
+
+    tmp 名带 pid+ns，避免同 dest 并发 prepare 抢固定 `.tmp` 名。
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.parent / (dest.name + ".tmp")
-    if tmp.exists():
-        shutil.rmtree(tmp)
+    tmp = dest.parent / f"{dest.name}.tmp.{os.getpid()}.{time.time_ns()}"
     tmp.mkdir(parents=True)
     try:
         index = write_tree(tmp)
@@ -659,10 +675,9 @@ def prepare_character_materials(
 def world_materials_root(db: Any, state: Any) -> Path:
     from ming_sim.audience_night import get_open_night
 
-    parent = Path(str(getattr(db, "path", "") or ".")).resolve().parent
     night = get_open_night(db)
     key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
-    return parent / "materials" / key / "世界推演"
+    return _materials_campaign_dir(db) / key / "世界推演"
 
 
 def _world_board_text(db: Any, state: Any) -> str:
@@ -857,10 +872,9 @@ def scene_materials_root(db: Any, state: Any) -> Path:
     """#1836：整场场景 LLM 的材料目录根（一夜一份，不按单人拆）。"""
     from ming_sim.audience_night import get_open_night
 
-    parent = Path(str(getattr(db, "path", "") or ".")).resolve().parent
     night = get_open_night(db)
     key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
-    return parent / "materials" / key / "scene"
+    return _materials_campaign_dir(db) / key / "scene"
 
 
 def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:

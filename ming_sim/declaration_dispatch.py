@@ -62,6 +62,7 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
+    _assignment_absolute_end_turn,
     require_materializable_xiexang_payload,
 )
 from ming_sim.applier import (
@@ -660,6 +661,56 @@ def _commission_grant_payload(
     return payload
 
 
+def _attach_commission_staging_fields(
+    payload: Dict[str, Any], item: Mapping[str, object], *, turn: int,
+) -> None:
+    """透传既有 staging 字段：assignee / participant_roster / due_turn。
+
+    字段可在交办顶层，或挂在 grant 对象内（与 stage_grant_allocation_candidate
+    kwargs 同口径）。期限单源＝due_turn；deadline_months / end_turn 仅作换算输入。
+    """
+    grant = item.get("grant") if isinstance(item.get("grant"), Mapping) else {}
+    lead = str(
+        item.get("assignee")
+        or item.get("assignee_id")
+        or item.get("assignee_name")
+        or (grant.get("assignee") if grant else "")
+        or (grant.get("assignee_id") if grant else "")
+        or ""
+    ).strip()
+    if lead:
+        payload["assignee"] = lead
+    roster = item.get("participant_roster")
+    if not isinstance(roster, list) and grant:
+        roster = grant.get("participant_roster")
+    if isinstance(roster, list) and roster:
+        payload["participant_roster"] = list(roster)
+    elif lead and not isinstance(payload.get("participant_roster"), list):
+        payload["participant_roster"] = [{
+            "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
+        }]
+    due_src = item if item.get("due_turn") not in (None, "", 0) else grant
+    end_src = item if item.get("end_turn") not in (None, "", 0) else grant
+    months_src = (
+        item if item.get("deadline_months") not in (None, "", 0) else grant
+    )
+    absolute_due = _assignment_absolute_end_turn(
+        int(turn),
+        end_turn=(due_src or item).get("due_turn") or (end_src or item).get("end_turn") or 0,
+        deadline_months=(months_src or item).get("deadline_months") or 0,
+    )
+    # due_turn 已是绝对回合时 _assignment_absolute_end_turn 原样返回。
+    if absolute_due <= int(turn):
+        try:
+            raw_due = int((due_src or item).get("due_turn") or 0)
+        except (TypeError, ValueError):
+            raw_due = 0
+        if raw_due > int(turn):
+            absolute_due = raw_due
+    if absolute_due > int(turn):
+        payload["due_turn"] = absolute_due
+
+
 def _attach_commission_affair(
     db: Any, state: Any, item: Mapping[str, object], payload: Dict[str, Any],
     *, rejected: List[RejectedItem], source: Provenance,
@@ -753,6 +804,12 @@ def _dispatch_commissions(
                 continue
             payload.update(appointment_fields)
 
+        # #1783/#1778：承办人、名单、期限为既有 staging 字段（stage_grant 同款），
+        # 非 #1815 新形；声明给出则透传到 directive payload，代码不猜当前大臣。
+        _attach_commission_staging_fields(
+            payload, item, turn=int(state.turn),
+        )
+
         if not _attach_commission_affair(
             db, state, item, payload, rejected=rejected, source=source,
         ):
@@ -830,7 +887,8 @@ def _dispatch_promises(
         # 另一夜，声明也不得应允/拒绝它——同样按「不存在实体」拒收（不静默
         # 误批，也不当真拒收物理删除他夜暂存）。
         row = db.conn.execute(
-            "SELECT night_id FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
+            "SELECT night_id, kind, action FROM pending_actions "
+            "WHERE id=? AND turn=? AND status='pending'",
             (action_id, int(state.turn)),
         ).fetchone()
         if row is None or int(row["night_id"] or 0) != int(night_id):
@@ -839,11 +897,42 @@ def _dispatch_promises(
                 "missing_ref", source,
             )
             continue
+        kind = str(row["kind"] or "")
+        action = str(row["action"] or "")
+        applied_row: Dict[str, Any] = {
+            "action_id": action_id, "decision": decision, "kind": kind, "action": action,
+        }
         if decision == "应允":
-            db.mark_pending_night_approved([action_id], night_id=night_id or None)
+            # ADR 0038：密令应允即落地（夜内直写白名单）；任免/拟旨/后宫只标
+            # night_approved，收夜才提交。与旧 session.chat 确认缝同口径。
+            if kind == "secret_order":
+                from ming_sim.applier import (
+                    RejectionCollector, mirror_rejections_after_commit,
+                )
+                from ming_sim.error_pack import rejections_jsonl_path
+                _rc = RejectionCollector()
+                committed = db.commit_pending_actions(
+                    state, action_ids=[action_id], rejection_collector=_rc,
+                )
+                mirror_rejections_after_commit(db, _rc, rejections_jsonl_path)
+                for c in committed or []:
+                    if (
+                        c.get("kind") == "secret_order"
+                        and str(c.get("action") or "") == "新建"
+                    ):
+                        oid = c.get("secret_order_id") or c.get("target_id")
+                        try:
+                            oid_i = int(oid or 0)
+                        except (TypeError, ValueError):
+                            oid_i = 0
+                        if oid_i > 0:
+                            applied_row["secret_order_id"] = oid_i
+                            break
+            else:
+                db.mark_pending_night_approved([action_id], night_id=night_id or None)
         else:
             db.withdraw_pending_action(action_id, int(state.turn))
-        applied.append({"action_id": action_id, "decision": decision})
+        applied.append(applied_row)
     return SectionResult(applied=applied, rejected=rejected)
 
 

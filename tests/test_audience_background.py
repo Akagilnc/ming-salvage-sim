@@ -83,10 +83,12 @@ class _FakeSession(HallAdmissionSessionMixin):
         self.temporary_characters = set()
         self.llm_config = SimpleNamespace(
             channel="api", base_url="", model="test", api_key="",
-            timeout_seconds=30.0,
+            timeout_seconds=30.0, default_headers=None,
         )
-        # 离线空转译，禁 sk-test 真网
+        # 离线空转译，禁 sk-test 真网（测例可覆盖）
         self._audience_translate_fn = lambda p, c: {"commissions": [], "promises": []}
+        # 高亮离线：禁 FakeSession llm_config 半字段触发真 create_chat_model
+        self._write_gate = None
         # 绑生产 scene_chat 及依赖方法（不平行实现 tool 暂存）
         import types as _types
         for _name in (
@@ -174,6 +176,7 @@ def _web_game(db, state, content, agent: _FakeAgent) -> WebGame:
     bind_skills_content(content)
     game = WebGame.__new__(WebGame)
     game.session = _FakeSession(db, state, content, agent)
+    game.session._write_gate = None  # 与 queue gate 分家；转译可无闸
     game.chat_history = {name: [] for name in content.characters}
     game.suggestions_for = lambda _character: []
     # The production lifecycle waits on this condition before closing its
@@ -185,6 +188,9 @@ def _web_game(db, state, content, agent: _FakeAgent) -> WebGame:
     game._runtime_write_queue = lambda: game._write_queue  # type: ignore
     game._mark_pending_write = lambda key=None: game._write_queue.claim(key=key or ("pending",))  # type: ignore
     game._complete_pending_write = lambda ticket=None: game._write_queue.complete(ticket)  # type: ignore
+    # 高亮/尾随离线——禁 FakeSession 半配置触发真 LLM
+    game._trail_highlight_judge_after_reply = lambda *a, **k: []  # type: ignore
+    game._spawn_pending_write_thread = lambda *a, **k: None  # type: ignore
     return game
 
 
@@ -595,52 +601,57 @@ def test_background_audience_pending_action_persists_after_observer_departure(ga
     _wait_for_pending_writes_to_drain(web_game)
 
 
-def test_background_audience_recommendation_stages_candidate_snapshot(game, monkeypatch):
-    """真实 CLI Agent 流式荐人进入 web pending，envelope 不泄漏给玩家。"""
-    from agno.agent import Agent
+def test_background_audience_recommendation_stages_candidate_snapshot(game):
+    """#1842：殿上荐人经转译交办任免进 pending；不经旧 tool envelope、不触真网。
 
-    from ming_sim.models import CourtContext
-    from ming_sim.tools import build_minister_tools
-
+    行为：chat_stream 真实入口 → 转译声明 appointment → external pending office。
+    不断言 #1815 尚未裁定的 recommendation 嵌套字段形状。
+    """
     db, state, content = game
     minister_name = "毕自严"
     candidate = db.list_recommendation_candidates(state, minister_name)[0]
-    model = cb.CliChat(id="test-stream-recommendation", backend="codex")
-    calls = iter((
-        [
-            "臣荐",
-            candidate["name"],
-            "。[[recomm",
-            "end_person:"
-            + json.dumps({
-                "name": candidate["name"],
-                "target_office": "巡盐御史",
-                "reason": "可堪任事",
-            }, ensure_ascii=False)
-            + "]]",
-        ],
-        ["臣荐此人巡盐，请陛下裁夺。"],
-    ))
-    monkeypatch.setattr(cb, "_iter_cli_runner_text", lambda *_args, **_kwargs: iter(next(calls)))
-    agent = Agent(
-        name=minister_name,
-        model=model,
-        tools=build_minister_tools(
-            content.characters[minister_name], CourtContext(state=state, db=db),
-        ),
-        markdown=False,
-    )
+    cand_name = str(candidate["name"])
+    office = "巡盐御史"
+    reply = f"臣荐{cand_name}可任{office}，请陛下裁夺。"
+    agent = _FakeAgent(chunks=[reply])
+
+    def translate_fn(prompt, llm_config):
+        # 既有 commissions.appointment 形状（declaration_dispatch 已有）；不发明 #1815 字段。
+        del prompt, llm_config
+        return {
+            "commissions": [{
+                "text": reply,
+                "appointment": {
+                    "name": cand_name,
+                    "office": office,
+                    "appoint_action": "任命",
+                },
+            }],
+            "promises": [],
+        }
+
     web_game = _web_game(db, state, content, agent)
+    web_game.session._audience_translate_fn = translate_fn
 
     events = list(web_game.chat_stream(minister_name, "可荐何人巡盐？"))
 
-    player_text = "".join(event.get("content", "") for event in events if event["type"] == "delta")
+    player_text = "".join(
+        event.get("content", "") for event in events if event.get("type") == "delta"
+    )
+    # 旧 tool envelope 不得泄漏到玩家可见流
     assert "[[recommend_person:" not in player_text
-    assert len(db.list_pending_actions(state.turn)) == 1
-    staged = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
-    assert staged["recommendation"]["recommender"] == minister_name
-    assert staged["recommendation"]["candidate"]["name"] == candidate["name"]
-    assert staged["office"] == "巡盐御史"
+    assert "__pending_recommendation__" not in player_text
+    assert "done" in [e.get("type") for e in events], events
+
+    # 转译后台串行：等 pending 出现（真实入口 → 外部账）
+    wait_until(lambda: len(db.list_pending_actions(state.turn)) >= 1)
+    pending = db.list_pending_actions(state.turn)
+    office_rows = [p for p in pending if p["kind"] == "office"]
+    assert len(office_rows) >= 1, pending
+    staged = json.loads(office_rows[0]["payload_json"])
+    assert staged.get("name") == cand_name
+    assert staged.get("office") == office
+    _wait_for_pending_writes_to_drain(web_game)
 
 
 def test_llm_failure_does_not_leave_half_chat_in_history(game):

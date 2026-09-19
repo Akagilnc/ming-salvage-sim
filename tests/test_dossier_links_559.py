@@ -395,7 +395,9 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
     runtime._trail_extraction_after_reply = lambda *_args, **_kwargs: None
     runtime._trail_mindreading_after_reply = lambda *_args, **_kwargs: None
 
-    events = list(runtime.chat_stream(minister, "下密令护行辽饷。"))
+    # #1842：殿上默认 scene_chat；本测咬密令 tool→pending→commit 链，须走正式密令入口
+    # （_SECRET_PREFIXES / intent），禁殿上 scene、不复活旧 tool envelope 到 scene 路。
+    events = list(runtime.chat_stream(minister, "密令：护行辽饷。", "secret_order"))
     assert not [event for event in events if event["type"] == "error"], events
     done = next(event for event in events if event["type"] == "done")
     pending_id = done["payload"]["pending_action_id"]

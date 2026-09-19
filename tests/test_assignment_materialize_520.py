@@ -27,7 +27,12 @@ from ming_sim.action_clusters import (
     candidates_from_classifier_payload,
     cluster_by_kind,
 )
-from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+from ming_sim.action_materialize import (
+    DecreeMaterializationValidationError,
+    MaterializeCtx,
+    run_materialize_pipeline,
+    stage_assignment_candidate,
+)
 from ming_sim.decree import reload_state_from_db
 from ming_sim.session import GameSession
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
@@ -546,57 +551,52 @@ def test_assignment_body_keeps_current_turn_short_line_against_prior_substring(g
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch):
-    """#1565 B：缺锚恢复全链 typed 证据（WebGame.chat 真实入口，不旁路 materialize）。
+    """#1565 B：缺锚 typed 拒收 → 补正 target_id 后 stage → 收夜成案 → initiative。
 
-    chat 缺锚 → validation 失败零 pending → 同会话补正 target_id 重拟 →
-    close_night 成案 → 盖玺 initiative。正文不锁散文。
+    C0 殿上转译无 assignment 声明分支（禁 invent #1815）；本测走既有
+    ``stage_assignment_candidate`` 授权缝，不经 classifier-via-WebGame.chat。
+    正文不锁散文。
     """
     import ming_sim.audience_night as an
 
     db, state, content = game
     actor = _active_ming(db, content)
-    monkeypatch.setattr(cb, "extract_draft_intent",
-                        lambda *a, **k: _extract_lead_result(actor.name))
+    _silence_serial(monkeypatch, lead=actor.name)
     player = (
         "户部亏空日甚，太仓入不敷出。卿可据实奏对，并拟一道旨："
         "清核太仓出纳、暂缓非急工役、优发边饷要紧处，限半月回报。"
     )
-    reply = "臣遵旨分办。请陛下定夺准驳。"
     before_initiatives = len(_active_initiatives(db))
-    phase = {"n": 0}
 
-    def fake_classify(*_a, **_k):
-        phase["n"] += 1
-        if phase["n"] == 1:
-            return candidates_from_classifier_payload({
-                "kind": "assignment", "title": "", "target_id": "",
-                "commitment_kind": "无",
-            }, soft=False)
-        return candidates_from_classifier_payload({
-            "kind": "assignment", "title": "", "target_id": "清核太仓",
-            "commitment_kind": "无",
-        }, soft=False)
-
-    # validation recovery 报告走 compose；禁活 backend
-    monkeypatch.setattr(
-        cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下明示交办题名后重拟。", 1),
-    )
-    _silence_serial(monkeypatch, lead=actor.name)
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-    wg = _wire_web_game(db, state, content, _SyncAgent(reply), monkeypatch)
-
-    # ① 缺锚：WebGame.chat → 零 pending，validation 留因
-    out1 = wg.chat(actor.name, player)
-    assert not out1.get("pending_action_id")
-    failure = out1.get("decree_validation_failure") or {}
-    assert "title" in set(failure.get("failed_fields") or [])
-    assert failure.get("report")
+    # ① 缺锚：stage 响亮 DecreeMaterializationValidationError，零 pending
+    with pytest.raises(DecreeMaterializationValidationError) as excinfo:
+        stage_assignment_candidate(
+            db, state.turn, actor.name,
+            text=player, title="", target_id="",
+            commitment_kind="无",
+        )
+    assert "title" in set(excinfo.value.failed_fields or ())
     assert not _assignment_pendings(db, state.turn, minister_name=actor.name)
 
-    # ② 补正/重拟：同会话再 chat，结构化 target_id 锚 → 合法 pending
-    out2 = wg.chat(actor.name, player)
-    pending_id = int(out2.get("pending_action_id") or 0)
+    # ② 空转译 chat 开夜并产源轮 → 补正 target_id 后 stage（C0 无 assignment commission）
+    wg = _wire_web_game(
+        db, state, content, _SyncAgent("臣遵旨分办。请陛下定夺准驳。"),
+        monkeypatch,
+        translate_fn=lambda *_a, **_k: {"commissions": [], "promises": []},
+    )
+    from ming_sim.audience_translation import join_all_translations
+    wg.chat(actor.name, player)
+    assert join_all_translations(timeout_s=5.0)
+    night = an.get_open_night(db)
+    assert night is not None
+    chat_turn_id = _latest_chat_turn_id(db, actor.name)
+    pending_id = stage_assignment_candidate(
+        db, state.turn, actor.name,
+        text=player, title="", target_id="清核太仓",
+        assignee=actor.name,
+        commitment_kind="无",
+        source_chat_turn_id=chat_turn_id,
+    )
     assert pending_id > 0
     pending = json.loads(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?",
@@ -604,12 +604,9 @@ def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch)
     ).fetchone()["payload_json"])
     assert pending.get("title") == "清核太仓"
     assert str(pending.get("text") or "").strip()
-    chat_turn_id = int(pending.get("source_chat_turn_id") or 0)
-    assert chat_turn_id > 0
+    assert int(pending.get("source_chat_turn_id") or 0) == chat_turn_id
 
     # ③ 收夜成案 → 盖玺 → initiative
-    night = an.get_open_night(db)
-    assert night is not None
     _close_night_approved_directives(db, state, content, int(night["id"]), [pending_id])
     dossier = next(
         d for d in db.list_decree_dossiers()
@@ -714,15 +711,17 @@ def test_assignment_rejected_verdict_creates_no_initiative(game):
 def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch):
     """无验收承诺的普通交办可落；stop_condition 空、无 until_stop marker。
 
-    #1565 验收2：HTTP 真入口链
-    chat 召对 → chat 应允 → issue/stream（close_night+颁布+过月）
+    #1565 验收2：HTTP chat 产源轮 → 既有 ``stage_assignment_candidate`` 暂存
+    → 转译 promises「准」应允 → issue/stream（close_night+颁布+过月）
     → GET /api/game/state 读 issues；typed 回指
     source_chat_turn_id / pending_id / directive_id / dossier_id / origin。
-    分类/应允 stub 只证明下游传递，不证明真实 LLM 题名/正文语义。
+
+    C0 无 assignment commission（禁 invent #1815）；分类器对 scene_chat 无效。
     禁 mark_pending_night_approved / apply_dossier_verdicts 直调、禁 issue_payloads 冒充 GET。
     """
+    from ming_sim.audience_translation import join_all_translations
+
     client = tracer_client
-    # tracer 已 stub 外层 LLM；canned_full_settlement 钉颁布/推演同形接缝（票面要求复用）
     canned_full_settlement(monkeypatch)
 
     new = client.post("/api/menu/new_game")
@@ -737,32 +736,39 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
     before_issue_ids = {int(i["id"]) for i in (state0.get("issues") or [])}
     before_initiatives = len(_active_initiatives(db))
     turn_before = _turn_of(state0)
-
-    def fake_classify(*_a, **_k):
-        return candidates_from_classifier_payload({
-            "kind": "assignment",
-            "title": "核钱粮",
-            "target_id": "he-qianliang",
-            "assignee": minister,
-            "commitment_kind": "无",
-        }, soft=False)
+    assign_text = "这核钱粮的事你办。"
 
     _silence_serial(monkeypatch, lead=minister)
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-    monkeypatch.setattr(
-        cb, "extract_confirmation_intent",
-        lambda *_a, **_k: {"confirmation": "应允", "target_ids": [], "new_content": ""},
+    agent = _SyncAgent("臣请奉行：核钱粮。请陛下定夺准驳。")
+    game.session.registry.get = lambda _ch, **_kw: agent
+    game.session._scene_agent_double = agent
+
+    # 空转译：仅建 chat_turn；assignment 走授权 stage 缝
+    game.session._audience_translate_fn = (
+        lambda *_a, **_k: {"commissions": [], "promises": []}
     )
 
-    # ① HTTP chat 召对持久完成（产 chat_turn / pending）
+    # ① HTTP chat 产源轮
     chat = client.post(
         f"/api/ministers/{minister}/chat",
-        json={"message": "这核钱粮的事你办。"},
+        json={"message": assign_text},
     )
     assert chat.status_code == 200, chat.text
-    pending_id = int((chat.json() or {}).get("pending_action_id") or 0)
-    assert pending_id > 0
+    assert join_all_translations(timeout_s=5.0)
     _wait_pending_writes(game)
+    chat_turn_id = _latest_chat_turn_id(db, minister)
+    assert chat_turn_id > 0
+
+    pending_id = stage_assignment_candidate(
+        db, state.turn, minister,
+        text=assign_text,
+        title="核钱粮",
+        target_id="he-qianliang",
+        assignee=minister,
+        commitment_kind="无",
+        source_chat_turn_id=chat_turn_id,
+    )
+    assert pending_id > 0
 
     pending_row = db.conn.execute(
         "SELECT payload_json, night_approved, status FROM pending_actions WHERE id=?",
@@ -771,21 +777,27 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
     pending = json.loads(pending_row["payload_json"])
     assert pending.get("title") == "核钱粮"
     assert str(pending.get("text") or "").strip()
-    chat_turn_id = int(pending.get("source_chat_turn_id") or 0)
-    assert chat_turn_id > 0
+    assert int(pending.get("source_chat_turn_id") or 0) == chat_turn_id
     assert pending.get("commitment_kind") in (None, "", "无")
     assert not pending.get("stop_condition")
-    ct = db.conn.execute(
-        "SELECT id, status FROM chat_turns WHERE id=?", (chat_turn_id,),
-    ).fetchone()
-    assert ct is not None
 
-    # ② chat 应允 → 生产 mark_actions_night_approved（禁测试直调 mark_pending_night_approved）
+    # ② chat 应允：转译 promises → 生产 mark night_approved
+    def _approve_translate(prompt, _cfg):
+        text = str(prompt or "")
+        if "【本轮皇帝】准" in text or "准。" in text:
+            return {
+                "commissions": [],
+                "promises": [{"action_id": int(pending_id), "decision": "应允"}],
+            }
+        return {"commissions": [], "promises": []}
+
+    game.session._audience_translate_fn = _approve_translate
     approve = client.post(
         f"/api/ministers/{minister}/chat",
         json={"message": "准。"},
     )
     assert approve.status_code == 200, approve.text
+    assert join_all_translations(timeout_s=5.0)
     _wait_pending_writes(game)
     approved_row = db.conn.execute(
         "SELECT night_approved, status FROM pending_actions WHERE id=?", (pending_id,),
@@ -793,7 +805,7 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
     assert int(approved_row["night_approved"] or 0) == 1
     assert approved_row["status"] == "pending"
 
-    # ③ issue/stream：真实收夜 close_night + 0055 颁布 + 过月（禁 apply_dossier_verdicts 直调）
+    # ③ issue/stream：真实收夜 close_night + 0055 颁布 + 过月
     _post_issue_stream(
         client, expected_turn=turn_before, step="#1565 验收2 issue/stream",
     )
@@ -823,7 +835,7 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
     assert row["stage_text"] == d_payload.get("text")
     assert row["commitment_kind"] in ("", None)
 
-    # ④ 真 HTTP GET /api/game/state 读 issues（禁 issue_payloads 旁路）
+    # ④ 真 HTTP GET /api/game/state 读 issues
     state1 = _get_state(client)
     api_issues = state1.get("issues") or []
     api_ids = {int(i["id"]) for i in api_issues}
@@ -847,11 +859,15 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
 
 
 def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch):
-    """#1565 验收1：基线 → HTTP chat 纯问事 → 退朝退出 → GET /api/game/state 零新增
-    + 同链离殿交办正对照（chat 应允 → issue/stream 颁布过月 → GET 读回）。
+    """#1565 验收1：基线 → HTTP chat 纯问事（空转译）→ 退朝 → GET 零新增
+    + 正对照：chat 产源轮 → ``stage_assignment_candidate`` → promises 应允
+    → issue/stream 颁布过月 → GET 读回。
 
-    分类/应允 stub 不证明真实 LLM 语义；禁手工应允/直接判决物化/issue_payloads 冒充 GET。
+    C0 无 assignment commission；空转译默认不产机械事项。禁 invent #1815、
+    禁手工应允/直接判决物化/issue_payloads 冒充 GET。
     """
+    from ming_sim.audience_translation import join_all_translations
+
     client = tracer_client
     canned_full_settlement(monkeypatch)
 
@@ -873,19 +889,6 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
     q_reply = "臣以为当先清核太仓出纳，再议缓急。"
     a_reply = "臣请奉行：核钱粮。请陛下定夺准驳。"
 
-    def fake_classify(message, *_a, **_k):
-        text = str(message or "")
-        # 退朝/准 口令与纯问事：零候选；仅交办句产出 assignment
-        if assign_msg in text:
-            return candidates_from_classifier_payload({
-                "kind": "assignment",
-                "title": "核钱粮",
-                "target_id": "he-qianliang",
-                "assignee": minister,
-                "commitment_kind": "无",
-            }, soft=False)
-        return []
-
     class _PhaseAgent:
         def run(self, prompt, *_a, **_k):
             blob = str(prompt or "")
@@ -893,29 +896,31 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
             return SimpleNamespace(content=text, tools=[])
 
     _silence_serial(monkeypatch, lead=minister)
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-    monkeypatch.setattr(
-        cb, "extract_confirmation_intent",
-        lambda *_a, **_k: {"confirmation": "应允", "target_ids": [], "new_content": ""},
+    agent = _PhaseAgent()
+    game.session.registry.get = lambda _ch, **_kw: agent
+    game.session._scene_agent_double = agent
+    game.session._audience_translate_fn = (
+        lambda *_a, **_k: {"commissions": [], "promises": []}
     )
-    game.session.registry.get = lambda _ch, **_kw: _PhaseAgent()
 
-    # ① 纯问事：HTTP chat 真实入口
+    # ① 纯问事：HTTP chat + 空转译 → 零 pending
     out = client.post(
         f"/api/ministers/{minister}/chat",
         json={"message": q_msg},
     )
     assert out.status_code == 200, out.text
+    assert join_all_translations(timeout_s=5.0)
     assert not (out.json() or {}).get("pending_action_id")
     assert len(db.list_pending_actions(state.turn)) == before_pending
     _wait_pending_writes(game)
 
-    # ② 退朝退出（court_break → 生产 close_night）；不手工 mark/close
+    # ② 退朝退出（court_break → 生产 close_night）
     brk = client.post(
         f"/api/ministers/{minister}/chat",
         json={"message": "退朝"},
     )
     assert brk.status_code == 200, brk.text
+    assert join_all_translations(timeout_s=5.0)
     _wait_pending_writes(game)
 
     # ③ GET /api/game/state 零新增机械事项
@@ -925,22 +930,43 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
     assert len(db.list_decree_dossiers()) == before_dossiers
     assert len(_active_initiatives(db)) == before_initiatives
 
-    # ④ 正对照：同链离殿交办 → chat 应允 → issue/stream 颁布过月 → GET 新增
+    # ④ 正对照：源轮 + stage_assignment_candidate → promises 应允 → issue/stream
     turn_before = _turn_of(_get_state(client))
     assign = client.post(
         f"/api/ministers/{minister}/chat",
         json={"message": assign_msg},
     )
     assert assign.status_code == 200, assign.text
-    pid = int((assign.json() or {}).get("pending_action_id") or 0)
-    assert pid > 0, assign.text
+    assert join_all_translations(timeout_s=5.0)
     _wait_pending_writes(game)
+    chat_turn_id = _latest_chat_turn_id(db, minister)
+    pid = stage_assignment_candidate(
+        db, state.turn, minister,
+        text=assign_msg,
+        title="核钱粮",
+        target_id="he-qianliang",
+        assignee=minister,
+        commitment_kind="无",
+        source_chat_turn_id=chat_turn_id,
+    )
+    assert pid > 0
 
+    def _approve_translate(prompt, _cfg):
+        text = str(prompt or "")
+        if "【本轮皇帝】准" in text or "准。" in text:
+            return {
+                "commissions": [],
+                "promises": [{"action_id": int(pid), "decision": "应允"}],
+            }
+        return {"commissions": [], "promises": []}
+
+    game.session._audience_translate_fn = _approve_translate
     approve = client.post(
         f"/api/ministers/{minister}/chat",
         json={"message": "准。"},
     )
     assert approve.status_code == 200, approve.text
+    assert join_all_translations(timeout_s=5.0)
     _wait_pending_writes(game)
     approved = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (pid,),
@@ -962,7 +988,6 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
         r["origin_ref"] == f"dossier:{dossier['id']}"
         for r in _active_initiatives(db)
     )
-    # 过月 + 恢复读回
     assert _turn_of(state_after) == turn_before + 1
     reload_state_from_db(db, state, content=content)
     restored = _get_state(client)
@@ -1398,7 +1423,8 @@ def test_beat10_accept_three_lands_three_independent_initiatives(game, monkeypat
 # ── 0038 跨轮强化撤回前像 ────────────────────────────────────────────
 
 
-def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
+def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None) -> WebGame:
+    """对齐 #515：真 GameSession.scene_chat / 转译路径 + base_url；禁猜造 assignment 声明分支。"""
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
@@ -1407,14 +1433,25 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
         get=lambda character, **_kw: agent,
         session_ids={},
     )
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
+    sess.llm_config = SimpleNamespace(
+        channel="cli", cli_runner="codex", base_url="", model="test", api_key="",
+    )
     sess.temporary_characters = set()
     sess.previous_summary = ""
     sess.last_decree = ""
     sess.agno_db = None
+    sess._beat_generator = None
+    from tests.conftest import _OfflineSceneRegistry
+    sess._scene_registry = _OfflineSceneRegistry()
+    sess._write_gate = threading.Lock()
     sess._retrieve_memories_for_message = lambda message: message
+    sess._audience_translate_fn = translate_fn
+    sess._scene_agent_double = agent
     for name in (
-        "chat", "_start_cli_action_intent", "_finish_cli_action_intent",
+        "chat", "scene_chat", "_apply_scene_turn_translation",
+        "start_chat_turn_scene", "join_chat_turn_scene",
+        "persist_chat_turn_scene", "abandon_chat_turn_scene",
+        "_start_cli_action_intent", "_finish_cli_action_intent",
         "_confirmation_intent_for_preexisting_pending",
         "_cli_backend_fallback_actions", "apply_cli_conversation_actions",
         "_character", "pending_count", "note_chat_rollback",
@@ -1422,12 +1459,38 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
         "_stage_appointment_candidate",
         "_merge_staged_new_secret_order_content",
         "admit_audience", "consume_audience_admission", "can_summon",
+        "_recognize_audience_command_verdict",
+        "close_night_after_chat_if_needed",
     ):
         if hasattr(GameSession, name):
             setattr(sess, name, types.MethodType(getattr(GameSession, name), sess))
     sess.refresh_runtime_after_chat_rollback = lambda: None
     sess.note_chat_rollback = lambda **kw: None
+    sess._cli_backend_fallback_actions = lambda *a, **k: None
+    sess.apply_cli_conversation_actions = lambda *a, **k: {
+        "directive": None, "secret_order_id": None, "pending_action_id": 0,
+    }
+
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
+
+    class _SceneShim:
+        def run(self, *_a, **_k):
+            out = agent.run() if hasattr(agent, "run") else SimpleNamespace(
+                content=getattr(agent, "content", ""), tools=[],
+            )
+            return out
+
+    monkeypatch.setattr(session_mod, "create_scene_agent", lambda *a, **k: _SceneShim())
+    import ming_sim.materials as materials_mod
+    monkeypatch.setattr(
+        materials_mod, "prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="", materials_dir="."),
+    )
+    monkeypatch.setattr(
+        session_mod, "prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="", materials_dir="."),
+        raising=False,
+    )
 
     wg = WebGame.__new__(WebGame)
     wg.session = sess
@@ -1437,12 +1500,16 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
     wg._write_queue = SessionWriteQueue()
     wg._write_gate = wg._write_queue.write_gate
     wg._runtime_write_queue = lambda: wg._write_queue  # type: ignore
+    wg._runtime_write_gate = lambda: wg._write_gate  # type: ignore
+    wg._ticketed_write_gate = lambda ticket=None: wg._write_gate  # type: ignore
     wg._mark_pending_write = lambda key=None: wg._write_queue.claim(key=key or ("pending",))  # type: ignore
     wg._complete_pending_write = lambda ticket=None: wg._write_queue.complete(ticket)  # type: ignore
     wg.favorites = set()
     wg.suggestions_for = lambda _c: []
     wg._spawn_pending_write_thread = lambda *a, **k: None
     wg._trail_mindreading_after_reply = lambda *a, **k: None
+    wg._trail_highlight_judge_after_reply = lambda *a, **k: []
+    wg._dispatch_relation_judge = lambda *a, **k: None
 
     # 生产 trail 同步跑：canned 空 facts → extract_status=done（禁 SQL 旁路清待补）
     from ming_sim.audience_extraction import trail_extraction_after_reply
@@ -1474,60 +1541,106 @@ class _SyncAgent:
         return SimpleNamespace(content=self.content, tools=self.tools)
 
 
+def _latest_chat_turn_id(db, minister_name: str) -> int:
+    row = db.conn.execute(
+        "SELECT id FROM chat_turns WHERE minister_name=? ORDER BY id DESC LIMIT 1",
+        (minister_name,),
+    ).fetchone()
+    assert row is not None
+    return int(row["id"])
+
+
+def _stage_assignment_under_chat_turn(
+    db, turn, minister_name, *, chat_turn_id, text, title="", target_id="",
+    assignee="", target_candidate=None, commitment_kind="无",
+) -> int:
+    """在源轮下 stage assignment 并自记撤回前像（对齐 dispatch_declaration）。
+
+    C0 无 assignment commission；本 helper 不发明声明分支，只把既有
+    ``stage_assignment_candidate`` 写入绑到 chat_turn rollback 账。
+    """
+    before = db.capture_chat_rollback_snapshot()
+    pid = stage_assignment_candidate(
+        db, int(turn), minister_name,
+        text=text,
+        title=title,
+        target_id=target_id,
+        assignee=assignee,
+        target_candidate=target_candidate,
+        commitment_kind=commitment_kind,
+        source_chat_turn_id=int(chat_turn_id),
+    )
+    db.record_chat_turn_rollback_diffs(
+        int(chat_turn_id), before, db.capture_chat_rollback_snapshot(),
+    )
+    return int(pid)
+
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_cross_round_assignment_update_undo_restores_before_image(game, monkeypatch):
-    """跨轮强化更新既有候选后，撤回本轮恢复前像（ADR 0038）。"""
+    """跨轮强化更新既有候选后，撤回本轮恢复前像（ADR 0038）。
+
+    Web 召对 C0 无 assignment 声明分支；本测覆盖 ``stage_assignment_candidate``
+    + WebGame.undo_last_chat 前像缝（禁 invent commission.assignment / #1815）。
+    """
+    from ming_sim.audience_translation import join_all_translations
+
     db, state, content = game
     minister = _active_ming(db, content)
     _silence_serial(monkeypatch, lead=minister.name)
 
     original_title = "核钱粮"
     updated_title = "核钱粮（加紧催办）"
-    phase = {"n": 0}
-    staged_id = {"id": 0}
-
-    def fake_classify(*_a, **_k):
-        phase["n"] += 1
-        if phase["n"] == 1:
-            return candidates_from_classifier_payload({
-                "kind": "assignment",
-                "title": original_title,
-                "target_id": "he-qianliang",
-                "assignee": minister.name,
-                "commitment_kind": "无",
-            }, soft=False)
-        return candidates_from_classifier_payload({
-            "kind": "assignment",
-            "title": updated_title,
-            "target_id": "he-qianliang",
-            "assignee": minister.name,
-            "commitment_kind": "无",
-            "target_candidate": str(staged_id["id"]),
-        }, soft=False)
-
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    empty_translate = lambda *_a, **_k: {"commissions": [], "promises": []}
     wg = _wire_web_game(
         db, state, content, _SyncAgent("臣请办核钱粮。"), monkeypatch,
+        translate_fn=empty_translate,
     )
 
+    # ① 第一轮：空转译产源轮 → 授权缝 stage 原题名
     wg.chat(minister.name, "核钱粮的事你办。")
+    assert join_all_translations(timeout_s=5.0)
+    ctid1 = _latest_chat_turn_id(db, minister.name)
+    staged_id = _stage_assignment_under_chat_turn(
+        db, state.turn, minister.name,
+        chat_turn_id=ctid1,
+        text="核钱粮的事你办。",
+        title=original_title,
+        target_id="he-qianliang",
+        assignee=minister.name,
+    )
     rows = _assignment_pendings(db, state.turn, minister_name=minister.name)
     assert len(rows) == 1
-    staged_id["id"] = rows[0][0]
+    assert rows[0][0] == staged_id
     original_payload = dict(rows[0][1])
 
+    # ② 第二轮：target_candidate 原地更新题名（仍走授权 stage 缝）
     wg.chat(minister.name, "这核钱粮你加紧办。")
+    assert join_all_translations(timeout_s=5.0)
+    ctid2 = _latest_chat_turn_id(db, minister.name)
+    assert ctid2 != ctid1
+    updated = _stage_assignment_under_chat_turn(
+        db, state.turn, minister.name,
+        chat_turn_id=ctid2,
+        text="这核钱粮你加紧办。",
+        title=updated_title,
+        target_id="he-qianliang",
+        assignee=minister.name,
+        target_candidate=str(staged_id),
+    )
+    assert updated == staged_id
     mid = json.loads(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?",
-        (staged_id["id"],),
+        (staged_id,),
     ).fetchone()["payload_json"])
     assert "加紧" in str(mid.get("title") or mid.get("text") or "")
 
+    # ③ 撤回第二轮 → 第一轮前像
     assert wg.can_undo_last_chat(minister.name)
     wg.undo_last_chat(minister.name)
     restored = json.loads(db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?",
-        (staged_id["id"],),
+        (staged_id,),
     ).fetchone()["payload_json"])
     assert restored.get("title") == original_payload.get("title")
     assert "加紧" not in str(restored.get("title") or "")

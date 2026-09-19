@@ -110,20 +110,52 @@ def _wait_spawns(spawns: list, start: int) -> None:
         assert c.close_ok is True
 
 
-def _install_canned_minister_factory(monkeypatch) -> None:
-    """外层模型工厂缝：create_minister_agent → canned；保留真实 registry/session。"""
-    import ming_sim.registry as reg
+def _canned_scene_agent():
+    """scene_chat 双桩体：非流式 run() 回 content；stream=True 时返回事件迭代器。"""
 
     class _A:
         def run(self, *_a, **_k):
             t = "canned-minister-reply"
-            yield SimpleNamespace(content=t, event="RunContent", tool=None, tools=[])
-            yield SimpleNamespace(
+            completed = SimpleNamespace(
                 content=t, event="RunCompleted", tool=None, tools=[],
                 status=None, messages=[],
             )
+            # 流式 transport 调 agent.run(..., stream=True) 并迭代返回值。
+            # 不可在本方法里用 yield（否则非流式也变成 generator）。
+            if _k.get("stream"):
+                return iter((
+                    SimpleNamespace(
+                        content=t, event="RunContent", tool=None, tools=[],
+                    ),
+                    completed,
+                ))
+            return completed
 
-    monkeypatch.setattr(reg, "create_minister_agent", lambda *a, **k: _A())
+    return _A()
+
+
+def _install_canned_minister_factory(monkeypatch) -> None:
+    """外层模型工厂缝：create_minister_agent → canned（密令/旧 registry 路兜底）。"""
+    import ming_sim.registry as reg
+
+    monkeypatch.setattr(reg, "create_minister_agent", lambda *a, **k: _canned_scene_agent())
+
+
+def _empty_translate_fn(_prompt, _cfg):
+    """离线转译缝：空声明，禁打真模型。"""
+    return {
+        "commissions": [],
+        "promises": [],
+        "edge_events": [],
+        "secret_orders": [],
+        "appointment_commissions": [],
+    }
+
+
+def _install_canned_scene_double(game) -> None:
+    """#1842：殿上 stream 走 scene_chat，只认显式 _scene_agent_double（禁嗅探）。"""
+    game.session._scene_agent_double = _canned_scene_agent()
+    game.session._audience_translate_fn = _empty_translate_fn
 
 
 def _directive(client: TestClient, text: str) -> None:
@@ -183,6 +215,7 @@ def _assert_chat_persisted(snap: dict, *, chat_turn_id: int, night_id: int,
 
 def _write_and_verify_live(client: TestClient, game, *, label: str) -> dict:
     """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/回话终态。"""
+    _install_canned_scene_double(game)
     d_text = f"着户部清核辽饷（{label}）。"
     _directive(client, d_text)
     _wait_pending_writes(game)

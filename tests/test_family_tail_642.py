@@ -122,38 +122,49 @@ def test_coda_acceptance_mechanical_only_skips_live_llm(monkeypatch):
 
 
 def test_yang_typed_failure_blocks_semantic_wash(monkeypatch):
-    """语义判官 pass 不得洗白 typed 张力序列失败（aggregate 必红）。"""
-    import ming_sim.agents as agents_mod
+    """语义判官 pass 不得洗白 typed 张力序列失败（aggregate 必红）。
+
+    #1842：边事件经 scene_chat 转译声明落账；禁复活收夜 relation judge。
+    """
+    from types import SimpleNamespace
+
     import scripts.family_tail_relation_acceptance_642 as gate
 
     content = _bind_content()
     cfg = _gate_cfg()
-    judge_calls = {"n": 0}
-    chat_calls = {"n": 0}
-
-    def _fake_chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        del message, chat_turn_id
-        chat_calls["n"] += 1
-        return ChatTurnResult(answer=f"臣{minister_name}领旨。")
-
-    monkeypatch.setattr(GameSession, "chat", _fake_chat)
+    translate_calls = {"n": 0}
+    scene_calls = {"n": 0}
 
     # 三拍全写协作——缺第一拍张力，typed 必败。
-    _COOP_ONLY = {"events": [
-        {"施动者": "杨嗣昌", "受动者": "倪元璐", "类目": "协作",
-         "语境": "杨嗣昌与倪元璐协作。"},
-        {"施动者": "杨嗣昌", "受动者": "黄道周", "类目": "协作",
-         "语境": "杨嗣昌与黄道周协作。"},
-    ]}
+    _COOP_ONLY_EDGES = [
+        {"source": "杨嗣昌", "target": "倪元璐", "event_kind": "协作",
+         "context": "杨嗣昌与倪元璐协作。"},
+        {"source": "杨嗣昌", "target": "黄道周", "event_kind": "协作",
+         "context": "杨嗣昌与黄道周协作。"},
+    ]
 
-    class _CoopJudge:
-        def run(self, prompt):
-            del prompt
-            judge_calls["n"] += 1
-            from types import SimpleNamespace
-            return SimpleNamespace(content=json.dumps(_COOP_ONLY, ensure_ascii=False))
+    class _SceneDouble:
+        def run(self, *_a, **_k):
+            scene_calls["n"] += 1
+            return SimpleNamespace(content="臣杨嗣昌领旨。", tools=[])
 
-    monkeypatch.setattr(agents_mod, "create_relation_judge_agent", lambda _cfg: _CoopJudge())
+    def _coop_only_translate(_prompt, _cfg):
+        translate_calls["n"] += 1
+        return {
+            "commissions": [],
+            "promises": [],
+            "edge_events": list(_COOP_ONLY_EDGES),
+        }
+
+    real_fresh = gate._fresh_session
+
+    def _fresh(content_arg, cfg_arg):
+        sess = real_fresh(content_arg, cfg_arg)
+        sess._scene_agent_double = _SceneDouble()
+        sess._audience_translate_fn = _coop_only_translate
+        return sess
+
+    monkeypatch.setattr(gate, "_fresh_session", _fresh)
 
     def _fake_runner(_cfg, _agno):
         def _create(state, db, *, settled_turn, settled_year, settled_period):
@@ -184,23 +195,25 @@ def test_yang_typed_failure_blocks_semantic_wash(monkeypatch):
     assert result["checks"]["structural_ok"] is False, result["structural"]
     assert result["checks"]["typed_semantic_consistent"] is False
     assert result["structural"]["beat1_yang_ni_huang_tension"] is False
-    assert judge_calls["n"] == 3
-    assert chat_calls["n"] == 3
+    assert translate_calls["n"] == 3
+    assert scene_calls["n"] == 3
 
 
 def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
-    """锚②最短生产缝：召对→close_night 判官 Future→按月 settle/brew；禁 gate642 自证写边。
+    """锚②最短生产缝：scene_chat→转译边→收夜 join→settle/brew；禁 gate642 自证写边。
 
-    canned 只替 LLM 体；attach/persist/close_night/settle 走真实入口。
+    canned 只替场景 LLM + 转译声明；attach/persist/close_night/settle 走真实入口。
     typed 断言水位/origin/edge/摘要年月递进；不锁自由文本、不另造 executor。
+    #1842：不 stub create_relation_judge_agent，不复活旧判官 Future。
     """
-    import ming_sim.agents as agents_mod
+    from types import SimpleNamespace
+
     import scripts.family_tail_relation_acceptance_642 as gate
 
     content = _bind_content()
     cfg = _gate_cfg()
-    judge_calls = {"n": 0}
-    chat_calls = {"n": 0}
+    translate_calls = {"n": 0}
+    scene_calls = {"n": 0}
     brew_calls = {"n": 0}
     direct_write_origins: list[str] = []
 
@@ -214,66 +227,68 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
 
     monkeypatch.setattr(GameDB, "record_relation_edge_event", _spy_record)
 
-    def _fake_chat(self, minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
-        # 三拍答问只驱动真实召对入口；边事件由 canned 判官按拍递进，不锁答词。
-        chat_calls["n"] += 1
-        n = chat_calls["n"]
-        if n <= 1:
-            answer = (
-                f"臣{minister_name}领旨。臣与倪元璐、黄道周清丈路线相左，"
-                f"钱粮权宜与刚直硬顶当面掣肘，细缝已现。"
-            )
-        elif n == 2:
-            answer = (
-                f"臣{minister_name}领旨。与倪元璐、黄道周一刚一柔分工协作，"
-                f"细缝在而事可办；户部接应钱粮，臣任之。"
-            )
-        else:
-            answer = (
-                f"臣{minister_name}领旨。与倪黄互看册证、分歧并呈，"
-                f"旧隙不必抹平，事要办成。"
-            )
-        return ChatTurnResult(answer=answer)
-
-    monkeypatch.setattr(GameSession, "chat", _fake_chat)
-
-    # 张力→配合→演进：三拍 canned 判官经 close_night Future 真实写边，不直写。
-    _BEAT_EVENTS = (
-        {"events": [
-            {"施动者": "杨嗣昌", "受动者": "倪元璐", "类目": "使绊",
-             "语境": "杨嗣昌与倪元璐清丈路线相左当面掣肘。"},
-            {"施动者": "杨嗣昌", "受动者": "黄道周", "类目": "使绊",
-             "语境": "杨嗣昌与黄道周清丈路线相左当面掣肘。"},
-        ]},
-        {"events": [
-            {"施动者": "杨嗣昌", "受动者": "倪元璐", "类目": "协作",
-             "语境": "杨嗣昌与倪元璐当面一刚一柔分工协作。"},
-            {"施动者": "杨嗣昌", "受动者": "黄道周", "类目": "协作",
-             "语境": "杨嗣昌与黄道周当面一刚一柔分工协作。"},
-        ]},
-        {"events": [
-            {"施动者": "杨嗣昌", "受动者": "倪元璐", "类目": "协作",
-             "语境": "杨嗣昌与倪元璐推进互看册证、分歧并呈御前。"},
-            {"施动者": "杨嗣昌", "受动者": "黄道周", "类目": "协作",
-             "语境": "杨嗣昌与黄道周推进互看册证、分歧并呈御前。"},
-        ]},
+    # 张力→配合→演进：三拍 canned 转译经 scene_chat 后台路径真实写边，不直写。
+    _BEAT_EDGE_EVENTS = (
+        [
+            {"source": "杨嗣昌", "target": "倪元璐", "event_kind": "使绊",
+             "context": "杨嗣昌与倪元璐清丈路线相左当面掣肘。"},
+            {"source": "杨嗣昌", "target": "黄道周", "event_kind": "使绊",
+             "context": "杨嗣昌与黄道周清丈路线相左当面掣肘。"},
+        ],
+        [
+            {"source": "杨嗣昌", "target": "倪元璐", "event_kind": "协作",
+             "context": "杨嗣昌与倪元璐当面一刚一柔分工协作。"},
+            {"source": "杨嗣昌", "target": "黄道周", "event_kind": "协作",
+             "context": "杨嗣昌与黄道周当面一刚一柔分工协作。"},
+        ],
+        [
+            {"source": "杨嗣昌", "target": "倪元璐", "event_kind": "协作",
+             "context": "杨嗣昌与倪元璐推进互看册证、分歧并呈御前。"},
+            {"source": "杨嗣昌", "target": "黄道周", "event_kind": "协作",
+             "context": "杨嗣昌与黄道周推进互看册证、分歧并呈御前。"},
+        ],
     )
 
-    class _BeatJudge:
-        def run(self, prompt):
-            del prompt
-            idx = judge_calls["n"]
-            judge_calls["n"] += 1
-            payload = _BEAT_EVENTS[min(idx, len(_BEAT_EVENTS) - 1)]
-            from types import SimpleNamespace
-            return SimpleNamespace(
-                content=json.dumps(payload, ensure_ascii=False),
-            )
+    class _SceneDouble:
+        def run(self, *_a, **_k):
+            scene_calls["n"] += 1
+            n = scene_calls["n"]
+            if n <= 1:
+                answer = (
+                    "臣杨嗣昌领旨。臣与倪元璐、黄道周清丈路线相左，"
+                    "钱粮权宜与刚直硬顶当面掣肘，细缝已现。"
+                )
+            elif n == 2:
+                answer = (
+                    "臣杨嗣昌领旨。与倪元璐、黄道周一刚一柔分工协作，"
+                    "细缝在而事可办；户部接应钱粮，臣任之。"
+                )
+            else:
+                answer = (
+                    "臣杨嗣昌领旨。与倪黄互看册证、分歧并呈，"
+                    "旧隙不必抹平，事要办成。"
+                )
+            return SimpleNamespace(content=answer, tools=[])
 
-    def _fake_agent(_cfg):
-        return _BeatJudge()
+    def _beat_translate(_prompt, _cfg):
+        idx = translate_calls["n"]
+        translate_calls["n"] += 1
+        edges = _BEAT_EDGE_EVENTS[min(idx, len(_BEAT_EDGE_EVENTS) - 1)]
+        return {
+            "commissions": [],
+            "promises": [],
+            "edge_events": [dict(e) for e in edges],
+        }
 
-    monkeypatch.setattr(agents_mod, "create_relation_judge_agent", _fake_agent)
+    real_fresh = gate._fresh_session
+
+    def _fresh(content_arg, cfg_arg):
+        sess = real_fresh(content_arg, cfg_arg)
+        sess._scene_agent_double = _SceneDouble()
+        sess._audience_translate_fn = _beat_translate
+        return sess
+
+    monkeypatch.setattr(gate, "_fresh_session", _fresh)
 
     def _fake_runner(_cfg, _agno):
         def _create(state, db, *, settled_turn, settled_year, settled_period):
@@ -304,7 +319,8 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
     assert result["checks"]["structural_ok"] is True, structural
     assert result["checks"]["semantic_pass"] is True
     assert result["checks"]["typed_semantic_consistent"] is True
-    assert judge_calls["n"] == 3
+    assert translate_calls["n"] == 3
+    assert scene_calls["n"] == 3
     assert len(result["settles"]) == 3
     assert brew_calls["n"] >= 1
     assert result["summon_edge_ids"], result

@@ -1,12 +1,11 @@
 """#1783 真入口 tracer：一卷宗原句 → 一件事一案（钱+期限同案）。
 
-后出为准替代 #1777 三候选并列形态：分类器按几件事拆，
-「着户部尚书…拨银十五万两…十日内奏报…卿即拟旨呈览」是一道旨，
-只出一个恩赏·拨帑候选，期限（十日＜一月→下一回合）挂同一案。
+#1842：殿上 scene_chat 转译双桩产出 grant commission（含 #1778 承办/
+#1783 期限既有 staging 字段）→ pending；「准」→ promises 应允。
 收夜后 economy_ledger 恰一条 −15、decree_dossiers 恰一份 grant_allocation，
 无以召对记录为正文的平行交办案卷。stub 仅 LLM 边界。
 
-#1778 并存：承办人来自分类器/后置名单（郭允厚），不是当前召对大臣；
+#1778 并存：承办人来自声明名单（郭允厚），不是当前召对大臣；
 本票不回写配人。
 """
 
@@ -17,27 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ming_sim.action_clusters import candidates_from_classifier_payload
 from tests.test_army_pay_decree_1503 import _set_guanning_arrears
-
-# #1783：同一事单候选——钱+下一回合期限挂本案（不再并列拟旨/拨帑/交办）。
-# #1778：姓名＝承办人郭允厚（非当前召对大臣）。
-_L13_ONE_MATTER = [
-    {
-        "动作类型": "恩赏·拨帑", "确认": "无", "新内容": "", "目标编号": "",
-        "密令动作": "无", "目标密令编号": 0, "新标题": "", "期限月数": 0,
-        "调教技能": "", "调教性格": "", "目标": "army.guanning",
-        "颁布方式": "ordinary", "标题": "", "事务类别": "钱粮",
-        "承诺类型": "无", "停止条件": "", "截止回合": 0,  # materialize 按 turn+1 覆写前由桩填
-        "持续效果": "十日内奏报实发数目，不得加派于民", "分段里程碑": "",
-        "目标候选": "", "恩赏拨帑": "协饷", "姓名": "郭允厚", "目标类型": "army",
-        "金额": 15, "账户": "国库", "用途": "补饷", "拨付节奏": "一次性",
-        "执行面": "immediate", "权项": "无", "惩处动作": "无",
-        "站台案卷": None, "事项标识": None, "事项处置": "无",
-        "驻地": "", "驻地省": "", "官职": "", "授权编号": 0,
-        "责任机关": "户部", "任免动作": "无", "任命后传召": "否", "任别": "真除",
-    },
-]
 
 _EDICT = "着户部自国库拨银十五万两，专解关宁军前补发欠饷，不得加派于民。钦此。"
 _UTTERANCE = (
@@ -55,7 +34,6 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
     """
     from fastapi.testclient import TestClient
 
-    import ming_sim.cli_backend as cb
     import web_app
     from tests.test_month_loop_tracer_1468 import (
         _get_state,
@@ -79,52 +57,16 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         def get_last_run_output(self):
             return None
 
-    def fake_classify(text, *a, **k):
-        if str(text or "").strip() == "准":
-            return []
-        # positional: active_orders, is_consort, has_pending_draft, summaries,
-        # llm_config, recent_context, current_turn, backing…
-        turn = int(k.get("current_turn") or 0)
-        if not turn and len(a) >= 7:
-            try:
-                turn = int(a[6] or 0)
-            except (TypeError, ValueError):
-                turn = 0
-        if not turn:
-            turn = int(game.state.turn)
-        raw = dict(_L13_ONE_MATTER[0])
-        # 日级不足一月 → 下一回合（与说明书同口径）
-        raw["截止回合"] = turn + 1
-        scripted = candidates_from_classifier_payload([raw], soft=False)
-        assert len(scripted) == 1, scripted
-        # #1778 并存：承办人挂本案（显式 assignee/名单，不由代码填当前大臣）
-        c = dict(scripted[0])
-        c["assignee"] = "郭允厚"
-        c["participant_roster"] = [{
-            "character_id": "郭允厚", "tier": "主办",
-            "role": "户部尚书承办", "delegator_id": None,
-        }]
-        return [c]
-
-    def fake_confirm(player_message, *_a, **_k):
-        if str(player_message or "").strip() == "准":
-            return "应允"
-        return "无"
-
-    def fake_directive_confirmation(_msg, _reply, candidates, **_k):
-        return {"decision": "应允", "target_ids": [int(c["id"]) for c in candidates]}
-
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     _stub_outer_llm_seams(monkeypatch)
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-    monkeypatch.setattr(cb, "extract_confirmation_intent", fake_confirm)
-    monkeypatch.setattr(cb, "extract_directive_confirmation", fake_directive_confirmation)
 
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     try:
+        from ming_sim.audience_translation import join_all_translations
+
         # 召对大臣刻意避开抽取所得承办人，钉「名单≠当前说话大臣」。
         name = next(
             getattr(ch, "name", key)
@@ -134,7 +76,9 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
             and getattr(ch, "name", key) != "郭允厚"
         )
-        game.session.registry.get = lambda _ch, **_kw: _HubuAgent()
+        agent = _HubuAgent()
+        game.session.registry.get = lambda _ch, **_kw: agent
+        game.session._scene_agent_double = agent
         if getattr(game.session, "llm_config", None) is not None:
             try:
                 game.session.llm_config.channel = "cli"
@@ -147,12 +91,51 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         treasury_before = int(game.state.metrics["国库"])
         turn_before = int(game.state.turn)
 
+        # #1842：殿上 scene_chat 双桩——交办 grant+承办/期限 → pending；「准」→ promises。
+        def _translate(prompt, _cfg):
+            text = str(prompt or "")
+            if "【本轮皇帝】准" in text:
+                rows = [
+                    r for r in game.db.list_pending_actions(game.state.turn)
+                    if r.get("kind") == "directive" and r.get("status") == "pending"
+                ]
+                if not rows:
+                    return {"commissions": [], "promises": []}
+                return {
+                    "commissions": [],
+                    "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],
+                }
+            return {
+                "commissions": [{
+                    "text": _UTTERANCE,
+                    "grant": {
+                        "grant_action": "协饷",
+                        "amount": 15,
+                        "account": "国库",
+                        "purpose": "补饷",
+                        "target_kind": "army",
+                        "target_id": "guanning",
+                    },
+                    # #1778/#1783 既有 staging 字段（非 #1815）
+                    "assignee": "郭允厚",
+                    "participant_roster": [{
+                        "character_id": "郭允厚", "tier": "主办",
+                        "role": "户部尚书承办", "delegator_id": None,
+                    }],
+                    "due_turn": turn_before + 1,
+                }],
+                "promises": [],
+            }
+
+        game.session._audience_translate_fn = _translate
+
         client = TestClient(web_app.app)
         petition = client.post(
             f"/api/ministers/{name}/chat",
             json={"message": _UTTERANCE},
         )
         assert petition.status_code == 200, petition.text
+        assert join_all_translations(timeout_s=5.0)
         wait_pending_writes(game)
         assert int(game.state.metrics["国库"]) == treasury_before
 
@@ -176,6 +159,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
         confirm = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
         assert confirm.status_code == 200, confirm.text
+        assert join_all_translations(timeout_s=5.0)
         wait_pending_writes(game)
 
         body = _post_issue_stream(

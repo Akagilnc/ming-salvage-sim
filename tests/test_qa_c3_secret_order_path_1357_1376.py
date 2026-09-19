@@ -46,6 +46,13 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
     runtime.chat_history = {name: [] for name in content.characters}
+    def _scene_chat_compat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        """生产 scene_chat 签名 → 本壳既有 stub chat(minister, message)；禁 TypeError 探测。"""
+        del stream_emit
+        return session_chat(
+            minister_name, message, chat_turn_id=chat_turn_id,
+        )
+
     runtime.session = SimpleNamespace(
         db=db,
         state=state,
@@ -53,10 +60,13 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
         temporary_characters=set(),
         registry=SimpleNamespace(),
         chat=session_chat,
+        # #1842/#1812：生产殿上入口改走 scene_chat；壳须同挂并兼容旧 stub 签名。
+        scene_chat=_scene_chat_compat,
         join_chat_turn_scene=lambda *_a, **_k: [],
         persist_chat_turn_scene=lambda *_a, **_k: None,
         abandon_chat_turn_scene=lambda *_a, **_k: None,
         close_night_after_chat_if_needed=lambda *_a, **_k: None,
+        await_translations_before_month=lambda: None,
         _character=lambda name: content.characters[name],
         pending_count=lambda: 0,
     )
@@ -284,19 +294,20 @@ def test_pending_secret_order_count_reflects_staged_candidate(game):
 def test_confirm_secret_order_http_returns_id_and_list_visible(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """#1376：召对确认密令后 secret_order_id 非 0，且立刻 GET /api/secret_orders 可见。
+    """#1376/#1842：殿上确认密令经 scene_chat 转译 promises 应允即落地。
 
-    真实 HTTP（ASGI TestClient）：POST /api/ministers/{name}/chat → 立刻
-    GET /api/secret_orders。stub 大臣 agent.run / 尾随 LLM / 确认判词边界；生产
-    session.chat→确认→commit→HTTP 序列化全链保留。确认句「准」经结构化 LLM
-    枚举 stub 返回应允（ADR 0028：禁自由散文词表快路）；内容在 pending payload
-    定文，落行不需内容抽取 LLM。
+    真实 HTTP：先开夜再 stage（night_id 对齐），确认句「准」走 scene_chat；
+    显式 `_audience_translate_fn` 灌 promises 应允（禁旧 extract_confirmation
+    / 词表快路）。ctid>0 后台转译——join 后 GET /api/secret_orders 可见；
+    同步包 secret_order_id 可仍为 0（#1842 前台不等）。
     """
     from fastapi.testclient import TestClient
 
     import ming_sim.agents as agents_mod
-    import ming_sim.cli_backend as cli_backend
     import ming_sim.mindreading as mindreading_mod
+    from ming_sim import audience_night as an
+    from ming_sim.audience_translation import join_all_translations
+    from tests.wait_utils import wait_until
 
     class _CannedRun:
         content = "臣即密办。"
@@ -321,7 +332,7 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    # 回话后尾随 LLM 边界离线中和（禁 sk-test 打真网）；被测缝 session.chat 不 stub。
+    # 回话后尾随 LLM 边界离线中和（禁 sk-test 打真网）；被测缝 scene_chat 不 stub。
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent", lambda *a, **k: _CannedExtractor())
     monkeypatch.setattr(
@@ -333,20 +344,18 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
         lambda *a, **k: _CannedMindreading(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    # 确认判读只许结构化 LLM 枚举：stub 抽取器返回应允（禁生产词表快路）
-    monkeypatch.setattr(
-        cli_backend,
-        "_run_json_extractor_for_config",
-        lambda *a, **k: (__import__("json").dumps({"确认": "应允"}, ensure_ascii=False), 1),
-    )
 
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     try:
         name = _active_minister_name(game.db, game.content)
-        # 唯一 fake 面：大臣回话 agent（LLM 边界）；确认/落库走生产。
-        game.session.registry.get = lambda _ch, **_kw: _CannedAgent()
+        # 唯一 fake 面：大臣回话 agent + 转译双桩；落库走生产 promises→commit。
+        agent = _CannedAgent()
+        game.session.registry.get = lambda _ch, **_kw: agent
+        game.session._scene_agent_double = agent
 
+        # stage 须挂本夜 night_id，否则 promises 按 missing_ref 拒收。
+        an.ensure_open_night_for_audience(game.db, game.state)
         pending_id = game.db.stage_pending_action(
             game.state.turn,
             kind="secret_order",
@@ -365,24 +374,34 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
         assert pending_id > 0
         assert game.db.list_secret_orders() == []
 
+        def _approve_translate(prompt, llm_config):
+            del prompt, llm_config
+            return {
+                "commissions": [],
+                "promises": [{"action_id": int(pending_id), "decision": "应允"}],
+            }
+
+        game.session._audience_translate_fn = _approve_translate
+
         client = TestClient(web_app.app)
         chat_resp = client.post(
             f"/api/ministers/{name}/chat",
             json={"message": "准"},
         )
         assert chat_resp.status_code == 200, chat_resp.text
-        chat_result = chat_resp.json()
-        oid = int(chat_result.get("secret_order_id") or 0)
-        assert oid > 0, (
-            f"#1376 确认后 secret_order_id 须非 0，got {chat_result!r}"
-        )
+        assert join_all_translations(timeout_s=5.0)
+        wait_until(lambda: len(game.db.list_secret_orders()) > 0)
+
+        orders = game.db.list_secret_orders()
+        oid = int(orders[0]["id"])
+        assert oid > 0, f"#1376 确认后须落地密令 id，got {orders!r}"
 
         listing_resp = client.get("/api/secret_orders")
         assert listing_resp.status_code == 200, listing_resp.text
         listing = listing_resp.json()
         ids = {int(o["id"]) for o in (listing.get("orders") or [])}
         assert oid in ids, (
-            f"#1376 确认返回后 GET /api/secret_orders 须立刻可见 id={oid}，got {listing!r}"
+            f"#1376 join 后 GET /api/secret_orders 须可见 id={oid}，got {listing!r}"
         )
         # 应允即落地：暂存不再挂 pending
         assert game.db.list_pending_actions(game.state.turn) == []

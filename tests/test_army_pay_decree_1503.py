@@ -1686,7 +1686,13 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
 def test_http_chat_stream_exposes_typed_decree_validation_recovery(
     tmp_path, monkeypatch, _offline_scene_beat_generator, validation_case,
 ):
-    """真实召对 SSE 以 typed failure 告知玩家恢复可用；生成正文不作机械断言。"""
+    """#1842：殿上坏拨帑经转译拒收当事实；不经旧 classifier / sync recovery SSE。
+
+    incomplete → commissions invalid_enum（缺 amount/account/target_id）；
+    region* → 幻影军 target：协饷 canonicalize 抛 DecreeMaterializationValidationError
+    → 分派归 invalid_enum（非 KeyError/hallucinated_id）；
+    existing_draft 案：既有 pending 不变。ctid>0 后台转译，等 rejection_reports。
+    """
     from fastapi.testclient import TestClient
 
     import ming_sim.cli_backend as cb
@@ -1695,6 +1701,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
     from tests.test_menu_continue_stream_1195 import _parse_sse
     from tests.test_month_loop_tracer_1468 import _stub_outer_llm_seams
     from tests.test_session_write_queue_1353 import wait_pending_writes
+    from tests.wait_utils import wait_until
 
     class _AudienceAgent:
         def run(self, *_args, **_kwargs):
@@ -1703,7 +1710,6 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         def get_last_run_output(self):
             return None
 
-    backend_tags = set()
     # cli_backend resolves its default trace path at import time; isolate the
     # real composer path explicitly so this tracer leaves no repository probe.
     monkeypatch.setattr(cb, "_TRACE_PATH", str(tmp_path / "cli_trace.jsonl"))
@@ -1711,40 +1717,6 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     _stub_outer_llm_seams(monkeypatch)
-    def backend(_prompt, _config=None, *, tag=""):
-        backend_tags.add(tag)
-        if tag == "action_intent":
-            if validation_case == "incomplete_xiexang":
-                candidate = {
-                    "kind": "grant_allocation", "grant_action": "协饷",
-                    "amount": 0, "account": "", "purpose": "补饷",
-                    "target_kind": "army", "target_id": "",
-                }
-            elif validation_case == "region_mismatch":
-                candidate = {"kind": "draft"}
-            else:
-                candidate = {"kind": "none"}
-            return json.dumps(candidate, ensure_ascii=False), 1
-        if tag == "draft_intent":
-            # Distinct provinces: 京师/@beizhili is alias-same after #1729 canonicalize.
-            return json.dumps({
-                "拟旨意图": "拟旨",
-                "动作类型": "policy",
-                "目标类型": "region",
-                "目标ID": "京师",
-                "地区ID": "陕西",
-                "施行范围": "single",
-                "事务类别": "",
-                "承办人": "",
-                "参与人": [],
-                "期限月数": None,
-                "目标案卷ID": None,
-            }, ensure_ascii=False), 1
-        if tag == "decree_validation_recovery":
-            return "任意生成回禀", 1
-        return "任意生成回禀", 1
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", backend)
 
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
@@ -1755,7 +1727,9 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             if getattr(ch, "power_id", "ming") == "ming"
             and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
         )
-        game.session.registry.get = lambda _character, **_kw: _AudienceAgent()
+        agent = _AudienceAgent()
+        game.session.registry.get = lambda _character, **_kw: agent
+        game.session._scene_agent_double = agent
         if game.session.llm_config is not None:
             game.session.llm_config.channel = "cli"
         if validation_case == "existing_draft_region_mismatch":
@@ -1766,11 +1740,36 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             })
         pending_before = [row["id"] for row in game.db.list_pending_actions(game.state.turn)]
         dossiers_before = [row["id"] for row in game.db.list_decree_dossiers()]
-        message = (
-            "拟旨如下：整饬京师"
-            if validation_case == "incomplete_xiexang"
-            else "请拟旨整饬京师"
-        )
+
+        if validation_case == "incomplete_xiexang":
+            commission = {
+                "text": "拟旨如下：整饬京师",
+                "grant": {
+                    "grant_action": "协饷",
+                    "amount": 0, "account": "", "purpose": "补饷",
+                    "target_kind": "army", "target_id": "",
+                },
+            }
+            expected_category = "invalid_enum"
+            message = "拟旨如下：整饬京师"
+        else:
+            # 旧 draft region_id/target_id 组合形已退役；幻影军走协饷权威缝 → invalid_enum。
+            commission = {
+                "text": "请拟旨整饬京师",
+                "grant": {
+                    "grant_action": "协饷",
+                    "amount": 15, "account": "国库", "purpose": "补饷",
+                    "target_kind": "army", "target_id": "no_such_army_1774",
+                },
+            }
+            expected_category = "invalid_enum"
+            message = "请拟旨整饬京师"
+
+        game.session._audience_translate_fn = lambda _prompt, _cfg: {
+            "commissions": [commission],
+            "promises": [],
+        }
+
         response = TestClient(web_app.app).post(
             f"/api/ministers/{name}/chat/stream",
             json={"message": message},
@@ -1778,33 +1777,33 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         assert response.status_code == 200
         events = _parse_sse(response.text)
         assert all(event != "error" for event, _payload in events)
-        done = next(payload for event, payload in events if event == "done")
-        failure = done.get("decree_validation_failure") or {}
-        expected_fields = (
-            {"amount", "account", "target_id"}
-            if validation_case == "incomplete_xiexang"
-            else {"region_id", "target_id"}
-        )
-        assert expected_fields <= set(failure.get("failed_fields") or [])
-        assert failure.get("report")
-        assert "action_intent" in backend_tags
-        assert "decree_validation_recovery" in backend_tags
-        assert [row["id"] for row in game.db.list_pending_actions(game.state.turn)] == pending_before
+        assert any(event == "done" for event, _payload in events)
+
+        turn = int(game.state.turn)
+
+        def _ledger():
+            return game.db.conn.execute(
+                "SELECT item_json, reason, category, source FROM rejection_reports "
+                "WHERE turn=? AND section='commissions'",
+                (turn,),
+            ).fetchall()
+
+        wait_until(lambda: len(_ledger()) >= 1)
+        assert [row["id"] for row in game.db.list_pending_actions(turn)] == pending_before
         assert [row["id"] for row in game.db.list_decree_dossiers()] == dossiers_before
-        ledger = game.db.conn.execute(
-            "SELECT item_json, source FROM rejection_reports "
-            "WHERE turn=? AND section='audience_decree' AND category='decree_validation'",
-            (game.state.turn,),
-        ).fetchall()
-        assert ledger and all(row["source"] == "player_decree" for row in ledger)
+        ledger = _ledger()
+        assert all(row["category"] == expected_category for row in ledger), ledger
+        assert all(row["reason"] for row in ledger)
         items = [json.loads(row["item_json"]) for row in ledger]
         assert all(isinstance(item, dict) and item for item in items)
         if validation_case == "incomplete_xiexang":
-            assert any(item.get("grant_action") == "协饷" for item in items)
-        else:
-            # T6：typed 失败优先落 partial_result；item_json 须含被拒旨稿结构化字段。
             assert any(
-                item.get("target_id") == "beizhili" and item.get("region_id") == "shaanxi"
+                (item.get("grant") or {}).get("grant_action") == "协饷"
+                for item in items
+            )
+        else:
+            assert any(
+                (item.get("grant") or {}).get("target_id") == "no_such_army_1774"
                 for item in items
             )
     finally:
@@ -1915,11 +1914,44 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         )
         canned = _TwoRoundHubuAgent()
         game.session.registry.get = lambda _ch, **_kw: canned
+        game.session._scene_agent_double = canned
         if getattr(game.session, "llm_config", None) is not None:
             try:
                 game.session.llm_config.channel = "cli"
             except Exception:
                 pass
+
+        from ming_sim.audience_translation import join_all_translations
+
+        def _translate(prompt, _cfg):
+            text = str(prompt or "")
+            if "【本轮皇帝】准" in text:
+                rows = [
+                    r for r in game.db.list_pending_actions(game.state.turn)
+                    if r.get("kind") == "directive" and r.get("status") == "pending"
+                ]
+                if not rows:
+                    return {"commissions": [], "promises": []}
+                return {
+                    "commissions": [],
+                    "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],
+                }
+            return {
+                "commissions": [{
+                    "text": "敕户部发太仓银十五万两协济关宁军前。",
+                    "grant": {
+                        "grant_action": "协饷",
+                        "amount": 15,
+                        "account": "太仓",
+                        "purpose": "补饷",
+                        "target_kind": "army",
+                        "target_id": "guanning",
+                    },
+                }],
+                "promises": [],
+            }
+
+        game.session._audience_translate_fn = _translate
 
         _set_guanning_arrears(game.db, 60, central=60, province=0)
         game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
@@ -1938,9 +1970,16 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             json={"message": "拨关宁军饷十五万两。"},
         )
         assert petition.status_code == 200, petition.text
-        pending_id = int(petition.json().get("pending_action_id") or 0)
-        assert pending_id > 0, petition.json()
+        # #1842：ctid>0 转译后台；前台 pending_action_id 可仍为 0——join 后读表。
+        assert join_all_translations(timeout_s=5.0)
         wait_pending_writes(game)
+        staged = [
+            r for r in game.db.list_pending_actions(turn_before)
+            if r.get("kind") == "directive" and r.get("status") == "pending"
+        ]
+        assert len(staged) == 1, staged
+        pending_id = int(staged[0]["id"])
+        assert pending_id > 0
         assert int(game.state.metrics["国库"]) == treasury_before
         assert _army_row(game.db)["arrears"] == pytest.approx(arrears_before["arrears"])
         from ming_sim.audience_night import get_open_night
@@ -1957,6 +1996,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             json={"message": "准"},
         )
         assert confirm.status_code == 200, confirm.text
+        assert join_all_translations(timeout_s=5.0)
         wait_pending_writes(game)
         assert int(game.state.metrics["国库"]) == treasury_before
         assert _army_row(game.db)["arrears"] == pytest.approx(arrears_before["arrears"])

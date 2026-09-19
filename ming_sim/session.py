@@ -2032,6 +2032,17 @@ class GameSession:
         if dispatch.commissions.applied:
             first = dispatch.commissions.applied[0]
             result.pending_action_id = int(first.get("id") or 0)
+        # ADR 0038：密令应允即落地——同步转译回填 secret_order_id（ctid>0 后台路径
+        # 前台不等，由调用方读表/列表可见性验收）。
+        if not int(getattr(result, "secret_order_id", 0) or 0):
+            for item in dispatch.promises.applied:
+                try:
+                    oid_i = int(item.get("secret_order_id") or 0)
+                except (TypeError, ValueError, AttributeError):
+                    oid_i = 0
+                if oid_i > 0:
+                    result.secret_order_id = oid_i
+                    break
         # 拒收当事实回场（挂既有 pending_action_failures）；不做「所指未明 → 强制追问」。
         for section_name in ("commissions", "promises"):
             section = getattr(dispatch, section_name)

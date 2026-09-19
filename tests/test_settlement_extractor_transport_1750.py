@@ -255,7 +255,9 @@ def _new_game_with_directive(client: TestClient) -> tuple[int, object]:
     turn0 = _turn_of((new.json() or {}).get("state") or {})
     game = web_app.web_game
     assert game is not None
-    game.session.registry.get = lambda _ch, **_kw: _CannedMinisterAgent()
+    agent = _CannedMinisterAgent()
+    game.session.registry.get = lambda _ch, **_kw: agent
+    game.session._scene_agent_double = agent
     directive = client.post(
         "/api/directives",
         json={"text": "着户部清核辽饷（#1750 transport）。", "notes": ""},

@@ -39,6 +39,7 @@ def _runtime(db, state, *, pending_decisions=None) -> web_app.WebGame:
         pending_count=lambda: 0,
         pending_decisions=lambda: list(pending_decisions or []),
         victory=lambda: {"status": "ongoing", "summary": ""},
+        await_translations_before_month=lambda: None,
     )
     runtime.directive_rows = lambda: []
     runtime.issue_payloads = lambda: []

@@ -273,7 +273,11 @@ def test_promise_refuse_withdraws_staged_action_and_missing_action_id_is_rejecte
     result = dispatch_declaration(db, state, declaration, minister_name=minister)
 
     assert len(result.promises.applied) == 1
-    assert result.promises.applied[0] == {"action_id": staged_id, "decision": "拒绝"}
+    applied = result.promises.applied[0]
+    assert applied["action_id"] == staged_id
+    assert applied["decision"] == "拒绝"
+    assert applied.get("kind") == "directive"
+    assert applied.get("action") == "拟旨"
     assert len(result.promises.rejected) == 1
     assert result.promises.rejected[0].category == "missing_ref"
 

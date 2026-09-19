@@ -8,8 +8,8 @@
 （消费 SSE 到终态）→ 月+1 → 再一月。起点置十一月以真跨 year rollover
 （year+1 且 period 回 1）。断言 turn+2 与 year/period 跨年安全月序 +2、无 409 死锁、
 无裸 500、闸/账双向等量（成功过月 count==len(pending)==0）。
-至少一轮 chat 返回后不预排空尾随写，直接拟旨/颁诏，用 Event 卡住 stub 尾随写
-完成时机以钉「颁诏受理 vs 尾随写」接缝（禁 sleep 竞猜）。
+至少一轮 chat 返回后不预排空后台转译，直接拟旨/颁诏，用 Event 卡住 stub 转译
+完成时机以钉「颁诏受理 vs #1842 在飞转译 join」接缝（禁 sleep 竞猜；旧读心/抽取尾随已退役）。
 
 #1353 fold-in 钉：
 - 植入欠账后一次过月动作成功（流内处理、无 409、无 CTA、账清、月+1）
@@ -207,33 +207,68 @@ def _pick_active_minister(state: dict) -> str:
 
 
 def _install_canned_minister(game) -> None:
-    game.session.registry.get = lambda _ch, **_kw: _CannedMinisterAgent()
+    agent = _CannedMinisterAgent()
+    game.session.registry.get = lambda _ch, **_kw: agent
+    game.session._scene_agent_double = agent
 
 
 def _install_trail_hold(game, release: threading.Event):
-    """卡住读心/抽取尾随写完成时机（Event 控制，禁 sleep 竞猜）。
+    """卡住现役高亮尾随完成时机（Event 控制，禁 sleep 竞猜）。
 
-    返回 (restore_fn,)——race 轮结束后还原真方法。
+    #1842 后旧读心/抽取尾随已退役；stream 仍经 `_spawn_pending_write_thread`
+    跑 `_trail_highlight_judge_after_reply`——court_break 等窗靠本 hold 拉长。
+    返回 restore_fn——race 轮结束后还原真方法。
     """
-    real_mind = game._trail_mindreading_after_reply
-    real_extract = game._trail_extraction_after_reply
+    real_highlight = game._trail_highlight_judge_after_reply
 
-    def _held_mind(*args, **kwargs):
+    def _held_highlight(*args, **kwargs):
         release.wait()
-        return real_mind(*args, **kwargs)
+        return real_highlight(*args, **kwargs)
 
-    def _held_extract(*args, **kwargs):
-        release.wait()
-        return real_extract(*args, **kwargs)
-
-    game._trail_mindreading_after_reply = _held_mind
-    game._trail_extraction_after_reply = _held_extract
+    game._trail_highlight_judge_after_reply = _held_highlight
 
     def _restore() -> None:
-        game._trail_mindreading_after_reply = real_mind
-        game._trail_extraction_after_reply = real_extract
+        game._trail_highlight_judge_after_reply = real_highlight
 
     return _restore
+
+
+def _install_translation_hold(game, release: threading.Event):
+    """卡住 #1842 后台转译 LLM 完成时机（Event）；钉过月 join 竞态窗。
+
+    非流式殿上 chat 不再 spawn 旧 WriteTicket 尾随；在飞并发真源=转译 Future。
+    实例赋值优先于 conftest 类属性空声明双桩。返回 restore_fn。
+    """
+    from tests.conftest import offline_empty_audience_translate
+
+    sess = game.session
+    # 裸函数（描述符 __get__）或既有实例覆盖；restore 时删实例属性以回到类描述符。
+    had_instance = "_audience_translate_fn" in getattr(sess, "__dict__", {})
+    real = sess.__dict__.get("_audience_translate_fn") if had_instance else None
+
+    def _held(prompt, cfg):
+        release.wait()
+        if callable(real):
+            return real(prompt, cfg)
+        return offline_empty_audience_translate(prompt, cfg)
+
+    sess._audience_translate_fn = _held
+
+    def _restore() -> None:
+        if had_instance:
+            sess._audience_translate_fn = real
+        elif "_audience_translate_fn" in getattr(sess, "__dict__", {}):
+            delattr(sess, "_audience_translate_fn")
+
+    return _restore
+
+
+def _translation_inflight() -> bool:
+    """观察 audience_translation 在飞 Future（禁 sleep 竞猜）。"""
+    import ming_sim.audience_translation as at
+
+    with at._night_inflight_guard:
+        return any(at._night_inflight.values())
 
 
 def _arm_barrier_open_event(game):
@@ -260,10 +295,10 @@ def _arm_barrier_open_event(game):
     return barrier_open, _restore
 
 
-def _release_trails_when_barrier_open(
+def _release_hold_when_barrier_open(
     barrier_open: threading.Event, release: threading.Event,
 ) -> None:
-    """侧线程：显式等待并断言 barrier 真打开后，再放行 stub 尾随写。
+    """侧线程：显式等待 barrier 真打开后，再放行 stub 转译/尾随。
 
     禁 deadline/sleep 轮询；禁『未见 barrier 也放行』。
     """
@@ -272,7 +307,7 @@ def _release_trails_when_barrier_open(
         barrier_open.wait()
         release.set()
 
-    threading.Thread(target=_run, daemon=True, name="trail-release-on-barrier").start()
+    threading.Thread(target=_run, daemon=True, name="hold-release-on-barrier").start()
 
 
 def _turn_of(state: dict) -> int:
@@ -410,8 +445,8 @@ def _play_one_month(
 ) -> int:
     """召对 → 拟旨 → 流式颁诏结算。返回推进后的 turn。
 
-    race_trailing_writes=True：chat 返回后不预排空尾随写，直接拟旨/颁诏；
-    用 Event 卡住 stub 尾随完成时机，屏障开后放行——钉真实竞态窗。
+    race_trailing_writes=True：chat 返回后不预排空 #1842 后台转译，直接拟旨/颁诏；
+    用 Event 卡住 stub 转译完成时机，屏障开后放行——钉真实竞态窗。
     """
     state = _get_state(client)
     turn_before = _turn_of(state)
@@ -422,13 +457,13 @@ def _play_one_month(
     game = web_app.web_game
     assert game is not None
 
-    trail_release: threading.Event | None = None
+    hold_release: threading.Event | None = None
     barrier_open: threading.Event | None = None
-    restore_trails = None
+    restore_hold = None
     restore_barrier_signal = None
     if race_trailing_writes:
-        trail_release = threading.Event()
-        restore_trails = _install_trail_hold(game, trail_release)
+        hold_release = threading.Event()
+        restore_hold = _install_translation_hold(game, hold_release)
         barrier_open, restore_barrier_signal = _arm_barrier_open_event(game)
 
     try:
@@ -444,16 +479,14 @@ def _play_one_month(
         assert answer, f"{month_label}: empty minister answer"
 
         if race_trailing_writes:
-            # 竞态窗：chat 已回但尾随票仍在——禁止预排空。
-            pending_now = int(getattr(game, "_pending_writes_count", 0) or 0)
-            assert pending_now > 0, (
-                f"{month_label}: expected in-flight trailing writes after chat, "
-                f"got count={pending_now}"
+            # 竞态窗：chat 已回但转译 Future 仍在飞——禁止预 join。
+            assert _translation_inflight(), (
+                f"{month_label}: expected in-flight audience translation after chat"
             )
-            assert barrier_open is not None and trail_release is not None
-            _release_trails_when_barrier_open(barrier_open, trail_release)
+            assert barrier_open is not None and hold_release is not None
+            _release_hold_when_barrier_open(barrier_open, hold_release)
         else:
-            # 非竞态轮：拟旨/颁诏前放空尾随（短轮询，非真超时窗）。
+            # 非竞态轮：拟旨/颁诏前放空写队列尾随（短轮询，非真超时窗）。
             _wait_pending_writes(game)
 
         directive = client.post(
@@ -488,10 +521,13 @@ def _play_one_month(
                 client, decisions, step=f"{month_label} resolve_decisions",
             )
     finally:
-        # 禁无条件 trail_release.set()：仅 _release_trails_when_barrier_open
-        # 在观察到 barrier_open 后才可置位；finally 只还原实例方法。
-        if restore_trails is not None:
-            restore_trails()
+        # 禁无条件 hold_release.set()：仅 _release_hold_when_barrier_open
+        # 在观察到 barrier_open 后才可置位；finally 只还原实例覆盖。
+        # 若 barrier 从未打开（issue 早失败），放行以免转译线程永挂。
+        if hold_release is not None and not hold_release.is_set():
+            hold_release.set()
+        if restore_hold is not None:
+            restore_hold()
         if restore_barrier_signal is not None:
             restore_barrier_signal()
 
@@ -524,7 +560,7 @@ def _play_one_month(
 def test_month_loop_two_months_via_http_entry(tracer_client):
     """HTTP 真入口起局走两个整月：turn+2 且 year rollover（period 回 1）、无 409、闸/账双向清零。
 
-    M1 保留 post-chat 尾随写竞态窗（Event 控 stub）；M2 正常排空。
+    M1 保留 post-chat #1842 转译竞态窗（Event 控 stub）；M2 正常排空。
     """
     client = tracer_client
 
@@ -551,7 +587,7 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
     assert period0 == 11, state0.get("turn")
     assert ord0 > 0, state0.get("turn")
 
-    # M1：chat 后不预排空尾随写，直接拟旨/流式颁诏（竞态窗）。
+    # M1：chat 后不预 join 转译，直接拟旨/流式颁诏（竞态窗）。
     turn1 = _play_one_month(
         client, minister=minister, month_label="M1", race_trailing_writes=True,
     )
@@ -788,6 +824,7 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind):
 
     agent = _StreamAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
+    game.session._scene_agent_double = agent
 
     stream = client.post(
         f"/api/ministers/{remote}/chat/stream",
@@ -833,6 +870,7 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
 
     sync = _SyncAgent()
     game.session.registry.get = lambda _ch, **_kw: sync
+    game.session._scene_agent_double = sync
 
     resp = client.post(
         f"/api/ministers/{remote}/chat",

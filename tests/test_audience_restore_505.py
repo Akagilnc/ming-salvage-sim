@@ -243,6 +243,12 @@ class _RetrySession:
         assert chat_turn_id != 0
         return ChatTurnResult(answer="臣重奏：剿为先。")
 
+    # #1842：殿上重试入口走 scene_chat；替身委托既有 chat 同 ChatTurnResult。
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        return self.chat(
+            minister_name or self._minister, message, chat_turn_id=chat_turn_id,
+        )
+
     # #542 scene lifecycle seams：retry 入口会 start/join/persist/abandon；替身 no-op。
     # #1566：场外密令重试不得启殿上 scene——外可见靠 scroll 无 entrance，不记 spy。
     def start_chat_turn_scene(self, *_a, **_k):
@@ -343,6 +349,11 @@ class _FailingRetrySession(_RetrySession):
         )
         self.db.conn.commit()
         raise RuntimeError("重试 LLM 失败")
+
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        return self.chat(
+            minister_name or self._minister, message, chat_turn_id=chat_turn_id,
+        )
 
 
 def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
@@ -1304,7 +1315,11 @@ def test_web_retry_ordinary_offsite_court_break_skips_hall_scene(game):
         assert message == question
         return ChatTurnResult(answer="臣领旨。", court_action="court_break")
 
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        return _chat(minister_name or remote.name, message, chat_turn_id=chat_turn_id)
+
     session.chat = _chat  # type: ignore[method-assign]
+    session.scene_chat = _scene_chat  # type: ignore[method-assign]
     session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
         AssertionError("ordinary offsite retry must not start_chat_turn_scene")
     )

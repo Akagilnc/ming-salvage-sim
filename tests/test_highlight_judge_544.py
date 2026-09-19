@@ -174,6 +174,19 @@ def _patch_mindreading_skip(monkeypatch):
     )
 
 
+def _restore_highlight_seams(web_game) -> None:
+    """_web_game 默认桩掉高亮 trail/spawn（离线禁真 LLM）；本文件通道测须绑回生产缝。"""
+    import types
+    from web_app import WebGame
+
+    web_game._trail_highlight_judge_after_reply = types.MethodType(
+        WebGame._trail_highlight_judge_after_reply, web_game,
+    )
+    web_game._spawn_pending_write_thread = types.MethodType(
+        WebGame._spawn_pending_write_thread, web_game,
+    )
+
+
 def _drain(web_game) -> None:
     from tests.test_audience_background import _wait_for_pending_writes_to_drain
 
@@ -188,6 +201,7 @@ def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
     db, state, content = game
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣", "陈辽饷。"]))
+    _restore_highlight_seams(web_game)
     _patch_mindreading_skip(monkeypatch)
 
     # run_highlight_judge 契约：失败/超时/坏输出只回 []、不抛（一层边界在其内部）。
@@ -216,6 +230,7 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
     db, state, content = game
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣", "先陈军务。"]))
+    _restore_highlight_seams(web_game)
     _patch_mindreading_skip(monkeypatch)
 
     release = threading.Event()
@@ -264,14 +279,15 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
     db, state, content = game
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣陈辽饷。"]))
+    _restore_highlight_seams(web_game)
     _patch_mindreading_skip(monkeypatch)
 
-    # session.chat 非流式路径
-    def fake_chat(name, message, *, chat_turn_id=0, explicit_secret_order=False):
+    # #1842：殿上非流式走 scene_chat
+    def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         from ming_sim.session import ChatTurnResult
         return ChatTurnResult(answer="臣陈辽饷。")
 
-    web_game.session.chat = fake_chat  # type: ignore[method-assign]
+    web_game.session.scene_chat = fake_scene_chat  # type: ignore[method-assign]
     monkeypatch.setattr(
         web_app_mod, "run_highlight_judge",
         lambda **_k: ["辽饷"],
@@ -294,13 +310,14 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
     db, state, content = game
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
+    _restore_highlight_seams(web_game)
     _patch_mindreading_skip(monkeypatch)
 
-    def fake_chat(name, message, *, chat_turn_id=0, explicit_secret_order=False):
+    def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         from ming_sim.session import ChatTurnResult
         return ChatTurnResult(answer="臣遵旨。")
 
-    web_game.session.chat = fake_chat  # type: ignore[method-assign]
+    web_game.session.scene_chat = fake_scene_chat  # type: ignore[method-assign]
 
     release = threading.Event()
 

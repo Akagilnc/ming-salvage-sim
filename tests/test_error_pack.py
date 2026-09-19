@@ -317,6 +317,9 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     from ming_sim.exceptions import SettlementAbort
 
     class _StubSession:
+        def await_translations_before_month(self):
+            return None
+
         def resolve_turn(self, cheat_directive="", inflight_wait_s=None):
             raise SettlementAbort(
                 "本月结算失败，进度已保存，可重试。\n错误包已生成：/tmp/x\n请把该文件夹发给作者，以便排查。",
@@ -326,6 +329,8 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
         session = _StubSession()
         class state:
             ended = False
+            turn = 3
+            turn_phase = "summoning"
 
     monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
 

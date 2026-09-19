@@ -839,6 +839,7 @@ def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatc
     session = types.SimpleNamespace(
         registry=None,
         advance_without_decree=abort_after_failed_action,
+        await_translations_before_month=lambda: None,
     )
     stub = types.SimpleNamespace(
         db=db,
@@ -855,7 +856,12 @@ def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatc
         web_app.api_advance_without_edict()
 
     assert exc.value.status_code == 409
-    assert exc.value.detail == "结算中止，可重试。"
+    # SettlementAbort HTTP detail 为结构化 dict（_settlement_abort_http_detail）
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail.get("message") == "结算中止，可重试。"
+    assert detail.get("stage") == "settle"
+    assert detail.get("turn") == state.turn
 
 
 def test_web_advance_without_edict_llm_unavailable_returns_412_detail(game, monkeypatch):
@@ -880,6 +886,7 @@ def test_web_advance_without_edict_llm_unavailable_returns_412_detail(game, monk
     session = types.SimpleNamespace(
         registry=None,
         advance_without_decree=boom,
+        await_translations_before_month=lambda: None,
     )
     stub = types.SimpleNamespace(
         db=db,
@@ -916,6 +923,7 @@ def test_web_advance_without_edict_generic_exception_returns_readable_detail(gam
     session = types.SimpleNamespace(
         registry=None,
         advance_without_decree=boom,
+        await_translations_before_month=lambda: None,
     )
     stub = types.SimpleNamespace(
         db=db,
@@ -1124,6 +1132,7 @@ def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, mon
         last_decree="",          # 真 GameSession 初始/清月态
         advance_without_decree=_advance,
         end_turn=lambda: calls.append("end_turn"),
+        await_translations_before_month=lambda: None,
     )
     stub = types.SimpleNamespace(
         db=db,

@@ -90,6 +90,21 @@ class _FakeSession(HallAdmissionSessionMixin):
     def pending_count(self):
         return 0
 
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        # #1842：殿上流式入口走 scene_chat；轻壳驱动既有假 agent，不复活旧 chat 并行链。
+        from ming_sim.session import ChatTurnResult
+
+        name = str(minister_name or next(iter(self.content.characters)))
+        agent = self.registry.get(self._character(name))
+        parts: list[str] = []
+        for event in agent.run():
+            content = getattr(event, "content", None)
+            if content:
+                parts.append(str(content))
+                if stream_emit is not None:
+                    stream_emit(str(content))
+        return ChatTurnResult(answer="".join(parts))
+
     # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
     def start_chat_turn_scene(self, *_a, **_k):
         return None
@@ -142,6 +157,14 @@ class _RecordingDB:
     def persist_minister_reply(self, minister_name: str, turn: int, content: str, chat_turn_id: int):
         # #499 单一事务插入回话+链接+接受（本 stub 复用 append_chat_message 记账，返回其 id）
         return self.append_chat_message(minister_name, turn, "minister", content)
+
+    def set_mindreading_status(self, chat_turn_id: int, status: str):
+        # #1842：_chat_payload persist 后 skip 退役读心；轻壳记账 no-op
+        return None
+
+    def fail_chat_turn(self, *_a, **_k):
+        # 流式失败尾声 / identity 失败路径会调此口
+        return None
 
     def record_chat_turn_rollback_diffs(self, *args, **kwargs):
         return None
@@ -380,22 +403,13 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     db = _RecordingDB(threading.Event())
 
     class _SlowChatSession(_FakeSession):
-        def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0, explicit_secret_order: bool = False):
+        def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+            # #1842：非流式殿上走 scene_chat；慢 LLM 窗须堵在此，禁仍堵已退役的 session.chat。
+            from ming_sim.session import ChatTurnResult
+
             chat_entered.set()
             allow_finish.wait()
-            return SimpleNamespace(
-                answer="臣已知悉。",
-                proposed_directive=None,
-                court_action="",
-                next_minister="",
-                appointed_minister="",
-                registered_minister="",
-                displaced_minister="",
-                secret_order_id=0,
-                pending_action_id=0,
-                pending_action_failures=[],
-                directive_confirmation_ambiguous=None,
-            )
+            return ChatTurnResult(answer="臣已知悉。")
 
         def close(self):
             closed.append(1)

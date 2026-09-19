@@ -291,10 +291,45 @@ def test_audience_grounded_army_pay_lands_through_close_night(
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     try:
+        from ming_sim.audience_translation import join_all_translations
+
         if game.session.llm_config is not None:
             game.session.llm_config.channel = "cli"
         name = _active_ming_minister(game.db, game.content, office="户部").name
-        game.session.registry.get = lambda _ch, **_kw: _Agent()
+        agent = _Agent()
+        game.session.registry.get = lambda _ch, **_kw: agent
+        game.session._scene_agent_double = agent
+
+        def _translate(prompt, _cfg):
+            # scene_chat 双桩：交办 grant → pending；「准」→ promises 应允。
+            text = str(prompt or "")
+            if "【本轮皇帝】准" in text:
+                rows = [
+                    r for r in game.db.list_pending_actions(game.state.turn)
+                    if r.get("kind") == "directive" and r.get("status") == "pending"
+                ]
+                if not rows:
+                    return {"commissions": [], "promises": []}
+                return {
+                    "commissions": [],
+                    "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],
+                }
+            return {
+                "commissions": [{
+                    "text": AUDIENCE_MESSAGE,
+                    "grant": {
+                        "grant_action": "协饷",
+                        "amount": 15,
+                        "account": "国库",
+                        "purpose": "补饷",
+                        "target_kind": "army",
+                        "target_id": "guanning",
+                    },
+                }],
+                "promises": [],
+            }
+
+        game.session._audience_translate_fn = _translate
         client = TestClient(web_app.app)
         turn_before = int(game.state.turn)
 
@@ -302,16 +337,18 @@ def test_audience_grounded_army_pay_lands_through_close_night(
             f"/api/ministers/{name}/chat/stream", json={"message": AUDIENCE_MESSAGE},
         )
         assert draft.status_code == 200, draft.text
+        assert join_all_translations(timeout_s=5.0)
         wait_pending_writes(game)
         pend = [
             json.loads(r["payload_json"])
             for r in game.db.list_pending_actions(game.state.turn)
-            if r["kind"] == "directive"
+            if r["kind"] == "directive" and r.get("status") == "pending"
         ]
         assert [p.get("target_id") for p in pend] == ["guanning"]
 
         approve = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
         assert approve.status_code == 200, approve.text
+        assert join_all_translations(timeout_s=5.0)
         wait_pending_writes(game)
 
         body = _post_issue_stream(client, expected_turn=turn_before, step="#1774 收夜")

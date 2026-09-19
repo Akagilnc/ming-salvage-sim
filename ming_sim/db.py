@@ -1567,6 +1567,8 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 closed_at TEXT,
+                -- affair_id 可能由 ensure_column 后补；索引不得写在本 CREATE 块
+                -- （旧档 decree_dossiers 已存在时 CREATE TABLE IF NOT EXISTS 不重建，索引会引用缺列失败）
                 affair_id INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(directive_id) REFERENCES turn_directives(id) ON DELETE CASCADE,
                 FOREIGN KEY(secret_order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
@@ -1585,8 +1587,7 @@ class GameDB:
                 ON decree_dossiers(status, id);
             CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
                 ON decree_dossiers(target_kind, target_id, status);
-            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_affair
-                ON decree_dossiers(affair_id, id);
+            -- idx_decree_dossiers_affair 在 ensure_column(affair_id) 之后建（见下）
             -- ADR 0054：只存新案卷→旧案卷；关系本身无状态位。
             CREATE TABLE IF NOT EXISTS decree_dossier_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1950,10 +1951,11 @@ class GameDB:
                 closed_turn INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                -- affair_id 可能由 ensure_column 后补；索引不得写在本 CREATE 块
+                -- （旧档 issues 已存在时 CREATE TABLE IF NOT EXISTS 不重建，索引会引用缺列失败）
                 affair_id INTEGER NOT NULL DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS idx_issues_affair
-                ON issues(affair_id, id);
+            -- idx_issues_affair 在 ensure_column(affair_id) 之后建（见下）
 
             -- #620 / ADR 0074：次回合召对待办（分段到期等）；结算内确定性写入、不停轮。
             -- #624 / ADR 0078：payload_json 引擎侧列（真伪底）；玩家投影路径不读。

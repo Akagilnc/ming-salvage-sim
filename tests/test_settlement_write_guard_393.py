@@ -77,6 +77,7 @@ class _FakeGame:
             content=self.content, state=self.state, db=self.db,
             temporary_characters=set(),
             registry=SimpleNamespace(refresh=lambda *a, **k: None, register=lambda *a, **k: None),
+            await_translations_before_month=lambda: None,
         )
         # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
         self.session.can_summon = MethodType(GameSession.can_summon, self.session)

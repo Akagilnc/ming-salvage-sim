@@ -93,6 +93,19 @@ def read_game(content):
         yield opening
 
 
+def _rebind_session_content(content) -> None:
+    """把各模块 _content 绑回 session 级共享 GameContent。
+
+    WebGame/GameSession 常 `GameContent.load()` 新对象并 `_bind_all_content`，
+    把 issues/context/agents/… 指到另一份盘面；仅还原 `content.characters`
+    不够——后续 `game` 夹具仍用 session content，而 `apply_person_changes_only`
+    走 `_ctx()` 会改到已退役的那份，DB 与断言侧 content 分叉。
+    """
+    from ming_sim.session import _bind_all_content
+
+    _bind_all_content(content)
+
+
 @pytest.fixture(autouse=True)
 def _restore_content_characters(content):
     """content 是 session 作用域共享对象，但建 GameSession（读档/_sync_offices_from_db_impl）
@@ -102,11 +115,14 @@ def _restore_content_characters(content):
     在全量里被静默 skip（「基底盘面无宗藩人物」），等于没验。
 
     每用例前快照、后还原 content.characters（深拷贝，连带 in-place 改的 office_type/status
-    等字段一并隔离），从根上断掉这层跨用例泄漏。只拷 characters：观测到的泄漏在此面，
-    region/faction 等不涉，避免无谓开销。"""
+    等字段一并隔离），并从前后两端把 bind_content 模块绑回本 session content，
+    断掉 GameSession 另 load 后留下的跨用例 _content 漂移。只拷 characters：
+    观测到的泄漏在此面，region/faction 等不涉，避免无谓开销。"""
     saved = copy.deepcopy(content.characters)
+    _rebind_session_content(content)
     yield
     content.characters = saved
+    _rebind_session_content(content)
 
 
 @pytest.fixture(autouse=True)
