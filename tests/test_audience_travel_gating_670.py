@@ -919,7 +919,7 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
         chat_turn_id=0,
         before_snapshot={},
         accepted_turn=state.turn,
-        emit_delta=lambda _chunk: None,
+        emit_delta=lambda _chunk, replace=False: None,
     )
     assert payload["answer"] == model_answer
     assert "本回合不能入殿" not in payload["answer"]

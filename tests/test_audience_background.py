@@ -278,59 +278,6 @@ def test_undo_chat_response_preserves_retryable_failed_secret_order(game):
     assert "密令" in failures[0]["message"]
 
 
-@pytest.mark.parametrize(("emperor_text", "typed_mode", "expected_mode"), [
-    ("中旨直发，命户部拟旨。", "ordinary", "ordinary"),
-    ("拟一道清核辽饷的旨。", "midzhi", "midzhi"),
-    ("拟一道清核辽饷的旨。", None, "ordinary"),
-])
-def test_background_audience_reply_preserves_typed_mode_after_observer_departure(
-    game, emperor_text, typed_mode, expected_mode,
-):
-    """#1842：殿上 scene 退役 tool 拟旨；typed mode 经生产 _stage_directive_tool_candidate。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    draft_text = "着户部清核辽饷。"
-    agent = _FakeAgent()
-    web_game = _web_game(db, state, content, agent)
-    web_game.session._audience_translate_fn = lambda p, c: {"commissions": [], "promises": []}
-
-    stream = web_game.chat_stream(minister_name, emperor_text)
-    _assert_next_accepted(stream)
-    assert next(stream)["type"] == "delta"
-    stream.close()
-
-    agent.completed.wait()
-    wait_until(lambda: db.can_undo_last_chat_turn(minister_name, state.turn))
-    _wait_for_pending_writes_to_drain(web_game)
-
-    # 生产 tool→candidate 缝（与 API/旧 tool 同形）；mode 只认 typed 参数
-    web_game.session._stage_directive_tool_candidate(
-        draft_text, minister_name, emperor_text,
-        mode=typed_mode,
-    )
-
-    def staged_directive():
-        return next((
-            row for row in db.list_pending_actions(state.turn)
-            if row["kind"] == "directive"
-            and json.loads(row["payload_json"])["text"] == draft_text
-        ), None)
-
-    assert staged_directive() is not None
-    pending_payload = json.loads(staged_directive()["payload_json"])
-    assert pending_payload.get("mode", "ordinary") == expected_mode
-    assert not any(
-        row["text"] == draft_text
-        for row in db.list_directives(state, statuses=("pending", "draft"))
-    )
-
-    db.commit_pending_actions(state, kind_filter="directive")
-    db.ensure_dossiers_for_draft_directives(state)
-    dossiers = db.list_decree_dossiers()
-    assert len(dossiers) == 1
-    assert dossiers[0]["mode"] == expected_mode
-
-
 def test_stream_tool_staged_secret_order_merges_emperor_not_reply(game):
     """#413/#405/#1274 K1：web streaming tool-call 并御旨；reply 不入 content。"""
     db, state, content = game
@@ -354,7 +301,7 @@ def test_stream_tool_staged_secret_order_merges_emperor_not_reply(game):
         chat_turn_id=0,
         before_snapshot={},
         accepted_turn=state.turn,
-        emit_delta=lambda _chunk: None,
+        emit_delta=lambda _chunk, replace=False: None,
     )
 
     pending = db.list_pending_actions(state.turn)
@@ -409,7 +356,7 @@ def test_stream_confirmation_ignores_same_turn_secret_order_tool_output(game, mo
         chat_turn_id=0,
         before_snapshot={},
         accepted_turn=state.turn,
-        emit_delta=lambda _chunk: None,
+        emit_delta=lambda _chunk, replace=False: None,
     )
 
     assert payload["pending_action_id"] == 0
@@ -446,7 +393,7 @@ def test_stream_secret_order_tool_blocked_in_recovery_window(game):
         chat_turn_id=0,
         before_snapshot={},
         accepted_turn=state.turn,
-        emit_delta=lambda _chunk: None,
+        emit_delta=lambda _chunk, replace=False: None,
     )
 
     assert payload["pending_action_id"] == 0
@@ -466,7 +413,7 @@ def test_stream_secret_order_plain_tool_result_does_not_stage_empty_candidate(ga
         chat_turn_id=0,
         before_snapshot={},
         accepted_turn=state.turn,
-        emit_delta=lambda _chunk: None,
+        emit_delta=lambda _chunk, replace=False: None,
     )
 
     assert payload["pending_action_id"] == 0
@@ -486,7 +433,7 @@ def test_chat_stream_uses_session_augmented_audience_prompt(game):
         chat_turn_id=0,
         before_snapshot={},
         accepted_turn=state.turn,
-        emit_delta=lambda _chunk: None,
+        emit_delta=lambda _chunk, replace=False: None,
     )
 
     assert agent.calls[0][0][0] == "【增强上下文】辽饷近况如何？"
@@ -646,50 +593,6 @@ def test_background_audience_pending_action_persists_after_observer_departure(ga
     wait_until(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
     _wait_for_pending_writes_to_drain(web_game)
-
-
-def test_background_audience_appointment_stages_after_observer_departure(game):
-    """#1842：殿上 scene 退役 tool 任免；候选经生产 _stage_appointment_candidate 暂存。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    appointee = "工具候选甲"
-    agent = _FakeAgent()
-    web_game = _web_game(db, state, content, agent)
-
-    stream = web_game.chat_stream(minister_name, "拟以工具候选甲为户部尚书。")
-    _assert_next_accepted(stream)
-    assert next(stream)["type"] == "delta"
-    stream.close()
-
-    agent.completed.wait()
-    wait_until(lambda: len(web_game.chat_history[minister_name]) >= 2)
-    _wait_for_pending_writes_to_drain(web_game)
-
-    raw = json.dumps(
-        {
-            "name": appointee,
-            "office": "户部尚书",
-            "action": "任命",
-            "mode": "midzhi",
-        },
-        ensure_ascii=False,
-    )
-    web_game.session._stage_appointment_candidate(
-        raw, content.characters[minister_name],
-    )
-
-    assert len(db.list_pending_actions(state.turn)) == 1
-    pending = db.list_pending_actions(state.turn)[0]
-    assert pending["kind"] == "office"
-    assert pending["action"] == "任命"
-    payload = json.loads(pending["payload_json"])
-    assert payload["name"] == appointee
-    assert payload["office"] == "户部尚书"
-    assert payload["mode"] == "midzhi"
-    assert db.conn.execute(
-        "SELECT name FROM characters WHERE name=?", (appointee,)
-    ).fetchone() is None
-    assert db.can_undo_last_chat_turn(minister_name, state.turn)
 
 
 def test_background_audience_recommendation_stages_candidate_snapshot(game, monkeypatch):

@@ -2677,10 +2677,8 @@ class WebGame:
         def _emit(delta: str, replace: bool = False) -> None:
             if delta:
                 emitted["n"] += 1
-            try:
-                emit_delta(delta, replace=replace)
-            except TypeError:
-                emit_delta(delta)
+            # 生产 emit_delta 契约含 replace；夹具须同形，禁签名探测降级。
+            emit_delta(delta, replace=replace)
 
         result = self.session.scene_chat(
             text,

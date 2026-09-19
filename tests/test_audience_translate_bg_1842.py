@@ -1027,10 +1027,7 @@ def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch):
         calls["scene"] += 1
         # 流式入口可经 stream_emit 推 delta；契约只计 scene 调用与 answer。
         if stream_emit is not None:
-            try:
-                stream_emit(FakeResult.answer)
-            except TypeError:
-                stream_emit(FakeResult.answer)
+            stream_emit(FakeResult.answer, replace=False)
         return FakeResult()
 
     def _chat(*a, **k):
