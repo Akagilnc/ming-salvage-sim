@@ -148,7 +148,7 @@ def test_chat_answer_path_typed_failure_keeps_scroll_clean():
     run_output = SimpleNamespace(content=_RUNNER_BANNER, status="ERROR", tools=[])
     persisted: list[str] = []
 
-    def persist_minister_reply(_name: str, _turn: int, answer: str, _ctid: int) -> int:
+    def persist_minister_reply(_name: str, _turn: int, answer: str, _ctid: int, **_kw) -> int:
         persisted.append(answer)
         return 1
 

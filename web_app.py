@@ -2048,18 +2048,18 @@ class WebGame:
                 # 杜绝「回话已 commit 却未链接」孤儿（否则可见回话 chat_turn_id 0、空任务态、
                 # 无对账、无 pending、in-flight 守卫永挡召见）。worker 崩溃遗留的 running 由启动
                 # 对账终态化，不永挂 pending。
-                # #1842：Web 入口已退役代码触发读心尾随；persist 仍原子链接回话，随即 skip
-                # 任务态，禁前端 mindreading_pending 永挂轮询。DB 直调 persist 的残迹契约不变。
+                # #1842：Web 入口已退役代码触发读心尾随；persist 同事务落 skip，
+                # 禁前端 mindreading_pending 永挂轮询。DB 直调 persist 的残迹契约不变。
+                # 失败须上抛，禁 catch 后仍返回成功。
                 minister_message_id = int(
-                    self.db.persist_minister_reply(minister_name, turn, answer, chat_turn_id)
-                )
-                try:
-                    self.db.set_mindreading_status(int(chat_turn_id), "skip")
-                except Exception:
-                    logger.exception(
-                        "chat_payload: skip retired mindreading failed chat_turn_id=%s",
+                    self.db.persist_minister_reply(
+                        minister_name,
+                        turn,
+                        answer,
                         chat_turn_id,
+                        mindreading_status="skip",
                     )
+                )
             else:
                 # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
                 minister_message_id = int(

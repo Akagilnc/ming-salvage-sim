@@ -920,7 +920,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     # 大臣级 Web 入口恢复 start_chat_turn_scene；离线 registry 禁 None 崩。
     from tests.conftest import _OfflineSceneRegistry
     sess._scene_registry = _OfflineSceneRegistry()
-    sess._write_gate = threading.Lock()
     sess._retrieve_memories_for_message = lambda message: message
     sess._audience_translate_fn = translate_fn
     # bind production methods used by WebGame.chat / undo_last_chat / scene_chat
@@ -973,10 +972,12 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     wg.session = sess
     # db/state/content 是 WebGame 从 session 投影的 property，不直写。
     wg.chat_history = {name: [] for name in content.characters}
-    wg._write_gate = threading.Lock()
     from ming_sim.session_write_queue import SessionWriteQueue
     wg._write_queue = SessionWriteQueue()
     wg._write_gate = wg._write_queue.write_gate
+    # 与生产同形：session 与 WebGame 共用 queue gate，转译与 chat atomic 同闸。
+    sess._write_gate = wg._write_gate
+    sess._write_queue = wg._write_queue
     wg._runtime_write_queue = lambda: wg._write_queue  # type: ignore
     wg._runtime_write_gate = lambda: wg._write_gate  # type: ignore
     wg._ticketed_write_gate = lambda ticket=None: wg._write_gate  # type: ignore

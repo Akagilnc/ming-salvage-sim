@@ -515,8 +515,8 @@ class _GapBDB:
     def update_chat_turn_messages(self, *_a, **_k):
         return None
 
-    def persist_minister_reply(self, minister_name, turn, content, chat_turn_id):
-        # #499 单一事务插入回话+链接+接受（本 stub 复用 append 记账，返回其 id）
+    def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
+        # #499/#1842：同事务回话+可选 mindreading_status；stub 只记账 message id
         return self.append_chat_message(minister_name, turn, "minister", content)
 
     def set_mindreading_status(self, chat_turn_id, status):

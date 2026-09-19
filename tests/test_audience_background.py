@@ -176,7 +176,6 @@ def _web_game(db, state, content, agent: _FakeAgent) -> WebGame:
     bind_skills_content(content)
     game = WebGame.__new__(WebGame)
     game.session = _FakeSession(db, state, content, agent)
-    game.session._write_gate = None  # 与 queue gate 分家；转译可无闸
     game.chat_history = {name: [] for name in content.characters}
     game.suggestions_for = lambda _character: []
     # The production lifecycle waits on this condition before closing its
@@ -185,6 +184,10 @@ def _web_game(db, state, content, agent: _FakeAgent) -> WebGame:
     from ming_sim.session_write_queue import SessionWriteQueue
     game._write_queue = SessionWriteQueue()
     game._write_gate = game._write_queue.write_gate
+    # 与生产 WebGame 同形：session._write_gate = queue gate。转译 worker 与
+    # chat atomic 须同闸串行，禁分家导致共享 conn 嵌套 BEGIN。
+    game.session._write_gate = game._write_gate
+    game.session._write_queue = game._write_queue
     game._runtime_write_queue = lambda: game._write_queue  # type: ignore
     game._mark_pending_write = lambda key=None: game._write_queue.claim(key=key or ("pending",))  # type: ignore
     game._complete_pending_write = lambda ticket=None: game._write_queue.complete(ticket)  # type: ignore

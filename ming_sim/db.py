@@ -1567,8 +1567,6 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 closed_at TEXT,
-                -- affair_id 可能由 ensure_column 后补；索引不得写在本 CREATE 块
-                -- （旧档 decree_dossiers 已存在时 CREATE TABLE IF NOT EXISTS 不重建，索引会引用缺列失败）
                 affair_id INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(directive_id) REFERENCES turn_directives(id) ON DELETE CASCADE,
                 FOREIGN KEY(secret_order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
@@ -1587,7 +1585,8 @@ class GameDB:
                 ON decree_dossiers(status, id);
             CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
                 ON decree_dossiers(target_kind, target_id, status);
-            -- idx_decree_dossiers_affair 在 ensure_column(affair_id) 之后建（见下）
+            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_affair
+                ON decree_dossiers(affair_id, id);
             -- ADR 0054：只存新案卷→旧案卷；关系本身无状态位。
             CREATE TABLE IF NOT EXISTS decree_dossier_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1951,11 +1950,10 @@ class GameDB:
                 closed_turn INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                -- affair_id 可能由 ensure_column 后补；索引不得写在本 CREATE 块
-                -- （旧档 issues 已存在时 CREATE TABLE IF NOT EXISTS 不重建，索引会引用缺列失败）
                 affair_id INTEGER NOT NULL DEFAULT 0
             );
-            -- idx_issues_affair 在 ensure_column(affair_id) 之后建（见下）
+            CREATE INDEX IF NOT EXISTS idx_issues_affair
+                ON issues(affair_id, id);
 
             -- #620 / ADR 0074：次回合召对待办（分段到期等）；结算内确定性写入、不停轮。
             -- #624 / ADR 0078：payload_json 引擎侧列（真伪底）；玩家投影路径不读。
@@ -10063,10 +10061,20 @@ class GameDB:
         return [int(row["id"]) for row in rows]
 
     def persist_minister_reply(
-        self, minister_name: str, turn: int, content: str, chat_turn_id: int,
+        self,
+        minister_name: str,
+        turn: int,
+        content: str,
+        chat_turn_id: int,
+        *,
+        mindreading_status: Optional[str] = None,
     ) -> int:
-        """**一个事务**内：插入大臣回话消息 → 取其 id → 链接到 turn → 升 active → 接受读心任务
-        （''→'running'）→ 单次提交。返回 message_id（#499）。
+        """**一个事务**内：插入大臣回话消息 → 取其 id → 链接到 turn → 升 active → 读心任务态
+        → 单次提交。返回 message_id（#499）。
+
+        默认 ''→'running'（接受读心）。Web #1842 退役代码尾随时传入
+        ``mindreading_status='skip'``，与回话同事务落终态，禁分二次提交后 skip 被外层
+        atomic / 并发写冲掉。
 
         杜绝「回话消息已 commit 但未链接」孤儿：分两次提交时，插入回话已落库、链接+接受
         未落库时崩溃 → 可见的持久回话却 chat_turn_id 0、active 未链接轮、空任务态、无启动
@@ -10075,37 +10083,53 @@ class GameDB:
         status 升级同 update_chat_turn_messages（#498 挂夜轮以 generating 起笔，回话落库后升 active）——
         本函数是 update_chat_turn_messages(minister_message_id=...) 的原子替代，须同做该升级。
         """
-        with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）
+        target_mind = str(mindreading_status) if mindreading_status is not None else None
+        with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）；外层 atomic 内 commit 暂停
             cur = self.conn.execute(
                 "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
                 "VALUES (?, ?, 'minister', ?, 'held')",
                 (minister_name, int(turn), content),
             )
             message_id = int(cur.lastrowid)
-            self.conn.execute(
-                """
-                UPDATE chat_turns
-                SET minister_message_id = ?,
-                    status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
-                    mindreading_status = CASE WHEN mindreading_status = ''
-                                             THEN 'running' ELSE mindreading_status END
-                WHERE id = ?
-                """,
-                (message_id, int(chat_turn_id)),
-            )
+            if target_mind is None:
+                self.conn.execute(
+                    """
+                    UPDATE chat_turns
+                    SET minister_message_id = ?,
+                        status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
+                        mindreading_status = CASE WHEN mindreading_status = ''
+                                                 THEN 'running' ELSE mindreading_status END
+                    WHERE id = ?
+                    """,
+                    (message_id, int(chat_turn_id)),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    UPDATE chat_turns
+                    SET minister_message_id = ?,
+                        status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
+                        mindreading_status = CASE WHEN mindreading_status IN ('', 'running')
+                                                 THEN ? ELSE mindreading_status END
+                    WHERE id = ?
+                    """,
+                    (message_id, target_mind, int(chat_turn_id)),
+                )
         return message_id
 
     def set_mindreading_status(self, chat_turn_id: int, status: str) -> None:
         """把在办任务落终态（'failed'/'skip'）：模型失败或不适用时落库，让重开轮询能判终止。
 
         只从非终态（''/'running'）转入，不覆盖已有终态；已 ready 的轮由 record 存在表达终态。
+        外层 atomic / 已开事务时不自 commit（connection_owns_transaction）。
         """
         self.conn.execute(
             "UPDATE chat_turns SET mindreading_status = ? "
             "WHERE id = ? AND mindreading_status IN ('', 'running')",
             (str(status), int(chat_turn_id)),
         )
-        self.conn.commit()
+        if connection_owns_transaction(self.conn):
+            self.conn.commit()
 
     def get_mindreading_status(self, chat_turn_id: int) -> str:
         row = self.conn.execute(

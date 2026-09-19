@@ -694,19 +694,12 @@ def _attach_commission_staging_fields(
     months_src = (
         item if item.get("deadline_months") not in (None, "", 0) else grant
     )
+    # 与 stage_assignment / stage_grant 同缝：相对月数或绝对回合 → 绝对 due_turn。
     absolute_due = _assignment_absolute_end_turn(
         int(turn),
         end_turn=(due_src or item).get("due_turn") or (end_src or item).get("end_turn") or 0,
         deadline_months=(months_src or item).get("deadline_months") or 0,
     )
-    # due_turn 已是绝对回合时 _assignment_absolute_end_turn 原样返回。
-    if absolute_due <= int(turn):
-        try:
-            raw_due = int((due_src or item).get("due_turn") or 0)
-        except (TypeError, ValueError):
-            raw_due = 0
-        if raw_due > int(turn):
-            absolute_due = raw_due
     if absolute_due > int(turn):
         payload["due_turn"] = absolute_due
 

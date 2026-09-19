@@ -154,8 +154,10 @@ class _RecordingDB:
     def update_chat_turn_messages(self, *args, **kwargs):
         return None
 
-    def persist_minister_reply(self, minister_name: str, turn: int, content: str, chat_turn_id: int):
-        # #499 单一事务插入回话+链接+接受（本 stub 复用 append_chat_message 记账，返回其 id）
+    def persist_minister_reply(
+        self, minister_name: str, turn: int, content: str, chat_turn_id: int, **_kw,
+    ):
+        # #499/#1842：同事务回话+可选 mindreading_status；stub 只记账 message id
         return self.append_chat_message(minister_name, turn, "minister", content)
 
     def set_mindreading_status(self, chat_turn_id: int, status: str):
