@@ -274,15 +274,6 @@ def _production_summon_turn(
     }
 
 
-def _mark_story_extract_done(db: Any, chat_turn_id: int) -> None:
-    """闸级卫生：本锚验的是收夜判官 Future，不另付费跑 story 抽取 drain。"""
-    db.conn.execute(
-        "UPDATE chat_turns SET extract_status='done' WHERE id=?",
-        (int(chat_turn_id),),
-    )
-    db.conn.commit()
-
-
 def _relation_judge_status(db: Any, chat_turn_id: int) -> str:
     row = db.conn.execute(
         "SELECT relation_judge_status FROM chat_turns WHERE id=?",
@@ -610,7 +601,8 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             )
             ctid = int(chat_meta["chat_turn_id"])
             all_chat_turn_ids.append(ctid)
-            _mark_story_extract_done(sess.db, ctid)
+            # 禁在调度后台转译后提前写 extract_status=done：worker 见 done 会空返回
+            # （audience_translation already_done），负载下偶发漏拍。水位由真实转译落账。
             close_meta = _close_night_production_judge(
                 sess, cfg, content=content, write_gate=write_gate,
             )

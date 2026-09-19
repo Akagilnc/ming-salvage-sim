@@ -2681,13 +2681,10 @@ class GameDB:
         # 绑定逻辑。
         self.ensure_column("relation_edge_events", "affair_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "affair_id", "INTEGER NOT NULL DEFAULT 0")
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_affair "
-            "ON decree_dossiers(affair_id, id)"
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_issues_affair ON issues(affair_id, id)"
-        )
+        # decree_dossiers / issues 的 affair 索引真源只在建表脚本（CREATE INDEX
+        # IF NOT EXISTS 每次 init_schema 仍会补缺）；此处禁重复定义。
+        # relation_edge_events / characters 的 affair_id 仅 ensure_column 后置，
+        # 索引只能跟在加列之后。
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_relation_edge_events_affair "
             "ON relation_edge_events(affair_id, id)"
