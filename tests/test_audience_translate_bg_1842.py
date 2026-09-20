@@ -487,17 +487,19 @@ def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypat
 
     worker = threading.Thread(target=_run_close, daemon=True)
     worker.start()
-    # while 续等真实发生后再断言外部态——单次 join 旧语义永不重入→超时红。
-    assert saw_join_retry.wait(timeout=2.0), "close_night 须 while 重入 join（≥2）"
-    row = get_night(db, nid)
-    assert row is not None
-    status = str(row["status"] or "")
-    assert status == NIGHT_STATUS_OPEN
-    assert status != NIGHT_STATUS_CLOSING, "屏障未清不得 CLOSING"
-    assert worker.is_alive(), "close_night 应仍在等屏障"
-    assert join_calls["n"] >= 2
-
-    release.set()
+    try:
+        # while 续等真实发生后再断言外部态——单次 join 旧语义永不重入→超时红。
+        assert saw_join_retry.wait(timeout=2.0), "close_night 须 while 重入 join（≥2）"
+        row = get_night(db, nid)
+        assert row is not None
+        status = str(row["status"] or "")
+        assert status == NIGHT_STATUS_OPEN
+        assert status != NIGHT_STATUS_CLOSING, "屏障未清不得 CLOSING"
+        assert worker.is_alive(), "close_night 应仍在等屏障"
+        assert join_calls["n"] >= 2
+    finally:
+        # 变异红/断言失败亦须放行，避免 join_while_blocked 即时 False 热自旋卡 teardown
+        release.set()
     worker.join(timeout=4.0)
     assert not worker.is_alive(), outcome
     assert outcome.get("err") is None, outcome
@@ -861,9 +863,12 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
 
     worker = threading.Thread(target=run_production_shape, daemon=True)
     worker.start()
-    # 先确认短 join 至少一次未清空（while 续等），再放行转译——禁 sleep 猜时序。
-    assert saw_incomplete_join.wait(timeout=2.0), "须至少一次 join 未清空"
-    release_llm.set()
+    try:
+        # 先确认 join 至少一次未清空（while 续等），再放行转译——禁 sleep 猜时序。
+        assert saw_incomplete_join.wait(timeout=2.0), "须至少一次 join 未清空"
+    finally:
+        # 变异红/断言失败亦须放行，避免即时 False 热自旋卡 teardown
+        release_llm.set()
     worker.join(timeout=4.0)
     hung = worker.is_alive()
     if hung:
