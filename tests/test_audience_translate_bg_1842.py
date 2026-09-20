@@ -1468,3 +1468,99 @@ def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch):
         # 若 interrupted 列表空或 CAS 失败，至少非流+stream 已证入口
         # 但本构造应成功；失败则响亮
         raise AssertionError(f"retry 入口未接通 scene_chat: {exc}") from exc
+
+
+def test_menu_exit_joins_inflight_translation_before_db_close(
+    game, monkeypatch, bg_life,
+):
+    """#1842：转译正在写 → 退出本局立即返回 → 后台写入完成 → 数据库关闭。
+
+    真实 schedule + 既有 menu drain/exit 接缝；Event 栅栏。
+    禁墙钟 SLA、禁 seal/owner lifecycle、禁退出路径 abandon/cancel。
+    """
+    import asyncio
+
+    import web_app
+    import ming_sim.audience_translation as at
+    from ming_sim.session_write_queue import SessionWriteQueue
+    from tests.wait_utils import reset_menu_path_leases, wait_until
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    write_q = SessionWriteQueue()
+    gate = write_q.write_gate
+    started = threading.Event()
+    release = threading.Event()
+    owner = translation_owner_key(gate, db)
+    bg_life.track(owner=owner, release=release)
+
+    def translate_fn(_prompt, _config):
+        started.set()
+        assert release.wait(5.0)
+        return {"commissions": [], "promises": []}
+
+    ctid = _persist_round(db, state, nid, "退出仍写完", "臣遵旨。")
+    future = schedule_audience_turn_translation(
+        db, state,
+        emperor_message="退出仍写完",
+        reply="臣遵旨。",
+        night_id=nid,
+        chat_turn_id=ctid,
+        llm_config=SimpleNamespace(channel="api"),
+        translate_fn=translate_fn,
+        write_gate=gate,
+    )
+    assert started.wait(2.0), "worker 须进入 LLM 窗"
+    assert db.get_story_extract_status(ctid) == "pending"
+
+    sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
+    sess._scene_registry = SimpleNamespace(abandon_all=lambda: None)
+    closed = threading.Event()
+    status_at_close: dict = {}
+    real_close = sess.close
+
+    def tracking_close():
+        # drain 仅在 join 清空后关库；此时转译须已终态并可观察水位。
+        status_at_close["extract"] = db.get_story_extract_status(ctid)
+        status_at_close["future_done"] = future.done()
+        real_close()
+        closed.set()
+
+    sess.close = tracking_close  # type: ignore[method-assign]
+
+    abandon_calls: list[int] = []
+    real_abandon = at.abandon_owner_translations
+
+    def tracking_abandon(owner_key: int) -> int:
+        abandon_calls.append(int(owner_key))
+        return real_abandon(owner_key)
+
+    monkeypatch.setattr(at, "abandon_owner_translations", tracking_abandon)
+
+    fake_game = SimpleNamespace(
+        _write_gate=gate,
+        _write_queue=write_q,
+        db_path=db.path,
+        session=sess,
+    )
+    reset_menu_path_leases()
+    assert web_app._register_holder(db.path, fake_game) is not None
+    monkeypatch.setattr(web_app, "web_game", fake_game)
+
+    result = asyncio.run(web_app.api_menu_exit())
+    assert result == {"ok": True}
+    assert web_app.web_game is None
+    assert not closed.is_set(), "退出响应时不得已关库（drain 仍应在等转译）"
+    assert not future.done(), "退出响应时转译仍应在飞"
+    assert db.get_story_extract_status(ctid) == "pending"
+
+    release.set()
+    wait_until(closed.is_set)
+    assert future.done()
+    assert status_at_close.get("future_done") is True
+    assert status_at_close.get("extract") == "done"
+    assert abandon_calls == [], f"正常退出不得 abandon/cancel: {abandon_calls}"
+
+    # game fixture finally 会再 close；库已由 drain 关闭。
+    db.close = lambda: None  # type: ignore[method-assign]
