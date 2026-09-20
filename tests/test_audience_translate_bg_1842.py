@@ -1681,15 +1681,16 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
 
 
 def test_cli_exit_joins_inflight_translation_before_db_close(
-    game, monkeypatch, bg_life,
+    game, monkeypatch, bg_life, tmp_path,
 ):
-    """#1842：CLI 正常退出复用 owner drain/close；worker 终态后才关原库。
+    """#1842：经真实 `run_cli` 退出；owner drain 后 worker 终态才关原库。
 
-    与 menu_exit 同形 scene_chat 在飞接缝；生产 finally 走同步
-    ``web_app._drain_and_close_session``（禁直接 session.close）。
-    侧线程跑 drain，证明 join 前不得关库；禁墙钟 SLA / 新 lifecycle。
+    与 menu_exit 同形 scene_chat 在飞；入口必须是 `terminal.run_cli`（禁测试内
+    复制 finally / 直调 `_drain_and_close_session`）。侧线程跑 run_cli，Event
+    证 join 前不关库；禁墙钟 SLA / 新 lifecycle。
     """
-    import web_app
+    import ming_sim.cli.terminal as term
+    from ming_sim.exceptions import ExitGame
     from ming_sim.session_write_queue import SessionWriteQueue
     from tests.wait_utils import wait_until
 
@@ -1755,37 +1756,50 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
 
     sess.close = tracking_close  # type: ignore[method-assign]
 
-    runtime = SimpleNamespace(
-        _write_gate=gate,
-        _write_queue=write_q,
-        db_path=db.path,
-        session=sess,
+    # 真实入口：run_cli 建 session → play_turn 抛 ExitGame → finally drain。
+    monkeypatch.setattr(term, "GameSession", lambda *a, **k: sess)
+    monkeypatch.setattr(
+        term, "play_turn",
+        lambda _s: (_ for _ in ()).throw(ExitGame()),
     )
-    drain_done = threading.Event()
-    drain_error: list[BaseException] = []
+    monkeypatch.setattr(
+        "ming_sim.llm_config.load_llm_config",
+        lambda *a, **k: SimpleNamespace(
+            advanced_model="", advanced_base_url="", advanced_api_key="",
+        ),
+    )
+    monkeypatch.setattr(
+        "ming_sim.token_stats.print_token_summary", lambda: None,
+    )
 
-    def _cli_finally_drain() -> None:
-        # 对齐 ming_sim.cli.terminal.run_cli finally：同步 owner drain/close。
+    run_done = threading.Event()
+    run_error: list[BaseException] = []
+
+    def _run_cli_exit() -> None:
         try:
-            web_app._drain_and_close_session(runtime)
+            term.run_cli(
+                base_url="http://test",
+                model="test-model",
+                db_path=str(tmp_path / "cli-exit.db"),
+            )
         except BaseException as exc:  # noqa: BLE001
-            drain_error.append(exc)
+            run_error.append(exc)
         finally:
-            drain_done.set()
+            run_done.set()
 
-    drain_thread = threading.Thread(
-        target=_cli_finally_drain, daemon=True, name="cli-exit-drain",
+    run_thread = threading.Thread(
+        target=_run_cli_exit, daemon=True, name="cli-run-exit",
     )
-    drain_thread.start()
-    # drain 已启动且仍卡在 join：库未关、转译仍 pending（Event 水位，禁墙钟）。
-    wait_until(lambda: drain_thread.is_alive() and not closed.is_set())
+    run_thread.start()
+    # run_cli finally 已进入 drain 且仍卡在 join：库未关、转译仍 pending。
+    wait_until(lambda: run_thread.is_alive() and not closed.is_set())
     assert db.get_story_extract_status(ctid) == "pending"
 
     release.set()
     wait_until(closed.is_set)
-    wait_until(drain_done.is_set)
-    if drain_error:
-        raise drain_error[0]
+    wait_until(run_done.is_set)
+    if run_error:
+        raise run_error[0]
     assert status_at_close.get("extract") == "done"
 
     db.close = lambda: None  # type: ignore[method-assign]
