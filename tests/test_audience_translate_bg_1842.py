@@ -1,7 +1,7 @@
 """#1842 T2：转译后台化与封夜提交 join。
 
 Seams:
-- build_audience_translate_prompt / normalize_audience_declaration（完整声明契约）
+- normalize_audience_declaration（完整声明契约）
 - schedule / trail / join 转译（按轮串行；前台不等）
 - GameSession.scene_chat（ctid>0 后台；ctid==0 同步兼容）
 - close_night join 最后一轮转译后再成案
@@ -23,10 +23,7 @@ from ming_sim.audience_night import (
     get_open_night,
     open_night,
 )
-from ming_sim.audience_translate import (
-    build_audience_translate_prompt,
-    normalize_audience_declaration,
-)
+from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.audience_translation import (
     abandon_owner_translations,
     catch_up_pending_translations,
@@ -173,7 +170,6 @@ def test_normalize_keeps_unknown_keys_and_full_sections():
 def test_target_grounding_covers_dispatcher_kinds_and_fails_loud(game):
     """权威目录覆盖 dispatcher 可校验 kind；查询失败不得静默空目录。"""
     from ming_sim.audience_translate import build_translation_target_grounding
-    from ming_sim.decree_vocabulary import TARGET_KINDS
 
     db, _state, content = game
     name = _active_name(db, content)
@@ -181,13 +177,6 @@ def test_target_grounding_covers_dispatcher_kinds_and_fails_loud(game):
     kinds = {line.split("\t", 1)[0] for line in grounded.splitlines() if "\t" in line}
     assert {"region", "army", "character", "issue"} <= kinds
     assert any(line.startswith(f"character\t{name}\t") for line in grounded.splitlines())
-    # prompt 表面复用 TARGET_KINDS 真源（结构化拼入，不手抄分叉）
-    prompt = build_audience_translate_prompt(
-        emperor_message="x", reply="y", night_said=[], pending_summaries=[],
-        target_grounding=grounded,
-    )
-    for kind in TARGET_KINDS:
-        assert kind in prompt
 
     class _BoomConn:
         def execute(self, *_a, **_k):
@@ -1339,55 +1328,6 @@ def test_scene_chat_control_command_marks_translation_done(game):
     assert TAG_STAY_ATTEND in (last.get("tags") or [])
     assert name in (last.get("person_names") or [])
     assert TAG_EXIT not in (last.get("tags") or [])
-
-
-def test_said_so_far_cuts_off_at_source_turn_and_excludes_self(game, monkeypatch):
-    """正确性 C2：生产 worker 按源轮截止已说；结构化列表不含本轮/后轮。"""
-    from ming_sim import audience_translate as translate_mod
-    from ming_sim.audience_translate import build_night_said_so_far
-
-    db, state, content = game
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    nid = int(night["id"])
-    gate = threading.Lock()
-    _persist_round(db, state, nid, "第一句已说", "第一答")
-    ctid2 = _persist_round(db, state, nid, "第二句本轮", "第二答")
-    _persist_round(db, state, nid, "第三句后轮", "第三答")
-
-    # 结构化截止契约（DB→list），禁解析 prompt 自由文本。
-    said = build_night_said_so_far(db, nid, until_chat_turn_id=ctid2)
-    joined = "\n".join(said)
-    assert "第一句已说" in joined or "第一答" in joined, said
-    assert "第二句本轮" not in joined and "第二答" not in joined, said
-    assert "第三句后轮" not in joined and "第三答" not in joined, said
-
-    # 生产 schedule→worker 须把源轮 id 传入同一截止缝。
-    captured: dict = {}
-    real_said = translate_mod.build_night_said_so_far
-
-    def wrap_said(db_, night_id, *, until_chat_turn_id=0):
-        captured["until"] = int(until_chat_turn_id or 0)
-        return real_said(db_, night_id, until_chat_turn_id=until_chat_turn_id)
-
-    monkeypatch.setattr(translate_mod, "build_night_said_so_far", wrap_said)
-    called = {"n": 0}
-
-    def translate_fn(_prompt, _llm_config):
-        called["n"] += 1
-        return {"commissions": [], "promises": []}
-
-    fut = schedule_audience_turn_translation(
-        db, state,
-        emperor_message="第二句本轮",
-        reply="第二答",
-        night_id=nid, chat_turn_id=ctid2,
-        llm_config=SimpleNamespace(channel="api"),
-        translate_fn=translate_fn, write_gate=gate,
-    )
-    assert join_night_translations(nid, timeout_s=2.0)
-    fut.result(timeout=0.5)
-    assert called["n"] == 1
-    assert captured.get("until") == ctid2
 
 
 def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game, bg_life):

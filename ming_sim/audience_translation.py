@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from ming_sim.applier import Provenance, atomic
@@ -191,6 +191,42 @@ def abandon_owner_translations(owner_key: int) -> int:
     return len(doomed)
 
 
+def _await_inflight_future(
+    fut: Future,
+    timeout_s: float,
+    *,
+    where: str,
+    **fields: Any,
+) -> None:
+    """短等一片 Future。TimeoutError=仍在跑（非终态失败）；其它异常留痕后继续排空。"""
+    try:
+        fut.result(timeout=max(0.0, float(timeout_s)))
+    except TimeoutError:
+        return
+    except Exception:
+        detail = " ".join(f"{k}={v}" for k, v in fields.items())
+        logger.exception("%s: future failed while draining %s", where, detail)
+
+
+def _observe_finished_future(
+    fut: Future,
+    *,
+    where: str,
+    **fields: Any,
+) -> None:
+    """已完成 Future 的终态观测：失败留痕；取消不当事故。须在摘账前调用。"""
+    if not fut.done():
+        return
+    try:
+        exc = fut.exception()
+    except CancelledError:
+        return
+    if exc is None:
+        return
+    detail = " ".join(f"{k}={v}" for k, v in fields.items())
+    logger.error("%s: future failed %s", where, detail, exc_info=exc)
+
+
 def join_owner_translations(owner_key: int, *, timeout_s: float = 120.0) -> bool:
     """等待该会话 owner 名下在飞转译全部结束。返回是否在时限内清空。"""
     import time
@@ -211,14 +247,14 @@ def join_owner_translations(owner_key: int, *, timeout_s: float = 120.0) -> bool
         if remaining <= 0:
             return False
         for fut in bucket:
-            try:
-                fut.result(timeout=min(remaining, 0.5))
-            except Exception:
-                # 单轮失败已由 job 标 pending；join 继续排空其余，但须留痕（ADR 0005）。
-                logger.exception(
-                    "join_owner_translations: future failed while draining owner=%s",
-                    owner,
-                )
+            # 单轮失败已由 job 标 pending；join 继续排空其余，但须留痕（ADR 0005）。
+            # 轮询切片 TimeoutError ≠ 终态失败，不得记成 future failed。
+            _await_inflight_future(
+                fut,
+                min(remaining, 0.5),
+                where="join_owner_translations",
+                owner=owner,
+            )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
@@ -433,6 +469,13 @@ def schedule_audience_turn_translation(
         _turn_key: Optional[Tuple[int, int]] = (owner, ctid) if ctid > 0 else None,
         _fut: Future = fut,
     ) -> None:
+        # 摘账前观测终态：末轮失败若先摘空，join 会直接 True 且无人读异常。
+        _observe_finished_future(
+            _f,
+            where="audience translation cleanup",
+            night_key=_night_key,
+            turn_key=_turn_key,
+        )
         with _night_inflight_guard:
             bucket = _night_inflight.get(_night_key) or []
             try:
@@ -483,14 +526,13 @@ def join_night_translations(
         if remaining <= 0:
             return False
         for fut in bucket:
-            try:
-                fut.result(timeout=min(remaining, 0.5))
-            except Exception:
-                logger.exception(
-                    "join_night_translations: future failed while draining "
-                    "night=%s owner_key=%s",
-                    nid, owner_key,
-                )
+            _await_inflight_future(
+                fut,
+                min(remaining, 0.5),
+                where="join_night_translations",
+                night=nid,
+                owner_key=owner_key,
+            )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
