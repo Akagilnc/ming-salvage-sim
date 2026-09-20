@@ -150,6 +150,9 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
         def abandon_chat_turn_scene(self, _ctid):
             drain_entered.set()
             release_drain.wait()
+        def schedule_pending_scene_translation(self, result):
+            # #1842：WebGame persist 尾必调；本测失败路径仍须绑契约。
+            return None
         def chat(self, *_a, **_k):
             raise RuntimeError("retry llm failed")
         def scene_chat(self, *_a, **_k):
@@ -1542,6 +1545,10 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
             abandon_entered.set()
             release_abandon.wait()
 
+        def schedule_pending_scene_translation(self, result):
+            # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
+            return None
+
         def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             from ming_sim.session import ChatTurnResult, GameSession
             agent = self.registry.get(None)
@@ -1672,7 +1679,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     assert any(e.get("type") == "error" for e in events2)
 
 
-def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
+def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game, monkeypatch):
     """#542: stream dismiss 先登记 exit、gate 外统一 join，再与 reply 原子落账。
 
     现码若 join 早于 start_exit，垫位文案残留、exit future 脱轮。
@@ -1774,7 +1781,7 @@ def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
     assert not game.session._scene_registry.has(int(ctid))
 
 
-def test_web_stream_exit_overlaps_unfinished_reply_after_dismiss_tool(web_game):
+def test_web_stream_exit_overlaps_unfinished_reply_after_dismiss_tool(web_game, monkeypatch):
     """#542 C1: dismiss tool 事件出现后立刻 start_exit，与尚未结束的回话流真实重叠。
 
     seam = WebGame._chat_stream_payload（流式 tool 事件 → scene registry）。

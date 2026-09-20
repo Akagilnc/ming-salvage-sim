@@ -504,6 +504,105 @@ def test_independent_owners_same_night_id_do_not_block_each_other(
                 os.remove(p)
 
 
+def test_old_owner_pool_fill_does_not_starve_new_owner(
+    game, content, _game_template_path, monkeypatch, bg_life,
+):
+    """断根：旧局同夜积压填满进程池容量时，新局仍可独立启动转译。
+
+    全局 max_workers=4；旧实现后继先占 worker 再 pred.result()——首个阻塞 +
+    三个后继即饿死跨会话。现实现占位链、前驱终态再 submit；外可见：新 owner
+    translate_fn 在旧局放行前已进入（Events，禁墙钟阈值）。
+    """
+    import os
+    import shutil
+    import tempfile
+
+    import ming_sim.audience_translation as at
+    from ming_sim.db import GameDB
+    from tests.wait_utils import wait_until
+
+    pool_capacity = int(getattr(at._executor, "_max_workers", 4) or 4)
+    assert pool_capacity >= 1
+
+    db_a, state_a, _ = game
+    night_a = open_night(db_a, state_a, location="乾清宫", time_of_day="夜")
+    nid_a = int(night_a["id"])
+    gate_a = threading.Lock()
+    release_a = threading.Event()
+    entered_old0 = threading.Event()
+    owner_a = translation_owner_key(gate_a, db_a)
+    bg_life.track(owner=owner_a, release=release_a)
+
+    monkeypatch.setattr(
+        "ming_sim.audience_extraction.extract_endorsements_for_night",
+        lambda **k: [],
+    )
+
+    def translate_old(prompt, llm_config):
+        # 仅首个实活进入；后继在占位链上不得占 worker。
+        entered_old0.set()
+        release_a.wait(timeout=5.0)
+        return {"commissions": [], "promises": []}
+
+    old_futs = []
+    for i in range(pool_capacity):
+        ctid = _persist_round(db_a, state_a, nid_a, f"旧积压{i}", "……")
+        old_futs.append(
+            schedule_audience_turn_translation(
+                db_a, state_a,
+                emperor_message=f"旧积压{i}",
+                reply="……",
+                night_id=nid_a, chat_turn_id=ctid,
+                llm_config=SimpleNamespace(channel="api"),
+                translate_fn=translate_old, write_gate=gate_a,
+            )
+        )
+    assert len(old_futs) == pool_capacity
+    assert entered_old0.wait(timeout=2.0), "旧局首个转译须先进入阻塞接缝"
+
+    fd, path_b = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db_b = None
+    entered_new = threading.Event()
+    try:
+        shutil.copyfile(_game_template_path, path_b)
+        db_b = GameDB(path_b, content)
+        state_b = db_b.load_state()
+        night_b = open_night(db_b, state_b, location="乾清宫", time_of_day="夜")
+        nid_b = int(night_b["id"])
+        gate_b = threading.Lock()
+        owner_b = translation_owner_key(gate_b, db_b)
+        bg_life.track(owner=owner_b)
+        assert owner_a != owner_b
+
+        def translate_new(prompt, llm_config):
+            entered_new.set()
+            return {"commissions": [{"text": "新局交办"}], "promises": []}
+
+        ctid_b = _persist_round(db_b, state_b, nid_b, "新局快走", "领旨。")
+        schedule_audience_turn_translation(
+            db_b, state_b,
+            emperor_message="新局快走",
+            reply="领旨。",
+            night_id=nid_b, chat_turn_id=ctid_b,
+            llm_config=SimpleNamespace(channel="api"),
+            translate_fn=translate_new, write_gate=gate_b,
+        )
+        # 旧局仍阻塞：新局须已启动（填满容量不得饿死）
+        wait_until(entered_new.is_set)
+        assert entered_new.is_set()
+        assert not release_a.is_set()
+        assert join_owner_translations(owner_b, timeout_s=2.0)
+        assert db_b.get_story_extract_status(ctid_b) == "done"
+    finally:
+        release_a.set()
+        if db_b is not None:
+            db_b.close()
+        for p in (path_b, f"{path_b}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)
+
+
 def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypatch, bg_life):
     """断根：join 未清空不得置 CLOSING；清空后沿同一路径收夜。"""
     import ming_sim.audience_translation as at

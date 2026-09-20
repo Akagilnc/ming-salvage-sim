@@ -20,6 +20,11 @@ from ming_sim.session import GameSession, TurnPhase
 from ming_sim import audience_night as an
 
 
+def _cli_schedule_pending_noop(self, result):
+    """#1842：CLI persist 尾必调 schedule_pending_scene_translation；轻壳无 pending 时 no-op。"""
+    return None
+
+
 @contextmanager
 def _noop_atomic(_db):
     yield
@@ -142,6 +147,9 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
                 next_minister="",
             )
 
+        def schedule_pending_scene_translation(self, result):
+            return _cli_schedule_pending_noop(self, result)
+
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
@@ -186,6 +194,9 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
                 ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
             ]
             raise RuntimeError("LLM down")
+
+        def schedule_pending_scene_translation(self, result):
+            return _cli_schedule_pending_noop(self, result)
 
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -233,6 +244,9 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
             ]
             raise KeyboardInterrupt()
 
+        def schedule_pending_scene_translation(self, result):
+            return _cli_schedule_pending_noop(self, result)
+
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
@@ -264,6 +278,9 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
 
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             raise RuntimeError("LLM down")
+
+        def schedule_pending_scene_translation(self, result):
+            return _cli_schedule_pending_noop(self, result)
 
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -306,6 +323,9 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
                 court_action="",
                 next_minister="",
             )
+
+        def schedule_pending_scene_translation(self, result):
+            return _cli_schedule_pending_noop(self, result)
 
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -370,6 +390,8 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
         join_chat_turn_scene=lambda *_a, **_k: [],
         persist_chat_turn_scene=lambda *_a, **_k: None,
         abandon_chat_turn_scene=lambda *_a, **_k: None,
+        # #1842：persist 尾必调；本测在落大臣行前失败，仍须绑契约防 AttributeError。
+        schedule_pending_scene_translation=lambda result: None,
     )
 
     with pytest.raises(RuntimeError, match="finalization write failed"):

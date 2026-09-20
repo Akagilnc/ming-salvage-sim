@@ -106,6 +106,8 @@ def _cli_session(db, state, content):
         join_chat_turn_scene=lambda *_a, **_k: [],
         persist_chat_turn_scene=lambda *_a, **_k: None,
         abandon_chat_turn_scene=lambda *_a, **_k: None,
+        # #1842：persist 尾必调；轻壳无 pending 时 no-op。
+        schedule_pending_scene_translation=lambda result: None,
     )
 
 

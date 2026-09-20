@@ -68,6 +68,8 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
         abandon_chat_turn_scene=lambda *_a, **_k: None,
         close_night_after_chat_if_needed=lambda *_a, **_k: None,
         await_translations_before_month=lambda: None,
+        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
+        schedule_pending_scene_translation=lambda result: None,
         _character=lambda name: content.characters[name],
         pending_count=lambda: 0,
     )

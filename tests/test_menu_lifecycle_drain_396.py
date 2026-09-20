@@ -490,6 +490,10 @@ class _GapBSession(HallAdmissionSessionMixin):
     def abandon_chat_turn_scene(self, *_a, **_k):
         return None
 
+    def schedule_pending_scene_translation(self, result):
+        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
+        return None
+
 
 class _GapBDB:
     def __init__(self):

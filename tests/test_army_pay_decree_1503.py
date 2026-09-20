@@ -1789,11 +1789,19 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         turn = int(game.state.turn)
 
         def _ledger():
-            return game.db.conn.execute(
-                "SELECT item_json, reason, category, source FROM rejection_reports "
-                "WHERE turn=? AND section='commissions'",
-                (turn,),
-            ).fetchall()
+            # rejection_reports 由 flush 懒建表；后台转译尚未 flush 时表可能不存在，
+            # 视作尚未就绪（禁把建表竞态当失败，也禁放松最终断言）。
+            try:
+                return game.db.conn.execute(
+                    "SELECT item_json, reason, category, source FROM rejection_reports "
+                    "WHERE turn=? AND section='commissions'",
+                    (turn,),
+                ).fetchall()
+            except Exception as exc:  # noqa: BLE001 — sqlite DatabaseError/OperationalError
+                msg = str(exc).lower()
+                if "no such table" in msg and "rejection_reports" in msg:
+                    return []
+                raise
 
         wait_until(lambda: len(_ledger()) >= 1)
         assert [row["id"] for row in game.db.list_pending_actions(turn)] == pending_before

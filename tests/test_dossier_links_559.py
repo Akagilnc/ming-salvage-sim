@@ -381,6 +381,10 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
         def abandon_chat_turn_scene(self, *_a, **_k):
             return None
 
+        def schedule_pending_scene_translation(self, result):
+            # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
+            return None
+
     bind_skills_content(content)
     runtime = WebGame.__new__(WebGame)
     runtime.session = Session()

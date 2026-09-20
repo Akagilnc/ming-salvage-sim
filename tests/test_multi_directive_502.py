@@ -637,6 +637,10 @@ def test_nonstream_web_chat_surfaces_ambiguous():
         def abandon_chat_turn_scene(self, *_a, **_k):
             return None
 
+        def schedule_pending_scene_translation(self, result):
+            # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
+            return None
+
     rt = object.__new__(web_app.WebGame)
     rt.session = _Sess()
     rt.chat_history = {name: []}
@@ -697,6 +701,10 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
             return None
 
         def abandon_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def schedule_pending_scene_translation(self, result):
+            # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
             return None
 
     rt = object.__new__(web_app.WebGame)

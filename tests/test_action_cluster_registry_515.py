@@ -929,6 +929,7 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
         "chat", "scene_chat", "_apply_scene_turn_translation",
         "start_chat_turn_scene", "join_chat_turn_scene",
         "persist_chat_turn_scene", "abandon_chat_turn_scene",
+        "schedule_pending_scene_translation",
         "_start_cli_action_intent", "_finish_cli_action_intent",
         "_confirmation_intent_for_preexisting_pending",
         "_cli_backend_fallback_actions", "apply_cli_conversation_actions",

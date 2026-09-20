@@ -108,9 +108,12 @@ class _FakeSession(HallAdmissionSessionMixin):
         # admission 放行仍用 HallAdmissionSessionMixin.consume_audience_admission
 
     def _resolve_scene_agent(self, prepared, *, night_id: int):
-        """测试双：直接返回构造时注入的 agent（生产经 create_scene_agent 工厂缝）。"""
+        """测试双：经 registry.agent 取活体（重发可换 agent）；与 stub_scene_agent 并用时
+        须同步 registry.agent（禁冻结构造快照导致耗尽后重发仍打失败 agent）。"""
         del prepared, night_id
-        return self._fake_scene_agent
+        reg = getattr(self, "registry", None)
+        agent = getattr(reg, "agent", None) if reg is not None else None
+        return agent if agent is not None else self._fake_scene_agent
 
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]

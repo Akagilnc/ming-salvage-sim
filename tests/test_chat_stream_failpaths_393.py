@@ -107,6 +107,8 @@ def _base_runtime(db):
         db=db,
         close=lambda: None,
         abandon_chat_turn_scene=lambda *_a, **_k: None,
+        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
+        schedule_pending_scene_translation=lambda result: None,
         _character=lambda name: character,
         llm_config=SimpleNamespace(channel="api"),
         registry=SimpleNamespace(get=lambda *_a, **_k: None),
@@ -524,6 +526,8 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
         join_chat_turn_scene=lambda *_a, **_k: [],
         persist_chat_turn_scene=lambda *_a, **_k: None,
         abandon_chat_turn_scene=_abandon,
+        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
+        schedule_pending_scene_translation=lambda result: None,
         _character=lambda name: character,
         chat=lambda *a, **k: (_ for _ in ()).throw(
             RuntimeError("session.chat should not run")

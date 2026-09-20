@@ -249,6 +249,11 @@ class _RetrySession:
             minister_name or self._minister, message, chat_turn_id=chat_turn_id,
         )
 
+    def schedule_pending_scene_translation(self, result):
+        # #1842：WebGame persist 尾必调；轻壳无 pending 时与生产同形 no-op。
+        from ming_sim.session import GameSession
+        return GameSession.schedule_pending_scene_translation(self, result)
+
     # #542 scene lifecycle seams：retry 入口会 start/join/persist/abandon；替身 no-op。
     # #1566：场外密令重试不得启殿上 scene——外可见靠 scroll 无 entrance，不记 spy。
     def start_chat_turn_scene(self, *_a, **_k):

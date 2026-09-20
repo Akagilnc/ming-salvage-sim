@@ -454,21 +454,8 @@ def schedule_audience_turn_translation(
             db.mark_story_extraction_pending(ctid)
 
     night_key = (owner, nid)
-    # 前驱在临界区写入 pred_holder；worker 启动后读同一格，保证与 tail 登记同序。
-    # 同夜 FIFO 唯一真源 = Future 链；前驱失败留痕后仍跑本轮（每轮失败隔离）。
-    pred_holder: List[Optional[Future]] = [None]
 
-    def _worker() -> DeclarationDispatchResult:
-        pred = pred_holder[0]
-        if pred is not None:
-            try:
-                pred.result()
-            except Exception:
-                logger.exception(
-                    "audience translation predecessor failed; "
-                    "continuing night=%s chat_turn_id=%s",
-                    nid, ctid,
-                )
+    def _run_job() -> DeclarationDispatchResult:
         return run_turn_translation_job(
             db, state,
             emperor_message=emperor_message,
@@ -482,11 +469,29 @@ def schedule_audience_turn_translation(
             source=source,
         )
 
-    # 读前驱 + submit + 写 tail + inflight 登记同持非重入锁；done callback 锁外挂
-    # （已完成 Future 会同步回调，持锁再挂会死锁）。
+    def _observe_predecessor(pred: Future) -> None:
+        """前驱失败留痕后仍跑本轮（每轮失败隔离）；不占执行线程等待。"""
+        try:
+            pred.result()
+        except Exception:
+            logger.exception(
+                "audience translation predecessor failed; "
+                "continuing night=%s chat_turn_id=%s",
+                nid, ctid,
+            )
+
+    # 同夜 FIFO 真源 = Future 链。后继不得先占 worker 再 pred.result()——旧局积压
+    # 会填满进程级线程池，饿死新会话（票面：新局不等待旧局后台转译）。
+    # 有未完成前驱时只登记占位 Future，前驱终态后再 submit 实活；无前驱则直接提交。
+    # 读前驱 + 登记同持非重入锁；done callback 一律锁外挂（已完成 Future 同步回调会死锁）。
     with _night_inflight_guard:
-        pred_holder[0] = _night_tail.get(night_key)
-        fut = _executor.submit(_worker)
+        pred = _night_tail.get(night_key)
+        if pred is None:
+            fut: Future = _executor.submit(_run_job)
+            chain_pred: Optional[Future] = None
+        else:
+            fut = Future()
+            chain_pred = pred
         _night_tail[night_key] = fut
         _night_inflight.setdefault(night_key, []).append(fut)
         if ctid > 0:
@@ -519,6 +524,42 @@ def schedule_audience_turn_translation(
             if _night_tail.get(_night_key) is _fut:
                 _night_tail.pop(_night_key, None)
 
+    def _bridge_work(
+        work: Future,
+        *,
+        _out: Future = fut,
+    ) -> None:
+        # _out 已 set_running；终态只能 set_result / set_exception。
+        try:
+            if work.cancelled():
+                raise CancelledError()
+            exc = work.exception()
+            if exc is not None:
+                _out.set_exception(exc)
+            else:
+                _out.set_result(work.result())
+        except Exception as exc:
+            if not _out.done():
+                _out.set_exception(exc)
+
+    def _launch_after_pred(
+        pred_fut: Future,
+        *,
+        _out: Future = fut,
+    ) -> None:
+        _observe_predecessor(pred_fut)
+        # 占位 Future：submit 前标 RUNNING，避免 cancel 成功摘账而实活仍在跑。
+        if not _out.set_running_or_notify_cancel():
+            return
+        try:
+            work = _executor.submit(_run_job)
+        except Exception as exc:
+            _out.set_exception(exc)
+            return
+        work.add_done_callback(_bridge_work)
+
+    if chain_pred is not None:
+        chain_pred.add_done_callback(_launch_after_pred)
     fut.add_done_callback(_cleanup)
     return fut
 
