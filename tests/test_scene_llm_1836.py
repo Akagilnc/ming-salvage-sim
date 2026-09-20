@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from ming_sim.audience_night import (
     TAG_ENTER,
     get_night,
@@ -224,6 +226,7 @@ def test_scene_agent_has_only_material_read_tools(game, tmp_path, monkeypatch):
     assert init_runs is None, f"不得传入固定 num_history_runs={init_runs!r}"
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     """AC1：一轮戏文（可含多人）出自同一次场景调用。"""
     db, state, content = game
@@ -248,7 +251,7 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
             return SimpleNamespace(content=script, tools=[])
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
-    # #1837：转译可注入空声明，不跑真 LLM。
+    # #1842：ctid=0 同步转译走 conftest 离线空声明缝，不另造平行 fixture。
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
     emperor = "洪承畴可堪大任？"
     result = sess.scene_chat(emperor)
@@ -260,6 +263,7 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     assert result.court_action == ""
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_path):
     """AC2：「宣 X」后入殿账落下，下一次场景材料准备他在场。"""
     db, state, content = game
@@ -295,6 +299,7 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
     assert result.answer  # 宣后仍起一次场景调用
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatch):
     """AC3：scene_chat('退朝') 真入口收夜；同库重读最后一条持久化对话轮仍在。"""
     db, state, content = game
@@ -340,8 +345,9 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     assert int(turns_after[-1].get("minister_message_id") or 0) == minister_mid
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_scene_chat_no_longer_calls_parallel_classifier(game, monkeypatch):
-    """#1837：场景入口退役并行分类器；回话后走转译（本测桩空声明）。"""
+    """#1837：场景入口退役并行分类器；回话后走转译（复用 conftest 离线空声明缝）。"""
     db, state, content = game
     open_night(db, state)
 
@@ -363,7 +369,6 @@ def test_scene_chat_no_longer_calls_parallel_classifier(game, monkeypatch):
         db, state, content,
         llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
     )
-    sess._audience_translate_fn = lambda prompt, cfg: {"commissions": [], "promises": []}
     result = sess.scene_chat("着户部拨银三十万两赈灾")
     assert result.answer == "臣领旨。"
     assert result.pending_action_id == 0
