@@ -1686,9 +1686,9 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
     """#1842：经真实 `run_cli` 退出；owner drain 后 worker 终态才关原库。
 
     与 menu_exit 同形 scene_chat 在飞；入口必须是 `terminal.run_cli`（禁测试内
-    复制 finally / 直调 `_drain_and_close_session`）。侧线程跑 run_cli；放行
-    worker 前等 `write_q.is_sealed`（drain 入口水位），证 join 前不关库；
-    禁墙钟 SLA / 新 lifecycle。
+    复制 finally / 直调 `_drain_and_close_session`）。侧线程跑 run_cli；只断言
+    结构化外部结果（ExitGame 后未关库、extract pending→done、关库次序）；
+    禁盯 seal/内部钩子；禁墙钟 SLA / 新 lifecycle。
     """
     import ming_sim.cli.terminal as term
     from ming_sim.exceptions import ExitGame
@@ -1758,11 +1758,14 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
     sess.close = tracking_close  # type: ignore[method-assign]
 
     # 真实入口：run_cli 建 session → play_turn 抛 ExitGame → finally drain。
+    exit_started = threading.Event()
+
+    def _play_turn_exit(_s):
+        exit_started.set()
+        raise ExitGame()
+
     monkeypatch.setattr(term, "GameSession", lambda *a, **k: sess)
-    monkeypatch.setattr(
-        term, "play_turn",
-        lambda _s: (_ for _ in ()).throw(ExitGame()),
-    )
+    monkeypatch.setattr(term, "play_turn", _play_turn_exit)
     monkeypatch.setattr(
         "ming_sim.llm_config.load_llm_config",
         lambda *a, **k: SimpleNamespace(
@@ -1792,10 +1795,9 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
         target=_run_cli_exit, daemon=True, name="cli-run-exit",
     )
     run_thread.start()
-    # 确定性水位：真实 drain 入口会 seal；旧 session.close() 永不 seal 或先关 → 红。
-    wait_until(lambda: write_q.is_sealed() or closed.is_set())
-    assert write_q.is_sealed(), "run_cli finally 须经 drain seal，不得直接 close"
-    assert not closed.is_set(), "seal 后、join 清空前不得关库"
+    # 与 menu_exit 同形：退出路径已进入、转译仍在飞时不得关库（禁盯 seal）。
+    wait_until(exit_started.is_set)
+    assert not closed.is_set(), "退出路径进入后、转译终态前不得关库"
     assert db.get_story_extract_status(ctid) == "pending"
 
     release.set()
