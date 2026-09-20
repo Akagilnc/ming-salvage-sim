@@ -457,6 +457,41 @@ def test_chat_stream_uses_session_augmented_audience_prompt(game, monkeypatch):
     assert agent.calls[0][0][0] == "【增强上下文】辽饷近况如何？"
 
 
+def test_web_chat_stream_assemble_preserves_leading_trailing_whitespace(game, monkeypatch):
+    """#1842 / P6：WebGame._chat_stream_payload 拼装保留首尾空白；.strip() 变异须红。
+
+    复用本文件既有 _web_game / _FakeAgent 真实入口；咬住 web_app._after_stream
+    的 "".join(chunks)（与 session scene 拼装彼此独立）。
+    """
+    db, state, content = game
+    minister_name = "毕自严"
+    raw = "\n  臣顿首。  \n"
+    agent = _FakeAgent(chunks=["\n  ", "臣顿首。", "  \n"])
+    web_game = _web_game(db, state, content, agent, monkeypatch)
+
+    deltas: list[str] = []
+    payload = web_game._chat_stream_payload(
+        minister_name,
+        "辽饷近况如何？",
+        chat_turn_id=0,
+        before_snapshot={},
+        accepted_turn=state.turn,
+        emit_delta=lambda chunk, replace=False: (
+            deltas.append(chunk) if chunk else None
+        ),
+    )
+
+    assert payload["answer"] == raw
+    assert payload["answer"] != payload["answer"].strip()
+    assert "".join(deltas) == raw
+    mid = int(payload.get("minister_message_id") or 0)
+    assert mid > 0
+    persisted = db.conn.execute(
+        "SELECT content FROM chat_messages WHERE id=?", (mid,),
+    ).fetchone()["content"]
+    assert persisted == raw
+
+
 def test_audience_prompt_does_not_expose_unissued_draft_to_uninvolved_minister(game):
     """本回合未明发草案不应绕过见闻投影，注入未参与大臣的召对提示。
 
