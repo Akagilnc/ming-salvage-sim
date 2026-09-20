@@ -159,6 +159,21 @@ def test_translate_prompt_declares_on_scene_and_full_sections():
     assert "status" in prompt
     assert "dead" in prompt or "imprisoned" in prompt
     assert "处置" in prompt or "罢黜" in prompt
+    assert "region_id" in prompt
+    assert "任所" in prompt
+    assert "excluded_names" in prompt
+    assert "excluded_offices" in prompt
+
+    grounded = build_audience_translate_prompt(
+        emperor_message="斩杀魏忠贤",
+        reply="臣遵旨。",
+        night_said=["皇帝：宣魏忠贤"],
+        pending_summaries=[],
+        target_grounding="【权威目标目录】\nregion\tshaanxi\t陕西\n",
+    )
+    assert "【权威目标目录】" in grounded
+    assert "region\tshaanxi\t陕西" in grounded
+    assert "【权威目标目录】" not in prompt
 
     raw = {
         "commissions": [{"text": "着办"}],
@@ -182,7 +197,7 @@ def test_translate_prompt_declares_on_scene_and_full_sections():
 
 
 def test_second_sentence_does_not_wait_for_first_translation(game, bg_life):
-    """AC1：皇帝连说两句，第二句不等第一句转译。"""
+    """AC1：皇帝连说多句，后句前台不等；同夜 FIFO 链 t1-done < t2-run < t3-run。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
@@ -210,13 +225,17 @@ def test_second_sentence_does_not_wait_for_first_translation(game, bg_life):
                     "reason": "第一句当场拿下",
                 }],
             }
-        order.append("t2-run")
+        if "【本轮皇帝】第二句：再问边饷" in prompt:
+            order.append("t2-run")
+            return {"commissions": [], "promises": []}
+        order.append("t3-run")
         return {"commissions": [], "promises": []}
 
     ctid1 = _persist_round(db, state, nid, "第一句：拿下", "臣遵旨。")
     ctid2 = _persist_round(db, state, nid, "第二句：再问边饷", "边饷尚可。")
+    ctid3 = _persist_round(db, state, nid, "第三句：再问辽左", "辽左吃紧。")
 
-    # 串行队列：先调度 t1（会卡住），再调度 t2；前台调度返回时 t1 仍在飞。
+    # 串行队列：先调度 t1（会卡住），再调度 t2/t3；前台调度返回时 t1 仍在飞。
     fut1 = schedule_audience_turn_translation(
         db, state,
         emperor_message="第一句：拿下",
@@ -241,8 +260,18 @@ def test_second_sentence_does_not_wait_for_first_translation(game, bg_life):
         translate_fn=translate_fn,
         write_gate=gate,
     )
-    # 第二次调度返回时 t1 仍未完成——确定性证明前台未等（禁墙钟 SLA）
-    assert not fut1.done(), "第二次调度返回时 t1 仍在飞"
+    fut3 = schedule_audience_turn_translation(
+        db, state,
+        emperor_message="第三句：再问辽左",
+        reply="辽左吃紧。",
+        night_id=nid,
+        chat_turn_id=ctid3,
+        llm_config=SimpleNamespace(channel="api"),
+        translate_fn=translate_fn,
+        write_gate=gate,
+    )
+    # 后继调度返回时 t1 仍未完成——确定性证明前台未等（禁墙钟 SLA）
+    assert not fut1.done(), "后继调度返回时 t1 仍在飞"
     assert "t1-done" not in order
     assert db.get_story_extract_status(ctid1) == "pending"
 
@@ -250,13 +279,15 @@ def test_second_sentence_does_not_wait_for_first_translation(game, bg_life):
     assert join_night_translations(nid, timeout_s=3.0, owner_key=owner)
     assert fut1.result(timeout=0.1) is not None
     assert fut2.result(timeout=0.1) is not None
-    # 按轮串行：t2 不得在 t1 完成前跑
-    assert order.index("t1-done") < order.index("t2-run")
+    assert fut3.result(timeout=0.1) is not None
+    # 同夜显式 FIFO：t2/t3 不得在前驱完成前跑
+    assert order.index("t1-done") < order.index("t2-run") < order.index("t3-run")
 
     status, _reason = db.get_character_status(name)
     assert status == "imprisoned"
     assert db.get_story_extract_status(ctid1) == "done"
     assert db.get_story_extract_status(ctid2) == "done"
+    assert db.get_story_extract_status(ctid3) == "done"
 
 
 def test_close_night_joins_last_translation_before_commit(game, monkeypatch, bg_life):
@@ -1208,6 +1239,77 @@ def test_close_night_no_longer_fail_closed_on_exhausted_pending(game, monkeypatc
         "WHERE night_id=? AND source_chat_turn_id=?",
         (nid, ctid),
     ).fetchone()["c"] == 0
+
+
+def test_close_night_catchup_runs_default_runner_when_translate_fn_none(
+    game, monkeypatch,
+):
+    """#1842：收夜 catch-up 在 translate_fn=None 时仍走默认 runner，不得跳过。"""
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    gate = threading.Lock()
+    called = {"n": 0}
+
+    def fake_default(prompt, llm_config):
+        called["n"] += 1
+        return {"commissions": [], "promises": []}
+
+    monkeypatch.setattr(
+        "ming_sim.audience_translate._default_translate_runner",
+        fake_default,
+    )
+    monkeypatch.setattr(
+        "ming_sim.audience_extraction.extract_endorsements_for_night",
+        lambda **k: [],
+    )
+
+    ctid = _persist_round(db, state, nid, "待补一句", "……")
+    db.mark_story_extraction_pending(ctid)
+    assert db.get_story_extract_status(ctid) == "pending"
+
+    result = close_night(
+        db, state, content=content, registry=None,
+        wait_timeout_s=0.0, write_gate=gate,
+        llm_config=SimpleNamespace(channel="api", model="x", base_url="", api_key=""),
+        translate_fn=None,
+    )
+    assert result.get("closed") is True or get_open_night(db) is None
+    assert called["n"] >= 1, "缺注入 translate_fn 时须走默认 runner"
+    assert db.get_story_extract_status(ctid) == "done"
+    assert not any(
+        int(r["chat_turn_id"]) == ctid
+        for r in list_pending_translations(db, night_id=nid)
+    )
+
+
+def test_scene_chat_control_command_marks_translation_done(game):
+    """口令早退轮标转译 done；留侍只回 court_action，不落 TAG_STAY_ATTEND 账。"""
+    from ming_sim.audience_night import TAG_STAY_ATTEND, list_ledger
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    ctid = int(db.create_chat_turn(
+        state, "殿上", "s", 0, night_id=nid, status="active",
+    ))
+    db.conn.commit()
+    assert db.get_story_extract_status(ctid) in ("", "pending")
+
+    sess = _sess(db, state, content)
+    result = sess.scene_chat("留下听着", chat_turn_id=ctid)
+
+    assert result.court_action == "stay_attend"
+    assert result.answer == ""
+    assert db.get_story_extract_status(ctid) == "done"
+    assert not any(
+        int(r["chat_turn_id"]) == ctid
+        for r in list_pending_translations(db, night_id=nid)
+    )
+    assert not any(
+        TAG_STAY_ATTEND in (e.get("tags") or [])
+        for e in list_ledger(db, nid)
+    )
 
 
 def test_said_so_far_cuts_off_at_source_turn_and_excludes_self(game):

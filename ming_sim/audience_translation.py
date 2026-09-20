@@ -37,6 +37,8 @@ _night_serial_locks: Dict[Tuple[int, int], threading.Lock] = {}
 _night_inflight_guard = threading.Lock()
 _night_inflight: Dict[Tuple[int, int], List[Future]] = {}  # (owner, night_id)
 _turn_inflight: Dict[Tuple[int, int], Future] = {}  # (owner, chat_turn_id)
+# 同夜显式 FIFO 链：不依赖 Lock 争用顺序；tail Future 按 (owner, night) 串起后继。
+_night_tail: Dict[Tuple[int, int], Future] = {}
 
 
 def translation_owner_key(write_gate: Any = None, db: Any = None) -> int:
@@ -126,46 +128,6 @@ def _night_lock(night_id: int, *, owner_key: int = 0) -> threading.Lock:
         return lock
 
 
-def _track_future(
-    night_id: int,
-    fut: Future,
-    *,
-    chat_turn_id: int = 0,
-    owner_key: int = 0,
-) -> None:
-    nid = int(night_id or 0)
-    ctid = int(chat_turn_id or 0)
-    owner = int(owner_key)
-    night_key = (owner, nid)
-    turn_key = (owner, ctid) if ctid > 0 else None
-    # 锁内只做 night/turn 两索引原子登记。add_done_callback 必须在锁外：
-    # 已完成 Future 会同步调用回调；若仍持非重入 Lock，_cleanup 再取同一锁即自死锁。
-    with _night_inflight_guard:
-        _night_inflight.setdefault(night_key, []).append(fut)
-        if turn_key is not None:
-            _turn_inflight[turn_key] = fut
-
-    def _cleanup(
-        _f: Future,
-        *,
-        _night_key: Tuple[int, int] = night_key,
-        _turn_key: Optional[Tuple[int, int]] = turn_key,
-        _fut: Future = fut,
-    ) -> None:
-        with _night_inflight_guard:
-            bucket = _night_inflight.get(_night_key) or []
-            try:
-                bucket.remove(_fut)
-            except ValueError:
-                pass
-            if not bucket:
-                _night_inflight.pop(_night_key, None)
-            if _turn_key is not None and _turn_inflight.get(_turn_key) is _fut:
-                _turn_inflight.pop(_turn_key, None)
-
-    fut.add_done_callback(_cleanup)
-
-
 def cancel_turn_translation(chat_turn_id: int, *, owner_key: int) -> int:
     """撤回本轮：取消/失效该会话 owner 下该源轮在飞转译 Future（ADR 0038 / 0155）。
 
@@ -215,6 +177,9 @@ def abandon_owner_translations(owner_key: int) -> int:
         for turn_key in list(_turn_inflight.keys()):
             if turn_key[0] == owner:
                 _turn_inflight.pop(turn_key, None)
+        for night_key in list(_night_tail.keys()):
+            if night_key[0] == owner:
+                _night_tail.pop(night_key, None)
     for fut in doomed:
         fut.cancel()
     return len(doomed)
@@ -357,11 +322,14 @@ def run_turn_translation_job(
                 db, nid, until_chat_turn_id=ctid,
             )
             pending = build_pending_summaries(db, int(state.turn), night_id=nid)
+            from ming_sim.audience_translate import build_translation_target_grounding
+            target_grounding = build_translation_target_grounding(db)
         declaration = translate_audience_turn(
             emperor_message=emperor_message,
             reply=reply,
             night_said=night_said,
             pending_summaries=pending,
+            target_grounding=target_grounding,
             llm_config=llm_config,
             translate_fn=translate_fn,
         )
@@ -400,7 +368,7 @@ def schedule_audience_turn_translation(
     write_gate: Any = None,
     source: Provenance = Provenance.system_simulation,
 ) -> Future:
-    """后台调度本轮转译：立即返回 Future；同夜按轮串行。"""
+    """后台调度本轮转译：立即返回 Future；同夜按轮串行（显式 Future 链 FIFO）。"""
     nid = int(night_id or 0)
     ctid = int(chat_turn_id or 0)
     owner = translation_owner_key(write_gate, db)
@@ -410,8 +378,17 @@ def schedule_audience_turn_translation(
             db.mark_story_extraction_pending(ctid)
 
     serial = _night_lock(nid, owner_key=owner)
+    night_key = (owner, nid)
+    # 前驱在临界区写入 pred_holder；worker 启动后读同一格，保证与 tail 登记同序。
+    pred_holder: List[Optional[Future]] = [None]
 
     def _worker() -> DeclarationDispatchResult:
+        pred = pred_holder[0]
+        if pred is not None:
+            try:
+                pred.result()
+            except Exception:
+                pass
         with serial:
             return run_turn_translation_job(
                 db, state,
@@ -426,8 +403,37 @@ def schedule_audience_turn_translation(
                 source=source,
             )
 
-    fut = _executor.submit(_worker)
-    _track_future(nid, fut, chat_turn_id=ctid, owner_key=owner)
+    # 读前驱 + submit + 写 tail + inflight 登记同持非重入锁；done callback 锁外挂
+    # （已完成 Future 会同步回调，持锁再挂会死锁）。
+    with _night_inflight_guard:
+        pred_holder[0] = _night_tail.get(night_key)
+        fut = _executor.submit(_worker)
+        _night_tail[night_key] = fut
+        _night_inflight.setdefault(night_key, []).append(fut)
+        if ctid > 0:
+            _turn_inflight[(owner, ctid)] = fut
+
+    def _cleanup(
+        _f: Future,
+        *,
+        _night_key: Tuple[int, int] = night_key,
+        _turn_key: Optional[Tuple[int, int]] = (owner, ctid) if ctid > 0 else None,
+        _fut: Future = fut,
+    ) -> None:
+        with _night_inflight_guard:
+            bucket = _night_inflight.get(_night_key) or []
+            try:
+                bucket.remove(_fut)
+            except ValueError:
+                pass
+            if not bucket:
+                _night_inflight.pop(_night_key, None)
+            if _turn_key is not None and _turn_inflight.get(_turn_key) is _fut:
+                _turn_inflight.pop(_turn_key, None)
+            if _night_tail.get(_night_key) is _fut:
+                _night_tail.pop(_night_key, None)
+
+    fut.add_done_callback(_cleanup)
     return fut
 
 

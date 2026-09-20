@@ -160,12 +160,54 @@ def build_night_said_so_far(
     return lines
 
 
+def build_translation_target_grounding(db: Any) -> str:
+    """权威目标目录：regions / armies / active issues，供 grant.target_id 与任命 region_id 对齐。
+
+    只读 DB 真源；不猜、不从正文匹配改写模型输出。
+    """
+    if not hasattr(db, "conn"):
+        return ""
+    lines: List[str] = []
+    try:
+        for row in db.conn.execute(
+            "SELECT id, name FROM regions ORDER BY id"
+        ).fetchall():
+            lines.append(f"region\t{row['id']}\t{row['name']}")
+        for row in db.conn.execute(
+            "SELECT id, name FROM armies ORDER BY id"
+        ).fetchall():
+            lines.append(f"army\t{row['id']}\t{row['name']}")
+        if hasattr(db, "list_active_issues"):
+            for row in db.list_active_issues():
+                lines.append(
+                    f"issue\t{int(row['id'])}\t{str(row['title'] or '')}"
+                )
+        else:
+            for row in db.conn.execute(
+                "SELECT id, title FROM issues WHERE status='active' ORDER BY id"
+            ).fetchall():
+                lines.append(
+                    f"issue\t{int(row['id'])}\t{str(row['title'] or '')}"
+                )
+    except Exception:
+        return ""
+    if not lines:
+        return ""
+    body = "\n".join(lines)
+    return (
+        "【权威目标目录】\n"
+        "grant.target_id / appointment.region_id 必须是下列目录中的精确 id，禁止编造。\n"
+        f"{body}\n"
+    )
+
+
 def build_audience_translate_prompt(
     *,
     emperor_message: str,
     reply: str,
     night_said: Sequence[str],
     pending_summaries: Sequence[str],
+    target_grounding: str = "",
 ) -> str:
     """转译输入：本轮皇帝原话 + 回话 + 本场已说 + 本夜暂存清单。
 
@@ -174,6 +216,8 @@ def build_audience_translate_prompt(
     """
     said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
+    grounding = str(target_grounding or "").strip()
+    grounding_block = f"{grounding}\n" if grounding else ""
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
         "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
@@ -182,7 +226,10 @@ def build_audience_translate_prompt(
         '  "commissions": [\n'
         "    {\n"
         '      "text": "交办正文（原样，不删改）",\n'
-        '      "appointment": {"name": "人名", "office": "官职", "appoint_action": "任命|罢免"},\n'
+        '      "appointment": {\n'
+        '        "name": "人名", "office": "官职", "appoint_action": "任命|罢免",\n'
+        '        "region_id": "任所 region id（地方/督抚/边镇任命必填；中央可空）"\n'
+        "      },\n"
         '      "grant": {\n'
         '        "grant_action": "赈灾|协饷|赏赉|发内帑|项目经费|…",\n'
         '        "amount": 正整数万两, "account": "国库|内库",\n'
@@ -205,7 +252,12 @@ def build_audience_translate_prompt(
         '    {"subject_kind": "character|army|region", "subject_id": "id", "body": "文字事实"}\n'
         "  ],\n"
         '  "public_sayings": [\n'
-        '    {"body": "公开说法", "involved_characters": ["人名"]}\n'
+        "    {\n"
+        '      "body": "公开说法",\n'
+        '      "involved_characters": ["人名"],\n'
+        '      "excluded_names": ["明示排除、不得知情的人名"],\n'
+        '      "excluded_offices": ["明示排除、不得知情的官职"]\n'
+        "    }\n"
         "  ],\n"
         '  "presence": [\n'
         '    {"person_name": "人名", "effect": "enter|exit", "body": "入见/告退正文"}\n'
@@ -233,8 +285,11 @@ def build_audience_translate_prompt(
         "「不准」「作罢」→ 拒绝。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
         "presence / public_sayings / edge_events，不要写成交办。\n"
+        "- public_sayings 的 excluded_names / excluded_offices：皇帝明示排除的读者"
+        "保持不知情；无排除则给空数组。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
         "- 承接不了的交办仍写入 commissions（由代码拒收），不要改写皇帝原话去猜。\n"
+        f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"
         f"【本轮皇帝】{emperor_message or '（无）'}\n"
@@ -292,6 +347,7 @@ def translate_audience_turn(
     reply: str,
     night_said: Sequence[str] = (),
     pending_summaries: Sequence[str] = (),
+    target_grounding: str = "",
     llm_config: Any = None,
     translate_fn: Optional[TranslateFn] = None,
 ) -> Dict[str, object]:
@@ -305,6 +361,7 @@ def translate_audience_turn(
         reply=reply,
         night_said=night_said,
         pending_summaries=pending_summaries,
+        target_grounding=target_grounding,
     )
     runner = translate_fn or _default_translate_runner
     try:
@@ -368,11 +425,13 @@ def run_audience_turn_translation(
         db, int(night_id or 0), until_chat_turn_id=ctid,
     )
     pending = build_pending_summaries(db, int(state.turn), night_id=int(night_id or 0))
+    target_grounding = build_translation_target_grounding(db)
     declaration = translate_audience_turn(
         emperor_message=emperor_message,
         reply=reply,
         night_said=night_said,
         pending_summaries=pending,
+        target_grounding=target_grounding,
         llm_config=llm_config,
         translate_fn=translate_fn,
     )

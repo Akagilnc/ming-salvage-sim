@@ -1753,6 +1753,22 @@ class GameSession:
         """委托编排层排空本轮 scene（cancel 或 join drain，不落库）。"""
         self._scene_registry.abandon(int(chat_turn_id or 0))
 
+    def _mark_control_turn_translation_done(self, chat_turn_id: int) -> None:
+        """口令早退轮：标转译水位 done，避免假 pending 进 list_pending_translations。"""
+        ctid = int(chat_turn_id or 0)
+        if ctid <= 0 or not hasattr(self.db, "conn"):
+            return
+        self.db.conn.execute(
+            "UPDATE chat_turns SET extract_status='done', relation_judge_status='done' "
+            "WHERE id=? AND status NOT IN ('failed','undone')",
+            (ctid,),
+        )
+        if (
+            not bool(getattr(self.db.conn, "_commit_suspended", False))
+            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
+        ):
+            self.db.conn.commit()
+
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,
         stream_emit: Any = None,
@@ -1797,17 +1813,24 @@ class GameSession:
         # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
         # - 留侍：无锚不落 stay_attend 账（等转译声明在场），只回 court_action
         # - 含糊收夜：回确认 cue，不收夜
+        # 口令早退且已持久化源轮时标转译水位 done，避免假 pending 进补跑窗。
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
         if audience_command_verdict and audience_command_verdict != CMD_NONE:
+            ctid = int(chat_turn_id or 0)
             if audience_command_verdict == CMD_AMBIGUOUS_CLOSE:
+                if ctid > 0:
+                    self._mark_control_turn_translation_done(ctid)
                 result.answer = GameSession._ensure_close_night_confirm_cue("")
                 return result
             if audience_command_verdict == CMD_STAY_ATTEND:
+                if ctid > 0:
+                    self._mark_control_turn_translation_done(ctid)
                 result.court_action = "stay_attend"
                 return result
             if audience_command_verdict == CMD_CLOSE_NIGHT:
-                if int(chat_turn_id or 0) != 0:
+                if ctid != 0:
+                    self._mark_control_turn_translation_done(ctid)
                     result.court_action = "court_break"
                     return result
                 close_night(
@@ -1877,7 +1900,8 @@ class GameSession:
             raise RuntimeError("scene_chat 需要 llm_config。")
         agent = self._resolve_scene_agent(prepared, night_id=night_id)
 
-        agent_prompt = prepared.opening + "\n\n" + message_text
+        # opening 已在 create_scene_agent instructions；run 输入只传本轮皇帝原话。
+        agent_prompt = message_text
         transport_attempts_box: list = []
         side_effects: dict = {"court_action": ""}
         if stream_emit is not None:  # noqa: SIM102 — 流式分支完整

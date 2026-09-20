@@ -95,9 +95,9 @@ from ming_sim.highlight_judge import (
     run_highlight_judge,
 )
 from ming_sim.audience_extraction import (
-    catch_up_pending_extractions,
     trail_extraction_after_reply,
 )
+from ming_sim.audience_translation import catch_up_pending_translations
 from ming_sim.session_write_queue import (
     SessionWriteQueue,
     TicketCancelled,
@@ -3639,10 +3639,10 @@ class WebGame:
         pending_ticket: Optional[WriteTicket] = None,
         owns_pending: bool = False,
     ) -> None:
-        """重开补跑（ADR 0036）：已持久化回话但账未抽 → 补跑抽取，不回滚对话。
+        """重开补跑（ADR 0036 / #1842）：已持久化回话但转译未承接 → 补跑转译，不回滚对话。
 
-        `catch_up_pending_extractions` 从不抛——补跑失败标待补、不锁档，**永不进启动致命路径**。
-        在后台线程跑，不阻塞存档加载。写经已领票据 seam（禁裸 gate）。
+        `catch_up_pending_translations` 单轮失败标待补、不锁档；本入口再捕意外故障，
+        **永不进启动致命路径**。在后台线程跑，不阻塞存档加载。写经已领票据 seam（禁裸 gate）。
         #1353：spawn 路票据由 spawner finally 归还；本函数不归还交接票（complete 幂等保直接调用钉）。
         """
         del owns_pending
@@ -3651,17 +3651,19 @@ class WebGame:
                 return
             if pending_ticket.cancelled or pending_ticket._done:
                 return
-            catch_up_pending_extractions(
+            catch_up_pending_translations(
                 db=self.db,
+                state=self.state,
                 llm_config=getattr(self.session, "llm_config", None),
+                translate_fn=getattr(self.session, "_audience_translate_fn", None),
                 write_gate=self._ticketed_write_gate(pending_ticket),
             )
         except TicketCancelled:
             return
         except Exception as exc:
-            # catch_up 契约从不抛；到此=意外故障。铁律：不锁档、不进启动致命路径——
+            # catch_up 契约单轮不抛；到此=意外故障。铁律：不锁档、不进启动致命路径——
             # 但**留痕不静默**（窄捕 + log，账仍待补候下轮 drain/重试）。
-            tlog(f"[audience-extraction] 启动补跑意外故障（不锁档、已忽略）：{exc}")
+            tlog(f"[audience-translation] 启动补跑意外故障（不锁档、已忽略）：{exc}")
         finally:
             # 直接调用钉（test_startup_catchup_uses_ticketed_gate_not_bare）仍依赖此处收口；
             # spawn 路 spawner 也会 complete——complete 幂等，双路径皆安全。

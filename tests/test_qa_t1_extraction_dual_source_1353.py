@@ -910,7 +910,7 @@ def test_seal_claim_rejects_three_trail_legs_zero_write(web_game, monkeypatch):
         lambda **_k: calls.__setitem__("ext", calls["ext"] + 1) or {"status": "done"},
     )
     monkeypatch.setattr(
-        web_app, "catch_up_pending_extractions",
+        web_app, "catch_up_pending_translations",
         lambda **_k: calls.__setitem__("catch", calls["catch"] + 1),
     )
 
@@ -939,7 +939,7 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
         seen["gate_type"] = type(write_gate).__name__
         seen["is_ticketed"] = type(write_gate).__name__ == "TicketedWriteGate"
 
-    monkeypatch.setattr(web_app, "catch_up_pending_extractions", fake_catch_up)
+    monkeypatch.setattr(web_app, "catch_up_pending_translations", fake_catch_up)
     ticket = game._mark_pending_write(key=("startup",))
     assert ticket is not None
     game._run_startup_extraction_catch_up(pending_ticket=ticket)

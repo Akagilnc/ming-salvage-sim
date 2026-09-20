@@ -1259,8 +1259,8 @@ def _drain_story_extraction_or_fail_closed(
     if game_state is None:
         return
     # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
-    # 无运行时依赖的库调用只保留待补；不得偷取进程级默认配置发起 provider 调用。
-    if llm_config is not None and write_gate is not None and translate_fn is not None:
+    # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
+    if llm_config is not None and write_gate is not None:
         catch_up_pending_translations(
             db, game_state,
             night_id=nid,
@@ -1408,11 +1408,8 @@ def close_night(
             ):
                 pass
             # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
-            if (
-                llm_config is not None
-                and write_gate is not None
-                and translate_fn is not None
-            ):
+            # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
+            if llm_config is not None and write_gate is not None:
                 catch_up_pending_translations(
                     db, state,
                     night_id=int(night_id),

@@ -557,6 +557,12 @@ def _commission_appointment_fields(
     ).strip()
     if tenure:
         payload["appointment_tenure"] = tenure
+    # Typed 任所原样透传；不从官名推断（地方/督抚/边镇任命必填；中央可空）。
+    seat = str(
+        appointment.get("region_id") or appointment.get("任所") or ""
+    ).strip()
+    if seat:
+        payload["region_id"] = seat
     return payload, None
 
 

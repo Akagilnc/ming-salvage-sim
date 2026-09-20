@@ -750,6 +750,40 @@ def test_pure_office_dossier_uses_payload_text_not_template(game):
     assert dossier_payload.get("text") == edict
 
 
+def test_appointment_region_id_stages_into_pending_payload(game):
+    """地方任命声明带 region_id 时原样进 office pending，不从官名推断。"""
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    person = _hong_name(db, content)
+    region = _region_id(db)
+    edict = f"着以{person}巡抚陕西 UNIQUE-REGION-SEAT"
+    staged = dispatch_declaration(
+        db, state,
+        {"commissions": [{
+            "text": edict,
+            "appointment": {
+                "name": person,
+                "office": "陕西巡抚",
+                "appoint_action": "任命",
+                "region_id": region,
+            },
+        }]},
+        minister_name="", night_id=night_id,
+    )
+    assert len(staged.commissions.applied) == 1
+    pa = staged.commissions.applied[0]
+    assert pa["kind"] == "office"
+    payload = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?",
+            (int(pa["id"]),),
+        ).fetchone()["payload_json"]
+    )
+    assert payload.get("region_id") == region
+    assert payload.get("text") == edict
+
+
 def test_scene_chat_translate_prompt_carries_pending_and_spoken(game, monkeypatch):
     """转译 prompt 含本轮皇帝原话区、回话、本夜暂存 id。"""
     db, state, content = game

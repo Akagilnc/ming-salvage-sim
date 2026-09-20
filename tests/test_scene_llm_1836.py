@@ -250,9 +250,12 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
     # #1837：转译可注入空声明，不跑真 LLM。
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
-    result = sess.scene_chat("洪承畴可堪大任？")
+    emperor = "洪承畴可堪大任？"
+    result = sess.scene_chat(emperor)
 
     assert len(calls) == 1, "整段戏文必须出自同一次场景调用"
+    # #1842：opening 已在 create_scene_agent instructions；run 输入不得再拼一份。
+    assert calls[0] == emperor
     assert result.answer == script
     assert result.court_action == ""
 
