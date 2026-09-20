@@ -415,7 +415,8 @@ def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypat
     gate = threading.Lock()
     release = threading.Event()
     entered_translate = threading.Event()
-    entered_close_join = threading.Event()
+    saw_join_retry = threading.Event()
+    join_calls = {"n": 0}
     owner = translation_owner_key(gate, db)
 
     def translate_fn(prompt, llm_config):
@@ -425,11 +426,16 @@ def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypat
 
     real_join_night = at.join_night_translations
 
-    def join_mark_entered(night_id, *, timeout_s=120.0, owner_key=None):
-        entered_close_join.set()
-        return real_join_night(night_id, timeout_s=timeout_s, owner_key=owner_key)
+    def join_short_while_blocked(night_id, *, timeout_s=120.0, owner_key=None):
+        # 短超时迫使 while 重入；旧语义单次 join False 直推 CLOSING 永不 ≥2。
+        join_calls["n"] += 1
+        if join_calls["n"] >= 2:
+            saw_join_retry.set()
+        return real_join_night(
+            night_id, timeout_s=min(float(timeout_s), 0.1), owner_key=owner_key,
+        )
 
-    monkeypatch.setattr(at, "join_night_translations", join_mark_entered)
+    monkeypatch.setattr(at, "join_night_translations", join_short_while_blocked)
     monkeypatch.setattr(
         "ming_sim.audience_extraction.extract_endorsements_for_night",
         lambda **k: [],
@@ -460,14 +466,15 @@ def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypat
 
     worker = threading.Thread(target=_run_close, daemon=True)
     worker.start()
-    # 事件确认 close 已进入 join 屏障后再断言外部态——禁猜时序轮询。
-    assert entered_close_join.wait(timeout=2.0), "close_night 须进入 join 屏障"
+    # while 续等真实发生后再断言外部态——单次 join 旧语义永不重入→超时红。
+    assert saw_join_retry.wait(timeout=2.0), "close_night 须 while 重入 join（≥2）"
     row = get_night(db, nid)
     assert row is not None
     status = str(row["status"] or "")
     assert status == NIGHT_STATUS_OPEN
     assert status != NIGHT_STATUS_CLOSING, "屏障未清不得 CLOSING"
     assert worker.is_alive(), "close_night 应仍在等屏障"
+    assert join_calls["n"] >= 2
 
     release.set()
     worker.join(timeout=4.0)
