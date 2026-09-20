@@ -11,7 +11,6 @@ Seams:
 from __future__ import annotations
 
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -172,8 +171,7 @@ def test_second_sentence_does_not_wait_for_first_translation(game):
     ctid1 = _persist_round(db, state, nid, "第一句：拿下", "臣遵旨。")
     ctid2 = _persist_round(db, state, nid, "第二句：再问边饷", "边饷尚可。")
 
-    # 串行队列：先调度 t1（会卡住），再调度 t2；前台调度本身必须立刻返回。
-    t_sched = time.monotonic()
+    # 串行队列：先调度 t1（会卡住），再调度 t2；前台调度返回时 t1 仍在飞。
     fut1 = schedule_audience_turn_translation(
         db, state,
         emperor_message="第一句：拿下",
@@ -184,10 +182,10 @@ def test_second_sentence_does_not_wait_for_first_translation(game):
         translate_fn=translate_fn,
         write_gate=gate,
     )
-    assert time.monotonic() - t_sched < 0.5
     assert started.wait(timeout=2.0), "t1 须已进入转译"
+    assert not fut1.done(), "调度返回时 t1 仍在飞"
+    assert db.get_story_extract_status(ctid1) == "pending"
 
-    t_sched2 = time.monotonic()
     fut2 = schedule_audience_turn_translation(
         db, state,
         emperor_message="第二句：再问边饷",
@@ -198,9 +196,10 @@ def test_second_sentence_does_not_wait_for_first_translation(game):
         translate_fn=translate_fn,
         write_gate=gate,
     )
-    # 调度返回不等 t1 完成
-    assert time.monotonic() - t_sched2 < 0.5
+    # 第二次调度返回时 t1 仍未完成——确定性证明前台未等（禁墙钟 SLA）
+    assert not fut1.done(), "第二次调度返回时 t1 仍在飞"
     assert "t1-done" not in order
+    assert db.get_story_extract_status(ctid1) == "pending"
 
     release.set()
     assert join_night_translations(nid, timeout_s=3.0)
@@ -642,13 +641,12 @@ def test_scene_chat_background_when_chat_turn_id(game, monkeypatch):
         lambda *a, **k: SimpleNamespace(opening="开场", root=None),
     )
 
-    t0 = time.monotonic()
     result = sess.scene_chat("边事如何？", chat_turn_id=ctid)
-    elapsed = time.monotonic() - t0
     assert result.answer == "臣等在。"
-    assert elapsed < 0.8, "前台不得等卡住的转译"
-    # 后台已启动
-    assert ran.wait(timeout=1.0)
+    # 前台已返回且转译仍被挡住 → 确定性证明未同步等待（禁墙钟 SLA）
+    assert not release.is_set()
+    assert db.get_story_extract_status(ctid) == "pending"
+    assert ran.wait(timeout=1.0), "后台转译须已启动"
     release.set()
     assert join_night_translations(nid, timeout_s=2.0)
     assert db.get_story_extract_status(ctid) == "done"
