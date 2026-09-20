@@ -135,6 +135,22 @@ def _persist_round(db, state, night_id: int, user_text: str, reply: str) -> int:
     return ctid
 
 
+def _persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
+    """镜像 Web/CLI：回话落定后再 schedule（ADR 0155 / 0036）。"""
+    pending = getattr(result, "pending_audience_translation", None)
+    if not pending:
+        return None
+    ctid = int(pending.get("chat_turn_id") or 0)
+    if ctid <= 0:
+        return None
+    answer = str(getattr(result, "answer", "") or "")
+    db.persist_minister_reply(
+        speaker, int(sess.state.turn), answer, ctid,
+        mindreading_status="skip",
+    )
+    return sess.schedule_pending_scene_translation(result)
+
+
 def test_normalize_keeps_unknown_keys_and_full_sections():
     """声明 normalize：全 section 可入；未知顶层键原样保留交分派器。"""
     raw = {
@@ -725,6 +741,10 @@ def test_scene_chat_background_when_chat_turn_id(game, monkeypatch, bg_life):
 
     result = sess.scene_chat("边事如何？", chat_turn_id=ctid)
     assert result.answer == "臣等在。"
+    # 回话未落定前不得起转译；persist 后 schedule 才进后台窗。
+    assert getattr(result, "pending_audience_translation", None) is not None
+    assert not ran.is_set()
+    _persist_and_schedule_scene(sess, db, result)
     # 前台已返回且转译仍被挡住 → 确定性证明未同步等待（禁墙钟 SLA）
     assert not release.is_set()
     assert db.get_story_extract_status(ctid) == "pending"
@@ -1639,7 +1659,8 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
 
     chat_out = sess.scene_chat("退出仍写完", chat_turn_id=ctid)
     assert chat_out.answer == "臣遵旨。"
-    assert started.wait(2.0), "worker 须经 scene_chat 进入转译窗"
+    _persist_and_schedule_scene(sess, db, chat_out)
+    assert started.wait(2.0), "worker 须经 persist 后 schedule 进入转译窗"
     assert db.get_story_extract_status(ctid) == "pending"
 
     closed = threading.Event()
@@ -1654,7 +1675,7 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
 
     sess.close = tracking_close  # type: ignore[method-assign]
 
-    # 薄 duck owner 只接 menu exit/drain 指针；在飞已由 scene_chat 登记。
+    # 薄 duck owner 只接 menu exit/drain 指针；在飞已由 schedule 登记。
     runtime = SimpleNamespace(
         _write_gate=gate,
         _write_queue=write_q,
@@ -1683,14 +1704,13 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
 def test_cli_exit_joins_inflight_translation_before_db_close(
     game, monkeypatch, bg_life, tmp_path,
 ):
-    """#1842：经真实 `run_cli` 退出；owner drain 后 worker 终态才关原库。
+    """#1842：经真实 `run_cli` 退出；外部可见 pending→done、关库次序。
 
-    与 menu_exit 同形 scene_chat 在飞；入口必须是 `terminal.run_cli`（禁测试内
-    复制 finally / 直调 `_drain_and_close_session`）。侧线程跑 run_cli；放行前以
-    join_owner_translations 接缝证清理已进入等待（禁盯 seal）；再断言 pending、
-    关库次序与 done-at-close。禁墙钟 SLA / 新 lifecycle。
+    与 menu_exit 同形：scene_chat 后 persist+schedule 在飞；入口必须是
+    `terminal.run_cli`（禁测试内复制 finally / 直调 `_drain_and_close_session`）。
+    侧线程跑 run_cli；以 play 已入 + extract pending + 未关库 证退出后仍在排空，
+    再放行 → done-at-close。禁盯 join 内部接缝 / seal / 墙钟 SLA / 新 lifecycle。
     """
-    import ming_sim.audience_translation as at
     import ming_sim.cli.terminal as term
     from ming_sim.exceptions import ExitGame
     from ming_sim.session_write_queue import SessionWriteQueue
@@ -1744,7 +1764,8 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
 
     chat_out = sess.scene_chat("CLI退出仍写完", chat_turn_id=ctid)
     assert chat_out.answer == "臣遵旨。"
-    assert started.wait(2.0), "worker 须经 scene_chat 进入转译窗"
+    _persist_and_schedule_scene(sess, db, chat_out)
+    assert started.wait(2.0), "worker 须经 persist 后 schedule 进入转译窗"
     assert db.get_story_extract_status(ctid) == "pending"
 
     closed = threading.Event()
@@ -1758,22 +1779,15 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
 
     sess.close = tracking_close  # type: ignore[method-assign]
 
-    # 接缝水位：清理须进入 owner join 等待；直接 session.close() 永不触达 → 红。
-    join_entered = threading.Event()
-    real_join = at.join_owner_translations
-
-    def tracking_join(owner_key, *, timeout_s=120.0):
-        join_entered.set()
-        return real_join(owner_key, timeout_s=timeout_s)
-
-    monkeypatch.setattr(at, "join_owner_translations", tracking_join)
-
     # 真实入口：run_cli 建 session → play_turn 抛 ExitGame → finally drain。
+    play_entered = threading.Event()
+
+    def _play_then_exit(_s):
+        play_entered.set()
+        raise ExitGame()
+
     monkeypatch.setattr(term, "GameSession", lambda *a, **k: sess)
-    monkeypatch.setattr(
-        term, "play_turn",
-        lambda _s: (_ for _ in ()).throw(ExitGame()),
-    )
+    monkeypatch.setattr(term, "play_turn", _play_then_exit)
     monkeypatch.setattr(
         "ming_sim.llm_config.load_llm_config",
         lambda *a, **k: SimpleNamespace(
@@ -1803,10 +1817,10 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
         target=_run_cli_exit, daemon=True, name="cli-run-exit",
     )
     run_thread.start()
-    # happens-before：join 接缝已入（或错误地先关）；禁 seal。直接 close → 无 join → 红。
-    wait_until(lambda: join_entered.is_set() or closed.is_set())
-    assert join_entered.is_set(), "run_cli finally 须 join 在飞转译，不得直接 close"
-    assert not closed.is_set(), "join 清空前不得关库"
+    # 外部可见：play 已入且仍 pending、未关库（drain 须等在飞；直接 close → 红）。
+    wait_until(lambda: play_entered.is_set() or closed.is_set())
+    assert play_entered.is_set(), "run_cli 须进入 play 后抛 ExitGame"
+    assert not closed.is_set(), "在飞转译清空前不得关库"
     assert db.get_story_extract_status(ctid) == "pending"
 
     release.set()

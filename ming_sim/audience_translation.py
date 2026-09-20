@@ -209,20 +209,22 @@ def _observe_finished_future(
     logger.error("%s: future failed %s", where, detail, exc_info=exc)
 
 
-def join_owner_translations(owner_key: int, *, timeout_s: float = 120.0) -> bool:
-    """等待该会话 owner 名下在飞转译全部结束。返回是否在时限内清空。"""
+def _join_inflight_bucket(
+    snapshot_bucket,
+    *,
+    timeout_s: float,
+    where: str,
+    **fields: Any,
+) -> bool:
+    """单一权威：快照在飞 Future → 短等切片 → 重快照，直至清空或超时。
+
+    ``snapshot_bucket`` 无参可调用，返回当前 Future 列表（须在锁内读账）。
+    """
     import time
 
-    owner = int(owner_key)
     deadline = time.monotonic() + max(0.0, float(timeout_s))
     while True:
-        with _night_inflight_guard:
-            bucket = [
-                fut
-                for key, futs in _night_inflight.items()
-                if key[0] == owner
-                for fut in futs
-            ]
+        bucket = list(snapshot_bucket() or ())
         if not bucket:
             return True
         remaining = deadline - time.monotonic()
@@ -234,12 +236,33 @@ def join_owner_translations(owner_key: int, *, timeout_s: float = 120.0) -> bool
             _await_inflight_future(
                 fut,
                 min(remaining, 0.5),
-                where="join_owner_translations",
-                owner=owner,
+                where=where,
+                **fields,
             )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
+
+
+def join_owner_translations(owner_key: int, *, timeout_s: float = 120.0) -> bool:
+    """等待该会话 owner 名下在飞转译全部结束。返回是否在时限内清空。"""
+    owner = int(owner_key)
+
+    def _snapshot():
+        with _night_inflight_guard:
+            return [
+                fut
+                for key, futs in _night_inflight.items()
+                if key[0] == owner
+                for fut in futs
+            ]
+
+    return _join_inflight_bucket(
+        _snapshot,
+        timeout_s=timeout_s,
+        where="join_owner_translations",
+        owner=owner,
+    )
 
 
 def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> None:
@@ -309,15 +332,28 @@ def run_turn_translation_job(
             return contextlib.nullcontext()
         return gate
 
-    # 死轮 / 已 done：闸内短读后早退（禁持非重入锁再嵌套写）。
+    # 死轮 / 未落定回话 / 已 done：闸内短读后早退（禁持非重入锁再嵌套写）。
+    # ADR 0155 / 0036：转译真源 = 已持久化回话；generating 或无 minister_message_id 拒绝。
     already_done = False
     if ctid > 0 and hasattr(db, "conn"):
         with _gate_cm():
             row = db.conn.execute(
-                "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+                "SELECT status, minister_message_id FROM chat_turns WHERE id=?",
+                (ctid,),
             ).fetchone()
             if row is not None and str(row["status"] or "") in {"failed", "undone"}:
                 raise AudienceTranslateError(f"源轮已死：chat_turn_id={ctid}")
+            status = str(row["status"] or "") if row is not None else ""
+            mid = 0
+            if row is not None and row["minister_message_id"] is not None:
+                try:
+                    mid = int(row["minister_message_id"] or 0)
+                except (TypeError, ValueError):
+                    mid = 0
+            if status == "generating" or mid <= 0:
+                raise AudienceTranslateError(
+                    f"源轮回话未落定：chat_turn_id={ctid} status={status}"
+                )
             already_done = (
                 hasattr(db, "get_story_extract_status")
                 and db.get_story_extract_status(ctid) == "done"
@@ -487,37 +523,26 @@ def join_night_translations(
     全部 owner（单会话测试清理便利，不得用于生产过月——过月走
     :func:`join_owner_translations`）。
     """
-    import time
-
     nid = int(night_id or 0)
-    deadline = time.monotonic() + max(0.0, float(timeout_s))
-    while True:
+
+    def _snapshot():
         with _night_inflight_guard:
             if owner_key is None:
-                bucket = [
+                return [
                     fut
                     for key, futs in _night_inflight.items()
                     if key[1] == nid
                     for fut in futs
                 ]
-            else:
-                bucket = list(_night_inflight.get((int(owner_key), nid)) or ())
-        if not bucket:
-            return True
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return False
-        for fut in bucket:
-            _await_inflight_future(
-                fut,
-                min(remaining, 0.5),
-                where="join_night_translations",
-                night=nid,
-                owner_key=owner_key,
-            )
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
+            return list(_night_inflight.get((int(owner_key), nid)) or ())
+
+    return _join_inflight_bucket(
+        _snapshot,
+        timeout_s=timeout_s,
+        where="join_night_translations",
+        night=nid,
+        owner_key=owner_key,
+    )
 
 
 def join_all_translations(*, timeout_s: float = 120.0) -> bool:

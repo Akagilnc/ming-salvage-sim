@@ -2481,6 +2481,8 @@ class WebGame:
                             result, "secret_order_landing_recovery", None),
                     )
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+                self.session.schedule_pending_scene_translation(result)
                 answer_text = str(getattr(result, "answer", "") or "")
                 message_id = int(payload.get("minister_message_id") or 0)
                 # #1842：转译后台承接记录；旧读心/抽取/判官尾随退役。高亮仍可跑（呈现腿）。
@@ -2657,6 +2659,8 @@ class WebGame:
                     )
                     # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+                self.session.schedule_pending_scene_translation(result)
                 answer_text = str(getattr(result, "answer", "") or "")
                 message_id = int(payload.get("minister_message_id") or 0)
                 # #1842：旧读心/抽取/判官退役；放行整轮票后高亮仍可跑。
@@ -2826,6 +2830,8 @@ class WebGame:
                         result, "secret_order_landing_recovery", None),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+        # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+        self.session.schedule_pending_scene_translation(result)
         attempts = getattr(result, "transport_attempts", None)
         if attempts:
             payload["transport_attempts"] = attempts
@@ -2905,7 +2911,8 @@ class WebGame:
         def _after_stream():
             run_output = run_output_box[0] if run_output_box else None
             _dump_llm_messages(run_output, f"大臣对话/{minister_name}", agent=agent)
-            answer = "".join(chunks).strip()
+            # P6 / #671：流式拼装不得 strip；玩家可见原文（含首尾空白）原样保留。
+            answer = "".join(chunks)
             if run_output is not None:
                 extracted = extract_agent_text(run_output)
                 if not answer:

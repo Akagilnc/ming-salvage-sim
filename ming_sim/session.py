@@ -174,6 +174,9 @@ class ChatTurnResult:
     decree_validation_failure: Optional[Dict[str, Any]] = None
     # #1765：密令落不了库 → 大臣揣摩/追问（landing_gaps + report）；与拟旨 recovery 同投影缝。
     secret_order_landing_recovery: Optional[Dict[str, Any]] = None
+    # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
+    # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
+    pending_audience_translation: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -1969,7 +1972,7 @@ class GameSession:
             # 结构化 attempts 账挂结果，供流式 payload 回指（非 prose）。
             result.transport_attempts = transport_attempts_box  # type: ignore[attr-defined]
 
-        # #1842：ctid>0 → 后台转译（前台不等）；ctid==0 → 同步落定（直调/单测）。
+        # #1842：ctid>0 → 暂存转译参数（persist 后 schedule）；ctid==0 → 同步落定。
         # 不跑并行分类器 / 故事抽取 / 边事件判官 / 读心——转译一次承接。
         self._apply_scene_turn_translation(
             result, message_text, answer, night_id=night_id,
@@ -2055,7 +2058,8 @@ class GameSession:
             _dump_llm_messages(
                 run_output, f"场景召对/{getattr(agent, 'name', '殿上')}", agent=agent,
             )
-            answer = "".join(chunks).strip()
+            # P6 / #671：流式拼装不得 strip；玩家可见原文（含首尾空白）原样保留。
+            answer = "".join(chunks)
             if run_output is not None:
                 extracted = extract_agent_text(run_output)
                 if not answer:
@@ -2101,34 +2105,28 @@ class GameSession:
         night_id: int,
         chat_turn_id: int = 0,
     ) -> None:
-        """#1837/#1842：场景入口转译完整声明；ctid>0 后台串行，否则同步。"""
+        """#1837/#1842：场景入口转译完整声明；ctid>0 暂存待 persist 后调度，否则同步。"""
         from ming_sim.audience_translate import (
             AudienceTranslateError,
             run_audience_turn_translation,
         )
-        from ming_sim.audience_translation import schedule_audience_turn_translation
         from ming_sim.token_stats import tlog
 
         if GameSession._proposal_blocked(self.state):
             return
         ctid = int(chat_turn_id or 0)
         nid = int(night_id or 0)
-        write_gate = getattr(self, "_write_gate", None)
 
         if ctid > 0:
-            # 生产路径：调度后立即返回；封夜/过月 join；失败由 worker 标 pending。
-            # 转译 runner 走默认；测试经 monkeypatch `_default_translate_runner`。
-            schedule_audience_turn_translation(
-                self.db,
-                self.state,
-                emperor_message=emperor_message,
-                reply=reply,
-                night_id=nid,
-                chat_turn_id=ctid,
-                minister_name="",
-                llm_config=getattr(self, "llm_config", None),
-                write_gate=write_gate,
-            )
+            # 生产路径：只暂存；Web/CLI 回话 persist 后
+            # schedule_pending_scene_translation 才起后台（ADR 0155 / 0036）。
+            result.pending_audience_translation = {
+                "emperor_message": emperor_message,
+                "reply": reply,
+                "night_id": nid,
+                "chat_turn_id": ctid,
+                "minister_name": "",
+            }
             return
 
         try:
@@ -2189,6 +2187,31 @@ class GameSession:
                     "source": "audience_translate",
                     "chat_turn_id": ctid,
                 })
+
+    def schedule_pending_scene_translation(
+        self, result: "ChatTurnResult",
+    ) -> Optional["Future"]:
+        """#1842：回话已 persist 后冲刷 scene_chat 暂存的后台转译。
+
+        无暂存则 no-op。调用方须先落大臣回话（generating→active + minister_message_id）。
+        """
+        pending = getattr(result, "pending_audience_translation", None)
+        if not pending:
+            return None
+        result.pending_audience_translation = None
+        from ming_sim.audience_translation import schedule_audience_turn_translation
+
+        return schedule_audience_turn_translation(
+            self.db,
+            self.state,
+            emperor_message=str(pending.get("emperor_message") or ""),
+            reply=str(pending.get("reply") or ""),
+            night_id=int(pending.get("night_id") or 0),
+            chat_turn_id=int(pending.get("chat_turn_id") or 0),
+            minister_name=str(pending.get("minister_name") or ""),
+            llm_config=getattr(self, "llm_config", None),
+            write_gate=getattr(self, "_write_gate", None),
+        )
 
     def chat(
         self, minister_name: str, message: str, *, chat_turn_id: int = 0,

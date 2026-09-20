@@ -42,6 +42,22 @@ def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None
     return sess
 
 
+def _persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
+    """镜像 Web/CLI：回话落定后再 schedule（ADR 0155 / 0036）。"""
+    pending = getattr(result, "pending_audience_translation", None)
+    if not pending:
+        return None
+    ctid = int(pending.get("chat_turn_id") or 0)
+    if ctid <= 0:
+        return None
+    answer = str(getattr(result, "answer", "") or "")
+    db.persist_minister_reply(
+        speaker, int(sess.state.turn), answer, ctid,
+        mindreading_status="skip",
+    )
+    return sess.schedule_pending_scene_translation(result)
+
+
 def _region_id(db, preferred: str = "shaanxi") -> str:
     row = db.conn.execute(
         "SELECT id FROM regions WHERE id=? LIMIT 1", (preferred,),
@@ -618,6 +634,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     )
     r = sess.scene_chat("拟赈灾", chat_turn_id=ctid_create)
     assert r.pending_action_id == 0  # #1842：前台不等后台转译
+    _persist_and_schedule_scene(sess, db, r)
     assert join_night_translations(night_id, timeout_s=2.0)
     created = db.conn.execute(
         "SELECT id FROM pending_actions WHERE payload_json LIKE ? ORDER BY id DESC LIMIT 1",
@@ -658,7 +675,8 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
             "promises": [{"action_id": approve_id, "decision": "应允"}],
         },
     )
-    sess.scene_chat("准", chat_turn_id=ctid_approve)
+    r_approve = sess.scene_chat("准", chat_turn_id=ctid_approve)
+    _persist_and_schedule_scene(sess, db, r_approve)
     assert join_night_translations(night_id, timeout_s=2.0)
     assert int(db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
@@ -689,7 +707,8 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
             "promises": [{"action_id": reject_id, "decision": "拒绝"}],
         },
     )
-    sess.scene_chat("不准", chat_turn_id=ctid_reject)
+    r_reject = sess.scene_chat("不准", chat_turn_id=ctid_reject)
+    _persist_and_schedule_scene(sess, db, r_reject)
     assert join_night_translations(night_id, timeout_s=2.0)
     assert db.conn.execute(
         "SELECT COUNT(*) n FROM pending_actions WHERE id=?", (reject_id,),

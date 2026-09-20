@@ -481,6 +481,8 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         else:
             mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
             db.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
+        # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+        session.schedule_pending_scene_translation(result)
         if hasattr(db, "record_chat_turn_rollback_diffs") and before_snapshot is not None:
             db.record_chat_turn_rollback_diffs(
                 chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
@@ -670,6 +672,8 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),
                     )
+                # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+                session.schedule_pending_scene_translation(result)
         except BaseException as original_error:
             try:
                 if chat_turn_id:
