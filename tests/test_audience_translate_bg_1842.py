@@ -227,6 +227,7 @@ def test_close_night_joins_last_translation_before_commit(game, monkeypatch):
     gate = threading.Lock()
 
     release = threading.Event()
+    entered_last = threading.Event()
 
     def translate_fn(prompt, llm_config):
         if "【本轮皇帝】任命并拨银赈灾" in prompt:
@@ -244,8 +245,9 @@ def test_close_night_joins_last_translation_before_commit(game, monkeypatch):
                 }],
                 "promises": [],
             }
-        # 应允轮：等 join 才会放行——模拟封夜时转译仍在飞
-        release.wait(timeout=2.0)
+        # 应允轮：进入阻塞接缝后再等 join 放行——模拟封夜时转译仍在飞
+        entered_last.set()
+        release.wait(timeout=5.0)
         rows = db.conn.execute(
             "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
         ).fetchall()
@@ -282,13 +284,24 @@ def test_close_night_joins_last_translation_before_commit(game, monkeypatch):
         llm_config=SimpleNamespace(channel="api"),
         translate_fn=translate_fn, write_gate=gate,
     )
-    # 不在此 release——close_night 必须 join 等到转译完成
-    threading.Timer(0.15, release.set).start()
+    assert entered_last.wait(timeout=2.0), "末轮转译须先进入阻塞接缝"
 
     # 成案前应允尚未落（转译仍在飞）
     assert db.conn.execute(
         "SELECT night_approved FROM pending_actions ORDER BY id LIMIT 1"
     ).fetchone()["night_approved"] == 0
+
+    import ming_sim.audience_translation as at
+    real_join_night = at.join_night_translations
+
+    def join_and_release(night_id, *, timeout_s=120.0, owner_key=None):
+        # close 已入 join：放行在飞转译，再走真实 join（禁 Timer 猜时序）
+        release.set()
+        return real_join_night(
+            night_id, timeout_s=timeout_s, owner_key=owner_key,
+        )
+
+    monkeypatch.setattr(at, "join_night_translations", join_and_release)
 
     result = close_night(
         db, state, content=content, registry=None,
@@ -341,7 +354,10 @@ def test_independent_owners_same_night_id_do_not_block_each_other(
         assert nid_a == nid_b == 1
         gate_b = threading.Lock()
 
+        entered_a = threading.Event()
+
         def translate_a(prompt, llm_config):
+            entered_a.set()
             release_a.wait(timeout=5.0)
             return {"commissions": [], "promises": []}
 
@@ -364,9 +380,10 @@ def test_independent_owners_same_night_id_do_not_block_each_other(
             llm_config=SimpleNamespace(channel="api"),
             translate_fn=translate_a, write_gate=gate_a,
         )
-        # 甲仍在飞
+        assert entered_a.wait(timeout=2.0), "甲档转译须先进入阻塞接缝"
+        # 甲仍在飞：timeout_s=0 桶非空则即时 False（禁墙钟短超时）
         assert not join_night_translations(
-            nid_a, timeout_s=0.05, owner_key=owner_a,
+            nid_a, timeout_s=0.0, owner_key=owner_a,
         )
 
         ctid_b = _persist_round(db_b, state_b, nid_b, "乙档快走", "领旨。")
@@ -426,16 +443,19 @@ def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypat
 
     real_join_night = at.join_night_translations
 
-    def join_short_while_blocked(night_id, *, timeout_s=120.0, owner_key=None):
-        # 短超时迫使 while 重入；旧语义单次 join False 直推 CLOSING 永不 ≥2。
+    def join_while_blocked(night_id, *, timeout_s=120.0, owner_key=None):
+        # 已知 worker 仍阻塞：即时 False 迫使 while 重入（禁墙钟短超时造 False）。
+        # 旧语义单次 join False 直推 CLOSING 永不 ≥2 → saw_join_retry 超时红。
         join_calls["n"] += 1
         if join_calls["n"] >= 2:
             saw_join_retry.set()
+        if not release.is_set():
+            return False
         return real_join_night(
-            night_id, timeout_s=min(float(timeout_s), 0.1), owner_key=owner_key,
+            night_id, timeout_s=timeout_s, owner_key=owner_key,
         )
 
-    monkeypatch.setattr(at, "join_night_translations", join_short_while_blocked)
+    monkeypatch.setattr(at, "join_night_translations", join_while_blocked)
     monkeypatch.setattr(
         "ming_sim.audience_extraction.extract_endorsements_for_night",
         lambda **k: [],
@@ -451,7 +471,8 @@ def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypat
         translate_fn=translate_fn, write_gate=gate,
     )
     assert entered_translate.wait(timeout=2.0), "转译须先进入阻塞接缝"
-    assert not real_join_night(nid, timeout_s=0.05, owner_key=owner)
+    # timeout_s=0：桶非空则即时 False（不耗尽墙钟）
+    assert not real_join_night(nid, timeout_s=0.0, owner_key=owner)
 
     outcome: dict = {}
 
@@ -684,11 +705,13 @@ def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch)
     nid = int(night["id"])
     gate = threading.Lock()
     release = threading.Event()
+    entered_translate = threading.Event()
     name = _active_name(db, content)
     saw_join = threading.Event()
 
     def translate_fn(prompt, llm_config):
-        release.wait(timeout=2.0)
+        entered_translate.set()
+        release.wait(timeout=5.0)
         return {
             "on_scene_facts": [{
                 "name": name, "动作": "处置", "status": "imprisoned",
@@ -706,11 +729,14 @@ def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch)
         translate_fn=translate_fn, write_gate=gate,
     )
     assert db.get_story_extract_status(ctid) == "pending"
+    assert entered_translate.wait(timeout=2.0), "转译须先进入阻塞接缝"
 
     import ming_sim.audience_translation as at
     real_join = at.join_owner_translations
 
     def tracking_join(owner_key, *, timeout_s=120.0):
+        # resolve 已入 join：放行在飞转译，再走真实 join（禁 Timer 猜时序）
+        release.set()
         ok = real_join(owner_key, timeout_s=timeout_s)
         saw_join.set()
         return ok
@@ -737,7 +763,6 @@ def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch)
         raise _StopAfterJoin()
 
     monkeypatch.setattr(at, "catch_up_pending_translations", catch_then_stop)
-    threading.Timer(0.1, release.set).start()
 
     with pytest.raises(_StopAfterJoin):
         sess.resolve_turn(allow_empty_decree=True)
@@ -786,13 +811,14 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
 
     real_join = at.join_owner_translations
 
-    def join_short(owner_key, *, timeout_s=120.0):
-        ok = real_join(owner_key, timeout_s=min(float(timeout_s), 0.4))
-        if not ok:
+    def join_while_blocked(owner_key, *, timeout_s=120.0):
+        # 已知 LLM 窗仍阻塞：即时 False（禁 0.4s 墙钟造 incomplete）；放行后走真实 join。
+        if not release_llm.is_set():
             saw_incomplete_join.set()
-        return ok
+            return False
+        return real_join(owner_key, timeout_s=timeout_s)
 
-    monkeypatch.setattr(at, "join_owner_translations", join_short)
+    monkeypatch.setattr(at, "join_owner_translations", join_while_blocked)
 
     class _StopAfterCatch(Exception):
         pass
@@ -864,6 +890,8 @@ def test_await_translations_does_not_steal_worker_write_gate(game, monkeypatch):
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
     gate = threading.Lock()
+    entered_apply = threading.Event()
+    hold_apply = threading.Event()
     import ming_sim.audience_translation as at
 
     def translate_fn(prompt, llm_config):
@@ -871,12 +899,13 @@ def test_await_translations_does_not_steal_worker_write_gate(game, monkeypatch):
 
     real_apply = at.apply_audience_round_translation
 
-    def slow_apply(*a, **k):
-        # 已在 run_turn_translation_job 的 with write_gate 内；拖住持闸窗。
-        time.sleep(0.8)
+    def blocked_apply(*a, **k):
+        # 已在 run_turn_translation_job 的 with write_gate 内；事件拖住持闸窗（禁 sleep）。
+        entered_apply.set()
+        hold_apply.wait(timeout=5.0)
         return real_apply(*a, **k)
 
-    monkeypatch.setattr(at, "apply_audience_round_translation", slow_apply)
+    monkeypatch.setattr(at, "apply_audience_round_translation", blocked_apply)
 
     ctid = _persist_round(db, state, nid, "反偷放", "……")
     schedule_audience_turn_translation(
@@ -888,11 +917,17 @@ def test_await_translations_does_not_steal_worker_write_gate(game, monkeypatch):
         translate_fn=translate_fn, write_gate=gate,
     )
 
-    # 等 worker 进入 apply 持闸
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline and not gate.locked():
-        time.sleep(0.01)
+    assert entered_apply.wait(timeout=2.0), "worker 须进入 apply 持闸窗"
     assert gate.locked(), "worker 应正在持 write_gate 落账"
+
+    real_join = at.join_owner_translations
+
+    def join_and_release(owner_key, *, timeout_s=120.0):
+        # await 已入 join：放行持闸 apply，再走真实 join
+        hold_apply.set()
+        return real_join(owner_key, timeout_s=timeout_s)
+
+    monkeypatch.setattr(at, "join_owner_translations", join_and_release)
 
     sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
     sess._begun = True
