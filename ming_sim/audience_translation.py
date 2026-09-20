@@ -12,10 +12,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from ming_sim.applier import Provenance, atomic
 from ming_sim.audience_night import set_night_protagonist
@@ -39,6 +40,11 @@ _night_inflight_guard = threading.Lock()
 _night_inflight: Dict[Tuple[int, int], List[Future]] = {}  # (owner, night_id)
 _turn_inflight: Dict[Tuple[int, int], Future] = {}  # (owner, chat_turn_id)
 _night_tail: Dict[Tuple[int, int], Future] = {}
+# 转译短持 write_gate 深度：前台非阻塞抢闸据此区分「等转译短临界」与「结算长写 → 409」。
+# Condition 与深度共用同一把锁；notify 须在 gate.release 之后，避免 depth=0 仍占闸的假放行窗。
+_translation_write_gate_depth = 0
+_translation_write_gate_depth_guard = threading.Lock()
+_translation_write_released = threading.Condition(_translation_write_gate_depth_guard)
 
 
 def translation_owner_key(write_gate: Any = None, db: Any = None) -> int:
@@ -48,6 +54,41 @@ def translation_owner_key(write_gate: Any = None, db: Any = None) -> int:
     if db is not None:
         return id(db)
     return 0
+
+
+def translation_holding_write_gate() -> bool:
+    """窥账：是否有转译 worker 正持会话 write_gate 短临界段（不 join、不 cancel）。"""
+    with _translation_write_gate_depth_guard:
+        return _translation_write_gate_depth > 0
+
+
+def wait_translation_write_gate_released() -> None:
+    """等到转译短持深度归零（不抢闸、不加超时；结算持闸不抬此信号）。"""
+    with _translation_write_released:
+        while _translation_write_gate_depth > 0:
+            _translation_write_released.wait()
+
+
+@contextlib.contextmanager
+def _translation_write_cm(gate: Any) -> Iterator[None]:
+    """转译侧短持会话 write_gate，并登记深度供前台抢闸分流。"""
+    global _translation_write_gate_depth
+    if gate is None:
+        yield
+        return
+    gate.acquire()
+    try:
+        with _translation_write_released:
+            _translation_write_gate_depth += 1
+        try:
+            yield
+        finally:
+            with _translation_write_released:
+                _translation_write_gate_depth -= 1
+    finally:
+        gate.release()
+        with _translation_write_released:
+            _translation_write_released.notify_all()
 
 
 def apply_audience_round_translation(
@@ -281,8 +322,8 @@ def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> No
     ctid = int(chat_turn_id or 0)
     if ctid <= 0 or not hasattr(db, "mark_story_extraction_pending"):
         return
-    gate = write_gate if write_gate is not None else threading.Lock()
-    with gate:
+    # 失败路径短持：与 job 内读写同属转译持闸类，登记深度避免前台误 409。
+    with _translation_write_cm(write_gate):
         db.mark_story_extraction_pending(ctid)
 
 
@@ -339,10 +380,8 @@ def run_turn_translation_job(
     gate = write_gate  # 可为 None（单写测试路径）
 
     def _gate_cm():
-        if gate is None:
-            import contextlib
-            return contextlib.nullcontext()
-        return gate
+        # 转译短持须登记深度，供前台非阻塞抢闸区分「等转译」与「结算 → 409」。
+        return _translation_write_cm(gate)
 
     # 死轮 / 未落定回话 / 已 done：闸内短读后早退（禁持非重入锁再嵌套写）。
     # ADR 0155 / 0036：转译真源 = 已持久化回话；generating 或无 minister_message_id 拒绝。
@@ -449,8 +488,8 @@ def schedule_audience_turn_translation(
     ctid = int(chat_turn_id or 0)
     owner = translation_owner_key(write_gate, db)
     if ctid > 0 and hasattr(db, "mark_story_extraction_pending"):
-        gate = write_gate if write_gate is not None else threading.Lock()
-        with gate:
+        # 调度线程短标 pending：同属转译持闸类（调用方须已放闸，禁嵌套非重入锁）。
+        with _translation_write_cm(write_gate):
             db.mark_story_extraction_pending(ctid)
 
     night_key = (owner, nid)
@@ -521,8 +560,12 @@ def schedule_audience_turn_translation(
                 _night_inflight.pop(_night_key, None)
             if _turn_key is not None and _turn_inflight.get(_turn_key) is _fut:
                 _turn_inflight.pop(_turn_key, None)
+            # 撤回/取消占位后仍须保留同夜前驱为 tail，否则新轮无 pred 直提并与前驱重叠。
             if _night_tail.get(_night_key) is _fut:
-                _night_tail.pop(_night_key, None)
+                if bucket:
+                    _night_tail[_night_key] = bucket[-1]
+                else:
+                    _night_tail.pop(_night_key, None)
 
     def _bridge_work(
         work: Future,
@@ -546,8 +589,29 @@ def schedule_audience_turn_translation(
         pred_fut: Future,
         *,
         _out: Future = fut,
+        _night_key: Tuple[int, int] = night_key,
     ) -> None:
         _observe_predecessor(pred_fut)
+        # 撤回链中位后，后继的 pred 回调会早于仍在跑的前驱触发——先重挂到
+        # 桶内更早未完成 peer，再 submit，保持同夜 FIFO（禁平行队列）。
+        while True:
+            rechain: Optional[Future] = None
+            with _night_inflight_guard:
+                if _out.done():
+                    return
+                bucket = list(_night_inflight.get(_night_key) or ())
+                for peer in bucket:
+                    if peer is _out:
+                        break
+                    if not peer.done():
+                        rechain = peer
+            if rechain is None:
+                break
+            if rechain.done():
+                # 扫描后前驱刚终态：重扫，勿挂回调以免同步重入打乱控制流。
+                continue
+            rechain.add_done_callback(_launch_after_pred)
+            return
         # 占位 Future：submit 前标 RUNNING，避免 cancel 成功摘账而实活仍在跑。
         if not _out.set_running_or_notify_cancel():
             return
@@ -629,8 +693,7 @@ def _load_emperor_message_for_turn(
     ctid = int(chat_turn_id or 0)
     if ctid <= 0 or not hasattr(db, "conn"):
         return ""
-    gate = write_gate if write_gate is not None else threading.Lock()
-    with gate:
+    with _translation_write_cm(write_gate):
         trow = db.conn.execute(
             "SELECT user_message_id FROM chat_turns WHERE id=?", (ctid,),
         ).fetchone()

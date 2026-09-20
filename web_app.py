@@ -4454,11 +4454,34 @@ def _refuse_if_open_night_barrier(game) -> None:
         )
 
 
+def _acquire_web_write_gate_or_409(gate) -> None:
+    """抢会话 write_gate：空闲即持；转译短持则等其释放后再非阻塞重试；否则 409。
+
+    #1842：后台转译只在读写临界短持同一闸；LLM 段不持闸。前台拟旨等入口不得
+    因转译短临界随机 409，也不得在结算长写上挂死——仅 ``translation_holding``
+    为真时等待深度归零，再非阻塞抢一次；仍抢不到（结算/其它写）→ 409。
+    """
+    if gate.acquire(blocking=False):
+        return
+    from ming_sim.audience_translation import (
+        translation_holding_write_gate,
+        wait_translation_write_gate_released,
+    )
+
+    if translation_holding_write_gate():
+        wait_translation_write_gate_released()
+        if gate.acquire(blocking=False):
+            return
+    raise HTTPException(
+        status_code=409,
+        detail="月末结算或上一步写入进行中，请稍候再操作。",
+    )
+
+
 def _try_acquire_serialized_web_write_gate(game):
-    """非阻塞抢 write_gate；抢不到立即 409（不挂死）。返回已持锁的 gate。"""
+    """非阻塞抢 write_gate；抢不到立即 409（转译短持除外，见上）。返回已持锁的 gate。"""
     gate = _game_write_gate(game)
-    if not gate.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="月末结算或上一步写入进行中，请稍候再操作。")
+    _acquire_web_write_gate_or_409(gate)
     return gate
 
 
@@ -4466,7 +4489,8 @@ class _NonBlockingWebWriteGate:
     """#1353 r12：同一把 runtime write_gate 的非阻塞短持适配（不是平行闸）。
 
     advance 路径注入 auto_close/get_open_night 真实 with 接缝：占用即 409，
-    禁阻塞等闸。issue/stream 仍传裸 Lock（阻塞 acquire）。
+    禁阻塞等闸（#1842：转译短持与 ``_try_acquire`` 同缝等待后重试）。
+    issue/stream 仍传裸 Lock（阻塞 acquire）。
     """
 
     __slots__ = ("_lock",)
@@ -4475,12 +4499,8 @@ class _NonBlockingWebWriteGate:
         self._lock = lock
 
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
-        del blocking, timeout  # 契约：短持处永不阻塞等闸
-        if not self._lock.acquire(blocking=False):
-            raise HTTPException(
-                status_code=409,
-                detail="月末结算或上一步写入进行中，请稍候再操作。",
-            )
+        del blocking, timeout  # 契约：短持处不挂死在结算长写上
+        _acquire_web_write_gate_or_409(self._lock)
         return True
 
     def release(self) -> None:
