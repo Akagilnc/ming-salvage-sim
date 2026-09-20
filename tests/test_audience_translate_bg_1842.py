@@ -23,7 +23,10 @@ from ming_sim.audience_night import (
     get_open_night,
     open_night,
 )
-from ming_sim.audience_translate import normalize_audience_declaration
+from ming_sim.audience_translate import (
+    build_night_said_so_far,
+    normalize_audience_declaration,
+)
 from ming_sim.audience_translation import (
     abandon_owner_translations,
     catch_up_pending_translations,
@@ -1284,6 +1287,26 @@ def test_close_night_catchup_runs_default_runner_when_translate_fn_none(
         int(r["chat_turn_id"]) == ctid
         for r in list_pending_translations(db, night_id=nid)
     )
+
+
+def test_said_so_far_cuts_off_at_source_turn_and_excludes_self(game):
+    """until_chat_turn_id：结构化已说列表只含严格早于源轮；本轮/后轮不入。
+
+    真实入口=build_night_said_so_far；断言外部可见 list。禁盯 prompt、
+    禁 monkeypatch/断言内部 until 传参（#1842 复判 P2 恢复最短覆盖）。
+    """
+    db, state, _content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    _persist_round(db, state, nid, "第一句已说", "第一答")
+    ctid2 = _persist_round(db, state, nid, "第二句本轮", "第二答")
+    _persist_round(db, state, nid, "第三句后轮", "第三答")
+
+    said = build_night_said_so_far(db, nid, until_chat_turn_id=ctid2)
+    joined = "\n".join(said)
+    assert "第一句已说" in joined or "第一答" in joined, said
+    assert "第二句本轮" not in joined and "第二答" not in joined, said
+    assert "第三句后轮" not in joined and "第三答" not in joined, said
 
 
 def test_scene_chat_control_command_marks_translation_done(game):
