@@ -138,30 +138,32 @@ def _track_future(
     owner = int(owner_key)
     night_key = (owner, nid)
     turn_key = (owner, ctid) if ctid > 0 else None
+    # 锁内只做 night/turn 两索引原子登记。add_done_callback 必须在锁外：
+    # 已完成 Future 会同步调用回调；若仍持非重入 Lock，_cleanup 再取同一锁即自死锁。
     with _night_inflight_guard:
         _night_inflight.setdefault(night_key, []).append(fut)
         if turn_key is not None:
             _turn_inflight[turn_key] = fut
 
-        def _cleanup(
-            _f: Future,
-            *,
-            _night_key: Tuple[int, int] = night_key,
-            _turn_key: Optional[Tuple[int, int]] = turn_key,
-            _fut: Future = fut,
-        ) -> None:
-            with _night_inflight_guard:
-                bucket = _night_inflight.get(_night_key) or []
-                try:
-                    bucket.remove(_fut)
-                except ValueError:
-                    pass
-                if not bucket:
-                    _night_inflight.pop(_night_key, None)
-                if _turn_key is not None and _turn_inflight.get(_turn_key) is _fut:
-                    _turn_inflight.pop(_turn_key, None)
+    def _cleanup(
+        _f: Future,
+        *,
+        _night_key: Tuple[int, int] = night_key,
+        _turn_key: Optional[Tuple[int, int]] = turn_key,
+        _fut: Future = fut,
+    ) -> None:
+        with _night_inflight_guard:
+            bucket = _night_inflight.get(_night_key) or []
+            try:
+                bucket.remove(_fut)
+            except ValueError:
+                pass
+            if not bucket:
+                _night_inflight.pop(_night_key, None)
+            if _turn_key is not None and _turn_inflight.get(_turn_key) is _fut:
+                _turn_inflight.pop(_turn_key, None)
 
-        fut.add_done_callback(_cleanup)
+    fut.add_done_callback(_cleanup)
 
 
 def cancel_turn_translation(chat_turn_id: int, *, owner_key: int) -> int:
