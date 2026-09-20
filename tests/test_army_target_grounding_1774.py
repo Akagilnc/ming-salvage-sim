@@ -291,8 +291,10 @@ def test_audience_grounded_army_pay_lands_through_close_night(
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     try:
-        from ming_sim.audience_translation import join_all_translations
-
+        from ming_sim.audience_translation import (
+            join_owner_translations,
+            translation_owner_key,
+        )
         if game.session.llm_config is not None:
             game.session.llm_config.channel = "cli"
         name = _active_ming_minister(game.db, game.content, office="户部").name
@@ -337,7 +339,8 @@ def test_audience_grounded_army_pay_lands_through_close_night(
             f"/api/ministers/{name}/chat/stream", json={"message": AUDIENCE_MESSAGE},
         )
         assert draft.status_code == 200, draft.text
-        assert join_all_translations(timeout_s=5.0)
+        owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+        assert join_owner_translations(owner, timeout_s=5.0)
         wait_pending_writes(game)
         pend = [
             json.loads(r["payload_json"])
@@ -348,7 +351,8 @@ def test_audience_grounded_army_pay_lands_through_close_night(
 
         approve = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
         assert approve.status_code == 200, approve.text
-        assert join_all_translations(timeout_s=5.0)
+        owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+        assert join_owner_translations(owner, timeout_s=5.0)
         wait_pending_writes(game)
 
         body = _post_issue_stream(client, expected_turn=turn_before, step="#1774 收夜")

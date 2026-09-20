@@ -1924,8 +1924,10 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             except Exception:
                 pass
 
-        from ming_sim.audience_translation import join_all_translations
-
+        from ming_sim.audience_translation import (
+            join_owner_translations,
+            translation_owner_key,
+        )
         def _translate(prompt, _cfg):
             text = str(prompt or "")
             if "【本轮皇帝】准" in text:
@@ -1974,7 +1976,8 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         )
         assert petition.status_code == 200, petition.text
         # #1842：ctid>0 转译后台；前台 pending_action_id 可仍为 0——join 后读表。
-        assert join_all_translations(timeout_s=5.0)
+        owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+        assert join_owner_translations(owner, timeout_s=5.0)
         wait_pending_writes(game)
         staged = [
             r for r in game.db.list_pending_actions(turn_before)
@@ -1999,7 +2002,8 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             json={"message": "准"},
         )
         assert confirm.status_code == 200, confirm.text
-        assert join_all_translations(timeout_s=5.0)
+        owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+        assert join_owner_translations(owner, timeout_s=5.0)
         wait_pending_writes(game)
         assert int(game.state.metrics["国库"]) == treasury_before
         assert _army_row(game.db)["arrears"] == pytest.approx(arrears_before["arrears"])

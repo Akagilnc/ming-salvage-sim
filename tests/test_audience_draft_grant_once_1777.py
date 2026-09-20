@@ -65,8 +65,10 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     try:
-        from ming_sim.audience_translation import join_all_translations
-
+        from ming_sim.audience_translation import (
+            join_owner_translations,
+            translation_owner_key,
+        )
         # 召对大臣刻意避开抽取所得承办人，钉「名单≠当前说话大臣」。
         name = next(
             getattr(ch, "name", key)
@@ -135,7 +137,8 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             json={"message": _UTTERANCE},
         )
         assert petition.status_code == 200, petition.text
-        assert join_all_translations(timeout_s=5.0)
+        owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+        assert join_owner_translations(owner, timeout_s=5.0)
         wait_pending_writes(game)
         assert int(game.state.metrics["国库"]) == treasury_before
 
@@ -159,7 +162,8 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
         confirm = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
         assert confirm.status_code == 200, confirm.text
-        assert join_all_translations(timeout_s=5.0)
+        owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+        assert join_owner_translations(owner, timeout_s=5.0)
         wait_pending_writes(game)
 
         body = _post_issue_stream(

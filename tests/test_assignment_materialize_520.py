@@ -600,8 +600,10 @@ def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch)
     ``stage_assignment_candidate``。只控制转译返回；不断言旧 assignment 题名/initiative。
     """
     import ming_sim.audience_night as an
-    from ming_sim.audience_translation import join_all_translations
-
+    from ming_sim.audience_translation import (
+        join_owner_translations,
+        translation_owner_key,
+    )
     db, state, content = game
     actor = _active_ming(db, content)
     _silence_serial(monkeypatch, lead=actor.name)
@@ -619,7 +621,8 @@ def test_assignment_title_structured_anchor_not_emperor_prose(game, monkeypatch)
         translate_fn=translate_fn,
     )
     wg.chat(actor.name, player)
-    assert join_all_translations(timeout_s=5.0)
+    owner = translation_owner_key(getattr(wg.session, "_write_gate", None), db)
+    assert join_owner_translations(owner, timeout_s=5.0)
     night = an.get_open_night(db)
     assert night is not None
 
@@ -735,8 +738,10 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
     special_decree directive（非 assignment initiative）。禁直调
     ``stage_assignment_candidate`` / mark_pending_night_approved。
     """
-    from ming_sim.audience_translation import join_all_translations
-
+    from ming_sim.audience_translation import (
+        join_owner_translations,
+        translation_owner_key,
+    )
     client = tracer_client
     canned_full_settlement(monkeypatch)
 
@@ -767,7 +772,8 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
         json={"message": assign_text},
     )
     assert chat.status_code == 200, chat.text
-    assert join_all_translations(timeout_s=5.0)
+    owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+    assert join_owner_translations(owner, timeout_s=5.0)
     _wait_pending_writes(game)
     chat_turn_id = _latest_chat_turn_id(db, minister)
     assert chat_turn_id > 0
@@ -790,7 +796,8 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
         json={"message": "准。"},
     )
     assert approve.status_code == 200, approve.text
-    assert join_all_translations(timeout_s=5.0)
+    owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+    assert join_owner_translations(owner, timeout_s=5.0)
     _wait_pending_writes(game)
     approved_row = db.conn.execute(
         "SELECT night_approved, status FROM pending_actions WHERE id=?", (pending_id,),
@@ -838,8 +845,10 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
 
     禁直调 ``stage_assignment_candidate``；同根 ``_text_commission_translate``。
     """
-    from ming_sim.audience_translation import join_all_translations
-
+    from ming_sim.audience_translation import (
+        join_owner_translations,
+        translation_owner_key,
+    )
     client = tracer_client
     canned_full_settlement(monkeypatch)
 
@@ -881,7 +890,8 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
         json={"message": q_msg},
     )
     assert out.status_code == 200, out.text
-    assert join_all_translations(timeout_s=5.0)
+    owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+    assert join_owner_translations(owner, timeout_s=5.0)
     assert not (out.json() or {}).get("pending_action_id")
     assert len(db.list_pending_actions(state.turn)) == before_pending
     _wait_pending_writes(game)
@@ -892,7 +902,8 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
         json={"message": "退朝"},
     )
     assert brk.status_code == 200, brk.text
-    assert join_all_translations(timeout_s=5.0)
+    owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+    assert join_owner_translations(owner, timeout_s=5.0)
     _wait_pending_writes(game)
 
     # ③ GET /api/game/state 零新增机械事项
@@ -911,7 +922,8 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
         json={"message": assign_msg},
     )
     assert assign.status_code == 200, assign.text
-    assert join_all_translations(timeout_s=5.0)
+    owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+    assert join_owner_translations(owner, timeout_s=5.0)
     _wait_pending_writes(game)
     staged = _directive_pendings(db, state.turn, text_substr=assign_msg)
     assert len(staged) == 1, db.list_pending_actions(state.turn)
@@ -924,7 +936,8 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
         json={"message": "准。"},
     )
     assert approve.status_code == 200, approve.text
-    assert join_all_translations(timeout_s=5.0)
+    owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+    assert join_owner_translations(owner, timeout_s=5.0)
     _wait_pending_writes(game)
     approved = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (pid,),
@@ -1539,8 +1552,10 @@ def test_cross_round_assignment_update_undo_restores_before_image(game, monkeypa
     Web 召对 C0 无 assignment 声明分支；本测覆盖 ``stage_assignment_candidate``
     + WebGame.undo_last_chat 前像缝（禁 invent commission.assignment / #1815）。
     """
-    from ming_sim.audience_translation import join_all_translations
-
+    from ming_sim.audience_translation import (
+        join_owner_translations,
+        translation_owner_key,
+    )
     db, state, content = game
     minister = _active_ming(db, content)
     _silence_serial(monkeypatch, lead=minister.name)
@@ -1555,7 +1570,8 @@ def test_cross_round_assignment_update_undo_restores_before_image(game, monkeypa
 
     # ① 第一轮：空转译产源轮 → 授权缝 stage 原题名
     wg.chat(minister.name, "核钱粮的事你办。")
-    assert join_all_translations(timeout_s=5.0)
+    owner = translation_owner_key(getattr(wg.session, "_write_gate", None), db)
+    assert join_owner_translations(owner, timeout_s=5.0)
     ctid1 = _latest_chat_turn_id(db, minister.name)
     staged_id = _stage_assignment_under_chat_turn(
         db, state.turn, minister.name,
@@ -1572,7 +1588,8 @@ def test_cross_round_assignment_update_undo_restores_before_image(game, monkeypa
 
     # ② 第二轮：target_candidate 原地更新题名（仍走授权 stage 缝）
     wg.chat(minister.name, "这核钱粮你加紧办。")
-    assert join_all_translations(timeout_s=5.0)
+    owner = translation_owner_key(getattr(wg.session, "_write_gate", None), db)
+    assert join_owner_translations(owner, timeout_s=5.0)
     ctid2 = _latest_chat_turn_id(db, minister.name)
     assert ctid2 != ctid1
     updated = _stage_assignment_under_chat_turn(

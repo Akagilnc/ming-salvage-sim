@@ -525,8 +525,10 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
 
 
 def _chat(env: dict, message: str) -> dict:
-    from ming_sim.audience_translation import join_all_translations
-
+    from ming_sim.audience_translation import (
+        join_owner_translations,
+        translation_owner_key,
+    )
     client: TestClient = env["client"]
     game = env["game"]
     agent = _CannedAgent()
@@ -539,7 +541,8 @@ def _chat(env: dict, message: str) -> dict:
     )
     assert resp.status_code == 200, f"chat {message!r} → {resp.status_code}: {resp.text}"
     _wait_pending_writes(game)
-    assert join_all_translations(timeout_s=5.0)
+    owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
+    assert join_owner_translations(owner, timeout_s=5.0)
     return resp.json() or {}
 
 
