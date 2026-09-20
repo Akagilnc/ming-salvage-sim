@@ -1686,8 +1686,9 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
     """#1842：经真实 `run_cli` 退出；owner drain 后 worker 终态才关原库。
 
     与 menu_exit 同形 scene_chat 在飞；入口必须是 `terminal.run_cli`（禁测试内
-    复制 finally / 直调 `_drain_and_close_session`）。侧线程跑 run_cli，Event
-    证 join 前不关库；禁墙钟 SLA / 新 lifecycle。
+    复制 finally / 直调 `_drain_and_close_session`）。侧线程跑 run_cli；放行
+    worker 前等 `write_q.is_sealed`（drain 入口水位），证 join 前不关库；
+    禁墙钟 SLA / 新 lifecycle。
     """
     import ming_sim.cli.terminal as term
     from ming_sim.exceptions import ExitGame
@@ -1791,8 +1792,10 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
         target=_run_cli_exit, daemon=True, name="cli-run-exit",
     )
     run_thread.start()
-    # run_cli finally 已进入 drain 且仍卡在 join：库未关、转译仍 pending。
-    wait_until(lambda: run_thread.is_alive() and not closed.is_set())
+    # 确定性水位：真实 drain 入口会 seal；旧 session.close() 永不 seal 或先关 → 红。
+    wait_until(lambda: write_q.is_sealed() or closed.is_set())
+    assert write_q.is_sealed(), "run_cli finally 须经 drain seal，不得直接 close"
+    assert not closed.is_set(), "seal 后、join 清空前不得关库"
     assert db.get_story_extract_status(ctid) == "pending"
 
     release.set()
