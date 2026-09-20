@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from ming_sim.applier import Provenance, atomic
 from ming_sim.audience_night import set_night_protagonist
@@ -25,14 +25,26 @@ from ming_sim.declaration_dispatch import (
 
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
 
-# 进程级：按夜串行（同一夜 FIFO）；跨夜可并行。
+# 进程级：按「会话 owner × 夜」串行（同一夜 FIFO）；跨夜 / 跨会话可并行。
+# owner = id(write_gate) 或 id(db)：关库后旧会话 worker 不得占住新会话同夜串行锁，
+# 也不得继续出现在 join_all 账上（xdist 复用进程 / 菜单退局后的孤儿 Future）。
 # 源轮 Future 另按 turn-key 索引，供撤回终结在飞转译（ADR 0038 / 0155）。
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="audience-translate")
 _night_serial_guard = threading.Lock()
-_night_serial_locks: Dict[int, threading.Lock] = {}
+_night_serial_locks: Dict[Tuple[int, int], threading.Lock] = {}
 _night_inflight_guard = threading.Lock()
 _night_inflight: Dict[int, List[Future]] = {}
 _turn_inflight: Dict[int, Future] = {}
+_future_owner: Dict[Future, int] = {}
+
+
+def translation_owner_key(write_gate: Any = None, db: Any = None) -> int:
+    """转译 inflight / 夜串行锁的会话锚：优先 write_gate，否则 db。"""
+    if write_gate is not None:
+        return id(write_gate)
+    if db is not None:
+        return id(db)
+    return 0
 
 
 def apply_audience_round_translation(
@@ -102,26 +114,39 @@ def _bind_round_after_dispatch(
     )
 
 
-def _night_lock(night_id: int) -> threading.Lock:
+def _night_lock(night_id: int, *, owner_key: int = 0) -> threading.Lock:
     nid = int(night_id or 0)
+    key = (int(owner_key), nid)
     with _night_serial_guard:
-        lock = _night_serial_locks.get(nid)
+        lock = _night_serial_locks.get(key)
         if lock is None:
             lock = threading.Lock()
-            _night_serial_locks[nid] = lock
+            _night_serial_locks[key] = lock
         return lock
 
 
-def _track_future(night_id: int, fut: Future, *, chat_turn_id: int = 0) -> None:
+def _track_future(
+    night_id: int,
+    fut: Future,
+    *,
+    chat_turn_id: int = 0,
+    owner_key: int = 0,
+) -> None:
     nid = int(night_id or 0)
     ctid = int(chat_turn_id or 0)
+    owner = int(owner_key)
     with _night_inflight_guard:
         _night_inflight.setdefault(nid, []).append(fut)
+        _future_owner[fut] = owner
         if ctid > 0:
             _turn_inflight[ctid] = fut
 
         def _cleanup(
-            _f: Future, *, _nid: int = nid, _fut: Future = fut, _ctid: int = ctid,
+            _f: Future,
+            *,
+            _nid: int = nid,
+            _fut: Future = fut,
+            _ctid: int = ctid,
         ) -> None:
             with _night_inflight_guard:
                 bucket = _night_inflight.get(_nid) or []
@@ -131,6 +156,7 @@ def _track_future(night_id: int, fut: Future, *, chat_turn_id: int = 0) -> None:
                     pass
                 if not bucket:
                     _night_inflight.pop(_nid, None)
+                _future_owner.pop(_fut, None)
                 if _ctid > 0 and _turn_inflight.get(_ctid) is _fut:
                     _turn_inflight.pop(_ctid, None)
 
@@ -158,8 +184,70 @@ def cancel_turn_translation(chat_turn_id: int) -> int:
             if not bucket:
                 _night_inflight.pop(nid, None)
             break
+        _future_owner.pop(fut, None)
     fut.cancel()
     return 1
+
+
+def abandon_owner_translations(owner_key: int) -> int:
+    """会话关库/退局：从 join 账上剥离该 owner 的在飞 Future，并 best-effort cancel。
+
+    已在跑的 worker 不能靠 Future.cancel 打断；剥离后 ``join_all_translations`` /
+    ``join_night_translations`` 不再被孤儿挂死。worker 若仍持旧 write_gate，落账
+    前复查 / 闭库写失败会自行收口（done callback 对已剥离项是 no-op）。
+    返回剥离数。
+    """
+    owner = int(owner_key)
+    doomed: List[Future] = []
+    with _night_inflight_guard:
+        for nid, bucket in list(_night_inflight.items()):
+            keep: List[Future] = []
+            for fut in bucket:
+                if _future_owner.get(fut) == owner:
+                    doomed.append(fut)
+                else:
+                    keep.append(fut)
+            if keep:
+                _night_inflight[nid] = keep
+            else:
+                _night_inflight.pop(nid, None)
+        for fut in doomed:
+            _future_owner.pop(fut, None)
+            for ctid, tf in list(_turn_inflight.items()):
+                if tf is fut:
+                    _turn_inflight.pop(ctid, None)
+    for fut in doomed:
+        fut.cancel()
+    return len(doomed)
+
+
+def join_owner_translations(owner_key: int, *, timeout_s: float = 120.0) -> bool:
+    """等待该会话 owner 名下在飞转译全部结束。返回是否在时限内清空。"""
+    import time
+
+    owner = int(owner_key)
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    while True:
+        with _night_inflight_guard:
+            bucket = [
+                fut
+                for futs in _night_inflight.values()
+                for fut in futs
+                if _future_owner.get(fut) == owner
+            ]
+        if not bucket:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        for fut in bucket:
+            try:
+                fut.result(timeout=min(remaining, 0.5))
+            except Exception:
+                pass
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
 
 
 def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> None:
@@ -316,12 +404,13 @@ def schedule_audience_turn_translation(
     """后台调度本轮转译：立即返回 Future；同夜按轮串行。"""
     nid = int(night_id or 0)
     ctid = int(chat_turn_id or 0)
+    owner = translation_owner_key(write_gate, db)
     if ctid > 0 and hasattr(db, "mark_story_extraction_pending"):
         gate = write_gate if write_gate is not None else threading.Lock()
         with gate:
             db.mark_story_extraction_pending(ctid)
 
-    serial = _night_lock(nid)
+    serial = _night_lock(nid, owner_key=owner)
 
     def _worker() -> DeclarationDispatchResult:
         with serial:
@@ -339,7 +428,7 @@ def schedule_audience_turn_translation(
             )
 
     fut = _executor.submit(_worker)
-    _track_future(nid, fut, chat_turn_id=ctid)
+    _track_future(nid, fut, chat_turn_id=ctid, owner_key=owner)
     return fut
 
 
@@ -433,7 +522,8 @@ def catch_up_pending_translations(
                             emperor = str(mrow["content"] or "")
             except Exception:
                 pass
-        serial = _night_lock(nid)
+        owner = translation_owner_key(write_gate, db)
+        serial = _night_lock(nid, owner_key=owner)
         try:
             with serial:
                 run_turn_translation_job(

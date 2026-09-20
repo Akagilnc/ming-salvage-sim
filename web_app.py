@@ -5268,6 +5268,29 @@ def _archive_move_db_files(old_db_path: str) -> bool:
 
 def _drain_close_body(game: Any) -> None:
     """seal + barrier + session.close 本体；失败上抛并按可写 unseal。"""
+    # #1842：转译 worker 与 chat 共非重入 write_gate；关库前闸外先 join 本会话
+    # 在飞转译，再 abandon 残留，避免 barrier 后抢闸与孤儿挂死 join_all。
+    session = getattr(game, "session", None)
+    if session is not None:
+        try:
+            from ming_sim.audience_translation import (
+                abandon_owner_translations,
+                join_owner_translations,
+                translation_owner_key,
+            )
+
+            owner = translation_owner_key(
+                getattr(session, "_write_gate", None),
+                getattr(session, "db", None),
+            )
+            join_owner_translations(owner, timeout_s=30.0)
+            abandon_owner_translations(owner)
+        except Exception:
+            logger.exception(
+                "drain/close: join/abandon owner translations failed path=%s",
+                _path_norm_of_game(game),
+            )
+
     q = get_session_write_queue(game)
     q.seal()
 

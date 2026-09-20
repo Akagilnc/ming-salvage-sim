@@ -4655,12 +4655,27 @@ class GameSession:
         主库与 agno 共路径；只关 GameDB 就归档/搬移文件时，agno 仍持 WAL 句柄，
         进程 fd 会钉在 drained_*.db 上，活局写路径可落到 readonly。
 
-        次序：先 registry 材料目录，再 scene，再 agno，最后 db。材料清理失败不得
-        阻断后续 agno/db 释放，但必须诚实上抛（ADR 0005，不得 ignore_errors 洗白）。
+        次序：先剥离本会话在飞转译（#1842 join 账不得被关库孤儿挂死），再 registry
+        材料目录，再 scene，再 agno，最后 db。材料清理失败不得阻断后续 agno/db
+        释放，但必须诚实上抛（ADR 0005，不得 ignore_errors 洗白）。
         agno 失败则立即上抛、不碰 db（两侧仍完整可恢复）。
         agno 已成功后 ``_close_epoch`` 递增——此后即使 db.close 失败/conn 仍可探测，
         也不得恢复为活局（registry 已失 agno）。
         """
+        try:
+            from ming_sim.audience_translation import (
+                abandon_owner_translations,
+                translation_owner_key,
+            )
+
+            abandon_owner_translations(
+                translation_owner_key(
+                    getattr(self, "_write_gate", None),
+                    getattr(self, "db", None),
+                )
+            )
+        except Exception:
+            logger.exception("GameSession.close: abandon owner translations failed")
         materials_error: BaseException | None = None
         registry = getattr(self, "registry", None)
         if registry is not None:
