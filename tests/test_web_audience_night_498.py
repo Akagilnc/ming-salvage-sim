@@ -24,6 +24,7 @@ import threading
 
 import httpx
 import pytest
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -290,7 +291,7 @@ async def _start_hanging_chat(game, client, minister):
     agent = _FakeAgent(started=started, allow=allow)
     game.session.registry.get = lambda ch, **_kw: agent
     # #1842：殿上 scene_chat 双桩——与 registry 同注入 agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
     task = asyncio.create_task(
         client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
     try:
@@ -508,7 +509,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     # Real chat path uses registry agent; keep canned so freeze is the only outcome.
     _agent = _FakeAgent(answer="臣另有奏。")
     game.session.registry.get = lambda ch, **_kw: _agent
-    game.session._scene_agent_double = _agent
+    stub_scene_agent(monkeypatch, _agent)
 
     async def first_fail_scenario():
         async with _client() as issue_client, _client() as chat_client:
@@ -898,7 +899,7 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
     # 装好 fake LLM：删掉持锁内复查时，失败只会因非法开夜/建轮（而非缺 API key 401）。
     _agent = _FakeAgent()
     game.session.registry.get = lambda ch, **_kw: _agent
-    game.session._scene_agent_double = _agent
+    stub_scene_agent(monkeypatch, _agent)
     game.state.turn_phase = TurnPhase.SUMMONING.value  # 锁前快速查通过
     nights0, turns0 = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")
 

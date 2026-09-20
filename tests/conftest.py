@@ -329,11 +329,23 @@ def offline_empty_audience_translate(prompt, llm_config):
     return {"commissions": [], "promises": []}
 
 
-class _OfflineAudienceTranslateAttr:
-    """类属性描述符：getattr(session, ...) 得到裸函数，禁绑成 bound method。"""
+def stub_scene_agent(monkeypatch, agent):
+    """#1842：经 create_scene_agent 工厂缝注入 scene agent（禁实例双桩属性）。"""
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent",
+        lambda *a, **k: agent,
+    )
+    return agent
 
-    def __get__(self, obj, objtype=None):
-        return offline_empty_audience_translate
+
+def stub_audience_translate(monkeypatch, fn=None):
+    """#1842：经 `_default_translate_runner` 缝注入转译（禁实例 `_audience_translate_fn`）。"""
+    runner = offline_empty_audience_translate if fn is None else fn
+    monkeypatch.setattr(
+        "ming_sim.audience_translate._default_translate_runner",
+        runner,
+    )
+    return runner
 
 
 @pytest.fixture
@@ -346,10 +358,10 @@ def _offline_scene_beat_generator():
     - factory 缝：create_llm_beat_generator → 确定性假 generator
     - 类属性缝：GameSession._beat_generator / _scene_registry 默认假
       （覆盖 __new__ 轻壳 resolve_turn / start_chat_turn_scene）
-    - #1842：类属性 `_audience_translate_fn` 空声明（收夜 catch-up / 后台转译禁 sk-test）
-    实例赋值（dual-fail / 503 e2e / 竞态）仍优先于类属性。不改生产。
+    - #1842：patch `_default_translate_runner` 空声明（收夜 catch-up / 后台转译禁 sk-test）
     独立 MonkeyPatch：测试内 monkeypatch.undo() 不会撤掉本兜底。
     """
+    import ming_sim.audience_translate as at
     import ming_sim.beat_orchestration as bo
     from ming_sim.session import GameSession
 
@@ -364,9 +376,7 @@ def _offline_scene_beat_generator():
     mp.setattr(
         GameSession, "_scene_registry", _OfflineSceneRegistry(), raising=False,
     )
-    mp.setattr(
-        GameSession, "_audience_translate_fn", _OfflineAudienceTranslateAttr(), raising=False,
-    )
+    mp.setattr(at, "_default_translate_runner", offline_empty_audience_translate)
     yield
     mp.undo()
 

@@ -6,7 +6,7 @@
 - E3=`POST .../chat` + `intent=secret_order`（#1842：殿上无前缀不再走 classifier）
 - S1 过月默认准 / S2 修改后准或过月 / S3 拒绝后过月不复活
 - settle=`POST /api/decree/issue/stream` 消费到终态
-- LLM 全 stub；创建走密令 session.chat；确认/修改/拒绝经 `_audience_translate_fn` 双桩
+- LLM 全 stub；创建走密令 session.chat；确认/修改/拒绝经 `_default_translate_runner` 缝
 - 行定位：调用前后 order-id 集差、pending id、候选 payload→落地 payload 动态传递
 
 零写：复用 conftest 的 user-data 隔离，并将每例 HOME/DB 定向到 tmp_path。
@@ -33,6 +33,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 # ── 矩阵常量 ───────────────────────────────────────────────────────────
 
@@ -200,7 +201,7 @@ class _ConfirmStub:
 
     #1842：殿上确认轮走 scene_chat，不再调 extract_confirmation_intent；
     本 stub 仍保留给旧 CLI 缝 monkeypatch，确认语义由
-    `_wire_confirm_translate` 灌进 `_audience_translate_fn`。
+    `_wire_confirm_translate` 灌进 `_default_translate_runner`。
     """
 
     def __init__(self) -> None:
@@ -259,7 +260,7 @@ def _wire_confirm_translate(game, confirm: _ConfirmStub) -> None:
             }
         return {"commissions": [], "promises": []}
 
-    game.session._audience_translate_fn = translate_fn
+    stub_audience_translate(monkeypatch, translate_fn)
 
 
 class _ExtractStub:
@@ -378,7 +379,7 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
     agent = _CannedAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
     _wire_confirm_translate(game, confirm)
     cfg = game.session.llm_config
     if getattr(cfg, "channel", None) != "cli":
@@ -519,7 +520,7 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
     _wait_pending_writes(game)
     agent = _CannedAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
     _wire_confirm_translate(game, env["confirm"])
     return resp.json() or {}
 
@@ -533,7 +534,7 @@ def _chat(env: dict, message: str) -> dict:
     game = env["game"]
     agent = _CannedAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
     _wire_confirm_translate(game, env["confirm"])
     resp = client.post(
         f"/api/ministers/{MINISTER}/chat",
@@ -606,7 +607,7 @@ def _settle_month(env: dict) -> dict:
     assert open_n is None or str(open_n.get("status")) == an.NIGHT_STATUS_CLOSED, open_n
     agent = _CannedAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
     return data if isinstance(data, dict) else {}
 
 

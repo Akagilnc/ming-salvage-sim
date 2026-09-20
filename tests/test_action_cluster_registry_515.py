@@ -37,6 +37,8 @@ from ming_sim.action_clusters import (
 )
 
 # 测试本地固定期望（#515 六类）；非生产常量——删 catalog 行仍红，未来新类不改此集。
+from tests.conftest import stub_audience_translate, stub_scene_agent
+
 _EXPECTED_MIGRATED_KINDS = frozenset({
     "none", "confirmation", "secret", "cultivate", "appointment", "draft",
 })
@@ -921,7 +923,7 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     from tests.conftest import _OfflineSceneRegistry
     sess._scene_registry = _OfflineSceneRegistry()
     sess._retrieve_memories_for_message = lambda message: message
-    sess._audience_translate_fn = translate_fn
+    stub_audience_translate(monkeypatch, translate_fn)
     # bind production methods used by WebGame.chat / undo_last_chat / scene_chat
     for name in (
         "chat", "scene_chat", "_apply_scene_turn_translation",

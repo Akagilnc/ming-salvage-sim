@@ -23,9 +23,10 @@ from ming_sim.audience_translate import (
 from ming_sim.audience_translation import join_night_translations
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
-def _sess(db, state, content, *, llm_config=None, translate_fn=None):
+def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None):
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
@@ -37,7 +38,7 @@ def _sess(db, state, content, *, llm_config=None, translate_fn=None):
     sess._beat_generator = None
     sess._scene_registry = None
     sess._write_gate = None
-    sess._audience_translate_fn = translate_fn
+    stub_audience_translate(monkeypatch, translate_fn)
     return sess
 
 
@@ -237,7 +238,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
                 ],
             }
 
-        sess = _sess(db, state, content, translate_fn=translate_fn)
+        sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
         r1 = sess.scene_chat(edict)
         assert r1.pending_action_id > 0, case["label"]
         pending = [
@@ -352,7 +353,7 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
 
     # 不表态：空 promises
     sess = _sess(
-        db, state, content,
+        db, state, content, monkeypatch,
         translate_fn=lambda p, c: {"commissions": [], "promises": []},
     )
     sess.scene_chat("边事如何？")
@@ -370,7 +371,7 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
             "promises": [{"action_id": staged_id, "decision": "应允"}],
         }
 
-    sess._audience_translate_fn = approve_fn
+    stub_audience_translate(monkeypatch, approve_fn)
     sess.scene_chat("准")
     row = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
@@ -429,7 +430,7 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
             return _decl
 
         sess = _sess(
-            db, state, content,
+            db, state, content, monkeypatch,
             llm_config=SimpleNamespace(channel=channel),
             translate_fn=translate_fn,
         )
@@ -513,7 +514,7 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
-    sess = _sess(db, state, content, translate_fn=boom)
+    sess = _sess(db, state, content, monkeypatch, translate_fn=boom)
     result = sess.scene_chat("边饷如何？")
     assert result.answer == "臣在。"
     after = db.conn.execute(
@@ -543,7 +544,7 @@ def test_translate_empty_success_still_dispatches_without_failure(game, monkeypa
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
     sess = _sess(
-        db, state, content,
+        db, state, content, monkeypatch,
         translate_fn=lambda p, c: {"commissions": [], "promises": []},
     )
     result = sess.scene_chat("边事如何？")
@@ -609,7 +610,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     ctid_create = _active_chat_turn(db, state, night_id)
     create_text = "着户部备陕西赈灾银UNIQUE-CREATE"
     sess = _sess(
-        db, state, content,
+        db, state, content, monkeypatch,
         translate_fn=lambda p, c: {
             "commissions": [{"text": create_text}],
             "promises": [],
@@ -651,7 +652,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
 
     ctid_approve = _active_chat_turn(db, state, night_id)
     sess = _sess(
-        db, state, content,
+        db, state, content, monkeypatch,
         translate_fn=lambda p, c: {
             "commissions": [],
             "promises": [{"action_id": approve_id, "decision": "应允"}],
@@ -682,7 +683,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
 
     ctid_reject = _active_chat_turn(db, state, night_id)
     sess = _sess(
-        db, state, content,
+        db, state, content, monkeypatch,
         translate_fn=lambda p, c: {
             "commissions": [],
             "promises": [{"action_id": reject_id, "decision": "拒绝"}],
@@ -813,7 +814,7 @@ def test_scene_chat_translate_prompt_carries_pending_and_spoken(game, monkeypatc
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
-    sess = _sess(db, state, content, translate_fn=translate_fn)
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
     # 用不会与规则段「准」混淆的皇帝原话
     sess.scene_chat("着即照办")
 

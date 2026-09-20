@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
 from typing import List, Optional
 
 from ming_sim.constants import (
@@ -457,16 +456,21 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     # #1566：route 权威解码——与 Web retry 同核；场外密令不启殿上 scene。
     from ming_sim.audience_night import decode_chat_turn_route
     retry_route = decode_chat_turn_route(target.get("route"))
-    # #634：重试回话同形——判官拍先于重新生成派发（与回话并行）。
-    _dispatch_relation_judge_cli(session, chat_turn_id)
     try:
         if retry_route["start_hall_scene"]:
             session.start_chat_turn_scene(minister_name, chat_turn_id)
-        result = session.chat(
-            minister_name, question,
-            chat_turn_id=chat_turn_id,
-            explicit_secret_order=retry_route["explicit_secret_order"],
-        )
+        # #1842：殿上重试走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
+        if retry_route["explicit_secret_order"]:
+            result = session.chat(
+                minister_name, question,
+                chat_turn_id=chat_turn_id,
+                explicit_secret_order=True,
+            )
+        else:
+            result = session.scene_chat(
+                question, chat_turn_id=chat_turn_id,
+                minister_name=minister_name,
+            )
         answer = str(getattr(result, "answer", "") or "")
         if hasattr(db, "persist_minister_reply"):
             scene_generated = session.join_chat_turn_scene(chat_turn_id)
@@ -481,8 +485,6 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             db.record_chat_turn_rollback_diffs(
                 chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
             )
-        # #501：重试回话成功后与正常回话同路径尾随抽取。
-        _trail_extraction_after_reply_cli(session, minister_name, answer, chat_turn_id)
         print(f"\n{minister_name}：{wrap(answer)}\n")
     except Exception as exc:
         # 失败翻回 interrupted 保持可再重试（与 web restore_interrupted_after_failed_retry 同语义）。
@@ -526,100 +528,6 @@ def _cli_write_gate(session: GameSession):
     """
     from ming_sim.session_write_queue import get_session_write_queue
     return get_session_write_queue(session).write_gate
-
-
-def _trail_extraction_after_reply_cli(
-    session: GameSession,
-    minister_name: str,
-    minister_reply: str,
-    chat_turn_id: int,
-) -> None:
-    """#501：CLI 回话落库后自动尾随抽取（与 Web `_trail_extraction_after_reply` 同核）。
-
-    同步调用——CLI 无后台线程池；失败标待补、不抛、不回滚回话。
-    #1353：起跑领 turn key 票，写经票据执行 seam（与 Web 生产同形）。
-    """
-    if not chat_turn_id:
-        return
-    ticket = None
-    q = None
-    try:
-        from ming_sim.audience_extraction import trail_extraction_after_reply
-        from ming_sim.session_write_queue import (
-            TicketCancelled,
-            get_session_write_queue,
-        )
-        q = get_session_write_queue(session)
-        ticket = q.claim(key=("turn", int(chat_turn_id)))
-        if ticket is None:
-            return
-        write_gate = q.ticketed_gate(ticket)
-        try:
-            trail_extraction_after_reply(
-                db=session.db,
-                minister_name=minister_name,
-                minister_reply=str(minister_reply or ""),
-                chat_turn_id=int(chat_turn_id),
-                llm_config=getattr(session, "llm_config", None),
-                write_gate=write_gate,
-            )
-        except TicketCancelled:
-            pass
-    except Exception:
-        # 共享核从不抛；到此=import 等外围故障——不锁档、不打断对话。
-        # #1353 fold-in r5：欠账唯一处理路=过月内部 drain；禁玩家可见技术提示。
-        pass
-    finally:
-        # 局部 q 归票——禁二次 get_session_write_queue（重解析可叉 ledger 漏票挂死 CLI）。
-        if ticket is not None and q is not None:
-            q.complete(ticket)
-
-
-def _dispatch_relation_judge_cli(session: GameSession, chat_turn_id: int) -> None:
-    """#634 / ADR 0082：CLI 召对判官拍派发——与回话生成并行的 daemon 线程。
-
-    派发先于回话（不依赖本轮回话输出，TD-9 零额外等待）；写经票据执行 seam
-    （与 Web 生产同形）。LLM 失败降级留痕不抛——判官漏判不阻塞召对主链。
-    """
-    if not chat_turn_id:
-        return
-    q = None
-    try:
-        from ming_sim.session_write_queue import get_session_write_queue
-        q = get_session_write_queue(session)
-    except Exception:
-        logger.exception("relation judge queue resolution degraded chat_turn_id=%s", chat_turn_id)
-        return
-
-    # Admission belongs to the dispatcher: a close barrier must see the worker
-    # before Thread.start, exactly as the Web spawner does.
-    ticket = q.claim(key=("turn", int(chat_turn_id)))
-    if ticket is None:
-        return
-
-    def _run() -> None:
-        try:
-            from ming_sim.relation_judge import run_summon_relation_judge
-            run_summon_relation_judge(
-                session.db, session.state,
-                llm_config=getattr(session, "llm_config", None),
-                write_gate=q.ticketed_gate(ticket),
-            )
-        except Exception:
-            # 核心 LLM 降级在 run_summon_relation_judge；到此是外围基础设施故障，
-            # 仍不得打断对话，但必须响亮留痕。
-            logger.exception("relation judge worker degraded chat_turn_id=%s", chat_turn_id)
-        finally:
-            q.complete(ticket)
-
-    thread = threading.Thread(
-        target=_run, daemon=True, name="cli-audience-relation-judge",
-    )
-    try:
-        thread.start()
-    except Exception:
-        q.complete(ticket)
-        logger.exception("relation judge thread start degraded chat_turn_id=%s", chat_turn_id)
 
 
 def minister_chat(session: GameSession, character: Character) -> str:
@@ -716,13 +624,19 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     session.db.update_chat_turn_messages(
                         chat_turn_id, user_message_id=user_message_id,
                     )
-            # #634：判官拍先于回话派发（与回话生成并行，TD-9）。
-            _dispatch_relation_judge_cli(session, chat_turn_id)
-            result = session.chat(
-                character.name, question,
-                chat_turn_id=chat_turn_id,
-                explicit_secret_order=cli_explicit_secret,
-            )
+            # #1842：殿上走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
+            # 殿上不派旧判官/尾随抽取——转译一次承接。
+            if cli_explicit_secret:
+                result = session.chat(
+                    character.name, question,
+                    chat_turn_id=chat_turn_id,
+                    explicit_secret_order=True,
+                )
+            else:
+                result = session.scene_chat(
+                    question, chat_turn_id=chat_turn_id,
+                    minister_name=character.name,
+                )
             if persistent_chat:
                 if (chat_turn_id and hasattr(session.db, "persist_minister_reply")
                         and hasattr(session, "join_chat_turn_scene")):
@@ -746,10 +660,6 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     session.db.record_chat_turn_rollback_diffs(
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),
-                    )
-                    # #501：回话入档后自动尾随抽取（与 Web 同核；失败标待补不抛）。
-                    _trail_extraction_after_reply_cli(
-                        session, character.name, result.answer, chat_turn_id,
                     )
         except BaseException as original_error:
             try:

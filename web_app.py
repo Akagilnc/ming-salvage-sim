@@ -2046,24 +2046,19 @@ class WebGame:
             raise HTTPException(status_code=409, detail="该召对尚未完整完成，不能撤回。")
         # #1353 / ADR 0038：撤回轮取消其在飞票据（空放行、不复活写库）。
         # #1842 / ADR 0155：同步终结该轮在飞转译 Future；落账临界区另复查源轮存活。
+        # ADR 0005：取消路径意外异常响亮上抛，禁 except Exception: pass。
         turn_id = int(row["id"])
-        try:
-            self._runtime_write_queue().cancel_key(("turn", turn_id))
-        except Exception:
-            pass
-        try:
-            from ming_sim.audience_translation import (
-                cancel_turn_translation,
-                translation_owner_key,
-            )
-            cancel_turn_translation(
-                turn_id,
-                owner_key=translation_owner_key(
-                    self._runtime_write_gate(), self.db,
-                ),
-            )
-        except Exception:
-            pass
+        self._runtime_write_queue().cancel_key(("turn", turn_id))
+        from ming_sim.audience_translation import (
+            cancel_turn_translation,
+            translation_owner_key,
+        )
+        cancel_turn_translation(
+            turn_id,
+            owner_key=translation_owner_key(
+                self._runtime_write_gate(), self.db,
+            ),
+        )
         try:
             undone = self.db.undo_chat_turn(turn_id)
         except ValueError as exc:
@@ -3655,7 +3650,6 @@ class WebGame:
                 db=self.db,
                 state=self.state,
                 llm_config=getattr(self.session, "llm_config", None),
-                translate_fn=getattr(self.session, "_audience_translate_fn", None),
                 write_gate=self._ticketed_write_gate(pending_ticket),
             )
         except TicketCancelled:
@@ -3769,7 +3763,6 @@ class WebGame:
             self.db, self.state,
             chat_turn_id=ctid,
             llm_config=getattr(self.session, "llm_config", None),
-            translate_fn=getattr(self.session, "_audience_translate_fn", None),
             write_gate=write_gate,
         )
         still = list_pending_translations(self.db, chat_turn_id=ctid)
@@ -6022,10 +6015,11 @@ async def api_menu_exit() -> Dict[str, Any]:
         global web_game, _menu_generation
         old_game = None
         with _menu_lifecycle_lock:
-            # X1
+            # X1：先 seal 再摘指针——晚到 claim 在 unbind 前即被拒（drain 可再 seal，幂等）。
             _menu_generation += 1
             if web_game is not None:
                 old_game = web_game
+                get_session_write_queue(old_game).seal()
                 web_game = None
         if old_game is not None:
             # X2/X3：定点退休，HTTP 不等待。E2_absent → 零新 drain（已由他方 A4 删除）。

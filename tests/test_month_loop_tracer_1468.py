@@ -35,6 +35,7 @@ import web_app
 from ming_sim import audience_night as an
 from ming_sim.session_write_queue import _is_barrier_ticket, get_session_write_queue
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
@@ -206,10 +207,10 @@ def _pick_active_minister(state: dict) -> str:
     raise AssertionError(f"no active ming minister in state ministers={state.get('ministers')!r}")
 
 
-def _install_canned_minister(game) -> None:
+def _install_canned_minister(game, monkeypatch) -> None:
     agent = _CannedMinisterAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
 
 
 def _install_trail_hold(game, release: threading.Event):
@@ -233,32 +234,22 @@ def _install_trail_hold(game, release: threading.Event):
     return _restore
 
 
-def _install_translation_hold(game, release: threading.Event):
+def _install_translation_hold(game, release: threading.Event, monkeypatch):
     """卡住 #1842 后台转译 LLM 完成时机（Event）；钉过月 join 竞态窗。
 
     非流式殿上 chat 不再 spawn 旧 WriteTicket 尾随；在飞并发真源=转译 Future。
-    实例赋值优先于 conftest 类属性空声明双桩。返回 restore_fn。
+    经 `_default_translate_runner` 缝注入；返回 restore_fn。
     """
     from tests.conftest import offline_empty_audience_translate
 
-    sess = game.session
-    # 裸函数（描述符 __get__）或既有实例覆盖；restore 时删实例属性以回到类描述符。
-    had_instance = "_audience_translate_fn" in getattr(sess, "__dict__", {})
-    real = sess.__dict__.get("_audience_translate_fn") if had_instance else None
-
     def _held(prompt, cfg):
         release.wait()
-        if callable(real):
-            return real(prompt, cfg)
         return offline_empty_audience_translate(prompt, cfg)
 
-    sess._audience_translate_fn = _held
+    stub_audience_translate(monkeypatch, _held)
 
     def _restore() -> None:
-        if had_instance:
-            sess._audience_translate_fn = real
-        elif "_audience_translate_fn" in getattr(sess, "__dict__", {}):
-            delattr(sess, "_audience_translate_fn")
+        stub_audience_translate(monkeypatch, offline_empty_audience_translate)
 
     return _restore
 
@@ -438,6 +429,7 @@ def _resolve_decisions_via_stream(
 
 def _play_one_month(
     client: TestClient,
+    monkeypatch,
     *,
     minister: str,
     month_label: str,
@@ -463,7 +455,7 @@ def _play_one_month(
     restore_barrier_signal = None
     if race_trailing_writes:
         hold_release = threading.Event()
-        restore_hold = _install_translation_hold(game, hold_release)
+        restore_hold = _install_translation_hold(game, hold_release, monkeypatch)
         barrier_open, restore_barrier_signal = _arm_barrier_open_event(game)
 
     try:
@@ -557,7 +549,7 @@ def _play_one_month(
 # ── 主 tracer：两整月（起点十一月 → 真跨年） ────────────────────────────
 
 
-def test_month_loop_two_months_via_http_entry(tracer_client):
+def test_month_loop_two_months_via_http_entry(tracer_client, monkeypatch):
     """HTTP 真入口起局走两个整月：turn+2 且 year rollover（period 回 1）、无 409、闸/账双向清零。
 
     M1 保留 post-chat #1842 转译竞态窗（Event 控 stub）；M2 正常排空。
@@ -574,7 +566,7 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
 
     game = web_app.web_game
     assert game is not None
-    _install_canned_minister(game)
+    _install_canned_minister(game, monkeypatch)
 
     # 真跨年：新档默认 period=10；推到 11 月起走两月 → year+1 / period=1。
     # （只推 M1/M2 从 10 起会停在 12 月，year rollover 根本不执行。）
@@ -589,14 +581,16 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
 
     # M1：chat 后不预 join 转译，直接拟旨/流式颁诏（竞态窗）。
     turn1 = _play_one_month(
-        client, minister=minister, month_label="M1", race_trailing_writes=True,
+        client, monkeypatch, minister=minister, month_label="M1",
+        race_trailing_writes=True,
     )
     assert turn1 == turn0 + 1
 
     # 第二月：registry 仍挂 canned（begin_turn 不重建 registry.get 绑定）
-    _install_canned_minister(web_app.web_game)
+    _install_canned_minister(web_app.web_game, monkeypatch)
     turn2 = _play_one_month(
-        client, minister=minister, month_label="M2", race_trailing_writes=False,
+        client, monkeypatch, minister=minister, month_label="M2",
+        race_trailing_writes=False,
     )
     assert turn2 == turn0 + 2
 
@@ -712,7 +706,7 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
         del prompt, llm_config
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
-    game.session._audience_translate_fn = _boom_translate
+    stub_audience_translate(monkeypatch, _boom_translate)
 
     issue = client.post("/api/decree/issue", json={"expected_turn": turn0})
     _assert_not_bare_500(issue, step="dead-llm issue")
@@ -805,7 +799,8 @@ def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) 
 
 
 @pytest.mark.parametrize("kind", ["offsite", "temporary"])
-def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind):
+def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind, monkeypatch):
+
     """#1716 stream 入口：已开夜场外/temporary /chat/stream 退朝 → court_break + 夜关。
 
     temporary 不得因 admission reason 返回 error；正式场外仍走地点分类与无 presence。
@@ -824,7 +819,7 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind):
 
     agent = _StreamAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
 
     stream = client.post(
         f"/api/ministers/{remote}/chat/stream",
@@ -852,7 +847,8 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind):
         assert str(turn["route"] or "") == "offsite", dict(turn)
 
 
-def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
+def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch):
+
     """#1716 非流式入口：已开夜场外 POST /chat 退朝 → court_break + 夜关。
 
     与 stream 共用 `_open_night_court_break`；两 call site 各一条最短主干。
@@ -870,7 +866,7 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
 
     sync = _SyncAgent()
     game.session.registry.get = lambda _ch, **_kw: sync
-    game.session._scene_agent_double = sync
+    stub_scene_agent(monkeypatch, sync)
 
     resp = client.post(
         f"/api/ministers/{remote}/chat",

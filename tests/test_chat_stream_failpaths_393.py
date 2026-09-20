@@ -22,6 +22,7 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _assert_write_path_free(runtime) -> None:
@@ -1069,10 +1070,10 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     assert fail_row is not None
     assert str(fail_row["status"]) == "failed"
 
-    # 实际重发：换可成功 agent（#1842 双桩缝 = _scene_agent_double）
+    # 实际重发：换可成功 agent（#1842：经 create_scene_agent 工厂缝）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
     web_game.session.registry.agent = ok_agent
-    web_game.session._scene_agent_double = ok_agent
+    stub_scene_agent(monkeypatch, ok_agent)
     response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
     events2 = _parse_sse(response2.text)
     assert "done" in [e[0] for e in events2], events2
@@ -1550,7 +1551,7 @@ def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
     # 夜开 + 可重发（写路径已释放；重发会再走入殿）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
     web_game.session.registry.agent = ok_agent
-    web_game.session._scene_agent_double = ok_agent
+    stub_scene_agent(monkeypatch, ok_agent)
     response2 = _post_chat_stream(monkeypatch, web_game, minister, message="再问边饷。")
     events2 = _parse_sse(response2.text)
     assert "done" in [e[0] for e in events2], events2

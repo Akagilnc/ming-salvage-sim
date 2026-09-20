@@ -140,6 +140,9 @@ def cancel_turn_translation(chat_turn_id: int, *, owner_key: int) -> int:
     必须传当前会话 ``owner_key``——跨存档同号 ``chat_turn_id`` 不得撤到别家。
     返回触及的 Future 数（0/1）。已跑到 write-gate 落账前的 worker 仍靠源轮
     存活复查挡写；pending/retry 真源随 chat_turns.status=undone 自然出窗。
+
+    在飞且未能 cancel 的 Future **不得**先从 ledger 剥离——``join_owner_translations``
+    / exit drain 仍须等它跑完；仅 cancel 成功或已终态时才摘账。
     """
     ctid = int(chat_turn_id or 0)
     owner = int(owner_key)
@@ -147,9 +150,16 @@ def cancel_turn_translation(chat_turn_id: int, *, owner_key: int) -> int:
         return 0
     turn_key = (owner, ctid)
     with _night_inflight_guard:
-        fut = _turn_inflight.pop(turn_key, None)
+        fut = _turn_inflight.get(turn_key)
         if fut is None:
             return 0
+    cancelled = fut.cancel()
+    if not (cancelled or fut.done()):
+        return 1
+    with _night_inflight_guard:
+        cur = _turn_inflight.get(turn_key)
+        if cur is fut:
+            _turn_inflight.pop(turn_key, None)
         for key, bucket in list(_night_inflight.items()):
             if key[0] != owner:
                 continue
@@ -160,35 +170,7 @@ def cancel_turn_translation(chat_turn_id: int, *, owner_key: int) -> int:
             if not bucket:
                 _night_inflight.pop(key, None)
             break
-    fut.cancel()
     return 1
-
-
-def abandon_owner_translations(owner_key: int) -> int:
-    """会话关库/退局：从 join 账上剥离该 owner 的在飞 Future，并 best-effort cancel。
-
-    已在跑的 worker 不能靠 Future.cancel 打断；剥离后本 owner 的
-    ``join_owner_translations`` / ``join_night_translations`` 不再被孤儿挂死。
-    worker 若仍持旧 write_gate，落账前复查 / 闭库写失败会自行收口
-    （done callback 对已剥离项是 no-op）。返回剥离数。
-    """
-    owner = int(owner_key)
-    doomed: List[Future] = []
-    with _night_inflight_guard:
-        for key, bucket in list(_night_inflight.items()):
-            if key[0] != owner:
-                continue
-            doomed.extend(bucket)
-            _night_inflight.pop(key, None)
-        for turn_key in list(_turn_inflight.keys()):
-            if turn_key[0] == owner:
-                _turn_inflight.pop(turn_key, None)
-        for night_key in list(_night_tail.keys()):
-            if night_key[0] == owner:
-                _night_tail.pop(night_key, None)
-    for fut in doomed:
-        fut.cancel()
-    return len(doomed)
 
 
 def _await_inflight_future(

@@ -47,6 +47,7 @@ from tests.test_month_loop_tracer_1468 import (
     tracer_client,  # noqa: F401 — 复用既有 HTTP 入口，不平行造 fixture
 )
 from web_app import WebGame
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _ctx(
@@ -761,10 +762,10 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
     _silence_serial(monkeypatch, lead=minister)
     agent = _SyncAgent("臣请奉行：核钱粮。请陛下定夺准驳。")
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
 
     box, translate_fn = _text_commission_translate(assign_text)
-    game.session._audience_translate_fn = translate_fn
+    stub_audience_translate(monkeypatch, translate_fn)
 
     # ① HTTP chat → 转译 commissions → 外部 directive pending
     chat = client.post(
@@ -879,9 +880,10 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
     _silence_serial(monkeypatch, lead=minister)
     agent = _PhaseAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
-    game.session._audience_translate_fn = (
-        lambda *_a, **_k: {"commissions": [], "promises": []}
+    stub_scene_agent(monkeypatch, agent)
+    stub_audience_translate(
+        monkeypatch,
+        lambda *_a, **_k: {"commissions": [], "promises": []},
     )
 
     # ① 纯问事：HTTP chat + 空转译 → 零 pending
@@ -916,7 +918,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
     # ④ 正对照：真实 commissions → promises 应允 → issue/stream → special_decree 案卷
     turn_before = _turn_of(_get_state(client))
     box, translate_fn = _text_commission_translate(assign_msg)
-    game.session._audience_translate_fn = translate_fn
+    stub_audience_translate(monkeypatch, translate_fn)
     assign = client.post(
         f"/api/ministers/{minister}/chat",
         json={"message": assign_msg},
@@ -1412,8 +1414,8 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     from tests.conftest import _OfflineSceneRegistry
     sess._scene_registry = _OfflineSceneRegistry()
     sess._retrieve_memories_for_message = lambda message: message
-    sess._audience_translate_fn = translate_fn
-    sess._scene_agent_double = agent
+    stub_audience_translate(monkeypatch, translate_fn)
+    stub_scene_agent(monkeypatch, agent)
     for name in (
         "chat", "scene_chat", "_apply_scene_turn_translation",
         "start_chat_turn_scene", "join_chat_turn_scene",

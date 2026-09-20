@@ -38,6 +38,7 @@ from tests.test_audience_extraction_501 import (
     _open_night_with_persisted_reply,
 )
 from tests.test_no_edict_full_settlement_1274 import _canned_full_settlement
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _pending_api(db) -> dict:
@@ -1008,7 +1009,7 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
 
     agent = _Agent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
     game.session.join_chat_turn_scene = lambda *_a, **_k: []
     game.session.persist_chat_turn_scene = lambda *_a, **_k: None
     game.session.abandon_chat_turn_scene = lambda *_a, **_k: None
@@ -1120,7 +1121,7 @@ def test_chat_stream_prologue_uses_ticketed_not_bare_runtime(web_game, monkeypat
 
     boom = _Boom()
     game.session.registry.get = lambda _ch, **_kw: boom
-    game.session._scene_agent_double = boom
+    stub_scene_agent(monkeypatch, boom)
     monkeypatch.setattr(game, "_persistent_chat_minister", lambda _n: False)
 
     events = list(game.chat_stream(minister, "边饷如何？"))

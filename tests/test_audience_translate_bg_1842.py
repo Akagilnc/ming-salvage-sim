@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.conftest import stub_audience_translate, stub_scene_agent
 from ming_sim.audience_night import (
     NIGHT_STATUS_CLOSING,
     NIGHT_STATUS_OPEN,
@@ -28,7 +29,6 @@ from ming_sim.audience_translate import (
     normalize_audience_declaration,
 )
 from ming_sim.audience_translation import (
-    abandon_owner_translations,
     catch_up_pending_translations,
     join_night_translations,
     join_owner_translations,
@@ -41,8 +41,7 @@ from ming_sim.session import GameSession
 
 class _BgTranslationLifecycle:
     """本测专属收口：登记 release 回调与 owner；teardown 唯一顺序
-    先放行 → owner-scoped join → False 响亮。abandon 仅失败后 best-effort，
-    不证明线程已结束，也不用 join_all 假绿。
+    先放行 → owner-scoped join → False 响亮失败（禁 abandon / 第二生命周期）。
     """
 
     def __init__(self) -> None:
@@ -69,16 +68,11 @@ class _BgTranslationLifecycle:
         for owner in dict.fromkeys(self._owners):
             if not join_owner_translations(owner, timeout_s=timeout_s):
                 stuck.append(owner)
-        if not stuck:
-            return
-        # abandon 只作失败后 best-effort 清账，不可当作线程已结束证明
-        abandoned: dict[int, int] = {}
-        for owner in stuck:
-            abandoned[owner] = abandon_owner_translations(owner)
-        pytest.fail(
-            f"bg translation teardown: owner join False after release; "
-            f"owners={stuck}; abandon_best_effort={abandoned}"
-        )
+        if stuck:
+            pytest.fail(
+                f"bg translation teardown: owner join False after release; "
+                f"owners={stuck}"
+            )
 
 
 @pytest.fixture(autouse=True)
@@ -89,7 +83,7 @@ def bg_life():
     life.teardown()
 
 
-def _sess(db, state, content, *, llm_config=None, translate_fn=None, write_gate=None):
+def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None, write_gate=None):
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
@@ -101,7 +95,7 @@ def _sess(db, state, content, *, llm_config=None, translate_fn=None, write_gate=
     sess._beat_generator = None
     sess._scene_registry = None
     sess._write_gate = write_gate
-    sess._audience_translate_fn = translate_fn
+    stub_audience_translate(monkeypatch, translate_fn)
     return sess
 
 
@@ -711,7 +705,7 @@ def test_scene_chat_background_when_chat_turn_id(game, monkeypatch, bg_life):
     )
     db.conn.commit()
 
-    sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn, write_gate=gate)
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent",
         lambda *a, **k: SimpleNamespace(run=lambda prompt: fake_agent_run(None, prompt)),
@@ -761,7 +755,7 @@ def test_scene_chat_sync_without_chat_turn_still_applies(game, monkeypatch):
             "promises": [],
         }
 
-    sess = _sess(db, state, content, translate_fn=translate_fn)
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn)
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent",
         lambda *a, **k: SimpleNamespace(
@@ -833,7 +827,7 @@ def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch,
 
     monkeypatch.setattr(at, "join_owner_translations", tracking_join)
 
-    sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn, write_gate=gate)
     sess._begun = True
     sess.last_decree = ""
     sess._decree_draft_fingerprint = ()
@@ -928,7 +922,7 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch, bg
 
     monkeypatch.setattr(at, "catch_up_pending_translations", catch_maybe_stop)
 
-    sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn, write_gate=gate)
     sess._begun = True
     sess.last_decree = ""
     sess._decree_draft_fingerprint = ()
@@ -1027,7 +1021,7 @@ def test_await_translations_does_not_steal_worker_write_gate(game, monkeypatch, 
 
     monkeypatch.setattr(at, "join_owner_translations", join_and_release)
 
-    sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn, write_gate=gate)
     sess._begun = True
     sess.last_decree = ""
     sess._decree_draft_fingerprint = ()
@@ -1095,7 +1089,7 @@ def test_resolve_turn_exhausted_pending_uses_0157_form(game, monkeypatch, tmp_pa
         lambda *a, **k: {"extracted": 0, "pending": 1, "scanned": 1},
     )
 
-    sess = _sess(db, state, content, translate_fn=boom, write_gate=gate)
+    sess = _sess(db, state, content, monkeypatch, translate_fn=boom, write_gate=gate)
     sess._begun = True
     sess.last_decree = ""
     sess._decree_draft_fingerprint = ()
@@ -1309,7 +1303,7 @@ def test_said_so_far_cuts_off_at_source_turn_and_excludes_self(game):
     assert "第三句后轮" not in joined and "第三答" not in joined, said
 
 
-def test_scene_chat_control_command_marks_translation_done(game):
+def test_scene_chat_control_command_marks_translation_done(game, monkeypatch):
     """口令早退：先兑现 stay_attend 权威落账，再标转译水位 done。"""
     from ming_sim.audience_night import (
         TAG_EXIT,
@@ -1319,6 +1313,7 @@ def test_scene_chat_control_command_marks_translation_done(game):
         set_night_protagonist,
         summon_enter,
     )
+    from ming_sim.audience_translation import join_owner_translations, translation_owner_key
 
     db, state, content = game
     name = _active_name(db, content)
@@ -1335,8 +1330,10 @@ def test_scene_chat_control_command_marks_translation_done(game):
     db.conn.commit()
     assert db.get_story_extract_status(ctid) in ("", "pending")
 
-    sess = _sess(db, state, content)
+    sess = _sess(db, state, content, monkeypatch)
     result = sess.scene_chat("留下听着", chat_turn_id=ctid)
+    owner = translation_owner_key(sess._write_gate, db)
+    assert join_owner_translations(owner, timeout_s=3.0)
 
     assert result.court_action == "stay_attend"
     assert result.answer == ""
@@ -1412,59 +1409,73 @@ def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game,
         at_mod.apply_audience_round_translation = real_apply
 
 
-def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch):
-    """完整性：Web 非流/重试/流式真实入口 → scene_chat，外部结果可见；旧四机制零调用。"""
+def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch, bg_life):
+    """完整性：Web 非流/重试/流式真实入口 → 真 scene_chat；旧四机制零调用。"""
+    import types
     import web_app as wa
     from types import SimpleNamespace as NS
     from ming_sim.audience_night import open_night
+    from ming_sim.audience_translation import join_owner_translations, translation_owner_key
+    from ming_sim.session_write_queue import SessionWriteQueue
 
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     name = next(iter(content.characters))
-    calls = {"scene": 0, "chat": 0, "judge": 0, "extract": 0, "mind": 0, "intent": 0}
+    calls = {"agent": 0, "chat": 0, "judge": 0, "extract": 0, "mind": 0, "intent": 0}
+    answer_text = "殿上戏文"
 
-    class FakeResult:
-        answer = "殿上戏文"
-        court_action = ""
-        next_minister = ""
-        proposed_directive = None
-        appointed_minister = ""
-        registered_minister = ""
-        displaced_minister = ""
-        secret_order_id = 0
-        pending_action_id = 0
-        pending_action_failures = []
-        directive_confirmation_ambiguous = None
-        decree_validation_failure = None
-        secret_order_landing_recovery = None
+    class _SceneAgent:
+        tools = []
 
-    # 真 WebGame 生命周期方法；session.scene_chat 计数
+        def run(self, prompt, stream=False, **_kw):
+            calls["agent"] += 1
+            if stream:
+                def _gen():
+                    yield SimpleNamespace(event="RunContent", content=answer_text)
+                    yield SimpleNamespace(content=answer_text, tools=[])
+                return _gen()
+            return SimpleNamespace(content=answer_text, tools=[])
+
+        def get_last_run_output(self):
+            return None
+
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
     sess.content = content
-    sess.registry = NS(get=lambda *a, **k: NS(run=lambda *a, **k: NS(content="x", tools=[])), session_ids={})
+    sess.registry = NS(
+        get=lambda *a, **k: (_ for _ in ()).throw(AssertionError("hall must not use registry.get")),
+        session_ids={},
+    )
     sess.llm_config = NS(channel="api", base_url="", model="t", api_key="")
     sess.temporary_characters = set()
     sess.agno_db = None
     sess._beat_generator = None
     sess._scene_registry = None
     sess._write_gate = threading.Lock()
-    sess._audience_translate_fn = lambda p, c: {"commissions": [], "promises": []}
+    owner = translation_owner_key(sess._write_gate, db)
+    bg_life.track(owner=owner)
 
-    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-        calls["scene"] += 1
-        # 流式入口可经 stream_emit 推 delta；契约只计 scene 调用与 answer。
-        if stream_emit is not None:
-            stream_emit(FakeResult.answer, replace=False)
-        return FakeResult()
+    stub_scene_agent(monkeypatch, _SceneAgent())
+    stub_audience_translate(monkeypatch, lambda p, c: {"commissions": [], "promises": []})
+    monkeypatch.setattr(
+        "ming_sim.llm_model.extract_agent_text",
+        lambda out: str(getattr(out, "content", "") or ""),
+    )
+    monkeypatch.setattr("ming_sim.session._dump_llm_messages", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "ming_sim.session.prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="开场", root=None),
+    )
 
-    def _chat(*a, **k):
+    real_chat = GameSession.chat
+
+    def _counting_chat(self, *a, **k):
         calls["chat"] += 1
-        return FakeResult()
+        return real_chat(self, *a, **k)
 
-    sess.scene_chat = _scene_chat
-    sess.chat = _chat
+    sess.scene_chat = types.MethodType(GameSession.scene_chat, sess)
+    sess.chat = types.MethodType(_counting_chat, sess)
     sess._character = lambda n: content.characters[n]
     sess.consume_audience_admission = lambda *a, **k: NS(allowed=True, reason="", result=None)
     sess.admit_audience = lambda *a, **k: NS(allowed=True, reason="", result=None)
@@ -1476,13 +1487,20 @@ def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch):
     sess.note_chat_rollback = lambda **k: None
     sess.refresh_runtime_after_chat_rollback = lambda: None
     sess._start_cli_action_intent = lambda *a, **k: calls.__setitem__("intent", calls["intent"] + 1)
+    for _name in (
+        "_apply_scene_turn_translation",
+        "_run_scene_agent_transport",
+        "_resolve_scene_agent",
+        "_recognize_audience_command_verdict",
+    ):
+        setattr(sess, _name, types.MethodType(getattr(GameSession, _name), sess))
 
     wg = wa.WebGame.__new__(wa.WebGame)
     wg.session = sess
     wg.chat_history = {n: [] for n in content.characters}
-    from ming_sim.session_write_queue import SessionWriteQueue
     wg._write_queue = SessionWriteQueue()
     wg._write_gate = wg._write_queue.write_gate
+    sess._write_gate = wg._write_gate
     wg._runtime_write_queue = lambda: wg._write_queue
     wg._runtime_write_gate = lambda: wg._write_gate
     wg._ticketed_write_gate = lambda ticket=None: wg._write_gate
@@ -1497,14 +1515,11 @@ def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch):
     wg.suggestions_for = lambda _c: []
     wg._trail_highlight_judge_after_reply = lambda *a, **k: []
     wg._spawn_pending_write_thread = lambda *a, **k: None
-    # 旧四机制：若生产仍调用则计数
     wg._dispatch_relation_judge = lambda *a, **k: calls.__setitem__("judge", calls["judge"] + 1)
     wg._spawn_extraction_trail = lambda *a, **k: calls.__setitem__("extract", calls["extract"] + 1) or None
     wg._trail_mindreading_after_reply = lambda *a, **k: calls.__setitem__("mind", calls["mind"] + 1)
     wg._finish_offsite_summon_scene = lambda *a, **k: None
     wg._summon_admission_success_payload = lambda *a, **k: {}
-    # 用真 _start_chat_turn / _chat_payload / chat 方法
-    import types
     for meth in (
         "_start_chat_turn", "_chat_payload", "_chat_core", "chat",
         "_record_chat_rollback_items", "_scene_chat_stream_payload",
@@ -1515,29 +1530,26 @@ def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch):
         if hasattr(wa.WebGame, meth):
             setattr(wg, meth, types.MethodType(getattr(wa.WebGame, meth), wg))
 
-    # 1) 非流式真实入口
-    calls["scene"] = calls["chat"] = calls["judge"] = calls["extract"] = calls["mind"] = 0
+    calls["agent"] = calls["chat"] = calls["judge"] = calls["extract"] = calls["mind"] = 0
     out = wg.chat(name, "边事如何？")
-    assert calls["scene"] == 1, calls
+    assert calls["agent"] >= 1, calls
     assert calls["chat"] == 0, calls
     assert calls["judge"] == 0 and calls["extract"] == 0 and calls["mind"] == 0, calls
-    assert out.get("answer") == "殿上戏文"
+    assert out.get("answer") == answer_text
+    assert join_owner_translations(owner, timeout_s=3.0)
 
-    # 2) 流式 payload 入口（chat_stream worker 同核）
-    calls["scene"] = 0
+    calls["agent"] = 0
     deltas: list[str] = []
     payload = wg._scene_chat_stream_payload(
         name, "再问一句", 0, {}, int(state.turn),
         lambda d, replace=False: deltas.append(d),
         write_gate=wg._write_gate,
     )
-    assert calls["scene"] == 1
-    assert payload.get("answer") == "殿上戏文"
-    assert "殿上戏文" in "".join(deltas)
+    assert calls["agent"] >= 1, calls
+    assert payload.get("answer") == answer_text
+    assert answer_text in "".join(deltas)
+    assert join_owner_translations(owner, timeout_s=3.0)
 
-    # 3) 重试入口：造 interrupted 轮后走 retry_interrupted_reply
-    from ming_sim.audience_night import attach_chat_turn_to_night
-    # 建一条 interrupted 轮（有问无答）
     agno = "s"
     uid = int(db.conn.execute(
         "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
@@ -1553,23 +1565,15 @@ def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch):
         (uid, ctid),
     )
     db.conn.commit()
-    # bind retry method
     wg.retry_interrupted_reply = types.MethodType(wa.WebGame.retry_interrupted_reply, wg)
     wg.interrupted_reply_retries = types.MethodType(wa.WebGame.interrupted_reply_retries, wg)
-    if hasattr(db, "reopen_interrupted_chat_turn_for_retry"):
-        # 某些实现要 CAS
-        pass
-    calls["scene"] = calls["chat"] = calls["judge"] = calls["extract"] = calls["mind"] = 0
-    try:
-        rout = wg.retry_interrupted_reply(name)
-        assert calls["scene"] == 1, calls
-        assert calls["chat"] == 0, calls
-        assert calls["judge"] == 0 and calls["extract"] == 0 and calls["mind"] == 0, calls
-        assert rout.get("answer") == "殿上戏文"
-    except Exception as exc:
-        # 若 interrupted 列表空或 CAS 失败，至少非流+stream 已证入口
-        # 但本构造应成功；失败则响亮
-        raise AssertionError(f"retry 入口未接通 scene_chat: {exc}") from exc
+    calls["agent"] = calls["chat"] = calls["judge"] = calls["extract"] = calls["mind"] = 0
+    rout = wg.retry_interrupted_reply(name)
+    assert calls["agent"] >= 1, calls
+    assert calls["chat"] == 0, calls
+    assert calls["judge"] == 0 and calls["extract"] == 0 and calls["mind"] == 0, calls
+    assert rout.get("answer") == answer_text
+    assert join_owner_translations(owner, timeout_s=3.0)
 
 
 def test_menu_exit_joins_inflight_translation_before_db_close(
@@ -1578,12 +1582,11 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
     """#1842：转译正在写 → 退出本局立即返回 → 后台写入完成 → 数据库关闭。
 
     真实 schedule + 既有 menu drain/exit 接缝；Event 栅栏。
-    禁墙钟 SLA、禁 seal/owner lifecycle、禁退出路径 abandon/cancel。
+    禁墙钟 SLA、禁第二生命周期、禁退出路径 abandon/cancel。
     """
     import asyncio
 
     import web_app
-    import ming_sim.audience_translation as at
     from ming_sim.session_write_queue import SessionWriteQueue
     from tests.wait_utils import reset_menu_path_leases, wait_until
 
@@ -1596,6 +1599,14 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
     release = threading.Event()
     owner = translation_owner_key(gate, db)
     bg_life.track(owner=owner, release=release)
+    sealed = {"n": 0}
+    real_seal = write_q.seal
+
+    def tracking_seal():
+        sealed["n"] += 1
+        return real_seal()
+
+    write_q.seal = tracking_seal  # type: ignore[method-assign]
 
     def translate_fn(_prompt, _config):
         started.set()
@@ -1616,7 +1627,7 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
     assert started.wait(2.0), "worker 须进入 LLM 窗"
     assert db.get_story_extract_status(ctid) == "pending"
 
-    sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
+    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn, write_gate=gate)
     sess._scene_registry = SimpleNamespace(abandon_all=lambda: None)
     closed = threading.Event()
     status_at_close: dict = {}
@@ -1631,15 +1642,6 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
 
     sess.close = tracking_close  # type: ignore[method-assign]
 
-    abandon_calls: list[int] = []
-    real_abandon = at.abandon_owner_translations
-
-    def tracking_abandon(owner_key: int) -> int:
-        abandon_calls.append(int(owner_key))
-        return real_abandon(owner_key)
-
-    monkeypatch.setattr(at, "abandon_owner_translations", tracking_abandon)
-
     fake_game = SimpleNamespace(
         _write_gate=gate,
         _write_queue=write_q,
@@ -1653,6 +1655,7 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
     result = asyncio.run(web_app.api_menu_exit())
     assert result == {"ok": True}
     assert web_app.web_game is None
+    assert sealed["n"] >= 1, "exit 须在 unbind 前 seal"
     assert not closed.is_set(), "退出响应时不得已关库（drain 仍应在等转译）"
     assert not future.done(), "退出响应时转译仍应在飞"
     assert db.get_story_extract_status(ctid) == "pending"
@@ -1662,7 +1665,6 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
     assert future.done()
     assert status_at_close.get("future_done") is True
     assert status_at_close.get("extract") == "done"
-    assert abandon_calls == [], f"正常退出不得 abandon/cancel: {abandon_calls}"
 
     # game fixture finally 会再 close；库已由 drain 关闭。
     db.close = lambda: None  # type: ignore[method-assign]

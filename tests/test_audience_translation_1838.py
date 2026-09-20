@@ -154,6 +154,7 @@ def test_presence_enter_exit_from_translation(game):
 
 def _scene_session(db, state, content, monkeypatch):
     """搭 scene_chat 最小壳：挡真实 LLM，保留宣 X 确定性写口。"""
+    from tests.conftest import stub_audience_translate, stub_scene_agent
 
     class FakeAgent:
         tools = []
@@ -161,7 +162,17 @@ def _scene_session(db, state, content, monkeypatch):
         def run(self, message):
             return SimpleNamespace(content="殿上应对。", tools=[])
 
-    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
+    stub_scene_agent(monkeypatch, FakeAgent())
+    stub_audience_translate(monkeypatch)
+    monkeypatch.setattr(
+        "ming_sim.llm_model.extract_agent_text",
+        lambda out: str(getattr(out, "content", "") or ""),
+    )
+    monkeypatch.setattr("ming_sim.session._dump_llm_messages", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "ming_sim.session.prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="开场", root=None),
+    )
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
@@ -174,6 +185,16 @@ def _scene_session(db, state, content, monkeypatch):
     sess._scene_registry = None
     sess._write_gate = None
     return sess
+
+
+def _drain_scene_owner(sess, db, *, timeout_s: float = 5.0) -> None:
+    """scene_chat(ctid>0) 调度后台转译后必须 owner-scoped join，禁跨测污染。"""
+    from ming_sim.audience_translation import join_owner_translations, translation_owner_key
+
+    owner = translation_owner_key(getattr(sess, "_write_gate", None), db)
+    assert join_owner_translations(owner, timeout_s=timeout_s), (
+        f"1838 scene_chat bg drain stuck owner={owner}"
+    )
 
 
 def _active_chat_turn(db, state, night_id: int) -> int:
@@ -195,6 +216,7 @@ def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
     t1 = _active_chat_turn(db, state, nid)
     # 真入口：scene_chat("宣王绍徽", chat_turn_id=t1) 当场先切并绑源轮
     sess.scene_chat("宣王绍徽", chat_turn_id=t1)
+    _drain_scene_owner(sess, db)
     assert get_night_protagonist(db, nid) == "王绍徽"
     assert db.conn.execute(
         "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
@@ -224,6 +246,7 @@ def test_protagonist_undo_reprojects_night_current(game, monkeypatch):
 
     t1 = _active_chat_turn(db, state, nid)
     sess.scene_chat("宣王绍徽", chat_turn_id=t1)
+    _drain_scene_owner(sess, db)
     assert get_night_protagonist(db, nid) == "王绍徽"
     assert db.conn.execute(
         "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),

@@ -304,7 +304,6 @@ def _close_night_production_judge(
         llm_config=cfg,
         write_gate=write_gate,
         scene_registry=getattr(sess, "_scene_registry", None),
-        translate_fn=getattr(sess, "_audience_translate_fn", None),
         wait_timeout_s=0.0,
     )
     return {

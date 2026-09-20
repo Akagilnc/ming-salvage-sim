@@ -21,6 +21,7 @@ import ming_sim.cli_backend as cli_backend
 from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
 from ming_sim.matching import army_identity_aliases
 from ming_sim.session import GameSession
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 AUDIENCE_MESSAGE = (
     "着户部从国库拨银十五万两，解赴关宁军前专补欠饷。卿即拟旨呈览。"
@@ -300,7 +301,7 @@ def test_audience_grounded_army_pay_lands_through_close_night(
         name = _active_ming_minister(game.db, game.content, office="户部").name
         agent = _Agent()
         game.session.registry.get = lambda _ch, **_kw: agent
-        game.session._scene_agent_double = agent
+        stub_scene_agent(monkeypatch, agent)
 
         def _translate(prompt, _cfg):
             # scene_chat 双桩：交办 grant → pending；「准」→ promises 应允。
@@ -331,7 +332,7 @@ def test_audience_grounded_army_pay_lands_through_close_night(
                 "promises": [],
             }
 
-        game.session._audience_translate_fn = _translate
+        stub_audience_translate(monkeypatch, _translate)
         client = TestClient(web_app.app)
         turn_before = int(game.state.turn)
 

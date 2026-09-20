@@ -35,6 +35,7 @@ from ming_sim.beat_orchestration import (
     beat_input_field_names,
 )
 from tests.wait_utils import ObservingLock
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def test_abandon_running_scene_drains_without_persisting_result():
@@ -1718,7 +1719,7 @@ def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
 
     agent = _DismissAgent()
     game.session.registry.get = lambda _c, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
 
     ctid, snap = game._start_chat_turn(minister)
     night_id = int(game.db.conn.execute(
@@ -1827,7 +1828,7 @@ def test_web_stream_exit_overlaps_unfinished_reply_after_dismiss_tool(web_game):
 
     agent = _OverlapDismissAgent()
     game.session.registry.get = lambda _c, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
 
     ctid, snap = game._start_chat_turn(minister)
     night_id = int(game.db.conn.execute(

@@ -30,6 +30,7 @@ import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 # ── 轻量 canned 边界（与 #498 web tracer 同形，仅中和 LLM）────────────────
@@ -363,7 +364,7 @@ def test_true_failure_pending_extraction_exits_display(web_game, monkeypatch, tm
         del prompt, llm_config
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
-    game.session._audience_translate_fn = _boom_translate
+    stub_audience_translate(monkeypatch, _boom_translate)
     before = _click_before(game.state)
     turn = int(game.state.turn)
     nid, ctid = _open_night_with_unextracted_reply(game, minister)
@@ -418,7 +419,7 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
         del prompt, llm_config
         raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
 
-    game.session._audience_translate_fn = _boom_translate
+    stub_audience_translate(monkeypatch, _boom_translate)
     before = _click_before(game.state)
     turn = int(game.state.turn)
     _open_night_with_unextracted_reply(game, minister)

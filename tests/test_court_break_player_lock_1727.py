@@ -25,6 +25,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from tests.test_month_loop_tracer_1468 import _install_trail_hold
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 class _CannedExtractor:
@@ -146,7 +147,7 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
     night_id = int(night["id"])
     agent = _StreamFarewellAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
 
     trail_release = threading.Event()
     restore_trails = _install_trail_hold(game, trail_release)

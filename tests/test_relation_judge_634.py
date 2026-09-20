@@ -688,36 +688,6 @@ def test_split_provider_phase_never_holds_runtime_gate(game):
     assert finalize_summon_relation_judge(prepared, result, write_gate=gate)["edges"] == 0
 
 
-def test_cli_dispatch_claims_ticket_before_thread_start_and_returns_it_on_start_failure(monkeypatch):
-    import ming_sim.cli.terminal as terminal
-    import ming_sim.session_write_queue as queue_mod
-
-    order = []
-
-    class _Queue:
-        def claim(self, *, key):
-            order.append(("claim", key))
-            return "ticket"
-
-        def complete(self, ticket):
-            order.append(("complete", ticket))
-
-    class _Thread:
-        def __init__(self, **_kwargs):
-            pass
-
-        def start(self):
-            order.append(("start", None))
-            raise RuntimeError("thread unavailable")
-
-    monkeypatch.setattr(queue_mod, "get_session_write_queue", lambda _session: _Queue())
-    monkeypatch.setattr(terminal.threading, "Thread", _Thread)
-    terminal._dispatch_relation_judge_cli(SimpleNamespace(), 73)
-    assert order == [
-        ("claim", ("turn", 73)), ("start", None), ("complete", "ticket"),
-    ]
-
-
 def test_split_finalize_waits_for_provider_result_before_watermark(game):
     db, state, _ = game
     a, _ = _roster_names(db, state)

@@ -25,6 +25,7 @@ from ming_sim.relation_brew import FOUNDINGS_KEY, MonthEndRelationBrewLeg, RECEN
 from ming_sim.relation_judge import run_summon_relation_judge, summon_edge_origin
 from ming_sim.relations import MINISTER_EDGE_KINDS
 from ming_sim.session import ChatTurnResult, GameSession
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 class _CannedJudge:
@@ -160,8 +161,8 @@ def test_yang_typed_failure_blocks_semantic_wash(monkeypatch):
 
     def _fresh(content_arg, cfg_arg):
         sess = real_fresh(content_arg, cfg_arg)
-        sess._scene_agent_double = _SceneDouble()
-        sess._audience_translate_fn = _coop_only_translate
+        stub_scene_agent(monkeypatch, _SceneDouble())
+        stub_audience_translate(monkeypatch, _coop_only_translate)
         return sess
 
     monkeypatch.setattr(gate, "_fresh_session", _fresh)
@@ -284,8 +285,8 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
 
     def _fresh(content_arg, cfg_arg):
         sess = real_fresh(content_arg, cfg_arg)
-        sess._scene_agent_double = _SceneDouble()
-        sess._audience_translate_fn = _beat_translate
+        stub_scene_agent(monkeypatch, _SceneDouble())
+        stub_audience_translate(monkeypatch, _beat_translate)
         return sess
 
     monkeypatch.setattr(gate, "_fresh_session", _fresh)

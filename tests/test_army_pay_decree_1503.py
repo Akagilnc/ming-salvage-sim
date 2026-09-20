@@ -23,6 +23,7 @@ from ming_sim.action_clusters import (
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.issues import apply_score_extraction
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _ctx(db, character, candidates, turn, *, message, reply):
@@ -1732,7 +1733,7 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
         )
         agent = _AudienceAgent()
         game.session.registry.get = lambda _character, **_kw: agent
-        game.session._scene_agent_double = agent
+        stub_scene_agent(monkeypatch, agent)
         if game.session.llm_config is not None:
             game.session.llm_config.channel = "cli"
         if validation_case == "existing_draft_region_mismatch":
@@ -1768,10 +1769,13 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             expected_category = "invalid_enum"
             message = "请拟旨整饬京师"
 
-        game.session._audience_translate_fn = lambda _prompt, _cfg: {
-            "commissions": [commission],
-            "promises": [],
-        }
+        stub_audience_translate(
+            monkeypatch,
+            lambda _prompt, _cfg: {
+                "commissions": [commission],
+                "promises": [],
+            },
+        )
 
         response = TestClient(web_app.app).post(
             f"/api/ministers/{name}/chat/stream",
@@ -1917,7 +1921,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         )
         canned = _TwoRoundHubuAgent()
         game.session.registry.get = lambda _ch, **_kw: canned
-        game.session._scene_agent_double = canned
+        stub_scene_agent(monkeypatch, canned)
         if getattr(game.session, "llm_config", None) is not None:
             try:
                 game.session.llm_config.channel = "cli"
@@ -1956,7 +1960,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
                 "promises": [],
             }
 
-        game.session._audience_translate_fn = _translate
+        stub_audience_translate(monkeypatch, _translate)
 
         _set_guanning_arrears(game.db, 60, central=60, province=0)
         game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)

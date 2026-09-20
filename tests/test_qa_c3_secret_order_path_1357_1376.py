@@ -19,6 +19,7 @@ import web_app
 from ming_sim.models import TurnPhase
 from ming_sim.session import ChatTurnResult, GameSession
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _active_minister_name(db, content) -> str:
@@ -297,7 +298,7 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
     """#1376/#1842：殿上确认密令经 scene_chat 转译 promises 应允即落地。
 
     真实 HTTP：先开夜再 stage（night_id 对齐），确认句「准」走 scene_chat；
-    显式 `_audience_translate_fn` 灌 promises 应允（禁旧 extract_confirmation
+    显式 `_default_translate_runner` 灌 promises 应允（禁旧 extract_confirmation
     / 词表快路）。ctid>0 后台转译——join 后 GET /api/secret_orders 可见；
     同步包 secret_order_id 可仍为 0（#1842 前台不等）。
     """
@@ -355,7 +356,7 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
         # 唯一 fake 面：大臣回话 agent + 转译双桩；落库走生产 promises→commit。
         agent = _CannedAgent()
         game.session.registry.get = lambda _ch, **_kw: agent
-        game.session._scene_agent_double = agent
+        stub_scene_agent(monkeypatch, agent)
 
         # stage 须挂本夜 night_id，否则 promises 按 missing_ref 拒收。
         an.ensure_open_night_for_audience(game.db, game.state)
@@ -384,7 +385,7 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
                 "promises": [{"action_id": int(pending_id), "decision": "应允"}],
             }
 
-        game.session._audience_translate_fn = _approve_translate
+        stub_audience_translate(monkeypatch, _approve_translate)
 
         client = TestClient(web_app.app)
         chat_resp = client.post(

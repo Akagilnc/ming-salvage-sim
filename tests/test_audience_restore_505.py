@@ -1387,13 +1387,16 @@ def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
     sess.temporary_characters = set()
     sess.registry = None
 
-    def _chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         assert chat_turn_id == ct
-        assert explicit_secret_order is False
         assert message == question
+        assert minister_name == remote.name
         return ChatTurnResult(answer="臣领旨。", court_action="court_break")
 
-    sess.chat = _chat  # type: ignore[method-assign]
+    sess.scene_chat = _scene_chat  # type: ignore[method-assign]
+    sess.chat = lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("ordinary offsite retry must use scene_chat, not chat")
+    )
     sess.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
         AssertionError("ordinary offsite retry must not start_chat_turn_scene")
     )
@@ -1403,16 +1406,12 @@ def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
     sess.close_night_after_chat_if_needed = GameSession.close_night_after_chat_if_needed.__get__(
         sess, GameSession,
     )
-    monkeypatch.setattr(term, "_dispatch_relation_judge_cli", lambda *_a, **_k: None)
-
-    def _trail(_session, _name, _reply, chat_turn_id):
-        db.conn.execute(
-            "UPDATE chat_turns SET extract_status='done' WHERE id=?",
-            (int(chat_turn_id),),
-        )
-        db.conn.commit()
-
-    monkeypatch.setattr(term, "_trail_extraction_after_reply_cli", _trail)
+    # #1842：CLI 重试不再跑 trail/judge；收夜前标转译水位以免假 pending。
+    db.conn.execute(
+        "UPDATE chat_turns SET extract_status='done', mindreading_status='skip' WHERE id=?",
+        (ct,),
+    )
+    db.conn.commit()
 
     term._retry_interrupted_reply_cli(sess, remote.name)
 

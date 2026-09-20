@@ -42,6 +42,8 @@ from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pen
 
 # 成功腿 fingerprint：internal 钱粮收支唯一 category，经 apply → economy_ledger →
 # GET state budget.国库.movements 可见（非 persist 形参间谍；终态 metrics 叠其它系统）。
+from tests.conftest import stub_audience_translate, stub_scene_agent
+
 _FP_CATEGORY = "fp1465-transport"
 _FP_DELTA = -1
 _SUCCESS_MODULE_JSON = {
@@ -257,7 +259,7 @@ def _new_game_with_directive(client: TestClient) -> tuple[int, object]:
     assert game is not None
     agent = _CannedMinisterAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
     directive = client.post(
         "/api/directives",
         json={"text": "着户部清核辽饷（#1750 transport）。", "notes": ""},

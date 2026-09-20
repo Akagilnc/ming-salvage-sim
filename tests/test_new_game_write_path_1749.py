@@ -24,6 +24,7 @@ from tests.test_month_loop_tracer_1468 import (
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 from tests.wait_utils import wait_until
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _campaign(game) -> str:
@@ -152,10 +153,10 @@ def _empty_translate_fn(_prompt, _cfg):
     }
 
 
-def _install_canned_scene_double(game) -> None:
-    """#1842：殿上 stream 走 scene_chat，只认显式 _scene_agent_double（禁嗅探）。"""
-    game.session._scene_agent_double = _canned_scene_agent()
-    game.session._audience_translate_fn = _empty_translate_fn
+def _install_canned_scene_double(game, monkeypatch) -> None:
+    """#1842：殿上 stream 走 scene_chat；经 create_scene_agent / translate runner 缝注入。"""
+    stub_scene_agent(monkeypatch, _canned_scene_agent())
+    stub_audience_translate(monkeypatch, _empty_translate_fn)
 
 
 def _directive(client: TestClient, text: str) -> None:
@@ -215,7 +216,7 @@ def _assert_chat_persisted(snap: dict, *, chat_turn_id: int, night_id: int,
 
 def _write_and_verify_live(client: TestClient, game, *, label: str) -> dict:
     """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/回话终态。"""
-    _install_canned_scene_double(game)
+    _install_canned_scene_double(game, monkeypatch)
     d_text = f"着户部清核辽饷（{label}）。"
     _directive(client, d_text)
     _wait_pending_writes(game)

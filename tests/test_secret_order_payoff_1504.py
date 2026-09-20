@@ -48,6 +48,7 @@ from ming_sim.simulation import (
     build_extractor_shared_context,
     _sanitize_module_output,
 )
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
@@ -1812,14 +1813,14 @@ def _web_secret_landing_client(tmp_path, monkeypatch, backend_fn):
     )
     agent = _AudienceAgent()
     game.session.registry.get = lambda _character, **_kw: agent
-    game.session._scene_agent_double = agent
+    stub_scene_agent(monkeypatch, agent)
     if game.session.llm_config is not None:
         game.session.llm_config.channel = "cli"
     client = TestClient(web_app.app)
 
     def _stream(message: str, *, intent: str | None = "secret_order"):
         # #1842：殿上默认 scene_chat；密令 landing / recovery 须强制旧 session.chat。
-        # 应允/拒绝等确认轮勿带 intent——走 scene_chat + `_audience_translate_fn` promises。
+        # 应允/拒绝等确认轮勿带 intent——走 scene_chat + translate runner promises。
         body: dict = {"message": message}
         if intent:
             body["intent"] = intent
@@ -2041,7 +2042,7 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
                 }
             return {"commissions": [], "promises": []}
 
-        game.session._audience_translate_fn = _approve_translate
+        stub_audience_translate(monkeypatch, _approve_translate)
         stream("准，就照此密行", intent=None)
         owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
         assert join_owner_translations(owner, timeout_s=5.0)

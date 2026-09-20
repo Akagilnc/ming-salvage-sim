@@ -1496,7 +1496,6 @@ class GameSession:
             llm_config=getattr(self, "llm_config", None),
             write_gate=getattr(self, "_write_gate", None),
             scene_registry=getattr(self, "_scene_registry", None),
-            translate_fn=getattr(self, "_audience_translate_fn", None),
         )
         result.court_action = "court_break"
 
@@ -1581,7 +1580,6 @@ class GameSession:
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=gate,
                     scene_registry=getattr(self, "_scene_registry", None),
-                    translate_fn=getattr(self, "_audience_translate_fn", None),
                 )
 
             # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
@@ -1845,7 +1843,6 @@ class GameSession:
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=getattr(self, "_write_gate", None),
                     scene_registry=getattr(self, "_scene_registry", None),
-                    translate_fn=getattr(self, "_audience_translate_fn", None),
                 )
                 result.court_action = "court_break"
                 return result
@@ -1935,10 +1932,7 @@ class GameSession:
         return result
 
     def _resolve_scene_agent(self, prepared: Any, *, night_id: int) -> Any:
-        """生产 create_scene_agent；双桩只认显式 _scene_agent_double（禁 registry 嗅探）。"""
-        double = getattr(self, "_scene_agent_double", None)
-        if double is not None:
-            return double
+        """生产 create_scene_agent；测试经 monkeypatch 此工厂缝注入，禁实例双桩属性。"""
         llm_config = getattr(self, "llm_config", None)
         return create_scene_agent(
             llm_config,
@@ -2071,13 +2065,13 @@ class GameSession:
 
         if GameSession._proposal_blocked(self.state):
             return
-        translate_fn = getattr(self, "_audience_translate_fn", None)
         ctid = int(chat_turn_id or 0)
         nid = int(night_id or 0)
         write_gate = getattr(self, "_write_gate", None)
 
         if ctid > 0:
             # 生产路径：调度后立即返回；封夜/过月 join；失败由 worker 标 pending。
+            # 转译 runner 走默认；测试经 monkeypatch `_default_translate_runner`。
             schedule_audience_turn_translation(
                 self.db,
                 self.state,
@@ -2087,7 +2081,6 @@ class GameSession:
                 chat_turn_id=ctid,
                 minister_name="",
                 llm_config=getattr(self, "llm_config", None),
-                translate_fn=translate_fn,
                 write_gate=write_gate,
             )
             return
@@ -2102,7 +2095,6 @@ class GameSession:
                 chat_turn_id=0,
                 minister_name="",
                 llm_config=getattr(self, "llm_config", None),
-                translate_fn=translate_fn,
             )
         except AudienceTranslateError as exc:
             # 失败诚实：真因落痕 + 既有 pending_action_failures 显眼回场；
@@ -3821,7 +3813,6 @@ class GameSession:
         catch_up_pending_translations(
             self.db, self.state,
             llm_config=getattr(self, "llm_config", None),
-            translate_fn=getattr(self, "_audience_translate_fn", None),
             write_gate=catch_gate,
         )
         still_pending = list_pending_translations(self.db)
