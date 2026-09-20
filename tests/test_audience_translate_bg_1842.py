@@ -2420,9 +2420,11 @@ def test_classified_write_gate_other_409_vs_translation_wait(game, monkeypatch):
 
     真实入口 = web_app._acquire_web_write_gate_or_409（chat/advance 同缝）。
     禁锁内部字段；只断言 HTTPException 状态码与最终持锁成败。
+    translation 分支用 wait 接缝事件证明已进入等待，禁调度时窗猜测。
     """
     import web_app
     from fastapi import HTTPException
+    import ming_sim.audience_translation as audience_translation
     from ming_sim.session_write_queue import (
         ClassifiedWriteGate,
         HOLDER_OTHER,
@@ -2439,23 +2441,35 @@ def test_classified_write_gate_other_409_vs_translation_wait(game, monkeypatch):
     assert other_exc.value.status_code == 409
     gate.release()
 
-    # translation 持锁：前台须等待释放后再抢到（非 409）。
+    # translation 持锁：前台须进入 wait 接缝，释放后再抢到（非 409）。
     assert gate.acquire_translation(blocking=False)
     assert gate.holder_kind() == HOLDER_TRANSLATION
+    entered_wait = threading.Event()
     acquired = threading.Event()
     errors: list[BaseException] = []
+    real_wait = audience_translation.wait_translation_write_gate_released
+
+    def _wait_and_signal(g) -> None:
+        entered_wait.set()
+        real_wait(g)
+
+    monkeypatch.setattr(
+        audience_translation,
+        "wait_translation_write_gate_released",
+        _wait_and_signal,
+    )
 
     def _wait_then_acquire() -> None:
         try:
             web_app._acquire_web_write_gate_or_409(gate)
             acquired.set()
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:  # noqa: BLE001 — collect worker fault
             errors.append(exc)
 
     t = threading.Thread(target=_wait_then_acquire, daemon=True, name="fg-wait-tx")
     t.start()
-    # 仍持 translation 时前台不得已抢到，也不得已 409。
-    assert not acquired.wait(0.2)
+    assert entered_wait.wait(2.0), "前台须已进入 translation 等待接缝"
+    assert not acquired.is_set(), "仍持 translation 时前台不得已抢到"
     assert errors == []
     gate.release()
     assert acquired.wait(2.0), "translation 释放后前台须抢到闸"
@@ -2537,13 +2551,12 @@ def test_mid_cancel_keeps_same_night_fifo(game, bg_life):
     )
     db.conn.commit()
 
-    # 中位取消后 C 仍不得越过仍在跑的 A（短窗抓并行偷跑；非性能阈值）。
+    # 中位取消后 C 仍排队：释放 A 前不得见 C-run / B-run（事件序，禁时窗猜测）。
     assert "B-run" not in order
-    assert not c_started.wait(0.5), (
-        f"C 不得在 A 仍阻塞时启动: order={order}"
-    )
+    assert not c_started.is_set(), f"C 不得在 A 仍阻塞时启动: order={order}"
     a_release.set()
     assert join_owner_translations(owner, timeout_s=5.0)
+    assert c_started.is_set()
     assert "A-enter" in order and "A-done" in order
     assert "B-run" not in order, order
     assert "C-run" in order, order

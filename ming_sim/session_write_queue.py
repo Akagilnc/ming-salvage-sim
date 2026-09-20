@@ -543,8 +543,9 @@ def drain_and_close_session(owner: Any) -> None:
     Order matches settlement (barrier then join): seal + wait_prior drains
     admitted chat tickets so scene_chat finishes and registers derived
     translation Futures; then join those Futures outside the write gate; then
-    close under the gate. Failures re-raise after attempting unseal — no
-    abandon / cancel / second lifecycle.
+    close under the gate. Failures re-raise without auto-unseal — callers
+    decide (Web: only if runtime restorable; CLI: always attempt unseal and
+    log any unseal failure). No abandon / cancel / second lifecycle.
 
     Web HolderEntry / CloseOp accounting stays in the Web wrapper; CLI calls
     this directly (no reverse coupling into ``web_app``).

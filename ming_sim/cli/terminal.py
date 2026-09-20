@@ -1018,6 +1018,8 @@ def run_cli(
                 try:
                     get_session_write_queue(session).unseal()
                 except Exception:
-                    pass
+                    logger.exception(
+                        "CLI exit: unseal after drain failure also failed"
+                    )
                 raise
         print_token_summary()
