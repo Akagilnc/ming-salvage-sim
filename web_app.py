@@ -2530,14 +2530,23 @@ class WebGame:
             if pending_ticket is not None:
                 self._complete_pending_write(pending_ticket)
                 pending_ticket = None
-            # #526：回话已落库后收夜。失败响亮上抛，不得回滚已成回话；夜可恢复。
+            # #526/#1842：回话已落库后收夜。非流式前台先返回；队列随后 FIFO 转译 join→封夜。
             # #1353：close 经队列屏障；穿既有 runtime write_gate（禁第二锁）。
-            close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
-            if close_after is not None:
-                close_after(
-                    getattr(result, "court_action", "") or "",
-                    write_gate=self._runtime_write_gate(),
+            court_action = getattr(result, "court_action", "") or ""
+            schedule = getattr(
+                self.session, "schedule_close_night_after_chat_if_needed", None,
+            )
+            if schedule is not None:
+                schedule(court_action, write_gate=self._runtime_write_gate())
+            else:
+                close_after = getattr(
+                    self.session, "close_night_after_chat_if_needed", None,
                 )
+                if close_after is not None:
+                    close_after(
+                        court_action,
+                        write_gate=self._runtime_write_gate(),
+                    )
             return payload
         finally:
             self._complete_pending_write(pending_ticket)
@@ -2690,13 +2699,22 @@ class WebGame:
             if pending_ticket is not None:
                 self._complete_pending_write(pending_ticket)
                 pending_ticket = None
-            # #526：回话已落库后收夜。失败响亮上抛，不得回滚已成回话；夜可恢复。
-            close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
-            if close_after is not None:
-                close_after(
-                    getattr(result, "court_action", "") or "",
-                    write_gate=self._runtime_write_gate(),
+            # #526/#1842：回话已落库后收夜。非流式前台先返回；队列随后 FIFO 转译 join→封夜。
+            court_action = getattr(result, "court_action", "") or ""
+            schedule = getattr(
+                self.session, "schedule_close_night_after_chat_if_needed", None,
+            )
+            if schedule is not None:
+                schedule(court_action, write_gate=self._runtime_write_gate())
+            else:
+                close_after = getattr(
+                    self.session, "close_night_after_chat_if_needed", None,
                 )
+                if close_after is not None:
+                    close_after(
+                        court_action,
+                        write_gate=self._runtime_write_gate(),
+                    )
             return payload
         finally:
             self._complete_pending_write(pending_ticket)

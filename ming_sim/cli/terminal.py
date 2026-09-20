@@ -500,21 +500,25 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         session.abandon_chat_turn_scene(chat_turn_id)
         print(f"重试回话失败：{exc}\n")
         return None
-    # #1716：与 Web retry 同缝——回话已落库后消费 court_action 收夜。
-    # 收夜失败响亮可观察，不得回滚已成回话；夜可恢复，仍留原对话。
-    # 成功收夜（court_action=court_break）传播 typed court_break → minister_chat → 审阅。
+    # #1716/#1842：与 Web retry 同缝——回话已落库后消费 court_action 收夜。
+    # 前台先返回 court_break；既有队列随后 FIFO 转译 join→封夜（不挡回话返回）。
+    # 后台收夜失败留痕、夜可恢复；不得回滚已成回话。
     court_action = str(getattr(result, "court_action", "") or "")
-    close_after = getattr(session, "close_night_after_chat_if_needed", None)
-    if close_after is not None:
-        from ming_sim.audience_night import AudienceNightError
-        try:
-            close_after(
-                court_action,
-                write_gate=_cli_write_gate(session),
-            )
-        except (AudienceNightError, LLMUnavailable) as err:
-            print(f"\n收夜未成：{err}\n")
-            return None
+    schedule = getattr(session, "schedule_close_night_after_chat_if_needed", None)
+    if schedule is not None:
+        schedule(court_action, write_gate=_cli_write_gate(session))
+    else:
+        close_after = getattr(session, "close_night_after_chat_if_needed", None)
+        if close_after is not None:
+            from ming_sim.audience_night import AudienceNightError
+            try:
+                close_after(
+                    court_action,
+                    write_gate=_cli_write_gate(session),
+                )
+            except (AudienceNightError, LLMUnavailable) as err:
+                print(f"\n收夜未成：{err}\n")
+                return None
     if court_action == "court_break":
         return "court_break"
     return None
@@ -559,24 +563,29 @@ def minister_chat(session: GameSession, character: Character) -> str:
             print(f"{character.name}退下。\n")
             return "dismiss"
         if cmd == "court_break":
-            # #526：高置信收夜口令 → 收夜提交；失败响亮可观察，夜可恢复，不假成功退朝。
+            # #526/#1842：高置信收夜口令 → 前台先返回；队列随后 FIFO 转译 join→封夜。
+            # 后台失败留痕、夜可恢复；不假成功静默吞错（ADR 0005）。
             from ming_sim.audience_night import AudienceNightError, auto_close_open_night
-            close_fn = getattr(session, "close_night_after_chat_if_needed", None)
-            try:
-                if close_fn is not None:
-                    close_fn("court_break", write_gate=_cli_write_gate(session))
-                else:
-                    auto_close_open_night(
-                        session.db, session.state,
-                        content=getattr(session, "content", None),
-                        wait_timeout_s=0.0,
-                        write_gate=_cli_write_gate(session),
-                        llm_config=getattr(session, "llm_config", None),
-                    )
-            except (AudienceNightError, LLMUnavailable) as err:
-                # #1353 fold-in r8：欠账耗尽/收夜失败留本回合，可重按退朝；CLI 不退出。
-                print(f"\n收夜未成：{err}\n")
-                continue
+            schedule = getattr(session, "schedule_close_night_after_chat_if_needed", None)
+            if schedule is not None:
+                schedule("court_break", write_gate=_cli_write_gate(session))
+            else:
+                close_fn = getattr(session, "close_night_after_chat_if_needed", None)
+                try:
+                    if close_fn is not None:
+                        close_fn("court_break", write_gate=_cli_write_gate(session))
+                    else:
+                        auto_close_open_night(
+                            session.db, session.state,
+                            content=getattr(session, "content", None),
+                            wait_timeout_s=0.0,
+                            write_gate=_cli_write_gate(session),
+                            llm_config=getattr(session, "llm_config", None),
+                        )
+                except (AudienceNightError, LLMUnavailable) as err:
+                    # #1353 fold-in r8：欠账耗尽/收夜失败留本回合，可重按退朝；CLI 不退出。
+                    print(f"\n收夜未成：{err}\n")
+                    continue
             print(f"{character.name}退下。\n")
             return "court_break"
         if cmd and cmd.startswith("summon:"):
@@ -990,5 +999,19 @@ def run_cli(
         print("\n退出游戏。")
     finally:
         if session is not None:
-            session.close()
+            # #1842：正常 CLI 退出复用 owner drain/close——转译 worker 终态后才关原库；
+            # 禁直接 session.close；不新增 cancel/abandon/lifecycle。
+            from types import SimpleNamespace
+
+            from ming_sim.session_write_queue import get_session_write_queue
+            import web_app
+
+            q = get_session_write_queue(session)
+            runtime = SimpleNamespace(
+                session=session,
+                _write_queue=q,
+                _write_gate=q.write_gate,
+                db_path=str(getattr(getattr(session, "db", None), "path", "") or ""),
+            )
+            web_app._drain_and_close_session(runtime)
         print_token_summary()

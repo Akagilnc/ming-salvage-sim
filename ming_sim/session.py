@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -1590,6 +1591,51 @@ class GameSession:
             # 早退/异常：预领票仍须归还，避免 has_open_barrier 永真（complete 幂等）。
             if barrier_ticket is not None:
                 q.complete(barrier_ticket)
+
+    def schedule_close_night_after_chat_if_needed(
+        self,
+        court_action: str,
+        *,
+        write_gate: Any = None,
+    ) -> Optional[threading.Thread]:
+        """#1842：court_break 前台先返回；预领屏障后既有队列 FIFO 转译 join→封夜。
+
+        与 stream done 前 claim_barrier 同形——不改转译发生时间/次序，只是不挡前台。
+        非 court_break 为空操作。后台失败 logger.exception 留痕（ADR 0005），票仍归还。
+        """
+        if str(court_action or "") != "court_break":
+            return None
+        from ming_sim.session_write_queue import get_session_write_queue
+
+        q = get_session_write_queue(self)
+        barrier_ticket = q.claim_barrier()
+        gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
+
+        def _run() -> None:
+            try:
+                self.close_night_after_chat_if_needed(
+                    court_action,
+                    write_gate=gate,
+                    barrier_ticket=barrier_ticket,
+                )
+            except Exception:
+                logger.exception(
+                    "background close_night_after_chat failed court_action=%s",
+                    court_action,
+                )
+            finally:
+                # 幂等：真路径已在 close_night_after_chat_if_needed 归还；
+                # stub/早退漏还时仍须清 has_open_barrier。
+                if barrier_ticket is not None:
+                    q.complete(barrier_ticket)
+
+        thread = threading.Thread(
+            target=_run,
+            daemon=True,
+            name="close-night-after-chat",
+        )
+        thread.start()
+        return thread
 
     def _confirmation_intent_for_preexisting_pending(
         self,

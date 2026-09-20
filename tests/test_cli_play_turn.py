@@ -640,7 +640,10 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     assert row["minister_message_id"]
     assert str(row["route"] or "") == "offsite"
 
-    assert an.get_open_night(db) is None
+    # #1842：回话返回后后台 schedule 封夜；等外部可见 CLOSED（禁假定同步）。
+    from tests.wait_utils import wait_until
+
+    wait_until(lambda: an.get_open_night(db) is None)
     night_row = db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),
     ).fetchone()

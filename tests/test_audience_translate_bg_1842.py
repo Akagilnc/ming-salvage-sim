@@ -1678,3 +1678,114 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
 
     # game fixture finally 会再 close；库已由 drain 关闭。
     db.close = lambda: None  # type: ignore[method-assign]
+
+
+def test_cli_exit_joins_inflight_translation_before_db_close(
+    game, monkeypatch, bg_life,
+):
+    """#1842：CLI 正常退出复用 owner drain/close；worker 终态后才关原库。
+
+    与 menu_exit 同形 scene_chat 在飞接缝；生产 finally 走同步
+    ``web_app._drain_and_close_session``（禁直接 session.close）。
+    侧线程跑 drain，证明 join 前不得关库；禁墙钟 SLA / 新 lifecycle。
+    """
+    import web_app
+    from ming_sim.session_write_queue import SessionWriteQueue
+    from tests.wait_utils import wait_until
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    write_q = SessionWriteQueue()
+    gate = write_q.write_gate
+    started = threading.Event()
+    release = threading.Event()
+    owner = translation_owner_key(gate, db)
+    bg_life.track(owner=owner, release=release)
+
+    def translate_fn(_prompt, _config):
+        started.set()
+        assert release.wait(5.0)
+        return {"commissions": [], "promises": []}
+
+    ctid = _persist_round(db, state, nid, "CLI退出仍写完", "")
+    db.conn.execute(
+        "UPDATE chat_turns SET minister_message_id=NULL WHERE id=?", (ctid,),
+    )
+    db.conn.commit()
+
+    sess = _sess(
+        db, state, content, monkeypatch,
+        translate_fn=translate_fn, write_gate=gate,
+    )
+    sess._write_queue = write_q
+    sess._scene_registry = SimpleNamespace(abandon_all=lambda: None)
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent",
+        lambda *a, **k: SimpleNamespace(
+            run=lambda prompt: SimpleNamespace(content="臣遵旨。", tools=[]),
+        ),
+    )
+    monkeypatch.setattr(
+        "ming_sim.llm_model.extract_agent_text",
+        lambda out: str(getattr(out, "content", "") or ""),
+    )
+    monkeypatch.setattr(
+        "ming_sim.session._dump_llm_messages",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "ming_sim.session.prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="开场", root=None),
+    )
+
+    chat_out = sess.scene_chat("CLI退出仍写完", chat_turn_id=ctid)
+    assert chat_out.answer == "臣遵旨。"
+    assert started.wait(2.0), "worker 须经 scene_chat 进入转译窗"
+    assert db.get_story_extract_status(ctid) == "pending"
+
+    closed = threading.Event()
+    status_at_close: dict = {}
+    real_close = sess.close
+
+    def tracking_close():
+        status_at_close["extract"] = db.get_story_extract_status(ctid)
+        real_close()
+        closed.set()
+
+    sess.close = tracking_close  # type: ignore[method-assign]
+
+    runtime = SimpleNamespace(
+        _write_gate=gate,
+        _write_queue=write_q,
+        db_path=db.path,
+        session=sess,
+    )
+    drain_done = threading.Event()
+    drain_error: list[BaseException] = []
+
+    def _cli_finally_drain() -> None:
+        # 对齐 ming_sim.cli.terminal.run_cli finally：同步 owner drain/close。
+        try:
+            web_app._drain_and_close_session(runtime)
+        except BaseException as exc:  # noqa: BLE001
+            drain_error.append(exc)
+        finally:
+            drain_done.set()
+
+    drain_thread = threading.Thread(
+        target=_cli_finally_drain, daemon=True, name="cli-exit-drain",
+    )
+    drain_thread.start()
+    # drain 已启动且仍卡在 join：库未关、转译仍 pending（Event 水位，禁墙钟）。
+    wait_until(lambda: drain_thread.is_alive() and not closed.is_set())
+    assert db.get_story_extract_status(ctid) == "pending"
+
+    release.set()
+    wait_until(closed.is_set)
+    wait_until(drain_done.is_set)
+    if drain_error:
+        raise drain_error[0]
+    assert status_at_close.get("extract") == "done"
+
+    db.close = lambda: None  # type: ignore[method-assign]

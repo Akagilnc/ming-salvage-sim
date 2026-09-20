@@ -1415,9 +1415,12 @@ def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
 
     term._retry_interrupted_reply_cli(sess, remote.name)
 
+    # #1842：CLI retry 前台先返回；后台 schedule 封夜后再断言 CLOSED。
+    from tests.wait_utils import wait_until
+
+    wait_until(lambda: an.get_open_night(db) is None)
     night_row = an.get_night(db, night_id)
     assert night_row is not None and night_row["status"] == an.NIGHT_STATUS_CLOSED
-    assert an.get_open_night(db) is None
     assert set(an.persons_present_tonight(db, night_id)) == present_before
     assert set(an.persons_entered_tonight(db, night_id)) == entered_before
     assert remote.name not in an.persons_present_tonight(db, night_id)

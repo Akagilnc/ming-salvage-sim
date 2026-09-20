@@ -849,10 +849,15 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind, monkeypa
 
 def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch):
 
-    """#1716 非流式入口：已开夜场外 POST /chat 退朝 → court_break + 夜关。
+    """#1716/#1842 非流式入口：退朝前台先返回；队列随后 FIFO join→封夜。
 
-    与 stream 共用 `_open_night_court_break`；两 call site 各一条最短主干。
+    场外非退朝首聊只记召（无 scene_chat/转译）；退朝口令才走 offsite court_break。
+    故用同夜殿上轮卡住转译 Future，证明封夜须 join 后再关；HTTP return-first。
+    禁改变转译发生时间/次序；禁平行夹具。
     """
+    import ming_sim.audience_night as an
+    from tests.wait_utils import wait_until
+
     client, game, remote, night_id = _setup_open_night_participant(
         tracer_client, kind="offsite",
     )
@@ -868,15 +873,54 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch
     game.session.registry.get = lambda _ch, **_kw: sync
     stub_scene_agent(monkeypatch, sync)
 
-    resp = client.post(
-        f"/api/ministers/{remote}/chat",
-        json={"message": "退朝"},
+    # 同夜殿上大臣：真实 scene_chat 才启后台转译（场外记召不启）。
+    hall = next(
+        c.name for c in game.content.characters.values()
+        if c.status == "active"
+        and getattr(c, "power_id", "ming") == "ming"
+        and getattr(c, "office_type", "") != "后宫"
+        and c.name != remote
     )
-    _assert_not_bare_500(resp, step="#1716 chat 场外退朝")
-    assert resp.status_code == 200, resp.text
-    body = resp.json() or {}
-    assert isinstance(body, dict), body
-    _assert_court_break_closed(game, body, night_id, remote=remote)
+    hold_release = threading.Event()
+    translate_started = threading.Event()
+
+    def _held_translate(prompt, cfg):
+        del prompt, cfg
+        translate_started.set()
+        assert hold_release.wait(5.0)
+        from tests.conftest import offline_empty_audience_translate
+        return offline_empty_audience_translate(None, None)
+
+    restore_hold = _install_translation_hold(game, hold_release, monkeypatch)
+    stub_audience_translate(monkeypatch, _held_translate)
+    try:
+        prior = client.post(
+            f"/api/ministers/{hall}/chat",
+            json={"message": "边事如何？"},
+        )
+        _assert_not_bare_500(prior, step="#1716/#1842 hall prior chat")
+        assert prior.status_code == 200, prior.text
+        assert translate_started.wait(2.0), "殿上先验在飞转译须进入 hold 窗"
+        assert _translation_inflight(), "封夜前须仍有同夜在飞转译"
+
+        resp = client.post(
+            f"/api/ministers/{remote}/chat",
+            json={"message": "退朝"},
+        )
+        _assert_not_bare_500(resp, step="#1716 chat 场外退朝")
+        assert resp.status_code == 200, resp.text
+        body = resp.json() or {}
+        assert isinstance(body, dict), body
+        assert body.get("court_action") == "court_break", body
+        # return-first：HTTP 已带 court_break 时夜仍开（封夜卡在 join 在飞转译）。
+        assert an.get_open_night(game.db) is not None, "非流式退朝不得同步挡到封夜完成"
+
+        hold_release.set()
+        wait_until(lambda: an.get_open_night(game.db) is None)
+        _assert_court_break_closed(game, body, night_id, remote=remote)
+    finally:
+        hold_release.set()
+        restore_hold()
 
 
 # ── #1725/#1740 settlement typed progress facts via real SSE entry ───────
