@@ -227,7 +227,7 @@ class _ConfirmStub:
         return {"confirmation": confirmation, "target_ids": [], "new_content": new_content}
 
 
-def _wire_confirm_translate(game, confirm: _ConfirmStub) -> None:
+def _wire_confirm_translate(game, confirm: _ConfirmStub, monkeypatch) -> None:
     """#1842：把 ConfirmStub 队列桥到 scene_chat 离线转译。
 
     应允/拒绝 → promises；修改 → 原地更新同一 pending 候选 content（typed
@@ -380,7 +380,7 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
     agent = _CannedAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
     stub_scene_agent(monkeypatch, agent)
-    _wire_confirm_translate(game, confirm)
+    _wire_confirm_translate(game, confirm, monkeypatch)
     cfg = game.session.llm_config
     if getattr(cfg, "channel", None) != "cli":
         try:
@@ -414,6 +414,7 @@ def matrix_env(tmp_path, monkeypatch, _offline_scene_beat_generator):
         "extract": extract,
         "home": home,
         "ud": ud,
+        "monkeypatch": monkeypatch,
     }
 
     g = web_app.web_game
@@ -520,8 +521,9 @@ def _issue_entry(env: dict, *, entry: str = "E1") -> dict:
     _wait_pending_writes(game)
     agent = _CannedAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
+    monkeypatch = env["monkeypatch"]
     stub_scene_agent(monkeypatch, agent)
-    _wire_confirm_translate(game, env["confirm"])
+    _wire_confirm_translate(game, env["confirm"], monkeypatch)
     return resp.json() or {}
 
 
@@ -534,8 +536,9 @@ def _chat(env: dict, message: str) -> dict:
     game = env["game"]
     agent = _CannedAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
+    monkeypatch = env["monkeypatch"]
     stub_scene_agent(monkeypatch, agent)
-    _wire_confirm_translate(game, env["confirm"])
+    _wire_confirm_translate(game, env["confirm"], monkeypatch)
     resp = client.post(
         f"/api/ministers/{MINISTER}/chat",
         json={"message": message},
@@ -607,7 +610,7 @@ def _settle_month(env: dict) -> dict:
     assert open_n is None or str(open_n.get("status")) == an.NIGHT_STATUS_CLOSED, open_n
     agent = _CannedAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
-    stub_scene_agent(monkeypatch, agent)
+    stub_scene_agent(env["monkeypatch"], agent)
     return data if isinstance(data, dict) else {}
 
 

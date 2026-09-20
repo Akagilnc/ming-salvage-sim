@@ -750,7 +750,7 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
     assert new.status_code == 200, new.text
     game = web_app.web_game
     assert game is not None
-    _install_canned_minister(game)
+    _install_canned_minister(game, monkeypatch)
     db, state, content = game.db, game.state, game.content
 
     state0 = _get_state(client)

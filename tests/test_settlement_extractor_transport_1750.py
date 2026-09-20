@@ -250,7 +250,7 @@ def _hitl_choices(decisions: list) -> list[dict]:
     return out
 
 
-def _new_game_with_directive(client: TestClient) -> tuple[int, object]:
+def _new_game_with_directive(client: TestClient, monkeypatch) -> tuple[int, object]:
     new = client.post("/api/menu/new_game")
     _assert_not_bare_500(new, step="new_game")
     assert new.status_code == 200, new.text
@@ -340,7 +340,7 @@ def test_extractor_one_retryable_transport_failure_self_heals(
     - 恢复后 GET budget.国库.movements 含 fp category = 失败腿成功终包进了落账
     """
     client = tracer_client
-    turn0, game = _new_game_with_directive(client)
+    turn0, game = _new_game_with_directive(client, monkeypatch)
     before_metrics = dict((_get_state(client).get("metrics") or {}))
     before_morale = before_metrics.get("民心")
     assert before_morale is not None, before_metrics
@@ -383,7 +383,7 @@ def _drive_terminal_extractor_fail(client, monkeypatch, *, step: str) -> dict:
 
     返回绿/红两案共用的结构化现场；断言分属调用方，避免重复建场形状。
     """
-    turn0, _game = _new_game_with_directive(client)
+    turn0, _game = _new_game_with_directive(client, monkeypatch)
     agents = _default_agents(always_error_module="relations")
     _wire_real_extract_path(monkeypatch, agents)
     before = _month_open_view(_get_state(client))
@@ -501,7 +501,7 @@ def test_a1_settling_unready_resimulate_via_issue_stream(
     见 session/SETTLEMENT_FLOW）；本条不断 clear 调用次数，只验上述既有行为。
     """
     client = tracer_client
-    turn0, game = _new_game_with_directive(client)
+    turn0, game = _new_game_with_directive(client, monkeypatch)
 
     agents_fail = _default_agents(always_error_module="relations")
     _wire_real_extract_path(monkeypatch, agents_fail)
@@ -563,7 +563,7 @@ def test_a2_hitl_phase2_extract_fail_reuses_narrative_only_reextracts(
     失败后再空 choices 续跑（已 decided 行）。
     """
     client = tracer_client
-    turn0, game = _new_game_with_directive(client)
+    turn0, game = _new_game_with_directive(client, monkeypatch)
 
     # phase1 产出决策块；sim 计数用于 a2 断言不重跑
     sim_calls = {"n": 0}
@@ -667,7 +667,7 @@ def test_extractor_stream_idle_retry_and_long_activity_past_old_wall(
     from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS
 
     client = tracer_client
-    turn0, game = _new_game_with_directive(client)
+    turn0, game = _new_game_with_directive(client, monkeypatch)
 
     idle_timeout = 10.0
     path = tmp_path / "runtime_llm.json"
@@ -734,7 +734,7 @@ def test_extractor_empty_terminal_retries(tracer_client, monkeypatch):
     internal 首 attempt 空终包，次 attempt 成功终包；calls>=2 + fingerprint 落账。
     """
     client = tracer_client
-    turn0, game = _new_game_with_directive(client)
+    turn0, game = _new_game_with_directive(client, monkeypatch)
 
     agents = {
         m: _TransportAgent(m, empty_terminal_first=(m == "internal"))
@@ -772,7 +772,7 @@ def test_extractor_empty_terminal_exhausted_pins_current_behavior(
     与 test_extractor_empty_terminal_retries（空后成功）分立，不平行同构。
     """
     client = tracer_client
-    turn0, game = _new_game_with_directive(client)
+    turn0, game = _new_game_with_directive(client, monkeypatch)
 
     agents = {
         m: _TransportAgent(m, always_empty_terminal=(m == "internal"))

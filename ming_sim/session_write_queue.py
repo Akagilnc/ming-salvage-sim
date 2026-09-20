@@ -532,3 +532,53 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
             owner._write_queue = q
             owner._write_gate = q.write_gate
         return q
+
+
+def drain_and_close_session(owner: Any) -> None:
+    """Seal queue, join this owner's in-flight translations, then close the session.
+
+    Shared by Web and CLI (#1842). ``owner`` may be a ``GameSession``, a WebGame,
+    or any duck that resolves through :func:`get_session_write_queue`.
+
+    Order matches settlement (barrier then join): seal + wait_prior drains
+    admitted chat tickets so scene_chat finishes and registers derived
+    translation Futures; then join those Futures outside the write gate; then
+    close under the gate. Failures re-raise after attempting unseal — no
+    abandon / cancel / second lifecycle.
+
+    Web HolderEntry / CloseOp accounting stays in the Web wrapper; CLI calls
+    this directly (no reverse coupling into ``web_app``).
+    """
+    q = get_session_write_queue(owner)
+    session = getattr(owner, "session", None)
+    if session is None and hasattr(owner, "close") and hasattr(owner, "db"):
+        session = owner
+    q.seal()
+
+    def _join_translations_then_close() -> None:
+        if session is not None:
+            from ming_sim.audience_translation import (
+                join_owner_translations,
+                translation_owner_key,
+            )
+
+            key = translation_owner_key(
+                getattr(session, "_write_gate", None),
+                getattr(session, "db", None),
+            )
+            while not join_owner_translations(key, timeout_s=120.0):
+                pass
+
+        gate = q.write_gate
+        gate.acquire()
+        try:
+            if session is not None:
+                session.close()
+        finally:
+            gate.release()
+
+    try:
+        q.barrier(_join_translations_then_close)
+    except Exception:
+        # Caller decides unseal (Web: only if runtime restorable; CLI: always).
+        raise

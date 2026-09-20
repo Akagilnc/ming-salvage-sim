@@ -1003,19 +1003,21 @@ def run_cli(
         print("\n退出游戏。")
     finally:
         if session is not None:
-            # #1842：正常 CLI 退出复用 owner drain/close——转译 worker 终态后才关原库；
-            # 禁直接 session.close；不新增 cancel/abandon/lifecycle。
-            from types import SimpleNamespace
-
-            from ming_sim.session_write_queue import get_session_write_queue
-            import web_app
-
-            q = get_session_write_queue(session)
-            runtime = SimpleNamespace(
-                session=session,
-                _write_queue=q,
-                _write_gate=q.write_gate,
-                db_path=str(getattr(getattr(session, "db", None), "path", "") or ""),
+            # #1842：正常 CLI 退出走共享 drain 核心——转译 worker 终态后才关原库；
+            # 禁直接 session.close；禁伪装 Web runtime / 反向耦合 web_app。
+            from ming_sim.session_write_queue import (
+                drain_and_close_session,
+                get_session_write_queue,
             )
-            web_app._drain_and_close_session(runtime)
+
+            try:
+                drain_and_close_session(session)
+            except Exception:
+                # Shared core does not auto-unseal; CLI always attempts unseal
+                # so a failed exit path remains writable for diagnostics.
+                try:
+                    get_session_write_queue(session).unseal()
+                except Exception:
+                    pass
+                raise
         print_token_summary()

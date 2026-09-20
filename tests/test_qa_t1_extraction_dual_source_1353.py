@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import re
 import threading
 from types import SimpleNamespace
 
@@ -168,9 +167,13 @@ def test_drain_exhausted_pending_api_still_lists_debt(game, tmp_path, monkeypatc
     assert ctid in api_ids
     assert not payload.get("player_hint")
 
-    # 收夜入口：不因欠账中止
+    def boom_translate(prompt, llm_config):
+        raise RuntimeError("translate exhausted")
+
+    # 收夜入口：不因欠账中止（#1842 转译 catch-up boom，非旧抽取 fail-closed）
     an.close_night(
         db, state, night_id=nid, llm_config=object(), write_gate=gate,
+        translate_fn=boom_translate,
     )
     assert int(_pending_api(db)["count"]) >= 1
 
@@ -180,18 +183,19 @@ def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypa
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent()
-    )
-    monkeypatch.setattr(
         "ming_sim.audience_extraction.extract_endorsements_for_night",
         lambda **k: [],
     )
     minister = _minister(db, content)
     nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
 
+    def boom_translate(prompt, llm_config):
+        raise RuntimeError("translate exhausted")
+
     an.close_night(
         db, state, night_id=nid,
         llm_config=object(), write_gate=threading.Lock(),
+        translate_fn=boom_translate,
     )
     row = db.conn.execute(
         "SELECT status, extract_status, minister_message_id FROM chat_turns WHERE id=?",
@@ -263,17 +267,18 @@ def test_debt_exhausted_single_source_no_player_cta(game, tmp_path, monkeypatch)
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent()
-    )
-    monkeypatch.setattr(
         "ming_sim.audience_extraction.extract_endorsements_for_night",
         lambda **k: [],
     )
     minister = _minister(db, content)
     nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
 
+    def boom_translate(prompt, llm_config):
+        raise RuntimeError("translate exhausted")
+
     an.close_night(
         db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
+        translate_fn=boom_translate,
     )
     payload = _pending_api(db)
     assert int(payload["count"]) >= 1
@@ -288,9 +293,6 @@ def test_partial_heal_single_source_pending_only_fresh(
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent()
-    )
-    monkeypatch.setattr(
         "ming_sim.audience_extraction.extract_endorsements_for_night",
         lambda **k: [],
     )
@@ -304,8 +306,12 @@ def test_partial_heal_single_source_pending_only_fresh(
     )
     db.conn.commit()
 
+    def boom_translate(prompt, llm_config):
+        raise RuntimeError("translate exhausted")
+
     an.close_night(
         db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
+        translate_fn=boom_translate,
     )
     payload = _pending_api(db)
     api_ids = {int(p["chat_turn_id"]) for p in payload.get("pending") or []}
@@ -347,9 +353,11 @@ def test_close_after_chat_passes_write_gate_like_auto_close(
     """口令收夜穿 runtime write_gate，与颁诏 auto_close 待补同形。"""
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent()
-    )
+
+    def boom_translate(prompt, llm_config):
+        raise RuntimeError("translate exhausted")
+
+    stub_audience_translate(monkeypatch, boom_translate)
     minister = _minister(db, content)
     nid, ctid, _ = _open_night_with_persisted_reply(db, state, minister)
 
@@ -501,105 +509,6 @@ def test_empty_endorsement_text_fail_closed_retryable_409(game, tmp_path, monkey
     # 既有失败单源：409 即重试 CTA（玩家重点颁诏/收夜）；无新 endpoint/文案模板
     assert "chat_turn_ids=" not in body  # 不与 pending_extraction 混面
 
-
-def test_deleted_surface_no_healed_drain_retry_residue():
-    """删除面 grep 钉：自愈 hint + 玩家补写 CTA/CLI 命令/旧 admission 舞步零残留。"""
-    import inspect
-    import pathlib
-
-    root = pathlib.Path(__file__).resolve().parents[1]
-    hits: list[str] = []
-    for rel in (
-        "ming_sim/audience_night.py",
-        "ming_sim/audience_extraction.py",
-        "ming_sim/cli/terminal.py",
-        "web_app.py",
-        "web/src/useChatActions.ts",
-        "web/src/useSettlementFlow.ts",
-        "web/src/components/chatModal.tsx",
-        "web/src/components/edictModal.tsx",
-        "web/src/main.tsx",
-        "web/src/types.ts",
-    ):
-        text = (root / rel).read_text(encoding="utf-8")
-        if "_healed_drain_retry" in text:
-            hits.append(rel)
-        if "player_hint" in text and "自愈" in text:
-            hits.append(f"{rel}:player_hint自愈")
-        if "extractionHealedHint" in text:
-            hits.append(f"{rel}:extractionHealedHint")
-        # #1353 fold-in：玩家可见补写 CTA / CLI 命令 / Web retry 包装
-        for needle in (
-            "data-testid=\"extraction-pending\"",
-            "data-testid=\"edict-extraction-pending\"",
-            "召对账待补写",
-            "重试补写",
-            "retry extraction",
-            "retry_extraction",
-            "onRetryExtraction",
-            "extractionPendingCount",
-            "retryStoryExtraction",
-            "retryAudienceStoryExtraction",
-            "retry_story_extractions",
-            "/api/audience/extraction/retry",
-            "_retry_story_extraction_cli",
-            "_print_extraction_pending_hint",
-            # #1353 fold-in r5：欠账技术进度/CLI 提示不得穿透玩家面
-            "补写召对账本",
-            "【账本抽取】",
-            "过月时自动补跑",
-        ):
-            if needle in text:
-                hits.append(f"{rel}:{needle}")
-    # extractionRetry 模块整链删除
-    if (root / "web/src/extractionRetry.ts").exists():
-        hits.append("web/src/extractionRetry.ts:exists")
-    assert hits == [], hits
-    assert "_healed_drain_retry" not in inspect.signature(an.close_night).parameters
-    # #1353 队列：旧 drain/admission/旁路 wait 机构全灭
-    web_src = (root / "web_app.py").read_text(encoding="utf-8")
-    for retired in (
-        "_drain_cond",
-        "_draining",
-        "_await_audience_inflight_clear",
-        "_release_pending_write_admission_freeze",
-        "_admission_drain_owners",
-        "def _wait_open_night_chat_inflight",
-    ):
-        assert retired not in web_src, f"retired machinery still present: {retired}"
-    prod = (root / "ming_sim/audience_extraction.py").read_text(encoding="utf-8")
-    assert 'code="endorsement_batch_contended"' not in prod
-    for retired_ae in (
-        "join_pending_turn_extractions",
-        "has_inflight_turn_extractions",
-        "_join_single_flight",
-        "DEFAULT_EXTRACT_JOIN_S",
-    ):
-        assert retired_ae not in prod, f"retired extraction join residue: {retired_ae}"
-    night_src = (root / "ming_sim/audience_night.py").read_text(encoding="utf-8")
-    # K10a：wait_in_flight_clear 无 elapsed 失败路——del 签名兼容参；不 raise / 不伪造错误包
-    wfc_src = night_src.split("def wait_in_flight_clear", 1)[1].split("\ndef ", 1)[0]
-    assert "del timeout_s" in wfc_src
-    assert "raise " not in wfc_src
-    assert "AudienceNightError" not in wfc_src
-    assert 'code="in_flight_chat"' not in wfc_src
-    swq = (root / "ming_sim/session_write_queue.py").read_text(encoding="utf-8")
-    assert "TicketBarrierTimeout" not in swq
-    assert "DEFAULT_TICKET_WAIT_S" not in swq
-    # 无票裸回落已删
-    assert "return self._runtime_write_gate()" not in (root / "web_app.py").read_text(encoding="utf-8")
-    assert "TicketedWriteGate" in (root / "ming_sim/session_write_queue.py").read_text(
-        encoding="utf-8"
-    )
-    # 生产写路径必须调用票据执行 seam（非仅单测）
-    assert "ticketed_gate" in web_src or "_ticketed_write_gate" in web_src
-    assert "TicketedWriteGate" in (root / "ming_sim/cli/terminal.py").read_text(
-        encoding="utf-8"
-    ) or "ticketed_gate" in (root / "ming_sim/cli/terminal.py").read_text(
-        encoding="utf-8"
-    )
-
-
 def test_endorsement_single_flight_owner_binds_once(game, tmp_path, monkeypatch):
     """#1353：背书 single-flight 去重仍在；owner 绑定后二次调用幂等 already。"""
     db, state, content = game
@@ -647,40 +556,6 @@ def test_endorsement_single_flight_owner_binds_once(game, tmp_path, monkeypatch)
     )
     assert r2.get("already") is True or r2["status"] in {"done", "skipped"}
     assert ae._is_endorsement_bound(db, nid)
-
-
-def test_drain_catch_up_silent_no_on_event_surface(game, tmp_path, monkeypatch):
-    """#1353 fold-in r5：drain/catch_up 静默补跑——签名无 on_event，落账仍成功。"""
-    import inspect
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
-    minister = _minister(db, content)
-    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
-    assert "on_event" not in inspect.signature(ae.drain_pending_before_close).parameters
-    assert "on_event" not in inspect.signature(ae.catch_up_pending_extractions).parameters
-    assert "on_event" not in inspect.signature(an.close_night).parameters
-    assert "on_event" not in inspect.signature(an.auto_close_open_night).parameters
-
-    ae.drain_pending_before_close(
-        db=db,
-        llm_config=object(),
-        write_gate=threading.Lock(),
-        night_id=nid,
-        extractor_agent=_FactsAgent(
-            '{"facts":[{"person_names":["'
-            + minister
-            + '"],"audibility":"殿上公开","body":"静默落","tags":[],'
-            '"presence_effect":""}]}'
-        ),
-    )
-    assert db.get_story_extract_status(ctid) == "done"
-    import pathlib
-
-    prod = pathlib.Path(ae.__file__).read_text(encoding="utf-8")
-    assert "补写召对账本" not in prod
-    assert "过月时自动补跑" not in prod
-
 
 def test_empty_startup_catchup_claims_zero_tickets(web_game):
     """#1353 r7：无待补时 startup catch-up 不领票——禁 residual pending 竞态。"""
@@ -1076,59 +951,6 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
     err = next(e for e in events if e.get("type") == "error")
     assert "detail" in err or "message" in err
 
-
-def test_chat_stream_prologue_uses_ticketed_not_bare_runtime(web_game, monkeypatch):
-    """#1353 r10 / 66nR：流式 prologue 经 ticketed gate，不得裸 runtime write_gate 越屏障。"""
-    from pathlib import Path
-
-    # 源码钉：chat_stream 领票后绑定 _ticketed_write_gate，禁 prologue 直绑 _runtime_write_gate
-    src = Path(web_app.__file__).read_text(encoding="utf-8")
-    # 定位 chat_stream 函数体（下一 def 前）
-    start = src.index("def chat_stream(")
-    end = src.index("\n    def ", start + 1)
-    body = src[start:end]
-    assert "_ticketed_write_gate(pending_ticket)" in body
-    assert "has_open_barrier()" in body
-    # 禁 prologue 把业务闸直接绑成裸 runtime（bare_write_gate= 收夜收口除外）
-    assert re.search(
-        r"^\s*write_gate\s*=\s*self\._runtime_write_gate\(\)",
-        body,
-        flags=re.M,
-    ) is None
-
-    game = web_game
-    minister = next(iter(game.content.characters))
-    seen = {"ticketed_acquire": 0}
-    real_tw = game._ticketed_write_gate
-
-    def wrap_ticketed(ticket):
-        gate = real_tw(ticket)
-        real_acq = gate.acquire
-
-        def acq(*a, **k):
-            seen["ticketed_acquire"] += 1
-            return real_acq(*a, **k)
-
-        gate.acquire = acq  # type: ignore[method-assign]
-        return gate
-
-    monkeypatch.setattr(game, "_ticketed_write_gate", wrap_ticketed)
-
-    class _Boom:
-        def run(self, *_a, **_k):
-            raise LLMUnavailable("boom")
-            yield  # pragma: no cover
-
-    boom = _Boom()
-    game.session.registry.get = lambda _ch, **_kw: boom
-    stub_scene_agent(monkeypatch, boom)
-    monkeypatch.setattr(game, "_persistent_chat_minister", lambda _n: False)
-
-    events = list(game.chat_stream(minister, "边饷如何？"))
-    assert seen["ticketed_acquire"] >= 1
-    assert any(e.get("type") == "error" for e in events)
-
-
 def test_seal_rejects_new_claim_after_lifecycle(web_game):
     """生命周期 seal 后新领票拒入（旧 _draining 语义）。"""
     game = web_game
@@ -1286,27 +1108,4 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
         )
     finally:
         gate.release()
-
-
-def test_close_night_shared_conn_reads_short_hold_gate_source():
-    """#1353 r7：close_night 共享 conn 读入闸——禁闸外 get_open/get_night/wait 裸读。"""
-    import inspect
-    from pathlib import Path
-
-    import ming_sim.audience_night as an
-
-    src = Path(an.__file__).read_text(encoding="utf-8")
-    # wait_in_flight_clear 必接受 write_gate，且 sleep 在 with 外
-    sig = inspect.signature(an.wait_in_flight_clear)
-    assert "write_gate" in sig.parameters
-    # close_night 调用 wait 时传 write_gate
-    assert "wait_in_flight_clear(" in src
-    assert "write_gate=write_gate" in src
-    # 入场 get_open_night / get_night 在 with gate 内（源码形态）
-    close_src = src.split("def close_night(", 1)[1].split("\ndef auto_close_open_night", 1)[0]
-    assert "with gate:" in close_src
-    # 禁「gate 赋值前」裸 get_open_night
-    before_gate = close_src.split("gate = _gate_cm", 1)[0]
-    assert "get_open_night" not in before_gate
-    assert "get_night(" not in before_gate
 

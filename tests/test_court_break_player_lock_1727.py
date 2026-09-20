@@ -135,7 +135,7 @@ def _named_scene_beats(scroll) -> list[str]:
     return [m["beat"] for m in scroll if m["beat"] not in {"coda", ""}]
 
 
-def test_court_break_locks_player_write_between_done_and_end(web_game):
+def test_court_break_locks_player_write_between_done_and_end(web_game, monkeypatch):
     """#1727 常绿：done(court_break) 后写入口锁；end 后 closed + exit/divider/closing。
 
     观测形态（#498 ASGI 在飞）：尾随 hold 拉长 done→end 窗；claim_barrier 接缝

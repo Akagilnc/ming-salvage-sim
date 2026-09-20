@@ -5335,46 +5335,16 @@ def _archive_move_db_files(old_db_path: str) -> bool:
 
 
 def _drain_close_body(game: Any) -> None:
-    """seal + barrier + session.close 本体；失败上抛并按可写 unseal。"""
-    # #1842：转译 worker 与 chat 共非重入 write_gate。关库前须在闸外 join 本会话
-    # 在飞转译至清空——不设 30s/墙钟 abandon，不 cancel worker，不 seal owner /
-    # 不造 pending / 不另建第二套 lifecycle。排空/枚举失败响亮上抛，禁止吞异常后关库。
-    #
-    # 次序必须复用结算样板（barrier 内再 join）：先 seal + wait_prior 排空已受理
-    # chat 票，使 scene_chat 终态并把派生转译 Future 登记完；再 join；最后持闸关库。
-    # 若先 join 再 barrier，已受理但尚未 schedule 的对话会在空账 join 之后才登记
-    # Future，barrier 放行即关库 → closed-database 竞态。
+    """委托共享 drain 核心；失败上抛，可写时 unseal（Web 保留可写探测）。
+
+    权威逻辑在 ``ming_sim.session_write_queue.drain_and_close_session``——
+    CLI/Web 同核；本函数只保留 Web 侧日志与 ``_runtime_restorable`` 门。
+    """
+    from ming_sim.session_write_queue import drain_and_close_session as _shared_drain
+
     q = get_session_write_queue(game)
-    q.seal()
-
-    def _join_translations_then_close() -> None:
-        session = getattr(game, "session", None)
-        if session is not None:
-            from ming_sim.audience_translation import (
-                join_owner_translations,
-                translation_owner_key,
-            )
-
-            owner = translation_owner_key(
-                getattr(session, "_write_gate", None),
-                getattr(session, "db", None),
-            )
-            # 复用既有 join：False=时限内未清空（仍有在飞），继续等；异常原样上抛。
-            # 闸外等待——禁持 write_gate 盖 join（与 await_translations_before_month 同契）。
-            while not join_owner_translations(owner, timeout_s=120.0):
-                pass
-
-        gate = _game_write_gate(game)
-        gate.acquire()
-        try:
-            session = getattr(game, "session", None)
-            if session is not None:
-                session.close()
-        finally:
-            gate.release()
-
     try:
-        q.barrier(_join_translations_then_close)
+        _shared_drain(game)
     except Exception:
         # #1740 / ADR 0005：排空关库失败不得无痕 return——保留原异常上抛。
         logger.exception("drain/close session failed")
