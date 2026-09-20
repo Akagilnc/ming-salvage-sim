@@ -1283,5 +1283,3 @@ def test_classifier_batch_identity_still_normalizes_without_web_chat():
     ], soft=False)
     kinds = [c.get("kind") for c in scripted]
     assert "draft" in kinds and "assignment" in kinds
-
-
