@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.applier import Provenance
 from ming_sim.declaration_dispatch import DeclarationDispatchResult
+from ming_sim.decree_vocabulary import TARGET_KINDS
 
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
 
@@ -161,36 +162,41 @@ def build_night_said_so_far(
 
 
 def build_translation_target_grounding(db: Any) -> str:
-    """权威目标目录：regions / armies / active issues，供 grant.target_id 与任命 region_id 对齐。
+    """权威目标目录：dispatcher 可校验的 region/army/character/issue 投影。
 
-    只读 DB 真源；不猜、不从正文匹配改写模型输出。
+    只读 DB 真源；查询失败按 ADR 0005 上抛，不得静默退化为空目录。
+    不猜、不从正文匹配改写模型输出。
     """
     if not hasattr(db, "conn"):
         return ""
     lines: List[str] = []
-    try:
+    for row in db.conn.execute(
+        "SELECT id, name FROM regions ORDER BY id"
+    ).fetchall():
+        lines.append(f"region\t{row['id']}\t{row['name']}")
+    for row in db.conn.execute(
+        "SELECT id, name FROM armies ORDER BY id"
+    ).fetchall():
+        lines.append(f"army\t{row['id']}\t{row['name']}")
+    for row in db.conn.execute(
+        "SELECT name, office FROM characters WHERE status='active' "
+        "ORDER BY name"
+    ).fetchall():
+        lines.append(
+            f"character\t{row['name']}\t{str(row['office'] or row['name'])}"
+        )
+    if hasattr(db, "list_active_issues"):
+        for row in db.list_active_issues():
+            lines.append(
+                f"issue\t{int(row['id'])}\t{str(row['title'] or '')}"
+            )
+    else:
         for row in db.conn.execute(
-            "SELECT id, name FROM regions ORDER BY id"
+            "SELECT id, title FROM issues WHERE status='active' ORDER BY id"
         ).fetchall():
-            lines.append(f"region\t{row['id']}\t{row['name']}")
-        for row in db.conn.execute(
-            "SELECT id, name FROM armies ORDER BY id"
-        ).fetchall():
-            lines.append(f"army\t{row['id']}\t{row['name']}")
-        if hasattr(db, "list_active_issues"):
-            for row in db.list_active_issues():
-                lines.append(
-                    f"issue\t{int(row['id'])}\t{str(row['title'] or '')}"
-                )
-        else:
-            for row in db.conn.execute(
-                "SELECT id, title FROM issues WHERE status='active' ORDER BY id"
-            ).fetchall():
-                lines.append(
-                    f"issue\t{int(row['id'])}\t{str(row['title'] or '')}"
-                )
-    except Exception:
-        return ""
+            lines.append(
+                f"issue\t{int(row['id'])}\t{str(row['title'] or '')}"
+            )
     if not lines:
         return ""
     body = "\n".join(lines)
@@ -218,6 +224,8 @@ def build_audience_translate_prompt(
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
     grounding = str(target_grounding or "").strip()
     grounding_block = f"{grounding}\n" if grounding else ""
+    # target_kind 表面唯一真源 = decree_vocabulary.TARGET_KINDS，禁手抄分叉。
+    target_kind_hint = "|".join(sorted(TARGET_KINDS))
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
         "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
@@ -234,7 +242,7 @@ def build_audience_translate_prompt(
         '        "grant_action": "赈灾|协饷|赏赉|发内帑|项目经费|…",\n'
         '        "amount": 正整数万两, "account": "国库|内库",\n'
         '        "purpose": "补饷（仅协饷）",\n'
-        '        "target_kind": "region|army|character|issue|…",\n'
+        f'        "target_kind": "{target_kind_hint}",\n'
         '        "target_id": "目标 id", "cadence": "一次性|每月"\n'
         "      }\n"
         "    }\n"

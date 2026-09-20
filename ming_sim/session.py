@@ -1754,20 +1754,10 @@ class GameSession:
         self._scene_registry.abandon(int(chat_turn_id or 0))
 
     def _mark_control_turn_translation_done(self, chat_turn_id: int) -> None:
-        """口令早退轮：标转译水位 done，避免假 pending 进 list_pending_translations。"""
-        ctid = int(chat_turn_id or 0)
-        if ctid <= 0 or not hasattr(self.db, "conn"):
-            return
-        self.db.conn.execute(
-            "UPDATE chat_turns SET extract_status='done', relation_judge_status='done' "
-            "WHERE id=? AND status NOT IN ('failed','undone')",
-            (ctid,),
-        )
-        if (
-            not bool(getattr(self.db.conn, "_commit_suspended", False))
-            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
-        ):
-            self.db.conn.commit()
+        """口令早退轮：复用转译水位单真源，避免假 pending 进 list_pending_translations。"""
+        from ming_sim.audience_translation import mark_turn_translation_done
+
+        mark_turn_translation_done(self.db, chat_turn_id, commit=True)
 
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,
@@ -1809,11 +1799,10 @@ class GameSession:
         )
         night_id = int(night["id"])
 
-        # 收夜 / 留侍口令。场景入口无单人主角：
+        # 收夜 / 留侍口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
         # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
-        # - 留侍：无锚不落 stay_attend 账（等转译声明在场），只回 court_action
+        # - 留侍：复用 stay_attend_in_audience 权威写缝（锚=minister_name 或夜主角）
         # - 含糊收夜：回确认 cue，不收夜
-        # 口令早退且已持久化源轮时标转译水位 done，避免假 pending 进补跑窗。
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
         if audience_command_verdict and audience_command_verdict != CMD_NONE:
@@ -1824,6 +1813,20 @@ class GameSession:
                 result.answer = GameSession._ensure_close_night_confirm_cue("")
                 return result
             if audience_command_verdict == CMD_STAY_ATTEND:
+                from ming_sim.audience_night import (
+                    get_night_protagonist,
+                    stay_attend_in_audience,
+                )
+                anchor = (
+                    str(minister_name or "").strip()
+                    or get_night_protagonist(self.db, night_id)
+                )
+                if anchor:
+                    stay_attend_in_audience(
+                        self.db, anchor,
+                        night_id=night_id,
+                        origin_chat_turn_id=ctid,
+                    )
                 if ctid > 0:
                     self._mark_control_turn_translation_done(ctid)
                 result.court_action = "stay_attend"

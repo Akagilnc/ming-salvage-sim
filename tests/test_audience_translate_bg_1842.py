@@ -141,46 +141,19 @@ def _persist_round(db, state, night_id: int, user_text: str, reply: str) -> int:
     return ctid
 
 
-def test_translate_prompt_declares_on_scene_and_full_sections():
-    """Owner resolution：补全 schema/prompt，可声明生死/下狱/革职/文字事实等。"""
-    prompt = build_audience_translate_prompt(
-        emperor_message="斩杀魏忠贤",
-        reply="臣遵旨。",
-        night_said=["皇帝：宣魏忠贤"],
-        pending_summaries=[],
-    )
-    for key in (
-        "commissions", "promises", "on_scene_facts", "textual_facts",
-        "public_sayings", "presence", "scene_facts", "edge_events",
-        "protagonist", "registrations",
-    ):
-        assert f'"{key}"' in prompt or f'"{key}":' in prompt, key
-    # 人物实况字段须可声明（闭集词汇提示，不锁整段措辞）
-    assert "status" in prompt
-    assert "dead" in prompt or "imprisoned" in prompt
-    assert "处置" in prompt or "罢黜" in prompt
-    assert "region_id" in prompt
-    assert "任所" in prompt
-    assert "excluded_names" in prompt
-    assert "excluded_offices" in prompt
-
-    grounded = build_audience_translate_prompt(
-        emperor_message="斩杀魏忠贤",
-        reply="臣遵旨。",
-        night_said=["皇帝：宣魏忠贤"],
-        pending_summaries=[],
-        target_grounding="【权威目标目录】\nregion\tshaanxi\t陕西\n",
-    )
-    assert "【权威目标目录】" in grounded
-    assert "region\tshaanxi\t陕西" in grounded
-    assert "【权威目标目录】" not in prompt
-
+def test_normalize_keeps_unknown_keys_and_full_sections():
+    """声明 normalize：全 section 可入；未知顶层键原样保留交分派器。"""
     raw = {
         "commissions": [{"text": "着办"}],
         "promises": [],
         "on_scene_facts": [{"name": "魏忠贤", "动作": "处置", "status": "dead"}],
         "textual_facts": [{"subject_kind": "character", "subject_id": "x", "body": "伤"}],
-        "public_sayings": [{"body": "外间有说", "involved_characters": ["x"]}],
+        "public_sayings": [{
+            "body": "外间有说",
+            "involved_characters": ["x"],
+            "excluded_names": ["甲"],
+            "excluded_offices": ["某职"],
+        }],
         "presence": [{"person_name": "x", "effect": "exit", "body": "出"}],
         "scene_facts": [{"body": "答", "audibility": "殿上公开", "person_names": ["x"]}],
         "edge_events": [{"source": "a", "target": "b", "event_kind": "结怨", "context": "c"}],
@@ -189,11 +162,42 @@ def test_translate_prompt_declares_on_scene_and_full_sections():
         "noise": 1,
     }
     decl = normalize_audience_declaration(raw)
-    # 未知顶层键原样保留，交既有分派器 durable invalid_shape（见 1837 tracer）
     assert decl.get("noise") == 1
     assert len(decl["on_scene_facts"]) == 1
     assert decl["protagonist"]["person_name"] == "x"
     assert decl["commissions"][0]["text"] == "着办"
+    assert decl["public_sayings"][0]["excluded_names"] == ["甲"]
+    assert decl["public_sayings"][0]["excluded_offices"] == ["某职"]
+
+
+def test_target_grounding_covers_dispatcher_kinds_and_fails_loud(game):
+    """权威目录覆盖 dispatcher 可校验 kind；查询失败不得静默空目录。"""
+    from ming_sim.audience_translate import build_translation_target_grounding
+    from ming_sim.decree_vocabulary import TARGET_KINDS
+
+    db, _state, content = game
+    name = _active_name(db, content)
+    grounded = build_translation_target_grounding(db)
+    kinds = {line.split("\t", 1)[0] for line in grounded.splitlines() if "\t" in line}
+    assert {"region", "army", "character", "issue"} <= kinds
+    assert any(line.startswith(f"character\t{name}\t") for line in grounded.splitlines())
+    # prompt 表面复用 TARGET_KINDS 真源（结构化拼入，不手抄分叉）
+    prompt = build_audience_translate_prompt(
+        emperor_message="x", reply="y", night_said=[], pending_summaries=[],
+        target_grounding=grounded,
+    )
+    for kind in TARGET_KINDS:
+        assert kind in prompt
+
+    class _BoomConn:
+        def execute(self, *_a, **_k):
+            raise RuntimeError("catalog query boom")
+
+    class _BoomDb:
+        conn = _BoomConn()
+
+    with pytest.raises(RuntimeError, match="catalog query boom"):
+        build_translation_target_grounding(_BoomDb())
 
 
 def test_second_sentence_does_not_wait_for_first_translation(game, bg_life):
@@ -209,27 +213,33 @@ def test_second_sentence_does_not_wait_for_first_translation(game, bg_life):
     owner = translation_owner_key(gate, db)
     bg_life.track(owner=owner, release=release)
     order: list[str] = []
+    # 按调度调用次序驱动假 runner——禁解析 prompt 自由文本。
+    behaviors = [
+        ("t1", True, {
+            "commissions": [],
+            "promises": [],
+            "on_scene_facts": [{
+                "name": name, "动作": "处置", "status": "imprisoned",
+                "reason": "第一句当场拿下",
+            }],
+        }),
+        ("t2", False, {"commissions": [], "promises": []}),
+        ("t3", False, {"commissions": [], "promises": []}),
+    ]
+    call_i = {"n": 0}
 
-    def translate_fn(prompt, llm_config):
-        # 只认本轮皇帝行，避免 night_said 里上轮正文误伤。
-        if "【本轮皇帝】第一句：拿下" in prompt:
-            order.append("t1-enter")
+    def translate_fn(_prompt, _llm_config):
+        i = call_i["n"]
+        call_i["n"] += 1
+        label, block, decl = behaviors[i]
+        if block:
+            order.append(f"{label}-enter")
             started.set()
             assert release.wait(timeout=2.0)
-            order.append("t1-done")
-            return {
-                "commissions": [],
-                "promises": [],
-                "on_scene_facts": [{
-                    "name": name, "动作": "处置", "status": "imprisoned",
-                    "reason": "第一句当场拿下",
-                }],
-            }
-        if "【本轮皇帝】第二句：再问边饷" in prompt:
-            order.append("t2-run")
-            return {"commissions": [], "promises": []}
-        order.append("t3-run")
-        return {"commissions": [], "promises": []}
+            order.append(f"{label}-done")
+        else:
+            order.append(f"{label}-run")
+        return decl
 
     ctid1 = _persist_round(db, state, nid, "第一句：拿下", "臣遵旨。")
     ctid2 = _persist_round(db, state, nid, "第二句：再问边饷", "边饷尚可。")
@@ -305,9 +315,13 @@ def test_close_night_joins_last_translation_before_commit(game, monkeypatch, bg_
     entered_last = threading.Event()
     owner = translation_owner_key(gate, db)
     bg_life.track(owner=owner, release=release)
+    # 按调度调用次序驱动假 runner——禁解析 prompt 自由文本。
+    call_i = {"n": 0}
 
-    def translate_fn(prompt, llm_config):
-        if "【本轮皇帝】任命并拨银赈灾" in prompt:
+    def translate_fn(_prompt, _llm_config):
+        i = call_i["n"]
+        call_i["n"] += 1
+        if i == 0:
             return {
                 "commissions": [{
                     "text": "任命并拨银赈灾",
@@ -1284,12 +1298,25 @@ def test_close_night_catchup_runs_default_runner_when_translate_fn_none(
 
 
 def test_scene_chat_control_command_marks_translation_done(game):
-    """口令早退轮标转译 done；留侍只回 court_action，不落 TAG_STAY_ATTEND 账。"""
-    from ming_sim.audience_night import TAG_STAY_ATTEND, list_ledger
+    """口令早退：先兑现 stay_attend 权威落账，再标转译水位 done。"""
+    from ming_sim.audience_night import (
+        TAG_EXIT,
+        TAG_STAY_ATTEND,
+        list_ledger,
+        present_names_at,
+        set_night_protagonist,
+        summon_enter,
+    )
 
     db, state, content = game
+    name = _active_name(db, content)
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
+    summon_enter(db, nid, name)
+    set_night_protagonist(db, nid, name)
+    before = present_names_at(db, nid)
+    assert name in before
+    seq_before = int(list_ledger(db, nid)[-1]["seq"])
     ctid = int(db.create_chat_turn(
         state, "殿上", "s", 0, night_id=nid, status="active",
     ))
@@ -1306,29 +1333,49 @@ def test_scene_chat_control_command_marks_translation_done(game):
         int(r["chat_turn_id"]) == ctid
         for r in list_pending_translations(db, night_id=nid)
     )
-    assert not any(
-        TAG_STAY_ATTEND in (e.get("tags") or [])
-        for e in list_ledger(db, nid)
-    )
+    assert present_names_at(db, nid) == before
+    last = list_ledger(db, nid)[-1]
+    assert int(last["seq"]) > seq_before
+    assert TAG_STAY_ATTEND in (last.get("tags") or [])
+    assert name in (last.get("person_names") or [])
+    assert TAG_EXIT not in (last.get("tags") or [])
 
 
-def test_said_so_far_cuts_off_at_source_turn_and_excludes_self(game):
-    """正确性 C2：生产 worker 路径 — 后轮已落库时，源轮转译 prompt 不含后轮/本轮正文。"""
+def test_said_so_far_cuts_off_at_source_turn_and_excludes_self(game, monkeypatch):
+    """正确性 C2：生产 worker 按源轮截止已说；结构化列表不含本轮/后轮。"""
+    from ming_sim import audience_translate as translate_mod
+    from ming_sim.audience_translate import build_night_said_so_far
+
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
     gate = threading.Lock()
-    ctid1 = _persist_round(db, state, nid, "第一句已说", "第一答")
+    _persist_round(db, state, nid, "第一句已说", "第一答")
     ctid2 = _persist_round(db, state, nid, "第二句本轮", "第二答")
-    ctid3 = _persist_round(db, state, nid, "第三句后轮", "第三答")
+    _persist_round(db, state, nid, "第三句后轮", "第三答")
 
-    seen: list[str] = []
+    # 结构化截止契约（DB→list），禁解析 prompt 自由文本。
+    said = build_night_said_so_far(db, nid, until_chat_turn_id=ctid2)
+    joined = "\n".join(said)
+    assert "第一句已说" in joined or "第一答" in joined, said
+    assert "第二句本轮" not in joined and "第二答" not in joined, said
+    assert "第三句后轮" not in joined and "第三答" not in joined, said
 
-    def translate_fn(prompt, llm_config):
-        seen.append(prompt)
+    # 生产 schedule→worker 须把源轮 id 传入同一截止缝。
+    captured: dict = {}
+    real_said = translate_mod.build_night_said_so_far
+
+    def wrap_said(db_, night_id, *, until_chat_turn_id=0):
+        captured["until"] = int(until_chat_turn_id or 0)
+        return real_said(db_, night_id, until_chat_turn_id=until_chat_turn_id)
+
+    monkeypatch.setattr(translate_mod, "build_night_said_so_far", wrap_said)
+    called = {"n": 0}
+
+    def translate_fn(_prompt, _llm_config):
+        called["n"] += 1
         return {"commissions": [], "promises": []}
 
-    # 后轮已在库；调度本轮转译（生产 schedule→worker 缝，非直调 build_*）。
     fut = schedule_audience_turn_translation(
         db, state,
         emperor_message="第二句本轮",
@@ -1339,18 +1386,8 @@ def test_said_so_far_cuts_off_at_source_turn_and_excludes_self(game):
     )
     assert join_night_translations(nid, timeout_s=2.0)
     fut.result(timeout=0.5)
-    assert seen, "worker 须调用 translate_fn"
-    prompt = seen[0]
-    # 本轮只走【本轮皇帝】【本轮回话】
-    assert "【本轮皇帝】第二句本轮" in prompt
-    assert "【本轮回话】第二答" in prompt
-    # 先前轮可在已说
-    assert "第一句已说" in prompt or "第一答" in prompt
-    # 后轮不得入已说；本轮正文不得在已说区重复（只在本轮字段）
-    said_block = prompt.split("【本夜暂存清单】")[0]
-    assert "第三句后轮" not in said_block and "第三答" not in said_block, said_block
-    # 已说区不得再抄本轮（防与本轮字段双挂）
-    assert "第二句本轮" not in said_block.split("【本场已说的话】")[-1].split("【本轮皇帝】")[0]
+    assert called["n"] == 1
+    assert captured.get("until") == ctid2
 
 
 def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game, bg_life):

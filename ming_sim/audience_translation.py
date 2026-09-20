@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
@@ -24,20 +25,19 @@ from ming_sim.declaration_dispatch import (
 )
 
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
+logger = logging.getLogger(__name__)
 
 # 进程级：按「会话 owner × 夜」串行与登记（同一夜 FIFO）；跨夜 / 跨会话可并行。
-# owner = id(write_gate) 或 id(db)：锁、inflight、join、清理共用同一 (owner, night)
-# 边界——独立存档同夜号不得互等；关库后旧会话 worker 不得占住新会话同夜串行锁，
-# 也不得继续出现在本 owner 的 join 账上（xdist 复用进程 / 菜单退局后的孤儿 Future）。
+# owner = id(write_gate) 或 id(db)：inflight、join、清理共用同一 (owner, night)
+# 边界——独立存档同夜号不得互等；关库后旧会话 worker 不得继续出现在本 owner 的
+# join 账上（xdist 复用进程 / 菜单退局后的孤儿 Future）。
 # 源轮 Future 按 (owner, chat_turn_id) 索引——跨存档同号轮次不得覆盖/撤错
 # （ADR 0038 / 0155）。
+# 同夜唯一串行真源 = `_night_tail` Future 链（禁并行再加 Lock）。
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="audience-translate")
-_night_serial_guard = threading.Lock()
-_night_serial_locks: Dict[Tuple[int, int], threading.Lock] = {}
 _night_inflight_guard = threading.Lock()
 _night_inflight: Dict[Tuple[int, int], List[Future]] = {}  # (owner, night_id)
 _turn_inflight: Dict[Tuple[int, int], Future] = {}  # (owner, chat_turn_id)
-# 同夜显式 FIFO 链：不依赖 Lock 争用顺序；tail Future 按 (owner, night) 串起后继。
 _night_tail: Dict[Tuple[int, int], Future] = {}
 
 
@@ -110,22 +110,28 @@ def _bind_round_after_dispatch(
             (name, int(chat_turn_id)),
         )
     # 转译已声明本轮记录 → 故事抽取与边事件判官退役于本轮（水位 done，收夜 drain 跳过）
+    mark_turn_translation_done(db, chat_turn_id, commit=False)
+
+
+def mark_turn_translation_done(
+    db: Any, chat_turn_id: int, *, commit: bool = True,
+) -> None:
+    """水位单真源：源轮 extract/relation_judge → done（控制口令早退与转译落账共用）。"""
+    ctid = int(chat_turn_id or 0)
+    if ctid <= 0 or not hasattr(db, "conn"):
+        return
     db.conn.execute(
         "UPDATE chat_turns SET extract_status='done', relation_judge_status='done' "
         "WHERE id=? AND status NOT IN ('failed','undone')",
-        (int(chat_turn_id),),
+        (ctid,),
     )
-
-
-def _night_lock(night_id: int, *, owner_key: int = 0) -> threading.Lock:
-    nid = int(night_id or 0)
-    key = (int(owner_key), nid)
-    with _night_serial_guard:
-        lock = _night_serial_locks.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _night_serial_locks[key] = lock
-        return lock
+    if not commit:
+        return
+    if (
+        not bool(getattr(db.conn, "_commit_suspended", False))
+        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+    ):
+        db.conn.commit()
 
 
 def cancel_turn_translation(chat_turn_id: int, *, owner_key: int) -> int:
@@ -208,7 +214,11 @@ def join_owner_translations(owner_key: int, *, timeout_s: float = 120.0) -> bool
             try:
                 fut.result(timeout=min(remaining, 0.5))
             except Exception:
-                pass
+                # 单轮失败已由 job 标 pending；join 继续排空其余，但须留痕（ADR 0005）。
+                logger.exception(
+                    "join_owner_translations: future failed while draining owner=%s",
+                    owner,
+                )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
@@ -377,9 +387,9 @@ def schedule_audience_turn_translation(
         with gate:
             db.mark_story_extraction_pending(ctid)
 
-    serial = _night_lock(nid, owner_key=owner)
     night_key = (owner, nid)
     # 前驱在临界区写入 pred_holder；worker 启动后读同一格，保证与 tail 登记同序。
+    # 同夜 FIFO 唯一真源 = Future 链；前驱失败留痕后仍跑本轮（每轮失败隔离）。
     pred_holder: List[Optional[Future]] = [None]
 
     def _worker() -> DeclarationDispatchResult:
@@ -388,20 +398,23 @@ def schedule_audience_turn_translation(
             try:
                 pred.result()
             except Exception:
-                pass
-        with serial:
-            return run_turn_translation_job(
-                db, state,
-                emperor_message=emperor_message,
-                reply=reply,
-                night_id=nid,
-                chat_turn_id=ctid,
-                minister_name=minister_name,
-                llm_config=llm_config,
-                translate_fn=translate_fn,
-                write_gate=write_gate,
-                source=source,
-            )
+                logger.exception(
+                    "audience translation predecessor failed; "
+                    "continuing night=%s chat_turn_id=%s",
+                    nid, ctid,
+                )
+        return run_turn_translation_job(
+            db, state,
+            emperor_message=emperor_message,
+            reply=reply,
+            night_id=nid,
+            chat_turn_id=ctid,
+            minister_name=minister_name,
+            llm_config=llm_config,
+            translate_fn=translate_fn,
+            write_gate=write_gate,
+            source=source,
+        )
 
     # 读前驱 + submit + 写 tail + inflight 登记同持非重入锁；done callback 锁外挂
     # （已完成 Future 会同步回调，持锁再挂会死锁）。
@@ -473,7 +486,11 @@ def join_night_translations(
             try:
                 fut.result(timeout=min(remaining, 0.5))
             except Exception:
-                pass
+                logger.exception(
+                    "join_night_translations: future failed while draining "
+                    "night=%s owner_key=%s",
+                    nid, owner_key,
+                )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
@@ -552,29 +569,35 @@ def catch_up_pending_translations(
     extracted = 0
     pending = 0
     scanned = 0
+    owner = translation_owner_key(write_gate, db)
     for row in rows:
         scanned += 1
         ctid = int(row.get("chat_turn_id") or 0)
         nid = int(row.get("night_id") or 0)
         reply = str(row.get("reply") or "")
-        # 查询异常在 job try 外上抛——不得被单轮失败宽吞洗成空输入。
+        # 查询异常在 schedule 外上抛——不得被单轮失败宽吞洗成空输入。
         emperor = _load_emperor_message_for_turn(db, ctid, write_gate)
-        owner = translation_owner_key(write_gate, db)
-        serial = _night_lock(nid, owner_key=owner)
+        # 补跑复用同夜 Future FIFO 单真源，不另开 Lock / 直跑旁路。
+        with _night_inflight_guard:
+            existing = _turn_inflight.get((owner, ctid)) if ctid > 0 else None
+        fut = existing if existing is not None else schedule_audience_turn_translation(
+            db, state,
+            emperor_message=emperor,
+            reply=reply,
+            night_id=nid,
+            chat_turn_id=ctid,
+            llm_config=llm_config,
+            translate_fn=translate_fn,
+            write_gate=write_gate,
+            source=source,
+        )
         try:
-            with serial:
-                run_turn_translation_job(
-                    db, state,
-                    emperor_message=emperor,
-                    reply=reply,
-                    night_id=nid,
-                    chat_turn_id=ctid,
-                    llm_config=llm_config,
-                    translate_fn=translate_fn,
-                    write_gate=write_gate,
-                    source=source,
-                )
+            fut.result()
             extracted += 1
         except Exception:
+            logger.exception(
+                "catch_up_pending_translations: turn failed night=%s chat_turn_id=%s",
+                nid, ctid,
+            )
             pending += 1
     return {"extracted": extracted, "pending": pending, "scanned": scanned}
