@@ -97,20 +97,52 @@ def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) ->
     return uid
 
 
-def test_normalize_keeps_declaration_sections_drops_noise():
+def test_normalize_unknown_section_reaches_durable_invalid_shape(game):
+    """转译 normalize → 既有 dispatcher：拼错顶层键 durable invalid_shape，合法兄弟保留。"""
+    from ming_sim.audience_translation import apply_audience_round_translation
+    from ming_sim.audience_night import open_night
+
+    db, state, _ = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()
+    assert minister is not None
+    minister_name = str(minister["name"])
+
     raw = {
-        "commissions": [{"text": "拟旨"}],
-        "promises": [{"action_id": 1, "decision": "应允"}],
-        "presence": [{"person_name": "王绍徽", "effect": "enter", "body": "入"}],
-        "noise": 1,
+        "commissions": [{"text": "拟旨赈济"}],
+        "promises": [],
+        "presence": [],
+        "commisssions": [{"text": "拼错交办"}],  # 故意拼错，不得在 normalize 蒸发
     }
-    out = normalize_audience_declaration(raw)
-    assert "noise" not in out
-    assert out["commissions"] == [{"text": "拟旨"}]
-    assert out["promises"] == [{"action_id": 1, "decision": "应允"}]
-    assert out["presence"] == [{"person_name": "王绍徽", "effect": "enter", "body": "入"}]
-    # 未给的数组 section 补空，便于分派器统一消费
-    assert out["on_scene_facts"] == []
+    decl = normalize_audience_declaration(raw)
+    assert "commisssions" in decl
+    assert decl["commissions"] == [{"text": "拟旨赈济"}]
+    # 未给的数组 section 仍补空
+    assert decl["on_scene_facts"] == []
+
+    apply_audience_round_translation(
+        db, state, decl,
+        night_id=nid,
+        minister_name=minister_name,
+    )
+
+    pending = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE status='pending' ORDER BY id"
+    ).fetchall()
+    assert pending, "合法 commissions 须落暂存"
+    assert "拟旨赈济" in str(pending[0]["payload_json"])
+
+    rows = db.conn.execute(
+        "SELECT section, category FROM rejection_reports WHERE turn=?",
+        (int(state.turn),),
+    ).fetchall()
+    assert any(
+        str(r["section"]) == "commisssions" and str(r["category"]) == "invalid_shape"
+        for r in rows
+    ), [dict(r) for r in rows]
 
 
 def test_build_night_said_reads_chat_messages_not_missing_turn_columns(game):

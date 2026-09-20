@@ -21,7 +21,7 @@ from ming_sim.declaration_dispatch import DeclarationDispatchResult
 
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
 
-# C0 全 section + 主角；normalize 只放行这些键。
+# C0 全 section + 主角；normalize 补齐这些键，未知顶层键原样保留给分派器。
 _DECLARATION_KEYS: tuple[str, ...] = (
     "commissions",
     "promises",
@@ -253,7 +253,11 @@ def _default_translate_runner(prompt: str, llm_config: Any) -> Mapping[str, obje
 
 
 def normalize_audience_declaration(raw: object) -> Dict[str, object]:
-    """转译 JSON → 只保留 C0 声明键；未知顶层键丢弃（分派器另有 unknown 留痕）。"""
+    """转译 JSON → C0 声明形状；未知顶层键原样保留，交既有分派器 durable 拒收。
+
+    不得在 normalize 静默删键——未知 section 的 ``invalid_shape`` 留痕是
+    ``declaration_dispatch._record_unknown_sections`` 的唯一职责（ADR 0015）。
+    """
     empty: Dict[str, object] = {k: [] for k in _ARRAY_SECTIONS}
     if not isinstance(raw, Mapping):
         return empty
@@ -273,6 +277,12 @@ def normalize_audience_declaration(raw: object) -> Dict[str, object]:
             declaration[key] = []
         else:
             declaration[key] = value
+    # 未知顶层键原样过手，供分派器逐项 invalid_shape；不在此过滤。
+    for key, value in raw.items():
+        sk = str(key)
+        if sk in _DECLARATION_KEYS:
+            continue
+        declaration[sk] = value
     return declaration
 
 

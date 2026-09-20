@@ -1247,11 +1247,15 @@ def _drain_story_extraction_or_fail_closed(
     """
     nid = int(night_id)
     # OPEN 期已 join；CLOSING restore 再 join 一次（崩溃恢复口，空则秒回）。
+    # 屏障未清空不得 catch-up / 推进——timeout 仅单次轮询上限，复用 0157 等待语义。
     from ming_sim.audience_translation import (
         catch_up_pending_translations,
         join_night_translations,
+        translation_owner_key,
     )
-    join_night_translations(nid, timeout_s=120.0)
+    owner = translation_owner_key(write_gate, db)
+    while not join_night_translations(nid, timeout_s=120.0, owner_key=owner):
+        pass
     if game_state is None:
         return
     # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
@@ -1392,11 +1396,17 @@ def close_night(
             # #1842：封夜提交 join 最后一轮转译须在 OPEN 期完成——CLOSING 会拒
             # mark_pending_night_approved（「本夜收夜中，暂不能应允暂存」）。
             # join / catch-up 在闸外（LLM + 串行锁）；落账自持 write_gate。
+            # 屏障未清空不得 catch-up / 置 CLOSING——timeout 仅轮询上限，保持 OPEN 续等。
             from ming_sim.audience_translation import (
                 catch_up_pending_translations,
                 join_night_translations,
+                translation_owner_key,
             )
-            join_night_translations(int(night_id), timeout_s=120.0)
+            owner = translation_owner_key(write_gate, db)
+            while not join_night_translations(
+                int(night_id), timeout_s=120.0, owner_key=owner,
+            ):
+                pass
             # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
             if (
                 llm_config is not None

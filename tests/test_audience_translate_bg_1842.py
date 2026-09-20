@@ -17,7 +17,10 @@ from types import SimpleNamespace
 import pytest
 
 from ming_sim.audience_night import (
+    NIGHT_STATUS_CLOSING,
+    NIGHT_STATUS_OPEN,
     close_night,
+    get_night,
     get_open_night,
     open_night,
 )
@@ -29,8 +32,10 @@ from ming_sim.audience_translation import (
     catch_up_pending_translations,
     join_all_translations,
     join_night_translations,
+    join_owner_translations,
     list_pending_translations,
     schedule_audience_turn_translation,
+    translation_owner_key,
 )
 from ming_sim.session import GameSession
 
@@ -127,7 +132,8 @@ def test_translate_prompt_declares_on_scene_and_full_sections():
         "noise": 1,
     }
     decl = normalize_audience_declaration(raw)
-    assert "noise" not in decl
+    # 未知顶层键原样保留，交既有分派器 durable invalid_shape（见 1837 tracer）
+    assert decl.get("noise") == 1
     assert len(decl["on_scene_facts"]) == 1
     assert decl["protagonist"]["person_name"] == "x"
     assert decl["commissions"][0]["text"] == "着办"
@@ -299,6 +305,199 @@ def test_close_night_joins_last_translation_before_commit(game, monkeypatch):
         dict(r) for r in pending
     ]
     assert all(str(r["status"]) == "committed" for r in pending)
+
+
+def test_independent_owners_same_night_id_do_not_block_each_other(
+    game, content, _game_template_path, monkeypatch,
+):
+    """断根：两独立会话同 night_id，一方阻塞不妨碍另一方 join/封夜。"""
+    import os
+    import shutil
+    import tempfile
+
+    from ming_sim.db import GameDB
+
+    db_a, state_a, _ = game
+    night_a = open_night(db_a, state_a, location="乾清宫", time_of_day="夜")
+    nid_a = int(night_a["id"])
+    gate_a = threading.Lock()
+    release_a = threading.Event()
+
+    monkeypatch.setattr(
+        "ming_sim.audience_extraction.extract_endorsements_for_night",
+        lambda **k: [],
+    )
+
+    fd, path_b = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db_b = None
+    try:
+        shutil.copyfile(_game_template_path, path_b)
+        db_b = GameDB(path_b, content)
+        state_b = db_b.load_state()
+        night_b = open_night(db_b, state_b, location="乾清宫", time_of_day="夜")
+        nid_b = int(night_b["id"])
+        # 同号夜是本案刀口；模板同核开局夜号应同为 1。
+        assert nid_a == nid_b == 1
+        gate_b = threading.Lock()
+
+        def translate_a(prompt, llm_config):
+            release_a.wait(timeout=5.0)
+            return {"commissions": [], "promises": []}
+
+        def translate_b(prompt, llm_config):
+            return {
+                "commissions": [{"text": "乙档交办"}],
+                "promises": [],
+            }
+
+        ctid_a = _persist_round(db_a, state_a, nid_a, "甲档阻塞", "……")
+        schedule_audience_turn_translation(
+            db_a, state_a,
+            emperor_message="甲档阻塞",
+            reply="……",
+            night_id=nid_a, chat_turn_id=ctid_a,
+            llm_config=SimpleNamespace(channel="api"),
+            translate_fn=translate_a, write_gate=gate_a,
+        )
+        # 甲仍在飞
+        assert not join_night_translations(
+            nid_a, timeout_s=0.05, owner_key=translation_owner_key(gate_a, db_a),
+        )
+
+        ctid_b = _persist_round(db_b, state_b, nid_b, "乙档快走", "领旨。")
+        schedule_audience_turn_translation(
+            db_b, state_b,
+            emperor_message="乙档快走",
+            reply="领旨。",
+            night_id=nid_b, chat_turn_id=ctid_b,
+            llm_config=SimpleNamespace(channel="api"),
+            translate_fn=translate_b, write_gate=gate_b,
+        )
+        assert join_owner_translations(
+            translation_owner_key(gate_b, db_b), timeout_s=2.0,
+        )
+        assert db_b.get_story_extract_status(ctid_b) == "done"
+        # 甲仍未放行
+        assert db_a.get_story_extract_status(ctid_a) == "pending"
+
+        # 乙可封夜，不因甲同夜号互等
+        result = close_night(
+            db_b, state_b, content=content, registry=None,
+            wait_timeout_s=0.0, write_gate=gate_b,
+        )
+        assert result.get("closed") is True or get_open_night(db_b) is None
+        assert db_a.get_story_extract_status(ctid_a) == "pending"
+    finally:
+        release_a.set()
+        join_all_translations(timeout_s=2.0)
+        if db_b is not None:
+            db_b.close()
+        for p in (path_b, f"{path_b}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)
+
+
+def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypatch):
+    """断根：join 未清空不得置 CLOSING；清空后沿同一路径收夜。"""
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    gate = threading.Lock()
+    release = threading.Event()
+    owner = translation_owner_key(gate, db)
+
+    def translate_fn(prompt, llm_config):
+        release.wait(timeout=5.0)
+        return {"commissions": [], "promises": []}
+
+    monkeypatch.setattr(
+        "ming_sim.audience_extraction.extract_endorsements_for_night",
+        lambda **k: [],
+    )
+
+    ctid = _persist_round(db, state, nid, "屏障未清", "……")
+    schedule_audience_turn_translation(
+        db, state,
+        emperor_message="屏障未清",
+        reply="……",
+        night_id=nid, chat_turn_id=ctid,
+        llm_config=SimpleNamespace(channel="api"),
+        translate_fn=translate_fn, write_gate=gate,
+    )
+    assert not join_night_translations(nid, timeout_s=0.05, owner_key=owner)
+
+    outcome: dict = {}
+
+    def _run_close():
+        try:
+            outcome["result"] = close_night(
+                db, state, content=content, registry=None,
+                wait_timeout_s=0.0, write_gate=gate,
+            )
+        except Exception as exc:  # noqa: BLE001
+            outcome["err"] = exc
+
+    worker = threading.Thread(target=_run_close, daemon=True)
+    worker.start()
+    # 转译仍阻塞期间：夜须保持 OPEN，不得进入 CLOSING
+    deadline = time.monotonic() + 1.0
+    saw_open = False
+    while time.monotonic() < deadline:
+        row = get_night(db, nid)
+        assert row is not None
+        status = str(row["status"] or "")
+        assert status != NIGHT_STATUS_CLOSING, "屏障未清不得 CLOSING"
+        if status == NIGHT_STATUS_OPEN:
+            saw_open = True
+        time.sleep(0.05)
+    assert saw_open
+    assert worker.is_alive(), "close_night 应仍在等屏障"
+
+    release.set()
+    worker.join(timeout=4.0)
+    assert not worker.is_alive(), outcome
+    assert outcome.get("err") is None, outcome
+    assert outcome.get("result", {}).get("closed") is True or get_open_night(db) is None
+    assert db.get_story_extract_status(ctid) == "done"
+
+
+def test_catch_up_query_exception_stays_pending_and_is_loud(game, monkeypatch):
+    """断根：源轮查询异常响亮上抛，轮次保持 pending，不洗成空原话转译。"""
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    gate = threading.Lock()
+    translated = {"n": 0}
+
+    def translate_fn(prompt, llm_config):
+        translated["n"] += 1
+        return {"commissions": [], "promises": []}
+
+    ctid = _persist_round(db, state, nid, "查询炸", "……")
+    # 人工标 pending（模拟耗尽后待补）
+    db.mark_story_extraction_pending(ctid)
+    assert db.get_story_extract_status(ctid) == "pending"
+
+    real_execute = db.conn.execute
+
+    def boom_execute(sql, params=()):
+        if "SELECT user_message_id FROM chat_turns" in str(sql):
+            raise RuntimeError("simulated chat_turns query failure")
+        return real_execute(sql, params)
+
+    monkeypatch.setattr(db.conn, "execute", boom_execute)
+
+    with pytest.raises(RuntimeError, match="simulated chat_turns query failure"):
+        catch_up_pending_translations(
+            db, state,
+            night_id=nid,
+            llm_config=SimpleNamespace(channel="api"),
+            translate_fn=translate_fn,
+            write_gate=gate,
+        )
+    assert translated["n"] == 0
+    assert db.get_story_extract_status(ctid) == "pending"
 
 
 def test_translation_exhaustion_is_pending_and_does_not_block_next(game):
@@ -487,14 +686,14 @@ def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch)
     assert db.get_story_extract_status(ctid) == "pending"
 
     import ming_sim.audience_translation as at
-    real_join = at.join_all_translations
+    real_join = at.join_owner_translations
 
-    def tracking_join(*, timeout_s=120.0):
-        ok = real_join(timeout_s=timeout_s)
+    def tracking_join(owner_key, *, timeout_s=120.0):
+        ok = real_join(owner_key, timeout_s=timeout_s)
         saw_join.set()
         return ok
 
-    monkeypatch.setattr(at, "join_all_translations", tracking_join)
+    monkeypatch.setattr(at, "join_owner_translations", tracking_join)
 
     sess = _sess(db, state, content, translate_fn=translate_fn, write_gate=gate)
     sess._begun = True
@@ -521,7 +720,7 @@ def test_resolve_turn_joins_pending_translations_before_month(game, monkeypatch)
     with pytest.raises(_StopAfterJoin):
         sess.resolve_turn(allow_empty_decree=True)
 
-    assert saw_join.is_set(), "resolve_turn 必须调用 join_all_translations"
+    assert saw_join.is_set(), "resolve_turn 必须调用 join_owner_translations"
     assert db.get_story_extract_status(ctid) == "done"
     status, _ = db.get_character_status(name)
     assert status == "imprisoned"
@@ -560,12 +759,12 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
     )
     assert db.get_story_extract_status(ctid) == "pending"
 
-    real_join = at.join_all_translations
+    real_join = at.join_owner_translations
 
-    def join_short(*, timeout_s=120.0):
-        return real_join(timeout_s=min(float(timeout_s), 0.4))
+    def join_short(owner_key, *, timeout_s=120.0):
+        return real_join(owner_key, timeout_s=min(float(timeout_s), 0.4))
 
-    monkeypatch.setattr(at, "join_all_translations", join_short)
+    monkeypatch.setattr(at, "join_owner_translations", join_short)
 
     class _StopAfterCatch(Exception):
         pass
@@ -618,7 +817,7 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
                 gate.release()
         except RuntimeError:
             pass
-        real_join(timeout_s=1.0)
+        real_join(translation_owner_key(gate, db), timeout_s=1.0)
         worker.join(timeout=1.0)
 
     assert not hung, "闸外等 join 后持闸 resolve 不得自锁"
@@ -724,7 +923,10 @@ def test_resolve_turn_exhausted_pending_uses_0157_form(game, monkeypatch, tmp_pa
     assert db.get_story_extract_status(ctid) == "pending"
 
     import ming_sim.audience_translation as at
-    monkeypatch.setattr(at, "join_all_translations", lambda *, timeout_s=120.0: True)
+    monkeypatch.setattr(
+        at, "join_owner_translations",
+        lambda owner_key, *, timeout_s=120.0: True,
+    )
     # catch-up 仍失败 → pending 残留
     monkeypatch.setattr(
         at, "catch_up_pending_translations",

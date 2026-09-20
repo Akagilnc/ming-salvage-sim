@@ -3772,14 +3772,19 @@ class GameSession:
         """
         from ming_sim.audience_translation import (
             catch_up_pending_translations,
-            join_all_translations,
+            join_owner_translations,
             list_pending_translations,
+            translation_owner_key,
         )
         from ming_sim.error_pack import settlement_abort_message, write_error_pack
         from ming_sim.exceptions import SettlementAbort
 
-        # ① 等待仍在 join 缝上：timeout 仅单次轮询上限，未清空则继续等，不清空不往下。
-        while not join_all_translations(timeout_s=120.0):
+        # ① 本会话 owner 等待：timeout 仅单次轮询上限，未清空则继续等，不清空不往下。
+        # 不得 join_all（进程全局）——独立存档同夜号不得互等（#1842）。
+        owner = translation_owner_key(
+            getattr(self, "_write_gate", None), getattr(self, "db", None),
+        )
+        while not join_owner_translations(owner, timeout_s=120.0):
             pass
         # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
         # 仅 join 已清空后才进入——避免与在飞 worker 争同一夜串行锁挂死。
