@@ -23,7 +23,11 @@ from ming_sim.audience_translate import (
 from ming_sim.audience_translation import join_night_translations
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import (
+    persist_and_schedule_scene,
+    stub_audience_translate,
+    stub_scene_agent,
+)
 
 
 def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None):
@@ -40,22 +44,6 @@ def _sess(db, state, content, monkeypatch, *, llm_config=None, translate_fn=None
     sess._write_gate = None
     stub_audience_translate(monkeypatch, translate_fn)
     return sess
-
-
-def _persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
-    """镜像 Web/CLI：回话落定后再 schedule（ADR 0155 / 0036）。"""
-    pending = getattr(result, "pending_audience_translation", None)
-    if not pending:
-        return None
-    ctid = int(pending.get("chat_turn_id") or 0)
-    if ctid <= 0:
-        return None
-    answer = str(getattr(result, "answer", "") or "")
-    db.persist_minister_reply(
-        speaker, int(sess.state.turn), answer, ctid,
-        mindreading_status="skip",
-    )
-    return sess.schedule_pending_scene_translation(result)
 
 
 def _region_id(db, preferred: str = "shaanxi") -> str:
@@ -634,7 +622,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     )
     r = sess.scene_chat("拟赈灾", chat_turn_id=ctid_create)
     assert r.pending_action_id == 0  # #1842：前台不等后台转译
-    _persist_and_schedule_scene(sess, db, r)
+    persist_and_schedule_scene(sess, db, r)
     assert join_night_translations(night_id, timeout_s=2.0)
     created = db.conn.execute(
         "SELECT id FROM pending_actions WHERE payload_json LIKE ? ORDER BY id DESC LIMIT 1",
@@ -676,7 +664,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
         },
     )
     r_approve = sess.scene_chat("准", chat_turn_id=ctid_approve)
-    _persist_and_schedule_scene(sess, db, r_approve)
+    persist_and_schedule_scene(sess, db, r_approve)
     assert join_night_translations(night_id, timeout_s=2.0)
     assert int(db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
@@ -708,7 +696,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
         },
     )
     r_reject = sess.scene_chat("不准", chat_turn_id=ctid_reject)
-    _persist_and_schedule_scene(sess, db, r_reject)
+    persist_and_schedule_scene(sess, db, r_reject)
     assert join_night_translations(night_id, timeout_s=2.0)
     assert db.conn.execute(
         "SELECT COUNT(*) n FROM pending_actions WHERE id=?", (reject_id,),

@@ -27,6 +27,7 @@ from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
 from ming_sim.relation_judge import summon_edge_origin
 from ming_sim.session import GameSession
+from tests.conftest import persist_and_schedule_scene
 
 
 def _activate(db, state, *names: str) -> None:
@@ -187,22 +188,6 @@ def _scene_session(db, state, content, monkeypatch):
     return sess
 
 
-def _persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
-    """镜像 Web/CLI：回话落定后再 schedule（ADR 0155 / 0036）。"""
-    pending = getattr(result, "pending_audience_translation", None)
-    if not pending:
-        return None
-    ctid = int(pending.get("chat_turn_id") or 0)
-    if ctid <= 0:
-        return None
-    answer = str(getattr(result, "answer", "") or "")
-    db.persist_minister_reply(
-        speaker, int(sess.state.turn), answer, ctid,
-        mindreading_status="skip",
-    )
-    return sess.schedule_pending_scene_translation(result)
-
-
 def _drain_scene_owner(sess, db, *, timeout_s: float = 5.0) -> None:
     """persist+schedule 后必须 owner-scoped join，禁跨测污染。"""
     from ming_sim.audience_translation import join_owner_translations, translation_owner_key
@@ -232,7 +217,7 @@ def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
     t1 = _active_chat_turn(db, state, nid)
     # 真入口：scene_chat("宣王绍徽", chat_turn_id=t1) 当场先切并绑源轮
     r_xuan = sess.scene_chat("宣王绍徽", chat_turn_id=t1)
-    _persist_and_schedule_scene(sess, db, r_xuan)
+    persist_and_schedule_scene(sess, db, r_xuan)
     _drain_scene_owner(sess, db)
     assert get_night_protagonist(db, nid) == "王绍徽"
     assert db.conn.execute(
@@ -263,7 +248,7 @@ def test_protagonist_undo_reprojects_night_current(game, monkeypatch):
 
     t1 = _active_chat_turn(db, state, nid)
     r_xuan = sess.scene_chat("宣王绍徽", chat_turn_id=t1)
-    _persist_and_schedule_scene(sess, db, r_xuan)
+    persist_and_schedule_scene(sess, db, r_xuan)
     _drain_scene_owner(sess, db)
     assert get_night_protagonist(db, nid) == "王绍徽"
     assert db.conn.execute(

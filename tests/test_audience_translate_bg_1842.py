@@ -15,7 +15,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import (
+    persist_and_schedule_scene,
+    stub_audience_translate,
+    stub_scene_agent,
+)
 from ming_sim.audience_night import (
     NIGHT_STATUS_CLOSING,
     NIGHT_STATUS_OPEN,
@@ -133,22 +137,6 @@ def _persist_round(db, state, night_id: int, user_text: str, reply: str) -> int:
     )
     db.conn.commit()
     return ctid
-
-
-def _persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
-    """镜像 Web/CLI：回话落定后再 schedule（ADR 0155 / 0036）。"""
-    pending = getattr(result, "pending_audience_translation", None)
-    if not pending:
-        return None
-    ctid = int(pending.get("chat_turn_id") or 0)
-    if ctid <= 0:
-        return None
-    answer = str(getattr(result, "answer", "") or "")
-    db.persist_minister_reply(
-        speaker, int(sess.state.turn), answer, ctid,
-        mindreading_status="skip",
-    )
-    return sess.schedule_pending_scene_translation(result)
 
 
 def test_normalize_keeps_unknown_keys_and_full_sections():
@@ -744,7 +732,7 @@ def test_scene_chat_background_when_chat_turn_id(game, monkeypatch, bg_life):
     # 回话未落定前不得起转译；persist 后 schedule 才进后台窗。
     assert getattr(result, "pending_audience_translation", None) is not None
     assert not ran.is_set()
-    _persist_and_schedule_scene(sess, db, result)
+    persist_and_schedule_scene(sess, db, result)
     # 前台已返回且转译仍被挡住 → 确定性证明未同步等待（禁墙钟 SLA）
     assert not release.is_set()
     assert db.get_story_extract_status(ctid) == "pending"
@@ -752,6 +740,110 @@ def test_scene_chat_background_when_chat_turn_id(game, monkeypatch, bg_life):
     release.set()
     assert join_night_translations(nid, timeout_s=2.0, owner_key=owner)
     assert db.get_story_extract_status(ctid) == "done"
+
+
+def test_scene_stream_assemble_preserves_leading_trailing_whitespace(
+    game, monkeypatch,
+):
+    """#1842 / P6：真实 scene 流式拼装保留首尾空白；strip 变异须红。"""
+    db, state, content = game
+    open_night(db, state, location="乾清宫", time_of_day="夜")
+    raw = "\n  臣顿首。  \n"
+
+    class _StreamAgent:
+        tools = []
+
+        def run(self, prompt, stream=False, **_kw):
+            if stream:
+                def _gen():
+                    yield SimpleNamespace(event="RunContent", content="\n  ")
+                    yield SimpleNamespace(event="RunContent", content="臣顿首。")
+                    yield SimpleNamespace(event="RunContent", content="  \n")
+                    yield SimpleNamespace(content=raw, tools=[])
+                return _gen()
+            return SimpleNamespace(content=raw, tools=[])
+
+        def get_last_run_output(self):
+            return None
+
+    sess = _sess(db, state, content, monkeypatch)
+    stub_scene_agent(monkeypatch, _StreamAgent())
+    monkeypatch.setattr(
+        "ming_sim.llm_model.extract_agent_text",
+        lambda out: str(getattr(out, "content", "") or ""),
+    )
+    monkeypatch.setattr("ming_sim.session._dump_llm_messages", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "ming_sim.session.prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="开场", root=None),
+    )
+
+    deltas: list[str] = []
+    result = sess.scene_chat(
+        "报。",
+        stream_emit=lambda d, replace=False: deltas.append(d),
+    )
+    assert result.answer == raw
+    assert result.answer != result.answer.strip()
+    assert "".join(deltas) == raw
+
+
+def test_worker_refuses_unpersisted_generating_turn(game, monkeypatch, bg_life):
+    """#1842 / ADR 0155：generating 且无 mid 时 worker 拒转译、不落账。
+
+    删 status/mid preflight 后本案须红（translate 被调或 extract=done）。
+    """
+    from ming_sim.audience_translate import AudienceTranslateError
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    gate = threading.Lock()
+    owner = translation_owner_key(gate, db)
+    bg_life.track(owner=owner)
+
+    speaker = "殿上"
+    uid = int(db.conn.execute(
+        "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
+        "VALUES (?, ?, 'user', ?, 'held')",
+        (speaker, int(state.turn), "未落定回话"),
+    ).lastrowid)
+    ctid = int(db.create_chat_turn(
+        state, speaker, "s", 0, night_id=nid, status="generating",
+    ))
+    db.conn.execute(
+        "UPDATE chat_turns SET user_message_id=?, minister_message_id=NULL "
+        "WHERE id=?",
+        (uid, ctid),
+    )
+    db.conn.commit()
+
+    translated: list[int] = []
+
+    def translate_fn(prompt, llm_config):
+        translated.append(1)
+        return {"commissions": [], "promises": []}
+
+    stub_audience_translate(monkeypatch, translate_fn)
+    fut = schedule_audience_turn_translation(
+        db, state,
+        emperor_message="未落定回话",
+        reply="……",
+        night_id=nid,
+        chat_turn_id=ctid,
+        llm_config=SimpleNamespace(channel="api"),
+        translate_fn=translate_fn,
+        write_gate=gate,
+    )
+    assert join_owner_translations(owner, timeout_s=3.0)
+    with pytest.raises(AudienceTranslateError, match="源轮回话未落定"):
+        fut.result(timeout=1.0)
+    assert translated == [], "未落定回话不得调用转译 LLM"
+    assert db.get_story_extract_status(ctid) == "pending"
+    assert db.conn.execute(
+        "SELECT COUNT(*) n FROM chat_turn_rollback_items WHERE chat_turn_id=?",
+        (ctid,),
+    ).fetchone()["n"] == 0
 
 
 def test_scene_chat_sync_without_chat_turn_still_applies(game, monkeypatch):
@@ -1659,7 +1751,7 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
 
     chat_out = sess.scene_chat("退出仍写完", chat_turn_id=ctid)
     assert chat_out.answer == "臣遵旨。"
-    _persist_and_schedule_scene(sess, db, chat_out)
+    persist_and_schedule_scene(sess, db, chat_out)
     assert started.wait(2.0), "worker 须经 persist 后 schedule 进入转译窗"
     assert db.get_story_extract_status(ctid) == "pending"
 
@@ -1764,7 +1856,7 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
 
     chat_out = sess.scene_chat("CLI退出仍写完", chat_turn_id=ctid)
     assert chat_out.answer == "臣遵旨。"
-    _persist_and_schedule_scene(sess, db, chat_out)
+    persist_and_schedule_scene(sess, db, chat_out)
     assert started.wait(2.0), "worker 须经 persist 后 schedule 进入转译窗"
     assert db.get_story_extract_status(ctid) == "pending"
 

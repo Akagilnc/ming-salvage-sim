@@ -348,6 +348,25 @@ def stub_audience_translate(monkeypatch, fn=None):
     return runner
 
 
+def persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
+    """#1842 单权威：镜像 Web/CLI——回话落定后再 schedule（ADR 0155 / 0036）。
+
+    测试侧不得再复制本流程；生产入口仍走 Web/CLI 各自 persist 尾。
+    """
+    pending = getattr(result, "pending_audience_translation", None)
+    if not pending:
+        return None
+    ctid = int(pending.get("chat_turn_id") or 0)
+    if ctid <= 0:
+        return None
+    answer = str(getattr(result, "answer", "") or "")
+    db.persist_minister_reply(
+        speaker, int(sess.state.turn), answer, ctid,
+        mindreading_status="skip",
+    )
+    return sess.schedule_pending_scene_translation(result)
+
+
 @pytest.fixture
 def _offline_scene_beat_generator():
     """#542：轻壳测试显式 opt-in 的 offline scene / beat 双缝（非 autouse）。
