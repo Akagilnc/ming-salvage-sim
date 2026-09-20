@@ -40,14 +40,6 @@ _night_inflight_guard = threading.Lock()
 _night_inflight: Dict[Tuple[int, int], List[Future]] = {}  # (owner, night_id)
 _turn_inflight: Dict[Tuple[int, int], Future] = {}  # (owner, chat_turn_id)
 _night_tail: Dict[Tuple[int, int], Future] = {}
-# 转译短持 write_gate：按 gate 身份记账（禁进程级混会话）。前台非阻塞抢闸据此区分
-# 「等本闸转译短临界」与「结算/他写 → 409」。Condition 与账本共用锁。
-# 入账仅在真实 acquire 成功之后；清账/唤醒仅在真实 release 之后——两头都不制造
-# 「信号与持闸事实」错位窗。未持闸时不抬信号，避免挡在结算后面的转译把前台从
-# 应立即 409 拖成盲等。
-_translation_holding_by_gate: Dict[int, int] = {}
-_translation_write_gate_guard = threading.Lock()
-_translation_write_released = threading.Condition(_translation_write_gate_guard)
 
 
 def translation_owner_key(write_gate: Any = None, db: Any = None) -> int:
@@ -60,46 +52,39 @@ def translation_owner_key(write_gate: Any = None, db: Any = None) -> int:
 
 
 def translation_holding_write_gate(gate: Any) -> bool:
-    """窥账：该 gate 是否正被转译短持。不 join、不 cancel。"""
-    if gate is None:
-        return False
-    key = id(gate)
-    with _translation_write_gate_guard:
-        return _translation_holding_by_gate.get(key, 0) > 0
+    """该 gate 是否正被转译短持（与所有权同临界可读；不 join、不 cancel）。"""
+    from ming_sim.session_write_queue import ClassifiedWriteGate
+
+    if isinstance(gate, ClassifiedWriteGate):
+        return gate.is_held_by_translation()
+    return False
 
 
 def wait_translation_write_gate_released(gate: Any) -> None:
-    """等到该 gate 的转译短持账归零（不抢闸、不加超时；其它 gate / 结算占闸不抬此信号）。"""
-    if gate is None:
-        return
-    key = id(gate)
-    with _translation_write_released:
-        while _translation_holding_by_gate.get(key, 0) > 0:
-            _translation_write_released.wait()
+    """等到该 gate 不再被转译持有（不抢闸、不加超时；结算/他写不抬此等待）。"""
+    from ming_sim.session_write_queue import ClassifiedWriteGate
+
+    if isinstance(gate, ClassifiedWriteGate):
+        gate.wait_while_held_by_translation()
 
 
 @contextlib.contextmanager
 def _translation_write_cm(gate: Any) -> Iterator[None]:
-    """转译侧短持会话 write_gate，并按 gate 登记持有账供前台抢闸分流。"""
+    """转译侧短持会话 write_gate；holder kind 与取得所有权同临界（#1842）。"""
+    from ming_sim.session_write_queue import ClassifiedWriteGate
+
     if gate is None:
         yield
         return
-    key = id(gate)
-    gate.acquire()
-    with _translation_write_released:
-        _translation_holding_by_gate[key] = _translation_holding_by_gate.get(key, 0) + 1
+    if isinstance(gate, ClassifiedWriteGate):
+        gate.acquire_translation()
+    else:
+        # 裸 Lock 测试夹具：无分类能力，仅保互斥（生产路径均为 ClassifiedWriteGate）。
+        gate.acquire()
     try:
         yield
     finally:
-        # 必须先 release 再清账/唤醒，否则等待方会在仍占闸时被放行并随机 409。
         gate.release()
-        with _translation_write_released:
-            depth = _translation_holding_by_gate.get(key, 0) - 1
-            if depth <= 0:
-                _translation_holding_by_gate.pop(key, None)
-            else:
-                _translation_holding_by_gate[key] = depth
-            _translation_write_released.notify_all()
 
 
 def apply_audience_round_translation(
@@ -333,7 +318,7 @@ def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> No
     ctid = int(chat_turn_id or 0)
     if ctid <= 0 or not hasattr(db, "mark_story_extraction_pending"):
         return
-    # 失败路径短持：与 job 内读写同属转译持闸类，登记深度避免前台误 409。
+    # 失败路径短持：与 job 内读写同属转译持闸类（ClassifiedWriteGate kind）。
     with _translation_write_cm(write_gate):
         db.mark_story_extraction_pending(ctid)
 
@@ -391,7 +376,7 @@ def run_turn_translation_job(
     gate = write_gate  # 可为 None（单写测试路径）
 
     def _gate_cm():
-        # 转译短持须登记深度，供前台非阻塞抢闸区分「等转译」与「结算 → 409」。
+        # 转译短持带 holder kind，供前台非阻塞抢闸区分「等转译」与「结算 → 409」。
         return _translation_write_cm(gate)
 
     # 死轮 / 未落定回话 / 已 done：闸内短读后早退（禁持非重入锁再嵌套写）。

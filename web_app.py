@@ -4459,8 +4459,8 @@ def _acquire_web_write_gate_or_409(gate) -> None:
 
     #1842：后台转译只在读写临界短持同一闸；LLM 段不持闸。前台拟旨等入口不得
     因本闸转译短临界随机 409，也不得在结算长写或其它会话转译上挂死——仅当
-    ``translation_holding_write_gate(gate)`` 为真时等待该闸账归零并重试；
-    非本闸转译占用（结算/其它写）→ 立即 409。信号按 gate 隔离。
+    holder kind 为转译时等待该闸释放并重试；结算/其它写 → 立即 409。
+    holder kind 与 gate 所有权同临界（ClassifiedWriteGate），无旁路入账窗。
     """
     from ming_sim.audience_translation import (
         translation_holding_write_gate,
