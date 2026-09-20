@@ -1087,7 +1087,10 @@ def test_manual_directive_admission_real_http_tracer_1591(
 
         game.db.stage_pending_action(
             turn2, kind="office", action="任命", minister_name=name,
-            payload={"name": name, "office": "经略关宁", "_office_action": "任命"},
+            payload={
+                "name": name, "office": "经略关宁", "_office_action": "任命",
+                "region_id": "liaodong",
+            },
         )
         assert game.db.list_pending_actions(turn2), "无关非旨 pending action 应在场"
 

@@ -1255,13 +1255,15 @@ def _drain_story_extraction_or_fail_closed(
     if game_state is None:
         return
     # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
-    catch_up_pending_translations(
-        db, game_state,
-        night_id=nid,
-        llm_config=llm_config,
-        translate_fn=translate_fn,
-        write_gate=write_gate,
-    )
+    # 无运行时依赖的库调用只保留待补；不得偷取进程级默认配置发起 provider 调用。
+    if llm_config is not None and write_gate is not None and translate_fn is not None:
+        catch_up_pending_translations(
+            db, game_state,
+            night_id=nid,
+            llm_config=llm_config,
+            translate_fn=translate_fn,
+            write_gate=write_gate,
+        )
 
 
 def _gate_cm(write_gate: Any):
@@ -1396,13 +1398,18 @@ def close_night(
             )
             join_night_translations(int(night_id), timeout_s=120.0)
             # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
-            catch_up_pending_translations(
-                db, state,
-                night_id=int(night_id),
-                llm_config=llm_config,
-                translate_fn=translate_fn,
-                write_gate=write_gate,
-            )
+            if (
+                llm_config is not None
+                and write_gate is not None
+                and translate_fn is not None
+            ):
+                catch_up_pending_translations(
+                    db, state,
+                    night_id=int(night_id),
+                    llm_config=llm_config,
+                    translate_fn=translate_fn,
+                    write_gate=write_gate,
+                )
             # #1353：start_close 的 assemble/知识短读与置 CLOSING 同持 write_gate。
             # 禁闸外知识链读共享 conn——后于屏障领票的尾随若尚未 wait_prior，
             # 并发 SELECT 会 sqlite3.Row IndexError（tuple index out of range）。
@@ -1612,10 +1619,10 @@ def close_night(
             _mingfa_candidates = db.conn.execute(
                 """
                 SELECT td.id AS directive_id, td.actor, td.text,
-                       MIN(d.id) AS dossier_id, MAX(d.affair_id) AS affair_id
+                       MIN(d.id) AS dossier_id
                 FROM pending_actions pa
                 JOIN turn_directives td ON td.id = pa.committed_directive_id
-                LEFT JOIN decree_dossiers d ON d.pending_action_id = pa.id
+                JOIN decree_dossiers d ON d.pending_action_id = pa.id
                 WHERE pa.night_id = ? AND pa.kind = 'directive'
                   AND pa.status = 'committed' AND pa.committed_directive_id > 0
                 GROUP BY td.id, td.actor, td.text
@@ -1629,13 +1636,9 @@ def close_night(
                 if not _did_int or _did in already_ids:
                     continue
                 dossier_id = int(_pd["dossier_id"] or 0)
-                affair_id = int(_pd["affair_id"] or 0)
-                if dossier_id > 0:
-                    origin_ref = f"dossier:{dossier_id}"
-                elif affair_id > 0:
-                    origin_ref = db.affairs.origin_ref(affair_id)
-                else:
-                    origin_ref = ""
+                if dossier_id <= 0:
+                    continue
+                origin_ref = f"dossier:{dossier_id}"
                 append_ledger_entry(
                     db, night_id,
                     person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],

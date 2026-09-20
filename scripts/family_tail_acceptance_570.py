@@ -574,7 +574,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         # 邸报：生产首月结算落库 turn_report（证据面；空不造假）
         gazette_blob = str(first_month_gazette or "")
         if not gazette_blob.strip():
-            reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
+            reports = db.list_turn_reports()
             gazette_blob = str((reports[-1]["report"] if reports else "") or "")
             if not gazette_blob.strip() and int(state.turn) > 0:
                 gazette_blob = str(db.get_turn_report(int(state.turn) - 1) or "")

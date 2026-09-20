@@ -5078,6 +5078,13 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="南迁之议")
     did = int(stalled["id"])
     origin = f"dossier:{did}"
+    affair = db.affairs.open(
+        name="南迁事务", origin="下部议",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    push_declaration = {
+        "attach": "existing", "affair_id": int(affair.id),
+    }
     issue_before = db.conn.execute(
         "SELECT id, status FROM issues WHERE origin_ref=? AND status='active'",
         (origin,),
@@ -5090,6 +5097,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
             "拟旨意图": "拟旨",
             "目标案卷ID": did,
             "颁布方式": "中旨直发",
+            "事务声明": push_declaration,
         }, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
@@ -5114,6 +5122,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     payload = json.loads(str(row["dossier_payload_json"] or "{}"))
     assert int(payload.get("target_dossier_id") or 0) == did
     assert payload.get("mode") == "midzhi"
+    assert payload.get("affair_declaration")
 
     # 真实结算：只替换外部 LLM seam；resolve_turn → ensure → 真 resolve_directives
     state.turn_phase = TurnPhase.SUMMONING.value
@@ -5151,6 +5160,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     assert len(db.list_decree_dossiers()) == before
     pushed = db.get_decree_dossier(did)
     assert pushed is not None
+    assert int(pushed.get("affair_id") or 0) == int(affair.id)
     assert _dossier_payload(pushed).get("deliberation_state") == "backed"
     assert pushed.get("mode") == "midzhi"
     ends = db.list_dossier_endorsements(did)
@@ -5204,6 +5214,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     try:
         restored = reopened.get_decree_dossier(did)
         assert restored is not None
+        assert int(restored.get("affair_id") or 0) == int(affair.id)
         assert _dossier_payload(restored).get("deliberation_state") == "backed"
         assert restored.get("mode") == "midzhi"
         assert any(
@@ -5234,6 +5245,28 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="南迁")
     did = int(stalled["id"])
+    bind_did = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="南迁绑定",
+        target_kind="issue",
+        target_id="river-works",
+        payload={"deliberation_state": "stalled", "mode": "ordinary"},
+    )
+    db.insert_issue(
+        state,
+        kind="situation",
+        title="南迁绑定",
+        origin_kind="decree",
+        origin_ref=f"dossier:{bind_did}",
+    )
+    bind_affair = db.affairs.open(
+        name="南迁事务", origin="下部议",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    push_declaration = {
+        "attach": "existing", "affair_id": int(bind_affair.id),
+    }
     before_dossiers = len(db.list_decree_dossiers())
     before_ends = len(db.list_dossier_endorsements(did))
     before_dirs = db.conn.execute(
@@ -5278,17 +5311,29 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     # 多旨真实抽取接缝逐项接受 push / ordinary 互斥形状。
     def backend_multi(prompt, *_a, **_k):
         return (json.dumps({"成品旨稿": [
-            {"正文": "御笔强推", "目标案卷ID": did, "颁布方式": "中旨直发"},
+            {"正文": "御笔强推", "目标案卷ID": bind_did, "颁布方式": "中旨直发"},
             {"正文": "清核河工", "动作类型": "policy", "目标类型": "issue",
              "目标ID": "river-works", "颁布方式": "普通", "施行范围": "无"},
-        ]}, ensure_ascii=False), 1)
+        ], "事务声明": push_declaration}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend_multi)
     multi = cli_backend.extract_draft_intent(
         "分拟两旨", "臣已拟成", draft_count=2, db=db,
     )
-    assert multi["drafts"][0]["target_dossier_id"] == did
+    assert multi["drafts"][0]["target_dossier_id"] == bind_did
     assert multi["drafts"][1]["target_id"] == "river-works"
+    push_payload = cli_backend.project_draft_extract_to_directive_payload(
+        multi["drafts"][0], decree_text="御笔强推", db=db, content=content,
+    )
+    assert push_payload.get("affair_declaration")
+    push_dir = int(db.add_directive(
+        state, None, "御笔强推", "test-658-push-bind",
+        dossier_payload=push_payload,
+    ))
+    db.ensure_dossiers_for_draft_directives(state)
+    assert int(db.get_decree_dossier(bind_did)["affair_id"] or 0) == int(bind_affair.id)
+    assert db.get_dossier_for_directive(push_dir) is not None
+    assert int(db.get_dossier_for_directive(push_dir)["id"]) == bind_did
 
     # 成案失败保持 draft 重试，但既有消费投影与 issued 边界均过滤无案卷旨。
     bad_directive = int(db.add_directive(
@@ -5332,7 +5377,7 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     assert len(db.list_dossier_endorsements(did)) == before_ends + 2
     assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM turn_directives"
-    ).fetchone()["c"] == before_dirs + 1
+    ).fetchone()["c"] == before_dirs + 2
     assert _dossier_payload(db.get_decree_dossier(did)).get(
         "deliberation_state",
     ) == "stalled"

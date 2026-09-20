@@ -51,7 +51,7 @@ from ming_sim.decree_vocabulary import (
     format_public_progress_disclosure,
     terminal_report_facade,
 )
-from ming_sim.exceptions import SettlementAbort
+from ming_sim.exceptions import OfficeAppointmentRejection, SettlementAbort
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
     ISSUE_METRIC_LOCK_CAPS,
@@ -251,10 +251,28 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     return {**row, "payload": payload}
 
 
+def _appointment_region_id(payload: Dict[str, object]) -> str:
+    """Typed 任所 from appointment payload keys; never inferred from title/location."""
+    return str(
+        payload.get("region_id")
+        or payload.get("任所")
+        or payload.get("辖区")
+        or payload.get("office_region")
+        or ""
+    ).strip()
+
+
 def _canonical_appointment_fields(
     payload: Dict[str, object], *, current_office_type: str = "", llm_config=None,
-) -> tuple[str, str, str]:
-    """Canonical fields consumed by both appointment apply and payload dedup."""
+) -> tuple[str, str, str, str]:
+    """Canonical fields consumed by both appointment apply and payload dedup.
+
+    Fourth element is typed region_id before seat resolve. Non-local office
+    types always normalize to empty — caller-stuffed region must not mint a
+    central seat identity. Local bare titles still carry raw region here;
+    :func:`_resolve_appointment_seat` turns that into the once-per-appointment
+    resolved seat for write / dedup / displace.
+    """
     office = normalize_office(str(payload.get("office") or payload.get("new_office") or ""))
     office_type = resolve_office_type_preserving_title(
         office,
@@ -262,7 +280,32 @@ def _canonical_appointment_fields(
         current_office_type,
         llm_config,
     )
-    return office, office_type, appointment_tenure_from(payload)
+    raw_region = _appointment_region_id(payload)
+    if office_type not in GameDB._LOCAL_ARCHIVE_OFFICE_TYPES:
+        return office, office_type, appointment_tenure_from(payload), ""
+    return office, office_type, appointment_tenure_from(payload), raw_region
+
+
+def _resolve_appointment_seat(
+    db: GameDB,
+    *,
+    name: object = "",
+    office: object,
+    office_type: object,
+    region_id: object = "",
+) -> str:
+    """Once-per-appointment resolved seat via existing typed 任所 helper.
+
+    Local same-office continuation reuses character_offices.region_id when the
+    caller omits region; central / non-local always empty; unknown or missing
+    local seat still raises OfficeAppointmentRejection from the helper.
+    """
+    return db._require_local_office_region(
+        name=name,
+        office=office,
+        office_type=office_type,
+        region_id=region_id,
+    )
 
 
 def _payload_owned_person_duplicate(
@@ -290,10 +333,28 @@ def _payload_owned_person_duplicate(
         "current_office_type": current_office_type,
         "llm_config": llm_config,
     }
-    payload_fields = _canonical_appointment_fields(payload, **canonical_kwargs)
-    return bool(payload_fields[0]) and payload_fields == _canonical_appointment_fields(
-        item, **canonical_kwargs
-    )
+
+    def _fields(src: Dict[str, object]) -> tuple[str, str, str, str]:
+        office, office_type, tenure, raw_seat = _canonical_appointment_fields(
+            src, **canonical_kwargs,
+        )
+        if not office:
+            return office, office_type, tenure, raw_seat
+        try:
+            seat = _resolve_appointment_seat(
+                db,
+                name=person,
+                office=office,
+                office_type=office_type,
+                region_id=raw_seat,
+            )
+        except OfficeAppointmentRejection:
+            # Typed seat reject only: missing/unknown region keeps raw for identity compare.
+            seat = raw_seat
+        return office, office_type, tenure, seat
+
+    payload_fields = _fields(payload)
+    return bool(payload_fields[0]) and payload_fields == _fields(item)
 
 
 def _issue_condition_text(raw: object) -> str:
@@ -4910,6 +4971,11 @@ def _strategic_event_result_preflight_error(
         origin_ref = item.get("origin_ref") if isinstance(item, dict) else None
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
+            # Batch-unauthorized affair is itemwise at apply (economy/person
+            # siblings continue). Envelope preflight only blocks missing/invalid
+            # provenance existence failures.
+            if origin_error.get("category") == "unauthorized_affair_origin":
+                continue
             return (
                 f"战略/外敌事件「{event_title or event_id}」{kind}战果来源拒收："
                 f"{origin_error.get('reason') or origin_error.get('category') or ''}"
@@ -5081,6 +5147,9 @@ def apply_issue_tracker_output(
     defer_event_trigger_ids: Optional[set[str]] = None,
     open_affair_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
+    # Do not re-copy open_affair_ids_at_input: settle path already hands the single
+    # internal working set from apply_score_extraction; a second copy would drop
+    # same-batch new_issues births from later carriers (close / durable origin).
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
     pairing_warnings: List[str] = []  # #45/#46 国策结案实体后果强制配对告警（warn-only）
@@ -5700,32 +5769,8 @@ def apply_issue_tracker_output(
         # 注：字符串字段含孤代理（JSON 解析出的 "\\ud800"）会在 SQLite bind 抛 UnicodeEncodeError。
         # #63 已在 SQLite-bind 序列化点统一用「保中文、净孤代理」helper 治理；本段不局部吞
         # UnicodeEncodeError，仍让非编码类代码/DB 异常按 ADR 0005 fail-loud 上抛。
-        # Validate provenance only after item-shape validation, so malformed
-        # fields retain their precise rejection category without ever reaching a write.
-        origin_error = db.effect_origin_rejection(origin_ref)
-        if not re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref) or origin_error:
-            applied_new.append({
-                "rejected": True, "category": "missing_ref", "item": ni,
-                "title": title,
-                "reason": (origin_error or {}).get(
-                    "reason", "new decree issue origin_ref 须为已颁 dossier:<id>"
-                ),
-            })
-            continue
-        from ming_sim.staged_commitment import (
-            capture_commitment_stages,
-            stages_source_from_issue_item,
-        )
-        stages_norm = (
-            capture_commitment_stages(
-                stages_source_from_issue_item(ni),
-                narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
-                origin_turn=int(state.turn),
-            )
-            if is_commitment
-            else []
-        )
-        # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
+        # Validate typed affair authority before any write. A decree issue may be
+        # grounded either by a promulgated dossier or by its typed affair declaration.
         from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
         try:
             issue_affair = declaration_from_payload(ni, allowed=ATTACH_BIRTH)
@@ -5747,8 +5792,42 @@ def apply_issue_tracker_output(
                 "item": ni, "title": title,
             })
             continue
-        issue_id = db.insert_issue(
-            state,
+        origin_error = db.effect_origin_rejection(origin_ref) if origin_ref else None
+        dossier_origin = bool(re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref))
+        if issue_affair is None and (not dossier_origin or origin_error):
+            applied_new.append({
+                "rejected": True, "category": "missing_ref", "item": ni,
+                "title": title,
+                "reason": (origin_error or {}).get(
+                    "reason", "new decree issue 须有已颁 dossier:<id> 或合法事务声明"
+                ),
+            })
+            continue
+        if issue_affair is not None and dossier_origin:
+            try:
+                db.affairs.assert_origin_matches_declaration(origin_ref, issue_affair)
+            except (KeyError, TypeError, ValueError) as exc:
+                applied_new.append({
+                    "rejected": True, "category": "invalid_enum", "item": ni,
+                    "title": title, "reason": str(exc),
+                })
+                continue
+        from ming_sim.staged_commitment import (
+            capture_commitment_stages,
+            stages_source_from_issue_item,
+        )
+        stages_norm = (
+            capture_commitment_stages(
+                stages_source_from_issue_item(ni),
+                narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
+                origin_turn=int(state.turn),
+            )
+            if is_commitment
+            else []
+        )
+        # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
+        # issue+affair 成对写由 GameDB 拥有（ADR 0150-D3）；本段不自包事务生命周期。
+        _issue_fields = dict(
             kind=kind,
             title=title[:60] or "无名事项",
             origin_kind="decree",
@@ -5780,18 +5859,17 @@ def apply_issue_tracker_output(
             commit=commit_now,
         )
         if issue_affair is not None:
-            db.affairs.attach_from_declaration(
-                "issues",
-                issue_id,
-                issue_affair,
-                year=int(state.year),
-                period=int(state.period),
-                turn=int(state.turn),
+            issue_id = db.insert_issue_with_affair_declaration(
+                state,
+                affair_declaration=issue_affair,
                 authorized_ids=(
                     open_affair_ids_at_input
                     if isinstance(open_affair_ids_at_input, set) else None
                 ),
+                **_issue_fields,
             )
+        else:
+            issue_id = db.insert_issue(state, **_issue_fields)
         applied_item = {"issue_id": issue_id, "kind": kind, "title": title, "rejected": False}
         if commitment_kind:
             applied_item["commitment_kind"] = commitment_kind
@@ -6118,14 +6196,20 @@ def _displace_duplicate_offices(
     new_holder: str,
     new_office: str,
     *,
+    region_id: str = "",
     commit: bool = True,
 ) -> List[str]:
     """新任者 new_holder 拿到 new_office 后，把其中每个独占实职分项从其他 active 官员
     office 里剔除，避免双缺官。返回被腾出的 (旧任者:职) 描述列表。
-    纯按 office 文字匹配——不依赖 court_role，对存量档同样生效。"""
+
+    ``region_id`` 必须是一次任职的 resolved seat（经 _resolve_appointment_seat /
+    character_offices），不是调用方原始字符串。中央 resolved 为空 → 按 office
+    文字挤位；地方 resolved 非空 → 仅同 seat 互挤（同名巡抚跨省不顶替）。
+    """
     new_parts = [p for p in normalize_office(new_office).split(",") if _is_exclusive_office(p)]
     if not new_parts:
         return []
+    new_seat = str(region_id or "").strip()
     displaced: List[str] = []
     displaced_names: set[str] = set()  # #9 cmr R1：被顶替者去重，循环后逐派系重算 leverage。
     rows = db.conn.execute(
@@ -6134,11 +6218,18 @@ def _displace_duplicate_offices(
     ).fetchall()
     for row in rows:
         holder_parts = [p.strip() for p in str(row["office"]).split(",") if p.strip()]
-        kept = [p for p in holder_parts if p not in new_parts]
-        if len(kept) == len(holder_parts):
+        # Seat-aware exclusive collision: resolved local seat only bumps the
+        # same seat; empty resolved seat is central identity (title-only).
+        if new_seat:
+            holder_seat = db.character_office_region(row["name"])
+            if holder_seat != new_seat:
+                continue
+        conflicting = [p for p in holder_parts if p in new_parts]
+        if not conflicting:
             continue  # 此人不占同名独缺
+        kept = [p for p in holder_parts if p not in conflicting]
         displaced_names.add(row["name"])
-        for lost in (p for p in holder_parts if p in new_parts):
+        for lost in conflicting:
             displaced.append(f"{row['name']}:{lost}")
         fully_displaced = not kept
         new_holder_office = "听用候铨" if fully_displaced else ",".join(kept)
@@ -6153,6 +6244,12 @@ def _displace_duplicate_offices(
             if fully_displaced
             else infer_office_type_from_office(new_holder_office, old_type, db.llm_config)
         )
+        # 排挤后 character_offices / 内存 office_region 与 characters 同事务同步：
+        # 全顶替 → 名分，备档删除、任所清空；部分保留 → 余职 + 原 seat 入 record。
+        # 内存 seat 必须以备档真源对齐（record 后可能因非地方 office_type 钳空）。
+        retained_seat = "" if fully_displaced else str(
+            db.character_office_region(row["name"]) or ""
+        ).strip()
         if fully_displaced:
             db.conn.execute(
                 "UPDATE characters SET office=?, office_type=?, status_reason=?, reason_code=? WHERE name=?",
@@ -6164,10 +6261,15 @@ def _displace_duplicate_offices(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
                 (new_holder_office, new_type, row["name"]),
             )
+        db._record_character_office(
+            row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
+        )
+        archived_seat = str(db.character_office_region(row["name"]) or "").strip()
         if content is not None and row["name"] in content.characters:
             ch = content.characters[row["name"]]
             ch.office = new_holder_office
             ch.office_type = new_type
+            ch.office_region = archived_seat
             if fully_displaced:
                 ch.status_reason = "被顶替"
                 ch.reason_code = "被顶替"
@@ -6205,7 +6307,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         dict(row)
         for row in db.conn.execute(
             "SELECT character_name, office_title, office_type, source, dossier_id, "
-            "appointment_tenure, updated_at FROM character_offices"
+            "appointment_tenure, region_id, updated_at FROM character_offices"
         ).fetchall()
     ]
     office_change_rows = [
@@ -6298,7 +6400,7 @@ def _restore_person_write_state(
     db.conn.executemany(
         "INSERT INTO character_offices "
         "(character_name, office_title, office_type, source, dossier_id, "
-        "appointment_tenure, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "appointment_tenure, region_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 row["character_name"],
@@ -6307,6 +6409,7 @@ def _restore_person_write_state(
                 row["source"],
                 row.get("dossier_id"),
                 row["appointment_tenure"],
+                str(row.get("region_id") or ""),
                 row["updated_at"],
             )
             for row in office_rows
@@ -6422,6 +6525,32 @@ def _appointment_tenure_scope(db: GameDB, appointment_tenure: str):
         db.conn._appointment_tenure = previous_tenure
 
 
+def _office_appointment_failure(
+    name: str,
+    new_office: str,
+    exc: BaseException,
+    *,
+    kind: str = "",
+    reason_suffix: str = "",
+) -> Dict[str, object]:
+    """Map known appointment write failures to typed rejection categories.
+
+    Category comes only from typed exception attributes — never from message text.
+    """
+    result: Dict[str, object] = {
+        "name": name,
+        "new_office": new_office,
+        "rejected": True,
+        "reason": f"落库失败：{exc}{reason_suffix}",
+    }
+    if kind:
+        result["kind"] = kind
+    category = getattr(exc, "category", None)
+    if isinstance(category, str) and category:
+        result["category"] = category
+    return result
+
+
 def apply_office_appointment(
     db: GameDB,
     state: GameState,
@@ -6434,6 +6563,7 @@ def apply_office_appointment(
     new_office_type: str = "",
     faction: str = "中立",
     appointment_tenure: str = "真除",
+    region_id: str = "",
     llm_config: Any = None,
     commit: bool = True,
 ) -> Dict[str, object]:
@@ -6470,14 +6600,26 @@ def apply_office_appointment(
         old_office = content.characters[name].office
         snapshot = _snapshot_person_write_state(db, content)
         try:
-            new_office, new_office_type, appointment_tenure = _canonical_appointment_fields(
-                {
-                    "office": new_office,
-                    "office_type": new_office_type,
-                    "任别": appointment_tenure,
-                },
-                current_office_type=current_office_type,
-                llm_config=llm_config or db.llm_config,
+            new_office, new_office_type, appointment_tenure, raw_seat = (
+                _canonical_appointment_fields(
+                    {
+                        "office": new_office,
+                        "office_type": new_office_type,
+                        "任别": appointment_tenure,
+                        "region_id": region_id,
+                    },
+                    current_office_type=current_office_type,
+                    llm_config=llm_config or db.llm_config,
+                )
+            )
+            # Resolved seat is the sole identity for write / displace / projection.
+            # Local same-office omit-region reuses character_offices; central strips.
+            seat = _resolve_appointment_seat(
+                db,
+                name=name,
+                office=new_office,
+                office_type=new_office_type,
+                region_id=raw_seat,
             )
             if cur_status != "active":
                 db.set_character_status(
@@ -6493,6 +6635,7 @@ def apply_office_appointment(
                     name, new_office, new_office_type,
                     source=reason[:60] or "诏书调任", llm_config=llm_config,
                     commit=commit,
+                    region_id=seat,
                 )
             if cur_status == "active":
                 db.conn.execute(
@@ -6504,12 +6647,15 @@ def apply_office_appointment(
                     content.characters[name].reason_code = ""
                 if commit:
                     db.conn.commit()
+            # Prefer post-write authority; never fall back to caller raw region.
+            seat = db.character_office_region(name) or seat
             displaced_parts = _displace_duplicate_offices(
-                db, content, name, new_office, commit=commit
+                db, content, name, new_office, region_id=seat, commit=commit,
             )
             ch = content.characters[name]
             ch.office = new_office
             ch.office_type = new_office_type
+            ch.office_region = seat
             if registry is not None:
                 registry.refresh(name)
                 # 被顶替者 office/office_type 也变了,一并刷 Agent,免本回合后续用陈旧身份/工具(线上 gemini)。
@@ -6517,7 +6663,7 @@ def apply_office_appointment(
                     registry.refresh(dp.split(":")[0])
         except Exception as exc:
             _restore_person_write_state(db, content, snapshot, commit=commit)
-            return {"name": name, "new_office": new_office, "rejected": True, "reason": f"落库失败：{exc}"}
+            return _office_appointment_failure(name, new_office, exc)
         return {
             "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
             "kind": "transfer", "reason": reason,
@@ -6538,16 +6684,27 @@ def apply_office_appointment(
     # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
     snapshot = _snapshot_person_write_state(db, content)
     try:
-        new_office, new_office_type, appointment_tenure = _canonical_appointment_fields(
-            {
-                "office": new_office,
-                "office_type": new_office_type,
-                "任别": appointment_tenure,
-            },
-            llm_config=llm_config or db.llm_config,
+        new_office, new_office_type, appointment_tenure, raw_seat = (
+            _canonical_appointment_fields(
+                {
+                    "office": new_office,
+                    "office_type": new_office_type,
+                    "任别": appointment_tenure,
+                    "region_id": region_id,
+                },
+                llm_config=llm_config or db.llm_config,
+            )
+        )
+        seat = _resolve_appointment_seat(
+            db,
+            name=name,
+            office=new_office,
+            office_type=new_office_type,
+            region_id=raw_seat,
         )
         appt = {"name": name, "office": new_office, "office_type": new_office_type,
-                "faction": faction, "reason": reason, "approved": True}
+                "faction": faction, "reason": reason, "approved": True,
+                "office_region": seat}
         with _appointment_tenure_scope(db, appointment_tenure):
             appointed, _ = apply_appointment(
                 db,
@@ -6559,12 +6716,13 @@ def apply_office_appointment(
                 commit=commit,
             )
         if appointed:
-            # 新任也按 office 文字去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
+            # 新任也按 office+任所 去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
             # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
             # displaced 统一取 _displace_duplicate_offices 的 List[str](apply_appointment 的单名
             # displaced 在去 replaces 后恒空,留着会让本字段时而 str 时而 list,故弃)(线上 gemini)。
+            seat = db.character_office_region(appointed) or seat
             displaced_parts = _displace_duplicate_offices(
-                db, content, appointed, new_office, commit=commit
+                db, content, appointed, new_office, region_id=seat, commit=commit,
             )
             # 被顶替者一并刷 Agent(新任者 apply_appointment 内已注册)(线上 gemini)。
             if registry is not None:
@@ -6574,8 +6732,10 @@ def apply_office_appointment(
                     **({"displaced": displaced_parts} if displaced_parts else {})}
     except Exception as exc:
         _restore_person_write_state(db, content, snapshot, commit=commit)
-        return {"name": name, "new_office": new_office, "rejected": True, "kind": "appoint",
-                "reason": f"落库失败：{exc}；原 status={cur_status or '不在册'}"}
+        return _office_appointment_failure(
+            name, new_office, exc, kind="appoint",
+            reason_suffix=f"；原 status={cur_status or '不在册'}",
+        )
     # apply_appointment 返回假值（查重拒/approved false/字段空——现均改库前早退）：防御性还原快照、
     # 与 except 路对称，确保此分支在任何 apply_appointment 行为下都不留半落库（P1 第一铁律，线上 gemini R3）。
     _restore_person_write_state(db, content, snapshot, commit=commit)
@@ -6619,6 +6779,22 @@ def _apply_person_changes(
         if status is not None:
             result["status"] = status
         return result
+
+    def project_appointment_result(
+        item: Dict[str, object],
+        result: Dict[str, object],
+    ) -> Dict[str, object]:
+        """Project typed appointment rejections onto ADR 0015 item/category shape."""
+        if not result.get("rejected"):
+            return result
+        category = str(result.get("category") or "")
+        if not category:
+            return result
+        shaped = rejected(item, str(result.get("reason") or ""), category)
+        for key, value in result.items():
+            if key not in shaped:
+                shaped[key] = value
+        return shaped
 
     def origin_rejected(item: Dict[str, object]) -> Dict[str, object] | None:
         error = db.effect_origin_rejection(origin_ref) if require_origin else None
@@ -6952,19 +7128,28 @@ def _apply_person_changes(
                     continue
                 result = {
                     "动作": effective_action,
-                    **apply_office_appointment(
-                        db,
-                        state,
-                        content,
-                        registry,
-                        name,
-                        new_office,
-                        reason=str(item.get("reason") or ""),
-                        new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
-                        faction=str(item.get("faction") or "中立"),
-                        appointment_tenure=appointment_tenure,
-                        llm_config=llm_config,
-                        commit=commit_person_change,
+                    **project_appointment_result(
+                        item,
+                        apply_office_appointment(
+                            db,
+                            state,
+                            content,
+                            registry,
+                            name,
+                            new_office,
+                            reason=str(item.get("reason") or ""),
+                            new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
+                            faction=str(item.get("faction") or "中立"),
+                            appointment_tenure=appointment_tenure,
+                            region_id=str(
+                                item.get("region_id")
+                                or item.get("任所")
+                                or item.get("辖区")
+                                or ""
+                            ).strip(),
+                            llm_config=llm_config,
+                            commit=commit_person_change,
+                        ),
                     ),
                 }
                 if transition.startswith("normalize:"):
@@ -7023,19 +7208,28 @@ def _apply_person_changes(
                     # 信用写端只消费 extractor 宣告本体行，禁盯 derived_from 文本特判。
                     "cascade_echo": True,
                 }
-            result = apply_office_appointment(
-                db,
-                state,
-                content,
-                registry,
-                name,
-                new_office,
-                reason=str(item.get("reason") or ""),
-                new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
-                faction=str(item.get("faction") or "中立"),
-                appointment_tenure=appointment_tenure,
-                llm_config=llm_config,
-                commit=False if derive_label else commit_person_change,
+            result = project_appointment_result(
+                item,
+                apply_office_appointment(
+                    db,
+                    state,
+                    content,
+                    registry,
+                    name,
+                    new_office,
+                    reason=str(item.get("reason") or ""),
+                    new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
+                    faction=str(item.get("faction") or "中立"),
+                    appointment_tenure=appointment_tenure,
+                    region_id=str(
+                        item.get("region_id")
+                        or item.get("任所")
+                        or item.get("辖区")
+                        or ""
+                    ).strip(),
+                    llm_config=llm_config,
+                    commit=False if derive_label else commit_person_change,
+                ),
             )
             wrapped = {"动作": effective_action, **result}
             if derive_label:
@@ -8206,11 +8400,65 @@ def apply_score_extraction(
     }
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
-    authorized_open_affairs = (
-        open_affair_ids_at_input if isinstance(open_affair_ids_at_input, set) else set()
+    frozen_open_affairs = (
+        set(open_affair_ids_at_input) if isinstance(open_affair_ids_at_input, set) else set()
     )
+    authorized_open_affairs = set(frozen_open_affairs)
+    # Single origin authority for this batch (GameDB.effect_origin_rejection).
+    _prev_batch_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+    _prev_batch_frozen = getattr(db, "_batch_frozen_open_affair_ids", None)
+    db._batch_authorized_open_affair_ids = authorized_open_affairs
+    db._batch_frozen_open_affair_ids = frozen_open_affairs
+    try:
+        return _apply_score_extraction_body(
+            db,
+            state,
+            extracted,
+            content=content,
+            registry=registry,
+            llm_config=llm_config,
+            candidate_event_ids_at_input=candidate_event_ids_at_input,
+            impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
+            dossier_ids_at_input=dossier_ids_at_input,
+            secret_dossier_ids_at_input=secret_dossier_ids_at_input,
+            authorized_open_affairs=authorized_open_affairs,
+            frozen_open_affairs=frozen_open_affairs,
+            caller_transaction=caller_transaction,
+            commit_now=commit_now,
+            relation_pre_roster=_relation_pre_roster,
+            validate_rejections=validate_rejections,
+        )
+    finally:
+        db._batch_authorized_open_affair_ids = _prev_batch_authorized
+        db._batch_frozen_open_affair_ids = _prev_batch_frozen
+
+
+def _apply_score_extraction_body(
+    db: GameDB,
+    state: GameState,
+    extracted: Dict[str, object],
+    *,
+    content,
+    registry,
+    llm_config: Any,
+    candidate_event_ids_at_input: Optional[set[str]],
+    impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]],
+    dossier_ids_at_input: Optional[set[int]],
+    secret_dossier_ids_at_input: Optional[set[int]],
+    authorized_open_affairs: set[int],
+    frozen_open_affairs: set[int],
+    caller_transaction: bool,
+    commit_now: bool,
+    relation_pre_roster: set[str],
+    validate_rejections: list,
+) -> Dict[str, object]:
+    """Bound apply body; batch affair authority is armed by caller."""
     from uuid import uuid4
-    from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+    from ming_sim.entities.affair import (
+        ATTACH_BIRTH,
+        UnauthorizedAffairOriginRef,
+        declaration_from_payload,
+    )
 
     batch_new_identities: dict[str, tuple[str, str, str]] = {}
 
@@ -8222,8 +8470,8 @@ def apply_score_extraction(
             return item, None
         try:
             parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
-        except (TypeError, ValueError):
-            return item, None
+        except (TypeError, ValueError) as exc:
+            return item, str(exc)
         if parsed is None or parsed.get("attach") != "new":
             return item, None
         identity = str(parsed.get("identity") or "").strip()
@@ -8272,9 +8520,6 @@ def apply_score_extraction(
             authorized_ids=authorized_open_affairs,
         )
 
-    # #1812：affair 了结声明挪到 issue tracker（close_issues 等）落地之后再
-    # 应用——同批先结清挂靠的 issue，declare_closed 那道唯一 mutation seam
-    # 才能看到最新 issue 状态，不误拒"同批先结案再了结事务"。
     # #623：召对 extraction 真入口——反悔/坚持消费哭谏条（须先于 cancels 物化，
     # 使 persist 先结账，cancels 环看到已非 active 而跳过，防双路径）。
     from ming_sim.breach_plea import resolve_breach_pleas_from_extraction
@@ -8548,7 +8793,7 @@ def apply_score_extraction(
             registry=registry,
             llm_config=llm_config,
             allow_legacy_partial_power=legacy,
-            external_transaction=caller_transaction,
+            external_transaction=db.conn.in_transaction,
             origin_ref=origin_ref,
             require_origin=require_origin,
         )
@@ -8560,60 +8805,87 @@ def apply_score_extraction(
         applied_person_changes.extend(results)
         return results
 
+    def _apply_person_changes_itemwise(
+        changes: List[Dict[str, object]], *, phase: str,
+    ) -> None:
+        """Apply carrier-bound person changes atomically one item at a time."""
+        for index, person_change in enumerate(changes):
+            savepoint = f"person_affair_{phase}_{index}"
+            db.conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                origin_ref = _origin_ref_from_result_item(person_change)
+                results = _apply_normalized_person_changes(
+                    [dict(person_change)], legacy=legacy_person_mode, origin_ref=origin_ref,
+                )
+                if not results or all(result.get("rejected") for result in results):
+                    db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+            except UnauthorizedAffairOriginRef as exc:
+                # Narrow LLM origin authorization failure only — not TypeError/
+                # ValueError/KeyError, which stay fail-loud with writer/DB faults.
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+                applied_person_changes.append({
+                    "name": str(person_change.get("name") or "").strip(),
+                    "动作": str(person_change.get("动作") or "").strip(),
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": str(exc), "item": dict(person_change),
+                })
+            except Exception:
+                # The adapter has already converted admissible LLM input errors
+                # into rejected results.  Anything escaping it is an execution
+                # failure: restore this item's savepoint, then fail loud.
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+                raise
+
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
     # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
     # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
-    economy_moves = []
+    applied_economy: List[Dict[str, object]] = []
     economy_rejections: List[Dict[str, object]] = []
-    for move in extracted.get("economy_moves") or []:
-        if not isinstance(move, dict):
-            economy_moves.append(move)
-            continue
+    for index, raw_move in enumerate(extracted.get("economy_moves") or []):
+        savepoint = f"economy_affair_{index}"
+        db.conn.execute(f"SAVEPOINT {savepoint}")
         try:
-            origin_ref = _origin_ref_from_result_item(move)
-        except (TypeError, ValueError, KeyError) as exc:
+            move = raw_move
+            if isinstance(move, dict):
+                origin_ref = _origin_ref_from_result_item(move)
+                if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
+                    move = {**move, "origin_ref": origin_ref}
+                # Structured grant dossiers already materialized their fiscal effect.
+                if origin_ref.startswith("dossier:"):
+                    dossier = _payload_owned_dossier_for_origin(db, origin_ref)
+                    if dossier is not None and str(dossier.get("action_type") or "") == "grant_allocation":
+                        db.conn.execute(f"RELEASE {savepoint}")
+                        continue
+            results = _apply_economy_list(
+                db, state, [move], commit=False, require_origin=True,
+            )
+            rejected = [row for row in results if row.get("rejected")]
+            if rejected:
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                economy_rejections.extend(rejected)
+            else:
+                applied_economy.extend(results)
+            db.conn.execute(f"RELEASE {savepoint}")
+        except UnauthorizedAffairOriginRef as exc:
+            # Narrow LLM origin authorization failure only — not TypeError/
+            # ValueError/KeyError, which stay fail-loud with writer/DB faults.
+            db.conn.execute(f"ROLLBACK TO {savepoint}")
+            db.conn.execute(f"RELEASE {savepoint}")
             economy_rejections.append({
                 "rejected": True, "category": "invalid_enum",
-                "reason": str(exc), "item": move,
+                "reason": str(exc), "item": raw_move,
             })
-            continue
-        if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
-            move = {**move, "origin_ref": origin_ref}
-        # #1503 单写者：仅按 origin_ref=dossier:<id> 复用既有 payload 案卷 provenance
-        # 判重（_payload_owned_dossier_for_origin）。不得按 army+turn 吞掉同回合
-        # 独立「盘面自发」补饷；已消费案卷身份由 extractor 输入接缝保留。
-        if not origin_ref.startswith("dossier:"):
-            economy_moves.append(move)
-            continue
-        try:
-            prefix, raw_id = origin_ref.split(":")
-            if prefix != "dossier":
-                raise ValueError("案卷 origin_ref 前缀非法")
-            dossier_id = _parse_sqlite_id(raw_id)
-        except (TypeError, ValueError):
-            # Malformed provenance is not a duplicate-allocation candidate;
-            # retain it for the durable-write seam to reject and report.
-            economy_moves.append(move)
-            continue
-        dossier = _payload_owned_dossier_for_origin(db, origin_ref)
-        if dossier is None or str(dossier.get("action_type") or "") != "grant_allocation":
-            economy_moves.append(move)
-            continue
-        # ADR 0055: structured allocation effects are materialized from the
-        # dossier payload.  The extractor may repeat the same non-empty delta,
-        # but origin-bound apply must not debit it twice.  Narrative dossiers
-        # remain on the extractor rail.
-    _eco_out = _apply_economy_list(
-        db,
-        state,
-        economy_moves,
-        commit=commit_now,
-        require_origin=True,
-    )
-    applied_economy = [r for r in _eco_out if not r.get("rejected")]
-    economy_rejections.extend(r for r in _eco_out if r.get("rejected"))
+        except Exception:
+            # Input rejection belongs to _apply_economy_list.  DB/writer and
+            # other execution failures must not be relabelled as invalid_enum.
+            db.conn.execute(f"ROLLBACK TO {savepoint}")
+            db.conn.execute(f"RELEASE {savepoint}")
+            raise
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
@@ -8813,19 +9085,7 @@ def apply_score_extraction(
                 state, {power_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
             ))
 
-    for person_change in pre_issue_person_changes:
-        try:
-            origin_ref = _origin_ref_from_result_item(person_change)
-        except (TypeError, ValueError, KeyError) as exc:
-            applied_person_changes.append({
-                "name": str(person_change.get("name") or "").strip(),
-                "动作": str(person_change.get("动作") or "").strip(),
-                "rejected": True, "category": "invalid_enum",
-                "reason": str(exc), "item": dict(person_change),
-            })
-            continue
-        clean_change = dict(person_change)
-        _apply_normalized_person_changes([clean_change], legacy=legacy_person_mode, origin_ref=origin_ref)
+    _apply_person_changes_itemwise(pre_issue_person_changes, phase="pre")
 
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
     issue_summary = apply_issue_tracker_output(db, state, {
@@ -8843,9 +9103,9 @@ def apply_score_extraction(
         defer_event_trigger_ids=strategic_event_pool_ids,
         open_affair_ids_at_input=authorized_open_affairs)
 
-    # #1812：issue tracker 落地（含 close_issues）之后再应用 affair 了结声明，
-    # 使 declare_closed 那道唯一 mutation seam 校验 active linked issue 时，
-    # 看到的是同批已结案的最新状态——不误拒"同批先结清 issue 再了结 affair"。
+    # Affair closure observes the batch's final issue state. In particular, a
+    # same-batch linked issue must prevent closure rather than leave a closed
+    # affair pointing at active work.
     for raw in extracted.get("affair_declarations") or []:
         try:
             if not isinstance(raw, dict):
@@ -8853,7 +9113,7 @@ def apply_score_extraction(
             db.affairs.close_from_declaration(
                 raw,
                 turn=int(state.turn),
-                authorized_ids=authorized_open_affairs,
+                authorized_ids=frozen_open_affairs,
             )
         except (TypeError, ValueError, KeyError) as exc:
             validate_rejections.append(
@@ -9070,7 +9330,8 @@ def apply_score_extraction(
         for item in event_person_changes:
             try:
                 origin_ref = _origin_ref_from_result_item(item)
-            except (TypeError, ValueError, KeyError) as exc:
+            except UnauthorizedAffairOriginRef as exc:
+                # Same narrow origin-auth signal as itemwise economy/person paths.
                 event_person_results.append({
                     "name": str(item.get("name") or "").strip(),
                     "动作": str(item.get("动作") or "").strip(),
@@ -9101,24 +9362,20 @@ def apply_score_extraction(
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
             apply_event_cascading_invalidations(state, db, commit=commit_now)
             new_issue["reason"] = "事件已记为触发，软判结果已落主账"
+            # Successful person applies already extended applied_person_changes via
+            # _apply_normalized_person_changes (same object ids). Origin-auth rejects
+            # only lived in event_person_results — promote them once into the final
+            # projection so material siblings cannot erase the structured trace.
+            present = {id(row) for row in applied_person_changes}
+            for row in event_person_results:
+                if row.get("rejected") and id(row) not in present:
+                    applied_person_changes.append(row)
         else:
             new_issue["rejected"] = True
             new_issue["category"] = "missing_world_state_delta"
             new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队均未成功）"
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""), reason=new_issue["reason"])
-    for person_change in post_issue_person_changes:
-        try:
-            origin_ref = _origin_ref_from_result_item(person_change)
-        except (TypeError, ValueError, KeyError) as exc:
-            applied_person_changes.append({
-                "name": str(person_change.get("name") or "").strip(),
-                "动作": str(person_change.get("动作") or "").strip(),
-                "rejected": True, "category": "invalid_enum",
-                "reason": str(exc), "item": dict(person_change),
-            })
-            continue
-        clean_change = dict(person_change)
-        _apply_normalized_person_changes([clean_change], legacy=legacy_person_mode, origin_ref=origin_ref)
+    _apply_person_changes_itemwise(post_issue_person_changes, phase="post")
 
     def _norm_int_leaf(v):
         """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
@@ -9644,7 +9901,7 @@ def apply_score_extraction(
         # T1 B 案：端点 ∈ 批内 pre∪post 名册并集——同批退场者与同批入场者的
         # 互动都落；前后均不合格（幻觉/皇帝入大臣端）仍拒收。此处已在该批人物
         # 变更全部 apply 之后，live 投影即 post-roster。
-        allowed_endpoint_names=_relation_pre_roster | {
+        allowed_endpoint_names=relation_pre_roster | {
             row["name"] for row in db.current_court_roster_rows(state)
         },
     )

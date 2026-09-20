@@ -28,6 +28,7 @@ class LLMUnavailable(Exception):
         provider_message: str = "",
         status_code: int | None = None,
         transport_attempts: list | None = None,
+        stage: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -36,6 +37,8 @@ class LLMUnavailable(Exception):
         self.status_code = status_code
         # #1465：结构化 attempt 账（可回指）；缺省 None＝未走统一 transport
         self.transport_attempts = transport_attempts
+        # #884：外呼阶段名（smoke-main / smoke-advanced）；缺省 None＝未标阶段
+        self.stage = stage
 
 
 class PromulgationHealEvidence(NamedTuple):
@@ -57,6 +60,18 @@ class LLMContractError(Exception):
         self.raw_value = raw_value
         # #1753：颁布判决有界补交耗尽时携带首次+补交坏输出与已合规判决证据。
         self.heal_evidence = heal_evidence
+
+
+class OfficeAppointmentRejection(ValueError):
+    """Local office appointment write rejection with ADR 0015 category.
+
+    category is the machine contract (missing_field / missing_ref); message is
+    human presentation only and must not be parsed by callers.
+    """
+
+    def __init__(self, message: str, *, category: str) -> None:
+        super().__init__(message)
+        self.category = category
 
 
 class SettlementAbort(Exception):

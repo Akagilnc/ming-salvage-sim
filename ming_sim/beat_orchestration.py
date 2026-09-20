@@ -78,8 +78,7 @@ class BeatInputs:
     person_name: str = ""
     characterization: str = ""       # 他是谁（ADR 0033）
     summon_method: str = ""          # 他怎么被召来（发起账召法）
-    perspectival_world: str = ""     # 他知道什么（ADR 0034，经供给接口）
-    court_tension: str = ""          # 当下朝局张力（定性，见闻内切片）
+    opening_context: str = ""       # 最小开场（身份/在场/日期/正经手/已说）
     prior_appearances: Tuple[str, ...] = ()  # 前次入殿与奏对账目
     public_layer: Tuple[str, ...] = ()       # 本夜公开层账（该知扩散取数）
     audience_scenes: Tuple[str, ...] = ()    # 待顶出场面的结构化在世事实（由开夜内容生成自然呈现）
@@ -97,14 +96,6 @@ def _default_knowledge_provider(db: Any, state: Any) -> KnowledgeProvider:
         return db.get_character_knowledge(state, name) or {}
 
     return provider
-
-
-def _court_tension(knowledge: Dict[str, Any]) -> str:
-    """从见闻投影取定性朝局张力：security 域（audience=True 定性口径，P4 安全）。
-    此人所任官职不含该域＝他不感知这层张力，返回空（perspectival，非全知）。"""
-    world = knowledge.get("world") if isinstance(knowledge, dict) else None
-    world = world or {}
-    return str(world.get("security") or "").strip()
 
 
 def _characterization(db: Any, person_name: str) -> str:
@@ -209,13 +200,37 @@ def assemble_beat_inputs(
         subject = roster[0] if roster else ""
 
     knowledge = provider(subject) if subject else {}
-    from ming_sim.knowledge import render_character_knowledge
 
-    perspectival_world = (
-        render_character_knowledge(knowledge, subject, db=db, state=state)
-        if subject else ""
+    from types import SimpleNamespace
+    from ming_sim.materials import (
+        _handled_affair_lines,
+        _present_names,
+        _spoken_this_scene,
+        _visible_affair_lines,
+        minimal_opening_context,
     )
-    court_tension = _court_tension(knowledge)
+
+    content = getattr(db, "content", None)
+    character = None
+    if content is not None and subject:
+        character = (getattr(content, "characters", None) or {}).get(subject)
+    if character is None:
+        character = SimpleNamespace(
+            name=subject,
+            office=str((knowledge or {}).get("office") or ""),
+        )
+    issue_materials = _visible_affair_lines(knowledge if isinstance(knowledge, dict) else {})
+    handled = (
+        _handled_affair_lines(db, state, subject, issue_materials)
+        if subject else []
+    )
+    opening_context = minimal_opening_context(
+        character,
+        state,
+        _present_names(db, character) if subject else [],
+        handled,
+        _spoken_this_scene(db, character) if subject else "",
+    )
 
     characterization = ""
     prior_appearances: Tuple[str, ...] = ()
@@ -266,8 +281,7 @@ def assemble_beat_inputs(
         person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT, BEAT_HANDOFF, BEAT_SUMMON) else "",
         characterization=characterization,
         summon_method=str(summon_method or "") if beat_kind in (BEAT_ENTER, BEAT_SUMMON) else "",
-        perspectival_world=perspectival_world,
-        court_tension=court_tension,
+        opening_context=opening_context,
         prior_appearances=prior_appearances,
         public_layer=tuple(extra_public_layer) + _public_layer_bodies(
             db, night_id, before_entry_id=prior_bound,
@@ -324,8 +338,7 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
             "人物": inputs.person_name,
             "人物特征": inputs.characterization,
             "召法": inputs.summon_method,
-            "人物所知": inputs.perspectival_world,
-            "人物感知的朝局张力": inputs.court_tension,
+            "人物开场": inputs.opening_context,
             "此前入殿与奏对": inputs.prior_appearances,
             "此前殿上公开之事": inputs.public_layer,
         }

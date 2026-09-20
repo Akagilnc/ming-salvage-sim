@@ -249,20 +249,23 @@ def test_recommendation_appointment_preserves_kind_and_restores_both_types(game)
     # The staged payload carries the original candidate snapshot; commit must
     # use it instead of reclassifying the candidate after appointment.
     for row, office in ((offstage, "巡盐御史"), (active, "河道总督")):
+        payload = {
+            "name": row["name"], "office": office,
+            "faction": row["faction"], "reason": "荐人采纳",
+            "recommendation": {
+                "candidate": row,
+                "recommender": recommender.name,
+            },
+        }
+        if office == "河道总督":
+            payload["region_id"] = "henan"
         action_id = db.stage_pending_action(
             state.turn,
             kind="office",
             action="任命",
             minister_name=recommender.name,
             target_id=None,
-            payload={
-                "name": row["name"], "office": office,
-                "faction": row["faction"], "reason": "荐人采纳",
-                "recommendation": {
-                    "candidate": row,
-                    "recommender": recommender.name,
-                },
-            },
+            payload=payload,
         )
         result = db.commit_pending_actions(
             state, content=content, registry=None, action_ids=[action_id]

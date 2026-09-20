@@ -1008,6 +1008,8 @@ def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
 
 
 def _open_affair_ids_from_payload(payload: object) -> set[int]:
+    from ming_sim.entities.affair import parse_positive_affair_id
+
     if not isinstance(payload, dict):
         return set()
     raw = payload.get("open_affairs")
@@ -1018,11 +1020,9 @@ def _open_affair_ids_from_payload(payload: object) -> set[int]:
         if not isinstance(item, dict):
             continue
         try:
-            affair_id = int(item.get("id"))
+            ids.add(parse_positive_affair_id(item.get("id")))
         except (TypeError, ValueError):
             continue
-        if affair_id > 0:
-            ids.add(affair_id)
     return ids
 
 
@@ -2574,7 +2574,10 @@ def prepare_resolve_front_half(
                 transit_arrivals_out=transit_arrivals_box,
             )
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
-            placeholder_payload = {"transit_arrivals": list(transit_arrivals_box)}
+            placeholder_payload = {
+                "transit_arrivals": list(transit_arrivals_box),
+                "open_affairs": db.affairs.input_brief(getattr(db, "textual_facts", None)),
+            }
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
             #（clear_for_resimulation 后 phase 非 FRONT_HALF_DONE 重入时尤甚）。
             prior_placeholder = db.get_resolve_context(int(state.turn))

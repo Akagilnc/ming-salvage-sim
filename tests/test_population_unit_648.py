@@ -298,7 +298,7 @@ def test_web_region_payload_has_no_population_wan_projection(game):
     assert node_bz["population"] == BEIZHILI_POP_PERSONS
 
 
-# ── W2：新档 region_detail/inspect_region sub-万分支 ─────────────────────────
+# ── W2：新档 region_detail sub-万分支 ─────────────────────────
 
 def test_new_save_region_detail_sub_wan_population_label(game):
     """新档人口 0—9999 不得报「约0万口」；与 simulation 投影同口径「不足一万口」。"""

@@ -340,7 +340,7 @@ def load_llm_config(
     advanced_thinking_level: str = "",
 ) -> LLMConfig:
     api_key = (api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
-    # 探针：MING_SIM_LLM_BACKEND=agy|codex 时走本地 CLI，无需 api key。
+    # 探针：MING_SIM_LLM_BACKEND=codex|claude 时走本地 CLI，无需 api key。
     # CLI 通道下 api_key 留空——占位符只在 create_chat_model 构造 CliChat 时注入，
     # 不让 magic-string 进 LLMConfig.api_key、不流经任何 key 路径。
     from ming_sim.cli_backend import cli_backend_from_env

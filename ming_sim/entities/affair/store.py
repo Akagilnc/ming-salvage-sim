@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ming_sim.applier import connection_owns_transaction, sanitize_sqlite_text
+from ming_sim.strict_types import strict_int
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
@@ -28,6 +29,14 @@ _POINTER_TABLES = {
 _POINTER_KEY_COLUMNS = {
     "characters": "name",
 }
+_UNAUTHORIZED_AFFAIR_ORIGIN = "事务不在本批可见输入"
+
+
+class UnauthorizedAffairOriginRef(ValueError):
+    """LLM cited an affair outside this batch's frozen authorized set."""
+
+    def __init__(self, message: str = _UNAUTHORIZED_AFFAIR_ORIGIN) -> None:
+        super().__init__(message)
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS affairs (
@@ -130,19 +139,8 @@ class AffairStore:
         return tuple(_row_to_affair(row) for row in rows)
 
     def declare_closed(self, affair_id: int, *, turn: int) -> Affair:
-        """LLM-declared close. LLM decides the storyline boundary; the one
-        typed consistency contract enforced here (ADR 0154 decision key
-        `affair-close-requires-no-active-linked-issues`) is that a closed
-        affair may not have an active linked issue — reject the declaration
-        and leave the affair open, no dossier-status checks beyond that.
-        """
+        """LLM-declared close. No conditions, no dossier-status checks."""
         self.get(affair_id)
-        active_linked = self._conn.execute(
-            "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
-            (int(affair_id),),
-        ).fetchone()
-        if active_linked is not None:
-            raise ValueError(f"事务 {affair_id} 仍有未结的挂靠局势，不能了结")
         owns = connection_owns_transaction(self._conn)
         self._conn.execute(
             "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
@@ -164,14 +162,7 @@ class AffairStore:
         parsed = parse_affair_declaration(declaration, allowed=allowed)
         if parsed["attach"] == _ATTACH_EXISTING:
             affair_id = int(parsed["affair_id"])
-            affair = self.get(affair_id)
-            # #1812：已了结事务不得再接新案卷（ADR 0154／#1818 决定 2：接到哪件
-            # 已开着的事上）。LLM 仍判剧情边界；代码只执行这条 typed 状态契约。
-            # existing 的 affair_id 是否取自拆旨那次可见集合，在声明抽取的同一次
-            # 读取上已当场验过（cli_backend.py _affair_declaration_from_draft_obj）；
-            # 此处只做成案点的 live-open 校验，不重复保存/透传整份开放集合。
-            if affair.status != "open":
-                raise ValueError(f"事务 {affair_id} 已了结，不能再接新案卷")
+            self.get(affair_id)
             return affair_id
         key = str(parsed.get("birth_key") or "").strip()
         if key:
@@ -217,13 +208,19 @@ class AffairStore:
         turn: int,
         authorized_ids: set[int],
     ) -> int:
-        """Close only an open affair id visible in this batch's structured input."""
+        """Close only a visible affair without an active linked issue."""
         parsed = parse_affair_declaration(
             declaration, allowed=ATTACH_RESULT_CLOSE,
         )
         affair_id = int(parsed["affair_id"])
         if affair_id not in authorized_ids:
-            raise ValueError("事务不在本批可见输入")
+            raise UnauthorizedAffairOriginRef()
+        active_issue = self._conn.execute(
+            "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
+            (affair_id,),
+        ).fetchone()
+        if active_issue is not None:
+            raise ValueError("事务尚有未了局势")
         return self.declare_closed(affair_id, turn=turn).id
 
     def attach_from_declaration(
@@ -241,7 +238,7 @@ class AffairStore:
         parsed = parse_affair_declaration(declaration, allowed=ATTACH_BIRTH)
         if parsed["attach"] == _ATTACH_EXISTING and authorized_ids is not None:
             if int(parsed["affair_id"]) not in authorized_ids:
-                raise ValueError("事务不在本批可见输入")
+                raise UnauthorizedAffairOriginRef()
         current = self._current_pointer(table, row_id)
         peeked = self.peek_declared_id(declaration, allowed=ATTACH_BIRTH)
         if current:
@@ -255,6 +252,8 @@ class AffairStore:
             declaration, year=year, period=period, turn=turn,
             allowed=ATTACH_BIRTH,
         )
+        if authorized_ids is not None:
+            authorized_ids.add(int(affair_id))
         self.attach_pointer(table, row_id, affair_id)
         return affair_id
 
@@ -316,6 +315,20 @@ class AffairStore:
 
     def point_issue(self, issue_id: int, affair_id: int) -> None:
         self.attach_pointer("issues", issue_id, affair_id)
+
+    def assert_origin_matches_declaration(
+        self, origin_ref: str, declaration: Mapping[str, object]
+    ) -> None:
+        """Preflight two pointers before their carrier row is inserted."""
+        kind, target = parse_origin_ref(origin_ref)
+        if kind != _ORIGIN_DOSSIER:
+            return
+        dossier_affair = self._current_pointer("decree_dossiers", int(target))
+        declared = self.peek_declared_id(declaration, allowed=ATTACH_BIRTH)
+        if dossier_affair and declared != dossier_affair:
+            raise ValueError(
+                f"案卷已指向事务 {dossier_affair}，不能同时声明 {declared or '新事务'}"
+            )
 
     def bind_from_origin_ref(self, table: str, row_id: int, origin_ref: str) -> None:
         """Follow origin_ref onto an affair. Dossier hops; affair:id binds directly."""
@@ -391,18 +404,27 @@ class AffairStore:
             return ""
         origin_ref = str(item.get("origin_ref") or item.get("来源引用") or "").strip()
         if origin_ref:
+            kind, target = parse_origin_ref(origin_ref)
+            if (
+                kind == _ORIGIN_AFFAIR
+                and authorized_ids is not None
+                and target not in authorized_ids
+            ):
+                raise UnauthorizedAffairOriginRef()
             return origin_ref
         parsed = declaration_from_payload(item, allowed=ATTACH_BIRTH)
         if parsed is None:
             return ""
         if parsed["attach"] == _ATTACH_EXISTING and authorized_ids is not None:
             if int(parsed["affair_id"]) not in authorized_ids:
-                raise ValueError("事务不在本批可见输入")
-        return self.origin_ref(
-            self.resolve_declaration(
-                parsed, year=year, period=period, turn=turn, allowed=ATTACH_BIRTH,
-            )
+                raise UnauthorizedAffairOriginRef()
+        affair_id = self.resolve_declaration(
+            parsed, year=year, period=period, turn=turn, allowed=ATTACH_BIRTH,
         )
+        # Same-batch births become authorized for later durable-effect carriers.
+        if authorized_ids is not None:
+            authorized_ids.add(int(affair_id))
+        return self.origin_ref(affair_id)
 
     def experiences(self, affair_id: int) -> tuple[dict[str, object], ...]:
         """Read-time projection: story-ledger rows whose origin_ref points at this affair."""
@@ -442,6 +464,14 @@ class AffairStore:
         return tuple(out)
 
 
+def parse_positive_affair_id(raw: object) -> int:
+    """Affair identity: reject bool/float, keep integer-string compat, require >0."""
+    value = strict_int(raw, accept_numeric_strings=True)
+    if value <= 0:
+        raise ValueError("affair_id must be a positive integer")
+    return value
+
+
 def parse_affair_declaration(
     raw: object,
     *,
@@ -472,13 +502,11 @@ def parse_affair_declaration(
             out["identity"] = identity
         return out
     try:
-        affair_id = int(raw.get("affair_id"))
-    except (TypeError, ValueError):
-        affair_id = 0
-    if affair_id <= 0:
+        affair_id = parse_positive_affair_id(raw.get("affair_id"))
+    except (TypeError, ValueError) as exc:
         raise ValueError(
             "了结须有 affair_id" if attach == _ATTACH_CLOSE else "接到已开事务须有 affair_id"
-        )
+        ) from exc
     return {"attach": attach, "affair_id": affair_id}
 
 
@@ -501,10 +529,8 @@ def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:
     """Canonical exact reference only: `affair:<id>` or `dossier:<id>`.
 
     No slash suffix accepted here — that is the story-experience seam's own
-    provenance shape (`affair:<id>/turn:<n>/<k>`), recognized by
-    `affair_id_from_experience_origin_ref` instead, so a durable-effect origin
-    check (`db.effect_origin_rejection`) reusing this parser cannot be widened
-    into accepting arbitrary suffixes as canonical (#1831).
+    provenance shape (`affair:<id>/turn:<n>/<k>`). Keeping this parser exact
+    prevents durable-effect checks from accepting arbitrary suffixes as canonical.
     """
     text = str(origin_ref or "").strip()
     if ":" not in text:
@@ -519,21 +545,6 @@ def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:
     if target <= 0:
         return None, None
     return kind, target
-
-
-def affair_id_from_experience_origin_ref(origin_ref: object) -> int | None:
-    """Recognize this seam's own suffixed experience provenance:
-    `affair:<id>` or `affair:<id>/<suffix>` (e.g. `/turn:<cid>/<n>`)."""
-    text = str(origin_ref or "").strip()
-    prefix = f"{_ORIGIN_AFFAIR}:"
-    if not text.startswith(prefix):
-        return None
-    head = text[len(prefix):].split("/", 1)[0]
-    try:
-        target = int(head)
-    except (TypeError, ValueError):
-        return None
-    return target if target > 0 else None
 
 
 def _row_to_affair(row: Any) -> Affair:

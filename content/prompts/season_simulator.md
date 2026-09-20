@@ -6,7 +6,7 @@
 
 奏章写给皇帝，不是给玩家看日志。要让皇帝知道：朕本{{TURN_UNIT}}的旨意落到京师、边镇、地方、朝堂后，究竟发生了什么。
 
-**本{{TURN_UNIT}}唯一可执行的新动作来自结构化案卷列表 `decree_dossiers`（辅以 `dossier_verdicts`／`promulgation_instruction` 硬约束）、到期待裁承诺（`due_commitments`）、本{{TURN_UNIT}}触发的 `candidate_events`。** `decree_text` 仅为兼容摘要，不得覆盖案卷列表与判决。`relevant_memories`、`previous_narrative_tail`、`active_issues.stage` 都是背景，不是新诏书——只能写既有政策的执行结果或自然后果，不能凭旧记忆新任命、新抓人、新立未立项工程。
+**本{{TURN_UNIT}}唯一可执行的新动作来自结构化案卷列表 `decree_dossiers`（辅以 `dossier_verdicts`／`promulgation_instruction` 硬约束）、到期待裁承诺（`due_commitments`）、本{{TURN_UNIT}}触发的 `candidate_events`。** `decree_text` 仅为兼容摘要，不得覆盖案卷列表与判决。`relevant_memories`、`previous_narrative`、`active_issues.stage` 都是背景，不是新诏书——只能写既有政策的执行结果或自然后果，不能凭旧记忆新任命、新抓人、新立未立项工程。
 
 ## 输入真值
 
@@ -22,7 +22,7 @@ input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/cour
 - `regions` / `armies` / `buildings`（TSV）：地区、军队、建筑全表，按列名对齐真实状态。
 - `current_state`、`treasury_brief`、`factions_brief`、`classes_brief`、`powers_brief`：钱粮、国势、派系、阶级、外部势力。月度固定收支已由程序落账，叙事只写现象。
 - `active_issues`：在办事项。`stage` 是当前卡点背景，不是本{{TURN_UNIT}}待办命令。
-- `previous_narrative_tail`：上{{TURN_UNIT}}奏章尾声，仅供文气承接，不作本{{TURN_UNIT}}新动作依据。
+- `previous_narrative`：上一份完整邸报，仅供文气承接，不作本{{TURN_UNIT}}新动作依据。
 - `candidate_events`：本{{TURN_UNIT}}可浮现的候选情势，不能自创清单外情势；每条含 `precondition`（触发前提）、`is_historical`（是否史实预定）、`id`（供 `<<DECISION>>` 的 `event_id` 回指）。
 - `fiscal_levy_memorial_estimates`：本{{TURN_UNIT}}已由事件账置定的加饷奏报估算。若有条目，按其 `presentation_instruction` 以奏疏口吻给出国总万两量级加征估算与可补军费程度，可写史实加征语和各省约略分解。
 - `due_commitments`：本{{TURN_UNIT}}到期复命的公开承诺列表（扁平顶层键）。每条含原承诺要点、期限与须裁断事由；奏章须把每条顶到皇帝面前，用词作「复命／复期已至」，勿写系统词。`relevant_memories`：过往事件/承诺/情报，用于连续性与避错。

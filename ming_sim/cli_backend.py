@@ -1,4 +1,4 @@
-"""本地 CLI LLM 后端：把 agy / codex 当 LLM，脱离 api key。
+"""本地 CLI LLM 后端：用已支持的本机 agent runner 调用 LLM，脱离 api key。
 
 探针目标：把游戏 LLM 后端从「api key 调远端」换成「本地自治 CLI agent」。
 做法 = 继承 agno 的 OpenAIChat，只覆盖最底层 invoke：
@@ -6,12 +6,12 @@
 交回 agno 原生 _parse_provider_response 解析。agno 全套（解析/流式回退/
 消息格式）原样复用，零 function-calling（工具不传，大臣退化成纯文本进谏）。
 
-启用：环境变量 MING_SIM_LLM_BACKEND=agy（或 codex）。
-机器依赖：本机已装并登录 agy（~/.local/bin/agy）/ codex。不兼容别的机器——
+启用：环境变量 MING_SIM_LLM_BACKEND=<runner>。
+机器依赖：本机已安装并登录所选 runner。不兼容别的机器——
 这是探针的预期，不是缺陷。
 
 调用约定来自 wiki/concepts/codex-bot-conventions.md + cross-model-review.md：
-- agy：先暖 keychain（auth 是 race），warm + retry（初试 1 + 最多 3），--sandbox。
+- agy：先暖 keychain（auth 是 race），Agy 1.2.0 用 `--print=<prompt>`。
 - codex：`codex exec -` 必须 stdin pipe，绝不 positional；始终 2>&1。
 """
 
@@ -32,9 +32,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import (
-    Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Type, Union,
-)
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Type, Union
 
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
@@ -92,17 +90,14 @@ _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
-# #1256：cursor / kimi / grok 本机 CLI runner；#1274-qa-y1 补 pi（owner：电脑上有的 CLI 一起接入）。
-# opencode 庭裁走 api 通道，不入此名单。
 _CURSOR_BIN = os.environ.get("MING_SIM_CURSOR_BIN", "cursor-agent")
 _KIMI_BIN = os.environ.get("MING_SIM_KIMI_BIN", "kimi")
 _GROK_BIN = os.environ.get("MING_SIM_GROK_BIN", "grok")
 _PI_BIN = os.environ.get("MING_SIM_PI_BIN", "pi")
 # 受支持 CLI runner 单一真源（membership + 文案 + env 回落共用）。
 _CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
-# #1830 / #1827：材料模式只承认 Codex 与 Claude。其余 runner 启动前响亮拒绝。
-_MATERIALS_CLI_RUNNERS = frozenset({"codex", "claude"})
-# 闸脚本 --runner choices 单一真源（不含 agy：闸形制未用）。脚本 import 此元组，禁各自复制。
+_MATERIALS_CLI_RUNNERS = _CLI_BACKENDS
+# 闸脚本 --runner choices 与公开支持集同源。
 GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok", "pi")
 # 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
 # GATE_CLI_RUNNERS ⊂ 此序（无 agy）；禁在 menuPage/gameMenu 再硬编一份。
@@ -172,6 +167,8 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
     codex_default = cli_model_from_env("codex", CODEX_DEFAULT_MODEL)
     claude_default = cli_model_from_env("claude", CLAUDE_DEFAULT_MODEL)
     return {
+        # agy：模型档由 CLI 自身选择，只提供默认逃生档。
+        "agy": [{"value": "", "label": "默认 · gemini"}],
         # codex：默认 gpt-5.5（机理扎实、字段全）；spark 最快、建 issue 满分。
         # gpt-5.4 不入档（bench 偏长且不在「可用主力」；mini 漏 DECISION 块已淘汰）。
         "codex": [
@@ -185,23 +182,11 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
             {"value": "claude-haiku-4-5", "label": "claude-haiku-4-5 · 快"},
             {"value": "claude-sonnet-4-6", "label": "claude-sonnet-4-6 · 慢，偏离线鉴赏"},
         ],
-        # agy：模型档模糊，只给「默认（gemini）」+ 前端「其他(手填)」逃生口。
-        "agy": [
-            {"value": "", "label": "默认 · gemini"},
-        ],
-        # #1256/#1274-y1 新 runner：策展档未立，只给默认档 + 前端「其他(手填)」逃生；--model 透传。
-        "cursor": [
-            {"value": "", "label": "默认"},
-        ],
-        "kimi": [
-            {"value": "", "label": "默认"},
-        ],
-        "grok": [
-            {"value": "", "label": "默认"},
-        ],
-        "pi": [
-            {"value": "", "label": "默认"},
-        ],
+        # 尚无策展模型档的 runner 保留 CLI 自身默认。
+        "cursor": [{"value": "", "label": "默认"}],
+        "kimi": [{"value": "", "label": "默认"}],
+        "grok": [{"value": "", "label": "默认"}],
+        "pi": [{"value": "", "label": "默认"}],
     }
 
 
@@ -685,25 +670,23 @@ def _cli_runner_command(
     reasoning_strength: Optional[str] = None,
     json_events: bool = False,
     materials_dir: Optional[str] = None,
+    kimi_agent_file: Optional[str] = None,
 ) -> Tuple[List[str], Optional[str], Optional[Dict[str, str]]]:
     """runner → (argv, stdin 文本, env)。各 runner 调用约定单真源；执行读法共用 helper。
 
     实测约定（docs/LLM_BACKEND_BENCH.md §9 / #1256 / #1274-qa-y1）：
-    - agy：`-p --sandbox`，prompt 走 stdin；调用前先暖 keychain（auth race）。
+    - agy 1.2.0：`--print=<prompt>` 单参数；调用前先暖 keychain（auth race）。
     - codex：`exec -` 必须 stdin pipe（绝不 positional）；`--skip-git-repo-check`
       （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
     - claude：`-p --output-format text`，prompt 走 stdin；thinking 预算走 env。
     - cursor / kimi / grok / pi：prompt 走参数（无 stdin 约定），干净答案在 stdout。
-    材料目录（#1830 / #1827）：仅 Codex / Claude。cwd 指向目录；
-    Codex 显式 `--sandbox read-only` + `--ignore-user-config`；
-    Claude 只开放 Read/Glob/Grep。
+    材料目录（#1830 / #1827）：cwd 指向目录；各 runner 只开放读取面或由 prompt
+    明确约束只读。Agy 不另建强沙箱，也不写用户 settings。
     """
     if materials_dir and runner not in _MATERIALS_CLI_RUNNERS:
-        raise RuntimeError(
-            f"材料模式仅支持 Codex 与 Claude，拒绝 runner={runner}"
-        )
+        raise RuntimeError(f"runner 不支持材料目录：{runner}")
     if runner == "agy":
-        return [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"], prompt, None
+        return [_resolve_cli_bin("agy", _AGY_BIN), f"--print={prompt}"], None, None
     if runner == "codex":
         cmd = _codex_cmd(
             model, json_events=json_events, reasoning_strength=reasoning_strength,
@@ -717,12 +700,16 @@ def _cli_runner_command(
             "--output-format", "text",
         ]
         if materials_dir:
+            # Single native isolation group (verified on host Claude):
+            # --restricted ignores user/project/local settings, drops command
+            # tools, and confines file tools to cwd; empty mcpServers + strict
+            # blocks foreign MCP. Do not use --bare here — it skips keychain auth.
             cmd += [
+                "--restricted",
+                "--strict-mcp-config",
+                "--mcp-config", '{"mcpServers":{}}',
                 "--allowedTools", "Read", "Glob", "Grep",
-                "--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit",
-                "WebFetch", "WebSearch", "Task",
                 "--permission-mode", "dontAsk",
-                "--no-session-persistence",
             ]
         else:
             cmd += ["--disallowed-tools", *_CLAUDE_DISALLOWED]
@@ -742,6 +729,8 @@ def _cli_runner_command(
             _resolve_cli_bin("cursor", _CURSOR_BIN),
             "-p", "--output-format", "text", "--trust",
         ]
+        if materials_dir:
+            cmd += ["--mode", "ask", "--sandbox", "enabled"]
         if model:
             cmd.extend(["--model", model])
         cmd.append(prompt)
@@ -750,12 +739,18 @@ def _cli_runner_command(
         # -p 单用：本机 kimi 0.36.1 实测与 --yolo/--auto 组合会被 parse 拒收。
         cmd = [_resolve_cli_bin("kimi", _KIMI_BIN), "-p", prompt,
                "--output-format", "text"]
+        if materials_dir and kimi_agent_file:
+            cmd += ["--agent-file", kimi_agent_file]
         if model:
             cmd.extend(["-m", model])
         return cmd, None, None
     if runner == "grok":
         cmd = [_resolve_cli_bin("grok", _GROK_BIN), "-p", prompt,
                "--output-format", "plain"]
+        if materials_dir:
+            cmd += ["--tools", "Read,Glob,Grep", "--sandbox", "read-only",
+                    "--permission-mode", "dontAsk", "--disable-web-search",
+                    "--no-subagents"]
         if model:
             cmd.extend(["-m", model])
         effort = _grok_effort(reasoning_strength)
@@ -765,6 +760,10 @@ def _cli_runner_command(
     if runner == "pi":
         # --no-tools：游戏/玩家文本不可注入驱动内置 read/bash/edit/write（#1456）。
         cmd = [_resolve_cli_bin("pi", _PI_BIN), "-p", "--mode", "text", "--no-tools"]
+        if materials_dir:
+            cmd += ["--tools", "read,grep,find,ls", "--no-session",
+                    "--no-extensions", "--no-skills", "--no-prompt-templates",
+                    "--no-themes", "--no-context-files", "--no-approve"]
         if model:
             cmd.extend(["--model", model])
         thinking = _pi_thinking(reasoning_strength)
@@ -810,72 +809,86 @@ def _iter_cli_runner_text(
 
     if runner == "agy":
         _warm_keychain()  # 操作步骤（缓解 headless auth race），不是重试策略
-    cmd, stdin_text, env = _cli_runner_command(
-        runner, prompt, model=model, reasoning_strength=reasoning_strength,
-        json_events=json_events, materials_dir=materials_dir,
-    )
-    outcome = _CliProcessOutcome()
-    pieces: List[str] = []
-    final_text = ""
-    for line in _iter_cli_process_lines(
-        cmd, stdin_text=stdin_text, env=env,
-        cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
-        clock=clock, outcome=outcome,
-    ):
-        if json_events:
-            stripped = line.strip()
-            if not stripped:
+    kimi_agent_path: Optional[str] = None
+    if materials_dir and runner == "kimi":
+        handle = tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False)
+        try:
+            handle.write("---\nname: ming-material-reader\ntools:\n  - Read\n  - Grep\n  - Glob\n---\nRead-only material reviewer. Never write or execute commands.\n")
+        finally:
+            handle.close()
+        kimi_agent_path = handle.name
+    try:
+        cmd, stdin_text, env = _cli_runner_command(
+            runner, prompt, model=model, reasoning_strength=reasoning_strength,
+            json_events=json_events, materials_dir=materials_dir,
+            kimi_agent_file=kimi_agent_path,
+        )
+        outcome = _CliProcessOutcome()
+        pieces: List[str] = []
+        final_text = ""
+        for line in _iter_cli_process_lines(
+                cmd, stdin_text=stdin_text, env=env,
+                cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
+                clock=clock, outcome=outcome,
+            ):
+            if json_events:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    obj = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                delta = _codex_event_text(obj)
+                if delta:
+                    pieces.append(delta)
+                    # 已确认 stdin 写失败则不再放产出；半流不回卷、不另造缓冲。
+                    if outcome.stdin_error is None:
+                        yield delta
+                    continue
+                maybe_final = _codex_final_text(obj)
+                if maybe_final:
+                    final_text = maybe_final
                 continue
+            # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
+            pieces.append(line)
+        returncode = int(outcome.returncode or 0)
+        stderr = outcome.stderr or ""
+        stdout_text = "".join(pieces)
+        # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
+        # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
+        if outcome.stdin_error is not None:
+            raise RuntimeError(
+                f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
+            ) from outcome.stdin_error
+        if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
+            raise LLMUnavailable(
+                "LLM 连接失败。",
+                code="llm_connection_error",
+                provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
+            )
+        text = stdout_text.strip() or final_text.strip()
+        if runner == "codex" and not json_events and not text:
+            # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
+            text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
+        # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
+        if returncode != 0:
+            raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
+        if not text:
+            raise transport_failure_unavailable(
+                empty_output_failure(), attempts=1, exhausted=False,
+            )
+        # 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
+        if not json_events:
+            yield text
+        elif not pieces and final_text.strip():
+            yield final_text.strip()
+    finally:
+        if kimi_agent_path:
             try:
-                obj = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            delta = _codex_event_text(obj)
-            if delta:
-                pieces.append(delta)
-                # 已确认 stdin 写失败则不再放产出；半流不回卷、不另造缓冲。
-                if outcome.stdin_error is None:
-                    yield delta
-                continue
-            maybe_final = _codex_final_text(obj)
-            if maybe_final:
-                final_text = maybe_final
-            continue
-        # 纯文本 runner：只入缓冲刷新活动，判活前不外抛（见 docstring）。
-        pieces.append(line)
-
-    returncode = int(outcome.returncode or 0)
-    stderr = outcome.stderr or ""
-    stdout_text = "".join(pieces)
-    # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
-    # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
-    if outcome.stdin_error is not None:
-        raise RuntimeError(
-            f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
-        ) from outcome.stdin_error
-    if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
-        raise LLMUnavailable(
-            "LLM 连接失败。",
-            code="llm_connection_error",
-            provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
-        )
-    text = stdout_text.strip() or final_text.strip()
-    if runner == "codex" and not json_events and not text:
-        # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
-        text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
-    # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
-    if returncode != 0:
-        raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
-    if not text:
-        raise transport_failure_unavailable(
-            empty_output_failure(), attempts=1, exhausted=False,
-        )
-    # 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
-    if not json_events:
-        yield text
-    elif not pieces and final_text.strip():
-        yield final_text.strip()
-
+                os.unlink(kimi_agent_path)
+            except FileNotFoundError:
+                pass
 
 def _run_cli_runner(
     runner: str,
@@ -900,7 +913,7 @@ def _run_cli_runner(
 
 
 def _run_agy(prompt: str, *, materials_dir: Optional[str] = None) -> Tuple[str, int]:
-    """调 agy -p --sandbox 一次（warm keychain 仍做；重试归 transport）。"""
+    """调 agy --print=<prompt> 一次（warm keychain 仍做；重试归 transport）。"""
     return _run_cli_runner("agy", prompt, materials_dir=materials_dir)
 
 
@@ -1023,7 +1036,7 @@ def _dispatch_cli_runner(
 
 def _run_backend(prompt: str) -> Tuple[str, int]:
     """按 MING_SIM_LLM_BACKEND 分派到对应 CLI（enrich/secret 等非 CliChat 路径用）。
-    未设或非法 → agy（沿用原默认）。"""
+    未设或非法时沿用默认 Agy。"""
     return _dispatch_cli_runner(cli_backend_from_env() or "agy", prompt)
 
 
@@ -1225,6 +1238,7 @@ def _messages_to_prompt(
     if materials_dir:
         prompt += (
             "\n\n【材料】你的材料在当前目录。根目录 INDEX 一行一项。想读哪份自己读。"
+            "禁止读取当前材料目录之外的任何内容；不得写入、修改或创建任何文件。"
             "直接以你所扮演的角色身份，用**中文**给出最终回答。"
         )
     else:
@@ -2532,25 +2546,11 @@ def _missing_execution_lead_feedback() -> str:
     )
 
 
-def _affair_declaration_from_draft_obj(
-    obj: Mapping[str, Any], *, authorized_open_ids: Sequence[int],
-) -> Dict[str, Any]:
-    """Typed 拆旨声明（new|existing）；缺席不猜。本阶段不消费了结。
-
-    #1812：existing 的 affair_id 须取自本次拆旨同一次 list_open() 读到的开放
-    事务集合，当场响亮拒绝伪造/过期引用——不透传整份开放集合到成案点；
-    成案点另做一次 live-open 校验（AffairStore.resolve_declaration）。
-    """
+def _affair_declaration_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
+    """Typed 拆旨声明（new|existing）；缺席不猜。本阶段不消费了结。"""
     from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
     declaration = declaration_from_payload(obj, allowed=ATTACH_BIRTH)
-    if declaration is None:
-        return {}
-    if (
-        declaration.get("attach") == "existing"
-        and int(declaration.get("affair_id") or 0) not in authorized_open_ids
-    ):
-        raise ValueError("事务不在本批可见输入")
-    return {"affair_declaration": dict(declaration)}
+    return {} if declaration is None else {"affair_declaration": dict(declaration)}
 
 
 def _stamp_split_birth_key(declaration: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2563,24 +2563,17 @@ def _stamp_split_birth_key(declaration: Mapping[str, Any]) -> Dict[str, Any]:
     return body
 
 
-def _draft_intent_open_affairs(db: Any) -> tuple[str, list[int]]:
-    """Structured open-affair snapshot for the 拆旨 prompt: facts text + frozen id set.
-
-    Both come from the same read (#1812): the LLM's existing.affair_id gets
-    checked at admission against exactly this frozen set, not a later live
-    re-read — an affair opened after this snapshot, or never shown to the
-    LLM, must not be attachable even if it happens to still be open then.
-    """
+def _draft_intent_open_affair_facts(db: Any) -> str:
+    """Structured open-affair list so existing.affair_id is chosen from input, not guessed."""
     if db is None:
-        return "", []
+        return ""
     store = getattr(db, "affairs", None)
     list_open = getattr(store, "list_open", None)
     if not callable(list_open):
-        return "", []
+        return ""
     rows = list_open()
     if not rows:
-        return "", []
-    ids = [int(row.id) for row in rows]
+        return ""
     lines = [
         json.dumps(
             {"id": int(row.id), "name": row.name, "origin": row.origin},
@@ -2588,12 +2581,11 @@ def _draft_intent_open_affairs(db: Any) -> tuple[str, list[int]]:
         )
         for row in rows
     ]
-    facts = (
+    return (
         "【已开事务】existing 的 affair_id 必须取自下列对象的 id，不得自造。\n"
         + "\n".join(lines)
         + "\n"
     )
-    return facts, ids
 
 
 def _participant_fields_from_draft_obj(obj: Mapping[str, Any]) -> Dict[str, Any]:
@@ -2928,7 +2920,7 @@ def extract_draft_intent(
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
-    open_affair_facts, authorized_open_ids = _draft_intent_open_affairs(db)
+    open_affair_facts = _draft_intent_open_affair_facts(db)
     from ming_sim.action_clusters import (
         assert_action_candidate_shape,
         cluster_fields_prompt,
@@ -2961,7 +2953,7 @@ def extract_draft_intent(
             '{"正文":"第一道完整旨稿","动作类型":"assignment",'
             '"目标类型":"region","目标ID":"shaanxi","地区ID":"shaanxi",'
             '"施行范围":"单省","事务类别":"督赈","承办人":"","目标案卷ID":null,'
-            '"颁布方式":"普通|中旨直发"}},'
+            '"颁布方式":"普通|中旨直发"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
             '"目标ID":"...",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发","施行范围":"无",'
@@ -3003,9 +2995,7 @@ def extract_draft_intent(
         invalid_batch = not isinstance(values, list) or len(values) != draft_count
         try:
             batch_declaration = (
-                _affair_declaration_from_draft_obj(
-                    obj, authorized_open_ids=authorized_open_ids,
-                )
+                _affair_declaration_from_draft_obj(obj)
                 if isinstance(obj, dict) else {}
             )
         except ValueError:
@@ -3015,7 +3005,7 @@ def extract_draft_intent(
             {
                 "affair_declaration": _stamp_split_birth_key(
                     batch_declaration["affair_declaration"]
-                ),
+                )
             }
             if batch_declaration else {}
         )
@@ -3310,6 +3300,14 @@ def extract_draft_intent(
         push_mode = _directive_mode(obj.get("颁布方式"))
         if push_mode is not None:
             push_out["mode"] = push_mode
+        try:
+            push_declaration = _affair_declaration_from_draft_obj(obj)
+        except (TypeError, ValueError):
+            push_declaration = {}
+        if push_declaration:
+            push_out["affair_declaration"] = _stamp_split_birth_key(
+                push_declaration["affair_declaration"]
+            )
         return push_out
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
     if dossier_action == "acting_appointment":
@@ -3382,16 +3380,14 @@ def extract_draft_intent(
         else:
             draft_text = (minister_reply or "").strip()
         try:
-            single_declaration = _affair_declaration_from_draft_obj(
-                obj, authorized_open_ids=authorized_open_ids,
-            )
-        except ValueError:
+            single_declaration = _affair_declaration_from_draft_obj(obj)
+        except (TypeError, ValueError):
             return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
         if single_declaration:
             single_declaration = {
                 "affair_declaration": _stamp_split_birth_key(
                     single_declaration["affair_declaration"]
-                ),
+                )
             }
         single_result = {
             "draft_action": _action, "draft_text": draft_text, "target_candidate": "",
@@ -3428,16 +3424,14 @@ def extract_draft_intent(
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
     try:
-        cand_declaration = _affair_declaration_from_draft_obj(
-            obj, authorized_open_ids=authorized_open_ids,
-        )
-    except ValueError:
+        cand_declaration = _affair_declaration_from_draft_obj(obj)
+    except (TypeError, ValueError):
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if cand_declaration:
         cand_declaration = {
             "affair_declaration": _stamp_split_birth_key(
                 cand_declaration["affair_declaration"]
-            ),
+            )
         }
     cand_result = {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
@@ -3596,7 +3590,7 @@ def project_draft_extract_to_directive_payload(
     for field in (
         "amount", "account", "execution_surface", "assignee",
         "deadline_months", "participant_roster", "locality_scope", "entries",
-        "target_dossier_id",
+        "target_dossier_id", "affair_declaration",
         "grant_action", "purpose", "cadence",
         "region_id", "transaction_category",
     ):
@@ -3648,10 +3642,14 @@ def project_draft_extract_to_directive_payload(
     if kind == "push":
         push_id = imperial_push_target_dossier_id(payload)
         assert push_id is not None
-        return {
+        push_payload: Dict[str, object] = {
             "target_dossier_id": push_id,
             "mode": declared_mode,
         }
+        declaration = captured.get("affair_declaration")
+        if declaration not in (None, ""):
+            push_payload["affair_declaration"] = declaration
+        return push_payload
     if kind == "empty":
         return _manual_special_decree_payload(declared_mode)
     return payload
@@ -3755,6 +3753,8 @@ def extract_appointment_action(
         "判定要点：皇帝口语如「着X任/授X为/升X/调X去/革X职/罢X」即任免；"
         "对已拟任免的路径应答「特旨钦命」→任免动作可无、颁布方式=中旨直发；"
         "「署理」→任免动作可无、任别=署理。"
+        "地方/督抚/边镇任命须填任所为英文 region_id（如 shaanxi/fujian/liaodong）；"
+        "任所是辖域不是行止去向；中央衙门任命任所留空。"
         "任命并令其入京/来见/赴阙 → 任命后传召=是；未要求传召则否。"
         "闲谈、议事、下密令、拟旨、惩处都不算。"
         "语义判断，别拘字面。无任免且无路径应答 → 任免动作填「无」、其余留空。\n\n"
@@ -3782,6 +3782,9 @@ def extract_appointment_action(
         "office": str(normalized.get("office") or "").strip()[:40],
         "summon_after": str(normalized.get("summon_after") or "否"),
     }
+    seat = str(normalized.get("region_id") or "").strip()[:40]
+    if seat:
+        result["region_id"] = seat
     mode = str(normalized.get("mode") or "").strip()
     if mode:
         result["mode"] = mode

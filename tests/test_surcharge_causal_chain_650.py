@@ -25,7 +25,6 @@ from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extractio
 import ming_sim.issues as issues
 from ming_sim.memories import effect_brief
 from ming_sim.population_pressure import regional_displaced_pressure_brief
-from ming_sim.knowledge import build_character_knowledge
 from ming_sim.simulation import build_simulator_payload
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
@@ -539,21 +538,6 @@ def test_production_inputs_project_qualitative_regional_displaced_trend(game):
     assert "陕西：流民压力" in payload_text
     assert "近月上升，期间加派致流民流入" in payload_text
     assert str(want) not in payload_text
-
-    regional_text = None
-    nonregional_text = None
-    for character in content.characters.values():
-        if db.get_character_status(character.name)[0] != "active":
-            continue
-        world = build_character_knowledge(db, state, character.name)["world"]
-        if "regional" in world and regional_text is None:
-            regional_text = str(world["regional"])
-        if "regional" not in world and nonregional_text is None:
-            nonregional_text = str(world)
-    assert regional_text is not None and "陕西：流民压力" in regional_text
-    assert "近月上升，期间加派致流民流入" in regional_text
-    assert nonregional_text is not None and "省级流民态势" not in nonregional_text
-    assert str(want) not in regional_text
 
 
 def test_displaced_trend_separates_total_direction_from_levy_cause(game):

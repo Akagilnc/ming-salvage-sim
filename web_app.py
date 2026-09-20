@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 import threading
-from concurrent.futures import Future
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional
 
@@ -397,22 +397,12 @@ def _delete_sqlite_db_files_or_raise(db_path: str) -> None:
             ) from exc
 
 
-def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
-    """校验主模型；若配置了 advanced_model，也用其实际 base/key 单独校验。"""
-    try:
-        verify_llm_available(config)
-    except LLMUnavailable as e:
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "主模型连通性检查失败：")) from None
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "主模型连通性检查失败：")) from None
-
-    advanced_model = (config.advanced_model or "").strip()
-    if not advanced_model:
-        return
-    advanced_config = LLMConfig(
+def _advanced_llm_config_for_verify(config: LLMConfig) -> LLMConfig:
+    """主配置上的高级模型槽 → 单独烟测用的 LLMConfig。"""
+    return LLMConfig(
         api_key=real_api_key_or_empty(config.advanced_api_key) or real_api_key_or_empty(config.api_key),
         base_url=(config.advanced_base_url or "").strip() or config.base_url,
-        model=advanced_model,
+        model=(config.advanced_model or "").strip(),
         timeout_seconds=config.timeout_seconds,
         thinking_level="",
         advanced_model=config.advanced_model,
@@ -426,12 +416,88 @@ def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
         cli_timeout_seconds=config.cli_timeout_seconds,
         default_headers=dict(config.default_headers or {}),
     )
+
+
+def _verify_smoke_leg(config: LLMConfig, *, stage: str, prefix: str) -> Optional[HTTPException]:
+    """单条点火烟。失败返回已包好的 HTTPException，成功返回 None。"""
     try:
-        verify_llm_available(advanced_config)
-    except LLMUnavailable as e:
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "高级模型连通性检查失败：")) from None
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=_llm_error_detail(e, "高级模型连通性检查失败：")) from None
+        verify_llm_available(config)
+        return None
+    except LLMUnavailable as exc:
+        exc.stage = stage
+        return HTTPException(status_code=400, detail=_llm_error_detail(exc, prefix))
+    except Exception as exc:  # noqa: BLE001
+        try:
+            exc.stage = stage
+        except (AttributeError, TypeError):
+            pass
+        return HTTPException(status_code=400, detail=_llm_error_detail(exc, prefix))
+
+
+def _is_deterministic_provider_4xx(err: Optional[HTTPException]) -> bool:
+    """主腿提供方确定性 4xx（非 408/429）——可立刻上浮，不必等高级腿耗尽。"""
+    if err is None:
+        return False
+    detail = err.detail
+    if not isinstance(detail, dict):
+        return False
+    try:
+        status = int(detail.get("status_code"))
+    except (TypeError, ValueError):
+        return False
+    return 400 <= status < 500 and status not in (408, 429)
+
+
+def _verify_llm_configs_or_raise(config: LLMConfig) -> None:
+    """校验主模型；API 通道若配置了 advanced_model，与主模型并行烟测（#884 / P5）。
+
+    CLI 通道只验当前 CLI 主槽；保留的 API advanced 槽不另起一腿、也不改槽字段。
+    主腿确定性 4xx 已完成后立即上浮，不等高级腿耗尽。
+    """
+    legs: List[tuple[str, LLMConfig, str]] = [
+        ("smoke-main", config, "主模型连通性检查失败："),
+    ]
+    channel = (config.channel or "").strip().lower()
+    if channel != "cli" and (config.advanced_model or "").strip():
+        legs.append(
+            (
+                "smoke-advanced",
+                _advanced_llm_config_for_verify(config),
+                "高级模型连通性检查失败：",
+            )
+        )
+    for stage, _cfg, _prefix in legs:
+        tlog(f"[llm:stage] {stage}")
+    if len(legs) == 1:
+        err = _verify_smoke_leg(legs[0][1], stage=legs[0][0], prefix=legs[0][2])
+        if err is not None:
+            raise err
+        return
+    pool = ThreadPoolExecutor(max_workers=len(legs), thread_name_prefix="llm-smoke")
+    try:
+        futures = [
+            pool.submit(_verify_smoke_leg, cfg, stage=stage, prefix=prefix)
+            for stage, cfg, prefix in legs
+        ]
+        main_fut = futures[0]
+        pending = set(futures)
+        errors_by_fut: Dict[Future, Optional[HTTPException]] = {}
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                errors_by_fut[fut] = fut.result()
+            if main_fut in errors_by_fut:
+                main_err = errors_by_fut[main_fut]
+                if _is_deterministic_provider_4xx(main_err):
+                    raise main_err
+        # 主腿优先 surface，避免并行把高级失败盖过主模型失败。
+        for fut in futures:
+            err = errors_by_fut.get(fut)
+            if err is not None:
+                raise err
+    finally:
+        # 主腿 4xx 快路径不 cancel 高级腿、也不等它耗尽；线程池自行收尾。
+        pool.shutdown(wait=False)
 
 
 def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
@@ -446,6 +512,10 @@ def _llm_error_detail(exc: Exception, prefix: str = "") -> Dict[str, Any]:
     attempts = getattr(exc, "transport_attempts", None)
     if attempts is not None:
         detail["transport_attempts"] = attempts
+    # #884：外呼阶段名（有则透传；无键＝未标阶段）
+    stage = getattr(exc, "stage", None)
+    if stage:
+        detail["stage"] = stage
     return detail
 
 

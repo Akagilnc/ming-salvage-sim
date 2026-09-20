@@ -11,7 +11,12 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 
 from __future__ import annotations
 
-from ming_sim.materials import list_materials, prepare_world_materials, read_material
+from pathlib import Path
+
+from ming_sim.db import GameDB
+from ming_sim.materials import (
+    list_materials, prepare_world_materials, read_material, world_materials_root,
+)
 
 
 def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tmp_path):
@@ -37,7 +42,7 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     assert "盘面/全局.txt" in names
     assert "人物/朝臣名册.txt" in names
     assert any(p.startswith("人物/") and p.endswith("/经历.txt") for p in names)
-    assert any(p.startswith(f"事务/affair-{affair.id}/") for p in names)
+    assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
     assert any(p.startswith("邸报/") for p in names)
 
     index = read_material(prepared.root, "INDEX.txt")
@@ -130,6 +135,111 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         state2 = restored.load_state()
         prepared = prepare_world_materials(restored, state2, dest_root=tmp_path / "m2")
         names = list_materials(prepared.root)
-        assert any(p.startswith(f"事务/affair-{affair.id}/") for p in names)
+        assert any(p.startswith(f"事务/affair-{affair.id}-") for p in names)
     finally:
         restored.close()
+
+
+def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monkeypatch):
+    db, state, content = game
+    requested = tmp_path / "world"
+    first = prepare_world_materials(db, state, dest_root=requested)
+    second = prepare_world_materials(db, state, dest_root=requested)
+    assert first.root != second.root
+    assert read_material(first.root, "INDEX.txt")
+    assert read_material(second.root, "INDEX.txt")
+
+    other = GameDB(str(Path(db.path).parent / "other.db"), content)
+    try:
+        other.seed_static_data()
+        other_state = other.load_state()
+
+        class _Fixed:
+            hex = "a" * 32
+
+        monkeypatch.setattr("ming_sim.materials.uuid.uuid4", lambda: _Fixed())
+        same_db = world_materials_root(db, state)
+        assert same_db == world_materials_root(db, state)
+        other_db = world_materials_root(other, other_state)
+        assert same_db != other_db
+    finally:
+        other.close()
+
+
+def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(game, tmp_path):
+    """世界目录直读权威文字事实与独立公开说法；邸报只走 邸报/ 载体。
+
+    契约只落结构化路径 / INDEX / typed store 可达关系，不盯人读正文。
+    """
+    db, state, content = game
+    name = next(iter(content.characters))
+    db.textual_facts.append(
+        subject_kind="character", subject_id=name, body="世界可见人物文字事实",
+        year=int(state.year), period=int(state.period), turn=int(state.turn),
+    )
+    region = db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 1").fetchone()
+    db.textual_facts.append(
+        subject_kind="region", subject_id=str(region["id"]), body="世界可见地方文字事实",
+        year=int(state.year), period=int(state.period), turn=int(state.turn),
+    )
+    affair = db.affairs.open(
+        name="事实探针事务", origin="probe",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    db.textual_facts.append(
+        subject_kind="affair", subject_id=str(affair.id), body="affair-fact-body",
+        year=int(state.year), period=int(state.period), turn=int(state.turn),
+        origin_ref=db.affairs.origin_ref(affair.id),
+    )
+    past_year, past_period, past_turn = state.year, max(1, state.period - 1), max(0, state.turn - 1)
+    from ming_sim.models import GameState
+    from ming_sim.public_sayings import list_public_sayings, record_public_saying
+
+    past_state = GameState(
+        turn=past_turn, year=past_year, period=past_period, metrics=dict(state.metrics),
+    )
+    db.save_turn_report(past_state, "gazette-body")
+
+    # Independent public_sayings must mint their own month path under 公开说法/,
+    # even when other knowledge public rows already occupy a different month.
+    saying_state = GameState(
+        turn=int(state.turn),
+        year=int(state.year) + 50,
+        period=6,
+        metrics=dict(state.metrics),
+    )
+    expected_public_rel = f"公开说法/{saying_state.year}年{saying_state.period}月.txt"
+    saying_id = record_public_saying(db, saying_state, "independent-public-saying-body")
+    assert any(int(row["id"]) == int(saying_id) for row in list_public_sayings(db))
+
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-facts")
+    names = list_materials(prepared.root)
+    index_lines = {
+        line.strip() for line in read_material(prepared.root, "INDEX.txt").splitlines() if line.strip()
+    }
+    fact_paths = [p for p in names if p.startswith("事实/")]
+    assert any(p.startswith("事实/character-") for p in fact_paths)
+    assert any(p.startswith("事实/region-") for p in fact_paths)
+    assert set(fact_paths) <= index_lines
+    # typed store still reachable for the written subjects
+    assert db.textual_facts.readable_materials(subject_kind="character", subject_id=name)
+    assert db.textual_facts.readable_materials(
+        subject_kind="region", subject_id=str(region["id"]),
+    )
+    # affair textual facts ride 事务/ only — not a second 事实/affair-* carrier.
+    assert not any(p.startswith("事实/affair-") for p in names)
+    affair_paths = [p for p in names if p.startswith(f"事务/affair-{affair.id}-")]
+    assert len([p for p in affair_paths if p.endswith("/当前情况.txt")]) == 1
+    assert set(affair_paths) <= index_lines
+
+    gazette_paths = [p for p in names if p.startswith("邸报/")]
+    assert gazette_paths
+    assert set(gazette_paths) <= index_lines
+    assert expected_public_rel in names
+    assert expected_public_rel in index_lines
+    # 邸报 stays a top-level carrier; public layer does not grow gazette path twins.
+    assert not any(p.startswith("公开说法/邸报/") for p in names)
+    # _is_gazette_public_event 必须把 turn_report 挡出 公开说法/：gate 在场时
+    # past 月路径不存在；gate 失效后该路径会出现（结构化路径契约，不盯正文）。
+    assert f"公开说法/{past_year}年{past_period}月.txt" not in names
+    assert f"邸报/{past_year}年{past_period}月.txt" in names

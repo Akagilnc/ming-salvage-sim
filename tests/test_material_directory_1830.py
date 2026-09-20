@@ -6,8 +6,13 @@ list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
+from tests.dossier_test_helpers import create_test_secret_order
 
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
@@ -15,9 +20,18 @@ from ming_sim.audience_night import (
     open_night,
     summon_enter,
 )
-from ming_sim.materials import list_materials, prepare_character_materials, read_material
+from ming_sim.materials import (
+    MaterialsRoot,
+    _handled_affair_lines,
+    _visible_affair_lines,
+    list_materials,
+    material_tools,
+    prepare_character_materials,
+    read_material,
+    release_material_tree,
+)
 from ming_sim.models import CourtContext, LLMConfig
-from ming_sim.registry import create_minister_agent
+from ming_sim.registry import MinisterRegistry, create_minister_agent
 from ming_sim.session import GameSession
 
 
@@ -40,91 +54,12 @@ def _ctx(game):
 def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
-    # #1812：并入既有真实入口 tracer——不另立平行测试。
-    # (a) 仅因非法字符被替换而撞名的两件「局势」，目录须各占一格，不得合并/覆盖。
-    db.insert_issue(
-        state, kind="situation", title="甲/乙",
-        origin_kind="decree", stage_text="第一件的近况",
-    )
-    db.insert_issue(
-        state, kind="situation", title="甲\\乙",
-        origin_kind="decree", stage_text="第二件的近况",
-    )
-    # (b) durable 事务（案卷参与人 + 挂事务文字事实）须投影进目录与开场最小集，
-    # 不能只靠旧「局势」投影（AffairStore.input_brief/current_situation 是真源）。
-    affair = db.affairs.open(
-        name="宁远护送", origin="拨银、调将、派兵去宁远",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    dossier_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="调将赴宁远",
-        target_kind="issue", target_id="ningyuan-general",
-        executor_kind="character", executor_id=character.name,
-        pending_action_id=93001, payload={"assignee_id": character.name},
-    )
-    db.affairs.point_dossier(dossier_id, affair.id)
-    # (c) ADR 0156：文字事实只追加不覆盖，读时按时间顺序全部提供——目录须给
-    # 该事务全部月份的事实，不能只留最新一条；开场仍只放最新一句（最小集）。
-    affair_situation_old = "护送启程，尚在筹备"
-    affair_situation_new = "护送银两已出京，尚未抵宁远"
     db.textual_facts.append(
-        subject_kind="affair", subject_id=str(affair.id), body=affair_situation_old,
-        year=state.year, period=max(1, state.period - 1), turn=state.turn,
-    )
-    db.textual_facts.append(
-        subject_kind="affair", subject_id=str(affair.id), body=affair_situation_new,
+        subject_kind="character",
+        subject_id=character.name,
+        body="本官亲见府库告罄。",
         year=state.year, period=state.period, turn=state.turn,
     )
-    # (d) ADR 0154：已指向该事务的 issue 是其机械载体——单一投影不丢内容：
-    # 不另立 事务/issue-N 第二身份，但它自己的机械材料须并进 事务/affair-N。
-    linked_issue_stage = "不得单独露面但材料不能丢"
-    linked_issue_id = db.insert_issue(
-        state, kind="situation", title="宁远护送机械载体",
-        origin_kind="decree", stage_text=linked_issue_stage,
-    )
-    db.affairs.point_issue(linked_issue_id, affair.id)
-    # (e) 单一投影不得连带丢材料：另一件事务 character 不是案卷参与人，但挂靠
-    # 它的 issue 无参与名单（公开可见）——原有知识透视仍看得到，合并须把它
-    # 归到该事务的 affair-N 身份（含它自己的机械材料），不能因为不是 dossier
-    # 参与人就整条消失，也不冒出对应的 issue-N。
-    bystander_affair = db.affairs.open(
-        name="辽东军情", origin="边镇急报",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    bystander_situation = "辽东军情已奏闻，尚候圣裁"
-    db.textual_facts.append(
-        subject_kind="affair", subject_id=str(bystander_affair.id),
-        body=bystander_situation,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    bystander_issue_stage = "旁观者也不该看不见的机械材料"
-    bystander_issue_id = db.insert_issue(
-        state, kind="situation", title="辽东军情机械载体",
-        origin_kind="decree", stage_text=bystander_issue_stage,
-    )
-    db.affairs.point_issue(bystander_issue_id, bystander_affair.id)
-    # (f) 事务了结不等于该事务的 durable 身份/全史从目录消失（#1819
-    # Resolution 3/7 各事务全史常驻目录）：closed_affair 是合法关闭（无 active
-    # linked issue，ADR 0154 `affair-close-requires-no-active-linked-issues`）
-    # ——关闭前留一条历史文字事实，关闭后仍可在同一 事务/affair-N 查到。
-    closed_affair = db.affairs.open(
-        name="宣府欠饷", origin="宣府镇奏报欠饷",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    closed_dossier_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="核实宣府欠饷",
-        target_kind="issue", target_id="xuanfu-arrears",
-        executor_kind="character", executor_id=character.name,
-        pending_action_id=93002, payload={"assignee_id": character.name},
-    )
-    db.affairs.point_dossier(closed_dossier_id, closed_affair.id)
-    closed_affair_fact = "宣府欠饷已核实，尚待补发"
-    db.textual_facts.append(
-        subject_kind="affair", subject_id=str(closed_affair.id), body=closed_affair_fact,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    db.affairs.declare_closed(closed_affair.id, turn=state.turn)
-
     dest = tmp_path / "materials"
     prepared = prepare_character_materials(db, state, character, dest_root=dest)
 
@@ -133,44 +68,306 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert "人物/朝臣名册.txt" in names
     assert any(p.startswith("人物/") and p.endswith("/经历.txt") for p in names)
     assert any(p.startswith("人物/") and p.endswith("/公事档案.txt") for p in names)
+    assert any(p.startswith("密令/") for p in names)
+    assert any(p.startswith("荐人/") for p in names)
+    assert any(p.startswith("事实/") for p in names)
     index = read_material(prepared.root, "INDEX.txt")
     assert "人物/朝臣名册.txt" in index.splitlines()
+    assert any(line.startswith("密令/") for line in index.splitlines())
+    assert any(line.startswith("荐人/") for line in index.splitlines())
+    assert any(line.startswith("事实/") for line in index.splitlines())
     for line in index.splitlines():
         if line.strip():
             assert line.strip() in names
-            read_material(prepared.root, line.strip())  # 索引每项真实存在且可读不抛错
-    # #1812：无裸副本——真实 prepare 输出里不该出现世界库/JSON 转储文件。
-    assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)
+            assert read_material(prepared.root, line.strip())
+    roster = read_material(prepared.root, "人物/朝臣名册.txt")
+    status, _reason = db.get_character_status(character.name)
+    assert character.name in roster
+    assert (character.office or "无现任官职") in roster
+    assert status in roster
 
-    # (a) 两件撞名局势不得合并/互相覆盖：各自成篇（路径结构化契约；不锁正文
-    # 措辞——生成物只特征化观察，按 #1812 契约断言只落结构化字段的规则）。
-    affair_files = [p for p in list_materials(prepared.root) if p.startswith("事务/")]
-    # (c) 目录给该事务全部月份的事实落在结构化路径上（非按正文措辞判定）；
-    # 开场为最小集，不含跨月历史——最小集契约落在生产代码（#1812 P6），不在
-    # 此对 opening 自由正文做词面断言（机械只咬契约，不咬呈现）。
-    next(p for p in affair_files if p.startswith(f"事务/affair-{affair.id}/"))
-    # (d) 已挂靠该事务的 issue 不另立一个 事务/issue-N 身份——材料并入
-    # 事务/affair-N（路径结构化契约），不得单独露面。
-    assert not any(
-        p.startswith(f"事务/issue-{linked_issue_id}/") for p in affair_files
+
+def test_same_requested_root_creates_independent_material_invocations(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+    requested = tmp_path / "materials"
+
+    first = prepare_character_materials(db, state, character, dest_root=requested)
+    second = prepare_character_materials(db, state, character, dest_root=requested)
+
+    assert first.root != second.root
+    assert read_material(first.root, "INDEX.txt")
+    assert read_material(second.root, "INDEX.txt")
+
+
+def test_material_tree_contains_only_structurally_related_world_details(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+    army = db.conn.execute("SELECT id,name FROM armies ORDER BY id LIMIT 1").fetchone()
+    # Real declaration entrance (not office_slots vacancy catalog / bare DB hook).
+    from ming_sim.issues import apply_person_changes_only
+    applied = apply_person_changes_only(
+        db, state,
+        [{
+            "name": character.name,
+            "动作": "任命",
+            "office": "陕西巡抚",
+            "office_type": "地方",
+            "region_id": "shaanxi",
+            "reason": "test-materials-posting",
+        }],
+        content=content,
+    )["applied_person_changes"]
+    assert applied and not applied[0].get("rejected"), applied
+    db.conn.execute("UPDATE armies SET commander='' WHERE commander=?", (character.name,))
+    db.conn.execute(
+        "UPDATE armies SET commander=?,supply=17,morale=23,loyalty=31,training=44,equipment=52 "
+        "WHERE id=?", (character.name, army["id"]),
     )
-    # (e) 非案卷参与人但可见 linked issue：归并到该事务自己的 affair-N 身份，
-    # 不冒出对应的 issue-N（路径结构化契约）。
-    next(
-        p for p in affair_files if p.startswith(f"事务/affair-{bystander_affair.id}/")
+    db.conn.execute(
+        "UPDATE regions SET public_support=13,unrest=87 WHERE id=?", ("shaanxi",),
     )
-    assert not any(
-        p.startswith(f"事务/issue-{bystander_issue_id}/") for p in affair_files
+    db.conn.commit()
+
+    prepared = prepare_character_materials(db, state, character, dest_root=tmp_path / "materials")
+    names = list_materials(prepared.root)
+    region_paths = [path for path in names if path.startswith("地区/")]
+    army_paths = [path for path in names if path.startswith("军队/")]
+    assert len(region_paths) == 1 and len(army_paths) == 1
+    region_text = read_material(prepared.root, region_paths[0])
+    army_text = read_material(prepared.root, army_paths[0])
+    region_name = db.conn.execute(
+        "SELECT name FROM regions WHERE id=?", ("shaanxi",),
+    ).fetchone()["name"]
+    assert region_name in region_text and army["name"] in army_text
+    assert "民心13" not in region_text and "动乱87" not in region_text
+    assert "补给：17" not in army_text
+    assert "士气：23" not in army_text and "士气23" not in army_text
+    assert "忠诚：31" not in army_text and "军心：31" not in army_text
+    assert "训练：44" not in army_text
+    assert "装备：52" not in army_text
+
+
+def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
+    """Minimal agent stand-in: MaterialsRoot always; materials_dir only for CLI."""
+    handle = MaterialsRoot(root)
+    model = SimpleNamespace()
+    if with_cli_cwd:
+        model.materials_dir = handle.root
+    return SimpleNamespace(model=model, materials_root=handle)
+
+
+def test_registry_owner_handoffs_release_replaced_materials(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+    old_root = tmp_path / "inv-old" / ("a" * 32) / "old-materials"
+    new_root = tmp_path / "inv-new" / ("b" * 32) / "new-materials"
+    runtime_old = tmp_path / "inv-rt-old" / ("c" * 32) / "runtime-old"
+    runtime_new = tmp_path / "inv-rt-new" / ("d" * 32) / "runtime-new"
+    closed = tmp_path / "inv-closed" / ("e" * 32) / "closed-materials"
+    session_old = tmp_path / "inv-session" / ("f" * 32) / "session-old"
+    for path in (old_root, new_root, runtime_old, runtime_new, closed, session_old):
+        path.mkdir(parents=True)
+    registry = object.__new__(MinisterRegistry)
+    registry.content = content
+    registry.context = SimpleNamespace(state=state)
+    registry.session_ids = {}
+    # API OpenAIChat path: no model.materials_dir; ownership is MaterialsRoot.
+    registry.agents = {character.name: _agent_with_materials(old_root, with_cli_cwd=False)}
+    registry._create = lambda _character: _agent_with_materials(new_root, with_cli_cwd=False)
+    registry.refresh(character.name)
+    assert not old_root.exists() and new_root.exists()
+    assert not old_root.parent.exists()  # UUID parent released with the leaf
+
+    registry.agents[character.name] = _agent_with_materials(runtime_old, with_cli_cwd=True)
+    registry._create = lambda _character: _agent_with_materials(runtime_new, with_cli_cwd=True)
+    registry.register_runtime(character)
+    assert not runtime_old.exists() and runtime_new.exists()
+    assert not runtime_old.parent.exists()
+
+    # adopt_materials keeps API tools + CLI cwd on the same live root even when
+    # the concrete model has no materials_dir (real API OpenAIChat).
+    adopted = tmp_path / "inv-adopt" / ("1" * 32) / "adopted"
+    adopted.mkdir(parents=True)
+    (adopted / "INDEX.txt").write_text("live\n", encoding="utf-8")
+    api_agent = _agent_with_materials(runtime_new, with_cli_cwd=False)
+    registry.agents[character.name] = api_agent
+    tools = material_tools(api_agent.materials_root)
+    registry.adopt_materials(character.name, adopted)
+    assert not runtime_new.exists() and adopted.exists()
+    assert api_agent.materials_root.root == str(adopted)
+    assert not hasattr(api_agent.model, "materials_dir")
+    listed = tools[0]("")
+    assert "INDEX.txt" in listed
+    assert read_material(Path(api_agent.materials_root.root), "INDEX.txt").strip() == "live"
+
+    # Empty/cleared MaterialsRoot must not resolve Path("") → CWD.
+    empty_tools = material_tools(MaterialsRoot())
+    empty_listed = empty_tools[0]("")
+    assert "材料目录未就绪" in empty_listed
+    assert ".agno_skills" not in empty_listed
+    assert empty_tools[1]("INDEX.txt").startswith("无法读取：")
+
+    # prepare failure must not leave empty UUID invocation parents behind.
+    # write_tree primary stays outward even when cleanup also fails.
+    fail_parent = tmp_path / ("3" * 32)
+    fail_dest = fail_parent / "leaf"
+
+    def _boom(_tmp):
+        raise RuntimeError("prepare-write-boom")
+
+    from ming_sim.materials import _publish_material_tree
+    with pytest.raises(RuntimeError, match="prepare-write-boom") as boom_exc:
+        _publish_material_tree(None, fail_dest, _boom)
+    assert not fail_parent.exists()
+    assert boom_exc.value.__cause__ is None
+
+    dual_parent = tmp_path / ("7" * 32)
+    dual_dest = dual_parent / "leaf"
+
+    def _boom_write(_tmp):
+        raise RuntimeError("ORIGINAL_WRITE")
+
+    def _rmtree_cleanup(path, *args, **kwargs):
+        raise OSError("CLEANUP_SECONDARY")
+
+    with patch("ming_sim.materials.shutil.rmtree", side_effect=_rmtree_cleanup):
+        with pytest.raises(RuntimeError, match="ORIGINAL_WRITE") as dual_exc:
+            _publish_material_tree(None, dual_dest, _boom_write)
+    assert isinstance(dual_exc.value.__cause__, OSError)
+    assert "CLEANUP_SECONDARY" in str(dual_exc.value.__cause__)
+
+    # adopt installs new root first; old-tree cleanup failure must keep new root
+    # and must not interrupt the handoff (separate agent so close chain stays intact).
+    keep_new = tmp_path / "inv-keep" / ("9" * 32) / "kept"
+    keep_new.mkdir(parents=True)
+    (keep_new / "INDEX.txt").write_text("kept\n", encoding="utf-8")
+    doomed_old = tmp_path / "inv-doom" / ("8" * 32) / "doomed"
+    doomed_old.mkdir(parents=True)
+    boom_agent = _agent_with_materials(doomed_old, with_cli_cwd=False)
+    registry.agents["handoff-resilience"] = boom_agent
+    real_rmtree = __import__("shutil").rmtree
+
+    def _rmtree_adopt_boom(path, *args, **kwargs):
+        if Path(path) == doomed_old or str(path) == str(doomed_old):
+            raise OSError("old-tree-cleanup-boom")
+        return real_rmtree(path, *args, **kwargs)
+
+    with patch("ming_sim.materials.shutil.rmtree", side_effect=_rmtree_adopt_boom):
+        registry.adopt_materials("handoff-resilience", keep_new)
+    assert boom_agent.materials_root.root == str(keep_new)
+    assert keep_new.exists()
+    assert "INDEX.txt" in material_tools(boom_agent.materials_root)[0]("")
+
+    registry.agents["other"] = _agent_with_materials(closed, with_cli_cwd=False)
+    registry.close()
+    assert not closed.exists() and not adopted.exists()
+    assert not keep_new.exists()
+    assert not closed.parent.exists()
+    assert registry.agents == {}
+
+    session = object.__new__(GameSession)
+    leftover = object.__new__(MinisterRegistry)
+    leftover.agents = {
+        character.name: _agent_with_materials(session_old, with_cli_cwd=False)
+    }
+    leftover.close = MinisterRegistry.close.__get__(leftover, MinisterRegistry)
+    leftover._release_materials = MinisterRegistry._release_materials
+    leftover._materials_handle = MinisterRegistry._materials_handle
+    session.registry = leftover
+    replacement = object.__new__(MinisterRegistry)
+    replacement.agents = {}
+    session._adopt_registry(replacement)
+    assert session.registry is replacement
+    assert not session_old.exists()
+    assert not session_old.parent.exists()
+
+    session_close_dir = tmp_path / "inv-close" / ("2" * 32) / "session-close"
+    session_close_dir.mkdir(parents=True)
+    closing = object.__new__(GameSession)
+    leftover_close = object.__new__(MinisterRegistry)
+    leftover_close.agents = {
+        character.name: _agent_with_materials(session_close_dir, with_cli_cwd=False)
+    }
+    leftover_close.close = MinisterRegistry.close.__get__(leftover_close, MinisterRegistry)
+    leftover_close._release_materials = MinisterRegistry._release_materials
+    leftover_close._materials_handle = MinisterRegistry._materials_handle
+    closing.registry = leftover_close
+    closing._scene_registry = SimpleNamespace(abandon_all=lambda: None)
+    closing.agno_db = None
+    closing.db = SimpleNamespace(close=lambda: None)
+    closing._close_epoch = 0
+    GameSession.close(closing)
+    assert closing.registry is None
+    assert not session_close_dir.exists()
+    assert not session_close_dir.parent.exists()
+
+    # Materials cleanup failure still releases db; error is surfaced honestly.
+    failing = object.__new__(GameSession)
+    bad_reg = object.__new__(MinisterRegistry)
+
+    def _boom_close():
+        raise RuntimeError("materials-cleanup-boom")
+
+    bad_reg.agents = {"x": _agent_with_materials(tmp_path / "x", with_cli_cwd=False)}
+    bad_reg.close = lambda: (_boom_close())
+    failing.registry = bad_reg
+    failing._scene_registry = SimpleNamespace(abandon_all=lambda: None)
+    failing.agno_db = None
+    closed_db = {"done": False}
+    failing.db = SimpleNamespace(close=lambda: closed_db.__setitem__("done", True))
+    failing._close_epoch = 0
+    with pytest.raises(RuntimeError, match="materials-cleanup-boom"):
+        GameSession.close(failing)
+    assert closed_db["done"] is True
+    assert failing.registry is None
+
+    # release keeps the primary cleanup error when parent rmdir also fails.
+    leaf = tmp_path / ("4" * 32) / "leaf-keep-primary"
+    leaf.mkdir(parents=True)
+    (leaf / "f.txt").write_text("x", encoding="utf-8")
+    real_rmtree = __import__("shutil").rmtree
+
+    def _rmtree_boom(path, *args, **kwargs):
+        raise RuntimeError("primary-rmtree")
+
+    with patch("ming_sim.materials.shutil.rmtree", side_effect=_rmtree_boom):
+        with pytest.raises(RuntimeError, match="primary-rmtree"):
+            release_material_tree(leaf)
+
+
+def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):
+    db, state, content = game
+    character = _active_minister(db, content)
+    current_office = "当回合新任官职"
+    db.conn.execute(
+        "UPDATE characters SET office = ? WHERE name = ?", (current_office, character.name),
     )
-    # 目录可见 ≠ 开场经手（#1830 最小集）：character 只是旁观者，既非该事务
-    # 案卷参与人，挂靠的 issue 也无参与名单/audience 命中——不得被开场宣告
-    # 「正经手事务」在办这件事。该资格契约落在生产代码（_opening_affair_lines
-    # 的 is_handling 闸），不在此对 opening 自由正文做词面断言。
-    # (f) 事务了结不清空其 durable 身份或全史（#1819 Resolution 3/7）：已关闭
-    # 的 closed_affair 仍在同一 事务/affair-N 路径下能查到（结构化路径契约）。
-    next(
-        p for p in affair_files if p.startswith(f"事务/affair-{closed_affair.id}/")
-    )
+    knowledge = {"issues": [
+        {"id": 101, "title": "经手事项", "participant_roster": json.dumps([
+            {"character_id": character.name, "tier": "主办"},
+        ])},
+        {"id": 102, "title": "无人承办事项", "participant_roster": "[]"},
+    ]}
+
+    original_get = db.get_character_knowledge
+    db.get_character_knowledge = lambda *_args: knowledge
+    try:
+        prepared = prepare_character_materials(
+            db, state, character, dest_root=tmp_path / "materials",
+        )
+    finally:
+        db.get_character_knowledge = original_get
+    assert current_office in prepared.opening
+    assert character.office not in prepared.opening
+    issue_paths = {line for line in prepared.index_lines if line.startswith("事务/issue-")}
+    assert issue_paths == {
+        "事务/issue-101/当前情况.txt", "事务/issue-102/当前情况.txt",
+    }
+    projected = _visible_affair_lines(knowledge)
+    assert [row["id"] for row in _handled_affair_lines(
+        db, state, character.name, projected,
+    )] == [101]
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
@@ -199,37 +396,37 @@ def test_read_material_stays_inside_directory(game, tmp_path):
         raise AssertionError("expected path confinement")
     except ValueError:
         pass
+    tools = {tool.__name__: tool for tool in material_tools(prepared.root)}
+    assert tools["list_materials"]("../outside") == tools["read_material"]("../outside")
 
 
-def test_opening_is_minimum_set_not_full_projection(game, tmp_path):
-    """#1812 P6：world 域账目（treasury/military/personnel/security/regional/
-    construction）只经材料目录 公事档案.txt 路径可达，不复刻进 opening 自由
-    正文——最小集边界契约落在生产代码，这里只断路径/INDEX（机械只咬契约，
-    不咬呈现）。"""
+def test_audience_agent_exposes_directory_tools_and_min_instructions(game, tmp_path):
     db, state, content = game
     character = _active_minister(db, content)
-    prepared = prepare_character_materials(
-        db, state, character, dest_root=tmp_path / "m",
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIChat
+
+    # Real Agent + real OpenAIChat API path (no model.materials_dir): prove handle
+    # from the production construction entrance — do not stand in with SimpleNamespace.
+    api_model = OpenAIChat(id="gpt-4o-mini", api_key="sk-test-not-used")
+    assert not hasattr(api_model, "materials_dir")
+    cfg_api = LLMConfig(
+        api_key="sk-test-not-used", base_url="https://example.invalid/v1",
+        model="gpt-4o-mini", channel="api",
     )
-    names = list_materials(prepared.root)
-    assert any(p.startswith("人物/") and p.endswith("/公事档案.txt") for p in names)
-
-
-def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
-    db, state, content = game
-    character = _active_minister(db, content)
-    captured = {}
-
-    def fake_agent(**kwargs):
-        captured.update(kwargs)
-        return kwargs
-
-    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
-    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
-         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
-        create_minister_agent(character, cfg, _ctx(game), db)
-
-    tool_names = {getattr(fn, "__name__", "") for fn in captured["tools"]}
+    agno_db = SqliteDb(db_file=str(tmp_path / "agno-materials.db"))
+    with patch("ming_sim.registry.create_chat_model", return_value=api_model):
+        agent = create_minister_agent(character, cfg_api, _ctx(game), agno_db)
+    assert isinstance(agent, Agent)
+    assert isinstance(agent.materials_root, MaterialsRoot)
+    assert agent.materials_root.root
+    assert Path(agent.materials_root.root).exists()
+    assert agent.model is api_model
+    assert not hasattr(agent.model, "materials_dir")
+    tool_names = {
+        getattr(fn, "__name__", "") for fn in (agent.tools or [])
+    }
     assert "list_materials" in tool_names
     assert "read_material" in tool_names
     assert "propose_directive" in tool_names
@@ -241,17 +438,57 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game):
         "allocate_payroll", "audit_tax_arrears",
     }
     assert not (tool_names & retired_reads)
-    tools = {fn.__name__: fn for fn in captured["tools"]}
+    tools = {fn.__name__: fn for fn in agent.tools if hasattr(fn, "__name__")}
     listing = tools["list_materials"]()
-    # #1812 P6：world 域账目（treasury/military/…）只经 公事档案.txt 路径可达，
-    # 不复刻进 instructions 自由正文——这里只断路径/INDEX，不对 instructions
-    # 做词面断言。
-    assert any(
-        line.startswith("人物/") and line.endswith("/公事档案.txt")
-        for line in listing.splitlines()
-    )
     rel = next(line for line in listing.splitlines() if line.endswith("经历.txt"))
-    tools["read_material"](rel)  # 经由工具接口真实读取不抛错
+    body = tools["read_material"](rel)
+    assert body
+    assert "INDEX.txt" in material_tools(agent.materials_root)[0]("")
+
+    # Failure injection only: Agent ctor boom releases prepared tree, keeps primary.
+    prepared_roots: list[str] = []
+
+    def tracking_prepare(*args, **kwargs):
+        prepared = prepare_character_materials(*args, **kwargs)
+        prepared_roots.append(str(prepared.root))
+        return prepared
+
+    def boom_agent(**_kwargs):
+        raise RuntimeError("agent-ctor-boom")
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=boom_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry.prepare_character_materials", side_effect=tracking_prepare):
+        with pytest.raises(RuntimeError, match="agent-ctor-boom"):
+            create_minister_agent(character, cfg, _ctx(game), agno_db)
+    assert prepared_roots and not Path(prepared_roots[-1]).exists()
+    assert not Path(prepared_roots[-1]).parent.exists()
+
+    # materials_root binding failure likewise releases ownership — no silent pass.
+    bind_roots: list[str] = []
+
+    def tracking_prepare_bind(*args, **kwargs):
+        prepared = prepare_character_materials(*args, **kwargs)
+        bind_roots.append(str(prepared.root))
+        return prepared
+
+    class _NoMaterialsAttr:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                object.__setattr__(self, key, value)
+
+        def __setattr__(self, key, value):
+            if key == "materials_root":
+                raise AttributeError("materials_root frozen")
+            object.__setattr__(self, key, value)
+
+    with patch("ming_sim.registry.Agent", side_effect=lambda **kw: _NoMaterialsAttr(**kw)), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry.prepare_character_materials", side_effect=tracking_prepare_bind):
+        with pytest.raises(AttributeError, match="materials_root frozen"):
+            create_minister_agent(character, cfg, _ctx(game), agno_db)
+    assert bind_roots and not Path(bind_roots[-1]).exists()
 
 
 def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
@@ -275,16 +512,18 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
         body=spoken, audibility=AUDIBILITY_PUBLIC,
     )
 
-    session = SimpleNamespace(db=db, state=state, registry=None)
-    prepared = prepare_character_materials(db, state, character)
-    GameSession._audience_prompt_for_message(
-        session, "下一句", character, prepared=prepared,
+    model = SimpleNamespace(materials_dir="")
+    registry = SimpleNamespace(agents={character.name: SimpleNamespace(model=model)})
+    session = SimpleNamespace(db=db, state=state, registry=registry)
+    GameSession._audience_prompt_for_message(session, "下一句", character)
+    prepared_root = Path(model.materials_dir)
+    index_before = tuple(
+        line for line in read_material(prepared_root, "INDEX.txt").splitlines() if line
     )
-    # #1812 P6：world 域账目（treasury/military/…）只经材料目录 公事档案.txt
-    # 路径可达，不复刻进 prompt 自由正文——这里只断路径/INDEX，不对 prompt
-    # 做词面断言。
-    names = list_materials(prepared.root)
-    assert any(p.startswith("人物/") and p.endswith("/公事档案.txt") for p in names)
+    turn_pointer = db.conn.execute(
+        "SELECT user_message_id, minister_message_id FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert tuple(turn_pointer) == (uid, mid)
 
     path = str(db.path)
     db.close()
@@ -293,16 +532,104 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
     try:
         state2 = restored.load_state()
         character2 = content.characters[character.name]
-        session2 = SimpleNamespace(db=restored, state=state2, registry=None)
-        prepared = prepare_character_materials(restored, state2, character2)
+        restored_pointer = restored.conn.execute(
+            "SELECT user_message_id, minister_message_id FROM chat_turns WHERE id=?", (ct,),
+        ).fetchone()
+        assert tuple(restored_pointer) == (uid, mid)
+        restored_model = SimpleNamespace(materials_dir="")
+        restored_registry = SimpleNamespace(
+            agents={character2.name: SimpleNamespace(model=restored_model)},
+        )
+        restored_session = SimpleNamespace(
+            db=restored, state=state2, registry=restored_registry,
+        )
         GameSession._audience_prompt_for_message(
-            session2, "重开后一句", character2, prepared=prepared,
+            restored_session, "重开后一句", character2,
         )
-        restored_names = list_materials(prepared.root)
-        assert not any(
-            n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in restored_names
+        rebuilt_root = Path(restored_model.materials_dir)
+        rebuilt_index = tuple(
+            line for line in read_material(rebuilt_root, "INDEX.txt").splitlines() if line
         )
-        rel = next(p for p in list_materials(prepared.root) if p.endswith("经历.txt"))
-        read_material(prepared.root, rel)  # 重建后仍可真实读取不抛错
+        assert rebuilt_index == index_before
+        tools = {tool.__name__: tool for tool in material_tools(rebuilt_root)}
+        rel = next(p for p in rebuilt_index if p.endswith("经历.txt"))
+        assert rel in tools["list_materials"]().splitlines()
+        assert tools["read_material"](rel)
     finally:
         restored.close()
+
+
+def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gazettes(
+    game, tmp_path,
+):
+    """#883/#1832: raw turn_reports do not authorize person gazette files.
+
+    Typed public counterparts still land under 公开说法/邸报/.
+    """
+    db, state, content = game
+    character = _active_minister(db, content)
+    legacy_marker = "LEGACY_RAW_GAZETTE_SHOULD_NOT_LEAK"
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report, attendant_message) "
+        "VALUES (?, ?, ?, ?, '')",
+        (max(1, int(state.turn) + 7), 1628, 1, legacy_marker),
+    )
+    db.conn.commit()
+
+    from ming_sim.models import GameState
+
+    for month in range(1, 8):
+        past = GameState(
+            turn=month, year=1627, period=month, metrics=dict(state.metrics),
+        )
+        body = f"PUBLIC_GAZETTE_MONTH_{month}"
+        db.record_public_knowledge_event(
+            past, "邸报", body, source_id=f"turn_report:{month}:public",
+        )
+        db.conn.execute(
+            "INSERT OR REPLACE INTO turn_reports (turn, year, period, report, attendant_message) "
+            "VALUES (?, ?, ?, ?, '')",
+            (month, 1627, month, body),
+        )
+    db.conn.commit()
+
+    prepared = prepare_character_materials(
+        db, state, character, dest_root=tmp_path / "char-gaz",
+    )
+    names = list_materials(prepared.root)
+    gazette_paths = [p for p in names if p.startswith("公开说法/邸报/")]
+    assert len(gazette_paths) == 7
+    blob = "\n".join(read_material(prepared.root, p) for p in names if p != "INDEX.txt")
+    assert legacy_marker not in blob
+    assert not any(p.startswith("邸报/") and not p.startswith("公开说法/") for p in names)
+    for month in range(1, 8):
+        assert any(f"1627年{month}月.txt" in p for p in gazette_paths)
+        assert f"PUBLIC_GAZETTE_MONTH_{month}" in blob
+
+
+def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
+    game, tmp_path, monkeypatch,
+):
+    db, state, content = game
+    character = _active_minister(db, content)
+    long_body = ("密令长正文-" * 20) + "-TAIL"
+    assert len(long_body) > 80
+    create_test_secret_order(
+        db, state, character.name, "长密令", long_body, [], deadline_months=6,
+    )
+    prepared = prepare_character_materials(
+        db, state, character, dest_root=tmp_path / "secret-ok",
+    )
+    secret_path = next(p for p in list_materials(prepared.root) if p.startswith("密令/"))
+    secret_text = read_material(prepared.root, secret_path)
+    assert "-TAIL" in secret_text
+    assert long_body in secret_text
+
+    def boom(_name):
+        raise RuntimeError("secret-order-db-boom")
+
+    monkeypatch.setattr(db, "get_active_secret_orders_for_minister", boom)
+    with pytest.raises(RuntimeError, match="secret-order-db-boom"):
+        prepare_character_materials(
+            db, state, character, dest_root=tmp_path / "secret-fail",
+        )

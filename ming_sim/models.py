@@ -376,7 +376,7 @@ class LLMConfig:
     advanced_thinking_level: str = ""  # legacy input only; unified reasoning_strength owns reasoning
     reasoning_strength: str = ""  # 抽象推理强度：off/low/medium/high；空=沿用后端默认/旧配置
     channel: str = ""  # ""=沿用旧 env 探针；api=OpenAI 兼容 API；cli=本地 CLI runner
-    cli_runner: str = ""  # agy | codex | claude | cursor | kimi | grok | pi（名单真源=_CLI_BACKENDS）
+    cli_runner: str = ""  # codex | claude（名单真源=_CLI_BACKENDS）
     cli_model: str = ""  # CLI runner 的模型名/档位，由具体后端解释
     cli_timeout_seconds: float = CLI_DEFAULT_TIMEOUT_SECONDS  # 静默判死阈值（秒），设置页那一格；同模块常量直接引用
     # #1794：API 通道附加请求头表（名→值）；空表＝现状。只属 API 槽，原样透传 default_headers。
@@ -398,6 +398,8 @@ class Character:
     style: str
     power_id: str
     location: str = ""
+    # Explicit appointment jurisdiction (typed region_id). Not physical location.
+    office_region: str = ""
     transit_to: str = ""
     transit_distance_remaining: float | None = None
     transit_speed_factor: float | None = None
@@ -427,8 +429,7 @@ def is_vassal_prince(character: "Character") -> bool:
     受守面清单（新增同类面时一并加，勿漏）：
     - web_app: visible_in_court / in_talent_pool / _require_active_minister / api_create_secret_order
     - simulation: court_roster / active_ministers / _talent_pool_rows（SQL office_type NOT IN(…'宗藩'…)）
-    - tools: get_active_ministers / query_court_roster
-    - registry: build_court_roster / build_court_roster_index
+    - materials: 人物/朝臣名册.txt
     - session: can_summon（召对 choke）/ list_ministers（召见阶段名册）
     - issues: apply_office_appointment（任命落地核 choke——授官会改 office_type、反解 roster 隐藏，必守）
     - session: can_summon（召对 choke，覆盖 session/web/CLI choose_minister 三路）
@@ -456,8 +457,7 @@ def is_weishi(character: "Character") -> bool:
     - cli: terminal.choose_minister
     - cli_backend: _draft_intent_character_roster_facts（拟诏事实块）
     - simulation: court_roster / active_ministers（SQL office_type NOT IN(…'未仕')）
-    - tools: get_active_ministers
-    - registry: build_court_roster / build_court_roster_index
+    - materials: 人物/朝臣名册.txt
     - db: current_court_roster_rows（已排）
     - web_app: in_talent_pool / simulation._talent_pool_rows（未入仕非「可起复前臣」）
     任命写路径（apply_office_appointment）**不**守本闸——未仕入仕是合法铨选。

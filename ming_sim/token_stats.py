@@ -6,6 +6,7 @@ _TOKEN_PATCH_INSTALLED 守卫保证补丁只打一次。
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 from typing import Dict
 
@@ -13,6 +14,7 @@ from ming_sim.llm_config import is_dashscope_base_url
 
 TOKEN_STATS: Dict[str, Dict[str, int]] = {}
 _TOKEN_PATCH_INSTALLED = False
+_TOKEN_PATCH_LOCK = threading.Lock()
 
 
 def ts() -> str:
@@ -167,42 +169,45 @@ def install_token_stats_patch() -> None:
     global _TOKEN_PATCH_INSTALLED
     if _TOKEN_PATCH_INSTALLED:
         return
-    try:
-        from openai.resources.chat.completions import Completions, AsyncCompletions  # type: ignore
-    except Exception:
-        return
-    orig_create = Completions.create
-    orig_acreate = AsyncCompletions.create
-
-    def patched_create(self, *args, **kwargs):
-        base_url = _get_client_base_url(self)
-        caller_tag = _guess_caller_tag(kwargs)
-        if is_dashscope_base_url(base_url):
-            _inject_dashscope_cache_mark(kwargs)
-        resp = orig_create(self, *args, **kwargs)
+    with _TOKEN_PATCH_LOCK:
+        if _TOKEN_PATCH_INSTALLED:
+            return
         try:
-            model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-            _record_usage(model_id, getattr(resp, "usage", None), caller_tag)
+            from openai.resources.chat.completions import Completions, AsyncCompletions  # type: ignore
         except Exception:
-            pass
-        return resp
+            return
+        orig_create = Completions.create
+        orig_acreate = AsyncCompletions.create
 
-    async def patched_acreate(self, *args, **kwargs):
-        base_url = _get_client_base_url(self)
-        caller_tag = _guess_caller_tag(kwargs)
-        if is_dashscope_base_url(base_url):
-            _inject_dashscope_cache_mark(kwargs)
-        resp = await orig_acreate(self, *args, **kwargs)
-        try:
-            model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-            _record_usage(model_id, getattr(resp, "usage", None), caller_tag)
-        except Exception:
-            pass
-        return resp
+        def patched_create(self, *args, **kwargs):
+            base_url = _get_client_base_url(self)
+            caller_tag = _guess_caller_tag(kwargs)
+            if is_dashscope_base_url(base_url):
+                _inject_dashscope_cache_mark(kwargs)
+            resp = orig_create(self, *args, **kwargs)
+            try:
+                model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
+                _record_usage(model_id, getattr(resp, "usage", None), caller_tag)
+            except Exception:
+                pass
+            return resp
 
-    Completions.create = patched_create  # type: ignore
-    AsyncCompletions.create = patched_acreate  # type: ignore
-    _TOKEN_PATCH_INSTALLED = True
+        async def patched_acreate(self, *args, **kwargs):
+            base_url = _get_client_base_url(self)
+            caller_tag = _guess_caller_tag(kwargs)
+            if is_dashscope_base_url(base_url):
+                _inject_dashscope_cache_mark(kwargs)
+            resp = await orig_acreate(self, *args, **kwargs)
+            try:
+                model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
+                _record_usage(model_id, getattr(resp, "usage", None), caller_tag)
+            except Exception:
+                pass
+            return resp
+
+        Completions.create = patched_create  # type: ignore
+        AsyncCompletions.create = patched_acreate  # type: ignore
+        _TOKEN_PATCH_INSTALLED = True
 
 
 def print_token_summary() -> None:

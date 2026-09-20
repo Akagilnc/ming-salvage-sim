@@ -6,10 +6,11 @@ from ming_sim.entities.affair.store import (
     ATTACH_RESULT_CLOSE,
     Affair,
     AffairStore,
-    affair_id_from_experience_origin_ref,
+    UnauthorizedAffairOriginRef,
     declaration_from_payload,
     parse_affair_declaration,
     parse_origin_ref,
+    parse_positive_affair_id,
 )
 
 __all__ = (
@@ -18,8 +19,9 @@ __all__ = (
     "ATTACH_RESULT_CLOSE",
     "Affair",
     "AffairStore",
-    "affair_id_from_experience_origin_ref",
+    "UnauthorizedAffairOriginRef",
     "declaration_from_payload",
     "parse_affair_declaration",
     "parse_origin_ref",
+    "parse_positive_affair_id",
 )

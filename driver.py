@@ -136,18 +136,18 @@ def _require_prepared_context(db, state):
     return ctx
 
 
-def _merge_settle_simulator_payload(
-    ctx, *, dossier_ids_at_input, open_affair_ids_at_input,
-) -> dict:
-    """案卷等完整键 ∪ 既有 ready=0 context 的 transit_arrivals（只读合并，禁整键覆写丢失）。"""
+def _merge_settle_simulator_payload(ctx, *, dossier_ids_at_input) -> dict:
+    """补齐案卷键，同时原样沿用 prepare 已冻结的其它 simulator 输入。"""
     prev = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
     payload: dict = {
         "decree_dossiers": [
             {"id": dossier_id} for dossier_id in sorted(dossier_ids_at_input)
         ],
-        "open_affairs": [
-            {"id": affair_id} for affair_id in sorted(open_affair_ids_at_input)
-        ],
+        "open_affairs": (
+            [dict(row) for row in prev.get("open_affairs", [])]
+            if isinstance(prev, dict) and isinstance(prev.get("open_affairs"), list)
+            else []
+        ),
     }
     if isinstance(prev, dict) and "transit_arrivals" in prev:
         arrivals = prev.get("transit_arrivals")
@@ -159,19 +159,21 @@ def _merge_settle_simulator_payload(
 
 
 def run_prepare(db, state, content, *, registry=None, source: Provenance = Provenance.player_decree,
-                decree_text: str = "") -> list:
+                decree_text: str = "") -> dict:
     """前半段：共享 prepare seam → settling + ready=0 context。
 
-    唯一 handoff：返回 `pending_resolve_context.simulator_payload.transit_arrivals`
-    （无抵达 = `[]`）。调用方据已提交盘面与 arrivals 产 narrative+delta，再 `run_settle`。
+    唯一 handoff 是已持久化的完整 ``simulator_payload``，其中 open_affairs
+    与 transit_arrivals 同批冻结；调用方据该盘面产 narrative+delta，再 run_settle。
     """
-    return prepare_resolve_front_half(
+    prepare_resolve_front_half(
         state, db,
         decree_text=decree_text,
         content=content,
         registry=registry,
         source=source,
     )
+    ctx = db.get_resolve_context(int(state.turn)) or {}
+    return dict(ctx.get("simulator_payload") or {})
 
 
 def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", registry=None,
@@ -239,14 +241,11 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
             db, secret_orders_for_sim,
         )
-        open_affair_ids_at_input = {
-            int(affair.id) for affair in db.affairs.list_open()
-        }
         simulator_payload = _merge_settle_simulator_payload(
             ctx,
             dossier_ids_at_input=dossier_ids_at_input,
-            open_affair_ids_at_input=open_affair_ids_at_input,
         )
+        open_affair_ids_at_input = _open_affair_ids_from_payload(simulator_payload)
         extracted = persist_resolve_context(
             db, before_turn, extracted,
             decree_text=decree_text, narrative=narrative,
@@ -296,7 +295,7 @@ def main(argv=None, *, game=None) -> int:
     sub.add_parser("state", help="打印当前盘面（回合/纪年/国势）")
     sub.add_parser(
         "prepare",
-        help="前半段：财政 tick + ready=0 context；stdout 打印 transit_arrivals JSON handoff",
+        help="前半段：财政 tick + ready=0 context；stdout 打印冻结的 simulator payload",
     )
     p_settle = sub.add_parser(
         "settle",

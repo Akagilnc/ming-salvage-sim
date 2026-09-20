@@ -34,7 +34,7 @@ from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
-from ming_sim.exceptions import LLMContractError
+from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
@@ -976,6 +976,7 @@ class GameDB:
                 source TEXT NOT NULL,
                 dossier_id INTEGER,
                 appointment_tenure TEXT NOT NULL DEFAULT '真除',
+                region_id TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(character_name) REFERENCES characters(name),
                 FOREIGN KEY(office_type) REFERENCES offices(office_type)
@@ -1002,6 +1003,9 @@ class GameDB:
                 jurisdiction TEXT NOT NULL DEFAULT '',
                 sort_order INTEGER NOT NULL DEFAULT 0
             );
+
+            -- Local appointment jurisdiction lives only on character_offices.region_id
+            -- (一次任职). No parallel seat catalog.
 
             CREATE VIEW IF NOT EXISTS office_vacancies AS
             SELECT
@@ -1556,6 +1560,7 @@ class GameDB:
                 stigma_json TEXT NOT NULL DEFAULT '[]',
                 extension_json TEXT NOT NULL DEFAULT '{}',
                 participant_roster TEXT NOT NULL DEFAULT '[]',
+                office_archive_keys TEXT NOT NULL DEFAULT '[]',
                 due_turn INTEGER NOT NULL DEFAULT 0,
                 execution_outcome TEXT NOT NULL DEFAULT '',
                 execution_note TEXT NOT NULL DEFAULT '',
@@ -1585,8 +1590,6 @@ class GameDB:
                 ON decree_dossiers(status, id);
             CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
                 ON decree_dossiers(target_kind, target_id, status);
-            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_affair
-                ON decree_dossiers(affair_id, id);
             -- ADR 0054：只存新案卷→旧案卷；关系本身无状态位。
             CREATE TABLE IF NOT EXISTS decree_dossier_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1952,8 +1955,6 @@ class GameDB:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 affair_id INTEGER NOT NULL DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS idx_issues_affair
-                ON issues(affair_id, id);
 
             -- #620 / ADR 0074：次回合召对待办（分段到期等）；结算内确定性写入、不停轮。
             -- #624 / ADR 0078：payload_json 引擎侧列（真伪底）；玩家投影路径不读。
@@ -2457,6 +2458,9 @@ class GameDB:
             "character_offices", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
         )
         self.ensure_column(
+            "character_offices", "region_id", "TEXT NOT NULL DEFAULT ''"
+        )
+        self.ensure_column(
             "office_change_records", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
         )
         self.ensure_column("skill_grants", "dossier_id", "INTEGER")
@@ -2554,6 +2558,9 @@ class GameDB:
         self.ensure_column("fiscal_config", "sort_order", "INTEGER NOT NULL DEFAULT 9999")
         # economy_ledger 支出结构化标签：仅 extractor 抽出的 economy_moves 填这三列；
         # flows 月固定支出与所有收入留 NULL。purpose 受控枚举见 constants.ECONOMY_PURPOSES。
+        self.ensure_column(
+            "decree_dossiers", "office_archive_keys", "TEXT NOT NULL DEFAULT '[]'"
+        )
         self.ensure_column("economy_ledger", "purpose", "TEXT")
         self.ensure_column("economy_ledger", "target_kind", "TEXT")
         self.ensure_column("economy_ledger", "target_id", "TEXT")
@@ -3737,35 +3744,46 @@ class GameDB:
             ),
         )
     def _record_character_office(
-        self, name: str, office: str, office_type: str, source: str
+        self,
+        name: str,
+        office: str,
+        office_type: str,
+        source: str,
+        region_id: str = "",
     ) -> None:
         """写 character_offices 备档，镜像 person-title 守卫（唯一接缝，set_character_office /
         add_character / seed 三路同源）：名分（PERSON_TITLE_KINDS）不入官职体系——删既有备档、
-        不建 offices 父行；否则确保父行在场（#1056 严格官类校验）后 upsert。"""
+        不建 offices 父行；否则确保父行在场（#1056 严格官类校验）后 upsert。
+        ``region_id`` is the appointment's jurisdiction seat (一次任职), never location."""
         if office_type in PERSON_TITLE_KINDS:
             self.conn.execute(
                 "DELETE FROM character_offices WHERE character_name=?", (name,)
             )
             return
         self._ensure_office_type_parent(office_type)
+        seat = str(region_id or "").strip()
+        if office_type not in self._LOCAL_ARCHIVE_OFFICE_TYPES:
+            seat = ""
         self.conn.execute(
             """
             INSERT INTO character_offices
                 (character_name, office_title, office_type, source, dossier_id,
-                 appointment_tenure)
-            VALUES (?, ?, ?, ?, ?, ?)
+                 appointment_tenure, region_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(character_name) DO UPDATE SET
                 office_title = excluded.office_title,
                 office_type = excluded.office_type,
                 source = excluded.source,
                 dossier_id = excluded.dossier_id,
                 appointment_tenure = excluded.appointment_tenure,
+                region_id = excluded.region_id,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
                 name, office, office_type, source,
                 int(getattr(self.conn, "_materializing_dossier_id", 0) or 0) or None,
                 str(getattr(self.conn, "_appointment_tenure", "真除") or "真除"),
+                seat,
             ),
         )
         dossier_id = int(
@@ -3922,8 +3940,15 @@ class GameDB:
         if not self.table_has_rows("character_offices"):
             for row in self.conn.execute("SELECT name, office, office_type FROM characters").fetchall():
                 # 同 add_character/set_character_office 走 person-title 守卫接缝：名分不写脏行。
+                # Jurisdiction only from explicit content office_region — never location.
+                ch = (
+                    self.content.characters.get(row["name"])
+                    if getattr(self, "content", None) is not None else None
+                )
+                seat = str(getattr(ch, "office_region", "") or "").strip() if ch else ""
                 self._record_character_office(
-                    row["name"], row["office"], row["office_type"], "存档迁移"
+                    row["name"], row["office"], row["office_type"], "存档迁移",
+                    region_id=seat,
                 )
 
         is_fresh_factions_seed = not self.table_has_rows("factions")
@@ -6300,9 +6325,13 @@ class GameDB:
         source: str = "诏书调任",
         llm_config: Any = None,
         commit: bool = True,
+        region_id: str = "",
     ) -> None:
         """既有官员调任/升迁：改 characters.office（office_type 给空则不动），
         同步 character_offices 备档。状态不变（仍 active）。
+        地方职任所经 :meth:`_require_local_office_region`：显式 typed region
+        原样消费；同人同职 identity 续任沿 character_offices.region_id；
+        真正新建/改授缺 typed 任所才拒（不读 location/官名推断）。
         #9：授官改了 office_type/品级 → 末尾全重算所属朝堂派系 leverage（升迁也联动；
         起复路 set_character_status(active)→set_character_office(新职) 双 recompute，新职覆盖中间值）。"""
         office = normalize_office(office)
@@ -6322,6 +6351,9 @@ class GameDB:
         is_person_title = eff_type in PERSON_TITLE_KINDS
         if not is_person_title:
             self._ensure_office_type_parent(eff_type)
+        seat = self._require_local_office_region(
+            name=name, office=office, office_type=eff_type, region_id=region_id,
+        )
         if office_type or eff_type != current_type:
             self.conn.execute(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
@@ -6332,7 +6364,7 @@ class GameDB:
                 "UPDATE characters SET office=? WHERE name=?",
                 (office, name),
             )
-        self._record_character_office(name, office, eff_type, source)
+        self._record_character_office(name, office, eff_type, source, region_id=seat)
         # #9：授官改了 office_type/品级权重 → 全重算该人物所属朝堂派系 leverage（commit 前）。
         faction_row = self.conn.execute(
             "SELECT faction FROM characters WHERE name=?", (name,)
@@ -6344,6 +6376,7 @@ class GameDB:
         if name in self.content.characters:
             self.content.characters[name].office = office
             self.content.characters[name].office_type = eff_type
+            self.content.characters[name].office_region = seat
 
     def apply_historical_deaths(self, state: GameState) -> List[Dict[str, str]]:
         """月初 tick：只有仍 active 的人到点自然死。被玩家提前罢/狱/流/杀的不走此分支。
@@ -6569,6 +6602,16 @@ class GameDB:
             portrait_id = self.next_pool_portrait_id(prefix)
         source_label = source or ("吏部铨选任命" if character.office_type != "后宫" else "诏书纳妃")
         office_source = source or ("吏部任命" if character.office_type != "后宫" else "诏书纳妃")
+        # Seat resolve/validate BEFORE characters INSERT — callers that catch
+        # OfficeAppointmentRejection must not inherit an orphan character row
+        # waiting on a later outer commit. SAVEPOINT isolation is complementary,
+        # not a substitute for write order.
+        seat = self._require_local_office_region(
+            name=character.name,
+            office=character.office,
+            office_type=character.office_type,
+            region_id=str(getattr(character, "office_region", "") or ""),
+        )
         self.conn.execute(
             """
             INSERT INTO characters
@@ -6607,7 +6650,8 @@ class GameDB:
             ),
         )
         self._record_character_office(
-            character.name, character.office, character.office_type, office_source
+            character.name, character.office, character.office_type, office_source,
+            region_id=seat,
         )
         # #9 cmr R2 finding#2：新建大臣（经 apply_office_appointment→apply_appointment 任命的不在册者）
         # 入朝即联动其所属派系 leverage（与 set_character_office/status hook 一致，commit 前重算）。
@@ -7016,9 +7060,15 @@ class GameDB:
         )
 
     def effect_origin_rejection(self, origin_ref: str) -> Dict[str, object] | None:
-        """Authorize extractor provenance immediately before a durable write."""
+        """Authorize extractor provenance immediately before a durable write.
+
+        When apply_score_extraction arms ``_batch_authorized_open_affair_ids``,
+        ``affair:<id>`` must also sit in that frozen batch set — one authority
+        for every durable-effect carrier (fiscal included).
+        """
         value = str(origin_ref or "").strip()
         valid = value == "盘面自发"
+        unauthorized_batch = False
         if value.startswith("dossier:"):
             try:
                 dossier_id = int(value.split(":", 1)[1])
@@ -7028,17 +7078,34 @@ class GameDB:
                 valid = False
         elif value.startswith("affair:"):
             try:
-                from ming_sim.entities.affair.store import parse_origin_ref
+                from ming_sim.entities.affair.store import (
+                    UnauthorizedAffairOriginRef,
+                    parse_origin_ref,
+                )
                 kind, affair_id = parse_origin_ref(value)
                 if kind == "affair" and affair_id is not None:
                     self.affairs.get(int(affair_id))
-                    valid = True
+                    authorized = getattr(self, "_batch_authorized_open_affair_ids", None)
+                    if authorized is not None and affair_id not in authorized:
+                        valid = False
+                        unauthorized_batch = True
+                    else:
+                        valid = True
                 else:
                     valid = False
             except (KeyError, OverflowError, TypeError, ValueError):
                 valid = False
         if valid:
             return None
+        if unauthorized_batch:
+            from ming_sim.entities.affair.store import UnauthorizedAffairOriginRef
+            return {
+                "rejected": True,
+                # Distinct from missing/invalid existence — strategic preflight
+                # must not envelope-fail this; apply paths still reject itemwise.
+                "category": "unauthorized_affair_origin",
+                "reason": str(UnauthorizedAffairOriginRef()),
+            }
         return {
             "rejected": True,
             "category": "missing_origin_ref" if not value else "invalid_origin_ref",
@@ -10454,7 +10521,11 @@ class GameDB:
         旧行为：现读现授权。
         """
         from ming_sim.audience_night import PRESENCE_ENTER, append_ledger_entry
-        from ming_sim.entities.affair import ATTACH_EXPERIENCE, declaration_from_payload
+        from ming_sim.entities.affair import (
+            ATTACH_EXPERIENCE,
+            UnauthorizedAffairOriginRef,
+            declaration_from_payload,
+        )
 
         cid = int(chat_turn_id)
         if self.get_story_extract_status(cid) == "done":
@@ -10468,10 +10539,22 @@ class GameDB:
         if srow is not None and str(srow["status"] or "") in {"failed", "undone"}:
             return []
         base = float(int(source_night_seq or 0)) + 0.5
+        authorized_open = (
+            set(authorized_open_ids) if authorized_open_ids is not None
+            else {int(row.id) for row in self.affairs.list_open()}
+        )
+        clock = self.conn.execute(
+            "SELECT year, period, turn FROM game_state WHERE id=1"
+        ).fetchone()
+        if clock is None:
+            raise ValueError("存档缺 game_state 时钟")
+        participation_state = self.load_state()
         accepted: List[Mapping[str, Any]] = []
         rejected: List[tuple[Mapping[str, Any], str]] = []
         # Validate model-owned items before opening the all-or-nothing application
         # transaction. Endorsements are never settled here (#612 night-level batch).
+        # Unauthorized affair origin is the same narrow per-item reject signal as
+        # economy/person paths (ADR 0005/0015): keep siblings, leave structured trace.
         for fact in facts:
             if "_rejected_story_fact" in fact:
                 rejected.append((fact.get("_rejected_story_fact") or {}, str(fact.get("_rejection_reason") or "事实形状非法")))
@@ -10479,6 +10562,21 @@ class GameDB:
             if isinstance(fact, Mapping) and "endorsement" in fact:
                 rejected.append((dict(fact), "普通故事抽取不得携带 endorsement"))
                 continue
+            if (
+                isinstance(fact, Mapping)
+                and declaration_from_payload(fact, allowed=ATTACH_EXPERIENCE) is not None
+            ):
+                try:
+                    self.affairs.origin_ref_from_result_item(
+                        fact,
+                        year=int(clock["year"]),
+                        period=int(clock["period"]),
+                        turn=int(clock["turn"]),
+                        authorized_ids=authorized_open,
+                    )
+                except UnauthorizedAffairOriginRef as exc:
+                    rejected.append((dict(fact), str(exc)))
+                    continue
             accepted.append(fact)
 
         new_ids: List[int] = []
@@ -10494,10 +10592,6 @@ class GameDB:
                         source=Provenance.system_simulation,
                     ), int(turn_row["turn"] if turn_row is not None else 0))
                 collector.flush_to_db(self)
-            authorized_open = (
-                set(authorized_open_ids) if authorized_open_ids is not None
-                else {int(row.id) for row in self.affairs.list_open()}
-            )
             for fact in accepted:
                 persons = [
                     str(n).strip()
@@ -10510,9 +10604,9 @@ class GameDB:
                 if parsed is not None:
                     pointed = self.affairs.origin_ref_from_result_item(
                         fact,
-                        year=0,
-                        period=0,
-                        turn=0,
+                        year=int(clock["year"]),
+                        period=int(clock["period"]),
+                        turn=int(clock["turn"]),
                         authorized_ids=authorized_open,
                     )
                     if pointed:
@@ -10533,6 +10627,15 @@ class GameDB:
                     origin_ref=origin_ref,
                 )
                 new_ids.append(int(entry_id))
+                self.record_character_participation(
+                    state=participation_state,
+                    participants=persons,
+                    kind="story",
+                    title=str(fact.get("body") or "").strip(),
+                    body=str(fact.get("body") or ""),
+                    source_id=f"story_ledger:{int(entry_id)}",
+                    commit=False,
+                )
             self.conn.execute(
                 "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
                 (cid,),
@@ -15070,23 +15173,33 @@ class GameDB:
     def _resolve_affair_id_from_payload(
         self, state: GameState, payload: Mapping[str, object] | None,
     ) -> int:
-        """Typed 拆旨声明 → 事务 id；无声明不自建；本阶段不消费了结。
-
-        #1812：existing 的授权已在拆旨抽取那一次读取当场验过（cli_backend.py
-        _affair_declaration_from_draft_obj）；此处只再做 live-open 校验
-        （resolve_declaration 自身的 status 契约），不重复保存/透传开放集合。
-        """
-        from ming_sim.entities.affair import ATTACH_BIRTH, declaration_from_payload
+        """Typed 拆旨声明 → 事务 id；无声明不自建；本阶段不消费了结。"""
+        from ming_sim.entities.affair import (
+            ATTACH_BIRTH,
+            UnauthorizedAffairOriginRef,
+            declaration_from_payload,
+        )
         declaration = declaration_from_payload(payload, allowed=ATTACH_BIRTH)
         if declaration is None:
             return 0
-        return int(self.affairs.resolve_declaration(
+        frozen = getattr(self, "_batch_frozen_open_affair_ids", None)
+        if (
+            declaration.get("attach") == "existing"
+            and frozen is not None
+            and int(declaration["affair_id"]) not in frozen
+        ):
+            raise UnauthorizedAffairOriginRef()
+        affair_id = int(self.affairs.resolve_declaration(
             declaration,
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),
             allowed=ATTACH_BIRTH,
         ))
+        working = getattr(self, "_batch_authorized_open_affair_ids", None)
+        if declaration.get("attach") == "new" and working is not None:
+            working.add(affair_id)
+        return affair_id
 
     def _attach_affair_from_payload(
         self, state: GameState, payload: Mapping[str, object] | None, dossier_id: int,
@@ -15095,6 +15208,11 @@ class GameDB:
         declaration = declaration_from_payload(payload)
         if declaration is None:
             return
+        authority = (
+            getattr(self, "_batch_frozen_open_affair_ids", None)
+            if declaration.get("attach") == "existing"
+            else getattr(self, "_batch_authorized_open_affair_ids", None)
+        )
         self.affairs.attach_from_declaration(
             "decree_dossiers",
             int(dossier_id),
@@ -15102,6 +15220,7 @@ class GameDB:
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),
+            authorized_ids=authority,
         )
 
     def _create_decree_dossier_row(
@@ -15332,15 +15451,35 @@ class GameDB:
                 raise ValueError("案卷 extension execution_signal 冲突")
             durable_extension["execution_signal"] = signal
         affair_id = self._resolve_affair_id_from_payload(state, canonical_payload)
+        lead_names = [
+            str(item.get("character_id") or "") for item in roster
+            if item.get("tier") == "主办"
+        ]
+        archive_keys: set[str] = set()
+        if action != "secret_order":
+            for lead_name in lead_names:
+                lead = self.conn.execute(
+                    "SELECT office,office_type,location FROM characters WHERE name=?",
+                    (lead_name,),
+                ).fetchone()
+                if lead is None:
+                    continue
+                key = self._office_archive_key(
+                    lead["office"], lead["office_type"],
+                    location=lead["location"] if "location" in lead.keys() else "",
+                    character_name=lead_name,
+                )
+                if key:
+                    archive_keys.add(key)
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
                 (action_type,target_kind,target_id,executor_kind,executor_id,
                  source_chat_turn_id,pending_action_id,
                  directive_id,secret_order_id,region_id,decree_text,payload_json,status,due_turn,
-                 extension_json,participant_roster,created_turn,created_year,created_period,
-                 affair_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 extension_json,participant_roster,office_archive_keys,
+                 created_turn,created_year,created_period,affair_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 action, canonical_target_kind, canonical_target_id,
@@ -15353,6 +15492,7 @@ class GameDB:
                 max(0, int(due_turn or 0)),
                 json.dumps(durable_extension, ensure_ascii=False),
                 json.dumps(roster, ensure_ascii=False),
+                json.dumps(sorted(archive_keys), ensure_ascii=False),
                 int(state.turn), int(state.year), int(state.period),
                 int(affair_id),
             ),
@@ -15565,9 +15705,46 @@ class GameDB:
         self._validate_dossier_delegations(merged)
         self._validate_participant_roster_references(merged)
         if added:
+            archive_keys: set[str] = set()
+            raw_keys_row = self.conn.execute(
+                "SELECT office_archive_keys FROM decree_dossiers WHERE id=?",
+                (int(dossier_id),),
+            ).fetchone()
+            raw_keys = (
+                raw_keys_row["office_archive_keys"] if raw_keys_row is not None else None
+            ) or "[]"
+            parsed_keys = json.loads(raw_keys)
+            if not isinstance(parsed_keys, list):
+                raise ValueError(
+                    f"office_archive_keys 须为 JSON 数组：dossier {int(dossier_id)}"
+                )
+            archive_keys = {str(item) for item in parsed_keys}
+            if str(row["action_type"] or "") != "secret_order":
+                for item in added:
+                    if str(item.get("tier") or "") != "主办":
+                        continue
+                    lead_name = str(item.get("character_id") or "")
+                    lead = self.conn.execute(
+                        "SELECT office,office_type,location FROM characters WHERE name=?",
+                        (lead_name,),
+                    ).fetchone()
+                    if lead is None:
+                        continue
+                    key = self._office_archive_key(
+                        lead["office"], lead["office_type"],
+                        location=lead["location"] if "location" in lead.keys() else "",
+                        character_name=lead_name,
+                    )
+                    if key:
+                        archive_keys.add(key)
             self.conn.execute(
-                "UPDATE decree_dossiers SET participant_roster=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (json.dumps(merged, ensure_ascii=False), int(dossier_id)),
+                "UPDATE decree_dossiers SET participant_roster=?,office_archive_keys=?,"
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (
+                    json.dumps(merged, ensure_ascii=False),
+                    json.dumps(sorted(archive_keys), ensure_ascii=False),
+                    int(dossier_id),
+                ),
             )
             if state is not None and str(row["action_type"] or "") != "secret_order":
                 for item in added:
@@ -15672,6 +15849,138 @@ class GameDB:
             })
         return result
 
+    # Central yamen archive identity: offices.json allowed_types minus non-yamen
+    # kinds. Never union characters.office_type (外臣/内臣/宗藩/未仕 would leak).
+    _NON_CENTRAL_ARCHIVE_OFFICE_TYPES = frozenset({
+        "地方", "督抚", "边镇", "内廷", "后宫",
+        "生员", "乡绅", "富商", "布衣", "流寇", "待铨",
+    })
+    _LOCAL_ARCHIVE_OFFICE_TYPES = frozenset({"地方", "督抚", "边镇"})
+
+    def _require_local_office_region(
+        self,
+        *,
+        name: object,
+        office: object,
+        office_type: object,
+        region_id: object = "",
+    ) -> str:
+        """Single typed 任所 resolver for appointment writes.
+
+        - Non-local office types store empty seat (no field required).
+        - Explicit payload/dossier region_id is consumed as-is (known → seat;
+          unknown → missing_ref). Never inferred from title/location/other seat.
+        - Same person + same local office identity continuing as no-op / 任别 /
+          replay / 起复 reuses character_offices.region_id (may be empty).
+        - Truly new or reassigned local seats without a typed region this call
+          → missing_field.
+        """
+        kind = str(office_type or "").strip()
+        if kind not in self._LOCAL_ARCHIVE_OFFICE_TYPES:
+            return ""
+        seat = str(region_id or "").strip()
+        if seat:
+            known = self.conn.execute(
+                "SELECT 1 FROM regions WHERE id=?", (seat,),
+            ).fetchone()
+            if known is None:
+                raise OfficeAppointmentRejection(
+                    f"unknown region_id {seat!r} for office appointment",
+                    category="missing_ref",
+                )
+            return seat
+        # No typed region this call — only continue an existing same-office seat.
+        person = str(name or "").strip()
+        title = normalize_office(str(office or ""))
+        if person and title and self._table_exists("character_offices"):
+            row = self.conn.execute(
+                "SELECT office_title, region_id FROM character_offices "
+                "WHERE character_name=?",
+                (person,),
+            ).fetchone()
+            if row is not None and normalize_office(str(row["office_title"] or "")) == title:
+                return str(row["region_id"] or "").strip()
+        raise OfficeAppointmentRejection(
+            f"地方任命缺 region_id 任所：{name} → {office}（{kind}）",
+            category="missing_field",
+        )
+
+    def _central_archive_office_types(self) -> frozenset[str]:
+        catalog = {
+            str(kind).strip()
+            for kind in (_offices_table().get("allowed_types") or ())
+            if str(kind).strip()
+        }
+        return frozenset(catalog - self._NON_CENTRAL_ARCHIVE_OFFICE_TYPES)
+
+    def character_office_region(self, character_name: object) -> str:
+        """Jurisdiction of the character's current appointment (一次任职)."""
+        name = str(character_name or "").strip()
+        if not name or not hasattr(self, "conn") or not self._table_exists("character_offices"):
+            return ""
+        row = self.conn.execute(
+            "SELECT region_id FROM character_offices WHERE character_name=?",
+            (name,),
+        ).fetchone()
+        return str(row["region_id"] or "").strip() if row is not None else ""
+
+    def project_office_identity(
+        self,
+        office: object,
+        office_type: object,
+        *,
+        location: object = "",
+        region_id: object = "",
+        character_name: object = "",
+    ) -> Dict[str, object]:
+        """Authoritative office → archive_key + region_ids.
+
+        Shared by character materials scope and decree-dossier succession.
+        Local jurisdiction binds to one appointment/seat identity: prefer the
+        caller's typed ``region_id``, else the holder's ``character_offices.region_id``.
+        Never derive from Character.location, free-text titles, or office_slots
+        (same bare 巡抚 in two provinces must not collide). ``location`` remains
+        accepted for call-site stability and is ignored.
+        """
+        del location  # physical presence ≠ posting jurisdiction
+        title = normalize_office(str(office or ""))
+        kind = str(office_type or "").strip()
+
+        if kind and kind in self._central_archive_office_types():
+            return {"archive_key": f"central:{kind}", "region_ids": ()}
+
+        if kind not in self._LOCAL_ARCHIVE_OFFICE_TYPES:
+            return {"archive_key": "", "region_ids": ()}
+
+        rid = str(region_id or "").strip()
+        if not rid and character_name:
+            rid = self.character_office_region(character_name)
+
+        region_ids: tuple[str, ...] = (rid,) if rid else ()
+        archive_key = ""
+        if title and rid:
+            archive_key = f"slot:{title}@{rid}"
+        return {"archive_key": archive_key, "region_ids": region_ids}
+
+    def _office_archive_key(
+        self,
+        office: object,
+        office_type: object,
+        *,
+        location: object = "",
+        region_id: object = "",
+        character_name: object = "",
+    ) -> str:
+        """Typed archive identity via :meth:`project_office_identity`."""
+        projected = self.project_office_identity(
+            office,
+            office_type,
+            location=location,
+            region_id=region_id,
+            character_name=character_name,
+        )
+        return str(projected.get("archive_key") or "")
+
     def list_referenceable_dossiers(
         self, character_name: str, current_turn: int,
     ) -> List[Dict[str, object]]:
@@ -15680,6 +15989,7 @@ class GameDB:
 
         name = str(character_name or "")
         known_secret_ids: set[int] = set()
+        known_dossier_ids: set[int] = set()
         knowledge_events = self._character_knowledge_events(name, include_exclusions=True)
         if name:
             knowledge_events += self._character_knowledge_events("", include_exclusions=True)
@@ -15690,6 +16000,20 @@ class GameDB:
             match = re.match(r"secret_order_(?:brief|disclosure):(\d+)(?::|$)", source_id)
             if match:
                 known_secret_ids.add(int(match.group(1)))
+            dossier_match = re.match(r"(?:decree_)?dossier:(\d+)(?::|$)", source_id)
+            if dossier_match:
+                known_dossier_ids.add(int(dossier_match.group(1)))
+        office_row = self.conn.execute(
+            "SELECT office,office_type,location FROM characters WHERE name=?", (name,),
+        ).fetchone()
+        reader_archive_key = (
+            self._office_archive_key(
+                office_row["office"], office_row["office_type"],
+                location=office_row["location"] if "location" in office_row.keys() else "",
+                character_name=name,
+            )
+            if office_row is not None else ""
+        )
         rows = self.conn.execute(
             """SELECT d.*,
                       s.title AS secret_title,
@@ -15711,6 +16035,10 @@ class GameDB:
                 and (
                     str(row["promulgation_decision"] or "") == "promulgated"
                     or bool(row["was_force_promulgated"])
+                    or int(row["id"]) in known_dossier_ids
+                    or reader_archive_key in set(
+                        json.loads(row["office_archive_keys"] or "[]")
+                    )
                 )
             ) or (
                 row["secret_order_id"] is not None
@@ -17235,13 +17563,23 @@ class GameDB:
                 and str(i.get("new_office") or i.get("office") or "").strip()
                 for i in office_items
             ):
-                office_items.append({
+                office_item: Dict[str, object] = {
                     "name": actor,
                     "动作": "调任",
                     "new_office": office_title,
                     "office": office_title,
                     "reason": reason,
-                })
+                }
+                # Preserve typed 任所 from dossier/pending payload; do not invent.
+                seat = str(
+                    payload.get("region_id")
+                    or payload.get("任所")
+                    or payload.get("辖区")
+                    or ""
+                ).strip()
+                if seat:
+                    office_item["region_id"] = seat
+                office_items.append(office_item)
         if not office_items:
             return set()
         from ming_sim.issues import _apply_person_changes
@@ -19241,7 +19579,7 @@ class GameDB:
         }
         for key in (
             "appointment_tenure", "任别", "faction", "summon_after",
-            "text", "affair_id",
+            "text", "affair_id", "region_id",
         ):
             value = payload.get(key)
             if value not in (None, ""):
@@ -19470,13 +19808,22 @@ class GameDB:
                     raise ValueError("荐人双边缺非空荐词语境：payload.reason 必填")
                 reason = recommendation_reason
             from ming_sim.issues import apply_person_changes_only
+            person_item = {
+                "name": name, "动作": "任命", "office": office,
+                "office_type": office_type, "任别": appointment_tenure,
+                "reason": reason, "origin_ref": "盘面自发",
+            }
+            seat = str(
+                payload.get("region_id")
+                or payload.get("任所")
+                or payload.get("辖区")
+                or ""
+            ).strip()
+            if seat:
+                person_item["region_id"] = seat
             applied = apply_person_changes_only(
                 self, state,
-                [{
-                    "name": name, "动作": "任命", "office": office,
-                    "office_type": office_type, "任别": appointment_tenure,
-                    "reason": reason, "origin_ref": "盘面自发",
-                }],
+                [person_item],
                 content=content, registry=None, llm_config=self.llm_config,
             )
             affected = self._affected_people_from_applied_rows(
@@ -20079,6 +20426,9 @@ class GameDB:
                 (int(target_did), int(directive_id)),
             ).fetchone()
             if bound is not None:
+                self._attach_affair_from_payload(state, structured, int(target_did))
+                if commit:
+                    self._commit_dossier_write(True)
                 return [int(target_did)]
             from ming_sim.rescript_actions import apply_imperial_deliberation_push
             push_mode = self._normalize_dossier_mode(
@@ -20098,6 +20448,7 @@ class GameDB:
                 "WHERE id=? AND (directive_id IS NULL OR directive_id=0 OR directive_id=?)",
                 (int(directive_id), int(pushed), int(directive_id)),
             )
+            self._attach_affair_from_payload(state, structured, int(pushed))
             if commit:
                 self._commit_dossier_write(True)
             return [int(pushed)]
@@ -20971,6 +21322,44 @@ class GameDB:
         )
         return int(cur.lastrowid)
 
+    def insert_issue_with_affair_declaration(
+        self,
+        state: GameState,
+        *,
+        affair_declaration: Mapping[str, object],
+        authorized_ids: set[int] | None = None,
+        commit: bool = True,
+        **issue_kwargs: object,
+    ) -> int:
+        """Issue row + affair pointer as one GameDB-owned write (ADR 0150-D3).
+
+        Outer atomic / suspended commit owns lifecycle when already in a batch
+        transaction; otherwise ``atomic`` pairs the two writes. Exceptions
+        propagate loud — no half product.
+        """
+        from ming_sim.applier import atomic
+
+        def _paired() -> int:
+            issue_id = self.insert_issue(state, commit=False, **issue_kwargs)  # type: ignore[arg-type]
+            self.affairs.attach_from_declaration(
+                "issues",
+                issue_id,
+                affair_declaration,
+                year=int(state.year),
+                period=int(state.period),
+                turn=int(state.turn),
+                authorized_ids=authorized_ids,
+            )
+            return issue_id
+
+        outer_owns = bool(
+            getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction
+        )
+        if outer_owns or not commit:
+            return _paired()
+        with atomic(self):
+            return _paired()
+
     def advance_issue(
         self,
         state: GameState,
@@ -21687,10 +22076,7 @@ class GameDB:
                     "period": int(row["period"] or 0),
                     "kind": row["kind"] or "assignment", "title": row["title"],
                     "body": row["body"] or "", "source_id": source_id,
-                    **({"excluded_names": json.dumps(
-                        self.knowledge_exclusions_for_source(source_id),
-                        ensure_ascii=False,
-                    )} if include_exclusions else {}),
+                    **({"excluded_names": "[]"} if include_exclusions else {}),
                 })
                 known_sources.add(source_id)
         return result

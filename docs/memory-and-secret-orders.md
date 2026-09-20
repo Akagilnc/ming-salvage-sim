@@ -1,6 +1,6 @@
 # 大臣记忆 & 密令系统文档
 
-> 覆盖：提取→落库→检索→遗忘→注入提示词 全链路。
+> 覆盖：提取→落库→检索→遗忘→材料目录取阅 全链路。
 
 ---
 
@@ -39,7 +39,7 @@ LLM显式传`expires_turn`时优先；否则按上表自动计算。
 
 ### `event_memory_sources`
 
-每张记忆卡可挂多条原始摘录，便于大臣工具`recall_memory_detail`溯源。
+每张记忆卡可挂多条原始摘录，供账本溯源与见闻投影；人物侧按需读材料目录，不把摘录预装进召对上下文。
 
 | 字段 | 说明 |
 |------|------|
@@ -116,31 +116,32 @@ step 4  record_event_memories_from_resolution   （规则层）
 
 ## 三、检索路径
 
-### 3a. 大臣召见前注入（court_brief）
+### 3a. 大臣召见前供料（材料目录）
 
-`registry.py → MinisterRegistry._brief_if_needed(character)`
+`registry.py → create_minister_agent` 经 `prepare_character_materials`（ADR 0155 / #1830 / #1833）。
 
-每月首次召见时触发，以 **user message**（非 system prompt）喂入，保护前缀缓存。
+开场只把最小集写入 instructions：本人身份与职位、在场诸人、当月日期、正经手事务一句、本场已说的话。派系档料在 system 的【派系档料】（`faction_context_with_db`）。
 
-```
-build_court_brief(context)    → 本月钱粮/奏报/地区/军队/派系/事项
-build_memory_brief(character, context)
-  └─ db.get_recent_event_memories(turn, window=5, limit=100)
-     -- 近5回合内所有event_memories，按turn/id升序
-     -- 不按大臣过滤，全局注入（量大时靠limit=100兜底）
-```
+其余加工材料写入该次调用的材料目录，由模型自读：
 
-**注意**：`get_recent_event_memories`不做主体过滤，全量近5回合记忆都注入，
-适合全局态势感知；精确召唤见3b。
+- `人物/<名>/经历.txt`、`公事档案.txt`、`见闻.txt`
+- `事务/<题>/当前情况.txt`
+- `公开说法/`（按月）与 `公开说法/邸报/`（历月邸报全文）
+- `INDEX.txt` 一行一项
 
-### 3b. 大臣工具主动检索
+API 通道：`list_materials` / `read_material`；CLI 通道以目录为 cwd、用自带只读工具。不预装全量盘面。
 
-大臣持有两个主动检索工具（`tools.py`）：
+### 3b. 大臣按需取阅
 
-| 工具 | 函数 | 说明 |
+旧按需查询工具已退役。旧事与公开记录按需读目录：
+
+| 材料 | 路径 | 说明 |
 |------|------|------|
-| `recall_memory_detail` | `db.event_memory_detail(memory_id)` | 按id查单条记忆+原始摘录 |
-| `recall_memories_by_time` | `db.conn.execute(turn=ref_turn)` + `get_memories_by_keywords` | 按年月+关键词回溯，ignore_expiry |
+| 个人经历 | `人物/<自己>/经历.txt` | 该人物可见事件记忆投影 |
+| 见闻 | `人物/<自己>/见闻.txt` | 职务可见世界事实（钱粮/地区/军队/派系等按域） |
+| 公开说法 / 邸报 | `公开说法/`、`公开说法/邸报/` | 按月公开记录与历月邸报全文 |
+
+账本侧 `db.event_memory_detail` / `get_memories_by_keywords(..., ignore_expiry=True)` 仍是引擎检索，不挂大臣 tool。
 
 ### 3c. 月末推演注入（simulator / extractor）
 
@@ -268,7 +269,7 @@ secret_orders_for_sim = {
 | chat_messages 逐条持久化 | ✅ | `db.append_chat_message` |
 | 规则层 + LLM层不重复source | ✅ | UNIQUE(subject_type,subject_id,event_type,source_kind,source_id) upsert |
 | 密令及其派生不进共享 memory | ✅ | #883：专用密令简报结构隔离；披露事件是唯一公开化通道 |
-| 注入不破前缀缓存 | ✅ | 全部走user message，不进system prompt |
+| 召对开场不预装全量盘面 | ✅ | 最小集进 instructions；其余走材料目录自读（ADR 0155） |
 | 时间查绕过衰减 | ✅ | `ignore_expiry=True` 路径 |
 | 每月per_subject剪枝防膨胀 | ✅ | `prune_event_memories_for_turn(per_subject=3)` |
 
@@ -276,9 +277,8 @@ secret_orders_for_sim = {
 
 ## 七、已知限制 / 潜在风险
 
-1. **`build_memory_brief` 全量注入**：`get_recent_event_memories(window=5, limit=100)` 不过滤主体，
-   近5回合若有大量记忆（100条+），会全部注入大臣brief，token压力大。
-   当前兜底是limit=100，若记忆量爆炸需按character过滤或降低window。
+1. **材料目录随邸报与经历增长**：召对开场只有最小集；旧事、见闻与历月邸报在目录里按需自读（ADR 0155），
+   引擎不为召对预装近 N 回合全量 `event_memories`。目录体积随月增长，不另设硬上限或摘要层。
 
 2. **密令active上限20条**：超限直接报错，不降级。
    若玩家密令积压多，大臣会看到报错提示，需先结案旧令。
