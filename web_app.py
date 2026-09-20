@@ -6015,11 +6015,11 @@ async def api_menu_exit() -> Dict[str, Any]:
         global web_game, _menu_generation
         old_game = None
         with _menu_lifecycle_lock:
-            # X1：先 seal 再摘指针——晚到 claim 在 unbind 前即被拒（drain 可再 seal，幂等）。
+            # X1：解绑指针；旧局拒绝新操作靠 web_game=None + 定点退休。
+            # seal 只在既有 drain（_drain_close_body）内做——#1842 禁正常退出另增 seal。
             _menu_generation += 1
             if web_game is not None:
                 old_game = web_game
-                get_session_write_queue(old_game).seal()
                 web_game = None
         if old_game is not None:
             # X2/X3：定点退休，HTTP 不等待。E2_absent → 零新 drain（已由他方 A4 删除）。

@@ -1579,10 +1579,11 @@ def test_web_hall_chat_routes_to_scene_chat(game, monkeypatch, bg_life):
 def test_menu_exit_joins_inflight_translation_before_db_close(
     game, monkeypatch, bg_life,
 ):
-    """#1842：转译正在写 → 退出本局立即返回 → 后台写入完成 → 数据库关闭。
+    """#1842：scene_chat 真实入口在飞转译 → 退出立即返回 → worker 写原库 → 关库。
 
-    真实 schedule + 既有 menu drain/exit 接缝；Event 栅栏。
-    禁墙钟 SLA、禁第二生命周期、禁退出路径 abandon/cancel。
+    经 GameSession.scene_chat（ctid>0）产生在飞；既有 menu drain/exit。
+    禁直接 schedule helper + fake 代替；禁墙钟 SLA；禁 seal-before-unbind；
+    只断言结构化外部结果（exit ok、extract pending→done、关库次序）。
     """
     import asyncio
 
@@ -1599,71 +1600,80 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
     release = threading.Event()
     owner = translation_owner_key(gate, db)
     bg_life.track(owner=owner, release=release)
-    sealed = {"n": 0}
-    real_seal = write_q.seal
-
-    def tracking_seal():
-        sealed["n"] += 1
-        return real_seal()
-
-    write_q.seal = tracking_seal  # type: ignore[method-assign]
 
     def translate_fn(_prompt, _config):
         started.set()
         assert release.wait(5.0)
         return {"commissions": [], "promises": []}
 
-    ctid = _persist_round(db, state, nid, "退出仍写完", "臣遵旨。")
-    future = schedule_audience_turn_translation(
-        db, state,
-        emperor_message="退出仍写完",
-        reply="臣遵旨。",
-        night_id=nid,
-        chat_turn_id=ctid,
-        llm_config=SimpleNamespace(channel="api"),
-        translate_fn=translate_fn,
-        write_gate=gate,
+    ctid = _persist_round(db, state, nid, "退出仍写完", "")
+    db.conn.execute(
+        "UPDATE chat_turns SET minister_message_id=NULL WHERE id=?", (ctid,),
     )
-    assert started.wait(2.0), "worker 须进入 LLM 窗"
+    db.conn.commit()
+
+    sess = _sess(
+        db, state, content, monkeypatch,
+        translate_fn=translate_fn, write_gate=gate,
+    )
+    sess._write_queue = write_q
+    sess._scene_registry = SimpleNamespace(abandon_all=lambda: None)
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent",
+        lambda *a, **k: SimpleNamespace(
+            run=lambda prompt: SimpleNamespace(content="臣遵旨。", tools=[]),
+        ),
+    )
+    monkeypatch.setattr(
+        "ming_sim.llm_model.extract_agent_text",
+        lambda out: str(getattr(out, "content", "") or ""),
+    )
+    monkeypatch.setattr(
+        "ming_sim.session._dump_llm_messages",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "ming_sim.session.prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="开场", root=None),
+    )
+
+    chat_out = sess.scene_chat("退出仍写完", chat_turn_id=ctid)
+    assert chat_out.answer == "臣遵旨。"
+    assert started.wait(2.0), "worker 须经 scene_chat 进入转译窗"
     assert db.get_story_extract_status(ctid) == "pending"
 
-    sess = _sess(db, state, content, monkeypatch, translate_fn=translate_fn, write_gate=gate)
-    sess._scene_registry = SimpleNamespace(abandon_all=lambda: None)
     closed = threading.Event()
     status_at_close: dict = {}
     real_close = sess.close
 
     def tracking_close():
-        # drain 仅在 join 清空后关库；此时转译须已终态并可观察水位。
+        # drain 仅在 join 清空后关库；此时转译须已终态（结构化水位）。
         status_at_close["extract"] = db.get_story_extract_status(ctid)
-        status_at_close["future_done"] = future.done()
         real_close()
         closed.set()
 
     sess.close = tracking_close  # type: ignore[method-assign]
 
-    fake_game = SimpleNamespace(
+    # 薄 duck owner 只接 menu exit/drain 指针；在飞已由 scene_chat 登记。
+    runtime = SimpleNamespace(
         _write_gate=gate,
         _write_queue=write_q,
         db_path=db.path,
         session=sess,
     )
     reset_menu_path_leases()
-    assert web_app._register_holder(db.path, fake_game) is not None
-    monkeypatch.setattr(web_app, "web_game", fake_game)
+    assert web_app._register_holder(db.path, runtime) is not None
+    monkeypatch.setattr(web_app, "web_game", runtime)
 
     result = asyncio.run(web_app.api_menu_exit())
     assert result == {"ok": True}
     assert web_app.web_game is None
-    assert sealed["n"] >= 1, "exit 须在 unbind 前 seal"
     assert not closed.is_set(), "退出响应时不得已关库（drain 仍应在等转译）"
-    assert not future.done(), "退出响应时转译仍应在飞"
     assert db.get_story_extract_status(ctid) == "pending"
 
     release.set()
     wait_until(closed.is_set)
-    assert future.done()
-    assert status_at_close.get("future_done") is True
+    # 关库前水位：worker 已把原 SQLite 写完（禁关库后再查 closed conn）。
     assert status_at_close.get("extract") == "done"
 
     # game fixture finally 会再 close；库已由 drain 关闭。

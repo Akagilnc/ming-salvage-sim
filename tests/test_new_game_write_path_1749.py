@@ -214,7 +214,9 @@ def _assert_chat_persisted(snap: dict, *, chat_turn_id: int, night_id: int,
     assert night_id in snap["night_ids"]
 
 
-def _write_and_verify_live(client: TestClient, game, *, label: str) -> dict:
+def _write_and_verify_live(
+    client: TestClient, game, monkeypatch, *, label: str,
+) -> dict:
     """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/回话终态。"""
     _install_canned_scene_double(game, monkeypatch)
     d_text = f"着户部清核辽饷（{label}）。"
@@ -260,7 +262,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     g0 = web_app.web_game
     assert g0 is not None
     p0 = g0.db_path
-    seed_rec = _write_and_verify_live(client, g0, label="seed")
+    seed_rec = _write_and_verify_live(client, g0, monkeypatch, label="seed")
     c0 = seed_rec["campaign_id"]
     d0_count = _db_snapshot(p0)["directives"]
 
@@ -273,7 +275,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     assert g1 is not None and g1 is not g0
     p1 = g1.db_path
     assert p1 != p0
-    rec1 = _write_and_verify_live(client, g1, label="direct-new")
+    rec1 = _write_and_verify_live(client, g1, monkeypatch, label="direct-new")
     c1 = rec1["campaign_id"]
     assert c1 and c1 != c0
     new_snap = _db_snapshot(p1)
@@ -324,7 +326,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     assert ng2.status_code == 200
     g2 = web_app.web_game
     assert g2 is not None and g2 is not g1
-    rec2 = _write_and_verify_live(client, g2, label="exit-new")
+    rec2 = _write_and_verify_live(client, g2, monkeypatch, label="exit-new")
     c2 = rec2["campaign_id"]
     assert c2 != c1
 
