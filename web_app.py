@@ -4455,27 +4455,27 @@ def _refuse_if_open_night_barrier(game) -> None:
 
 
 def _acquire_web_write_gate_or_409(gate) -> None:
-    """抢会话 write_gate：空闲即持；转译短持则等其释放后再非阻塞重试；否则 409。
+    """抢会话 write_gate：空闲即持；本闸转译短持则等其释放后再非阻塞重试；否则 409。
 
     #1842：后台转译只在读写临界短持同一闸；LLM 段不持闸。前台拟旨等入口不得
-    因转译短临界随机 409，也不得在结算长写上挂死——仅 ``translation_holding``
-    为真时等待深度归零，再非阻塞抢一次；仍抢不到（结算/其它写）→ 409。
+    因本闸转译短临界随机 409，也不得在结算长写或其它会话转译上挂死——仅当
+    ``translation_holding_write_gate(gate)`` 为真时等待该闸账归零并重试；
+    非本闸转译占用（结算/其它写）→ 立即 409。信号按 gate 隔离。
     """
-    if gate.acquire(blocking=False):
-        return
     from ming_sim.audience_translation import (
         translation_holding_write_gate,
         wait_translation_write_gate_released,
     )
 
-    if translation_holding_write_gate():
-        wait_translation_write_gate_released()
+    while True:
         if gate.acquire(blocking=False):
             return
-    raise HTTPException(
-        status_code=409,
-        detail="月末结算或上一步写入进行中，请稍候再操作。",
-    )
+        if not translation_holding_write_gate(gate):
+            raise HTTPException(
+                status_code=409,
+                detail="月末结算或上一步写入进行中，请稍候再操作。",
+            )
+        wait_translation_write_gate_released(gate)
 
 
 def _try_acquire_serialized_web_write_gate(game):

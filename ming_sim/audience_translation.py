@@ -40,11 +40,14 @@ _night_inflight_guard = threading.Lock()
 _night_inflight: Dict[Tuple[int, int], List[Future]] = {}  # (owner, night_id)
 _turn_inflight: Dict[Tuple[int, int], Future] = {}  # (owner, chat_turn_id)
 _night_tail: Dict[Tuple[int, int], Future] = {}
-# 转译短持 write_gate 深度：前台非阻塞抢闸据此区分「等转译短临界」与「结算长写 → 409」。
-# Condition 与深度共用同一把锁；notify 须在 gate.release 之后，避免 depth=0 仍占闸的假放行窗。
-_translation_write_gate_depth = 0
-_translation_write_gate_depth_guard = threading.Lock()
-_translation_write_released = threading.Condition(_translation_write_gate_depth_guard)
+# 转译短持 write_gate：按 gate 身份记账（禁进程级混会话）。前台非阻塞抢闸据此区分
+# 「等本闸转译短临界」与「结算/他写 → 409」。Condition 与账本共用锁。
+# 入账仅在真实 acquire 成功之后；清账/唤醒仅在真实 release 之后——两头都不制造
+# 「信号与持闸事实」错位窗。未持闸时不抬信号，避免挡在结算后面的转译把前台从
+# 应立即 409 拖成盲等。
+_translation_holding_by_gate: Dict[int, int] = {}
+_translation_write_gate_guard = threading.Lock()
+_translation_write_released = threading.Condition(_translation_write_gate_guard)
 
 
 def translation_owner_key(write_gate: Any = None, db: Any = None) -> int:
@@ -56,38 +59,46 @@ def translation_owner_key(write_gate: Any = None, db: Any = None) -> int:
     return 0
 
 
-def translation_holding_write_gate() -> bool:
-    """窥账：是否有转译 worker 正持会话 write_gate 短临界段（不 join、不 cancel）。"""
-    with _translation_write_gate_depth_guard:
-        return _translation_write_gate_depth > 0
+def translation_holding_write_gate(gate: Any) -> bool:
+    """窥账：该 gate 是否正被转译短持。不 join、不 cancel。"""
+    if gate is None:
+        return False
+    key = id(gate)
+    with _translation_write_gate_guard:
+        return _translation_holding_by_gate.get(key, 0) > 0
 
 
-def wait_translation_write_gate_released() -> None:
-    """等到转译短持深度归零（不抢闸、不加超时；结算持闸不抬此信号）。"""
+def wait_translation_write_gate_released(gate: Any) -> None:
+    """等到该 gate 的转译短持账归零（不抢闸、不加超时；其它 gate / 结算占闸不抬此信号）。"""
+    if gate is None:
+        return
+    key = id(gate)
     with _translation_write_released:
-        while _translation_write_gate_depth > 0:
+        while _translation_holding_by_gate.get(key, 0) > 0:
             _translation_write_released.wait()
 
 
 @contextlib.contextmanager
 def _translation_write_cm(gate: Any) -> Iterator[None]:
-    """转译侧短持会话 write_gate，并登记深度供前台抢闸分流。"""
-    global _translation_write_gate_depth
+    """转译侧短持会话 write_gate，并按 gate 登记持有账供前台抢闸分流。"""
     if gate is None:
         yield
         return
+    key = id(gate)
     gate.acquire()
+    with _translation_write_released:
+        _translation_holding_by_gate[key] = _translation_holding_by_gate.get(key, 0) + 1
     try:
-        with _translation_write_released:
-            _translation_write_gate_depth += 1
-        try:
-            yield
-        finally:
-            with _translation_write_released:
-                _translation_write_gate_depth -= 1
+        yield
     finally:
+        # 必须先 release 再清账/唤醒，否则等待方会在仍占闸时被放行并随机 409。
         gate.release()
         with _translation_write_released:
+            depth = _translation_holding_by_gate.get(key, 0) - 1
+            if depth <= 0:
+                _translation_holding_by_gate.pop(key, None)
+            else:
+                _translation_holding_by_gate[key] = depth
             _translation_write_released.notify_all()
 
 
