@@ -4505,6 +4505,10 @@ def _hot_replace_when_idle(game):
     #1702：与 settlement entry 共用临界区——锁序先 write_gate 后 entry_lock
     （同 `_exit_settlement_display_on_failure`），持锁全程覆盖 inflight 检与 replace，
     杜绝 gate-free 窗（HITL 尾/join）下 TOCTOU 热替换。
+
+    #1842：转译 Future 活在 ledger，不是 queue ticket；LLM 段亦不持 write_gate。
+    热替换与菜单退出同认 ledger——在飞时 409，禁持闸 join（与
+    await_translations_before_month / drain 闸外 join 同契），亦不得 orphan 关库。
     """
     _refuse_settling_or_busy_write_phase(game)
     gate = _try_acquire_serialized_web_write_gate(game)
@@ -4524,6 +4528,22 @@ def _hot_replace_when_idle(game):
                 status_code=409,
                 detail="月末结算或上一步写入进行中，请稍候再操作。",
             )
+        session = getattr(game, "session", None)
+        if session is not None:
+            from ming_sim.audience_translation import (
+                owner_has_inflight_translations,
+                translation_owner_key,
+            )
+
+            owner = translation_owner_key(
+                getattr(session, "_write_gate", None),
+                getattr(session, "db", None),
+            )
+            if owner_has_inflight_translations(owner):
+                raise HTTPException(
+                    status_code=409,
+                    detail="月末结算或上一步写入进行中，请稍候再操作。",
+                )
         yield
     finally:
         q.unseal()
@@ -7403,9 +7423,10 @@ async def api_delete_save(name: str) -> Dict[str, Any]:
 
 @app.post("/api/saves/{name}/load")
 async def api_load_save(name: str) -> Dict[str, Any]:
-    # load_save 会 session.close() 热替换主 DB——若结算/后台召对 worker 正持锁写旧连接，关连接
-    # 会让 worker 崩在「closed database」。非阻塞抢 _write_gate：忙时 409，让玩家待 worker 落定
-    # 再载（cmr Gate2 r5；强制中断在途 worker 的取消语义属 #382 通用并发模型，本轮不做）。
+    # load_save 会 session.close() 热替换主 DB——若结算/后台召对 worker / 在飞转译正写旧连接，
+    # 关连接会让 worker 崩在「closed database」。非阻塞抢 _write_gate，并核 queue ticket 与
+    # 转译 ledger：忙时 409，让玩家待落定再载（cmr Gate2 r5；#1842；强制中断在途 worker
+    # 的取消语义属 #382 通用并发模型，本轮不做）。
     game = get_game()
     _run_hot_replace(game, lambda: game.load_save(name), failure_label="载入存档失败")
     return {"state": get_game().state_payload()}

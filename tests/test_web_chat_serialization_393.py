@@ -105,6 +105,11 @@ class _FakeSession(HallAdmissionSessionMixin):
                     stream_emit(str(content))
         return ChatTurnResult(answer="".join(parts))
 
+    def schedule_pending_scene_translation(self, result):
+        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op（与生产同形入口）。
+        from ming_sim.session import GameSession
+        return GameSession.schedule_pending_scene_translation(self, result)
+
     # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
     def start_chat_turn_scene(self, *_a, **_k):
         return None

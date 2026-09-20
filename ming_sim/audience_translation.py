@@ -244,6 +244,18 @@ def _join_inflight_bucket(
                 return False
 
 
+def owner_has_inflight_translations(owner_key: int) -> bool:
+    """窥账：该会话 owner 名下是否仍有在飞转译 Future（不 join、不 cancel）。"""
+    owner = int(owner_key)
+    with _night_inflight_guard:
+        return any(
+            fut
+            for key, futs in _night_inflight.items()
+            if key[0] == owner
+            for fut in futs
+        )
+
+
 def join_owner_translations(owner_key: int, *, timeout_s: float = 120.0) -> bool:
     """等待该会话 owner 名下在飞转译全部结束。返回是否在时限内清空。"""
     owner = int(owner_key)

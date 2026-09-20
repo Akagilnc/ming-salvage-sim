@@ -1701,7 +1701,7 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
 
     import web_app
     from ming_sim.session_write_queue import SessionWriteQueue
-    from tests.wait_utils import reset_menu_path_leases, wait_until
+    from tests.wait_utils import reset_menu_path_leases
 
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
@@ -1785,7 +1785,7 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
     assert db.get_story_extract_status(ctid) == "pending"
 
     release.set()
-    wait_until(closed.is_set)
+    assert closed.wait(5.0), "drain 须在转译终态后关库"
     # 关库前水位：worker 已把原 SQLite 写完（禁关库后再查 closed conn）。
     assert status_at_close.get("extract") == "done"
 
@@ -1806,7 +1806,6 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
     import ming_sim.cli.terminal as term
     from ming_sim.exceptions import ExitGame
     from ming_sim.session_write_queue import SessionWriteQueue
-    from tests.wait_utils import wait_until
 
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
@@ -1910,16 +1909,127 @@ def test_cli_exit_joins_inflight_translation_before_db_close(
     )
     run_thread.start()
     # 外部可见：play 已入且仍 pending、未关库（drain 须等在飞；直接 close → 红）。
-    wait_until(lambda: play_entered.is_set() or closed.is_set())
+    assert play_entered.wait(5.0) or closed.is_set(), "run_cli 须进入 play 或已关库"
     assert play_entered.is_set(), "run_cli 须进入 play 后抛 ExitGame"
     assert not closed.is_set(), "在飞转译清空前不得关库"
     assert db.get_story_extract_status(ctid) == "pending"
 
     release.set()
-    wait_until(closed.is_set)
-    wait_until(run_done.is_set)
+    assert closed.wait(5.0), "drain 须在转译终态后关库"
+    assert run_done.wait(5.0), "run_cli 须收口"
     if run_error:
         raise run_error[0]
     assert status_at_close.get("extract") == "done"
 
     db.close = lambda: None  # type: ignore[method-assign]
+
+
+def test_hot_replace_409_while_translation_inflight(
+    game, monkeypatch, bg_life,
+):
+    """#1842：转译 Future 在飞时 in-game load-save 热替换立即 409，不关旧库。
+
+    真实入口=/api/saves/.../load → `_hot_replace_when_idle` 窥 ledger；
+    queue.inflight 可为 0（LLM 段非 ticket）。禁持闸 join；放行并 join 后再载成功。
+    """
+    from fastapi.testclient import TestClient
+
+    import web_app
+    from ming_sim.audience_translation import owner_has_inflight_translations
+    from ming_sim.session_write_queue import SessionWriteQueue
+
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    write_q = SessionWriteQueue()
+    gate = write_q.write_gate
+    started = threading.Event()
+    release = threading.Event()
+    owner = translation_owner_key(gate, db)
+    bg_life.track(owner=owner, release=release)
+
+    def translate_fn(_prompt, _config):
+        started.set()
+        assert release.wait(5.0)
+        return {"commissions": [], "promises": []}
+
+    ctid = _persist_round(db, state, nid, "热替换仍在飞", "")
+    db.conn.execute(
+        "UPDATE chat_turns SET minister_message_id=NULL WHERE id=?", (ctid,),
+    )
+    db.conn.commit()
+
+    sess = _sess(
+        db, state, content, monkeypatch,
+        translate_fn=translate_fn, write_gate=gate,
+    )
+    sess._write_queue = write_q
+    sess._scene_registry = SimpleNamespace(abandon_all=lambda: None)
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent",
+        lambda *a, **k: SimpleNamespace(
+            run=lambda prompt: SimpleNamespace(content="臣遵旨。", tools=[]),
+        ),
+    )
+    monkeypatch.setattr(
+        "ming_sim.llm_model.extract_agent_text",
+        lambda out: str(getattr(out, "content", "") or ""),
+    )
+    monkeypatch.setattr(
+        "ming_sim.session._dump_llm_messages",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "ming_sim.session.prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="开场", root=None),
+    )
+
+    chat_out = sess.scene_chat("热替换仍在飞", chat_turn_id=ctid)
+    assert chat_out.answer == "臣遵旨。"
+    persist_and_schedule_scene(sess, db, chat_out)
+    assert started.wait(2.0), "worker 须经 persist 后 schedule 进入转译窗"
+    assert db.get_story_extract_status(ctid) == "pending"
+    assert owner_has_inflight_translations(owner)
+    assert write_q.inflight_count() == 0, "LLM 段不得冒充 queue ticket"
+
+    closed = threading.Event()
+    real_close = sess.close
+
+    def tracking_close():
+        real_close()
+        closed.set()
+
+    sess.close = tracking_close  # type: ignore[method-assign]
+
+    replacements: list[str] = []
+    runtime = SimpleNamespace(
+        _write_gate=gate,
+        _write_queue=write_q,
+        _runtime_write_gate=lambda: gate,
+        _settlement_entry_inflight=0,
+        state=state,
+        session=sess,
+        db=db,
+        db_path=db.path,
+        load_save=lambda _name: replacements.append("load"),
+        state_payload=lambda: {"ok": True},
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    path = "/api/saves/存档/load"
+    busy = TestClient(web_app.app).post(path)
+    assert busy.status_code == 409, busy.text
+    assert replacements == []
+    assert not closed.is_set(), "转译在飞时不得关旧库"
+    assert db.get_story_extract_status(ctid) == "pending"
+    db.conn.execute("SELECT 1").fetchone()
+
+    release.set()
+    assert join_owner_translations(owner, timeout_s=5.0)
+    assert db.get_story_extract_status(ctid) == "done"
+    assert not owner_has_inflight_translations(owner)
+
+    retried = TestClient(web_app.app).post(path)
+    assert retried.status_code == 200, retried.text
+    assert replacements == ["load"]
+    assert retried.json() == {"state": {"ok": True}}

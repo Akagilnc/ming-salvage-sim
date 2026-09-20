@@ -88,6 +88,8 @@ class _FakeSession(HallAdmissionSessionMixin):
         # 高亮离线：禁 FakeSession llm_config 半字段触发真 create_chat_model
         self._write_gate = None
         # 绑生产 scene_chat 及依赖方法（不平行实现 tool 暂存）
+        # #1842：WebGame persist 尾必调 schedule_pending_scene_translation——假壳缺绑
+        # 会在回话已入档后 AttributeError，失败回滚 history，观察者离开回归永久停车。
         import types as _types
         for _name in (
             "_apply_scene_turn_translation",
@@ -96,6 +98,7 @@ class _FakeSession(HallAdmissionSessionMixin):
             "_stage_directive_tool_candidate",
             "_stage_appointment_candidate",
             "summon_character",
+            "schedule_pending_scene_translation",
         ):
             if hasattr(GameSession, _name):
                 setattr(self, _name, _types.MethodType(getattr(GameSession, _name), self))
@@ -203,11 +206,24 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
 
 
 def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
+    """等本局 owned 终态：queue idle + 本 owner 转译 ledger 清空（禁盲轮询 history）。"""
     q = getattr(web_game, "_write_queue", None)
     if q is not None and hasattr(q, "wait_idle"):
         q.wait_idle()  # unlimited; CI job final line owns hang
+    else:
+        wait_until(lambda: int(getattr(web_game, "_pending_writes_count", 0) or 0) == 0)
+    sess = getattr(web_game, "session", None)
+    if sess is None:
         return
-    wait_until(lambda: int(getattr(web_game, "_pending_writes_count", 0) or 0) == 0)
+    from ming_sim.audience_translation import join_owner_translations, translation_owner_key
+
+    owner = translation_owner_key(
+        getattr(sess, "_write_gate", None),
+        getattr(sess, "db", None),
+    )
+    assert join_owner_translations(owner, timeout_s=5.0), (
+        "owner translation ledger did not clear before fixture close"
+    )
 
 
 def _assert_next_accepted(stream) -> None:
@@ -235,14 +251,13 @@ def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(ga
     stream.close()
 
     agent.completed.wait()
-    wait_until(lambda: len(web_game.chat_history[minister_name]) >= 2)
+    # fixture 关闭共享 DB 前必须等 queue + 本 owner 转译 ledger 终态（禁盲等 history）。
+    _wait_for_pending_writes_to_drain(web_game)
     assert web_game.chat_history[minister_name] == [
         {"role": "user", "content": "户部钱粮如何？"},
         {"role": "minister", "content": "臣遵旨。"},
     ]
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
-    # fixture 关闭共享 DB 前必须等后台 worker 的 finally 完整结束。
-    _wait_for_pending_writes_to_drain(web_game)
 
 
 def test_chat_reload_exposes_retryable_failed_secret_order(game):
@@ -629,11 +644,11 @@ def test_background_audience_secret_order_persists_after_observer_departure(game
     stream.close()
 
     agent.completed.wait()
-    # 后台跑完：CLI 动作落地真源被调用 + 大臣回话入档（apply 在 _chat_payload 前）
-    wait_until(lambda: len(web_game.session.apply_calls) >= 1)
-    wait_until(lambda: len(web_game.chat_history[minister_name]) >= 2)
-    assert db.can_undo_last_chat_turn(minister_name, state.turn)
+    # 后台跑完：queue + 转译 ledger 终态后断言外部结构化结果（禁盲等 history）。
     _wait_for_pending_writes_to_drain(web_game)
+    assert len(web_game.session.apply_calls) >= 1
+    assert len(web_game.chat_history[minister_name]) >= 2
+    assert db.can_undo_last_chat_turn(minister_name, state.turn)
 
 
 def test_background_audience_pending_action_persists_after_observer_departure(game, monkeypatch):
@@ -651,10 +666,10 @@ def test_background_audience_pending_action_persists_after_observer_departure(ga
     stream.close()
 
     agent.completed.wait()
-    wait_until(lambda: len(web_game.session.apply_calls) >= 1)
-    wait_until(lambda: len(web_game.chat_history[minister_name]) >= 2)
-    assert db.can_undo_last_chat_turn(minister_name, state.turn)
     _wait_for_pending_writes_to_drain(web_game)
+    assert len(web_game.session.apply_calls) >= 1
+    assert len(web_game.chat_history[minister_name]) >= 2
+    assert db.can_undo_last_chat_turn(minister_name, state.turn)
 
 
 def test_background_audience_recommendation_stages_candidate_snapshot(game, monkeypatch):
@@ -699,15 +714,14 @@ def test_background_audience_recommendation_stages_candidate_snapshot(game, monk
     assert "__pending_recommendation__" not in player_text
     assert "done" in [e.get("type") for e in events], events
 
-    # 转译后台串行：等 pending 出现（真实入口 → 外部账）
-    wait_until(lambda: len(db.list_pending_actions(state.turn)) >= 1)
+    # 转译后台串行：join owner ledger 后再断言外部 pending 账（禁盲轮询条数）。
+    _wait_for_pending_writes_to_drain(web_game)
     pending = db.list_pending_actions(state.turn)
     office_rows = [p for p in pending if p["kind"] == "office"]
     assert len(office_rows) >= 1, pending
     staged = json.loads(office_rows[0]["payload_json"])
     assert staged.get("name") == cand_name
     assert staged.get("office") == office
-    _wait_for_pending_writes_to_drain(web_game)
 
 
 def test_llm_failure_does_not_leave_half_chat_in_history(game, monkeypatch):
