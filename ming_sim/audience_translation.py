@@ -29,14 +29,14 @@ TranslateFn = Callable[[str, Any], Mapping[str, object]]
 # owner = id(write_gate) 或 id(db)：锁、inflight、join、清理共用同一 (owner, night)
 # 边界——独立存档同夜号不得互等；关库后旧会话 worker 不得占住新会话同夜串行锁，
 # 也不得继续出现在本 owner 的 join 账上（xdist 复用进程 / 菜单退局后的孤儿 Future）。
-# 源轮 Future 另按 turn-key 索引，供撤回终结在飞转译（ADR 0038 / 0155）。
+# 源轮 Future 按 (owner, chat_turn_id) 索引——跨存档同号轮次不得覆盖/撤错
+# （ADR 0038 / 0155）。
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="audience-translate")
 _night_serial_guard = threading.Lock()
 _night_serial_locks: Dict[Tuple[int, int], threading.Lock] = {}
 _night_inflight_guard = threading.Lock()
 _night_inflight: Dict[Tuple[int, int], List[Future]] = {}  # (owner, night_id)
-_turn_inflight: Dict[int, Future] = {}
-_future_owner: Dict[Future, int] = {}
+_turn_inflight: Dict[Tuple[int, int], Future] = {}  # (owner, chat_turn_id)
 
 
 def translation_owner_key(write_gate: Any = None, db: Any = None) -> int:
@@ -136,49 +136,53 @@ def _track_future(
     nid = int(night_id or 0)
     ctid = int(chat_turn_id or 0)
     owner = int(owner_key)
-    key = (owner, nid)
+    night_key = (owner, nid)
+    turn_key = (owner, ctid) if ctid > 0 else None
     with _night_inflight_guard:
-        _night_inflight.setdefault(key, []).append(fut)
-        _future_owner[fut] = owner
-        if ctid > 0:
-            _turn_inflight[ctid] = fut
+        _night_inflight.setdefault(night_key, []).append(fut)
+        if turn_key is not None:
+            _turn_inflight[turn_key] = fut
 
         def _cleanup(
             _f: Future,
             *,
-            _key: Tuple[int, int] = key,
+            _night_key: Tuple[int, int] = night_key,
+            _turn_key: Optional[Tuple[int, int]] = turn_key,
             _fut: Future = fut,
-            _ctid: int = ctid,
         ) -> None:
             with _night_inflight_guard:
-                bucket = _night_inflight.get(_key) or []
+                bucket = _night_inflight.get(_night_key) or []
                 try:
                     bucket.remove(_fut)
                 except ValueError:
                     pass
                 if not bucket:
-                    _night_inflight.pop(_key, None)
-                _future_owner.pop(_fut, None)
-                if _ctid > 0 and _turn_inflight.get(_ctid) is _fut:
-                    _turn_inflight.pop(_ctid, None)
+                    _night_inflight.pop(_night_key, None)
+                if _turn_key is not None and _turn_inflight.get(_turn_key) is _fut:
+                    _turn_inflight.pop(_turn_key, None)
 
         fut.add_done_callback(_cleanup)
 
 
-def cancel_turn_translation(chat_turn_id: int) -> int:
-    """撤回本轮：取消/失效该源轮在飞转译 Future（ADR 0038 / 0155）。
+def cancel_turn_translation(chat_turn_id: int, *, owner_key: int) -> int:
+    """撤回本轮：取消/失效该会话 owner 下该源轮在飞转译 Future（ADR 0038 / 0155）。
 
+    必须传当前会话 ``owner_key``——跨存档同号 ``chat_turn_id`` 不得撤到别家。
     返回触及的 Future 数（0/1）。已跑到 write-gate 落账前的 worker 仍靠源轮
     存活复查挡写；pending/retry 真源随 chat_turns.status=undone 自然出窗。
     """
     ctid = int(chat_turn_id or 0)
+    owner = int(owner_key)
     if ctid <= 0:
         return 0
+    turn_key = (owner, ctid)
     with _night_inflight_guard:
-        fut = _turn_inflight.pop(ctid, None)
+        fut = _turn_inflight.pop(turn_key, None)
         if fut is None:
             return 0
         for key, bucket in list(_night_inflight.items()):
+            if key[0] != owner:
+                continue
             try:
                 bucket.remove(fut)
             except ValueError:
@@ -186,7 +190,6 @@ def cancel_turn_translation(chat_turn_id: int) -> int:
             if not bucket:
                 _night_inflight.pop(key, None)
             break
-        _future_owner.pop(fut, None)
     fut.cancel()
     return 1
 
@@ -207,11 +210,9 @@ def abandon_owner_translations(owner_key: int) -> int:
                 continue
             doomed.extend(bucket)
             _night_inflight.pop(key, None)
-        for fut in doomed:
-            _future_owner.pop(fut, None)
-            for ctid, tf in list(_turn_inflight.items()):
-                if tf is fut:
-                    _turn_inflight.pop(ctid, None)
+        for turn_key in list(_turn_inflight.keys()):
+            if turn_key[0] == owner:
+                _turn_inflight.pop(turn_key, None)
     for fut in doomed:
         fut.cancel()
     return len(doomed)

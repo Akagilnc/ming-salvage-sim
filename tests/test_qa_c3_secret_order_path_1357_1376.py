@@ -306,7 +306,10 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
     import ming_sim.agents as agents_mod
     import ming_sim.mindreading as mindreading_mod
     from ming_sim import audience_night as an
-    from ming_sim.audience_translation import join_all_translations
+    from ming_sim.audience_translation import (
+        join_owner_translations,
+        translation_owner_key,
+    )
     from tests.wait_utils import wait_until
 
     class _CannedRun:
@@ -389,7 +392,11 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
             json={"message": "准"},
         )
         assert chat_resp.status_code == 200, chat_resp.text
-        assert join_all_translations(timeout_s=5.0)
+        # 生产契约：只等本会话 owner，不被他档孤儿 Future 拖死。
+        owner = translation_owner_key(
+            getattr(game.session, "_write_gate", None), game.db,
+        )
+        assert join_owner_translations(owner, timeout_s=5.0)
         wait_until(lambda: len(game.db.list_secret_orders()) > 0)
 
         orders = game.db.list_secret_orders()

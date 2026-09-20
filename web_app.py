@@ -2052,8 +2052,16 @@ class WebGame:
         except Exception:
             pass
         try:
-            from ming_sim.audience_translation import cancel_turn_translation
-            cancel_turn_translation(turn_id)
+            from ming_sim.audience_translation import (
+                cancel_turn_translation,
+                translation_owner_key,
+            )
+            cancel_turn_translation(
+                turn_id,
+                owner_key=translation_owner_key(
+                    self._runtime_write_gate(), self.db,
+                ),
+            )
         except Exception:
             pass
         try:

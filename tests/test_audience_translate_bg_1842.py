@@ -351,6 +351,10 @@ def test_independent_owners_same_night_id_do_not_block_each_other(
                 "promises": [],
             }
 
+        owner_a = translation_owner_key(gate_a, db_a)
+        owner_b = translation_owner_key(gate_b, db_b)
+        assert owner_a != owner_b
+
         ctid_a = _persist_round(db_a, state_a, nid_a, "甲档阻塞", "……")
         schedule_audience_turn_translation(
             db_a, state_a,
@@ -362,10 +366,12 @@ def test_independent_owners_same_night_id_do_not_block_each_other(
         )
         # 甲仍在飞
         assert not join_night_translations(
-            nid_a, timeout_s=0.05, owner_key=translation_owner_key(gate_a, db_a),
+            nid_a, timeout_s=0.05, owner_key=owner_a,
         )
 
         ctid_b = _persist_round(db_b, state_b, nid_b, "乙档快走", "领旨。")
+        # 同号源轮是撤回隔离刀口；模板同核首轮应为同 id。
+        assert ctid_a == ctid_b
         schedule_audience_turn_translation(
             db_b, state_b,
             emperor_message="乙档快走",
@@ -374,11 +380,12 @@ def test_independent_owners_same_night_id_do_not_block_each_other(
             llm_config=SimpleNamespace(channel="api"),
             translate_fn=translate_b, write_gate=gate_b,
         )
-        assert join_owner_translations(
-            translation_owner_key(gate_b, db_b), timeout_s=2.0,
-        )
+        # 撤甲不得撤到乙（同 chat_turn_id、异 owner）
+        from ming_sim.audience_translation import cancel_turn_translation
+        assert cancel_turn_translation(ctid_a, owner_key=owner_a) == 1
+        assert join_owner_translations(owner_b, timeout_s=2.0)
         assert db_b.get_story_extract_status(ctid_b) == "done"
-        # 甲仍未放行
+        # 甲被撤后仍未落 done（worker 放行后复查死轮/空桶）
         assert db_a.get_story_extract_status(ctid_a) == "pending"
 
         # 乙可封夜，不因甲同夜号互等
@@ -1135,6 +1142,7 @@ def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game)
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
     gate = threading.Lock()
+    owner = translation_owner_key(gate, db)
     hold = threading.Event()
     entered = threading.Event()
     applied = {"n": 0}
@@ -1165,7 +1173,7 @@ def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game)
             translate_fn=translate_fn, write_gate=gate,
         )
         assert entered.wait(timeout=2.0)
-        n = cancel_turn_translation(ctid)
+        n = cancel_turn_translation(ctid, owner_key=owner)
         assert n == 1
         db.conn.execute(
             "UPDATE chat_turns SET status='undone', undone_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -1173,7 +1181,7 @@ def test_undo_cancels_inflight_translation_and_write_gate_blocks_dead_turn(game)
         )
         db.conn.commit()
         hold.set()
-        join_night_translations(nid, timeout_s=2.0)
+        join_night_translations(nid, timeout_s=2.0, owner_key=owner)
         try:
             fut.result(timeout=0.5)
         except Exception:
