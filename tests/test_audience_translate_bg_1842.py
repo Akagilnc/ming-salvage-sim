@@ -407,17 +407,29 @@ def test_independent_owners_same_night_id_do_not_block_each_other(
 
 def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypatch):
     """断根：join 未清空不得置 CLOSING；清空后沿同一路径收夜。"""
+    import ming_sim.audience_translation as at
+
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
     gate = threading.Lock()
     release = threading.Event()
+    entered_translate = threading.Event()
+    entered_close_join = threading.Event()
     owner = translation_owner_key(gate, db)
 
     def translate_fn(prompt, llm_config):
+        entered_translate.set()
         release.wait(timeout=5.0)
         return {"commissions": [], "promises": []}
 
+    real_join_night = at.join_night_translations
+
+    def join_mark_entered(night_id, *, timeout_s=120.0, owner_key=None):
+        entered_close_join.set()
+        return real_join_night(night_id, timeout_s=timeout_s, owner_key=owner_key)
+
+    monkeypatch.setattr(at, "join_night_translations", join_mark_entered)
     monkeypatch.setattr(
         "ming_sim.audience_extraction.extract_endorsements_for_night",
         lambda **k: [],
@@ -432,7 +444,8 @@ def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypat
         llm_config=SimpleNamespace(channel="api"),
         translate_fn=translate_fn, write_gate=gate,
     )
-    assert not join_night_translations(nid, timeout_s=0.05, owner_key=owner)
+    assert entered_translate.wait(timeout=2.0), "转译须先进入阻塞接缝"
+    assert not real_join_night(nid, timeout_s=0.05, owner_key=owner)
 
     outcome: dict = {}
 
@@ -447,18 +460,13 @@ def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypat
 
     worker = threading.Thread(target=_run_close, daemon=True)
     worker.start()
-    # 转译仍阻塞期间：夜须保持 OPEN，不得进入 CLOSING
-    deadline = time.monotonic() + 1.0
-    saw_open = False
-    while time.monotonic() < deadline:
-        row = get_night(db, nid)
-        assert row is not None
-        status = str(row["status"] or "")
-        assert status != NIGHT_STATUS_CLOSING, "屏障未清不得 CLOSING"
-        if status == NIGHT_STATUS_OPEN:
-            saw_open = True
-        time.sleep(0.05)
-    assert saw_open
+    # 事件确认 close 已进入 join 屏障后再断言外部态——禁猜时序轮询。
+    assert entered_close_join.wait(timeout=2.0), "close_night 须进入 join 屏障"
+    row = get_night(db, nid)
+    assert row is not None
+    status = str(row["status"] or "")
+    assert status == NIGHT_STATUS_OPEN
+    assert status != NIGHT_STATUS_CLOSING, "屏障未清不得 CLOSING"
     assert worker.is_alive(), "close_night 应仍在等屏障"
 
     release.set()
@@ -741,13 +749,15 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
     nid = int(night["id"])
     gate = threading.Lock()
     release_llm = threading.Event()
+    entered_translate = threading.Event()
+    saw_incomplete_join = threading.Event()
     name = _active_name(db, content)
     import ming_sim.audience_translation as at
 
     def translate_fn(prompt, llm_config):
-        # LLM 窗无锁；落账短持 write_gate。
-        release_llm.wait(timeout=2.0)
-        time.sleep(0.55)  # 单次短 join 可能先 False → 须 while 等，非一次 Abort
+        # LLM 窗无锁；落账短持 write_gate。屏障未放行前保持在飞，迫使短 join False。
+        entered_translate.set()
+        release_llm.wait(timeout=5.0)
         return {
             "on_scene_facts": [{
                 "name": name, "动作": "处置", "status": "imprisoned",
@@ -765,11 +775,15 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
         translate_fn=translate_fn, write_gate=gate,
     )
     assert db.get_story_extract_status(ctid) == "pending"
+    assert entered_translate.wait(timeout=2.0), "转译须先进入阻塞接缝"
 
     real_join = at.join_owner_translations
 
     def join_short(owner_key, *, timeout_s=120.0):
-        return real_join(owner_key, timeout_s=min(float(timeout_s), 0.4))
+        ok = real_join(owner_key, timeout_s=min(float(timeout_s), 0.4))
+        if not ok:
+            saw_incomplete_join.set()
+        return ok
 
     monkeypatch.setattr(at, "join_owner_translations", join_short)
 
@@ -814,7 +828,8 @@ def test_resolve_turn_incomplete_join_waits_then_continues(game, monkeypatch):
 
     worker = threading.Thread(target=run_production_shape, daemon=True)
     worker.start()
-    time.sleep(0.05)
+    # 先确认短 join 至少一次未清空（while 续等），再放行转译——禁 sleep 猜时序。
+    assert saw_incomplete_join.wait(timeout=2.0), "须至少一次 join 未清空"
     release_llm.set()
     worker.join(timeout=4.0)
     hung = worker.is_alive()
