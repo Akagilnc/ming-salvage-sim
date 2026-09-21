@@ -396,7 +396,7 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
 
 
 @pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
-def test_drain_waits_for_in_flight_nonstream_chat():
+def test_drain_waits_for_in_flight_nonstream_chat(game, monkeypatch):
     """非流式 chat 在飞（慢 LLM）时 drain 须等待——pending 覆盖 LLM 窗 + epilogue。
 
     #1291 卸 threadpool 后事件循环可与回菜单重叠；若不标 pending，drain 当空闲关
@@ -407,10 +407,23 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     closed: list[int] = []
     derived_started = threading.Event()
     release_derived = threading.Event()
-    derived_status = {"value": "missing"}
-    character = SimpleNamespace(name="测试大臣")
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
-    db = _RecordingDB(threading.Event())
+    from ming_sim.audience_night import open_night
+    from tests.conftest import stub_audience_translate
+
+    db, state, _content = game
+    row = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    character = SimpleNamespace(name=str(row["name"]))
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+
+    def translate_fn(_prompt, _config):
+        derived_started.set()
+        assert release_derived.wait(5.0)
+        return {"commissions": [], "promises": []}
+
+    stub_audience_translate(monkeypatch, translate_fn)
 
     class _SlowChatSession(_FakeSession):
         def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
@@ -421,24 +434,20 @@ def test_drain_waits_for_in_flight_nonstream_chat():
             allow_finish.wait()
             return ChatTurnResult(
                 answer="臣已知悉。",
-                pending_audience_translation={"chat_turn_id": 1},
+                pending_audience_translation={
+                    "emperor_message": message,
+                    "reply": "臣已知悉。",
+                    "night_id": int(night["id"]),
+                    "chat_turn_id": int(chat_turn_id),
+                    "minister_name": minister_name,
+                },
             )
 
-        def schedule_pending_scene_translation(self, result):
-            ticket = result._admitted_write_ticket
-            runtime._write_queue.retain(ticket, ("audience_translation", 1))
-            derived_status["value"] = "pending"
-            derived_started.set()
-
-            def finish_translation():
-                release_derived.wait()
-                derived_status["value"] = "done"
-                runtime._write_queue.complete(ticket)
-
-            threading.Thread(target=finish_translation, daemon=True).start()
-
         def close(self):
-            assert derived_status["value"] == "done"
+            latest = db.conn.execute(
+                "SELECT extract_status FROM chat_turns ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            assert latest is not None and latest["extract_status"] == "done"
             closed.append(1)
 
     runtime = object.__new__(web_app.WebGame)
@@ -448,6 +457,9 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     from ming_sim.session_write_queue import SessionWriteQueue
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
+    runtime.session._write_queue = runtime._write_queue
+    runtime.session._write_gate = runtime._write_gate
+    runtime.session.llm_config = SimpleNamespace(channel="api")
     runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
     runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
     runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
