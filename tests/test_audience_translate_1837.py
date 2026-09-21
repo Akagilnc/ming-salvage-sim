@@ -20,10 +20,6 @@ from ming_sim.audience_translate import (
     build_night_said_so_far,
     normalize_audience_declaration,
 )
-from ming_sim.audience_translation import (
-    join_night_translations,
-    translation_owner_key,
-)
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 from tests.conftest import (
@@ -624,9 +620,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     r = sess.scene_chat("拟赈灾", chat_turn_id=ctid_create)
     assert r.pending_action_id == 0  # #1842：前台不等后台转译
     persist_and_schedule_scene(sess, db, r)
-    assert join_night_translations(
-        night_id, timeout_s=2.0, owner_key=translation_owner_key(None, db),
-    )
+    sess._write_queue.barrier(lambda: None)
     created = db.conn.execute(
         "SELECT id FROM pending_actions WHERE payload_json LIKE ? ORDER BY id DESC LIMIT 1",
         (f"%{create_text}%",),
@@ -668,9 +662,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     )
     r_approve = sess.scene_chat("准", chat_turn_id=ctid_approve)
     persist_and_schedule_scene(sess, db, r_approve)
-    assert join_night_translations(
-        night_id, timeout_s=2.0, owner_key=translation_owner_key(None, db),
-    )
+    sess._write_queue.barrier(lambda: None)
     assert int(db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
     ).fetchone()["night_approved"] or 0) == 1
@@ -702,9 +694,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     )
     r_reject = sess.scene_chat("不准", chat_turn_id=ctid_reject)
     persist_and_schedule_scene(sess, db, r_reject)
-    assert join_night_translations(
-        night_id, timeout_s=2.0, owner_key=translation_owner_key(None, db),
-    )
+    sess._write_queue.barrier(lambda: None)
     assert db.conn.execute(
         "SELECT COUNT(*) n FROM pending_actions WHERE id=?", (reject_id,),
     ).fetchone()["n"] == 0

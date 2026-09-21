@@ -28,27 +28,12 @@ from ming_sim.declaration_dispatch import (
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
 logger = logging.getLogger(__name__)
 
-# 进程级：按「会话 owner × 夜」串行与登记（同一夜 FIFO）；跨夜 / 跨会话可并行。
-# owner = id(write_gate) 或 id(db)：inflight、join、清理共用同一 (owner, night)
-# 边界——独立存档同夜号不得互等；关库后旧会话 worker 不得继续出现在本 owner 的
-# join 账上（xdist 复用进程 / 菜单退局后的孤儿 Future）。
-# 源轮 Future 按 (owner, chat_turn_id) 索引——跨存档同号轮次不得覆盖/撤错
-# （ADR 0038 / 0155）。
-# 同夜唯一串行真源 = `_night_tail` Future 链（禁并行再加 Lock）。
+# 同夜 FIFO 只保留 Future tail；在飞/排空/关闭的唯一真源是
+# SessionWriteQueue 的 open ticket。Future 不再另建 owner/night ledger。
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="audience-translate")
 _night_inflight_guard = threading.Lock()
-_night_inflight: Dict[Tuple[int, int], List[Future]] = {}  # (owner, night_id)
-_turn_inflight: Dict[Tuple[int, int], Future] = {}  # (owner, chat_turn_id)
-_night_tail: Dict[Tuple[int, int], Future] = {}
-
-
-def translation_owner_key(write_gate: Any = None, db: Any = None) -> int:
-    """转译 inflight / 夜串行锁的会话锚：优先 write_gate，否则 db。"""
-    if write_gate is not None:
-        return id(write_gate)
-    if db is not None:
-        return id(db)
-    return 0
+_night_tail: Dict[Tuple[int, int], Future] = {}  # (queue identity, night_id)
+_turn_future: Dict[Tuple[int, int], Future] = {}  # cancellation scheduling only
 
 
 def translation_holding_write_gate(gate: Any) -> bool:
@@ -171,43 +156,18 @@ def mark_turn_translation_done(
         db.conn.commit()
 
 
-def cancel_turn_translation(chat_turn_id: int, *, owner_key: int) -> int:
-    """撤回本轮：取消/失效该会话 owner 下该源轮在飞转译 Future（ADR 0038 / 0155）。
-
-    必须传当前会话 ``owner_key``——跨存档同号 ``chat_turn_id`` 不得撤到别家。
-    返回触及的 Future 数（0/1）。已跑到 write-gate 落账前的 worker 仍靠源轮
-    存活复查挡写；pending/retry 真源随 chat_turns.status=undone 自然出窗。
-
-    在飞且未能 cancel 的 Future **不得**先从 ledger 剥离——``join_owner_translations``
-    / exit drain 仍须等它跑完；仅 cancel 成功或已终态时才摘账。
-    """
+def cancel_turn_translation(chat_turn_id: int, *, write_queue: Any) -> int:
+    """撤回本轮：由 SessionWriteQueue 取消唯一在飞票。"""
     ctid = int(chat_turn_id or 0)
-    owner = int(owner_key)
     if ctid <= 0:
         return 0
-    turn_key = (owner, ctid)
+    n = int(write_queue.cancel_key(("audience_translation", ctid)))
+    turn_key = (id(write_queue), ctid)
     with _night_inflight_guard:
-        fut = _turn_inflight.get(turn_key)
-        if fut is None:
-            return 0
-    cancelled = fut.cancel()
-    if not (cancelled or fut.done()):
-        return 1
-    with _night_inflight_guard:
-        cur = _turn_inflight.get(turn_key)
-        if cur is fut:
-            _turn_inflight.pop(turn_key, None)
-        for key, bucket in list(_night_inflight.items()):
-            if key[0] != owner:
-                continue
-            try:
-                bucket.remove(fut)
-            except ValueError:
-                continue
-            if not bucket:
-                _night_inflight.pop(key, None)
-            break
-    return 1
+        fut = _turn_future.get(turn_key)
+    if fut is not None:
+        fut.cancel()
+    return n
 
 
 def _await_inflight_future(
@@ -279,39 +239,6 @@ def _join_inflight_bucket(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
-
-
-def owner_has_inflight_translations(owner_key: int) -> bool:
-    """窥账：该会话 owner 名下是否仍有在飞转译 Future（不 join、不 cancel）。"""
-    owner = int(owner_key)
-    with _night_inflight_guard:
-        return any(
-            fut
-            for key, futs in _night_inflight.items()
-            if key[0] == owner
-            for fut in futs
-        )
-
-
-def join_owner_translations(owner_key: int, *, timeout_s: float = 120.0) -> bool:
-    """等待该会话 owner 名下在飞转译全部结束。返回是否在时限内清空。"""
-    owner = int(owner_key)
-
-    def _snapshot():
-        with _night_inflight_guard:
-            return [
-                fut
-                for key, futs in _night_inflight.items()
-                if key[0] == owner
-                for fut in futs
-            ]
-
-    return _join_inflight_bucket(
-        _snapshot,
-        timeout_s=timeout_s,
-        where="join_owner_translations",
-        owner=owner,
-    )
 
 
 def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> None:
@@ -477,18 +404,27 @@ def schedule_audience_turn_translation(
     llm_config: Any = None,
     translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
+    write_queue: Any = None,
     source: Provenance = Provenance.system_simulation,
 ) -> Future:
     """后台调度本轮转译：立即返回 Future；同夜按轮串行（显式 Future 链 FIFO）。"""
     nid = int(night_id or 0)
     ctid = int(chat_turn_id or 0)
-    owner = translation_owner_key(write_gate, db)
-    if ctid > 0 and hasattr(db, "mark_story_extraction_pending"):
-        # 调度线程短标 pending：同属转译持闸类（调用方须已放闸，禁嵌套非重入锁）。
-        with _translation_write_cm(write_gate):
-            db.mark_story_extraction_pending(ctid)
+    if write_queue is None:
+        raise RuntimeError("audience translation requires SessionWriteQueue")
+    ticket = write_queue.claim(key=("audience_translation", ctid))
+    if ticket is None:
+        raise RuntimeError("write queue sealed")
+    try:
+        if ctid > 0 and hasattr(db, "mark_story_extraction_pending"):
+            # 调度线程短标 pending：同属转译持闸类（调用方须已放闸，禁嵌套非重入锁）。
+            with _translation_write_cm(write_gate):
+                db.mark_story_extraction_pending(ctid)
+    except Exception:
+        write_queue.complete(ticket)
+        raise
 
-    night_key = (owner, nid)
+    night_key = (id(write_queue), nid)
 
     def _run_job() -> DeclarationDispatchResult:
         return run_turn_translation_job(
@@ -532,15 +468,14 @@ def schedule_audience_turn_translation(
             fut = Future()
             chain_pred = pred
         _night_tail[night_key] = fut
-        _night_inflight.setdefault(night_key, []).append(fut)
         if ctid > 0:
-            _turn_inflight[(owner, ctid)] = fut
+            _turn_future[(id(write_queue), ctid)] = fut
 
     def _cleanup(
         _f: Future,
         *,
         _night_key: Tuple[int, int] = night_key,
-        _turn_key: Optional[Tuple[int, int]] = (owner, ctid) if ctid > 0 else None,
+        _turn_key: Optional[Tuple[int, int]] = (id(write_queue), ctid) if ctid > 0 else None,
         _fut: Future = fut,
     ) -> None:
         # 摘账前观测终态：末轮失败若先摘空，join 会直接 True 且无人读异常。
@@ -551,21 +486,11 @@ def schedule_audience_turn_translation(
             turn_key=_turn_key,
         )
         with _night_inflight_guard:
-            bucket = _night_inflight.get(_night_key) or []
-            try:
-                bucket.remove(_fut)
-            except ValueError:
-                pass
-            if not bucket:
-                _night_inflight.pop(_night_key, None)
-            if _turn_key is not None and _turn_inflight.get(_turn_key) is _fut:
-                _turn_inflight.pop(_turn_key, None)
-            # 撤回/取消占位后仍须保留同夜前驱为 tail，否则新轮无 pred 直提并与前驱重叠。
+            if _turn_key is not None and _turn_future.get(_turn_key) is _fut:
+                _turn_future.pop(_turn_key, None)
             if _night_tail.get(_night_key) is _fut:
-                if bucket:
-                    _night_tail[_night_key] = bucket[-1]
-                else:
-                    _night_tail.pop(_night_key, None)
+                _night_tail.pop(_night_key, None)
+        write_queue.complete(ticket)
 
     def _bridge_work(
         work: Future,
@@ -592,25 +517,7 @@ def schedule_audience_turn_translation(
         _night_key: Tuple[int, int] = night_key,
     ) -> None:
         _observe_predecessor(pred_fut)
-        # 撤回链中位后，后继的 pred 回调会早于仍在跑的前驱触发——先重挂到
-        # 桶内更早未完成 peer，再 submit，保持同夜 FIFO（禁平行队列）。
-        while True:
-            rechain: Optional[Future] = None
-            with _night_inflight_guard:
-                if _out.done():
-                    return
-                bucket = list(_night_inflight.get(_night_key) or ())
-                for peer in bucket:
-                    if peer is _out:
-                        break
-                    if not peer.done():
-                        rechain = peer
-            if rechain is None:
-                break
-            if rechain.done():
-                # 扫描后前驱刚终态：重扫，勿挂回调以免同步重入打乱控制流。
-                continue
-            rechain.add_done_callback(_launch_after_pred)
+        if _out.done():
             return
         # 占位 Future：submit 前标 RUNNING，避免 cancel 成功摘账而实活仍在跑。
         if not _out.set_running_or_notify_cancel():
@@ -626,29 +533,6 @@ def schedule_audience_turn_translation(
         chain_pred.add_done_callback(_launch_after_pred)
     fut.add_done_callback(_cleanup)
     return fut
-
-
-def join_night_translations(
-    night_id: int,
-    *,
-    timeout_s: float = 120.0,
-    owner_key: int,
-) -> bool:
-    """等待指定 owner 本夜在飞转译清空。返回是否在时限内清空。"""
-    nid = int(night_id or 0)
-    owner = int(owner_key)
-
-    def _snapshot():
-        with _night_inflight_guard:
-            return list(_night_inflight.get((owner, nid)) or ())
-
-    return _join_inflight_bucket(
-        _snapshot,
-        timeout_s=timeout_s,
-        where="join_night_translations",
-        night=nid,
-        owner_key=owner,
-    )
 
 
 def _load_emperor_message_for_turn(
@@ -685,6 +569,7 @@ def catch_up_pending_translations(
     llm_config: Any = None,
     translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
+    write_queue: Any = None,
     source: Provenance = Provenance.system_simulation,
 ) -> Dict[str, int]:
     """补跑转译待补：已持久化回话但 extract_status 未 done 的轮，按夜序串行重试。
@@ -699,7 +584,6 @@ def catch_up_pending_translations(
     extracted = 0
     pending = 0
     scanned = 0
-    owner = translation_owner_key(write_gate, db)
     for row in rows:
         scanned += 1
         ctid = int(row.get("chat_turn_id") or 0)
@@ -709,7 +593,7 @@ def catch_up_pending_translations(
         emperor = _load_emperor_message_for_turn(db, ctid, write_gate)
         # 补跑复用同夜 Future FIFO 单真源，不另开 Lock / 直跑旁路。
         with _night_inflight_guard:
-            existing = _turn_inflight.get((owner, ctid)) if ctid > 0 else None
+            existing = _turn_future.get((id(write_queue), ctid)) if ctid > 0 else None
             # Future 先标记终态、再同步执行 cleanup callback。终态旧账即使
             # 尚未从 ledger 摘除，也不是本次 catch-up，不得复用。
             if existing is not None and existing.done():
@@ -723,6 +607,7 @@ def catch_up_pending_translations(
             llm_config=llm_config,
             translate_fn=translate_fn,
             write_gate=write_gate,
+            write_queue=write_queue,
             source=source,
         )
         try:

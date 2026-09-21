@@ -631,7 +631,7 @@ def test_withdraw_pending_action_removes_before_decree(game):
     night = an.open_night(db, state, empty_scaffold=True)
     pid = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=name, target_id=None,
-        payload={"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+        payload={"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
     )
     an.ensure_inactive_office_summon(
         db, int(pid), "袁崇焕", night_id=int(night["id"]),
@@ -659,7 +659,7 @@ def test_withdraw_pending_action_does_not_commit_outer_transaction(game):
     night = an.open_night(db, state, empty_scaffold=True)
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=name, target_id=None,
-        payload={"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+        payload={"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
     )
     an.ensure_inactive_office_summon(
         db, int(pending_id), "袁崇焕", night_id=int(night["id"]),
@@ -1781,7 +1781,7 @@ def test_commit_new_office_action_rolls_back_memory_registration(game, monkeypat
     content.characters.pop(new_name, None)
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name="测试召对",
-        payload={"name": new_name, "office": "陕西总督", "region_id": "shaanxi"},
+        payload={"text": "测试任免原文", "name": new_name, "office": "陕西总督", "region_id": "shaanxi"},
     )
 
     monkeypatch.setattr(
@@ -2273,7 +2273,7 @@ def test_office_appointment_refreshes_displaced_holder(game):
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=new_holder.name, target_id=None,
-        payload={"name": new_holder.name, "office": "兵部尚书"},
+        payload={"text": "测试任免原文", "name": new_holder.name, "office": "兵部尚书"},
     )
     applied = db.commit_pending_actions(state, content=content, registry=None)
     assert any(row["kind"] == "office" for row in applied)

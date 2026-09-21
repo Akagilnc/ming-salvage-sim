@@ -17,7 +17,6 @@ from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
 from tests.conftest import (
-    register_translation_owner_for_teardown,
     stub_audience_translate,
     stub_scene_agent,
 )
@@ -197,7 +196,6 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
     # chat atomic 须同闸串行，禁分家导致共享 conn 嵌套 BEGIN。
     game.session._write_gate = game._write_gate
     game.session._write_queue = game._write_queue
-    register_translation_owner_for_teardown(db, game._write_gate)
     game._runtime_write_queue = lambda: game._write_queue  # type: ignore
     game._mark_pending_write = lambda key=None: game._write_queue.claim(key=key or ("pending",))  # type: ignore
     game._complete_pending_write = lambda ticket=None: game._write_queue.complete(ticket)  # type: ignore
@@ -211,24 +209,12 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
 
 
 def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
-    """等本局 owned 终态：queue idle + 本 owner 转译 ledger 清空（禁盲轮询 history）。"""
+    """等本局唯一写队列进入 idle。"""
     q = getattr(web_game, "_write_queue", None)
     if q is not None and hasattr(q, "wait_idle"):
         q.wait_idle()  # unlimited; CI job final line owns hang
     else:
         wait_until(lambda: int(getattr(web_game, "_pending_writes_count", 0) or 0) == 0)
-    sess = getattr(web_game, "session", None)
-    if sess is None:
-        return
-    from ming_sim.audience_translation import join_owner_translations, translation_owner_key
-
-    owner = translation_owner_key(
-        getattr(sess, "_write_gate", None),
-        getattr(sess, "db", None),
-    )
-    assert join_owner_translations(owner, timeout_s=5.0), (
-        "owner translation ledger did not clear before fixture close"
-    )
 
 
 def _assert_next_accepted(stream) -> None:
@@ -275,7 +261,7 @@ def test_chat_reload_exposes_retryable_failed_secret_order(game):
     )
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister_name, target_id=None,
-        payload={"name": "测试新臣", "office": "太常寺卿"},
+        payload={"text": "测试任免原文", "name": "测试新臣", "office": "太常寺卿"},
     )
     db.conn.execute("UPDATE pending_actions SET status='failed'")
     db.conn.commit()
@@ -624,7 +610,6 @@ def _cli_web_game(db, state, content, agent, monkeypatch=None, **kwargs) -> WebG
     game._write_gate = game._write_queue.write_gate
     game.session._write_gate = game._write_gate
     game.session._write_queue = game._write_queue
-    register_translation_owner_for_teardown(db, game._write_gate)
     game._runtime_write_queue = lambda: game._write_queue  # type: ignore
     game._mark_pending_write = lambda key=None: game._write_queue.claim(key=key or ("pending",))  # type: ignore
     game._complete_pending_write = lambda ticket=None: game._write_queue.complete(ticket)  # type: ignore

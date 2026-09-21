@@ -1088,7 +1088,7 @@ def test_manual_directive_admission_real_http_tracer_1591(
 
         game.db.stage_pending_action(
             turn2, kind="office", action="任命", minister_name=name,
-            payload={
+            payload={"text": "测试任免原文",
                 "name": name, "office": "经略关宁", "_office_action": "任命",
                 "region_id": "liaodong",
             },
@@ -1936,10 +1936,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             except Exception:
                 pass
 
-        from ming_sim.audience_translation import (
-            join_owner_translations,
-            translation_owner_key,
-        )
         def _translate(prompt, _cfg):
             text = str(prompt or "")
             if "【本轮皇帝】准" in text:
@@ -1988,8 +1984,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         )
         assert petition.status_code == 200, petition.text
         # #1842：ctid>0 转译后台；前台 pending_action_id 可仍为 0——join 后读表。
-        owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
-        assert join_owner_translations(owner, timeout_s=5.0)
+        game._runtime_write_queue().barrier(lambda: None)
         wait_pending_writes(game)
         staged = [
             r for r in game.db.list_pending_actions(turn_before)
@@ -2014,8 +2009,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             json={"message": "准"},
         )
         assert confirm.status_code == 200, confirm.text
-        owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
-        assert join_owner_translations(owner, timeout_s=5.0)
+        game._runtime_write_queue().barrier(lambda: None)
         wait_pending_writes(game)
         assert int(game.state.metrics["国库"]) == treasury_before
         assert _army_row(game.db)["arrears"] == pytest.approx(arrears_before["arrears"])
@@ -2321,7 +2315,7 @@ def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(
     ).out["pending_action_id"]
     existing_office = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=actor,
-        payload={
+        payload={"text": "测试任免原文",
             "name": actor, "office": "兵部尚书", "appointer": actor,
             "mode": "ordinary", "summon_after": "是",
         },
@@ -2560,5 +2554,4 @@ def test_batch_draft_combo_failure_cached_and_attributed(game, monkeypatch, tmp_
     assert len(items) == 1
     assert items[0].get("target_id") == "京师"
     assert items[0].get("region_id") == "shaanxi"
-
 

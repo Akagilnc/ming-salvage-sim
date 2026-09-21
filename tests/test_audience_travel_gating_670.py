@@ -2709,7 +2709,7 @@ def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game
     for office, seat in (("三边总督", "shaanxi"), ("蓟辽总督", "liaodong")):
         pid = int(db.stage_pending_action(
             int(state.turn), "office", "任命", minister,
-            {"name": person.name, "office": office, "summon_after": "是", "region_id": seat},
+            {"text": "测试任免原文", "name": person.name, "office": office, "summon_after": "是", "region_id": seat},
         ))
         an.ensure_inactive_office_summon(
             db, pid, person.name, night_id=night_id,

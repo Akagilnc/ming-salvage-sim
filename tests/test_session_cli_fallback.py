@@ -786,7 +786,7 @@ def test_midzhi_confirmation_updates_selected_dossier_mode(game, kind):
     else:
         pending_id = db.stage_pending_action(
             state.turn, kind="office", action="任命", minister_name=minister,
-            payload={"name": "史可法", "office": "兵部主事", "appointer": minister,
+            payload={"text": "测试任免原文", "name": "史可法", "office": "兵部主事", "appointer": minister,
                      "mode": "ordinary"},
         )
 
@@ -902,7 +902,7 @@ def test_mixed_directive_secret_confirmation_does_not_commit_unmentioned_office(
     )
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister, target_id=None,
-        payload={"name": "史可法", "office": "兵部主事"},
+        payload={"text": "测试任免原文", "name": "史可法", "office": "兵部主事"},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -989,7 +989,7 @@ def test_secret_confirmation_does_not_drop_office_pending(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister, target_id=None,
-        payload={"name": "史可法", "office": "兵部主事"},
+        payload={"text": "测试任免原文", "name": "史可法", "office": "兵部主事"},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -1326,7 +1326,7 @@ def test_propose_appointment_continue_draft_same_direction(
         seed_ids.append(db.stage_pending_action(
             state.turn, kind="office", action="任命",
             minister_name=minister, target_id=None,
-            payload={
+            payload={"text": "测试任免原文",
                 "name": appointee, "office": office,
                 "appointer": minister, "mode": mode,
             },
@@ -1646,7 +1646,7 @@ def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch)
     db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=who, target_id=None,
-        payload={"name": "倪元璐", "office": "户部尚书", "appointer": who})
+        payload={"text": "测试任免原文", "name": "倪元璐", "office": "户部尚书", "appointer": who})
     _forbid_post_prefix_extractors(monkeypatch)
 
     seed = "臣遵旨，当即清核辽饷。"

@@ -1232,6 +1232,7 @@ def _drain_story_extraction_or_fail_closed(
     extractor_agent: Any = None,
     translate_fn: Any = None,
     game_state: Any = None,
+    write_queue: Any = None,
 ) -> None:
     """收夜 phase-2：转译已在 OPEN 期 join；此处再 catch-up 待补。
 
@@ -1248,25 +1249,19 @@ def _drain_story_extraction_or_fail_closed(
     nid = int(night_id)
     # OPEN 期已 join；CLOSING restore 再 join 一次（崩溃恢复口，空则秒回）。
     # 屏障未清空不得 catch-up / 推进——timeout 仅单次轮询上限，复用 0157 等待语义。
-    from ming_sim.audience_translation import (
-        catch_up_pending_translations,
-        join_night_translations,
-        translation_owner_key,
-    )
-    owner = translation_owner_key(write_gate, db)
-    while not join_night_translations(nid, timeout_s=120.0, owner_key=owner):
-        pass
+    from ming_sim.audience_translation import catch_up_pending_translations
     if game_state is None:
         return
     # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
     # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
-    if llm_config is not None and write_gate is not None:
+    if llm_config is not None and write_gate is not None and write_queue is not None:
         catch_up_pending_translations(
             db, game_state,
             night_id=nid,
             llm_config=llm_config,
             translate_fn=translate_fn,
             write_gate=write_gate,
+            write_queue=write_queue,
         )
 
 
@@ -1299,6 +1294,7 @@ def close_night(
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
     translate_fn: Any = None,
+    write_queue: Any = None,
 ) -> Dict[str, Any]:
     """收夜：短写前提 → 无锁普通补抽 + 夜级 endorsement-only 批 → 短写终局。
 
@@ -1397,25 +1393,17 @@ def close_night(
             # mark_pending_night_approved（「本夜收夜中，暂不能应允暂存」）。
             # join / catch-up 在闸外（LLM + 串行锁）；落账自持 write_gate。
             # 屏障未清空不得 catch-up / 置 CLOSING——timeout 仅轮询上限，保持 OPEN 续等。
-            from ming_sim.audience_translation import (
-                catch_up_pending_translations,
-                join_night_translations,
-                translation_owner_key,
-            )
-            owner = translation_owner_key(write_gate, db)
-            while not join_night_translations(
-                int(night_id), timeout_s=120.0, owner_key=owner,
-            ):
-                pass
+            from ming_sim.audience_translation import catch_up_pending_translations
             # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
             # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
-            if llm_config is not None and write_gate is not None:
+            if llm_config is not None and write_gate is not None and write_queue is not None:
                 catch_up_pending_translations(
                     db, state,
                     night_id=int(night_id),
                     llm_config=llm_config,
                     translate_fn=translate_fn,
                     write_gate=write_gate,
+                    write_queue=write_queue,
                 )
             # #1353：start_close 的 assemble/知识短读与置 CLOSING 同持 write_gate。
             # 禁闸外知识链读共享 conn——后于屏障领票的尾随若尚未 wait_prior，
@@ -1491,6 +1479,7 @@ def close_night(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
             extractor_agent=extractor_agent, game_state=state,
             translate_fn=translate_fn,
+            write_queue=write_queue,
         )
     except Exception as drain_exc:
         from ming_sim.exceptions import LLMUnavailable

@@ -1845,8 +1845,8 @@ def _stage_office_pending_core(
         "summon_after": "是" if want_summon else "否",
     }
     # 成案核优先 payload 原样 text：会话任免把玩家原话带入，免 commit 回落题名。
-    player_text = str(ctx.player_message or "").strip()
-    if player_text:
+    player_text = str(ctx.player_message or "")
+    if player_text.strip():
         payload["text"] = player_text
     if appt_region:
         payload["region_id"] = appt_region

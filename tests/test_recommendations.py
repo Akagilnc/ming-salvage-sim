@@ -252,6 +252,7 @@ def test_recommendation_appointment_preserves_kind_and_restores_both_types(game)
         payload = {
             "name": row["name"], "office": office,
             "faction": row["faction"], "reason": "荐人采纳",
+            "text": f"准荐{row['name']}任{office}",
             "recommendation": {
                 "candidate": row,
                 "recommender": recommender.name,

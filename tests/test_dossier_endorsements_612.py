@@ -766,7 +766,7 @@ def test_office_phase1_draft_only_materializes_once_after_endorsement(game):
 
     office_pa = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister,
-        payload={"name": target_name, "office": new_office},
+        payload={"text": "测试任免原文", "name": target_name, "office": new_office},
     )
     db.mark_pending_night_approved([office_pa], night_id=night_id)
     calls = []
@@ -780,7 +780,7 @@ def test_office_phase1_draft_only_materializes_once_after_endorsement(game):
             candidates = payload["可背书案卷"]
             target_row = next(
                 row for row in candidates
-                if str(row.get("decree_text") or "").startswith(f"任命{target_name}")
+                    if str(row.get("decree_text") or "") == "测试任免原文"
             )
             return json.dumps({"endorsements": [{
                 "dossier_id": target_row["ref"]["dossier_id"], "form": "御笔手敕",
@@ -801,7 +801,7 @@ def test_office_phase1_draft_only_materializes_once_after_endorsement(game):
     assert int(failed["close_commit_cursor"] or 0) == 0
     dossiers = [
         row for row in db.list_decree_dossiers(status="proposed")
-        if str(row.get("decree_text") or "").startswith(f"任命{target_name}")
+            if str(row.get("decree_text") or "") == "测试任免原文"
     ]
     assert len(dossiers) == 1
     draft_id = int(dossiers[0]["id"])

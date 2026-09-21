@@ -19051,8 +19051,8 @@ class GameDB:
             )
         except (TypeError, ValueError, json.JSONDecodeError):
             return {"classification": "invalid"}
-        text = str(payload.get("text") or "").strip()
-        if not text:
+        text = str(payload.get("text") or "")
+        if not text.strip():
             return {"classification": "invalid"}
         actor = str(payload.get("actor") or pa.get("minister_name") or "").strip()
         payload["text"] = text
@@ -19507,9 +19507,9 @@ class GameDB:
                 payload = self._normalize_directive_dossier_payload(
                     payload, content=content, current_turn=int(state.turn),
                 )
-            text = str(payload.get("text") or "").strip()
+            text = str(payload.get("text") or "")
             actor = str(payload.get("actor") or pa["minister_name"] or "")
-            if not text:
+            if not text.strip():
                 return False
             status = "pending" if str(payload.get("_directive_status") or "draft") == "pending" else "draft"
             # 不回到颁诏 checkpoint 时默认同意为 draft；召对里明确应允只表示接受为候选，
@@ -19602,10 +19602,10 @@ class GameDB:
                 pa.get("minister_name") or payload.get("actor") or ""
             ),
         }
-        decree_text = str(payload.get("text") or sliced.get("text") or "").strip()
+        decree_text = str(payload.get("text") or sliced.get("text") or "")
         return self._materialize_office_appointment_dossier(
             state, office_pa, sliced, content=content,
-            decree_text=decree_text or None,
+            decree_text=decree_text if decree_text.strip() else None,
         )
 
     def _materialize_office_appointment_dossier(

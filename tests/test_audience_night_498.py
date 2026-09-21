@@ -368,7 +368,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         pa_id = db.stage_pending_action(
             state.turn, kind="office", action="任命",
             minister_name=minister,
-            payload={
+            payload={"text": "测试任免原文",
                 "name": minister, "office": new_office, "office_type": "六部",
                 "faction": "中立", "reason": "测试任免",
             },
@@ -453,14 +453,14 @@ def test_close_night_only_commits_this_night_approved(game):
     night = an.open_night(db, state)
     approved = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister,
-        payload={"name": minister, "office": "兵部郎中", "office_type": "六部",
+        payload={"text": "测试任免原文", "name": minister, "office": "兵部郎中", "office_type": "六部",
                  "faction": "中立", "reason": "测试"},
     )
     db.mark_pending_night_approved([approved], night_id=night["id"])
     # 未应允项（同回合、另一夜语义）
     unapproved = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister,
-        payload={"name": minister, "office": "不该落的官", "office_type": "六部"},
+        payload={"text": "测试任免原文", "name": minister, "office": "不该落的官", "office_type": "六部"},
     )
     db.conn.execute(
         "UPDATE pending_actions SET night_id=0, night_approved=0 WHERE id=?", (unapproved,))
@@ -491,7 +491,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content)
         new_office = "兵部郎中"
         pa_id = db.stage_pending_action(
             state.turn, kind="office", action="任命", minister_name=minister,
-            payload={"name": minister, "office": new_office, "office_type": "六部",
+            payload={"text": "测试任免原文", "name": minister, "office": new_office, "office_type": "六部",
                      "faction": "中立", "reason": "测试"},
         )
         db.mark_pending_night_approved([pa_id], night_id=night["id"])

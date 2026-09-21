@@ -314,7 +314,7 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
     pid = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=minister.name, target_id=None,
-        payload={"name": "某人", "office": "某职", "appointer": minister.name},
+        payload={"text": "测试任免原文", "name": "某人", "office": "某职", "appointer": minister.name},
     )
     _silence_serial(monkeypatch)
     monkeypatch.setattr(
@@ -1010,10 +1010,6 @@ class _SyncAgent:
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
-    from ming_sim.audience_translation import (
-        join_owner_translations,
-        translation_owner_key,
-    )
     db, state, content = game
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
@@ -1027,8 +1023,7 @@ def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
 
     before = _count_pending(db, state.turn)
     payload = wg.chat(minister.name, "拟一道旨赈陕西。")
-    owner = translation_owner_key(getattr(wg.session, "_write_gate", None), db)
-    assert join_owner_translations(owner, timeout_s=2.0)
+    wg._runtime_write_queue().barrier(lambda: None)
     assert payload.get("answer")
     assert any(
         p["kind"] == "directive" for p in db.list_pending_actions(int(state.turn))
@@ -1045,10 +1040,6 @@ def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkeypatch):
     """scene_chat + 转译：第二轮新交办后撤回，第一轮 pending 前像必须仍在（ADR 0038）。"""
-    from ming_sim.audience_translation import (
-        join_owner_translations,
-        translation_owner_key,
-    )
     db, state, content = game
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
@@ -1073,8 +1064,7 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
     )
 
     wg.chat(minister.name, "拟一道旨赈陕西。")
-    owner = translation_owner_key(getattr(wg.session, "_write_gate", None), db)
-    assert join_owner_translations(owner, timeout_s=2.0)
+    wg._runtime_write_queue().barrier(lambda: None)
     rows = [
         p for p in db.list_pending_actions(int(state.turn))
         if p["kind"] == "directive" and p.get("status") == "pending"
@@ -1085,8 +1075,7 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
     assert original_text == original
 
     wg.chat(minister.name, "把赈银改成五十万两。")
-    owner = translation_owner_key(getattr(wg.session, "_write_gate", None), db)
-    assert join_owner_translations(owner, timeout_s=2.0)
+    wg._runtime_write_queue().barrier(lambda: None)
     after = [
         p for p in db.list_pending_actions(int(state.turn))
         if p["kind"] == "directive" and p.get("status") == "pending"
@@ -1191,10 +1180,6 @@ def _bind_draft_extract_1744(monkeypatch, *, minister_name: str):
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch):
     """#1744/#1842：classify 归一仍可单测；Web 殿上 chat 经 scene_chat 转译落一条 directive 可见。"""
-    from ming_sim.audience_translation import (
-        join_owner_translations,
-        translation_owner_key,
-    )
     db, state, content = game
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
@@ -1225,8 +1210,7 @@ def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch
         for r in db.list_pending_actions(int(state.turn))
     }
     wg.chat(minister.name, _EMPEROR_1744)
-    owner = translation_owner_key(getattr(wg.session, "_write_gate", None), db)
-    assert join_owner_translations(owner, timeout_s=2.0)
+    wg._runtime_write_queue().barrier(lambda: None)
     rows = _pending_directives_via_api(monkeypatch, wg, minister_name=minister.name)
     # API 可能按 minister 过滤；转译 actor 未必是 minister——改查全库新 directive
     all_new = [
@@ -1241,10 +1225,6 @@ def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_scene_chat_translation_can_stage_multiple_commissions(game, monkeypatch):
     """#1842：Web scene_chat 转译一次可落多条 commission → pending 可见（替代旧分类器 batch 网测）。"""
-    from ming_sim.audience_translation import (
-        join_owner_translations,
-        translation_owner_key,
-    )
     db, state, content = game
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
@@ -1266,8 +1246,7 @@ def test_scene_chat_translation_can_stage_multiple_commissions(game, monkeypatch
     )
     before = {int(r["id"]) for r in db.list_pending_actions(int(state.turn))}
     wg.chat(minister.name, "清核太仓，另着陕西巡抚督办赈灾。")
-    owner = translation_owner_key(getattr(wg.session, "_write_gate", None), db)
-    assert join_owner_translations(owner, timeout_s=2.0)
+    wg._runtime_write_queue().barrier(lambda: None)
     new_dirs = [
         r for r in db.list_pending_actions(int(state.turn))
         if int(r["id"]) not in before and r.get("kind") == "directive" and r.get("status") == "pending"

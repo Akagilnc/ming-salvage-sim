@@ -1732,7 +1732,7 @@ def test_confirm_gate_does_not_sweep_conversational_directive(game, monkeypatch)
         state.turn, name, payload={**_POLICY_FIELDS, "text": "草案：着户部清查三边粮饷。", "actor": name})
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=name, target_id=None,
-        payload={"name": "某新臣", "office": "兵部主事", "appointer": name})
+        payload={"text": "测试任免原文", "name": "某新臣", "office": "兵部主事", "appointer": name})
     assert len(db.list_pending_actions(state.turn)) == 2
 
     # 后一轮被判「应允」（语义针对 office 暂存）：directive 必须存活、不被提前 commit
@@ -1765,7 +1765,7 @@ def test_confirm_reject_does_not_delete_conversational_directive(game, monkeypat
         state.turn, name, payload={**_POLICY_FIELDS, "text": "草案：着兵部整饬三边。", "actor": name})
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=name, target_id=None,
-        payload={"name": "某新臣", "office": "兵部主事", "appointer": name})
+        payload={"text": "测试任免原文", "name": "某新臣", "office": "兵部主事", "appointer": name})
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps(

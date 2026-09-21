@@ -41,7 +41,7 @@ def _stage_break_rank_acting(db, state, content, name):
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=minister, target_id=None,
-        payload={"name": name, "office": "陕西巡抚", "任别": "署理", "region_id": "shaanxi"},
+        payload={"text": "测试任免原文", "name": name, "office": "陕西巡抚", "任别": "署理", "region_id": "shaanxi"},
     )
     db.commit_pending_actions(state, content=content, registry=None)
     dossier = next(
@@ -290,7 +290,7 @@ def test_secret_order_0055_exempt_not_in_rescript_with_break_rank(game, monkeypa
     office_pending = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=minister, target_id=None,
-        payload={"name": appointee, "office": "陕西巡抚", "任别": "署理"},
+        payload={"text": "测试任免原文", "name": appointee, "office": "陕西巡抚", "任别": "署理"},
     )
     db.commit_pending_actions(state, content=content, registry=None)
 

@@ -363,7 +363,7 @@ def test_undo_confirm_round_reverts_pending_to_unapproved(game):
 
     def _stage(night_id: int, chat_id: int) -> None:
         staged["id"] = db.stage_pending_action(
-            int(state.turn), "office", "任命", m, {"office": "兵部尚书"},
+            int(state.turn), "office", "任命", m, {"text": "测试任免原文", "office": "兵部尚书"},
         )
     _run_round(db, state, m, writes=_stage)
     action_id = staged["id"]
@@ -399,7 +399,7 @@ def test_undo_restores_staging_row_deleted_by_verbal_reject(game):
 
     def _stage(night_id: int, chat_id: int) -> None:
         staged["id"] = db.stage_pending_action(
-            int(state.turn), "office", "任命", m, {"office": "蓟辽总督"},
+            int(state.turn), "office", "任命", m, {"text": "测试任免原文", "office": "蓟辽总督"},
         )
     _run_round(db, state, m, writes=_stage)
     action_id = staged["id"]
@@ -608,7 +608,7 @@ def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
     def _writes(_nid: int, chat_id: int) -> None:
         pending_id = db.stage_pending_action(
             int(state.turn), "office", "任命", m,
-            {"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+            {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
         )
         an.ensure_inactive_office_summon(
             db, int(pending_id), "袁崇焕",
@@ -638,7 +638,7 @@ def test_reject_pending_discards_inactive_office_summon_origin(game):
     night = an.open_night(db, state, empty_scaffold=True)
     pending_id = db.stage_pending_action(
         int(state.turn), "office", "任命", m,
-        {"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+        {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
     )
     an.ensure_inactive_office_summon(
         db, int(pending_id), "袁崇焕",

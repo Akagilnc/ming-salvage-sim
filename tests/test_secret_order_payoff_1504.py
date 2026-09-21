@@ -2001,10 +2001,6 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
         tmp_path, monkeypatch, backend,
     )
     good = _secret_landing_good_raw(name, good_body)
-    from ming_sim.audience_translation import (
-        join_owner_translations,
-        translation_owner_key,
-    )
     try:
         # 1) 首次坏产物 → 大臣回禀、无候选
         done1 = stream("你替朕下一道密令，暗查关宁诸将虚冒兵额。")
@@ -2044,8 +2040,7 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
 
         stub_audience_translate(monkeypatch, _approve_translate)
         stream("准，就照此密行", intent=None)
-        owner = translation_owner_key(getattr(game.session, "_write_gate", None), game.db)
-        assert join_owner_translations(owner, timeout_s=5.0)
+        game._runtime_write_queue().barrier(lambda: None)
         wait_pending_writes(game)
         from fastapi.testclient import TestClient
         import web_app

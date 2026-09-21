@@ -1499,6 +1499,7 @@ class GameSession:
             beat_generator=getattr(self, "_beat_generator", None),
             llm_config=getattr(self, "llm_config", None),
             write_gate=getattr(self, "_write_gate", None),
+            write_queue=self._write_queue,
             scene_registry=getattr(self, "_scene_registry", None),
         )
         result.court_action = "court_break"
@@ -1583,6 +1584,7 @@ class GameSession:
                     beat_generator=getattr(self, "_beat_generator", None),
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=gate,
+                    write_queue=self._write_queue,
                     scene_registry=getattr(self, "_scene_registry", None),
                 )
 
@@ -1891,6 +1893,7 @@ class GameSession:
                     beat_generator=getattr(self, "_beat_generator", None),
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=getattr(self, "_write_gate", None),
+                    write_queue=self._write_queue,
                     scene_registry=getattr(self, "_scene_registry", None),
                 )
                 result.court_action = "court_break"
@@ -2200,6 +2203,9 @@ class GameSession:
             return None
         result.pending_audience_translation = None
         from ming_sim.audience_translation import schedule_audience_turn_translation
+        from ming_sim.session_write_queue import get_session_write_queue
+
+        write_queue = get_session_write_queue(self)
 
         return schedule_audience_turn_translation(
             self.db,
@@ -2211,6 +2217,7 @@ class GameSession:
             minister_name=str(pending.get("minister_name") or ""),
             llm_config=getattr(self, "llm_config", None),
             write_gate=getattr(self, "_write_gate", None),
+            write_queue=write_queue,
         )
 
     def chat(
@@ -2377,7 +2384,7 @@ class GameSession:
                 result.pending_action_id = coalesce_pending_action_id(
                     result.pending_action_id,
                     self._stage_appointment_candidate(
-                        payload, character,
+                        payload, character, source_text=message,
                     ),
                 )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
@@ -3388,7 +3395,7 @@ class GameSession:
         )
 
     def _stage_appointment_candidate(
-        self, payload: str, appointer: Character,
+        self, payload: str, appointer: Character, *, source_text: str = "",
     ) -> int:
         """把吏部 propose_appointment 工具结果接入与口头任免相同的确认闸门。"""
         if GameSession._proposal_blocked(self.state):
@@ -3465,6 +3472,8 @@ class GameSession:
         raw_text = data.get("text")
         if isinstance(raw_text, str) and raw_text.strip():
             staged_payload["text"] = raw_text
+        elif source_text.strip():
+            staged_payload["text"] = source_text
         for key in ("office_type", "faction", "replaces"):
             value = str(data.get(key) or data.get(metadata_aliases[key]) or "").strip()
             if value:
@@ -3860,20 +3869,15 @@ class GameSession:
         """
         from ming_sim.audience_translation import (
             catch_up_pending_translations,
-            join_owner_translations,
             list_pending_translations,
-            translation_owner_key,
         )
+        from ming_sim.session_write_queue import get_session_write_queue
         from ming_sim.error_pack import settlement_abort_message, write_error_pack
         from ming_sim.exceptions import SettlementAbort
 
-        # ① 本会话 owner 等待：timeout 仅单次轮询上限，未清空则继续等，不清空不往下。
-        # 不得 join_all（进程全局）——独立存档同夜号不得互等（#1842）。
-        owner = translation_owner_key(
-            getattr(self, "_write_gate", None), getattr(self, "db", None),
-        )
-        while not join_owner_translations(owner, timeout_s=120.0):
-            pass
+        # ① SessionWriteQueue 是唯一在飞真源；barrier 等待全部既受理转译。
+        write_queue = get_session_write_queue(self)
+        write_queue.barrier(lambda: None)
         # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
         # 仅 join 已清空后才进入——避免与在飞 worker 争同一夜串行锁挂死。
         gate = getattr(self, "_write_gate", None)
@@ -3883,6 +3887,7 @@ class GameSession:
             self.db, self.state,
             llm_config=getattr(self, "llm_config", None),
             write_gate=catch_gate,
+            write_queue=write_queue,
         )
         still_pending = list_pending_translations(self.db)
         if still_pending:

@@ -254,12 +254,9 @@ def _install_translation_hold(game, release: threading.Event, monkeypatch):
     return _restore
 
 
-def _translation_inflight() -> bool:
-    """观察 audience_translation 在飞 Future（禁 sleep 竞猜）。"""
-    import ming_sim.audience_translation as at
-
-    with at._night_inflight_guard:
-        return any(at._night_inflight.values())
+def _translation_inflight(game) -> bool:
+    """观察会话唯一队列尚有在飞票（禁 sleep 竞猜）。"""
+    return get_session_write_queue(game).inflight_count() > 0
 
 
 def _arm_barrier_open_event(game):
@@ -472,7 +469,7 @@ def _play_one_month(
 
         if race_trailing_writes:
             # 竞态窗：chat 已回但转译 Future 仍在飞——禁止预 join。
-            assert _translation_inflight(), (
+            assert _translation_inflight(game), (
                 f"{month_label}: expected in-flight audience translation after chat"
             )
             assert barrier_open is not None and hold_release is not None
@@ -901,7 +898,7 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch
         _assert_not_bare_500(prior, step="#1716/#1842 hall prior chat")
         assert prior.status_code == 200, prior.text
         assert translate_started.wait(2.0), "殿上先验在飞转译须进入 hold 窗"
-        assert _translation_inflight(), "封夜前须仍有同夜在飞转译"
+        assert _translation_inflight(game), "封夜前须仍有同夜在飞转译"
 
         resp = client.post(
             f"/api/ministers/{remote}/chat",

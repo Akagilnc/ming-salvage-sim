@@ -1169,6 +1169,9 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
 
 def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch):
     """#1732：热替换成功路径只覆盖 load_save（局内 reset 已删）。"""
+    from tests.conftest import stub_audience_translate
+
+    stub_audience_translate(monkeypatch)
     db_path = tmp_path / "ming.db"
     monkeypatch.setenv("MING_SIM_DB", str(db_path))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))

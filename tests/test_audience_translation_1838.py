@@ -189,13 +189,9 @@ def _scene_session(db, state, content, monkeypatch):
 
 
 def _drain_scene_owner(sess, db, *, timeout_s: float = 5.0) -> None:
-    """persist+schedule 后必须 owner-scoped join，禁跨测污染。"""
-    from ming_sim.audience_translation import join_owner_translations, translation_owner_key
-
-    owner = translation_owner_key(getattr(sess, "_write_gate", None), db)
-    assert join_owner_translations(owner, timeout_s=timeout_s), (
-        f"1838 scene_chat bg drain stuck owner={owner}"
-    )
+    """persist+schedule 后经会话唯一写队列排空。"""
+    del db, timeout_s
+    sess._write_queue.barrier(lambda: None)
 
 
 def _active_chat_turn(db, state, night_id: int) -> int:

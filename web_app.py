@@ -2049,15 +2049,10 @@ class WebGame:
         # ADR 0005：取消路径意外异常响亮上抛，禁 except Exception: pass。
         turn_id = int(row["id"])
         self._runtime_write_queue().cancel_key(("turn", turn_id))
-        from ming_sim.audience_translation import (
-            cancel_turn_translation,
-            translation_owner_key,
-        )
+        from ming_sim.audience_translation import cancel_turn_translation
         cancel_turn_translation(
             turn_id,
-            owner_key=translation_owner_key(
-                self._runtime_write_gate(), self.db,
-            ),
+            write_queue=self._runtime_write_queue(),
         )
         try:
             undone = self.db.undo_chat_turn(turn_id)
@@ -3116,7 +3111,7 @@ class WebGame:
                     pending_action_id = coalesce_pending_action_id(
                         pending_action_id,
                         self.session._stage_appointment_candidate(
-                            payload_json, character,
+                            payload_json, character, source_text=text,
                         ),
                     )
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
@@ -3412,6 +3407,7 @@ class WebGame:
                 self.db, self.state,
                 llm_config=getattr(self.session, "llm_config", None),
                 write_gate=self._ticketed_write_gate(pending_ticket),
+                write_queue=self._runtime_write_queue(),
             )
         except TicketCancelled:
             return None
@@ -3596,6 +3592,7 @@ class WebGame:
                 chat_turn_id=int(chat_turn_id),
                 llm_config=getattr(self.session, "llm_config", None),
                 write_gate=self._ticketed_write_gate(pending_ticket),
+                write_queue=self._runtime_write_queue(),
             )
         except TicketCancelled:
             return None
@@ -3676,6 +3673,7 @@ class WebGame:
                 state=self.state,
                 llm_config=getattr(self.session, "llm_config", None),
                 write_gate=self._ticketed_write_gate(pending_ticket),
+                write_queue=self._runtime_write_queue(),
             )
         except TicketCancelled:
             return
@@ -3789,6 +3787,7 @@ class WebGame:
             chat_turn_id=ctid,
             llm_config=getattr(self.session, "llm_config", None),
             write_gate=write_gate,
+            write_queue=self._runtime_write_queue(),
         )
         still = list_pending_translations(self.db, chat_turn_id=ctid)
         status = (
@@ -4548,22 +4547,6 @@ def _hot_replace_when_idle(game):
                 status_code=409,
                 detail="月末结算或上一步写入进行中，请稍候再操作。",
             )
-        session = getattr(game, "session", None)
-        if session is not None:
-            from ming_sim.audience_translation import (
-                owner_has_inflight_translations,
-                translation_owner_key,
-            )
-
-            owner = translation_owner_key(
-                getattr(session, "_write_gate", None),
-                getattr(session, "db", None),
-            )
-            if owner_has_inflight_translations(owner):
-                raise HTTPException(
-                    status_code=409,
-                    detail="月末结算或上一步写入进行中，请稍候再操作。",
-                )
         yield
     finally:
         q.unseal()

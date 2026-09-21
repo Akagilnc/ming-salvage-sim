@@ -618,7 +618,7 @@ def test_source_night_translation_edges_survive_phase1_roster_change(game):
     )
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="罢免", minister_name=b,
-        payload={"name": b},
+        payload={"text": "测试任免原文", "name": b},
     )
     db.mark_pending_night_approved([pending_id], night_id=night_id)
     db.conn.commit()

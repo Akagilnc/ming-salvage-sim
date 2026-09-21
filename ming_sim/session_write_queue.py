@@ -535,15 +535,14 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
 
 
 def drain_and_close_session(owner: Any) -> None:
-    """Seal queue, join this owner's in-flight translations, then close the session.
+    """Seal the queue, drain every admitted writer, then close the session.
 
     Shared by Web and CLI (#1842). ``owner`` may be a ``GameSession``, a WebGame,
     or any duck that resolves through :func:`get_session_write_queue`.
 
-    Order matches settlement (barrier then join): seal + wait_prior drains
-    admitted chat tickets so scene_chat finishes and registers derived
-    translation Futures; then join those Futures outside the write gate; then
-    close under the gate. Failures re-raise without auto-unseal — callers
+    The queue is the sole admitted-work ledger: derived translation work owns a
+    queue ticket too, so the barrier covers it without a second Future ledger.
+    Failures re-raise without auto-unseal — callers
     decide (Web: only if runtime restorable; CLI: always attempt unseal and
     log any unseal failure). No abandon / cancel / second lifecycle.
 
@@ -556,20 +555,7 @@ def drain_and_close_session(owner: Any) -> None:
         session = owner
     q.seal()
 
-    def _join_translations_then_close() -> None:
-        if session is not None:
-            from ming_sim.audience_translation import (
-                join_owner_translations,
-                translation_owner_key,
-            )
-
-            key = translation_owner_key(
-                getattr(session, "_write_gate", None),
-                getattr(session, "db", None),
-            )
-            while not join_owner_translations(key, timeout_s=120.0):
-                pass
-
+    def _close() -> None:
         gate = q.write_gate
         gate.acquire()
         try:
@@ -579,7 +565,7 @@ def drain_and_close_session(owner: Any) -> None:
             gate.release()
 
     try:
-        q.barrier(_join_translations_then_close)
+        q.barrier(_close)
     except Exception:
         # Caller decides unseal (Web: only if runtime restorable; CLI: always).
         raise
