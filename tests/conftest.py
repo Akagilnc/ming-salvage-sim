@@ -330,6 +330,24 @@ def offline_empty_audience_translate(prompt, llm_config):
     return {"commissions": [], "promises": []}
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _offline_audience_translation_provider():
+    """测试 worker 全生命周期隔离 audience provider。
+
+    后台转译可能晚于单个 test teardown 才进入 provider；因此此桩必须覆盖整个
+    pytest worker，而不是随 function-scoped monkeypatch 提前撤销。需特定结果的
+    用例仍可在本边界上临时覆盖，撤销后回到离线实现。
+    """
+    import ming_sim.audience_translate as audience_translate
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(
+        audience_translate, "_default_translate_runner", offline_empty_audience_translate,
+    )
+    yield
+    mp.undo()
+
+
 def stub_scene_agent(monkeypatch, agent):
     """#1842：经 create_scene_agent 工厂缝注入 scene agent（禁实例双桩属性）。"""
     monkeypatch.setattr(

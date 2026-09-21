@@ -570,6 +570,15 @@ def drain_and_close_session(owner: Any) -> None:
     session = getattr(owner, "session", None)
     if session is None and hasattr(owner, "close") and hasattr(owner, "db"):
         session = owner
+    # A WebGame delegates to the GameSession public lifecycle seam. Besides
+    # keeping one close authority, this preserves instance-level close failure
+    # injection used by callers/tests. GameSession itself enters below and
+    # invokes only its resource closer inside the barrier (no recursion).
+    if session is not None and owner is not session:
+        close_resources = getattr(session, "_close_resources", None)
+        if callable(close_resources):
+            session.close()
+            return
     q.seal()
 
     def _close() -> None:
@@ -577,7 +586,11 @@ def drain_and_close_session(owner: Any) -> None:
         gate.acquire()
         try:
             if session is not None:
-                session.close()
+                close_resources = getattr(session, "_close_resources", None)
+                if callable(close_resources):
+                    close_resources()
+                else:
+                    session.close()
         finally:
             gate.release()
 
