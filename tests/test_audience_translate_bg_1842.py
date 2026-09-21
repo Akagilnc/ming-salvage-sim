@@ -884,12 +884,14 @@ def test_catch_up_query_exception_stays_pending_and_is_loud(game, monkeypatch):
     assert db.get_story_extract_status(ctid) == "pending"
 
 
-def test_translation_exhaustion_is_pending_and_does_not_block_next(game):
+def test_translation_exhaustion_is_pending_and_does_not_block_next(game, bg_life):
     """AC3：某轮转译耗尽 → 待补可查可重试；对话照常续。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
     gate = threading.Lock()
+    owner = translation_owner_key(gate, db)
+    bg_life.track(owner=owner)
 
     def boom(prompt, llm_config):
         raise RuntimeError("model exhausted")
@@ -907,7 +909,7 @@ def test_translation_exhaustion_is_pending_and_does_not_block_next(game):
         translate_fn=boom, write_gate=gate,
     )
     assert join_night_translations(
-        nid, timeout_s=2.0, owner_key=translation_owner_key(gate, db),
+        nid, timeout_s=2.0, owner_key=owner,
     )
     with pytest.raises(Exception):
         fut.result(timeout=0.1)
@@ -926,7 +928,7 @@ def test_translation_exhaustion_is_pending_and_does_not_block_next(game):
         translate_fn=ok, write_gate=gate,
     )
     assert join_night_translations(
-        nid, timeout_s=2.0, owner_key=translation_owner_key(None, db),
+        nid, timeout_s=2.0, owner_key=owner,
     )
     assert fut2.result(timeout=0.1) is not None
     assert db.get_story_extract_status(ctid2) == "done"
@@ -1424,7 +1426,9 @@ def test_await_translations_does_not_steal_worker_write_gate(game, monkeypatch, 
     assert db.get_story_extract_status(ctid) == "done"
 
 
-def test_resolve_turn_exhausted_pending_uses_0157_form(game, monkeypatch, tmp_path):
+def test_resolve_turn_exhausted_pending_uses_0157_form(
+    game, monkeypatch, tmp_path, bg_life,
+):
     """类1：catch-up 后仍 pending=真耗尽 → 0157（错误包+停步）；月份不推进。"""
     from ming_sim.exceptions import SettlementAbort
 
@@ -1433,6 +1437,8 @@ def test_resolve_turn_exhausted_pending_uses_0157_form(game, monkeypatch, tmp_pa
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
     gate = threading.Lock()
+    owner = translation_owner_key(gate, db)
+    bg_life.track(owner=owner)
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
 
     def boom(prompt, llm_config):
@@ -1448,7 +1454,7 @@ def test_resolve_turn_exhausted_pending_uses_0157_form(game, monkeypatch, tmp_pa
         translate_fn=boom, write_gate=gate,
     )
     assert join_night_translations(
-        nid, timeout_s=2.0, owner_key=translation_owner_key(None, db),
+        nid, timeout_s=2.0, owner_key=owner,
     )
     assert db.get_story_extract_status(ctid) == "pending"
 
@@ -1480,12 +1486,14 @@ def test_resolve_turn_exhausted_pending_uses_0157_form(game, monkeypatch, tmp_pa
     assert int(state.turn) == before_turn
 
 
-def test_pending_translation_structured_status_and_source_retry(game):
+def test_pending_translation_structured_status_and_source_retry(game, bg_life):
     """类2：待补可投影结构化系统提示态；按源轮收窄 catch-up 重试。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
     gate = threading.Lock()
+    owner = translation_owner_key(gate, db)
+    bg_life.track(owner=owner)
 
     def boom(prompt, llm_config):
         raise RuntimeError("exhausted")
@@ -1504,7 +1512,7 @@ def test_pending_translation_structured_status_and_source_retry(game):
             translate_fn=boom, write_gate=gate,
         )
     assert join_night_translations(
-        nid, timeout_s=2.0, owner_key=translation_owner_key(gate, db),
+        nid, timeout_s=2.0, owner_key=owner,
     )
 
     rows = list_pending_translations(db, night_id=nid)
@@ -1567,12 +1575,16 @@ def test_apply_round_translation_bind_failure_rolls_back_sections(game, monkeypa
     ).fetchone()["c"] == 0
 
 
-def test_close_night_no_longer_fail_closed_on_exhausted_pending(game, monkeypatch):
+def test_close_night_no_longer_fail_closed_on_exhausted_pending(
+    game, monkeypatch, bg_life,
+):
     """0036 修订：待补不 fail-closed；生产同形（llm_config+write_gate）旧抽取不得抢水位。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
     gate = threading.Lock()
+    owner = translation_owner_key(gate, db)
+    bg_life.track(owner=owner)
 
     def boom(prompt, llm_config):
         raise RuntimeError("exhausted")
@@ -1597,7 +1609,7 @@ def test_close_night_no_longer_fail_closed_on_exhausted_pending(game, monkeypatc
         translate_fn=boom, write_gate=gate,
     )
     assert join_night_translations(
-        nid, timeout_s=2.0, owner_key=translation_owner_key(None, db),
+        nid, timeout_s=2.0, owner_key=owner,
     )
     assert db.get_story_extract_status(ctid) == "pending"
 
