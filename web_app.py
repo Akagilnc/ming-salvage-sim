@@ -1024,7 +1024,7 @@ class WebGame:
                 # cannot change the snapshot between prepare and destructive replace.
                 self.db.backup_to(backup_path)
                 backup_complete = True
-                old_session._close_resources()
+                old_session.close(write_gate_already_held=True)
                 destructive_replace()
                 self._rebuild_session(old_config)
             except Exception as replace_exc:
