@@ -405,6 +405,9 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     allow_finish = threading.Event()
     chat_entered = threading.Event()
     closed: list[int] = []
+    derived_started = threading.Event()
+    release_derived = threading.Event()
+    derived_status = {"value": "missing"}
     character = SimpleNamespace(name="测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     db = _RecordingDB(threading.Event())
@@ -416,9 +419,26 @@ def test_drain_waits_for_in_flight_nonstream_chat():
 
             chat_entered.set()
             allow_finish.wait()
-            return ChatTurnResult(answer="臣已知悉。")
+            return ChatTurnResult(
+                answer="臣已知悉。",
+                pending_audience_translation={"chat_turn_id": 1},
+            )
+
+        def schedule_pending_scene_translation(self, result):
+            ticket = result._admitted_write_ticket
+            runtime._write_queue.retain(ticket, ("audience_translation", 1))
+            derived_status["value"] = "pending"
+            derived_started.set()
+
+            def finish_translation():
+                release_derived.wait()
+                derived_status["value"] = "done"
+                runtime._write_queue.complete(ticket)
+
+            threading.Thread(target=finish_translation, daemon=True).start()
 
         def close(self):
+            assert derived_status["value"] == "done"
             closed.append(1)
 
     runtime = object.__new__(web_app.WebGame)
@@ -471,6 +491,9 @@ def test_drain_waits_for_in_flight_nonstream_chat():
     assert closed == []
 
     allow_finish.set()
+    assert derived_started.wait(2.0)
+    assert not drain_done.is_set(), "派生转译终态前不得关 session"
+    release_derived.set()
     drain_done.wait()
     chat_thread.join()
     assert not chat_error, f"nonstream chat failed: {chat_error!r}"

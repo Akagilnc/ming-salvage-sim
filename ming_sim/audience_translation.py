@@ -405,6 +405,7 @@ def schedule_audience_turn_translation(
     translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
     write_queue: Any = None,
+    admitted_ticket: Any = None,
     source: Provenance = Provenance.system_simulation,
 ) -> Future:
     """后台调度本轮转译：立即返回 Future；同夜按轮串行（显式 Future 链 FIFO）。"""
@@ -412,7 +413,11 @@ def schedule_audience_turn_translation(
     ctid = int(chat_turn_id or 0)
     if write_queue is None:
         raise RuntimeError("audience translation requires SessionWriteQueue")
-    ticket = write_queue.claim(key=("audience_translation", ctid))
+    ticket = (
+        write_queue.retain(admitted_ticket, ("audience_translation", ctid))
+        if admitted_ticket is not None
+        else write_queue.claim(key=("audience_translation", ctid))
+    )
     if ticket is None:
         raise RuntimeError("write queue sealed")
     try:

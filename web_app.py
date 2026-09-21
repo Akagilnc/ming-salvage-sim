@@ -2477,6 +2477,7 @@ class WebGame:
                     )
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+                result._admitted_write_ticket = pending_ticket
                 self.session.schedule_pending_scene_translation(result)
                 answer_text = str(getattr(result, "answer", "") or "")
                 message_id = int(payload.get("minister_message_id") or 0)
@@ -2655,6 +2656,7 @@ class WebGame:
                     # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+                result._admitted_write_ticket = pending_ticket
                 self.session.schedule_pending_scene_translation(result)
                 answer_text = str(getattr(result, "answer", "") or "")
                 message_id = int(payload.get("minister_message_id") or 0)
@@ -2768,6 +2770,7 @@ class WebGame:
         accepted_turn: int,
         emit_delta,
         write_gate: Optional[threading.Lock] = None,
+        admitted_ticket: Optional[WriteTicket] = None,
     ) -> Dict[str, Any]:
         """#1842：流式殿上入口——scene_chat + transport 流式，保 SSE/重试/失败路径。
 
@@ -2826,6 +2829,7 @@ class WebGame:
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+        result._admitted_write_ticket = admitted_ticket
         self.session.schedule_pending_scene_translation(result)
         attempts = getattr(result, "transport_attempts", None)
         if attempts:
@@ -4071,6 +4075,7 @@ class WebGame:
                             minister_name, text, chat_turn_id, before_snapshot,
                             accepted_turn, emit_delta,
                             write_gate=write_gate,
+                            admitted_ticket=pending_ticket,
                         )
 
                     answer = str((payload or {}).get("answer") or "")

@@ -138,6 +138,7 @@ class WriteTicket:
     key: Optional[Hashable] = None
     cancelled: bool = False
     _done: bool = field(default=False, repr=False, compare=False)
+    _claims: int = field(default=1, repr=False, compare=False)
     # Write-turn state (P5): only serializes DB critical sections, not whole-leg LLM.
     _awaiting_write: bool = field(default=False, repr=False, compare=False)
     _in_write: bool = field(default=False, repr=False, compare=False)
@@ -268,7 +269,25 @@ class SessionWriteQueue:
         if ticket is None:
             return
         with self._cond:
-            self._finish_locked(ticket)
+            if ticket._done:
+                return
+            ticket._claims -= 1
+            if ticket._claims <= 0:
+                self._finish_locked(ticket)
+
+    def retain(self, ticket: WriteTicket, key: Hashable) -> WriteTicket:
+        """Hand an admitted ticket to derived work, including after ``seal``.
+
+        The retained work keeps the parent's original sequence, so a close
+        barrier already queued behind the parent cannot overtake its child.
+        This is one queue ticket with two owners, not a second lifecycle log.
+        """
+        with self._cond:
+            if ticket._done or self._open.get(ticket.seq) is not ticket:
+                raise RuntimeError("write ticket is no longer open")
+            ticket._claims += 1
+            self._by_key.setdefault(key, set()).add(ticket.seq)
+            return ticket
 
     def vacate(self, ticket: Optional[WriteTicket]) -> None:
         """Empty release on fail/cancel — same as complete (order advances)."""
@@ -301,12 +320,10 @@ class SessionWriteQueue:
             return
         ticket._done = True
         self._open.pop(ticket.seq, None)
-        if ticket.key is not None:
-            bucket = self._by_key.get(ticket.key)
-            if bucket is not None:
-                bucket.discard(ticket.seq)
-                if not bucket:
-                    self._by_key.pop(ticket.key, None)
+        for key, bucket in list(self._by_key.items()):
+            bucket.discard(ticket.seq)
+            if not bucket:
+                self._by_key.pop(key, None)
         self._cond.notify_all()
 
     # ── barrier / waits ────────────────────────────────────────────────

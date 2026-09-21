@@ -2218,6 +2218,7 @@ class GameSession:
             llm_config=getattr(self, "llm_config", None),
             write_gate=getattr(self, "_write_gate", None),
             write_queue=write_queue,
+            admitted_ticket=getattr(result, "_admitted_write_ticket", None),
         )
 
     def chat(
