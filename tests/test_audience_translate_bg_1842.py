@@ -2043,12 +2043,8 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
 
     result = asyncio.run(web_app.api_menu_exit())
     assert result == {"ok": True}
-    # 外部可见解绑：get_game 契约 409（禁盯 web_game 内部全局）。
-    from fastapi import HTTPException
-
-    with pytest.raises(HTTPException) as unbound:
-        web_app.get_game()
-    assert unbound.value.status_code == 409
+    # 解绑 409 由同文件 HTTP exit tracer 以真实入口覆盖；此处只保
+    # pending→done 与关库次序（禁盯 web_game，亦不重复解绑契约）。
     assert not closed.is_set(), "退出响应时不得已关库（drain 仍应在等转译）"
     assert db.get_story_extract_status(ctid) == "pending"
 
