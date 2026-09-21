@@ -4648,21 +4648,18 @@ def _settlement_period_entry(
 
         # #1353：过月=屏障票据（队列内任务）。整轮 chat 票 + 尾随 turn 票清零后
         # 才 gate-free 收夜；屏障只等工人终态/空放行（K10a：无 elapsed 熔断）。
-        # #1842：转译排空自身已经是 SessionWriteQueue 屏障，必须在收夜屏障外执行；
-        # 屏障 callback 再领屏障票会等待当前票自身，造成无界自锁。
-        # settlement 已进入在办态，期间不会再受理新的玩家写入。
-        # 欠账抽取并入同一次过月动作（内部静默），不再 409 打回玩家补写。
+        # #1842：排空、欠账补跑与收夜共用一张 SessionWriteQueue
+        # 屏障票；既不在 callback 内再领票自等，也不在收夜前归还留窗。
         sess = getattr(game, "session", None)
         if sess is None:
             raise RuntimeError("settlement entry 缺 session")
-        sess.await_translations_before_month()
 
         def _close_open_night() -> None:
             _auto_close_open_night_gate_free(
                 game, inflight_wait_s=0.0, write_gate=close_gate,
             )
 
-        get_session_write_queue(game).barrier(_close_open_night)
+        sess.await_translations_before_month(after_drain=_close_open_night)
 
         def _clear_orphan_success() -> None:
             # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。

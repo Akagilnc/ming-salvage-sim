@@ -608,6 +608,75 @@ def test_month_loop_two_months_via_http_entry(tracer_client, monkeypatch):
     )
 
 
+def test_month_advance_never_reopens_chat_between_translation_and_close(
+    tracer_client, monkeypatch,
+):
+    """过月排空转译至收夜完成须保持同一准入屏障。"""
+    client = tracer_client
+    new = client.post("/api/menu/new_game")
+    assert new.status_code == 200, new.text
+    state = (new.json() or {}).get("state") or {}
+    minister = _pick_active_minister(state)
+    game = web_app.web_game
+    assert game is not None
+    _install_canned_minister(game, monkeypatch)
+
+    first = client.post(
+        f"/api/ministers/{minister}/chat", json={"message": "边饷如何？"},
+    )
+    assert first.status_code == 200, first.text
+    _wait_pending_writes(game)
+    directive = client.post(
+        "/api/directives", json={"text": "着户部清核辽饷。", "notes": ""},
+    )
+    assert directive.status_code == 200, directive.text
+    _wait_pending_writes(game)
+
+    drain_returned = threading.Event()
+    release_settlement = threading.Event()
+    close_completed = threading.Event()
+    real_await = game.session.await_translations_before_month
+    real_close = web_app._auto_close_open_night_gate_free
+
+    def observe_await(*args, **kwargs):
+        result = real_await(*args, **kwargs)
+        drain_returned.set()
+        release_settlement.wait()
+        return result
+
+    def observe_close(*args, **kwargs):
+        result = real_close(*args, **kwargs)
+        close_completed.set()
+        return result
+
+    monkeypatch.setattr(game.session, "await_translations_before_month", observe_await)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", observe_close)
+
+    issue_result: dict = {}
+
+    def issue_month() -> None:
+        issue_result["body"] = _post_issue_stream(
+            client, expected_turn=_turn_of(state), step="continuous admission boundary",
+        )
+
+    issue_thread = threading.Thread(target=issue_month, daemon=True)
+    issue_thread.start()
+    drain_returned.wait()
+    try:
+        raced = client.post(
+            f"/api/ministers/{minister}/chat", json={"message": "此刻还能召对吗？"},
+        )
+        assert raced.status_code != 200 or close_completed.is_set(), (
+            "chat was admitted after translation barrier returned but before night close"
+        )
+    finally:
+        release_settlement.set()
+    issue_thread.join()
+    assert not issue_thread.is_alive()
+    assert close_completed.is_set()
+    assert "body" in issue_result
+
+
 # ── #1353 fold-in：带欠账一次过月成功 + 死透失败单源 ─────────────────────
 
 

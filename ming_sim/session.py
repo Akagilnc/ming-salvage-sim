@@ -3855,7 +3855,7 @@ class GameSession:
                 ) from write_exc
         return next_carry
 
-    def await_translations_before_month(self) -> None:
+    def await_translations_before_month(self, after_drain=None) -> None:
         """过月前转译：join 等到清空 → catch-up → 真耗尽走 0157。
 
         #1842 / ADR 0155 两态：① 未完成则过月等（join 缝系统内等待后自动续跑，
@@ -3876,35 +3876,37 @@ class GameSession:
         from ming_sim.error_pack import settlement_abort_message, write_error_pack
         from ming_sim.exceptions import SettlementAbort
 
-        # ① SessionWriteQueue 是唯一在飞真源；barrier 等待全部既受理转译。
+        # ① SessionWriteQueue 是唯一在飞真源；同一 barrier 连续覆盖
+        # 既受理转译、欠账补跑和调用方收夜，不留重新准入窗口。
         write_queue = get_session_write_queue(self)
-        write_queue.barrier(lambda: None)
-        # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
-        # 仅 join 已清空后才进入——避免与在飞 worker 争同一夜串行锁挂死。
-        gate = getattr(self, "_write_gate", None)
-        # 闸忙（调用方持闸或他者短持）→ 不传入，避免非重入嵌套自锁；不 release。
-        catch_gate = self._write_gate_if_free() if gate is not None else None
-        catch_up_pending_translations(
-            self.db, self.state,
-            llm_config=getattr(self, "llm_config", None),
-            write_gate=catch_gate,
-            write_queue=write_queue,
-        )
-        still_pending = list_pending_translations(self.db)
-        if still_pending:
-            # 真耗尽：0157 形态——停步 + 错误包 + 系统提示行 + 重试，重开同态。
-            exc = RuntimeError(
-                f"召对转译重试耗尽，待补 {len(still_pending)} 轮"
+        def _drain_catch_up_and_continue() -> None:
+            gate = getattr(self, "_write_gate", None)
+            catch_gate = self._write_gate_if_free() if gate is not None else None
+            catch_up_pending_translations(
+                self.db, self.state,
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=catch_gate,
+                write_queue=write_queue,
+                within_barrier=True,
             )
-            pack_path = write_error_pack(
-                self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
-            )
-            raise SettlementAbort(
-                settlement_abort_message(pack_path),
-                turn=int(self.state.turn),
-                stage="audience_translation_exhausted",
-                error_pack_path=pack_path,
-            ) from exc
+            still_pending = list_pending_translations(self.db)
+            if still_pending:
+                exc = RuntimeError(
+                    f"召对转译重试耗尽，待补 {len(still_pending)} 轮"
+                )
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="audience_translation_exhausted",
+                    error_pack_path=pack_path,
+                ) from exc
+            if after_drain is not None:
+                after_drain()
+
+        write_queue.barrier(_drain_catch_up_and_continue)
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None,

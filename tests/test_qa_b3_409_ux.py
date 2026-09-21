@@ -142,9 +142,10 @@ class _PhaseSession:
     def current_phase(self):
         return TurnPhase(self.state.turn_phase)
 
-    def await_translations_before_month(self):
+    def await_translations_before_month(self, after_drain=None):
         # #1842：过月入口在 auto_close 前闸外 join 转译；桩无在飞 Future。
-        return None
+        if after_drain is not None:
+            after_drain()
 
     def submit_hitl_choices(self, *_a, write_gate=None, **_k):
         self._submit_called = True
@@ -319,5 +320,4 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
 
     assert game.actions == ["submit", "end_turn", "refresh"]
     assert tail_sessions == [old_session]
-
 

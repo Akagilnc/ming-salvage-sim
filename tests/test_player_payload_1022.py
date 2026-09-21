@@ -63,8 +63,9 @@ class _SettlementSession:
         self.state = state
         self.actions = []
 
-    def await_translations_before_month(self):
-        return None
+    def await_translations_before_month(self, after_drain=None):
+        if after_drain is not None:
+            after_drain()
 
     def current_phase(self):
         from ming_sim.models import TurnPhase

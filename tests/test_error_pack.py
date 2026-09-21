@@ -317,8 +317,9 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     from ming_sim.exceptions import SettlementAbort
 
     class _StubSession:
-        def await_translations_before_month(self):
-            return None
+        def await_translations_before_month(self, after_drain=None):
+            if after_drain is not None:
+                after_drain()
 
         def resolve_turn(self, cheat_directive="", inflight_wait_s=None):
             raise SettlementAbort(

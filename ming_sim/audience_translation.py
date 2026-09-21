@@ -524,6 +524,7 @@ def catch_up_pending_translations(
     translate_fn: Optional[TranslateFn] = None,
     write_gate: Any = None,
     write_queue: Any = None,
+    within_barrier: bool = False,
     source: Provenance = Provenance.system_simulation,
 ) -> Dict[str, int]:
     """补跑转译待补：已持久化回话但 extract_status 未 done 的轮，按夜序串行重试。
@@ -545,7 +546,32 @@ def catch_up_pending_translations(
         reply = str(row.get("reply") or "")
         # 查询异常在 schedule 外上抛——不得被单轮失败宽吞洗成空输入。
         emperor = _load_emperor_message_for_turn(db, ctid, write_gate)
-        # 补跑复用同夜 Future FIFO 单真源，不另开 Lock / 直跑旁路。
+        if within_barrier:
+            # 过月已由 SessionWriteQueue 屏障独占准入；此时再领后序票
+            # 并等 Future 会被当前屏障拦住自等。复用同一翻译作业同步
+            # 完成，写入生命期由已开的唯一屏障票覆盖。
+            try:
+                run_turn_translation_job(
+                    db, state,
+                    emperor_message=emperor,
+                    reply=reply,
+                    night_id=nid,
+                    chat_turn_id=ctid,
+                    minister_name=str(row.get("minister_name") or ""),
+                    llm_config=llm_config,
+                    translate_fn=translate_fn,
+                    write_gate=write_gate,
+                    source=source,
+                )
+                extracted += 1
+            except Exception:
+                logger.exception(
+                    "catch_up_pending_translations: turn failed night=%s chat_turn_id=%s",
+                    nid, ctid,
+                )
+                pending += 1
+            continue
+        # 普通补跑复用同夜 Future FIFO 单真源。
         with _night_inflight_guard:
             existing = _turn_future.get((id(write_queue), ctid)) if ctid > 0 else None
             # Future 先标记终态、再同步执行 cleanup callback。终态旧账即使
