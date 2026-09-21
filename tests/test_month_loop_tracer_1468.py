@@ -8,9 +8,6 @@
 （消费 SSE 到终态）→ 月+1 → 再一月。起点置十一月以真跨 year rollover
 （year+1 且 period 回 1）。断言 turn+2 与 year/period 跨年安全月序 +2、无 409 死锁、
 无裸 500、闸/账双向等量（成功过月 count==len(pending)==0）。
-至少一轮 chat 返回后不预排空尾随写，直接拟旨/颁诏，用 Event 卡住 stub 尾随写
-完成时机以钉「颁诏受理 vs 尾随写」接缝（禁 sleep 竞猜）。
-
 #1353 fold-in 钉：
 - 植入欠账后一次过月动作成功（流内处理、无 409、无 CTA、账清、月+1）
 - 真死 LLM stub → 失败单源（通传未达），非待补 CTA/409；夜保持可重按
@@ -19,7 +16,6 @@
 from __future__ import annotations
 
 import json
-import threading
 from types import SimpleNamespace
 
 import pytest
@@ -33,8 +29,8 @@ import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
-from ming_sim.session_write_queue import _is_barrier_ticket, get_session_write_queue
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
@@ -67,20 +63,11 @@ class _CannedMinisterAgent:
         return SimpleNamespace(content="臣已知悉，边饷当速清。", tools=[])
 
 
-class _CannedRelationJudge:
-    """召对/收夜关系判官外层——零事件 canned，禁真网。"""
-
-    def run(self, _prompt):
-        return SimpleNamespace(content='{"events":[]}')
 
 
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda *a, **k: _CannedExtractor(),
-    )
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
@@ -91,10 +78,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
     )
     # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
     # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent",
-        lambda *a, **k: _CannedRelationJudge(),
-    )
     # 高亮判官默认 8s 超时——必须零延迟 stub，否则两月链必破速度红线。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     # 拟旨 capture 默认 30s 总罩——外层接缝 canned，禁真 LLM/真等。
@@ -206,73 +189,10 @@ def _pick_active_minister(state: dict) -> str:
     raise AssertionError(f"no active ming minister in state ministers={state.get('ministers')!r}")
 
 
-def _install_canned_minister(game) -> None:
-    game.session.registry.get = lambda _ch: _CannedMinisterAgent()
-
-
-def _install_trail_hold(game, release: threading.Event):
-    """卡住读心/抽取尾随写完成时机（Event 控制，禁 sleep 竞猜）。
-
-    返回 (restore_fn,)——race 轮结束后还原真方法。
-    """
-    real_mind = game._trail_mindreading_after_reply
-    real_extract = game._trail_extraction_after_reply
-
-    def _held_mind(*args, **kwargs):
-        release.wait()
-        return real_mind(*args, **kwargs)
-
-    def _held_extract(*args, **kwargs):
-        release.wait()
-        return real_extract(*args, **kwargs)
-
-    game._trail_mindreading_after_reply = _held_mind
-    game._trail_extraction_after_reply = _held_extract
-
-    def _restore() -> None:
-        game._trail_mindreading_after_reply = real_mind
-        game._trail_extraction_after_reply = real_extract
-
-    return _restore
-
-
-def _arm_barrier_open_event(game):
-    """包装 session queue 的 barrier claim/open 接缝：票入 _open 后 wait_prior 时置 Event。
-
-    与 test_web_audience_night_498 同形——只观察既有 wait_prior 接缝，不改生产、不加钩子。
-    返回 (barrier_open_event, restore_fn)。
-    """
-    q = get_session_write_queue(game)
-    barrier_open = threading.Event()
-    real_wait_prior = q.wait_prior
-
-    def _observe_wait_prior(ticket):
-        # barrier() 先把票写入 _open 再 wait_prior——此处即 claim/open 接缝。
-        if _is_barrier_ticket(ticket):
-            barrier_open.set()
-        return real_wait_prior(ticket)
-
-    q.wait_prior = _observe_wait_prior  # type: ignore[method-assign]
-
-    def _restore() -> None:
-        q.wait_prior = real_wait_prior  # type: ignore[method-assign]
-
-    return barrier_open, _restore
-
-
-def _release_trails_when_barrier_open(
-    barrier_open: threading.Event, release: threading.Event,
-) -> None:
-    """侧线程：显式等待并断言 barrier 真打开后，再放行 stub 尾随写。
-
-    禁 deadline/sleep 轮询；禁『未见 barrier 也放行』。
-    """
-
-    def _run() -> None:
-        barrier_open.wait()
-        release.set()
-
-    threading.Thread(target=_run, daemon=True, name="trail-release-on-barrier").start()
+def _install_canned_minister(game, monkeypatch) -> None:
+    agent = _CannedMinisterAgent()
+    game.session.registry.get = lambda _ch, **_kw: agent
+    stub_scene_agent(monkeypatch, agent)
 
 
 def _turn_of(state: dict) -> int:
@@ -403,16 +323,12 @@ def _resolve_decisions_via_stream(
 
 def _play_one_month(
     client: TestClient,
+    monkeypatch,
     *,
     minister: str,
     month_label: str,
-    race_trailing_writes: bool = False,
 ) -> int:
-    """召对 → 拟旨 → 流式颁诏结算。返回推进后的 turn。
-
-    race_trailing_writes=True：chat 返回后不预排空尾随写，直接拟旨/颁诏；
-    用 Event 卡住 stub 尾随完成时机，屏障开后放行——钉真实竞态窗。
-    """
+    """召对 → 拟旨 → 流式颁诏结算。返回推进后的 turn。"""
     state = _get_state(client)
     turn_before = _turn_of(state)
     assert state["turn"]["phase"] not in (
@@ -422,79 +338,45 @@ def _play_one_month(
     game = web_app.web_game
     assert game is not None
 
-    trail_release: threading.Event | None = None
-    barrier_open: threading.Event | None = None
-    restore_trails = None
-    restore_barrier_signal = None
-    if race_trailing_writes:
-        trail_release = threading.Event()
-        restore_trails = _install_trail_hold(game, trail_release)
-        barrier_open, restore_barrier_signal = _arm_barrier_open_event(game)
+    chat = client.post(
+        f"/api/ministers/{minister}/chat",
+        json={"message": f"边饷如何？本月{month_label}召对。"},
+    )
+    _assert_not_bare_500(chat, step=f"{month_label} chat")
+    assert chat.status_code == 200, (
+        f"{month_label} chat → {chat.status_code}: {chat.text}"
+    )
+    answer = str((chat.json() or {}).get("answer") or "")
+    assert answer, f"{month_label}: empty minister answer"
 
-    try:
-        chat = client.post(
-            f"/api/ministers/{minister}/chat",
-            json={"message": f"边饷如何？本月{month_label}召对。"},
+    # 顺序 tracer 只验证真实入口和结构化月推进结果。
+    _wait_pending_writes(game)
+
+    directive = client.post(
+        "/api/directives",
+        json={"text": f"着户部清核辽饷（{month_label}）。", "notes": ""},
+    )
+    _assert_not_bare_500(directive, step=f"{month_label} 拟旨")
+    assert directive.status_code == 200, (
+        f"{month_label} 拟旨 → {directive.status_code}: {directive.text}"
+    )
+    dirs = (directive.json() or {}).get("directives") or []
+    assert dirs, f"{month_label}: directive list empty after POST"
+
+    _wait_pending_writes(game)
+
+    body = _post_issue_stream(
+        client, expected_turn=turn_before, step=f"{month_label} issue/stream",
+    )
+    # 若 simulator canned 仍吐决策点，最短续跑：空批不得卡死主链。
+    if body.get("awaiting_decision"):
+        decisions = body.get("decisions") or []
+        assert decisions, (
+            f"{month_label}: awaiting_decision with empty decisions: {body!r}"
         )
-        _assert_not_bare_500(chat, step=f"{month_label} chat")
-        assert chat.status_code == 200, (
-            f"{month_label} chat → {chat.status_code}: {chat.text}"
+        _resolve_decisions_via_stream(
+            client, decisions, step=f"{month_label} resolve_decisions",
         )
-        answer = str((chat.json() or {}).get("answer") or "")
-        assert answer, f"{month_label}: empty minister answer"
-
-        if race_trailing_writes:
-            # 竞态窗：chat 已回但尾随票仍在——禁止预排空。
-            pending_now = int(getattr(game, "_pending_writes_count", 0) or 0)
-            assert pending_now > 0, (
-                f"{month_label}: expected in-flight trailing writes after chat, "
-                f"got count={pending_now}"
-            )
-            assert barrier_open is not None and trail_release is not None
-            _release_trails_when_barrier_open(barrier_open, trail_release)
-        else:
-            # 非竞态轮：拟旨/颁诏前放空尾随（短轮询，非真超时窗）。
-            _wait_pending_writes(game)
-
-        directive = client.post(
-            "/api/directives",
-            json={"text": f"着户部清核辽饷（{month_label}）。", "notes": ""},
-        )
-        _assert_not_bare_500(directive, step=f"{month_label} 拟旨")
-        assert directive.status_code == 200, (
-            f"{month_label} 拟旨 → {directive.status_code}: {directive.text}"
-        )
-        dirs = (directive.json() or {}).get("directives") or []
-        assert dirs, f"{month_label}: directive list empty after POST"
-
-        if not race_trailing_writes:
-            _wait_pending_writes(game)
-
-        body = _post_issue_stream(
-            client, expected_turn=turn_before, step=f"{month_label} issue/stream",
-        )
-        if race_trailing_writes:
-            # 主链结束后再钉一次：屏障票必须真打开过（非超时放行）。
-            assert barrier_open is not None and barrier_open.is_set(), (
-                f"{month_label}: issue/stream finished without barrier ticket open"
-            )
-        # 若 simulator canned 仍吐决策点，最短续跑：空批不得卡死主链。
-        if body.get("awaiting_decision"):
-            decisions = body.get("decisions") or []
-            assert decisions, (
-                f"{month_label}: awaiting_decision with empty decisions: {body!r}"
-            )
-            _resolve_decisions_via_stream(
-                client, decisions, step=f"{month_label} resolve_decisions",
-            )
-    finally:
-        # 禁无条件 trail_release.set()：仅 _release_trails_when_barrier_open
-        # 在观察到 barrier_open 后才可置位；finally 只还原实例方法。
-        if restore_trails is not None:
-            restore_trails()
-        if restore_barrier_signal is not None:
-            restore_barrier_signal()
-
     _wait_pending_writes(game)
     after = _get_state(client)
     turn_after = _turn_of(after)
@@ -521,10 +403,8 @@ def _play_one_month(
 # ── 主 tracer：两整月（起点十一月 → 真跨年） ────────────────────────────
 
 
-def test_month_loop_two_months_via_http_entry(tracer_client):
+def test_month_loop_two_months_via_http_entry(tracer_client, monkeypatch):
     """HTTP 真入口起局走两个整月：turn+2 且 year rollover（period 回 1）、无 409、闸/账双向清零。
-
-    M1 保留 post-chat 尾随写竞态窗（Event 控 stub）；M2 正常排空。
     """
     client = tracer_client
 
@@ -538,7 +418,7 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
 
     game = web_app.web_game
     assert game is not None
-    _install_canned_minister(game)
+    _install_canned_minister(game, monkeypatch)
 
     # 真跨年：新档默认 period=10；推到 11 月起走两月 → year+1 / period=1。
     # （只推 M1/M2 从 10 起会停在 12 月，year rollover 根本不执行。）
@@ -551,16 +431,15 @@ def test_month_loop_two_months_via_http_entry(tracer_client):
     assert period0 == 11, state0.get("turn")
     assert ord0 > 0, state0.get("turn")
 
-    # M1：chat 后不预排空尾随写，直接拟旨/流式颁诏（竞态窗）。
     turn1 = _play_one_month(
-        client, minister=minister, month_label="M1", race_trailing_writes=True,
+        client, monkeypatch, minister=minister, month_label="M1",
     )
     assert turn1 == turn0 + 1
 
     # 第二月：registry 仍挂 canned（begin_turn 不重建 registry.get 绑定）
-    _install_canned_minister(web_app.web_game)
+    _install_canned_minister(web_app.web_game, monkeypatch)
     turn2 = _play_one_month(
-        client, minister=minister, month_label="M2", race_trailing_writes=False,
+        client, monkeypatch, minister=minister, month_label="M2",
     )
     assert turn2 == turn0 + 2
 
@@ -651,10 +530,11 @@ def test_issue_with_extraction_debt_succeeds_once(tracer_client):
 
 
 def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
-    """#1353 fold-in：抽取 LLM 死透 → 失败单源（通传未达），非待补 CTA/409；夜可重按。
+    """#1353 fold-in / #1842：转译 LLM 死透 → 耗尽失败单源；夜可重按。
 
-    非流式兼容口轻钉：结构化 HTTP 400/412 + detail 单源（流式主链另由主 tracer 覆盖）。
+    非流式兼容口轻钉：结构化 HTTP 409 SettlementAbort + detail 单源。
     """
+    from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
     client = tracer_client
@@ -670,34 +550,23 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 
     ctid = _plant_extraction_debt(game, minister, sess_tag="sess-1468-dead")
 
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda *a, **k: _BoomExtractor(),
-    )
+    # #1842：收夜 catch-up 认转译水位；真失败注入转译缝。
+    def _boom_translate(prompt, llm_config):
+        del prompt, llm_config
+        raise LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error")
+
+    stub_audience_translate(monkeypatch, _boom_translate)
 
     issue = client.post("/api/decree/issue", json={"expected_turn": turn0})
     _assert_not_bare_500(issue, step="dead-llm issue")
-    # 欠账类不得再 409 打回；走既定 LLM 失败单源面。
-    assert issue.status_code != 409, (
-        f"debt-class 409 deleted; got {issue.status_code}: {issue.text}"
-    )
-    assert issue.status_code in (400, 412), (
-        f"expected LLM single-source status, got {issue.status_code}: {issue.text}"
+    # #1842：转译耗尽 → SettlementAbort → 409 + typed stage（非玩家补写 CTA）。
+    assert issue.status_code == 409, (
+        f"expected translation-exhaustion 409, got {issue.status_code}: {issue.text}"
     )
     detail = issue.json().get("detail")
-    if isinstance(detail, dict):
-        detail_text = str(detail.get("message") or "")
-        detail_blob = str(detail)
-    else:
-        detail_text = str(detail or "")
-        detail_blob = detail_text
-    assert CLI_RUNNER_PLAYER_MESSAGE in detail_text or CLI_RUNNER_PLAYER_MESSAGE in detail_blob, (
-        f"failure single source missing: {detail!r}"
-    )
-    # 禁玩家可见待补/补写 CTA 语义
-    assert "待补" not in detail_text
-    assert "补写" not in detail_text
-    assert "chat_turn" not in detail_text
+    assert isinstance(detail, dict), detail
+    assert detail.get("stage") == "audience_translation_exhausted", detail
+    assert detail.get("error_pack_path"), detail
 
     # 诊断面仍可见欠账；夜保持开，玩家重按过月=重试整段
     pending = _pending_payload(client)
@@ -779,7 +648,8 @@ def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) 
 
 
 @pytest.mark.parametrize("kind", ["offsite", "temporary"])
-def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind):
+def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind, monkeypatch):
+
     """#1716 stream 入口：已开夜场外/temporary /chat/stream 退朝 → court_break + 夜关。
 
     temporary 不得因 admission reason 返回 error；正式场外仍走地点分类与无 presence。
@@ -797,7 +667,8 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind):
             return None
 
     agent = _StreamAgent()
-    game.session.registry.get = lambda _ch: agent
+    game.session.registry.get = lambda _ch, **_kw: agent
+    stub_scene_agent(monkeypatch, agent)
 
     stream = client.post(
         f"/api/ministers/{remote}/chat/stream",
@@ -825,15 +696,12 @@ def test_issue_1716_offsite_court_break_via_stream(tracer_client, kind):
         assert str(turn["route"] or "") == "offsite", dict(turn)
 
 
-def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
-    """#1716 非流式入口：已开夜场外 POST /chat 退朝 → court_break + 夜关。
-
-    与 stream 共用 `_open_night_court_break`；两 call site 各一条最短主干。
-    """
+def test_issue_1716_offsite_court_break_via_nonstream(tracer_client, monkeypatch):
+    """#1716 非流式入口：已开夜场外 POST /chat 退朝 → court_break + 夜关。"""
     client, game, remote, night_id = _setup_open_night_participant(
         tracer_client, kind="offsite",
     )
-    # non-stream 读 agent.run() 为单值；覆盖 generator 形态。
+
     class _SyncAgent:
         def run(self, *_a, **_k):
             return SimpleNamespace(content="臣领旨。", tools=[])
@@ -842,16 +710,16 @@ def test_issue_1716_offsite_court_break_via_nonstream(tracer_client):
             return None
 
     sync = _SyncAgent()
-    game.session.registry.get = lambda _ch: sync
-
+    game.session.registry.get = lambda _ch, **_kw: sync
+    stub_scene_agent(monkeypatch, sync)
     resp = client.post(
-        f"/api/ministers/{remote}/chat",
-        json={"message": "退朝"},
+        f"/api/ministers/{remote}/chat", json={"message": "退朝"},
     )
     _assert_not_bare_500(resp, step="#1716 chat 场外退朝")
     assert resp.status_code == 200, resp.text
     body = resp.json() or {}
     assert isinstance(body, dict), body
+    _wait_pending_writes(game)
     _assert_court_break_closed(game, body, night_id, remote=remote)
 
 

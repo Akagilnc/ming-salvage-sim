@@ -24,6 +24,7 @@ import threading
 
 import httpx
 import pytest
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -71,13 +72,6 @@ class _CannedMindreadingAgent:
         return _R()
 
 
-class _CannedRelationJudge:
-    """#634 关系判官离线边界：召对后 trail 会 create_relation_judge_agent——空 events，禁 sk-test 真网。"""
-
-    def run(self, _prompt):
-        class _R:
-            content = '{"events":[]}'
-        return _R()
 
 
 # ── canned LLM 边界（唯一 fake）────────────────────────────────────────
@@ -104,6 +98,7 @@ class _FakeAgent:
         self.answer = answer
 
     def run(self, *args, **kwargs):
+        # 接受 stream 旗（生产 scene transport 同形）
         yield _RunContent(self.answer)
         if self.started is not None:
             self.started.set()
@@ -150,10 +145,8 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     beat factory，避免 sk-test 401；实例仍走生产 ChatTurnSceneRegistry。
 
     允许 canned seam（定义真源 / runtime lookup，本 fixture 唯一 fake 面）：
-    - agents.create_audience_extractor_agent → 回话尾随 / 收夜 drain 叙事抽取
     - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
     - mindreading.create_mindreading_agent → 回话 done 后读心尾随（#499）
-    - agents.create_relation_judge_agent → 回话后关系判官 trail（#634；禁 sk-test 真网）
     - GameSession._start/_finish_cli_action_intent → 动作意图分类器（禁 sk-test 真网）
     - web_app.run_highlight_judge → 回话 done 后高亮判官（#544；禁 sk-test 真网）
     - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
@@ -165,10 +158,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    # #501：叙事抽取是每条召对夜回话的新 LLM 边界（回话尾随 + 收夜前 drain）——离线中和，
-    # 默认抽空 facts，避免本 #498 用例走真实网络。
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _CannedExtractor())
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
@@ -177,11 +166,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setattr(
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreadingAgent(),
-    )
-    # #634：关系判官 trail 同属回话后 LLM 边界——取证定位为 sk-test 401 源之一。
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent",
-        lambda *a, **k: _CannedRelationJudge(),
     )
     # 动作意图分类器：chat stream 在 payload 前可并发启动；取证定位为另一 sk-test 401 源。
     # 本 fixture 只钉夜/在飞接缝，分类确定性空返，禁真网（与 #1727 fixture 同边界）。
@@ -277,7 +261,7 @@ async def _wait_for(pred) -> None:
         await asyncio.sleep(0)
 
 
-async def _start_hanging_chat(game, client, minister):
+async def _start_hanging_chat(game, client, minister, monkeypatch):
     """经真实 /chat/stream ASGI 请求起一轮回话并卡在生成中（在飞）。
     返回 (chat_task, allow)：chat_task 是仍在跑的 SSE 请求；置位 allow 后回话收尾。
 
@@ -286,7 +270,10 @@ async def _start_hanging_chat(game, client, minister):
     故本 helper 在 raise 前 release+drain，不把半移交资源留给调用方。
     """
     started, allow = threading.Event(), threading.Event()
-    game.session.registry.get = lambda ch: _FakeAgent(started=started, allow=allow)
+    agent = _FakeAgent(started=started, allow=allow)
+    game.session.registry.get = lambda ch, **_kw: agent
+    # #1842：殿上 scene_chat 双桩——与 registry 同注入 agent
+    stub_scene_agent(monkeypatch, agent)
     task = asyncio.create_task(
         client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
     try:
@@ -335,7 +322,7 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
             # 取得 chat 所有权后即进入释放责任区间——观察/断言/写入均在 try 内。
-            chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
+            chat_task, allow = await _start_hanging_chat(game, chat_client, minister, monkeypatch)
             issue_task = None
             try:
                 night = an.get_open_night(game.db)
@@ -502,7 +489,9 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
         lambda *a, **k: _TracingEndorsementExtractor(),
     )
     # Real chat path uses registry agent; keep canned so freeze is the only outcome.
-    game.session.registry.get = lambda ch: _FakeAgent(answer="臣另有奏。")
+    _agent = _FakeAgent(answer="臣另有奏。")
+    game.session.registry.get = lambda ch, **_kw: _agent
+    stub_scene_agent(monkeypatch, _agent)
 
     async def first_fail_scenario():
         async with _client() as issue_client, _client() as chat_client:
@@ -612,11 +601,12 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     # no LLM); CAS reopen + persist succeed only after OPEN. Suppress trail workers so
     # dual-fail close does not race the shared SQLite conn.
     assert game.db.get_interrupted_reply_retries(minister)
-    real_chat = game.session.chat
+    real_scene = game.session.scene_chat
     real_spawn = game._spawn_pending_write_thread
     canned_retry_answer = "臣重奏：边饷当清。"
-    game.session.chat = (
-        lambda minister_name, message, *, chat_turn_id=0, explicit_secret_order=False: ChatTurnResult(
+    # #1842：殿上重试走 scene_chat
+    game.session.scene_chat = (
+        lambda message, *, chat_turn_id=0, stream_emit=None, minister_name="": ChatTurnResult(
             answer=canned_retry_answer,
         )
     )
@@ -624,7 +614,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     try:
         retry_payload = game.retry_interrupted_reply(minister)
     finally:
-        game.session.chat = real_chat
+        game.session.scene_chat = real_scene
         game._spawn_pending_write_thread = real_spawn
     # canned 无损透传（等值，非文案分类）；队列清空证 OPEN 恢复。
     assert retry_payload.get("answer") == canned_retry_answer
@@ -790,7 +780,7 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
             # 取得 chat 所有权后即进入释放责任区间——观察/断言均在 try 内。
-            chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
+            chat_task, allow = await _start_hanging_chat(game, chat_client, minister, monkeypatch)
             issue_task = None
             try:
                 night = an.get_open_night(game.db)
@@ -854,7 +844,7 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
 
         async with _client() as chat_client, _client() as adv_client:
             # 取得 chat 所有权后即进入释放责任区间；sibling 尚未创建时按实际存在收尾。
-            chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
+            chat_task, allow = await _start_hanging_chat(game, chat_client, minister, monkeypatch)
             t = None
             adv_task = None
             try:
@@ -885,11 +875,13 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
 
 
 # ── ④ TOCTOU：等 gate 期间相位翻到亲裁 → 持锁内权威复查经真实 /chat/stream SSE 拒 ──
-def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
+def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
     game = web_game
     minister = _active_minister(game)
     # 装好 fake LLM：删掉持锁内复查时，失败只会因非法开夜/建轮（而非缺 API key 401）。
-    game.session.registry.get = lambda ch: _FakeAgent()
+    _agent = _FakeAgent()
+    game.session.registry.get = lambda ch, **_kw: _agent
+    stub_scene_agent(monkeypatch, _agent)
     game.state.turn_phase = TurnPhase.SUMMONING.value  # 锁前快速查通过
     nights0, turns0 = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")
 

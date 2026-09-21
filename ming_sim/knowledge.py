@@ -19,6 +19,11 @@ from ming_sim.public_sayings import (
 )
 
 
+def _prose(text: object) -> str:
+    """Carry durable report prose without mechanically interpreting it."""
+    return str(text or "")
+
+
 def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
     """Audience-name supplement for an event-origin issue, or ``None`` if N/A.
 
@@ -150,8 +155,14 @@ def knowledge_row_visible_to(
 
     target_name = str(target_value("name") or target_value("character_id") or character_name)
     excluded_names, people, offices = _exclusion_lists_from_row(row)
+    source_id = str(row["source_id"] or "")
+    # 合成读模型行未必自带 excluded_names；source 上的持久黑名单仍是同一真源。
+    if hasattr(db, "knowledge_exclusions_for_source"):
+        excluded_names |= {
+            str(name)
+            for name in (db.knowledge_exclusions_for_source(source_id) or [])
+        }
     if not people and not offices:
-        source_id = str(row["source_id"] or "")
         if hasattr(db, "knowledge_exclusion_targets_for_source"):
             fallback = db.knowledge_exclusion_targets_for_source(source_id)
             if isinstance(fallback, dict):
@@ -511,6 +522,60 @@ def current_character_office(
         str((current["office"] if current is not None else getattr(character, "office", "")) or ""),
         str((current["office_type"] if current is not None else getattr(character, "office_type", "")) or ""),
     )
+
+
+def _issue_audience_case_events(
+    db: Any,
+    state: Any,
+    character_name: str,
+    *,
+    known_source_ids: set[str] | None = None,
+) -> list[Dict[str, object]]:
+    """#1281 prompt-only synthesis: seed-event audience sees issue stage_text.
+
+    Read-time only.  Must never be folded into ``build_character_knowledge`` /
+    ``get_character_knowledge`` events — those APIs return durable rows only
+    (#492 near_minister tail contract).
+    """
+    known = set(known_source_ids or ())
+    synthesized: list[Dict[str, object]] = []
+    active_issues = (
+        db.list_active_issues() if hasattr(db, "list_active_issues") else []
+    )
+    for issue in active_issues:
+        try:
+            source_id = f"issue:{int(issue['id'])}"
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if source_id in known:
+            continue
+        try:
+            stage = _prose(issue["stage_text"]).strip()
+        except (KeyError, IndexError, TypeError):
+            stage = ""
+        if not stage or character_name not in _issue_audience_names(db, issue):
+            continue
+        if not knowledge_row_visible_to(
+            db,
+            {"source_id": source_id},
+            character_name,
+        ):
+            continue
+        try:
+            origin_turn = int(issue["origin_turn"] or state.turn)
+        except (KeyError, IndexError, TypeError, ValueError):
+            origin_turn = int(state.turn)
+        synthesized.append({
+            "turn": origin_turn,
+            "year": int(state.year) if origin_turn == int(state.turn) else 0,
+            "period": int(state.period) if origin_turn == int(state.turn) else 0,
+            "kind": "issue_case",
+            "title": issue["title"],
+            "body": stage,
+            "source_id": source_id,
+        })
+        known.add(source_id)
+    return synthesized
 
 
 def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[str, object]:

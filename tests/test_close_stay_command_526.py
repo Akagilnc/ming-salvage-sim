@@ -19,6 +19,7 @@ import ming_sim.audience_night as an
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
+from ming_sim.session_write_queue import SessionWriteQueue
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -50,16 +51,18 @@ def _session(db, state, content, *, reply="臣领旨。", tools=None):
             return SimpleNamespace(content=reply, tools=list(tools or []))
 
     sess = GameSession.__new__(GameSession)
+    sess._write_queue = SessionWriteQueue()
+    sess._write_gate = sess._write_queue.write_gate
     sess.db = db
     sess.state = state
     sess.content = content
     sess.registry = SimpleNamespace(
-        get=lambda _c: FakeAgent(),
+        get=lambda _c, **_kw: FakeAgent(),
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = set()
     sess._retrieve_memories_for_message = lambda message: message
-    sess._audience_prompt_for_message = lambda message, character, chat_turn_id=0: message
+    sess._audience_prompt_for_message = lambda message, character, chat_turn_id=0, **_kw: message
     sess._start_cli_action_intent = lambda *a, **k: None
     sess._finish_cli_action_intent = lambda *a, **k: []
     sess.start_exit_scene_from_dismiss_tools = lambda *a, **k: None

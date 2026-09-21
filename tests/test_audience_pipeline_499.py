@@ -110,8 +110,8 @@ def test_run_mindreading_for_turn_empty_narration_is_absent_no_record(game):
     assert db.list_mindreading_records(chat_turn_id) == []
 
 
-def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatch):
-    """真实 chat_stream：done 先于 mindreading；读心事件可浮现；输入为完整回话。"""
+def test_chat_stream_done_before_end_without_code_mindreading(game, monkeypatch):
+    """#1842：真实 chat_stream SSE 契约为 accepted/delta/done/end；代码触发读心已退役。"""
     import web_app as web_app_mod
     from tests.test_audience_background import _FakeAgent, _web_game
 
@@ -120,132 +120,70 @@ def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatc
     agent = _FakeAgent(chunks=["臣", "先陈军务，不敢删节。"])
     web_game = _web_game(db, state, content, agent)
 
-    seen_replies: List[str] = []
-    release_mind = threading.Event()  # 阻塞门：done 交付前读心不完成 → 外部可见 done<mindreading
+    mind_calls: List[Any] = []
 
-    def slow_spy_run(**kwargs):
-        seen_replies.append(kwargs.get("minister_reply") or "")
-        release_mind.wait()
-        payload = {
+    def spy_mind(**kwargs):
+        mind_calls.append(kwargs)
+        return {
             "reader": "王承恩",
             "target": minister_name,
             "source": "见闻",
             "precision": "清晰",
             "narration": "近臣低声：此言另有盘算。",
         }
-        chat_turn_id = int(kwargs.get("chat_turn_id") or 0)
-        if chat_turn_id:
-            gate = kwargs.get("write_gate") or threading.Lock()
-            with gate:
-                db.record_mindreading(chat_turn_id, payload)
-        return payload
 
-    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", slow_spy_run)
+    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", spy_mind)
 
-    stream = web_game.chat_stream(minister_name, "军务如何？")
-    events: List[Dict[str, Any]] = []
-    done_seen = False
-    mind_before_done = False
-    for item in stream:
-        events.append(item)
-        if item.get("type") == "mindreading" and not done_seen:
-            mind_before_done = True
-        if item.get("type") == "done":
-            done_seen = True
-            release_mind.set()  # done 已交付后才放行读心
-
+    events: List[Dict[str, Any]] = list(web_game.chat_stream(minister_name, "军务如何？"))
     types = [e.get("type") for e in events]
     assert "delta" in types
-    # 外部可见时序：done < mindreading < end（阻塞门保证读心不抢在 done 前）
-    assert types.index("done") < types.index("mindreading")
-    assert types.index("mindreading") < types.index("end")
-    assert not mind_before_done
+    assert "mindreading" not in types
+    assert types.index("done") < types.index("end")
     done_payload = next(e["payload"] for e in events if e["type"] == "done")
     assert done_payload["answer"] == "臣先陈军务，不敢删节。"
-    mind_event = next(e for e in events if e["type"] == "mindreading")
-    assert mind_event["payload"]["narration"] == "近臣低声：此言另有盘算。"
-    assert seen_replies == ["臣先陈军务，不敢删节。"]
-    assert "军务如何？" not in seen_replies[0]
-    # 公共信号（非私有计数）：读心任务达终态（记录已落）——worker DB 工作已收尾。
-    wait_until(lambda: db.list_mindreading_records(int(mind_event["chat_turn_id"])))
+    assert mind_calls == []
+    cid = int(done_payload.get("chat_turn_id") or 0)
+    assert cid > 0
+    assert db.get_mindreading_status(cid) == "skip"
+    assert web_game.mindreading_for_minister(minister_name, cid)["mindreading_pending"] is False
 
 
-def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
-    """真实入口：唯一 qualifying 独立调用（action_intent，只读皇帝消息）与大臣回话同时在飞。
-
-    不注入生产不存在的假任务；用 2 方 barrier 让 action_intent 分类器与回话流式
-    在同一时刻汇合——串行则任一方永久等待、barrier 超时，测试失败。
-    """
+def test_chat_stream_scene_path_retires_action_intent_overlap(game, monkeypatch):
+    """#1842：殿上 scene 流式入口不再并行旧 action_intent 分类器；SSE 仍交付 done/end。"""
     import web_app as web_app_mod
-    from concurrent.futures import ThreadPoolExecutor
-
     from tests.test_audience_background import RunContent, RunOutput, _web_game
 
     db, state, content = game
     minister_name = "温体仁"
-
-    both_in_flight = threading.Barrier(2)
     intent_started = threading.Event()
-    reply_streaming = threading.Event()
 
-    class _BlockingReplyAgent:
-        def __init__(self) -> None:
-            self.completed = threading.Event()
-            self.calls: List[Any] = []
-
+    class _ReplyAgent:
         def run(self, *args, **kwargs):
-            self.calls.append((args, kwargs))
             yield RunContent("臣")
-            reply_streaming.set()
-            both_in_flight.wait()  # 与 action_intent 汇合 → 证明同时在飞
             yield RunContent("先陈军务。")
-            self.completed.set()
             yield RunOutput([])
 
-    web_game = _web_game(db, state, content, _BlockingReplyAgent())
-
-    intent_exec = ThreadPoolExecutor(max_workers=1)
+    web_game = _web_game(db, state, content, _ReplyAgent())
     seen_intent_messages: List[str] = []
-    intent_consumed: List[Any] = []
 
     def _start_intent(character, message):
-        seen_intent_messages.append(message)  # 只读皇帝消息，不依赖回话
-
-        def _classify():
-            intent_started.set()
-            both_in_flight.wait()  # 与回话汇合
-            return {"kind": "none"}
-
-        return intent_exec.submit(_classify)
-
-    def _finish_intent(future):
-        result = future.result() if future is not None else None
-        intent_consumed.append(result)
-        return result
+        seen_intent_messages.append(message)
+        intent_started.set()
+        return None
 
     web_game.session._start_cli_action_intent = _start_intent
-    web_game.session._finish_cli_action_intent = _finish_intent
     monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", lambda **_k: None)
 
-    try:
-        events = list(web_game.chat_stream(minister_name, "军务如何？"))
-        assert any(e.get("type") == "done" for e in events)
-        assert any(e.get("type") == "end" for e in events)
-        # barrier(2) 只在两者都抵达时放行；两个事件都 set 证明回话与 action_intent 同时在飞
-        assert reply_streaming.is_set()
-        assert intent_started.is_set()
-        # 恰消费一次（无第二次发起），且分类器只喂到皇帝消息、不含回话正文
-        assert intent_consumed == [{"kind": "none"}]
-        assert seen_intent_messages == ["军务如何？"]
-        # 公共信号：读心任务达终态（记录或 failed/skip）——worker 已收尾。
-        wait_until(lambda: not web_game.mindreading_for_minister(minister_name)["mindreading_pending"])
-    finally:
-        intent_exec.shutdown(wait=True)
+    events = list(web_game.chat_stream(minister_name, "军务如何？"))
+    assert any(e.get("type") == "done" for e in events)
+    assert any(e.get("type") == "end" for e in events)
+    assert not intent_started.is_set()
+    assert seen_intent_messages == []
+    wait_until(lambda: not web_game.mindreading_for_minister(minister_name)["mindreading_pending"])
 
 
 def test_mindreading_poll_path_after_stream(game, monkeypatch):
-    """轮询/恢复路径：落库后 mindreading_for_minister 可读。"""
-    import web_app as web_app_mod
+    """轮询/恢复路径：流式回话后手工落库，mindreading_for_minister 仍可读（#1842 无代码尾随）。"""
     from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
@@ -253,25 +191,22 @@ def test_mindreading_poll_path_after_stream(game, monkeypatch):
     agent = _FakeAgent(chunks=["臣遵旨。"])
     web_game = _web_game(db, state, content, agent)
 
-    def spy(**kwargs):
-        payload = {
-            "reader": "王承恩",
-            "target": minister_name,
-            "source": "见闻",
-            "precision": "清晰",
-            "narration": "近臣低声陈明。",
-        }
-        cid = int(kwargs.get("chat_turn_id") or 0)
-        if cid:
-            db.record_mindreading(cid, payload)
-        return payload
+    events = list(web_game.chat_stream(minister_name, "如何？"))
+    done = next(e for e in events if e.get("type") == "done")
+    cid = int((done.get("payload") or {}).get("chat_turn_id") or 0)
+    assert cid > 0
+    assert db.get_mindreading_status(cid) == "skip"
+    assert web_game.mindreading_for_minister(minister_name)["mindreading"] == []
 
-    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", spy)
-    list(web_game.chat_stream(minister_name, "如何？"))
-    # 公共信号：读心记录已落（API 输出可读）——worker 已收尾。
-    wait_until(lambda: web_game.mindreading_for_minister(minister_name)["mindreading"])
-    out = web_game.mindreading_for_minister(minister_name)
-    assert out["chat_turn_id"] > 0
+    db.record_mindreading(cid, {
+        "reader": "王承恩",
+        "target": minister_name,
+        "source": "见闻",
+        "precision": "清晰",
+        "narration": "近臣低声陈明。",
+    })
+    out = web_game.mindreading_for_minister(minister_name, cid)
+    assert out["chat_turn_id"] == cid
     assert out["mindreading"]
     assert out["mindreading"][0]["narration"] == "近臣低声陈明。"
 
@@ -307,8 +242,9 @@ def test_build_chat_projection_weaves_mindreading_by_turn(game):
 
 
 def test_failed_mindreading_marks_terminal_and_stops_pending(game, monkeypatch):
-    """读心模型失败 → 落终态 failed → 单轮 pending 转 false、pending_turn_ids 移出。
+    """残迹读心腿失败 → 落终态 failed → 单轮 pending 转 false、pending_turn_ids 移出。
 
+    #1842 Web 流式不再挂读心；本测直调 `_trail_mindreading_after_reply` 证明终态契约仍在。
     轮询寿命系于服务端终态而非魔法次数上限：终态一落，重开轮询即终止（#499）。
     """
     import web_app as web_app_mod
@@ -318,14 +254,17 @@ def test_failed_mindreading_marks_terminal_and_stops_pending(game, monkeypatch):
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
 
+    uid = db.append_chat_message(minister, int(state.turn), "user", "问")
+    cid = db.create_chat_turn(state, minister, "mind-fail", 0)
+    db.update_chat_turn_messages(cid, user_message_id=uid)
+    db.persist_minister_reply(minister, int(state.turn), "臣遵旨。", cid)
+    assert db.get_mindreading_status(cid) == "running"
+
     def boom(**_kwargs):
         raise RuntimeError("model down")
 
     monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", boom)
-    list(web_game.chat_stream(minister, "问。"))
-
-    cid = int(db.get_last_active_chat_turn(minister, state.turn)["id"])
-    # 公共信号：终态 failed 落库（任务态可读）——worker 已收尾。
+    assert web_game._trail_mindreading_after_reply(minister, "臣遵旨。", cid) is None
     wait_until(lambda: db.get_mindreading_status(cid) == "failed")
     out = web_game.mindreading_for_minister(minister, cid)
     assert out["mindreading"] == []
@@ -333,16 +272,11 @@ def test_failed_mindreading_marks_terminal_and_stops_pending(game, monkeypatch):
     assert cid not in web_game.mindreading_for_minister(minister)["pending_turn_ids"]
 
 
-def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeypatch):
-    """真实 chat 持久化 counterexample：回话链接与任务接受**原子**提交——完成的回话必是
-    'running'（已接受），重开经 API 可恢复（pending）。若把接受从回话提交拆出（旧非原子实现），
-    完成的回话会留空状态 → 本断言（status=='running' / pending）失败。
+def test_real_chat_persistence_skips_retired_mindreading_task(game, monkeypatch):
+    """#1842：真实 chat_stream 持久化回话后读心任务态为 skip（代码尾随退役），禁永挂 pending。
 
-    读心阻塞用显式 release（无共享截止线竞态）；highlight 属无关尾腿，本契约隔离之；
-    finally 放行 + join + queue-drain，生产降级日志不删不吞。
+    回话仍原子链接；highlight 属无关尾腿，本契约隔离之。
     """
-    import threading as _t
-
     import web_app as web_app_mod
     from tests.test_audience_background import (
         _FakeAgent, _web_game, _wait_for_pending_writes_to_drain,
@@ -351,52 +285,23 @@ def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeyp
     db, state, content = game
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
-
-    release = _t.Event()
-
-    def blocked(**_kwargs):
-        # 显式 release 控制：测试断言完成前不返回；禁与 wait_until 共用 timeout 竞态
-        release.wait()
-        return None
-
-    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", blocked)
-    # 本契约不覆盖 highlight：隔离尾腿，避免假 session 无 base_url 的既有降级日志干扰
     monkeypatch.setattr(web_app_mod, "run_highlight_judge", lambda **_k: [])
 
-    stream_thread = _t.Thread(
-        target=lambda: list(web_game.chat_stream(minister, "问？")),
-        daemon=True,
-    )
-    stream_thread.start()
-    holder: dict = {}
-
-    def _reply_linked_and_accepted():
-        row = db.get_last_active_chat_turn(minister, state.turn)
-        if row and row.get("minister_message_id"):
-            holder["cid"] = int(row["id"])
-            # 回话已链接 ⇒ 任务已接受为 'running'（同一原子提交）——不存在「已链接却空状态」
-            return db.get_mindreading_status(int(row["id"])) == "running"
-        return False
-
-    try:
-        wait_until(_reply_linked_and_accepted)
-        cid = holder["cid"]
-        # 公共恢复结果：重开 API 见任务 pending（accepted 已持久，恢复会轮询/投递）
-        assert web_game.mindreading_for_minister(minister, cid)["mindreading_pending"] is True
-    finally:
-        release.set()
-        stream_thread.join()
-        _wait_for_pending_writes_to_drain(web_game)
-
-    cid = holder["cid"]
-    wait_until(lambda: db.get_mindreading_status(cid) in {"skip", "failed"})
+    events = list(web_game.chat_stream(minister, "问？"))
+    _wait_for_pending_writes_to_drain(web_game)
+    assert any(e.get("type") == "done" for e in events)
+    row = db.get_last_active_chat_turn(minister, state.turn)
+    assert row and row.get("minister_message_id")
+    cid = int(row["id"])
+    assert db.get_mindreading_status(cid) == "skip"
+    assert web_game.mindreading_for_minister(minister, cid)["mindreading_pending"] is False
 
 
 def test_real_chat_poll_survives_shared_connection_reads(game, monkeypatch):
     """chat-worker 写与 poll 读共用 GameDB 连接时不得 sqlite3.InterfaceError。
 
     公共入口：chat_stream + mindreading_for_minister。基线 fdb6cc07 在 Python 3.12
-    四读线程下稳定 InterfaceError；cached_statements=0 后应无异常且回话仍原子接受。
+    四读线程下稳定 InterfaceError；cached_statements=0 后应无异常且回话链接+skip 终态。
     """
     import threading as _t
 
@@ -408,15 +313,8 @@ def test_real_chat_poll_survives_shared_connection_reads(game, monkeypatch):
     db, state, content = game
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
-    release = _t.Event()
     stop = _t.Event()
     errors: list[BaseException] = []
-
-    def blocked(**_kwargs):
-        release.wait()
-        return None
-
-    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", blocked)
     monkeypatch.setattr(web_app_mod, "run_highlight_judge", lambda **_k: [])
 
     def poller():
@@ -435,29 +333,17 @@ def test_real_chat_poll_survives_shared_connection_reads(game, monkeypatch):
     pollers = [_t.Thread(target=poller, daemon=True) for _ in range(4)]
     for t in pollers:
         t.start()
-    stream_thread = _t.Thread(
-        target=lambda: list(web_game.chat_stream(minister, "问？")),
-        daemon=True,
-    )
-    stream_thread.start()
-    holder: dict = {}
     try:
-        wait_until(
-            lambda: (
-                (row := db.get_last_active_chat_turn(minister, state.turn))
-                and row.get("minister_message_id")
-                and db.get_mindreading_status(int(row["id"])) == "running"
-                and holder.update(cid=int(row["id"])) is None
-            ),
-        )
-        assert web_game.mindreading_for_minister(minister, holder["cid"])[
-            "mindreading_pending"
-        ] is True
+        events = list(web_game.chat_stream(minister, "问？"))
+        assert any(e.get("type") == "done" for e in events)
+        row = db.get_last_active_chat_turn(minister, state.turn)
+        assert row and row.get("minister_message_id")
+        cid = int(row["id"])
+        assert db.get_mindreading_status(cid) == "skip"
+        assert web_game.mindreading_for_minister(minister, cid)["mindreading_pending"] is False
         assert errors == []
     finally:
-        release.set()
         stop.set()
-        stream_thread.join()
         for t in pollers:
             t.join()
         _wait_for_pending_writes_to_drain(web_game)

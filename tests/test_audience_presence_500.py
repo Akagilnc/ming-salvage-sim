@@ -93,14 +93,21 @@ def _cli_session(db, state, content):
             pending_action_failures=[],
         )
 
+    def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        # #1842：CLI 殿上口令外问话走 scene_chat；替身委托既有 chat 同形。
+        return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
+
     return SimpleNamespace(
-        db=db, state=state, content=content, temporary_characters=set(), chat=chat,
+        db=db, state=state, content=content, temporary_characters=set(),
+        chat=chat, scene_chat=scene_chat,
         # #542 scene lifecycle seams（CLI minister_chat / 退下会调）；替身 no-op。
         start_chat_turn_scene=lambda *_a, **_k: None,
         start_chat_turn_exit_scene=lambda *_a, **_k: None,
         join_chat_turn_scene=lambda *_a, **_k: [],
         persist_chat_turn_scene=lambda *_a, **_k: None,
         abandon_chat_turn_scene=lambda *_a, **_k: None,
+        # #1842：persist 尾必调；轻壳无 pending 时 no-op。
+        schedule_pending_scene_translation=lambda result: None,
     )
 
 
@@ -133,11 +140,12 @@ def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
 
 def test_court_break_writes_no_exit_ledger(game, monkeypatch):
     """负向：退朝不落个人告退账（#526 收夜链 ≠ dismiss 告退）。"""
-    import ming_sim.cli.terminal as term
 
+    import ming_sim.cli.terminal as term
     db, state, content = game
     character = _active_minister(db, content)
     session = _cli_session(db, state, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     closed_nid: dict[str, int] = {}
 
     # #526：CLI 退朝走收夜；本测只证「无个人告退账」，收夜本体 stub 成功。
@@ -153,6 +161,7 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
         )
 
     session.close_night_after_chat_if_needed = _close_ok
+    session.schedule_close_night_after_chat_if_needed = _close_ok
     answers = iter(["朕问卿边事如何？", "退朝"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
@@ -182,7 +191,7 @@ def _session_double(db, state, content, registry):
     sess.registry = registry
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *a, **k: None
     sess._finish_cli_action_intent = lambda *a, **k: None
     return sess
@@ -196,7 +205,7 @@ def _tool_registry(tools):
             return SimpleNamespace(content="臣领旨。", tools=list(tools))
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 

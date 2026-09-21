@@ -431,7 +431,7 @@ class _GapBRegistry:
     def __init__(self, agents: dict):
         self.agents = agents
 
-    def get(self, character):
+    def get(self, character, **_kw):
         return self.agents[character.name]
 
 
@@ -459,6 +459,21 @@ class _GapBSession(HallAdmissionSessionMixin):
     def pending_count(self):
         return 0
 
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        # #1842：殿上流式入口走 scene_chat；轻壳驱动既有假 agent，不复活旧 chat 并行链。
+        from ming_sim.session import ChatTurnResult
+
+        name = str(minister_name or next(iter(self.content.characters)))
+        agent = self.registry.get(self._character(name))
+        parts: list[str] = []
+        for event in agent.run():
+            content = getattr(event, "content", None)
+            if content:
+                parts.append(str(content))
+                if stream_emit is not None:
+                    stream_emit(str(content))
+        return ChatTurnResult(answer="".join(parts))
+
     # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
     def start_chat_turn_scene(self, *_a, **_k):
         return None
@@ -473,6 +488,10 @@ class _GapBSession(HallAdmissionSessionMixin):
         return None
 
     def abandon_chat_turn_scene(self, *_a, **_k):
+        return None
+
+    def schedule_pending_scene_translation(self, result):
+        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
         return None
 
 
@@ -500,9 +519,13 @@ class _GapBDB:
     def update_chat_turn_messages(self, *_a, **_k):
         return None
 
-    def persist_minister_reply(self, minister_name, turn, content, chat_turn_id):
-        # #499 单一事务插入回话+链接+接受（本 stub 复用 append 记账，返回其 id）
+    def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
+        # #499/#1842：同事务回话+可选 mindreading_status；stub 只记账 message id
         return self.append_chat_message(minister_name, turn, "minister", content)
+
+    def set_mindreading_status(self, chat_turn_id, status):
+        # #1842：_chat_payload persist 后 skip 退役读心；轻壳记账 no-op
+        return None
 
     def record_chat_turn_rollback_diffs(self, *_a, **_k):
         return None
@@ -511,6 +534,19 @@ class _GapBDB:
         return None
 
     def fail_chat_turn(self, *_a, **_k):
+        return None
+
+    def build_chat_projection(self, minister_name: str):
+        return [
+            {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
+            for m in self.messages
+            if m["minister"] == minister_name
+        ]
+
+    def list_pending_actions(self, turn, *a, **k):
+        return []
+
+    def set_message_highlights(self, message_id, phrases):
         return None
 
     def load_all_chat_history(self):

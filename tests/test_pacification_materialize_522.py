@@ -542,7 +542,7 @@ def test_api_tool_propose_directive_stages_pacification_with_admission(game):
         def __init__(self, agent):
             self._agent = agent
 
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return self._agent
 
 
@@ -784,7 +784,7 @@ def test_api_tool_pacification_failure_diagnostic_reaches_chat_and_web_stream(ga
             )
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 
@@ -928,7 +928,7 @@ def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(ga
             )
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 

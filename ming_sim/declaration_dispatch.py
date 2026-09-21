@@ -12,18 +12,12 @@ ADR 0028 后出注记）、既有暂存的应允 / 拒绝、当场实况（人�
 合成替代玩家可感的自由文本（P6/P7：文字模板与删改 LLM 原文均违宪——例如
 「在场进出」落账用的正是声明自带的正文，代码不拼「某某入殿」这类固定句）。
 
-召对（C1a / C1b）与过月（C3）在各自真实上线时都调 :func:`dispatch_declaration`
-这一个入口，不各自另写一份同构分派逻辑；本票内演示两种真实但不同的调用形态：
-:func:`dispatch_declaration`（连 `night_id` 直接落账，召对场中承接的形态，
-ADR 0155）与 :func:`stage_declaration` + :func:`settle_staged_declarations_in_decree_order`
-（先暂存、过月按下旨先后幂等结算，ADR 0157 步骤 1-2 的形态）——**但 C1a
-（#1837）/ C1b（#1838）/ C3（#1840）三票截至本次提交仍是 OPEN、未实现**：
-它们是把「转译 LLM 读一轮回话 / 一个推演段」接到本模块输入端的那一步，
-0155/0157 描述的召对整场单 LLM 会话与过月推演段调用本身在这个代码库里
-还不存在任何实现可挂。把那一步做进 #1835 等同于把 C1a/C1b/C3 的票面判定
-提前抢答——三票各自的验收与设计取舍应在各自票内定，不该被 #1835 的施工
-腿单方面决定。若判定 #1835 必须把三票工作量并入才算完成，这是需要 owner /
-票庭裁定的边界问题（是否合并票面），不是本票施工腿能自行决定的实现细节。
+召对与过月都调 :func:`dispatch_declaration` 这一个入口，不各自另写一份同构
+分派逻辑；两种真实调用形态：:func:`dispatch_declaration`（连 `night_id` 直接
+落账，召对场中承接，ADR 0155）与 :func:`stage_declaration` +
+:func:`settle_staged_declarations_in_decree_order`（先暂存、过月按下旨先后幂等
+结算，ADR 0157 步骤 1-2）。C1a（#1837）已把召对转译接到本入口（交办 / 应允）；
+C1b（分段 / 在场 / 边事件）与 C3（过月段）仍在各自票内接线。
 
 任一项引用不存在实体（事务 / 人物 / 军队 / 暂存动作 / 夜）单独拒收、留痕于
 对应 ``SectionResult.rejected``，不牵连同批其余合法项（ADR 0015 per-item
@@ -38,9 +32,9 @@ ADR 0155）与 :func:`stage_declaration` + :func:`settle_staged_declarations_in_
 textual_facts / public_sayings / presence / scene_facts（原生 `origin_ref`
 字段）、edge_events（`relation_edge_events` 整数主键，直接复用 AffairStore
 通用指针 `attach_pointer`）、on_scene_facts / registrations（`characters`
-主键是 name 非整数 id，AffairStore 通用指针假设整数 id 不兼容，改由本模块
-`_attach_character_affair_pointer` 按同样语义单独实现，未改 AffairStore
-既有契约）。只有 **protagonist** 未接入：它不是一条带来源的记录，而是「谁在
+主键是 name 非整数 id，AffairStore 通用指针 `attach_pointer` 现按表配置主键
+列——`characters` 配置为 `name`——同样直接复用，不再另实现一份，#1831）。
+只有 **protagonist** 未接入：它不是一条带来源的记录，而是「谁在
 御前」这个选择性指针本身，且本轮已校验其指向的人物真实存在——「所属事务」
 对一个选择指针没有独立于其已校验存在性之外的意义，故未强行给它挂一个不
 对应任何落库行为的事务字段。edge_events 与 on_scene_facts 的「动作本身 +
@@ -68,6 +62,7 @@ from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
+    _assignment_absolute_end_turn,
     IncompleteXiexangPayloadError,
     require_materializable_xiexang_payload,
 )
@@ -90,6 +85,7 @@ from ming_sim.audience_night import (
 )
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.error_pack import rejections_jsonl_path
+from ming_sim.relations import summon_edge_origin
 from ming_sim.issues import apply_person_changes_only
 from ming_sim.public_sayings import record_public_saying
 from ming_sim.relations import validate_edge_kind
@@ -208,54 +204,69 @@ def _dispatch_declaration_sections(
     night_id: int,
     source: Provenance,
     collector: RejectionCollector,
+    chat_turn_id: int = 0,
+    source_chat_turn_id: int = 0,
 ) -> DeclarationDispatchResult:
     """真正跑十个 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
     给定的收集器；只记不落库——落库时机与事务边界由调用方决定（J1 判词打回：
-    直接分派与暂存结算两条路径共用同一段执行体，不复制两份分派逻辑）。"""
-    # Dependency order within one declaration body: first establish reference
-    # targets (registrations / commissions that may birth affairs), then facts
-    # and scene items that may point at those targets. One dispatcher only.
+    直接分派与暂存结算两条路径共用同一段执行体，不复制两份分派逻辑）。
+
+    ``chat_turn_id``（#1839）：召对当场实况的源轮。在场进出 / 说话人分段绑
+    ``origin_chat_turn_id``；边事件 origin 拼 ``转译声明|chat_turn:{id}``；
+    人物变更 / 文字事实 / 公开说法 / 入册走前像日志——撤回本轮按此前像 /
+    源轮逆转（ADR 0038 第四类）。过月结算无对话轮，传 0。夜上下文
+    （night_id>0）下源轮须为正且属本夜，否则第四类全部 section 逐项
+    missing_ref 拒收，不得落 origin=0 / turn:N 孤儿账。
+    """
+    # #1838 的场中承接入口沿用 source_chat_turn_id；#1839 的直接分派入口使用
+    # chat_turn_id。两者是同一个源轮，统一后再做 #1839 的属夜校验。
+    origin_ctid, source_turn_err = _resolve_night_source_chat_turn(
+        db, night_id=night_id,
+        chat_turn_id=int(chat_turn_id or source_chat_turn_id or 0),
+    )
+    # 同声明内先建立人物与事务引用目标，再落依赖事实。
     registrations = _dispatch_registrations(
         db, state, declaration.get("registrations"), source=source,
+        source_turn_error=source_turn_err,
     )
     commissions = _dispatch_commissions(
         db, state, declaration.get("commissions"),
         minister_name=minister_name, source=source,
     )
-    promises = _dispatch_promises(
-        db, state, declaration.get("promises"), night_id=night_id, source=source,
-    )
-    textual_facts = _dispatch_textual_facts(
-        db, state, declaration.get("textual_facts"), source=source,
-    )
-    public_sayings = _dispatch_public_sayings(
-        db, state, declaration.get("public_sayings"), source=source,
-    )
-    on_scene_facts = _dispatch_on_scene_facts(
-        db, state, declaration.get("on_scene_facts"), source=source,
-    )
-    presence = _dispatch_presence(
-        db, declaration.get("presence"), night_id=night_id, source=source,
-    )
-    scene_facts = _dispatch_scene_facts(
-        db, declaration.get("scene_facts"), night_id=night_id, source=source,
-    )
-    edge_events = _dispatch_edge_events(
-        db, state, declaration.get("edge_events"), source=source,
-    )
-    protagonist = _dispatch_protagonist(
-        db, declaration.get("protagonist"), source=source,
-    )
     result = DeclarationDispatchResult(
         commissions=commissions,
-        promises=promises,
-        textual_facts=textual_facts,
-        public_sayings=public_sayings,
-        on_scene_facts=on_scene_facts,
-        presence=presence,
-        scene_facts=scene_facts,
-        edge_events=edge_events,
-        protagonist=protagonist,
+        promises=_dispatch_promises(
+            db, state, declaration.get("promises"), night_id=night_id, source=source,
+        ),
+        # 第四类夜绑定 section 统一消费源轮校验（ADR 0038 / #1839 AC3）：
+        # 缺源轮或不属本夜 → 逐项 missing_ref，零落账；过月 night_id<=0 不拦。
+        textual_facts=_dispatch_textual_facts(
+            db, state, declaration.get("textual_facts"), source=source,
+            source_turn_error=source_turn_err,
+        ),
+        public_sayings=_dispatch_public_sayings(
+            db, state, declaration.get("public_sayings"), source=source,
+            source_turn_error=source_turn_err,
+        ),
+        on_scene_facts=_dispatch_on_scene_facts(
+            db, state, declaration.get("on_scene_facts"), source=source,
+            source_turn_error=source_turn_err,
+        ),
+        presence=_dispatch_presence(
+            db, declaration.get("presence"), night_id=night_id, source=source,
+            chat_turn_id=origin_ctid, source_turn_error=source_turn_err,
+        ),
+        scene_facts=_dispatch_scene_facts(
+            db, declaration.get("scene_facts"), night_id=night_id, source=source,
+            chat_turn_id=origin_ctid, source_turn_error=source_turn_err,
+        ),
+        edge_events=_dispatch_edge_events(
+            db, state, declaration.get("edge_events"), source=source,
+            chat_turn_id=origin_ctid, source_turn_error=source_turn_err,
+        ),
+        protagonist=_dispatch_protagonist(
+            db, declaration.get("protagonist"), source=source,
+        ),
         registrations=registrations,
     )
     turn = int(state.turn)
@@ -271,7 +282,9 @@ def dispatch_declaration(
     *,
     minister_name: str = "",
     night_id: int = 0,
+    chat_turn_id: int = 0,
     source: Provenance = Provenance.system_simulation,
+    source_chat_turn_id: int = 0,
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
     承接（ADR 0155）直接分派单条声明时用的公开入口，唯一契约：始终原子、始终
@@ -288,6 +301,16 @@ def dispatch_declaration(
     可闻性」同样挂在这一夜的账本上，无夜（night_id<=0）时整批拒收，不落成
     孤儿账。
 
+    ``chat_turn_id``（#1839 C2）：当场实况的源轮。召对场中承接传入本轮
+    ``chat_turns.id``，第四类全部 section 带源轮绑定，撤回本轮以前像日志
+    逆转；夜上下文须为正且属本夜，否则第四类逐项 missing_ref 拒收。过月
+    路径传 0。交办仍只落暂存，不因源轮而绕过颁布关。
+
+    本入口自足记录撤回前像：``chat_turn_id>0`` 时在分派前后截快照并写入
+    ``chat_turn_rollback_items``，调用方（含测试 helper）不必手工
+    capture/record——#1842 后台转译形态下回话窗口的 caller 快照覆盖不到
+    分派写入，前像必须随分派执行走。
+
     :func:`settle_staged_declarations_in_decree_order` 结算一旨下多条暂存
     声明时不走这个入口——它需要把同旨下每条声明的分派副作用、拒收与该旨的
     `mark_settled` 落在同一次提交里，因此直接在自己的旨级 `atomic(db)` 内
@@ -295,13 +318,27 @@ def dispatch_declaration(
     函数另开的事务。
     """
     collector = RejectionCollector()
+    origin_ctid = int(chat_turn_id or source_chat_turn_id or 0)
+    # 有源轮则入口自记前像：后台/直接调用都不必依赖 caller 窗口快照。
+    before = (
+        db.capture_chat_rollback_snapshot()
+        if origin_ctid > 0 and hasattr(db, "capture_chat_rollback_snapshot")
+        else None
+    )
     with atomic(db):
         result = _dispatch_declaration_sections(
             db, state, declaration,
             minister_name=minister_name, night_id=night_id, source=source,
             collector=collector,
+            chat_turn_id=origin_ctid,
         )
         collector.flush_to_db(db)
+        # 前像与 section/拒收同权威事务提交前写入（0036 R3 / 0038）；
+        # 提交后才记前像会在崩溃窗口丢撤回完整性。atomic 内 conn.commit 为 no-op。
+        if before is not None and hasattr(db, "record_chat_turn_rollback_diffs"):
+            db.record_chat_turn_rollback_diffs(
+                origin_ctid, before, db.capture_chat_rollback_snapshot(),
+            )
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return result
 
@@ -483,38 +520,290 @@ def _item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
             db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
 
 
+def _commission_appointment_fields(
+    appointment: object, *, source: Provenance,
+) -> Tuple[Optional[Dict[str, Any]], Optional[RejectedItem]]:
+    """交办上的任免载荷；缺 name/office（任命）→ invalid_shape。"""
+    if not appointment:
+        return None, None
+    if not isinstance(appointment, Mapping):
+        return None, RejectedItem(
+            item={"raw_value": appointment}, reason="任免载荷须为对象",
+            category="invalid_shape", source=source,
+        )
+    action = str(
+        appointment.get("appoint_action") or appointment.get("action") or "任命"
+    ).strip() or "任命"
+    if action not in {"任命", "罢免"}:
+        return None, RejectedItem(
+            item=dict(appointment), reason=f"任免动作非法：{action}",
+            category="invalid_enum", source=source,
+        )
+    name = str(appointment.get("name") or "").strip()
+    office = str(appointment.get("office") or appointment.get("new_office") or "").strip()
+    if not name:
+        return None, RejectedItem(
+            item=dict(appointment), reason="任免声明缺 name",
+            category="invalid_shape", source=source,
+        )
+    if action == "任命" and not office:
+        return None, RejectedItem(
+            item=dict(appointment), reason="任命声明缺 office",
+            category="invalid_shape", source=source,
+        )
+    payload: Dict[str, Any] = {"name": name, "office": office, "appoint_action": action}
+    tenure = str(
+        appointment.get("appointment_tenure") or appointment.get("任别") or ""
+    ).strip()
+    if tenure:
+        payload["appointment_tenure"] = tenure
+    # Typed 任所原样透传；不从官名推断（地方/督抚/边镇任命必填；中央可空）。
+    seat = str(
+        appointment.get("region_id") or appointment.get("任所") or ""
+    ).strip()
+    if seat:
+        payload["region_id"] = seat
+    return payload, None
+
+
+def _assert_commission_grant_target_exists(
+    db: Any, target_kind: str, target_id: str,
+) -> None:
+    """拨帑目标必须是账上真实体；查无 → KeyError（hallucinated_id）。"""
+    kind = str(target_kind or "").strip()
+    tid = str(target_id or "").strip()
+    if kind == "region":
+        row = db.conn.execute("SELECT 1 FROM regions WHERE id=?", (tid,)).fetchone()
+        if row is None:
+            raise KeyError(f"地区不存在：{tid}")
+        return
+    if kind == "character":
+        _assert_characters_exist(db, [tid])
+        return
+    if kind == "army":
+        row = db.conn.execute("SELECT 1 FROM armies WHERE id=?", (tid,)).fetchone()
+        if row is None:
+            raise KeyError(f"军队不存在：{tid}")
+        return
+    if kind == "issue":
+        try:
+            iid = int(tid)
+        except (TypeError, ValueError) as exc:
+            raise KeyError(f"事项不存在：{tid}") from exc
+        row = db.conn.execute("SELECT 1 FROM issues WHERE id=?", (iid,)).fetchone()
+        if row is None:
+            raise KeyError(f"事项不存在：{tid}")
+        return
+    # 未知 kind 留给成案/物化缝；此处不放行空目标（调用方已要求非空）。
+
+
+def _commission_grant_payload(
+    db: Any, *, text: object, grant: Mapping[str, object],
+) -> Dict[str, Any]:
+    """交办上的拨帑载荷；协饷走 #1503 单轨，其余走 grant_allocation shape。"""
+    from ming_sim.action_materialize import (
+        GRANT_ACTIONS,
+        require_grant_allocation_shape,
+        resolve_grant_account,
+        write_locality_scope_for_target_kind,
+    )
+
+    grant_action = str(grant.get("grant_action") or grant.get("action") or "").strip()
+    # 兼容 C0 旧形：未写 grant_action 但给了协饷五字段 → 视作协饷。
+    if not grant_action:
+        if any(grant.get(k) not in (None, "") for k in (
+            "amount", "account", "purpose", "target_kind", "target_id",
+        )):
+            grant_action = "协饷"
+    if grant_action not in (GRANT_ACTIONS - {"无"}):
+        raise DecreeMaterializationValidationError(
+            f"拨帑 grant_action 非法或缺失：{grant_action!r}",
+            failed_fields=("grant_action",),
+        )
+    body = str(text or "")
+    if not body.strip():
+        raise DecreeMaterializationValidationError(
+            "交办声明缺正文（不猜散文）", failed_fields=("text",),
+        )
+    if grant_action == "协饷":
+        payload = require_materializable_xiexang_payload(
+            db,
+            text=body,
+            amount=grant.get("amount", 0),
+            account=grant.get("account", ""),
+            purpose=grant.get("purpose", ""),
+            target_kind=grant.get("target_kind", ""),
+            target_id=grant.get("target_id", ""),
+            cadence=grant.get("cadence", ""),
+        )
+        payload["grant_action"] = "协饷"
+        payload["dossier_action_type"] = "grant_allocation"
+        payload["execution_surface"] = "immediate"
+        return payload
+
+    shaped = require_grant_allocation_shape(
+        grant_action=grant_action,
+        amount=grant.get("amount"),
+        account=grant.get("account"),
+    )
+    target_kind = str(grant.get("target_kind") or "").strip()
+    target_id = str(grant.get("target_id") or "").strip()
+    if not target_kind or not target_id:
+        raise DecreeMaterializationValidationError(
+            "拨帑声明缺 target_kind/target_id", failed_fields=("target_kind", "target_id"),
+        )
+    _assert_commission_grant_target_exists(db, target_kind, target_id)
+    account = str(shaped.get("account") or resolve_grant_account(
+        grant_action=grant_action, account=grant.get("account"),
+    ))
+    cadence = str(grant.get("cadence") or "").strip() or "一次性"
+    if cadence not in {"一次性", "每月"}:
+        raise DecreeMaterializationValidationError(
+            f"拨帑 cadence 非法：{cadence!r}", failed_fields=("cadence",),
+        )
+    surface = str(grant.get("execution_surface") or "in_transit").strip() or "in_transit"
+    if surface not in {"immediate", "in_transit"}:
+        raise DecreeMaterializationValidationError(
+            f"拨帑 execution_surface 非法：{surface!r}",
+            failed_fields=("execution_surface",),
+        )
+    payload = {
+        "text": body,
+        "dossier_action_type": "grant_allocation",
+        "grant_action": grant_action,
+        "amount": int(shaped["amount"]),
+        "account": account,
+        "target_kind": target_kind,
+        "target_id": target_id,
+        "cadence": cadence,
+        "execution_surface": surface,
+        "locality_scope": write_locality_scope_for_target_kind(target_kind),
+        "mode": "ordinary",
+    }
+    purpose = str(grant.get("purpose") or "").strip()
+    if purpose:
+        payload["purpose"] = purpose
+    return payload
+
+
+def _attach_commission_staging_fields(
+    payload: Dict[str, Any], item: Mapping[str, object], *, turn: int,
+) -> None:
+    """透传既有 staging 字段：assignee / participant_roster / due_turn。
+
+    字段可在交办顶层，或挂在 grant 对象内（与 stage_grant_allocation_candidate
+    kwargs 同口径）。期限单源＝due_turn；deadline_months / end_turn 仅作换算输入。
+    """
+    grant = item.get("grant") if isinstance(item.get("grant"), Mapping) else {}
+    lead = str(
+        item.get("assignee")
+        or item.get("assignee_id")
+        or item.get("assignee_name")
+        or (grant.get("assignee") if grant else "")
+        or (grant.get("assignee_id") if grant else "")
+        or ""
+    ).strip()
+    if lead:
+        payload["assignee"] = lead
+    roster = item.get("participant_roster")
+    if not isinstance(roster, list) and grant:
+        roster = grant.get("participant_roster")
+    if isinstance(roster, list) and roster:
+        payload["participant_roster"] = list(roster)
+    elif lead and not isinstance(payload.get("participant_roster"), list):
+        payload["participant_roster"] = [{
+            "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
+        }]
+    due_src = item if item.get("due_turn") not in (None, "", 0) else grant
+    end_src = item if item.get("end_turn") not in (None, "", 0) else grant
+    months_src = (
+        item if item.get("deadline_months") not in (None, "", 0) else grant
+    )
+    # 与 stage_assignment / stage_grant 同缝：相对月数或绝对回合 → 绝对 due_turn。
+    absolute_due = _assignment_absolute_end_turn(
+        int(turn),
+        end_turn=(due_src or item).get("due_turn") or (end_src or item).get("end_turn") or 0,
+        deadline_months=(months_src or item).get("deadline_months") or 0,
+    )
+    if absolute_due > int(turn):
+        payload["due_turn"] = absolute_due
+
+
+def _attach_commission_affair(
+    db: Any, state: Any, item: Mapping[str, object], payload: Dict[str, Any],
+    *, rejected: List[RejectedItem], source: Provenance,
+) -> bool:
+    """可选事务声明挂到载荷；失败时已写入 rejected，返回 False。"""
+    raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
+    if raw_affair is None:
+        return True
+    try:
+        affair_id = db.affairs.resolve_declaration(
+            raw_affair, year=state.year, period=state.period,
+            turn=state.turn, allowed=ATTACH_BIRTH,
+        )
+    except KeyError as exc:
+        _reject(rejected, item, str(exc), "hallucinated_id", source)
+        return False
+    except ValueError as exc:
+        _reject(rejected, item, str(exc), "invalid_shape", source)
+        return False
+    payload["affair_id"] = affair_id
+    return True
+
+
 def _dispatch_commissions(
     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance,
 ) -> SectionResult:
+    """交办声明 → 既有 pending 暂存。
+
+    一句话同时含拟旨 + 拨帑 + 任免时由声明本身合成**一件事一份载荷**
+    （ADR 0028 后出注记 / C0 AC2 / C1a AC1）：
+    - 有拨帑 → kind=directive，typed grant 入同一 payload；任免字段若有亦挂同一份
+    - 仅任免 → kind=office（收夜成 appointment 案卷）
+    - 仅正文 → kind=directive 普通拟旨
+    """
     items, rejected = _section_items(raw, label="交办声明", source=source)
     applied: List[Any] = []
     for item in items:
-        grant = item.get("grant") or {}
-        if not isinstance(grant, Mapping):
+        grant_raw = item.get("grant") or {}
+        if grant_raw and not isinstance(grant_raw, Mapping):
             _reject(rejected, item, "拨帑载荷须为对象", "invalid_shape", source)
             continue
+        appointment_fields, appt_rejected = _commission_appointment_fields(
+            item.get("appointment"), source=source,
+        )
+        if appt_rejected is not None:
+            rejected.append(appt_rejected)
+            continue
+
+        text = item.get("text")
         try:
-            if grant:
-                # 一句话同时含拟旨 + 拨帑：一次校验、合成一份载荷（AC2）。
-                payload = require_materializable_xiexang_payload(
-                    db,
-                    text=item.get("text"),
-                    amount=grant.get("amount", 0),
-                    account=grant.get("account", ""),
-                    purpose=grant.get("purpose", ""),
-                    target_kind=grant.get("target_kind", ""),
-                    target_id=grant.get("target_id", ""),
-                    cadence=grant.get("cadence", ""),
+            if grant_raw:
+                # 拟旨 + 拨帑（±任免）→ 一份 directive 载荷。
+                payload = _commission_grant_payload(
+                    db, text=text, grant=grant_raw,  # type: ignore[arg-type]
                 )
             else:
-                text = _declared_prose(item.get("text"))
-                if text is None:
-                    _reject(
-                        rejected, item, "交办声明缺正文或正文须为字符串",
-                        "invalid_shape", source,
-                    )
+                body = _declared_prose(text)
+                # P7：正文必须由声明给出；缺正文不猜、不拼「任命X为Y」模板。
+                if body is None:
+                    _reject(rejected, item, "交办声明缺正文或正文须为字符串", "invalid_shape", source)
                     continue
-                payload = {"text": text}
+                # 收夜成案需要 ordinary triad；纯正文走 special_decree 最小结构
+                # （与 _ensure_directive_dossier 无结构回退同形，声明侧一次给齐）。
+                # target_id 按本批已落条数区分，避免同回合多条纯正文互撞。
+                payload = {
+                    "text": body,
+                    "dossier_action_type": "special_decree",
+                    "target_kind": "policy",
+                    "target_id": f"commission-text:{int(state.turn)}:{len(applied)}",
+                    "locality_scope": "none",
+                    "mode": "ordinary",
+                }
+        except KeyError as exc:
+            _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
         except DecreeMaterializationValidationError as exc:
             _reject(rejected, item, str(exc), _xiexang_reject_category(exc), source)
             continue
@@ -523,24 +812,82 @@ def _dispatch_commissions(
         except (TypeError, ValueError) as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
-        if raw_affair is not None:
+        if appointment_fields:
             try:
-                affair_id = db.affairs.resolve_declaration(
-                    raw_affair, year=state.year, period=state.period,
-                    turn=state.turn, allowed=ATTACH_BIRTH,
-                )
+                _assert_characters_exist(db, [str(appointment_fields["name"])])
             except KeyError as exc:
                 _reject(rejected, item, str(exc), "hallucinated_id", source)
                 continue
-            except ValueError as exc:
-                _reject(rejected, item, str(exc), "invalid_shape", source)
-                continue
-            payload["affair_id"] = affair_id
-        row_id = db.stage_pending_action(
-            int(state.turn), "directive", "拟旨", minister_name, payload,
+            payload.update(appointment_fields)
+            # 组合声明中，属地拨帑的 typed region 同时给出了地方任命的任所；
+            # 原样挂到同一载荷，避免后续成案从官名或叙事正文猜辖区。
+            if (
+                grant_raw
+                and str(grant_raw.get("target_kind") or "").strip() == "region"
+                and str(grant_raw.get("target_id") or "").strip()
+            ):
+                payload["region_id"] = str(grant_raw["target_id"]).strip()
+
+        # #1783/#1778：承办人、名单、期限为既有 staging 字段（stage_grant 同款），
+        # 非 #1815 新形；声明给出则透传到 directive payload，代码不猜当前大臣。
+        _attach_commission_staging_fields(
+            payload, item, turn=int(state.turn),
         )
-        applied.append({"id": row_id, "payload": payload})
+
+        if not _attach_commission_affair(
+            db, state, item, payload, rejected=rejected, source=source,
+        ):
+            continue
+
+        def _stage_office(shared_text: str) -> Dict[str, Any]:
+            # office 成案链只吃任免字段；禁把 grant 的 execution_surface 等带进
+            # appointment 案卷（会撞「execution_surface 与案卷动作策略不符」）。
+            office_payload = dict(appointment_fields or {})
+            office_payload["text"] = shared_text
+            if "affair_id" in payload:
+                office_payload["affair_id"] = payload["affair_id"]
+            oid = db.stage_pending_action(
+                int(state.turn),
+                "office",
+                str(office_payload["appoint_action"]),
+                minister_name,
+                office_payload,
+            )
+            return {"id": oid, "payload": office_payload, "kind": "office"}
+
+        # 仅任免 → office 成案链（收夜 → appointment 案卷 → 过月落职）。
+        if appointment_fields and not grant_raw:
+            applied.append(_stage_office(str(payload.get("text") or "")))
+            continue
+
+        # 有拨帑（±任免）或纯正文拟旨：一份 directive 载荷。任免字段已挂同一 payload
+        # （ADR 0028 一份载荷）；收夜物化缝从这份同时产出拨帑案卷与任免案卷，
+        # 不再另 stage 第二条 office pending（半准半驳病）。
+        actor = str(minister_name or payload.get("actor") or "").strip()
+        if not actor:
+            actor = _commission_fallback_actor(db)
+        if actor:
+            payload["actor"] = actor
+        row_id = db.stage_pending_action(
+            int(state.turn), "directive", "拟旨", actor, payload,
+        )
+        applied.append({"id": row_id, "payload": payload, "kind": "directive"})
     return SectionResult(applied=applied, rejected=rejected)
+
+
+def _commission_fallback_actor(db: Any) -> str:
+    """场景整场入口无单人大臣锚时，directive.actor 回落殿前常在（王承恩优先）。"""
+    for name in ("王承恩", "曹化淳"):
+        row = db.conn.execute(
+            "SELECT name FROM characters WHERE name=? LIMIT 1", (name,),
+        ).fetchone()
+        if row is not None:
+            return str(row["name"])
+    row = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' "
+        "AND power_id='ming' ORDER BY name LIMIT 1"
+    ).fetchone()
+    return str(row["name"]) if row is not None else ""
 
 
 def _dispatch_promises(
@@ -570,7 +917,8 @@ def _dispatch_promises(
         # 另一夜，声明也不得应允/拒绝它——同样按「不存在实体」拒收（不静默
         # 误批，也不当真拒收物理删除他夜暂存）。
         row = db.conn.execute(
-            "SELECT night_id FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
+            "SELECT night_id, kind, action FROM pending_actions "
+            "WHERE id=? AND turn=? AND status='pending'",
             (action_id, int(state.turn)),
         ).fetchone()
         if row is None or int(row["night_id"] or 0) != int(night_id):
@@ -579,11 +927,42 @@ def _dispatch_promises(
                 "missing_ref", source,
             )
             continue
+        kind = str(row["kind"] or "")
+        action = str(row["action"] or "")
+        applied_row: Dict[str, Any] = {
+            "action_id": action_id, "decision": decision, "kind": kind, "action": action,
+        }
         if decision == "应允":
-            db.mark_pending_night_approved([action_id], night_id=night_id or None)
+            # ADR 0038：密令应允即落地（夜内直写白名单）；任免/拟旨/后宫只标
+            # night_approved，收夜才提交。与旧 session.chat 确认缝同口径。
+            if kind == "secret_order":
+                from ming_sim.applier import (
+                    RejectionCollector, mirror_rejections_after_commit,
+                )
+                from ming_sim.error_pack import rejections_jsonl_path
+                _rc = RejectionCollector()
+                committed = db.commit_pending_actions(
+                    state, action_ids=[action_id], rejection_collector=_rc,
+                )
+                mirror_rejections_after_commit(db, _rc, rejections_jsonl_path)
+                for c in committed or []:
+                    if (
+                        c.get("kind") == "secret_order"
+                        and str(c.get("action") or "") == "新建"
+                    ):
+                        oid = c.get("secret_order_id") or c.get("target_id")
+                        try:
+                            oid_i = int(oid or 0)
+                        except (TypeError, ValueError):
+                            oid_i = 0
+                        if oid_i > 0:
+                            applied_row["secret_order_id"] = oid_i
+                            break
+            else:
+                db.mark_pending_night_approved([action_id], night_id=night_id or None)
         else:
             db.withdraw_pending_action(action_id, int(state.turn))
-        applied.append({"action_id": action_id, "decision": decision})
+        applied.append(applied_row)
     return SectionResult(applied=applied, rejected=rejected)
 
 
@@ -610,7 +989,7 @@ def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
 
     IncompleteXiexangPayloadError（显式字段未齐）：枚举域（account/purpose/
     cadence/target_kind）优先 invalid_enum，其余形状域 invalid_shape。
-    字段已齐后的物化失败（军队实体解析不到等）→ hallucinated_id；纯 text/
+    字段已齐后的物化失败（军队实体解析不到等）→ invalid_enum；纯 text/
     amount 等形状失败仍 invalid_shape。禁止解析异常文案 substring。
     """
     failed = frozenset(str(field) for field in (getattr(exc, "failed_fields", ()) or ()))
@@ -623,7 +1002,7 @@ def _xiexang_reject_category(exc: DecreeMaterializationValidationError) -> str:
     if failed and failed <= shape_fields:
         return "invalid_shape"
     if failed & {"target_id", "target_kind"}:
-        return "hallucinated_id"
+        return "invalid_enum"
     if failed & enum_fields:
         return "invalid_enum"
     if failed & shape_fields:
@@ -665,37 +1044,24 @@ def _resolve_affair_origin_ref(db: Any, item: Mapping[str, object]) -> Tuple[str
 
 
 def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None:
-    """`characters` 主键是 name（非整数 id），AffairStore.attach_pointer 的通用
-    实现假设 id 整数主键、对这张表不适用；本地按同样的语义（未绑可绑一次、
-    同一事务幂等、绑别的事务响亮拒绝）实现，不改 AffairStore 的既有契约。
-    只在人物变更 / 入册已经真实落库之后调用——绑定失败不撤销已经发生的
-    落库（那会谎报「没发生」），调用方把异常信息原样带回结果，不吞。"""
-    db.affairs.get(affair_id)
-    row = db.conn.execute(
-        "SELECT affair_id FROM characters WHERE name=?", (name,),
-    ).fetchone()
-    if row is None:
-        raise KeyError(f"人物不存在：{name}")
-    current = int(row["affair_id"] or 0)
-    if current == affair_id:
-        return
-    if current != 0:
-        raise ValueError(f"人物已指向事务 {current}，不能改指 {affair_id}")
-    owns = connection_owns_transaction(db.conn)
-    cur = db.conn.execute(
-        "UPDATE characters SET affair_id=? WHERE name=? AND affair_id=0",
-        (affair_id, name),
-    )
-    if int(cur.rowcount or 0) != 1:
-        raise ValueError(f"人物已指向其它事务，不能改指 {affair_id}")
-    if owns:
-        db.conn.commit()
+    """`characters` 主键是 name（非整数 id）；AffairStore.attach_pointer 现按表
+    配置主键列（`characters` → `name`），语义（未绑可绑一次、同一事务幂等、
+    绑别的事务响亮拒绝）与其它指针表完全一致，直接复用、不再单独实现
+    （#1831）。只在人物变更 / 入册已经真实落库之后调用——绑定失败不撤销已经
+    发生的落库（那会谎报「没发生」），调用方把异常信息原样带回结果，不吞。"""
+    db.affairs.attach_pointer("characters", name, affair_id)
 
 
-def _dispatch_textual_facts(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+def _dispatch_textual_facts(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
     items, rejected = _section_items(raw, label="文字事实声明", source=source)
     applied: List[Any] = []
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         subject_kind = str(item.get("subject_kind") or "").strip()
         subject_id = str(item.get("subject_id") or "").strip()
         try:
@@ -732,22 +1098,52 @@ def _assert_characters_exist(db: Any, names: Sequence[str]) -> None:
             raise KeyError(f"人物不存在：{name}")
 
 
-def _dispatch_public_sayings(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+def _string_array_field(item: Mapping[str, object], key: str) -> Optional[List[str]]:
+    """字段缺省视为空数组合法；给了就必须是纯字符串数组，否则返回 None 令
+    调用方拒收——与 `involved_characters` 既有校验同一套宽严尺度。"""
+    value = item.get(key) or ()
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or not all(isinstance(x, str) for x in value)
+    ):
+        return None
+    return list(value)
+
+
+def _dispatch_public_sayings(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
+    """公开说法：R3 记录 + 进公开层。声明可带 `excluded_names`/`excluded_offices`
+    ——密令『瞒某人』这类显式排除黑名单随说法一起落进它自己的 source
+    （`public_saying:<id>`），一票否决压过公开层与职位桶（既有
+    `knowledge_row_visible_to` 读口，本节只补上一直缺失的写口，#1829/#1832）。
+
+    夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
+    """
     items, rejected = _section_items(raw, label="公开说法声明", source=source)
     applied: List[Any] = []
     for item in items:
-        involved = item.get("involved_characters") or ()
-        if (
-            not isinstance(involved, Sequence)
-            or isinstance(involved, (str, bytes))
-            or not all(isinstance(name, str) for name in involved)
-        ):
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
+        involved = _string_array_field(item, "involved_characters")
+        if involved is None:
             _reject(rejected, item, "所涉人物须为字符串数组", "invalid_shape", source)
             continue
         try:
             _assert_characters_exist(db, involved)
         except KeyError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
+            continue
+        excluded_names = _string_array_field(item, "excluded_names")
+        if excluded_names is None:
+            _reject(rejected, item, "排除人物须为字符串数组", "invalid_shape", source)
+            continue
+        excluded_offices = _string_array_field(item, "excluded_offices")
+        if excluded_offices is None:
+            _reject(rejected, item, "排除职位须为字符串数组", "invalid_shape", source)
             continue
         affair_ref, error_category = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
@@ -757,6 +1153,8 @@ def _dispatch_public_sayings(db: Any, state: Any, raw: object, *, source: Proven
             saying_id = record_public_saying(
                 db, state, item.get("body"),
                 involved_characters=involved, affair_ref=affair_ref,
+                excluded_names=excluded_names,
+                excluded_targets={"offices": excluded_offices} if excluded_offices else None,
             )
         except ValueError as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
@@ -765,16 +1163,32 @@ def _dispatch_public_sayings(db: Any, state: Any, raw: object, *, source: Proven
     return SectionResult(applied=applied, rejected=rejected)
 
 
-def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
-    """当场实况：人物生死 / 下狱 / 革职等（既有 ADR 0009 人物变更核）。
+def _dispatch_on_scene_facts(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
+    """当场实况：人物生死 / 下狱 / 革职等（既有 ADR 0009 人物变更核，动作字段沿用
+    既有 `PERSON_ACTIONS` 闭集词汇——如「处置」配 `status=dead/imprisoned`、
+    「罢黜」= 革职；既有核已做「非既有人物 → hallucinated_id」逐项拒收。
 
-    事务挂在本次人物变动的 durable 事件（person_logs.origin_ref = affair:<id>），
-    不写 characters 单例 affair_id——同一人物可先后参与多事务，后续真实变更
-    不得因首个 affair_id 回滚。复用既有 person_logs 真源，不建第二套人物状态账。
-    """
+    夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
+
+    各自所属事务：人物变更与事务指针绑定放进同一个 :func:`_item_savepoint_scope`
+    块逐项处理（不再整批调用 `apply_person_changes_only`）——指针绑定失败时
+    整块回滚，该项进 rejected、不产生任何副作用；`apply_person_changes_only`
+    在既有事务内运行时会自行注册运行时快照（`_register_runtime_rollback_snapshot`），
+    `_item_savepoint_scope` 在本项失败时手动回放该快照的 undo 闭包，回滚会
+    连带撤销它对 `content.characters` 做的内存态更改，不会出现「DB 已回滚、
+    内存态却留着」的半写状态（详见 :func:`_item_savepoint_scope` 文档）。用
+    SAVEPOINT 而非直接嵌套 `atomic(db)`：本函数可能被 `dispatch_declaration`
+    自己的外层事务（直接分派或暂存结算）调用，SAVEPOINT 才能在共享事务内做
+    本项独立回滚而不牵连同批 sibling。"""
     items, rejected = _section_items(raw, label="当场实况声明", source=source)
     applied: List[Any] = []
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         affair_id, error_category = _peek_affair_id(db, item)
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
@@ -796,6 +1210,13 @@ def _dispatch_on_scene_facts(db: Any, state: Any, raw: object, *, source: Proven
                         str(result.get("reason") or ""),
                         str(result.get("category") or "invalid_enum"),
                     )
+                if affair_id is not None:
+                    name = str(result.get("name") or "").strip()
+                    try:
+                        _attach_character_affair_pointer(db, name, affair_id)
+                    except (ValueError, KeyError) as exc:
+                        category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
+                        raise _ItemAtomicReject(str(exc), category) from exc
         except _ItemAtomicReject as exc:
             _reject(rejected, item, exc.reason, exc.category, source)
             continue
@@ -815,16 +1236,47 @@ def _category_for_audience_night_error(exc: AudienceNightError) -> str:
     return "invalid_enum"  # bad_audibility / bad_presence_effect 等既有枚举校验
 
 
+def _resolve_night_source_chat_turn(
+    db: Any, *, night_id: int, chat_turn_id: int,
+) -> Tuple[int, Optional[str]]:
+    """夜上下文源轮核（#1839 AC3 / ADR 0038 第四类）：night_id>0 时须带正
+    ``chat_turn_id`` 且 ``chat_turns.night_id`` 属本夜；缺失或不属本夜返回
+    拒收原因，由第四类全部 section 逐项 missing_ref。过月无夜（night_id<=0）
+    保留 0，不拦。
+    """
+    nid = int(night_id or 0)
+    ctid = int(chat_turn_id or 0)
+    if nid <= 0:
+        return ctid, None
+    if ctid <= 0:
+        return 0, "召对夜上下文的当场实况须带正源轮 chat_turn_id"
+    row = db.conn.execute(
+        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()
+    if row is None or int(row["night_id"] or 0) != nid:
+        return 0, f"源轮不属于本夜：chat_turn_id={ctid}"
+    return ctid, None
+
+
 def _dispatch_presence(
     db: Any, raw: object, *, night_id: int, source: Provenance,
+    chat_turn_id: int = 0, source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """在场进出：落既有召对夜账本（`append_ledger_entry`）。正文必须是转译声明
     自己带的自由文本——代码不合成「某某入殿/退下」模板句（P6/P7：玩家可感文字
     零模板、LLM 自由文本零删改）。落账前先校验人物存在，无夜上下文或人物不存在
-    的项单独拒收，不落孤儿账（AC3）。"""
+    的项单独拒收，不落孤儿账（AC3）。
+
+    ``chat_turn_id``（#1839）：源轮绑定到 ``origin_chat_turn_id``，撤回本轮删该账。
+    夜上下文下源轮缺失/不属本夜时整项 missing_ref，不落 origin=0 孤儿账。
+    """
     items, rejected = _section_items(raw, label="在场进出声明", source=source)
     applied: List[Any] = []
+    origin_ctid = int(chat_turn_id or 0)
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         name = str(item.get("person_name") or "").strip()
         effect = _PRESENCE_ITEM_EFFECTS.get(str(item.get("effect") or "").strip())
         body = _declared_prose(item.get("body"))
@@ -850,6 +1302,8 @@ def _dispatch_presence(
                 person_names=[name], audibility=AUDIBILITY_PUBLIC,
                 body=body, tags=[effect], presence_effect=effect,
                 check_dead=(effect == PRESENCE_ENTER), origin_ref=origin_ref,
+                source_chat_turn_id=origin_ctid,
+                origin_chat_turn_id=origin_ctid,
             )
         except AudienceNightError as exc:
             _reject(rejected, item, str(exc), _category_for_audience_night_error(exc), source)
@@ -860,20 +1314,29 @@ def _dispatch_presence(
 
 def _dispatch_scene_facts(
     db: Any, raw: object, *, night_id: int, source: Provenance,
+    chat_turn_id: int = 0, source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """说话人分段与可闻性：转译声明自带的一段戏文正文 + 可闻性 + 涉及人物，
     原样落既有召对夜账本，代码不改写、不合成替代文本（P6/P7）。落账前校验涉及
     人物全部存在；纯提及不拦死人（同既有 `settle_story_extraction` 口径：死账
-    仅对「进」效果校验），故 `check_dead=False`。"""
+    仅对「进」效果校验），故 `check_dead=False`。
+
+    ``chat_turn_id``（#1839）：源轮绑定到 ``origin_chat_turn_id``，撤回本轮删该账。
+    夜上下文下源轮缺失/不属本夜时整项 missing_ref，不落 origin=0 孤儿账。
+    """
     items, rejected = _section_items(raw, label="说话人分段声明", source=source)
     applied: List[Any] = []
+    origin_ctid = int(chat_turn_id or 0)
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         body = _declared_prose(item.get("body"))
         audibility = item.get("audibility") or AUDIBILITY_PUBLIC
         person_names = item.get("person_names") or []
         tags = item.get("tags") or []
         if (
-            not body
+            body is None
             or audibility not in _AUDIBILITIES
             or not isinstance(person_names, Sequence) or isinstance(person_names, (str, bytes))
             or not all(isinstance(n, str) for n in person_names)
@@ -899,6 +1362,8 @@ def _dispatch_scene_facts(
                 db, int(night_id),
                 person_names=list(person_names), audibility=str(audibility),
                 body=body, tags=list(tags), check_dead=False, origin_ref=origin_ref,
+                source_chat_turn_id=origin_ctid,
+                origin_chat_turn_id=origin_ctid,
             )
         except AudienceNightError as exc:
             _reject(rejected, item, str(exc), _category_for_audience_night_error(exc), source)
@@ -907,7 +1372,19 @@ def _dispatch_scene_facts(
     return SectionResult(applied=applied, rejected=rejected)
 
 
-def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+def _translation_edge_origin(chat_turn_id: int, turn: int) -> str:
+    """#1839：转译声明边事件的源轮 origin。有 chat_turn 时与召对判官同形
+    （``前缀|chat_turn:{id}``，写口再附 ``|round:N``）；无轮（过月）回退 turn 段。"""
+    ctid = int(chat_turn_id or 0)
+    if ctid > 0:
+        return summon_edge_origin(ctid)
+    return f"转译声明|turn:{int(turn)}"
+
+
+def _dispatch_edge_events(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    chat_turn_id: int = 0, source_turn_error: Optional[str] = None,
+) -> SectionResult:
     """边事件：既有唯一写口 `record_relation_edge_event`。三类失败各自准确归类：
     未知 event_kind = invalid_enum；source/target 非在册人物 = hallucinated_id；
     空 source/target/context 等形状问题 = invalid_shape——不拿宽 catch 一律
@@ -915,10 +1392,19 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
     复用 AffairStore 通用指针（`attach_pointer`）；写事件与绑指针放进同一个
     :func:`_item_savepoint_scope` 块，指针冲突时整块回滚（该项进 rejected，
     不留半写的「有边事件没有所属事务」状态）；用 SAVEPOINT 而非直接嵌套
-    `atomic(db)`，理由同 :func:`_dispatch_on_scene_facts`。"""
+    `atomic(db)`，理由同 :func:`_dispatch_on_scene_facts`。
+
+    ``chat_turn_id``（#1839）：源轮写进 origin，撤回按轮删。夜上下文下源轮
+    缺失/不属本夜时整项 missing_ref，不落 turn:N 孤儿 origin；过月无夜保留
+    turn 回退。
+    """
     items, rejected = _section_items(raw, label="边事件声明", source=source)
     applied: List[Any] = []
+    origin = _translation_edge_origin(chat_turn_id, int(state.turn))
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         source_name = str(item.get("source") or "").strip()
         target_name = str(item.get("target") or "").strip()
         context = item.get("context")
@@ -944,7 +1430,7 @@ def _dispatch_edge_events(db: Any, state: Any, raw: object, *, source: Provenanc
                 try:
                     event_id = db.record_relation_edge_event(
                         source=source_name, target=target_name, event_kind=event_kind,
-                        context=context, origin=f"转译声明:turn{int(state.turn)}",
+                        context=context, origin=origin,
                         turn=int(state.turn), year=int(state.year), period=int(state.period),
                     )
                 except ValueError as exc:
@@ -990,13 +1476,18 @@ def _dispatch_protagonist(db: Any, raw: object, *, source: Provenance) -> Protag
     return ProtagonistResult(validated={"person_name": name}, rejected=[])
 
 
-def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provenance) -> SectionResult:
+def _dispatch_registrations(
+    db: Any, state: Any, raw: object, *, source: Provenance,
+    source_turn_error: Optional[str] = None,
+) -> SectionResult:
     """入册：登记名册外人物进入本局可召见人物池。构档的唯一权威实现是
     `ming_sim.session.register_unlisted_person_record`——`GameSession.
     _apply_unlisted_person_registration`（召对场景 LLM 工具触发）与本函数
     共用它，查重规则、落库都不在两处各写一份。「登记之后随手把他召上殿」是
     召对专属的 UI 便利动作，留给召对侧自己决定要不要做；入册本身与是否立刻
     传召是两件事，本分派器只管前者。
+
+    夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
 
     `style`（人物材料上的可感文字）原样取声明自带的值、零删改地传给共享写核，
     不合成任何占位文案（P7）——声明没给就留空。`_apply_unlisted_person_registration`
@@ -1016,6 +1507,9 @@ def _dispatch_registrations(db: Any, state: Any, raw: object, *, source: Provena
     items, rejected = _section_items(raw, label="入册声明", source=source)
     applied: List[Any] = []
     for item in items:
+        if source_turn_error is not None:
+            _reject(rejected, item, source_turn_error, "missing_ref", source)
+            continue
         name = str(item.get("name") or "").strip()
         office = str(item.get("office") or "").strip()
         office_type = str(item.get("office_type") or "").strip()

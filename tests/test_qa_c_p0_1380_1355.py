@@ -182,7 +182,7 @@ def test_prior_unrelated_office_pending_does_not_block_yuan_reinstatement(
     qian_pid = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=ch.name, target_id=None,
-        payload={
+        payload={"text": "测试任免原文",
             "name": "钱某", "office": "礼部主事", "appointer": ch.name,
         },
     )
@@ -571,7 +571,7 @@ def test_api_tool_appointment_not_duplicated_by_preclassified(game, monkeypatch)
     office_pid = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=ch.name, target_id=None,
-        payload={
+        payload={"text": "测试任免原文",
             "name": "袁崇焕",
             "office": "辽东巡抚",
             "appointer": ch.name,
@@ -615,7 +615,7 @@ def test_api_confirmation_round_does_not_revive_actions(game, monkeypatch):
     pid = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=ch.name, target_id=None,
-        payload={"name": "某人", "office": "某职", "appointer": ch.name},
+        payload={"text": "测试任免原文", "name": "某人", "office": "某职", "appointer": ch.name},
     )
 
     def _backend(prompt, llm_config=None, tag=""):
@@ -676,7 +676,7 @@ def test_pending_count_includes_staged_directive_and_office(game):
     db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=name, target_id=None,
-        payload={"name": "袁崇焕", "office": "辽东巡抚", "appointer": name},
+        payload={"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "appointer": name},
     )
     sess = _fake_session(db, state, content)
     n = GameSession.pending_count(sess)

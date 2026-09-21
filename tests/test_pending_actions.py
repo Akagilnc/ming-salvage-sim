@@ -631,7 +631,7 @@ def test_withdraw_pending_action_removes_before_decree(game):
     night = an.open_night(db, state, empty_scaffold=True)
     pid = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=name, target_id=None,
-        payload={"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+        payload={"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
     )
     an.ensure_inactive_office_summon(
         db, int(pid), "袁崇焕", night_id=int(night["id"]),
@@ -659,7 +659,7 @@ def test_withdraw_pending_action_does_not_commit_outer_transaction(game):
     night = an.open_night(db, state, empty_scaffold=True)
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=name, target_id=None,
-        payload={"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+        payload={"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
     )
     an.ensure_inactive_office_summon(
         db, int(pending_id), "袁崇焕", night_id=int(night["id"]),
@@ -839,6 +839,7 @@ def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatc
     session = types.SimpleNamespace(
         registry=None,
         advance_without_decree=abort_after_failed_action,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     stub = types.SimpleNamespace(
         db=db,
@@ -855,7 +856,12 @@ def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatc
         web_app.api_advance_without_edict()
 
     assert exc.value.status_code == 409
-    assert exc.value.detail == "结算中止，可重试。"
+    # SettlementAbort HTTP detail 为结构化 dict（_settlement_abort_http_detail）
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail.get("message") == "结算中止，可重试。"
+    assert detail.get("stage") == "settle"
+    assert detail.get("turn") == state.turn
 
 
 def test_web_advance_without_edict_llm_unavailable_returns_412_detail(game, monkeypatch):
@@ -880,6 +886,7 @@ def test_web_advance_without_edict_llm_unavailable_returns_412_detail(game, monk
     session = types.SimpleNamespace(
         registry=None,
         advance_without_decree=boom,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     stub = types.SimpleNamespace(
         db=db,
@@ -916,6 +923,7 @@ def test_web_advance_without_edict_generic_exception_returns_readable_detail(gam
     session = types.SimpleNamespace(
         registry=None,
         advance_without_decree=boom,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     stub = types.SimpleNamespace(
         db=db,
@@ -1124,6 +1132,7 @@ def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, mon
         last_decree="",          # 真 GameSession 初始/清月态
         advance_without_decree=_advance,
         end_turn=lambda: calls.append("end_turn"),
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     stub = types.SimpleNamespace(
         db=db,
@@ -1772,7 +1781,7 @@ def test_commit_new_office_action_rolls_back_memory_registration(game, monkeypat
     content.characters.pop(new_name, None)
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name="测试召对",
-        payload={"name": new_name, "office": "陕西总督", "region_id": "shaanxi"},
+        payload={"text": "测试任免原文", "name": new_name, "office": "陕西总督", "region_id": "shaanxi"},
     )
 
     monkeypatch.setattr(
@@ -1807,7 +1816,12 @@ def test_commit_new_office_action_restores_when_post_create_helper_raises(game, 
         (
             state.turn,
             "测试召对",
-            json.dumps({"name": new_name, "office": "陕西总督", "region_id": "shaanxi"}, ensure_ascii=False),
+            json.dumps({
+                "text": "授测试新臣为陕西总督。",
+                "name": new_name,
+                "office": "陕西总督",
+                "region_id": "shaanxi",
+            }, ensure_ascii=False),
         ),
     )
     db.conn.commit()
@@ -2264,7 +2278,7 @@ def test_office_appointment_refreshes_displaced_holder(game):
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=new_holder.name, target_id=None,
-        payload={"name": new_holder.name, "office": "兵部尚书"},
+        payload={"text": "测试任免原文", "name": new_holder.name, "office": "兵部尚书"},
     )
     applied = db.commit_pending_actions(state, content=content, registry=None)
     assert any(row["kind"] == "office" for row in applied)

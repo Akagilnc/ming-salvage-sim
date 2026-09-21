@@ -28,15 +28,28 @@ def allow_hall_admission(
     )
 
 
+def allow_hall_admit_audience(character: Any) -> AudienceAdmissionDecision:
+    """密令/court_break 入口调 admit_audience；与 consume 同形放行，禁各壳自造。"""
+    del character
+    return AudienceAdmissionDecision(
+        AudienceAdmission.IN_CAPITAL,
+        reason="",
+        allowed=True,
+    )
+
+
 class HallAdmissionSessionMixin:
     """给 class 体可改的假 Session 混入统一放行入口（实现只此一处）。"""
 
     consume_audience_admission = staticmethod(allow_hall_admission)
+    # #1842/#1566：正式密令前缀走 admit_audience（不 consume）；壳须同混入，禁 AttributeError→流挂。
+    admit_audience = staticmethod(allow_hall_admit_audience)
 
 
 def install_hall_admission(session: Any) -> Any:
     """给无法改 class 体的轻壳一次赋值共享函数。"""
     session.consume_audience_admission = allow_hall_admission
+    session.admit_audience = allow_hall_admit_audience
     return session
 
 

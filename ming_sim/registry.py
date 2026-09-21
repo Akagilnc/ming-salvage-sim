@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -222,6 +222,57 @@ def _make_select_consort_tool(context: CourtContext):
     pool_table = "\n".join(f"  {i}：{CONSORT_POOL_IDENTITIES[i]}" for i in sorted(CONSORT_POOL_IDENTITIES))
     present_consort_candidates.__doc__ = present_consort_candidates.__doc__.replace("{POOL_TABLE}", pool_table)
     return present_consort_candidates
+
+
+def create_scene_agent(
+    llm_config: LLMConfig,
+    prepared: PreparedMaterials,
+    *,
+    model: Any = None,
+    agno_db: Optional[SqliteDb] = None,
+    content: Optional[GameContent] = None,
+    session_id: Optional[str] = None,
+) -> Agent:
+    """#1836 / ADR 0155：一个 LLM 演整场召对。
+
+    生成链零动作 / 写入工具、零格式约束（ADR 0033）；读材料只用目录只读工具。
+    """
+    c = content or _ctx()
+    chat_model = model if model is not None else create_chat_model(
+        llm_config, temperature=0.6, top_p=0.9,
+    )
+    if hasattr(chat_model, "materials_dir"):
+        chat_model.materials_dir = str(prepared.root)
+    scene_prompt = str(getattr(c, "scene_agent_prompt", "") or "").strip()
+    if not scene_prompt:
+        # 无 bundled prompt 时的最低特征化底（真源仍是 content/prompts/scene_agent.md）。
+        scene_prompt = (
+            "你演一场御前召对整场戏。以整段自由戏文回应；可含多人答话、插话与递话人低语。"
+            "材料在当前目录，按需自读。"
+        )
+    instructions = [
+        _minister_game_world_prompt(c.game_world_prompt) if getattr(c, "game_world_prompt", "") else "",
+        scene_prompt,
+        prepared.opening,
+    ]
+    instructions = [part for part in instructions if part]
+    # ADR 0155：本夜全量 runs 入上下文，不得设票面未授权的固定 run 裁切。
+    # agno 3.0.9 Agent.__init__ 在 num_history_runs 与 num_history_messages 皆
+    # 为 None 时会归一 num_history_runs=3；session.get_messages(last_n_runs=None)
+    # 才是全量。故构造后显式放开，不换另一个固定正整数。
+    agent = Agent(
+        name="殿上",
+        id="scene-audience",
+        session_id=session_id or f"scene-turn-{id(prepared)}",
+        db=agno_db,
+        model=chat_model,
+        instructions=instructions,
+        tools=material_tools(prepared.root),
+        add_history_to_context=True,
+        markdown=False,
+    )
+    agent.num_history_runs = None
+    return agent
 
 
 def create_minister_agent(

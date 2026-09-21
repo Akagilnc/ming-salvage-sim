@@ -11,7 +11,6 @@ session.chat 非流式路径与 web streaming 路径共用它，杜绝漂移（C
 from __future__ import annotations
 
 import json
-import re
 import threading
 import types
 from types import SimpleNamespace
@@ -472,7 +471,7 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
             )
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 
@@ -483,7 +482,7 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
     sess.registry = Registry()
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *_args, **_kwargs: None
     sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
 
@@ -497,29 +496,6 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
     assert len(pending) == 1
     assert pending[0]["action"] == "记进展"
 
-
-def test_chat_prompt_builder_internal_typeerror_is_not_retried_without_turn_scope(game):
-    """真实 builder 的 TypeError 不能被误判为旧签名兼容而改走无 turn 的调用。"""
-    _db, _state, content = game
-    minister = "毕自严"
-    message = "请奏"
-    turn_id = 7
-    err = "production prompt failure"
-    calls = []
-    sess = GameSession.__new__(GameSession)
-    sess.content = content
-    sess.registry = SimpleNamespace(get=lambda _character: object())
-    sess.temporary_characters = set()
-
-    def prompt_builder(msg, character, *, chat_turn_id=0):
-        calls.append((msg, character.name, chat_turn_id))
-        raise TypeError(err)
-
-    sess._audience_prompt_for_message = prompt_builder
-
-    with pytest.raises(TypeError, match=f"^{re.escape(err)}$"):
-        GameSession.chat(sess, minister, message, chat_turn_id=turn_id)
-    assert calls == [(message, minister, turn_id)]
 
 
 def test_propose_directive_tool_arguments_stages_draft(game):
@@ -539,7 +515,7 @@ def test_propose_directive_tool_arguments_stages_draft(game):
             )
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 
@@ -550,7 +526,7 @@ def test_propose_directive_tool_arguments_stages_draft(game):
     sess.registry = Registry()
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *_args, **_kwargs: None
     sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
 
@@ -810,7 +786,7 @@ def test_midzhi_confirmation_updates_selected_dossier_mode(game, kind):
     else:
         pending_id = db.stage_pending_action(
             state.turn, kind="office", action="任命", minister_name=minister,
-            payload={"name": "史可法", "office": "兵部主事", "appointer": minister,
+            payload={"text": "测试任免原文", "name": "史可法", "office": "兵部主事", "appointer": minister,
                      "mode": "ordinary"},
         )
 
@@ -926,7 +902,7 @@ def test_mixed_directive_secret_confirmation_does_not_commit_unmentioned_office(
     )
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister, target_id=None,
-        payload={"name": "史可法", "office": "兵部主事"},
+        payload={"text": "测试任免原文", "name": "史可法", "office": "兵部主事"},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -1013,7 +989,7 @@ def test_secret_confirmation_does_not_drop_office_pending(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister, target_id=None,
-        payload={"name": "史可法", "office": "兵部主事"},
+        payload={"text": "测试任免原文", "name": "史可法", "office": "兵部主事"},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -1132,7 +1108,7 @@ def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
             )
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 
@@ -1143,7 +1119,7 @@ def test_tool_staged_action_is_not_confirmed_in_same_chat_turn(game):
     sess.registry = Registry()
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *_args, **_kwargs: None
     sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
 
@@ -1176,7 +1152,7 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
             )
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 
@@ -1193,7 +1169,7 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
     sess.registry = Registry()
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *_args, **_kwargs: None
     sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
 
@@ -1350,7 +1326,7 @@ def test_propose_appointment_continue_draft_same_direction(
         seed_ids.append(db.stage_pending_action(
             state.turn, kind="office", action="任命",
             minister_name=minister, target_id=None,
-            payload={
+            payload={"text": "测试任免原文",
                 "name": appointee, "office": office,
                 "appointer": minister, "mode": mode,
             },
@@ -1426,7 +1402,7 @@ def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monk
             )
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 
@@ -1440,7 +1416,7 @@ def test_confirmation_turn_ignores_same_turn_secret_order_tool_output(game, monk
     sess.registry = Registry()
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *_args, **_kwargs: None
     sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
 
@@ -1485,7 +1461,7 @@ def test_secret_prefix_ignores_mismatched_directive_tool_output(game, monkeypatc
             )
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 
@@ -1496,7 +1472,7 @@ def test_secret_prefix_ignores_mismatched_directive_tool_output(game, monkeypatc
     sess.registry = Registry()
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
 
     def _forbid_cli_action_intent(*_args, **_kwargs):
         raise AssertionError("explicit secret route must not start ordinary action classification")
@@ -1670,7 +1646,7 @@ def test_draft_prefix_with_pending_confirmation_runs_zero_llm(game, monkeypatch)
     db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=who, target_id=None,
-        payload={"name": "倪元璐", "office": "户部尚书", "appointer": who})
+        payload={"text": "测试任免原文", "name": "倪元璐", "office": "户部尚书", "appointer": who})
     _forbid_post_prefix_extractors(monkeypatch)
 
     seed = "臣遵旨，当即清核辽饷。"
@@ -2426,7 +2402,7 @@ def test_chat_starts_cli_action_classification_before_reply_finishes(read_game, 
             return SimpleNamespace(content="臣谨奏：辽饷尚可支应。", tools=[])
 
     registry = SimpleNamespace(
-        get=lambda character: FakeAgent(),
+        get=lambda character, **_kw: FakeAgent(),
     )
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -2471,7 +2447,7 @@ def test_api_chat_never_calls_cli_classifier(game, monkeypatch):
     sess.state = state
     sess.content = content
     sess.registry = SimpleNamespace(
-        get=lambda _character: FakeAgent(),
+        get=lambda _character, **_kw: FakeAgent(),
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = {}

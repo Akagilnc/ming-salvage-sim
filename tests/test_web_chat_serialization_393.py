@@ -54,7 +54,7 @@ class _FakeRegistry:
     def __init__(self, agent: _FakeAgent):
         self.agent = agent
 
-    def get(self, character):
+    def get(self, character, **_kw):
         return self.agent
 
 
@@ -89,6 +89,26 @@ class _FakeSession(HallAdmissionSessionMixin):
 
     def pending_count(self):
         return 0
+
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        # #1842：殿上流式入口走 scene_chat；轻壳驱动既有假 agent，不复活旧 chat 并行链。
+        from ming_sim.session import ChatTurnResult
+
+        name = str(minister_name or next(iter(self.content.characters)))
+        agent = self.registry.get(self._character(name))
+        parts: list[str] = []
+        for event in agent.run():
+            content = getattr(event, "content", None)
+            if content:
+                parts.append(str(content))
+                if stream_emit is not None:
+                    stream_emit(str(content))
+        return ChatTurnResult(answer="".join(parts))
+
+    def schedule_pending_scene_translation(self, result):
+        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op（与生产同形入口）。
+        from ming_sim.session import GameSession
+        return GameSession.schedule_pending_scene_translation(self, result)
 
     # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
     def start_chat_turn_scene(self, *_a, **_k):
@@ -139,9 +159,19 @@ class _RecordingDB:
     def update_chat_turn_messages(self, *args, **kwargs):
         return None
 
-    def persist_minister_reply(self, minister_name: str, turn: int, content: str, chat_turn_id: int):
-        # #499 单一事务插入回话+链接+接受（本 stub 复用 append_chat_message 记账，返回其 id）
+    def persist_minister_reply(
+        self, minister_name: str, turn: int, content: str, chat_turn_id: int, **_kw,
+    ):
+        # #499/#1842：同事务回话+可选 mindreading_status；stub 只记账 message id
         return self.append_chat_message(minister_name, turn, "minister", content)
+
+    def set_mindreading_status(self, chat_turn_id: int, status: str):
+        # #1842：_chat_payload persist 后 skip 退役读心；轻壳记账 no-op
+        return None
+
+    def fail_chat_turn(self, *_a, **_k):
+        # 流式失败尾声 / identity 失败路径会调此口
+        return None
 
     def record_chat_turn_rollback_diffs(self, *args, **kwargs):
         return None
@@ -365,99 +395,6 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     assert chat_result["answer"] == "臣已知悉。"
 
 
-@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
-def test_drain_waits_for_in_flight_nonstream_chat():
-    """非流式 chat 在飞（慢 LLM）时 drain 须等待——pending 覆盖 LLM 窗 + epilogue。
-
-    #1291 卸 threadpool 后事件循环可与回菜单重叠；若不标 pending，drain 当空闲关
-    session，epilogue 落库打到已关连接。对齐 chat_stream 整轮 pending ownership。
-    """
-    allow_finish = threading.Event()
-    chat_entered = threading.Event()
-    closed: list[int] = []
-    character = SimpleNamespace(name="测试大臣")
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
-    db = _RecordingDB(threading.Event())
-
-    class _SlowChatSession(_FakeSession):
-        def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0, explicit_secret_order: bool = False):
-            chat_entered.set()
-            allow_finish.wait()
-            return SimpleNamespace(
-                answer="臣已知悉。",
-                proposed_directive=None,
-                court_action="",
-                next_minister="",
-                appointed_minister="",
-                registered_minister="",
-                displaced_minister="",
-                secret_order_id=0,
-                pending_action_id=0,
-                pending_action_failures=[],
-                directive_confirmation_ambiguous=None,
-            )
-
-        def close(self):
-            closed.append(1)
-
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _SlowChatSession(character, _FakeAgent(allow_finish), state, db)
-    runtime.chat_history = {character.name: []}
-    runtime._write_gate = threading.Lock()
-    from ming_sim.session_write_queue import SessionWriteQueue
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    runtime.directive_rows = lambda: []
-    runtime.directive_payload = lambda row: row
-    runtime.suggestions_for = lambda _c: []
-    runtime.can_undo_last_chat = lambda _name: False
-    # 尾随不进本测范围：只钉主轮 pending 覆盖 LLM 窗。
-    runtime._spawn_pending_write_thread = lambda *a, **k: False
-    runtime._spawn_extraction_trail = lambda *a, **k: None
-    runtime._trail_highlight_judge_after_reply = lambda *a, **k: []
-
-    chat_error: list[BaseException] = []
-    chat_payload: list[dict] = []
-
-    def run_chat():
-        try:
-            chat_payload.append(runtime.chat(character.name, "边饷如何？"))
-        except BaseException as exc:  # noqa: BLE001 — surface any fail for assert
-            chat_error.append(exc)
-
-    chat_thread = threading.Thread(target=run_chat, daemon=True)
-    chat_thread.start()
-    chat_entered.wait()
-    assert runtime._pending_writes_count >= 1, (
-        f"非流式 chat 在飞未标 pending（count={runtime._pending_writes_count}）"
-    )
-
-    drain_done = threading.Event()
-
-    def run_drain():
-        web_app._drain_and_close_session(runtime)
-        drain_done.set()
-
-    drain_thread = threading.Thread(target=run_drain, daemon=True)
-    drain_thread.start()
-
-    wait_until(lambda: runtime._write_queue.is_sealed())
-    # 负向：LLM 仍在飞时 drain 不得关连接
-    assert not drain_done.is_set(), "drain 在非流式 chat 仍在飞时就关了 session"
-    assert closed == []
-
-    allow_finish.set()
-    drain_done.wait()
-    chat_thread.join()
-    assert not chat_error, f"nonstream chat failed: {chat_error!r}"
-    assert chat_payload and chat_payload[0]["answer"] == "臣已知悉。"
-    assert closed == [1]
-    assert runtime._pending_writes_count == 0
-
-
 def test_nonstream_chat_rejects_when_session_draining():
     """drain 已开始时非流式 chat 不得再登记 pending——对齐 stream 拒绝路，HTTP 503。"""
     from fastapi import HTTPException
@@ -483,25 +420,6 @@ def test_nonstream_chat_rejects_when_session_draining():
     assert "正在关闭" in str(ei.value.detail)
     assert runtime._pending_writes_count == 0
 
-
-def test_stream_prompt_builder_internal_typeerror_is_not_retried_as_legacy_signature():
-    """签名兼容须在调用前判定，不能吞掉 production builder 内部 TypeError。"""
-    runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
-    calls = []
-
-    def prompt_builder(text, character, *, chat_turn_id=0):
-        calls.append((text, character, chat_turn_id))
-        raise TypeError("production prompt failure")
-
-    runtime.session._audience_prompt_for_message = prompt_builder
-
-    try:
-        runtime._chat_stream_payload(minister_name, "请奏", 7, {}, 1, lambda _delta: None)
-    except TypeError as exc:
-        assert str(exc) == "production prompt failure"
-    else:
-        raise AssertionError("prompt builder TypeError should propagate")
-    assert len(calls) == 1
 
 
 def test_streamed_secret_order_preserves_blacklist_through_commit_restore_transfer_and_disclosure(game):

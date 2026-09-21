@@ -21,6 +21,7 @@ import ming_sim.cli_backend as cli_backend
 from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
 from ming_sim.matching import army_identity_aliases
 from ming_sim.session import GameSession
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 AUDIENCE_MESSAGE = (
     "着户部从国库拨银十五万两，解赴关宁军前专补欠饷。卿即拟旨呈览。"
@@ -294,7 +295,40 @@ def test_audience_grounded_army_pay_lands_through_close_night(
         if game.session.llm_config is not None:
             game.session.llm_config.channel = "cli"
         name = _active_ming_minister(game.db, game.content, office="户部").name
-        game.session.registry.get = lambda _ch: _Agent()
+        agent = _Agent()
+        game.session.registry.get = lambda _ch, **_kw: agent
+        stub_scene_agent(monkeypatch, agent)
+
+        def _translate(prompt, _cfg):
+            # scene_chat 双桩：交办 grant → pending；「准」→ promises 应允。
+            text = str(prompt or "")
+            if "【本轮皇帝】准" in text:
+                rows = [
+                    r for r in game.db.list_pending_actions(game.state.turn)
+                    if r.get("kind") == "directive" and r.get("status") == "pending"
+                ]
+                if not rows:
+                    return {"commissions": [], "promises": []}
+                return {
+                    "commissions": [],
+                    "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],
+                }
+            return {
+                "commissions": [{
+                    "text": AUDIENCE_MESSAGE,
+                    "grant": {
+                        "grant_action": "协饷",
+                        "amount": 15,
+                        "account": "国库",
+                        "purpose": "补饷",
+                        "target_kind": "army",
+                        "target_id": "guanning",
+                    },
+                }],
+                "promises": [],
+            }
+
+        stub_audience_translate(monkeypatch, _translate)
         client = TestClient(web_app.app)
         turn_before = int(game.state.turn)
 
@@ -302,16 +336,18 @@ def test_audience_grounded_army_pay_lands_through_close_night(
             f"/api/ministers/{name}/chat/stream", json={"message": AUDIENCE_MESSAGE},
         )
         assert draft.status_code == 200, draft.text
+        game._runtime_write_queue().barrier(lambda: None)
         wait_pending_writes(game)
         pend = [
             json.loads(r["payload_json"])
             for r in game.db.list_pending_actions(game.state.turn)
-            if r["kind"] == "directive"
+            if r["kind"] == "directive" and r.get("status") == "pending"
         ]
         assert [p.get("target_id") for p in pend] == ["guanning"]
 
         approve = client.post(f"/api/ministers/{name}/chat", json={"message": "准"})
         assert approve.status_code == 200, approve.text
+        game._runtime_write_queue().barrier(lambda: None)
         wait_pending_writes(game)
 
         body = _post_issue_stream(client, expected_turn=turn_before, step="#1774 收夜")

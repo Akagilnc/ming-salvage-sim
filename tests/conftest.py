@@ -62,6 +62,15 @@ def _opening_game(content):
                 os.remove(p)
 
 
+def own_session_until_game_teardown(db, owner) -> None:
+    """让 ``game`` fixture 在关闭 SQLite 前排空该 session 的已接纳工作。"""
+    owners = getattr(db, "_test_session_owners", None)
+    if owners is None:
+        owners = []
+        db._test_session_owners = owners
+    owners.append(owner)
+
+
 @pytest.fixture(scope="session")
 def _game_template_path(content):
     """Session 级开局模板 DB（只 seed 一次）。供 ``game`` 每案文件拷贝，避免逐案建库。
@@ -93,6 +102,19 @@ def read_game(content):
         yield opening
 
 
+def _rebind_session_content(content) -> None:
+    """把各模块 _content 绑回 session 级共享 GameContent。
+
+    WebGame/GameSession 常 `GameContent.load()` 新对象并 `_bind_all_content`，
+    把 issues/context/agents/… 指到另一份盘面；仅还原 `content.characters`
+    不够——后续 `game` 夹具仍用 session content，而 `apply_person_changes_only`
+    走 `_ctx()` 会改到已退役的那份，DB 与断言侧 content 分叉。
+    """
+    from ming_sim.session import _bind_all_content
+
+    _bind_all_content(content)
+
+
 @pytest.fixture(autouse=True)
 def _restore_content_characters(content):
     """content 是 session 作用域共享对象，但建 GameSession（读档/_sync_offices_from_db_impl）
@@ -102,11 +124,14 @@ def _restore_content_characters(content):
     在全量里被静默 skip（「基底盘面无宗藩人物」），等于没验。
 
     每用例前快照、后还原 content.characters（深拷贝，连带 in-place 改的 office_type/status
-    等字段一并隔离），从根上断掉这层跨用例泄漏。只拷 characters：观测到的泄漏在此面，
-    region/faction 等不涉，避免无谓开销。"""
+    等字段一并隔离），并从前后两端把 bind_content 模块绑回本 session content，
+    断掉 GameSession 另 load 后留下的跨用例 _content 漂移。只拷 characters：
+    观测到的泄漏在此面，region/faction 等不涉，避免无谓开销。"""
     saved = copy.deepcopy(content.characters)
+    _rebind_session_content(content)
     yield
     content.characters = saved
+    _rebind_session_content(content)
 
 
 @pytest.fixture(autouse=True)
@@ -127,7 +152,7 @@ def _transport_retry_interval_instant():
 
 
 @pytest.fixture
-def game(content, _game_template_path):
+def game(content, _game_template_path, monkeypatch):
     """返回 (db, state, content)：开局同核临时库，用例间隔离。
 
     Setup 形态（#1233 刀1 方案 c）：session 模板 DB 一次 seed，每案 ``shutil.copyfile``
@@ -136,6 +161,7 @@ def game(content, _game_template_path):
 
     不依赖 gitignored data/probe.db（#5）：characters 直接来自 content（101 全）。
     """
+    del monkeypatch
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     db = None
@@ -146,6 +172,10 @@ def game(content, _game_template_path):
         yield db, state, content
     finally:
         if db is not None:
+            from ming_sim.session_write_queue import drain_and_close_session
+
+            for owner in reversed(getattr(db, "_test_session_owners", ())):
+                drain_and_close_session(owner)
             db.close()
         for p in (path, f"{path}_agno.db"):
             if os.path.exists(p):
@@ -307,6 +337,68 @@ class _OfflineSceneRegistry:
         return False
 
 
+def offline_empty_audience_translate(prompt, llm_config):
+    """#1842 离线转译边界：空声明，禁 sk-test 真网。"""
+    del prompt, llm_config
+    return {"commissions": [], "promises": []}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _offline_audience_translation_provider():
+    """测试 worker 全生命周期隔离 audience provider。
+
+    后台转译可能晚于单个 test teardown 才进入 provider；因此此桩必须覆盖整个
+    pytest worker，而不是随 function-scoped monkeypatch 提前撤销。需特定结果的
+    用例仍可在本边界上临时覆盖，撤销后回到离线实现。
+    """
+    import ming_sim.audience_translate as audience_translate
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(
+        audience_translate, "_default_translate_runner", offline_empty_audience_translate,
+    )
+    yield
+    mp.undo()
+
+
+def stub_scene_agent(monkeypatch, agent):
+    """#1842：经 create_scene_agent 工厂缝注入 scene agent（禁实例双桩属性）。"""
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent",
+        lambda *a, **k: agent,
+    )
+    return agent
+
+
+def stub_audience_translate(monkeypatch, fn=None):
+    """#1842：经 `_default_translate_runner` 缝注入转译（禁实例 `_audience_translate_fn`）。"""
+    runner = offline_empty_audience_translate if fn is None else fn
+    monkeypatch.setattr(
+        "ming_sim.audience_translate._default_translate_runner",
+        runner,
+    )
+    return runner
+
+
+def persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
+    """#1842 单权威：镜像 Web/CLI——回话落定后再 schedule（ADR 0155 / 0036）。
+
+    测试侧不得再复制本流程；生产入口仍走 Web/CLI 各自 persist 尾。
+    """
+    pending = getattr(result, "pending_audience_translation", None)
+    if not pending:
+        return None
+    ctid = int(pending.get("chat_turn_id") or 0)
+    if ctid <= 0:
+        return None
+    answer = str(getattr(result, "answer", "") or "")
+    db.persist_minister_reply(
+        speaker, int(sess.state.turn), answer, ctid,
+        mindreading_status="skip",
+    )
+    return sess.schedule_pending_scene_translation(result)
+
+
 @pytest.fixture
 def _offline_scene_beat_generator():
     """#542：轻壳测试显式 opt-in 的 offline scene / beat 双缝（非 autouse）。
@@ -317,9 +409,10 @@ def _offline_scene_beat_generator():
     - factory 缝：create_llm_beat_generator → 确定性假 generator
     - 类属性缝：GameSession._beat_generator / _scene_registry 默认假
       （覆盖 __new__ 轻壳 resolve_turn / start_chat_turn_scene）
-    实例赋值（dual-fail / 503 e2e / 竞态）仍优先于类属性。不改生产。
+    - #1842：patch `_default_translate_runner` 空声明（收夜 catch-up / 后台转译禁 sk-test）
     独立 MonkeyPatch：测试内 monkeypatch.undo() 不会撤掉本兜底。
     """
+    import ming_sim.audience_translate as at
     import ming_sim.beat_orchestration as bo
     from ming_sim.session import GameSession
 
@@ -334,6 +427,7 @@ def _offline_scene_beat_generator():
     mp.setattr(
         GameSession, "_scene_registry", _OfflineSceneRegistry(), raising=False,
     )
+    mp.setattr(at, "_default_translate_runner", offline_empty_audience_translate)
     yield
     mp.undo()
 

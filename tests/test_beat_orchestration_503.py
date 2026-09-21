@@ -35,6 +35,7 @@ from ming_sim.beat_orchestration import (
     beat_input_field_names,
 )
 from tests.wait_utils import ObservingLock
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def test_abandon_running_scene_drains_without_persisting_result():
@@ -149,7 +150,13 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
         def abandon_chat_turn_scene(self, _ctid):
             drain_entered.set()
             release_drain.wait()
+        def schedule_pending_scene_translation(self, result):
+            # #1842：WebGame persist 尾必调；本测失败路径仍须绑契约。
+            return None
         def chat(self, *_a, **_k):
+            raise RuntimeError("retry llm failed")
+        def scene_chat(self, *_a, **_k):
+            # #1842：殿上重试走 scene_chat
             raise RuntimeError("retry llm failed")
 
     rt = object.__new__(web_app.WebGame)
@@ -166,7 +173,6 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))  # type: ignore
     rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)  # type: ignore
     rt._spawn_pending_write_thread = lambda *a, **k: False
-    rt._spawn_extraction_trail = lambda *a, **k: None
     rt.directive_rows = lambda: []
     rt.directive_payload = lambda row: row
     rt.suggestions_for = lambda _c: []
@@ -1510,7 +1516,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
             self.content = SimpleNamespace(
                 characters={minister: minister_double(minister)},
             )
-            self.registry = SimpleNamespace(get=lambda _c: _AgentOk())
+            self.registry = SimpleNamespace(get=lambda _c, **_kw: _AgentOk())
             self._character = lambda name: minister_double(name)
             self._start_cli_action_intent = lambda *_a, **_k: None
             self._finish_cli_action_intent = lambda *_a, **_k: None
@@ -1521,6 +1527,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
                 "pending_action_failures": [],
                 "directive_confirmation_ambiguous": None,
             }
+            self.llm_config = SimpleNamespace(channel="api")
 
         def start_chat_turn_scene(self, *_a, **_k):
             return None
@@ -1536,6 +1543,29 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
         def abandon_chat_turn_scene(self, _ctid):
             abandon_entered.set()
             release_abandon.wait()
+
+        def schedule_pending_scene_translation(self, result):
+            # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
+            return None
+
+        def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+            from ming_sim.session import ChatTurnResult, GameSession
+            agent = self.registry.get(None)
+            if stream_emit is not None:
+                answer, _att = GameSession._run_scene_agent_transport(
+                    self, agent, message, stream_emit,
+                    chat_turn_id=int(chat_turn_id or 0),
+                )
+                return ChatTurnResult(answer=answer)
+            # boom agent raises
+            run = agent.run(message)
+            if hasattr(run, "__iter__") and not isinstance(run, (str, bytes)):
+                parts = []
+                for ev in run:
+                    if getattr(ev, "event", None) == "RunContent" or type(ev).__name__ == "RunContent":
+                        parts.append(str(getattr(ev, "content", "") or ""))
+                return ChatTurnResult(answer="".join(parts) or "臣遵旨。")
+            return ChatTurnResult(answer=str(getattr(run, "content", "") or "臣遵旨。"))
 
     class _DB:
         def create_chat_turn(self, *a, **k):
@@ -1593,10 +1623,8 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     rt._start_chat_turn = lambda _n, **_k: (11, {})
     rt._record_chat_rollback_items = lambda *_a, **_k: None
     rt._chat_payload = lambda *a, **k: {"answer": "臣遵旨。", "minister_message_id": 1}
-    rt._spawn_extraction_trail = lambda *_a, **_k: None
     rt._trail_mindreading_after_reply = lambda *_a, **_k: None
     rt._trail_highlight_judge_after_reply = lambda *_a, **_k: []
-    rt._dispatch_relation_judge = lambda *_a, **_k: None
     rt._complete_pending_write = lambda ticket=None: q.complete(ticket)
     rt._mark_pending_write = lambda key=None: q.claim(key=key or ("pending",))
     # 轻量 mock 无 SuspendableConnection；join 后 persist 短临界段用 nullcontext，
@@ -1628,7 +1656,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     assert any(e.get("type") == "done" for e in events), events
     assert not abandon_entered.is_set(), "success path must not abandon"
 
-    session.registry = SimpleNamespace(get=lambda _c: _AgentBoom())
+    session.registry = SimpleNamespace(get=lambda _c, **_kw: _AgentBoom())
     object.__setattr__(rt, "chat_history", {minister: []})
     gen2 = rt.chat_stream(minister, "再问边饷")
     events2: list = []
@@ -1648,7 +1676,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     assert any(e.get("type") == "error" for e in events2)
 
 
-def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
+def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game, monkeypatch):
     """#542: stream dismiss 先登记 exit、gate 外统一 join，再与 reply 原子落账。
 
     现码若 join 早于 start_exit，垫位文案残留、exit future 脱轮。
@@ -1693,7 +1721,9 @@ def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
             yield SimpleNamespace(event="RunContent", content="臣告退。")
             yield RunOutput()
 
-    game.session.registry.get = lambda _c: _DismissAgent()
+    agent = _DismissAgent()
+    game.session.registry.get = lambda _c, **_kw: agent
+    stub_scene_agent(monkeypatch, agent)
 
     ctid, snap = game._start_chat_turn(minister)
     night_id = int(game.db.conn.execute(
@@ -1748,7 +1778,7 @@ def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
     assert not game.session._scene_registry.has(int(ctid))
 
 
-def test_web_stream_exit_overlaps_unfinished_reply_after_dismiss_tool(web_game):
+def test_web_stream_exit_overlaps_unfinished_reply_after_dismiss_tool(web_game, monkeypatch):
     """#542 C1: dismiss tool 事件出现后立刻 start_exit，与尚未结束的回话流真实重叠。
 
     seam = WebGame._chat_stream_payload（流式 tool 事件 → scene registry）。
@@ -1800,7 +1830,9 @@ def test_web_stream_exit_overlaps_unfinished_reply_after_dismiss_tool(web_game):
             yield SimpleNamespace(event="RunContent", content="告退。")
             yield RunOutput()
 
-    game.session.registry.get = lambda _c: _OverlapDismissAgent()
+    agent = _OverlapDismissAgent()
+    game.session.registry.get = lambda _c, **_kw: agent
+    stub_scene_agent(monkeypatch, agent)
 
     ctid, snap = game._start_chat_turn(minister)
     night_id = int(game.db.conn.execute(
@@ -1873,7 +1905,7 @@ def test_session_chat_exit_overlaps_inflight_action_intent(game):
             )
 
     class _Reg:
-        def get(self, _c):
+        def get(self, _c, **_kw):
             return _DismissAgent()
 
     sess = GameSession.__new__(GameSession)

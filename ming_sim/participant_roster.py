@@ -32,6 +32,8 @@ NON_PERSON_PARTICIPANT_NAMES = frozenset({
     "陛下", "皇帝", "皇上", "圣上", "天子", "朝廷", "朕",
     # 泛称 / 集体通名（#1391 票面 + #1331/#1339 起居注混入）
     "大臣", "群臣", "众臣", "诸臣", "边将", "朝鲜边军",
+    # #1836：整场场景对话轮挂名，非真人参与者
+    "殿上",
 })
 # 明代中枢/部院寺监/厂卫 + 卫/司整词。fullmatch 闭集，不用单字 stop-class search。
 BARE_INSTITUTION_PARTICIPANT_NAMES = frozenset({

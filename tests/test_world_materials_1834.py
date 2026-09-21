@@ -76,6 +76,50 @@ def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_
     assert rel is not None, f"{name}（不在当前朝臣名册）应仍有经历文件"
 
 
+def test_character_army_region_textual_facts_reach_world_directory(game, tmp_path):
+    """#1828/#1834 缺口钉：textual_facts 写口早接好（declaration_dispatch 的
+    R2 分派），但修前世界目录只读 affair 一种 subject_kind，人物/军队/地区的
+    按月文字事实（负伤、欠饷加剧等）落库后无处可读——100% 不可达。写一条
+    character/army/region 各一条真实文字事实，断言世界目录三类对象各自的按月
+    实况路径均已可达（#1812 P6：结构化路径契约，不对材料正文做词面/哨兵
+    断言——同本文件顶部大理寺 01a08e3a 裁定）。"""
+    db, state, content = game
+    character_name = next(iter(content.characters))
+    army_id = str(db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"])
+    region_id = str(db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()["id"])
+
+    character_fact = "SENTINEL_CHARACTER_FACT_1828：右臂中箭，尚未痊愈"
+    army_fact = "SENTINEL_ARMY_FACT_1828：欠饷已逾三月"
+    region_fact = "SENTINEL_REGION_FACT_1828：旱情加剧，流民渐增"
+    db.textual_facts.append(
+        subject_kind="character", subject_id=character_name, body=character_fact,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    db.textual_facts.append(
+        subject_kind="army", subject_id=army_id, body=army_fact,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    db.textual_facts.append(
+        subject_kind="region", subject_id=region_id, body=region_fact,
+        year=state.year, period=state.period, turn=state.turn,
+    )
+
+    prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m3")
+    names = list_materials(prepared.root)
+
+    character_rel = next(
+        (p for p in names if p.startswith("人物/") and p.endswith("/按月实况.txt") and character_name in p),
+        None,
+    )
+    army_rel = next(
+        (p for p in names if p.startswith(f"军队/{army_id}/按月实况.txt")), None,
+    )
+    region_rel = next(
+        (p for p in names if p.startswith(f"地区/{region_id}/按月实况.txt")), None,
+    )
+    assert character_rel and army_rel and region_rel, "三类对象的按月实况文件均应在世界目录里"
+
+
 def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
     db, state, content = game
     affair = db.affairs.open(

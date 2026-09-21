@@ -3,6 +3,7 @@
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,12 +12,10 @@ from ming_sim import audience_night as an
 from ming_sim import beat_orchestration as bo
 from ming_sim.audience_extraction import (
     ExtractionShapeError,
-    catch_up_pending_extractions,
     parse_endorsement_batch,
     parse_extraction_facts,
-    run_extraction_for_turn,
-    trail_extraction_after_reply,
 )
+from ming_sim.audience_translation import apply_audience_round_translation
 from ming_sim.db import GameDB
 from ming_sim.decree import build_promulgation_judge_context
 
@@ -25,6 +24,18 @@ def _minister(db):
     return str(db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
     ).fetchone()["name"])
+
+
+def _extract(db, *, chat_turn_id, night_id, fact, **_ignored):
+    """用现役转译入口落场景事实；背书测试不复活旧抽取员。"""
+    row = db.conn.execute(
+        "SELECT turn FROM chat_turns WHERE id=?", (int(chat_turn_id),),
+    ).fetchone()
+    apply_audience_round_translation(
+        db, SimpleNamespace(turn=int(row["turn"])), {"scene_facts": [fact]},
+        night_id=night_id, chat_turn_id=chat_turn_id,
+    )
+    return {"status": "done"}
 
 
 def _night_reply(db, state, minister, reply="臣愿会签此旨。"):
@@ -38,13 +49,6 @@ def _night_reply(db, state, minister, reply="臣愿会签此旨。"):
     return night_id, chat_turn_id, int(row["night_seq"] or 0)
 
 
-def _extract(db, *, minister, reply, chat_turn_id, night_id, seq, fact):
-    return run_extraction_for_turn(
-        db=db, minister_name=minister, reply=reply,
-        chat_turn_id=chat_turn_id, night_id=night_id, source_night_seq=seq,
-        llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=_Agent({"facts": [fact]}),
-    )
 
 
 def _approve_directive(db, state, minister, night_id, *, text, target_id):
@@ -220,95 +224,8 @@ def test_undo_chat_turn_removes_source_bound_endorsements_from_judge(game):
     assert dossier_ctx["criteria_snapshot_source"]["endorsement_entry_ids"] == []
 
 
-def test_ordinary_extraction_and_parse_boundaries(game):
-    """普通抽取拒 endorsement；背书 envelope 整批失败、单项畸形留给 settle。"""
-    db, state, _content = game
-    minister = _minister(db)
-    night_id, chat_turn_id, seq = _night_reply(db, state, minister)
-
-    with pytest.raises(ExtractionShapeError, match="endorsement"):
-        parse_extraction_facts({"facts": [{
-            "body": "坏", "endorsement": {
-                "dossier_id": 1, "form": "会签", "endorser_id": minister,
-            },
-        }]})
-    with pytest.raises(ExtractionShapeError, match="facts"):
-        parse_endorsement_batch({"facts": []})
-    with pytest.raises(ExtractionShapeError, match="endorsements"):
-        parse_endorsement_batch({})
-
-    # Envelope ok：单项畸形仍返回，合法 sibling 保留；ref → 扁平 dossier_id。
-    items = parse_endorsement_batch({
-        "endorsements": [
-            {
-                "dossier_ref": {"dossier_id": 3}, "form": "会签",
-                "endorser_id": "毕自严", "imperial": False,
-                "source_chat_turn_id": 9,
-                "decision_key": "",
-            },
-            {"body": "故事字段不得入背书", "dossier_id": 3, "form": "会签",
-             "endorser_id": "毕自严", "imperial": False, "source_chat_turn_id": 9},
-            "not-an-object",
-        ],
-    })
-    assert items[0]["dossier_id"] == 3
-    assert "dossier_ref" not in items[0]
-    assert "body" in items[1]
-    assert items[2] == {"raw": repr("not-an-object")}
-
-    # Runtime ordinary path: embedded endorsement → loud pending, no silent drop.
-    result = run_extraction_for_turn(
-        db=db, minister_name=minister, reply="臣愿会签。",
-        chat_turn_id=chat_turn_id, night_id=night_id, source_night_seq=seq,
-        llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=_Agent({"facts": [
-            {"body": "合法事实", "person_names": [minister]},
-            {"body": "坏背书", "endorsement": {
-                "dossier_id": 1, "form": "会签", "endorser_id": minister,
-            }},
-        ]}),
-    )
-    assert result["status"] == "pending"
-    assert result["code"] == "extraction_bad_shape"
-    assert result["error_pack_path"]
-    assert db.get_story_extract_status(chat_turn_id) == "pending"
 
 
-def test_post_reply_extracts_ordinary_facts_immediately_even_with_approved_pending(game):
-    """方案 A：有 approved office/directive 时，回话后普通 story 仍当轮 done；
-    startup catch-up 只补普通事实，不触发夜级 endorsement。"""
-    db, state, _content = game
-    minister = _minister(db)
-    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿会签。")
-    _approve_directive(
-        db, state, minister, night_id,
-        text="清核辽饷", target_id="immediate-story",
-    )
-    agent = _Agent({"facts": [{
-        "body": "大臣当殿愿会签。", "person_names": [minister], "tags": ["会签"],
-    }]})
-    extracted = trail_extraction_after_reply(
-        db=db, minister_name=minister, minister_reply="臣愿会签。",
-        chat_turn_id=chat_turn_id, llm_config=object(),
-        write_gate=threading.Lock(), extractor_agent=agent,
-    )
-    assert extracted["status"] == "done"
-    assert db.get_story_extract_status(chat_turn_id) == "done"
-    assert len(agent.calls) == 1
-    materials = json.loads(agent.calls[0])
-    assert "可背书案卷" not in materials
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM decree_dossier_endorsements"
-    ).fetchone()[0] == 0
-
-    summary = catch_up_pending_extractions(
-        db=db, llm_config=object(), write_gate=threading.Lock(),
-        night_id=night_id, extractor_agent=agent,
-    )
-    assert summary["extracted"] == 0
-    assert "deferred" not in summary
-    assert len(agent.calls) == 1
-    assert not an.night_endorsement_bound(an.get_night(db, night_id))
 
 
 def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_work(game, monkeypatch):
@@ -766,7 +683,7 @@ def test_office_phase1_draft_only_materializes_once_after_endorsement(game):
 
     office_pa = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister,
-        payload={"name": target_name, "office": new_office},
+        payload={"text": "测试任免原文", "name": target_name, "office": new_office},
     )
     db.mark_pending_night_approved([office_pa], night_id=night_id)
     calls = []
@@ -780,7 +697,7 @@ def test_office_phase1_draft_only_materializes_once_after_endorsement(game):
             candidates = payload["可背书案卷"]
             target_row = next(
                 row for row in candidates
-                if str(row.get("decree_text") or "").startswith(f"任命{target_name}")
+                    if str(row.get("decree_text") or "") == "测试任免原文"
             )
             return json.dumps({"endorsements": [{
                 "dossier_id": target_row["ref"]["dossier_id"], "form": "御笔手敕",
@@ -801,7 +718,7 @@ def test_office_phase1_draft_only_materializes_once_after_endorsement(game):
     assert int(failed["close_commit_cursor"] or 0) == 0
     dossiers = [
         row for row in db.list_decree_dossiers(status="proposed")
-        if str(row.get("decree_text") or "").startswith(f"任命{target_name}")
+            if str(row.get("decree_text") or "") == "测试任免原文"
     ]
     assert len(dossiers) == 1
     draft_id = int(dossiers[0]["id"])
@@ -941,49 +858,3 @@ def test_mingfa_publication_ignores_extractor_source_and_malformed_suffix_on_ret
     assert exact_tags == [an.mingfa_publication_tag(first_directive)]
     ranged = db.list_promulgated_directives(turn_from=state.turn, turn_to=state.turn)
     assert [int(p["directive_id"]) for p in ranged] == [first_directive]
-
-
-def test_no_edict_chain_binds_endorsement_after_draft(game, monkeypatch):
-    """真实 no-edict 链：先普通即时抽取，收夜一次 endorsement-only。"""
-    db, state, content = game
-    minister = _minister(db)
-    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣叩领圣恩。")
-    emperor_text = "准此旨，朕亲书手敕作保。"
-    user_message_id = db.append_chat_message(minister, int(state.turn), "user", emperor_text)
-    db.update_chat_turn_messages(chat_turn_id, user_message_id=user_message_id)
-    _approve_directive(
-        db, state, minister, night_id,
-        text="清核辽饷", target_id="same-night-endorsement",
-    )
-
-    story_agent = _Agent({"facts": [{"body": "大臣叩领。", "person_names": [minister]}]})
-    trail = trail_extraction_after_reply(
-        db=db, minister_name=minister, minister_reply="臣叩领圣恩。",
-        chat_turn_id=chat_turn_id, llm_config=object(),
-        write_gate=threading.Lock(), extractor_agent=story_agent,
-    )
-    assert trail["status"] == "done"
-
-    endorse_calls = []
-
-    class _Endorse:
-        def run(self, materials):
-            endorse_calls.append(json.loads(materials))
-            candidates = endorse_calls[-1]["可背书案卷"]
-            return json.dumps({"endorsements": [{
-                "dossier_ref": candidates[0]["ref"], "form": "御笔手敕",
-                "endorser_id": "", "imperial": True,
-                "source_chat_turn_id": chat_turn_id,
-                "decision_key": "",
-            }]}, ensure_ascii=False)
-
-    monkeypatch.setattr(agents_mod, "create_endorsement_extractor_agent", lambda cfg: _Endorse())
-    # #1274 r1：收夜 endorsement 归 resolve_turn 同缝 auto_close（空壳已删；本测只钉收夜背书）。
-    an.auto_close_open_night(
-        db, state, content=content, registry=None, wait_timeout_s=0.0,
-        llm_config=object(), write_gate=threading.Lock(),
-    )
-    assert len(endorse_calls) == 1
-    did = int(endorse_calls[0]["可背书案卷"][0]["ref"]["dossier_id"])
-    assert db.list_dossier_endorsements(did)[0]["imperial"] is True
-    assert an.get_night(db, night_id)["status"] == an.NIGHT_STATUS_CLOSED

@@ -266,7 +266,10 @@ def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, co
             last_advance_turn INTEGER NOT NULL DEFAULT 0,
             closed_turn INTEGER,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            -- #1831 起 CREATE 基线含 affair_id；本测只缺 commitment 列，不模拟缺 affair 旧档
+            -- （#1812 Out of Scope：缺 affair_id 时 CREATE INDEX 须响亮失败，不得静默迁移）
+            affair_id INTEGER NOT NULL DEFAULT 0
         )
         """
     )

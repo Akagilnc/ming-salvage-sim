@@ -1169,29 +1169,27 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
 
 def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch):
     """#1732：热替换成功路径只覆盖 load_save（局内 reset 已删）。"""
+    from tests.conftest import stub_audience_translate
+
+    stub_audience_translate(monkeypatch)
     db_path = tmp_path / "ming.db"
     monkeypatch.setenv("MING_SIM_DB", str(db_path))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     runtime = web_app.WebGame(fresh=True)
+    close_calls = []
+    real_close = runtime.session.close
+
+    def observed_close(**kwargs):
+        close_calls.append(kwargs)
+        return real_close(**kwargs)
+
+    runtime.session.close = observed_close
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
     runtime.favorites = {saved_marker}
     runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
-    from ming_sim import audience_extraction
-    from tests.test_audience_extraction_501 import (
-        _minister,
-        _open_night_with_persisted_reply,
-    )
-
-    _open_night_with_persisted_reply(
-        runtime.db, runtime.state, _minister(runtime.db, runtime.content),
-    )
-    assert runtime.db.list_unextracted_replies()
-    monkeypatch.setattr(
-        audience_extraction, "extract_story_facts", lambda *_a, **_k: [],
-    )
     runtime.save_to("before")
     runtime.favorites = {live_marker}
     runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
@@ -1205,10 +1203,9 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     assert write.status_code == 200
     favorites = write.json()["favorites"]
     assert write_minister in favorites
+    assert close_calls == [{"write_gate_already_held": True}]
     assert saved_marker in favorites
     assert live_marker not in favorites
-    runtime._runtime_write_queue().barrier(lambda: None)
-    assert runtime.db.list_unextracted_replies() == []
     runtime.session.close()
 
 

@@ -158,7 +158,7 @@ def test_rollback_purges_content_character_ghost(game, monkeypatch):
     new_name = "赵无忌"
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name="王承恩",
-        payload={"name": new_name, "office": "兵部右侍郎"})
+        payload={"text": "测试任免原文", "name": new_name, "office": "兵部右侍郎"})
 
     # commit_pending_actions 之后的步骤抛错 → 回滚
     def _boom(*a, **k):
@@ -252,7 +252,7 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
 
     db.stage_pending_action(
         state.turn, kind="office", action="罢免", minister_name="王承恩",
-        payload={"name": name})
+        payload={"text": "测试任免原文", "name": name})
 
     def _boom(*a, **k):
         raise RuntimeError("post-commit step crash")

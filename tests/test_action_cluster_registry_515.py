@@ -37,6 +37,8 @@ from ming_sim.action_clusters import (
 )
 
 # 测试本地固定期望（#515 六类）；非生产常量——删 catalog 行仍红，未来新类不改此集。
+from tests.conftest import stub_audience_translate, stub_scene_agent
+
 _EXPECTED_MIGRATED_KINDS = frozenset({
     "none", "confirmation", "secret", "cultivate", "appointment", "draft",
 })
@@ -312,7 +314,7 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
     pid = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=minister.name, target_id=None,
-        payload={"name": "某人", "office": "某职", "appointer": minister.name},
+        payload={"text": "测试任免原文", "name": "某人", "office": "某职", "appointer": minister.name},
     )
     _silence_serial(monkeypatch)
     monkeypatch.setattr(
@@ -663,7 +665,7 @@ def test_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):
     sess.state = state
     sess.content = content
     sess.registry = SimpleNamespace(
-        get=lambda character: FakeAgent(),
+        get=lambda character, **_kw: FakeAgent(),
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
     sess.temporary_characters = {}
@@ -777,7 +779,7 @@ def test_real_chat_bidirectional_barrier_parallel_required(
     sess.state = state
     sess.content = content
     sess.registry = SimpleNamespace(
-        get=lambda character: FakeAgent(),
+        get=lambda character, **_kw: FakeAgent(),
     )
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}
@@ -882,7 +884,7 @@ def test_real_chat_poisoned_classifier_zero_writes(
     sess.db = db
     sess.state = state
     sess.content = content
-    sess.registry = SimpleNamespace(get=lambda c: FakeAgent())
+    sess.registry = SimpleNamespace(get=lambda c, **_kw: FakeAgent())
     sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
     sess.temporary_characters = {}
     sess._retrieve_memories_for_message = lambda message: message
@@ -899,25 +901,36 @@ def test_real_chat_poisoned_classifier_zero_writes(
 # ── 撤回：WebGame.chat + undo_last_chat 生产入口 ─────────────────────
 
 
-def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
-    """真实 WebGame 生命周期方法 + 真 GameSession 分类/apply 路径。"""
+def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None) -> WebGame:
+    """真实 WebGame 生命周期方法 + 真 GameSession scene_chat / 转译路径。"""
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
     sess.content = content
     sess.registry = SimpleNamespace(
-        get=lambda character: agent,
+        get=lambda character, **_kw: agent,
         session_ids={},
     )
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
+    sess.llm_config = SimpleNamespace(
+        channel="cli", cli_runner="codex", base_url="", model="test", api_key="",
+    )
     sess.temporary_characters = set()
     sess.previous_summary = ""
     sess.last_decree = ""
     sess.agno_db = None
+    sess._beat_generator = None
+    # 大臣级 Web 入口恢复 start_chat_turn_scene；离线 registry 禁 None 崩。
+    from tests.conftest import _OfflineSceneRegistry
+    sess._scene_registry = _OfflineSceneRegistry()
     sess._retrieve_memories_for_message = lambda message: message
-    # bind production methods used by WebGame.chat / undo_last_chat
+    stub_audience_translate(monkeypatch, translate_fn)
+    # bind production methods used by WebGame.chat / undo_last_chat / scene_chat
     for name in (
-        "chat", "_start_cli_action_intent", "_finish_cli_action_intent",
+        "chat", "scene_chat", "_apply_scene_turn_translation",
+        "start_chat_turn_scene", "join_chat_turn_scene",
+        "persist_chat_turn_scene", "abandon_chat_turn_scene",
+        "schedule_pending_scene_translation",
+        "_start_cli_action_intent", "_finish_cli_action_intent",
         "_confirmation_intent_for_preexisting_pending",
         "_cli_backend_fallback_actions", "apply_cli_conversation_actions",
         "_character", "pending_count", "note_chat_rollback",
@@ -925,31 +938,60 @@ def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
         "_stage_appointment_candidate",
         "_merge_staged_new_secret_order_content",
         "admit_audience", "consume_audience_admission", "can_summon",
+        "_recognize_audience_command_verdict",
+        "close_night_after_chat_if_needed",
     ):
         if hasattr(GameSession, name):
             setattr(sess, name, types.MethodType(getattr(GameSession, name), sess))
     # undo 后 registry 重建需要完整 Agno 环境；本 tracer 只验 pending 前像，跳过 registry 重建。
     sess.refresh_runtime_after_chat_rollback = lambda: None
     sess.note_chat_rollback = lambda **kw: None
+    # 本区只验转译交办水位；禁 CLI 拟旨前缀双 stage（与 translate_fn 抢 pending）。
+    sess._cli_backend_fallback_actions = lambda *a, **k: None
+    sess.apply_cli_conversation_actions = lambda *a, **k: {
+        "directive": None, "secret_order_id": None, "pending_action_id": 0,
+    }
 
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
+    # scene_chat 用 create_scene_agent；挡真实 LLM，回放 agent 正文。
+    class _SceneShim:
+        def run(self, *_a, **_k):
+            out = agent.run() if hasattr(agent, "run") else SimpleNamespace(content=getattr(agent, "content", ""), tools=[])
+            return out
+    monkeypatch.setattr(session_mod, "create_scene_agent", lambda *a, **k: _SceneShim())
+    import ming_sim.materials as materials_mod
+    monkeypatch.setattr(
+        materials_mod, "prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="", materials_dir="."),
+    )
+    # session.scene_chat 从 ming_sim.materials 名绑定导入；同步补 session 模块属性。
+    monkeypatch.setattr(
+        session_mod, "prepare_scene_materials",
+        lambda *a, **k: SimpleNamespace(opening="", materials_dir="."),
+        raising=False,
+    )
 
     wg = WebGame.__new__(WebGame)
     wg.session = sess
+    # db/state/content 是 WebGame 从 session 投影的 property，不直写。
     wg.chat_history = {name: [] for name in content.characters}
-    wg._write_gate = threading.Lock()
     from ming_sim.session_write_queue import SessionWriteQueue
     wg._write_queue = SessionWriteQueue()
     wg._write_gate = wg._write_queue.write_gate
+    # 与生产同形：session 与 WebGame 共用 queue gate，转译与 chat atomic 同闸。
+    sess._write_gate = wg._write_gate
+    sess._write_queue = wg._write_queue
     wg._runtime_write_queue = lambda: wg._write_queue  # type: ignore
+    wg._runtime_write_gate = lambda: wg._write_gate  # type: ignore
+    wg._ticketed_write_gate = lambda ticket=None: wg._write_gate  # type: ignore
     wg._mark_pending_write = lambda key=None: wg._write_queue.claim(key=key or ("pending",))  # type: ignore
     wg._complete_pending_write = lambda ticket=None: wg._write_queue.complete(ticket)  # type: ignore
     wg.favorites = set()
     wg.suggestions_for = lambda _c: []
     # trail helpers no-op (avoid mindreading/extraction noise)
     wg._spawn_pending_write_thread = lambda *a, **k: None
-    wg._spawn_extraction_trail = lambda *a, **k: None
     wg._trail_mindreading_after_reply = lambda *a, **k: None
+    wg._trail_highlight_judge_after_reply = lambda *a, **k: []
     return wg
 
 
@@ -968,16 +1010,22 @@ class _SyncAgent:
 def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
     db, state, content = game
     minister = _active_ch(db, content)
-    monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: [{"kind": "draft"}])
     _silence_serial(monkeypatch)
-    agent = _SyncAgent("着户部发银三万两赈陕西。")
-    wg = _wire_web_game(db, state, content, agent, monkeypatch)
+    draft_text = "着户部发银三万两赈陕西。"
+    agent = _SyncAgent(draft_text)
+
+    def translate_fn(prompt, llm_config):
+        return {"commissions": [{"text": draft_text}], "promises": []}
+
+    wg = _wire_web_game(db, state, content, agent, monkeypatch, translate_fn=translate_fn)
 
     before = _count_pending(db, state.turn)
     payload = wg.chat(minister.name, "拟一道旨赈陕西。")
-    assert payload.get("pending_action_id") or any(
+    wg._runtime_write_queue().barrier(lambda: None)
+    assert payload.get("answer")
+    assert any(
         p["kind"] == "directive" for p in db.list_pending_actions(int(state.turn))
-    )
+    ), db.list_pending_actions(int(state.turn))
     assert _count_pending(db, state.turn) == before + 1
     assert wg.can_undo_last_chat(minister.name)
 
@@ -989,6 +1037,7 @@ def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkeypatch):
+    """scene_chat + 转译：第二轮新交办后撤回，第一轮 pending 前像必须仍在（ADR 0038）。"""
     db, state, content = game
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
@@ -996,49 +1045,59 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
     updated = "着户部发银五十万两赈陕西（改）。"
     phase = {"n": 0}
 
-    def fake_classify(*a, **k):
-        return [{"kind": "draft"}]
-
-    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
-
     class PhaseAgent:
         def run(self, *_a, **_k):
             phase["n"] += 1
             text = original if phase["n"] == 1 else updated
             return SimpleNamespace(content=text, tools=[])
 
-    wg = _wire_web_game(db, state, content, PhaseAgent(), monkeypatch)
+    def translate_fn(prompt, llm_config):
+        # 每轮各声明一条新交办（不改写既有行），使撤回第二轮只逆转第二轮产物。
+        if "【本轮皇帝】把赈银改成五十万两" in prompt or "五十万两" in prompt and "改成" in prompt:
+            return {"commissions": [{"text": updated}], "promises": []}
+        return {"commissions": [{"text": original}], "promises": []}
+
+    wg = _wire_web_game(
+        db, state, content, PhaseAgent(), monkeypatch, translate_fn=translate_fn,
+    )
 
     wg.chat(minister.name, "拟一道旨赈陕西。")
+    wg._runtime_write_queue().barrier(lambda: None)
     rows = [
-        p for p in db.list_pending_actions(int(state.turn), minister_name=minister.name)
-        if p["kind"] == "directive"
+        p for p in db.list_pending_actions(int(state.turn))
+        if p["kind"] == "directive" and p.get("status") == "pending"
     ]
-    assert len(rows) == 1
+    assert len(rows) == 1, rows
     pid = int(rows[0]["id"])
     original_text = json.loads(rows[0]["payload_json"])["text"]
+    assert original_text == original
 
-    def fake_draft(player_message, reply, **kwargs):
-        cands = kwargs.get("existing_candidates") or []
-        tid = str(cands[-1]["id"]) if cands else ""
-        return {"draft_action": "拟旨", "draft_text": updated, "target_candidate": tid}
-
-    monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
     wg.chat(minister.name, "把赈银改成五十万两。")
-    mid = json.loads(
-        db.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?", (pid,),
-        ).fetchone()["payload_json"]
-    )["text"]
-    assert "五十万" in mid
+    wg._runtime_write_queue().barrier(lambda: None)
+    after = [
+        p for p in db.list_pending_actions(int(state.turn))
+        if p["kind"] == "directive" and p.get("status") == "pending"
+    ]
+    assert len(after) == 2, after
+    assert any(int(p["id"]) == pid for p in after)
 
     wg.undo_last_chat(minister.name)
-    restored = json.loads(
-        db.conn.execute(
-            "SELECT payload_json FROM pending_actions WHERE id=?", (pid,),
-        ).fetchone()["payload_json"]
-    )["text"]
+    # ADR 0038：撤第二轮须留下第一轮前像——pid 行必须仍 pending 且正文不变。
+    restored_row = db.conn.execute(
+        "SELECT payload_json, status FROM pending_actions WHERE id=?",
+        (pid,),
+    ).fetchone()
+    assert restored_row is not None, "第一轮 pending 被误删"
+    assert str(restored_row["status"] or "") == "pending"
+    restored = json.loads(restored_row["payload_json"])["text"]
     assert restored == original_text
+    # 第二轮产物须随撤回消失
+    remaining = [
+        p for p in db.list_pending_actions(int(state.turn))
+        if p["kind"] == "directive" and p.get("status") == "pending"
+    ]
+    assert len(remaining) == 1
+    assert int(remaining[0]["id"]) == pid
 
 
 # ── #1744：分类粒度 / draft 共存边界 → chat → HTTP 可见 ──
@@ -1118,14 +1177,10 @@ def _bind_draft_extract_1744(monkeypatch, *, minister_name: str):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch):
-    """#1744 运输+可见闭环：probe-shaped raw → classify 归一 → chat → GET 恰一 ordinary。
-
-    合并原独立 classify tracer 与 chat tracer；fixture 不冒称 live LLM。
-    """
+    """#1744/#1842：classify 归一仍可单测；Web 殿上 chat 经 scene_chat 转译落一条 directive 可见。"""
     db, state, content = game
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
-    _bind_draft_extract_1744(monkeypatch, minister_name=minister.name)
 
     def _scripted(prompt, llm_config=None, tag=""):
         assert tag == "action_intent"
@@ -1133,7 +1188,7 @@ def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch
         return (json.dumps(_PROBE_RAW_DRAFT_1744, ensure_ascii=False), 0)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
-    # 入口归一契约：raw 中文键 → 单 draft（与 chat 共用同一 scripted backend）
+    # 入口归一契约：raw 中文键 → 单 draft（分类器仍供 CLI；Web 殿上已退役）
     got = cb.classify_cli_action_intent(_EMPEROR_1744)
     assert [c.get("kind") for c in got] == ["draft"]
     assert got[0].get("mode") == "ordinary"
@@ -1141,210 +1196,70 @@ def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch
     assert got[0].get("target_kind") == "policy"
     assert "太仓出纳" in str(got[0].get("target_id") or "")
 
+    def translate_fn(prompt, llm_config):
+        return {"commissions": [{"text": _REPLY_1744}], "promises": []}
+
     wg = _wire_web_game(
         db, state, content, _SyncAgent(_REPLY_1744), monkeypatch,
+        translate_fn=translate_fn,
     )
     before = {
         int(r["id"])
-        for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
+        for r in db.list_pending_actions(int(state.turn))
     }
     wg.chat(minister.name, _EMPEROR_1744)
+    wg._runtime_write_queue().barrier(lambda: None)
     rows = _pending_directives_via_api(monkeypatch, wg, minister_name=minister.name)
-    new_rows = [r for r in rows if int(r["id"]) not in before]
-    assert len(new_rows) == 1
-    payload = json.loads(new_rows[0].get("payload_json") or "{}")
-    assert payload.get("mode") == "ordinary"
-    assert payload.get("dossier_action_type") == "policy"
-    assert "太仓出纳" in str(payload.get("target_id") or "") or (
-        _DRAFT_TARGET_1744 in str(payload.get("target_id") or "")
-    )
+    # API 可能按 minister 过滤；转译 actor 未必是 minister——改查全库新 directive
+    all_new = [
+        r for r in db.list_pending_actions(int(state.turn))
+        if int(r["id"]) not in before and r.get("kind") == "directive"
+    ]
+    assert len(all_new) == 1, all_new
+    payload = json.loads(all_new[0].get("payload_json") or "{}")
+    assert _REPLY_1744 in str(payload.get("text") or "")
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_draft_plus_independent_titleless_assignment_both_stage(game, monkeypatch):
-    """空 title 不是意图身份：draft + 独立无 title assignment（不同 target）须两行。"""
+def test_scene_chat_translation_can_stage_multiple_commissions(game, monkeypatch):
+    """#1842：Web scene_chat 转译一次可落多条 commission → pending 可见（替代旧分类器 batch 网测）。"""
     db, state, content = game
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
-    _bind_draft_extract_1744(monkeypatch, minister_name=minister.name)
+
+    def translate_fn(prompt, llm_config):
+        return {
+            "commissions": [
+                {"text": "着清核太仓出纳"},
+                {"text": "着陕西巡抚督办赈灾"},
+            ],
+            "promises": [],
+        }
+
+    wg = _wire_web_game(
+        db, state, content,
+        _SyncAgent("臣请清核太仓，并请陕西巡抚督办赈灾。"),
+        monkeypatch,
+        translate_fn=translate_fn,
+    )
+    before = {int(r["id"]) for r in db.list_pending_actions(int(state.turn))}
+    wg.chat(minister.name, "清核太仓，另着陕西巡抚督办赈灾。")
+    wg._runtime_write_queue().barrier(lambda: None)
+    new_dirs = [
+        r for r in db.list_pending_actions(int(state.turn))
+        if int(r["id"]) not in before and r.get("kind") == "directive" and r.get("status") == "pending"
+    ]
+    assert len(new_dirs) == 2, new_dirs
+    texts = [json.loads(r["payload_json"]).get("text", "") for r in new_dirs]
+    assert any("太仓" in t for t in texts)
+    assert any("陕西" in t for t in texts)
+
+
+def test_classifier_batch_identity_still_normalizes_without_web_chat():
+    """#1744 分类器 batch 身份归一仍在 CLI 分类器缝（不经已退役的 Web 殿上旧链）。"""
     scripted = candidates_from_classifier_payload([
         {"kind": "draft"},
         {"kind": "assignment", "title": "", "target_id": "陕西赈灾"},
     ], soft=False)
-    monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: scripted)
-    wg = _wire_web_game(
-        db, state, content, _SyncAgent(_REPLY_1744 + "\n另请陕西巡抚督办赈灾。"), monkeypatch,
-    )
-    before = {
-        int(r["id"])
-        for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
-    }
-    wg.chat(minister.name, f"{_EMPEROR_1744} 另着陕西巡抚督办赈灾。")
-    rows = _pending_directives_via_api(monkeypatch, wg, minister_name=minister.name)
-    new_rows = [r for r in rows if int(r["id"]) not in before]
-    assert len(new_rows) == 2
-    by_type = {
-        str(json.loads(r.get("payload_json") or "{}").get("dossier_action_type") or ""):
-        json.loads(r.get("payload_json") or "{}")
-        for r in new_rows
-    }
-    assert set(by_type) == {"policy", "assignment"}
-    assert _DRAFT_TARGET_1744 in str(by_type["policy"].get("target_id") or "")
-    assert by_type["policy"].get("mode") == "ordinary"
-    assert str(by_type["assignment"].get("target_id") or "") == "陕西赈灾"
-    assert by_type["assignment"].get("mode") == "ordinary"
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-@pytest.mark.parametrize(
-    "assignment_first",
-    [True, False],
-    ids=["assignment_then_draft", "draft_then_assignment"],
-)
-def test_draft_plus_digit_target_candidate_updates_existing(
-    game, monkeypatch, assignment_first,
-):
-    """draft 共存边界：batch 含 draft 时 digit target_candidate 仍原地更新既有 assignment。
-
-    相对 520 beat8（无 draft 的多事项续办/加第四）的独有价值：draft 与 assignment
-    同批时的顺序边界与 digit 续办。参数化 fresh game，各序独立初始态，不在同库循环。
-    """
-    from ming_sim.action_materialize import stage_assignment_candidate
-
-    db, state, content = game
-    minister = _active_ch(db, content)
-    _silence_serial(monkeypatch)
-    old_id = stage_assignment_candidate(
-        db, state.turn, minister.name,
-        text="旧交办正文", title="旧交办", target_id="旧锚",
-    )
-    assert old_id > 0
-    before_text = json.loads(
-        next(
-            r for r in db.list_pending_actions(state.turn, minister_name=minister.name)
-            if int(r["id"]) == old_id
-        )["payload_json"]
-    ).get("text")
-
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "拟旨",
-        "draft_text": "新拟旨正文清核太仓",
-        "target_candidate": "新",
-        "dossier_action_type": "policy",
-        "target_kind": "policy",
-        "target_id": _DRAFT_TARGET_1744,
-        "mode": "ordinary",
-        "locality_scope": "national",
-        "participant_roster": [{
-            "character_id": minister.name,
-            "tier": "主办",
-            "role": "督办",
-            "delegator_id": None,
-        }],
-    })
-    reinforce = "臣请强化旧交办：限半月清核完报。并另拟清核太仓旨。"
-    draft_c = candidates_from_classifier_payload({"kind": "draft"}, soft=False)[0]
-    assign_c = candidates_from_classifier_payload({
-        "kind": "assignment",
-        "title": "",
-        "target_id": "旧锚",
-        "target_candidate": str(old_id),
-    }, soft=False)[0]
-    ordered = [assign_c, draft_c] if assignment_first else [draft_c, assign_c]
-    monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: ordered)
-    wg = _wire_web_game(
-        db, state, content, _SyncAgent(reinforce), monkeypatch,
-    )
-    before_ids = {
-        int(r["id"])
-        for r in db.list_pending_actions(state.turn, minister_name=minister.name)
-    }
-    wg.chat(minister.name, "拟一道旨清核太仓，并强化先前交办。")
-    rows = list(db.list_pending_actions(state.turn, minister_name=minister.name))
-    by_id = {int(r["id"]): r for r in rows if r.get("status") == "pending"}
-    assert old_id in by_id
-    updated = json.loads(by_id[old_id]["payload_json"])
-    assert updated.get("dossier_action_type") == "assignment"
-    assert str(updated.get("target_id") or "") == "旧锚"
-    assert str(updated.get("text") or "") != str(before_text or "")
-    new_dirs = [
-        r for r in rows
-        if int(r["id"]) not in before_ids
-        and r.get("kind") == "directive"
-        and r.get("status") == "pending"
-    ]
-    assert len(new_dirs) == 1
-    draft_payload = json.loads(new_dirs[0]["payload_json"])
-    assert draft_payload.get("dossier_action_type") == "policy"
-    assert _DRAFT_TARGET_1744 in str(draft_payload.get("target_id") or "")
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_draft_xiexang_promoted_plus_independent_titleless_assignment(game, monkeypatch):
-    """独立事项反向：draft 协饷改写 kind 后，*不同 target* 的 titleless assignment 仍成条。
-
-    这不是线上 T2 协饷同旨阴影案形；同旨双落风险见回执一次性 classify→物化探针，
-    不在此永久测里冒称已消失。
-    """
-    db, state, content = game
-    minister = _active_ch(db, content)
-    _silence_serial(monkeypatch)
-    # draft+协饷 → grant_allocation；assignment 目标独立
-    scripted = candidates_from_classifier_payload([
-        {
-            "kind": "draft",
-            "grant_action": "协饷",
-            "purpose": "补饷",
-            "target_kind": "army",
-            "target_id": "guanning",
-            "account": "太仓",
-            "amount": 10000,
-        },
-        {"kind": "assignment", "title": "", "target_id": "陕西赈灾"},
-    ], soft=False)
-    monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: scripted)
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "拟旨",
-        "draft_text": "着拨关宁军饷。",
-        "target_candidate": "",
-        "grant_action": "协饷",
-        "purpose": "补饷",
-        "target_kind": "army",
-        "target_id": "guanning",
-        "account": "太仓",
-        "amount": 10000,
-        "mode": "ordinary",
-        # #1778：交办后置抽取同缝须有主办
-        "assignee": minister.name,
-        "participant_roster": [{
-            "character_id": minister.name, "tier": "主办",
-            "role": "", "delegator_id": None,
-        }],
-    })
-    wg = _wire_web_game(
-        db, state, content,
-        _SyncAgent("臣请拨关宁军饷，另请陕西巡抚督办赈灾。"), monkeypatch,
-    )
-    before = {
-        int(r["id"])
-        for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
-    }
-    wg.chat(minister.name, "拟旨拨关宁军饷一万两，另着陕西巡抚督办赈灾。")
-    dirs = [
-        r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
-        if int(r["id"]) not in before
-        and r.get("status") == "pending"
-        and r.get("kind") == "directive"
-    ]
-    assert len(dirs) == 2
-    payloads = [json.loads(r.get("payload_json") or "{}") for r in dirs]
-    types = [str(p.get("dossier_action_type") or "") for p in payloads]
-    assert sorted(types) == ["assignment", "grant_allocation"]
-    grant = next(p for p in payloads if p.get("dossier_action_type") == "grant_allocation")
-    assign = next(p for p in payloads if p.get("dossier_action_type") == "assignment")
-    assert grant.get("grant_action") == "协饷"
-    assert str(grant.get("target_id") or "") == "guanning"
-    assert int(grant.get("amount") or 0) == 10000
-    assert grant.get("mode") == "ordinary"
-    assert str(assign.get("target_id") or "") == "陕西赈灾"
-    assert assign.get("mode") == "ordinary"
+    kinds = [c.get("kind") for c in scripted]
+    assert "draft" in kinds and "assignment" in kinds

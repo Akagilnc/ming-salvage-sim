@@ -24,6 +24,7 @@ from tests.test_month_loop_tracer_1468 import (
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 from tests.wait_utils import wait_until
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _campaign(game) -> str:
@@ -110,20 +111,52 @@ def _wait_spawns(spawns: list, start: int) -> None:
         assert c.close_ok is True
 
 
-def _install_canned_minister_factory(monkeypatch) -> None:
-    """外层模型工厂缝：create_minister_agent → canned；保留真实 registry/session。"""
-    import ming_sim.registry as reg
+def _canned_scene_agent():
+    """scene_chat 双桩体：非流式 run() 回 content；stream=True 时返回事件迭代器。"""
 
     class _A:
         def run(self, *_a, **_k):
             t = "canned-minister-reply"
-            yield SimpleNamespace(content=t, event="RunContent", tool=None, tools=[])
-            yield SimpleNamespace(
+            completed = SimpleNamespace(
                 content=t, event="RunCompleted", tool=None, tools=[],
                 status=None, messages=[],
             )
+            # 流式 transport 调 agent.run(..., stream=True) 并迭代返回值。
+            # 不可在本方法里用 yield（否则非流式也变成 generator）。
+            if _k.get("stream"):
+                return iter((
+                    SimpleNamespace(
+                        content=t, event="RunContent", tool=None, tools=[],
+                    ),
+                    completed,
+                ))
+            return completed
 
-    monkeypatch.setattr(reg, "create_minister_agent", lambda *a, **k: _A())
+    return _A()
+
+
+def _install_canned_minister_factory(monkeypatch) -> None:
+    """外层模型工厂缝：create_minister_agent → canned（密令/旧 registry 路兜底）。"""
+    import ming_sim.registry as reg
+
+    monkeypatch.setattr(reg, "create_minister_agent", lambda *a, **k: _canned_scene_agent())
+
+
+def _empty_translate_fn(_prompt, _cfg):
+    """离线转译缝：空声明，禁打真模型。"""
+    return {
+        "commissions": [],
+        "promises": [],
+        "edge_events": [],
+        "secret_orders": [],
+        "appointment_commissions": [],
+    }
+
+
+def _install_canned_scene_double(game, monkeypatch) -> None:
+    """#1842：殿上 stream 走 scene_chat；经 create_scene_agent / translate runner 缝注入。"""
+    stub_scene_agent(monkeypatch, _canned_scene_agent())
+    stub_audience_translate(monkeypatch, _empty_translate_fn)
 
 
 def _directive(client: TestClient, text: str) -> None:
@@ -181,8 +214,11 @@ def _assert_chat_persisted(snap: dict, *, chat_turn_id: int, night_id: int,
     assert night_id in snap["night_ids"]
 
 
-def _write_and_verify_live(client: TestClient, game, *, label: str) -> dict:
+def _write_and_verify_live(
+    client: TestClient, game, monkeypatch, *, label: str,
+) -> dict:
     """经真实 directives + chat/stream 写入，独立 DB 核对 campaign/回话终态。"""
+    _install_canned_scene_double(game, monkeypatch)
     d_text = f"着户部清核辽饷（{label}）。"
     _directive(client, d_text)
     _wait_pending_writes(game)
@@ -226,7 +262,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     g0 = web_app.web_game
     assert g0 is not None
     p0 = g0.db_path
-    seed_rec = _write_and_verify_live(client, g0, label="seed")
+    seed_rec = _write_and_verify_live(client, g0, monkeypatch, label="seed")
     c0 = seed_rec["campaign_id"]
     d0_count = _db_snapshot(p0)["directives"]
 
@@ -239,7 +275,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     assert g1 is not None and g1 is not g0
     p1 = g1.db_path
     assert p1 != p0
-    rec1 = _write_and_verify_live(client, g1, label="direct-new")
+    rec1 = _write_and_verify_live(client, g1, monkeypatch, label="direct-new")
     c1 = rec1["campaign_id"]
     assert c1 and c1 != c0
     new_snap = _db_snapshot(p1)
@@ -290,7 +326,7 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     assert ng2.status_code == 200
     g2 = web_app.web_game
     assert g2 is not None and g2 is not g1
-    rec2 = _write_and_verify_live(client, g2, label="exit-new")
+    rec2 = _write_and_verify_live(client, g2, monkeypatch, label="exit-new")
     c2 = rec2["campaign_id"]
     assert c2 != c1
 

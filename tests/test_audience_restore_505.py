@@ -243,6 +243,17 @@ class _RetrySession:
         assert chat_turn_id != 0
         return ChatTurnResult(answer="臣重奏：剿为先。")
 
+    # #1842：殿上重试入口走 scene_chat；替身委托既有 chat 同 ChatTurnResult。
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        return self.chat(
+            minister_name or self._minister, message, chat_turn_id=chat_turn_id,
+        )
+
+    def schedule_pending_scene_translation(self, result):
+        # #1842：WebGame persist 尾必调；轻壳无 pending 时与生产同形 no-op。
+        from ming_sim.session import GameSession
+        return GameSession.schedule_pending_scene_translation(self, result)
+
     # #542 scene lifecycle seams：retry 入口会 start/join/persist/abandon；替身 no-op。
     # #1566：场外密令重试不得启殿上 scene——外可见靠 scroll 无 entrance，不记 spy。
     def start_chat_turn_scene(self, *_a, **_k):
@@ -283,7 +294,6 @@ def _retry_runtime(db, state, minister, *, session=None):
     rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))  # type: ignore
     rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)  # type: ignore
     rt._spawn_pending_write_thread = lambda *a, **k: False
-    rt._spawn_extraction_trail = lambda *a, **k: None
     return rt
 
 
@@ -343,6 +353,11 @@ class _FailingRetrySession(_RetrySession):
         )
         self.db.conn.commit()
         raise RuntimeError("重试 LLM 失败")
+
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        return self.chat(
+            minister_name or self._minister, message, chat_turn_id=chat_turn_id,
+        )
 
 
 def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
@@ -1304,7 +1319,11 @@ def test_web_retry_ordinary_offsite_court_break_skips_hall_scene(game):
         assert message == question
         return ChatTurnResult(answer="臣领旨。", court_action="court_break")
 
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        return _chat(minister_name or remote.name, message, chat_turn_id=chat_turn_id)
+
     session.chat = _chat  # type: ignore[method-assign]
+    session.scene_chat = _scene_chat  # type: ignore[method-assign]
     session.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
         AssertionError("ordinary offsite retry must not start_chat_turn_scene")
     )
@@ -1372,13 +1391,16 @@ def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
     sess.temporary_characters = set()
     sess.registry = None
 
-    def _chat(minister_name, message, *, chat_turn_id=0, explicit_secret_order=False):
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         assert chat_turn_id == ct
-        assert explicit_secret_order is False
         assert message == question
+        assert minister_name == remote.name
         return ChatTurnResult(answer="臣领旨。", court_action="court_break")
 
-    sess.chat = _chat  # type: ignore[method-assign]
+    sess.scene_chat = _scene_chat  # type: ignore[method-assign]
+    sess.chat = lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("ordinary offsite retry must use scene_chat, not chat")
+    )
     sess.start_chat_turn_scene = lambda *_a, **_k: (_ for _ in ()).throw(
         AssertionError("ordinary offsite retry must not start_chat_turn_scene")
     )
@@ -1388,22 +1410,21 @@ def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
     sess.close_night_after_chat_if_needed = GameSession.close_night_after_chat_if_needed.__get__(
         sess, GameSession,
     )
-    monkeypatch.setattr(term, "_dispatch_relation_judge_cli", lambda *_a, **_k: None)
-
-    def _trail(_session, _name, _reply, chat_turn_id):
-        db.conn.execute(
-            "UPDATE chat_turns SET extract_status='done' WHERE id=?",
-            (int(chat_turn_id),),
-        )
-        db.conn.commit()
-
-    monkeypatch.setattr(term, "_trail_extraction_after_reply_cli", _trail)
+    # #1842：CLI 重试不再跑 trail/judge；收夜前标转译水位以免假 pending。
+    db.conn.execute(
+        "UPDATE chat_turns SET extract_status='done', mindreading_status='skip' WHERE id=?",
+        (ct,),
+    )
+    db.conn.commit()
 
     term._retry_interrupted_reply_cli(sess, remote.name)
 
+    # #1842：CLI retry 前台先返回；后台 schedule 封夜后再断言 CLOSED。
+    from tests.wait_utils import wait_until
+
+    wait_until(lambda: an.get_open_night(db) is None)
     night_row = an.get_night(db, night_id)
     assert night_row is not None and night_row["status"] == an.NIGHT_STATUS_CLOSED
-    assert an.get_open_night(db) is None
     assert set(an.persons_present_tonight(db, night_id)) == present_before
     assert set(an.persons_entered_tonight(db, night_id)) == entered_before
     assert remote.name not in an.persons_present_tonight(db, night_id)

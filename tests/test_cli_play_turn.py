@@ -20,6 +20,11 @@ from ming_sim.session import GameSession, TurnPhase
 from ming_sim import audience_night as an
 
 
+def _cli_schedule_pending_noop(self, result):
+    """#1842：CLI persist 尾必调 schedule_pending_scene_translation；轻壳无 pending 时 no-op。"""
+    return None
+
+
 @contextmanager
 def _noop_atomic(_db):
     yield
@@ -110,8 +115,7 @@ def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
 def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatch):
     """#407: CLI terminal 召对也要落 chat_messages。
 
-    密令短确认依赖 session.chat 内部读取本回合前文；因此 user 行必须在调用
-    session.chat 前已落库，minister 行在回话后补上。
+    #1842：殿上走 scene_chat；user 行必须在调用前已落库，minister 行在回话后补上。
     """
 
     class Db:
@@ -129,7 +133,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
+        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             assert self.db.messages == [
                 ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。")
             ]
@@ -142,6 +146,9 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
                 court_action="",
                 next_minister="",
             )
+
+        def schedule_pending_scene_translation(self, result):
+            return _cli_schedule_pending_noop(self, result)
 
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -181,12 +188,15 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
+        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             assert self.db.messages == [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
                 ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
             ]
             raise RuntimeError("LLM down")
+
+        def schedule_pending_scene_translation(self, result):
+            return _cli_schedule_pending_noop(self, result)
 
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -227,12 +237,15 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
+        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             assert self.db.messages == [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
                 ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
             ]
             raise KeyboardInterrupt()
+
+        def schedule_pending_scene_translation(self, result):
+            return _cli_schedule_pending_noop(self, result)
 
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -247,7 +260,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
 
 
 def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeypatch):
-    """回滚删除失败不能盖掉原始 session.chat 异常。"""
+    """回滚删除失败不能盖掉原始 scene_chat/chat 异常。"""
 
     class Db:
         def append_chat_message(self, minister_name, turn, role, content):
@@ -263,8 +276,11 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
+        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             raise RuntimeError("LLM down")
+
+        def schedule_pending_scene_translation(self, result):
+            return _cli_schedule_pending_noop(self, result)
 
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -297,7 +313,7 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
             self.temporary_characters = set()
 
-        def chat(self, minister_name, question, *, chat_turn_id=0, explicit_secret_order=False):
+        def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
             return SimpleNamespace(
                 answer="臣领密旨，当令东厂暗中护送赈银。",
                 proposed_directive=None,
@@ -307,6 +323,9 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
                 court_action="",
                 next_minister="",
             )
+
+        def schedule_pending_scene_translation(self, result):
+            return _cli_schedule_pending_noop(self, result)
 
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -343,7 +362,7 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     received_chat_turn_ids = []
 
-    def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
+    def scene_chat(_question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         assert chat_turn_id > 0
         received_chat_turn_ids.append(chat_turn_id)
         db.persist_return_report(
@@ -364,13 +383,15 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
         state=state,
         content=content,
         temporary_characters=set(),
-        chat=chat,
+        scene_chat=scene_chat,
         # #542 scene lifecycle seams — CLI minister_chat start/join/persist/abandon.
         start_chat_turn_scene=lambda *_a, **_k: None,
         start_chat_turn_exit_scene=lambda *_a, **_k: None,
         join_chat_turn_scene=lambda *_a, **_k: [],
         persist_chat_turn_scene=lambda *_a, **_k: None,
         abandon_chat_turn_scene=lambda *_a, **_k: None,
+        # #1842：persist 尾必调；本测在落大臣行前失败，仍须绑契约防 AttributeError。
+        schedule_pending_scene_translation=lambda result: None,
     )
 
     with pytest.raises(RuntimeError, match="finalization write failed"):
@@ -604,29 +625,30 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
     sess.registry = SimpleNamespace(
-        get=lambda _ch: SimpleNamespace(
+        get=lambda _ch, **_kw: SimpleNamespace(
             run=lambda *_a, **_k: SimpleNamespace(content="臣遵旨。", tools=[]),
         ),
         session_ids={},
     )
-    sess._audience_prompt_for_message = lambda msg, character=None, chat_turn_id=0: msg
+    sess._audience_prompt_for_message = lambda msg, character=None, chat_turn_id=0, **_kw: msg
     sess._start_cli_action_intent = lambda *_a, **_k: None
     sess._finish_cli_action_intent = lambda *_a, **_k: None
     sess.close_night_after_chat_if_needed = types.MethodType(
         GameSession.close_night_after_chat_if_needed, sess,
     )
 
-    # 尾随抽取不入本契约；标 done 使收夜不被待补抽取挡住。
-    def _trail_done(_session, _minister, _reply, chat_turn_id):
-        db.conn.execute(
-            "UPDATE chat_turns SET extract_status='done', mindreading_status='skip' "
-            "WHERE id=?",
-            (int(chat_turn_id),),
-        )
-        db.conn.commit()
+    # #1842：殿上/场外重试走 scene_chat；标转译水位以免收夜被假 pending 挡住。
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        assert chat_turn_id == ct
+        assert message == question
+        return SimpleNamespace(answer="臣遵旨。", court_action="court_break")
 
-    monkeypatch.setattr(term, "_trail_extraction_after_reply_cli", _trail_done)
-    monkeypatch.setattr(term, "_dispatch_relation_judge_cli", lambda *_a, **_k: None)
+    sess.scene_chat = _scene_chat  # type: ignore[method-assign]
+    db.conn.execute(
+        "UPDATE chat_turns SET extract_status='done', mindreading_status='skip' WHERE id=?",
+        (ct,),
+    )
+    db.conn.commit()
 
     answers = iter(["重试回话"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
@@ -640,7 +662,10 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     assert row["minister_message_id"]
     assert str(row["route"] or "") == "offsite"
 
-    assert an.get_open_night(db) is None
+    # #1842：回话返回后后台 schedule 封夜；等外部可见 CLOSED（禁假定同步）。
+    from tests.wait_utils import wait_until
+
+    wait_until(lambda: an.get_open_night(db) is None)
     night_row = db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),
     ).fetchone()
@@ -653,11 +678,11 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
 
 def test_cli_write_gate_canonical_session_attr():
     """#1353 fold-in r8：CLI 唯一 write gate 挂 session._write_gate（禁第二锁名分叉）。"""
-    import threading
+    from ming_sim.session_write_queue import ClassifiedWriteGate
 
     session = SimpleNamespace()
     gate = term._cli_write_gate(session)
-    assert isinstance(gate, type(threading.Lock()))
+    assert isinstance(gate, ClassifiedWriteGate)
     assert getattr(session, "_write_gate", None) is gate
     # 二次调用同锁
     assert term._cli_write_gate(session) is gate

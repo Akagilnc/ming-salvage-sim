@@ -4595,12 +4595,12 @@ def _658_session(db, state, content, *, agent=None):
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
     sess._refuse_if_settling = lambda: None  # type: ignore[attr-defined]
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *_a, **_k: None
     sess._finish_cli_action_intent = lambda *_a, **_k: None
     if agent is not None:
         class _Registry:
-            def get(self, _character):
+            def get(self, _character, **_kw):
                 return agent
 
 

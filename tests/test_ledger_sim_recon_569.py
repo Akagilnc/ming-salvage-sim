@@ -245,18 +245,18 @@ def test_e_audience_brief_uses_qualitative_chinese_for_rejected(game, monkeypatc
         session.db, "get_character_knowledge",
         lambda *a, **k: {"events": [], "public_events": [], "issues": [], "world": {}},
     )
-    prompt = GameSession._audience_prompt_for_message(
-        session, "卿以为前旨如何？", minister,
-    )
-    assert _ENGLISH_LEAK.search(prompt) is None
     from ming_sim.materials import list_materials, prepare_character_materials, read_material
     prepared = prepare_character_materials(db, state, minister)
+    prompt = GameSession._audience_prompt_for_message(
+        session, "卿以为前旨如何？", minister, prepared=prepared,
+    )
+    assert _ENGLISH_LEAK.search(prompt) is None
+    # 生产接缝：材料目录走同一渲染，不得裸奔英文枚举（负向闸案，不锁中文措辞）。
     blob = "\n".join(
         read_material(prepared.root, path)
         for path in list_materials(prepared.root) if path != "INDEX.txt"
     )
-    assert "打回" in blob or "强颁" in blob
-    assert "可参考既有旨意" in blob
+    assert _ENGLISH_LEAK.search(blob) is None
 
 
 # ── F. prompt 改域 + 判决无关章节零改 ────────────────────────────────

@@ -37,6 +37,7 @@ def _shell(db, state, content):
         pending_count=lambda: 0,
         pending_decisions=lambda: [],
         victory=lambda: {"status": "ongoing", "summary": ""},
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     runtime._write_gate = threading.Lock()
     runtime._settlement_entry_lock = threading.Lock()

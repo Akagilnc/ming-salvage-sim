@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -173,18 +174,27 @@ _CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
 _CLOSE_COMMIT_KINDS_FINAL = frozenset({"consort"})
 
-# ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3）───────────────────────
-# 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**这可枚举的两项，其余结构化
+# ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3；#1839 第四类）────────
+# 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**本表可枚举项，其余结构化
 # 后果一律走 ADR 0006 待确认暂存、收夜才提交。每项映射其直写落地的真实盘面表；新增任何
-# 夜内直写必须过设计审、显式扩本表，否则撤回逆转不净。〔白名单第三项「召对口关系边事件」
-# 随 #479/ADR 0082 另片过审，不在本片。〕
-# 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3）。第三项「召对口关系边
-# 事件」随 #634/ADR 0082 落地：判官拍与收夜扫尾当场落库，边事件带源轮绑定
-# （origin chat_turn 段），撤回按轮删＋水位回退，逆转干净。
+# 夜内直写必须过设计审、显式扩本表，否则撤回逆转不净。
+#
+# ① 密令落地（应允即落地）。
+# ② 转译声明的当场实况（#1821 / ADR 0038 后出注记第四类；原「未在册人物入册」与
+#    「召对口关系边事件」并入此类）：人物生死/下狱/革职/在场、文字事实、公开说法、
+#    边事件、入册；均带源轮，撤回以前像日志逆转。交办（任免/拨帑/明发）不在此列。
 NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
     "密令落地": frozenset({"secret_orders", "secret_order_briefs"}),
-    "未在册人物入册": frozenset({"characters", "character_offices"}),
-    "召对口关系边事件": frozenset({"relation_edge_events"}),
+    "转译声明的当场实况": frozenset({
+        "characters", "character_offices",  # 入册 + 生死/下狱/革职
+        # set_character_status 的 leverage 重算副作用（#9）；前像快照已含 factions，
+        # 撤回与人物状态同逆转——不把副作用另立直写类。
+        "factions",
+        "relation_edge_events",             # 边事件（含原召对口判官路径）
+        "textual_facts",                   # 文字事实（ADR 0156）
+        "public_sayings",                  # 公开说法（ADR 0153）
+        "story_ledger_entries",            # 在场进出 / 说话人分段
+    }),
 }
 
 # 夜内结构化写可能触及、且属真实盘面（非暂存/候选层）的表全集——审计据此判越权：落在此集
@@ -193,6 +203,7 @@ NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
 _REAL_BOARD_TABLES = frozenset({
     "characters", "character_offices", "consort_traits", "factions",
     "secret_orders", "secret_order_briefs", "relation_edge_events",
+    "textual_facts", "public_sayings", "story_ledger_entries",
 })
 
 
@@ -363,6 +374,7 @@ def _hydrate_night(raw: Dict[str, Any]) -> Dict[str, Any]:
         "status": str(raw.get("status") or ""),
         "close_commit_cursor": int(raw.get("close_commit_cursor") or 0),
         "next_event_seq": int(raw.get("next_event_seq") or 0),
+        "protagonist_name": str(raw.get("protagonist_name") or ""),
         "opened_at": raw.get("opened_at"),
         "closed_at": raw.get("closed_at"),
     }
@@ -716,12 +728,13 @@ def _night_direct_write_allowed_tables() -> frozenset:
 def audit_night_direct_writes(db: Any, night_id: int) -> set[str]:
     """审计一夜内对真实盘面的直写全部落在可枚举白名单内（ADR 0038 防坑不变式，#506 AC3）。
 
-    撤回逆转干净的前提 = 夜内对真实盘面的直写只有白名单两项（密令落地、未在册人物入册），
-    其余结构化后果全走待确认暂存、收夜才提交。经该夜各未撤/未失败轮的前像撤销日志
-    （chat_turn_rollback_items 记录本轮触碰过的业务表）核真：任一真实盘面表被直写、却不属
-    白名单授权 → 越权夜内直写，写错误包并响亮咬住（此类直写撤回逆转不净，是设计洞）。
+    撤回逆转干净的前提 = 夜内对真实盘面的直写只落白名单（①密令落地；②转译声明的
+    当场实况——#1839 第四类，含原入册/边事件），其余结构化后果全走待确认暂存、收夜
+    才提交。经该夜各未撤/未失败轮的前像撤销日志（chat_turn_rollback_items 记录本轮
+    触碰过的业务表）核真：任一真实盘面表被直写、却不属白名单授权 → 越权夜内直写，
+    写错误包并响亮咬住（此类直写撤回逆转不净，是设计洞）。
 
-    返回观测到的白名单操作名集（合法夜用于确认「密令落地/入册」确经白名单落地）。
+    返回观测到的白名单操作名集（合法夜用于确认授权项确经白名单落地）。
     """
     allowed = _night_direct_write_allowed_tables()
     rows = db.conn.execute(
@@ -1217,37 +1230,37 @@ def _raise_pending_extraction(
 def _drain_story_extraction_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
     extractor_agent: Any = None,
+    translate_fn: Any = None,
+    game_state: Any = None,
+    write_queue: Any = None,
 ) -> None:
-    """收夜前清空普通待补抽取（ADR 0036）——并入过月/收夜流，玩家无感。
+    """收夜 phase-2：转译已在 OPEN 期 join；此处再 catch-up 待补。
 
-    只补 story/presence；不含 endorsement batch。有待补 → 强制同步补跑（内部静默，
-    不推玩家可见 stage）；仍有 → 失败单源（LLMUnavailable）。LLM 在 write_gate
-    外跑（drain 内 settle 才短持锁）。
+    ADR 0036 后出注记 / #1842：待补不再 fail-closed 中止收夜。join/补跑后仍
+    pending 的留给过月 join / 原地重试（0157）。
 
-    write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)，
-    否则 `write_gate is None` 卫兵被架空（#1353 嫌疑缝②）。
+    ``extract_status`` 由转译通路独占；未完成的轮次留给过月 join /
+    原地重试，不再有平行的故事抽取通路。
+
+    write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)。
     """
-    if not hasattr(db, "count_pending_story_extractions"):
+    nid = int(night_id)
+    # OPEN 期已 join；CLOSING restore 再 join 一次（崩溃恢复口，空则秒回）。
+    # 屏障未清空不得 catch-up / 推进——timeout 仅单次轮询上限，复用 0157 等待语义。
+    from ming_sim.audience_translation import catch_up_pending_translations
+    if game_state is None:
         return
-    # #1353 r10：pending 计数与缺依赖时的 list 同持 gate（禁二相锁外裸读）。
-    gate = _gate_cm(write_gate)
-    with gate:
-        pending = int(db.count_pending_story_extractions(night_id=int(night_id)) or 0)
-        if pending <= 0:
-            return
-        missing_rows: Optional[List[Dict[str, Any]]] = None
-        if llm_config is None or write_gate is None:
-            missing_rows = _pending_extraction_rows(db, int(night_id))
-    if missing_rows is not None:
-        _raise_pending_extraction(
-            db, int(night_id), rows=missing_rows, missing_deps=True,
+    # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
+    # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
+    if llm_config is not None and write_gate is not None and write_queue is not None:
+        catch_up_pending_translations(
+            db, game_state,
+            night_id=nid,
+            llm_config=llm_config,
+            translate_fn=translate_fn,
+            write_gate=write_gate,
+            write_queue=write_queue,
         )
-    from ming_sim.audience_extraction import drain_pending_before_close
-
-    drain_pending_before_close(
-        db=db, llm_config=llm_config, write_gate=write_gate, night_id=int(night_id),
-        extractor_agent=extractor_agent,
-    )
 
 
 def _gate_cm(write_gate: Any):
@@ -1278,6 +1291,8 @@ def close_night(
     endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
+    translate_fn: Any = None,
+    write_queue: Any = None,
 ) -> Dict[str, Any]:
     """收夜：短写前提 → 无锁普通补抽 + 夜级 endorsement-only 批 → 短写终局。
 
@@ -1306,9 +1321,6 @@ def close_night(
 
     with gate:
         night = get_night(db, night_id)
-        source_night_roster = {
-            row["name"] for row in db.current_court_roster_rows(state)
-        }
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
     if night["status"] == NIGHT_STATUS_CLOSED:
@@ -1375,6 +1387,22 @@ def close_night(
             wait_in_flight_clear(
                 db, night_id, timeout_s=wait_timeout_s, write_gate=write_gate,
             )
+            # #1842：封夜提交 join 最后一轮转译须在 OPEN 期完成——CLOSING 会拒
+            # mark_pending_night_approved（「本夜收夜中，暂不能应允暂存」）。
+            # join / catch-up 在闸外（LLM + 串行锁）；落账自持 write_gate。
+            # 屏障未清空不得 catch-up / 置 CLOSING——timeout 仅轮询上限，保持 OPEN 续等。
+            from ming_sim.audience_translation import catch_up_pending_translations
+            # catch_up 契约：单轮失败标 pending、不抛；代码异常按 ADR 0005 上抛。
+            # translate_fn=None 走默认 runner（#1842：收夜补跑不因缺注入而跳过）。
+            if llm_config is not None and write_gate is not None and write_queue is not None:
+                catch_up_pending_translations(
+                    db, state,
+                    night_id=int(night_id),
+                    llm_config=llm_config,
+                    translate_fn=translate_fn,
+                    write_gate=write_gate,
+                    write_queue=write_queue,
+                )
             # #1353：start_close 的 assemble/知识短读与置 CLOSING 同持 write_gate。
             # 禁闸外知识链读共享 conn——后于屏障领票的尾随若尚未 wait_prior，
             # 并发 SELECT 会 sqlite3.Row IndexError（tuple index out of range）。
@@ -1438,44 +1466,8 @@ def close_night(
             _cleanup_close_scene_early(early_exc)
         raise
 
-    # Prepare on the owner thread; only the gate-free provider call enters the
-    # existing close bucket. Finalization happens after that bucket is joined.
-    from ming_sim.relation_judge import (
-        PreparedRelationJudge, abandon_summon_relation_judge,
-        finalize_summon_relation_judge, invoke_summon_relation_judge_provider,
-        prepare_summon_relation_judge,
-    )
-    judge_prepared = prepare_summon_relation_judge(
-        db, state, write_gate=write_gate, night_id=int(night_id),
-        allowed_endpoint_names=source_night_roster,
-    )
-    judge_future = None
-    if isinstance(judge_prepared, PreparedRelationJudge):
-        if not close_ctid and reg is not None:
-            with gate:
-                close_ctid = int(db.create_chat_turn(
-                    state, "收夜", "close-judge", 0, night_id=int(night_id),
-                ))
-                close_scaffold_owned = True
-                close_started = True
-        if reg is not None and hasattr(reg, "start_relation_judge_provider"):
-            judge_future = reg.start_relation_judge_provider(
-                int(close_ctid),
-                lambda: invoke_summon_relation_judge_provider(
-                    judge_prepared, llm_config=llm_config,
-                ),
-            )
-        else:
-            # Library callers without a session registry still use the split phases;
-            # importantly, only the provider call runs gate-free here.
-            judge_provider_result = invoke_summon_relation_judge_provider(
-                judge_prepared, llm_config=llm_config,
-            )
-            judge_result = finalize_summon_relation_judge(
-                judge_prepared, judge_provider_result, write_gate=write_gate,
-            )
-            judge_prepared = judge_result
-
+    # #1842 / ADR 0155：收夜旧边事件判官退役——转译已在场中声明边事件并落账；
+    # 不再 prepare/invoke/finalize relation judge，也不为判官另建 scaffold 轮。
     # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
     # Ordinary story drain (LLM outside settle lock). CLOSING restore drain =
     # ADR 0036 崩溃恢复口；OPEN 期 join 已汇合在飞 owner，此处只清真欠账。
@@ -1483,13 +1475,12 @@ def close_night(
     try:
         _drain_story_extraction_or_fail_closed(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-            extractor_agent=extractor_agent,
+            extractor_agent=extractor_agent, game_state=state,
+            translate_fn=translate_fn,
+            write_queue=write_queue,
         )
     except Exception as drain_exc:
         from ming_sim.exceptions import LLMUnavailable
-        if isinstance(judge_prepared, PreparedRelationJudge):
-            abandon_summon_relation_judge(judge_prepared)
-
         cleanup_exc: BaseException | None = None
         if close_started and reg is not None:
             try:
@@ -1568,20 +1559,6 @@ def close_night(
                 close_body = str(joined_body)
         except Exception as exc:
             join_exc = exc
-
-    if judge_future is not None and join_exc is not None:
-        abandon_summon_relation_judge(judge_prepared)
-
-    if judge_future is not None and join_exc is None:
-        _marker, judge_provider_result = judge_future.result()
-        judge_result = finalize_summon_relation_judge(
-            judge_prepared, judge_provider_result, write_gate=write_gate,
-        )
-        if judge_result.get("degraded"):
-            logger.warning(
-                "relation judge sweep degraded night_id=%s: %s",
-                night_id, judge_result["degraded"],
-            )
 
     if primary_exc is not None or join_exc is not None:
         with gate:
@@ -2386,6 +2363,35 @@ def recognize_audience_command(message: str) -> str:
     return CMD_NONE
 
 
+# #1836：一夜一场入口的「宣 X」口令——封闭前缀 + 人名片段；引擎落入殿账（ADR 0037），
+# 不另立 summon 动作类型。后缀可有可无（「宣王绍徽」与「宣王绍徽来」同形）。
+_XUAN_COMMAND_RE = re.compile(
+    r"^(?:传召|传|召|宣|叫|带)(.{1,12}?)(?:来|到|入殿|上殿|面圣|见我)?$"
+)
+
+# 场景对话轮挂名：整场戏文不绑单人；归档 involved_people 投影会滤非人（#1331）。
+SCENE_CHAT_SPEAKER = "殿上"
+
+
+def recognize_xuan_command(message: str) -> Optional[str]:
+    """解析皇帝「宣 X」口令，返回人名片段；非宣召口令 → None。
+
+    #1836 / ADR 0035 / 0037：玩家口令确定性落账的前半——只认封闭前缀形状，
+    不靠自由散文启发；人名解析交给调用方 match。
+    """
+    text = str(message or "").strip()
+    if not text:
+        return None
+    # 收夜/留侍口令优先，避免「退下」等被宣召形状误吞。
+    if recognize_audience_command(text) != CMD_NONE:
+        return None
+    m = _XUAN_COMMAND_RE.match(text)
+    if not m:
+        return None
+    name = str(m.group(1) or "").strip()
+    return name or None
+
+
 def _presence_delta(entry: Dict[str, Any]) -> Optional[str]:
     """一条账对在场集的净效果：'enter' / 'exit' / None——**单一在场步进真源**（ADR 0035 R2）。
 
@@ -2456,6 +2462,58 @@ def audible_entries_for(
         if name in present and entry.get("audibility") == AUDIBILITY_PUBLIC:
             out.append(entry)
     return out
+
+
+def person_night_experience(
+    db: Any, night_id: int, person_name: str,
+) -> List[Dict[str, Any]]:
+    """人物经历读时投影（#1838）：按转译标记的在场进出与可闻性取本夜所闻。
+
+    单一真源 = :func:`audible_entries_for`——殿上公开且在场区间内；御前低语
+    （私密）不进不在场者 / 非当事人的经历。不另立第二套可闻性规则。
+    """
+    return audible_entries_for(db, int(night_id), person_name)
+
+
+def set_night_protagonist(
+    db: Any,
+    night_id: int,
+    person_name: str,
+    *,
+    reason: str = "translation",
+    commit: bool = True,
+) -> str:
+    """写下本夜御前主角（#1838 / ADR 0158 决定 4）。
+
+    ``reason`` 仅作调用语义标注（``xuan`` = 皇帝亲口宣 X 当场先切；
+    ``translation`` = 转译声明），不进库、不驱动规则。代码只存声明/口令给出
+    的人名，不从戏文散文解析（ADR 0142）。
+    """
+    name = str(person_name or "").strip()
+    if not name:
+        raise AudienceNightError("御前主角人名不能为空", code="empty_protagonist")
+    nid = int(night_id)
+    night = get_night(db, nid)
+    if night is None:
+        raise AudienceNightError(f"夜不存在：{nid}", code="night_not_found")
+    db.conn.execute(
+        "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
+        (name, nid),
+    )
+    if commit and _should_commit(db):
+        db.conn.commit()
+    return name
+
+
+def get_night_protagonist(db: Any, night_id: int) -> str:
+    """读本夜当前御前主角；未声明则空串。"""
+    row = db.conn.execute(
+        "SELECT protagonist_name FROM audience_nights WHERE id=?",
+        (int(night_id),),
+    ).fetchone()
+    if row is None:
+        return ""
+    return str(row["protagonist_name"] or "")
 
 
 SCENE_RECAP_HEADER = "【殿上先前所闻】"

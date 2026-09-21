@@ -1402,7 +1402,7 @@ def test_976_production_session_tool_path_progress_not_shared(game):
             )
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 

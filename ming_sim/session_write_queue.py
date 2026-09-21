@@ -24,15 +24,110 @@ Design contract:
 
 from __future__ import annotations
 
+import time
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Hashable, Optional, TypeVar
 
 T = TypeVar("T")
 
+# Holder classification for the exclusive write gate (#1842).
+# Kind is set/cleared in the same critical section as ownership — foreground
+# can linearize "translation holds this gate" vs "settlement/other holds it"
+# without a side ledger race on either acquire or release.
+HOLDER_OTHER = "other"
+HOLDER_TRANSLATION = "translation"
+
 
 class TicketCancelled(Exception):
     """Ticket was cancelled before or during its work; caller must not write."""
+
+
+class ClassifiedWriteGate:
+    """Lock-compatible exclusive write gate with atomic holder kind (#1842).
+
+    Drop-in for ``threading.Lock`` (``acquire`` / ``release`` / ``locked`` /
+    context manager). Default ``acquire`` marks ``HOLDER_OTHER`` (settlement,
+    ticketed writes, foreground). Translation uses ``acquire_translation`` so
+    the kind is visible the instant ownership is taken — no acquire→ledger
+    window — and cleared atomically on ``release``. While translation is only
+    queued behind another holder, kind stays that holder's (not translation),
+    so foreground non-blocking admit still 409s immediately.
+    """
+
+    __slots__ = ("_cv", "_held", "_kind")
+
+    def __init__(self) -> None:
+        self._cv = threading.Condition(threading.Lock())
+        self._held = False
+        self._kind: Optional[str] = None
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        return self._acquire(HOLDER_OTHER, blocking=blocking, timeout=timeout)
+
+    def acquire_translation(self, blocking: bool = True, timeout: float = -1) -> bool:
+        """Acquire and mark holder as translation in one critical section."""
+        return self._acquire(
+            HOLDER_TRANSLATION, blocking=blocking, timeout=timeout,
+        )
+
+    def _acquire(
+        self, kind: str, *, blocking: bool = True, timeout: float = -1,
+    ) -> bool:
+        with self._cv:
+            if not self._held:
+                self._held = True
+                self._kind = kind
+                return True
+            if not blocking:
+                return False
+            # Match threading.Lock: timeout < 0 → wait forever; else bounded.
+            deadline = None if timeout < 0 else time.monotonic() + float(timeout)
+            while self._held:
+                if deadline is None:
+                    self._cv.wait()
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._cv.wait(timeout=remaining)
+            self._held = True
+            self._kind = kind
+            return True
+
+    def release(self) -> None:
+        with self._cv:
+            if not self._held:
+                raise RuntimeError("release unlocked ClassifiedWriteGate")
+            self._held = False
+            self._kind = None
+            self._cv.notify_all()
+
+    def locked(self) -> bool:
+        with self._cv:
+            return self._held
+
+    def holder_kind(self) -> Optional[str]:
+        with self._cv:
+            return self._kind
+
+    def is_held_by_translation(self) -> bool:
+        with self._cv:
+            return self._held and self._kind == HOLDER_TRANSLATION
+
+    def wait_while_held_by_translation(self) -> None:
+        """Block while this gate is held by translation (no timeout)."""
+        with self._cv:
+            while self._held and self._kind == HOLDER_TRANSLATION:
+                self._cv.wait()
+
+    def __enter__(self) -> "ClassifiedWriteGate":
+        self.acquire()
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        self.release()
+        return False
 
 
 @dataclass
@@ -43,6 +138,7 @@ class WriteTicket:
     key: Optional[Hashable] = None
     cancelled: bool = False
     _done: bool = field(default=False, repr=False, compare=False)
+    _claims: int = field(default=1, repr=False, compare=False)
     # Write-turn state (P5): only serializes DB critical sections, not whole-leg LLM.
     _awaiting_write: bool = field(default=False, repr=False, compare=False)
     _in_write: bool = field(default=False, repr=False, compare=False)
@@ -125,7 +221,8 @@ class SessionWriteQueue:
         # key -> set of open seqs (for cancel-by-key / retract)
         self._by_key: dict[Hashable, set[int]] = {}
         # Exclusive DB write lock — write_gate semantics live here.
-        self.write_gate = threading.Lock()
+        # ClassifiedWriteGate: atomic holder kind for #1842 foreground admit.
+        self.write_gate: ClassifiedWriteGate = ClassifiedWriteGate()
         # Lifecycle seal: reject new claims (menu drain / session teardown).
         self._sealed = False
 
@@ -172,7 +269,25 @@ class SessionWriteQueue:
         if ticket is None:
             return
         with self._cond:
-            self._finish_locked(ticket)
+            if ticket._done:
+                return
+            ticket._claims -= 1
+            if ticket._claims <= 0:
+                self._finish_locked(ticket)
+
+    def retain(self, ticket: WriteTicket, key: Hashable) -> WriteTicket:
+        """Hand an admitted ticket to derived work, including after ``seal``.
+
+        The retained work keeps the parent's original sequence, so a close
+        barrier already queued behind the parent cannot overtake its child.
+        This is one queue ticket with two owners, not a second lifecycle log.
+        """
+        with self._cond:
+            if ticket._done or self._open.get(ticket.seq) is not ticket:
+                raise RuntimeError("write ticket is no longer open")
+            ticket._claims += 1
+            self._by_key.setdefault(key, set()).add(ticket.seq)
+            return ticket
 
     def vacate(self, ticket: Optional[WriteTicket]) -> None:
         """Empty release on fail/cancel — same as complete (order advances)."""
@@ -205,12 +320,10 @@ class SessionWriteQueue:
             return
         ticket._done = True
         self._open.pop(ticket.seq, None)
-        if ticket.key is not None:
-            bucket = self._by_key.get(ticket.key)
-            if bucket is not None:
-                bucket.discard(ticket.seq)
-                if not bucket:
-                    self._by_key.pop(ticket.key, None)
+        for key, bucket in list(self._by_key.items()):
+            bucket.discard(ticket.seq)
+            if not bucket:
+                self._by_key.pop(key, None)
         self._cond.notify_all()
 
     # ── barrier / waits ────────────────────────────────────────────────
@@ -388,8 +501,11 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
     `_INSTALL_LOCK` (double-checked) so concurrent first-touch cannot fork two
     queues onto the same owner/session.
 
-    If owner already has a bare `_write_gate` Lock (legacy fixtures), reuse that
-    lock as the queue's write_gate so drain/barrier never diverge onto a second lock.
+    If owner already has a write_gate (legacy fixtures), reuse that same object
+    as the queue's write_gate so drain/barrier never diverge onto a second lock.
+    Production installs ``ClassifiedWriteGate`` via ``SessionWriteQueue()``;
+    bare ``threading.Lock`` fixtures keep their Lock identity (classification
+    requires ClassifiedWriteGate — do not retarget a held Lock mid-test).
 
     Wiring assignments are fail-loud (ADR 0005): silent swallow here can fork
     owner/session onto different queue/gate ledgers and leak tickets.
@@ -420,7 +536,8 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
         # Install on the most session-like object available.
         target = session if session is not None else owner
         q = SessionWriteQueue()
-        # Reuse pre-existing write_gate Lock if present (fixture / partial wiring).
+        # Reuse pre-existing write_gate (Classified or bare Lock) so fixture
+        # hold/409 probes and drain share one lock object.
         existing_gate = getattr(owner, "_write_gate", None)
         if existing_gate is None and session is not None:
             existing_gate = getattr(session, "_write_gate", None)
@@ -432,3 +549,53 @@ def get_session_write_queue(owner: Any) -> SessionWriteQueue:
             owner._write_queue = q
             owner._write_gate = q.write_gate
         return q
+
+
+def drain_and_close_session(owner: Any) -> None:
+    """Seal the queue, drain every admitted writer, then close the session.
+
+    Shared by Web and CLI (#1842). ``owner`` may be a ``GameSession``, a WebGame,
+    or any duck that resolves through :func:`get_session_write_queue`.
+
+    The queue is the sole admitted-work ledger: derived translation work owns a
+    queue ticket too, so the barrier covers it without a second Future ledger.
+    Failures re-raise without auto-unseal — callers
+    decide (Web: only if runtime restorable; CLI: always attempt unseal and
+    log any unseal failure). No abandon / cancel / second lifecycle.
+
+    Web HolderEntry / CloseOp accounting stays in the Web wrapper; CLI calls
+    this directly (no reverse coupling into ``web_app``).
+    """
+    q = get_session_write_queue(owner)
+    session = getattr(owner, "session", None)
+    if session is None and hasattr(owner, "close") and hasattr(owner, "db"):
+        session = owner
+    # A WebGame delegates to the GameSession public lifecycle seam. Besides
+    # keeping one close authority, this preserves instance-level close failure
+    # injection used by callers/tests. GameSession itself enters below and
+    # invokes only its resource closer inside the barrier (no recursion).
+    if session is not None and owner is not session:
+        close_resources = getattr(session, "_close_resources", None)
+        if callable(close_resources):
+            session.close()
+            return
+    q.seal()
+
+    def _close() -> None:
+        gate = q.write_gate
+        gate.acquire()
+        try:
+            if session is not None:
+                close_resources = getattr(session, "_close_resources", None)
+                if callable(close_resources):
+                    close_resources()
+                else:
+                    session.close()
+        finally:
+            gate.release()
+
+    try:
+        q.barrier(_close)
+    except Exception:
+        # Caller decides unseal (Web: only if runtime restorable; CLI: always).
+        raise

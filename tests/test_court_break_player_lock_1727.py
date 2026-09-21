@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from types import SimpleNamespace
 
 import httpx
@@ -24,7 +23,7 @@ import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
-from tests.test_month_loop_tracer_1468 import _install_trail_hold
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 class _CannedExtractor:
@@ -42,9 +41,6 @@ class _CannedMindreadingAgent:
         return SimpleNamespace(content="近臣低声：边饷事重。")
 
 
-class _CannedRelationJudge:
-    def run(self, _prompt):
-        return SimpleNamespace(content='{"events":[]}')
 
 
 class _StreamFarewellAgent:
@@ -63,20 +59,12 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda *a, **k: _CannedExtractor(),
-    )
-    monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
     )
     monkeypatch.setattr(
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreadingAgent(),
-    )
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent",
-        lambda *a, **k: _CannedRelationJudge(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     # stream worker 在 payload 前启动 _start_cli_action_intent → 真 classify LLM；
@@ -134,119 +122,61 @@ def _named_scene_beats(scroll) -> list[str]:
     return [m["beat"] for m in scroll if m["beat"] not in {"coda", ""}]
 
 
-def test_court_break_locks_player_write_between_done_and_end(web_game):
-    """#1727 常绿：done(court_break) 后写入口锁；end 后 closed + exit/divider/closing。
-
-    观测形态（#498 ASGI 在飞）：尾随 hold 拉长 done→end 窗；claim_barrier 接缝
-    一置位即并发 POST /chat——断言外部 409，不依赖 SSE 半流缓冲时序。
-    """
+def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch):
+    """#1727：真实退朝在 done 暴露前预领屏障，随后收夜。"""
     game = web_game
     minister = _active_minister(game)
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
-    game.session.registry.get = lambda _ch: _StreamFarewellAgent()
+    agent = _StreamFarewellAgent()
+    game.session.registry.get = lambda _ch, **_kw: agent
+    stub_scene_agent(monkeypatch, agent)
 
-    trail_release = threading.Event()
-    restore_trails = _install_trail_hold(game, trail_release)
+    statuses: dict[str, int] = {}
+    barrier_at_done: list[bool] = []
 
-    q = game._runtime_write_queue()
-    barrier_claimed = threading.Event()
-    # stream 终态或 claim 成功均可唤醒 probe——禁只等成功屏障而吞 stream_error。
-    probe_wake = threading.Event()
-    real_claim = q.claim_barrier
+    class _DoneProbeQueue(web_app.queue.Queue):
+        """在生产 worker 发布 done 的同步边界观察外部写入口。"""
 
-    def _claim_and_signal():
-        ticket = real_claim()
-        barrier_claimed.set()
-        probe_wake.set()
-        return ticket
-
-    q.claim_barrier = _claim_and_signal  # type: ignore[method-assign]
-
-    stream_events: list[dict] = []
-    stream_error: list[BaseException] = []
-    probe_error: list[BaseException] = []
-    concurrent_results: dict[str, dict] = {}
-
-    def _run_stream() -> None:
-        try:
-            async def _go() -> None:
-                async with _client() as client:
-                    resp = await client.post(
-                        f"/api/ministers/{minister}/chat/stream",
-                        json={"message": "退朝"},
-                    )
-                    assert resp.status_code == 200, resp.text
-                    stream_events.extend(_parse_sse_chunk(resp.text))
-
-            asyncio.run(_go())
-        except BaseException as exc:  # noqa: BLE001
-            stream_error.append(exc)
-        finally:
-            probe_wake.set()
-
-    def _probe_when_barrier_open() -> None:
-        # 释放所有权在 probe finally：断言失败不得绕过 trail_release，
-        # 否则主线程先 join stream 时外层 finally 不可达。
-        try:
-            probe_wake.wait()
-            if not barrier_claimed.is_set():
-                # stream 已终态且未领屏障：不探针，交主线程传播 stream_error。
-                return
-            # hold 窗内：屏障已开、尾随未放行 → 召对写入口必须外部可见拒。
-            assert q.has_open_barrier(), "预领屏障后 has_open_barrier 应为 True"
-            async def _probe() -> None:
-                async with _client() as client:
-                    probes = {
-                        "chat": client.post(
-                            f"/api/ministers/{minister}/chat",
-                            json={"message": "再问边饷？"},
-                        ),
-                        # #1727 T1/T2：撤回本轮不得绕过屏障（亦防 cancel_key 抽空尾随票）。
-                        "undo": client.post(f"/api/ministers/{minister}/chat/undo"),
-                        # 同类补扫：secret_order 持闸兼容路亦须端点侧拒。
-                        "secret_order": client.post(
-                            f"/api/ministers/{minister}/secret_order",
-                            json={"title": "边饷", "content": "速办边饷"},
-                        ),
-                        # pending withdraw 同属召对写入口族。
-                        "withdraw": client.post("/api/pending_actions/1/withdraw"),
-                    }
-                    for name, awaitable in probes.items():
-                        probe = await awaitable
-                        concurrent_results[name] = {
-                            "status": probe.status_code,
-                            "body": probe.text,
+        def put(self, item, *args, **kwargs):
+            if item.get("type") == "done":
+                barrier_at_done.append(game._runtime_write_queue().has_open_barrier())
+                if not barrier_at_done[-1]:
+                    return super().put(item, *args, **kwargs)
+                async def _probe() -> dict[str, int]:
+                    async with _client() as client:
+                        requests = {
+                            "chat": client.post(
+                                f"/api/ministers/{minister}/chat",
+                                json={"message": "再问边饷？"},
+                            ),
+                            "undo": client.post(f"/api/ministers/{minister}/chat/undo"),
+                            "secret_order": client.post(
+                                f"/api/ministers/{minister}/secret_order",
+                                json={"title": "边饷", "content": "速办边饷"},
+                            ),
+                            "withdraw": client.post("/api/pending_actions/1/withdraw"),
+                        }
+                        return {
+                            name: (await request).status_code
+                            for name, request in requests.items()
                         }
 
-            asyncio.run(_probe())
-        except BaseException as exc:  # noqa: BLE001
-            probe_error.append(exc)
-        finally:
-            trail_release.set()
+                statuses.update(asyncio.run(_probe()))
+            return super().put(item, *args, **kwargs)
 
-    stream_thread = threading.Thread(target=_run_stream, daemon=True, name="1727-stream")
-    probe_thread = threading.Thread(
-        target=_probe_when_barrier_open, daemon=True, name="1727-probe",
-    )
-    try:
-        stream_thread.start()
-        probe_thread.start()
-        probe_thread.join()
-        stream_thread.join()
-    finally:
-        trail_release.set()
-        q.claim_barrier = real_claim  # type: ignore[method-assign]
-        restore_trails()
+    monkeypatch.setattr(web_app.queue, "Queue", _DoneProbeQueue)
 
-    # 原异常在双方退出后传播（不在 join 前吞掉；probe 不再只等成功屏障）。
-    if probe_error:
-        raise probe_error[0]
-    if stream_error:
-        raise stream_error[0]
-    assert not stream_thread.is_alive(), "stream 未在期限内结束"
-    assert not probe_thread.is_alive(), "probe 未在期限内结束"
-    assert barrier_claimed.is_set(), "未领 court_break 屏障票"
+    async def _run_stream() -> list[dict]:
+        async with _client() as client:
+            resp = await client.post(
+                f"/api/ministers/{minister}/chat/stream",
+                json={"message": "退朝"},
+            )
+            assert resp.status_code == 200, resp.text
+            return _parse_sse_chunk(resp.text)
+
+    stream_events = asyncio.run(_run_stream())
 
     types = [str(ev.get("event") or "") for ev in stream_events]
     assert "error" not in types, stream_events
@@ -255,13 +185,14 @@ def test_court_break_locks_player_write_between_done_and_end(web_game):
     done_raw = next(ev for ev in stream_events if ev.get("event") == "done").get("data") or "{}"
     done_payload = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
     assert isinstance(done_payload, dict), done_payload
-    # D1 同形常绿：判词链无辜——done 已带 court_break。
     assert done_payload.get("court_action") == "court_break", done_payload
-    # 写入口外可见锁：hold 窗内并发召对写入口结构化拒写（HTTP 409）；不锁呈现措辞。
-    for name in ("chat", "undo", "secret_order", "withdraw"):
-        assert concurrent_results.get(name, {}).get("status") == 409, (
-            name, concurrent_results.get(name),
-        )
+    assert barrier_at_done == [True]
+    assert statuses == {
+        "chat": 409,
+        "undo": 409,
+        "secret_order": 409,
+        "withdraw": 409,
+    }
     # end 后终态：夜 closed + 收尾三拍 + 告退轮仍在（未被 undo 抽空）。
     row = game.db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),

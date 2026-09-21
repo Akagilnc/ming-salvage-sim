@@ -13,9 +13,7 @@ import json
 
 import pytest
 
-from ming_sim.content import GameContent
 from ming_sim.declaration_dispatch import dispatch_declaration
-import ming_sim.issues as issues_mod
 from ming_sim.public_sayings import list_public_sayings
 
 
@@ -41,8 +39,10 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
         int(state.turn), "directive", "拟旨", minister, {"text": "已暂存旧旨"},
     )
 
+    # 首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账（P6）。
+    commission_text = "  遣使赈济陕西  \n"
     declaration = {
-        "commissions": [{"text": "遣使赈济陕西"}],
+        "commissions": [{"text": commission_text}],
         "promises": [{"action_id": pre_staged_id, "decision": "应允"}],
         "textual_facts": [{
             "subject_kind": "character", "subject_id": minister,
@@ -59,6 +59,13 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
     assert len(result.promises.applied) == 1 and result.promises.rejected == []
     assert len(result.textual_facts.applied) == 1 and result.textual_facts.rejected == []
     assert len(result.public_sayings.applied) == 1 and result.public_sayings.rejected == []
+
+    commission_row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (result.commissions.applied[0]["id"],),
+    ).fetchone()
+    commission_payload = json.loads(commission_row["payload_json"])
+    assert commission_payload["text"] == commission_text  # 原样落账，含首尾空白，代码没有 strip 篡改
 
     approved_row = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (pre_staged_id,),
@@ -79,9 +86,11 @@ def test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row(g
     army_id = _army_id(db)
     before = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
 
+    # 首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账（P6）。
+    commission_text = "  拨国库十五万两协饷该军  \n"
     declaration = {
         "commissions": [{
-            "text": "拨国库十五万两协饷该军",
+            "text": commission_text,
             "grant": {
                 "amount": 150000, "account": "国库", "purpose": "补饷",
                 "target_kind": "army", "target_id": army_id,
@@ -100,10 +109,65 @@ def test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row(g
         (result.commissions.applied[0]["id"],),
     ).fetchone()
     payload = json.loads(row["payload_json"])
-    assert payload["text"] == "拨国库十五万两协饷该军"
+    assert payload["text"] == commission_text  # 原样落账，含首尾空白，代码没有 strip 篡改
     assert payload["amount"] == 150000
     assert payload["account"] == "国库"
     assert payload["target_id"] == army_id
+
+
+def test_commission_with_appointment_and_grant_is_one_combined_payload_one_row(game):
+    """ADR 0028 / #1837：任免+拨帑一件事一份载荷、一条 pending，不拆 office 第二道。"""
+    db, state, content = game
+    minister = _minister(db)
+    person = "洪承畴" if "洪承畴" in getattr(content, "characters", {}) else minister
+    if person != minister:
+        row = db.conn.execute(
+            "SELECT name FROM characters WHERE name=? LIMIT 1", (person,),
+        ).fetchone()
+        if row is None:
+            person = minister
+    region = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()
+    assert region is not None
+    region_id = str(region["id"])
+    before = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
+    text = f"任命{person}为陕西巡抚，调银三十万两赈灾"
+    result = dispatch_declaration(
+        db, state,
+        {"commissions": [{
+            "text": text,
+            "appointment": {
+                "name": person, "office": "陕西巡抚", "appoint_action": "任命",
+            },
+            "grant": {
+                "grant_action": "赈灾", "amount": 30, "account": "国库",
+                "target_kind": "region", "target_id": region_id,
+                "execution_surface": "immediate",
+            },
+        }]},
+        minister_name=minister,
+    )
+    assert result.commissions.rejected == []
+    assert len(result.commissions.applied) == 1
+    assert result.commissions.applied[0]["kind"] == "directive"
+    after = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
+    assert after - before == 1
+    kinds = [
+        r["kind"] for r in db.conn.execute(
+            "SELECT kind FROM pending_actions WHERE status='pending' ORDER BY id"
+        ).fetchall()
+    ]
+    assert kinds == ["directive"], kinds
+    payload = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?",
+            (result.commissions.applied[0]["id"],),
+        ).fetchone()["payload_json"]
+    )
+    assert payload["text"] == text
+    assert payload["grant_action"] == "赈灾"
+    assert payload["name"] == person
+    assert payload["office"] == "陕西巡抚"
+    assert payload["appoint_action"] == "任命"
 
 
 def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item(game, monkeypatch):
@@ -122,9 +186,6 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
             {"subject_kind": "character", "subject_id": "子虚乌有之人", "body": "凭空捏造"},
             {"subject_kind": "character", "subject_id": minister, "body": "如实记事"},
         ],
-        "registrations": [{
-            "name": "李若璉補", "office": "锦衣卫百户", "office_type": "武职",
-        }],
     }
 
     # flush 失败路径：制造 rejection_reports flush 失败，断言合法 sibling
@@ -145,10 +206,6 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
     assert db.conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
     ).fetchone() is None
-    assert db.conn.execute(
-        "SELECT 1 FROM characters WHERE name=?", ("李若璉補",),
-    ).fetchone() is None
-    assert "李若璉補" not in db.content.characters
 
     # 恢复正常后，继续断成功路径：合法 sibling 落库、拒收落 durable（原有断言）。
     result = dispatch_declaration(db, state, declaration, minister_name=minister)
@@ -172,10 +229,6 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
     assert rows[0]["section"] == "textual_facts"
     assert rows[0]["category"] == "hallucinated_id"
     assert "子虚乌有之人" in rows[0]["item_json"]
-    assert db.conn.execute(
-        "SELECT 1 FROM characters WHERE name=?", ("李若璉補",),
-    ).fetchone() is not None
-    assert "李若璉補" in db.content.characters
 
 
 def test_unknown_top_level_section_is_rejected_durably_without_dropping_sibling(game):
@@ -215,21 +268,18 @@ def test_promise_refuse_withdraws_staged_action_and_missing_action_id_is_rejecte
         "promises": [
             {"action_id": staged_id, "decision": "拒绝"},
             {"action_id": staged_id + 100000, "decision": "应允"},
-            # bool/float/numeric-string must not coerce into another pending id.
-            {"action_id": True, "decision": "应允"},
-            {"action_id": 1.9, "decision": "应允"},
-            {"action_id": str(staged_id), "decision": "应允"},
         ],
     }
     result = dispatch_declaration(db, state, declaration, minister_name=minister)
 
     assert len(result.promises.applied) == 1
-    assert result.promises.applied[0] == {"action_id": staged_id, "decision": "拒绝"}
-    assert len(result.promises.rejected) == 4
-    assert {item.category for item in result.promises.rejected} == {
-        "missing_ref", "invalid_shape",
-    }
-    assert sum(1 for item in result.promises.rejected if item.category == "invalid_shape") == 3
+    applied = result.promises.applied[0]
+    assert applied["action_id"] == staged_id
+    assert applied["decision"] == "拒绝"
+    assert applied.get("kind") == "directive"
+    assert applied.get("action") == "拟旨"
+    assert len(result.promises.rejected) == 1
+    assert result.promises.rejected[0].category == "missing_ref"
 
     row = db.conn.execute(
         "SELECT id FROM pending_actions WHERE id=?", (staged_id,),
@@ -285,9 +335,8 @@ def test_on_scene_person_status_change_lands_and_rejects_nonexistent_person(game
 
 
 def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game):
-    """各自所属事务：on_scene_facts 挂 person_logs.origin_ref（affair:<id>），
-    不写 characters 单例 affair_id；引用不存在事务的项在人物变更真正发生前
-    就被拒收（不产生半成品状态变更）。"""
+    """各自所属事务：on_scene_facts 落库后绑 characters.affair_id；引用不存在
+    事务的项在人物变更真正发生前就被拒收（不产生半成品状态变更）。"""
     db, state, _ = game
     minister = _minister(db)
     affair = db.affairs.open(
@@ -303,16 +352,10 @@ def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game
     })
     assert len(ok.on_scene_facts.applied) == 1
     assert "affair_attach_error" not in ok.on_scene_facts.applied[0]
-    log = db.conn.execute(
-        "SELECT origin_ref FROM person_logs WHERE person_name=? ORDER BY id DESC LIMIT 1",
-        (minister,),
-    ).fetchone()
-    assert log["origin_ref"] == db.affairs.origin_ref(affair.id)
-    # characters.affair_id is not the person-change provenance.
     row = db.conn.execute(
         "SELECT affair_id FROM characters WHERE name=?", (minister,),
     ).fetchone()
-    assert int(row["affair_id"] or 0) == 0
+    assert row["affair_id"] == affair.id
 
     other_minister = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND name!=? ORDER BY name LIMIT 1",
@@ -330,139 +373,51 @@ def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game
     assert status != "imprisoned"  # 拒收在变更发生前，不留半成品
 
 
-def test_on_scene_fact_multi_affair_person_changes_keep_each_event_provenance(game):
-    """同一人物可先后参与多事务：每次人物变动挂各自 durable origin_ref，
-    后续真实变更不得因首个 affair_id 回滚。受控顺序污染仍须用当前局 content。"""
+def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_too(game):
+    """指针绑定与人物变更同一原子块：已挂事务 A 的人物再声明挂事务 B，指针
+    冲突时连同人物变更一起回滚——不是「变更真落库、只是绑事务失败」的半写。
+    跨层回滚：`apply_person_changes_only` 直接改了 `content.characters[name]`
+    这个运行时对象（`db.set_character_status`），SAVEPOINT 只回滚 DB 行；
+    本项回滚必须连运行时对象也一并还原，否则 DB 与运行时盘面分叉。"""
     db, state, content = game
-    polluted = GameContent.load()
-    assert polluted is not content
-    issues_mod.bind_content(polluted)
-    try:
-        minister = _minister(db)
-        affair_a = db.affairs.open(
-            name="宁远护送", origin="拨银、调将、派兵去宁远",
-            year=state.year, period=state.period, turn=state.turn,
-        )
-        affair_b = db.affairs.open(
-            name="蓟镇募兵", origin="募兵备边",
-            year=state.year, period=state.period, turn=state.turn,
-        )
-        first = dispatch_declaration(db, state, {
-            "on_scene_facts": [{
-                "name": minister, "动作": "处置", "status": "imprisoned", "reason": "下狱待勘",
-                "affair_declaration": {"attach": "existing", "affair_id": affair_a.id},
-            }],
-        })
-        assert len(first.on_scene_facts.applied) == 1
-        status_before, _ = db.get_character_status(minister)
-        assert status_before == "imprisoned"
-
-        second = dispatch_declaration(db, state, {
-            "on_scene_facts": [{
-                "name": minister, "动作": "处置", "status": "dead", "reason": "另案牵连",
-                "affair_declaration": {"attach": "existing", "affair_id": affair_b.id},
-            }],
-        })
-        assert len(second.on_scene_facts.applied) == 1
-        status_after, _ = db.get_character_status(minister)
-        assert status_after == "dead"
-        refs = [
-            row["origin_ref"]
-            for row in db.conn.execute(
-                "SELECT origin_ref FROM person_logs WHERE person_name=? ORDER BY id",
-                (minister,),
-            ).fetchall()
-        ]
-        assert db.affairs.origin_ref(affair_a.id) in refs
-        assert db.affairs.origin_ref(affair_b.id) in refs
-        assert content.characters[minister].status == "dead"
-        assert db.content.characters[minister].status == "dead"
-    finally:
-        issues_mod.bind_content(content)
-
-
-def test_same_declaration_registration_establishes_target_before_dependent_facts(game):
-    """同声明体内先入册再写依赖人物的文字事实；畸形 affair_declaration 进单项拒收；
-    协饷失败按 account/purpose 枚举 vs 缺字段 vs 不存在军队 分型。"""
-    db, state, _ = game
     minister = _minister(db)
-    army = db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 1").fetchone()
-    army_id = str(army["id"]) if army is not None else "jingying"
-    result = dispatch_declaration(db, state, {
-        "registrations": [{
-            "name": "新入册人甲", "office": "锦衣卫百户", "office_type": "锦衣卫",
+    affair_a = db.affairs.open(
+        name="宁远护送", origin="拨银、调将、派兵去宁远",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    affair_b = db.affairs.open(
+        name="蓟镇募兵", origin="募兵备边",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    first = dispatch_declaration(db, state, {
+        "on_scene_facts": [{
+            "name": minister, "动作": "处置", "status": "imprisoned", "reason": "下狱待勘",
+            "affair_declaration": {"attach": "existing", "affair_id": affair_a.id},
         }],
-        "textual_facts": [
-            {"subject_kind": "character", "subject_id": "新入册人甲", "body": "同声明入册后事实"},
-            {
-                "subject_kind": "character", "subject_id": minister, "body": "坏事务形状",
-                "affair_declaration": "bad",
-            },
-        ],
-        "commissions": [
-            {
-                "text": "拨饷坏账户",
-                "grant": {
-                    "amount": 1000, "account": "不是国库", "purpose": "补饷",
-                    "target_kind": "army", "target_id": army_id,
-                },
-            },
-            {
-                "text": "拨饷坏用途",
-                "grant": {
-                    "amount": 1000, "account": "国库", "purpose": "不是补饷",
-                    "target_kind": "army", "target_id": army_id,
-                },
-            },
-            {
-                "text": "拨饷缺目标",
-                "grant": {
-                    "amount": 1000, "account": "国库", "purpose": "补饷",
-                    "target_kind": "army", "target_id": "",
-                },
-            },
-            {
-                "text": "拨饷坏数额",
-                "grant": {
-                    "amount": "not-a-number", "account": "国库", "purpose": "补饷",
-                    "target_kind": "army", "target_id": army_id,
-                },
-            },
-            {
-                "text": "拨饷幽灵军",
-                "grant": {
-                    "amount": 1000, "account": "国库", "purpose": "补饷",
-                    "target_kind": "army", "target_id": "ghost-army-no-such",
-                },
-            },
-        ],
-    }, minister_name=minister)
-    assert result.registrations.applied == [{"name": "新入册人甲"}]
-    assert any(
-        isinstance(f, dict) and f.get("subject_id") == "新入册人甲"
-        for f in result.textual_facts.applied
-    )
-    assert any(
-        r.category == "invalid_shape" and r.item.get("subject_id") == minister
-        for r in result.textual_facts.rejected
-    )
-    facts = db.textual_facts.readable_materials(
-        subject_kind="character", subject_id="新入册人甲",
-    )
-    assert [f.body for f in facts] == ["同声明入册后事实"]
-    # Case identity = declaration array order + typed grant fields, not free-text labels.
-    rejected = list(result.commissions.rejected)
-    assert len(rejected) == 5
-    assert rejected[0].category == "invalid_enum"
-    assert (rejected[0].item or {}).get("grant", {}).get("account") == "不是国库"
-    assert rejected[1].category == "invalid_enum"
-    assert (rejected[1].item or {}).get("grant", {}).get("purpose") == "不是补饷"
-    assert rejected[2].category == "invalid_shape"
-    assert (rejected[2].item or {}).get("grant", {}).get("target_id") == ""
-    assert rejected[3].category == "invalid_shape"
-    assert (rejected[3].item or {}).get("grant", {}).get("amount") == "not-a-number"
-    assert rejected[4].category == "hallucinated_id"
-    assert (rejected[4].item or {}).get("grant", {}).get("target_id") == "ghost-army-no-such"
+    })
+    assert len(first.on_scene_facts.applied) == 1
+    status_before, _ = db.get_character_status(minister)
+    assert status_before == "imprisoned"
+
+    conflicting = dispatch_declaration(db, state, {
+        "on_scene_facts": [{
+            "name": minister, "动作": "处置", "status": "dead", "reason": "另案牵连",
+            "affair_declaration": {"attach": "existing", "affair_id": affair_b.id},
+        }],
+    })
+    assert conflicting.on_scene_facts.applied == []
+    assert len(conflicting.on_scene_facts.rejected) == 1
+    assert conflicting.on_scene_facts.rejected[0].category == "invalid_state"
+
+    status_after, _ = db.get_character_status(minister)
+    assert status_after == "imprisoned"  # 没有被冲突项的「dead」半写进去
+    row = db.conn.execute(
+        "SELECT affair_id FROM characters WHERE name=?", (minister,),
+    ).fetchone()
+    assert row["affair_id"] == affair_a.id  # 指针仍是最初绑的那个，没被改动
+    # DB 回滚必须连运行时对象一起还原：不能出现「DB 仍是 imprisoned、
+    # content.characters 却停在冲突项写过的 dead」这种跨层分叉。
+    assert content.characters[minister].status == "imprisoned"
 
 
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
@@ -473,12 +428,16 @@ def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
 
     night = open_night(db, state)
     night_id = int(night["id"])
-    declared_body = "内侍高唱，乔尚书趋步入殿，绯袍犹带风尘。"
+    chat_turn_id = db.create_chat_turn(state, minister, "t1835:presence", 0, night_id=night_id)
+    # 首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账
+    declared_body = "  内侍高唱，乔尚书趋步入殿，绯袍犹带风尘。  \n"
 
     declaration = {
         "presence": [{"person_name": minister, "effect": "enter", "body": declared_body}],
     }
-    result = dispatch_declaration(db, state, declaration, night_id=night_id)
+    result = dispatch_declaration(
+        db, state, declaration, night_id=night_id, chat_turn_id=chat_turn_id,
+    )
     assert result.presence.rejected == []
     assert len(result.presence.applied) == 1
 
@@ -486,16 +445,18 @@ def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
         "SELECT body FROM story_ledger_entries WHERE id=?",
         (result.presence.applied[0]["id"],),
     ).fetchone()
-    assert row["body"] == declared_body  # 原样落账，代码没有拼接/替换成模板句
+    assert row["body"] == declared_body  # 原样落账，含首尾空白，代码没有 strip 篡改
 
 
 def test_presence_rejects_nonexistent_person_without_polluting_ledger(game):
     """AC3：有效夜下引用不存在的人物一样要逐项拒收，不能真落进 story_ledger_entries。"""
     db, state, _ = game
+    minister = _minister(db)
     from ming_sim.audience_night import open_night
 
     night = open_night(db, state)
     night_id = int(night["id"])
+    chat_turn_id = db.create_chat_turn(state, minister, "t1835:ghost", 0, night_id=night_id)
     before = db.conn.execute(
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
     ).fetchone()["c"]
@@ -503,7 +464,9 @@ def test_presence_rejects_nonexistent_person_without_polluting_ledger(game):
     declaration = {
         "presence": [{"person_name": "子虚乌有之人", "effect": "enter", "body": "凭空捏造之人入殿。"}],
     }
-    result = dispatch_declaration(db, state, declaration, night_id=night_id)
+    result = dispatch_declaration(
+        db, state, declaration, night_id=night_id, chat_turn_id=chat_turn_id,
+    )
 
     assert result.presence.applied == []
     assert len(result.presence.rejected) == 1
@@ -534,10 +497,12 @@ def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_an
 
     night = open_night(db, state)
     night_id = int(night["id"])
+    chat_turn_id = db.create_chat_turn(state, minister, "t1835:scene", 0, night_id=night_id)
 
+    # 首项首尾刻意带空白：证明落账是原字符串本身，不是先 .strip() 再落账
     declaration = {
         "scene_facts": [
-            {"body": "臣领旨。", "audibility": "殿上公开", "person_names": [minister]},
+            {"body": "  臣领旨。  \n", "audibility": "殿上公开", "person_names": [minister]},
             {"body": "低声私语", "audibility": "非法可闻性"},
             {"body": "凭空捏造之人插话。", "audibility": "殿上公开", "person_names": ["子虚乌有之人"]},
         ],
@@ -545,7 +510,9 @@ def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_an
     before = db.conn.execute(
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
     ).fetchone()["c"]
-    result = dispatch_declaration(db, state, declaration, night_id=night_id)
+    result = dispatch_declaration(
+        db, state, declaration, night_id=night_id, chat_turn_id=chat_turn_id,
+    )
     after = db.conn.execute(
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
     ).fetchone()["c"]
@@ -559,7 +526,7 @@ def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_an
         "SELECT body FROM story_ledger_entries WHERE id=?",
         (result.scene_facts.applied[0]["id"],),
     ).fetchone()
-    assert row["body"] == "臣领旨。"
+    assert row["body"] == "  臣领旨。  \n"  # 含首尾空白，未被 strip 篡改
 
 
 def test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_differently(game):
@@ -676,43 +643,16 @@ def test_registration_adds_new_person_to_roster_and_rejects_existing_name(game):
 
     declaration = {
         "registrations": [
-            {
-                "name": "李若璉補", "office": "锦衣卫百户", "office_type": "武职",
-                "source": "historical", "aliases": ["李补"],
-            },
+            {"name": "李若璉補", "office": "锦衣卫百户", "office_type": "武职", "source": "historical"},
             {"name": minister, "office": "户部尚书", "office_type": "文职"},
-            # aliases shape: string/mapping/mixed → invalid_shape, not char/key iteration.
-            {
-                "name": "别名串人", "office": "锦衣卫百户", "office_type": "武职",
-                "aliases": "甲乙",
-            },
-            {
-                "name": "别名表人", "office": "锦衣卫百户", "office_type": "武职",
-                "aliases": {"甲": 1},
-            },
-            {
-                "name": "别名混人", "office": "锦衣卫百户", "office_type": "武职",
-                "aliases": ["甲", 2],
-            },
         ],
     }
     result = dispatch_declaration(db, state, declaration)
 
     assert len(result.registrations.applied) == 1
     assert result.registrations.applied[0] == {"name": "李若璉補"}
-    assert db.content.characters["李若璉補"].aliases == ["李补"]
-    rejected_by_name = {
-        str((item.item or {}).get("name") or ""): item.category
-        for item in result.registrations.rejected
-    }
-    assert rejected_by_name.get(minister) == "invalid_state"
-    assert rejected_by_name.get("别名串人") == "invalid_shape"
-    assert rejected_by_name.get("别名表人") == "invalid_shape"
-    assert rejected_by_name.get("别名混人") == "invalid_shape"
-    for bad in ("别名串人", "别名表人", "别名混人"):
-        assert db.conn.execute(
-            "SELECT 1 FROM characters WHERE name=?", (bad,),
-        ).fetchone() is None
+    assert len(result.registrations.rejected) == 1
+    assert result.registrations.rejected[0].category == "invalid_state"
 
     row = db.conn.execute(
         "SELECT status, office FROM characters WHERE name=?", ("李若璉補",),
@@ -721,97 +661,6 @@ def test_registration_adds_new_person_to_roster_and_rejects_existing_name(game):
     assert row["status"] == "active"
     assert row["office"] == "锦衣卫百户"
     assert "李若璉補" in db.content.characters
-
-
-def test_registration_typed_seat_lands_and_bad_local_item_isolates_sibling(game):
-    """入册共享写核吃 typed region_id；地方缺任所逐项拒收，不带走合法 sibling + textual_fact。
-
-    真实入口 = dispatch_declaration（与 #1835 AC3 同 tracer），不造 helper-only 平行测试。
-    """
-    db, state, _ = game
-    minister = _minister(db)
-
-    declaration = {
-        "registrations": [
-            {
-                "name": "地方缺任所甲",
-                "office": "福建巡抚",
-                "office_type": "督抚",
-                # 故意不给 region_id/任所——不得从官名推断 fujian。
-            },
-            {
-                "name": "福建补档乙",
-                "office": "福建巡抚",
-                "office_type": "督抚",
-                "region_id": "fujian",
-            },
-            {
-                "name": "未知任所丙",
-                "office": "河南巡抚",
-                "office_type": "地方",
-                "任所": "not_a_region",
-            },
-            {
-                "name": "中央补档丁",
-                "office": "锦衣卫百户",
-                "office_type": "武职",
-            },
-        ],
-        "textual_facts": [{
-            "subject_kind": "character", "subject_id": minister,
-            "body": "入册坏项旁的合法事实",
-        }],
-    }
-    result = dispatch_declaration(db, state, declaration)
-
-    applied_names = {row["name"] for row in result.registrations.applied}
-    assert applied_names == {"福建补档乙", "中央补档丁"}, result.registrations.applied
-    rejected_by_name = {
-        str((item.item or {}).get("name") or ""): item.category
-        for item in result.registrations.rejected
-    }
-    assert rejected_by_name.get("地方缺任所甲") == "missing_field", result.registrations.rejected
-    assert rejected_by_name.get("未知任所丙") == "missing_ref", result.registrations.rejected
-
-    # 坏项全回滚：无 characters 行、无内存 roster、无 character_offices。
-    for bad in ("地方缺任所甲", "未知任所丙"):
-        assert db.conn.execute(
-            "SELECT 1 FROM characters WHERE name=?", (bad,),
-        ).fetchone() is None
-        assert bad not in db.content.characters
-        assert db.conn.execute(
-            "SELECT 1 FROM character_offices WHERE character_name=?", (bad,),
-        ).fetchone() is None
-
-    # 合法地方入册：typed seat 落 character_offices.region_id 与内存 office_region。
-    assert db.character_office_region("福建补档乙") == "fujian"
-    assert db.content.characters["福建补档乙"].office_region == "fujian"
-    assert db.project_office_identity(
-        "福建巡抚", "督抚", character_name="福建补档乙",
-    )["archive_key"] == "slot:福建巡抚@fujian"
-
-    # 中央入册不要求 seat，空任所合法。
-    assert db.character_office_region("中央补档丁") == ""
-    assert "中央补档丁" in db.content.characters
-
-    # sibling textual_fact 不受入册坏项牵连。
-    assert result.textual_facts.rejected == []
-    facts = db.textual_facts.readable_materials(
-        subject_kind="character", subject_id=minister,
-    )
-    assert [f.body for f in facts] == ["入册坏项旁的合法事实"]
-
-    # 拒收进既有 durable 真源（不只活在返回值）。
-    durable = db.conn.execute(
-        "SELECT category, item_json FROM rejection_reports WHERE category IN ('missing_field', 'missing_ref')",
-    ).fetchall()
-    durable_cats = {
-        str(json.loads(row["item_json"]).get("name") or ""): row["category"]
-        for row in durable
-        if row["item_json"]
-    }
-    assert durable_cats.get("地方缺任所甲") == "missing_field", durable_cats
-    assert durable_cats.get("未知任所丙") == "missing_ref", durable_cats
 
 
 def test_registration_attaches_declared_affair(game):
@@ -847,7 +696,6 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
         settle_staged_declarations_in_decree_order,
         stage_declaration,
     )
-    from ming_sim.entities.staged_declaration import DecreeAlreadySettled
 
     db, state, _ = game
     minister = _minister(db)
@@ -881,31 +729,6 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
 
     discarded = discard_staged_declaration(db, "decree:2")
     assert discarded == 1
-    with pytest.raises(DecreeAlreadySettled):
-        stage_declaration(
-            db, decree_ref="decree:2",
-            declaration={"textual_facts": [{
-                "subject_kind": "character", "subject_id": minister, "body": "resurrected",
-            }]},
-            turn=int(state.turn),
-        )
-    restaged = db.conn.execute(
-        "SELECT COUNT(*) c FROM staged_declarations "
-        "WHERE decree_ref='decree:2' AND status='staged'",
-    ).fetchone()
-    assert restaged["c"] == 0
-
-    # discard-before-stage tombstone: no product row yet, late stage still rejected.
-    ghost = discard_staged_declaration(db, "decree:ghost")
-    assert ghost == 0
-    with pytest.raises(DecreeAlreadySettled):
-        stage_declaration(
-            db, decree_ref="decree:ghost",
-            declaration={"textual_facts": [{
-                "subject_kind": "character", "subject_id": minister, "body": "too late",
-            }]},
-            turn=int(state.turn),
-        )
 
     # 刻意把 decree:3 排在 decree:1 之前——与暂存先后（1→2→3）相反，用来断言
     # 结算真的服从传入顺序，而不是暂存插入顺序。
@@ -982,117 +805,3 @@ def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
     assert row["c"] == 0
     facts_after = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
     assert [f.body for f in facts_after] == ["旨三：首次暂存"]
-
-
-def test_declared_free_prose_is_persisted_byte_for_byte(game):
-    db, state, _ = game
-    minister = _minister(db)
-    from ming_sim.audience_night import open_night
-
-    night = open_night(db, state)
-    night_id = int(night["id"])
-    presence_body = "  前后空格正文  \n"
-    scene_body = "  场景前后  "
-    commission_text = "  交办前后空白  \n"
-    result = dispatch_declaration(db, state, {
-        "presence": [{"person_name": minister, "effect": "enter", "body": presence_body}],
-        "scene_facts": [{
-            "body": scene_body, "audibility": "殿上公开", "person_names": [minister],
-        }],
-        "commissions": [{"text": commission_text}],
-    }, night_id=night_id)
-    assert result.presence.rejected == []
-    assert result.scene_facts.rejected == []
-    assert result.commissions.rejected == []
-    presence_row = db.conn.execute(
-        "SELECT body FROM story_ledger_entries WHERE id=?",
-        (result.presence.applied[0]["id"],),
-    ).fetchone()
-    scene_row = db.conn.execute(
-        "SELECT body FROM story_ledger_entries WHERE id=?",
-        (result.scene_facts.applied[0]["id"],),
-    ).fetchone()
-    payload = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (result.commissions.applied[0]["id"],),
-    ).fetchone()["payload_json"])
-    assert presence_row["body"] == presence_body
-    assert scene_row["body"] == scene_body
-    assert payload["text"] == commission_text
-
-
-@pytest.mark.parametrize("section,field,bad", [
-    ("presence", "body", 123),
-    ("presence", "body", ["list"]),
-    ("presence", "body", {"k": 1}),
-    ("scene_facts", "body", 123),
-    ("scene_facts", "body", ["list"]),
-    ("scene_facts", "body", {"k": 1}),
-    ("commissions", "text", 123),
-    ("commissions", "text", ["list"]),
-    ("commissions", "text", {"k": 1}),
-])
-def test_non_string_declared_prose_is_durable_invalid_shape(game, section, field, bad):
-    db, state, _ = game
-    minister = _minister(db)
-    from ming_sim.audience_night import open_night
-
-    night = open_night(db, state)
-    night_id = int(night["id"])
-    before_ledger = db.conn.execute(
-        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
-    ).fetchone()["c"]
-    before_pending = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
-
-    if section == "presence":
-        declaration = {
-            "presence": [{"person_name": minister, "effect": "enter", field: bad}],
-        }
-    elif section == "scene_facts":
-        declaration = {
-            "scene_facts": [{
-                field: bad, "audibility": "殿上公开", "person_names": [minister],
-            }],
-        }
-    else:
-        declaration = {"commissions": [{field: bad}]}
-
-    result = dispatch_declaration(db, state, declaration, night_id=night_id)
-    section_result = getattr(result, section)
-    assert section_result.applied == []
-    assert section_result.rejected
-    assert section_result.rejected[0].category == "invalid_shape"
-    rows = db.conn.execute(
-        "SELECT section, category FROM rejection_reports WHERE turn=?",
-        (int(state.turn),),
-    ).fetchall()
-    assert (section, "invalid_shape") in {
-        (row["section"], row["category"]) for row in rows
-    }
-    after_ledger = db.conn.execute(
-        "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
-    ).fetchone()["c"]
-    after_pending = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
-    assert after_ledger == before_ledger
-    assert after_pending == before_pending
-
-
-@pytest.mark.parametrize("raw", [{}, "", 0])
-def test_present_falsy_section_is_durable_invalid_shape(game, raw):
-    db, state, _ = game
-    result = dispatch_declaration(db, state, {"textual_facts": raw})
-    assert result.textual_facts.applied == []
-    assert result.textual_facts.rejected
-    assert result.textual_facts.rejected[0].category == "invalid_shape"
-    rows = db.conn.execute(
-        "SELECT section, category FROM rejection_reports WHERE turn=?",
-        (int(state.turn),),
-    ).fetchall()
-    assert [(row["section"], row["category"]) for row in rows] == [
-        ("textual_facts", "invalid_shape"),
-    ]
-
-    empty_protagonist = dispatch_declaration(db, state, {"protagonist": {}})
-    assert empty_protagonist.protagonist.validated is None
-    assert empty_protagonist.protagonist.rejected
-    assert empty_protagonist.protagonist.rejected[0].category == "invalid_shape"

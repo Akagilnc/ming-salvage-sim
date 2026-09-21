@@ -368,7 +368,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         pa_id = db.stage_pending_action(
             state.turn, kind="office", action="任命",
             minister_name=minister,
-            payload={
+            payload={"text": "测试任免原文",
                 "name": minister, "office": new_office, "office_type": "六部",
                 "faction": "中立", "reason": "测试任免",
             },
@@ -453,14 +453,14 @@ def test_close_night_only_commits_this_night_approved(game):
     night = an.open_night(db, state)
     approved = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister,
-        payload={"name": minister, "office": "兵部郎中", "office_type": "六部",
+        payload={"text": "测试任免原文", "name": minister, "office": "兵部郎中", "office_type": "六部",
                  "faction": "中立", "reason": "测试"},
     )
     db.mark_pending_night_approved([approved], night_id=night["id"])
     # 未应允项（同回合、另一夜语义）
     unapproved = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister,
-        payload={"name": minister, "office": "不该落的官", "office_type": "六部"},
+        payload={"text": "测试任免原文", "name": minister, "office": "不该落的官", "office_type": "六部"},
     )
     db.conn.execute(
         "UPDATE pending_actions SET night_id=0, night_approved=0 WHERE id=?", (unapproved,))
@@ -491,7 +491,7 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content)
         new_office = "兵部郎中"
         pa_id = db.stage_pending_action(
             state.turn, kind="office", action="任命", minister_name=minister,
-            payload={"name": minister, "office": new_office, "office_type": "六部",
+            payload={"text": "测试任免原文", "name": minister, "office": new_office, "office_type": "六部",
                      "faction": "中立", "reason": "测试"},
         )
         db.mark_pending_night_approved([pa_id], night_id=night["id"])
@@ -662,14 +662,22 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
             pending_action_failures=[],
         )
 
+    def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        # #1842：CLI 殿上口令外问话走 scene_chat；替身委托既有 chat 同形。
+        del stream_emit
+        return chat(minister_name or "", message, chat_turn_id=chat_turn_id)
+
     session = SimpleNamespace(
-        db=db, state=state, content=content, temporary_characters=set(), chat=chat,
+        db=db, state=state, content=content, temporary_characters=set(),
+        chat=chat, scene_chat=scene_chat,
         # #542 scene lifecycle seams — CLI minister_chat start/join/persist/abandon.
         start_chat_turn_scene=lambda *_a, **_k: None,
         start_chat_turn_exit_scene=lambda *_a, **_k: None,
         join_chat_turn_scene=lambda *_a, **_k: [],
         persist_chat_turn_scene=lambda *_a, **_k: None,
         abandon_chat_turn_scene=lambda *_a, **_k: None,
+        # #1842：persist 尾必调；轻壳无 pending 时 no-op。
+        schedule_pending_scene_translation=lambda result: None,
     )
     answers = iter(["朕问卿边事如何？", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))

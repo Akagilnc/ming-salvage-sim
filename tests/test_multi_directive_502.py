@@ -612,6 +612,9 @@ def test_nonstream_web_chat_surfaces_ambiguous():
             return ChatTurnResult(
                 answer="请陛下明示是哪一道。", directive_confirmation_ambiguous=amb)
 
+        def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+            return self.chat(minister_name or name, message, chat_turn_id=chat_turn_id)
+
         def pending_count(self):
             return 0
 
@@ -632,6 +635,10 @@ def test_nonstream_web_chat_surfaces_ambiguous():
             return None
 
         def abandon_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def schedule_pending_scene_translation(self, result):
+            # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
             return None
 
     rt = object.__new__(web_app.WebGame)
@@ -671,6 +678,9 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
         def chat(self, minister_name, text, *, chat_turn_id=0, explicit_secret_order=False):
             return ChatTurnResult(answer="臣遵旨。")
 
+        def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+            return self.chat(minister_name or name, message, chat_turn_id=chat_turn_id)
+
         def pending_count(self):
             return 0
 
@@ -691,6 +701,10 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
             return None
 
         def abandon_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def schedule_pending_scene_translation(self, result):
+            # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
             return None
 
     rt = object.__new__(web_app.WebGame)

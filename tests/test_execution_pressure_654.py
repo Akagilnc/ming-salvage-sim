@@ -288,9 +288,11 @@ def test_region_id_column_and_composite_indexes(env):
     }
     assert "idx_decree_dossiers_directive" in idx
     assert "idx_decree_dossiers_pending_action" in idx
-    # 复合唯一：sql 含 region_id
+    # 复合唯一：directive 含 region_id；pending 含 region_id + action_type（#1837 组合载荷）
     assert "region_id" in (idx["idx_decree_dossiers_directive"] or "")
-    assert "region_id" in (idx["idx_decree_dossiers_pending_action"] or "")
+    pending_sql = idx["idx_decree_dossiers_pending_action"] or ""
+    assert "region_id" in pending_sql
+    assert "action_type" in pending_sql
     # secret_order 单列索引保留
     assert "idx_decree_dossiers_secret_order" in idx
 

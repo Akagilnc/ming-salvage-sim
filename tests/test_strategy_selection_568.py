@@ -347,7 +347,7 @@ def test_confirmation_answer_existing_not_swallowed_by_strategy_path(game, monke
     pid = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=minister.name, target_id=None,
-        payload={"name": "洪承畴", "office": "陕西巡抚", "appointer": minister.name},
+        payload={"text": "测试任免原文", "name": "洪承畴", "office": "陕西巡抚", "appointer": minister.name},
     )
     _silence_serial(monkeypatch)
     monkeypatch.setattr(

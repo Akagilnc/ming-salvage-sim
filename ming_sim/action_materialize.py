@@ -1844,6 +1844,10 @@ def _stage_office_pending_core(
         "mode": resolve_directive_mode(extracted=appt.get("mode") or mode_mark),
         "summon_after": "是" if want_summon else "否",
     }
+    # 成案核优先 payload 原样 text：会话任免把玩家原话带入，免 commit 回落题名。
+    player_text = str(ctx.player_message or "")
+    if player_text.strip():
+        payload["text"] = player_text
     if appt_region:
         payload["region_id"] = appt_region
     # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
@@ -2516,8 +2520,8 @@ def require_materializable_xiexang_payload(
         target_id=target_id,
         cadence=cadence,
     )
-    body = str(text or "").strip()
-    if not body:
+    body = str(text or "")
+    if not body.strip():
         raise DecreeMaterializationValidationError(
             "协饷旨意缺少正文（不猜散文）", failed_fields=("text",),
         )

@@ -24,6 +24,7 @@ def _stage_recommendation(db, state, recommender_name, row, office, reason, regi
     payload = {
         "name": row["name"], "office": office,
         "faction": row["faction"], "reason": reason,
+        "text": f"准荐{row['name']}任{office}",
         "recommendation": {
             "candidate": dict(row),
             "recommender": recommender_name,

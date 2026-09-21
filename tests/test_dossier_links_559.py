@@ -237,7 +237,7 @@ def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
 
     sess = GameSession.__new__(GameSession)
     sess.db, sess.state, sess.content = db, state, content
-    sess.registry = SimpleNamespace(get=lambda _character: Agent())
+    sess.registry = SimpleNamespace(get=lambda _character, **_kw: Agent())
     sess.llm_config = SimpleNamespace(channel="api")
     sess.temporary_characters = set()
     sess._audience_prompt_for_message = lambda message, *_args, **_kwargs: message
@@ -338,7 +338,7 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
         def __init__(self):
             self.db, self.state, self.content = db, state, content
             self.registry = SimpleNamespace(
-                get=lambda _character: Agent(), refresh=lambda _name: None, session_ids={})
+                get=lambda _character, **_kw: Agent(), refresh=lambda _name: None, session_ids={})
 
         def _character(self, name):
             return self.content.characters[name]
@@ -381,6 +381,10 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
         def abandon_chat_turn_scene(self, *_a, **_k):
             return None
 
+        def schedule_pending_scene_translation(self, result):
+            # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
+            return None
+
     bind_skills_content(content)
     runtime = WebGame.__new__(WebGame)
     runtime.session = Session()
@@ -392,10 +396,11 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
     runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
     runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
     runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    runtime._trail_extraction_after_reply = lambda *_args, **_kwargs: None
     runtime._trail_mindreading_after_reply = lambda *_args, **_kwargs: None
 
-    events = list(runtime.chat_stream(minister, "下密令护行辽饷。"))
+    # #1842：殿上默认 scene_chat；本测咬密令 tool→pending→commit 链，须走正式密令入口
+    # （_SECRET_PREFIXES / intent），禁殿上 scene、不复活旧 tool envelope 到 scene 路。
+    events = list(runtime.chat_stream(minister, "密令：护行辽饷。", "secret_order"))
     assert not [event for event in events if event["type"] == "error"], events
     done = next(event for event in events if event["type"] == "done")
     pending_id = done["payload"]["pending_action_id"]

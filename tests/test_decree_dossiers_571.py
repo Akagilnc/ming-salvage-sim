@@ -672,7 +672,7 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
         action="任命",
         minister_name=minister,
         target_id=None,
-        payload={"name": minister, "office": "兵部主事"},
+        payload={"text": "测试任免原文", "name": minister, "office": "兵部主事"},
     )
 
     before = db.conn.execute(
@@ -1709,7 +1709,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=_active_minister(db), target_id=None,
-        payload={"name": alias, "office": "兵部主事"},
+        payload={"text": "测试任免原文", "name": alias, "office": "兵部主事"},
     )
     db.commit_pending_actions(state, content=content, registry=None)
     dossier = next(

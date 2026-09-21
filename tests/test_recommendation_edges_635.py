@@ -26,6 +26,7 @@ def _stage_recommendation(db, state, recommender_name, row, office, reason):
         payload={
             "name": row["name"], "office": office,
             "faction": row["faction"], "reason": reason,
+            "text": f"准荐{row['name']}任{office}",
             "recommendation": {"candidate": row, "recommender": recommender_name},
         },
     )
@@ -207,7 +208,7 @@ def test_appointment_without_recommendation_writes_no_edges(game):
         action="任命",
         minister_name=recommender.name,
         target_id=None,
-        payload={
+        payload={"text": "测试任免原文",
             "name": row["name"], "office": "巡盐御史",
             "faction": row["faction"], "reason": "",
         },
@@ -304,7 +305,7 @@ def test_full_chain_tool_reason_verbatim_to_both_legs(game):
 
     action_id = sess._stage_appointment_candidate(
         out.removeprefix("__pending_recommendation__").strip(),
-        recommender)
+        recommender, source_text="准其所荐。")
     assert action_id > 0
 
     _commit_and_promulgate(db, state, content, action_id)
@@ -332,7 +333,7 @@ def test_rejected_blank_call_does_not_poison_same_turn(game):
 
     action_id = sess._stage_appointment_candidate(
         good.removeprefix("__pending_recommendation__").strip(),
-        recommender)
+        recommender, source_text="准其所荐。")
     assert action_id > 0
 
     _commit_and_promulgate(db, state, content, action_id)

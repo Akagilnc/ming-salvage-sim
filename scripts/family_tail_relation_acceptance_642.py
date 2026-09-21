@@ -55,7 +55,7 @@ import ming_sim.issues as issues_mod
 from ming_sim.llm_model import create_chat_model
 from ming_sim.models import LLMConfig
 from ming_sim.relation_brew import build_brew_input
-from ming_sim.relation_judge import summon_edge_origin
+from ming_sim.relations import summon_edge_origin
 from ming_sim.relation_read import load_relation_history_before, project_relation_ledger
 from ming_sim.relations import EDGE_KINDS, EMPEROR_NODE
 from ming_sim.session import GameSession
@@ -220,7 +220,7 @@ def _production_summon_turn(
     minister: str,
     utterance: str,
 ) -> Dict[str, Any]:
-    """真实 session/CLI 召对缝：attach → scene → chat → persist minister reply。"""
+    """真实 Web 召对缝：attach → scene_chat → persist；边事件经转译声明落账（#1842）。"""
     from ming_sim.audience_night import attach_chat_turn_to_night
 
     db, state = sess.db, sess.state
@@ -234,18 +234,24 @@ def _production_summon_turn(
         agno_runs_before=0,
         beat_generator=None,
     )
-    # 气氛 scene 非本锚契约：不 start_chat_turn_scene（避免无 generator 时 join 炸，
-    # 也不另启平行气氛 LLM）。召对主链=chat + persist_minister_reply。
+    # 气氛 scene 非本锚契约：不 start_chat_turn_scene。召对主链=
+    # scene_chat（#1836/#1842 单入口）+ persist；边事件/水位由转译承接，
+    # 不复活收夜 relation judge Future。
     user_message_id = db.append_chat_message(
         minister, accepted_turn, "user", utterance,
     )
     db.update_chat_turn_messages(int(chat_turn_id), user_message_id=int(user_message_id))
     try:
-        result = sess.chat(minister, utterance, chat_turn_id=int(chat_turn_id))
+        result = sess.scene_chat(
+            utterance,
+            chat_turn_id=int(chat_turn_id),
+            minister_name=minister,
+        )
         answer = str(getattr(result, "answer", "") or "")
         db.persist_minister_reply(
             minister, accepted_turn, answer, int(chat_turn_id),
         )
+        sess.schedule_pending_scene_translation(result)
         db.record_chat_turn_rollback_diffs(
             int(chat_turn_id),
             rollback_snapshot or {},
@@ -269,15 +275,6 @@ def _production_summon_turn(
     }
 
 
-def _mark_story_extract_done(db: Any, chat_turn_id: int) -> None:
-    """闸级卫生：本锚验的是收夜判官 Future，不另付费跑 story 抽取 drain。"""
-    db.conn.execute(
-        "UPDATE chat_turns SET extract_status='done' WHERE id=?",
-        (int(chat_turn_id),),
-    )
-    db.conn.commit()
-
-
 def _relation_judge_status(db: Any, chat_turn_id: int) -> str:
     row = db.conn.execute(
         "SELECT relation_judge_status FROM chat_turns WHERE id=?",
@@ -293,7 +290,7 @@ def _close_night_production_judge(
     content: GameContent,
     write_gate: Any,
 ) -> Dict[str, Any]:
-    """生产收夜：判官经 scene_registry.start_relation_judge_provider Future。"""
+    """生产收夜：join 在飞转译后封夜；#1842 后不再起边事件判官 Future。"""
     open_n = get_open_night(sess.db)
     if open_n is None:
         return {"closed": False, "reason": "no_open_night"}
@@ -308,6 +305,7 @@ def _close_night_production_judge(
         llm_config=cfg,
         write_gate=write_gate,
         scene_registry=getattr(sess, "_scene_registry", None),
+        write_queue=sess._write_queue,
         wait_timeout_s=0.0,
     )
     return {
@@ -583,7 +581,7 @@ def _chat_turn_pointer(db: Any, chat_turn_id: int) -> Dict[str, Any]:
 
 
 def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
-    """锚②最短生产单链：读面→召对→close_night 判官 Future→按月 settle/brew。"""
+    """锚②最短生产单链：读面→scene_chat→转译边事件→收夜 join→按月 settle/brew。"""
     sess = _fresh_session(content, cfg)
     write_gate = getattr(sess, "_write_gate", None) or threading.Lock()
     try:
@@ -592,7 +590,7 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
         all_chat_turn_ids: List[int] = []
         settle_traces: List[Dict[str, Any]] = []
 
-        # 三拍按素材月份真实推进：每拍召对→收夜判官 Future→月末 settle/brew。
+        # 三拍按素材月份真实推进：每拍 scene_chat+转译→收夜 join→月末 settle/brew。
         for spec in _YANG_BEAT_UTTERANCES:
             minister = str(spec["minister"])
             face_before = project_relation_ledger(sess.db, viewer=minister)
@@ -604,7 +602,8 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             )
             ctid = int(chat_meta["chat_turn_id"])
             all_chat_turn_ids.append(ctid)
-            _mark_story_extract_done(sess.db, ctid)
+            # 禁在调度后台转译后提前写 extract_status=done：worker 见 done 会空返回
+            # （audience_translation already_done），负载下偶发漏拍。水位由真实转译落账。
             close_meta = _close_night_production_judge(
                 sess, cfg, content=content, write_gate=write_gate,
             )
@@ -670,7 +669,7 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             })
 
         events = sess.db.get_relation_edge_events()
-        # 召对判官 origin 含 chat_turn 段（summon_edge_origin 形）。
+        # 转译声明边 origin 含 chat_turn 段（summon_edge_origin 形；#1838/#1842）。
         summon_origin_edges = [
             e for e in events if "|chat_turn:" in str(e.get("origin") or "")
         ]
@@ -741,18 +740,18 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
             "beat3_yang_ni_huang_coop": bool(progression["beat3_yang_ni_huang_coop"]),
         }
         # 语义裁判只读真实链指针（chat-turn / edge / summary），不喂直写剧本。
-        # 召对关系判官只产大臣↔大臣类目；君→杨的知遇/委任加深看三拍问答应酬与
+        # 转译声明只产大臣↔大臣类目；君→杨的知遇/委任加深看三拍问答应酬与
         # 委任加重轨迹（生产上君臣类目另归 0079 写端，本链不伪造知遇边）。
         prompt = (
             "你是关系演化判官。下面是杨嗣昌三拍**真实生产链**留下的证据指针"
-            "（召对轮问/答原文、判官落边、读面 DTO、月末酿制摘要），不是测试直写事件。\n"
+            "（召对轮问/答原文、转译声明边事件、读面 DTO、月末酿制摘要），不是测试直写事件。\n"
             "判定标准：\n"
             "1) 君→杨：三拍皇帝问话与杨答是否呈越次接应→问配合→委任加重的定性加深"
-            "（不必要求 DB 已有「知遇」类目边；君臣类目不由召对判官写）。\n"
+            "（不必要求 DB 已有「知遇」类目边；君臣类目不由召对转译写）。\n"
             "2) 杨↔倪/黄：须先有路线张力（使绊/结怨等）进入读面，再在后续拍"
             "出现配合/协作回写并逐拍演进，而非一次跳变抹平或完全无回写；"
             "第二拍召对前 face_before 已含杨嗣昌↔倪元璐/黄道周关系读面。\n"
-            "3) 配合段闭环：至少一拍在读面后出现召对判官回写的新边。\n"
+            "3) 配合段闭环：至少一拍在读面后出现转译回写的新边。\n"
             "证据不足则 pass=false。\n"
             "只输出 JSON：{\"pass\": true|false, \"reason\": \"...\", "
             "\"jun_yang\": \"deeper|flat|regress|unclear\", "
@@ -910,8 +909,8 @@ def main() -> int:
             "design": (
                 "Live production-chain tracer: seed semantic on seed ledger; "
                 "yang = 3×(project_relation_ledger → session summon Q&A → "
-                "audience_night.close_night via scene_registry."
-                "start_relation_judge_provider Future → settle_with_delta brew); "
+                "audience translation edge → audience_night.close_night "
+                "→ settle_with_delta brew); "
                 "typed asserts on judge watermark/origin/edge id/summary "
                 "last_event_id + last_brewed year-period progression + "
                 "beat1 tension kinds → face_before event pointers → beat2/3 coop; "

@@ -178,14 +178,15 @@ def test_settle_extraction_skips_dead_round_but_writes_live_round(game):
 # ── AC3：夜内真实盘面直写走可枚举白名单；越权直写被审计咬住 ──────────────────────
 
 
-def test_night_direct_write_whitelist_enumerates_three_items():
+def test_night_direct_write_whitelist_enumerates_authorized_items():
     wl = an.NIGHT_DIRECT_WRITE_WHITELIST
-    # 白名单恰三项（#634 落地 ADR 0038 白名单③「召对口关系边事件」）——
+    # ADR 0038：①密令落地；②转译声明的当场实况（#1839 第四类，原入册/边事件并入）。
     # 新增夜内直写仍须过设计审、显式扩表。
-    assert set(wl) == {"密令落地", "未在册人物入册", "召对口关系边事件"}
+    assert set(wl) == {"密令落地", "转译声明的当场实况"}
     assert wl["密令落地"] == frozenset({"secret_orders", "secret_order_briefs"})
-    assert wl["未在册人物入册"] == frozenset({"characters", "character_offices"})
-    assert wl["召对口关系边事件"] == frozenset({"relation_edge_events"})
+    fourth = wl["转译声明的当场实况"]
+    assert {"characters", "character_offices", "relation_edge_events"} <= set(fourth)
+    assert {"textual_facts", "public_sayings", "story_ledger_entries"} <= set(fourth)
 
 
 def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
@@ -204,18 +205,26 @@ def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
     assert "密令落地" in an.audit_night_direct_writes(db, legal_night)
     an.close_night(db, state, night_id=legal_night)
 
-    # 越权夜：夜内直写 factions（真实盘面、非白名单——本应走待确认暂存）→ 审计咬住
+    # 越权夜：夜内直写 consort_traits（真实盘面、非白名单——本应走待确认暂存）→ 审计咬住
+    # （factions 已随 #1839 第四类并入人物状态副作用，不再作越权哨兵。）
     def _rogue_direct_write(night_id: int, chat_id: int) -> None:
-        fac = db.conn.execute("SELECT name FROM factions LIMIT 1").fetchone()["name"]
-        db.conn.execute(
-            "UPDATE factions SET leverage = leverage + 1 WHERE name = ?", (fac,)
-        )
+        row = db.conn.execute("SELECT name FROM consort_traits LIMIT 1").fetchone()
+        if row is None:
+            db.conn.execute(
+                "INSERT INTO consort_traits (name, extra_skills, extra_traits, updated_turn) "
+                "VALUES ('审计越权探针妃', '越权', '', 0)"
+            )
+        else:
+            db.conn.execute(
+                "UPDATE consort_traits SET extra_skills = extra_skills || 'x' WHERE name = ?",
+                (str(row["name"]),),
+            )
         db.conn.commit()
     rogue_night, _ = _run_round(db, state, m, writes=_rogue_direct_write)
     with pytest.raises(AudienceNightError) as ei:
         an.audit_night_direct_writes(db, rogue_night)
     assert ei.value.code == "unwhitelisted_night_write"
-    assert "factions" in ei.value.detail.get("tables", [])
+    assert "consort_traits" in ei.value.detail.get("tables", [])
 
 
 # ── AC4：撤回删除该轮新入册人物——档案+入殿账一并消失，像没登场过 ────────────────
@@ -354,7 +363,7 @@ def test_undo_confirm_round_reverts_pending_to_unapproved(game):
 
     def _stage(night_id: int, chat_id: int) -> None:
         staged["id"] = db.stage_pending_action(
-            int(state.turn), "office", "任命", m, {"office": "兵部尚书"},
+            int(state.turn), "office", "任命", m, {"text": "测试任免原文", "office": "兵部尚书"},
         )
     _run_round(db, state, m, writes=_stage)
     action_id = staged["id"]
@@ -390,7 +399,7 @@ def test_undo_restores_staging_row_deleted_by_verbal_reject(game):
 
     def _stage(night_id: int, chat_id: int) -> None:
         staged["id"] = db.stage_pending_action(
-            int(state.turn), "office", "任命", m, {"office": "蓟辽总督"},
+            int(state.turn), "office", "任命", m, {"text": "测试任免原文", "office": "蓟辽总督"},
         )
     _run_round(db, state, m, writes=_stage)
     action_id = staged["id"]
@@ -599,7 +608,7 @@ def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
     def _writes(_nid: int, chat_id: int) -> None:
         pending_id = db.stage_pending_action(
             int(state.turn), "office", "任命", m,
-            {"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+            {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
         )
         an.ensure_inactive_office_summon(
             db, int(pending_id), "袁崇焕",
@@ -629,7 +638,7 @@ def test_reject_pending_discards_inactive_office_summon_origin(game):
     night = an.open_night(db, state, empty_scaffold=True)
     pending_id = db.stage_pending_action(
         int(state.turn), "office", "任命", m,
-        {"name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+        {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
     )
     an.ensure_inactive_office_summon(
         db, int(pending_id), "袁崇焕",

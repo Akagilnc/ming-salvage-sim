@@ -1421,6 +1421,8 @@ class GameDB:
                 -- #1566/#1716：typed route（'' / offsite / secret_order / secret_order_offsite）；
                 -- 中断重试经 decode_chat_turn_route 恢复 explicit_secret_order / 殿上 scene。
                 route TEXT NOT NULL DEFAULT '',
+                -- #1838：本轮转译声明的御前主角（按源轮；空=本轮未声明）
+                protagonist_name TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 undone_at TEXT
             );
@@ -1443,6 +1445,8 @@ class GameDB:
                 close_commit_cursor INTEGER NOT NULL DEFAULT 0,
                 -- 夜内事件单调序源：账本 seq 与 chat night_seq 同桶递增
                 next_event_seq INTEGER NOT NULL DEFAULT 0,
+                -- #1838：本夜当前御前主角（转译判；宣 X 当场先切）
+                protagonist_name TEXT NOT NULL DEFAULT '',
                 opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 closed_at TEXT
             );
@@ -1573,8 +1577,11 @@ class GameDB:
                 FOREIGN KEY(secret_order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
             );
             -- #654：fan-out 幂等键＝(source_id, region_id)；单行 region_id='' 与旧语义等价
+            -- #1837：幂等键含 action_type，一份 pending 可同时产拨帑+任免两类案卷
+            -- （非属地 grant 的 region_id='' 不再把 appointment 短路成既有 grant 行）。
             CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action
-                ON decree_dossiers(pending_action_id, region_id) WHERE pending_action_id > 0;
+                ON decree_dossiers(pending_action_id, region_id, action_type)
+                WHERE pending_action_id > 0;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive
                 ON decree_dossiers(directive_id, region_id) WHERE directive_id > 0;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_secret_order
@@ -2512,6 +2519,10 @@ class GameDB:
         self.ensure_column("chat_turns", "undone_at", "TEXT")
         # #1566：typed 密令 route 旧档补列（中断重试恢复 explicit_secret_order / 殿上 scene）。
         self.ensure_column("chat_turns", "route", "TEXT NOT NULL DEFAULT ''")
+        # #1838 C1b：本轮转译声明的御前主角（按源轮持久化；夜当前值在 audience_nights）。
+        self.ensure_column("chat_turns", "protagonist_name", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "audience_nights", "protagonist_name", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
             "story_ledger_entries", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
         # #506 轮级撤销：口令账（入殿/告退等，source_chat_turn_id==0）由某一轮 attach 创建时
@@ -2670,20 +2681,17 @@ class GameDB:
         AffairStore.ensure_schema(self.conn)
         self.ensure_column("decree_dossiers", "affair_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "affair_id", "INTEGER NOT NULL DEFAULT 0")
-        # #1835：relation_edge_events 是整数 id 主键，可直接复用 AffairStore 通用
-        # 指针机制（_POINTER_TABLES）；characters 主键是 name（非整数 id），不
-        # 兼容该通用机制的 `WHERE id=?`，其「各自所属事务」绑定由
-        # ming_sim.declaration_dispatch 按 name 主键另写最小实现，语义对齐但不
-        # 强行改 AffairStore 的既有 id 主键契约。
+        # #1835/#1831：relation_edge_events 是整数 id 主键，直接复用 AffairStore
+        # 通用指针机制（_POINTER_TABLES）；characters 主键是 name（非整数 id），
+        # AffairStore.attach_pointer 现按表配置主键列（_POINTER_KEY_COLUMNS，
+        # characters → name）同样直接复用，不再单独实现一份「各自所属事务」
+        # 绑定逻辑。
         self.ensure_column("relation_edge_events", "affair_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "affair_id", "INTEGER NOT NULL DEFAULT 0")
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_affair "
-            "ON decree_dossiers(affair_id, id)"
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_issues_affair ON issues(affair_id, id)"
-        )
+        # decree_dossiers / issues 的 affair 索引真源只在建表脚本（CREATE INDEX
+        # IF NOT EXISTS 每次 init_schema 仍会补缺）；此处禁重复定义。
+        # relation_edge_events / characters 的 affair_id 仅 ensure_column 后置，
+        # 索引只能跟在加列之后。
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_relation_edge_events_affair "
             "ON relation_edge_events(affair_id, id)"
@@ -3465,12 +3473,14 @@ class GameDB:
         return False
 
     def _ensure_decree_dossier_locality_indexes(self) -> None:
-        """#654：把旧单列 UNIQUE 换成 (source_id, region_id) 复合键；secret_order 不动。"""
+        """#654 / #1837：pending 幂等键＝(pending_action_id, region_id, action_type)；
+        directive 仍 (directive_id, region_id)；secret_order 不动。"""
         self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_pending_action")
         self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_directive")
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action "
-            "ON decree_dossiers(pending_action_id, region_id) WHERE pending_action_id > 0"
+            "ON decree_dossiers(pending_action_id, region_id, action_type) "
+            "WHERE pending_action_id > 0"
         )
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive "
@@ -9449,6 +9459,12 @@ class GameDB:
         # 被还原而 factions leverage 留脏。快照 SELECT * 含 leverage+offset，原位 UPDATE
         # 全列覆盖、二者同还原。
         "factions": "name",
+        # #1839 C2 / ADR 0038 第四类：转译声明当场实况的前像表——文字事实 / 公开说法 /
+        # 边事件。人物 status 变更走 characters；在场账走 origin_chat_turn_id 删（undo
+        # 既有路径），不进本快照。
+        "textual_facts": "id",
+        "public_sayings": "id",
+        "relation_edge_events": "id",
     }
 
     def _delete_turn_scoped_knowledge_sources_in_tx(self, chat_turn_id: int) -> None:
@@ -10109,10 +10125,20 @@ class GameDB:
         return [int(row["id"]) for row in rows]
 
     def persist_minister_reply(
-        self, minister_name: str, turn: int, content: str, chat_turn_id: int,
+        self,
+        minister_name: str,
+        turn: int,
+        content: str,
+        chat_turn_id: int,
+        *,
+        mindreading_status: Optional[str] = None,
     ) -> int:
-        """**一个事务**内：插入大臣回话消息 → 取其 id → 链接到 turn → 升 active → 接受读心任务
-        （''→'running'）→ 单次提交。返回 message_id（#499）。
+        """**一个事务**内：插入大臣回话消息 → 取其 id → 链接到 turn → 升 active → 读心任务态
+        → 单次提交。返回 message_id（#499）。
+
+        默认 ''→'running'（接受读心）。Web #1842 退役代码尾随时传入
+        ``mindreading_status='skip'``，与回话同事务落终态，禁分二次提交后 skip 被外层
+        atomic / 并发写冲掉。
 
         杜绝「回话消息已 commit 但未链接」孤儿：分两次提交时，插入回话已落库、链接+接受
         未落库时崩溃 → 可见的持久回话却 chat_turn_id 0、active 未链接轮、空任务态、无启动
@@ -10121,37 +10147,53 @@ class GameDB:
         status 升级同 update_chat_turn_messages（#498 挂夜轮以 generating 起笔，回话落库后升 active）——
         本函数是 update_chat_turn_messages(minister_message_id=...) 的原子替代，须同做该升级。
         """
-        with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）
+        target_mind = str(mindreading_status) if mindreading_status is not None else None
+        with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）；外层 atomic 内 commit 暂停
             cur = self.conn.execute(
                 "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
                 "VALUES (?, ?, 'minister', ?, 'held')",
                 (minister_name, int(turn), content),
             )
             message_id = int(cur.lastrowid)
-            self.conn.execute(
-                """
-                UPDATE chat_turns
-                SET minister_message_id = ?,
-                    status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
-                    mindreading_status = CASE WHEN mindreading_status = ''
-                                             THEN 'running' ELSE mindreading_status END
-                WHERE id = ?
-                """,
-                (message_id, int(chat_turn_id)),
-            )
+            if target_mind is None:
+                self.conn.execute(
+                    """
+                    UPDATE chat_turns
+                    SET minister_message_id = ?,
+                        status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
+                        mindreading_status = CASE WHEN mindreading_status = ''
+                                                 THEN 'running' ELSE mindreading_status END
+                    WHERE id = ?
+                    """,
+                    (message_id, int(chat_turn_id)),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    UPDATE chat_turns
+                    SET minister_message_id = ?,
+                        status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
+                        mindreading_status = CASE WHEN mindreading_status IN ('', 'running')
+                                                 THEN ? ELSE mindreading_status END
+                    WHERE id = ?
+                    """,
+                    (message_id, target_mind, int(chat_turn_id)),
+                )
         return message_id
 
     def set_mindreading_status(self, chat_turn_id: int, status: str) -> None:
         """把在办任务落终态（'failed'/'skip'）：模型失败或不适用时落库，让重开轮询能判终止。
 
         只从非终态（''/'running'）转入，不覆盖已有终态；已 ready 的轮由 record 存在表达终态。
+        外层 atomic / 已开事务时不自 commit（connection_owns_transaction）。
         """
         self.conn.execute(
             "UPDATE chat_turns SET mindreading_status = ? "
             "WHERE id = ? AND mindreading_status IN ('', 'running')",
             (str(status), int(chat_turn_id)),
         )
-        self.conn.commit()
+        if connection_owns_transaction(self.conn):
+            self.conn.commit()
 
     def get_mindreading_status(self, chat_turn_id: int) -> str:
         row = self.conn.execute(
@@ -10162,68 +10204,26 @@ class GameDB:
 
     # ----- #634 召对判官水位（ADR 0082：逐轮标记即水位，无平行水位表）-----
 
-    def list_unjudged_completed_chat_turns(
-        self, night_id: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        """Return one night's unjudged output targets, never a cross-night window.
 
-        Without an explicit night, the oldest outstanding turn chooses the batch.
-        Legacy ``night_id=0`` is an ordinary, isolated batch of its own.
-        """
-        nid = int(night_id) if night_id is not None else None
-        if nid is None:
-            first = self.conn.execute(
-                """SELECT night_id FROM chat_turns
-                   WHERE status='active' AND minister_message_id > 0
-                     AND relation_judge_status=''
-                   ORDER BY id LIMIT 1""",
-            ).fetchone()
-            if first is None:
-                return []
-            nid = int(first["night_id"] or 0)
-        rows = self.conn.execute(
-            """SELECT * FROM chat_turns
-               WHERE status='active' AND minister_message_id > 0
-                 AND relation_judge_status='' AND night_id=?
-               ORDER BY id""",
-            (nid,),
-        ).fetchall()
-        return [self._row_dict(r) for r in rows]
 
-    def list_relation_judge_context(self, night_id: int, through_id: int) -> List[Dict[str, Any]]:
-        """Completed active context for a night through this batch's high-water turn."""
-        rows = self.conn.execute(
-            """SELECT * FROM chat_turns
-               WHERE status='active' AND minister_message_id > 0
-                 AND night_id=? AND id <= ? ORDER BY id""",
-            (int(night_id), int(through_id)),
-        ).fetchall()
-        return [self._row_dict(r) for r in rows]
-
-    def mark_relation_judge_done(self, chat_turn_ids: Iterable[int]) -> None:
-        """把本拍已落库的窗口轮标 'done'；只从 '' 转入，不覆盖其它终态。"""
-        ids = [int(i) for i in chat_turn_ids]
-        if not ids:
-            return
-        placeholders = ",".join("?" for _ in ids)
-        self.conn.execute(
-            f"UPDATE chat_turns SET relation_judge_status = 'done' "
-            f"WHERE id IN ({placeholders}) AND relation_judge_status = ''",
-            ids,
-        )
-        self.conn.commit()
 
     def delete_relation_edge_events_for_chat_turn(self, chat_turn_id: int) -> int:
-        """撤回联动（ADR 0038 白名单③）：删该轮源绑定的召对边事件行，返回删除数。
+        """撤回联动（ADR 0038 白名单③ / #1839 第四类）：删该轮源绑定的边事件行。
 
         事务归属调用方：undo_chat_turn 在其原子块内调（禁提前 commit）；origin 的
-        chat_turn 段是唯一的源轮绑定真源（relation_judge.summon_edge_origin 拼装）。
+        chat_turn 段是唯一的源轮绑定真源——relations.summon_edge_origin
+        与转译声明路径（declaration_dispatch 拼装
+        ``转译声明|chat_turn:{id}``）共用同一段形态。
         """
-        cur = self.conn.execute(
-            "DELETE FROM relation_edge_events WHERE origin LIKE ?",
-            (f"{SUMMON_EDGE_ORIGIN_PREFIX}|chat_turn:{int(chat_turn_id)}|%",),
-        )
-        return int(cur.rowcount)
+        cid = int(chat_turn_id)
+        total = 0
+        for prefix in (SUMMON_EDGE_ORIGIN_PREFIX, "转译声明"):
+            cur = self.conn.execute(
+                "DELETE FROM relation_edge_events WHERE origin LIKE ?",
+                (f"{prefix}|chat_turn:{cid}|%",),
+            )
+            total += int(cur.rowcount)
+        return total
 
     # ----- #501 叙事抽取落账（水位 + 原子落账 + 补跑真源）-----
 
@@ -10769,6 +10769,14 @@ class GameDB:
             target_id = str(item["target_id"])
             if strategy == "delete_inserted_row":
                 self._delete_row_in_tx(table, target_id)
+                # #1839：公开说法写口附带 character_knowledge_sources（source_id=
+                # public_saying:<id>，仅承载排除名单）；前像删行时同步清掉，避免
+                # 孤儿 exclusion 源在说法已撤回后仍挡见闻。
+                if table == "public_sayings":
+                    self.conn.execute(
+                        "DELETE FROM character_knowledge_sources WHERE source_id = ?",
+                        (f"public_saying:{target_id}",),
+                    )
             elif strategy in {"restore_row", "restore_deleted_row"}:
                 before_row = self._json_load_row(item["before_json"])
                 self._restore_row_in_tx(table, before_row)
@@ -10912,6 +10920,27 @@ class GameDB:
                 """,
                 (int(chat_turn_id),),
             )
+            # #1838 / ADR 0155：夜当前主角是投影，不是独立真源。撤本轮后按该夜
+            # 仍存活轮（status 非 undone/failed）最近一条非空 chat_turns.protagonist_name
+            # 重投影 audience_nights.protagonist_name；无存活声明则回初态空值。
+            # 覆盖转译绑定与宣 X 先切两个写口（二者都写同一夜级缓存）。
+            if night_id > 0:
+                prev = self.conn.execute(
+                    """
+                    SELECT protagonist_name FROM chat_turns
+                    WHERE night_id = ?
+                      AND status NOT IN ('undone', 'failed')
+                      AND protagonist_name != ''
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (night_id,),
+                ).fetchone()
+                restored = str(prev["protagonist_name"] or "") if prev is not None else ""
+                self.conn.execute(
+                    "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
+                    (restored, night_id),
+                )
             self._truncate_agno_runs_in_tx(
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),
@@ -15172,7 +15201,7 @@ class GameDB:
     ) -> int:
         """单行案卷内核（#654 region_id）；create_decree_dossier(s) 共用。"""
         action = str(action_type or "").strip()
-        text = str(decree_text or "").strip()
+        text = str(decree_text or "")
         normalized_payload = dict(payload or {})
         # #1565：公开成案/旧入口只有 decree_text 时，正文无损承接到唯一正文槽 payload.text；
         # 不回填为题名，不建平行 body 真源。
@@ -15276,9 +15305,10 @@ class GameDB:
                 (int(directive_id), region_id),
             )
         elif int(pending_action_id or 0) > 0:
+            # #1837：同 pending 可挂多 action_type（组合拨帑+任免）；幂等按三类键查。
             lookup_sql, lookup_params = (
-                "pending_action_id = ? AND region_id = ?",
-                (int(pending_action_id), region_id),
+                "pending_action_id = ? AND region_id = ? AND action_type = ?",
+                (int(pending_action_id), region_id, action),
             )
         if lookup_sql:
             existing = self.conn.execute(
@@ -18973,8 +19003,8 @@ class GameDB:
             )
         except (TypeError, ValueError, json.JSONDecodeError):
             return {"classification": "invalid"}
-        text = str(payload.get("text") or "").strip()
-        if not text:
+        text = str(payload.get("text") or "")
+        if not text.strip():
             return {"classification": "invalid"}
         actor = str(payload.get("actor") or pa.get("minister_name") or "").strip()
         payload["text"] = text
@@ -19258,75 +19288,9 @@ class GameDB:
         commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。
         office(任免)落库需 content/registry(注册新臣);缺则返 False(标 failed,不静默)。"""
         if pa["kind"] == "office":
-            name = str(payload.get("name") or "").strip()
-            office = str(payload.get("office") or "").strip()
-            if not name or (pa["action"] == "任命" and not office):
-                return False
-            if content is None:
-                return False
-            from ming_sim.session import _find_existing_minister
-            canonical = _find_existing_minister(content, name, self)
-            if canonical:
-                row = self.conn.execute(
-                    "SELECT status,power_id FROM characters WHERE name=?",
-                    (canonical,),
-                ).fetchone()
-                if row is None or str(row["power_id"] or "ming") != "ming":
-                    return False
-                if pa["action"] == "任命" and row["status"] == "dead":
-                    return False
-                if pa["action"] == "罢免" and row["status"] != "active":
-                    return False
-            elif pa["action"] == "罢免":
-                return False
-            if canonical:
-                name = canonical
-            elif (
-                pa["action"] == "任命"
-                and infer_office_type_from_office(office, "", self.llm_config) != "后宫"
-            ):
-                # 任命准旨成案前只登记朝臣身份；后宫仍走既有纳妃核。
-                # 授官/激活仍只由顺颁后的
-                # _commit_office_action -> apply_office_appointment 完成。
-                from ming_sim.models import Character
-                from ming_sim.session import canonical_new_appointment_person_fields
-                character = Character(
-                    name=name, office="待选", office_type="未仕",
-                    aliases=[], personal_skills=[], power_id="ming",
-                    status="offstage",
-                    **canonical_new_appointment_person_fields(
-                        content, payload.get("faction"),
-                    ),
-                )
-                content.characters[name] = character
-                self.add_character(
-                    state, character,
-                    source="任命准旨身份登记", commit=False,
-                )
-            staged_payload = dict(payload)
-            staged_payload["name"] = name
-            staged_payload["_office_action"] = str(pa["action"])
-            staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
-            dossier_id = self.create_decree_dossier(
-                state,
-                action_type=(
-                    "dismiss_assignment"
-                    if pa["action"] == "罢免" else "appointment"
-                ),
-                decree_text=(
-                    f"{pa['action']}{name}"
-                    + (f"为{office}" if office else "")
-                ),
-                target_kind="character",
-                target_id=name,
-                executor_kind="character",
-                executor_id=name,
-                pending_action_id=int(pa["id"]),
-                payload=staged_payload,
-                status="proposed",
-                commit=False,
+            return self._materialize_office_appointment_dossier(
+                state, pa, payload, content=content,
             )
-            return dossier_id != 0
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
@@ -19495,9 +19459,9 @@ class GameDB:
                 payload = self._normalize_directive_dossier_payload(
                     payload, content=content, current_turn=int(state.turn),
                 )
-            text = str(payload.get("text") or "").strip()
+            text = str(payload.get("text") or "")
             actor = str(payload.get("actor") or pa["minister_name"] or "")
-            if not text:
+            if not text.strip():
                 return False
             status = "pending" if str(payload.get("_directive_status") or "draft") == "pending" else "draft"
             # 不回到颁诏 checkpoint 时默认同意为 draft；召对里明确应允只表示接受为候选，
@@ -19537,8 +19501,141 @@ class GameDB:
                     "OR pending_action_id=0 OR pending_action_id=?)",
                     (int(pa["id"]), int(did), int(pa["id"])),
                 )
+                # ADR 0028 / #1837：组合载荷（拨帑±任免）同一份 pending 同时产任免案卷；
+                # 任免字段只进 appointment 案卷，禁把 grant 的 execution_surface 带过去。
+                if not self._materialize_combined_appointment_from_directive(
+                    state, pa, payload, content=content,
+                ):
+                    return False
             return True
         return False
+
+    @staticmethod
+    def _appointment_slice_from_combined_payload(
+        payload: Dict[str, object],
+    ) -> Optional[Dict[str, object]]:
+        """从组合 directive 载荷抽出任免字段；无任免声明返 None。
+
+        只保留任免成案所需键，剥离 grant 的 execution_surface / amount 等，
+        避免 appointment 案卷撞「execution_surface 与案卷动作策略不符」。
+        """
+        action = str(payload.get("appoint_action") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        if action not in {"任命", "罢免"} or not name:
+            return None
+        office = str(payload.get("office") or "").strip()
+        if action == "任命" and not office:
+            return None
+        sliced: Dict[str, object] = {
+            "name": name, "office": office, "appoint_action": action,
+        }
+        for key in (
+            "appointment_tenure", "任别", "faction", "summon_after",
+            "text", "affair_id", "region_id",
+        ):
+            value = payload.get(key)
+            if value not in (None, ""):
+                sliced[key] = value
+        return sliced
+
+    def _materialize_combined_appointment_from_directive(
+        self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
+        *, content=None,
+    ) -> bool:
+        """组合 directive 载荷上的任免 → 既有 office 成案核；无任免字段则 no-op 成功。"""
+        sliced = self._appointment_slice_from_combined_payload(payload)
+        if sliced is None:
+            return True
+        office_pa = {
+            "id": pa["id"],
+            "kind": "office",
+            "action": str(sliced["appoint_action"]),
+            "minister_name": str(
+                pa.get("minister_name") or payload.get("actor") or ""
+            ),
+        }
+        decree_text = str(payload.get("text") or sliced.get("text") or "")
+        return self._materialize_office_appointment_dossier(
+            state, office_pa, sliced, content=content,
+            decree_text=decree_text if decree_text.strip() else None,
+        )
+
+    def _materialize_office_appointment_dossier(
+        self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
+        *, content=None, decree_text: Optional[str] = None,
+    ) -> bool:
+        """任免案卷唯一成案核：kind=office 与组合 directive 同伴共用，不平行第二套。"""
+        name = str(payload.get("name") or "").strip()
+        office = str(payload.get("office") or "").strip()
+        action = str(pa.get("action") or payload.get("appoint_action") or "").strip()
+        if not name or (action == "任命" and not office):
+            return False
+        if content is None:
+            return False
+        from ming_sim.session import _find_existing_minister
+        canonical = _find_existing_minister(content, name, self)
+        if canonical:
+            row = self.conn.execute(
+                "SELECT status,power_id FROM characters WHERE name=?",
+                (canonical,),
+            ).fetchone()
+            if row is None or str(row["power_id"] or "ming") != "ming":
+                return False
+            if action == "任命" and row["status"] == "dead":
+                return False
+            if action == "罢免" and row["status"] != "active":
+                return False
+        elif action == "罢免":
+            return False
+        if canonical:
+            name = canonical
+        elif (
+            action == "任命"
+            and infer_office_type_from_office(office, "", self.llm_config) != "后宫"
+        ):
+            # 任命准旨成案前只登记朝臣身份；后宫仍走既有纳妃核。
+            # 授官/激活仍只由顺颁后的
+            # _commit_office_action -> apply_office_appointment 完成。
+            from ming_sim.models import Character
+            from ming_sim.session import canonical_new_appointment_person_fields
+            character = Character(
+                name=name, office="待选", office_type="未仕",
+                aliases=[], personal_skills=[], power_id="ming",
+                status="offstage",
+                **canonical_new_appointment_person_fields(
+                    content, payload.get("faction"),
+                ),
+            )
+            content.characters[name] = character
+            self.add_character(
+                state, character,
+                source="任命准旨身份登记", commit=False,
+            )
+        staged_payload = dict(payload)
+        staged_payload["name"] = name
+        staged_payload["_office_action"] = action
+        staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
+        # 纯 office 与组合路径同核：优先声明/payload 原样 text（P7）。
+        # 缺少唯一原文真源时拒绝物化；不得替 LLM 拼玩家可感正文。
+        text = str(decree_text or staged_payload.get("text") or "")
+        if not text.strip():
+            return False
+        dossier_id = self.create_decree_dossier(
+            state,
+            action_type=(
+                "dismiss_assignment" if action == "罢免" else "appointment"
+            ),
+            decree_text=text,
+            target_kind="character",
+            target_id=name,
+            executor_kind="character",
+            executor_id=name,
+            pending_action_id=int(pa["id"]),
+            payload=staged_payload,
+            status="proposed",
+            commit=False,
+        )
+        return dossier_id != 0
 
     def _recommendation_snapshot_ready(
         self, state: GameState, payload: Dict[str, object], *, minister_name: str = "",

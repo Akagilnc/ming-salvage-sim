@@ -124,7 +124,7 @@ def test_negated_hold_over_phrase_approves_not_held_over(game, monkeypatch):
             return types.SimpleNamespace(content="臣遵旨。", tools=[])
 
     class Registry:
-        def get(self, _character):
+        def get(self, _character, **_kw):
             return Agent()
 
 
@@ -136,7 +136,7 @@ def test_negated_hold_over_phrase_approves_not_held_over(game, monkeypatch):
     sess.registry = Registry()
     sess.llm_config = types.SimpleNamespace(channel="cli")
     sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message: message
+    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
     sess._start_cli_action_intent = lambda *_a, **_k: None
     sess._finish_cli_action_intent = lambda *_a, **_k: None
 

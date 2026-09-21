@@ -855,7 +855,7 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
     sess.content = content
     sess.temporary_characters = {}
     sess.registry = SimpleNamespace(
-        get=lambda _character: _Agent(),
+        get=lambda _character, **_kw: _Agent(),
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess._retrieve_memories_for_message = lambda text: text
@@ -919,7 +919,7 @@ def test_tool_summon_does_not_splice_gate_reason_into_llm_answer(game, monkeypat
         chat_turn_id=0,
         before_snapshot={},
         accepted_turn=state.turn,
-        emit_delta=lambda _chunk: None,
+        emit_delta=lambda _chunk, replace=False: None,
     )
     assert payload["answer"] == model_answer
     assert "本回合不能入殿" not in payload["answer"]
@@ -962,7 +962,7 @@ def test_session_register_unlisted_summon_after_uses_admission(game, monkeypatch
         sess.content = content
         sess.temporary_characters = {}
         sess.registry = SimpleNamespace(
-            get=lambda _character: _Agent(),
+            get=lambda _character, **_kw: _Agent(),
             register=lambda _ch: None,
         )
         sess.llm_config = SimpleNamespace(channel="api")
@@ -1641,10 +1641,10 @@ def _install_secret_order_agent(runtime, *, stream: bool = False) -> None:
         agent = _SyncAgent(tools=non_secret_tools, chunks=["臣领密旨。"])
 
     s = runtime.session
-    s.registry = SimpleNamespace(get=lambda _ch: agent, session_ids={})
+    s.registry = SimpleNamespace(get=lambda _ch, **_kw: agent, session_ids={})
     s.llm_config = SimpleNamespace(channel="api")
     s._audience_prompt_for_message = (
-        lambda msg, character=None, chat_turn_id=0: msg
+        lambda msg, character=None, chat_turn_id=0, **_kw: msg
     )
     s._start_cli_action_intent = lambda *_a, **_k: None
     s._finish_cli_action_intent = lambda *_a, **_k: None
@@ -2609,7 +2609,7 @@ def test_tool_summon_binds_origin_chat_turn_id_and_undo_deletes(game, monkeypatc
     sess.content = content
     sess.temporary_characters = {}
     sess.registry = SimpleNamespace(
-        get=lambda _character: _Agent(),
+        get=lambda _character, **_kw: _Agent(),
     )
     sess.llm_config = SimpleNamespace(channel="api")
     sess._retrieve_memories_for_message = lambda text: text
@@ -2709,7 +2709,7 @@ def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game
     for office, seat in (("三边总督", "shaanxi"), ("蓟辽总督", "liaodong")):
         pid = int(db.stage_pending_action(
             int(state.turn), "office", "任命", minister,
-            {"name": person.name, "office": office, "summon_after": "是", "region_id": seat},
+            {"text": "测试任免原文", "name": person.name, "office": office, "summon_after": "是", "region_id": seat},
         ))
         an.ensure_inactive_office_summon(
             db, pid, person.name, night_id=night_id,

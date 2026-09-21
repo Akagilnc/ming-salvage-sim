@@ -16,7 +16,7 @@ def _active_minister(db):
 
 
 def _promulgate_appointment(db, state, content, name, office, tenure=None):
-    payload = {"name": name, "office": office}
+    payload = {"name": name, "office": office, "text": f"命{name}任{office}"}
     if tenure is not None:
         payload["任别"] = tenure
     pending_id = db.stage_pending_action(
@@ -111,7 +111,7 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命",
         minister_name=_active_minister(db), target_id=None,
-        payload={"name": name, "office": "失败回滚新官", "任别": "兼署"},
+        payload={"text": "测试任免原文", "name": name, "office": "失败回滚新官", "任别": "兼署"},
     )
     db.commit_pending_actions(state, content=content, registry=None)
     dossier = next(

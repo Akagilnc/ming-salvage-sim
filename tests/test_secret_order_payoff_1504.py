@@ -48,6 +48,7 @@ from ming_sim.simulation import (
     build_extractor_shared_context,
     _sanitize_module_output,
 )
+from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
@@ -1810,15 +1811,22 @@ def _web_secret_landing_client(tmp_path, monkeypatch, backend_fn):
         if getattr(ch, "power_id", "ming") == "ming"
         and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
     )
-    game.session.registry.get = lambda _character: _AudienceAgent()
+    agent = _AudienceAgent()
+    game.session.registry.get = lambda _character, **_kw: agent
+    stub_scene_agent(monkeypatch, agent)
     if game.session.llm_config is not None:
         game.session.llm_config.channel = "cli"
     client = TestClient(web_app.app)
 
-    def _stream(message: str):
+    def _stream(message: str, *, intent: str | None = "secret_order"):
+        # #1842：殿上默认 scene_chat；密令 landing / recovery 须强制旧 session.chat。
+        # 应允/拒绝等确认轮勿带 intent——走 scene_chat + translate runner promises。
+        body: dict = {"message": message}
+        if intent:
+            body["intent"] = intent
         response = client.post(
             f"/api/ministers/{name}/chat/stream",
-            json={"message": message},
+            json=body,
         )
         assert response.status_code == 200, response.text
         events = _parse_sse(response.text)
@@ -1970,8 +1978,6 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
 
     Owner 御批 A：召对能问现场就问；不暂存候选，皇帝再说一轮才有候选。
     """
-    import ming_sim.cli_backend as cb
-
     good_body = "暗查关宁诸将虚冒兵额，三月内回奏。"
     bad = _secret_landing_bad_raw()
     good = None  # filled after minister name known
@@ -1995,12 +2001,6 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
         tmp_path, monkeypatch, backend,
     )
     good = _secret_landing_good_raw(name, good_body)
-    monkeypatch.setattr(
-        cb, "extract_confirmation_intent",
-        lambda player_message, *a, **k: (
-            "应允" if "准" in str(player_message or "") else "无"
-        ),
-    )
     try:
         # 1) 首次坏产物 → 大臣回禀、无候选
         done1 = stream("你替朕下一道密令，暗查关宁诸将虚冒兵额。")
@@ -2028,8 +2028,19 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
         ).fetchone()
         assert row is not None and row["kind"] == "secret_order"
 
-        # 3) 既有应允 → /api/secret_orders 身份内容一致
-        stream("准，就照此密行")
+        # 3) 既有应允：scene_chat + promises（禁旧 extract_confirmation；ADR 0038 即落）
+        def _approve_translate(prompt, _cfg):
+            text = str(prompt or "")
+            if "【本轮皇帝】准" in text or "准" in text:
+                return {
+                    "commissions": [],
+                    "promises": [{"action_id": int(pid), "decision": "应允"}],
+                }
+            return {"commissions": [], "promises": []}
+
+        stub_audience_translate(monkeypatch, _approve_translate)
+        stream("准，就照此密行", intent=None)
+        game._runtime_write_queue().barrier(lambda: None)
         wait_pending_writes(game)
         from fastapi.testclient import TestClient
         import web_app

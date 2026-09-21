@@ -215,7 +215,7 @@ def test_new_appointee_identity_exists_before_promulgation_and_leads_dossier(env
     name = "测试新臣"
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name="毕自严",
-        target_id=None, payload={"name": name, "office": "户部主事", "faction": "中立"},
+        target_id=None, payload={"text": "测试任免原文", "name": name, "office": "户部主事", "faction": "中立"},
     )
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
 
@@ -250,7 +250,7 @@ def test_unknown_appointee_normalizes_unrecognized_faction(env):
     name = "测试异派新臣"
     pending_id = db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name="毕自严",
-        target_id=None, payload={"name": name, "office": "户部主事", "faction": "不存在派"},
+        target_id=None, payload={"text": "测试任免原文", "name": name, "office": "户部主事", "faction": "不存在派"},
     )
     db.commit_pending_actions(state, content=content, action_ids=[pending_id])
 

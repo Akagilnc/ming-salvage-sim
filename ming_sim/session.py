@@ -8,10 +8,10 @@ CLI 和 Web 各自只做 I/O 包装。
 from __future__ import annotations
 
 import json
-import inspect
 import logging
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -26,6 +26,8 @@ from ming_sim.agents import bind_content as _bind_agents
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
+from ming_sim.materials import prepare_scene_materials
+from ming_sim.registry import create_scene_agent
 from ming_sim.context import (
     bind_content as _bind_context,
     character_from_name,
@@ -172,6 +174,9 @@ class ChatTurnResult:
     decree_validation_failure: Optional[Dict[str, Any]] = None
     # #1765：密令落不了库 → 大臣揣摩/追问（landing_gaps + report）；与拟旨 recovery 同投影缝。
     secret_order_landing_recovery: Optional[Dict[str, Any]] = None
+    # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
+    # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
+    pending_audience_translation: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -1494,6 +1499,7 @@ class GameSession:
             beat_generator=getattr(self, "_beat_generator", None),
             llm_config=getattr(self, "llm_config", None),
             write_gate=getattr(self, "_write_gate", None),
+            write_queue=self._write_queue,
             scene_registry=getattr(self, "_scene_registry", None),
         )
         result.court_action = "court_break"
@@ -1508,29 +1514,6 @@ class GameSession:
         if not text:
             return ask
         return text + "\n" + ask
-
-    def _write_gate_if_free(self) -> Any:
-        """#1353 fold-in r8：resolve_turn 收夜用——仅当既有唯一 write_gate 空闲时传入。
-
-        Web 入口在 write_cm 内调 resolve_turn 时外层已持同一把非重入锁；若仍传入，
-        close_night 短写 `with gate` 会自锁。探测：非阻塞 acquire 成功=空闲（立刻
-        release，close 自己短持）；失败=外层持锁中，回落 None（夜应已在闸外收完）。
-        CLI 单写者不持外层锁 → 恒传入真锁，欠账 drain 同流。禁第二锁。
-        """
-        gate = getattr(self, "_write_gate", None)
-        if gate is None:
-            return None
-        try:
-            acquired = bool(gate.acquire(blocking=False))
-        except Exception:
-            return None
-        if not acquired:
-            return None
-        try:
-            gate.release()
-        except Exception:
-            pass
-        return gate
 
     def close_night_after_chat_if_needed(
         self,
@@ -1578,6 +1561,7 @@ class GameSession:
                     beat_generator=getattr(self, "_beat_generator", None),
                     llm_config=getattr(self, "llm_config", None),
                     write_gate=gate,
+                    write_queue=self._write_queue,
                     scene_registry=getattr(self, "_scene_registry", None),
                 )
 
@@ -1589,6 +1573,51 @@ class GameSession:
             # 早退/异常：预领票仍须归还，避免 has_open_barrier 永真（complete 幂等）。
             if barrier_ticket is not None:
                 q.complete(barrier_ticket)
+
+    def schedule_close_night_after_chat_if_needed(
+        self,
+        court_action: str,
+        *,
+        write_gate: Any = None,
+    ) -> Optional[threading.Thread]:
+        """#1842：court_break 前台先返回；预领屏障后既有队列 FIFO 转译 join→封夜。
+
+        与 stream done 前 claim_barrier 同形——不改转译发生时间/次序，只是不挡前台。
+        非 court_break 为空操作。后台失败 logger.exception 留痕（ADR 0005），票仍归还。
+        """
+        if str(court_action or "") != "court_break":
+            return None
+        from ming_sim.session_write_queue import get_session_write_queue
+
+        q = get_session_write_queue(self)
+        barrier_ticket = q.claim_barrier()
+        gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
+
+        def _run() -> None:
+            try:
+                self.close_night_after_chat_if_needed(
+                    court_action,
+                    write_gate=gate,
+                    barrier_ticket=barrier_ticket,
+                )
+            except Exception:
+                logger.exception(
+                    "background close_night_after_chat failed court_action=%s",
+                    court_action,
+                )
+            finally:
+                # 幂等：真路径已在 close_night_after_chat_if_needed 归还；
+                # stub/早退漏还时仍须清 has_open_barrier。
+                if barrier_ticket is not None:
+                    q.complete(barrier_ticket)
+
+        thread = threading.Thread(
+            target=_run,
+            daemon=True,
+            name="close-night-after-chat",
+        )
+        thread.start()
+        return thread
 
     def _confirmation_intent_for_preexisting_pending(
         self,
@@ -1750,6 +1779,425 @@ class GameSession:
         """委托编排层排空本轮 scene（cancel 或 join drain，不落库）。"""
         self._scene_registry.abandon(int(chat_turn_id or 0))
 
+    def _mark_control_turn_translation_done(self, chat_turn_id: int) -> None:
+        """口令早退轮：复用转译水位单真源，避免假 pending 进 list_pending_translations。"""
+        from ming_sim.audience_translation import mark_turn_translation_done
+
+        mark_turn_translation_done(self.db, chat_turn_id, commit=True)
+
+    def scene_chat(
+        self, message: str, *, chat_turn_id: int = 0,
+        stream_emit: Any = None,
+        minister_name: str = "",
+    ) -> ChatTurnResult:
+        """#1836 T1 / #1837 C1a / #1842 T2：一夜一场入口——一个场景 LLM 演整场。
+
+        - 皇帝「宣 X」→ 引擎落入殿账（ADR 0037）→ 起一次场景调用
+        - 「退朝」口令 → 收夜（与既有 command-verdict 同缝）
+        - 一条对话轮 = 整段自由戏文（可含多人）；生成链零动作工具
+        - 回话落定后一次转译（完整声明）；ctid>0 时后台按轮串行、前台不等
+          （#1842）；ctid==0 同步落定（无生命周期测/直调）
+        - 退役与回话并行的意图分类器 / 应允判读 / 故事抽取 / 边事件判官 /
+          代码触发读心（转译承接）；旧按大臣 chat() 入口暂留（收口在 X1）
+        - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
+        """
+        from ming_sim.audience_night import (
+            CMD_AMBIGUOUS_CLOSE,
+            CMD_CLOSE_NIGHT,
+            CMD_NONE,
+            CMD_STAY_ATTEND,
+            SCENE_CHAT_SPEAKER,
+            close_night,
+            ensure_open_night_for_audience,
+            ensure_summon_enter,
+            get_open_night,
+            recognize_xuan_command,
+        )
+        from ming_sim.llm_model import extract_agent_text
+
+        message_text = str(message or "").strip()
+        if not message_text:
+            raise ValueError("问话不能为空。")
+
+        # 开夜（若需）；一夜一场不绑单人 minister 入口。
+        night = get_open_night(self.db) or ensure_open_night_for_audience(
+            self.db, self.state,
+        )
+        night_id = int(night["id"])
+
+        # 收夜 / 留侍口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
+        # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
+        # - 留侍：复用 stay_attend_in_audience 权威写缝（锚=minister_name 或夜主角）
+        # - 含糊收夜：回确认 cue，不收夜
+        audience_command_verdict = self._recognize_audience_command_verdict(message_text)
+        result = ChatTurnResult(answer="")
+        if audience_command_verdict and audience_command_verdict != CMD_NONE:
+            ctid = int(chat_turn_id or 0)
+            if audience_command_verdict == CMD_AMBIGUOUS_CLOSE:
+                if ctid > 0:
+                    self._mark_control_turn_translation_done(ctid)
+                result.answer = GameSession._ensure_close_night_confirm_cue("")
+                return result
+            if audience_command_verdict == CMD_STAY_ATTEND:
+                from ming_sim.audience_night import (
+                    get_night_protagonist,
+                    stay_attend_in_audience,
+                )
+                anchor = (
+                    str(minister_name or "").strip()
+                    or get_night_protagonist(self.db, night_id)
+                )
+                if anchor:
+                    stay_attend_in_audience(
+                        self.db, anchor,
+                        night_id=night_id,
+                        origin_chat_turn_id=ctid,
+                    )
+                if ctid > 0:
+                    self._mark_control_turn_translation_done(ctid)
+                result.court_action = "stay_attend"
+                return result
+            if audience_command_verdict == CMD_CLOSE_NIGHT:
+                if ctid != 0:
+                    self._mark_control_turn_translation_done(ctid)
+                    result.court_action = "court_break"
+                    return result
+                close_night(
+                    self.db, self.state,
+                    content=getattr(self, "content", None),
+                    registry=getattr(self, "registry", None),
+                    wait_timeout_s=0.0,
+                    beat_generator=getattr(self, "_beat_generator", None),
+                    llm_config=getattr(self, "llm_config", None),
+                    write_gate=getattr(self, "_write_gate", None),
+                    write_queue=self._write_queue,
+                    scene_registry=getattr(self, "_scene_registry", None),
+                )
+                result.court_action = "court_break"
+                return result
+
+        # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
+        xuan_fragment = recognize_xuan_command(message_text)
+        if xuan_fragment:
+            fragment = str(xuan_fragment).strip()
+            chars = getattr(getattr(self, "content", None), "characters", None) or {}
+            target = chars.get(fragment) or match_minister_from_text(fragment)
+            if target is None:
+                try:
+                    target, _tmp = self.summon_character(
+                        fragment, allow_temporary=False,
+                    )
+                except ValueError:
+                    target = None
+            if target is not None:
+                decision = self.consume_audience_admission(
+                    target,
+                    origin_id=f"scene:xuan:{int(self.state.turn)}:{target.name}",
+                    origin_chat_turn_id=int(chat_turn_id or 0),
+                )
+                if decision.allowed:
+                    ensure_summon_enter(
+                        self.db, night_id, target.name,
+                        origin_chat_turn_id=int(chat_turn_id or 0),
+                        empty_scaffold=True,
+                    )
+                    # #1838 / ADR 0158：宣 X 当场先切御前主角（不等转译）。
+                    # 夜当前值是投影；ctid>0 时同步写 chat_turns.protagonist_name
+                    # 作按源轮真源，供 undo 按存活最近轮重投影（ADR 0038 / 0155）。
+                    # ctid==0：无源轮场景（单测/无生命周期），只写夜表、不参与撤回联动
+                    # ——与入殿账 origin_chat_turn_id==0 框架账不随轮撤同语义。
+                    from ming_sim.audience_night import set_night_protagonist
+                    set_night_protagonist(
+                        self.db, night_id, target.name, reason="xuan",
+                    )
+                    xuan_ctid = int(chat_turn_id or 0)
+                    if xuan_ctid > 0:
+                        self.db.conn.execute(
+                            "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
+                            (target.name, xuan_ctid),
+                        )
+                        if (
+                            not bool(getattr(self.db.conn, "_commit_suspended", False))
+                            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
+                        ):
+                            self.db.conn.commit()
+
+        # 材料目录：在场诸人各一份；开场最小集 + 只读工具。
+        prepared = prepare_scene_materials(self.db, self.state)
+        llm_config = getattr(self, "llm_config", None)
+        if llm_config is None:
+            raise RuntimeError("scene_chat 需要 llm_config。")
+        agent = self._resolve_scene_agent(prepared, night_id=night_id)
+
+        # opening 已在 create_scene_agent instructions；run 输入只传本轮皇帝原话。
+        agent_prompt = message_text
+        transport_attempts_box: list = []
+        side_effects: dict = {"court_action": ""}
+        if stream_emit is not None:  # noqa: SIM102 — 流式分支完整
+            # Web 流式同核：transport 重试/空转/终失败；delta 经 stream_emit 出 SSE。
+            answer, transport_attempts_box = self._run_scene_agent_transport(
+                agent, agent_prompt, stream_emit,
+                chat_turn_id=int(chat_turn_id or 0),
+                side_effects=side_effects,
+                minister_name=str(minister_name or ""),
+            )
+        else:
+            run_output = agent.run(agent_prompt)
+            _dump_llm_messages(run_output, f"场景召对/{SCENE_CHAT_SPEAKER}")
+            answer = extract_agent_text(run_output)
+        result = ChatTurnResult(answer=answer)
+        if side_effects.get("court_action"):
+            result.court_action = str(side_effects["court_action"])
+        if transport_attempts_box:
+            # 结构化 attempts 账挂结果，供流式 payload 回指（非 prose）。
+            result.transport_attempts = transport_attempts_box  # type: ignore[attr-defined]
+
+        # #1842：ctid>0 → 暂存转译参数（persist 后 schedule）；ctid==0 → 同步落定。
+        # 不跑并行分类器 / 故事抽取 / 边事件判官 / 读心——转译一次承接。
+        self._apply_scene_turn_translation(
+            result, message_text, answer, night_id=night_id,
+            chat_turn_id=int(chat_turn_id or 0),
+        )
+        return result
+
+    def _resolve_scene_agent(self, prepared: Any, *, night_id: int) -> Any:
+        """生产 create_scene_agent；测试经 monkeypatch 此工厂缝注入，禁实例双桩属性。"""
+        llm_config = getattr(self, "llm_config", None)
+        return create_scene_agent(
+            llm_config,
+            prepared,
+            agno_db=getattr(self, "agno_db", None),
+            content=getattr(self, "content", None),
+            session_id=f"scene-night-{night_id}",
+        )
+
+    def _run_scene_agent_transport(
+        self,
+        agent: Any,
+        agent_prompt: str,
+        stream_emit: Any,
+        *,
+        chat_turn_id: int = 0,
+        side_effects: Optional[dict] = None,
+        minister_name: str = "",
+    ) -> tuple[str, list]:
+        """场景 agent 的 transport 流式核——与 web 大臣流同政策，不经旧分类器链。"""
+        from ming_sim.llm_model import extract_agent_text, fail_if_llm_error
+        from ming_sim.llm_transport import (
+            bind_transport_sdk_budget,
+            empty_output_failure,
+            is_stream_activity_event,
+            map_run_error_event,
+            resolve_transport_policy,
+            run_transport_stream,
+            transport_attempts_public,
+            transport_failure_unavailable,
+        )
+
+        llm_cfg = getattr(self, "llm_config", None)
+        policy = resolve_transport_policy(llm_cfg)
+        chunks: list[str] = []
+        run_output_box: list = []
+        stream_attempt_n = {"n": 0}
+        effects = side_effects if side_effects is not None else {}
+
+        def _on_event(event: Any) -> None:
+            name = type(event).__name__
+            if name == "RunContent" or getattr(event, "event", None) == "RunContent":
+                piece = str(getattr(event, "content", "") or "")
+                if piece:
+                    chunks.append(piece)
+                    stream_emit(piece)
+            if name == "ToolCallCompletedEvent":
+                tool = getattr(event, "tool", None)
+                tname = str(getattr(tool, "tool_name", "") or "")
+                tres = str(getattr(tool, "result", "") or "")
+                if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
+                    effects["court_action"] = "dismiss"
+                    # 流中退场登记（与旧 _chat_stream_payload 同缝；幂等不双落）
+                    start_exit = getattr(
+                        self, "start_exit_scene_from_dismiss_tools", None,
+                    )
+                    if callable(start_exit) and int(chat_turn_id or 0) > 0:
+                        start_exit(
+                            str(minister_name or ""),
+                            int(chat_turn_id),
+                            [tool],
+                        )
+            if name in ("RunOutput", "RunCompletedEvent"):
+                run_output_box.clear()
+                run_output_box.append(event)
+                for tool in list(getattr(event, "tools", None) or []):
+                    tname = str(getattr(tool, "tool_name", "") or "")
+                    tres = str(getattr(tool, "result", "") or "")
+                    if tname == "dismiss_minister" or tres.startswith("__dismiss__"):
+                        effects["court_action"] = "dismiss"
+
+        def _after_stream():
+            run_output = run_output_box[0] if run_output_box else None
+            _dump_llm_messages(
+                run_output, f"场景召对/{getattr(agent, 'name', '殿上')}", agent=agent,
+            )
+            # P6 / #671：流式拼装不得 strip；玩家可见原文（含首尾空白）原样保留。
+            answer = "".join(chunks)
+            if run_output is not None:
+                extracted = extract_agent_text(run_output)
+                if not answer:
+                    answer = extracted
+            else:
+                fail_if_llm_error(answer, "LLM 调用")
+            if not answer:
+                raise transport_failure_unavailable(
+                    empty_output_failure(), attempts=1, exhausted=False,
+                )
+            return answer, run_output
+
+        def _start_stream():
+            chunks.clear()
+            run_output_box.clear()
+            if stream_attempt_n["n"] > 0:
+                stream_emit("", replace=True)
+                if int(chat_turn_id or 0) > 0:
+                    self.db.truncate_chat_turn_agno_runs(int(chat_turn_id))
+            stream_attempt_n["n"] += 1
+            return agent.run(
+                agent_prompt, stream=True, stream_events=True, yield_run_output=True,
+            )
+
+        with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+            (answer, _run_output), attempts_box = run_transport_stream(
+                _start_stream,
+                on_event=_on_event,
+                is_activity_event=is_stream_activity_event,
+                map_error_event=map_run_error_event,
+                after_stream=_after_stream,
+                policy=policy,
+            )
+        public = transport_attempts_public(attempts_box) if attempts_box else []
+        return str(answer or ""), list(public)
+
+    def _apply_scene_turn_translation(
+        self,
+        result: "ChatTurnResult",
+        emperor_message: str,
+        reply: str,
+        *,
+        night_id: int,
+        chat_turn_id: int = 0,
+    ) -> None:
+        """#1837/#1842：场景入口转译完整声明；ctid>0 暂存待 persist 后调度，否则同步。"""
+        from ming_sim.audience_translate import (
+            AudienceTranslateError,
+            run_audience_turn_translation,
+        )
+        from ming_sim.token_stats import tlog
+
+        if GameSession._proposal_blocked(self.state):
+            return
+        ctid = int(chat_turn_id or 0)
+        nid = int(night_id or 0)
+
+        if ctid > 0:
+            # 生产路径：只暂存；Web/CLI 回话 persist 后
+            # schedule_pending_scene_translation 才起后台（ADR 0155 / 0036）。
+            result.pending_audience_translation = {
+                "emperor_message": emperor_message,
+                "reply": reply,
+                "night_id": nid,
+                "chat_turn_id": ctid,
+                "minister_name": "",
+            }
+            return
+
+        try:
+            dispatch = run_audience_turn_translation(
+                self.db,
+                self.state,
+                emperor_message=emperor_message,
+                reply=reply,
+                night_id=nid,
+                chat_turn_id=0,
+                minister_name="",
+                llm_config=getattr(self, "llm_config", None),
+            )
+        except AudienceTranslateError as exc:
+            # 失败诚实：真因落痕 + 既有 pending_action_failures 显眼回场；
+            # 不进 dispatch、不洗成成功空声明。
+            tlog(f"[audience_translate] 转译失败：{exc}")
+            result.pending_action_failures.append({
+                "id": 0,
+                "kind": "audience_translate",
+                "action": "转译",
+                "minister_name": "",
+                "message": f"召对转译失败：{exc}",
+                "category": "translate_failed",
+                "source": "audience_translate",
+                "chat_turn_id": ctid,
+            })
+            return
+        # 呈现用：本轮新交办的首条 id（若有）；应允不另占 pending_action_id。
+        if dispatch.commissions.applied:
+            first = dispatch.commissions.applied[0]
+            result.pending_action_id = int(first.get("id") or 0)
+        # ADR 0038：密令应允即落地——同步转译回填 secret_order_id（ctid>0 后台路径
+        # 前台不等，由调用方读表/列表可见性验收）。
+        if not int(getattr(result, "secret_order_id", 0) or 0):
+            for item in dispatch.promises.applied:
+                try:
+                    oid_i = int(item.get("secret_order_id") or 0)
+                except (TypeError, ValueError, AttributeError):
+                    oid_i = 0
+                if oid_i > 0:
+                    result.secret_order_id = oid_i
+                    break
+        # 拒收当事实回场（挂既有 pending_action_failures）；不做「所指未明 → 强制追问」。
+        for section_name in ("commissions", "promises"):
+            section = getattr(dispatch, section_name)
+            for item in section.rejected:
+                reason = getattr(item, "reason", str(item))
+                result.pending_action_failures.append({
+                    "id": 0,
+                    "kind": "audience_translate",
+                    "action": section_name,
+                    "minister_name": "",
+                    "message": str(reason),
+                    "section": section_name,
+                    "reason": reason,
+                    "category": getattr(item, "category", ""),
+                    "source": "audience_translate",
+                    "chat_turn_id": ctid,
+                })
+
+    def schedule_pending_scene_translation(
+        self, result: "ChatTurnResult",
+    ) -> Optional["Future"]:
+        """#1842：回话已 persist 后冲刷 scene_chat 暂存的后台转译。
+
+        无暂存则 no-op。调用方须先落大臣回话（generating→active + minister_message_id）。
+        """
+        pending = getattr(result, "pending_audience_translation", None)
+        if not pending:
+            return None
+        result.pending_audience_translation = None
+        from ming_sim.audience_translation import schedule_audience_turn_translation
+        from ming_sim.session_write_queue import get_session_write_queue
+
+        write_queue = get_session_write_queue(self)
+
+        return schedule_audience_turn_translation(
+            self.db,
+            self.state,
+            emperor_message=str(pending.get("emperor_message") or ""),
+            reply=str(pending.get("reply") or ""),
+            night_id=int(pending.get("night_id") or 0),
+            chat_turn_id=int(pending.get("chat_turn_id") or 0),
+            minister_name=str(pending.get("minister_name") or ""),
+            llm_config=getattr(self, "llm_config", None),
+            write_gate=getattr(self, "_write_gate", None),
+            write_queue=write_queue,
+            admitted_ticket=getattr(result, "_admitted_write_ticket", None),
+        )
+
     def chat(
         self, minister_name: str, message: str, *, chat_turn_id: int = 0,
         explicit_secret_order: bool = False,
@@ -1762,25 +2210,15 @@ class GameSession:
         character = self._character(minister_name)
         # 控制指令（退下/换人/技能）由 CLI 层 parse_court_command 处理；
         # GameSession.chat 只负责与 agent 对话与 tool 截获。
-        agent = self.registry.get(character)
-        # Keep the public seam compatible with lightweight web/test session
-        # doubles that predate the optional character-aware audience context.
-        audience_prompt = self._audience_prompt_for_message
-        try:
-            prompt_signature = inspect.signature(audience_prompt)
-        except (TypeError, ValueError):
-            # The production bound method has an inspectable signature.  For
-            # opaque callables, preserve the character-aware production call;
-            # do not catch its runtime TypeError as a signature fallback.
-            augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
-        else:
-            try:
-                prompt_signature.bind(message, character, chat_turn_id=chat_turn_id)
-            except TypeError:
-                prompt_signature.bind(message)
-                augmented = audience_prompt(message)
-            else:
-                augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
+        # #1812：本消息只备一次材料，供 Agent 首建、tools/model cwd 与开场共用；
+        # 不得各自再各建一份（重复全树重写+开场重复入 prompt）。准备失败按
+        # ADR 0005 响亮失败，不吞异常、不改走无 prepared 的旧路。
+        from ming_sim.materials import prepare_character_materials
+        prepared = prepare_character_materials(self.db, self.state, character)
+        agent = self.registry.get(character, prepared=prepared)
+        augmented = self._audience_prompt_for_message(
+            message, character, chat_turn_id=chat_turn_id, prepared=prepared,
+        )
         # #1566：密令 route 须在 command-verdict / exit / summon·dismiss 之前成立。
         message_text = (message or "").strip()
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
@@ -1924,7 +2362,7 @@ class GameSession:
                 result.pending_action_id = coalesce_pending_action_id(
                     result.pending_action_id,
                     self._stage_appointment_candidate(
-                        payload, character,
+                        payload, character, source_text=message,
                     ),
                 )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
@@ -2061,7 +2499,14 @@ class GameSession:
         )
         return result
 
-    def _audience_prompt_for_message(self, message: str, character: Character, *, chat_turn_id: int = 0) -> str:
+    def _audience_prompt_for_message(
+        self,
+        message: str,
+        character: Character,
+        *,
+        chat_turn_id: int = 0,
+        prepared: Optional[PreparedMaterials] = None,
+    ) -> str:
         # Opening context is the #1819 minimum set.  Full perspectival material
         # lives in the prepared directory and is read on demand (#1830).
         try:
@@ -2079,16 +2524,16 @@ class GameSession:
                 )
             except Exception:
                 return "【近臣回奏暂不可用：查访未能持久留档；不得据此臆答事实。】\n\n" + message
+        # 真实 chat 入口传入已准备的同一份材料；直接调用此投影缝时
+        # 仍可响亮地准备一次，不吞异常、不伪装成功。
+        if prepared is None:
+            from ming_sim.materials import prepare_character_materials
+            prepared = prepare_character_materials(self.db, self.state, character)
         from ming_sim.materials import (
             MaterialsRoot,
-            prepare_character_materials,
             release_material_tree,
             release_previous_material_tree,
         )
-        try:
-            prepared = prepare_character_materials(self.db, self.state, character)
-        except Exception:
-            return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
         registry = getattr(self, "registry", None)
         if registry is not None and hasattr(registry, "adopt_materials"):
             # adopt installs the new root first; old-tree cleanup failure must
@@ -2928,7 +3373,7 @@ class GameSession:
         )
 
     def _stage_appointment_candidate(
-        self, payload: str, appointer: Character,
+        self, payload: str, appointer: Character, *, source_text: str = "",
     ) -> int:
         """把吏部 propose_appointment 工具结果接入与口头任免相同的确认闸门。"""
         if GameSession._proposal_blocked(self.state):
@@ -3001,6 +3446,12 @@ class GameSession:
         raw_reason = data.get("reason") or data.get(metadata_aliases["reason"])
         if isinstance(raw_reason, str) and raw_reason.strip():
             staged_payload["reason"] = raw_reason
+        # 成案核优先 payload 原样 text：工具路若显式给了正文则原样带入（荐词≠正文）。
+        raw_text = data.get("text")
+        if isinstance(raw_text, str) and raw_text.strip():
+            staged_payload["text"] = raw_text
+        elif source_text.strip():
+            staged_payload["text"] = source_text
         for key in ("office_type", "faction", "replaces"):
             value = str(data.get(key) or data.get(metadata_aliases[key]) or "").strip()
             if value:
@@ -3381,9 +3832,65 @@ class GameSession:
                 ) from write_exc
         return next_carry
 
+    def await_translations_before_month(
+        self, after_drain=None, *, write_gate_already_held: bool = False,
+    ) -> None:
+        """过月前转译：join 等到清空 → catch-up → 真耗尽走 0157。
+
+        #1842 / ADR 0155 两态：① 未完成则过月等（join 缝系统内等待后自动续跑，
+        不得 SettlementAbort/409）；② 耗尽才 write_error_pack+SettlementAbort。
+        hang 切断：join 未清空不进阻塞 catch-up。
+
+        **闸外契约**（同 close_night「join 在闸外」、HITL「禁整段 gate 盖 join」）：
+        调用方不得在持非重入 write_gate 时进入本方法的等待路径。web 受理样板在
+        hold_write_for_body 之前调用本方法；resolve_turn 再调一次时 join 已清空、
+        立即放行。本方法**绝不** release/acquire write_gate（不猜锁所有权、不偷放）。
+        调用方已持闸时须显式声明；其余路径始终传递真实 gate，
+        不得把“他线程正持有”误判为本线程可无锁访问 SQLite。
+        """
+        from ming_sim.audience_translation import (
+            catch_up_pending_translations,
+            list_pending_translations,
+        )
+        from ming_sim.session_write_queue import get_session_write_queue
+        from ming_sim.error_pack import settlement_abort_message, write_error_pack
+        from ming_sim.exceptions import SettlementAbort
+
+        # ① SessionWriteQueue 是唯一在飞真源；同一 barrier 连续覆盖
+        # 既受理转译、欠账补跑和调用方收夜，不留重新准入窗口。
+        write_queue = get_session_write_queue(self)
+        def _drain_catch_up_and_continue() -> None:
+            catch_gate = None if write_gate_already_held else self._write_gate
+            catch_up_pending_translations(
+                self.db, self.state,
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=catch_gate,
+                write_queue=write_queue,
+                within_barrier=True,
+            )
+            still_pending = list_pending_translations(self.db)
+            if still_pending:
+                exc = RuntimeError(
+                    f"召对转译重试耗尽，待补 {len(still_pending)} 轮"
+                )
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="audience_translation_exhausted",
+                    error_pack_path=pack_path,
+                ) from exc
+            if after_drain is not None:
+                after_drain()
+
+        write_queue.barrier(_drain_catch_up_and_continue)
+
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None,
-                     *, allow_empty_decree: bool = False) -> ResolveResult:
+                     *, allow_empty_decree: bool = False,
+                     write_gate_already_held: bool = False) -> ResolveResult:
         """颁诏并推演本回合（phase1）。
 
         on_event(kind, data): 推演过程实时回调，透传给 resolve_directives。
@@ -3395,6 +3902,9 @@ class GameSession:
         调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
         回合已结算推进，置 issued 态。
         """
+        # #1842：过月前转译 join/catch-up/耗尽判定（闸外契约，见 await_translations_before_month）。
+        if not write_gate_already_held:
+            self.await_translations_before_month()
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))
             or any(
@@ -3476,21 +3986,20 @@ class GameSession:
         # Close-night owns short write sections + gate-free endorsement LLM.
         # Web 入口先在闸外 free-close（issue/stream/no-edict），再持闸跑 resolve；
         # 此处幂等兜底 CLI/直调。
-        # #1353 fold-in r8：穿既有唯一 write_gate（session._write_gate）。
-        # 若调用方已持同一把非重入锁（Web write_cm 内），不得再传入——否则 close
-        # 短写 with gate 自锁；闸已被外层持时回落 None（夜应已在闸外收完）。
-        # 闸空闲（CLI）→ 传入真锁，欠账 drain 同流；耗尽走 LLMUnavailable 失败单源。
+        # 调用方显式声明已持同一把非重入锁时不得再传入，避免 close 短写自锁；
+        # CLI/直调未持闸则始终传真实 gate，不用“抢不到”猜测所有权。
         try:
-            auto_close_open_night(
-                self.db, self.state,
-                content=getattr(self, "content", None),
-                registry=getattr(self, "registry", None),
-                wait_timeout_s=inflight_wait_s,
-                beat_generator=self._beat_generator,
-                llm_config=getattr(self, "llm_config", None),
-                write_gate=self._write_gate_if_free(),
-                scene_registry=self._scene_registry,
-            )
+            if not write_gate_already_held:
+                auto_close_open_night(
+                    self.db, self.state,
+                    content=getattr(self, "content", None),
+                    registry=getattr(self, "registry", None),
+                    wait_timeout_s=inflight_wait_s,
+                    beat_generator=self._beat_generator,
+                    llm_config=getattr(self, "llm_config", None),
+                    write_gate=self._write_gate,
+                    scene_registry=self._scene_registry,
+                )
         except (AudienceNightError, LLMUnavailable):
             # #1235 真失败另形：收夜中止后人话 + 出展示态（欠账耗尽=失败单源）。
             exit_settlement_display_on_failure(self.db, self.state)
@@ -4175,7 +4684,9 @@ class GameSession:
         self.db.save_state(self.state)
         return report
 
-    def advance_without_decree(self, inflight_wait_s: float | None = None):
+    def advance_without_decree(
+        self, inflight_wait_s: float | None = None, *, write_gate_already_held: bool = False,
+    ):
         """CLI/web 退朝；无旨月亦走完整结算链（#1274 / owner B-2）。
 
         有草案/pending → 视同颁诏 resolve_turn。
@@ -4183,9 +4694,13 @@ class GameSession:
         settle_with_delta 全链照跑（邸报/种子局势/议题惯性/结局判定）；16ms 快路已废。
         """
         if self.db.list_directives(self.state, statuses=("pending", "draft")):
-            return self.resolve_turn(inflight_wait_s=inflight_wait_s)
+            return self.resolve_turn(
+                inflight_wait_s=inflight_wait_s,
+                write_gate_already_held=write_gate_already_held,
+            )
         return self.resolve_turn(
             inflight_wait_s=inflight_wait_s, allow_empty_decree=True,
+            write_gate_already_held=write_gate_already_held,
         )
 
     def victory(self) -> Dict[str, object]:
@@ -4220,17 +4735,27 @@ class GameSession:
         if old is not None and old is not registry:
             old.close()
 
-    def close(self) -> None:
-        """关主库连接，并释放 agno SqliteDb 连接池（#1749）。
+    def close(self, *, write_gate_already_held: bool = False) -> None:
+        """排空本会话已受理工作，再关闭全部数据库资源。"""
+        if write_gate_already_held:
+            self._close_resources()
+            return
+        from ming_sim.session_write_queue import drain_and_close_session
+
+        drain_and_close_session(self)
+
+    def _close_resources(self) -> None:
+        """关闭主库连接，并释放 agno SqliteDb 连接池（#1749）。
 
         主库与 agno 共路径；只关 GameDB 就归档/搬移文件时，agno 仍持 WAL 句柄，
         进程 fd 会钉在 drained_*.db 上，活局写路径可落到 readonly。
 
-        次序：先 registry 材料目录，再 scene，再 agno，最后 db。材料清理失败不得
-        阻断后续 agno/db 释放，但必须诚实上抛（ADR 0005，不得 ignore_errors 洗白）。
-        agno 失败则立即上抛、不碰 db（两侧仍完整可恢复）。
-        agno 已成功后 ``_close_epoch`` 递增——此后即使 db.close 失败/conn 仍可探测，
-        也不得恢复为活局（registry 已失 agno）。
+        次序：registry 材料目录 → scene → agno → db。仅由
+        ``drain_and_close_session`` 在 SessionWriteQueue 已 seal、barrier 已排空且
+        持 write_gate 时调用。材料清理失败不得阻断后续 agno/db 释放，但必须诚实上抛
+        （ADR 0005，不得 ignore_errors 洗白）。agno 失败则立即上抛、不碰 db
+        （两侧仍完整可恢复）。agno 已成功后 ``_close_epoch`` 递增——此后即使
+        db.close 失败/conn 仍可探测，也不得恢复为活局（registry 已失 agno）。
         """
         materials_error: BaseException | None = None
         registry = getattr(self, "registry", None)
@@ -4241,7 +4766,9 @@ class GameSession:
                 materials_error = exc
                 logger.exception("GameSession.registry materials close failed")
             self.registry = None
-        self._scene_registry.abandon_all()
+        scene = getattr(self, "_scene_registry", None)
+        if scene is not None:
+            scene.abandon_all()
         agno = getattr(self, "agno_db", None)
         if agno is not None:
             close_fn = getattr(agno, "close", None)
