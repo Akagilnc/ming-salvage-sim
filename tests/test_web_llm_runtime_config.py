@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import sqlite3
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -1197,6 +1198,65 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     assert write_minister in favorites
     assert saved_marker in favorites
     assert live_marker not in favorites
+    runtime.session.close()
+
+
+def test_hot_replace_rechecks_settlement_entered_after_http_preflight(
+    tmp_path, monkeypatch,
+):
+    """预检后才进入的结算仍须挡住载档；退出后载档与写入恢复。"""
+    from tests.conftest import stub_audience_translate
+
+    stub_audience_translate(monkeypatch)
+    db_path = tmp_path / "ming.db"
+    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    runtime = web_app.WebGame(fresh=True)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
+    runtime.favorites = {saved_marker}
+    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+    runtime.save_to("before")
+    runtime.favorites = {live_marker}
+    runtime.db.kv_set("favorites", json.dumps(sorted(runtime.favorites), ensure_ascii=False))
+
+    reached_replace = threading.Event()
+    release_replace = threading.Event()
+    real_load = runtime.load_save
+
+    def paused_load(name):
+        reached_replace.set()
+        assert release_replace.wait(5)
+        return real_load(name)
+
+    runtime.load_save = paused_load
+    result = {}
+
+    def load() -> None:
+        result["response"] = TestClient(web_app.app).post("/api/saves/before/load")
+
+    thread = threading.Thread(target=load)
+    thread.start()
+    assert reached_replace.wait(5), "载档未通过 HTTP 预检"
+    web_app._begin_settlement_entry(runtime)
+    release_replace.set()
+    thread.join(5)
+    assert not thread.is_alive(), "载档与结算入口形成死锁"
+    response = result["response"]
+    assert response.status_code == 409
+    write = TestClient(web_app.app).post(f"/api/favorites/{write_minister}")
+    assert write.status_code == 200
+    assert live_marker in write.json()["favorites"]
+
+    web_app._end_settlement_entry(runtime)
+    runtime.load_save = real_load
+    response = TestClient(web_app.app).post("/api/saves/before/load")
+    assert response.status_code == 200
+    write = TestClient(web_app.app).post(f"/api/favorites/{write_minister}")
+    assert write.status_code == 200
+    assert saved_marker in write.json()["favorites"]
     runtime.session.close()
 
 

@@ -1005,14 +1005,21 @@ class WebGame:
         backup_complete = False
         q = get_session_write_queue(self)
         entry_lock = self._settlement_entry_lock
-        entry_lock.acquire()
         q.seal()
 
         def _replace() -> None:
             nonlocal backup_complete
             gate = q.write_gate
             gate.acquire()
+            entry_lock.acquire()
             try:
+                # 全局锁序固定为 gate → entry_lock（失败清理亦同序）。HTTP
+                # 预检不是安全边界；必须在此最终独占区拒绝预检后新进入的结算。
+                if int(self._settlement_entry_inflight or 0) > 0:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="月末结算或上一步写入进行中，请稍候再操作。",
+                    )
                 # Backup and close share the same exclusive span: an admitted writer
                 # cannot change the snapshot between prepare and destructive replace.
                 self.db.backup_to(backup_path)
@@ -1041,13 +1048,13 @@ class WebGame:
                     raise replace_exc from recovery_exc
                 raise
             finally:
+                entry_lock.release()
                 gate.release()
 
         try:
             q.barrier(_replace)
         finally:
             q.unseal()
-            entry_lock.release()
             try:
                 os.remove(backup_path)
             except OSError:
