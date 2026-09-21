@@ -997,40 +997,57 @@ class WebGame:
         return ok
 
     def _replace_database(self, destructive_replace: Callable[[], None]) -> None:
-        """Replace the main DB transactionally, preserving the live runtime on prepare failure."""
+        """Drain admitted work, then replace the main DB under one exclusive barrier."""
         backup_fd, backup_path = tempfile.mkstemp(prefix="ming-hot-replace-", suffix=".db")
         os.close(backup_fd)
         old_session = self.session
         old_config = old_session.llm_config
         backup_complete = False
-        try:
-            # Prepare is deliberately non-destructive: a failed backup leaves the old runtime intact.
-            self.db.backup_to(backup_path)
-            backup_complete = True
-            old_session.close(write_gate_already_held=True)
-            destructive_replace()
-            self._rebuild_session(old_config)
-        except Exception as replace_exc:
-            if not backup_complete:
-                raise
+        q = get_session_write_queue(self)
+        entry_lock = self._settlement_entry_lock
+        entry_lock.acquire()
+        q.seal()
+
+        def _replace() -> None:
+            nonlocal backup_complete
+            gate = q.write_gate
+            gate.acquire()
             try:
-                # 恢复重建前必须处置失败候选；仍活则禁止改文件/二次 rebuild。
-                if not self._dispose_rebuild_residual():
-                    logger.error(
-                        "hot replace recovery blocked: rebuild residual still live path=%s",
-                        self.db_path,
-                    )
-                    raise replace_exc
-                _delete_sqlite_db_files_or_raise(self.db_path)
-                shutil.copy2(backup_path, self.db_path)
+                # Backup and close share the same exclusive span: an admitted writer
+                # cannot change the snapshot between prepare and destructive replace.
+                self.db.backup_to(backup_path)
+                backup_complete = True
+                old_session._close_resources()
+                destructive_replace()
                 self._rebuild_session(old_config)
-            except Exception as recovery_exc:
-                if recovery_exc is replace_exc:
+            except Exception as replace_exc:
+                if not backup_complete:
                     raise
-                logger.exception("hot replace recovery failed")
-                raise replace_exc from recovery_exc
-            raise
+                try:
+                    # 恢复重建前必须处置失败候选；仍活则禁止改文件/二次 rebuild。
+                    if not self._dispose_rebuild_residual():
+                        logger.error(
+                            "hot replace recovery blocked: rebuild residual still live path=%s",
+                            self.db_path,
+                        )
+                        raise replace_exc
+                    _delete_sqlite_db_files_or_raise(self.db_path)
+                    shutil.copy2(backup_path, self.db_path)
+                    self._rebuild_session(old_config)
+                except Exception as recovery_exc:
+                    if recovery_exc is replace_exc:
+                        raise
+                    logger.exception("hot replace recovery failed")
+                    raise replace_exc from recovery_exc
+                raise
+            finally:
+                gate.release()
+
+        try:
+            q.barrier(_replace)
         finally:
+            q.unseal()
+            entry_lock.release()
             try:
                 os.remove(backup_path)
             except OSError:
@@ -4410,43 +4427,6 @@ class _NonBlockingWebWriteGate:
         return False
 
 
-@contextlib.contextmanager
-def _hot_replace_when_idle(game):
-    """load/reset 热替换：非阻塞抢 gate + entry_lock 后 seal queue；在办 entry/ticket 立即 409。
-
-    #1702：与 settlement entry 共用临界区——锁序先 write_gate 后 entry_lock
-    （同 `_exit_settlement_display_on_failure`），持锁全程覆盖 inflight 检与 replace，
-    杜绝 gate-free 窗（HITL 尾/join）下 TOCTOU 热替换。
-
-    #1842：转译 Future 活在 ledger，不是 queue ticket；LLM 段亦不持 write_gate。
-    热替换与菜单退出同认 ledger——在飞时 409，禁持闸 join（与
-    await_translations_before_month / drain 闸外 join 同契），亦不得 orphan 关库。
-    """
-    _refuse_settling_or_busy_write_phase(game)
-    gate = _try_acquire_serialized_web_write_gate(game)
-    entry_lock = _settlement_entry_lock(game)
-    entry_lock.acquire()
-    q = get_session_write_queue(game)
-    q.seal()
-    try:
-        # 直接读计数；禁止调 `_settlement_entry_inflight()`（会二次抢同一 entry_lock）。
-        if int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 0:
-            raise HTTPException(
-                status_code=409,
-                detail="月末结算或上一步写入进行中，请稍候再操作。",
-            )
-        if q.inflight_count() > 0:
-            raise HTTPException(
-                status_code=409,
-                detail="月末结算或上一步写入进行中，请稍候再操作。",
-            )
-        yield
-    finally:
-        q.unseal()
-        entry_lock.release()
-        gate.release()
-
-
 def _spawn_startup_catch_up_nonfatal(game) -> None:
     """Start post-replacement catch-up without turning a successful replacement into failure."""
     try:
@@ -4456,10 +4436,20 @@ def _spawn_startup_catch_up_nonfatal(game) -> None:
 
 
 def _run_hot_replace(game, replace: Callable[[], None], *, failure_label: str) -> None:
-    """独占热替换核心；释放旧 gate 后才让新 session 的补跑领票。"""
+    """局内忙态先回 409；真正排空与独占由 ``_replace_database`` 单点负责。"""
     try:
-        with _hot_replace_when_idle(game):
-            replace()
+        _refuse_settling_or_busy_write_phase(game)
+        gate_probe = _try_acquire_serialized_web_write_gate(game)
+        gate_probe.release()
+        entry_lock = _settlement_entry_lock(game)
+        with entry_lock:
+            entry_busy = int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 0
+        if entry_busy or get_session_write_queue(game).inflight_count() > 0:
+            raise HTTPException(
+                status_code=409,
+                detail="月末结算或上一步写入进行中，请稍候再操作。",
+            )
+        replace()
     except HTTPException:
         raise
     except Exception as exc:

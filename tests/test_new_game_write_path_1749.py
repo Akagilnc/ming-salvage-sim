@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -400,6 +401,58 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
             night_id=rec["night_id"],
             minister_message_id=rec["minister_message_id"],
         )
+
+
+def test_menu_load_drains_startup_translation_before_replacing_database(
+    tracer_client, monkeypatch,
+):
+    """菜单载档须等构造期已受理的当前转译完成，再关闭其数据库。"""
+    client = tracer_client
+    _install_canned_minister_factory(monkeypatch)
+    assert client.post("/api/menu/new_game").status_code == 200
+    game = web_app.web_game
+    assert game is not None
+    _install_canned_scene_double(game, monkeypatch)
+    state = client.get("/api/game/state").json()
+    minister = _pick_active_minister(state)
+    chat = _chat_stream(client, minister, "边饷如何？菜单载档屏障")
+    _wait_pending_writes(game)
+    game.db.conn.execute(
+        "UPDATE chat_turns SET extract_status='pending' WHERE id=?",
+        (chat["chat_turn_id"],),
+    )
+    game.db.conn.commit()
+    game.save_to("menu_barrier")
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_translate(_prompt, _cfg):
+        entered.set()
+        assert release.wait(5)
+        return _empty_translate_fn(_prompt, _cfg)
+
+    stub_audience_translate(monkeypatch, blocking_translate)
+    result: dict = {}
+
+    def load() -> None:
+        result["response"] = client.post("/api/menu/load_save/menu_barrier")
+
+    thread = threading.Thread(target=load)
+    thread.start()
+    assert entered.wait(5), "构造期当前转译 catch-up 未起跑"
+    assert thread.is_alive(), "载档不得越过尚在飞的当前转译关闭数据库"
+    release.set()
+    thread.join(5)
+    assert not thread.is_alive(), "载档未在当前转译完成后收口"
+    response = result["response"]
+    assert response.status_code == 200, response.text
+    loaded = web_app.web_game
+    assert loaded is not None
+    _wait_pending_writes(loaded)
+    _directive(client, "着户部续核边饷（载档后）。")
+    _wait_pending_writes(loaded)
+    assert "着户部续核边饷（载档后）。" in _db_snapshot(loaded.db_path)["directive_texts"]
 
 
 def test_new_game_construct_failure_keeps_old_writable(tracer_client, monkeypatch):

@@ -1178,14 +1178,6 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     runtime = web_app.WebGame(fresh=True)
-    close_calls = []
-    real_close = runtime.session.close
-
-    def observed_close(**kwargs):
-        close_calls.append(kwargs)
-        return real_close(**kwargs)
-
-    runtime.session.close = observed_close
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     saved_marker, live_marker, write_minister = list(runtime.content.characters)[:3]
     runtime.favorites = {saved_marker}
@@ -1203,7 +1195,6 @@ def test_hot_replace_http_success_reopens_state_and_writes(tmp_path, monkeypatch
     assert write.status_code == 200
     favorites = write.json()["favorites"]
     assert write_minister in favorites
-    assert close_calls == [{"write_gate_already_held": True}]
     assert saved_marker in favorites
     assert live_marker not in favorites
     runtime.session.close()
