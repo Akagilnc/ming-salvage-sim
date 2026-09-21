@@ -123,7 +123,7 @@ def _named_scene_beats(scroll) -> list[str]:
 
 
 def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch):
-    """#1727 常绿：屏障拒玩家写入口；退朝流最终 closed + 三拍。"""
+    """#1727：真实退朝在 done 暴露前预领屏障，随后收夜。"""
     game = web_game
     minister = _active_minister(game)
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
@@ -132,36 +132,40 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     game.session.registry.get = lambda _ch, **_kw: agent
     stub_scene_agent(monkeypatch, agent)
 
-    q = game._runtime_write_queue()
-    ticket = q.claim_barrier()
-    assert ticket is not None
-    try:
-        async def _probe() -> dict[str, int]:
-            async with _client() as client:
-                requests = {
-                    "chat": client.post(
-                        f"/api/ministers/{minister}/chat",
-                        json={"message": "再问边饷？"},
-                    ),
-                    "undo": client.post(f"/api/ministers/{minister}/chat/undo"),
-                    "secret_order": client.post(
-                        f"/api/ministers/{minister}/secret_order",
-                        json={"title": "边饷", "content": "速办边饷"},
-                    ),
-                    "withdraw": client.post("/api/pending_actions/1/withdraw"),
-                }
-                return {name: (await request).status_code for name, request in requests.items()}
+    statuses: dict[str, int] = {}
+    barrier_at_done: list[bool] = []
 
-        statuses = asyncio.run(_probe())
-    finally:
-        q.complete(ticket)
+    class _DoneProbeQueue(web_app.queue.Queue):
+        """在生产 worker 发布 done 的同步边界观察外部写入口。"""
 
-    assert statuses == {
-        "chat": 409,
-        "undo": 409,
-        "secret_order": 409,
-        "withdraw": 409,
-    }
+        def put(self, item, *args, **kwargs):
+            if item.get("type") == "done":
+                barrier_at_done.append(game._runtime_write_queue().has_open_barrier())
+                if not barrier_at_done[-1]:
+                    return super().put(item, *args, **kwargs)
+                async def _probe() -> dict[str, int]:
+                    async with _client() as client:
+                        requests = {
+                            "chat": client.post(
+                                f"/api/ministers/{minister}/chat",
+                                json={"message": "再问边饷？"},
+                            ),
+                            "undo": client.post(f"/api/ministers/{minister}/chat/undo"),
+                            "secret_order": client.post(
+                                f"/api/ministers/{minister}/secret_order",
+                                json={"title": "边饷", "content": "速办边饷"},
+                            ),
+                            "withdraw": client.post("/api/pending_actions/1/withdraw"),
+                        }
+                        return {
+                            name: (await request).status_code
+                            for name, request in requests.items()
+                        }
+
+                statuses.update(asyncio.run(_probe()))
+            return super().put(item, *args, **kwargs)
+
+    monkeypatch.setattr(web_app.queue, "Queue", _DoneProbeQueue)
 
     async def _run_stream() -> list[dict]:
         async with _client() as client:
@@ -181,8 +185,14 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     done_raw = next(ev for ev in stream_events if ev.get("event") == "done").get("data") or "{}"
     done_payload = json.loads(done_raw) if isinstance(done_raw, str) else done_raw
     assert isinstance(done_payload, dict), done_payload
-    # D1 同形常绿：判词链无辜——done 已带 court_break。
     assert done_payload.get("court_action") == "court_break", done_payload
+    assert barrier_at_done == [True]
+    assert statuses == {
+        "chat": 409,
+        "undo": 409,
+        "secret_order": 409,
+        "withdraw": 409,
+    }
     # end 后终态：夜 closed + 收尾三拍 + 告退轮仍在（未被 undo 抽空）。
     row = game.db.conn.execute(
         "SELECT status FROM audience_nights WHERE id=?", (night_id,),

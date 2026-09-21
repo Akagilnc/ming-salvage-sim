@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import ming_sim.audience_translate as audience_translate
 from ming_sim.audience_night import (
     close_night,
     list_chat_turns_for_night,
@@ -84,18 +85,70 @@ def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) ->
         (speaker, int(state.turn), reply),
     )
     mid = int(cur.lastrowid)
-    db.conn.execute(
+    cur = db.conn.execute(
         "INSERT INTO chat_turns "
         "(minister_name, turn, year, period, user_message_id, minister_message_id, "
         " status, night_id, night_seq) "
-        "VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 1)",
+        "VALUES (?, ?, ?, ?, ?, ?, 'active', ?, "
+        "COALESCE((SELECT MAX(night_seq) + 1 FROM chat_turns WHERE night_id=?), 1))",
         (
             speaker, int(state.turn), int(state.year), int(state.period),
-            uid, mid, int(night_id),
+            uid, mid, int(night_id), int(night_id),
         ),
     )
     db.conn.commit()
-    return uid
+    return int(cur.lastrowid)
+
+
+def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
+    game, monkeypatch,
+):
+    """真实转译入口：未知 section 留痕；上下文只含严格早于源轮的轮次。"""
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    _persist_night_chat(db, state, night_id, "第一问", "第一答")
+    source = _persist_night_chat(db, state, night_id, "本轮问", "本轮答")
+    _persist_night_chat(db, state, night_id, "后轮问", "后轮答")
+    captured: dict[str, object] = {}
+    real_build_prompt = audience_translate.build_audience_translate_prompt
+
+    def capture_prompt(**kwargs):
+        captured["night_said"] = tuple(kwargs["night_said"])
+        return real_build_prompt(**kwargs)
+
+    monkeypatch.setattr(audience_translate, "build_audience_translate_prompt", capture_prompt)
+    declaration = {
+        "commissions": [{"text": "拟旨赈济"}],
+        "commisssions": [{"text": "拼错交办"}],
+    }
+    audience_translate.run_audience_turn_translation(
+        db,
+        state,
+        emperor_message="本轮问",
+        reply="本轮答",
+        night_id=night_id,
+        chat_turn_id=source,
+        minister_name=_hong_name(db, content),
+        translate_fn=lambda _prompt, _config: declaration,
+    )
+
+    said = captured["night_said"]
+    assert isinstance(said, tuple)
+    # 每轮两条消息；源轮与后轮若越过严格截止，条数会从 2 增至 4/6。
+    assert len(said) == 2
+    pending = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE status='pending' ORDER BY id"
+    ).fetchall()
+    assert any("拟旨赈济" in str(row["payload_json"]) for row in pending)
+    rejected = db.conn.execute(
+        "SELECT section, category FROM rejection_reports WHERE turn=?",
+        (int(state.turn),),
+    ).fetchall()
+    assert any(
+        row["section"] == "commisssions" and row["category"] == "invalid_shape"
+        for row in rejected
+    )
 
 
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
