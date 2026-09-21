@@ -2043,7 +2043,12 @@ def test_menu_exit_joins_inflight_translation_before_db_close(
 
     result = asyncio.run(web_app.api_menu_exit())
     assert result == {"ok": True}
-    assert web_app.web_game is None
+    # 外部可见解绑：get_game 契约 409（禁盯 web_game 内部全局）。
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as unbound:
+        web_app.get_game()
+    assert unbound.value.status_code == 409
     assert not closed.is_set(), "退出响应时不得已关库（drain 仍应在等转译）"
     assert db.get_story_extract_status(ctid) == "pending"
 
@@ -2305,7 +2310,8 @@ def test_http_chat_exit_lands_on_scene_facts_then_closes(
     """AC39/40：HTTP chat → HTTP exit → 原 SQLite 写完再关；当场实况齐套。
 
     真实入口：POST /api/ministers/{}/chat + POST /api/menu/exit_to_menu。
-    外部结果：exit 立即 ok；关库前 extract=done；生死/下狱/罢黜/自由文本已落。
+    外部结果：exit 立即 ok；后续 chat 409；关库前 extract=done；
+    生死/下狱/罢黜/文字事实（subject 结构化）已落。禁盯 web_game 与自由文本。
     """
     import asyncio
     from fastapi.testclient import TestClient
@@ -2372,8 +2378,12 @@ def test_http_chat_exit_lands_on_scene_facts_then_closes(
         texts = db.textual_facts.readable_materials(
             subject_kind="character", subject_id=speaker,
         )
-        facts_at_close["textual"] = [
-            str(getattr(t, "body", "") or "") for t in (texts or [])
+        # 结构化水位：条数 + subject；禁盯自由文本 body 子串。
+        facts_at_close["textual_n"] = len(texts or ())
+        facts_at_close["textual_subjects"] = [
+            (str(getattr(t, "subject_kind", "") or ""),
+             str(getattr(t, "subject_id", "") or ""))
+            for t in (texts or ())
         ]
         real_close()
         closed.set()
@@ -2382,8 +2392,8 @@ def test_http_chat_exit_lands_on_scene_facts_then_closes(
 
     reset_menu_path_leases()
     assert web_app._register_holder(db.path, wg) is not None
+    # 走真实 get_game（读 web_game）；禁 stub 掉解绑后的 409 契约。
     monkeypatch.setattr(web_app, "web_game", wg)
-    monkeypatch.setattr(web_app, "get_game", lambda: wg)
     monkeypatch.setattr(web_app, "_require_active_minister", lambda _n: None)
 
     client = TestClient(web_app.app)
@@ -2398,7 +2408,12 @@ def test_http_chat_exit_lands_on_scene_facts_then_closes(
     exit_resp = client.post("/api/menu/exit_to_menu")
     assert exit_resp.status_code == 200, exit_resp.text
     assert exit_resp.json() == {"ok": True}
-    assert web_app.web_game is None
+    # 外部可见：旧局已解绑，后续 chat 须 409；禁盯 web_game 内部全局。
+    refused = client.post(
+        f"/api/ministers/{speaker}/chat",
+        json={"message": "再问一句"},
+    )
+    assert refused.status_code == 409, refused.text
     assert not closed.is_set(), "退出响应时不得已关库"
     assert status_at_close == {}
 
@@ -2408,9 +2423,8 @@ def test_http_chat_exit_lands_on_scene_facts_then_closes(
     assert facts_at_close.get("dead") == "dead"
     assert facts_at_close.get("jail") == "imprisoned"
     assert facts_at_close.get("dismiss") == "dismissed"
-    assert any("边饷告急" in t for t in facts_at_close.get("textual") or []), (
-        facts_at_close.get("textual")
-    )
+    assert facts_at_close.get("textual_n") == 1
+    assert facts_at_close.get("textual_subjects") == [("character", speaker)]
 
     db.close = lambda: None  # type: ignore[method-assign]
 
