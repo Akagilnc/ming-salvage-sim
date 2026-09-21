@@ -4,10 +4,11 @@
 公开说法及 C0 其余 section），源轮绑定、主角持久化、抽取/判官水位推进——
 故事抽取、边事件判官、代码触发读心不再另起（ADR 0155 场中承接段）。
 
-后台调度（#1842）：每轮回话后按轮串行起转译，前台不等；封夜提交 join
-本 owner×夜最后一轮；耗尽标 extract_status=pending（待补），不挡下一句；
-过月前 join 本会话 owner。水位复用 chat_turns.extract_status（与旧抽取
-同一真源，转译承接后标 done，收夜不再跑故事抽取）。
+后台调度（#1842）：每轮回话后按轮串行起转译，前台不等；转译以
+SessionWriteQueue 票据登记，封夜与过月 barrier 等待此前已受理票据排空；
+耗尽标 extract_status=pending（待补），不挡下一句。水位复用
+chat_turns.extract_status（与旧抽取同一真源，转译承接后标 done，收夜不再跑
+故事抽取）。
 """
 
 from __future__ import annotations
@@ -170,23 +171,6 @@ def cancel_turn_translation(chat_turn_id: int, *, write_queue: Any) -> int:
     return n
 
 
-def _await_inflight_future(
-    fut: Future,
-    timeout_s: float,
-    *,
-    where: str,
-    **fields: Any,
-) -> None:
-    """短等一片 Future。TimeoutError=仍在跑（非终态失败）；其它异常留痕后继续排空。"""
-    try:
-        fut.result(timeout=max(0.0, float(timeout_s)))
-    except TimeoutError:
-        return
-    except Exception:
-        detail = " ".join(f"{k}={v}" for k, v in fields.items())
-        logger.exception("%s: future failed while draining %s", where, detail)
-
-
 def _observe_finished_future(
     fut: Future,
     *,
@@ -204,41 +188,6 @@ def _observe_finished_future(
         return
     detail = " ".join(f"{k}={v}" for k, v in fields.items())
     logger.error("%s: future failed %s", where, detail, exc_info=exc)
-
-
-def _join_inflight_bucket(
-    snapshot_bucket,
-    *,
-    timeout_s: float,
-    where: str,
-    **fields: Any,
-) -> bool:
-    """单一权威：快照在飞 Future → 短等切片 → 重快照，直至清空或超时。
-
-    ``snapshot_bucket`` 无参可调用，返回当前 Future 列表（须在锁内读账）。
-    """
-    import time
-
-    deadline = time.monotonic() + max(0.0, float(timeout_s))
-    while True:
-        bucket = list(snapshot_bucket() or ())
-        if not bucket:
-            return True
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return False
-        for fut in bucket:
-            # 单轮失败已由 job 标 pending；join 继续排空其余，但须留痕（ADR 0005）。
-            # 轮询切片 TimeoutError ≠ 终态失败，不得记成 future failed。
-            _await_inflight_future(
-                fut,
-                min(remaining, 0.5),
-                where=where,
-                **fields,
-            )
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
 
 
 def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> None:

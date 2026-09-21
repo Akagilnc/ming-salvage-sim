@@ -391,7 +391,7 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
             json={"message": "准"},
         )
         assert chat_resp.status_code == 200, chat_resp.text
-        # 生产契约：只等本会话 owner，不被他档孤儿 Future 拖死。
+        # 生产契约：本会话 barrier 等此前已受理的写票据排空。
         game._runtime_write_queue().barrier(lambda: None)
         wait_until(lambda: len(game.db.list_secret_orders()) > 0)
 
