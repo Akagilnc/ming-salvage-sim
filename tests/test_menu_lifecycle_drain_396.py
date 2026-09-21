@@ -56,34 +56,6 @@ def test_drain_and_close_session_waits_for_gate_then_closes():
     assert not gate.locked()
 
 
-def test_game_session_close_waits_for_admitted_background_work():
-    """Every public close path keeps admitted work inside the DB lifetime."""
-    from ming_sim.session import GameSession
-    from ming_sim.session_write_queue import SessionWriteQueue
-
-    class CompletingQueue(SessionWriteQueue):
-        def seal(self):
-            super().seal()
-            self.complete(ticket)
-
-    queue = CompletingQueue()
-    ticket = queue.claim(key=("audience_translation", 1))
-    assert ticket is not None
-    session = GameSession.__new__(GameSession)
-    session._write_queue = queue
-    session._write_gate = queue.write_gate
-    session.registry = None
-    session._scene_registry = None
-    session.agno_db = None
-    session.db = SimpleNamespace(
-        close=lambda: (
-            queue.is_sealed() and queue.inflight_count() == 1
-        ) or (_ for _ in ()).throw(AssertionError("DB closed before queue drain")),
-    )
-
-    session.close()
-
-
 def test_exit_to_menu_returns_before_delayed_close_drains(monkeypatch, tmp_path):
     gate = threading.Lock()
     closed: list[int] = []

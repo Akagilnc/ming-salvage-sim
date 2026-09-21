@@ -395,123 +395,88 @@ def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkey
     assert chat_result["answer"] == "臣已知悉。"
 
 
-@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
-def test_drain_waits_for_in_flight_nonstream_chat(game, monkeypatch):
-    """非流式 chat 在飞（慢 LLM）时 drain 须等待——pending 覆盖 LLM 窗 + epilogue。
+def test_session_close_drains_real_audience_translation(tmp_path, content, monkeypatch):
+    """公开 close 须等真实转译落账后才关闭所属数据库。"""
+    import sqlite3
 
-    #1291 卸 threadpool 后事件循环可与回菜单重叠；若不标 pending，drain 当空闲关
-    session，epilogue 落库打到已关连接。对齐 chat_stream 整轮 pending ownership。
-    """
-    allow_finish = threading.Event()
-    chat_entered = threading.Event()
-    closed: list[int] = []
-    derived_started = threading.Event()
-    release_derived = threading.Event()
     from ming_sim.audience_night import open_night
+    from ming_sim.models import LLMConfig
+    from ming_sim.session import ChatTurnResult, GameSession
     from tests.conftest import stub_audience_translate
 
-    db, state, _content = game
-    row = db.conn.execute(
+    session = GameSession(
+        str(tmp_path / "translation-close.db"),
+        LLMConfig(api_key="", base_url="http://unused", model="unused"),
+        content=content,
+    )
+    db = session.db
+    minister = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()
-    assert row is not None
-    character = SimpleNamespace(name=str(row["name"]))
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    ).fetchone()["name"]
+    night = open_night(db, session.state, location="乾清宫", time_of_day="夜")
+    chat_turn_id = db.create_chat_turn(
+        session.state, str(minister), "close-tracer", 0, night_id=int(night["id"]),
+    )
+    db.persist_minister_reply(
+        str(minister), session.state.turn, "臣已知悉。", chat_turn_id,
+        mindreading_status="skip",
+    )
+
+    provider_entered = threading.Event()
+    release_provider = threading.Event()
 
     def translate_fn(_prompt, _config):
-        derived_started.set()
-        assert release_derived.wait(5.0)
+        provider_entered.set()
+        release_provider.wait()
         return {"commissions": [], "promises": []}
 
     stub_audience_translate(monkeypatch, translate_fn)
-
-    class _SlowChatSession(_FakeSession):
-        def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            # #1842：非流式殿上走 scene_chat；慢 LLM 窗须堵在此，禁仍堵已退役的 session.chat。
-            from ming_sim.session import ChatTurnResult
-
-            chat_entered.set()
-            allow_finish.wait()
-            return ChatTurnResult(
-                answer="臣已知悉。",
-                pending_audience_translation={
-                    "emperor_message": message,
-                    "reply": "臣已知悉。",
-                    "night_id": int(night["id"]),
-                    "chat_turn_id": int(chat_turn_id),
-                    "minister_name": minister_name,
-                },
-            )
-
-        def close(self):
-            latest = db.conn.execute(
-                "SELECT extract_status FROM chat_turns ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-            assert latest is not None and latest["extract_status"] == "done"
-            closed.append(1)
-
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = _SlowChatSession(character, _FakeAgent(allow_finish), state, db)
-    runtime.chat_history = {character.name: []}
-    runtime._write_gate = threading.Lock()
-    from ming_sim.session_write_queue import SessionWriteQueue
-    runtime._write_queue = SessionWriteQueue()
-    runtime._write_gate = runtime._write_queue.write_gate
-    runtime.session._write_queue = runtime._write_queue
-    runtime.session._write_gate = runtime._write_gate
-    runtime.session.llm_config = SimpleNamespace(channel="api")
-    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
-    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
-    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    runtime.directive_rows = lambda: []
-    runtime.directive_payload = lambda row: row
-    runtime.suggestions_for = lambda _c: []
-    runtime.can_undo_last_chat = lambda _name: False
-    # 尾随不进本测范围：只钉主轮 pending 覆盖 LLM 窗。
-    runtime._spawn_pending_write_thread = lambda *a, **k: False
-    runtime._spawn_extraction_trail = lambda *a, **k: None
-    runtime._trail_highlight_judge_after_reply = lambda *a, **k: []
-
-    chat_error: list[BaseException] = []
-    chat_payload: list[dict] = []
-
-    def run_chat():
-        try:
-            chat_payload.append(runtime.chat(character.name, "边饷如何？"))
-        except BaseException as exc:  # noqa: BLE001 — surface any fail for assert
-            chat_error.append(exc)
-
-    chat_thread = threading.Thread(target=run_chat, daemon=True)
-    chat_thread.start()
-    chat_entered.wait()
-    assert runtime._pending_writes_count >= 1, (
-        f"非流式 chat 在飞未标 pending（count={runtime._pending_writes_count}）"
+    result = ChatTurnResult(
+        answer="臣已知悉。",
+        pending_audience_translation={
+            "emperor_message": "边饷如何？",
+            "reply": "臣已知悉。",
+            "night_id": int(night["id"]),
+            "chat_turn_id": chat_turn_id,
+            "minister_name": str(minister),
+        },
     )
+    translation = session.schedule_pending_scene_translation(result)
+    assert translation is not None
+    assert provider_entered.wait(2.0)
 
-    drain_done = threading.Event()
+    close_done = threading.Event()
+    close_error: list[BaseException] = []
 
-    def run_drain():
-        web_app._drain_and_close_session(runtime)
-        drain_done.set()
+    def close_session():
+        try:
+            session.close()
+        except BaseException as exc:  # noqa: BLE001 — surface worker failure
+            close_error.append(exc)
+        finally:
+            close_done.set()
 
-    drain_thread = threading.Thread(target=run_drain, daemon=True)
-    drain_thread.start()
+    threading.Thread(target=close_session, daemon=True).start()
+    assert not close_done.is_set()
+    assert db.conn.execute("SELECT 1").fetchone()[0] == 1
 
-    wait_until(lambda: runtime._write_queue.is_sealed())
-    # 负向：LLM 仍在飞时 drain 不得关连接
-    assert not drain_done.is_set(), "drain 在非流式 chat 仍在飞时就关了 session"
-    assert closed == []
+    release_provider.set()
+    dispatch = translation.result(timeout=2.0)
+    assert dispatch.commissions.applied == []
+    assert dispatch.promises.applied == []
+    assert close_done.wait(2.0)
+    assert close_error == []
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        db.conn.execute("SELECT 1")
 
-    allow_finish.set()
-    assert derived_started.wait(2.0)
-    assert not drain_done.is_set(), "派生转译终态前不得关 session"
-    release_derived.set()
-    drain_done.wait()
-    chat_thread.join()
-    assert not chat_error, f"nonstream chat failed: {chat_error!r}"
-    assert chat_payload and chat_payload[0]["answer"] == "臣已知悉。"
-    assert closed == [1]
-    assert runtime._pending_writes_count == 0
+    reopened = sqlite3.connect(str(tmp_path / "translation-close.db"))
+    try:
+        status = reopened.execute(
+            "SELECT extract_status FROM chat_turns WHERE id=?", (chat_turn_id,),
+        ).fetchone()
+        assert status == ("done",)
+    finally:
+        reopened.close()
 
 
 def test_nonstream_chat_rejects_when_session_draining():
