@@ -43,9 +43,6 @@ class _CannedMindreadingAgent:
         return SimpleNamespace(content="近臣低声：边饷事重。")
 
 
-class _CannedRelationJudge:
-    def run(self, _prompt):
-        return SimpleNamespace(content='{"events":[]}')
 
 
 class _StreamFarewellAgent:
@@ -64,20 +61,12 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda *a, **k: _CannedExtractor(),
-    )
-    monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
     )
     monkeypatch.setattr(
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreadingAgent(),
-    )
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent",
-        lambda *a, **k: _CannedRelationJudge(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     # stream worker 在 payload 前启动 _start_cli_action_intent → 真 classify LLM；

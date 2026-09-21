@@ -1816,7 +1816,12 @@ def test_commit_new_office_action_restores_when_post_create_helper_raises(game, 
         (
             state.turn,
             "测试召对",
-            json.dumps({"name": new_name, "office": "陕西总督", "region_id": "shaanxi"}, ensure_ascii=False),
+            json.dumps({
+                "text": "授测试新臣为陕西总督。",
+                "name": new_name,
+                "office": "陕西总督",
+                "region_id": "shaanxi",
+            }, ensure_ascii=False),
         ),
     )
     db.conn.commit()

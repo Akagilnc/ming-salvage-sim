@@ -1239,10 +1239,8 @@ def _drain_story_extraction_or_fail_closed(
     ADR 0036 后出注记 / #1842：待补不再 fail-closed 中止收夜。join/补跑后仍
     pending 的留给过月 join / 原地重试（0157）。
 
-    **不再**调用旧 ``drain_pending_before_close``：转译与故事抽取共用水位
-    ``extract_status``，旧抽取成功会把转译待补标 done 并落故事账，该轮交办/
-    应允/当场实况永久无法补跑（#1842 owner「接通后退役故事抽取」；AC3 待补
-    可重试）。旧 ``drain_pending_before_close`` 的 raise 契约仍保留给直接调用方。
+    ``extract_status`` 由转译通路独占；未完成的轮次留给过月 join /
+    原地重试，不再有平行的故事抽取通路。
 
     write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)。
     """

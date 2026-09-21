@@ -68,20 +68,11 @@ class _CannedMinisterAgent:
         return SimpleNamespace(content="臣已知悉，边饷当速清。", tools=[])
 
 
-class _CannedRelationJudge:
-    """召对/收夜关系判官外层——零事件 canned，禁真网。"""
-
-    def run(self, _prompt):
-        return SimpleNamespace(content='{"events":[]}')
 
 
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda *a, **k: _CannedExtractor(),
-    )
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
@@ -92,10 +83,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
     )
     # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
     # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent",
-        lambda *a, **k: _CannedRelationJudge(),
-    )
     # 高亮判官默认 8s 超时——必须零延迟 stub，否则两月链必破速度红线。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     # 拟旨 capture 默认 30s 总罩——外层接缝 canned，禁真 LLM/真等。

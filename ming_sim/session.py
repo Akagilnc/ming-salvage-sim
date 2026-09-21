@@ -3903,9 +3903,8 @@ class GameSession:
         回合已结算推进，置 issued 态。
         """
         # #1842：过月前转译 join/catch-up/耗尽判定（闸外契约，见 await_translations_before_month）。
-        self.await_translations_before_month(
-            write_gate_already_held=write_gate_already_held,
-        )
+        if not write_gate_already_held:
+            self.await_translations_before_month()
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))
             or any(
@@ -3990,16 +3989,17 @@ class GameSession:
         # 调用方显式声明已持同一把非重入锁时不得再传入，避免 close 短写自锁；
         # CLI/直调未持闸则始终传真实 gate，不用“抢不到”猜测所有权。
         try:
-            auto_close_open_night(
-                self.db, self.state,
-                content=getattr(self, "content", None),
-                registry=getattr(self, "registry", None),
-                wait_timeout_s=inflight_wait_s,
-                beat_generator=self._beat_generator,
-                llm_config=getattr(self, "llm_config", None),
-                write_gate=None if write_gate_already_held else self._write_gate,
-                scene_registry=self._scene_registry,
-            )
+            if not write_gate_already_held:
+                auto_close_open_night(
+                    self.db, self.state,
+                    content=getattr(self, "content", None),
+                    registry=getattr(self, "registry", None),
+                    wait_timeout_s=inflight_wait_s,
+                    beat_generator=self._beat_generator,
+                    llm_config=getattr(self, "llm_config", None),
+                    write_gate=self._write_gate,
+                    scene_registry=self._scene_registry,
+                )
         except (AudienceNightError, LLMUnavailable):
             # #1235 真失败另形：收夜中止后人话 + 出展示态（欠账耗尽=失败单源）。
             exit_settlement_display_on_failure(self.db, self.state)
@@ -4735,8 +4735,11 @@ class GameSession:
         if old is not None and old is not registry:
             old.close()
 
-    def close(self) -> None:
+    def close(self, *, write_gate_already_held: bool = False) -> None:
         """排空本会话已受理工作，再关闭全部数据库资源。"""
+        if write_gate_already_held:
+            self._close_resources()
+            return
         from ming_sim.session_write_queue import drain_and_close_session
 
         drain_and_close_session(self)

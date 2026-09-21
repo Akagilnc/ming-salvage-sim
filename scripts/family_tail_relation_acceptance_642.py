@@ -55,7 +55,7 @@ import ming_sim.issues as issues_mod
 from ming_sim.llm_model import create_chat_model
 from ming_sim.models import LLMConfig
 from ming_sim.relation_brew import build_brew_input
-from ming_sim.relation_judge import summon_edge_origin
+from ming_sim.relations import summon_edge_origin
 from ming_sim.relation_read import load_relation_history_before, project_relation_ledger
 from ming_sim.relations import EDGE_KINDS, EMPEROR_NODE
 from ming_sim.session import GameSession
@@ -909,8 +909,8 @@ def main() -> int:
             "design": (
                 "Live production-chain tracer: seed semantic on seed ledger; "
                 "yang = 3×(project_relation_ledger → session summon Q&A → "
-                "audience_night.close_night via scene_registry."
-                "start_relation_judge_provider Future → settle_with_delta brew); "
+                "audience translation edge → audience_night.close_night "
+                "→ settle_with_delta brew); "
                 "typed asserts on judge watermark/origin/edge id/summary "
                 "last_event_id + last_brewed year-period progression + "
                 "beat1 tension kinds → face_before event pointers → beat2/3 coop; "

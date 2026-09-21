@@ -115,17 +115,10 @@ class _CannedMindreading:
         return SimpleNamespace(content="近臣低声：边饷事重。")
 
 
-class _CannedRelationJudge:
-    def run(self, _prompt):
-        return SimpleNamespace(content='{"events":[]}')
 
 
 def _install_settlement_llm_stubs(monkeypatch) -> None:
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda *a, **k: _CannedExtractor(),
-    )
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
@@ -133,10 +126,6 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
     monkeypatch.setattr(
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreading(),
-    )
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent",
-        lambda *a, **k: _CannedRelationJudge(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     monkeypatch.setattr(

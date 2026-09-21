@@ -25,7 +25,7 @@ from ming_sim.audience_night import (
 from ming_sim.audience_translation import apply_audience_round_translation
 from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
-from ming_sim.relation_judge import summon_edge_origin
+from ming_sim.relations import summon_edge_origin
 from ming_sim.session import GameSession
 from tests.conftest import persist_and_schedule_scene
 

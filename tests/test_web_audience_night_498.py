@@ -72,13 +72,6 @@ class _CannedMindreadingAgent:
         return _R()
 
 
-class _CannedRelationJudge:
-    """#634 关系判官离线边界：召对后 trail 会 create_relation_judge_agent——空 events，禁 sk-test 真网。"""
-
-    def run(self, _prompt):
-        class _R:
-            content = '{"events":[]}'
-        return _R()
 
 
 # ── canned LLM 边界（唯一 fake）────────────────────────────────────────
@@ -152,10 +145,8 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     beat factory，避免 sk-test 401；实例仍走生产 ChatTurnSceneRegistry。
 
     允许 canned seam（定义真源 / runtime lookup，本 fixture 唯一 fake 面）：
-    - agents.create_audience_extractor_agent → 回话尾随 / 收夜 drain 叙事抽取
     - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
     - mindreading.create_mindreading_agent → 回话 done 后读心尾随（#499）
-    - agents.create_relation_judge_agent → 回话后关系判官 trail（#634；禁 sk-test 真网）
     - GameSession._start/_finish_cli_action_intent → 动作意图分类器（禁 sk-test 真网）
     - web_app.run_highlight_judge → 回话 done 后高亮判官（#544；禁 sk-test 真网）
     - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
@@ -167,10 +158,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    # #501：叙事抽取是每条召对夜回话的新 LLM 边界（回话尾随 + 收夜前 drain）——离线中和，
-    # 默认抽空 facts，避免本 #498 用例走真实网络。
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _CannedExtractor())
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
@@ -179,11 +166,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setattr(
         mindreading_mod, "create_mindreading_agent",
         lambda *a, **k: _CannedMindreadingAgent(),
-    )
-    # #634：关系判官 trail 同属回话后 LLM 边界——取证定位为 sk-test 401 源之一。
-    monkeypatch.setattr(
-        agents_mod, "create_relation_judge_agent",
-        lambda *a, **k: _CannedRelationJudge(),
     )
     # 动作意图分类器：chat stream 在 payload 前可并发启动；取证定位为另一 sk-test 401 源。
     # 本 fixture 只钉夜/在飞接缝，分类确定性空返，禁真网（与 #1727 fixture 同边界）。
@@ -320,6 +302,16 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     observed_ticket_inflight = threading.Event()
     observed_ticket_clear = threading.Event()
     q = game._runtime_write_queue()
+    highlight_finished = threading.Event()
+    real_highlight = web_app.run_highlight_judge
+
+    def observed_highlight(**kwargs):
+        try:
+            return real_highlight(**kwargs)
+        finally:
+            highlight_finished.set()
+
+    monkeypatch.setattr(web_app, "run_highlight_judge", observed_highlight)
     real_wait_prior = q.wait_prior
 
     def observe_wait_prior(ticket):
@@ -384,6 +376,8 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
         "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "active"
     # 颁诏成功（done）+ 真实结算核：收夜封夜 + 推进回合 + 持久化
     assert issue_events[-1]["event"] == "done"
+    assert highlight_finished.is_set()
+    assert q.inflight_count() == 0
     assert an.get_night(game.db, night["id"])["status"] == "closed"
     assert int(game.state.turn) == turn_before + 1
     assert int(game.db.load_state().turn) == turn_before + 1

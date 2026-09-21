@@ -169,9 +169,6 @@ def _patch_mindreading_skip(monkeypatch):
 
     monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", lambda **_k: None)
     # 抽取尾随与本票无关；禁真跑以免 fixture teardown 与后台写竞态
-    monkeypatch.setattr(
-        web_app_mod, "trail_extraction_after_reply", lambda **_k: None, raising=False,
-    )
 
 
 def _restore_highlight_seams(web_game) -> None:

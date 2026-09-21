@@ -10204,63 +10204,15 @@ class GameDB:
 
     # ----- #634 召对判官水位（ADR 0082：逐轮标记即水位，无平行水位表）-----
 
-    def list_unjudged_completed_chat_turns(
-        self, night_id: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        """Return one night's unjudged output targets, never a cross-night window.
 
-        Without an explicit night, the oldest outstanding turn chooses the batch.
-        Legacy ``night_id=0`` is an ordinary, isolated batch of its own.
-        """
-        nid = int(night_id) if night_id is not None else None
-        if nid is None:
-            first = self.conn.execute(
-                """SELECT night_id FROM chat_turns
-                   WHERE status='active' AND minister_message_id > 0
-                     AND relation_judge_status=''
-                   ORDER BY id LIMIT 1""",
-            ).fetchone()
-            if first is None:
-                return []
-            nid = int(first["night_id"] or 0)
-        rows = self.conn.execute(
-            """SELECT * FROM chat_turns
-               WHERE status='active' AND minister_message_id > 0
-                 AND relation_judge_status='' AND night_id=?
-               ORDER BY id""",
-            (nid,),
-        ).fetchall()
-        return [self._row_dict(r) for r in rows]
 
-    def list_relation_judge_context(self, night_id: int, through_id: int) -> List[Dict[str, Any]]:
-        """Completed active context for a night through this batch's high-water turn."""
-        rows = self.conn.execute(
-            """SELECT * FROM chat_turns
-               WHERE status='active' AND minister_message_id > 0
-                 AND night_id=? AND id <= ? ORDER BY id""",
-            (int(night_id), int(through_id)),
-        ).fetchall()
-        return [self._row_dict(r) for r in rows]
-
-    def mark_relation_judge_done(self, chat_turn_ids: Iterable[int]) -> None:
-        """把本拍已落库的窗口轮标 'done'；只从 '' 转入，不覆盖其它终态。"""
-        ids = [int(i) for i in chat_turn_ids]
-        if not ids:
-            return
-        placeholders = ",".join("?" for _ in ids)
-        self.conn.execute(
-            f"UPDATE chat_turns SET relation_judge_status = 'done' "
-            f"WHERE id IN ({placeholders}) AND relation_judge_status = ''",
-            ids,
-        )
-        self.conn.commit()
 
     def delete_relation_edge_events_for_chat_turn(self, chat_turn_id: int) -> int:
         """撤回联动（ADR 0038 白名单③ / #1839 第四类）：删该轮源绑定的边事件行。
 
         事务归属调用方：undo_chat_turn 在其原子块内调（禁提前 commit）；origin 的
-        chat_turn 段是唯一的源轮绑定真源——召对判官路径（relation_judge.
-        summon_edge_origin）与转译声明路径（declaration_dispatch 拼装
+        chat_turn 段是唯一的源轮绑定真源——relations.summon_edge_origin
+        与转译声明路径（declaration_dispatch 拼装
         ``转译声明|chat_turn:{id}``）共用同一段形态。
         """
         cid = int(chat_turn_id)

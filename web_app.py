@@ -1007,7 +1007,7 @@ class WebGame:
             # Prepare is deliberately non-destructive: a failed backup leaves the old runtime intact.
             self.db.backup_to(backup_path)
             backup_complete = True
-            old_session.close()
+            old_session.close(write_gate_already_held=True)
             destructive_replace()
             self._rebuild_session(old_config)
         except Exception as replace_exc:

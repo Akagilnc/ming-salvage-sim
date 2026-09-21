@@ -839,7 +839,7 @@ def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
 
 
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
-    """#1472：全部 11 个 ming_sim.agents 工厂 + gate 真实参数面无 max_tokens 键。"""
+    """#1472：ming_sim.agents 现役工厂 + gate 真实参数面无 max_tokens 键。"""
     from types import SimpleNamespace
 
     import ming_sim.agents as agents_mod
@@ -877,11 +877,10 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         reasoning_strength="high",
     )
 
-    # 11 个 ming_sim.agents 工厂——逐项命名调用，漏一个即红
+    # ming_sim.agents 现役工厂——逐项命名调用，漏一个即红
     factories = [
         ("create_mindreading_agent", lambda: agents_mod.create_mindreading_agent(cfg)),
         ("create_highlight_judge_agent", lambda: agents_mod.create_highlight_judge_agent(cfg)),
-        ("create_audience_extractor_agent", lambda: agents_mod.create_audience_extractor_agent(cfg)),
         ("create_endorsement_extractor_agent", lambda: agents_mod.create_endorsement_extractor_agent(cfg)),
         (
             "create_score_extractor_module_agent",
@@ -899,7 +898,7 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ("create_ending_summary_agent", lambda: agents_mod.create_ending_summary_agent(cfg, object())),
     ]
     factory_names = [name for name, _ in factories]
-    assert len(factory_names) == len(set(factory_names)) == 11
+    assert len(factory_names) == len(set(factory_names)) == 10
 
     for name, call in factories:
         before = len(seen)

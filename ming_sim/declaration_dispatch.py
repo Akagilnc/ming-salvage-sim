@@ -85,7 +85,7 @@ from ming_sim.audience_night import (
 )
 from ming_sim.entities.affair import ATTACH_BIRTH, ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.error_pack import rejections_jsonl_path
-from ming_sim.relation_judge import summon_edge_origin
+from ming_sim.relations import summon_edge_origin
 from ming_sim.issues import apply_person_changes_only
 from ming_sim.public_sayings import record_public_saying
 from ming_sim.relations import validate_edge_kind
