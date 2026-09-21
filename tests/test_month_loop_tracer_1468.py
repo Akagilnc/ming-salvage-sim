@@ -632,16 +632,29 @@ def test_month_advance_never_reopens_chat_between_translation_and_close(
     assert directive.status_code == 200, directive.text
     _wait_pending_writes(game)
 
-    drain_returned = threading.Event()
+    drain_reached = threading.Event()
     release_settlement = threading.Event()
     close_completed = threading.Event()
     real_await = game.session.await_translations_before_month
     real_close = web_app._auto_close_open_night_gate_free
 
     def observe_await(*args, **kwargs):
+        after_drain = kwargs.get("after_drain")
+
+        def pause_before_close():
+            drain_reached.set()
+            release_settlement.wait()
+            assert after_drain is not None
+            return after_drain()
+
+        if after_drain is not None:
+            kwargs["after_drain"] = pause_before_close
         result = real_await(*args, **kwargs)
-        drain_returned.set()
-        release_settlement.wait()
+        # 变异成旧的双 barrier 调用时，await 没有收夜委托；
+        # 在第一张票归还后停住，同一 tracer 必须报红。
+        if after_drain is None:
+            drain_reached.set()
+            release_settlement.wait()
         return result
 
     def observe_close(*args, **kwargs):
@@ -661,14 +674,15 @@ def test_month_advance_never_reopens_chat_between_translation_and_close(
 
     issue_thread = threading.Thread(target=issue_month, daemon=True)
     issue_thread.start()
-    drain_returned.wait()
+    drain_reached.wait()
     try:
+        assert not close_completed.is_set()
         raced = client.post(
             f"/api/ministers/{minister}/chat", json={"message": "此刻还能召对吗？"},
         )
-        assert raced.status_code != 200 or close_completed.is_set(), (
-            "chat was admitted after translation barrier returned but before night close"
-        )
+        assert raced.status_code == 409, raced.text
+        assert "detail" in (raced.json() or {})
+        assert not close_completed.is_set()
     finally:
         release_settlement.set()
     issue_thread.join()
