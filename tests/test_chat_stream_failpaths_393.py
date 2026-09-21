@@ -804,12 +804,12 @@ class _FailLeavingAgnoRunAgent:
         yield RunCompletedEvent()
 
 
-def _transport_web_game(game, agent):
+def _transport_web_game(game, agent, monkeypatch):
     """复用 audience_background 真实召对装配（真 DB / atomic / interpret）。"""
     from tests.test_audience_background import _web_game
 
     db, state, content = game
-    web_game = _web_game(db, state, content, agent)
+    web_game = _web_game(db, state, content, agent, monkeypatch)
     # 成功路径会 spawn 尾随；空操作避免额外 LLM/线程噪音
     web_game._dispatch_relation_judge = lambda *_a, **_k: None  # type: ignore[method-assign]
     web_game._spawn_extraction_trail = lambda *_a, **_k: None  # type: ignore[method-assign]
@@ -862,7 +862,7 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
     """#1452 B / #1465：真实 web 流入口——无 typed status 的 RunErrorEvent
     → 一次不重试、系统层 typed 终失败、provider_message 保真。"""
     agent = _RunErrorAgent()
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
     calls = {"n": 0}
     real_run = agent.run
 
@@ -943,7 +943,7 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
         return real_run(*a, **k)
 
     agent.run = _timed_run  # type: ignore[method-assign]
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
     web_game.session.registry.session_ids[minister] = session_id
 
     # 游戏账基线（截史不得动问话/回话账）
@@ -1036,7 +1036,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     monkeypatch.setattr(transport_mod, "_sleep_retry_interval", _wait)
 
     agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
     db = web_game.db
     night_closed = {"n": 0}
 
@@ -1102,7 +1102,7 @@ def test_chat_stream_provider_5xx_retries_status_preserved(monkeypatch, game):
     agent = _provider_http_error_agent(
         500, "Internal server error", http_hits=http_hits,
     )
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -1135,7 +1135,7 @@ def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, game):
     agent = _provider_http_error_agent(
         400, "top_p not supported", http_hits=http_hits,
     )
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     events = _parse_sse(response.text)
@@ -1158,7 +1158,7 @@ def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, g
     agent = _provider_http_error_agent(
         None, "connection refused", http_hits=http_hits,
     )
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -1190,7 +1190,7 @@ def test_chat_stream_typed_429_preserved(monkeypatch, game):
         )
 
     agent = _CountingFailAgent(fail_times=99, error_factory=_rate_limit)
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     events = _parse_sse(response.text)
@@ -1231,7 +1231,7 @@ def test_chat_stream_config_max_attempts_override(monkeypatch, tmp_path, game):
         )
 
     agent = _CountingFailAgent(fail_times=99, error_factory=_conn_err)
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
     web_game.session.llm_config = SimpleNamespace(channel="api")
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
@@ -1290,7 +1290,7 @@ def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, tmp_path, 
             yield RunCompletedEvent()
 
     agent = _IdleThenNearFullOk()
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
     web_game.session.llm_config = SimpleNamespace(channel="api")
     # 只替换 transport 模块内的取时名，不改全局 time.monotonic（进程内 ASGI/线程共享时钟）
     monkeypatch.setattr(
@@ -1346,7 +1346,7 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, ga
             yield RunCompletedEvent()
 
     agent = _PartialDismissThenOk()
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -1407,7 +1407,7 @@ def test_chat_stream_halfstream_terminal_fail_replaces_temp(
             yield RunErrorEvent("Unknown model error")
 
     agent = _PartialThenTerminal()
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -1455,7 +1455,7 @@ def test_chat_stream_error_status_run_output_system_layer_not_diegetic(
             yield ev
 
     agent = _ErrorStatusAgent()
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -1510,7 +1510,7 @@ def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
             raise _conn_err(self.calls)
 
     agent = _DismissThenAlwaysFail()
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
     db = web_game.db
 
     exit_starts = {"n": 0}

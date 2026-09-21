@@ -113,13 +113,13 @@ def _pin_transport_policy(
     )
 
 
-def _cli_web_game(game, *, backend: str = "claude"):
+def _cli_web_game(game, monkeypatch, *, backend: str = "claude"):
     """真实召对装配 + 真 CliChat model（channel=cli）。"""
     from agno.agent import Agent
 
     model = cb.CliChat(id="cli-model-test", backend=backend)
     agent = Agent(model=model, markdown=False)
-    web_game, minister = _transport_web_game(game, agent)
+    web_game, minister = _transport_web_game(game, agent, monkeypatch)
     web_game.session.llm_config = SimpleNamespace(
         channel="cli", cli_runner=backend, cli_model="cli-model-test",
         cli_timeout_seconds=None, reasoning_strength="",
@@ -140,7 +140,7 @@ def test_cli_chat_stream_two_transient_then_success_three_attempts(
         {"stdout": (), "returncode": 0},
         {"stdout": (_OK_REPLY,), "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(game)
+    web_game, minister = _cli_web_game(game, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -171,7 +171,7 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     script = install_fake_cli_runner(monkeypatch, [
         {"stdout": ("Authentication required\n",), "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(game, backend="agy")
+    web_game, minister = _cli_web_game(game, monkeypatch, backend="agy")
     db = web_game.db
     night_closed = {"n": 0}
     web_game.session.close_night_after_chat_if_needed = (
@@ -219,7 +219,7 @@ def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, tmp_path, 
     script = install_fake_cli_runner(monkeypatch, [
         {"stdout": (), "stderr": ("error: unknown model\n",), "returncode": 1},
     ])
-    web_game, minister = _cli_web_game(game)
+    web_game, minister = _cli_web_game(game, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -250,7 +250,7 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
         "stdout": stdout, "returncode": 0,
         "stdin_error": BrokenPipeError("stdin 已关闭"),
     }])
-    web_game, minister = _cli_web_game(game)
+    web_game, minister = _cli_web_game(game, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -285,7 +285,7 @@ def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, g
         "stdout": tuple(chunks),
         "returncode": 0,
     }])
-    web_game, minister = _cli_web_game(game)
+    web_game, minister = _cli_web_game(game, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -336,7 +336,7 @@ def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
         {"stdout": (SilentUntilKilled(on_tick=_advance_while_silent),), "returncode": 0},
         {"stdout": no_nl_chunks, "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(game)
+    web_game, minister = _cli_web_game(game, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text

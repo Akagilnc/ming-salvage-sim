@@ -16,7 +16,11 @@ from ming_sim.skills import bind_content as bind_skills_content
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import (
+    register_translation_owner_for_teardown,
+    stub_audience_translate,
+    stub_scene_agent,
+)
 
 
 class RunContent:
@@ -186,9 +190,6 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
     game.session = _FakeSession(db, state, content, agent)
     game.chat_history = {name: [] for name in content.characters}
     game.suggestions_for = lambda _character: []
-    # The production lifecycle waits on this condition before closing its
-    # shared DB.  Keep observer-departure tests on the same boundary so a
-    # daemon worker cannot outlive the fixture and touch a closed connection.
     from ming_sim.session_write_queue import SessionWriteQueue
     game._write_queue = SessionWriteQueue()
     game._write_gate = game._write_queue.write_gate
@@ -196,6 +197,7 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
     # chat atomic 须同闸串行，禁分家导致共享 conn 嵌套 BEGIN。
     game.session._write_gate = game._write_gate
     game.session._write_queue = game._write_queue
+    register_translation_owner_for_teardown(db, game._write_gate)
     game._runtime_write_queue = lambda: game._write_queue  # type: ignore
     game._mark_pending_write = lambda key=None: game._write_queue.claim(key=key or ("pending",))  # type: ignore
     game._complete_pending_write = lambda ticket=None: game._write_queue.complete(ticket)  # type: ignore
@@ -622,6 +624,7 @@ def _cli_web_game(db, state, content, agent, monkeypatch=None, **kwargs) -> WebG
     game._write_gate = game._write_queue.write_gate
     game.session._write_gate = game._write_gate
     game.session._write_queue = game._write_queue
+    register_translation_owner_for_teardown(db, game._write_gate)
     game._runtime_write_queue = lambda: game._write_queue  # type: ignore
     game._mark_pending_write = lambda key=None: game._write_queue.claim(key=key or ("pending",))  # type: ignore
     game._complete_pending_write = lambda ticket=None: game._write_queue.complete(ticket)  # type: ignore

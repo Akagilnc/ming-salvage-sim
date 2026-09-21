@@ -143,7 +143,7 @@ def _transport_retry_interval_instant():
 
 
 @pytest.fixture
-def game(content, _game_template_path):
+def game(content, _game_template_path, monkeypatch):
     """返回 (db, state, content)：开局同核临时库，用例间隔离。
 
     Setup 形态（#1233 刀1 方案 c）：session 模板 DB 一次 seed，每案 ``shutil.copyfile``
@@ -152,6 +152,9 @@ def game(content, _game_template_path):
 
     不依赖 gitignored data/probe.db（#5）：characters 直接来自 content（101 全）。
     """
+    # 依赖 monkeypatch 固定 teardown 次序：先排空本 fixture 的 translation owner，
+    # 再回滚真实 chat helper 安装的离线转译边界。
+    del monkeypatch
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     db = None
@@ -162,6 +165,12 @@ def game(content, _game_template_path):
         yield db, state, content
     finally:
         if db is not None:
+            from ming_sim.audience_translation import join_owner_translations
+
+            for owner in getattr(db, "_test_translation_owners", ()):
+                assert join_owner_translations(owner), (
+                    "owner translation ledger did not clear before fixture close"
+                )
             db.close()
         for p in (path, f"{path}_agno.db"):
             if os.path.exists(p):
@@ -346,6 +355,19 @@ def stub_audience_translate(monkeypatch, fn=None):
         runner,
     )
     return runner
+
+
+def register_translation_owner_for_teardown(db, write_gate):
+    """让共享 game fixture 在关库前排空真实 chat harness 创建的 owner。"""
+    from ming_sim.audience_translation import translation_owner_key
+
+    owner = translation_owner_key(write_gate, db)
+    owners = getattr(db, "_test_translation_owners", None)
+    if owners is None:
+        owners = set()
+        db._test_translation_owners = owners
+    owners.add(owner)
+    return owner
 
 
 def persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
