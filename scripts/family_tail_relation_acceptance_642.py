@@ -251,6 +251,7 @@ def _production_summon_turn(
         db.persist_minister_reply(
             minister, accepted_turn, answer, int(chat_turn_id),
         )
+        sess.schedule_pending_scene_translation(result)
         db.record_chat_turn_rollback_diffs(
             int(chat_turn_id),
             rollback_snapshot or {},
@@ -304,6 +305,7 @@ def _close_night_production_judge(
         llm_config=cfg,
         write_gate=write_gate,
         scene_registry=getattr(sess, "_scene_registry", None),
+        write_queue=sess._write_queue,
         wait_timeout_s=0.0,
     )
     return {

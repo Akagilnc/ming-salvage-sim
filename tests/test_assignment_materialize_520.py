@@ -1461,26 +1461,7 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     wg._spawn_pending_write_thread = lambda *a, **k: None
     wg._trail_mindreading_after_reply = lambda *a, **k: None
     wg._trail_highlight_judge_after_reply = lambda *a, **k: []
-    wg._dispatch_relation_judge = lambda *a, **k: None
 
-    # 生产 trail 同步跑：canned 空 facts → extract_status=done（禁 SQL 旁路清待补）
-    from ming_sim.audience_extraction import trail_extraction_after_reply
-
-    def _spawn_extraction_trail(minister_name, answer_text, chat_turn_id):
-        if not chat_turn_id:
-            return None
-        trail_extraction_after_reply(
-            db=db,
-            minister_name=minister_name,
-            minister_reply=str(answer_text or ""),
-            chat_turn_id=int(chat_turn_id),
-            llm_config=sess.llm_config,
-            write_gate=wg._write_gate,
-            extractor_agent=_CannedStoryExtractor(),
-        )
-        return None
-
-    wg._spawn_extraction_trail = _spawn_extraction_trail
     return wg
 
 

@@ -173,7 +173,6 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))  # type: ignore
     rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)  # type: ignore
     rt._spawn_pending_write_thread = lambda *a, **k: False
-    rt._spawn_extraction_trail = lambda *a, **k: None
     rt.directive_rows = lambda: []
     rt.directive_payload = lambda row: row
     rt.suggestions_for = lambda _c: []
@@ -1624,10 +1623,8 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     rt._start_chat_turn = lambda _n, **_k: (11, {})
     rt._record_chat_rollback_items = lambda *_a, **_k: None
     rt._chat_payload = lambda *a, **k: {"answer": "臣遵旨。", "minister_message_id": 1}
-    rt._spawn_extraction_trail = lambda *_a, **_k: None
     rt._trail_mindreading_after_reply = lambda *_a, **_k: None
     rt._trail_highlight_judge_after_reply = lambda *_a, **_k: []
-    rt._dispatch_relation_judge = lambda *_a, **_k: None
     rt._complete_pending_write = lambda ticket=None: q.complete(ticket)
     rt._mark_pending_write = lambda key=None: q.claim(key=key or ("pending",))
     # 轻量 mock 无 SuspendableConnection；join 后 persist 短临界段用 nullcontext，

@@ -294,7 +294,6 @@ def _retry_runtime(db, state, minister, *, session=None):
     rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))  # type: ignore
     rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)  # type: ignore
     rt._spawn_pending_write_thread = lambda *a, **k: False
-    rt._spawn_extraction_trail = lambda *a, **k: None
     return rt
 
 

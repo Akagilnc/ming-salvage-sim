@@ -1515,29 +1515,6 @@ class GameSession:
             return ask
         return text + "\n" + ask
 
-    def _write_gate_if_free(self) -> Any:
-        """#1353 fold-in r8：resolve_turn 收夜用——仅当既有唯一 write_gate 空闲时传入。
-
-        Web 入口在 write_cm 内调 resolve_turn 时外层已持同一把非重入锁；若仍传入，
-        close_night 短写 `with gate` 会自锁。探测：非阻塞 acquire 成功=空闲（立刻
-        release，close 自己短持）；失败=外层持锁中，回落 None（夜应已在闸外收完）。
-        CLI 单写者不持外层锁 → 恒传入真锁，欠账 drain 同流。禁第二锁。
-        """
-        gate = getattr(self, "_write_gate", None)
-        if gate is None:
-            return None
-        try:
-            acquired = bool(gate.acquire(blocking=False))
-        except Exception:
-            return None
-        if not acquired:
-            return None
-        try:
-            gate.release()
-        except Exception:
-            pass
-        return gate
-
     def close_night_after_chat_if_needed(
         self,
         court_action: str,
@@ -3855,7 +3832,9 @@ class GameSession:
                 ) from write_exc
         return next_carry
 
-    def await_translations_before_month(self, after_drain=None) -> None:
+    def await_translations_before_month(
+        self, after_drain=None, *, write_gate_already_held: bool = False,
+    ) -> None:
         """过月前转译：join 等到清空 → catch-up → 真耗尽走 0157。
 
         #1842 / ADR 0155 两态：① 未完成则过月等（join 缝系统内等待后自动续跑，
@@ -3866,7 +3845,8 @@ class GameSession:
         调用方不得在持非重入 write_gate 时进入本方法的等待路径。web 受理样板在
         hold_write_for_body 之前调用本方法；resolve_turn 再调一次时 join 已清空、
         立即放行。本方法**绝不** release/acquire write_gate（不猜锁所有权、不偷放）。
-        catch-up 仅在闸空闲时传入 write_gate，避免调用方已持闸时同线程嵌套自锁。
+        调用方已持闸时须显式声明；其余路径始终传递真实 gate，
+        不得把“他线程正持有”误判为本线程可无锁访问 SQLite。
         """
         from ming_sim.audience_translation import (
             catch_up_pending_translations,
@@ -3880,8 +3860,7 @@ class GameSession:
         # 既受理转译、欠账补跑和调用方收夜，不留重新准入窗口。
         write_queue = get_session_write_queue(self)
         def _drain_catch_up_and_continue() -> None:
-            gate = getattr(self, "_write_gate", None)
-            catch_gate = self._write_gate_if_free() if gate is not None else None
+            catch_gate = None if write_gate_already_held else self._write_gate
             catch_up_pending_translations(
                 self.db, self.state,
                 llm_config=getattr(self, "llm_config", None),
@@ -3910,7 +3889,8 @@ class GameSession:
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None,
-                     *, allow_empty_decree: bool = False) -> ResolveResult:
+                     *, allow_empty_decree: bool = False,
+                     write_gate_already_held: bool = False) -> ResolveResult:
         """颁诏并推演本回合（phase1）。
 
         on_event(kind, data): 推演过程实时回调，透传给 resolve_directives。
@@ -3923,7 +3903,9 @@ class GameSession:
         回合已结算推进，置 issued 态。
         """
         # #1842：过月前转译 join/catch-up/耗尽判定（闸外契约，见 await_translations_before_month）。
-        self.await_translations_before_month()
+        self.await_translations_before_month(
+            write_gate_already_held=write_gate_already_held,
+        )
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))
             or any(
@@ -4005,10 +3987,8 @@ class GameSession:
         # Close-night owns short write sections + gate-free endorsement LLM.
         # Web 入口先在闸外 free-close（issue/stream/no-edict），再持闸跑 resolve；
         # 此处幂等兜底 CLI/直调。
-        # #1353 fold-in r8：穿既有唯一 write_gate（session._write_gate）。
-        # 若调用方已持同一把非重入锁（Web write_cm 内），不得再传入——否则 close
-        # 短写 with gate 自锁；闸已被外层持时回落 None（夜应已在闸外收完）。
-        # 闸空闲（CLI）→ 传入真锁，欠账 drain 同流；耗尽走 LLMUnavailable 失败单源。
+        # 调用方显式声明已持同一把非重入锁时不得再传入，避免 close 短写自锁；
+        # CLI/直调未持闸则始终传真实 gate，不用“抢不到”猜测所有权。
         try:
             auto_close_open_night(
                 self.db, self.state,
@@ -4017,7 +3997,7 @@ class GameSession:
                 wait_timeout_s=inflight_wait_s,
                 beat_generator=self._beat_generator,
                 llm_config=getattr(self, "llm_config", None),
-                write_gate=self._write_gate_if_free(),
+                write_gate=None if write_gate_already_held else self._write_gate,
                 scene_registry=self._scene_registry,
             )
         except (AudienceNightError, LLMUnavailable):
@@ -4704,7 +4684,9 @@ class GameSession:
         self.db.save_state(self.state)
         return report
 
-    def advance_without_decree(self, inflight_wait_s: float | None = None):
+    def advance_without_decree(
+        self, inflight_wait_s: float | None = None, *, write_gate_already_held: bool = False,
+    ):
         """CLI/web 退朝；无旨月亦走完整结算链（#1274 / owner B-2）。
 
         有草案/pending → 视同颁诏 resolve_turn。
@@ -4712,9 +4694,13 @@ class GameSession:
         settle_with_delta 全链照跑（邸报/种子局势/议题惯性/结局判定）；16ms 快路已废。
         """
         if self.db.list_directives(self.state, statuses=("pending", "draft")):
-            return self.resolve_turn(inflight_wait_s=inflight_wait_s)
+            return self.resolve_turn(
+                inflight_wait_s=inflight_wait_s,
+                write_gate_already_held=write_gate_already_held,
+            )
         return self.resolve_turn(
             inflight_wait_s=inflight_wait_s, allow_empty_decree=True,
+            write_gate_already_held=write_gate_already_held,
         )
 
     def victory(self) -> Dict[str, object]:

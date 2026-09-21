@@ -396,7 +396,6 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
     runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
     runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
     runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
-    runtime._trail_extraction_after_reply = lambda *_args, **_kwargs: None
     runtime._trail_mindreading_after_reply = lambda *_args, **_kwargs: None
 
     # #1842：殿上默认 scene_chat；本测咬密令 tool→pending→commit 链，须走正式密令入口

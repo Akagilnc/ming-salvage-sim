@@ -990,10 +990,8 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     wg.suggestions_for = lambda _c: []
     # trail helpers no-op (avoid mindreading/extraction noise)
     wg._spawn_pending_write_thread = lambda *a, **k: None
-    wg._spawn_extraction_trail = lambda *a, **k: None
     wg._trail_mindreading_after_reply = lambda *a, **k: None
     wg._trail_highlight_judge_after_reply = lambda *a, **k: []
-    wg._dispatch_relation_judge = lambda *a, **k: None
     return wg
 
 

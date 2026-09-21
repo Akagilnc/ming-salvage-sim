@@ -19,6 +19,7 @@ import ming_sim.audience_night as an
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
+from ming_sim.session_write_queue import SessionWriteQueue
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -50,6 +51,8 @@ def _session(db, state, content, *, reply="臣领旨。", tools=None):
             return SimpleNamespace(content=reply, tools=list(tools or []))
 
     sess = GameSession.__new__(GameSession)
+    sess._write_queue = SessionWriteQueue()
+    sess._write_gate = sess._write_queue.write_gate
     sess.db = db
     sess.state = state
     sess.content = content

@@ -683,7 +683,7 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
         resolve_turn=_boom_resolve,
         last_decree="",
         current_phase=lambda: state.turn_phase,
-        await_translations_before_month=lambda: None,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     runtime = SimpleNamespace(
         db=db,
@@ -811,8 +811,6 @@ def _transport_web_game(game, agent, monkeypatch):
     db, state, content = game
     web_game = _web_game(db, state, content, agent, monkeypatch)
     # 成功路径会 spawn 尾随；空操作避免额外 LLM/线程噪音
-    web_game._dispatch_relation_judge = lambda *_a, **_k: None  # type: ignore[method-assign]
-    web_game._spawn_extraction_trail = lambda *_a, **_k: None  # type: ignore[method-assign]
     web_game._spawn_pending_write_thread = lambda *_a, **_k: None  # type: ignore[method-assign]
     return web_game, "毕自严"
 

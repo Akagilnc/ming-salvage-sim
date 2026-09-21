@@ -839,7 +839,7 @@ def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatc
     session = types.SimpleNamespace(
         registry=None,
         advance_without_decree=abort_after_failed_action,
-        await_translations_before_month=lambda: None,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     stub = types.SimpleNamespace(
         db=db,
@@ -886,7 +886,7 @@ def test_web_advance_without_edict_llm_unavailable_returns_412_detail(game, monk
     session = types.SimpleNamespace(
         registry=None,
         advance_without_decree=boom,
-        await_translations_before_month=lambda: None,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     stub = types.SimpleNamespace(
         db=db,
@@ -923,7 +923,7 @@ def test_web_advance_without_edict_generic_exception_returns_readable_detail(gam
     session = types.SimpleNamespace(
         registry=None,
         advance_without_decree=boom,
-        await_translations_before_month=lambda: None,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     stub = types.SimpleNamespace(
         db=db,
@@ -1132,7 +1132,7 @@ def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, mon
         last_decree="",          # 真 GameSession 初始/清月态
         advance_without_decree=_advance,
         end_turn=lambda: calls.append("end_turn"),
-        await_translations_before_month=lambda: None,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     stub = types.SimpleNamespace(
         db=db,

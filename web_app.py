@@ -89,13 +89,9 @@ from ming_sim.session import (
     coalesce_pending_action_id,
 )
 from ming_sim.audience_pipeline import run_mindreading_for_turn
-from ming_sim.relation_judge import run_summon_relation_judge
 from ming_sim.highlight_judge import (
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
     run_highlight_judge,
-)
-from ming_sim.audience_extraction import (
-    trail_extraction_after_reply,
 )
 from ming_sim.audience_translation import catch_up_pending_translations
 from ming_sim.session_write_queue import (
@@ -3372,56 +3368,6 @@ class WebGame:
             "secret_order_landing_recovery": res.get("secret_order_landing_recovery"),
         }
 
-    def _dispatch_relation_judge(self, chat_turn_id: Any) -> Optional[threading.Thread]:
-        """启动关系判官旁路；基础设施失败只响亮降级，不得阻塞回话主链。"""
-        if not chat_turn_id:
-            return None
-        try:
-            return self._spawn_pending_write_thread(
-                self._trail_relation_judge_beat,
-                (),
-                "audience-p5-relation-judge",
-                ticket_key=("turn", int(chat_turn_id)),
-            )
-        except Exception:
-            logger.exception(
-                "relation judge dispatch degraded chat_turn_id=%s", chat_turn_id,
-            )
-            return None
-
-    def _trail_relation_judge_beat(
-        self, *, pending_ticket: Optional[WriteTicket] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """#634 / ADR 0082：召对判官拍——P5 并行记账腿。
-
-        派发先于回话生成（不依赖本轮回话输出，TD-9 零额外等待）；判读窗口＝已判
-        水位后的已完成轮。LLM 失败降级留痕不抛（漏判不阻塞召对主链）；写库经票据
-        执行 seam。#1353：spawn 路票据由 spawner finally 归还；直接调用无票时自领自还。
-        """
-        own_ticket = False
-        try:
-            if pending_ticket is None:
-                pending_ticket = self._mark_pending_write()
-                own_ticket = pending_ticket is not None
-            if pending_ticket is None:
-                return None
-            if pending_ticket.cancelled or pending_ticket._done:
-                return None
-            return run_summon_relation_judge(
-                self.db, self.state,
-                llm_config=getattr(self.session, "llm_config", None),
-                write_gate=self._ticketed_write_gate(pending_ticket),
-                write_queue=self._runtime_write_queue(),
-            )
-        except TicketCancelled:
-            return None
-        except Exception:
-            logger.exception("relation judge worker degraded")
-            return None
-        finally:
-            if own_ticket:
-                self._complete_pending_write(pending_ticket)
-
     def _trail_mindreading_after_reply(
         self,
         minister_name: str,
@@ -3562,49 +3508,6 @@ class WebGame:
             if own_ticket:
                 self._complete_pending_write(pending_ticket)
 
-    def _trail_extraction_after_reply(
-        self,
-        minister_name: str,
-        minister_reply: str,
-        chat_turn_id: int,
-        *,
-        pending_ticket: Optional[WriteTicket] = None,
-        owns_pending: bool = False,  # 旧形兼容
-    ) -> Optional[Dict[str, Any]]:
-        """#501：回话 done 后尾随叙事抽取落账（与读心并行——二者皆只依赖已完成回话，P5）。
-
-        核在 `audience_extraction.trail_extraction_after_reply`（Web/CLI 共用）；本方法只
-        包票据执行 seam。#1353：spawn 路票据由 spawner finally 归还；本腿只消费交接票。
-        直接调用无票时自领自还；seal 拒票 → 零写（禁裸 gate）。
-        """
-        del owns_pending
-        own_ticket = False
-        try:
-            if pending_ticket is None and int(chat_turn_id or 0) > 0:
-                pending_ticket = self._mark_pending_write(
-                    key=("turn", int(chat_turn_id)),
-                )
-                own_ticket = pending_ticket is not None
-            if pending_ticket is None:
-                return None
-            if pending_ticket.cancelled or pending_ticket._done:
-                return None
-            return trail_extraction_after_reply(
-                db=self.db,
-                minister_name=minister_name,
-                minister_reply=minister_reply,
-                chat_turn_id=int(chat_turn_id),
-                llm_config=getattr(self.session, "llm_config", None),
-                write_gate=self._ticketed_write_gate(pending_ticket),
-                write_queue=self._runtime_write_queue(),
-            )
-        except TicketCancelled:
-            return None
-        finally:
-            # 仅自领票由本腿收口；spawn 交接票由 spawner finally 归还（stub 安全）。
-            if own_ticket:
-                self._complete_pending_write(pending_ticket)
-
     def _spawn_pending_write_thread(
         self, target: Any, args: tuple, name: str,
         *,
@@ -3638,21 +3541,6 @@ class WebGame:
             self._complete_pending_write(ticket)
             raise
         return thread
-
-    def _spawn_extraction_trail(
-        self, minister_name: str, minister_reply: str, chat_turn_id: int,
-    ) -> Optional[threading.Thread]:
-        """在独立后台线程发起抽取落账尾随（与读心并行）。原子交接 pending ownership：
-        任何 DB 访问前先登记，关闭须等其完成。非召对夜轮 / 空白回话由尾随函数内自决
-        （空白 → 标 done，不占永久待补；与 run 入口一致）。seal → None。"""
-        if not chat_turn_id:
-            return None
-        return self._spawn_pending_write_thread(
-            self._trail_extraction_after_reply,
-            (minister_name, str(minister_reply or ""), chat_turn_id),
-            "audience-p5-extraction",
-            ticket_key=("turn", int(chat_turn_id)),
-        )
 
     def _run_startup_extraction_catch_up(
         self,
@@ -6856,7 +6744,9 @@ def api_advance_without_edict(
                 # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
                 # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
                 # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
-                settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
+                settlement_result = game.session.advance_without_decree(
+                    inflight_wait_s=0.0, write_gate_already_held=True,
+                )
                 # #1769：last_decree 须在 end_turn/refresh 之前取样
                 # （refresh→begin_turn 会清 last_decree）。awaiting 不计 steam。
                 decree = game.session.last_decree
@@ -7002,7 +6892,10 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
             try:
                 # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
                 _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
-                result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
+                result = game.session.resolve_turn(
+                    cheat_directive=body.cheat, inflight_wait_s=0.0,
+                    write_gate_already_held=True,
+                )
                 decree = game.session.last_decree
                 # §2.2：第一次 query 成功处立刻赋 holder；awaiting/done 两 return 共用。
                 failure_snapshot = _new_secret_order_failure_payloads_for_turn(
@@ -7104,7 +6997,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
                     _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
                     result = game.session.resolve_turn(
-                        on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
+                        on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0,
+                        write_gate_already_held=True,
+                    )
                     decree = game.session.last_decree
                     # §2.2：第一次 query 成功处立刻赋 holder；与 terminal 同一份 list。
                     failure_snapshot = _new_secret_order_failure_payloads_for_turn(

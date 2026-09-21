@@ -43,7 +43,7 @@ def _runtime(db, state):
         pending_decisions=lambda: db.list_pending_decisions(int(state.turn)),
         victory=lambda: {"status": "ongoing", "summary": ""},
         current_phase=lambda: TurnPhase(state.turn_phase),
-        await_translations_before_month=lambda: None,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
     runtime.directive_rows = lambda: []
     runtime.issue_payloads = lambda: []

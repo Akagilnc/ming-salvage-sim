@@ -23,6 +23,7 @@ import pytest
 
 import ming_sim.agents as agents_mod
 import ming_sim.audience_extraction as ae
+import ming_sim.audience_translation as audience_translation
 import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
 import web_app
@@ -764,12 +765,12 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     assert an.list_in_flight_chat_turns(db, nid) == []
 
 
-def test_seal_claim_rejects_three_trail_legs_zero_write(web_game, monkeypatch):
-    """生产钉：seal 后三腿 claim 拒绝 → 零 LLM、零写。"""
+def test_seal_claim_rejects_active_trail_legs_zero_write(web_game, monkeypatch):
+    """生产钉：seal 后现役尾随腿拒绝 → 零 LLM、零写。"""
     game = web_game
     q = game._runtime_write_queue()
     q.seal()
-    calls = {"hl": 0, "mind": 0, "ext": 0, "catch": 0}
+    calls = {"hl": 0, "mind": 0, "catch": 0}
 
     monkeypatch.setattr(
         web_app, "run_highlight_judge",
@@ -782,10 +783,6 @@ def test_seal_claim_rejects_three_trail_legs_zero_write(web_game, monkeypatch):
 
     monkeypatch.setattr(web_app, "run_mindreading_for_turn", boom_mind)
     monkeypatch.setattr(
-        web_app, "trail_extraction_after_reply",
-        lambda **_k: calls.__setitem__("ext", calls["ext"] + 1) or {"status": "done"},
-    )
-    monkeypatch.setattr(
         web_app, "catch_up_pending_translations",
         lambda **_k: calls.__setitem__("catch", calls["catch"] + 1),
     )
@@ -794,14 +791,12 @@ def test_seal_claim_rejects_three_trail_legs_zero_write(web_game, monkeypatch):
         game._trail_mindreading_after_reply, ("m", "r", 1), "t",
         ticket_key=("turn", 1),
     ) is None
-    assert game._spawn_extraction_trail("m", "r", 1) is None
     assert game._trail_highlight_judge_after_reply(
         "回话", message_id=1, chat_turn_id=1,
     ) == []
     assert game._trail_mindreading_after_reply("m", "r", 1) is None
-    assert game._trail_extraction_after_reply("m", "r", 1) is None
     game._run_startup_extraction_catch_up(pending_ticket=None)
-    assert calls == {"hl": 0, "mind": 0, "ext": 0, "catch": 0}
+    assert calls == {"hl": 0, "mind": 0, "catch": 0}
     assert q.inflight_count() == 0
     q.unseal()
 
@@ -1102,10 +1097,40 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
 
     try:
         with pytest.raises(ValueError, match="草案"):
-            sess.resolve_turn()
+            sess.resolve_turn(write_gate_already_held=True)
         assert seen.get("write_gate") is None, (
             f"held outer gate must not re-enter; got {seen.get('write_gate')!r}"
         )
     finally:
         gate.release()
 
+
+def test_translation_catch_up_keeps_real_gate_when_another_owner_holds_it(
+    game, monkeypatch,
+):
+    """#1842：忙闸只说明他者持有，不能据此把 SQLite 补账降级成无锁。"""
+    from ming_sim.session import GameSession
+    from ming_sim.session_write_queue import SessionWriteQueue
+
+    db, state, _content = game
+    queue = SessionWriteQueue()
+    sess = object.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.llm_config = object()
+    sess._write_queue = queue
+    sess._write_gate = queue.write_gate
+    seen = {}
+
+    def observe_catch_up(*_a, **kwargs):
+        seen["write_gate"] = kwargs.get("write_gate")
+
+    monkeypatch.setattr(audience_translation, "catch_up_pending_translations", observe_catch_up)
+    monkeypatch.setattr(audience_translation, "list_pending_translations", lambda *_a: [])
+
+    assert queue.write_gate.acquire(blocking=False)
+    try:
+        sess.await_translations_before_month()
+    finally:
+        queue.write_gate.release()
+    assert seen["write_gate"] is queue.write_gate

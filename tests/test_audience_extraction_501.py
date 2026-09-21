@@ -456,36 +456,6 @@ def web_game(tmp_path, monkeypatch):
     return web_app.WebGame(fresh=False)
 
 
-def test_web_reply_trail_ledgers_via_real_wiring(web_game, monkeypatch):
-    """真实 WebGame：进入召对（开夜挂轮）→ 落回话 → 生产尾随方法落账（AC1）。"""
-    game = web_game
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda cfg: _FactsAgent(_STAGE_FACT_JSON),
-    )
-    minister = _minister(game.db, game.content)
-    ctid, _snap = game._start_chat_turn(minister)  # 真实 attach_chat_turn_to_night
-    reply = "臣为洪承畴作保，愿以官身担之。"
-    game.db.persist_minister_reply(minister, int(game.state.turn), reply, ctid)
-
-    # 生产尾随（chat / chat_stream 的 _spawn_extraction_trail 同核）同步驱动断言。
-    result = game._trail_extraction_after_reply(minister, reply, ctid)
-    assert result is not None and result["status"] == "done"
-    nid = int(game.db.conn.execute(
-        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,)
-    ).fetchone()["night_id"])
-    entries = [e for e in an.list_ledger(game.db, nid) if e["source_chat_turn_id"] == ctid]
-    assert len(entries) == 1 and entries[0]["person_names"] == ["毕自严", "洪承畴"]
-
-    # 非召对夜轮（night_id=0）不入故事账（负路）。
-    off = game.db.create_chat_turn(game.state, minister, "s", 0)
-    assert game._trail_extraction_after_reply(minister, "闲话一句。", off) is None
-
-
-# #1842：CLI 殿上/场外不再调 `_trail_extraction_after_reply_cli`（已删）；
-# 转译经 scene_chat 后台承接。Web `_trail_extraction_after_reply` 仍保留兼容面。
-
-
 def test_web_await_inflight_does_not_pre_drain_pending(web_game, monkeypatch):
     """Web 前门只等在飞；待补留给创建案卷后的 close-night 单一 owner。"""
     game = web_game
@@ -646,11 +616,13 @@ def test_engine_close_night_drains_pending_success(game, monkeypatch):
             }],
         }
 
-    gate = threading.Lock()
+    from ming_sim.session_write_queue import SessionWriteQueue
+    write_queue = SessionWriteQueue()
+    gate = write_queue.write_gate
     # 生产同形：close_night 带 llm_config+write_gate+translate_fn → OPEN catch-up 清待补
     result = an.close_night(
         db, state, night_id=nid, llm_config=object(), write_gate=gate,
-        translate_fn=translate_fn,
+        write_queue=write_queue, translate_fn=translate_fn,
     )
     assert result["closed"] is True
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
@@ -725,30 +697,3 @@ def test_blank_reply_marked_done_and_closeable(game):
 
 
 # ── L5 待补只读诊断 + 内部 catch_up（#1353：无玩家手动补写面）─────────────
-def test_pending_readable_and_internal_catch_up(web_game, monkeypatch):
-    game = web_game
-    minister = _minister(game.db, game.content)
-    ctid, _snap = game._start_chat_turn(minister)
-    game.db.persist_minister_reply(minister, int(game.state.turn), "臣作保。", ctid)
-    # 抽取失败留下待补
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent())
-    game._trail_extraction_after_reply(minister, "臣作保。", ctid)
-    status = game.pending_story_extractions()
-    assert status["count"] >= 1
-    assert any(p["chat_turn_id"] == ctid for p in status["pending"])
-    # 内部 catch_up（换好抽取员）→ 水位 done、待补清零；禁 retry_story_extractions 包装
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda *a, **k: _FactsAgent(_STAGE_FACT_JSON))
-    nid = int(status.get("night_id") or 0) or None
-    catch_up_pending_extractions(
-        db=game.db,
-        llm_config=getattr(game.session, "llm_config", None),
-        write_gate=game._runtime_write_gate(),
-        night_id=nid,
-    )
-    after = game.pending_story_extractions()
-    assert after["count"] == 0
-    assert game.db.get_story_extract_status(ctid) == "done"
-    assert not hasattr(game, "retry_story_extractions")

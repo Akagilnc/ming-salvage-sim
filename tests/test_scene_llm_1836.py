@@ -26,6 +26,7 @@ from ming_sim.audience_night import (
 from ming_sim.materials import list_materials, prepare_scene_materials, read_material
 from ming_sim.models import Character
 from ming_sim.session import GameSession
+from ming_sim.session_write_queue import SessionWriteQueue
 
 
 def _sess(db, state, content, *, llm_config=None):
@@ -39,7 +40,8 @@ def _sess(db, state, content, *, llm_config=None):
     sess.agno_db = None
     sess._beat_generator = None
     sess._scene_registry = None
-    sess._write_gate = None
+    sess._write_queue = SessionWriteQueue()
+    sess._write_gate = sess._write_queue.write_gate
     return sess
 
 

@@ -67,7 +67,7 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
         persist_chat_turn_scene=lambda *_a, **_k: None,
         abandon_chat_turn_scene=lambda *_a, **_k: None,
         close_night_after_chat_if_needed=lambda *_a, **_k: None,
-        await_translations_before_month=lambda: None,
+        await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
         # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
         _character=lambda name: content.characters[name],
@@ -90,7 +90,6 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
     runtime.can_undo_last_chat = lambda _name: False
     # 读心/抽取尾随不进本密令路测范围；高亮判官写库缝必须真走（禁 no-op stub 掩死锁）。
     runtime._spawn_pending_write_thread = lambda *_a, **_k: None
-    runtime._spawn_extraction_trail = lambda *_a, **_k: None
     runtime.character_power_id = lambda c: web_app._character_power_id(c, db)
     # Production methods under test — NOT mocked.
     runtime.chat = web_app.WebGame.chat.__get__(runtime)
