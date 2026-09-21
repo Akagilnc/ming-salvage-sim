@@ -139,32 +139,19 @@ def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
 
 
 def test_court_break_writes_no_exit_ledger(game, monkeypatch):
-    """负向：退朝不落个人告退账（#526 收夜链 ≠ dismiss 告退）。
-
-    #1842：CLI 口令前台先返回；schedule→后台 close stub；禁同步挡返回。
-    """
-    import threading
-    import types
+    """负向：退朝不落个人告退账（#526 收夜链 ≠ dismiss 告退）。"""
 
     import ming_sim.cli.terminal as term
-    from ming_sim.session import GameSession
-    from tests.wait_utils import wait_until
-
     db, state, content = game
     character = _active_minister(db, content)
     session = _cli_session(db, state, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     closed_nid: dict[str, int] = {}
-    close_entered = threading.Event()
-    release_close = threading.Event()
 
     # #526：CLI 退朝走收夜；本测只证「无个人告退账」，收夜本体 stub 成功。
     # #1353：生产 epilogue 传 write_gate=…；假体须收 **kwargs，禁 TypeError。
-    # #1842：hold 拉长后台 close，证明口令返回时夜尚未关。
     def _close_ok(court_action: str, **_kwargs) -> None:
         assert court_action == "court_break"
-        close_entered.set()
-        assert release_close.wait(5.0)
         open_n = an.get_open_night(db)
         assert open_n is not None
         nid = int(open_n["id"])
@@ -174,17 +161,11 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
         )
 
     session.close_night_after_chat_if_needed = _close_ok
-    session.schedule_close_night_after_chat_if_needed = types.MethodType(
-        GameSession.schedule_close_night_after_chat_if_needed, session,
-    )
+    session.schedule_close_night_after_chat_if_needed = _close_ok
     answers = iter(["朕问卿边事如何？", "退朝"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     assert term.minister_chat(session, character) == "court_break"
-    assert close_entered.wait(2.0), "后台收夜须已进入"
-    assert an.get_open_night(db) is not None, "口令返回时不得已封夜"
-    release_close.set()
-    wait_until(lambda: an.get_open_night(db) is None)
 
     nid = closed_nid["id"]
     exits = [

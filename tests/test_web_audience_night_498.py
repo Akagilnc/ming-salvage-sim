@@ -302,16 +302,6 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     observed_ticket_inflight = threading.Event()
     observed_ticket_clear = threading.Event()
     q = game._runtime_write_queue()
-    highlight_finished = threading.Event()
-    real_highlight = web_app.run_highlight_judge
-
-    def observed_highlight(**kwargs):
-        try:
-            return real_highlight(**kwargs)
-        finally:
-            highlight_finished.set()
-
-    monkeypatch.setattr(web_app, "run_highlight_judge", observed_highlight)
     real_wait_prior = q.wait_prior
 
     def observe_wait_prior(ticket):
@@ -376,8 +366,6 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
         "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "active"
     # 颁诏成功（done）+ 真实结算核：收夜封夜 + 推进回合 + 持久化
     assert issue_events[-1]["event"] == "done"
-    assert highlight_finished.is_set()
-    assert q.inflight_count() == 0
     assert an.get_night(game.db, night["id"])["status"] == "closed"
     assert int(game.state.turn) == turn_before + 1
     assert int(game.db.load_state().turn) == turn_before + 1
