@@ -62,6 +62,15 @@ def _opening_game(content):
                 os.remove(p)
 
 
+def own_session_until_game_teardown(db, owner) -> None:
+    """让 ``game`` fixture 在关闭 SQLite 前排空该 session 的已接纳工作。"""
+    owners = getattr(db, "_test_session_owners", None)
+    if owners is None:
+        owners = []
+        db._test_session_owners = owners
+    owners.append(owner)
+
+
 @pytest.fixture(scope="session")
 def _game_template_path(content):
     """Session 级开局模板 DB（只 seed 一次）。供 ``game`` 每案文件拷贝，避免逐案建库。
@@ -163,6 +172,10 @@ def game(content, _game_template_path, monkeypatch):
         yield db, state, content
     finally:
         if db is not None:
+            from ming_sim.session_write_queue import drain_and_close_session
+
+            for owner in reversed(getattr(db, "_test_session_owners", ())):
+                drain_and_close_session(owner)
             db.close()
         for p in (path, f"{path}_agno.db"):
             if os.path.exists(p):

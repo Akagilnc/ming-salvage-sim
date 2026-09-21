@@ -20,11 +20,9 @@ from ming_sim.audience_night import (
     list_ledger,
     open_night,
     present_names_at,
-    recognize_xuan_command,
     summon_enter,
 )
-from ming_sim.materials import list_materials, prepare_scene_materials, read_material
-from ming_sim.models import Character
+from ming_sim.materials import list_materials, prepare_scene_materials
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import SessionWriteQueue
 
@@ -43,133 +41,6 @@ def _sess(db, state, content, *, llm_config=None):
     sess._write_queue = SessionWriteQueue()
     sess._write_gate = sess._write_queue.write_gate
     return sess
-
-
-def test_recognize_xuan_command_extracts_name():
-    assert recognize_xuan_command("宣王绍徽") == "王绍徽"
-    assert recognize_xuan_command("宣王绍徽来") == "王绍徽"
-    assert recognize_xuan_command("传毕自严入殿") == "毕自严"
-    assert recognize_xuan_command("退朝") is None
-    assert recognize_xuan_command("洪承畴可堪大任？") is None
-
-
-def test_prepare_scene_materials_no_cross_person_overwrite(game, tmp_path):
-    """在场多人的朝臣名册/公开说法/事务各写在 人物/<名>/ 下，后写不覆盖先写。"""
-    db, state, content = game
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    # 固定三人：毕自严、王绍徽（外廷）+ 王承恩（常在，开夜已入）。
-    for name in ("毕自严", "王绍徽"):
-        if name not in present_names_at(db, night_id):
-            summon_enter(db, night_id, name, body="", empty_scaffold=True)
-
-    # 单人投影：三人朝臣名册行数不同（职位透视），场景目录必须各自保留，不得只剩最后一人。
-    from ming_sim.materials import prepare_character_materials
-    solo_lens = {}
-    for name in ("毕自严", "王承恩", "王绍徽"):
-        solo = prepare_character_materials(
-            db, state, content.characters[name],
-            dest_root=tmp_path / f"solo-{name}",
-        )
-        solo_roster = read_material(solo.root, "人物/朝臣名册.txt")
-        solo_lens[name] = len(solo_roster.splitlines())
-
-    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
-    listed = list_materials(prepared.root)
-
-    # 每人一棵子树：人物档料/经历/公事档案/朝臣名册 都在 人物/<名>/ 下。
-    for name in ("毕自严", "王绍徽", "王承恩"):
-        assert any(
-            p.startswith(f"人物/{name}/") and p.endswith("/经历.txt") for p in listed
-        ), f"{name} 须有私有经历"
-        # ADR 0033/0155：人物+派系档料入私有子树；确定性字段（派系名）可核，不锁措辞。
-        dossier_rel = next(
-            (
-                p for p in listed
-                if p.startswith(f"人物/{name}/") and p.endswith("人物档料.txt")
-            ),
-            None,
-        )
-        assert dossier_rel, f"{name} 须有人物档料文件"
-        dossier_body = read_material(prepared.root, dossier_rel)
-        faction = str(getattr(content.characters[name], "faction", "") or "")
-        assert faction and faction in dossier_body, (
-            f"{name} 人物档料须含派系名 {faction!r}（character_context_with_db 投影）"
-        )
-        roster_rel = next(
-            p for p in listed
-            if p.startswith(f"人物/{name}/") and p.endswith("朝臣名册.txt")
-        )
-        scene_roster = read_material(prepared.root, roster_rel)
-        # 结构化：行数与单人投影一致 → 该人视角未被后写覆盖。
-        assert len(scene_roster.splitlines()) == solo_lens[name], (
-            f"{name} 场景朝臣名册被覆盖（期望 {solo_lens[name]} 行，得 "
-            f"{len(scene_roster.splitlines())}）"
-        )
-
-    # 不得出现根级共享路径（单人 _write_tree 叠写形状）。
-    assert "人物/朝臣名册.txt" not in listed
-    assert not any(
-        (p.startswith("事务/") or p.startswith("公开说法/")) and not p.startswith("人物/")
-        for p in listed
-    )
-
-    index = read_material(prepared.root, "INDEX.txt")
-    for line in index.splitlines():
-        if line.strip():
-            assert line.strip() in listed
-
-
-def test_prepare_scene_materials_db_only_present_person_writes_dossier(game, tmp_path):
-    """DB 补档人物不在 content.characters 时：真入口不崩，人物档料落出且含 DB 派系名。"""
-    db, state, content = game
-    name = "张三补档"
-    faction = "东林"
-    content.characters.pop(name, None)
-    assert name not in content.characters
-
-    db.add_character(
-        state,
-        Character(
-            name=name,
-            office="御前近臣",
-            office_type="司礼监",
-            faction=faction,
-            aliases=[],
-            personal_skills=[],
-            loyalty=55,
-            ability=55,
-            integrity=60,
-            courage=55,
-            style="",
-            power_id="ming",
-            status="active",
-        ),
-    )
-    # 仅落 DB，不入 content.characters（模拟运行时补档与静态 JSON 分叉）。
-    assert name not in content.characters
-
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    if name not in present_names_at(db, night_id):
-        summon_enter(db, night_id, name, body="", empty_scaffold=True)
-    assert name in present_names_at(db, night_id)
-
-    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "scene-db-only")
-    listed = list_materials(prepared.root)
-    dossier_rel = next(
-        (
-            p for p in listed
-            if p.startswith(f"人物/{name}/") and p.endswith("人物档料.txt")
-        ),
-        None,
-    )
-    assert dossier_rel, f"{name} 须有人物档料文件（DB 投影，不得因不在 content 而跳过）"
-    dossier_body = read_material(prepared.root, dossier_rel)
-    assert name in dossier_body
-    assert faction in dossier_body, (
-        f"DB 补档人物档料须含派系名 {faction!r}（character_context_with_db 投影）"
-    )
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

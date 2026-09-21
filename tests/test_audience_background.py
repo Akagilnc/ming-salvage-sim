@@ -153,6 +153,10 @@ class _FakeSession(HallAdmissionSessionMixin):
         # WebGame.directive_rows 唯一权威：委托真 GameSession 过滤（含 dossier 剔除）。
         return GameSession.list_directives(self, include_pending=include_pending)
 
+    def close(self):
+        # SQLite 由共享 ``game`` fixture 关闭；这里只给生产 drain seam 一个资源终点。
+        return None
+
     def note_chat_rollback(self, **_kwargs):
         return None
 
@@ -196,6 +200,8 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
     # chat atomic 须同闸串行，禁分家导致共享 conn 嵌套 BEGIN。
     game.session._write_gate = game._write_gate
     game.session._write_queue = game._write_queue
+    from tests.conftest import own_session_until_game_teardown
+    own_session_until_game_teardown(db, game.session)
     game._runtime_write_queue = lambda: game._write_queue  # type: ignore
     game._mark_pending_write = lambda key=None: game._write_queue.claim(key=key or ("pending",))  # type: ignore
     game._complete_pending_write = lambda ticket=None: game._write_queue.complete(ticket)  # type: ignore
