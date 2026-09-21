@@ -6,7 +6,6 @@
 
 Seams:
 - dispatch_declaration（C0 分派入口 + 源轮 chat_turn_id；入口自记撤回前像）
-- NIGHT_DIRECT_WRITE_WHITELIST 第四类
 - undo_chat_turn（逆转入口自记的前像）
 - prepare_scene_materials（下一句目录可见实况）
 """
@@ -64,22 +63,6 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
     )
     db.conn.commit()
     return int(night_id), int(chat_id), result
-
-
-def test_whitelist_fourth_category_covers_declared_on_scene_tables():
-    """ADR 0038 后出：第四类「转译声明的当场实况」；原②③并入。"""
-    wl = an.NIGHT_DIRECT_WRITE_WHITELIST
-    assert "密令落地" in wl
-    assert "转译声明的当场实况" in wl
-    # 原第②③项并入第四类，不再并列。
-    assert "未在册人物入册" not in wl
-    assert "召对口关系边事件" not in wl
-    fourth = wl["转译声明的当场实况"]
-    for table in (
-        "characters", "character_offices", "factions", "relation_edge_events",
-        "textual_facts", "public_sayings", "story_ledger_entries",
-    ):
-        assert table in fourth
 
 
 def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):

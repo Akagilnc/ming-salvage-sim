@@ -521,6 +521,10 @@ def schedule_audience_turn_translation(
     # 读前驱 + 登记同持非重入锁；done callback 一律锁外挂（已完成 Future 同步回调会死锁）。
     with _night_inflight_guard:
         pred = _night_tail.get(night_key)
+        # Future 终态先于 cleanup callback 可见；此窗口内的 tail 已不是
+        # 在飞前驱，新一轮不得继承它的旧失败。
+        if pred is not None and pred.done():
+            pred = None
         if pred is None:
             fut: Future = _executor.submit(_run_job)
             chain_pred: Optional[Future] = None
@@ -628,58 +632,23 @@ def join_night_translations(
     night_id: int,
     *,
     timeout_s: float = 120.0,
-    owner_key: Optional[int] = None,
+    owner_key: int,
 ) -> bool:
-    """等待本夜在飞转译清空。返回是否在时限内清空。
-
-    ``owner_key`` 显式传入时只等该会话（生产封夜/恢复口）；``None`` 时等该夜
-    全部 owner（单会话测试清理便利，不得用于生产过月——过月走
-    :func:`join_owner_translations`）。
-    """
+    """等待指定 owner 本夜在飞转译清空。返回是否在时限内清空。"""
     nid = int(night_id or 0)
+    owner = int(owner_key)
 
     def _snapshot():
         with _night_inflight_guard:
-            if owner_key is None:
-                return [
-                    fut
-                    for key, futs in _night_inflight.items()
-                    if key[1] == nid
-                    for fut in futs
-                ]
-            return list(_night_inflight.get((int(owner_key), nid)) or ())
+            return list(_night_inflight.get((owner, nid)) or ())
 
     return _join_inflight_bucket(
         _snapshot,
         timeout_s=timeout_s,
         where="join_night_translations",
         night=nid,
-        owner_key=owner_key,
+        owner_key=owner,
     )
-
-
-def join_all_translations(*, timeout_s: float = 120.0) -> bool:
-    """测试/进程清理用：等全部 owner×夜在飞转译。生产过月走 join_owner_translations。"""
-    import time
-
-    deadline = time.monotonic() + max(0.0, float(timeout_s))
-    while True:
-        with _night_inflight_guard:
-            keys = list(_night_inflight.keys())
-        if not keys:
-            return True
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return False
-        for owner, nid in keys:
-            ok = join_night_translations(
-                nid, timeout_s=remaining, owner_key=owner,
-            )
-            if not ok:
-                return False
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
 
 
 def _load_emperor_message_for_turn(
@@ -741,6 +710,10 @@ def catch_up_pending_translations(
         # 补跑复用同夜 Future FIFO 单真源，不另开 Lock / 直跑旁路。
         with _night_inflight_guard:
             existing = _turn_inflight.get((owner, ctid)) if ctid > 0 else None
+            # Future 先标记终态、再同步执行 cleanup callback。终态旧账即使
+            # 尚未从 ledger 摘除，也不是本次 catch-up，不得复用。
+            if existing is not None and existing.done():
+                existing = None
         fut = existing if existing is not None else schedule_audience_turn_translation(
             db, state,
             emperor_message=emperor,

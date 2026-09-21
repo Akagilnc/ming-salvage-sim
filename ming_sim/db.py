@@ -15249,7 +15249,7 @@ class GameDB:
     ) -> int:
         """单行案卷内核（#654 region_id）；create_decree_dossier(s) 共用。"""
         action = str(action_type or "").strip()
-        text = str(decree_text or "").strip()
+        text = str(decree_text or "")
         normalized_payload = dict(payload or {})
         # #1565：公开成案/旧入口只有 decree_text 时，正文无损承接到唯一正文槽 payload.text；
         # 不回填为题名，不建平行 body 真源。
@@ -19664,10 +19664,10 @@ class GameDB:
         staged_payload["_office_action"] = action
         staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
         # 纯 office 与组合路径同核：优先声明/payload 原样 text（P7）。
-        # legacy 会话/荐举暂存可不带 text；缺文时回落旧形题名，避免 commit 整单 failed。
-        text = str(decree_text or staged_payload.get("text") or "").strip()
-        if not text:
-            text = f"{action}{name}" + (f"为{office}" if office else "")
+        # 缺少唯一原文真源时拒绝物化；不得替 LLM 拼玩家可感正文。
+        text = str(decree_text or staged_payload.get("text") or "")
+        if not text.strip():
+            return False
         dossier_id = self.create_decree_dossier(
             state,
             action_type=(

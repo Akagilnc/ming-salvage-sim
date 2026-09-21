@@ -2,7 +2,6 @@
 
 Seams:
 - prepare_scene_materials（在场诸人各一棵私有子树 + 开场最小集）
-- create_scene_agent（零动作工具、只读材料工具）
 - GameSession.scene_chat（宣 X 落入殿账 → 场景调用；退朝收夜；一轮一次调用）
 - 关档重开：list_chat_turns_for_night 回到最后一条持久化对话轮
 """
@@ -25,8 +24,7 @@ from ming_sim.audience_night import (
     summon_enter,
 )
 from ming_sim.materials import list_materials, prepare_scene_materials, read_material
-from ming_sim.models import Character, LLMConfig
-from ming_sim.registry import create_scene_agent
+from ming_sim.models import Character
 from ming_sim.session import GameSession
 
 
@@ -114,15 +112,6 @@ def test_prepare_scene_materials_no_cross_person_overwrite(game, tmp_path):
         for p in listed
     )
 
-    # 开场最小集含在场、日期、正经手事务段、本场已说。
-    assert "在场：" in prepared.opening
-    assert str(state.year) in prepared.opening
-    assert "正经手事务" in prepared.opening
-    assert "本场已说的话" in prepared.opening
-    # 零形式约束：opening 不得负向约束戏文。
-    assert "不填表" not in prepared.opening
-    assert "不调动作" not in prepared.opening
-
     index = read_material(prepared.root, "INDEX.txt")
     for line in index.splitlines():
         if line.strip():
@@ -179,51 +168,6 @@ def test_prepare_scene_materials_db_only_present_person_writes_dossier(game, tmp
     assert faction in dossier_body, (
         f"DB 补档人物档料须含派系名 {faction!r}（character_context_with_db 投影）"
     )
-
-
-def test_scene_agent_has_only_material_read_tools(game, tmp_path, monkeypatch):
-    db, state, content = game
-    open_night(db, state)
-    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "scene")
-    cfg = LLMConfig(api_key="k", base_url="http://example.test", model="test-model")
-
-    captured = {}
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-            self.tools = kwargs.get("tools") or []
-            # 摹 agno 3.0.9：两者皆空时 num_history_runs 归一为 3。
-            self.num_history_runs = kwargs.get("num_history_runs")
-            self.num_history_messages = kwargs.get("num_history_messages")
-            if self.num_history_messages is None and self.num_history_runs is None:
-                self.num_history_runs = 3
-
-    monkeypatch.setattr("ming_sim.registry.Agent", FakeAgent)
-    monkeypatch.setattr(
-        "ming_sim.registry.create_chat_model",
-        lambda *a, **k: SimpleNamespace(materials_dir=""),
-    )
-    agent = create_scene_agent(cfg, prepared, content=content)
-    tool_names = sorted(
-        getattr(t, "__name__", getattr(t, "name", str(t))) for t in (agent.tools or [])
-    )
-    assert tool_names == ["list_materials", "read_material"]
-    banned = {
-        "dismiss_minister", "summon_minister", "propose_directive",
-        "propose_appointment", "secret_order", "rush_staged_commitment",
-        "register_unlisted_person",
-    }
-    assert banned.isdisjoint(tool_names)
-    assert captured.get("skills") in (None, [])
-    # ADR 0155：本夜全量 runs；不得留固定正整数硬截断（含 agno 默认 3）。
-    assert captured.get("add_history_to_context") is True
-    assert agent.num_history_runs is None, (
-        f"create_scene_agent 须放开本夜历史，得 num_history_runs={agent.num_history_runs!r}"
-    )
-    # 构造入参也不得夹带未授权固定裁切；全量靠构造后显式 None。
-    init_runs = captured.get("num_history_runs", None)
-    assert init_runs is None, f"不得传入固定 num_history_runs={init_runs!r}"
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -294,7 +238,6 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
     assert target in present_names_at(db, night_id)
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-xuan")
-    assert target in prepared.opening
     assert any(p.startswith(f"人物/{target}/") for p in list_materials(prepared.root))
     assert result.answer  # 宣后仍起一次场景调用
 

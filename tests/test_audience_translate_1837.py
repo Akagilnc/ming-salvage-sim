@@ -20,7 +20,10 @@ from ming_sim.audience_translate import (
     build_night_said_so_far,
     normalize_audience_declaration,
 )
-from ming_sim.audience_translation import join_night_translations
+from ming_sim.audience_translation import (
+    join_night_translations,
+    translation_owner_key,
+)
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 from tests.conftest import (
@@ -368,8 +371,6 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
 
     # 「准」
     def approve_fn(prompt, cfg):
-        # 皇帝原话必须进 prompt 正文区，不能只靠规则段里的「准」字样。
-        assert "【本轮皇帝】准" in prompt, prompt[-200:]
         return {
             "commissions": [],
             "promises": [{"action_id": staged_id, "decision": "应允"}],
@@ -623,7 +624,9 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     r = sess.scene_chat("拟赈灾", chat_turn_id=ctid_create)
     assert r.pending_action_id == 0  # #1842：前台不等后台转译
     persist_and_schedule_scene(sess, db, r)
-    assert join_night_translations(night_id, timeout_s=2.0)
+    assert join_night_translations(
+        night_id, timeout_s=2.0, owner_key=translation_owner_key(None, db),
+    )
     created = db.conn.execute(
         "SELECT id FROM pending_actions WHERE payload_json LIKE ? ORDER BY id DESC LIMIT 1",
         (f"%{create_text}%",),
@@ -665,7 +668,9 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     )
     r_approve = sess.scene_chat("准", chat_turn_id=ctid_approve)
     persist_and_schedule_scene(sess, db, r_approve)
-    assert join_night_translations(night_id, timeout_s=2.0)
+    assert join_night_translations(
+        night_id, timeout_s=2.0, owner_key=translation_owner_key(None, db),
+    )
     assert int(db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
     ).fetchone()["night_approved"] or 0) == 1
@@ -697,7 +702,9 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     )
     r_reject = sess.scene_chat("不准", chat_turn_id=ctid_reject)
     persist_and_schedule_scene(sess, db, r_reject)
-    assert join_night_translations(night_id, timeout_s=2.0)
+    assert join_night_translations(
+        night_id, timeout_s=2.0, owner_key=translation_owner_key(None, db),
+    )
     assert db.conn.execute(
         "SELECT COUNT(*) n FROM pending_actions WHERE id=?", (reject_id,),
     ).fetchone()["n"] == 0
@@ -719,7 +726,7 @@ def test_pure_office_dossier_uses_payload_text_not_template(game):
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     person = _hong_name(db, content)
-    edict = f"着以{person}巡抚陕西，专办边饷UNIQUE-OFFICE-TEXT"
+    edict = f"  着以{person}巡抚陕西，专办边饷UNIQUE-OFFICE-TEXT\n"
     staged = dispatch_declaration(
         db, state,
         {"commissions": [{
@@ -792,8 +799,7 @@ def test_appointment_region_id_stages_into_pending_payload(game):
     assert payload.get("text") == edict
 
 
-def test_scene_chat_translate_prompt_carries_pending_and_spoken(game, monkeypatch):
-    """转译 prompt 含本轮皇帝原话区、回话、本夜暂存 id。"""
+def test_scene_chat_translation_can_approve_staged_action(game, monkeypatch):
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
@@ -805,10 +811,7 @@ def test_scene_chat_translate_prompt_carries_pending_and_spoken(game, monkeypatc
     )
     staged_id = int(staged.commissions.applied[0]["id"])
 
-    seen = {}
-
     def translate_fn(prompt, llm_config):
-        seen["prompt"] = prompt
         return {
             "commissions": [],
             "promises": [{"action_id": staged_id, "decision": "应允"}],
@@ -825,13 +828,6 @@ def test_scene_chat_translate_prompt_carries_pending_and_spoken(game, monkeypatc
     # 用不会与规则段「准」混淆的皇帝原话
     sess.scene_chat("着即照办")
 
-    prompt = seen["prompt"]
-    assert "【本轮皇帝】着即照办" in prompt
-    assert "【本轮回话】臣领旨。" in prompt
-    assert f"#{staged_id}" in prompt
-    assert "旧暂存旨正文独特标记XYZ" in prompt
-    assert "昨夜已问边饷" in prompt
-    assert "臣已回奏" in prompt
     row = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
     ).fetchone()

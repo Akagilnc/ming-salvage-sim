@@ -45,17 +45,19 @@ from ming_sim.session import GameSession
 
 
 class _BgTranslationLifecycle:
-    """本测专属收口：登记 release 回调与 owner；teardown 唯一顺序
-    先放行 → owner-scoped join → False 响亮失败（禁 abandon / 第二生命周期）。
-    """
+    """登记阻塞任务的 release；owner 排空统一归共享 game fixture。"""
 
-    def __init__(self) -> None:
+    def __init__(self, db) -> None:
+        self._db = db
         self._releases: list = []
-        self._owners: list[int] = []
 
     def track(self, *, owner: int | None = None, release=None) -> None:
         if owner is not None:
-            self._owners.append(int(owner))
+            owners = getattr(self._db, "_test_translation_owners", None)
+            if owners is None:
+                owners = set()
+                self._db._test_translation_owners = owners
+            owners.add(int(owner))
         if release is None:
             return
         if callable(getattr(release, "set", None)):
@@ -63,28 +65,20 @@ class _BgTranslationLifecycle:
         else:
             self._releases.append(release)
 
-    def teardown(self, *, timeout_s: float = 3.0) -> None:
+    def teardown(self) -> None:
         for rel in self._releases:
             try:
                 rel()
             except (RuntimeError, AttributeError, TypeError, ValueError):
                 # 放行不得被回调异常打断；非预期类型上抛
                 pass
-        stuck: list[int] = []
-        for owner in dict.fromkeys(self._owners):
-            if not join_owner_translations(owner, timeout_s=timeout_s):
-                stuck.append(owner)
-        if stuck:
-            pytest.fail(
-                f"bg translation teardown: owner join False after release; "
-                f"owners={stuck}"
-            )
 
 
 @pytest.fixture(autouse=True)
-def bg_life():
-    """九门阻塞测登记 release/owner；其余测无登记则 teardown 为空操作。"""
-    life = _BgTranslationLifecycle()
+def bg_life(game):
+    """先放行阻塞任务；随后由 game fixture 排空 owner，再关闭 DB。"""
+    db, _state, _content = game
+    life = _BgTranslationLifecycle(db)
     yield life
     life.teardown()
 
@@ -538,7 +532,7 @@ def test_close_night_joins_last_translation_before_commit(game, monkeypatch, bg_
     import ming_sim.audience_translation as at
     real_join_night = at.join_night_translations
 
-    def join_and_release(night_id, *, timeout_s=120.0, owner_key=None):
+    def join_and_release(night_id, *, timeout_s=120.0, owner_key):
         # close 已入 join：放行在飞转译，再走真实 join（禁 Timer 猜时序）
         release.set()
         return real_join_night(
@@ -788,7 +782,7 @@ def test_close_night_stays_open_until_translation_barrier_clears(game, monkeypat
 
     real_join_night = at.join_night_translations
 
-    def join_while_blocked(night_id, *, timeout_s=120.0, owner_key=None):
+    def join_while_blocked(night_id, *, timeout_s=120.0, owner_key):
         # 已知 worker 仍阻塞：即时 False 迫使 while 重入（禁墙钟短超时造 False）。
         # 旧语义单次 join False 直推 CLOSING 永不 ≥2 → saw_join_retry 超时红。
         join_calls["n"] += 1
@@ -912,7 +906,9 @@ def test_translation_exhaustion_is_pending_and_does_not_block_next(game):
         llm_config=SimpleNamespace(channel="api"),
         translate_fn=boom, write_gate=gate,
     )
-    assert join_night_translations(nid, timeout_s=2.0)
+    assert join_night_translations(
+        nid, timeout_s=2.0, owner_key=translation_owner_key(gate, db),
+    )
     with pytest.raises(Exception):
         fut.result(timeout=0.1)
     assert db.get_story_extract_status(ctid1) == "pending"
@@ -929,7 +925,9 @@ def test_translation_exhaustion_is_pending_and_does_not_block_next(game):
         llm_config=SimpleNamespace(channel="api"),
         translate_fn=ok, write_gate=gate,
     )
-    assert join_night_translations(nid, timeout_s=2.0)
+    assert join_night_translations(
+        nid, timeout_s=2.0, owner_key=translation_owner_key(None, db),
+    )
     assert fut2.result(timeout=0.1) is not None
     assert db.get_story_extract_status(ctid2) == "done"
 
@@ -1449,7 +1447,9 @@ def test_resolve_turn_exhausted_pending_uses_0157_form(game, monkeypatch, tmp_pa
         llm_config=SimpleNamespace(channel="api"),
         translate_fn=boom, write_gate=gate,
     )
-    assert join_night_translations(nid, timeout_s=2.0)
+    assert join_night_translations(
+        nid, timeout_s=2.0, owner_key=translation_owner_key(None, db),
+    )
     assert db.get_story_extract_status(ctid) == "pending"
 
     import ming_sim.audience_translation as at
@@ -1503,7 +1503,9 @@ def test_pending_translation_structured_status_and_source_retry(game):
             llm_config=SimpleNamespace(channel="api"),
             translate_fn=boom, write_gate=gate,
         )
-    assert join_night_translations(nid, timeout_s=2.0)
+    assert join_night_translations(
+        nid, timeout_s=2.0, owner_key=translation_owner_key(gate, db),
+    )
 
     rows = list_pending_translations(db, night_id=nid)
     assert len(rows) >= 2
@@ -1594,7 +1596,9 @@ def test_close_night_no_longer_fail_closed_on_exhausted_pending(game, monkeypatc
         llm_config=SimpleNamespace(channel="api"),
         translate_fn=boom, write_gate=gate,
     )
-    assert join_night_translations(nid, timeout_s=2.0)
+    assert join_night_translations(
+        nid, timeout_s=2.0, owner_key=translation_owner_key(None, db),
+    )
     assert db.get_story_extract_status(ctid) == "pending"
 
     # 生产同形：必传 llm_config + write_gate（旧路径会借此跑故事 drain）
