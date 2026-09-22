@@ -66,9 +66,30 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     assert live["night_id"] == closed["night_id"] == night_id
     assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
     assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
-    assert set(live) == set(closed) == {"night_id", "status", "messages"}
+    assert set(live) == set(closed) == {"night_id", "status", "messages", "protagonist", "roster"}
     assert live["status"] == "open"
     assert closed["status"] == "closed"
+
+
+def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch):
+    import web_app
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    an.summon_enter(db, night_id, "王绍徽")
+    an.summon_enter(db, night_id, "毕自严")
+    an.set_night_protagonist(db, night_id, "王绍徽")
+    an.dismiss_from_audience(db, "王绍徽", night_id=night_id)
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+
+    assert payload["protagonist"] == "王绍徽"
+    assert payload["roster"] == [
+        {"name": "王承恩", "present": True},
+        {"name": "王绍徽", "present": False},
+        {"name": "毕自严", "present": True},
+    ]
 
 
 def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats(game, monkeypatch):

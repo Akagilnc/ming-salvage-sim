@@ -13,6 +13,8 @@ import type {
   Suggestion,
 } from "../types";
 
+type AudienceRosterEntry = { name: string; present: boolean };
+
 export function ChatModal({
   minister,
   portraitPrefix,
@@ -103,6 +105,8 @@ export function ChatModal({
       kind: "night";
       nightId: number;
       messages: AudienceScrollMessage[];
+      protagonist: string;
+      roster: AudienceRosterEntry[];
       refreshError: boolean;
     } | { kind: "error" }
   >({ kind: "loading" });
@@ -140,13 +144,20 @@ export function ChatModal({
       setScrollState({ kind: "none" });
       return () => { alive = false; };
     }
-    api<{ night_id: number; messages: AudienceScrollMessage[] }>("/api/audience/scroll")
+    api<{
+      night_id: number;
+      messages: AudienceScrollMessage[];
+      protagonist?: string;
+      roster?: AudienceRosterEntry[];
+    }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
         setScrollState(data.night_id ? {
           kind: "night",
           nightId: data.night_id,
           messages: data.messages || [],
+          protagonist: data.protagonist || "",
+          roster: data.roster || [],
           refreshError: false,
         } : { kind: "none" });
       })
@@ -169,16 +180,16 @@ export function ChatModal({
   if (pendingUserMessage && !pendingAlreadyPersisted) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });
   }
-  // The scroll remains the only authority: derive the sidebar lens from its latest
-  // recognised entrance/divider anchor instead of storing parallel scene state.
-  // Minister dialogue can be an interjection from someone standing at the side.
   const currentMinister = scrollMode === "audience"
-    ? displayMessages.reduce<Minister | undefined>((current, message) => {
-        if (!("speaker" in message) || !message.speaker) return current;
-        const isAudienceAnchor = message.beat === "entrance" || message.beat === "divider";
-        return isAudienceAnchor ? ministers.find((candidate) => candidate.name === message.speaker) ?? current : current;
-      }, undefined) ?? minister
+    ? (effectiveScrollState.kind === "night"
+        ? ministers.find((candidate) => candidate.name === effectiveScrollState.protagonist)
+        : undefined) ?? minister
     : minister;
+  const roster = scrollMode === "audience" && effectiveScrollState.kind === "night" && effectiveScrollState.roster.length
+    ? effectiveScrollState.roster
+    : ministers
+        .filter((candidate) => !candidate.status || candidate.status === "active")
+        .map((candidate) => ({ name: candidate.name, present: true }));
   const pendingTurnKey = pendingIdentity
     ? `${pendingIdentity.campaign_id}:${pendingIdentity.night_id}:${pendingIdentity.chat_turn_id}`
     : "";
@@ -290,11 +301,23 @@ export function ChatModal({
         {scrollMode === "audience" ? (
           <div className="audience-roster" aria-label="在殿花名册">
             <h2>乾清宫 · 夜</h2>
-            {ministers.filter((candidate) => !candidate.status || candidate.status === "active").map((candidate) => (
-              <button type="button" key={candidate.id ?? candidate.name} onClick={() => dispatchSend(minister.name, `宣${candidate.name}`)} disabled={!!busy}>
-                {candidate.name}<small>{candidate.office}</small>
-              </button>
-            ))}
+            {roster.map((entry) => {
+              const candidate = ministers.find((item) => item.name === entry.name);
+              const portrait = candidate ? portraitSources(candidate, portraitPrefix) : { primary: "", fallback: undefined };
+              return (
+                <button
+                  type="button"
+                  key={entry.name}
+                  data-roster-name={entry.name}
+                  data-presence={entry.present ? "present" : "departed"}
+                  onClick={() => dispatchSend(minister.name, `宣${entry.name}`)}
+                  disabled={!!busy}
+                >
+                  <MinisterPortrait className="audience-roster-avatar" primary={portrait.primary} fallback={portrait.fallback} name={entry.name} />
+                  <span>{entry.name}<small>{candidate?.office}{entry.present ? "" : " · 已退"}</small></span>
+                </button>
+              );
+            })}
           </div>
         ) : null}
         {scrollMode === "legacy" ? <div className="minister-profile">

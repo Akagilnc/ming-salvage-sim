@@ -1094,6 +1094,26 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     expect(onSend).toHaveBeenCalledWith("许誉卿", "宣洪承畴");
   });
 
+  it("renders the declared protagonist while keeping every entrant in the avatar roster", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      night_id: 23,
+      protagonist: "洪承畴",
+      roster: [
+        { name: "洪承畴", present: true },
+        { name: "许誉卿", present: false },
+      ],
+      messages: nightScroll,
+    }) }));
+    const host = renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+    expect(Array.from(host.querySelectorAll(".audience-roster img")).map((node) => node.getAttribute("src")))
+      .toEqual(["/portraits/minister_hong.png", "/portraits/minister_xu.png"]);
+    expect(host.querySelector('[data-roster-name="许誉卿"]')?.getAttribute("data-presence")).toBe("departed");
+    expect(host.querySelectorAll(".minister-side > .chat-portrait-wrap")).toHaveLength(1);
+  });
+
   it("keeps one turn container while a streamed reply becomes durable", async () => {
     let updateChat!: (chat: ChatMessage[]) => void;
     let updateStreaming!: (message: string) => void;
