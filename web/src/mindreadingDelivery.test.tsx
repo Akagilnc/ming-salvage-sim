@@ -87,7 +87,7 @@ function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = fals
   document.body.appendChild(host);
   act(() => createRoot(host).render(<Harness />));
   const rows = () =>
-    Array.from(host.querySelectorAll(".chat-log > .chat-message:not(.pending):not(.thinking)")).map((el) => {
+    Array.from(host.querySelectorAll(".chat-log .chat-message:not(.pending):not(.thinking)")).map((el) => {
       const role = ["user", "minister", "attendant"].find((r) => el.classList.contains(r)) || "";
       return `${role}:${el.querySelector("p")?.textContent ?? ""}`;
     });
