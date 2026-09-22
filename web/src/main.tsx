@@ -1,4 +1,5 @@
 import React from "react";
+import { AUDIENCE_SCENE_SPEAKER } from "./audienceScene";
 import { createRoot } from "react-dom/client";
 import { Crown, X } from "lucide-react";
 import { api } from "./api";
@@ -268,6 +269,7 @@ export function App() {
     // #1808 C：再入局清上一局 settlementHudError，防陈旧失败冒充当前 HUD。
     clearSettlementHudError();
     setUndoneChatIdentity(null);
+    audienceResumeCheckedRef.current = false;
     setAppView("game");
     await loadState();
   }, [loadState, resetLocalEdictState, clearSettlementHudError]);
@@ -280,6 +282,7 @@ export function App() {
     resetLocalEdictState();
     // #1808 C：退菜单清 settlementHudError，接缝归既有退出路径。
     clearSettlementHudError();
+    audienceResumeCheckedRef.current = false;
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
     setUndoneChatIdentity(null);
@@ -370,7 +373,7 @@ export function App() {
     api<{ night_id: number; status: string }>("/api/audience/scroll")
       .then((scroll) => {
         if (scroll.night_id > 0 && scroll.status === "open") {
-          setSelectedMinister("殿上");
+          setSelectedMinister(AUDIENCE_SCENE_SPEAKER);
           setActiveModal("chat");
         }
       })
@@ -633,7 +636,7 @@ export function App() {
         onGroupChange={setMinisterGroup}
         onClose={() => setDrawerOpen(false)}
         onOpenAudience={() => {
-          openChat({ name: "殿上", office: "一夜一卷", status: "active" } as Minister);
+          openChat({ name: AUDIENCE_SCENE_SPEAKER, office: "一夜一卷", status: "active" } as Minister);
         }}
         onOpenEdict={() => openModal("edict")}
         onUploadPortrait={uploadPortrait}

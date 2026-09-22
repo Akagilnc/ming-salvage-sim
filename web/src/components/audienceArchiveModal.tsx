@@ -3,6 +3,7 @@ import { FullscreenModal } from "./hud";
 import { ScrollMessages } from "./scrollMessages";
 import type { AudienceScrollMessage, HistoryTurnItem, Minister } from "../types";
 import { filterScrollForSelectedMinister } from "../ministerScrollLens";
+import { AUDIENCE_SCENE_SPEAKER } from "../audienceScene";
 
 export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => void; ministers: Minister[] }) {
   const [nights, setNights] = React.useState<HistoryTurnItem[]>([]);
@@ -38,6 +39,10 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
     return () => { alive = false; };
   }, [selected]);
 
+  React.useEffect(() => {
+    setMinisterFilter("");
+  }, [selected?.night_id]);
+
   return <FullscreenModal title="起居注：召对记录" subtitle="退朝后同源只读，不可编辑" bgClass="modal-bg-chat" onClose={onClose}>
     <div className="history-modal-body">
       <aside className="history-turn-list"><ul>{nights.slice().reverse().map((night) => <li key={night.night_id}>
@@ -53,7 +58,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
           </select>
         </label> : null}
         {error ? <p className="long-copy">加载失败：{error}</p> : null}
-        {messages ? <ScrollMessages messages={ministerFilter ? filterScrollForSelectedMinister(messages, ministerFilter) : messages} ministerName="" ministers={ministers} /> : null}
+        {messages ? <ScrollMessages messages={ministerFilter ? filterScrollForSelectedMinister(messages, ministerFilter, { sceneSpeaker: AUDIENCE_SCENE_SPEAKER }) : messages} ministerName="" ministers={ministers} /> : null}
       </article>
     </div>
   </FullscreenModal>;

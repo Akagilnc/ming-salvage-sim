@@ -1252,8 +1252,9 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
       ] }) });
       const id = url.endsWith("31") ? 31 : 32;
       return Promise.resolve({ ok: true, json: async () => ({ messages: id === 32 ? [
-        { role: "user", content: `场次${id}` },
-        { role: "attendant", speaker: "退场近臣", content: "旧臣御前低语", audibility: "御前低语" },
+        { role: "user", speaker: "朕", content: `场次${id}`, beat: "dialogue", chat_turn_id: 8 },
+        { role: "minister", speaker: "殿上", content: "群臣奏对", beat: "dialogue", chat_turn_id: 8 },
+        { role: "attendant", speaker: "退场近臣", content: "旧臣御前低语", beat: "aside", chat_turn_id: 8, audibility: "御前低语" },
       ] : [{ role: "user", content: `场次${id}` }] }) });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -1265,6 +1266,12 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(host.textContent).toContain("召对记录");
     expect(host.textContent).toContain("涉及人物：洪承畴");
     expect(host.textContent).toContain("场次32");
+    const filter = host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')!;
+    await act(async () => {
+      filter.value = "洪承畴";
+      filter.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(host.textContent).toContain("群臣奏对");
     expect(host.querySelector("textarea, input, .chat-composer")).toBeNull();
     const archivedAvatar = host.querySelector<HTMLImageElement>(".aside-avatar");
     expect(archivedAvatar?.getAttribute("src")).toBe("/portraits/minister_former-attendant.png");
@@ -1272,6 +1279,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
     expect(host.textContent).toContain("场次31");
+    expect(host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')?.value).toBe("");
   });
 
   it("史册 filters out scene rows and keeps the public-document boundary", async () => {

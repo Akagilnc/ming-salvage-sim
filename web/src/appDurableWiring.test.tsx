@@ -442,6 +442,10 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await act(async () => {
       await vi.waitFor(() => expect(stateCall).toBeGreaterThanOrEqual(2));
     });
+    const retryCalls = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")
+      .map(([url]) => new URL(String(url), "http://t.local").pathname);
+    expect(retryCalls).toContain("/api/audience/reply/retry");
+    expect(retryCalls).not.toContain("/api/ministers/%E9%83%AD%E5%85%81%E5%8E%9A/reply/retry");
 
     await click(host.querySelector(".composer-exit"));
     await tick();
@@ -2565,6 +2569,41 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
     expect(host.querySelector('[data-directive-phase="inflight"]')).toBeNull();
     expect(host.querySelector('[data-local-key]')).toBeNull();
+  });
+
+  it("关档再开会重新检查并恢复同一未闭召对夜", async () => {
+    const minister = { name: "洪承畴", office: "三边总督", status: "active", skills: [] };
+    let scrollChecks = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/audience/scroll")) {
+        scrollChecks += 1;
+        return jsonResp({ night_id: 9, status: "open", messages: [] });
+      }
+      if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({
+        minister, history: [], suggestions: [], campaign_id: "c1", night_id: 9,
+        can_undo_last_chat: false,
+      });
+      if (u.pathname.endsWith("/api/menu/exit_to_menu") && init?.method === "POST") return jsonResp({});
+      if (u.pathname.endsWith("/api/menu/continue")) return sseResp("done", { state: { ok: true } });
+      return jsonResp({});
+    }));
+    const host = await mountApp();
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector(".chat-composer")).not.toBeNull()); });
+    await click(host.querySelector(".composer-exit"));
+    await click(host.querySelector('[aria-label="游戏菜单"]'));
+    await tick();
+    await click(findButton(host, "回到主菜单"));
+    await tick();
+    await click(host.querySelector(".menu-btn.primary"));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).toBeNull()); });
+    await click(Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").trim() === "继续"));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector(".chat-composer")).not.toBeNull()); });
+    expect(scrollChecks).toBeGreaterThanOrEqual(2);
   });
 
   // #1764 成案 tracer 共享夹具：召对流 + 可切换的 state 权威投影（在线 end / 离面重入同形）。

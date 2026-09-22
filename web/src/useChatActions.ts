@@ -15,6 +15,7 @@ import type {
   ServerChatMessage,
   Suggestion,
 } from "./types";
+import { AUDIENCE_SCENE_SPEAKER, audienceRetryPath, audienceUndoPath } from "./audienceScene";
 
 type RefreshDurableProjection = (options?: {
   secretOrders?: boolean;
@@ -148,8 +149,8 @@ export function useChatActions({
 
   const activeMinister = state && selectedMinister
     ? ([...state.ministers, ...(state.consorts || [])].find((m) => m.name === selectedMinister)
-      || (selectedMinister === "殿上" ? {
-        name: "殿上", office: "一夜一卷", office_type: "scene", faction: "", style: "",
+      || (selectedMinister === AUDIENCE_SCENE_SPEAKER ? {
+        name: AUDIENCE_SCENE_SPEAKER, office: "一夜一卷", office_type: "scene", faction: "", style: "",
         status: "active", status_label: "在殿", summary: "", favorite: false, skills: [],
       } : temporaryActiveMinister))
     : null;
@@ -296,9 +297,7 @@ export function useChatActions({
     setComposerHint("");
     clearPendingText();
     try {
-      const data = await api<ChatUndoResponse>(targetMinisterName === "殿上"
-        ? "/api/audience/chat/undo"
-        : `/api/ministers/${encodeURIComponent(targetMinisterName)}/chat/undo`, {
+      const data = await api<ChatUndoResponse>(audienceUndoPath(targetMinisterName), {
         method: "POST",
       });
       // Undo's GLOBAL effects (secret orders / directives / full state) apply
@@ -346,9 +345,9 @@ export function useChatActions({
     setError("");
     setChatNotice("");
     try {
-      const data = await api<ChatResponse>(targetMinisterName === "殿上"
-        ? "/api/audience/reply/retry"
-        : `/api/ministers/${encodeURIComponent(targetMinisterName)}/reply/retry`, {
+      // The visible portrait may be a named participant; the persisted interrupted
+      // turn owns routing. Never let a presentation anchor revive the retired route.
+      const data = await api<ChatResponse>(audienceRetryPath(replyRetry.minister_name || targetMinisterName), {
         method: "POST",
       });
       // 拟旨计数是全局态：面板切走仍须即时投影，不得等 refresh / 不得被陈旧判断吞掉。

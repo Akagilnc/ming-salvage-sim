@@ -1,4 +1,5 @@
 import React from "react";
+import { audienceStreamPath } from "./audienceScene";
 import { forwardSteamEvents } from "./steamEvents";
 import type { ApiErrorDetail, ChatResponse } from "./types";
 
@@ -98,9 +99,7 @@ export const streamChat = async (
     signalOrOptions instanceof AbortSignal || signalOrOptions === undefined
       ? { signal: signalOrOptions }
       : signalOrOptions;
-  const url = ministerName === "殿上"
-    ? "/api/audience/chat/stream"
-    : `/api/ministers/${encodeURIComponent(ministerName)}/chat/stream`;
+  const url = audienceStreamPath(ministerName);
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
