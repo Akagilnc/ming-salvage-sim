@@ -134,6 +134,7 @@ export function useAudienceChat(
       // used to open the modal. Guard ephemeral writes by the initiating panel only.
       const panelMatches = () => selectedMinisterRef.current === initiatingPanelName;
       const historyFresh = () => chatGenRef.current === gen && panelMatches();
+      let acceptedIdentity: ChatIdentity | null = null;
       setPendingUserMessage(message);
       setPendingIdentity(null);
       setFailedIdentity(null);
@@ -154,6 +155,7 @@ export function useAudienceChat(
               if (ownsEphemeral() && panelMatches()) setStreamingMinisterMessage("");
             },
             onAccepted: (identity) => {
+              acceptedIdentity = identity;
               if (panelMatches()) {
                 setCurrentCampaignId(identity.campaign_id);
                 setCurrentNightId(identity.night_id);
@@ -205,7 +207,10 @@ export function useAudienceChat(
         } else if (historyFresh()) {
           // 失败回填只属于发起时仍存活的同一 composer（generation + 面板）；
           // 关闭/重开已推进 gen，旧非 Abort reject 不得污染新 session。
-          if (err instanceof ApiRequestError && err.chatIdentity) setFailedIdentity(err.chatIdentity);
+          const failedTurn = err instanceof ApiRequestError && err.chatIdentity
+            ? err.chatIdentity
+            : acceptedIdentity;
+          if (failedTurn) setFailedIdentity(failedTurn);
           cb.onError?.(err);
         }
       } finally {

@@ -176,6 +176,23 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     expect(rows()).toContain("minister:保留答复");
   });
 
+  it("accepted 后普通流中断会移除未持久化的半段回话", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/scroll")) return jsonResp({ night_id: 24, messages: [] });
+      return sse([
+        { event: "accepted", data: { campaign_id: "c1", night_id: 24, chat_turn_id: 8 } },
+        { event: "delta", data: { content: "未完成回话" } },
+      ]);
+    }));
+    const { hookRef } = mount("audience");
+    await tick();
+
+    await act(async () => { await hookRef.current!.sendChat("温体仁", "请奏", noCbs); });
+
+    expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
+    expect(document.querySelector('[data-audience-turn-id="8"]')).toBeNull();
+  });
+
   it("无夜 identity 不接纳猜测出的旧卷，新夜回话失败也不回闪", async () => {
     let call = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
