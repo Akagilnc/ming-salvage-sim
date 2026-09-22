@@ -72,6 +72,7 @@ function renderModal(props: {
   onScrollPositionChange?: (position: number) => void;
   registerChatUpdate?: (update: (chat: ChatMessage[]) => void) => void;
   registerStreamingUpdate?: (update: (message: string) => void) => void;
+  registerPendingIdentityUpdate?: (update: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void) => void;
   registerNightUpdate?: (update: (nightId: number) => void) => void;
   registerUndoUpdate?: (update: (chatTurnId: number | null) => void) => void;
   registerChatDispatch?: (dispatch: React.Dispatch<ChatAction>) => void;
@@ -90,6 +91,7 @@ function renderModal(props: {
     const [undoneChatTurnId, setUndoneChatTurnId] = React.useState<number | null>(props.undoneChatTurnId ?? null);
     const [chat, dispatchChat] = React.useReducer(chatReducer, props.chat ?? []);
     const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState(props.streamingMinisterMessage ?? "");
+    const [pendingIdentity, setPendingIdentity] = React.useState(props.pendingIdentity ?? null);
     const setChat = React.useCallback((next: ChatMessage[]) => dispatchChat({
       type: "history",
       history: next.map((message) => ({
@@ -101,6 +103,7 @@ function renderModal(props: {
     }), []);
     React.useEffect(() => props.registerChatUpdate?.(setChat), [setChat]);
     React.useEffect(() => props.registerStreamingUpdate?.(setStreamingMinisterMessage), []);
+    React.useEffect(() => props.registerPendingIdentityUpdate?.(setPendingIdentity), []);
     React.useEffect(() => props.registerNightUpdate?.(setCurrentNightId), []);
     React.useEffect(() => props.registerUndoUpdate?.(setUndoneChatTurnId), []);
     React.useEffect(() => props.registerChatDispatch?.(dispatchChat), []);
@@ -118,7 +121,7 @@ function renderModal(props: {
         chat={chat}
         suggestions={props.suggestions ?? []}
         pendingUserMessage={props.pendingUserMessage ?? ""}
-        pendingIdentity={props.pendingIdentity ?? null}
+        pendingIdentity={pendingIdentity}
         failedIdentity={null}
         streamingMinisterMessage={streamingMinisterMessage}
         chatNotice=""
@@ -1129,6 +1132,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   it("keeps one turn container while a streamed reply becomes durable", async () => {
     let updateChat!: (chat: ChatMessage[]) => void;
     let updateStreaming!: (message: string) => void;
+    let updatePendingIdentity!: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void;
     let reads = 0;
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({
       ok: true,
@@ -1145,6 +1149,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       streamingMinisterMessage: "流式回话",
       registerChatUpdate: (update) => { updateChat = update; },
       registerStreamingUpdate: (update) => { updateStreaming = update; },
+      registerPendingIdentityUpdate: (update) => { updatePendingIdentity = update; },
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     const streamingTurn = document.querySelector<HTMLElement>('[data-audience-turn-id="11"]');
@@ -1152,6 +1157,12 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
 
     await act(async () => {
       updateStreaming("");
+      updatePendingIdentity(null);
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-audience-turn-id="11"]')).toBe(streamingTurn);
+
+    await act(async () => {
       updateChat([{ role: "user", content: "已落卷", chatTurnId: 11 }]);
       await Promise.resolve();
       await Promise.resolve();

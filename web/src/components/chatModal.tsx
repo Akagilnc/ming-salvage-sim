@@ -185,12 +185,15 @@ export function ChatModal({
   const streamingTurnRef = React.useRef<{ key: string; chatTurnId?: number; content: string } | null>(null);
   if (streamingMinisterMessage) {
     streamingTurnRef.current = { key: pendingTurnKey, chatTurnId: pendingIdentity?.chat_turn_id, content: streamingMinisterMessage };
-  } else if (pendingAlreadyPersisted || streamingTurnRef.current?.key !== pendingTurnKey) {
+  }
+  const streamingTurnAlreadyPersisted = streamingTurnRef.current?.chatTurnId != null
+    && streamingTurnRef.current.key === `${currentCampaignId}:${currentNightId}:${streamingTurnRef.current.chatTurnId}`
+    && displayMessages.some((message) => "chat_turn_id" in message
+      && message.chat_turn_id === streamingTurnRef.current?.chatTurnId);
+  if (!streamingMinisterMessage && streamingTurnAlreadyPersisted) {
     streamingTurnRef.current = null;
   }
-  const streamingTurn = streamingMinisterMessage
-    ? streamingTurnRef.current
-    : pendingAlreadyPersisted ? null : streamingTurnRef.current;
+  const streamingTurn = streamingTurnRef.current;
   if (streamingTurn) {
     displayMessages.push({
       role: "scene",
