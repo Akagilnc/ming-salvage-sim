@@ -1,7 +1,7 @@
 import React from "react";
 import { ApiRequestError, api, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
-import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion } from "./types";
+import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion, TranslationRetry } from "./types";
 import { audienceHistoryPath } from "./audienceScene";
 
 /**
@@ -31,6 +31,7 @@ export type AudienceHistoryData = {
   night_id: number;
   /** #505：崩溃遗留的中断轮 → 最后一句上给系统层重试（重新生成回话）。 */
   reply_retry?: ReplyRetry | null;
+  translation_retries?: TranslationRetry[];
 };
 
 export type SendChatCallbacks = {

@@ -6445,6 +6445,9 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
         "pending_action_failures": game.pending_action_failures_for(SCENE_CHAT_SPEAKER),
         "reply_retry": (game.interrupted_reply_retries(SCENE_CHAT_SPEAKER) or [None])[-1],
+        "translation_retries": game.pending_translation_retries(
+            night_id=int(open_night["id"]) if open_night else None,
+        ),
     }
 
 

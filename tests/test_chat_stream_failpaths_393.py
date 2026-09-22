@@ -887,7 +887,7 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
 
 
 def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game):
-    """#1465 ① / #1792：两次可重试失败（含一次 typed 429）后第三次成功
+    """#1465 ① / #1792：两次可重试失败（含一次 typed 503）后第三次成功
     → 真 interpret/atomic 落库 + 3 attempts 可回指；
     第二、三次起手各晚于前次失败 ≥ retry_interval（受控时钟，不真等）。
 
@@ -899,13 +899,13 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
     from tests.test_audience_restore_505 import _seed_agno_v3_runs
 
     def _mixed_retryable(n):
-        # attempt 1：瞬断；attempt 2：typed 429（#1792 验收含一次 typed 429）
+        # attempt 1：瞬断；attempt 2：typed 503。
         if n == 2:
             return LLMUnavailable(
                 "限流",
                 code="llm_run_error",
                 provider_message="model_concurrency_rate_limit_exceeded",
-                status_code=429,
+                status_code=503,
             )
         return LLMUnavailable(
             "连接失败",
@@ -963,7 +963,7 @@ def test_chat_stream_two_transient_then_success_three_attempts(monkeypatch, game
     assert [a.get("outcome") for a in attempts] == [
         "retryable_fail", "retryable_fail", "ok",
     ]
-    assert attempts[1].get("status_code") == 429
+    assert attempts[1].get("status_code") == 503
     # #1792：两段固定间隔；第二、三次起手 ≥ 前次失败后的 interval
     interval = TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS
     assert waits == [interval, interval], waits
@@ -1051,7 +1051,6 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     detail = events[-1][1]
     assert detail.get("code") == "llm_connection_error"
     assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
-    max_a = default_transport_policy().max_attempts
     assert agent.calls == max_a
     attempts = detail.get("transport_attempts") or []
     assert len(attempts) == max_a
@@ -1197,12 +1196,11 @@ def test_chat_stream_typed_429_preserved(monkeypatch, game):
     assert detail.get("status_code") == 429
     assert detail.get("code") == "llm_run_error"
     assert detail.get("provider_message") == reason
-    assert agent.calls == max_a
+    assert agent.calls == 1
     attempts = detail.get("transport_attempts") or []
-    assert len(attempts) == max_a
-    assert [a.get("status_code") for a in attempts] == [429] * max_a
-    assert [a.get("outcome") for a in attempts[:-1]] == ["retryable_fail"] * (max_a - 1)
-    assert attempts[-1].get("outcome") == "terminal_fail"
+    assert len(attempts) == 1
+    assert attempts[0].get("status_code") == 429
+    assert attempts[0].get("outcome") == "terminal_fail"
 
 
 def test_chat_stream_config_max_attempts_override(monkeypatch, tmp_path, game):

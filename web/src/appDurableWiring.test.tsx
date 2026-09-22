@@ -407,6 +407,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     };
     let stateCall = 0;
     let retryDone = false;
+    let translationDone = false;
     let statePhase: "init" | "afterRetry" | "afterUndo" = "init";
     let releaseRefresh!: () => void;
     const refreshGate = new Promise<void>((r) => { releaseRefresh = r; });
@@ -416,7 +417,13 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
-      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 1, messages: [] });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({
+        night_id: 1,
+        messages: [{
+          role: "scene", speaker: "郭允厚", content: "臣请核实。", chat_turn_id: 8,
+          beat: "dialogue", highlights: [], container: {},
+        }],
+      });
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
       if (u.pathname.endsWith("/api/game/state")) {
@@ -436,7 +443,12 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
           minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1, pending_turn_ids: [],
           can_undo_last_chat: retryDone,
           reply_retry: retryDone ? undefined : { chat_turn_id: 7, minister_name: "殿上", turn: 1, question: "拟旨赈济" },
+          translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
         });
+      }
+      if (u.pathname.endsWith("/api/audience/translation/retry") && init?.method === "POST") {
+        translationDone = true;
+        return jsonResp({ status: "completed", retryable: false });
       }
       if (u.pathname.endsWith("/reply/retry") && init?.method === "POST") {
         retryDone = true;
@@ -465,6 +477,9 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await tick();
     await click(host.querySelector(".court-drawer.open .primary-action"));
     await act(async () => { await vi.waitFor(() => expect(findButton(host, "重新生成回话")).toBeTruthy()); });
+    await act(async () => { await vi.waitFor(() => expect(findButton(host, "重试整理")).toBeTruthy()); });
+    await click(findButton(host, "重试整理"));
+    await act(async () => { await vi.waitFor(() => expect(findButton(host, "重试整理")).toBeFalsy()); });
     await click(findButton(host, "重新生成回话"));
     await act(async () => {
       await vi.waitFor(() => expect(findButton(host, "重新生成回话")).toBeFalsy());
@@ -475,6 +490,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const retryCalls = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")
       .map(([url]) => new URL(String(url), "http://t.local").pathname);
     expect(retryCalls).toContain("/api/audience/reply/retry");
+    expect(retryCalls).toContain("/api/audience/translation/retry");
     expect(retryCalls).not.toContain("/api/ministers/%E9%83%AD%E5%85%81%E5%8E%9A/reply/retry");
 
     await click(host.querySelector(".composer-exit"));
@@ -650,60 +666,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.querySelector(".hud2-stage")).toBeNull();  // 已退出游戏视图
   });
 
-  // #1499：main.tsx 未落库政务告知调用点——经拟诏「处理」真链触发，不得日后误传 hideTitle。
-  it("#1499 经真实 App 拟诏处理入口触发未落库政务告知：标题可见且非 bare 布局", async () => {
-    const failure = {
-      id: 42,
-      kind: "secret_order",
-      action: "落库",
-      message: "密令未能正式落库",
-      // 无 minister_name → selectedMinister 空 → activeMinister null → 走只读告知分支
-    };
-    try {
-      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-        const u = new URL(String(url), "http://t.local");
-        if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
-        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
-        if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-        if (u.pathname.endsWith("/api/game/state")) {
-          // 无草案 + 有失败密令 → 拟诏台露出「处理」入口
-          return jsonResp({ ...makeState(1, []), failed_secret_order_count: 1 });
-        }
-        if (u.pathname.endsWith("/api/pending_actions/failures")) {
-          return jsonResp({ pending_action_failures: [failure] });
-        }
-        return jsonResp({});
-      }));
-      const host = document.createElement("div");
-      document.body.appendChild(host);
-      await act(async () => { trackRoot(host).render(<App />); });
-      await tick();
-      expect(host.querySelector(".hud2-stage")).not.toBeNull();
-
-      await click(findButton(host, "拟诏"));
-      await act(async () => {
-        await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
-      });
-      const processBtn = Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes("处理"));
-      expect(processBtn).toBeTruthy();
-      await click(processBtn);
-
-      await act(async () => {
-        await vi.waitFor(() => {
-          expect(host.querySelector('[role="dialog"][aria-label="未落库的政务"]')).not.toBeNull();
-        });
-      });
-      const dialog = host.querySelector('[role="dialog"][aria-label="未落库的政务"]') as HTMLElement;
-      // 可见标题（main 未传 hideTitle）
-      expect(dialog.querySelector(".modal-title h1")?.textContent).toContain("未落库的政务");
-      const modal = dialog.querySelector(".fullscreen-modal.modal-bg-chat");
-      expect(modal).not.toBeNull();
-      expect(modal!.classList.contains("modal-layout-bare")).toBe(false);
-      expect(dialog.querySelector(".modal-header-bare")).toBeNull();
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
 });
 
 // ─── #1236 T3：必达三面 / 只读组零半程泄漏 —— App 真挂载 ───────────────────
@@ -872,50 +834,6 @@ const byAria = (host: HTMLElement, label: string) =>
   host.querySelector(`[aria-label="${label}"]`) as HTMLElement | null;
 
 describe("#1236 App must-face wiring（settlement_display 真链）", () => {
-  it("#1849 普通朝臣失败恢复仍读取共享殿上卷轴", async () => {
-    const paths: string[] = [];
-    const liveState = settlementBaseState("player", {
-      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
-      directives: [],
-      pending_directive_count: 0,
-      failed_secret_order_count: 1,
-    });
-    stubSettlementFetch(liveState, [], undefined, (url) => {
-      paths.push(url.pathname);
-      if (url.pathname === "/api/pending_actions/failures") {
-        return jsonResp({
-          pending_action_failures: [{
-            id: 42, kind: "secret_order", action: "落库",
-            message: "密令未能正式落库", minister_name: SNAP_MINISTER,
-          }],
-        });
-      }
-      if (url.pathname === "/api/audience/chat") {
-        return jsonResp({
-          minister: liveState.ministers[0], history: [], suggestions: [],
-          campaign_id: "c1", night_id: 1, can_undo_last_chat: false,
-        });
-      }
-    });
-
-    const host = await mountApp();
-    await click(edictCommand(host));
-    await act(async () => {
-      await vi.waitFor(() => expect(
-        host.querySelector('[role="dialog"][aria-label="诏书草案"]'),
-      ).not.toBeNull());
-    });
-    const process = Array.from(host.querySelectorAll("button")).find(
-      (button) => (button.textContent || "").includes("处理"),
-    );
-    expect(process).toBeTruthy();
-    await click(process);
-
-    await act(async () => {
-      await vi.waitFor(() => expect(paths).toContain("/api/audience/chat"));
-    });
-    expect(paths).not.toContain(`/api/ministers/${encodeURIComponent(SNAP_MINISTER)}/chat`);
-  });
 
   it("#1849 后宫妃嫔从真实入口读取既有 legacy 会话", async () => {
     const paths: string[] = [];
@@ -2489,7 +2407,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(editAfterSaveFail?.value).toBe("改稿边饷");
   });
 
-  it("#1764 本地失败 create 卡不挡失败密令「处理」入口", async () => {
+  it("#1764 failed-only 退朝确认不挡本地 create 的失败呈现", async () => {
     let releaseCreate!: (value: Response) => void;
     const createGate = new Promise<Response>((resolve) => { releaseCreate = resolve; });
     const base = {
@@ -2526,9 +2444,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
-    // 打开时即有失败密令 → 处理入口可见
-    expect(Array.from(host.querySelectorAll("button")).some((b) => (b.textContent || "").includes("处理"))).toBe(true);
-
     // failed-only 退朝确认打开后提交草案：页脚取消为纯本地，不吃 requestLocked。
     const footerOpen = host.querySelector<HTMLButtonElement>(".desk-footer button");
     expect(footerOpen).not.toBeNull();
@@ -2579,15 +2494,6 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     const localFailed = host.querySelector('[data-directive-phase="failed"]');
     expect(localFailed?.getAttribute("aria-invalid")).not.toBe("true");
     expect(localFailed?.querySelector('[data-role="local-error"][role="alert"]')?.textContent).toBe("local-fail-blocks-not");
-    // 本地失败卡在桌，deskCount>0，但恢复入口仍以失败谓词可达
-    const processBtn = Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes("处理"));
-    expect(processBtn).toBeTruthy();
-    await click(processBtn);
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(host.querySelector('[role="dialog"][aria-label="未落库的政务"]')).not.toBeNull();
-      });
-    });
   });
 
   it("#1764 退出主菜单清本地失败卡；再入局不残留", async () => {

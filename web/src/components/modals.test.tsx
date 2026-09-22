@@ -9,7 +9,7 @@ import { FullscreenModal } from "./hud";
 import { ReportModal } from "./reportModal";
 import { ScrollMessages } from "./scrollMessages";
 import { parseLeadingStageDirection } from "../format";
-import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
+import type { BudgetAccount, ChatMessage, GameState, Minister, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -70,9 +70,10 @@ function renderModal(props: {
   busy?: string;
   streamingMinisterMessage?: string;
   onCancel?: () => void;
-  chatFailures?: PendingActionFailure[];
   replyRetry?: { chat_turn_id: number; question: string } | null;
   onRetryReply?: (ministerName: string) => void;
+  translationRetries?: React.ComponentProps<typeof ChatModal>["translationRetries"];
+  onRetryTranslation?: React.ComponentProps<typeof ChatModal>["onRetryTranslation"];
   pendingUserMessage?: string;
   pendingIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   failedIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
@@ -144,7 +145,6 @@ function renderModal(props: {
         failedIdentity={failedIdentity}
         streamingMinisterMessage={streamingMinisterMessage}
         chatNotice=""
-        chatFailures={props.chatFailures ?? []}
         canUndoLastChat={props.canUndoLastChat ?? false}
         composerHint=""
         input={input}
@@ -155,6 +155,8 @@ function renderModal(props: {
         onIntent={props.onIntent}
         onSend={props.onSend ?? (() => {})}
         onRetryReply={props.onRetryReply}
+        translationRetries={props.translationRetries}
+        onRetryTranslation={props.onRetryTranslation}
         onUndo={props.onUndo ?? (() => {})}
         onHint={() => {}}
         onFavorite={props.onFavorite ?? (() => {})}
@@ -245,7 +247,6 @@ function renderEdictModal(props: {
   state: GameState;
   onIssueDecree?: () => void;
   onAdvanceWithoutEdict?: () => void;
-  onOpenFailureRecovery?: () => void;
   error?: string;
 }) {
   const host = document.createElement("div");
@@ -271,7 +272,6 @@ function renderEdictModal(props: {
         onDeleteDirective={() => {}}
         onIssueDecree={props.onIssueDecree ?? (() => {})}
         onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
-        onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
       />
     )
   );
@@ -574,26 +574,6 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(textarea.placeholder.length).toBeGreaterThan(5);
   });
 
-  it("surfaces secret-order landing failure without any payload-replay control", () => {
-    const failure: PendingActionFailure = {
-      id: 7,
-      kind: "secret_order",
-      action: "新建",
-      message: "密令未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。",
-    };
-
-    renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      chatFailures: [failure],
-    });
-
-    expect(document.querySelector(".chat-failure-note")?.textContent).toContain("密令未能正式落库");
-    // #1765 ②：原地恢复=继续召对本身，不给重放旧 payload 的按钮。
-    const button = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "重试");
-    expect(button).toBeUndefined();
-  });
-
   it("shows #505 system-layer reply retry control when replyRetry is set", () => {
     const retry = vi.fn();
     renderModal({
@@ -711,6 +691,7 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
       { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次召对" } },
       { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 1 },
       { role: "minister", speaker: "杨嗣昌", content: "殿侧容臣插一句。", beat: "dialogue", container: { audience_type: "越次召对" } },
+      { role: "user", speaker: "朕", content: "辽饷何解？", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 12 },
       { role: "scene", speaker: "", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
     ] }) }));
 
@@ -726,6 +707,8 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
       canUndoLastChat: true,
       replyRetry: { chat_turn_id: 12, question: "辽饷何解？" },
       onRetryReply: retryReply,
+      translationRetries: [{ chat_turn_id: 1, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/audience-turn-1" }],
+      onRetryTranslation: vi.fn(),
       suggestions: [{ label: "追问", text: "细奏边情" }],
       secretOrders: [{ id: 9, minister_name: "洪承畴", title: "密察边饷", content: "暗访欠饷", status: "active", turn_issued: 1, due_turn: 2, year_issued: 1, period_issued: 11, tags: [], importance: 1, result: "", sim_note: "", turn_closed: null }],
     });
@@ -746,6 +729,12 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     expect(send).toHaveBeenCalledWith("洪承畴", "细奏边情");
     expect(undo).toHaveBeenCalledWith("洪承畴");
     expect(retryReply).toHaveBeenCalledWith("洪承畴");
+    const replyFailure = host.querySelector('[data-testid="reply-retry"]');
+    expect(replyFailure?.closest('[data-audience-turn-id="12"]')).not.toBeNull();
+    const translationFailure = host.querySelector('[data-testid="translation-retry-1"]');
+    expect(translationFailure?.closest('[data-audience-turn-id="1"]')).not.toBeNull();
+    expect(translationFailure?.textContent).toContain("/tmp/audience-turn-1");
+    expect(translationFailure?.textContent).toContain("请交给作者");
     const divisions = Array.from(host.querySelectorAll(".beat-divider"));
     expect(divisions).toHaveLength(2);
     expect(divisions[0]?.textContent).toContain("洪承畴");

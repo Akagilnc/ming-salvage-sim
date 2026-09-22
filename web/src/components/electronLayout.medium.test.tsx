@@ -60,7 +60,7 @@ describe.sequential("medium: shared Electron geometry", () => {
           error={`结算中止，请重试。\n错误包：/${"long-directory/".repeat(18)}error-pack\n请将整个目录发给作者。`}
           onDirectiveTextChange={noop} onEditingTextChange={noop} onCreateDirective={noop}
           onStartEdit={noop} onCancelEdit={noop} onSaveDirective={noop} onDeleteDirective={noop}
-          onAdvanceWithoutEdict={noop} onIssueDecree={noop} onOpenFailureRecovery={noop}
+          onAdvanceWithoutEdict={noop} onIssueDecree={noop}
         />
       </FullscreenModal>,
     );

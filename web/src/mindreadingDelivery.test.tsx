@@ -76,7 +76,7 @@ function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = fals
         failedIdentity={hook.failedIdentity}
         scrollGeneration={scrollGeneration}
         streamingMinisterMessage={hook.streamingMinisterMessage}
-        suggestions={[]} chatNotice="" chatFailures={[]} canUndoLastChat={false}
+        suggestions={[]} chatNotice="" canUndoLastChat={false}
         composerHint="" input="" busy={busy} error="" secretOrders={[]}
         onInput={() => {}} onSend={() => {}} onUndo={() => {}}
         onHint={() => {}} onFavorite={() => {}} onClose={() => {}} onCancel={() => {}}
