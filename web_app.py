@@ -2086,7 +2086,7 @@ class WebGame:
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
-        character = self.session._character(minister_name)
+        character = None if minister_name == "殿上" else self.session._character(minister_name)
         return {
             "minister": minister_name,
             "campaign_id": str(self.db.kv_get("campaign_id") or ""),
@@ -2098,7 +2098,7 @@ class WebGame:
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
             "secret_orders": self.db.list_secret_orders(),
-            "suggestions": self.suggestions_for(character),
+            "suggestions": self.suggestions_for(character) if character is not None else [],
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
             "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
@@ -2122,7 +2122,7 @@ class WebGame:
         decree_validation_failure: Optional[Dict[str, Any]] = None,
         secret_order_landing_recovery: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        character = self.session._character(minister_name)
+        character = None if minister_name == "殿上" else self.session._character(minister_name)
         # Durable chat_turn message ids first, then memory history.  Publishing
         # history before append/update opens a race: observers see the minister
         # reply while can_undo_last_chat_turn is still false (#976 hold path
@@ -2189,7 +2189,7 @@ class WebGame:
             "pending_count": self.session.pending_count(),
             # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
             "pending_directive_count": self.pending_directive_count(),
-            "suggestions": self.suggestions_for(character),
+            "suggestions": self.suggestions_for(character) if character is not None else [],
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
@@ -3720,7 +3720,8 @@ class WebGame:
         }
 
     def chat_stream(self, minister_name: str, message: str, intent: Optional[str] = None) -> Iterator[Dict[str, Any]]:
-        if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
+        scene_chat = minister_name == "殿上"
+        if not scene_chat and minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             yield {"type": "error", "message": f"未找到大臣：{minister_name}"}
             return
         text = message.strip()
@@ -3796,9 +3797,11 @@ class WebGame:
             # #1566：正式密令前缀先入密令管线；场外记召成功后在 gate 外物化 scene。
             # #1716：已开夜收夜口令跳过场外记召，否则散夜被 SUMMON_* 短路、夜永不关。
             offsite_secret_order = False
-            explicit_secret_order = intent == "secret_order" or self._message_is_formal_secret_order(text)
+            explicit_secret_order = (not scene_chat) and (intent == "secret_order" or self._message_is_formal_secret_order(text))
             court_break_open_night = self._open_night_court_break(text)
-            if not explicit_secret_order and not court_break_open_night:
+            if scene_chat:
+                offsite_secret_order = False
+            elif not explicit_secret_order and not court_break_open_night:
                 stream_origin = f"web:stream:{accepted_turn}:{minister_name}"
                 admission = self.session.consume_audience_admission(
                     self.session._character(minister_name),
@@ -6423,6 +6426,43 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     }
 
 
+@app.get("/api/audience/chat")
+async def api_audience_chat_history() -> Dict[str, Any]:
+    """Live audience state belongs to the open scene, never to a roster member."""
+    game = get_game()
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+    open_night = get_open_night(game.db) if hasattr(game.db, "conn") else None
+    return {
+        "minister": {
+            "name": SCENE_CHAT_SPEAKER, "office": "一夜一卷", "office_type": "scene",
+            "faction": "", "style": "", "status": "active", "status_label": "在殿",
+            "summary": "", "favorite": False, "skills": [],
+        },
+        "campaign_id": str(game.db.kv_get("campaign_id") or ""),
+        "night_id": int(open_night["id"]) if open_night else 0,
+        "history": game.chat_projection(SCENE_CHAT_SPEAKER),
+        "suggestions": [],
+        "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
+        "pending_action_failures": game.pending_action_failures_for(SCENE_CHAT_SPEAKER),
+        "reply_retry": (game.interrupted_reply_retries(SCENE_CHAT_SPEAKER) or [None])[-1],
+    }
+
+
+@app.post("/api/audience/reply/retry")
+async def api_retry_audience_reply() -> Dict[str, Any]:
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+    return await run_in_threadpool(get_game().retry_interrupted_reply, SCENE_CHAT_SPEAKER)
+
+
+@app.post("/api/audience/chat/undo")
+async def api_undo_audience_chat() -> Dict[str, Any]:
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+    game = get_game()
+    _refuse_if_open_night_barrier(game)
+    with _serialized_web_write(game):
+        return game.undo_last_chat(SCENE_CHAT_SPEAKER)
+
+
 @app.get("/api/ministers/{minister_name}/chat")
 async def api_chat_history(minister_name: str) -> Dict[str, Any]:
     _require_active_minister(minister_name)
@@ -6561,9 +6601,7 @@ async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
         return game.undo_last_chat(minister_name)
 
 
-@app.post("/api/ministers/{minister_name}/chat/stream")
-async def api_chat_stream(minister_name: str, request: ChatRequest) -> StreamingResponse:
-    _require_active_minister(minister_name)
+def _chat_stream_response(minister_name: str, request: ChatRequest) -> StreamingResponse:
     async def generate() -> AsyncIterator[str]:
         iterator = iter(get_game().chat_stream(minister_name, request.message, request.intent))
         loop = asyncio.get_running_loop()
@@ -6613,6 +6651,19 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                 break
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.post("/api/ministers/{minister_name}/chat/stream")
+async def api_chat_stream(minister_name: str, request: ChatRequest) -> StreamingResponse:
+    _require_active_minister(minister_name)
+    return _chat_stream_response(minister_name, request)
+
+
+@app.post("/api/audience/chat/stream")
+async def api_audience_chat_stream(request: ChatRequest) -> StreamingResponse:
+    """Scene-level live transport; the scene LLM chooses who answers."""
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+    return _chat_stream_response(SCENE_CHAT_SPEAKER, request)
 
 
 @app.post("/api/directives")

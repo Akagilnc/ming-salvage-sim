@@ -99,6 +99,7 @@ export function App() {
   const [undoneChatIdentity, setUndoneChatIdentity] = React.useState<ChatIdentity | null>(null);
   const [audienceScrollGeneration, setAudienceScrollGeneration] = React.useState(0);
   const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
+  const audienceResumeCheckedRef = React.useRef(false);
   const invalidateAudienceScroll = React.useCallback(() => {
     setAudienceScrollGeneration((generation) => generation + 1);
   }, []);
@@ -363,6 +364,19 @@ export function App() {
     selectedMinisterRef.current = selectedMinister;
   }, [selectedMinister]);
 
+  React.useEffect(() => {
+    if (!state || appView !== "game" || audienceResumeCheckedRef.current) return;
+    audienceResumeCheckedRef.current = true;
+    api<{ night_id: number; status: string }>("/api/audience/scroll")
+      .then((scroll) => {
+        if (scroll.night_id > 0 && scroll.status === "open") {
+          setSelectedMinister("殿上");
+          setActiveModal("chat");
+        }
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [state, appView]);
+
   // 全局 ESC：按 z-index 优先级，最前面的弹窗先关。
   // ending 须同时 setEndingDismissed，否则自动重开 effect 会立刻弹回。
   useEscClose(activeModal, setActiveModal, [
@@ -619,8 +633,7 @@ export function App() {
         onGroupChange={setMinisterGroup}
         onClose={() => setDrawerOpen(false)}
         onOpenAudience={() => {
-          const anchor = ministers.find((candidate) => !candidate.status || candidate.status === "active");
-          if (anchor) openChat(anchor);
+          openChat({ name: "殿上", office: "一夜一卷", status: "active" } as Minister);
         }}
         onOpenEdict={() => openModal("edict")}
         onUploadPortrait={uploadPortrait}

@@ -109,9 +109,9 @@ export function useAudienceChat(
     // App 据 null 早退，杜绝陈旧快照的建议/可撤回/失败/临时大臣元数据回覆（#499）。
     async (minister: string): Promise<AudienceHistoryData | null> => {
       const gen = ++chatGenRef.current;
-      const data = await api<AudienceHistoryData>(
-        `/api/ministers/${encodeURIComponent(minister)}/chat`,
-      );
+      const data = await api<AudienceHistoryData>(minister === "殿上"
+        ? "/api/audience/chat"
+        : `/api/ministers/${encodeURIComponent(minister)}/chat`);
       // generation + 面板守卫：更新的 load/send/reset 已发生或已切人 → 陈旧快照，拒收返 null。
       if (chatGenRef.current !== gen || selectedMinisterRef.current !== minister) return null;
       dispatchChat({ type: "history", history: data.history });

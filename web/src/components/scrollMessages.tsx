@@ -24,14 +24,12 @@ export function ScrollMessages({
   ministers: Minister[];
 }) {
   const groups: Array<{ key: string; turnId?: number; messages: typeof messages }> = [];
-  const turns = new Map<number, (typeof groups)[number]>();
   messages.forEach((message, index) => {
     const turnId = "chat_turn_id" in message ? message.chat_turn_id : undefined;
     if (turnId != null) {
-      let group = turns.get(turnId);
-      if (!group) {
-        group = { key: `turn-${turnId}`, turnId, messages: [] };
-        turns.set(turnId, group);
+      let group = groups[groups.length - 1];
+      if (!group || group.turnId !== turnId) {
+        group = { key: `turn-${turnId}-${index}`, turnId, messages: [] };
         groups.push(group);
       }
       group.messages.push(message);

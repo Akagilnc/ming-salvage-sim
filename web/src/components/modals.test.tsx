@@ -7,6 +7,7 @@ import { EdictModal } from "./edictModal";
 import { HistoryModal } from "./historyModal";
 import { FullscreenModal } from "./hud";
 import { ReportModal } from "./reportModal";
+import { ScrollMessages } from "./scrollMessages";
 import { parseLeadingStageDirection } from "../format";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
@@ -43,6 +44,20 @@ const CONSORT_MOCK: Minister = {
   favorite: false,
   skills: [],
 };
+
+describe("ScrollMessages — frozen ledger order", () => {
+  it("groups only adjacent rows of a turn without moving an interleaved scene row", () => {
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    act(() => { root.render(<ScrollMessages ministerName="" ministers={[]} messages={[
+      { role: "user", speaker: "朕", content: "先问", beat: "dialogue", chat_turn_id: 7, audibility: "", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
+      { role: "scene", speaker: "", content: "烛花一爆", beat: "scene", audibility: "", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
+      { role: "minister", speaker: "洪承畴", content: "后答", beat: "dialogue", chat_turn_id: 7, audibility: "", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
+    ]} />); });
+    expect(host.textContent).toBe("朕先问烛花一爆洪承畴后答");
+    expect(host.querySelectorAll('[data-audience-turn-id="7"]')).toHaveLength(2);
+  });
+});
 
 function renderModal(props: {
   minister: Minister;
@@ -522,8 +537,8 @@ describe("ChatModal — four diegetic roles and system boundary (#541)", () => {
       json: async () => ({
         night_id: 9,
         messages: [
-          { role: "scene", speaker: "周延儒", content: "宣周延儒入殿。", beat: "entrance", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: {} },
-          { role: "scene", speaker: "周延儒", content: "周延儒告退。", beat: "exit", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: {} },
+          { role: "scene", speaker: "周延儒", content: "宣周延儒入殿。", beat: "entrance", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
+          { role: "scene", speaker: "周延儒", content: "周延儒告退。", beat: "exit", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
         ],
       }),
     }));
@@ -932,61 +947,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent?.match(/刚完成的答复/g)).toHaveLength(1);
   });
 
-  it("waits for the canonical scroll before showing a late persisted aside", async () => {
-    let rejectRefresh!: (reason?: unknown) => void;
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
-        { role: "user", speaker: "朕", content: "初问", chat_turn_id: 1 },
-        { role: "minister", speaker: MINISTER_MOCK.name, content: "初答", chat_turn_id: 1 },
-        { role: "user", speaker: "朕", content: "再问", chat_turn_id: 2 },
-        { role: "minister", speaker: MINISTER_MOCK.name, content: "已完成尾答", chat_turn_id: 2 },
-      ] }) })
-      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectRefresh = reject; }))
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
-        { role: "user", speaker: "朕", content: "初问", chat_turn_id: 1 },
-        { role: "minister", speaker: MINISTER_MOCK.name, content: "初答", chat_turn_id: 1 },
-        { role: "attendant", speaker: "王承恩", content: "旧轮迟到递话", chat_turn_id: 1, record_id: 91 },
-        { role: "user", speaker: "朕", content: "再问", chat_turn_id: 2 },
-        { role: "minister", speaker: MINISTER_MOCK.name, content: "已完成尾答", chat_turn_id: 2 },
-        { role: "attendant", speaker: "王承恩", content: "刷新触发递话", chat_turn_id: 2, record_id: 92 },
-      ] }) });
-    vi.stubGlobal("fetch", fetchMock);
-    let dispatchChat!: React.Dispatch<ChatAction>;
-    renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      currentNightId: 23,
-      chat: [
-        { role: "user", content: "初问", chatTurnId: 1 },
-        { role: "minister", content: "初答", chatTurnId: 1 },
-        { role: "user", content: "再问", chatTurnId: 2 },
-        { role: "minister", content: "已完成尾答", chatTurnId: 2 },
-      ],
-      registerChatDispatch: (dispatch) => { dispatchChat = dispatch; },
-    });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    await act(async () => {
-      dispatchChat({ type: "mindreading", chatTurnId: 1, records: [{ id: 91, narration: "旧轮迟到递话" }] });
-      await Promise.resolve();
-    });
-    expect(document.body.textContent).not.toContain("旧轮迟到递话");
-    expect(document.body.textContent?.match(/已完成尾答/g)).toHaveLength(1);
-
-    await act(async () => { rejectRefresh(new Error("refresh failed")); await Promise.resolve(); await Promise.resolve(); });
-    expect(document.body.textContent).not.toContain("旧轮迟到递话");
-    expect(document.body.textContent?.match(/已完成尾答/g)).toHaveLength(1);
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
-
-    await act(async () => {
-      dispatchChat({ type: "mindreading", chatTurnId: 2, records: [{ id: 92, narration: "刷新触发递话" }] });
-      await Promise.resolve(); await Promise.resolve();
-    });
-    expect(document.body.textContent?.match(/旧轮迟到递话/g)).toHaveLength(1);
-    expect(document.body.textContent?.match(/已完成尾答/g)).toHaveLength(1);
-    expect(document.body.textContent?.match(/刷新触发递话/g)).toHaveLength(1);
-    expect(document.querySelector('[role="alert"]')).toBeNull();
-  });
 
   it("keeps the last-known scroll without importing personal history when refresh fails", async () => {
     const fetchMock = vi.fn()

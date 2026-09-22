@@ -98,7 +98,10 @@ export const streamChat = async (
     signalOrOptions instanceof AbortSignal || signalOrOptions === undefined
       ? { signal: signalOrOptions }
       : signalOrOptions;
-  const response = await fetch(`/api/ministers/${encodeURIComponent(ministerName)}/chat/stream`, {
+  const url = ministerName === "殿上"
+    ? "/api/audience/chat/stream"
+    : `/api/ministers/${encodeURIComponent(ministerName)}/chat/stream`;
+  const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, ...(options.intent ? { intent: options.intent } : {}) }),

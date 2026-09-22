@@ -147,7 +147,11 @@ export function useChatActions({
   }, [activeModal]);
 
   const activeMinister = state && selectedMinister
-    ? [...state.ministers, ...(state.consorts || [])].find((m) => m.name === selectedMinister) || temporaryActiveMinister
+    ? ([...state.ministers, ...(state.consorts || [])].find((m) => m.name === selectedMinister)
+      || (selectedMinister === "殿上" ? {
+        name: "殿上", office: "一夜一卷", office_type: "scene", faction: "", style: "",
+        status: "active", status_label: "在殿", summary: "", favorite: false, skills: [],
+      } : temporaryActiveMinister))
     : null;
   const activeChatFailures = activeMinister
     ? (failureRecoveryMode
@@ -222,15 +226,6 @@ export function useChatActions({
         const responseFailures = data.pending_action_failures || [];
         // 成功的密令与拟旨由各自持久投影自然显现；系统层只承载失败/重试/恢复。
         setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
-        if (data.next_minister && !responseFailures.length) {
-          // 换人：设 selectedMinister 即触发 selected-minister effect 加载新面板（不再显式重复加载）。
-          resetPanel();
-          setSuggestions([]);
-          setCanUndoLastChat(false);
-          setChatFailures([]);
-          setReplyRetry(null);
-          setSelectedMinister(data.next_minister);
-        }
         if (data.court_action === "dismiss") {
           clearPendingText();
         }
@@ -301,7 +296,9 @@ export function useChatActions({
     setComposerHint("");
     clearPendingText();
     try {
-      const data = await api<ChatUndoResponse>(`/api/ministers/${encodeURIComponent(targetMinisterName)}/chat/undo`, {
+      const data = await api<ChatUndoResponse>(targetMinisterName === "殿上"
+        ? "/api/audience/chat/undo"
+        : `/api/ministers/${encodeURIComponent(targetMinisterName)}/chat/undo`, {
         method: "POST",
       });
       // Undo's GLOBAL effects (secret orders / directives / full state) apply
@@ -349,7 +346,9 @@ export function useChatActions({
     setError("");
     setChatNotice("");
     try {
-      const data = await api<ChatResponse>(`/api/ministers/${encodeURIComponent(targetMinisterName)}/reply/retry`, {
+      const data = await api<ChatResponse>(targetMinisterName === "殿上"
+        ? "/api/audience/reply/retry"
+        : `/api/ministers/${encodeURIComponent(targetMinisterName)}/reply/retry`, {
         method: "POST",
       });
       // 拟旨计数是全局态：面板切走仍须即时投影，不得等 refresh / 不得被陈旧判断吞掉。
