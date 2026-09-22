@@ -7,6 +7,8 @@ export type MinisterScrollLensOptions = {
    * Only applies when the turn has no named minister owner yet. No cache / durable write.
    */
   claimedTurnId?: number | null;
+  /** A single-scene turn belongs to every durable participant in that archived night. */
+  sceneSpeaker?: string;
 };
 
 /**
@@ -73,7 +75,8 @@ export function filterScrollForSelectedMinister(
       const turnId = message.chat_turn_id;
       if (turnId) {
         // Formal turn: structured turnOwner wins over any segment ownerHint.
-        if (turnOwner.get(turnId) === selectedMinister) {
+        const owner = turnOwner.get(turnId);
+        if (owner === selectedMinister || (!!options?.sceneSpeaker && owner === options.sceneSpeaker)) {
           out.push(message);
         }
         // else: other minister's turn, or orphan turn — drop from this window

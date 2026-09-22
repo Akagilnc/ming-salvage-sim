@@ -1,4 +1,5 @@
 import React from "react";
+import { AUDIENCE_SCENE_SPEAKER } from "./audienceScene";
 import { createRoot } from "react-dom/client";
 import { Crown, X } from "lucide-react";
 import { api } from "./api";
@@ -99,6 +100,7 @@ export function App() {
   const [undoneChatIdentity, setUndoneChatIdentity] = React.useState<ChatIdentity | null>(null);
   const [audienceScrollGeneration, setAudienceScrollGeneration] = React.useState(0);
   const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
+  const audienceResumeCheckedRef = React.useRef(false);
   const invalidateAudienceScroll = React.useCallback(() => {
     setAudienceScrollGeneration((generation) => generation + 1);
   }, []);
@@ -156,6 +158,7 @@ export function App() {
     failureRecoveryMode,
     activeMinister,
     openChat,
+    summonMinister,
     sendChat,
     undoLastChat,
     retryInterruptedReply,
@@ -267,6 +270,7 @@ export function App() {
     // #1808 C：再入局清上一局 settlementHudError，防陈旧失败冒充当前 HUD。
     clearSettlementHudError();
     setUndoneChatIdentity(null);
+    audienceResumeCheckedRef.current = false;
     setAppView("game");
     await loadState();
   }, [loadState, resetLocalEdictState, clearSettlementHudError]);
@@ -279,6 +283,7 @@ export function App() {
     resetLocalEdictState();
     // #1808 C：退菜单清 settlementHudError，接缝归既有退出路径。
     clearSettlementHudError();
+    audienceResumeCheckedRef.current = false;
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
     setUndoneChatIdentity(null);
@@ -362,6 +367,19 @@ export function App() {
   React.useEffect(() => {
     selectedMinisterRef.current = selectedMinister;
   }, [selectedMinister]);
+
+  React.useEffect(() => {
+    if (!state || appView !== "game" || audienceResumeCheckedRef.current) return;
+    audienceResumeCheckedRef.current = true;
+    api<{ night_id: number; status: string }>("/api/audience/scroll")
+      .then((scroll) => {
+        if (scroll.night_id > 0 && scroll.status === "open") {
+          setSelectedMinister(AUDIENCE_SCENE_SPEAKER);
+          setActiveModal("chat");
+        }
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [state, appView]);
 
   // 全局 ESC：按 z-index 优先级，最前面的弹窗先关。
   // ending 须同时 setEndingDismissed，否则自动重开 effect 会立刻弹回。
@@ -618,7 +636,9 @@ export function App() {
         open={drawerOpen}
         onGroupChange={setMinisterGroup}
         onClose={() => setDrawerOpen(false)}
-        onOpenChat={openChat}
+        onOpenAudience={() => {
+          openChat({ name: AUDIENCE_SCENE_SPEAKER, office: "一夜一卷", status: "active" } as Minister);
+        }}
         onOpenEdict={() => openModal("edict")}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
@@ -669,10 +689,7 @@ export function App() {
       <AppointmentDrawer
         ministers={state.ministers}
         open={appointmentDrawerOpen}
-        onOpenChat={openChat}
         onClose={() => setAppointmentDrawerOpen(false)}
-        chatEntryEnabled={chatEntryEnabled}
-        phase={state.turn.phase}
       />
 
       {mapIntelVisible ? (
@@ -696,7 +713,7 @@ export function App() {
       ) : null}
 
       {chatOpen && activeMinister ? (
-        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" hideTitle onClose={() => setActiveModal("none")}>
+        <FullscreenModal title={(state.consorts || []).some((c) => c.name === activeMinister.name) ? `召对：${activeMinister.name}` : "乾清宫 · 夜"} subtitle={activeMinister.office} bgClass="modal-bg-chat" hideTitle onClose={() => setActiveModal("none")}>
           <ChatModal
             minister={activeMinister}
             ministers={audienceRoster}
@@ -833,8 +850,7 @@ export function App() {
               setError(settlementClosedReason(state?.turn.phase));
               return;
             }
-            setActiveModal("chat");
-            setSelectedMinister(name);
+            summonMinister(name);
           }}
         />
       ) : null}

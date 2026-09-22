@@ -23,14 +23,32 @@ export function ScrollMessages({
   ministerName: string;
   ministers: Minister[];
 }) {
-  return <>{messages.map((message, index) => {
+  const groups: Array<{ key: string; turnId?: number; messages: typeof messages }> = [];
+  messages.forEach((message, index) => {
+    const turnId = "chat_turn_id" in message ? message.chat_turn_id : undefined;
+    if (turnId != null) {
+      let group = groups[groups.length - 1];
+      if (!group || group.turnId !== turnId) {
+        group = { key: `turn-${turnId}-${index}`, turnId, messages: [] };
+        groups.push(group);
+      }
+      group.messages.push(message);
+      return;
+    }
+    groups.push({ key: `loose-${message.role}-${index}`, messages: [message] });
+  });
+
+  const renderMessage = (message: ChatDisplayMessage | AudienceScrollMessage, index: number) => {
+    const persistedId = "record_id" in message && message.record_id != null
+      ? `record-${message.record_id}`
+      : `${message.role}-${index}`;
     const pending = "pending" in message && message.pending;
     const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
     const beat = "beat" in message ? message.beat : "dialogue";
     // #1280 / ADR 0045：scene/attendant 与大臣气泡同走 organic markdown 剥离链。
     if (message.role === "scene") {
       const sceneText = stripOrganicMarkdown(message.content);
-      return <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>
+      return <div className={`chat-message scene beat-${beat}`} key={persistedId}>
         {beat === "divider" ? <div className="scene-divider"><hr aria-label={speaker ? `宣${speaker}` : "分隔"} />{speaker ? <strong>{speaker}</strong> : null}</div> : sceneText ? <p>{sceneText}</p> : null}
       </div>;
     }
@@ -52,11 +70,17 @@ export function ScrollMessages({
             ? <mark className="hl" key={`h-${segIndex}`}>{seg.text}</mark>
             : <React.Fragment key={`t-${segIndex}`}>{seg.text}</React.Fragment>)
       : content;
-    return <div className={`chat-message ${message.role} ${isAside ? "aside" : ""} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
+    return <div className={`chat-message ${message.role} ${isAside ? "aside" : ""} ${pending ? "pending" : ""}`} key={persistedId}>
       {isAside ? <MinisterPortrait className="aside-avatar" primary={attendantPortrait?.primary ?? ""} fallback={attendantPortrait?.fallback} name={speaker} /> : null}
       <span>{speaker}</span>
       {action ? <em className="action">{action}</em> : null}
       <p>{body}</p>
     </div>;
-  })}</>;
+  };
+
+  return <>{groups.map((group) => (
+    <div className="audience-turn" data-audience-turn-id={group.turnId} key={group.key}>
+      {group.messages.map(renderMessage)}
+    </div>
+  ))}</>;
 }

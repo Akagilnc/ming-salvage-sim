@@ -15,6 +15,7 @@ import type {
   ServerChatMessage,
   Suggestion,
 } from "./types";
+import { AUDIENCE_SCENE_SPEAKER, audienceRetryPath, audienceUndoPath } from "./audienceScene";
 
 type RefreshDurableProjection = (options?: {
   secretOrders?: boolean;
@@ -23,7 +24,7 @@ type RefreshDurableProjection = (options?: {
 }) => Promise<GameState | null>;
 
 // 召对动作群：召对面板的全部外围态（建议/提示/失败/恢复模式/输入框）与 busy 动作
-// （开召对/发问/撤回/重试/失败恢复）。SSE 流、历史投影、读心轮询的归属仍在
+// （开召对/发问/撤回/重试/失败恢复）。SSE 流、历史投影的归属仍在
 // useAudienceChat（#499 单一控制器）——本 hook 只经其回调补全面板外围写入，
 // 面板写入一律按 selectedMinisterRef 当前大臣门控（陈旧快照绝不回覆新面板）。
 export function useChatActions({
@@ -147,7 +148,11 @@ export function useChatActions({
   }, [activeModal]);
 
   const activeMinister = state && selectedMinister
-    ? [...state.ministers, ...(state.consorts || [])].find((m) => m.name === selectedMinister) || temporaryActiveMinister
+    ? ([...state.ministers, ...(state.consorts || [])].find((m) => m.name === selectedMinister)
+      || (selectedMinister === AUDIENCE_SCENE_SPEAKER ? {
+        name: AUDIENCE_SCENE_SPEAKER, office: "一夜一卷", office_type: "scene", faction: "", style: "",
+        status: "active", status_label: "在殿", summary: "", favorite: false, skills: [],
+      } : temporaryActiveMinister))
     : null;
   const activeChatFailures = activeMinister
     ? (failureRecoveryMode
@@ -159,14 +164,19 @@ export function useChatActions({
     if (!failures.length) return false;
     setFailureRecoveryMode(true);
     setChatFailures((items) => mergePendingActionFailures(items, failures));
-    const targetName = failures.find((failure) => failure.minister_name)?.minister_name || "";
+    const attributedName = failures.find((failure) => failure.minister_name)?.minister_name || "";
+    const targetScene = !attributedName
+      ? ""
+      : (state?.consorts || []).some((consort) => consort.name === attributedName)
+        ? attributedName
+        : AUDIENCE_SCENE_SPEAKER;
     suppressNextReportRef.current = true;
     const initialMinister = selectedMinisterRef.current;
     try {
       await loadState();
       if (selectedMinisterRef.current !== initialMinister) return false;
-      selectedMinisterRef.current = targetName;
-      setSelectedMinister(targetName);
+      selectedMinisterRef.current = targetScene;
+      setSelectedMinister(targetScene);
       setActiveModal("chat");
       setChatNotice("");
       clearPendingText();
@@ -222,15 +232,6 @@ export function useChatActions({
         const responseFailures = data.pending_action_failures || [];
         // 成功的密令与拟旨由各自持久投影自然显现；系统层只承载失败/重试/恢复。
         setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
-        if (data.next_minister && !responseFailures.length) {
-          // 换人：设 selectedMinister 即触发 selected-minister effect 加载新面板（不再显式重复加载）。
-          resetPanel();
-          setSuggestions([]);
-          setCanUndoLastChat(false);
-          setChatFailures([]);
-          setReplyRetry(null);
-          setSelectedMinister(data.next_minister);
-        }
         if (data.court_action === "dismiss") {
           clearPendingText();
         }
@@ -291,6 +292,14 @@ export function useChatActions({
     }
   };
 
+  const summonMinister = (ministerName: string) => {
+    const scene = { name: AUDIENCE_SCENE_SPEAKER, office: "一夜一卷", status: "active" } as Minister;
+    openChat(scene);
+    // The command starts in the same event turn, before React commits selectedMinister.
+    selectedMinisterRef.current = AUDIENCE_SCENE_SPEAKER;
+    void sendChat(AUDIENCE_SCENE_SPEAKER, `宣${ministerName}`);
+  };
+
   const undoLastChat = async (targetMinisterName: string) => {
     if (busy || !canUndoLastChat) return;
     // #1732 B：确认门控移到 ChatModal 就地条；此处直接执行。
@@ -301,7 +310,7 @@ export function useChatActions({
     setComposerHint("");
     clearPendingText();
     try {
-      const data = await api<ChatUndoResponse>(`/api/ministers/${encodeURIComponent(targetMinisterName)}/chat/undo`, {
+      const data = await api<ChatUndoResponse>(audienceUndoPath(targetMinisterName), {
         method: "POST",
       });
       // Undo's GLOBAL effects (secret orders / directives / full state) apply
@@ -349,7 +358,7 @@ export function useChatActions({
     setError("");
     setChatNotice("");
     try {
-      const data = await api<ChatResponse>(`/api/ministers/${encodeURIComponent(targetMinisterName)}/reply/retry`, {
+      const data = await api<ChatResponse>(audienceRetryPath(targetMinisterName), {
         method: "POST",
       });
       // 拟旨计数是全局态：面板切走仍须即时投影，不得等 refresh / 不得被陈旧判断吞掉。
@@ -406,6 +415,7 @@ export function useChatActions({
     failureRecoveryMode,
     activeMinister,
     openChat,
+    summonMinister,
     sendChat,
     undoLastChat,
     retryInterruptedReply,

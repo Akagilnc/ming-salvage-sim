@@ -224,4 +224,15 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     expect(hong.some((m) => m.speaker === "许誉卿")).toBe(false);
     expect(hong.some((m) => m.beat === "entrance" && m.speaker === "洪承畴")).toBe(true);
   });
+
+  it("现行单场景轮按参与臣过滤时保留殿上正式对话", () => {
+    const scroll = [
+      msg({ role: "user", speaker: "朕", content: "诸卿以为如何？", beat: "dialogue", chat_turn_id: 30 }),
+      msg({ role: "minister", speaker: "殿上", content: "群臣各陈所见。", beat: "dialogue", chat_turn_id: 30 }),
+      msg({ role: "attendant", speaker: "王承恩", content: "洪承畴亦在列。", beat: "aside", chat_turn_id: 30 }),
+    ];
+    expect(filterScrollForSelectedMinister(scroll, "洪承畴", { sceneSpeaker: "殿上" }).map((m) => m.content)).toEqual([
+      "诸卿以为如何？", "群臣各陈所见。", "洪承畴亦在列。",
+    ]);
+  });
 });
