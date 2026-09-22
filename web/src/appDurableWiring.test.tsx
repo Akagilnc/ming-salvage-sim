@@ -872,6 +872,37 @@ const byAria = (host: HTMLElement, label: string) =>
   host.querySelector(`[aria-label="${label}"]`) as HTMLElement | null;
 
 describe("#1236 App must-face wiring（settlement_display 真链）", () => {
+  it("#1849 后宫妃嫔从真实入口读取既有 legacy 会话", async () => {
+    const paths: string[] = [];
+    const liveState = settlementBaseState("player", {
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+    });
+    stubSettlementFetch(liveState, [], undefined, (url) => {
+      paths.push(url.pathname);
+      if (url.pathname === `/api/ministers/${encodeURIComponent(SNAP_CONSORT)}/chat`) {
+        return jsonResp({
+          minister: liveState.consorts[0], history: [], suggestions: [],
+          campaign_id: "c1", night_id: 0, can_undo_last_chat: false,
+        });
+      }
+    });
+
+    const host = await mountApp();
+    await click(byAria(host, "后宫"));
+    const consort = Array.from(host.querySelectorAll(".harem-drawer.open button.minister-card")).find(
+      (button) => (button.textContent || "").includes(SNAP_CONSORT),
+    );
+    expect(consort).toBeTruthy();
+    await click(consort);
+
+    await act(async () => {
+      await vi.waitFor(() => expect(paths).toContain(
+        `/api/ministers/${encodeURIComponent(SNAP_CONSORT)}/chat`,
+      ));
+    });
+    expect(paths).not.toContain("/api/audience/chat");
+  });
+
   it("phase===settling：续跑入口可点；刷新重挂后仍在", async () => {
     stubSettlementFetch(settlementBaseState("settling"));
     const host = await mountApp();

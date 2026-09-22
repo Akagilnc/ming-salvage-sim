@@ -305,7 +305,7 @@ export function useChatActions({
     setComposerHint("");
     clearPendingText();
     try {
-      const data = await api<ChatUndoResponse>(audienceUndoPath(), {
+      const data = await api<ChatUndoResponse>(audienceUndoPath(targetMinisterName), {
         method: "POST",
       });
       // Undo's GLOBAL effects (secret orders / directives / full state) apply
@@ -353,7 +353,9 @@ export function useChatActions({
     setError("");
     setChatNotice("");
     try {
-      const data = await api<ChatResponse>(audienceRetryPath(), {
+      const data = await api<ChatResponse>(audienceRetryPath(
+        replyRetry.minister_name || targetMinisterName,
+      ), {
         method: "POST",
       });
       // 拟旨计数是全局态：面板切走仍须即时投影，不得等 refresh / 不得被陈旧判断吞掉。
