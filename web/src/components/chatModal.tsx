@@ -190,7 +190,9 @@ export function ChatModal({
     && streamingTurnRef.current.key === `${currentCampaignId}:${currentNightId}:${streamingTurnRef.current.chatTurnId}`
     && displayMessages.some((message) => "chat_turn_id" in message
       && message.chat_turn_id === streamingTurnRef.current?.chatTurnId);
-  if (!streamingMinisterMessage && streamingTurnAlreadyPersisted) {
+  const streamingTurnFailed = !!failedIdentity
+    && streamingTurnRef.current?.key === `${failedIdentity.campaign_id}:${failedIdentity.night_id}:${failedIdentity.chat_turn_id}`;
+  if (!streamingMinisterMessage && (streamingTurnAlreadyPersisted || streamingTurnFailed)) {
     streamingTurnRef.current = null;
   }
   const streamingTurn = streamingTurnRef.current;

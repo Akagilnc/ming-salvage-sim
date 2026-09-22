@@ -60,6 +60,7 @@ function renderModal(props: {
   onRetryReply?: (ministerName: string) => void;
   pendingUserMessage?: string;
   pendingIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
+  failedIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   suggestions?: Suggestion[];
   secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
   onSend?: (ministerName: string, text?: string) => void;
@@ -73,6 +74,7 @@ function renderModal(props: {
   registerChatUpdate?: (update: (chat: ChatMessage[]) => void) => void;
   registerStreamingUpdate?: (update: (message: string) => void) => void;
   registerPendingIdentityUpdate?: (update: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void) => void;
+  registerFailedIdentityUpdate?: (update: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void) => void;
   registerNightUpdate?: (update: (nightId: number) => void) => void;
   registerUndoUpdate?: (update: (chatTurnId: number | null) => void) => void;
   registerChatDispatch?: (dispatch: React.Dispatch<ChatAction>) => void;
@@ -92,6 +94,7 @@ function renderModal(props: {
     const [chat, dispatchChat] = React.useReducer(chatReducer, props.chat ?? []);
     const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState(props.streamingMinisterMessage ?? "");
     const [pendingIdentity, setPendingIdentity] = React.useState(props.pendingIdentity ?? null);
+    const [failedIdentity, setFailedIdentity] = React.useState(props.failedIdentity ?? null);
     const setChat = React.useCallback((next: ChatMessage[]) => dispatchChat({
       type: "history",
       history: next.map((message) => ({
@@ -104,6 +107,7 @@ function renderModal(props: {
     React.useEffect(() => props.registerChatUpdate?.(setChat), [setChat]);
     React.useEffect(() => props.registerStreamingUpdate?.(setStreamingMinisterMessage), []);
     React.useEffect(() => props.registerPendingIdentityUpdate?.(setPendingIdentity), []);
+    React.useEffect(() => props.registerFailedIdentityUpdate?.(setFailedIdentity), []);
     React.useEffect(() => props.registerNightUpdate?.(setCurrentNightId), []);
     React.useEffect(() => props.registerUndoUpdate?.(setUndoneChatTurnId), []);
     React.useEffect(() => props.registerChatDispatch?.(dispatchChat), []);
@@ -122,7 +126,7 @@ function renderModal(props: {
         suggestions={props.suggestions ?? []}
         pendingUserMessage={props.pendingUserMessage ?? ""}
         pendingIdentity={pendingIdentity}
-        failedIdentity={null}
+        failedIdentity={failedIdentity}
         streamingMinisterMessage={streamingMinisterMessage}
         chatNotice=""
         chatFailures={props.chatFailures ?? []}
@@ -1169,6 +1173,34 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     });
     await act(async () => { await vi.waitFor(() => expect(document.querySelectorAll('[data-audience-turn-id="11"] .chat-message')).toHaveLength(3)); });
     expect(document.querySelector('[data-audience-turn-id="11"]')).toBe(streamingTurn);
+  });
+
+  it("removes an unpersisted streamed turn when its request fails", async () => {
+    let updateStreaming!: (message: string) => void;
+    let updatePendingIdentity!: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void;
+    let updateFailedIdentity!: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [] }) }));
+    renderModal({
+      minister: hong,
+      ministers: [hong, xu],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+      pendingIdentity: { campaign_id: "test-campaign", night_id: 23, chat_turn_id: 11 },
+      streamingMinisterMessage: "未落卷回话",
+      registerStreamingUpdate: (update) => { updateStreaming = update; },
+      registerPendingIdentityUpdate: (update) => { updatePendingIdentity = update; },
+      registerFailedIdentityUpdate: (update) => { updateFailedIdentity = update; },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector('[data-audience-turn-id="11"]')).not.toBeNull();
+
+    await act(async () => {
+      updateStreaming("");
+      updatePendingIdentity(null);
+      updateFailedIdentity({ campaign_id: "test-campaign", night_id: 23, chat_turn_id: 11 });
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-audience-turn-id="11"]')).toBeNull();
   });
 
   it("半轮 replyRetry：保留同 turn user 气泡且不重复 pending 气泡", async () => {
