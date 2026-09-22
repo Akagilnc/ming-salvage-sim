@@ -287,6 +287,14 @@ export function useChatActions({
     }
   };
 
+  const summonMinister = (ministerName: string) => {
+    const scene = { name: AUDIENCE_SCENE_SPEAKER, office: "一夜一卷", status: "active" } as Minister;
+    openChat(scene);
+    // The command starts in the same event turn, before React commits selectedMinister.
+    selectedMinisterRef.current = AUDIENCE_SCENE_SPEAKER;
+    void sendChat(AUDIENCE_SCENE_SPEAKER, `宣${ministerName}`);
+  };
+
   const undoLastChat = async (targetMinisterName: string) => {
     if (busy || !canUndoLastChat) return;
     // #1732 B：确认门控移到 ChatModal 就地条；此处直接执行。
@@ -297,7 +305,7 @@ export function useChatActions({
     setComposerHint("");
     clearPendingText();
     try {
-      const data = await api<ChatUndoResponse>(audienceUndoPath(targetMinisterName), {
+      const data = await api<ChatUndoResponse>(audienceUndoPath(), {
         method: "POST",
       });
       // Undo's GLOBAL effects (secret orders / directives / full state) apply
@@ -345,9 +353,7 @@ export function useChatActions({
     setError("");
     setChatNotice("");
     try {
-      // The visible portrait may be a named participant; the persisted interrupted
-      // turn owns routing. Never let a presentation anchor revive the retired route.
-      const data = await api<ChatResponse>(audienceRetryPath(replyRetry.minister_name || targetMinisterName), {
+      const data = await api<ChatResponse>(audienceRetryPath(), {
         method: "POST",
       });
       // 拟旨计数是全局态：面板切走仍须即时投影，不得等 refresh / 不得被陈旧判断吞掉。
@@ -404,6 +410,7 @@ export function useChatActions({
     failureRecoveryMode,
     activeMinister,
     openChat,
+    summonMinister,
     sendChat,
     undoLastChat,
     retryInterruptedReply,

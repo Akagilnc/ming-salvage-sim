@@ -158,6 +158,7 @@ export function App() {
     failureRecoveryMode,
     activeMinister,
     openChat,
+    summonMinister,
     sendChat,
     undoLastChat,
     retryInterruptedReply,
@@ -849,8 +850,7 @@ export function App() {
               setError(settlementClosedReason(state?.turn.phase));
               return;
             }
-            setActiveModal("chat");
-            setSelectedMinister(name);
+            summonMinister(name);
           }}
         />
       ) : null}

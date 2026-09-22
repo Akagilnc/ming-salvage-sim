@@ -181,6 +181,36 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.textContent).toContain("杨嗣昌御前低语");
   });
 
+  it("密令召见从真实入口在同一殿上卷宣人，不再打开按大臣实时会话 (#1849)", async () => {
+    const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] };
+    const order = { id: 7, title: "整饬边备", content: "查核军饷", status: "active", minister_name: minister.name, year_issued: 1627, period_issued: 10, dossier_progress: [] };
+    const calls: Array<{ path: string; body?: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      calls.push({ path: decodeURIComponent(u.pathname), body: typeof init?.body === "string" ? init.body : undefined });
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [order] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, status: "open", messages: [] });
+      if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ campaign_id: "c", night_id: 23, minister, history: [], suggestions: [], can_undo_last_chat: false });
+      if (u.pathname.endsWith("/api/audience/chat/stream")) return sseResp("end", {});
+      return jsonResp({});
+    }));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { trackRoot(host).render(<App />); });
+    await tick();
+    await click(cmdByCaption(host, "密令"));
+    await act(async () => { await vi.waitFor(() => expect(secretDialog(host)).not.toBeNull()); });
+    await click(findButton(host, "整饬边备"));
+    await click(findButton(host, `召见 ${minister.name}`));
+    await act(async () => {
+      await vi.waitFor(() => expect(calls.some((call) => call.body?.includes(`宣${minister.name}`))).toBe(true));
+    });
+    expect(calls.some((call) => call.path.includes("/api/ministers/"))).toBe(false);
+    expect(calls.some((call) => call.path.endsWith("/api/audience/chat/stream"))).toBe(true);
+  });
+
   it("typed SSE error 经真实召对链只向玩家呈现结构化 message", async () => {
     const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] };
     const detail = {
