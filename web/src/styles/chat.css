@@ -17,6 +17,26 @@
   min-height: 0;
 }
 
+.audience-roster {
+  display: grid;
+  gap: 6px;
+}
+
+.audience-roster h2 {
+  margin: 0 0 4px;
+}
+
+.audience-roster button {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+}
+
+.audience-roster small {
+  color: var(--muted);
+}
+
 .chat-portrait-wrap {
   /* 立绘卡贴左栏底部；高度受限时缩小而不是让 cover 裁掉头脚。 */
   position: sticky;
@@ -423,4 +443,3 @@ button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
 }
-

@@ -2,7 +2,6 @@ import React from "react";
 import { Loader2, Lock, RotateCcw, Send, Star, X } from "lucide-react";
 import { MinisterPlaceOffice, MinisterPortrait } from "./hud";
 import { api } from "../api";
-import { filterScrollForSelectedMinister } from "../ministerScrollLens";
 import { ScrollMessages, portraitSources } from "./scrollMessages";
 import type {
   AudienceScrollMessage,
@@ -126,24 +125,10 @@ export function ChatModal({
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
   // The night scroll is the sole live authority. Personal chat history is only the legacy fallback;
   // mixing it here reintroduces cross-night records and snapshot-difference heuristics.
-  // #1511: open-night branch applies a pure selected-minister lens — never dump the campaign-wide scroll.
-  // Half-turn claim is window-local presentation only (replyRetry / in-flight pendingIdentity).
-  const claimedTurnId = replyRetry?.chat_turn_id
-    ?? (
-      pendingIdentity
-      && pendingIdentity.campaign_id === currentCampaignId
-      && pendingIdentity.night_id === currentNightId
-        ? pendingIdentity.chat_turn_id
-        : null
-    );
   const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollMode === "legacy" || (effectiveScrollState.kind === "none" && currentNightId === 0)
     ? [...chat]
     : effectiveScrollState.kind === "night"
-      ? filterScrollForSelectedMinister(
-        effectiveScrollState.messages.filter((message) => !failedInThisScroll(message)),
-        minister.name,
-        { claimedTurnId },
-      )
+      ? effectiveScrollState.messages.filter((message) => !failedInThisScroll(message))
       : [];
 
   React.useEffect(() => {
@@ -196,8 +181,8 @@ export function ChatModal({
     : minister;
   if (streamingMinisterMessage) {
     displayMessages.push({
-      role: "minister",
-      speaker: currentMinister.name,
+      role: "scene",
+      speaker: "",
       audibility: "",
       time: null,
       content: streamingMinisterMessage,
@@ -205,8 +190,7 @@ export function ChatModal({
       beat: "dialogue",
       highlights: [],
       container: { time_of_day: "", location: "", audience_type: "" },
-      pending: true,
-    } as ChatDisplayMessage & AudienceScrollMessage);
+    } as AudienceScrollMessage);
   }
   const { primary: portraitPrimary, fallback: portraitFallback } = portraitSources(currentMinister, portraitPrefix);
   const visibleSecretOrders = secretOrders.filter((order) => order.minister_name === currentMinister.name);
@@ -263,13 +247,13 @@ export function ChatModal({
   };
 
   const handleSend = () => {
-    dispatchSend(currentMinister.name, input);
+    dispatchSend(minister.name, input);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    dispatchSend(currentMinister.name, input);
+    dispatchSend(minister.name, input);
   };
 
   const sendSuggestion = (suggestion: Suggestion) => {
@@ -278,14 +262,24 @@ export function ChatModal({
       onInput(suggestion.text);
       setTimeout(() => inputRef.current?.focus(), 0);
     } else {
-      dispatchSend(currentMinister.name, suggestion.text);
+      dispatchSend(minister.name, suggestion.text);
     }
   };
 
   return (
     <div className="chat-full-grid">
       <aside className="modal-pane minister-side">
-        <div className="minister-profile">
+        {scrollMode === "audience" ? (
+          <div className="audience-roster" aria-label="在殿花名册">
+            <h2>乾清宫 · 夜</h2>
+            {ministers.filter((candidate) => !candidate.status || candidate.status === "active").map((candidate) => (
+              <button type="button" key={candidate.id ?? candidate.name} onClick={() => dispatchSend(minister.name, `宣${candidate.name}`)} disabled={!!busy}>
+                {candidate.name}<small>{candidate.office}</small>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {scrollMode === "legacy" ? <div className="minister-profile">
           <div>
             <h2>{currentMinister.name}</h2>
             <p>
@@ -298,12 +292,12 @@ export function ChatModal({
           <button className="icon-button" aria-label="收藏大臣" onClick={() => onFavorite(currentMinister)}>
             <Star size={16} fill={currentMinister.favorite ? "currentColor" : "none"} />
           </button>
-        </div>
-        <p className="profile-copy">{currentMinister.summary}</p>
+        </div> : null}
+        {scrollMode === "legacy" ? <p className="profile-copy">{currentMinister.summary}</p> : null}
         <div className="chat-portrait-wrap">
           <MinisterPortrait primary={portraitPrimary} fallback={portraitFallback} name={currentMinister.name} />
         </div>
-        {visibleSecretOrders.length > 0 && (
+        {scrollMode === "legacy" && visibleSecretOrders.length > 0 && (
           <div className="chat-secret-orders">
             <div className="secret-orders-label"><Lock size={12} />密令</div>
             {visibleSecretOrders.map((o) => (
@@ -379,7 +373,7 @@ export function ChatModal({
               onKeyDown={handleKeyDown}
               placeholder={portraitPrefix === "consort_"
                 ? "询问后宫近况、心思、见闻，或吩咐她做事... Enter 发送，Shift+Enter 换行"
-                : "问大臣军情、钱粮、地方，或要求他拟旨... Enter 发送，Shift+Enter 换行"}
+                : "陛下有何旨意…（宣 X / 退朝 都是话）"}
             />
           </label>
           {confirmUndo ? (
@@ -393,7 +387,7 @@ export function ChatModal({
                   disabled={!!busy || !canUndoLastChat}
                   onClick={() => {
                     setConfirmUndo(false);
-                    onUndo(currentMinister.name);
+                    onUndo(minister.name);
                   }}
                 >
                   继续撤回
@@ -424,7 +418,7 @@ export function ChatModal({
               <X size={15} />
               退出召对
             </button>
-            <button className="secondary-action composer-retreat" onClick={() => dispatchSend(currentMinister.name, "退朝")} disabled={!!busy}>
+            <button className="secondary-action composer-retreat" onClick={() => dispatchSend(minister.name, "退朝")} disabled={!!busy}>
               散夜
             </button>
             {composerHint && <div className="composer-hint">{composerHint}</div>}

@@ -618,6 +618,10 @@ export function App() {
         open={drawerOpen}
         onGroupChange={setMinisterGroup}
         onClose={() => setDrawerOpen(false)}
+        onOpenAudience={() => {
+          const anchor = ministers.find((candidate) => !candidate.status || candidate.status === "active");
+          if (anchor) openChat(anchor);
+        }}
         onOpenChat={openChat}
         onOpenEdict={() => openModal("edict")}
         onUploadPortrait={uploadPortrait}
@@ -696,7 +700,7 @@ export function App() {
       ) : null}
 
       {chatOpen && activeMinister ? (
-        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" hideTitle onClose={() => setActiveModal("none")}>
+        <FullscreenModal title={(state.consorts || []).some((c) => c.name === activeMinister.name) ? `召对：${activeMinister.name}` : "乾清宫 · 夜"} subtitle={activeMinister.office} bgClass="modal-bg-chat" hideTitle onClose={() => setActiveModal("none")}>
           <ChatModal
             minister={activeMinister}
             ministers={audienceRoster}

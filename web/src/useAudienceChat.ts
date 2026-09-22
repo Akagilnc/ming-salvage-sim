@@ -1,10 +1,10 @@
 import React from "react";
-import { ApiRequestError, api, pollMindreadingUntilReady, streamChat } from "./api";
+import { ApiRequestError, api, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
 import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion } from "./types";
 
 /**
- * #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE 流、历史加载、读心轮询、
+ * #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE 流与历史加载、
  * reducer 派发。事件归属分三层，按最小必要门控（不多加 token/缓存/executor）：
  *
  * - 短暂请求态（待答文 / 流式文 / busy / 取消句柄）：归 requestToken。更新的 send 接手即
@@ -12,8 +12,6 @@ import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Min
  * - 历史快照（/chat 加载、回话 done 的整串投影）：归 generation + 当前大臣。send/reset/close/新
  *   load 都推进 generation，陈旧快照（更旧的 GET 迟到）据此丢弃，不抹掉新完成的轮。
  *   close 推进同一代次，使离面后迟到的非 Abort 失败不得再回调 composer 回填。
- * - 读心事件（持久、turn-identified）：只认当前大臣面板即入 reducer（不按 token/gen）。迟到的
- *   旧流读心仍按归属轮定位插入——绝不因新 send 作废 token 而永久丢失。
  * - 持久后果（草案/密令/换人/退下/loadState 等）：done 载荷到手即由 App 幂等消费（不按 token
  *   门控），不拖到 SSE end——读心可延后 end 达 120s，期间起新轮不得吞掉已完成的旧轮后果。
  * - 提交完成投影（成案等尾随落账）：SSE end 表示抽取/收夜等已 join，App 经 onEnd 再读权威
@@ -27,9 +25,6 @@ export type AudienceHistoryData = {
   can_undo_last_chat: boolean;
   pending_action_failures?: PendingActionFailure[];
   chat_turn_id?: number;
-  mindreading_pending?: boolean;
-  /** 本大臣本回合所有待读心轮 id（不只最新）——每轮各自轮询，随新一轮发出仍存活。 */
-  pending_turn_ids?: number[];
   campaign_id: string;
   /** Persisted current open-night identity; 0 means no open audience night. */
   night_id: number;
@@ -77,24 +72,17 @@ export function useAudienceChat(
   }, []);
   // 历史快照 generation：load / send / reset / close 都推进；陈旧历史响应与失败回填据此丢弃。
   const chatGenRef = React.useRef(0);
-  // 读心 poll-batch 归属：一次「面板观察会话」的全部待读心轮轮询共此代次。close / reset /
-  // 新接受的历史快照替换旧批（推进代次作废旧批）；**send 不推进**（同面板同待读心轮仍有效，
-  // 旧轮读心不该因新一轮发出而停）。给 hook 唯一 poll-batch 归属，避免同大臣重开叠加重复轮询环。
-  const pollBatchRef = React.useRef(0);
-
-  // 唯一 chat-exit 归属 effect：面板关闭即取消流观察者 + 作废 poll-batch/generation
+  // 唯一 chat-exit 归属 effect：面板关闭即取消流观察者 + 作废 generation
   // （selectedMinister 不变也停；同代次接缝让离面后的失败回调失去 freshness）。
   React.useEffect(() => {
     if (!chatOpen) {
       abortAll();
-      pollBatchRef.current += 1;
       chatGenRef.current += 1;
     }
   }, [chatOpen, abortAll]);
 
   const resetPanel = React.useCallback(() => {
     chatGenRef.current += 1;   // 作废在飞的历史加载
-    pollBatchRef.current += 1; // 作废旧 poll-batch（切人/清屏）
     dispatchChat({ type: "reset" });
     setPendingUserMessage("");
     setPendingIdentity(null);
@@ -129,21 +117,6 @@ export function useAudienceChat(
       dispatchChat({ type: "history", history: data.history });
       setCurrentCampaignId(String(data.campaign_id || ""));
       setCurrentNightId(Number(data.night_id || 0));
-      // 新接受的历史快照替换旧 poll-batch：推进批次代次，旧批的在飞轮询自停（去重叠加）。
-      const batch = ++pollBatchRef.current;
-      const batchAlive = () =>
-        selectedMinisterRef.current === minister && pollBatchRef.current === batch;
-      // 每一待读心轮各自轮询：寿命系于服务端终态（api 层），存活系于本 poll-batch 归属——
-      // close/reset/新快照停之，send 不停之。覆盖所有待读心轮，不止最新轮。
-      const pendingTurns = Array.isArray(data.pending_turn_ids) ? data.pending_turn_ids : [];
-      for (const turnId of pendingTurns) {
-        void pollMindreadingUntilReady(minister, turnId, {
-          shouldContinue: batchAlive,
-          onRecords: (records, tid) => {
-            if (batchAlive()) dispatchChat({ type: "mindreading", chatTurnId: tid, records });
-          },
-        });
-      }
       return data;
     },
     [selectedMinisterRef],
@@ -202,18 +175,8 @@ export function useAudienceChat(
               }
               // done 已持久化本轮，立即重读公共卷轴；end 再失效一次以接回尾随落账。
               onScrollSettled?.();
-              // 持久后果：done 到手即消费，不按 token 门控、不拖到 end（防 120s 读心期间被新轮吞掉）
+              // 持久后果：done 到手即消费，不按 token 门控、不拖到 end。
               cb.onDone?.(doneData);
-            },
-            onMindreading: (mind) => {
-              // 持久 turn-identified 事件：仅认当前面板即入 reducer（不按 token/gen；迟到旧流读心仍归其轮）
-              if (panelMatches() && mind.mindreading) {
-                dispatchChat({
-                  type: "mindreading",
-                  chatTurnId: Number(mind.chat_turn_id || 0),
-                  records: [mind.mindreading],
-                });
-              }
             },
             onHighlights: (hl) => {
               // #544：流完补挂——legacy 串挂清单；卷轴权威由 onEnd 重读带回

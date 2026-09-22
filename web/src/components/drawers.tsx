@@ -690,6 +690,7 @@ export function CourtDrawer({
   open,
   onGroupChange,
   onClose,
+  onOpenAudience,
   onOpenChat,
   onOpenEdict,
   onUploadPortrait,
@@ -702,6 +703,7 @@ export function CourtDrawer({
   open: boolean;
   onGroupChange: (group: string) => void;
   onClose: () => void;
+  onOpenAudience?: () => void;
   onOpenChat: (minister: Minister) => void;
   /** #1402：在野 offstage 起复 → 既有拟诏面。 */
   onOpenEdict?: () => void;
@@ -721,6 +723,7 @@ export function CourtDrawer({
             <Landmark size={17} />
             <span>朝堂</span>
           </div>
+          {chatEntryEnabled ? <button type="button" className="primary-action" onClick={onOpenAudience}>召对</button> : null}
           <button className="icon-button" aria-label="收起" onClick={onClose}><X size={16} /></button>
         </div>
         <div className="segmented">

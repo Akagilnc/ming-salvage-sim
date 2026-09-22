@@ -23,7 +23,7 @@ type RefreshDurableProjection = (options?: {
 }) => Promise<GameState | null>;
 
 // 召对动作群：召对面板的全部外围态（建议/提示/失败/恢复模式/输入框）与 busy 动作
-// （开召对/发问/撤回/重试/失败恢复）。SSE 流、历史投影、读心轮询的归属仍在
+// （开召对/发问/撤回/重试/失败恢复）。SSE 流、历史投影的归属仍在
 // useAudienceChat（#499 单一控制器）——本 hook 只经其回调补全面板外围写入，
 // 面板写入一律按 selectedMinisterRef 当前大臣门控（陈旧快照绝不回覆新面板）。
 export function useChatActions({
