@@ -21,7 +21,7 @@ export function MinisterCardList({
   portraitPrefix: string;
   selectedMinister: string;
   emptyNote: string;
-  onOpenChat: (minister: Minister) => void;
+  onOpenChat?: (minister: Minister) => void;
   /** #1402：在野 offstage 卡内起复入口 → 既有拟诏面，不走召对。 */
   onOpenEdict?: () => void;
   onUploadPortrait?: (ministerName: string, file: File) => Promise<void>;
@@ -297,6 +297,9 @@ export function MinisterCardList({
               </div>
             );
           }
+          if (!onOpenChat) {
+            return <div key={minister.name} className={className}>{cardBody(minister, ousted, false)}</div>;
+          }
           return (
             <button key={minister.name}
               type="button"
@@ -336,6 +339,13 @@ export function MinisterCardList({
           return (
             <div key={minister.name} className={className} style={style}>
               {cardBody(minister, ousted, true)}
+            </div>
+          );
+        }
+        if (!onOpenChat) {
+          return (
+            <div key={minister.name} className={className} style={style} onMouseDown={(e) => onMouseDown(e, minister.name)}>
+              {cardBody(minister, ousted, false)}
             </div>
           );
         }
@@ -615,22 +625,13 @@ export function EconomyDrawer({
 export function AppointmentDrawer({
   ministers,
   open,
-  onOpenChat,
   onClose,
-  chatEntryEnabled = true,
-  phase,
 }: {
   ministers: Minister[];
   open: boolean;
-  onOpenChat: (minister: Minister) => void;
   onClose: () => void;
-  /** #1236：核账期拔任免行召对写入口。 */
-  chatEntryEnabled?: boolean;
-  /** #1323：关闭理由按 phase 分口吻（awaiting≠核账）。 */
-  phase?: string;
 }) {
   const [q, setQ] = React.useState("");
-  const closedTitle = chatEntryEnabled ? undefined : settlementClosedReason(phase);
   const offices = ["内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"];
   const byOffice = new Map<string, Minister[]>();
   for (const office of offices) byOffice.set(office, []);
@@ -656,20 +657,15 @@ export function AppointmentDrawer({
             <div key={office}>
               <div className="right-drawer-section-title">{office}</div>
               {group.map((m) => (
-                <button
+                <div
                   key={m.name}
-                  type="button"
                   className="right-drawer-row right-drawer-row-minister"
-                  disabled={!chatEntryEnabled}
-                  aria-disabled={!chatEntryEnabled}
-                  title={closedTitle}
-                  onClick={() => { if (chatEntryEnabled) onOpenChat(m); }}
                 >
                   <div className="right-drawer-minister-row">
                     <span className="right-drawer-row-name">{m.name}</span>
                     <span className="right-drawer-minister-office">{m.office || m.office_type}</span>
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           );
@@ -691,7 +687,6 @@ export function CourtDrawer({
   onGroupChange,
   onClose,
   onOpenAudience,
-  onOpenChat,
   onOpenEdict,
   onUploadPortrait,
   chatEntryEnabled = true,
@@ -704,7 +699,6 @@ export function CourtDrawer({
   onGroupChange: (group: string) => void;
   onClose: () => void;
   onOpenAudience?: () => void;
-  onOpenChat: (minister: Minister) => void;
   /** #1402：在野 offstage 起复 → 既有拟诏面。 */
   onOpenEdict?: () => void;
   onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
@@ -745,7 +739,6 @@ export function CourtDrawer({
           portraitPrefix="minister_"
           selectedMinister={selectedMinister}
           emptyNote={q ? "无匹配大臣。" : (ministerGroup === "在野" ? "暂无在野前臣可起复。" : "此栏暂无可召见大臣。")}
-          onOpenChat={onOpenChat}
           onOpenEdict={onOpenEdict}
           courtMode={ministerGroup === "内阁+六部" || ministerGroup === "收藏"}
           onUploadPortrait={onUploadPortrait}

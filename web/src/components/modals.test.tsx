@@ -71,6 +71,7 @@ function renderModal(props: {
   scrollPosition?: number;
   onScrollPositionChange?: (position: number) => void;
   registerChatUpdate?: (update: (chat: ChatMessage[]) => void) => void;
+  registerStreamingUpdate?: (update: (message: string) => void) => void;
   registerNightUpdate?: (update: (nightId: number) => void) => void;
   registerUndoUpdate?: (update: (chatTurnId: number | null) => void) => void;
   registerChatDispatch?: (dispatch: React.Dispatch<ChatAction>) => void;
@@ -88,6 +89,7 @@ function renderModal(props: {
     const [activeMinister, setActiveMinister] = React.useState(props.minister);
     const [undoneChatTurnId, setUndoneChatTurnId] = React.useState<number | null>(props.undoneChatTurnId ?? null);
     const [chat, dispatchChat] = React.useReducer(chatReducer, props.chat ?? []);
+    const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState(props.streamingMinisterMessage ?? "");
     const setChat = React.useCallback((next: ChatMessage[]) => dispatchChat({
       type: "history",
       history: next.map((message) => ({
@@ -98,6 +100,7 @@ function renderModal(props: {
       })),
     }), []);
     React.useEffect(() => props.registerChatUpdate?.(setChat), [setChat]);
+    React.useEffect(() => props.registerStreamingUpdate?.(setStreamingMinisterMessage), []);
     React.useEffect(() => props.registerNightUpdate?.(setCurrentNightId), []);
     React.useEffect(() => props.registerUndoUpdate?.(setUndoneChatTurnId), []);
     React.useEffect(() => props.registerChatDispatch?.(dispatchChat), []);
@@ -117,7 +120,7 @@ function renderModal(props: {
         pendingUserMessage={props.pendingUserMessage ?? ""}
         pendingIdentity={props.pendingIdentity ?? null}
         failedIdentity={null}
-        streamingMinisterMessage={props.streamingMinisterMessage ?? ""}
+        streamingMinisterMessage={streamingMinisterMessage}
         chatNotice=""
         chatFailures={props.chatFailures ?? []}
         canUndoLastChat={props.canUndoLastChat ?? false}
@@ -1121,6 +1124,40 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       .find((button) => button.textContent?.includes("洪承畴"));
     act(() => summon?.click());
     expect(onSend).toHaveBeenCalledWith("许誉卿", "宣洪承畴");
+  });
+
+  it("keeps one turn container while a streamed reply becomes durable", async () => {
+    let updateChat!: (chat: ChatMessage[]) => void;
+    let updateStreaming!: (message: string) => void;
+    let reads = 0;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async () => reads++ === 0
+        ? ({ night_id: 23, messages: [] })
+        : ({ night_id: 23, messages: nightScroll.filter((message) => message.chat_turn_id === 11) }),
+    })));
+    renderModal({
+      minister: hong,
+      ministers: [hong, xu],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+      pendingIdentity: { campaign_id: "test-campaign", night_id: 23, chat_turn_id: 11 },
+      streamingMinisterMessage: "流式回话",
+      registerChatUpdate: (update) => { updateChat = update; },
+      registerStreamingUpdate: (update) => { updateStreaming = update; },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const streamingTurn = document.querySelector<HTMLElement>('[data-audience-turn-id="11"]');
+    expect(streamingTurn).not.toBeNull();
+
+    await act(async () => {
+      updateStreaming("");
+      updateChat([{ role: "user", content: "已落卷", chatTurnId: 11 }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => { await vi.waitFor(() => expect(document.querySelectorAll('[data-audience-turn-id="11"] .chat-message')).toHaveLength(3)); });
+    expect(document.querySelector('[data-audience-turn-id="11"]')).toBe(streamingTurn);
   });
 
   it("半轮 replyRetry：保留同 turn user 气泡且不重复 pending 气泡", async () => {

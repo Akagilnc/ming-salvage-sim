@@ -179,17 +179,30 @@ export function ChatModal({
         return isAudienceAnchor ? ministers.find((candidate) => candidate.name === message.speaker) ?? current : current;
       }, undefined) ?? minister
     : minister;
+  const pendingTurnKey = pendingIdentity
+    ? `${pendingIdentity.campaign_id}:${pendingIdentity.night_id}:${pendingIdentity.chat_turn_id}`
+    : "";
+  const streamingTurnRef = React.useRef<{ key: string; chatTurnId?: number; content: string } | null>(null);
   if (streamingMinisterMessage) {
+    streamingTurnRef.current = { key: pendingTurnKey, chatTurnId: pendingIdentity?.chat_turn_id, content: streamingMinisterMessage };
+  } else if (pendingAlreadyPersisted || streamingTurnRef.current?.key !== pendingTurnKey) {
+    streamingTurnRef.current = null;
+  }
+  const streamingTurn = streamingMinisterMessage
+    ? streamingTurnRef.current
+    : pendingAlreadyPersisted ? null : streamingTurnRef.current;
+  if (streamingTurn) {
     displayMessages.push({
       role: "scene",
       speaker: "",
       audibility: "",
       time: null,
-      content: streamingMinisterMessage,
+      content: streamingTurn.content,
       soft_boundary: false,
       beat: "dialogue",
       highlights: [],
       container: { time_of_day: "", location: "", audience_type: "" },
+      chat_turn_id: streamingTurn.chatTurnId,
     } as AudienceScrollMessage);
   }
   const { primary: portraitPrimary, fallback: portraitFallback } = portraitSources(currentMinister, portraitPrefix);

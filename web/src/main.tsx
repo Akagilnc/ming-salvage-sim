@@ -622,7 +622,6 @@ export function App() {
           const anchor = ministers.find((candidate) => !candidate.status || candidate.status === "active");
           if (anchor) openChat(anchor);
         }}
-        onOpenChat={openChat}
         onOpenEdict={() => openModal("edict")}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
@@ -673,10 +672,7 @@ export function App() {
       <AppointmentDrawer
         ministers={state.ministers}
         open={appointmentDrawerOpen}
-        onOpenChat={openChat}
         onClose={() => setAppointmentDrawerOpen(false)}
-        chatEntryEnabled={chatEntryEnabled}
-        phase={state.turn.phase}
       />
 
       {mapIntelVisible ? (

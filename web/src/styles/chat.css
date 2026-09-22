@@ -118,6 +118,12 @@
   padding: 4px 6px 4px 4px;
 }
 
+.audience-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* #1370：召对空态引导 chrome（系统层，非叙事） */
 .chat-empty-chrome {
   align-self: center;

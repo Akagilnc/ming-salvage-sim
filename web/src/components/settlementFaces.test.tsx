@@ -291,41 +291,17 @@ describe("#1236 roster chat entry stripped in settlement_display", () => {
     expect(card.getAttribute("title")).not.toMatch(/核账/);
   });
 
-  it("AppointmentDrawer 任免行核账期只读", () => {
-    const opened: string[] = [];
+  it("AppointmentDrawer 任免名册不再承载召对入口", () => {
     const host = mount(
       <AppointmentDrawer
         ministers={[minister("温体仁")]}
         open={true}
-        onOpenChat={(m) => opened.push(m.name)}
         onClose={() => {}}
-        chatEntryEnabled={false}
-        phase="settling"
       />,
     );
     expect(host.textContent).toContain("温体仁");
-    const row = host.querySelector("button.right-drawer-row-minister") as HTMLButtonElement;
-    expect(row.disabled).toBe(true);
-    expect(row.getAttribute("title")).toBe(SETTLEMENT_CLOSED_REASON);
-    act(() => { row.click(); });
-    expect(opened).toEqual([]);
-  });
-
-  it("#1323 awaiting：AppointmentDrawer title 吃 settlementClosedReason(phase)", () => {
-    const host = mount(
-      <AppointmentDrawer
-        ministers={[minister("温体仁")]}
-        open={true}
-        onOpenChat={() => {}}
-        onClose={() => {}}
-        chatEntryEnabled={false}
-        phase="awaiting_decision"
-      />,
-    );
-    const row = host.querySelector("button.right-drawer-row-minister") as HTMLButtonElement;
-    expect(row.disabled).toBe(true);
-    expect(row.getAttribute("title")).toBe(AWAITING_CLOSED_REASON);
-    expect(row.getAttribute("title")).not.toMatch(/核账/);
+    expect(host.querySelector("button.right-drawer-row-minister")).toBeNull();
+    expect(host.querySelector(".right-drawer-row-minister")?.tagName).toBe("DIV");
   });
 });
 
