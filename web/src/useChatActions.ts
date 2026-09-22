@@ -164,14 +164,19 @@ export function useChatActions({
     if (!failures.length) return false;
     setFailureRecoveryMode(true);
     setChatFailures((items) => mergePendingActionFailures(items, failures));
-    const targetName = failures.find((failure) => failure.minister_name)?.minister_name || "";
+    const attributedName = failures.find((failure) => failure.minister_name)?.minister_name || "";
+    const targetScene = !attributedName
+      ? ""
+      : (state?.consorts || []).some((consort) => consort.name === attributedName)
+        ? attributedName
+        : AUDIENCE_SCENE_SPEAKER;
     suppressNextReportRef.current = true;
     const initialMinister = selectedMinisterRef.current;
     try {
       await loadState();
       if (selectedMinisterRef.current !== initialMinister) return false;
-      selectedMinisterRef.current = targetName;
-      setSelectedMinister(targetName);
+      selectedMinisterRef.current = targetScene;
+      setSelectedMinister(targetScene);
       setActiveModal("chat");
       setChatNotice("");
       clearPendingText();
@@ -353,9 +358,7 @@ export function useChatActions({
     setError("");
     setChatNotice("");
     try {
-      const data = await api<ChatResponse>(audienceRetryPath(
-        replyRetry.minister_name || targetMinisterName,
-      ), {
+      const data = await api<ChatResponse>(audienceRetryPath(targetMinisterName), {
         method: "POST",
       });
       // 拟旨计数是全局态：面板切走仍须即时投影，不得等 refresh / 不得被陈旧判断吞掉。

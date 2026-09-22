@@ -872,6 +872,51 @@ const byAria = (host: HTMLElement, label: string) =>
   host.querySelector(`[aria-label="${label}"]`) as HTMLElement | null;
 
 describe("#1236 App must-face wiring（settlement_display 真链）", () => {
+  it("#1849 普通朝臣失败恢复仍读取共享殿上卷轴", async () => {
+    const paths: string[] = [];
+    const liveState = settlementBaseState("player", {
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      directives: [],
+      pending_directive_count: 0,
+      failed_secret_order_count: 1,
+    });
+    stubSettlementFetch(liveState, [], undefined, (url) => {
+      paths.push(url.pathname);
+      if (url.pathname === "/api/pending_actions/failures") {
+        return jsonResp({
+          pending_action_failures: [{
+            id: 42, kind: "secret_order", action: "落库",
+            message: "密令未能正式落库", minister_name: SNAP_MINISTER,
+          }],
+        });
+      }
+      if (url.pathname === "/api/audience/chat") {
+        return jsonResp({
+          minister: liveState.ministers[0], history: [], suggestions: [],
+          campaign_id: "c1", night_id: 1, can_undo_last_chat: false,
+        });
+      }
+    });
+
+    const host = await mountApp();
+    await click(edictCommand(host));
+    await act(async () => {
+      await vi.waitFor(() => expect(
+        host.querySelector('[role="dialog"][aria-label="诏书草案"]'),
+      ).not.toBeNull());
+    });
+    const process = Array.from(host.querySelectorAll("button")).find(
+      (button) => (button.textContent || "").includes("处理"),
+    );
+    expect(process).toBeTruthy();
+    await click(process);
+
+    await act(async () => {
+      await vi.waitFor(() => expect(paths).toContain("/api/audience/chat"));
+    });
+    expect(paths).not.toContain(`/api/ministers/${encodeURIComponent(SNAP_MINISTER)}/chat`);
+  });
+
   it("#1849 后宫妃嫔从真实入口读取既有 legacy 会话", async () => {
     const paths: string[] = [];
     const liveState = settlementBaseState("player", {
