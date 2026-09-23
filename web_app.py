@@ -70,10 +70,10 @@ from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_transport import (
     bind_transport_sdk_budget,
+    audience_transport_policy,
     empty_output_failure,
     is_stream_activity_event,
     map_run_error_event,
-    resolve_transport_policy,
     run_transport_stream,
     transport_attempts_public,
     transport_failure_unavailable,
@@ -2921,7 +2921,7 @@ class WebGame:
         # #1465 切片③：API / CLI 同一 transport（次数、空转、分类、终失败同一权威）。
         # 槽位仍平级（ADR 0001）：transport 是调用策略，不是第三通道。
         llm_cfg = getattr(self.session, "llm_config", None)
-        policy = resolve_transport_policy(llm_cfg)
+        policy = audience_transport_policy(llm_cfg)
         chunks: List[str] = []
         run_output_box: List[Any] = []
         exit_started_during_stream = {"v": False}

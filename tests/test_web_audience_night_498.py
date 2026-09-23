@@ -230,7 +230,7 @@ def test_persisted_reply_before_translation_admission_has_no_retry_button(web_ga
 
 
 @pytest.mark.parametrize("failure", ["code", "429", "503", "timeout"])
-def test_translation_failure_retry_and_undo_through_audience_http(web_game, monkeypatch, request, failure):
+def test_translation_failure_retry_and_undo_through_audience_http(web_game, monkeypatch, request, failure, tmp_path):
     """The source turn owns the failed translation across retry and retraction."""
     game = web_game
     stub_scene_agent(monkeypatch, _FakeAgent(answer="臣领旨。"))
@@ -247,7 +247,11 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
     else:
         from dataclasses import replace
         import ming_sim.cli_backend as cli_backend
+        import ming_sim.llm_config as llm_config_mod
         import ming_sim.llm_transport as transport
+        path = tmp_path / "runtime_llm.json"
+        path.write_text(json.dumps({"transport": {"max_attempts": 5}}), encoding="utf-8")
+        monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
         game.session.llm_config = replace(game.session.llm_config, channel="cli", cli_runner="agy")
 
         def wait(seconds):

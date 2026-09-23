@@ -450,22 +450,27 @@ def test_extractor_transport_terminal_fail_keeps_month_and_recovery_panel(
 
 
 def test_extractor_transport_terminal_fail_surfaces_upstream_status_and_budget(
-    tracer_client, monkeypatch,
+    tracer_client, monkeypatch, tmp_path,
 ):
     """终失败 pending 红灯：预算耗尽 + 上游 status（共享建场，只加未结断言）。
 
-    - 预算：#1465 默认重试 2 → transport_attempts >= 3
+    - 预算：#1465 配置可覆盖到 5，结算不可被召对三次上限截断
     - status_code 须等于 agent.run 所抛 LLMUnavailable.status_code（_UPSTREAM_STATUS_CODE）
     - code 保真 llm_run_error（既有 typed 键；非从错误散文提取）
     - #1465 ② SSE 形状：message 人话标量；typed 键在外层（FE setError 吃 string）
     保月/manifest 绿契约由 test_…_keeps_month_and_recovery_panel 承接，本条不重复。
     """
+    import ming_sim.llm_config as llm_config_mod
+
+    path = tmp_path / "runtime_llm.json"
+    path.write_text(json.dumps({"transport": {"max_attempts": 5}}), encoding="utf-8")
+    monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
     scene = _drive_terminal_extractor_fail(
         tracer_client, monkeypatch, step="terminal-budget-status",
     )
     transport_attempts = scene["transport_attempts"]
-    assert transport_attempts >= 3, (
-        f"budget exhausted requires transport_attempts>=3; got {transport_attempts}"
+    assert transport_attempts == 5, (
+        f"configured budget requires transport_attempts=5; got {transport_attempts}"
     )
 
     surfaces = scene["surfaces"]
