@@ -15,6 +15,7 @@ import logging
 import re
 import sqlite3
 import time
+import traceback
 from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -274,6 +275,8 @@ def write_audience_error_pack(
     kind: str,
     message: str,
     detail: Optional[Dict[str, Any]] = None,
+    db: Any = None,
+    exc: Optional[BaseException] = None,
 ) -> str:
     """落一份夜域错误包到 user-data error_packs（响亮、可发包）。"""
     root = error_packs_root()
@@ -296,6 +299,13 @@ def write_audience_error_pack(
         encoding="utf-8",
     )
     (pack_dir / "message.txt").write_text(message + "\n", encoding="utf-8")
+    if exc is not None:
+        (pack_dir / "traceback.txt").write_text(
+            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            encoding="utf-8",
+        )
+    if db is not None:
+        db.backup_to(str(pack_dir / "save_backup.db"))
     return str(pack_dir.resolve())
 
 

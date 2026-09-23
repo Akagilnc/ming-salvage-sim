@@ -1,6 +1,5 @@
 import React from "react";
-import { api } from "./api";
-import { mergePendingActionFailures } from "./chatFailures";
+import { api, ApiRequestError } from "./api";
 import type { AudienceHistoryData, SendChatCallbacks } from "./useAudienceChat";
 import type {
   ChatIdentity,
@@ -9,11 +8,11 @@ import type {
   GameState,
   Minister,
   ModalName,
-  PendingActionFailure,
   ReplyRetry,
   SecretOrder,
   ServerChatMessage,
   Suggestion,
+  TranslationRetry,
 } from "./types";
 import { AUDIENCE_SCENE_SPEAKER, audienceRetryPath, audienceUndoPath } from "./audienceScene";
 
@@ -38,7 +37,6 @@ export function useChatActions({
   selectedMinister,
   setSelectedMinister,
   selectedMinisterRef,
-  suppressNextReportRef,
   setSecretOrders,
   setUndoneChatIdentity,
   loadState,
@@ -61,7 +59,6 @@ export function useChatActions({
   selectedMinister: string;
   setSelectedMinister: (name: string) => void;
   selectedMinisterRef: React.MutableRefObject<string>;
-  suppressNextReportRef: React.MutableRefObject<boolean>;
   setSecretOrders: (orders: SecretOrder[]) => void;
   setUndoneChatIdentity: React.Dispatch<React.SetStateAction<ChatIdentity | null>>;
   loadState: () => Promise<GameState | null>;
@@ -76,13 +73,12 @@ export function useChatActions({
 }) {
   const [suggestions, setSuggestions] = React.useState<Suggestion[]>([]);
   const [chatNotice, setChatNotice] = React.useState("");
-  const [chatFailures, setChatFailures] = React.useState<PendingActionFailure[]>([]);
   const [replyRetry, setReplyRetry] = React.useState<ReplyRetry | null>(null);
+  const [translationRetries, setTranslationRetries] = React.useState<TranslationRetry[]>([]);
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
   const [composerIntent, setComposerIntent] = React.useState<"secret_order" | undefined>();
-  const [failureRecoveryMode, setFailureRecoveryMode] = React.useState(false);
   const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
 
   // 仅用花名册查 temporaryActiveMinister；挂 ref 避免 durable setState 整表刷新
@@ -95,7 +91,7 @@ export function useChatActions({
     ];
   }, [state?.ministers, state?.consorts]);
 
-  const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
+  const loadMinisterChat = React.useCallback(async (ministerName: string) => {
     // #499：历史投影 + 每一待读心轮的轮询由 hook 独占派发。返回 null=被 generation 守卫拒收
     // 的陈旧快照 → App 一并跳过全部面板外围写入（建议/可撤回/失败/临时大臣），不回覆新完成的轮。
     const data = await loadHistoryProjection(ministerName);
@@ -106,12 +102,7 @@ export function useChatActions({
     setCanUndoLastChat(!!data.can_undo_last_chat);
     // #505：崩溃遗留的中断轮 → 系统层重试入口。
     setReplyRetry(data.reply_retry ?? null);
-    if (options?.mergeFailures) {
-      const responseFailures = data.pending_action_failures || [];
-      setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
-    } else {
-      setChatFailures(data.pending_action_failures || []);
-    }
+    setTranslationRetries(data.translation_retries ?? []);
   }, [loadHistoryProjection, selectedMinisterRef]);
 
   React.useEffect(() => {
@@ -119,9 +110,6 @@ export function useChatActions({
       resetPanel();
       setSuggestions([]);
       setChatNotice("");
-      if (!failureRecoveryMode) {
-        setChatFailures([]);
-      }
       setCanUndoLastChat(false);
       setComposerHint("");
       setComposerIntent(undefined);
@@ -129,15 +117,12 @@ export function useChatActions({
     }
     resetPanel();
     setSuggestions([]);
-    if (!failureRecoveryMode) {
-      setChatFailures([]);
-    }
     setCanUndoLastChat(false);
     setComposerHint("");
     setComposerIntent(undefined);
-    loadMinisterChat(selectedMinister, failureRecoveryMode ? { mergeFailures: true } : undefined)
+    loadMinisterChat(selectedMinister)
       .catch((err) => setError(err.message));
-  }, [selectedMinister, loadMinisterChat, failureRecoveryMode]);
+  }, [selectedMinister, loadMinisterChat]);
 
   // 关召对只 setActiveModal("none"), 不改 selectedMinister / 不走 resetPanel；
   // composerIntent 是 composer-session 态，离 chat 面必须随 session 死。
@@ -154,37 +139,6 @@ export function useChatActions({
         status: "active", status_label: "在殿", summary: "", favorite: false, skills: [],
       } : temporaryActiveMinister))
     : null;
-  const activeChatFailures = activeMinister
-    ? (failureRecoveryMode
-      ? chatFailures
-      : chatFailures.filter((failure) => !failure.minister_name || failure.minister_name === activeMinister.name))
-    : [];
-
-  const surfacePendingActionFailures = async (failures: PendingActionFailure[] = []) => {
-    if (!failures.length) return false;
-    setFailureRecoveryMode(true);
-    setChatFailures((items) => mergePendingActionFailures(items, failures));
-    const attributedName = failures.find((failure) => failure.minister_name)?.minister_name || "";
-    const targetScene = !attributedName
-      ? ""
-      : (state?.consorts || []).some((consort) => consort.name === attributedName)
-        ? attributedName
-        : AUDIENCE_SCENE_SPEAKER;
-    suppressNextReportRef.current = true;
-    const initialMinister = selectedMinisterRef.current;
-    try {
-      await loadState();
-      if (selectedMinisterRef.current !== initialMinister) return false;
-      selectedMinisterRef.current = targetScene;
-      setSelectedMinister(targetScene);
-      setActiveModal("chat");
-      setChatNotice("");
-      clearPendingText();
-    } finally {
-      setBusy("");
-    }
-    return true;
-  };
 
   const sendChat = async (targetMinisterName: string, text = input) => {
     const intent = text === input ? composerIntent : undefined;
@@ -229,9 +183,6 @@ export function useChatActions({
         if (selectedMinisterRef.current !== initiatingPanelName) return;
         setSuggestions(data.suggestions);
         setCanUndoLastChat(!!data.can_undo_last_chat);
-        const responseFailures = data.pending_action_failures || [];
-        // 成功的密令与拟旨由各自持久投影自然显现；系统层只承载失败/重试/恢复。
-        setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
         if (data.court_action === "dismiss") {
           clearPendingText();
         }
@@ -249,6 +200,13 @@ export function useChatActions({
       onError: (err) => {
         // 回填归属由 useAudienceChat 的 generation+面板 freshness 门控后才入此回调；
         // 此处再按发起面板守一次，防切大臣后的同 token 尾巴。
+        if (err instanceof ApiRequestError && err.chatIdentity?.chat_turn_id) {
+          setError("");
+          void loadMinisterChat(initiatingPanelName).catch((loadError) =>
+            setError(loadError instanceof Error ? loadError.message : String(loadError))
+          );
+          return;
+        }
         if (fromComposer && selectedMinisterRef.current === initiatingPanelName) {
           setInput(message);
           setComposerIntent(intent);
@@ -279,10 +237,8 @@ export function useChatActions({
     setSelectedMinister(minister.name);
     setActiveModal("chat");
     setError("");
-    setFailureRecoveryMode(false);
     setComposerHint("");
     setChatNotice("");
-    setChatFailures([]);
     setCanUndoLastChat(false);
     clearPendingText();
     // 切换大臣时 selected-minister effect 会加载；只有重开同一大臣（effect 不触发）才显式加载，
@@ -340,7 +296,6 @@ export function useChatActions({
         applyHistory(data.history);
         setSuggestions(data.suggestions);
         setCanUndoLastChat(!!data.can_undo_last_chat);
-        setChatFailures(data.pending_action_failures || []);
         setChatNotice("已撤回最近一轮召对。");
       }
     } catch (err) {
@@ -373,28 +328,34 @@ export function useChatActions({
       applyHistory(data.history);
       setSuggestions(data.suggestions);
       setCanUndoLastChat(!!data.can_undo_last_chat);
-      setChatFailures((items) => mergePendingActionFailures(items, data.pending_action_failures || []));
       setReplyRetry(null);
       setChatNotice("已重新生成回话。");
       invalidateAudienceScroll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      await loadMinisterChat(initiatingPanelName).catch((loadError) =>
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
+      );
     } finally {
       setBusy("");
     }
   };
 
-  const openFailureRecovery = async () => {
-    setBusy("读取失败密令");
+  const retryTranslation = async (chatTurnId: number) => {
+    if (busy) return;
+    const ministerName = selectedMinisterRef.current;
+    setBusy("重试整理记录");
     setError("");
     try {
-      const data = await api<{ pending_action_failures?: PendingActionFailure[] }>("/api/pending_actions/failures");
-      const failures = data.pending_action_failures || [];
-      if (!(await surfacePendingActionFailures(failures))) {
-        setError("暂无未落库的密令。");
-      }
+      await api("/api/audience/translation/retry", {
+        method: "POST",
+        body: JSON.stringify({ chat_turn_id: chatTurnId }),
+      });
+      await loadMinisterChat(ministerName);
+      invalidateAudienceScroll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      await loadMinisterChat(ministerName).catch((loadError) =>
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
+      );
     } finally {
       setBusy("");
     }
@@ -403,23 +364,20 @@ export function useChatActions({
   return {
     suggestions,
     chatNotice,
-    chatFailures,
-    activeChatFailures,
     replyRetry,
+    translationRetries,
     canUndoLastChat,
     composerHint,
     setComposerHint,
     input,
     setComposerIntent,
     setInput,
-    failureRecoveryMode,
     activeMinister,
     openChat,
     summonMinister,
     sendChat,
     undoLastChat,
     retryInterruptedReply,
-    openFailureRecovery,
-    surfacePendingActionFailures,
+    retryTranslation,
   };
 }

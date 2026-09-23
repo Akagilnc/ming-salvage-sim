@@ -18,10 +18,12 @@ export function ScrollMessages({
   messages,
   ministerName,
   ministers,
+  turnNotices,
 }: {
   messages: Array<ChatDisplayMessage | AudienceScrollMessage>;
   ministerName: string;
   ministers: Minister[];
+  turnNotices?: ReadonlyMap<number, React.ReactNode>;
 }) {
   const groups: Array<{ key: string; turnId?: number; messages: typeof messages }> = [];
   messages.forEach((message, index) => {
@@ -81,6 +83,7 @@ export function ScrollMessages({
   return <>{groups.map((group) => (
     <div className="audience-turn" data-audience-turn-id={group.turnId} key={group.key}>
       {group.messages.map(renderMessage)}
+      {group.turnId != null ? turnNotices?.get(group.turnId) : null}
     </div>
   ))}</>;
 }

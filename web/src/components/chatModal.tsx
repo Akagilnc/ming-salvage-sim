@@ -8,9 +8,9 @@ import type {
   ChatDisplayMessage,
   ChatMessage,
   Minister,
-  PendingActionFailure,
   SecretOrder,
   Suggestion,
+  TranslationRetry,
 } from "../types";
 
 type AudienceRosterEntry = { name: string; present: boolean };
@@ -31,7 +31,6 @@ export function ChatModal({
   scrollGeneration,
   streamingMinisterMessage,
   chatNotice,
-  chatFailures,
   canUndoLastChat,
   composerHint,
   input,
@@ -39,10 +38,12 @@ export function ChatModal({
   error,
   secretOrders,
   replyRetry,
+  translationRetries = [],
   onInput,
   onIntent,
   onSend,
   onRetryReply,
+  onRetryTranslation,
   onUndo,
   onHint,
   onFavorite,
@@ -70,7 +71,6 @@ export function ChatModal({
   scrollGeneration?: number;
   streamingMinisterMessage: string;
   chatNotice: string;
-  chatFailures: PendingActionFailure[];
   canUndoLastChat: boolean;
   composerHint: string;
   input: string;
@@ -78,11 +78,13 @@ export function ChatModal({
   error: string;
   secretOrders: SecretOrder[];
   /** #505：系统层回话重试（崩溃后问话保留）。 */
-  replyRetry?: { chat_turn_id: number; question: string } | null;
+  replyRetry?: { chat_turn_id: number; question: string; error_pack_path?: string } | null;
+  translationRetries?: TranslationRetry[];
   onInput: (value: string) => void;
   onIntent?: (intent: "secret_order" | undefined) => void;
   onSend: (ministerName: string, text?: string) => void;
   onRetryReply?: (ministerName: string) => void;
+  onRetryTranslation?: (chatTurnId: number) => void;
   onUndo: (ministerName: string) => void;
   onHint: (value: string) => void;
   onFavorite: (minister: Minister) => void;
@@ -161,7 +163,7 @@ export function ChatModal({
           nightId: data.night_id,
           messages: data.messages || [],
           protagonist: data.protagonist,
-          roster: data.roster,
+          roster: data.roster || [],
           characters: data.characters || [],
           translationPending: data.translation_pending,
           refreshError: false,
@@ -187,7 +189,7 @@ export function ChatModal({
         .then((data) => {
           if (alive && data.night_id === scrollState.nightId) setScrollState({
             kind: "night", nightId: data.night_id, messages: data.messages,
-            protagonist: data.protagonist, roster: data.roster, characters: data.characters || [],
+            protagonist: data.protagonist, roster: data.roster || [], characters: data.characters || [],
             translationPending: data.translation_pending, refreshError: false,
           });
         })
@@ -293,7 +295,7 @@ export function ChatModal({
     } else if (followsTailRef.current) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry]);
+  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error, replyRetry, translationRetries]);
 
   const handleScroll = () => {
     const node = chatLogRef.current;
@@ -302,6 +304,35 @@ export function ChatModal({
       onScrollPositionChange?.(node.scrollTop);
     }
   };
+
+  const turnNotices = new Map<number, React.ReactNode>();
+  if (replyRetry && onRetryReply) {
+    turnNotices.set(replyRetry.chat_turn_id, (
+      <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="reply-retry">
+        <span>问话未得回话（「{replyRetry.question}」）。{replyRetry.error_pack_path ? `错误包：${replyRetry.error_pack_path}；请交给作者。` : ""}</span>
+        <button type="button" onClick={() => onRetryReply(currentMinister?.name ?? minister.name)} disabled={!!busy}>
+          重新生成回话
+        </button>
+      </div>
+    ));
+  }
+  for (const retry of translationRetries) {
+    if (!retry.retryable || !onRetryTranslation) continue;
+    turnNotices.set(retry.chat_turn_id, (
+      <React.Fragment key={`translation-${retry.chat_turn_id}`}>
+        {turnNotices.get(retry.chat_turn_id)}
+        <div className="chat-system-note danger chat-failure-note" role="alert" data-testid={`translation-retry-${retry.chat_turn_id}`}>
+          <span>本轮记录未能整理。{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
+          <button type="button" onClick={() => onRetryTranslation(retry.chat_turn_id)} disabled={!!busy}>
+            重试整理
+          </button>
+        </div>
+      </React.Fragment>
+    ));
+  }
+  const unmatchedReplyNotice = replyRetry && !displayMessages.some(
+    (message) => "chat_turn_id" in message && message.chat_turn_id === replyRetry.chat_turn_id,
+  ) ? turnNotices.get(replyRetry.chat_turn_id) : null;
 
   // #1732 T3：任何会改变「最近一轮」的发送入口先失效确认条，避免陈旧确认误撤新轮。
   const dispatchSend = (ministerName: string, text?: string) => {
@@ -395,7 +426,7 @@ export function ChatModal({
           {!displayMessages.length && !busy && !streamingMinisterMessage && effectiveScrollState.kind !== "loading" && effectiveScrollState.kind !== "error" && (
             <div className="chat-empty-chrome" role="status">请陛下问话</div>
           )}
-          <ScrollMessages messages={displayMessages} ministerName={currentMinister?.name ?? ""} ministers={scrollMode === "audience" ? portraitCharacters : ministers} />
+          <ScrollMessages messages={displayMessages} ministerName={currentMinister?.name ?? ""} ministers={scrollMode === "audience" ? portraitCharacters : ministers} turnNotices={turnNotices} />
           {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
             <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
           )}
@@ -406,20 +437,7 @@ export function ChatModal({
             </div>
           )}
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
-          {/* #505：系统层恢复——崩溃后问话保留，给重试（非给皇帝的内容选项按钮）。 */}
-          {replyRetry && onRetryReply && (
-            <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="reply-retry">
-              <span>上回问话未得回话（「{replyRetry.question}」），可重新生成回话。</span>
-              <button type="button" onClick={() => onRetryReply(currentMinister?.name ?? minister.name)} disabled={!!busy}>
-                重新生成回话
-              </button>
-            </div>
-          )}
-          {chatFailures.map((failure) => (
-            <div className="chat-system-note danger chat-failure-note" role="alert" key={failure.id}>
-              <span>{failure.minister_name && failure.minister_name !== minister.name ? `${failure.minister_name}：` : ""}{failure.message}</span>
-            </div>
-          ))}
+          {unmatchedReplyNotice}
           {error && <div className="chat-system-note danger" role="alert">{error}</div>}
         </div>
         <div className="chat-composer">

@@ -1418,6 +1418,7 @@ class GameDB:
                 -- #501 叙事抽取水位（确定性可判、补跑不重复/不漏）：
                 --   ''=未抽 / 'done'=已抽落账 / 'pending'=待补（抽取失败，给玩家原地重试）
                 extract_status TEXT NOT NULL DEFAULT '',
+                error_pack_path TEXT NOT NULL DEFAULT '',
                 -- #1566/#1716：typed route（'' / offsite / secret_order / secret_order_offsite）；
                 -- 中断重试经 decode_chat_turn_route 恢复 explicit_secret_order / 殿上 scene。
                 route TEXT NOT NULL DEFAULT '',
@@ -2511,6 +2512,7 @@ class GameDB:
         )
         # #501 叙事抽取水位 + 抽取账溯源/在场效果/时序键（旧档补列，schema 升级非 fallback）。
         self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("chat_turns", "error_pack_path", "TEXT NOT NULL DEFAULT ''")
         # #634 召对判官已判水位（ADR 0082）：''=未判 / 'done'=已判落库。逐轮标记即水位，
         # 撤回轮翻 undone 后天然出窗（水位回退），无平行水位表。
         self.ensure_column("chat_turns", "relation_judge_status", "TEXT NOT NULL DEFAULT ''")
@@ -9646,7 +9648,7 @@ class GameDB:
         where = " AND ".join(clauses)
         rows = self.conn.execute(
             f"""
-            SELECT t.id, t.minister_name, t.turn, t.route, m.content AS question
+            SELECT t.id, t.minister_name, t.turn, t.route, t.error_pack_path, m.content AS question
             FROM chat_turns t
             JOIN chat_messages m ON m.id = t.user_message_id
             WHERE {where}
@@ -9661,6 +9663,7 @@ class GameDB:
                 "turn": int(r["turn"]),
                 "question": str(r["question"]),
                 "route": str(r["route"] or ""),
+                "error_pack_path": str(r["error_pack_path"] or ""),
             }
             for r in rows
         ]
@@ -9704,6 +9707,11 @@ class GameDB:
         ).fetchall()
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
+            self.conn.execute(
+                "DELETE FROM story_ledger_entries "
+                "WHERE source_chat_turn_id = ? OR origin_chat_turn_id = ?",
+                (int(chat_turn_id), int(chat_turn_id)),
+            )
             # 空 undone 消息集：只还原业务副作用，一句问话/回话都不删。
             self._restore_chat_rollback_items_in_tx(items, [])
             self.conn.execute(
@@ -9786,6 +9794,7 @@ class GameDB:
         if minister_message_id is not None:
             assignments.append("minister_message_id = ?")
             params.append(int(minister_message_id))
+            assignments.append("error_pack_path = ''")
             # 回话入档 = 轮完成：generating → active（#498 完成态）
             assignments.append("status = CASE WHEN status = 'generating' THEN 'active' ELSE status END")
         if not assignments:
@@ -10160,6 +10169,7 @@ class GameDB:
                     """
                     UPDATE chat_turns
                     SET minister_message_id = ?,
+                        error_pack_path = '',
                         status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
                         mindreading_status = CASE WHEN mindreading_status = ''
                                                  THEN 'running' ELSE mindreading_status END
@@ -10172,6 +10182,7 @@ class GameDB:
                     """
                     UPDATE chat_turns
                     SET minister_message_id = ?,
+                        error_pack_path = '',
                         status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
                         mindreading_status = CASE WHEN mindreading_status IN ('', 'running')
                                                  THEN ? ELSE mindreading_status END
@@ -10233,6 +10244,13 @@ class GameDB:
             (int(chat_turn_id),),
         ).fetchone()
         return str(row["extract_status"] or "") if row is not None else ""
+
+    def set_chat_turn_error_pack(self, chat_turn_id: int, path: str) -> None:
+        self.conn.execute(
+            "UPDATE chat_turns SET error_pack_path = ? WHERE id = ? AND status NOT IN ('failed', 'undone')",
+            (path, int(chat_turn_id)),
+        )
+        self.conn.commit()
 
     def mark_story_extraction_pending(self, chat_turn_id: int) -> None:
         """抽取失败 → 待补（'' / 'pending' → 'pending'）；不覆盖已 'done'。"""
@@ -10589,7 +10607,7 @@ class GameDB:
                     commit=False,
                 )
             self.conn.execute(
-                "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
+                "UPDATE chat_turns SET extract_status = 'done', error_pack_path = '' WHERE id = ?",
                 (cid,),
             )
         # 本方法即外层 owner：atomic 提交后镜像（0008-D5；#1745 补缺镜像）。
@@ -10622,7 +10640,7 @@ class GameDB:
         rows = self.conn.execute(
             f"""
             SELECT t.id AS chat_turn_id, t.minister_name, t.night_id, t.night_seq,
-                   t.extract_status, m.content AS reply
+                   t.extract_status, t.error_pack_path, m.content AS reply
             FROM chat_turns t
             JOIN chat_messages m ON m.id = t.minister_message_id
             WHERE {where}

@@ -22,7 +22,6 @@ import { ClosedIssuesModal } from "./components/closedIssues";
 import { EdictModal } from "./components/edictModal";
 import { EndingModal } from "./components/endingModal";
 import { HistoryModal } from "./components/historyModal";
-import { PendingFailureNoticePanel } from "./components/pendingFailureNotice";
 import { ReportModal } from "./components/reportModal";
 import { SecretOrdersModal } from "./components/secretOrders";
 import { SettlementLock } from "./components/settlementLock";
@@ -141,29 +140,25 @@ export function App() {
     [refreshDurableProjection],
   );
 
-  // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试/失败恢复。
-  // 须在 useSettlementFlow 之前调用——结算流的 surfacePendingActionFailures 由这里直供。
+  // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试。
   const {
     suggestions,
     chatNotice,
-    chatFailures,
-    activeChatFailures,
     replyRetry,
+    translationRetries,
     canUndoLastChat,
     composerHint,
     setComposerHint,
     input,
     setComposerIntent,
     setInput,
-    failureRecoveryMode,
     activeMinister,
     openChat,
     summonMinister,
     sendChat,
     undoLastChat,
     retryInterruptedReply,
-    openFailureRecovery,
-    surfacePendingActionFailures,
+    retryTranslation,
   } = useChatActions({
     state,
     setState,
@@ -175,7 +170,6 @@ export function App() {
     selectedMinister,
     setSelectedMinister,
     selectedMinisterRef,
-    suppressNextReportRef,
     setSecretOrders,
     setUndoneChatIdentity,
     loadState,
@@ -228,7 +222,6 @@ export function App() {
     cheatDirective,
     setCheatDirective,
     loadState,
-    surfacePendingActionFailures,
     state,
   });
 
@@ -730,7 +723,6 @@ export function App() {
             scrollGeneration={audienceScrollGeneration}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
-            chatFailures={activeChatFailures}
             canUndoLastChat={canUndoLastChat}
             composerHint={composerHint}
             input={input}
@@ -738,10 +730,12 @@ export function App() {
             error={error}
             secretOrders={secretOrders.filter((o) => o.status === "active")}
             replyRetry={replyRetry}
+            translationRetries={translationRetries}
             onInput={setInput}
             onIntent={setComposerIntent}
             onSend={sendChat}
             onRetryReply={retryInterruptedReply}
+            onRetryTranslation={retryTranslation}
             onUndo={undoLastChat}
             onHint={setComposerHint}
             onFavorite={toggleFavorite}
@@ -753,14 +747,6 @@ export function App() {
         </FullscreenModal>
       ) : null}
 
-      {chatOpen && !activeMinister && failureRecoveryMode && chatFailures.length ? (
-        <FullscreenModal title="未落库的政务" subtitle="承办人不可召见" bgClass="modal-bg-chat" onClose={() => setActiveModal("none")}>
-          <PendingFailureNoticePanel
-            failures={chatFailures}
-            error={error}
-          />
-        </FullscreenModal>
-      ) : null}
 
       {edictOpen ? (
         <FullscreenModal
@@ -790,7 +776,6 @@ export function App() {
             onDeleteDirective={deleteDirective}
             onIssueDecree={issueDecree}
             onAdvanceWithoutEdict={advanceWithoutEdict}
-            onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>
       ) : null}

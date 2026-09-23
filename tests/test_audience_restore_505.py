@@ -15,6 +15,7 @@ reconcile 保留问话消息行（区别于 fail_chat_turn 的删问话善后）
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -386,6 +387,11 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     ).fetchone()
     assert row["status"] == "interrupted"
     assert not row["minister_message_id"]
+    pack = Path(db.conn.execute(
+        "SELECT error_pack_path FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()["error_pack_path"])
+    assert (pack / "traceback.txt").is_file()
+    assert (pack / "save_backup.db").is_file()
     assert [r["question"] for r in db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
     assert [
         r["content"] for r in db.conn.execute(

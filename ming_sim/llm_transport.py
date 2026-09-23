@@ -152,7 +152,9 @@ def resolve_transport_policy(source: object = None) -> TransportPolicy:
 
 
 def _status_retryable(status_i: Optional[int]) -> bool:
-    return status_i is not None and (status_i >= 500 or status_i in {408, 429})
+    # 429 needs player action (quota/rate-limit relief); retrying the same call
+    # automatically only burns the shared three-attempt budget.
+    return status_i is not None and (status_i >= 500 or status_i == 408)
 
 
 def _coerce_status(status: object) -> Optional[int]:
@@ -251,8 +253,8 @@ def _typed_status_from_run_error_event(event: Any) -> Optional[int]:
 def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
     """先分类后重试。只认 typed 信号；不从错误散文猜语义（ADR 0142）。
 
-    可重试：瞬断/空转/5xx/408/429/空输出。
-    不可重试：确定性 4xx（#1452 Unknown model 等带 4xx status）。
+    可重试：瞬断/空转/5xx/408/空输出。
+    不可重试：429 及其余确定性 4xx（#1452 Unknown model 等带 4xx status）。
     未知（无 status 的笼统 stream/run error）→ 不洗成瞬断，立即上浮。
 
     本函数是 APITimeout/Connection/Status/空输出/RunError → code/retryable/status 的唯一权威
@@ -565,7 +567,8 @@ def run_with_transport(
     pol = policy or default_transport_policy()
     attempts: List[TransportAttempt] = []
     last: Optional[ClassifiedFailure] = None
-    max_attempts = pol.max_attempts
+    # 票面上限是三次；runtime 配置只能收紧，不能把单次玩家动作放大为更多调用。
+    max_attempts = min(pol.max_attempts, TRANSPORT_DEFAULT_MAX_ATTEMPTS)
 
     for index in range(1, max_attempts + 1):
         try:
