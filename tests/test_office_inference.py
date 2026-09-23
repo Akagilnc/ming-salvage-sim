@@ -80,7 +80,7 @@ def test_runtime_cli_unknown_office_uses_configured_runner_without_env(monkeypat
     seen = {}
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
-    def fake_run(prompt, llm_config=None, tag=""):
+    def fake_run(prompt, llm_config=None, tag="", *, policy=None):
         seen["prompt"] = prompt
         seen["config"] = llm_config
         return "边镇", 1
@@ -106,7 +106,7 @@ def test_api_channel_unknown_office_ignores_cli_derived_cache(monkeypatch):
     dbmod._OFFICE_TYPE_LLM_CACHE.clear()
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
-    def fake_run(prompt, llm_config=None, tag=""):
+    def fake_run(prompt, llm_config=None, tag="", *, policy=None):
         return "边镇", 1
 
     monkeypatch.setattr(cb, "_run_backend_for_config", fake_run)
@@ -144,7 +144,7 @@ def test_use_llm_false_skips_backend_and_trusts_content_type(monkeypatch):
     called = []
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda prompt, llm_config=None, tag="": called.append(prompt) or ("内阁", 1),
+        lambda prompt, llm_config=None, tag="", *, policy=None: called.append(prompt) or ("内阁", 1),
     )
     cfg = _cli_cfg()
     # 外藩官名表查不中 + content=外臣（非朝堂类）→ use_llm=False 原样保留、不打后端
@@ -167,7 +167,7 @@ def test_fresh_seed_makes_no_office_type_backend_calls(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda prompt, llm_config=None, tag="": calls.append(prompt) or ("待铨", 1),
+        lambda prompt, llm_config=None, tag="", *, policy=None: calls.append(prompt) or ("待铨", 1),
     )
     content = GameContent.load()
     bind_content(content)
@@ -200,7 +200,7 @@ def test_fresh_gamesession_start_makes_no_backend_calls(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda prompt, llm_config=None, tag="": calls.append(prompt) or ("待铨", 1),
+        lambda prompt, llm_config=None, tag="", *, policy=None: calls.append(prompt) or ("待铨", 1),
     )
     content = GameContent.load()
     bind_content(content)

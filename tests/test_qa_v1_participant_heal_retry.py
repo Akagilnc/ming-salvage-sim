@@ -622,7 +622,7 @@ def test_materialize_truncation_bi_zi_heals_to_biziyan(game, monkeypatch):
     minister = _active_minister(db, content)
     calls: list[str] = []
 
-    def backend(prompt, llm_config=None, tag=""):
+    def backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag != "draft_intent":
             return ("{}", 1)
         calls.append(prompt)
@@ -663,7 +663,7 @@ def test_materialize_unknown_escalates_report_no_draft(game, monkeypatch):
     minister = _active_minister(db, content)
     draft_calls: list[str] = []
 
-    def backend(prompt, llm_config=None, tag=""):
+    def backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "participant_escalate_report":
             return (f"臣{minister.name}启：朝中查无不存在之人甲，乞陛下明示。", 1)
         if tag != "draft_intent":
@@ -704,7 +704,7 @@ def test_materialize_unknown_removal_attempt_escalates(game, monkeypatch):
     minister = _active_minister(db, content)
     n = {"c": 0}
 
-    def backend(prompt, llm_config=None, tag=""):
+    def backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "participant_escalate_report":
             return ("臣启：朝中查无不存在之人甲，乞陛下明示。", 1)
         if tag != "draft_intent":
@@ -739,7 +739,7 @@ def test_materialize_happy_path_single_draft_intent_call(game, monkeypatch):
     minister = _active_minister(db, content)
     calls: list[str] = []
 
-    def backend(prompt, llm_config=None, tag=""):
+    def backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag != "draft_intent":
             return ("{}", 1)
         calls.append(prompt)
@@ -771,7 +771,7 @@ def test_materialize_llm_hang_on_retry_surfaces(game, monkeypatch):
     minister = _active_minister(db, content)
     n = {"c": 0}
 
-    def backend(prompt, llm_config=None, tag=""):
+    def backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag != "draft_intent":
             return ("{}", 1)
         n["c"] += 1
@@ -802,7 +802,7 @@ def test_batch_drafts_heal_truncation(game, monkeypatch):
     _biziyan(content)
     calls: list[str] = []
 
-    def backend(prompt, llm_config=None, tag=""):
+    def backend(prompt, llm_config=None, tag="", *, policy=None):
         calls.append(prompt)
         if _CORRECTION_MARK in prompt:
             person = "毕自严"
@@ -989,7 +989,7 @@ def test_batch_heal_keeps_first_extract_non_roster_fields(game, monkeypatch):
             ]
         }
 
-    def backend(prompt, llm_config=None, tag=""):
+    def backend(prompt, llm_config=None, tag="", *, policy=None):
         if _CORRECTION_MARK in prompt:
             # 漂移 + 甚至调换批序语义字段
             return (json.dumps(_batch(
@@ -1443,7 +1443,7 @@ def test_session_post_pass_appends_escalate_report(game, monkeypatch):
     db, state, content = game
     minister = _active_minister(db, content)
 
-    def backend(prompt, llm_config=None, tag=""):
+    def backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "participant_escalate_report":
             return ("臣启：朝中查无不存在之人甲，乞陛下明示。", 1)
         if tag != "draft_intent":

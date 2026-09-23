@@ -1604,7 +1604,7 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
 
     recovery_calls = []
 
-    def recovery_backend(_prompt, _config=None, *, tag=""):
+    def recovery_backend(_prompt, _config=None, *, tag="", policy=None):
         recovery_calls.append(tag)
         if recovery_mode == "raise":
             raise RuntimeError("recovery backend unavailable")
@@ -2298,7 +2298,7 @@ def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(
 
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下改说。", 1),
+        lambda _p, _c=None, *, tag="", policy=None: ("臣请陛下改说。", 1),
     )
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, _content = game
@@ -2432,7 +2432,7 @@ def test_non_xiexang_grant_shape_failure_is_typed_rejection(game, monkeypatch, t
 
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下明示银两。", 1),
+        lambda _p, _c=None, *, tag="", policy=None: ("臣请陛下明示银两。", 1),
     )
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, _content = game
@@ -2517,7 +2517,7 @@ def test_batch_draft_combo_failure_cached_and_attributed(game, monkeypatch, tmp_
     monkeypatch.setattr(cb, "extract_draft_intent_with_roster_heal", fake_extract)
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下改说所指地域。", 1),
+        lambda _p, _c=None, *, tag="", policy=None: ("臣请陛下改说所指地域。", 1),
     )
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, _content = game
@@ -2555,4 +2555,3 @@ def test_batch_draft_combo_failure_cached_and_attributed(game, monkeypatch, tmp_
     assert len(items) == 1
     assert items[0].get("target_id") == "京师"
     assert items[0].get("region_id") == "shaanxi"
-

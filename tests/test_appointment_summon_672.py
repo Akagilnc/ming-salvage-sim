@@ -566,7 +566,7 @@ def test_serial_appointment_fallback_preserves_summon_after(game, monkeypatch):
     minister = _minister_wang_shaohui(db, content)
     open_night(db, state, empty_scaffold=True)
 
-    def _fake_run(prompt, llm_config=None, tag=""):
+    def _fake_run(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             return (json.dumps({
                 "任免动作": "任命",

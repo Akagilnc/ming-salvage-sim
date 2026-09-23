@@ -410,7 +410,7 @@ def test_classify_soft_path_ask_vs_order_payload_matrix(
 ):
     """#515 soft 归一：问/令查表驱动 payload → kind 列表（LLM 语义 externally scripted）。"""
 
-    def _scripted(prompt, llm_config=None, tag=""):
+    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
         assert tag == "action_intent"
         return (json.dumps(raw_payload, ensure_ascii=False), 0)
 
@@ -1182,7 +1182,7 @@ def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
 
-    def _scripted(prompt, llm_config=None, tag=""):
+    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
         assert tag == "action_intent"
         assert _EMPEROR_1744 in prompt
         return (json.dumps(_PROBE_RAW_DRAFT_1744, ensure_ascii=False), 0)
@@ -1197,7 +1197,8 @@ def test_one_intent_probe_raw_chat_to_pending_api_one_ordinary(game, monkeypatch
     assert "太仓出纳" in str(got[0].get("target_id") or "")
 
     def translate_fn(prompt, llm_config):
-        return {"commissions": [{"text": _REPLY_1744}], "promises": []}
+        return {"scene_facts": [{"body": _REPLY_1744, "role": "scene", "person_names": []}],
+                "commissions": [{"text": _REPLY_1744}], "promises": []}
 
     wg = _wire_web_game(
         db, state, content, _SyncAgent(_REPLY_1744), monkeypatch,

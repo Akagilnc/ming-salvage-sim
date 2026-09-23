@@ -123,7 +123,7 @@ def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatc
     assert len(long_title) > 20
     canned = _so_json(标题=long_title, 内容="查明事实并回奏。", 承办人="毕自严", 标签=["辽饷"])
 
-    def fake_json_extractor(prompt, llm_config=None, tag=""):
+    def fake_json_extractor(prompt, llm_config=None, tag="", *, policy=None):
         return canned, 1
 
     monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)

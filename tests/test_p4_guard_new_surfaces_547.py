@@ -22,6 +22,7 @@ from ming_sim.beat_orchestration import (
 from ming_sim.decree import _rescript_decisions
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import create_test_secret_order
+from tests.test_audience_scroll_539 import _scroll_game
 from tests.conftest import (
     CHARACTER_AXIS_SENTINEL,
     active_ming_character,
@@ -224,8 +225,13 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
         20,
     )
     db.set_message_highlights(mid, ["辽饷", f"兵{facts['manpower']}"])
+    from ming_sim.audience_translation import apply_audience_round_translation
+    apply_audience_round_translation(db, state, {"scene_facts": [{
+        "body": f"臣请据实核账，兵约{facts['manpower']}。",
+        "role": "minister", "audibility": "殿上公开", "person_names": [minister],
+    }]}, night_id=night_id, chat_turn_id=_turn_id, minister_name=minister)
 
-    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
     scroll = an.read_night_scroll(db, night_id)
     projection = db.build_chat_projection(minister)
@@ -343,7 +349,7 @@ def test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in(game, monk
 
     archives = db.list_closed_night_archives()
     archived_scroll = an.read_night_scroll(db, night_id)
-    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
     client = TestClient(web_app.app)
     history = client.get("/api/history/turns").json()
     scroll_http = client.get(f"/api/audience/scroll?night_id={night_id}").json()

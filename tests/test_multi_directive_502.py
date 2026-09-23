@@ -58,7 +58,7 @@ def _canned_by_tag(mapping):
         "action_intent": {"动作类型": "无"},
     }
 
-    def _run(prompt, llm_config=None, tag=""):
+    def _run(prompt, llm_config=None, tag="", *, policy=None):
         obj = mapping.get(tag, _defaults.get(tag, {}))
         if tag == "draft_intent" and obj.get("拟旨意图") == "拟旨":
             obj = {

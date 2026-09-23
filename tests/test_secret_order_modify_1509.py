@@ -62,7 +62,7 @@ def test_modify_target_from_stub_id_not_message_literal(game, monkeypatch):
 
     captured_prompts: list = []
 
-    def _stub_backend(prompt, llm_config=None, tag=""):
+    def _stub_backend(prompt, llm_config=None, tag="", *, policy=None):
         captured_prompts.append((tag, prompt))
         # 故意与消息字面「第二道」「暗结蒙古」相反：点名第一道
         return (
@@ -414,7 +414,7 @@ def test_non_secret_modify_does_not_swallow_directive(game, monkeypatch):
 
 def test_extract_confirmation_intent_returns_target_ids(monkeypatch):
     """confirmation JSON 契约：确认枚举 + 合法目标编号（非法 id 丢弃）。"""
-    def _semantic(prompt, llm_config=None, tag=""):
+    def _semantic(prompt, llm_config=None, tag="", *, policy=None):
         assert tag == "confirmation"
         assert "[42]" in prompt and "[99]" in prompt
         return (
@@ -499,7 +499,7 @@ def test_chat_path_modify_uses_stub_id_not_message_literal(game, monkeypatch):
 
     confirm_calls: list = []
 
-    def _stub_backend(prompt, llm_config=None, tag=""):
+    def _stub_backend(prompt, llm_config=None, tag="", *, policy=None):
         confirm_calls.append(tag)
         # 故意与消息字面「第二道」相反：点名第一道
         return (

@@ -254,7 +254,7 @@ def test_materialize_draft_grounds_roster_and_biziyan_zero_409(game, monkeypatch
     minister = _active_minister(db, content)
     seen: list[str] = []
 
-    def backend(prompt, llm_config=None, tag=""):
+    def backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "draft_intent":
             seen.append(prompt)
             return (

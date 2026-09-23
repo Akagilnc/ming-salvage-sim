@@ -3345,7 +3345,7 @@ def test_1620_materialize_rejects_illegal_account_like_shape(
     # T3 后 grant shape 走 typed 拒收 + recovery 回禀；替身 LLM 边界，禁真 agy。
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下明示银两。", 1),
+        lambda _p, _c=None, *, tag="", policy=None: ("臣请陛下明示银两。", 1),
     )
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
 

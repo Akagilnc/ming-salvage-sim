@@ -421,6 +421,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({
         night_id: 1,
+        translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
         messages: [{
           role: "scene", speaker: "郭允厚", content: "臣请核实。", chat_turn_id: 8,
           beat: "dialogue", highlights: [], container: {},

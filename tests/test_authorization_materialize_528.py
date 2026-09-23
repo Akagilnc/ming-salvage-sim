@@ -302,7 +302,7 @@ def test_secret_order_does_not_stage_authorization_candidate(game, monkeypatch):
     db, state, content = game
     holder = _minister(db)
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "secret_order_landing_recovery":
             return "任意生成回禀", 1
         return json.dumps({

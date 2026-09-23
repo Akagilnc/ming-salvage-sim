@@ -279,6 +279,10 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
         async with _client() as client:
             return (await client.get("/api/audience/chat")).json()
 
+    async def inspect_scroll():
+        async with _client() as client:
+            return (await client.get("/api/audience/scroll")).json()
+
     response = asyncio.run(send())
     assert response.status_code == 200
     if failure in {"503", "timeout"}:
@@ -298,6 +302,8 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
     ctid = failed["translation_retries"][0]["chat_turn_id"]
     assert failed["translation_retries"][0]["retryable"] is True
     assert failed["translation_retries"][0]["error_pack_path"]
+    scroll = asyncio.run(inspect_scroll())
+    assert scroll["translation_retries"] == failed["translation_retries"]
     if failure != "code":
         assert calls == ([0.0] if failure == "429" else [0.0, 5.0, 10.0])
         assert waits == ([] if failure == "429" else [5.0, 5.0])

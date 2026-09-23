@@ -682,7 +682,7 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     const retryReply = vi.fn();
     const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣", favorite: false };
     const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣", favorite: true };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], messages: [
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], translation_retries: [{ chat_turn_id: 1, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/audience-turn-1" }], messages: [
       { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
       { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次召对" } },
       { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 1 },
@@ -703,7 +703,6 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
       canUndoLastChat: true,
       replyRetry: { chat_turn_id: 12, question: "辽饷何解？" },
       onRetryReply: retryReply,
-      translationRetries: [{ chat_turn_id: 1, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/audience-turn-1" }],
       onRetryTranslation: vi.fn(),
       suggestions: [{ label: "追问", text: "细奏边情" }],
       secretOrders: [{ id: 9, minister_name: "洪承畴", title: "密察边饷", content: "暗访欠饷", status: "active", turn_issued: 1, due_turn: 2, year_issued: 1, period_issued: 11, tags: [], importance: 1, result: "", sim_note: "", turn_closed: null }],
@@ -1279,6 +1278,30 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     expect(turn?.querySelectorAll(".turn-segment.aside p")).toHaveLength(1);
     expect(turn?.querySelectorAll(".turn-segment.user strong.hl, .turn-segment.aside strong.hl, .turn-segment.scene strong.hl")).toHaveLength(0);
     expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("")).toBe(originalStory);
+  });
+
+  it("shows a background translation failure beneath its turn without reopening the scroll", async () => {
+    vi.useFakeTimers();
+    const story = { role: "scene", content: "臣请据实核账。", chat_turn_id: 11 };
+    let reads = 0;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async () => (++reads === 1
+        ? { night_id: 23, messages: [story], translation_pending: true, translation_retries: [] }
+        : { night_id: 23, messages: [story], translation_pending: true, translation_retries: [
+            { chat_turn_id: 11, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/turn-11" },
+          ] }),
+    })));
+    const retry = vi.fn();
+    renderModal({ minister: hong, ministers: [hong], portraitPrefix: "minister_", currentNightId: 23, onRetryTranslation: retry });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector('[data-testid="translation-retry-11"]')).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    const turn = document.querySelector('[data-audience-turn-id="11"]');
+    const button = turn?.querySelector<HTMLButtonElement>('[data-testid="translation-retry-11"] button');
+    expect(button).not.toBeNull();
+    act(() => button?.click());
+    expect(retry).toHaveBeenCalledWith(11);
   });
 
   it("removes an unpersisted streamed turn when its request fails", async () => {

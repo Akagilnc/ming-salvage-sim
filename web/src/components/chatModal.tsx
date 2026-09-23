@@ -112,6 +112,7 @@ export function ChatModal({
       roster: AudienceRosterEntry[];
       characters: Minister[];
       translationPending: boolean;
+      translationRetries: TranslationRetry[];
       refreshError: boolean;
     } | { kind: "error" }
   >({ kind: "loading" });
@@ -159,6 +160,7 @@ export function ChatModal({
       roster: AudienceRosterEntry[];
       characters?: Minister[];
       translation_pending: boolean;
+      translation_retries?: TranslationRetry[];
     }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
@@ -199,6 +201,7 @@ export function ChatModal({
           roster: data.roster || [],
           characters: data.characters || [],
           translationPending: data.translation_pending,
+          translationRetries: data.translation_retries || [],
           refreshError: false,
         } : { kind: "none" });
         translationPending = !!data.translation_pending;
@@ -362,7 +365,8 @@ export function ChatModal({
       </div>
     ));
   }
-  for (const retry of translationRetries) {
+  for (const retry of scrollMode === "audience" && effectiveScrollState.kind === "night"
+    ? effectiveScrollState.translationRetries : translationRetries) {
     if (!retry.retryable || !onRetryTranslation) continue;
     turnNotices.set(retry.chat_turn_id, (
       <React.Fragment key={`translation-${retry.chat_turn_id}`}>

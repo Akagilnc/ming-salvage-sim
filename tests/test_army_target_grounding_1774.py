@@ -274,7 +274,7 @@ def test_audience_grounded_army_pay_lands_through_close_night(
     _stub_outer_llm_seams(monkeypatch)
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
 
-    def backend(_prompt, _config=None, *, tag=""):
+    def backend(_prompt, _config=None, *, tag="", policy=None):
         if tag == "action_intent":
             return json.dumps({"kind": "draft"}, ensure_ascii=False), 1
         if tag == "draft_intent":

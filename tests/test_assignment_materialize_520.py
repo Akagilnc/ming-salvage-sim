@@ -108,7 +108,7 @@ def _classify_assignment_via_real_entry(
     """
     lead = str(extract_lead or "").strip()
 
-    def _scripted(prompt, llm_config=None, tag=""):
+    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "draft_intent":
             return (json.dumps({
                 "拟旨意图": "无",
@@ -469,7 +469,7 @@ def test_classify_prompt_carries_turn_and_stop_condition_contract(monkeypatch, g
     db, state, content = game
     captured = {}
 
-    def _scripted(prompt, llm_config=None, tag=""):
+    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
         captured["prompt"] = prompt
         assert tag == "action_intent"
         return (json.dumps({"kind": "none"}, ensure_ascii=False), 0)
@@ -496,7 +496,7 @@ def test_classify_prompt_stop_condition_example_is_single_layer_json(monkeypatch
     db, state, content = game
     captured = {}
 
-    def _scripted(prompt, llm_config=None, tag=""):
+    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
         captured["prompt"] = prompt
         assert tag == "action_intent"
         return (json.dumps({"kind": "none"}, ensure_ascii=False), 0)
