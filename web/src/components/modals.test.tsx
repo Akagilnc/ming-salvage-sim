@@ -1519,6 +1519,26 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 8 }) }));
     expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
   });
+  it("recovers a completed translation by rereading the scroll after its first read fails", async () => {
+    let reads = 0;
+    let posts = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [{ kind: "night", night_id: 31, title: "旧夜", involved_people: [] }] }) });
+      if (options?.method === "POST") { posts++; return Promise.resolve({ ok: true, json: async () => ({}) }); }
+      reads++;
+      if (reads === 2) return Promise.resolve({ ok: false, status: 503 });
+      return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "minister", content: "旧夜奏对", chat_turn_id: 8 }], translation_retries: reads === 1 ? [{ chat_turn_id: 8, night_id: 31, retryable: true }] : [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button')?.click(); await Promise.resolve(); });
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).not.toBeNull();
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button')?.click(); await Promise.resolve(); });
+    expect(posts).toBe(1);
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
+  });
   it("selects closed scenes through the shared scroll endpoint without a composer", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
@@ -1527,7 +1547,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
         { kind: "night", turn: 7, year: 1, period: 11, night_id: 32, title: "1年11月 · 戌时乾清宫 · 召对 · 第2场", involved_people: ["洪承畴"] },
       ] }) });
       const id = url.endsWith("31") ? 31 : 32;
-      return Promise.resolve({ ok: true, json: async () => ({ messages: id === 32 ? [
+      return Promise.resolve({ ok: true, json: async () => ({ characters: id === 32 ? [{ ...MINISTER_MOCK, id: "former-attendant", name: "退场近臣", portrait_id: "portrait_court_03" }] : [], messages: id === 32 ? [
         { role: "user", speaker: "朕", content: `场次${id}`, beat: "dialogue", chat_turn_id: 8 },
         { role: "minister", speaker: "殿上", content: "群臣奏对", beat: "dialogue", chat_turn_id: 8 },
         { role: "attendant", speaker: "退场近臣", content: "旧臣御前低语", beat: "aside", chat_turn_id: 8, audibility: "御前低语" },
@@ -1536,9 +1556,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     vi.stubGlobal("fetch", fetchMock);
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
-    await act(async () => { root.render(<AudienceArchiveModal ministers={[
-      { ...MINISTER_MOCK, id: "former-attendant", name: "退场近臣", portrait_id: "portrait_court_03" },
-    ]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
     expect(host.textContent).toContain("召对记录");
     expect(host.textContent).toContain("涉及人物：洪承畴");
     expect(host.textContent).toContain("场次32");

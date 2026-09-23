@@ -12,10 +12,12 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
   const [selected, setSelected] = React.useState<HistoryTurnItem | null>(null);
   const selectedNightId = React.useRef<number | null>(null);
   const [messages, setMessages] = React.useState<AudienceScrollMessage[] | null>(null);
+  const [nightCharacters, setNightCharacters] = React.useState<Minister[]>([]);
   const [pendingTranslationTurnIds, setPendingTranslationTurnIds] = React.useState<number[]>([]);
   const [translationRetries, setTranslationRetries] = React.useState<TranslationRetry[]>([]);
   const [retrying, setRetrying] = React.useState<{ nightId: number; chatTurnId: number } | null>(null);
   const [retryError, setRetryError] = React.useState<{ chatTurnId: number; message: string } | null>(null);
+  const completedRetries = React.useRef(new Set<number>());
   const [error, setError] = React.useState("");
   const [ministerFilter, setMinisterFilter] = React.useState("");
 
@@ -38,6 +40,8 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
     if (!selected?.night_id) return;
     let alive = true;
     setMessages(null);
+    setNightCharacters([]);
+    completedRetries.current.clear();
     setPendingTranslationTurnIds([]);
     setTranslationRetries([]);
     setRetryError(null);
@@ -45,7 +49,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
     void fetch(`/api/audience/scroll?night_id=${selected.night_id}`).then((response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.json();
-    }).then((data) => { if (alive) { setMessages(data.messages || []); setPendingTranslationTurnIds(data.pending_translation_turn_ids || []); setTranslationRetries(data.translation_retries || []); } })
+    }).then((data) => { if (alive) { setMessages(data.messages || []); setNightCharacters(data.characters || []); setPendingTranslationTurnIds(data.pending_translation_turn_ids || []); setTranslationRetries(data.translation_retries || []); } })
       .catch((reason) => { if (alive) setError(reason?.message || "加载失败"); });
     return () => { alive = false; };
   }, [selected]);
@@ -60,15 +64,21 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
     setRetrying({ nightId, chatTurnId });
     setRetryError(null);
     try {
-      await api("/api/audience/translation/retry", { method: "POST", body: JSON.stringify({ chat_turn_id: chatTurnId }) });
+      if (!completedRetries.current.has(chatTurnId)) {
+        await api("/api/audience/translation/retry", { method: "POST", body: JSON.stringify({ chat_turn_id: chatTurnId }) });
+        if (selectedNightId.current !== nightId) return;
+        completedRetries.current.add(chatTurnId);
+      }
       if (selectedNightId.current !== nightId) return;
       const response = await fetch(`/api/audience/scroll?night_id=${nightId}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       if (selectedNightId.current !== nightId) return;
       setMessages(data.messages || []);
+      setNightCharacters(data.characters || []);
       setPendingTranslationTurnIds(data.pending_translation_turn_ids || []);
       setTranslationRetries(data.translation_retries || []);
+      completedRetries.current.delete(chatTurnId);
     } catch (reason) {
       if (selectedNightId.current === nightId) setRetryError({ chatTurnId, message: reason instanceof Error ? reason.message : String(reason) });
     } finally {
@@ -88,7 +98,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
   return <FullscreenModal title="起居注：召对记录" subtitle="退朝后同源只读，不可编辑" bgClass="modal-bg-chat" onClose={onClose}>
     <div className="history-modal-body">
       <aside className="history-turn-list"><ul>{nights.slice().reverse().map((night) => <li key={night.night_id}>
-        <button className={`history-turn-item ${night.night_id === selected?.night_id ? "active" : ""}`} onClick={() => { selectedNightId.current = night.night_id ?? null; setMessages(null); setPendingTranslationTurnIds([]); setTranslationRetries([]); setRetryError(null); setSelected(night); }}>
+        <button className={`history-turn-item ${night.night_id === selected?.night_id ? "active" : ""}`} onClick={() => { selectedNightId.current = night.night_id ?? null; completedRetries.current.clear(); setMessages(null); setNightCharacters([]); setPendingTranslationTurnIds([]); setTranslationRetries([]); setRetryError(null); setSelected(night); }}>
           <b>{night.title}</b><small>涉及人物：{night.involved_people?.join("、") || "无载"}</small>
         </button>
       </li>)}</ul>{!nights.length && !error ? <p className="long-copy">尚无召对记录。</p> : null}</aside>
@@ -100,7 +110,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
           </select>
         </label> : null}
         {error ? <p className="long-copy">加载失败：{error}</p> : null}
-        {messages ? <ScrollMessages messages={ministerFilter ? filterScrollForSelectedMinister(messages, ministerFilter, { sceneSpeaker: AUDIENCE_SCENE_SPEAKER, pendingTranslationTurnIds }) : messages} ministerName="" ministers={ministers} turnNotices={turnNotices} /> : null}
+        {messages ? <ScrollMessages messages={ministerFilter ? filterScrollForSelectedMinister(messages, ministerFilter, { sceneSpeaker: AUDIENCE_SCENE_SPEAKER, pendingTranslationTurnIds }) : messages} ministerName="" ministers={[...nightCharacters, ...ministers]} turnNotices={turnNotices} /> : null}
       </article>
     </div>
   </FullscreenModal>;
