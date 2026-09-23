@@ -1991,14 +1991,14 @@ class GameSession:
             empty_output_failure,
             is_stream_activity_event,
             map_run_error_event,
-            resolve_transport_policy,
+            audience_transport_policy,
             run_transport_stream,
             transport_attempts_public,
             transport_failure_unavailable,
         )
 
         llm_cfg = getattr(self, "llm_config", None)
-        policy = resolve_transport_policy(llm_cfg)
+        policy = audience_transport_policy(llm_cfg)
         chunks: list[str] = []
         run_output_box: list = []
         stream_attempt_n = {"n": 0}

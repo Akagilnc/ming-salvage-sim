@@ -1061,7 +1061,9 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, str]]:
     return runner, model, reasoning_strength
 
 
-def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
+def _run_backend_for_config(
+    prompt: str, llm_config: Any = None, tag: str = "", *, policy=None,
+) -> Tuple[str, int]:
     """runtime CLI 配置优先；没有显式 CLI channel 时保持旧 env/default 行为。
 
     直接编程路径（职官分类/各 extractor/国策补全/连通性 verify）的唯一咽喉：
@@ -1092,7 +1094,7 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
 
     try:
         text, attempt_records = run_with_transport(
-            _one_call, policy=resolve_transport_policy(),
+            _one_call, policy=policy or resolve_transport_policy(),
         )
         attempts = len(attempt_records)
         return text, attempts
@@ -1119,6 +1121,7 @@ def _run_api_for_config(
     force_json_output: bool = True,
     temperature: float = 0,
     instructions: Optional[List[str]] = None,
+    policy=None,
 ) -> Tuple[str, int]:
     """API 通道小调用。JSON 抽取默认 force_json；玩家产文传 force_json_output=False（0033）。"""
     from agno.agent import Agent
@@ -1143,13 +1146,23 @@ def _run_api_for_config(
         instructions=list(instructions),
         markdown=False,
     )
-    return extract_agent_text(agent.run(prompt)), 1
+    if policy is None:
+        return extract_agent_text(agent.run(prompt)), 1
+    from ming_sim.llm_transport import bind_transport_sdk_budget, run_with_transport
+
+    with bind_transport_sdk_budget(agent.model, policy):
+        text, attempts = run_with_transport(
+            lambda: extract_agent_text(agent.run(prompt)), policy=policy,
+        )
+    return text, len(attempts)
 
 
-def _run_json_extractor_for_config(prompt: str, llm_config: Any = None, tag: str = "") -> Tuple[str, int]:
+def _run_json_extractor_for_config(
+    prompt: str, llm_config: Any = None, tag: str = "", *, policy=None,
+) -> Tuple[str, int]:
     if _llm_channel(llm_config) == "api":
-        return _run_api_for_config(prompt, llm_config, tag=tag)
-    return _run_backend_for_config(prompt, llm_config, tag=tag)
+        return _run_api_for_config(prompt, llm_config, tag=tag, policy=policy)
+    return _run_backend_for_config(prompt, llm_config, tag=tag, policy=policy)
 
 
 def _backend_label(llm_config: Any = None) -> str:
