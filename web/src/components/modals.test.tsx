@@ -1461,31 +1461,39 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(source?.querySelector('[role="alert"]')?.textContent).toContain("retry failed");
   });
   it("keeps the selected night when an earlier night's translation retry finishes late", async () => {
-    let releaseRetry: (() => void) | undefined;
-    const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
+    let releaseOldRetry: (() => void) | undefined;
+    let releaseNewRetry: (() => void) | undefined;
+    const oldRetryGate = new Promise<void>((resolve) => { releaseOldRetry = resolve; });
+    const newRetryGate = new Promise<void>((resolve) => { releaseNewRetry = resolve; });
     const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
         { kind: "night", night_id: 32, title: "乙夜", involved_people: [] },
         { kind: "night", night_id: 31, title: "甲夜", involved_people: [] },
       ] }) });
-      if (url === "/api/audience/translation/retry" && options?.method === "POST") return retryGate.then(() => ({ ok: true, json: async () => ({ chat_turn_id: 8 }) }));
+      if (url === "/api/audience/translation/retry" && options?.method === "POST") return (JSON.parse(String(options.body)).chat_turn_id === 31 ? oldRetryGate : newRetryGate).then(() => ({ ok: true, json: async () => ({}) }));
       const nightId = url.endsWith("31") ? 31 : 32;
       return Promise.resolve({ ok: true, json: async () => ({
         messages: [{ role: "user", content: nightId === 31 ? "甲夜奏对" : "乙夜奏对", chat_turn_id: nightId }],
-        translation_retries: nightId === 31 ? [{ chat_turn_id: 8, night_id: 31, minister_name: "洪承畴", kind: "translation_pending", retryable: true }] : [],
+        translation_retries: [{ chat_turn_id: nightId, night_id: nightId, minister_name: "洪承畴", kind: "translation_pending", retryable: true }],
       }) });
     });
     vi.stubGlobal("fetch", fetchMock);
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button')?.click(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-31"] button')?.click(); });
+    expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 31 }) }));
     await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item:not(.active)")?.click(); await Promise.resolve(); await Promise.resolve(); });
-    await act(async () => { releaseRetry?.(); await Promise.resolve(); await Promise.resolve(); });
+    const newRetry = host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-32"] button');
+    expect(newRetry?.disabled).toBe(false);
+    await act(async () => { newRetry?.click(); });
+    expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 32 }) }));
+    await act(async () => { releaseOldRetry?.(); await Promise.resolve(); await Promise.resolve(); });
     expect(host.querySelector(".history-turn-item.active")?.textContent).toContain("乙夜");
     expect(host.textContent).toContain("乙夜奏对");
     expect(host.textContent).not.toContain("甲夜奏对");
-    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-32"] button')?.disabled).toBe(true);
+    await act(async () => { releaseNewRetry?.(); await Promise.resolve(); await Promise.resolve(); });
   });
   it("retries a pending translation on its original closed night", async () => {
     let pending = true;
