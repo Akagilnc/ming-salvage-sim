@@ -3666,17 +3666,19 @@ class WebGame:
         open_n = get_open_night(self.db)
         nid = int(open_n["id"]) if open_n else None
         night_status = str((open_n or {}).get("status") or "")
-        rows = list_pending_translations(
+        retry_rows = list_pending_translations(
             self.db, night_id=int(nid) if nid else None,
             write_queue=self._runtime_write_queue(),
         )
+        retry_by_turn = {int(r["chat_turn_id"]): r for r in retry_rows}
+        rows = self.db.list_unextracted_replies(night_id=int(nid) if nid else None)
         pending = [
             {
                 "chat_turn_id": int(r.get("chat_turn_id") or 0),
                 "minister_name": str(r.get("minister_name") or ""),
                 "night_id": int(r.get("night_id") or 0),
                 "kind": str(r.get("kind") or "translation_pending"),
-                "retryable": bool(r.get("retryable", True)),
+                "retryable": bool(retry_by_turn.get(int(r.get("chat_turn_id") or 0), {}).get("retryable", False)),
                 "extract_status": str(r.get("extract_status") or "pending"),
                 "error_pack_path": str(r.get("error_pack_path") or ""),
             }

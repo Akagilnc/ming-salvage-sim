@@ -207,6 +207,79 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=web_app.app), base_url="http://t")
 
 
+def test_persisted_reply_before_translation_admission_has_no_retry_button(web_game):
+    """A complete reply is not an exhausted translation until the job actually fails."""
+    game = web_game
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    ctid = game.db.create_chat_turn(
+        game.state, "殿上", "sess", 0, night_id=int(night["id"]),
+    )
+    game.db.persist_minister_reply("殿上", int(game.state.turn), "臣领旨。", ctid)
+
+    async def scenario():
+        async with _client() as client:
+            before = (await client.get("/api/audience/chat")).json()
+            retry = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
+            return before, retry
+
+    before, retry = asyncio.run(scenario())
+    assert before["translation_retries"] == []
+    assert retry.status_code == 404
+
+
+def test_translation_failure_retry_and_undo_through_audience_http(web_game, monkeypatch):
+    """The source turn owns the failed translation across retry and retraction."""
+    game = web_game
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣领旨。"))
+
+    def exhausted(_prompt, _config):
+        raise RuntimeError("translation unavailable")
+
+    stub_audience_translate(monkeypatch, exhausted)
+
+    async def send():
+        async with _client() as client:
+            return await client.post("/api/audience/chat/stream", json={"message": "边饷如何？"})
+
+    response = asyncio.run(send())
+    assert response.status_code == 200
+    assert game._runtime_write_queue().wait_idle()
+
+    async def inspect():
+        async with _client() as client:
+            return (await client.get("/api/audience/chat")).json()
+
+    failed = asyncio.run(inspect())
+    assert len(failed["translation_retries"]) == 1
+    ctid = failed["translation_retries"][0]["chat_turn_id"]
+    assert failed["translation_retries"][0]["retryable"] is True
+    assert failed["translation_retries"][0]["error_pack_path"]
+    turns_before_retry = _count(game.db, "chat_turns")
+    ledger_before_retry = _count(game.db, "story_ledger_entries")
+
+    stub_audience_translate(monkeypatch)
+
+    async def retry_and_undo():
+        async with _client() as client:
+            retry = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
+            healed = (await client.get("/api/audience/chat")).json()
+            counts_after_retry = (
+                _count(game.db, "chat_turns"), _count(game.db, "story_ledger_entries"),
+            )
+            undo = await client.post("/api/audience/chat/undo")
+            retracted = (await client.get("/api/audience/chat")).json()
+            stale = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
+            return retry, healed, counts_after_retry, undo, retracted, stale
+
+    retry, healed, counts_after_retry, undo, retracted, stale = asyncio.run(retry_and_undo())
+    assert retry.status_code == 200
+    assert healed["translation_retries"] == []
+    assert counts_after_retry == (turns_before_retry, ledger_before_retry)
+    assert undo.status_code == 200
+    assert retracted["translation_retries"] == []
+    assert stale.status_code == 404
+
+
 def _parse_sse(text: str) -> list[dict]:
     events: list[dict] = []
     for block in text.strip().split("\n\n"):

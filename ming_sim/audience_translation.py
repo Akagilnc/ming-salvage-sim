@@ -203,7 +203,7 @@ def list_pending_translations(
     db: Any, *, night_id: Optional[int] = None, chat_turn_id: Optional[int] = None,
     write_queue: Any = None,
 ) -> List[Dict[str, Any]]:
-    """转译待补真源：复用 list_unextracted_replies（extract_status ''/'pending'）。
+    """玩家可重试的转译失败：仅明确失败的 pending，不含刚落库的空水位。
 
     可按夜 / 源轮收窄。返回行附结构化系统提示态（供 0158 决定 6 投影，不做页面）。
     """
@@ -215,6 +215,8 @@ def list_pending_translations(
     for row in rows:
         ctid = int(row.get("chat_turn_id") or 0)
         if want is not None and ctid != want:
+            continue
+        if row.get("extract_status") != "pending":
             continue
         item = dict(row)
         item["chat_turn_id"] = ctid
@@ -418,9 +420,6 @@ def schedule_audience_turn_translation(
         # 与撤回路径同锁序：先会话写闸，后 Future 账锁，避免互等。
         with _translation_write_cm(write_gate):
             with _night_inflight_guard:
-                if ctid > 0 and hasattr(db, "mark_story_extraction_pending"):
-                    # 标 pending 与 Future 登记同一临界段：投影不能见到无任务的待补钮。
-                    db.mark_story_extraction_pending(ctid)
                 pred = _night_tail.get(night_key)
                 # Future 终态先于 cleanup callback 可见；此窗口内的 tail 已不是
                 # 在飞前驱，新一轮不得继承它的旧失败。
@@ -547,9 +546,10 @@ def catch_up_pending_translations(
     单轮转译/落账失败保持 pending、继续后续轮；源轮查询等代码异常按 ADR 0005 上抛，
     不洗成空原话继续转译。
     """
-    rows = list_pending_translations(
-        db, night_id=night_id, chat_turn_id=chat_turn_id,
-    )
+    # 恢复真源比玩家可重试投影宽：崩溃在回话落库与任务登记之间时，'' 也须补跑。
+    rows = list(db.list_unextracted_replies(night_id=night_id) or [])
+    if chat_turn_id is not None:
+        rows = [r for r in rows if int(r.get("chat_turn_id") or 0) == int(chat_turn_id)]
     extracted = 0
     pending = 0
     scanned = 0
