@@ -32,12 +32,15 @@ export function ScrollMessages({
       : message.content;
   };
   const groups: Array<{ key: string; turnId?: number; messages: typeof messages }> = [];
+  const turnOccurrences = new Map<number, number>();
   messages.forEach((message, index) => {
     const turnId = "chat_turn_id" in message ? message.chat_turn_id : undefined;
     if (turnId != null) {
       let group = groups[groups.length - 1];
       if (!group || group.turnId !== turnId) {
-        group = { key: `turn-${turnId}-${index}`, turnId, messages: [] };
+        const occurrence = turnOccurrences.get(turnId) ?? 0;
+        turnOccurrences.set(turnId, occurrence + 1);
+        group = { key: `turn-${turnId}-${occurrence}`, turnId, messages: [] };
         groups.push(group);
       }
       group.messages.push(message);

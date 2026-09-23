@@ -564,6 +564,13 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         return result
 
     events: List[tuple[float, int, Dict[str, Any]]] = []
+    translated: Dict[int, List[tuple[str, Dict[str, Any]]]] = {}
+    for entry in ledgers:
+        source_id = int(entry.get("source_chat_turn_id") or 0)
+        role_tags = [tag.removeprefix("scroll_role:") for tag in entry.get("tags", [])
+                     if tag.startswith("scroll_role:")]
+        if source_id and len(role_tags) == 1 and role_tags[0] in {"user", "minister", "attendant", "scene"}:
+            translated.setdefault(source_id, []).append((role_tags[0], entry))
     for turn in turns:
         for rank, (column, role, speaker) in enumerate((
             ("user_message_id", "user", "朕"),
@@ -585,12 +592,27 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                 if role == "minister"
                 else []
             )
-            events.append((
-                float(int(turn.get("night_seq") or 0)), 20 + rank,
-                message(role=role, speaker=speaker, audibility=AUDIBILITY_PUBLIC,
-                        time=row["created_at"], content=content, beat="dialogue",
-                        chat_turn_id=int(turn["id"]), highlights=hl),
-            ))
+            segments = translated.get(int(turn["id"]), []) if role == "minister" else []
+            # Structural, byte-for-byte coverage check: a partial/altered translation
+            # stays neutral rather than replacing any part of the original drama.
+            if segments and "".join(entry["body"] for _, entry in segments) == content:
+                for segment_role, entry in segments:
+                    names = entry.get("person_names") or []
+                    segment_speaker = "朕" if segment_role == "user" else (names[0] if names else "")
+                    events.append((
+                        float(int(turn.get("night_seq") or 0)), 21,
+                        message(role=segment_role, speaker=segment_speaker,
+                                audibility=entry["audibility"], time=row["created_at"],
+                                content=entry["body"], beat="aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "dialogue",
+                                chat_turn_id=int(turn["id"]), highlights=hl),
+                    ))
+            else:
+                events.append((
+                    float(int(turn.get("night_seq") or 0)), 20 + rank,
+                    message(role=role, speaker=speaker, audibility=AUDIBILITY_PUBLIC,
+                            time=row["created_at"], content=content, beat="dialogue",
+                            chat_turn_id=int(turn["id"]), highlights=hl),
+                ))
         # 递话/读心是对话轮的第三种持久消息，紧随该轮奏对归位；不并入故事账。
         if hasattr(db, "list_mindreading_records"):
             for record_index, record in enumerate(db.list_mindreading_records(int(turn["id"]))):

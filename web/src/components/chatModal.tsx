@@ -108,6 +108,7 @@ export function ChatModal({
   >({ kind: "loading" });
   const followsTailRef = React.useRef(true);
   const restoredNightRef = React.useRef<number | false>(false);
+  const readingAnchorRef = React.useRef<{ turnId: string; top: number } | null>(null);
   const withdrawnFromThisScroll = (message: AudienceScrollMessage): boolean => !!(
     undoneChatIdentity
     && undoneChatIdentity.campaign_id === currentCampaignId
@@ -133,6 +134,7 @@ export function ChatModal({
 
   React.useEffect(() => {
     let alive = true;
+    let retryTimer: number | undefined;
     // Once an open night is known, refreshes retain that single authority while loading;
     // first load/minister switches never flash the old per-minister projection.
     setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current) ? current : { kind: "loading" });
@@ -140,15 +142,26 @@ export function ChatModal({
       setScrollState({ kind: "none" });
       return () => { alive = false; };
     }
-    api<{ night_id: number; messages: AudienceScrollMessage[] }>("/api/audience/scroll")
+    const refresh = () => api<{ night_id: number; messages: AudienceScrollMessage[]; translation_pending?: boolean }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
+        const node = chatLogRef.current;
+        if (node && !followsTailRef.current) {
+          const viewportTop = node.getBoundingClientRect().top;
+          const anchor = Array.from(node.querySelectorAll<HTMLElement>("[data-audience-turn-id]"))
+            .find((turn) => turn.getBoundingClientRect().bottom > viewportTop);
+          if (anchor) readingAnchorRef.current = {
+            turnId: anchor.dataset.audienceTurnId ?? "",
+            top: anchor.getBoundingClientRect().top,
+          };
+        }
         setScrollState(data.night_id ? {
           kind: "night",
           nightId: data.night_id,
           messages: data.messages || [],
           refreshError: false,
         } : { kind: "none" });
+        if (data.translation_pending) retryTimer = window.setTimeout(refresh, 1500);
       })
       .catch(() => {
         if (!alive) return;
@@ -156,7 +169,8 @@ export function ChatModal({
           ? { ...current, refreshError: true }
           : { kind: "error" });
       });
-    return () => { alive = false; };
+    refresh();
+    return () => { alive = false; window.clearTimeout(retryTimer); };
   }, [minister.name, scrollMode, currentCampaignId, currentNightId, undoneChatIdentity, failedIdentity,
     // App supplies the explicit durable-settlement generation. Standalone/legacy consumers
     // retain the historical chat-driven refresh contract until they adopt that signal.
@@ -236,7 +250,7 @@ export function ChatModal({
     return () => clearInterval(id);
   }, [busy, streamingMinisterMessage]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const node = chatLogRef.current;
     if (!node) return;
     const nightId = scrollState.kind === "night" ? scrollState.nightId : 0;
@@ -247,7 +261,13 @@ export function ChatModal({
       restoredNightRef.current = nightId;
     } else if (followsTailRef.current) {
       node.scrollTop = node.scrollHeight;
+    } else if (readingAnchorRef.current) {
+      const { turnId, top } = readingAnchorRef.current;
+      const anchor = Array.from(node.querySelectorAll<HTMLElement>("[data-audience-turn-id]"))
+        .find((turn) => turn.dataset.audienceTurnId === turnId);
+      if (anchor) node.scrollTop += anchor.getBoundingClientRect().top - top;
     }
+    readingAnchorRef.current = null;
   }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry]);
 
   const handleScroll = () => {

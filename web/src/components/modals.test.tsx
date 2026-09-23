@@ -46,6 +46,17 @@ const CONSORT_MOCK: Minister = {
 };
 
 describe("ScrollMessages — frozen ledger order", () => {
+  it("keeps original drama while emphasizing only phrases present in that exact text", () => {
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    const content = "臣陈**辽饷**与*军心*。";
+    act(() => { root.render(<ScrollMessages ministerName="杨嗣昌" ministers={[]} messages={[
+      { role: "minister", speaker: "杨嗣昌", content, highlights: ["辽饷与军心", "军心"], beat: "dialogue", chat_turn_id: 7 },
+    ]} />); });
+    expect(host.querySelector(".turn-segment p")?.textContent).toBe(content);
+    expect(Array.from(host.querySelectorAll(".turn-segment strong.hl"), (node) => node.textContent)).toEqual(["军心"]);
+  });
+
   it("groups only adjacent rows of a turn without moving an interleaved scene row", () => {
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
@@ -280,6 +291,7 @@ function renderEdictModal(props: {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   // Unmount every root rendered this test (whether the body passed or threw).
   for (const { root, host } of mountedRoots) {
     act(() => root.unmount());
@@ -1092,45 +1104,53 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   });
 
   it("adds translated roles and minister emphasis inside the same unchanged turn block", async () => {
-    let updateChat!: (chat: ChatMessage[]) => void;
+    vi.useFakeTimers();
     let reads = 0;
     const parts = ["密令：整饬边备。", "臣领旨。", "臣附议。", "王承恩低语。", "殿内烛影摇曳。"];
     const turnId = 11;
-    const neutral = [{ role: "scene", speaker: "", content: parts.join("\n"), beat: "dialogue", chat_turn_id: turnId }];
+    const trailing = { role: "user", speaker: "朕", content: "后续诏问", beat: "dialogue", chat_turn_id: turnId + 1 };
+    const neutral = [{ role: "scene", speaker: "", content: parts.join("\n"), beat: "dialogue", chat_turn_id: turnId }, trailing];
     const translated = [
       { role: "user", speaker: "朕", content: parts[0], beat: "dialogue", chat_turn_id: turnId },
       { role: "minister", speaker: "洪承畴", content: parts[1], beat: "dialogue", highlights: ["领旨"], chat_turn_id: turnId },
       { role: "minister", speaker: "许誉卿", content: parts[2], beat: "dialogue", highlights: ["附议"], chat_turn_id: turnId },
       { role: "attendant", speaker: "王承恩", content: parts[3], beat: "aside", audibility: "御前低语", highlights: ["低语"], chat_turn_id: turnId },
       { role: "scene", speaker: "", content: parts[4], beat: "dialogue", chat_turn_id: turnId },
+      trailing,
     ];
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({
       ok: true,
       json: async () => reads++ === 0
-        ? ({ night_id: 23, messages: neutral })
-        : ({ night_id: 23, messages: translated }),
+        ? ({ night_id: 23, messages: neutral, translation_pending: true })
+        : ({ night_id: 23, messages: translated, translation_pending: false }),
     })));
     renderModal({
       minister: hong,
       ministers: [hong, xu],
       portraitPrefix: "minister_",
       currentNightId: 23,
-      registerChatUpdate: (update) => { updateChat = update; },
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     const turn = document.querySelector<HTMLElement>(`[data-audience-turn-id="${turnId}"]`);
     const originalStory = Array.from(turn?.querySelectorAll("p") ?? [], (node) => node.textContent).join("\n");
+    const stage = document.querySelector<HTMLElement>(".chat-stage")!;
+    const followingTurn = document.querySelector<HTMLElement>(`[data-audience-turn-id="${turnId + 1}"]`)!;
+    Object.defineProperties(stage, { scrollHeight: { value: 600 }, clientHeight: { value: 200 } });
+    vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+    vi.spyOn(followingTurn, "getBoundingClientRect").mockImplementation(() => ({
+      top: turn?.querySelectorAll(".turn-segment").length === 1 ? 50 : 110,
+      bottom: 150,
+    } as DOMRect));
+    stage.scrollTop = 100;
+    act(() => stage.dispatchEvent(new Event("scroll", { bubbles: true })));
 
-    await act(async () => {
-      updateChat([{ role: "user", content: "已落卷", chatTurnId: turnId }]);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => { await vi.waitFor(() => expect(turn?.querySelectorAll('.turn-segment')).toHaveLength(translated.length)); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(turn?.querySelectorAll('.turn-segment')).toHaveLength(translated.length - 1);
+    expect(stage.scrollTop).toBe(160);
     expect(document.querySelectorAll(`[data-audience-turn-id="${turnId}"]`)).toHaveLength(1);
     expect(document.querySelector(`[data-audience-turn-id="${turnId}"]`)).toBe(turn);
     expect(turn?.querySelectorAll(".chat-message")).toHaveLength(0);
-    expect(turn?.querySelectorAll(".turn-segment")).toHaveLength(translated.length);
+    expect(turn?.querySelectorAll(".turn-segment")).toHaveLength(translated.length - 1);
     expect(turn?.querySelectorAll(".turn-segment.minister strong.hl")).toHaveLength(2);
     expect(turn?.querySelectorAll(".turn-segment.aside p")).toHaveLength(1);
     expect(turn?.querySelectorAll(".turn-segment.user strong.hl, .turn-segment.aside strong.hl, .turn-segment.scene strong.hl")).toHaveLength(0);

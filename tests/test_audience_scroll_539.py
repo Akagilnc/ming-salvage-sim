@@ -66,9 +66,43 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     assert live["night_id"] == closed["night_id"] == night_id
     assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
     assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
-    assert set(live) == set(closed) == {"night_id", "status", "messages"}
+    assert set(live) == set(closed) == {"night_id", "status", "messages", "translation_pending"}
     assert live["status"] == "open"
     assert closed["status"] == "closed"
+
+
+def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeypatch):
+    import web_app
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    story = "臣领旨。王承恩低语。殿内烛影摇曳。"
+    turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "辽饷何解？", story, 10)
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    client = TestClient(web_app.app)
+    before = client.get("/api/audience/scroll").json()["messages"]
+    assert [m["content"] for m in before if m.get("chat_turn_id") == turn_id][-1] == story
+    assert client.get("/api/audience/scroll").json()["translation_pending"] is True
+
+    apply_audience_round_translation(db, state, {
+        "scene_facts": [
+            {"body": "臣领旨。", "role": "minister", "audibility": "殿上公开", "person_names": ["杨嗣昌"]},
+            {"body": "王承恩低语。", "role": "attendant", "audibility": "御前低语", "person_names": ["王承恩"]},
+            {"body": "殿内烛影摇曳。", "role": "scene", "audibility": "殿上公开", "person_names": []},
+        ],
+    }, night_id=night_id, chat_turn_id=turn_id, minister_name="杨嗣昌")
+    after = client.get("/api/audience/scroll").json()["messages"]
+    assert client.get("/api/audience/scroll").json()["translation_pending"] is False
+    segments = [m for m in after if m.get("chat_turn_id") == turn_id and m["role"] != "user"]
+    assert [(m["role"], m["speaker"], m["content"]) for m in segments] == [
+        ("minister", "杨嗣昌", "臣领旨。"), ("attendant", "王承恩", "王承恩低语。"),
+        ("scene", "", "殿内烛影摇曳。"),
+    ]
+    assert segments[1]["audibility"] == "御前低语"
+    assert segments[1]["beat"] == "aside"
+    assert "".join(m["content"] for m in segments) == story
+    assert [m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"] if m.get("chat_turn_id") == turn_id and m["role"] != "user"] == segments
 
 
 def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats(game, monkeypatch):

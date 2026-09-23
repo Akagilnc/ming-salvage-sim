@@ -6418,11 +6418,13 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     game = get_game()
     night = get_night(game.db, night_id) if night_id else get_open_night(game.db)
     if night is None:
-        return {"night_id": 0, "status": "", "messages": []}
+        return {"night_id": 0, "status": "", "messages": [], "translation_pending": False}
+    pending = bool(game.db.list_unextracted_replies(night_id=int(night["id"])))
     return {
         "night_id": int(night["id"]),
         "status": night["status"],
         "messages": read_night_scroll(game.db, int(night["id"])),
+        "translation_pending": pending,
     }
 
 
