@@ -9,6 +9,8 @@ export type MinisterScrollLensOptions = {
   claimedTurnId?: number | null;
   /** A single-scene turn belongs to every durable participant in that archived night. */
   sceneSpeaker?: string;
+  /** Durable, not-yet-translated turns have no named speaker; keep them visible without attributing ownership. */
+  pendingTranslationTurnIds?: readonly number[];
 };
 
 /**
@@ -78,7 +80,8 @@ export function filterScrollForSelectedMinister(
       if (turnId) {
         // Formal turn: structured turnOwner wins over any segment ownerHint.
         const owner = turnOwner.get(turnId);
-        if (owner?.has(selectedMinister) || (!!options?.sceneSpeaker && owner?.has(options.sceneSpeaker))) {
+        if (owner?.has(selectedMinister) || (!!options?.sceneSpeaker && owner?.has(options.sceneSpeaker))
+          || (!owner && options?.pendingTranslationTurnIds?.includes(turnId))) {
           out.push(message);
         }
         // else: other minister's turn, or orphan turn — drop from this window

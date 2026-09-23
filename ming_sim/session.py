@@ -1928,9 +1928,9 @@ class GameSession:
                             self.db.conn.commit()
                     if on_protagonist_changed is not None:
                         on_protagonist_changed()
-                    # 宣召的空入殿垫位现已入账，方可发现本轮 enter beat。
-                    if xuan_ctid > 0:
-                        self.start_chat_turn_scene(str(minister_name or ""), xuan_ctid)
+            # 被拒的宣召仍是一轮殿上戏文；只在合法入殿时先写入殿账。
+            if chat_turn_id:
+                self.start_chat_turn_scene(str(minister_name or ""), int(chat_turn_id))
 
         # 材料目录：在场诸人各一份；开场最小集 + 只读工具。
         prepared = prepare_scene_materials(self.db, self.state)

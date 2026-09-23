@@ -648,6 +648,8 @@ export type RetryReadFailure = {
   kind: "reply" | "translation";
   chatTurnId: number;
   postSucceeded: boolean;
+  message: string;
+  readFailure?: boolean;
 };
 
 /** #501 / #1353：待补叙事抽取诊断状态（不再驱动玩家 CTA）。 */

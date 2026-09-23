@@ -229,6 +229,29 @@ def test_persisted_reply_before_translation_admission_has_no_retry_button(web_ga
     assert retry.status_code == 404
 
 
+def test_old_named_hall_turn_is_visible_and_undoable_from_scene_window(web_game):
+    game = web_game
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    old_speaker = _active_minister(game)
+    turn_id = game.db.create_chat_turn(game.state, old_speaker, "sess", 0, night_id=int(night["id"]))
+    user_id = game.db.append_chat_message(old_speaker, int(game.state.turn), "user", "边务如何？")
+    game.db.update_chat_turn_messages(turn_id, user_message_id=user_id)
+    game.db.persist_minister_reply(old_speaker, int(game.state.turn), "臣领旨。", turn_id)
+
+    async def scenario():
+        async with _client() as client:
+            before = (await client.get("/api/audience/chat")).json()
+            undone = await client.post("/api/audience/chat/undo")
+            after = (await client.get("/api/audience/chat")).json()
+            return before, undone, after
+
+    before, undone, after = asyncio.run(scenario())
+    assert any(message["chat_turn_id"] == turn_id for message in before["history"])
+    assert before["can_undo_last_chat"] is True
+    assert undone.status_code == 200
+    assert all(message["chat_turn_id"] != turn_id for message in after["history"])
+
+
 @pytest.mark.parametrize("night_status", [an.NIGHT_STATUS_CLOSING, an.NIGHT_STATUS_CLOSED])
 def test_pending_translation_retries_original_round_after_night_seal(web_game, monkeypatch, night_status):
     """A sealed night keeps its failed source round repairable before month advance."""

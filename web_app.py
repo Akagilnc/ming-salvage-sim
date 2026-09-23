@@ -1106,6 +1106,7 @@ class WebGame:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
             if hasattr(candidate.db, "conn"):
                 candidate.db.reconcile_interrupted_chat_turns()
+                candidate.db.reconcile_post_reply_recovery()
         except Exception as rebuild_exc:
             residual = candidate or getattr(rebuild_exc, "residual_session", None)
             if residual is not None:
@@ -1922,6 +1923,14 @@ class WebGame:
                 return self.db.build_chat_projection(minister_name)
             from ming_sim.audience_night import get_open_night
             night = get_open_night(self.db)
+            from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+            if minister_name == SCENE_CHAT_SPEAKER and night:
+                turns = self.db.list_hall_chat_turns(int(night["id"]))
+                ids = {int(row["id"]) for row in turns}
+                history = [message for speaker in dict.fromkeys(row["minister_name"] for row in turns)
+                           for message in self.db.build_chat_projection(speaker, int(night["id"]))
+                           if int(message.get("chat_turn_id") or 0) in ids]
+                return sorted(history, key=lambda message: int(message.get("chat_turn_id") or 0))
             return self.db.build_chat_projection(minister_name, int(night["id"]) if night else 0)
         return [
             {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
@@ -1939,6 +1948,14 @@ class WebGame:
             return False
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             return False
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
+            night = get_open_night(self.db)
+            if night:
+                turns = self.db.list_hall_chat_turns(int(night["id"]))
+                active = next((row for row in reversed(turns) if row["status"] == "active"), None)
+                return bool(active and active["user_message_id"] and active["minister_message_id"]
+                            and self.db.is_global_last_active_chat_turn(int(active["id"])))
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
     def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
@@ -2104,6 +2121,22 @@ class WebGame:
             self.chat_history.setdefault(name, []).extend(msgs)
 
     def undo_last_chat(self, minister_name: str) -> Dict[str, Any]:
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
+            night = get_open_night(self.db)
+            if night:
+                turns = self.db.list_hall_chat_turns(int(night["id"]))
+                active = next((row for row in reversed(turns) if row["status"] == "active"), None)
+                if active:
+                    owner = str(active["minister_name"])
+                    if owner != minister_name:
+                        owner_last = self.db.get_last_active_chat_turn(owner, self.state.turn)
+                        if not owner_last or int(owner_last["id"]) != int(active["id"]):
+                            raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
+                        result = self.undo_last_chat(owner)
+                        result["history"] = self.chat_projection(minister_name)
+                        result["can_undo_last_chat"] = self.can_undo_last_chat(minister_name)
+                        return result
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
         if not self._persistent_chat_minister(minister_name):
@@ -2637,6 +2670,18 @@ class WebGame:
         return self.db.get_interrupted_reply_retries(minister_name)
 
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
+            night = get_open_night(self.db)
+            if night:
+                turns = self.db.list_hall_chat_turns(int(night["id"]))
+                speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)
+                ids = {int(row["id"]) for row in turns}
+                return sorted([retry for speaker in speakers
+                               for retry in (self.interrupted_reply_retries(speaker)
+                                             + self.db.get_post_reply_retries(speaker))
+                               if int(retry["chat_turn_id"]) in ids],
+                              key=lambda item: int(item["chat_turn_id"]))
         interrupted = self.interrupted_reply_retries(minister_name)
         post_reply = self.db.get_post_reply_retries(minister_name) if hasattr(self.db, "get_post_reply_retries") else []
         return sorted([*interrupted, *post_reply], key=lambda item: int(item["chat_turn_id"]))
@@ -2686,6 +2731,11 @@ class WebGame:
                   if target_chat_turn_id else next((r for r in reversed(retries) if not r.get("recovery_phase")), None))
         if target is None:
             raise HTTPException(status_code=404, detail=f"{minister_name}没有该轮待重试回话。")
+        if target["minister_name"] != minister_name:
+            result = self.retry_interrupted_reply(str(target["minister_name"]), int(target["chat_turn_id"]))
+            result["history"] = self.chat_projection(minister_name)
+            result["can_undo_last_chat"] = self.can_undo_last_chat(minister_name)
+            return result
         if target.get("recovery_phase"):
             return self._resume_post_reply(minister_name, target)
         chat_turn_id = int(target["chat_turn_id"])
@@ -6571,12 +6621,13 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     if night is None:
         return {
             "night_id": 0, "status": "", "messages": [], "protagonist": "",
-            "roster": [], "translation_pending": False, "translation_retries": [],
+            "roster": [], "translation_pending": False, "translation_retries": [], "pending_translation_turn_ids": [],
         }
     roster = presence_roster(game.db, int(night["id"]))
     protagonist = str(night.get("protagonist_name") or "")
     names = list(dict.fromkeys([entry["name"] for entry in roster] + ([protagonist] if protagonist else [])))
     characters = getattr(getattr(game, "content", None), "characters", {})
+    pending_replies = game.db.list_unextracted_replies(night_id=int(night["id"]))
 
     return {
         "night_id": int(night["id"]),
@@ -6585,7 +6636,8 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         "protagonist": protagonist,
         "roster": roster,
         "characters": [game.public_character(characters[name]) for name in names if name in characters],
-        "translation_pending": bool(game.db.list_unextracted_replies(night_id=int(night["id"]))),
+        "translation_pending": bool(pending_replies),
+        "pending_translation_turn_ids": [int(row["chat_turn_id"]) for row in pending_replies],
         "translation_retries": game.pending_translation_retries(night_id=int(night["id"])),
     }
 
@@ -6610,8 +6662,8 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "pending_action_failures": game.pending_action_failures_for(SCENE_CHAT_SPEAKER),
         "reply_retries": game.reply_retries(SCENE_CHAT_SPEAKER),
         "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
-            minister_name=SCENE_CHAT_SPEAKER,
-        )],
+            night_id=int(open_night["id"]) if open_night else None,
+        ) if r.get("route", "") in ("", "secret_order")],
         "translation_retries": game.pending_translation_retries(
             night_id=int(open_night["id"]) if open_night else None,
         ),

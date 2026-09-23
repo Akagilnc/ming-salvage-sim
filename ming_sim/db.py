@@ -9425,6 +9425,15 @@ class GameDB:
                     })
         return projection
 
+    def list_hall_chat_turns(self, night_id: int) -> List[Dict[str, Any]]:
+        """殿上轮的原始持久身份，含升级前按朝臣存储的轮。"""
+        rows = self.conn.execute(
+            "SELECT id, minister_name, status, user_message_id, minister_message_id FROM chat_turns "
+            "WHERE night_id=? AND route IN ('', 'secret_order') ORDER BY id",
+            (int(night_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def record_mindreading(self, chat_turn_id: int, payload: Mapping[str, object]) -> int:
         """持久化近臣私语；独立于召对逐字稿与共享见闻轨。"""
         cur = self.conn.execute(

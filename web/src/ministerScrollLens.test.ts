@@ -245,4 +245,17 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
       "诸卿以为如何？", "群臣各陈所见。", "洪承畴亦在列。",
     ]);
   });
+
+  it("未转译的无主轮保留为中性记录，不将他臣具名轮归给当前臣", () => {
+    const scroll = [
+      msg({ role: "user", speaker: "朕", content: "待整理问话", beat: "dialogue", chat_turn_id: 40 }),
+      msg({ role: "scene", speaker: "", content: "待整理回话", beat: "dialogue", chat_turn_id: 40 }),
+      msg({ role: "minister", speaker: "洪承畴", content: "已具名回话", beat: "dialogue", chat_turn_id: 41 }),
+    ];
+    const visible = filterScrollForSelectedMinister(scroll, "许誉卿", { pendingTranslationTurnIds: [40] });
+    expect(visible.map((message) => ({ role: message.role, speaker: message.speaker, chat_turn_id: message.chat_turn_id }))).toEqual([
+      { role: "user", speaker: "朕", chat_turn_id: 40 },
+      { role: "scene", speaker: "", chat_turn_id: 40 },
+    ]);
+  });
 });

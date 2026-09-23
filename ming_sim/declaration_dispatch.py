@@ -1369,7 +1369,8 @@ def _dispatch_scene_facts(
             entry_id = append_ledger_entry(
                 db, int(night_id),
                 person_names=list(person_names), audibility=str(audibility),
-                body=body, tags=list(tags) + ([f"scroll_role:{scroll_role}"] if scroll_role else []),
+                body=body, tags=[tag for tag in tags if not tag.startswith("scroll_role:")]
+                + ([f"scroll_role:{scroll_role}"] if scroll_role else []),
                 check_dead=False, origin_ref=origin_ref,
                 source_chat_turn_id=origin_ctid,
                 origin_chat_turn_id=origin_ctid,

@@ -9,6 +9,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
   const [nights, setNights] = React.useState<HistoryTurnItem[]>([]);
   const [selected, setSelected] = React.useState<HistoryTurnItem | null>(null);
   const [messages, setMessages] = React.useState<AudienceScrollMessage[] | null>(null);
+  const [pendingTranslationTurnIds, setPendingTranslationTurnIds] = React.useState<number[]>([]);
   const [error, setError] = React.useState("");
   const [ministerFilter, setMinisterFilter] = React.useState("");
 
@@ -34,7 +35,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
     void fetch(`/api/audience/scroll?night_id=${selected.night_id}`).then((response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.json();
-    }).then((data) => { if (alive) setMessages(data.messages || []); })
+    }).then((data) => { if (alive) { setMessages(data.messages || []); setPendingTranslationTurnIds(data.pending_translation_turn_ids || []); } })
       .catch((reason) => { if (alive) setError(reason?.message || "加载失败"); });
     return () => { alive = false; };
   }, [selected]);
@@ -58,7 +59,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
           </select>
         </label> : null}
         {error ? <p className="long-copy">加载失败：{error}</p> : null}
-        {messages ? <ScrollMessages messages={ministerFilter ? filterScrollForSelectedMinister(messages, ministerFilter, { sceneSpeaker: AUDIENCE_SCENE_SPEAKER }) : messages} ministerName="" ministers={ministers} /> : null}
+        {messages ? <ScrollMessages messages={ministerFilter ? filterScrollForSelectedMinister(messages, ministerFilter, { sceneSpeaker: AUDIENCE_SCENE_SPEAKER, pendingTranslationTurnIds }) : messages} ministerName="" ministers={ministers} /> : null}
       </article>
     </div>
   </FullscreenModal>;

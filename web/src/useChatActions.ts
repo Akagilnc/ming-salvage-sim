@@ -366,13 +366,18 @@ export function useChatActions({
       setReplyRetries((current) => current.filter((retry) => retry.chat_turn_id !== chatTurnId));
       setChatNotice("本轮恢复完成。");
       invalidateAudienceScroll();
-    } catch {
+    } catch (postError) {
       try {
         await loadMinisterChat(initiatingPanelName);
+        if (selectedMinisterRef.current === initiatingPanelName) {
+          setRetryReadFailure({ kind: "reply", chatTurnId, postSucceeded: false,
+            message: postError instanceof Error ? postError.message : String(postError) });
+        }
       } catch (reloadError) {
         console.error("Failed to reload audience after reply retry", reloadError);
         if (selectedMinisterRef.current === initiatingPanelName) {
-          setRetryReadFailure({ kind: "reply", chatTurnId, postSucceeded: false });
+          setRetryReadFailure({ kind: "reply", chatTurnId, postSucceeded: false,
+            message: postError instanceof Error ? postError.message : String(postError), readFailure: true });
         }
       }
       invalidateAudienceScroll();
@@ -400,13 +405,18 @@ export function useChatActions({
       }
       await loadMinisterChat(ministerName);
       invalidateAudienceScroll();
-    } catch {
+    } catch (postError) {
       try {
         await loadMinisterChat(ministerName);
+        if (!postSucceeded && selectedMinisterRef.current === ministerName) {
+          setRetryReadFailure({ kind: "translation", chatTurnId, postSucceeded,
+            message: postError instanceof Error ? postError.message : String(postError) });
+        }
       } catch (reloadError) {
         console.error("Failed to reload audience after translation retry", reloadError);
         if (selectedMinisterRef.current === ministerName) {
-          setRetryReadFailure({ kind: "translation", chatTurnId, postSucceeded });
+          setRetryReadFailure({ kind: "translation", chatTurnId, postSucceeded,
+            message: postError instanceof Error ? postError.message : String(postError), readFailure: true });
         }
       }
       invalidateAudienceScroll();
