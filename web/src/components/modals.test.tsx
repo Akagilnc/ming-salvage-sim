@@ -1062,6 +1062,16 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     { role: "attendant", speaker: "王承恩", content: "他神色凝重。", beat: "aside", chat_turn_id: 11, audibility: "御前低语", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "召对" } },
   ];
 
+  it("names the live scroll from its persisted container", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      night_id: 23, protagonist: "", roster: [], translation_pending: false,
+      messages: [{ ...nightScroll[0], container: { time_of_day: "戌时", location: "便殿", audience_type: "召对" } }],
+    }) }));
+    const host = renderModal({ minister: hong, ministers: [hong], portraitPrefix: "minister_", currentNightId: 23 });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".audience-roster h2")?.textContent).toBe("便殿 · 戌时");
+  });
+
   it("shows portraits for declared people outside the court and talent lists", async () => {
     const visitor = { ...MINISTER_MOCK, name: "夜访者", portrait_id: "portrait_guest" };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({

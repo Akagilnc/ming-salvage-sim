@@ -284,6 +284,9 @@ export function ChatModal({
   const audienceType = scrollMode === "audience" && effectiveScrollState.kind === "night"
     ? effectiveScrollState.messages.find((message) => message.container?.audience_type)?.container?.audience_type ?? ""
     : "";
+  const nightContainer = effectiveScrollState.kind === "night"
+    ? effectiveScrollState.messages.find((message) => message.container?.location && message.container?.time_of_day)?.container
+    : undefined;
 
   React.useEffect(() => {
     inputRef.current?.focus();
@@ -421,7 +424,7 @@ export function ChatModal({
       <aside className="modal-pane minister-side">
         {scrollMode === "audience" ? (
           <div className="audience-roster" aria-label="在殿花名册">
-            <h2>乾清宫 · 夜</h2>
+            <h2>{nightContainer ? `${nightContainer.location} · ${nightContainer.time_of_day}` : "召对"}</h2>
             {roster.map((entry) => {
               const candidate = portraitCharacters.find((item) => item.name === entry.name);
               const portrait = candidate ? portraitSources(candidate, portraitPrefix) : { primary: "", fallback: undefined };

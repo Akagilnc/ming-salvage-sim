@@ -130,6 +130,26 @@ def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch
     ]
 
 
+def test_scroll_projects_portrait_for_legal_aside_speaker_outside_roster(game, monkeypatch):
+    import web_app
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    db, state, content = game
+    night_id = open_audience_night(db, state)
+    an.append_ledger_entry(
+        db, night_id, body="御前密奏。", tags=["scroll_role:attendant"],
+        person_names=["杨嗣昌"], audibility="御前低语",
+    )
+    runtime = _web_game(db, state, content, _FakeAgent(), monkeypatch)
+    runtime.favorites = set()
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+    assert "杨嗣昌" not in [entry["name"] for entry in payload["roster"]]
+    assert any(message["role"] == "attendant" and message["speaker"] == "杨嗣昌" for message in payload["messages"])
+    assert any(person["name"] == "杨嗣昌" and person["portrait_id"] == content.characters["杨嗣昌"].portrait_id for person in payload["characters"])
+
+
 def test_scroll_exposes_translation_pending_until_late_declaration_lands(game, monkeypatch):
     import web_app
     from ming_sim.audience_translation import apply_audience_round_translation
