@@ -156,7 +156,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
         scrollCalls += 1;
         return jsonResp(scrollCalls === 1 ? { night_id: 0, messages: [] } : {
           night_id: 24,
-          messages: [
+          protagonist: "", roster: [], translation_pending: false, messages: [
             { role: "user", speaker: "圣上", content: "失败问话", chat_turn_id: 8, status: "generating" },
             { role: "user", speaker: "圣上", content: "保留问话", chat_turn_id: 7 },
             { role: "minister", speaker: "温体仁", content: "保留答复", chat_turn_id: 7 },
@@ -182,7 +182,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
   it("accepted 后普通流中断会移除未持久化的半段回话", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (String(url).includes("/api/audience/scroll")) return jsonResp({ night_id: 24, messages: [] });
+      if (String(url).includes("/api/audience/scroll")) return jsonResp({ night_id: 24, protagonist: "", roster: [], translation_pending: false, messages: [] });
       return sse([
         { event: "accepted", data: { campaign_id: "c1", night_id: 24, chat_turn_id: 8 } },
         { event: "delta", data: { content: "未完成回话" } },
@@ -203,7 +203,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
       call += 1;
       if (call === 1 && String(url).includes("/api/audience/scroll")) return jsonResp({
         night_id: 23,
-        messages: [{ role: "minister", speaker: "洪承畴", content: "旧夜他臣", chat_turn_id: 7 }],
+        protagonist: "", roster: [], translation_pending: false, messages: [{ role: "minister", speaker: "洪承畴", content: "旧夜他臣", chat_turn_id: 7 }],
       });
       return sse([
         { event: "accepted", data: { night_id: 24 } },

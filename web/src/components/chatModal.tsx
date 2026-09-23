@@ -107,6 +107,7 @@ export function ChatModal({
       messages: AudienceScrollMessage[];
       protagonist: string;
       roster: AudienceRosterEntry[];
+      translationPending: boolean;
       refreshError: boolean;
     } | { kind: "error" }
   >({ kind: "loading" });
@@ -147,8 +148,9 @@ export function ChatModal({
     api<{
       night_id: number;
       messages: AudienceScrollMessage[];
-      protagonist?: string;
-      roster?: AudienceRosterEntry[];
+      protagonist: string;
+      roster: AudienceRosterEntry[];
+      translation_pending: boolean;
     }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
@@ -156,8 +158,9 @@ export function ChatModal({
           kind: "night",
           nightId: data.night_id,
           messages: data.messages || [],
-          protagonist: data.protagonist || "",
-          roster: data.roster || [],
+          protagonist: data.protagonist,
+          roster: data.roster,
+          translationPending: data.translation_pending,
           refreshError: false,
         } : { kind: "none" });
       })
@@ -173,6 +176,23 @@ export function ChatModal({
     // retain the historical chat-driven refresh contract until they adopt that signal.
     scrollGeneration === undefined ? chat : scrollGeneration]);
 
+  React.useEffect(() => {
+    if (scrollMode !== "audience" || scrollState.kind !== "night" || !scrollState.translationPending) return;
+    let alive = true;
+    const timer = setTimeout(() => {
+      api<{ night_id: number; messages: AudienceScrollMessage[]; protagonist: string; roster: AudienceRosterEntry[]; translation_pending: boolean }>("/api/audience/scroll")
+        .then((data) => {
+          if (alive && data.night_id === scrollState.nightId) setScrollState({
+            kind: "night", nightId: data.night_id, messages: data.messages,
+            protagonist: data.protagonist, roster: data.roster,
+            translationPending: data.translation_pending, refreshError: false,
+          });
+        })
+        .catch(() => { if (alive) setScrollState((current) => current.kind === "night" ? { ...current, refreshError: true } : current); });
+    }, 1000);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [scrollMode, scrollState]);
+
   const pendingAlreadyPersisted = !!pendingIdentity
     && pendingIdentity.campaign_id === currentCampaignId
     && pendingIdentity.night_id === currentNightId
@@ -186,7 +206,15 @@ export function ChatModal({
         : undefined)
     : minister;
   const roster = scrollMode === "audience"
-    ? (effectiveScrollState.kind === "night" ? effectiveScrollState.roster : [])
+    ? (effectiveScrollState.kind === "night"
+        ? [
+            ...effectiveScrollState.roster,
+            ...ministers.filter((candidate) => (!candidate.status || candidate.status === "active")
+              && !effectiveScrollState.roster.some((entry) => entry.name === candidate.name))
+              .map((candidate) => ({ name: candidate.name, present: false, waiting: true })),
+          ]
+        : ministers.filter((candidate) => !candidate.status || candidate.status === "active")
+            .map((candidate) => ({ name: candidate.name, present: false, waiting: true })))
     : ministers
         .filter((candidate) => !candidate.status || candidate.status === "active")
         .map((candidate) => ({ name: candidate.name, present: true }));
@@ -310,12 +338,12 @@ export function ChatModal({
                   type="button"
                   key={entry.name}
                   data-roster-name={entry.name}
-                  data-presence={entry.present ? "present" : "departed"}
+                  data-presence={entry.present ? "present" : "waiting" in entry ? "waiting" : "departed"}
                   onClick={() => dispatchSend(minister.name, `宣${entry.name}`)}
                   disabled={!!busy}
                 >
                   <MinisterPortrait className="audience-roster-avatar" primary={portrait.primary} fallback={portrait.fallback} name={entry.name} />
-                  <span>{entry.name}<small>{candidate?.office}{entry.present ? "" : " · 已退"}</small></span>
+                  <span>{entry.name}<small>{candidate?.office}{entry.present || "waiting" in entry ? "" : " · 已退"}</small></span>
                 </button>
               );
             })}

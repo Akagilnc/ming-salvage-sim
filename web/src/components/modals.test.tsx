@@ -536,7 +536,7 @@ describe("ChatModal — four diegetic roles and system boundary (#541)", () => {
       ok: true,
       json: async () => ({
         night_id: 9,
-        messages: [
+        protagonist: "", roster: [], translation_pending: false, messages: [
           { role: "scene", speaker: "周延儒", content: "宣周延儒入殿。", beat: "entrance", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
           { role: "scene", speaker: "周延儒", content: "周延儒告退。", beat: "exit", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "", location: "", audience_type: "" } },
         ],
@@ -642,7 +642,7 @@ describe("ChatModal — organic markdown display cleanup", () => {
       ok: true,
       json: async () => ({
         night_id: 23,
-        messages: [
+        protagonist: "", roster: [], translation_pending: false, messages: [
           { role: "scene", speaker: "周延儒", content: "殿内 **烛影** 摇曳\n- 夜风入户", beat: "entrance" },
           { role: "attendant", speaker: "王承恩", content: "**低声**：边报已至。", beat: "aside", audibility: "御前低语" },
           { role: "minister", speaker: "周延儒", content: "臣已知。", beat: "dialogue", chat_turn_id: 1 },
@@ -665,7 +665,7 @@ describe("ChatModal — organic markdown display cleanup", () => {
 
 describe("ChatModal — four diegetic roles (#540)", () => {
   it("renders role variants and derives the private aside only from audibility", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
       { role: "scene", speaker: "周延儒", content: "殿门徐启", beat: "entrance", audibility: "殿上公开" },
       { role: "user", speaker: "朕", content: "（搁笔）卿且直言。", beat: "dialogue", audibility: "殿上公开", chat_turn_id: 1 },
       { role: "minister", speaker: "周延儒", content: "臣谨奏。", beat: "dialogue", audibility: "殿上公开", chat_turn_id: 1 },
@@ -767,7 +767,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   it("retires the whole old-night snapshot when the persisted player-entry identity changes before refresh fails", async () => {
     let rejectRefresh!: (reason?: unknown) => void;
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧夜问话", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧夜答复", chat_turn_id: 1 },
         { role: "minister", speaker: "洪承畴", content: "同夜他臣", chat_turn_id: 2 },
@@ -797,7 +797,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   it("retires the pre-withdrawal snapshot when a successful undo identifies its turn", async () => {
     let rejectRefresh!: (reason?: unknown) => void;
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "撤回前问话", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "撤回前答复", chat_turn_id: 1 },
         { role: "minister", speaker: "洪承畴", content: "仍在旧 snapshot", chat_turn_id: 2 },
@@ -823,7 +823,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   });
 
   it("does not treat an ordinary history reduction as a withdrawal", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
       { role: "user", speaker: "朕", content: "公共卷仍保留", chat_turn_id: 1 },
       { role: "minister", speaker: MINISTER_MOCK.name, content: "公共答复仍保留", chat_turn_id: 1 },
     ] }) }));
@@ -873,7 +873,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     });
 
     await act(async () => {
-      resolveScroll({ ok: true, json: async () => ({ night_id: 17, messages: [{ role: "user", content: "卷首" }] }) });
+      resolveScroll({ ok: true, json: async () => ({ night_id: 17, protagonist: "", roster: [], translation_pending: false, messages: [{ role: "user", content: "卷首" }] }) });
       await Promise.resolve(); await Promise.resolve();
     });
     expect(log.scrollTop).toBe(600);
@@ -891,7 +891,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   });
 
   it("restores a saved position and reports player scrolling for the open night", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "卷首" }] }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [{ role: "user", content: "卷首" }] }) }));
     const save = vi.fn();
     const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23, scrollPosition: 137, onScrollPositionChange: save });
     const log = host.querySelector(".chat-log") as HTMLDivElement;
@@ -906,7 +906,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   it("does not merge personal history while the canonical scroll refresh is delayed", async () => {
     let resolveRefresh!: (value: unknown) => void;
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧卷", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧答", chat_turn_id: 1 },
       ] }) })
@@ -935,7 +935,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent).not.toContain("刚完成的答复");
 
     await act(async () => {
-      resolveRefresh({ ok: true, json: async () => ({ night_id: 23, messages: [
+      resolveRefresh({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧卷", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧答", chat_turn_id: 1 },
         { role: "user", speaker: "朕", content: "刚完成的新问", chat_turn_id: 2 },
@@ -951,7 +951,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
 
   it("keeps the last-known scroll without importing personal history when refresh fails", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧卷", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧答", chat_turn_id: 1 },
       ] }) })
@@ -983,11 +983,11 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
 
   it("refreshes the canonical scroll after a non-streaming completed chat update", async () => {
     const replies = [
-      { night_id: 23, messages: [
+      { night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧卷", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧答", chat_turn_id: 1 },
       ] },
-      { night_id: 23, messages: [
+      { night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "user", speaker: "朕", content: "旧卷", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "旧答", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "非流式新答", chat_turn_id: 2 },
@@ -1007,7 +1007,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   it("renders a streaming reply as a neutral scene block", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ night_id: 23, messages: [
+      json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
         { role: "scene", speaker: "洪承畴", content: "入殿", beat: "entrance" },
         { role: "minister", speaker: "洪承畴", content: "臣在。", beat: "dialogue", chat_turn_id: 1 },
         { role: "attendant", speaker: "杨嗣昌", content: "御前低语", audibility: "御前低语", beat: "dialogue" },
@@ -1075,7 +1075,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   ];
 
   it("shows the whole chronological night instead of a selected-minister window", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: nightScroll }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
     renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(document.body.textContent).toContain("密令：整饬边备");
@@ -1111,7 +1111,8 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       registerNightUpdate: (update) => { updateNight = update; } });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(host.querySelector(".chat-portrait-wrap img")).toBeNull();
-    expect(host.querySelectorAll(".audience-roster button")).toHaveLength(0);
+    expect(Array.from(host.querySelectorAll(".audience-roster button")).map((node) => node.getAttribute("data-presence")))
+      .toEqual(["waiting", "waiting"]);
 
     protagonist = "洪承畴";
     nightId = 24;
@@ -1134,6 +1135,29 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     expect(host.querySelector(".chat-portrait-wrap img")).toBeNull();
   });
 
+  it("refreshes the open scroll when a late translation finishes after the reply", async () => {
+    vi.useFakeTimers();
+    let pending = true;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({
+      night_id: 23,
+      messages: [],
+      protagonist: pending ? "洪承畴" : "许誉卿",
+      roster: [{ name: "洪承畴", present: pending }],
+      translation_pending: pending,
+    }) })));
+    try {
+      const host = renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+      pending = false;
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_xu.png");
+      expect(host.querySelector('[data-roster-name="洪承畴"]')?.getAttribute("data-presence")).toBe("departed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps one turn container while a streamed reply becomes durable", async () => {
     let updateChat!: (chat: ChatMessage[]) => void;
     let updateStreaming!: (message: string) => void;
@@ -1142,8 +1166,8 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({
       ok: true,
       json: async () => reads++ === 0
-        ? ({ night_id: 23, messages: [] })
-        : ({ night_id: 23, messages: nightScroll.filter((message) => message.chat_turn_id === 11) }),
+        ? ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [] })
+        : ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll.filter((message) => message.chat_turn_id === 11) }),
     })));
     renderModal({
       minister: hong,
@@ -1180,7 +1204,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     let updateStreaming!: (message: string) => void;
     let updatePendingIdentity!: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void;
     let updateFailedIdentity!: (identity: { campaign_id: string; night_id: number; chat_turn_id: number } | null) => void;
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [] }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [] }) }));
     renderModal({
       minister: hong,
       ministers: [hong, xu],
@@ -1210,7 +1234,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       // The same night keeps every participant in chronological order.
       ...nightScroll,
     ];
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: halfTurnScroll }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: halfTurnScroll }) }));
     renderModal({
       minister: xu,
       ministers: [hong, xu],
@@ -1232,7 +1256,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   });
 
   it("切回有记录大臣：语义轮完整含朕问/回话/递话", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: nightScroll }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
     renderModal({ minister: hong, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(document.body.textContent).toContain("密令：整饬边备");
