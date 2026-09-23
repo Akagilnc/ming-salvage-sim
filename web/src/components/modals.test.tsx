@@ -1421,6 +1421,45 @@ describe("#1480 / #1499 FullscreenModal modal-layout-bare 只随 hideTitle", () 
 });
 
 describe("AudienceArchiveModal — read-only scene archive", () => {
+  it("hides the previous night's retry while the selected night is still loading", async () => {
+    let releaseScroll: (() => void) | undefined;
+    const pendingScroll = new Promise<void>((resolve) => { releaseScroll = resolve; });
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
+        { kind: "night", night_id: 32, title: "乙夜", involved_people: [] },
+        { kind: "night", night_id: 31, title: "甲夜", involved_people: [] },
+      ] }) });
+      if (url.endsWith("32")) return pendingScroll.then(() => ({ ok: true, json: async () => ({ messages: [] }) }));
+      return Promise.resolve({ ok: true, json: async () => ({ messages: [
+        { role: "minister", content: "甲夜奏对", chat_turn_id: 8 },
+      ], translation_retries: [{ chat_turn_id: 8, night_id: 31, retryable: true }] }) });
+    }));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).not.toBeNull();
+    await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item:not(.active)")?.click(); });
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
+    releaseScroll?.();
+  });
+  it("places a failed translation beneath its source turn, including retry failure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/audience/translation/retry") return Promise.reject(new Error("retry failed"));
+      return Promise.resolve({ ok: true, json: async () =>
+        url === "/api/history/turns" ? { turns: [{ kind: "night", night_id: 31, title: "旧夜", involved_people: [] }] }
+          : { messages: [
+            { role: "minister", content: "源轮", chat_turn_id: 8 },
+            { role: "minister", content: "后轮", chat_turn_id: 9 },
+          ], translation_retries: [{ chat_turn_id: 8, night_id: 31, retryable: true }] } });
+    }));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    const source = host.querySelector('[data-audience-turn-id="8"]');
+    expect(source?.querySelector('[data-testid="archive-translation-retry-8"]')).not.toBeNull();
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button')?.click(); });
+    expect(source?.querySelector('[role="alert"]')?.textContent).toContain("retry failed");
+  });
   it("keeps the selected night when an earlier night's translation retry finishes late", async () => {
     let releaseRetry: (() => void) | undefined;
     const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
@@ -1458,7 +1497,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
         pending = false;
         return Promise.resolve({ ok: true, json: async () => ({ chat_turn_id: 8 }) });
       }
-      return Promise.resolve({ ok: true, json: async () => ({ messages: [], translation_retries: pending ? [
+      return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "minister", content: "旧夜奏对", chat_turn_id: 8 }], translation_retries: pending ? [
         { chat_turn_id: 8, night_id: 31, minister_name: "洪承畴", kind: "translation_pending", retryable: true },
       ] : [] }) });
     });
