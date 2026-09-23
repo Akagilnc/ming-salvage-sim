@@ -160,6 +160,7 @@ def audience_transport_policy(source: object = None) -> TransportPolicy:
         policy,
         max_attempts=min(policy.max_attempts, TRANSPORT_DEFAULT_MAX_ATTEMPTS),
         retry_429=False,
+        retry_interval_seconds=TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
     )
 
 

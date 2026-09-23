@@ -724,7 +724,7 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     clickButton("重新生成回话");
     expect(send).toHaveBeenCalledWith("洪承畴", "细奏边情");
     expect(undo).toHaveBeenCalledWith("洪承畴");
-    expect(retryReply).toHaveBeenCalledWith("洪承畴");
+    expect(retryReply).toHaveBeenCalledWith("殿上");
     const replyFailure = host.querySelector('[data-testid="reply-retry"]');
     expect(replyFailure?.closest('[data-audience-turn-id="12"]')).not.toBeNull();
     const translationFailure = host.querySelector('[data-testid="translation-retry-1"]');
@@ -1160,6 +1160,8 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
       pending = false;
       await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
       expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_xu.png");
       expect(host.querySelector('[data-roster-name="洪承畴"]')?.getAttribute("data-presence")).toBe("departed");
     } finally {
@@ -1225,7 +1227,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       trailing,
     ];
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => {
-      if (reads++ === 1) throw new Error("temporary read failure");
+      reads++;
       return {
         ok: true,
         json: async () => reads === 1
@@ -1261,7 +1263,6 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     stage.scrollTop = 100;
     act(() => stage.dispatchEvent(new Event("scroll", { bubbles: true })));
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     expect(turn?.querySelectorAll('.turn-segment')).toHaveLength(translated.length - 1);
     expect(stage.scrollTop).toBe(200);

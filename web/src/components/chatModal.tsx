@@ -3,6 +3,7 @@ import { Loader2, Lock, RotateCcw, Send, Star, X } from "lucide-react";
 import { MinisterPlaceOffice, MinisterPortrait } from "./hud";
 import { api } from "../api";
 import { ScrollMessages, portraitSources } from "./scrollMessages";
+import { AUDIENCE_SCENE_SPEAKER } from "../audienceScene";
 import type {
   AudienceScrollMessage,
   ChatDisplayMessage,
@@ -217,23 +218,6 @@ export function ChatModal({
     // retain the historical chat-driven refresh contract until they adopt that signal.
     scrollGeneration === undefined ? chat : scrollGeneration]);
 
-  React.useEffect(() => {
-    if (scrollMode !== "audience" || scrollState.kind !== "night" || !scrollState.translationPending) return;
-    let alive = true;
-    const timer = setTimeout(() => {
-      api<{ night_id: number; messages: AudienceScrollMessage[]; protagonist: string; roster: AudienceRosterEntry[]; characters?: Minister[]; translation_pending: boolean }>("/api/audience/scroll")
-        .then((data) => {
-          if (alive && data.night_id === scrollState.nightId) setScrollState({
-            kind: "night", nightId: data.night_id, messages: data.messages,
-            protagonist: data.protagonist, roster: data.roster || [], characters: data.characters || [],
-            translationPending: data.translation_pending, refreshError: false,
-          });
-        })
-        .catch(() => { if (alive) setScrollState((current) => current.kind === "night" ? { ...current, refreshError: true } : current); });
-    }, 1000);
-    return () => { alive = false; clearTimeout(timer); };
-  }, [scrollMode, scrollState]);
-
   const pendingAlreadyPersisted = !!pendingIdentity
     && pendingIdentity.campaign_id === currentCampaignId
     && pendingIdentity.night_id === currentNightId
@@ -372,7 +356,7 @@ export function ChatModal({
     turnNotices.set(replyRetry.chat_turn_id, (
       <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="reply-retry">
         <span>问话未得回话（「{replyRetry.question}」）。{replyRetry.error_pack_path ? `错误包：${replyRetry.error_pack_path}；请交给作者。` : ""}</span>
-        <button type="button" onClick={() => onRetryReply(currentMinister?.name ?? minister.name)} disabled={!!busy}>
+        <button type="button" onClick={() => onRetryReply(scrollMode === "audience" ? AUDIENCE_SCENE_SPEAKER : minister.name)} disabled={!!busy}>
           重新生成回话
         </button>
       </div>

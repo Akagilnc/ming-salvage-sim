@@ -250,7 +250,7 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
         import ming_sim.llm_config as llm_config_mod
         import ming_sim.llm_transport as transport
         path = tmp_path / "runtime_llm.json"
-        path.write_text(json.dumps({"transport": {"max_attempts": 5}}), encoding="utf-8")
+        path.write_text(json.dumps({"transport": {"max_attempts": 5, "retry_interval_seconds": 1}}), encoding="utf-8")
         monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
         game.session.llm_config = replace(game.session.llm_config, channel="cli", cli_runner="agy")
 
@@ -330,7 +330,6 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
         assert [row["chat_turn_id"] for row in reopened["translation_retries"]] == [ctid]
         assert game._runtime_write_queue().wait_idle()
     turns_before_retry = _count(game.db, "chat_turns")
-    ledger_before_retry = _count(game.db, "story_ledger_entries")
 
     if failure == "code":
         started = threading.Event()
@@ -382,20 +381,26 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
         async with _client() as client:
             retry = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
             healed = (await client.get("/api/audience/chat")).json()
-            counts_after_retry = (
-                _count(game.db, "chat_turns"), _count(game.db, "story_ledger_entries"),
-            )
+            turns_after_retry = _count(game.db, "chat_turns")
+            source_segments_after_retry = game.db.conn.execute(
+                "SELECT body FROM story_ledger_entries WHERE source_chat_turn_id=?",
+                (ctid,),
+            ).fetchall()
             undo = await client.post("/api/audience/chat/undo")
             retracted = (await client.get("/api/audience/chat")).json()
             stale = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
-            return retry, healed, counts_after_retry, undo, retracted, stale
+            return retry, healed, turns_after_retry, source_segments_after_retry, undo, retracted, stale
 
-    retry, healed, counts_after_retry, undo, retracted, stale = asyncio.run(retry_and_undo())
+    retry, healed, turns_after_retry, source_segments_after_retry, undo, retracted, stale = asyncio.run(retry_and_undo())
     assert retry.status_code == 200
     assert healed["translation_retries"] == []
-    assert counts_after_retry == (turns_before_retry, ledger_before_retry)
+    assert turns_after_retry == turns_before_retry
+    assert [row["body"] for row in source_segments_after_retry] == ["臣领旨。"]
     assert undo.status_code == 200
     assert retracted["translation_retries"] == []
+    assert game.db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE source_chat_turn_id=?", (ctid,),
+    ).fetchone()["c"] == 0
     assert stale.status_code == 404
 
 

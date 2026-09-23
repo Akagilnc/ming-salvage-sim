@@ -21,6 +21,7 @@ from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 from tests.conftest import (
+    offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
     stub_scene_agent,
@@ -130,7 +131,7 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         night_id=night_id,
         chat_turn_id=source,
         minister_name=_hong_name(db, content),
-        translate_fn=lambda _prompt, _config: declaration,
+        translate_fn=lambda prompt, config: {**offline_empty_audience_translate(prompt, config), **declaration},
     )
 
     said = captured["night_said"]
@@ -345,7 +346,7 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
     # 不表态：空 promises
     sess = _sess(
         db, state, content, monkeypatch,
-        translate_fn=lambda p, c: {"commissions": [], "promises": []},
+        translate_fn=offline_empty_audience_translate,
     )
     sess.scene_chat("边事如何？")
     row = db.conn.execute(
@@ -356,6 +357,7 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
     # 「准」
     def approve_fn(prompt, cfg):
         return {
+            **offline_empty_audience_translate(prompt, cfg),
             "commissions": [],
             "promises": [{"action_id": staged_id, "decision": "应允"}],
         }
@@ -534,7 +536,7 @@ def test_translate_empty_success_still_dispatches_without_failure(game, monkeypa
     )
     sess = _sess(
         db, state, content, monkeypatch,
-        translate_fn=lambda p, c: {"commissions": [], "promises": []},
+        translate_fn=offline_empty_audience_translate,
     )
     result = sess.scene_chat("边事如何？")
     assert result.answer == "臣在。"
@@ -601,6 +603,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     sess = _sess(
         db, state, content, monkeypatch,
         translate_fn=lambda p, c: {
+            **offline_empty_audience_translate(p, c),
             "commissions": [{"text": create_text}],
             "promises": [],
         },
@@ -644,6 +647,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     sess = _sess(
         db, state, content, monkeypatch,
         translate_fn=lambda p, c: {
+            **offline_empty_audience_translate(p, c),
             "commissions": [],
             "promises": [{"action_id": approve_id, "decision": "应允"}],
         },
@@ -676,6 +680,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     sess = _sess(
         db, state, content, monkeypatch,
         translate_fn=lambda p, c: {
+            **offline_empty_audience_translate(p, c),
             "commissions": [],
             "promises": [{"action_id": reject_id, "decision": "拒绝"}],
         },
@@ -791,6 +796,7 @@ def test_scene_chat_translation_can_approve_staged_action(game, monkeypatch):
 
     def translate_fn(prompt, llm_config):
         return {
+            **offline_empty_audience_translate(prompt, llm_config),
             "commissions": [],
             "promises": [{"action_id": staged_id, "decision": "应允"}],
         }
