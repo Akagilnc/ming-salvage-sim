@@ -699,6 +699,41 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
         "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?", (minister,)
     )] == ["臣遵旨。"]
 
+
+@pytest.mark.parametrize("entry", ["stream", "nonstream"])
+def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monkeypatch, entry):
+    from ming_sim.session import ChatTurnResult
+    from tests.web_audience_test_doubles import install_hall_admission
+
+    game = web_game
+    minister = next(iter(game.content.characters))
+    install_hall_admission(game.session)
+    game.session.start_chat_turn_scene = lambda *_a, **_k: None
+    game.session.join_chat_turn_scene = lambda *_a, **_k: []
+    game.session.persist_chat_turn_scene = lambda *_a, **_k: None
+    game.session.scene_chat = lambda *_a, **_k: ChatTurnResult(answer="臣遵旨。")
+    game.session.schedule_pending_scene_translation = lambda *_a, **_k: (_ for _ in ()).throw(
+        RuntimeError("translation dispatch failed"))
+
+    if entry == "stream":
+        events = list(game.chat_stream(minister, "边饷如何？"))
+        chat_turn_id = int(next(ev for ev in events if ev["type"] == "accepted")["chat_turn_id"])
+        assert [ev["type"] for ev in events][-2:] == ["error", "end"]
+    else:
+        with pytest.raises(RuntimeError, match="translation dispatch failed"):
+            game.chat(minister, "边饷如何？")
+        chat_turn_id = game.chat_projection(minister)[0]["chat_turn_id"]
+    retries = game.pending_translation_retries(chat_turn_id=chat_turn_id)
+    assert [r["chat_turn_id"] for r in retries] == [chat_turn_id]
+    assert retries[0]["error_pack_path"]
+    assert [(m["role"], m["content"], m["chat_turn_id"]) for m in game.chat_projection(minister)] == [
+        ("user", "边饷如何？", chat_turn_id), ("minister", "臣遵旨。", chat_turn_id)]
+    stub_audience_translate(monkeypatch)
+    game.retry_pending_translation(chat_turn_id)
+    assert game.pending_translation_retries(chat_turn_id=chat_turn_id) == []
+    assert [(m["role"], m["content"]) for m in game.chat_projection(minister)] == [
+        ("user", "边饷如何？"), ("minister", "臣遵旨。")]
+
 def test_seal_rejects_new_claim_after_lifecycle(web_game):
     """生命周期 seal 后新领票拒入（旧 _draining 语义）。"""
     game = web_game

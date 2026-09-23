@@ -330,6 +330,25 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(minister)] == [later]
 
 
+def test_retry_dispatch_failure_recovers_persisted_reply_without_regeneration(restore_env):
+    db, state, content = restore_env.db, restore_env.state, restore_env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    chat_turn_id = _start_generating_turn(db, state, minister, "剿抚孰先？")
+    db.reconcile_interrupted_chat_turns()
+    rt = _retry_runtime(db, state, minister)
+    rt.session.schedule_pending_scene_translation = lambda *_a: (_ for _ in ()).throw(
+        RuntimeError("translation dispatch failed"))
+
+    with pytest.raises(RuntimeError, match="translation dispatch failed"):
+        rt.retry_interrupted_reply(minister, chat_turn_id)
+    assert rt.reply_retries(minister) == []
+    assert [r["chat_turn_id"] for r in rt.pending_translation_retries(chat_turn_id=chat_turn_id)] == [
+        chat_turn_id]
+    assert [(m["role"], m["content"]) for m in rt.chat_projection(minister)] == [
+        ("user", "剿抚孰先？"), ("minister", "臣重奏：剿为先。")]
+
+
 def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env):
     db, state, content = restore_env.db, restore_env.state, restore_env.content
     minister = _active_minister(db, content)

@@ -2036,6 +2036,37 @@ class WebGame:
         after_snapshot = self.db.capture_chat_rollback_snapshot()
         self.db.record_chat_turn_rollback_diffs(chat_turn_id, before_snapshot, after_snapshot)
 
+    def _record_persisted_reply_failure(
+        self, chat_turn_id: int, error: BaseException, *,
+        translation_unstarted: bool, court_action: str = "",
+    ) -> bool:
+        """持闸调用；以落库相位分流转译补偿与回话后尾随恢复。"""
+        if not chat_turn_id or not hasattr(self.db, "conn"):
+            return False
+        row = self.db.conn.execute(
+            "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
+            (chat_turn_id,),
+        ).fetchone()
+        if not row or row["status"] != "active" or not row["minister_message_id"]:
+            return False
+        from ming_sim.audience_night import write_audience_error_pack
+        translation_pending = translation_unstarted and row["extract_status"] != "done"
+        if translation_pending:
+            self.db.mark_story_extraction_pending(chat_turn_id)
+        pack = write_audience_error_pack(
+            kind="translation" if translation_pending else "reply",
+            message=str(error), detail={"chat_turn_id": chat_turn_id, "phase": "post_reply"},
+            db=self.db, exc=error,
+        )
+        if translation_pending:
+            self.db.set_chat_turn_error_pack(chat_turn_id, pack)
+        else:
+            self.db.mark_post_reply_failure(
+                chat_turn_id,
+                "court_break" if court_action == "court_break" else "after_reply", pack,
+            )
+        return True
+
     def _fail_chat_turn_and_reload(
         self, chat_turn_id: int, before_snapshot: Dict[str, Any],
         error: Optional[BaseException] = None,
@@ -2370,6 +2401,8 @@ class WebGame:
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
+        result = None
+        translation_scheduled = False
         # #1566：场外记召成功后在 gate 外物化 scene；（minister, admission_result, origin_id）
         offsite_summon: Optional[tuple[str, str, str]] = None
         # #542 r6e：prologue（_start_chat_turn / append）纳入既有 try/except；
@@ -2515,6 +2548,7 @@ class WebGame:
                 # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
                 result._admitted_write_ticket = pending_ticket
                 self.session.schedule_pending_scene_translation(result)
+                translation_scheduled = True
                 answer_text = str(getattr(result, "answer", "") or "")
                 message_id = int(payload.get("minister_message_id") or 0)
                 # #1842：转译后台承接记录；旧读心/抽取/判官尾随退役。高亮仍可跑（呈现腿）。
@@ -2535,7 +2569,7 @@ class WebGame:
                         self._complete_pending_write(held_ticket)
                         pending_ticket = None
                     payload["history"] = self.chat_projection(minister_name)
-            except Exception:
+            except Exception as error:
                 # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
                 # 内层守护对齐流式：二次失败记日志不吞原错；abandon / 终态写分 try，
                 # 终态写尽力而为——abandon 崩不得跳过 fail，否则 turn 卡 generating。
@@ -2549,11 +2583,16 @@ class WebGame:
                 try:
                     with cleanup_gate:
                         if chat_turn_id:
-                            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                            self.db.fail_chat_turn(chat_turn_id)
-                            self.chat_history = {name: [] for name in self.session.content.characters}
-                            for name, msgs in self.db.load_all_chat_history().items():
-                                self.chat_history.setdefault(name, []).extend(msgs)
+                            if not self._record_persisted_reply_failure(
+                                chat_turn_id, error,
+                                translation_unstarted=not translation_scheduled,
+                                court_action=getattr(result, "court_action", ""),
+                            ):
+                                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                                self.db.fail_chat_turn(chat_turn_id)
+                                self.chat_history = {name: [] for name in self.session.content.characters}
+                                for name, msgs in self.db.load_all_chat_history().items():
+                                    self.chat_history.setdefault(name, []).extend(msgs)
                 except Exception:
                     logger.exception(
                         "nonstream chat cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
@@ -2658,6 +2697,8 @@ class WebGame:
         gate = self._ticketed_write_gate(pending_ticket)
         cleanup_gate = self._runtime_write_gate()
         before_snapshot: Dict[str, Any] = {}
+        result = None
+        translation_scheduled = False
         # #1566：route 权威解码——场外密令不启殿上 scene；密令重试保 explicit_secret_order。
         from ming_sim.audience_night import decode_chat_turn_route
         retry_route = decode_chat_turn_route(target.get("route"))
@@ -2728,6 +2769,7 @@ class WebGame:
                 # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
                 result._admitted_write_ticket = pending_ticket
                 self.session.schedule_pending_scene_translation(result)
+                translation_scheduled = True
                 answer_text = str(getattr(result, "answer", "") or "")
                 message_id = int(payload.get("minister_message_id") or 0)
                 # #1842：旧读心/抽取/判官退役；放行整轮票后高亮仍可跑。
@@ -2758,9 +2800,15 @@ class WebGame:
                     )
                 try:
                     with cleanup_gate:
-                        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                        self.db.restore_interrupted_after_failed_retry(chat_turn_id)
-                        if not isinstance(error, LLMUnavailable):
+                        reply_persisted = self._record_persisted_reply_failure(
+                            chat_turn_id, error,
+                            translation_unstarted=not translation_scheduled,
+                            court_action=getattr(result, "court_action", ""),
+                        )
+                        if not reply_persisted:
+                            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                            self.db.restore_interrupted_after_failed_retry(chat_turn_id)
+                        if not reply_persisted and not isinstance(error, LLMUnavailable):
                             from ming_sim.audience_night import write_audience_error_pack
                             pack = write_audience_error_pack(
                                 kind="reply", message=str(error),
@@ -4141,7 +4189,7 @@ class WebGame:
                 except Exception as error:  # noqa: BLE001
                     # #1353 r12/r13：worker 单一异常出口——payload / 后处理 / 收夜任一失败
                     # 皆 error→end；禁逐点补丁，禁只走 finally 致消费者永阻。
-                    # payload 未成（回话失败）才 fail 本轮；后处理失败回话已可见。
+                    # 回话是否已落以持久轮为准；payload 仍可能在落库后的调度窗为空。
                     # #1727：done 前尾随/屏障步失败时，此处补 done，保「回话已可见」再 error。
                     # ADR 0005 / #1408：清理二次失败 logger.exception 记 traceback 不宽吞；
                     # abandon / 终态写分 try；清理异常不覆盖原始 error、不阻断 error→end。
@@ -4149,7 +4197,23 @@ class WebGame:
                     if payload is not None and not reply_done_emitted:
                         ev_queue.put({"type": "done", "payload": payload or {}})
                         reply_done_emitted = True
-                    if payload is None:
+                    reply_persisted = False
+                    try:
+                        if chat_turn_id:
+                            with bare_write_gate:
+                                reply_persisted = self._record_persisted_reply_failure(
+                                    chat_turn_id, error,
+                                    translation_unstarted=payload is None,
+                                    court_action=court_action,
+                                )
+                    except Exception:
+                        logger.exception(
+                            "stream worker cleanup: record persisted reply failure failed chat_turn_id=%s",
+                            chat_turn_id,
+                        )
+                        # 相位取证失败绝不可推定回话未落，进而删问话/回话。
+                        reply_persisted = True
+                    if payload is None and not reply_persisted:
                         try:
                             if chat_turn_id:
                                 self.session.abandon_chat_turn_scene(chat_turn_id)
@@ -4169,25 +4233,6 @@ class WebGame:
                         # #1465 ④：回话未成终失败 — 与重试起手同形无条件 replace，再 error
                         # （禁「只 put error 不 replace」；客户端已处理空 replace）
                         emit_delta("", replace=True)
-                    elif chat_turn_id:
-                        try:
-                            from ming_sim.audience_night import write_audience_error_pack
-                            with bare_write_gate:
-                                pack = write_audience_error_pack(
-                                    kind="reply", message=str(error),
-                                    detail={"chat_turn_id": chat_turn_id, "phase": "post_reply"},
-                                    db=self.db, exc=error,
-                                )
-                                self.db.mark_post_reply_failure(
-                                    chat_turn_id,
-                                    "court_break" if court_action == "court_break" else "after_reply",
-                                    pack,
-                                )
-                        except Exception:
-                            logger.exception(
-                                "stream worker cleanup: mark_post_reply_failure failed chat_turn_id=%s",
-                                chat_turn_id,
-                            )
                     if isinstance(error, LLMUnavailable):
                         ev_queue.put({
                             "type": "error",
