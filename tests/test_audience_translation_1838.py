@@ -36,8 +36,8 @@ def _activate(db, state, *names: str) -> None:
             db.set_character_status(state, name, "active", reason="1838 测试置在场")
 
 
-def test_three_speaker_segments_private_whisper_not_in_other_experience(game):
-    """AC1：王绍徽答 / 毕自严插话 / 王承恩低语 → 三段可闻性；低语不进王绍徽经历。"""
+def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
+    """AC1：三段说话人可闻性；低语只进王承恩经历。"""
     db, state, _ = game
     _activate(db, state, "王绍徽", "毕自严", "王承恩")
     night = open_night(db, state, location="乾清宫", time_of_day="戌时")

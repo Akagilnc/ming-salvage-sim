@@ -501,7 +501,7 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
     _nid, ct = attach_chat_turn_to_night(
         db, state, character.name, agno_session_id="sess", agno_runs_before=0,
     )
-    spoken = "SENTINEL_NIGHT_SPOKEN_1830"
+    spoken = "臣已核过边饷册。"
     uid = db.append_chat_message(character.name, state.turn, "user", "问边饷")
     db.update_chat_turn_messages(ct, user_message_id=uid)
     mid = db.append_chat_message(character.name, state.turn, "minister", spoken)
