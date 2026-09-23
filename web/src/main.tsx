@@ -144,7 +144,7 @@ export function App() {
   const {
     suggestions,
     chatNotice,
-    replyRetry,
+    replyRetries,
     translationRetries,
     canUndoLastChat,
     composerHint,
@@ -729,7 +729,7 @@ export function App() {
             busy={busy}
             error={error}
             secretOrders={secretOrders.filter((o) => o.status === "active")}
-            replyRetry={replyRetry}
+            replyRetries={replyRetries}
             translationRetries={translationRetries}
             onInput={setInput}
             onIntent={setComposerIntent}

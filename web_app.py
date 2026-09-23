@@ -37,7 +37,7 @@ try:
 except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
     pass
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -2592,15 +2592,49 @@ class WebGame:
             return []
         return self.db.get_interrupted_reply_retries(minister_name)
 
-    def retry_interrupted_reply(self, minister_name: str) -> Dict[str, Any]:
-        """#505 恢复动作：重开后为最后一条中断轮**重新生成回话**（系统层重试，非内容选项按钮）。
+    def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
+        interrupted = self.interrupted_reply_retries(minister_name)
+        post_reply = self.db.get_post_reply_retries(minister_name) if hasattr(self.db, "get_post_reply_retries") else []
+        return sorted([*interrupted, *post_reply], key=lambda item: int(item["chat_turn_id"]))
+
+    def _resume_post_reply(self, minister_name: str, target: Dict[str, Any]) -> Dict[str, Any]:
+        """只续已落回话的尾随阶段；绝不再次运行召对模型或插入回话。"""
+        chat_turn_id = int(target["chat_turn_id"])
+        phase = str(target["recovery_phase"])
+        if phase == "court_break":
+            self.session.close_night_after_chat_if_needed(
+                "court_break", write_gate=self._runtime_write_gate(),
+            )
+        else:
+            self._trail_highlight_judge_after_reply(
+                str(target["answer"]), message_id=int(target["minister_message_id"]),
+                chat_turn_id=chat_turn_id,
+            )
+        self.db.clear_post_reply_failure(chat_turn_id)
+        return {
+            "answer": str(target["answer"]), "chat_turn_id": chat_turn_id,
+            "history": self.chat_projection(minister_name),
+            "directives": [self.directive_payload(row) for row in self.directive_rows()],
+            "pending_count": self.session.pending_count(),
+            "pending_directive_count": self.pending_directive_count(),
+            "suggestions": [], "can_undo_last_chat": self.can_undo_last_chat(minister_name),
+            "pending_action_failures": self.pending_action_failures_for(minister_name),
+        }
+
+    def retry_interrupted_reply(self, minister_name: str, target_chat_turn_id: Optional[int] = None) -> Dict[str, Any]:
+        """恢复指定中断轮，或续接已落回话的尾随阶段；旧调用默认最新中断轮。
 
         复用既有 chat_turn 与已持久问话——**绝不再落问话**（对话记录无重复句，AC3）。成功即回话
         落库、轮 generating→active；重试再失败则翻回 interrupted 保持可再重试。无待重试轮 → 响亮 404。"""
-        retries = self.interrupted_reply_retries(minister_name)
+        retries = self.reply_retries(minister_name)
         if not retries:
-            raise HTTPException(status_code=404, detail=f"{minister_name}没有待重试的中断回话。")
-        target = retries[-1]  # 最后一条中断轮
+            raise HTTPException(status_code=404, detail=f"{minister_name}没有待重试的回话。")
+        target = (next((r for r in retries if int(r["chat_turn_id"]) == target_chat_turn_id), None)
+                  if target_chat_turn_id else next((r for r in reversed(retries) if not r.get("recovery_phase")), None))
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"{minister_name}没有该轮待重试回话。")
+        if target.get("recovery_phase"):
+            return self._resume_post_reply(minister_name, target)
         chat_turn_id = int(target["chat_turn_id"])
         question = str(target["question"])
         accepted_turn = int(target["turn"])
@@ -4002,6 +4036,7 @@ class WebGame:
         def worker() -> None:
             nonlocal pending_ticket
             payload: Optional[Dict[str, Any]] = None
+            court_action = ""
             # #1727：court_break 预领屏障；异常出口也须 complete，禁 has_open_barrier 永真。
             close_barrier_ticket: Optional[WriteTicket] = None
             # #1353 r12：payload 已成 ⇒ done 必先于 error（后处理失败回话已可见）。
@@ -4134,6 +4169,25 @@ class WebGame:
                         # #1465 ④：回话未成终失败 — 与重试起手同形无条件 replace，再 error
                         # （禁「只 put error 不 replace」；客户端已处理空 replace）
                         emit_delta("", replace=True)
+                    elif chat_turn_id:
+                        try:
+                            from ming_sim.audience_night import write_audience_error_pack
+                            with bare_write_gate:
+                                pack = write_audience_error_pack(
+                                    kind="reply", message=str(error),
+                                    detail={"chat_turn_id": chat_turn_id, "phase": "post_reply"},
+                                    db=self.db, exc=error,
+                                )
+                                self.db.mark_post_reply_failure(
+                                    chat_turn_id,
+                                    "court_break" if court_action == "court_break" else "after_reply",
+                                    pack,
+                                )
+                        except Exception:
+                            logger.exception(
+                                "stream worker cleanup: mark_post_reply_failure failed chat_turn_id=%s",
+                                chat_turn_id,
+                            )
                     if isinstance(error, LLMUnavailable):
                         ev_queue.put({
                             "type": "error",
@@ -6492,7 +6546,10 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "suggestions": [],
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
         "pending_action_failures": game.pending_action_failures_for(SCENE_CHAT_SPEAKER),
-        "reply_retry": (game.interrupted_reply_retries(SCENE_CHAT_SPEAKER) or [None])[-1],
+        "reply_retries": game.reply_retries(SCENE_CHAT_SPEAKER),
+        "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
+            minister_name=SCENE_CHAT_SPEAKER,
+        )],
         "translation_retries": game.pending_translation_retries(
             night_id=int(open_night["id"]) if open_night else None,
         ),
@@ -6500,9 +6557,9 @@ async def api_audience_chat_history() -> Dict[str, Any]:
 
 
 @app.post("/api/audience/reply/retry")
-async def api_retry_audience_reply() -> Dict[str, Any]:
+async def api_retry_audience_reply(chat_turn_id: int = Body(0, embed=True)) -> Dict[str, Any]:
     from ming_sim.audience_night import SCENE_CHAT_SPEAKER
-    return await run_in_threadpool(get_game().retry_interrupted_reply, SCENE_CHAT_SPEAKER)
+    return await run_in_threadpool(get_game().retry_interrupted_reply, SCENE_CHAT_SPEAKER, chat_turn_id or None)
 
 
 @app.post("/api/audience/chat/undo")
@@ -6535,8 +6592,11 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         "chat_turn_id": mind["chat_turn_id"],
         "mindreading_pending": mind["mindreading_pending"],
         "pending_turn_ids": mind["pending_turn_ids"],
-        # #505：重开后崩溃遗留的中断轮 → 最后一句上给「重新生成回话」重试（系统层恢复动作）。
-        "reply_retry": (game.interrupted_reply_retries(minister_name) or [None])[-1],
+        # #505/#1853：每个原轮各自投影待恢复状态。
+        "reply_retries": game.reply_retries(minister_name),
+        "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
+            minister_name=minister_name,
+        )],
         # #1842 / 0158 决定 6：转译待补 → 源轮结构化系统提示态（提示行 + 重试能力；页面归 #1826）。
         "translation_retries": [
             r for r in game.pending_translation_retries(
@@ -6549,12 +6609,12 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
 
 
 @app.post("/api/ministers/{minister_name}/reply/retry")
-async def api_retry_interrupted_reply(minister_name: str) -> Dict[str, Any]:
+async def api_retry_interrupted_reply(minister_name: str, chat_turn_id: int = Body(0, embed=True)) -> Dict[str, Any]:
     """#505：重开后为中断轮重新生成回话（复用已持久问话，对话记录无重复句）。"""
     _require_active_minister(minister_name)
     from ming_sim.audience_night import AudienceNightError
     try:
-        return await run_in_threadpool(get_game().retry_interrupted_reply, minister_name)
+        return await run_in_threadpool(get_game().retry_interrupted_reply, minister_name, chat_turn_id or None)
     except AudienceNightError as e:
         # CLOSING / night admission → 409 (retryable); reuse shared converter, no status fork.
         raise _retryable_audience_close_http(e) from None

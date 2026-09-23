@@ -73,13 +73,15 @@ export function useChatActions({
 }) {
   const [suggestions, setSuggestions] = React.useState<Suggestion[]>([]);
   const [chatNotice, setChatNotice] = React.useState("");
-  const [replyRetry, setReplyRetry] = React.useState<ReplyRetry | null>(null);
+  const [replyRetries, setReplyRetries] = React.useState<ReplyRetry[]>([]);
   const [translationRetries, setTranslationRetries] = React.useState<TranslationRetry[]>([]);
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
   const [composerIntent, setComposerIntent] = React.useState<"secret_order" | undefined>();
   const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
+  const recoveryTimer = React.useRef<number | undefined>(undefined);
+  const recoveryRun = React.useRef(0);
 
   // 仅用花名册查 temporaryActiveMinister；挂 ref 避免 durable setState 整表刷新
   // 重造 loadMinisterChat → 触发 selectedMinister effect → resetPanel 清掉召对面板。
@@ -95,14 +97,15 @@ export function useChatActions({
     // #499：历史投影 + 每一待读心轮的轮询由 hook 独占派发。返回 null=被 generation 守卫拒收
     // 的陈旧快照 → App 一并跳过全部面板外围写入（建议/可撤回/失败/临时大臣），不回覆新完成的轮。
     const data = await loadHistoryProjection(ministerName);
-    if (!data || selectedMinisterRef.current !== ministerName) return;
+    if (!data || selectedMinisterRef.current !== ministerName) return null;
     const allKnown = rosterRef.current;
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
     // #505：崩溃遗留的中断轮 → 系统层重试入口。
-    setReplyRetry(data.reply_retry ?? null);
+    setReplyRetries(data.reply_retries ?? []);
     setTranslationRetries(data.translation_retries ?? []);
+    return data;
   }, [loadHistoryProjection, selectedMinisterRef]);
 
   React.useEffect(() => {
@@ -129,7 +132,13 @@ export function useChatActions({
   React.useEffect(() => {
     if (activeModal !== "chat") {
       setComposerIntent(undefined);
+      recoveryRun.current += 1;
+      window.clearTimeout(recoveryTimer.current);
     }
+    return () => {
+      recoveryRun.current += 1;
+      window.clearTimeout(recoveryTimer.current);
+    };
   }, [activeModal]);
 
   const activeMinister = state && selectedMinister
@@ -155,8 +164,6 @@ export function useChatActions({
     setError("");
     setComposerHint("");
     setChatNotice("");
-    // 新一轮发出即清中断重试条（本轮 supersedes 崩溃遗留的系统重试入口）。
-    setReplyRetry(null);
     if (fromComposer) {
       setInput("");
       setComposerIntent(undefined);
@@ -202,9 +209,19 @@ export function useChatActions({
         // 此处再按发起面板守一次，防切大臣后的同 token 尾巴。
         if (failedTurn?.chat_turn_id) {
           setError("");
-          void loadMinisterChat(initiatingPanelName).catch((loadError) =>
-            setError(loadError instanceof Error ? loadError.message : String(loadError))
-          );
+          const run = ++recoveryRun.current;
+          const awaitTerminal = async () => {
+            try {
+              const data = await loadMinisterChat(initiatingPanelName);
+              if (run === recoveryRun.current && data?.generating_turn_ids?.includes(failedTurn.chat_turn_id)) {
+                recoveryTimer.current = window.setTimeout(awaitTerminal, 1500);
+              }
+            } catch (loadError) {
+              setError(loadError instanceof Error ? loadError.message : String(loadError));
+              if (run === recoveryRun.current) recoveryTimer.current = window.setTimeout(awaitTerminal, 1500);
+            }
+          };
+          void awaitTerminal();
           return;
         }
         if (fromComposer && selectedMinisterRef.current === initiatingPanelName) {
@@ -305,16 +322,18 @@ export function useChatActions({
     }
   };
 
-  const retryInterruptedReply = async (targetMinisterName: string) => {
+  const retryInterruptedReply = async (targetMinisterName: string, chatTurnId: number) => {
     // #505：系统层重试——复用已持久问话，不造重复句。
-    if (busy || !replyRetry) return;
+    const retry = replyRetries.find((entry) => entry.chat_turn_id === chatTurnId);
+    if (busy || !retry) return;
     const initiatingPanelName = selectedMinisterRef.current;
-    setBusy("重新生成回话");
+    setBusy(retry.recovery_phase ? "恢复本轮后续处理" : "重新生成回话");
     setError("");
     setChatNotice("");
     try {
       const data = await api<ChatResponse>(audienceRetryPath(targetMinisterName), {
         method: "POST",
+        body: JSON.stringify({ chat_turn_id: chatTurnId }),
       });
       // 拟旨计数是全局态：面板切走仍须即时投影，不得等 refresh / 不得被陈旧判断吞掉。
       setState((current) => (current ? {
@@ -328,8 +347,8 @@ export function useChatActions({
       applyHistory(data.history);
       setSuggestions(data.suggestions);
       setCanUndoLastChat(!!data.can_undo_last_chat);
-      setReplyRetry(null);
-      setChatNotice("已重新生成回话。");
+      setReplyRetries((current) => current.filter((retry) => retry.chat_turn_id !== chatTurnId));
+      setChatNotice("本轮恢复完成。");
       invalidateAudienceScroll();
     } catch (err) {
       await loadMinisterChat(initiatingPanelName).catch((loadError) =>
@@ -364,7 +383,7 @@ export function useChatActions({
   return {
     suggestions,
     chatNotice,
-    replyRetry,
+    replyRetries,
     translationRetries,
     canUndoLastChat,
     composerHint,

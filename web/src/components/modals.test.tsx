@@ -69,7 +69,7 @@ function renderModal(props: {
   busy?: string;
   streamingMinisterMessage?: string;
   onCancel?: () => void;
-  replyRetry?: { chat_turn_id: number; question: string } | null;
+  replyRetries?: React.ComponentProps<typeof ChatModal>["replyRetries"];
   onRetryReply?: (ministerName: string) => void;
   translationRetries?: React.ComponentProps<typeof ChatModal>["translationRetries"];
   onRetryTranslation?: React.ComponentProps<typeof ChatModal>["onRetryTranslation"];
@@ -149,7 +149,7 @@ function renderModal(props: {
         input={input}
         error=""
         secretOrders={props.secretOrders ?? []}
-        replyRetry={props.replyRetry}
+        replyRetries={props.replyRetries}
         onInput={(value) => setInput(value)}
         onIntent={props.onIntent}
         onSend={props.onSend ?? (() => {})}
@@ -579,18 +579,24 @@ describe("ChatModal — placeholder switches on character type", () => {
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
       chat: [{ role: "user", content: "剿抚孰先？" }],
-      replyRetry: { chat_turn_id: 12, question: "剿抚孰先？" },
+      replyRetries: [
+        { chat_turn_id: 12, question: "剿抚孰先？" },
+        { chat_turn_id: 13, question: "退朝", recovery_phase: "court_break", error_pack_path: "/tmp/post-reply-pack" },
+      ],
       onRetryReply: retry,
     });
-    const note = document.querySelector('[data-testid="reply-retry"]');
+    const note = document.querySelector('[data-testid="reply-retry-12"]');
     expect(note?.textContent).toContain("重试");
     expect(note?.textContent).toContain("剿抚孰先？");
+    expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("回话已保存，后续处理失败");
+    expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("/tmp/post-reply-pack");
     const button = Array.from(document.querySelectorAll("button")).find(
       (node) => node.textContent === "重试",
     );
     expect(button).toBeTruthy();
     act(() => button?.click());
     expect(retry).toHaveBeenCalledTimes(1);
+    expect(retry).toHaveBeenCalledWith("殿上", 12);
   });
 
 });
@@ -701,7 +707,7 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
       onSend: send,
       onUndo: undo,
       canUndoLastChat: true,
-      replyRetry: { chat_turn_id: 12, question: "辽饷何解？" },
+      replyRetries: [{ chat_turn_id: 12, question: "辽饷何解？" }],
       onRetryReply: retryReply,
       onRetryTranslation: vi.fn(),
       suggestions: [{ label: "追问", text: "细奏边情" }],
@@ -720,11 +726,11 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     // #1732 B：撤回就地确认
     clickButton("撤回本轮");
     clickButton("继续撤回");
-    act(() => host.querySelector<HTMLButtonElement>('[data-testid="reply-retry"] button')?.click());
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="reply-retry-12"] button')?.click());
     expect(send).toHaveBeenCalledWith("洪承畴", "细奏边情");
     expect(undo).toHaveBeenCalledWith("洪承畴");
-    expect(retryReply).toHaveBeenCalledWith("殿上");
-    const replyFailure = host.querySelector('[data-testid="reply-retry"]');
+    expect(retryReply).toHaveBeenCalledWith("殿上", 12);
+    const replyFailure = host.querySelector('[data-testid="reply-retry-12"]');
     expect(replyFailure?.closest('[data-audience-turn-id="12"]')).not.toBeNull();
     const translationFailure = host.querySelector('[data-testid="translation-retry-1"]');
     expect(translationFailure?.closest('[data-audience-turn-id="1"]')).not.toBeNull();
@@ -1344,7 +1350,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       ministers: [hong, xu],
       portraitPrefix: "minister_",
       currentNightId: 23,
-      replyRetry: { chat_turn_id: 12, question: "辽饷何解？" },
+      replyRetries: [{ chat_turn_id: 12, question: "辽饷何解？" }],
       pendingUserMessage: "辽饷何解？",
       pendingIdentity: { campaign_id: "test-campaign", night_id: 23, chat_turn_id: 12 },
     });

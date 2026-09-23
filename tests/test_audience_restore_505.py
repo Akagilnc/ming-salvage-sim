@@ -304,17 +304,18 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     ct = _start_generating_turn(db, state, minister, "剿抚孰先？")
+    later = _start_generating_turn(db, state, minister, "续问军情？")
     db.reconcile_interrupted_chat_turns()
 
     rt = _retry_runtime(db, state, minister)
-    payload = rt.retry_interrupted_reply(minister)
+    payload = rt.retry_interrupted_reply(minister, ct)
 
     assert payload["answer"] == "臣重奏：剿为先。"
     # 记录无重复句：问话仍只一条，回话新落一条。
     users = db.conn.execute(
         "SELECT content FROM chat_messages WHERE role='user'"
     ).fetchall()
-    assert [r["content"] for r in users] == ["剿抚孰先？"]
+    assert [r["content"] for r in users] == ["剿抚孰先？", "续问军情？"]
     replies = db.conn.execute(
         "SELECT content FROM chat_messages WHERE role='minister'"
     ).fetchall()
@@ -326,7 +327,29 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert row["status"] == "active"
     assert row["minister_message_id"]
     # 重试后该轮不再挂在待重试面板。
-    assert db.get_interrupted_reply_retries(minister) == []
+    assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(minister)] == [later]
+
+
+def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env):
+    db, state, content = restore_env.db, restore_env.state, restore_env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    ct = _land_full_turn(db, state, minister, "退朝", "臣遵旨。")
+    db.mark_post_reply_failure(ct, "court_break", "/tmp/post-reply-pack")
+    rt = _retry_runtime(db, state, minister)
+    assert [(r["chat_turn_id"], r["error_pack_path"]) for r in rt.reply_retries(minister)] == [
+        (ct, "/tmp/post-reply-pack")]
+    rt.session.chat = lambda *a, **k: (_ for _ in ()).throw(AssertionError("reply model rerun"))
+    calls = []
+    rt.session.close_night_after_chat_if_needed = lambda action, **kw: calls.append(action)
+    rt.pending_directive_count = lambda: 0
+    payload = rt.retry_interrupted_reply(minister, ct)
+    assert payload["answer"] == "臣遵旨。"
+    assert calls == ["court_break"]
+    assert rt.reply_retries(minister) == []
+    assert [r["content"] for r in db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='minister'"
+    )] == ["臣遵旨。"]
 
 
 

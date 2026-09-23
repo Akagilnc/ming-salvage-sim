@@ -38,7 +38,7 @@ export function ChatModal({
   busy,
   error,
   secretOrders,
-  replyRetry,
+  replyRetries = [],
   translationRetries = [],
   onInput,
   onIntent,
@@ -79,12 +79,12 @@ export function ChatModal({
   error: string;
   secretOrders: SecretOrder[];
   /** #505：系统层回话重试（崩溃后问话保留）。 */
-  replyRetry?: { chat_turn_id: number; question: string; error_pack_path?: string } | null;
+  replyRetries?: { chat_turn_id: number; question: string; error_pack_path?: string; recovery_phase?: "after_reply" | "court_break" }[];
   translationRetries?: TranslationRetry[];
   onInput: (value: string) => void;
   onIntent?: (intent: "secret_order" | undefined) => void;
   onSend: (ministerName: string, text?: string) => void;
-  onRetryReply?: (ministerName: string) => void;
+  onRetryReply?: (ministerName: string, chatTurnId: number) => void;
   onRetryTranslation?: (chatTurnId: number) => void;
   onUndo: (ministerName: string) => void;
   onHint: (value: string) => void;
@@ -338,7 +338,7 @@ export function ChatModal({
       }
     }
     readingAnchorRef.current = null;
-  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error, replyRetry, translationRetries]);
+  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error, replyRetries, translationRetries]);
 
   const handleScroll = () => {
     const node = chatLogRef.current;
@@ -349,11 +349,12 @@ export function ChatModal({
   };
 
   const turnNotices = new Map<number, React.ReactNode>();
-  if (replyRetry && onRetryReply) {
-    turnNotices.set(replyRetry.chat_turn_id, (
-      <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="reply-retry">
-        <span>问话未得回话（「{replyRetry.question}」）。{replyRetry.error_pack_path ? `错误包：${replyRetry.error_pack_path}；请交给作者。` : ""}</span>
-        <button type="button" onClick={() => onRetryReply(scrollMode === "audience" ? AUDIENCE_SCENE_SPEAKER : minister.name)} disabled={!!busy}>
+  for (const retry of replyRetries) {
+    if (!onRetryReply) continue;
+    turnNotices.set(retry.chat_turn_id, (
+      <div className="chat-system-note danger chat-failure-note" role="alert" data-testid={`reply-retry-${retry.chat_turn_id}`}>
+        <span>{retry.recovery_phase ? "回话已保存，后续处理失败" : `问话未得回话（「${retry.question}」）`}。{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
+        <button type="button" onClick={() => onRetryReply(scrollMode === "audience" ? AUDIENCE_SCENE_SPEAKER : minister.name, retry.chat_turn_id)} disabled={!!busy}>
           重试
         </button>
       </div>
@@ -374,9 +375,9 @@ export function ChatModal({
       </React.Fragment>
     ));
   }
-  const unmatchedReplyNotice = replyRetry && !displayMessages.some(
-    (message) => "chat_turn_id" in message && message.chat_turn_id === replyRetry.chat_turn_id,
-  ) ? turnNotices.get(replyRetry.chat_turn_id) : null;
+  const unmatchedReplyNotices = replyRetries.filter((retry) => !displayMessages.some(
+    (message) => "chat_turn_id" in message && message.chat_turn_id === retry.chat_turn_id,
+  )).map((retry) => <React.Fragment key={retry.chat_turn_id}>{turnNotices.get(retry.chat_turn_id)}</React.Fragment>);
 
   // #1732 T3：任何会改变「最近一轮」的发送入口先失效确认条，避免陈旧确认误撤新轮。
   const dispatchSend = (ministerName: string, text?: string) => {
@@ -481,7 +482,7 @@ export function ChatModal({
             </div>
           )}
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
-          {unmatchedReplyNotice}
+          {unmatchedReplyNotices}
           {error && <div className="chat-system-note danger" role="alert">{error}</div>}
         </div>
         <div className="chat-composer">

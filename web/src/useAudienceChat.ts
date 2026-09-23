@@ -30,7 +30,8 @@ export type AudienceHistoryData = {
   /** Persisted current open-night identity; 0 means no open audience night. */
   night_id: number;
   /** #505：崩溃遗留的中断轮 → 最后一句上给系统层重试（重新生成回话）。 */
-  reply_retry?: ReplyRetry | null;
+  reply_retries?: ReplyRetry[];
+  generating_turn_ids?: number[];
   translation_retries?: TranslationRetry[];
 };
 

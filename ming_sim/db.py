@@ -1419,6 +1419,8 @@ class GameDB:
                 --   ''=未抽 / 'done'=已抽落账 / 'pending'=待补（抽取失败，给玩家原地重试）
                 extract_status TEXT NOT NULL DEFAULT '',
                 error_pack_path TEXT NOT NULL DEFAULT '',
+                post_reply_recovery TEXT NOT NULL DEFAULT '',
+                post_reply_error_pack_path TEXT NOT NULL DEFAULT '',
                 -- #1566/#1716：typed route（'' / offsite / secret_order / secret_order_offsite）；
                 -- 中断重试经 decode_chat_turn_route 恢复 explicit_secret_order / 殿上 scene。
                 route TEXT NOT NULL DEFAULT '',
@@ -2513,6 +2515,8 @@ class GameDB:
         # #501 叙事抽取水位 + 抽取账溯源/在场效果/时序键（旧档补列，schema 升级非 fallback）。
         self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("chat_turns", "error_pack_path", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("chat_turns", "post_reply_recovery", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("chat_turns", "post_reply_error_pack_path", "TEXT NOT NULL DEFAULT ''")
         # #634 召对判官已判水位（ADR 0082）：''=未判 / 'done'=已判落库。逐轮标记即水位，
         # 撤回轮翻 undone 后天然出窗（水位回退），无平行水位表。
         self.ensure_column("chat_turns", "relation_judge_status", "TEXT NOT NULL DEFAULT ''")
@@ -9667,6 +9671,42 @@ class GameDB:
             }
             for r in rows
         ]
+
+    def get_post_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
+        """已落回话的尾随失败：保留原轮身份与错误包，不回到生成态。"""
+        rows = self.conn.execute(
+            """SELECT t.id, t.minister_name, t.turn, t.post_reply_recovery,
+                      t.post_reply_error_pack_path, q.content AS question, a.content AS answer,
+                      t.minister_message_id
+               FROM chat_turns t
+               JOIN chat_messages q ON q.id = t.user_message_id
+               JOIN chat_messages a ON a.id = t.minister_message_id
+               WHERE t.minister_name = ? AND t.status = 'active'
+                 AND t.post_reply_recovery != '' ORDER BY t.id ASC""",
+            (minister_name,),
+        ).fetchall()
+        return [{"chat_turn_id": int(r["id"]), "minister_name": str(r["minister_name"]),
+                 "turn": int(r["turn"]), "question": str(r["question"]),
+                 "answer": str(r["answer"]), "minister_message_id": int(r["minister_message_id"]),
+                 "recovery_phase": str(r["post_reply_recovery"]),
+                 "error_pack_path": str(r["post_reply_error_pack_path"] or "")}
+                for r in rows]
+
+    def mark_post_reply_failure(self, chat_turn_id: int, phase: str, pack_path: str) -> None:
+        self.conn.execute(
+            "UPDATE chat_turns SET post_reply_recovery = ?, post_reply_error_pack_path = ? "
+            "WHERE id = ? AND status = 'active' AND minister_message_id IS NOT NULL",
+            (phase, pack_path, int(chat_turn_id)),
+        )
+        self.conn.commit()
+
+    def clear_post_reply_failure(self, chat_turn_id: int) -> None:
+        self.conn.execute(
+            "UPDATE chat_turns SET post_reply_recovery = '', post_reply_error_pack_path = '' "
+            "WHERE id = ? AND status = 'active'",
+            (int(chat_turn_id),),
+        )
+        self.conn.commit()
 
     def reopen_interrupted_chat_turn_for_retry(self, chat_turn_id: int) -> bool:
         """重试起手：'interrupted' → 'generating'（重入生成态、与在飞守卫一致，回话落库后升 active）。

@@ -273,7 +273,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (decodeURIComponent(path).endsWith("/api/audience/chat")) {
         historyReads += 1;
         return jsonResp({ campaign_id: "c", night_id: 23, minister, history: [], suggestions: [], can_undo_last_chat: false,
-          reply_retry: historyReads > 1 ? { chat_turn_id: 8, minister_name: "殿上", turn: 1, question: "边务如何" } : undefined });
+          reply_retries: historyReads > 2 ? [{ chat_turn_id: 8, minister_name: "殿上", turn: 1, question: "边务如何" }] : [],
+          generating_turn_ids: historyReads === 2 ? [8] : [] });
       }
       return jsonResp({});
     }));
@@ -292,7 +293,9 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await click(findButton(host, "发送"));
-    await act(async () => { await vi.waitFor(() => expect(host.querySelector('[data-testid="reply-retry"]')).not.toBeNull()); });
+    await vi.waitFor(() => expect(historyReads).toBeGreaterThan(2), { timeout: 3000 });
+    await tick();
+    expect(host.querySelector('[data-testid="reply-retry-8"]')).not.toBeNull();
     expect(historyReads).toBeGreaterThan(1);
     expect(host.querySelector("textarea")?.value).toBe("");
     expect(host.querySelector('[data-audience-turn-id="8"]')?.textContent).toContain("边务如何");
@@ -463,10 +466,11 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({
         night_id: 1,
         translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
-        messages: [{
-          role: "scene", speaker: "郭允厚", content: "臣请核实。", chat_turn_id: 8,
-          beat: "dialogue", highlights: [], container: {},
-        }],
+        messages: [
+          { role: "user", speaker: "朕", content: "拟旨赈济", chat_turn_id: 7, beat: "dialogue", highlights: [], container: {} },
+          { role: "scene", speaker: "郭允厚", content: "臣请核实。", chat_turn_id: 8, beat: "dialogue", highlights: [], container: {} },
+          { role: "user", speaker: "朕", content: "续问赈济", chat_turn_id: 9, beat: "dialogue", highlights: [], container: {} },
+        ],
       });
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
       if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
@@ -486,7 +490,10 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         return jsonResp({
           minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1, pending_turn_ids: [],
           can_undo_last_chat: retryDone,
-          reply_retry: retryDone ? undefined : { chat_turn_id: 7, minister_name: "殿上", turn: 1, question: "拟旨赈济" },
+          reply_retries: retryDone ? [{ chat_turn_id: 9, minister_name: "殿上", turn: 1, question: "续问赈济" }] : [
+            { chat_turn_id: 7, minister_name: "殿上", turn: 1, question: "拟旨赈济" },
+            { chat_turn_id: 9, minister_name: "殿上", turn: 1, question: "续问赈济" },
+          ],
           translation_retries: translationDone ? [] : [{ chat_turn_id: 8, retryable: true }],
         });
       }
@@ -524,18 +531,20 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await tick();
     await click(host.querySelector(".court-drawer.open .primary-action"));
-    const replyButton = () => host.querySelector('[data-testid="reply-retry"] button');
+    const replyButton = () => host.querySelector('[data-testid="reply-retry-7"] button');
     const translationButton = () => host.querySelector('[data-testid="translation-retry-8"] button');
     await act(async () => { await vi.waitFor(() => expect(replyButton()?.textContent).toBe("重试")); });
+    expect(host.querySelector('[data-testid="reply-retry-7"]')?.closest('[data-audience-turn-id="7"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="reply-retry-9"]')?.closest('[data-audience-turn-id="9"]')).not.toBeNull();
     await act(async () => { await vi.waitFor(() => expect(translationButton()?.textContent).toBe("重试")); });
     await click(translationButton());
     await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeTruthy()); });
-    expect(host.querySelectorAll('.chat-system-note.danger[role="alert"]')).toHaveLength(2);
+    expect(host.querySelectorAll('.chat-system-note.danger[role="alert"]')).toHaveLength(3);
     await click(translationButton());
     await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeFalsy()); });
     await click(replyButton());
     await act(async () => { await vi.waitFor(() => expect(replyButton()).toBeTruthy()); });
-    expect(host.querySelectorAll('.chat-system-note.danger[role="alert"]')).toHaveLength(1);
+    expect(host.querySelectorAll('.chat-system-note.danger[role="alert"]')).toHaveLength(2);
     await click(replyButton());
     await act(async () => {
       await vi.waitFor(() => expect(replyButton()).toBeFalsy());
@@ -546,6 +555,10 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const retryCalls = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")
       .map(([url]) => new URL(String(url), "http://t.local").pathname);
     expect(retryCalls).toContain("/api/audience/reply/retry");
+    const targetedRetry = vi.mocked(fetch).mock.calls.find(([url, init]) =>
+      new URL(String(url), "http://t.local").pathname === "/api/audience/reply/retry" && init?.method === "POST");
+    expect(JSON.parse(String(targetedRetry?.[1]?.body))).toEqual({ chat_turn_id: 7 });
+    expect(host.querySelector('[data-testid="reply-retry-9"]')).not.toBeNull();
     expect(retryCalls).toContain("/api/audience/translation/retry");
     expect(retryCalls).not.toContain("/api/ministers/%E9%83%AD%E5%85%81%E5%8E%9A/reply/retry");
 

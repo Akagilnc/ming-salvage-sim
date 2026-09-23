@@ -663,6 +663,42 @@ def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypa
     err = next(e for e in events if e.get("type") == "error")
     assert "detail" in err or "message" in err
 
+
+def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(web_game, monkeypatch):
+    from ming_sim.session import ChatTurnResult
+    from tests.web_audience_test_doubles import install_hall_admission
+
+    game = web_game
+    minister = next(iter(game.content.characters))
+    install_hall_admission(game.session)
+    game.session.start_chat_turn_scene = lambda *_a, **_k: None
+    game.session.join_chat_turn_scene = lambda *_a, **_k: []
+    game.session.persist_chat_turn_scene = lambda *_a, **_k: None
+    game.session.schedule_pending_scene_translation = lambda *_a, **_k: None
+    game._spawn_pending_write_thread = lambda *_a, **_k: None
+    calls = []
+
+    def scene_chat(message, **_kw):
+        calls.append(message)
+        return ChatTurnResult(answer="臣遵旨。", court_action="court_break")
+
+    game.session.scene_chat = scene_chat
+    game.session.close_night_after_chat_if_needed = lambda *_a, **_k: (_ for _ in ()).throw(
+        RuntimeError("close failed"))
+    events = list(game.chat_stream(minister, "退朝"))
+    assert [ev["type"] for ev in events][-3:] == ["done", "error", "end"]
+    chat_turn_id = int(next(ev for ev in events if ev["type"] == "accepted")["chat_turn_id"])
+    retries = game.reply_retries(minister)
+    assert [(r["chat_turn_id"], r["recovery_phase"]) for r in retries] == [(chat_turn_id, "court_break")]
+    assert retries[0]["error_pack_path"]
+    game.session.close_night_after_chat_if_needed = lambda action, **_kw: calls.append(action)
+    game.retry_interrupted_reply(minister, chat_turn_id)
+    assert calls == ["退朝", "court_break"]
+    assert game.reply_retries(minister) == []
+    assert [r["content"] for r in game.db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?", (minister,)
+    )] == ["臣遵旨。"]
+
 def test_seal_rejects_new_claim_after_lifecycle(web_game):
     """生命周期 seal 后新领票拒入（旧 _draining 语义）。"""
     game = web_game

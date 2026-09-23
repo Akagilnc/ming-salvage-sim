@@ -632,6 +632,7 @@ export type ReplyRetry = {
   turn: number;
   question: string;
   error_pack_path?: string;
+  recovery_phase?: "after_reply" | "court_break";
 };
 
 export type TranslationRetry = {
