@@ -483,7 +483,7 @@ export function ChatModal({
             <div className="chat-empty-chrome" role="status">请陛下问话</div>
           )}
           <ScrollMessages messages={displayMessages} ministerName={currentMinister?.name ?? ""} ministers={scrollMode === "audience" ? portraitCharacters : ministers} turnNotices={turnNotices} />
-          {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
+          {!retryReadFailure && (scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
             <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
           )}
           {busy && !streamingMinisterMessage && (

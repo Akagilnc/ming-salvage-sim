@@ -628,6 +628,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     let historyReads = 0;
     let retryPosts = 0;
     let replyPosts = 0;
+    let scrollFailures = 0;
     let translated = false;
     let replied = false;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -636,6 +637,10 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (path.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (path.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (path.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
+      if (path.endsWith("/api/audience/scroll") && [3, 5].includes(historyReads)) {
+        scrollFailures += 1;
+        return new Response(JSON.stringify({ detail: "scroll unavailable" }), { status: 500 });
+      }
       if (path.endsWith("/api/audience/scroll")) return jsonResp({
         night_id: 1, translation_retries: translated ? [] : [{ chat_turn_id: 8, retryable: true }],
         messages: [
@@ -674,6 +679,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await act(async () => { await vi.waitFor(() => expect(notice()).not.toBeNull()); });
     await click(notice()?.querySelector("button"));
     await act(async () => { await vi.waitFor(() => expect(historyReads).toBe(3)); });
+    await act(async () => { await vi.waitFor(() => expect(scrollFailures).toBe(1)); });
     expect(notice()?.closest('[data-audience-turn-id="8"]')).not.toBeNull();
     expect(notice()?.textContent).toContain("读取失败");
     expect(notice()?.querySelector("button")?.disabled).toBe(false);
@@ -685,6 +691,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const replyNotice = () => host.querySelector('[data-testid="reply-retry-7"]');
     await click(replyNotice()?.querySelector("button"));
     await act(async () => { await vi.waitFor(() => expect(historyReads).toBe(5)); });
+    await act(async () => { await vi.waitFor(() => expect(scrollFailures).toBe(2)); });
     expect(replyNotice()?.closest('[data-audience-turn-id="7"]')).not.toBeNull();
     expect(replyNotice()?.textContent).toContain("读取失败");
     expect(replyNotice()?.querySelector("button")?.disabled).toBe(false);
