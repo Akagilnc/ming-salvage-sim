@@ -361,13 +361,11 @@ export function useChatActions({
       setReplyRetries((current) => current.filter((retry) => retry.chat_turn_id !== chatTurnId));
       setChatNotice("本轮恢复完成。");
       invalidateAudienceScroll();
-    } catch (err) {
-      const primaryError = err instanceof Error ? err.message : String(err);
+    } catch {
       try {
         await loadMinisterChat(initiatingPanelName);
-        setError(primaryError);
       } catch (reloadError) {
-        setError(`${primaryError}；重新读取失败：${reloadError instanceof Error ? reloadError.message : String(reloadError)}`);
+        console.error("Failed to reload audience after reply retry", reloadError);
       }
       invalidateAudienceScroll();
     } finally {
@@ -387,13 +385,11 @@ export function useChatActions({
       });
       await loadMinisterChat(ministerName);
       invalidateAudienceScroll();
-    } catch (err) {
-      const primaryError = err instanceof Error ? err.message : String(err);
+    } catch {
       try {
         await loadMinisterChat(ministerName);
-        setError(primaryError);
       } catch (reloadError) {
-        setError(`${primaryError}；重新读取失败：${reloadError instanceof Error ? reloadError.message : String(reloadError)}`);
+        console.error("Failed to reload audience after translation retry", reloadError);
       }
       invalidateAudienceScroll();
     } finally {
