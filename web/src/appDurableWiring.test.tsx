@@ -257,6 +257,47 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
   });
 
+  it("accepted 后普通流中断重读持久问话与原位重试，不回填输入框", async () => {
+    const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] };
+    let historyReads = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const path = new URL(String(url), "http://t.local").pathname;
+      if (path.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (path.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (path.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (path.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
+      if (path.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, messages: historyReads
+        ? [{ role: "user", speaker: "朕", content: "边务如何", chat_turn_id: 8 }]
+        : [] });
+      if (path.endsWith("/chat/stream")) return sseResp("accepted", { campaign_id: "c", night_id: 23, chat_turn_id: 8 });
+      if (decodeURIComponent(path).endsWith("/api/audience/chat")) {
+        historyReads += 1;
+        return jsonResp({ campaign_id: "c", night_id: 23, minister, history: [], suggestions: [], can_undo_last_chat: false,
+          reply_retry: historyReads > 1 ? { chat_turn_id: 8, minister_name: "殿上", turn: 1, question: "边务如何" } : undefined });
+      }
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { trackRoot(host).render(<App />); });
+    await tick();
+    await click(host.querySelector('[title="朝堂·召见大臣"]'));
+    await tick();
+    await click(host.querySelector(".court-drawer.open .primary-action"));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
+    const textarea = host.querySelector("textarea")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(textarea, "边务如何");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "发送"));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector('[data-testid="reply-retry"]')).not.toBeNull()); });
+    expect(historyReads).toBeGreaterThan(1);
+    expect(host.querySelector("textarea")?.value).toBe("");
+    expect(host.querySelector('[data-audience-turn-id="8"]')?.textContent).toContain("边务如何");
+  });
+
 
 
 
@@ -483,19 +524,21 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
     await tick();
     await click(host.querySelector(".court-drawer.open .primary-action"));
-    await act(async () => { await vi.waitFor(() => expect(findButton(host, "重新生成回话")).toBeTruthy()); });
-    await act(async () => { await vi.waitFor(() => expect(findButton(host, "重试整理")).toBeTruthy()); });
-    await click(findButton(host, "重试整理"));
-    await act(async () => { await vi.waitFor(() => expect(findButton(host, "重试整理")).toBeTruthy()); });
+    const replyButton = () => host.querySelector('[data-testid="reply-retry"] button');
+    const translationButton = () => host.querySelector('[data-testid="translation-retry-8"] button');
+    await act(async () => { await vi.waitFor(() => expect(replyButton()?.textContent).toBe("重试")); });
+    await act(async () => { await vi.waitFor(() => expect(translationButton()?.textContent).toBe("重试")); });
+    await click(translationButton());
+    await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeTruthy()); });
     expect(host.querySelectorAll('.chat-system-note.danger[role="alert"]')).toHaveLength(2);
-    await click(findButton(host, "重试整理"));
-    await act(async () => { await vi.waitFor(() => expect(findButton(host, "重试整理")).toBeFalsy()); });
-    await click(findButton(host, "重新生成回话"));
-    await act(async () => { await vi.waitFor(() => expect(findButton(host, "重新生成回话")).toBeTruthy()); });
+    await click(translationButton());
+    await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeFalsy()); });
+    await click(replyButton());
+    await act(async () => { await vi.waitFor(() => expect(replyButton()).toBeTruthy()); });
     expect(host.querySelectorAll('.chat-system-note.danger[role="alert"]')).toHaveLength(1);
-    await click(findButton(host, "重新生成回话"));
+    await click(replyButton());
     await act(async () => {
-      await vi.waitFor(() => expect(findButton(host, "重新生成回话")).toBeFalsy());
+      await vi.waitFor(() => expect(replyButton()).toBeFalsy());
     });
     await act(async () => {
       await vi.waitFor(() => expect(stateCall).toBeGreaterThanOrEqual(2));

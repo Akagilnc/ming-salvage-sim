@@ -175,26 +175,38 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     await tick();
 
     expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "", night_id: 24, chat_turn_id: 8 });
-    expect(rows()).not.toContain("user:失败问话");
+    expect(rows()).toContain("user:失败问话");
     expect(rows()).toContain("user:保留问话");
     expect(rows()).toContain("minister:保留答复");
   });
 
   it("accepted 后普通流中断会移除未持久化的半段回话", async () => {
+    let scrollCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (String(url).includes("/api/audience/scroll")) return jsonResp({ night_id: 24, protagonist: "", roster: [], translation_pending: false, messages: [] });
+      if (String(url).includes("/api/audience/scroll")) {
+        scrollCalls += 1;
+        return jsonResp({ night_id: 24, protagonist: "", roster: [], translation_pending: false, messages: scrollCalls > 1
+          ? [{ role: "user", speaker: "朕", content: "请奏", chat_turn_id: 8 }]
+          : [] });
+      }
       return sse([
         { event: "accepted", data: { campaign_id: "c1", night_id: 24, chat_turn_id: 8 } },
         { event: "delta", data: { content: "未完成回话" } },
       ]);
     }));
-    const { hookRef } = mount("audience");
+    const { hookRef, rows } = mount("audience", true);
     await tick();
 
-    await act(async () => { await hookRef.current!.sendChat("温体仁", "请奏", noCbs); });
+    let failedTurn: unknown;
+    await act(async () => { await hookRef.current!.sendChat("温体仁", "请奏", {
+      ...noCbs, onError: (_error, identity) => { failedTurn = identity; },
+    }); });
+    await tick();
 
     expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
-    expect(document.querySelector('[data-audience-turn-id="8"]')).toBeNull();
+    expect(failedTurn).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
+    expect(rows()).toContain("user:请奏");
+    expect(rows()).not.toContain(":未完成回话");
   });
 
   it("无夜 identity 不接纳猜测出的旧卷，新夜回话失败也不回闪", async () => {

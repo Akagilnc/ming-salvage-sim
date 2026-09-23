@@ -42,7 +42,7 @@ export type SendChatCallbacks = {
   /** 观察者离开实时流（AbortError） */
   onLeave?: () => void;
   /** 失败（非 Abort） */
-  onError?: (err: unknown) => void;
+  onError?: (err: unknown, failedTurn: ChatIdentity | null) => void;
 };
 
 export function useAudienceChat(
@@ -211,8 +211,11 @@ export function useAudienceChat(
           const failedTurn = err instanceof ApiRequestError && err.chatIdentity
             ? err.chatIdentity
             : acceptedIdentity;
-          if (failedTurn) setFailedIdentity(failedTurn);
-          cb.onError?.(err);
+          if (failedTurn) {
+            setFailedIdentity(failedTurn);
+            onScrollSettled?.();
+          }
+          cb.onError?.(err, failedTurn);
         }
       } finally {
         if (ownsEphemeral()) setBusy("");

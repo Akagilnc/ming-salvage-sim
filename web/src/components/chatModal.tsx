@@ -125,12 +125,6 @@ export function ChatModal({
     && undoneChatIdentity.night_id === currentNightId
     && message.chat_turn_id === undoneChatIdentity.chat_turn_id
   );
-  const failedInThisScroll = (message: AudienceScrollMessage): boolean => !!(
-    failedIdentity
-    && failedIdentity.campaign_id === currentCampaignId
-    && failedIdentity.night_id === currentNightId
-    && message.chat_turn_id === failedIdentity.chat_turn_id
-  );
   const snapshotStillCurrent = (state: typeof scrollState): boolean =>
     state.kind !== "night" || (state.nightId === currentNightId && !state.messages.some(withdrawnFromThisScroll));
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
@@ -139,7 +133,7 @@ export function ChatModal({
   const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollMode === "legacy" || (effectiveScrollState.kind === "none" && currentNightId === 0)
     ? [...chat]
     : effectiveScrollState.kind === "night"
-      ? effectiveScrollState.messages.filter((message) => !failedInThisScroll(message))
+      ? [...effectiveScrollState.messages]
       : [];
 
   React.useEffect(() => {
@@ -360,7 +354,7 @@ export function ChatModal({
       <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="reply-retry">
         <span>问话未得回话（「{replyRetry.question}」）。{replyRetry.error_pack_path ? `错误包：${replyRetry.error_pack_path}；请交给作者。` : ""}</span>
         <button type="button" onClick={() => onRetryReply(scrollMode === "audience" ? AUDIENCE_SCENE_SPEAKER : minister.name)} disabled={!!busy}>
-          重新生成回话
+          重试
         </button>
       </div>
     ));
@@ -374,7 +368,7 @@ export function ChatModal({
         <div className="chat-system-note danger chat-failure-note" role="alert" data-testid={`translation-retry-${retry.chat_turn_id}`}>
           <span>本轮记录未能整理。{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
           <button type="button" onClick={() => onRetryTranslation(retry.chat_turn_id)} disabled={!!busy}>
-            重试整理
+            重试
           </button>
         </div>
       </React.Fragment>

@@ -583,10 +583,10 @@ describe("ChatModal — placeholder switches on character type", () => {
       onRetryReply: retry,
     });
     const note = document.querySelector('[data-testid="reply-retry"]');
-    expect(note?.textContent).toContain("重新生成回话");
+    expect(note?.textContent).toContain("重试");
     expect(note?.textContent).toContain("剿抚孰先？");
     const button = Array.from(document.querySelectorAll("button")).find(
-      (node) => node.textContent === "重新生成回话",
+      (node) => node.textContent === "重试",
     );
     expect(button).toBeTruthy();
     act(() => button?.click());
@@ -720,7 +720,7 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     // #1732 B：撤回就地确认
     clickButton("撤回本轮");
     clickButton("继续撤回");
-    clickButton("重新生成回话");
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="reply-retry"] button')?.click());
     expect(send).toHaveBeenCalledWith("洪承畴", "细奏边情");
     expect(undo).toHaveBeenCalledWith("洪承畴");
     expect(retryReply).toHaveBeenCalledWith("殿上");

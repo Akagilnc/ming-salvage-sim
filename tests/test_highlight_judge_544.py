@@ -95,6 +95,18 @@ def _minister_turn(db, state, minister: str, reply: str, night_id: int = 0):
     return cid, mid
 
 
+def _settle_minister_reply(db, chat_turn_id: int, night_id: int, minister: str, reply: str):
+    seq = db.conn.execute(
+        "SELECT night_seq FROM chat_turns WHERE id=?", (chat_turn_id,),
+    ).fetchone()["night_seq"]
+    db.settle_story_extraction(
+        chat_turn_id, night_id,
+        [{"body": reply, "person_names": [minister], "audibility": "殿上公开",
+          "tags": ["scroll_role:minister"]}],
+        int(seq),
+    )
+
+
 def test_build_chat_projection_includes_minister_highlights(game):
     db, state, _ = game
     minister = "温体仁"
@@ -118,11 +130,14 @@ def test_read_night_scroll_includes_minister_highlights(game):
     db, state, _ = game
     minister = "杨嗣昌"
     night_id = int(an.open_night(db, state, time_of_day="戌时", location="乾清宫")["id"])
-    _cid, mid = _minister_turn(
+    cid, mid = _minister_turn(
         db, state, minister, "臣请据实核账。", night_id=night_id,
     )
     db.set_message_highlights(mid, ["据实核账"])
 
+    scroll = an.read_night_scroll(db, night_id)
+    assert any(m["role"] == "scene" and m["content"] == "臣请据实核账。" and m["highlights"] == [] for m in scroll)
+    _settle_minister_reply(db, cid, night_id, minister, "臣请据实核账。")
     scroll = an.read_night_scroll(db, night_id)
     minister_msgs = [m for m in scroll if m["role"] == "minister"]
     assert minister_msgs
@@ -140,10 +155,13 @@ def test_highlights_survive_db_restore(game, content, tmp_path):
     src_db, state, _ = game
     minister = "温体仁"
     night_id = int(an.open_night(src_db, state, time_of_day="午时", location="文华殿")["id"])
-    _cid, mid = _minister_turn(
+    cid, mid = _minister_turn(
         src_db, state, minister, "臣陈军务与辽饷。", night_id=night_id,
     )
     src_db.set_message_highlights(mid, ["军务", "辽饷"])
+    assert any(m["role"] == "scene" and m["highlights"] == []
+               for m in an.read_night_scroll(src_db, night_id) if m.get("chat_turn_id") == cid)
+    _settle_minister_reply(src_db, cid, night_id, minister, "臣陈军务与辽饷。")
     # 不关 fixture 库：checkpoint + 文件拷贝后重开，模拟 restore
     src_db.conn.execute("PRAGMA wal_checkpoint(FULL)")
     copy_path = Path(tmp_path) / "restore-hl.db"

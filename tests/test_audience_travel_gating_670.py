@@ -1838,7 +1838,7 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream, mo
     chat_turn_id = int(payload.get("chat_turn_id") or 0)
     assert chat_turn_id > 0
     turn = db.conn.execute(
-        "SELECT night_id, status, route FROM chat_turns WHERE id=?",
+        "SELECT night_id, night_seq, minister_message_id, status, route FROM chat_turns WHERE id=?",
         (chat_turn_id,),
     ).fetchone()
     assert turn is not None
@@ -1853,7 +1853,21 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream, mo
     owned = [m for m in scroll if int(m.get("chat_turn_id") or 0) == chat_turn_id]
     roles = {m.get("role") for m in owned}
     assert "user" in roles
-    assert "minister" in roles
+    # 转译尚未落水位时回话保持中性，不能从原始 minister 消息抢定说话人。
+    assert "scene" in roles
+    assert "minister" not in roles
+    reply = db.conn.execute(
+        "SELECT content FROM chat_messages WHERE id=?", (turn["minister_message_id"],),
+    ).fetchone()["content"]
+    db.settle_story_extraction(
+        chat_turn_id, int(turn["night_id"]),
+        [{"body": reply, "person_names": [remote.name], "audibility": "殿上公开",
+          "tags": ["scroll_role:minister"]}],
+        int(turn["night_seq"]),
+    )
+    settled = [m for m in an.read_night_scroll(db, int(turn["night_id"]))
+               if int(m.get("chat_turn_id") or 0) == chat_turn_id]
+    assert {m["role"] for m in settled} >= {"user", "minister"}
 
     # #1566：typed 退朝在密令 intent 下不得收夜/留侍/court_break。
     before_nights = db.conn.execute(
