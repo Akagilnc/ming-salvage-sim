@@ -204,7 +204,7 @@ export function ChatModal({
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });
   }
   const nightCharacters = effectiveScrollState.kind === "night" ? effectiveScrollState.characters : [];
-  const portraitCharacters = [...ministers, ...nightCharacters.filter((person) => !ministers.some((item) => item.name === person.name))];
+  const portraitCharacters = [...nightCharacters, ...ministers.filter((person) => !nightCharacters.some((item) => item.name === person.name))];
   const currentMinister = scrollMode === "audience"
     ? (effectiveScrollState.kind === "night"
         ? portraitCharacters.find((candidate) => candidate.name === effectiveScrollState.protagonist)
