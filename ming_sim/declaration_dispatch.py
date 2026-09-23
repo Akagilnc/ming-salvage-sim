@@ -1317,8 +1317,8 @@ def _dispatch_scene_facts(
     chat_turn_id: int = 0, source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """说话人分段与可闻性：转译声明自带的一段戏文正文 + 可闻性 + 涉及人物，
-    原样落既有召对夜账本，代码不改写、不合成替代文本（P6/P7）。涉及人物可为
-    未在册的提及者；不作人物存在/生死校验，故 `check_dead=False`。
+    原样落既有召对夜账本，代码不改写、不合成替代文本（P6/P7）。旁白可提及
+    未在册人物，说话人须在册；不以生死状态改写戏文，故 `check_dead=False`。
 
     ``chat_turn_id``（#1839）：源轮绑定到 ``origin_chat_turn_id``，撤回本轮删该账。
     夜上下文下源轮缺失/不属本夜时整项 missing_ref，不落 origin=0 孤儿账。
@@ -1350,8 +1350,17 @@ def _dispatch_scene_facts(
                 "invalid_shape", source,
             )
             continue
-        # A scroll segment names speakers and mentioned people, not necessarily
-        # registered characters. World-changing declarations validate their IDs.
+        # 有角色标注时仅首位是说话人；其余名字只是提及。旧无角色声明
+        # 无此区分，仍须拒绝其中凭空的说话人。
+        speaker_names = person_names[:1] if scroll_role in {"minister", "attendant"} else (
+            person_names if scroll_role is None else []
+        )
+        if speaker_names:
+            try:
+                _assert_characters_exist(db, speaker_names)
+            except KeyError as exc:
+                _reject(rejected, item, str(exc), "hallucinated_id", source)
+                continue
         origin_ref, error_category = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)

@@ -140,6 +140,10 @@ export function App() {
     [refreshDurableProjection],
   );
 
+  React.useEffect(() => {
+    selectedMinisterRef.current = selectedMinister;
+  }, [selectedMinister]);
+
   // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试。
   const {
     suggestions,
@@ -356,10 +360,6 @@ export function App() {
     setActiveModal("report");
     setGazetteShown(currentTurn);
   }, [state, gazetteShown, endingDismissed, activeModal]);
-
-  React.useEffect(() => {
-    selectedMinisterRef.current = selectedMinister;
-  }, [selectedMinister]);
 
   React.useEffect(() => {
     if (!state || appView !== "game" || audienceResumeCheckedRef.current) return;

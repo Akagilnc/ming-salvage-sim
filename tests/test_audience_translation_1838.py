@@ -27,7 +27,7 @@ from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
 from ming_sim.relations import summon_edge_origin
 from ming_sim.session import GameSession
-from tests.conftest import persist_and_schedule_scene
+from tests.conftest import deterministic_test_beat_generator, persist_and_schedule_scene
 
 
 def _activate(db, state, *names: str) -> None:
@@ -182,8 +182,10 @@ def _scene_session(db, state, content, monkeypatch):
     sess.llm_config = SimpleNamespace(channel="")
     sess.temporary_characters = {}
     sess.agno_db = None
-    sess._beat_generator = None
-    sess._scene_registry = None
+    from ming_sim.beat_orchestration import ChatTurnSceneRegistry
+    from ming_sim.session import _CLI_ACTION_INTENT_EXECUTOR
+    sess._beat_generator = deterministic_test_beat_generator
+    sess._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
     sess._write_gate = None
     return sess
 

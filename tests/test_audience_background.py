@@ -247,7 +247,7 @@ def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(ga
 
     stream.close()
 
-    agent.completed.wait()
+    assert agent.completed.wait(5), agent.calls
     # fixture 关闭共享 DB 前必须等 queue + 本 owner 转译 ledger 终态（禁盲等 history）。
     _wait_for_pending_writes_to_drain(web_game)
     assert web_game.chat_history[minister_name] == [
@@ -593,11 +593,11 @@ class _CliActionSession(_FakeSession):
             "pending_action_id": self._pending_action_id,
         }
 
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
         # 生产 scene_chat 后接 CLI apply（密令/pending 落地夹具）
         result = GameSession.scene_chat(
             self, message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
-            minister_name=minister_name,
+            minister_name=minister_name, on_protagonist_changed=on_protagonist_changed,
         )
         applied = self.apply_cli_conversation_actions(message, result.answer)
         result.secret_order_id = int(applied.get("secret_order_id") or 0)
@@ -640,7 +640,7 @@ def test_background_audience_secret_order_persists_after_observer_departure(game
     assert next(stream)["type"] == "delta"
     stream.close()
 
-    agent.completed.wait()
+    assert agent.completed.wait(5), agent.calls
     # 后台跑完：queue + 转译 ledger 终态后断言外部结构化结果（禁盲等 history）。
     _wait_for_pending_writes_to_drain(web_game)
     assert len(web_game.session.apply_calls) >= 1
@@ -662,7 +662,7 @@ def test_background_audience_pending_action_persists_after_observer_departure(ga
     assert next(stream)["type"] == "delta"
     stream.close()
 
-    agent.completed.wait()
+    assert agent.completed.wait(5), agent.calls
     _wait_for_pending_writes_to_drain(web_game)
     assert len(web_game.session.apply_calls) >= 1
     assert len(web_game.chat_history[minister_name]) >= 2
@@ -736,10 +736,11 @@ def test_llm_failure_does_not_leave_half_chat_in_history(game, monkeypatch):
     assert "error" in types, events
     assert types[-1] == "end", events
     assert types[types.index("error") + 1] == "end", types
-    assert web_game.chat_history[minister_name] == []
-    assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
+    assert agent.completed.is_set(), events
+    assert web_game.chat_history[minister_name] == [{"role": "user", "content": "户部钱粮如何？"}]
+    assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 1
     row = db.conn.execute("SELECT status FROM chat_turns").fetchone()
-    assert row["status"] == "failed"
+    assert row["status"] == "interrupted"
 
 
 class _RaisingActionSession(_FakeSession):
@@ -748,10 +749,10 @@ class _RaisingActionSession(_FakeSession):
     def apply_cli_conversation_actions(self, *_args, **_kwargs):
         raise RuntimeError("落地阶段失败")
 
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
         result = GameSession.scene_chat(
             self, message, chat_turn_id=chat_turn_id, stream_emit=stream_emit,
-            minister_name=minister_name,
+            minister_name=minister_name, on_protagonist_changed=on_protagonist_changed,
         )
         # 回话后落地失败（拟旨若已由转译/tool 写入则回滚路径测）
         self.apply_cli_conversation_actions(message, result.answer)
@@ -789,6 +790,8 @@ def test_background_audience_failure_after_action_rolls_back_cleanly(game, monke
     assert "error" in types, events
     assert types[-1] == "end", events
     assert types[types.index("error") + 1] == "end", types
+    assert agent.calls, events
+    assert any(e.get("type") == "error" and e.get("message") == "落地阶段失败" for e in events), events
     # 已暂存的拟旨被回滚——不留不可撤回的半成品政务结果
     assert not any(
         row["kind"] == "directive"
@@ -799,10 +802,10 @@ def test_background_audience_failure_after_action_rolls_back_cleanly(game, monke
         row["text"] == draft_text
         for row in db.list_directives(state, statuses=("pending", "draft"))
     )
-    # 半截聊天被清，turn 标 failed
-    assert web_game.chat_history[minister_name] == []
-    assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
-    assert db.conn.execute("SELECT status FROM chat_turns").fetchone()["status"] == "failed"
+    # 回话未落时问话保留为可重试的 interrupted 轮，而非删掉玩家输入。
+    assert web_game.chat_history[minister_name] == [{"role": "user", "content": "拟一道清核辽饷的旨。"}]
+    assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 1
+    assert db.conn.execute("SELECT status FROM chat_turns").fetchone()["status"] == "interrupted"
 
 
 def test_chat_stream_rejects_second_concurrent_turn_same_minister(game, monkeypatch):

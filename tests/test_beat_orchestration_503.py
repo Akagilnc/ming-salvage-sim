@@ -1491,7 +1491,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     release_join = threading.Event()
     abandon_entered = threading.Event()
     release_abandon = threading.Event()
-    minister = "测试大臣"
+    minister = "殿上"
 
     class _RunOutput:
         def __init__(self, content: str):
@@ -1647,7 +1647,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
 
     t = threading.Thread(target=drive)
     t.start()
-    join_entered.wait()
+    assert join_entered.wait(5), events
     assert rt._write_gate.acquire(blocking=False), "write_gate held during stream join"
     rt._write_gate.release()
     release_join.set()
@@ -1667,7 +1667,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
 
     t2 = threading.Thread(target=drive2)
     t2.start()
-    abandon_entered.wait()
+    assert abandon_entered.wait(5), events2
     assert rt._write_gate.acquire(blocking=False), "write_gate held during stream abandon"
     rt._write_gate.release()
     release_abandon.set()

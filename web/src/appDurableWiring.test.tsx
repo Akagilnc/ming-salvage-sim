@@ -186,6 +186,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const order = { id: 7, title: "整饬边备", content: "查核军饷", status: "active", minister_name: minister.name, year_issued: 1627, period_issued: 10, dossier_progress: [] };
     const calls: Array<{ path: string; body?: string }> = [];
     let replyStored = false;
+    let finishStream!: () => void;
+    const streamGate = new Promise<void>((resolve) => { finishStream = resolve; });
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
       calls.push({ path: decodeURIComponent(u.pathname), body: typeof init?.body === "string" ? init.body : undefined });
@@ -193,17 +195,23 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [order] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
-      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, status: "open", messages: replyStored ? [
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: replyStored ? 23 : 0, status: replyStored ? "open" : "closed", messages: replyStored ? [
         { role: "minister", speaker: minister.name, content: "臣已入殿", chat_turn_id: 1, beat: "dialogue" },
       ] : [] });
       if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ campaign_id: "c", night_id: 23, minister, history: [], suggestions: [], can_undo_last_chat: false });
       if (u.pathname.endsWith("/api/audience/chat/stream")) {
-        replyStored = true;
-        return new Response([
-        'event: delta\ndata: {"content":"臣已入殿"}\n\n',
-        'event: done\ndata: {"history":[{"role":"minister","speaker":"洪承畴","content":"臣已入殿","chat_turn_id":1}],"directives":[],"pending_count":0,"suggestions":[],"can_undo_last_chat":true}\n\n',
-        'event: end\ndata: {}\n\n',
-        ].join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+        const encoder = new TextEncoder();
+        return new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode('event: delta\ndata: {"content":"臣已入殿"}\n\n'));
+            void streamGate.then(() => {
+              replyStored = true;
+              controller.enqueue(encoder.encode('event: done\ndata: {"history":[{"role":"minister","speaker":"洪承畴","content":"臣已入殿","chat_turn_id":1}],"directives":[],"pending_count":0,"suggestions":[],"can_undo_last_chat":true}\n\n'));
+              controller.enqueue(encoder.encode('event: end\ndata: {}\n\n'));
+              controller.close();
+            });
+          },
+        }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
       }
       return jsonResp({});
     }));
@@ -219,6 +227,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     });
     expect(calls.some((call) => call.path.includes("/api/ministers/"))).toBe(false);
     expect(calls.some((call) => call.path.endsWith("/api/audience/chat/stream"))).toBe(true);
+    await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已入殿")); });
+    finishStream();
     await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已入殿")); });
   });
 
@@ -551,11 +561,13 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(translationButton());
     await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeTruthy()); });
     expect(translationAttempts).toBe(1);
+    expect(host.querySelector('[data-testid="translation-retry-8"][role="alert"]')?.textContent).toContain("本轮记录未能整理");
     await click(translationButton());
     await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeFalsy()); });
     await click(replyButton());
     await act(async () => { await vi.waitFor(() => expect(replyButton()).toBeTruthy()); });
     expect(replyAttempts).toBe(1);
+    expect(host.querySelector('[data-testid="reply-retry-7"][role="alert"]')?.textContent).toContain("问话未得回话");
     await click(replyButton());
     await act(async () => {
       await vi.waitFor(() => expect(replyButton()).toBeFalsy());
