@@ -326,6 +326,23 @@ def test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn(game):
     assert db.get_last_active_chat_turn(minister_name, state.turn)["id"] == completed
 
 
+def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
+    db, state, content = game
+    minister_name = "毕自严"
+    web_game = _web_game(db, state, content, _FakeAgent())
+    turn = db.create_chat_turn(state, minister_name, "sess", 0)
+    user_id = db.append_chat_message(minister_name, state.turn, "user", "前问")
+    db.update_chat_turn_messages(turn, user_message_id=user_id)
+    db.persist_minister_reply(minister_name, state.turn, "前答", turn, mindreading_status="skip")
+
+    # Web 路由持同一非重入写闸再调撤回；不得在取消转译时二次取闸。
+    with web_game._write_gate:
+        result = web_game.undo_last_chat(minister_name, gate_held=True)
+
+    assert result["undone_chat_turn_id"] == turn
+    assert db.get_last_active_chat_turn(minister_name, state.turn) is None
+
+
 def test_stream_tool_staged_secret_order_merges_emperor_not_reply(game, monkeypatch):
 
     """#413/#405/#1274 K1：web streaming tool-call 并御旨；reply 不入 content。"""
