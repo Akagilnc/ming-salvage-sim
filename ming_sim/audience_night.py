@@ -2517,7 +2517,10 @@ def audible_entries_for(
 def person_night_experience(
     db: Any, night_id: int, person_name: str,
 ) -> List[Dict[str, Any]]:
-    """人物经历：在场公开所闻，加本人亲历的私密条目。"""
+    """人物经历：在场公开所闻，加本人说出的私密条目。
+
+    转译声明的 person_names 首位是说话人；其余仅为涉及人，不获知低语。
+    """
     name = str(person_name or "").strip()
     if not name:
         return []
@@ -2526,7 +2529,7 @@ def person_night_experience(
         entry for entry in list_ledger(db, int(night_id))
         if entry["id"] in audible_ids
         or (entry.get("audibility") == AUDIBILITY_PRIVATE
-            and name in (entry.get("person_names") or []))
+            and (entry.get("person_names") or [None])[0] == name)
     ]
 
 

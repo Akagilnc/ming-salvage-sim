@@ -69,7 +69,7 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
             {
                 "body": wang_whisper,
                 "audibility": AUDIBILITY_PRIVATE,
-                "person_names": ["王承恩"],
+                "person_names": ["王承恩", "王绍徽"],
                 "tags": ["递话"],
             },
         ],
@@ -95,7 +95,7 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
     assert by_body[wang_reply]["audibility"] == AUDIBILITY_PUBLIC
     assert by_body[bi_interject]["person_names"] == ["毕自严"]
     assert by_body[bi_interject]["audibility"] == AUDIBILITY_PUBLIC
-    assert by_body[wang_whisper]["person_names"] == ["王承恩"]
+    assert by_body[wang_whisper]["person_names"] == ["王承恩", "王绍徽"]
     assert by_body[wang_whisper]["audibility"] == AUDIBILITY_PRIVATE
 
     # 王绍徽在场期间可闻殿上公开；御前低语不进其经历投影
