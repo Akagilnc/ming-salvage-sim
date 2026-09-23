@@ -2120,7 +2120,7 @@ class WebGame:
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
 
-    def undo_last_chat(self, minister_name: str) -> Dict[str, Any]:
+    def undo_last_chat(self, minister_name: str, *, gate_held: bool = False) -> Dict[str, Any]:
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
         if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
             night = get_open_night(self.db)
@@ -2133,7 +2133,7 @@ class WebGame:
                         owner_last = self.db.get_last_active_chat_turn(owner, self.state.turn)
                         if not owner_last or int(owner_last["id"]) != int(active["id"]):
                             raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
-                        result = self.undo_last_chat(owner)
+                        result = self.undo_last_chat(owner, gate_held=gate_held)
                         result["history"] = self.chat_projection(minister_name)
                         result["can_undo_last_chat"] = self.can_undo_last_chat(minister_name)
                         return result
@@ -2157,6 +2157,7 @@ class WebGame:
         cancel_turn_translation(
             turn_id,
             write_queue=self._runtime_write_queue(),
+            gate_held=gate_held,
         )
         try:
             undone = self.db.undo_chat_turn(turn_id)
@@ -6692,7 +6693,7 @@ async def api_undo_audience_chat() -> Dict[str, Any]:
     game = get_game()
     _refuse_if_open_night_barrier(game)
     with _serialized_web_write(game):
-        return game.undo_last_chat(SCENE_CHAT_SPEAKER)
+        return game.undo_last_chat(SCENE_CHAT_SPEAKER, gate_held=True)
 
 
 @app.get("/api/ministers/{minister_name}/chat")
@@ -6833,7 +6834,7 @@ async def api_undo_chat(minister_name: str) -> Dict[str, Any]:
     # #1727：收夜屏障窗内拒撤回本轮——禁 cancel_key 抽空屏障 wait_prior 所等尾随票。
     _refuse_if_open_night_barrier(game)
     with _serialized_web_write(game):
-        return game.undo_last_chat(minister_name)
+        return game.undo_last_chat(minister_name, gate_held=True)
 
 
 def _chat_stream_response(minister_name: str, request: ChatRequest) -> StreamingResponse:

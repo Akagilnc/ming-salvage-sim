@@ -895,7 +895,7 @@ def _write_tree(
     index.append(_COURT_ROSTER_REL)
 
     person_dir = tmp / _PERSON_DIR / _safe_segment(name)
-    _write_text(person_dir / "经历.txt", _experience_text(knowledge))
+    _write_text(person_dir / "经历.txt", _experience_text(knowledge, _person_audience_experience(db, name)))
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/经历.txt")
 
     _write_text(
@@ -963,6 +963,17 @@ def _experience_text(knowledge: dict, audible_entries: Sequence[dict] = ()) -> s
             lines.append(f"{title}：{body}".strip("："))
     lines.extend(str(item["body"]) for item in audible_entries if item.get("body"))
     return "\n".join(lines) or "（无）"
+
+
+def _person_audience_experience(db: Any, name: str) -> list[dict]:
+    """Surviving audience nights, projected through the existing audibility rule."""
+    if not hasattr(db, "conn"):
+        return []
+    from ming_sim.audience_night import person_night_experience
+
+    nights = db.conn.execute("SELECT id FROM audience_nights ORDER BY id").fetchall()
+    return [entry for night in nights
+            for entry in person_night_experience(db, int(night["id"]), name)]
 
 
 def _is_gazette_public_event(item: dict) -> bool:
@@ -1278,7 +1289,7 @@ def _write_world_tree(
         )
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
         rel = f"{person_dir}/经历.txt"
-        _write_text(tmp / rel, _experience_text(knowledge))
+        _write_text(tmp / rel, _experience_text(knowledge, _person_audience_experience(db, name)))
         index.append(rel)
         # #1828/#1834：人物名下按月文字事实（负伤/患病等）单独一份，世界目录
         # 才有；人物私有经历目录（_write_tree）不注入，仍只按其知识见闻投影。
@@ -1562,11 +1573,7 @@ def _write_one_present_person(
     index.append(roster_rel)
 
     exp_rel = f"{base}/经历.txt"
-    if night_id:
-        from ming_sim.audience_night import person_night_experience
-        audible = person_night_experience(db, night_id, name)
-    else:
-        audible = []
+    audible = _person_audience_experience(db, name)
     _write_text(tmp / exp_rel, _experience_text(knowledge, audible))
     index.append(exp_rel)
 

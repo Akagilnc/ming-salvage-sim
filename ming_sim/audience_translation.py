@@ -164,21 +164,26 @@ def mark_turn_translation_done(
         db.conn.commit()
 
 
-def cancel_turn_translation(chat_turn_id: int, *, write_queue: Any) -> int:
+def cancel_turn_translation(chat_turn_id: int, *, write_queue: Any, gate_held: bool = False) -> int:
     """撤回本轮：可取消的 Future 即刻放票；运行中的票等 worker 终态。"""
     ctid = int(chat_turn_id or 0)
     if ctid <= 0:
         return 0
     # Same lock order as admission: gate, then Future map. This also covers the
     # interval after the ticket was retained but before its Future was recorded.
-    with _translation_write_cm(write_queue.write_gate):
+    with (contextlib.nullcontext() if gate_held else _translation_write_cm(write_queue.write_gate)):
         turn_key = (id(write_queue), ctid)
         with _night_inflight_guard:
             fut = _turn_future.get(turn_key)
         if fut is not None:
             # A running Future cannot be cancelled. Its ticket is the close
             # barrier's owner until _cleanup; never vacate it here.
-            fut.cancel()
+            # A queued placeholder remains the FIFO link until its predecessor
+            # finishes. Cancelling it here would let the next round overtake A.
+            if not fut.running():
+                write_queue.cancel_key(("audience_translation", ctid))
+            else:
+                fut.cancel()
             return 0
         return int(write_queue.cancel_key(("audience_translation", ctid)))
 
@@ -509,6 +514,9 @@ def schedule_audience_turn_translation(
     ) -> None:
         _observe_predecessor(pred_fut)
         if _out.done():
+            return
+        if ticket.cancelled:
+            _out.cancel()
             return
         # 占位 Future：submit 前标 RUNNING，避免 cancel 成功摘账而实活仍在跑。
         if not _out.set_running_or_notify_cancel():
