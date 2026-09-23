@@ -201,6 +201,7 @@ def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> No
 
 def list_pending_translations(
     db: Any, *, night_id: Optional[int] = None, chat_turn_id: Optional[int] = None,
+    write_queue: Any = None,
 ) -> List[Dict[str, Any]]:
     """转译待补真源：复用 list_unextracted_replies（extract_status ''/'pending'）。
 
@@ -222,11 +223,8 @@ def list_pending_translations(
         # 结构化系统提示状态（前端渲染提示行 + 重试钮；本层只交能力）
         item["kind"] = "translation_pending"
         with _night_inflight_guard:
-            future = next(
-                (f for (_, turn_id), f in _turn_future.items() if turn_id == ctid and not f.done()),
-                None,
-            )
-        item["retryable"] = future is None
+            future = _turn_future.get((id(write_queue), ctid)) if write_queue is not None else None
+        item["retryable"] = future is None or future.done()
         item["extract_status"] = str(row.get("extract_status") or "pending") or "pending"
         out.append(item)
     return out
@@ -350,6 +348,7 @@ def run_turn_translation_job(
                 pack = write_audience_error_pack(
                     kind="translation", message=str(exc),
                     detail={"chat_turn_id": ctid, "night_id": nid},
+                    db=db, exc=exc,
                 )
                 with _gate_cm():
                     db.set_chat_turn_error_pack(ctid, pack)
@@ -384,15 +383,6 @@ def schedule_audience_turn_translation(
     )
     if ticket is None:
         raise RuntimeError("write queue sealed")
-    try:
-        if ctid > 0 and hasattr(db, "mark_story_extraction_pending"):
-            # 调度线程短标 pending：同属转译持闸类（调用方须已放闸，禁嵌套非重入锁）。
-            with _translation_write_cm(write_gate):
-                db.mark_story_extraction_pending(ctid)
-    except Exception:
-        write_queue.complete(ticket)
-        raise
-
     night_key = (id(write_queue), nid)
 
     def _run_job() -> DeclarationDispatchResult:
@@ -424,21 +414,29 @@ def schedule_audience_turn_translation(
     # 会填满进程级线程池，饿死新会话（票面：新局不等待旧局后台转译）。
     # 有未完成前驱时只登记占位 Future，前驱终态后再 submit 实活；无前驱则直接提交。
     # 读前驱 + 登记同持非重入锁；done callback 一律锁外挂（已完成 Future 同步回调会死锁）。
-    with _night_inflight_guard:
-        pred = _night_tail.get(night_key)
-        # Future 终态先于 cleanup callback 可见；此窗口内的 tail 已不是
-        # 在飞前驱，新一轮不得继承它的旧失败。
-        if pred is not None and pred.done():
-            pred = None
-        if pred is None:
-            fut: Future = _executor.submit(_run_job)
-            chain_pred: Optional[Future] = None
-        else:
-            fut = Future()
-            chain_pred = pred
-        _night_tail[night_key] = fut
-        if ctid > 0:
-            _turn_future[(id(write_queue), ctid)] = fut
+    try:
+        with _night_inflight_guard:
+            if ctid > 0 and hasattr(db, "mark_story_extraction_pending"):
+                # 标 pending 与 Future 登记同一临界段：投影不能见到无任务的待补钮。
+                with _translation_write_cm(write_gate):
+                    db.mark_story_extraction_pending(ctid)
+            pred = _night_tail.get(night_key)
+            # Future 终态先于 cleanup callback 可见；此窗口内的 tail 已不是
+            # 在飞前驱，新一轮不得继承它的旧失败。
+            if pred is not None and pred.done():
+                pred = None
+            if pred is None:
+                fut: Future = _executor.submit(_run_job)
+                chain_pred: Optional[Future] = None
+            else:
+                fut = Future()
+                chain_pred = pred
+            _night_tail[night_key] = fut
+            if ctid > 0:
+                _turn_future[(id(write_queue), ctid)] = fut
+    except Exception:
+        write_queue.complete(ticket)
+        raise
 
     def _cleanup(
         _f: Future,

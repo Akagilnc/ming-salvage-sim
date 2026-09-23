@@ -2036,7 +2036,10 @@ class WebGame:
         after_snapshot = self.db.capture_chat_rollback_snapshot()
         self.db.record_chat_turn_rollback_diffs(chat_turn_id, before_snapshot, after_snapshot)
 
-    def _fail_chat_turn_and_reload(self, chat_turn_id: int, before_snapshot: Dict[str, Any]) -> None:
+    def _fail_chat_turn_and_reload(
+        self, chat_turn_id: int, before_snapshot: Dict[str, Any],
+        error: Optional[BaseException] = None,
+    ) -> None:
         """召对中断/失败的统一善后：回滚副作用；有问话则保留并标 interrupted。
         所有「已建 chat_turn 但本轮未能正常完成」的路径都必须调用——否则留下 status=active 且
         minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把该大臣永久判为「上一轮
@@ -2052,6 +2055,13 @@ class WebGame:
         ).fetchone() if hasattr(self.db, "conn") else None
         if row is not None and row["user_message_id"]:
             self.db.restore_interrupted_after_failed_retry(chat_turn_id)
+            if error is not None and not isinstance(error, LLMUnavailable):
+                from ming_sim.audience_night import write_audience_error_pack
+                pack = write_audience_error_pack(
+                    kind="reply", message=str(error),
+                    detail={"chat_turn_id": chat_turn_id}, db=self.db, exc=error,
+                )
+                self.db.set_chat_turn_error_pack(chat_turn_id, pack)
         else:
             self.db.fail_chat_turn(chat_turn_id)
         self.chat_history = {name: [] for name in self.session.content.characters}
@@ -2721,6 +2731,7 @@ class WebGame:
                             pack = write_audience_error_pack(
                                 kind="reply", message=str(error),
                                 detail={"chat_turn_id": chat_turn_id},
+                                db=self.db, exc=error,
                             )
                             self.db.set_chat_turn_error_pack(chat_turn_id, pack)
                 except Exception:
@@ -3657,6 +3668,7 @@ class WebGame:
         night_status = str((open_n or {}).get("status") or "")
         rows = list_pending_translations(
             self.db, night_id=int(nid) if nid else None,
+            write_queue=self._runtime_write_queue(),
         )
         pending = [
             {
@@ -3689,6 +3701,7 @@ class WebGame:
 
         return list_pending_translations(
             self.db, night_id=night_id, chat_turn_id=chat_turn_id,
+            write_queue=self._runtime_write_queue(),
         )
 
     def retry_pending_translation(self, chat_turn_id: int) -> Dict[str, Any]:
@@ -3704,8 +3717,10 @@ class WebGame:
             list_pending_translations,
         )
 
-        pending_before = list_pending_translations(self.db, chat_turn_id=ctid)
-        if not pending_before or not pending_before[0].get("retryable"):
+        pending_before = list_pending_translations(
+            self.db, chat_turn_id=ctid, write_queue=self._runtime_write_queue(),
+        )
+        if not pending_before:
             raise HTTPException(
                 status_code=404,
                 detail=f"chat_turn_id={ctid} 没有待补转译。",
@@ -3719,7 +3734,9 @@ class WebGame:
             write_gate=write_gate,
             write_queue=self._runtime_write_queue(),
         )
-        still = list_pending_translations(self.db, chat_turn_id=ctid)
+        still = list_pending_translations(
+            self.db, chat_turn_id=ctid, write_queue=self._runtime_write_queue(),
+        )
         status = (
             self.db.get_story_extract_status(ctid)
             if hasattr(self.db, "get_story_extract_status")
@@ -3880,7 +3897,7 @@ class WebGame:
                     message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
                     if chat_turn_id:
                         self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
-        except Exception:
+        except Exception as error:
             # Release gate before scene drain — prologue may have already started futures.
             if gate_held:
                 try:
@@ -3900,7 +3917,7 @@ class WebGame:
                 )
             try:
                 with write_gate:
-                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
             except Exception:
                 logger.exception(
                     "stream prologue cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
@@ -3961,7 +3978,7 @@ class WebGame:
                 )
             try:
                 with write_gate:
-                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
             except Exception:
                 logger.exception(
                     "stream identity cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
@@ -4103,7 +4120,7 @@ class WebGame:
                             )
                         try:
                             with write_gate:
-                                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
                         except Exception:
                             logger.exception(
                                 "stream worker cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
@@ -4112,14 +4129,6 @@ class WebGame:
                         # #1465 ④：回话未成终失败 — 与重试起手同形无条件 replace，再 error
                         # （禁「只 put error 不 replace」；客户端已处理空 replace）
                         emit_delta("", replace=True)
-                        if chat_turn_id and not isinstance(error, LLMUnavailable) and hasattr(self.db, "set_chat_turn_error_pack"):
-                            from ming_sim.audience_night import write_audience_error_pack
-                            pack = write_audience_error_pack(
-                                kind="reply", message=str(error),
-                                detail={"chat_turn_id": chat_turn_id},
-                            )
-                            with bare_write_gate:
-                                self.db.set_chat_turn_error_pack(chat_turn_id, pack)
                     if isinstance(error, LLMUnavailable):
                         ev_queue.put({
                             "type": "error",
@@ -4142,7 +4151,7 @@ class WebGame:
         thread = threading.Thread(target=worker, daemon=True)
         try:
             thread.start()
-        except Exception:
+        except Exception as error:
             # ADR 0005 / #1408：清理二次失败记日志不宽吞；原始异常仍上抛。
             try:
                 if chat_turn_id:
@@ -4154,7 +4163,7 @@ class WebGame:
                 )
             try:
                 with write_gate:
-                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot, error)
             except Exception:
                 logger.exception(
                     "stream start cleanup: fail_chat_turn/reload failed chat_turn_id=%s",

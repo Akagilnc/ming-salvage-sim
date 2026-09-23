@@ -408,6 +408,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     let stateCall = 0;
     let retryDone = false;
     let translationDone = false;
+    let translationAttempts = 0;
+    let replyAttempts = 0;
     let statePhase: "init" | "afterRetry" | "afterUndo" = "init";
     let releaseRefresh!: () => void;
     const refreshGate = new Promise<void>((r) => { releaseRefresh = r; });
@@ -447,10 +449,14 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         });
       }
       if (u.pathname.endsWith("/api/audience/translation/retry") && init?.method === "POST") {
+        translationAttempts += 1;
+        if (translationAttempts === 1) return new Response(JSON.stringify({ detail: "retry failed" }), { status: 500 });
         translationDone = true;
         return jsonResp({ status: "completed", retryable: false });
       }
       if (u.pathname.endsWith("/reply/retry") && init?.method === "POST") {
+        replyAttempts += 1;
+        if (replyAttempts === 1) return new Response(JSON.stringify({ detail: "retry failed" }), { status: 500 });
         retryDone = true;
         return jsonResp({
           answer: "臣已拟旨。", history: [], directives: [],
@@ -479,7 +485,13 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await act(async () => { await vi.waitFor(() => expect(findButton(host, "重新生成回话")).toBeTruthy()); });
     await act(async () => { await vi.waitFor(() => expect(findButton(host, "重试整理")).toBeTruthy()); });
     await click(findButton(host, "重试整理"));
+    await act(async () => { await vi.waitFor(() => expect(findButton(host, "重试整理")).toBeTruthy()); });
+    expect(host.querySelectorAll('.chat-system-note.danger[role="alert"]')).toHaveLength(2);
+    await click(findButton(host, "重试整理"));
     await act(async () => { await vi.waitFor(() => expect(findButton(host, "重试整理")).toBeFalsy()); });
+    await click(findButton(host, "重新生成回话"));
+    await act(async () => { await vi.waitFor(() => expect(findButton(host, "重新生成回话")).toBeTruthy()); });
+    expect(host.querySelectorAll('.chat-system-note.danger[role="alert"]')).toHaveLength(1);
     await click(findButton(host, "重新生成回话"));
     await act(async () => {
       await vi.waitFor(() => expect(findButton(host, "重新生成回话")).toBeFalsy());

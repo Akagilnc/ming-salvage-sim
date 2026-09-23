@@ -332,7 +332,9 @@ export function useChatActions({
       setChatNotice("已重新生成回话。");
       invalidateAudienceScroll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      await loadMinisterChat(initiatingPanelName).catch((loadError) =>
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
+      );
     } finally {
       setBusy("");
     }
@@ -351,7 +353,9 @@ export function useChatActions({
       await loadMinisterChat(ministerName);
       invalidateAudienceScroll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      await loadMinisterChat(ministerName).catch((loadError) =>
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
+      );
     } finally {
       setBusy("");
     }
