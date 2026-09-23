@@ -1079,25 +1079,33 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
       night_id: 23, protagonist: visitor.name,
       roster: [{ name: visitor.name, present: true }], characters: [visitor],
-      translation_pending: false, messages: [],
+      translation_pending: false, messages: [{ ...nightScroll[2], speaker: visitor.name }],
     }) }));
     const host = renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
     expect(host.querySelector(".audience-roster img")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
+    expect(host.querySelector("img.aside-avatar")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
   });
 
   it("prefers current-night portrait data over a stale court-list copy", async () => {
     const updated = { ...hong, portrait_id: "custom:latest" };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+    let reads = 0;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({
       night_id: 23, protagonist: hong.name,
-      roster: [{ name: hong.name, present: true }], characters: [updated],
-      translation_pending: false, messages: [],
-    }) }));
-    const host = renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
+      roster: [{ name: hong.name, present: true }], characters: [reads++ ? updated : hong],
+      translation_pending: false, messages: [{ ...nightScroll[2], speaker: hong.name }],
+    }) })));
+    let updateMinister!: (minister: Minister) => void;
+    const host = renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23,
+      registerMinisterUpdate: (update) => { updateMinister = update; } });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLImageElement>(".audience-roster img")?.dispatchEvent(new Event("error")); });
+    expect(host.querySelector(".audience-roster .minister-card-portrait-placeholder")).not.toBeNull();
+    await act(async () => { updateMinister({ ...xu, name: "另位臣" }); await Promise.resolve(); await Promise.resolve(); });
     expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
     expect(host.querySelector(".audience-roster img")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
+    expect(host.querySelector("img.aside-avatar")?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%B4%AA%E6%89%BF%E7%95%B4\?t=/);
   });
 
   it("shows the whole chronological night instead of a selected-minister window", async () => {

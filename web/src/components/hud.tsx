@@ -36,6 +36,9 @@ export function MinisterPortrait({ primary, fallback, name, className = "ministe
   const [stage, setStage] = React.useState<"primary" | "fallback" | "placeholder">(
     fallback ? "primary" : (primary ? "primary" : "placeholder")
   );
+  React.useEffect(() => {
+    setStage(primary ? "primary" : "placeholder");
+  }, [primary, fallback]);
   const src = stage === "primary" ? primary : stage === "fallback" ? (fallback ?? "") : "";
   if (stage === "placeholder") {
     return <div className={`${className} minister-card-portrait-placeholder`}>臣</div>;
