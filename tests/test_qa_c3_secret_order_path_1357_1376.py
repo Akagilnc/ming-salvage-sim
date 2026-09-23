@@ -19,7 +19,7 @@ import web_app
 from ming_sim.models import TurnPhase
 from ming_sim.session import ChatTurnResult, GameSession
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 
 def _active_minister_name(db, content) -> str:
@@ -374,8 +374,8 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
         assert game.db.list_secret_orders() == []
 
         def _approve_translate(prompt, llm_config):
-            del prompt, llm_config
             return {
+                **offline_empty_audience_translate(prompt, llm_config),
                 "commissions": [],
                 "promises": [{"action_id": int(pending_id), "decision": "应允"}],
             }

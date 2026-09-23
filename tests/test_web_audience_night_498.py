@@ -229,6 +229,32 @@ def test_persisted_reply_before_translation_admission_has_no_retry_button(web_ga
     assert retry.status_code == 404
 
 
+@pytest.mark.parametrize("night_status", [an.NIGHT_STATUS_CLOSING, an.NIGHT_STATUS_CLOSED])
+def test_pending_translation_retries_original_round_after_night_seal(web_game, monkeypatch, night_status):
+    """A sealed night keeps its failed source round repairable before month advance."""
+    game = web_game
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    ctid = game.db.create_chat_turn(game.state, "殿上", "sess", 0, night_id=nid)
+    game.db.persist_minister_reply("殿上", int(game.state.turn), "臣领旨。", ctid)
+    game.db.mark_story_extraction_pending(ctid)
+    an._set_night_fields(game.db, nid, status=night_status)
+    stub_audience_translate(monkeypatch)
+
+    async def retry():
+        async with _client() as client:
+            return await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
+
+    response = asyncio.run(retry())
+    assert response.status_code == 200
+    assert response.json()["extract_status"] == "done"
+    assert game.pending_translation_retries(chat_turn_id=ctid) == []
+    assert [row["body"] for row in game.db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE source_chat_turn_id=?", (ctid,),
+    )] == ["臣领旨。"]
+    assert an.get_night(game.db, nid)["status"] == night_status
+
+
 @pytest.mark.parametrize("failure", ["code", "429", "503", "timeout"])
 def test_translation_failure_retry_and_undo_through_audience_http(web_game, monkeypatch, request, failure, tmp_path):
     """The source turn owns the failed translation across retry and retraction."""

@@ -219,11 +219,15 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         def translate_fn(prompt, llm_config, _c=commission, _db=db):
             calls["n"] += 1
             if calls["n"] == 1:
-                return {"commissions": [_c], "promises": []}
+                return {
+                    **offline_empty_audience_translate(prompt, llm_config),
+                    "commissions": [_c], "promises": [],
+                }
             rows = _db.conn.execute(
                 "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
             ).fetchall()
             return {
+                **offline_empty_audience_translate(prompt, llm_config),
                 "commissions": [],
                 "promises": [
                     {"action_id": int(r["id"]), "decision": "应允"} for r in rows
@@ -418,7 +422,7 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     for channel in ("api", "cli"):
         def translate_fn(prompt, llm_config, _decl=declaration):
             shapes.append(normalize_audience_declaration(_decl))
-            return _decl
+            return {**offline_empty_audience_translate(prompt, llm_config), **_decl}
 
         sess = _sess(
             db, state, content, monkeypatch,

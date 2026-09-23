@@ -893,17 +893,29 @@ def append_ledger_entry(
     `origin_chat_turn_id`（#506）：口令账由某一轮 attach 创建时绑该轮 chat_turn_id，供
     撤回按轮删除该轮所产的入殿/告退等口令账；0=开夜/员额/收夜等框架账，不随任一轮撤。
 
-    CLOSING 一律拒绝玩家侧新账（默认 allow_closing=False）；收夜自有框架写与
-    close-owned drain 仅显式 allow_closing=True，不得按 source/origin id 漏放。
+    CLOSING 拒绝玩家侧新账（默认 allow_closing=False）；收夜框架写显式
+    allow_closing=True。唯有仍待转译的本月原对话轮可在封夜后补记抽取账。
     """
     night = get_night(db, night_id)
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
-    if night["status"] == NIGHT_STATUS_CLOSED:
+    # A failed translation belongs to an already persisted source round, not to
+    # a new player action. It may finish after the night seals, but never after
+    # the month advances or after its source round has been completed/retracted.
+    pending_source = False
+    if night["status"] in {NIGHT_STATUS_CLOSING, NIGHT_STATUS_CLOSED} and source_chat_turn_id > 0:
+        row = db.conn.execute(
+            "SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 "
+            "WHERE t.id=? AND t.night_id=? AND t.status='active' "
+            "AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?",
+            (int(source_chat_turn_id), int(night_id), int(night["turn"])),
+        ).fetchone()
+        pending_source = row is not None and int(origin_chat_turn_id) == int(source_chat_turn_id)
+    if night["status"] == NIGHT_STATUS_CLOSED and not pending_source:
         raise AudienceNightError(
             f"夜已收，不能再落账：{night_id}", code="night_closed",
         )
-    if night["status"] == NIGHT_STATUS_CLOSING and not allow_closing:
+    if night["status"] == NIGHT_STATUS_CLOSING and not (allow_closing or pending_source):
         raise AudienceNightError(
             f"本夜收夜中，不能再落故事账：{night_id}",
             code="night_closing",

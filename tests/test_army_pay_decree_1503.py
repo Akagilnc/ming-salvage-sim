@@ -1705,7 +1705,6 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
     from tests.test_menu_continue_stream_1195 import _parse_sse
     from tests.test_month_loop_tracer_1468 import _stub_outer_llm_seams
     from tests.test_session_write_queue_1353 import wait_pending_writes
-    from tests.wait_utils import wait_until
 
     class _AudienceAgent:
         def run(self, *_args, **_kwargs):
@@ -1771,7 +1770,8 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
 
         stub_audience_translate(
             monkeypatch,
-            lambda _prompt, _cfg: {
+            lambda prompt, cfg: {
+                **offline_empty_audience_translate(prompt, cfg),
                 "commissions": [commission],
                 "promises": [],
             },
@@ -1803,7 +1803,8 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
                     return []
                 raise
 
-        wait_until(lambda: len(_ledger()) >= 1)
+        game._runtime_write_queue().barrier(lambda: None)
+        assert _ledger()
         assert [row["id"] for row in game.db.list_pending_actions(turn)] == pending_before
         assert [row["id"] for row in game.db.list_decree_dossiers()] == dossiers_before
         ledger = _ledger()

@@ -24,7 +24,7 @@ from tests.test_month_loop_tracer_1468 import (
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
 from tests.wait_utils import wait_until
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 
 def _campaign(game) -> str:
@@ -142,9 +142,10 @@ def _install_canned_minister_factory(monkeypatch) -> None:
     monkeypatch.setattr(reg, "create_minister_agent", lambda *a, **k: _canned_scene_agent())
 
 
-def _empty_translate_fn(_prompt, _cfg):
+def _empty_translate_fn(prompt, cfg):
     """离线转译缝：空声明，禁打真模型。"""
     return {
+        **offline_empty_audience_translate(prompt, cfg),
         "commissions": [],
         "promises": [],
         "edge_events": [],
