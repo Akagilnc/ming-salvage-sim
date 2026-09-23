@@ -2037,7 +2037,7 @@ class WebGame:
         self.db.record_chat_turn_rollback_diffs(chat_turn_id, before_snapshot, after_snapshot)
 
     def _fail_chat_turn_and_reload(self, chat_turn_id: int, before_snapshot: Dict[str, Any]) -> None:
-        """召对中断/失败的统一善后：记 rollback 项、标 chat_turn=failed、从 DB 重载聊天缓存。
+        """召对中断/失败的统一善后：回滚副作用；有问话则保留并标 interrupted。
         所有「已建 chat_turn 但本轮未能正常完成」的路径都必须调用——否则留下 status=active 且
         minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把该大臣永久判为「上一轮
         仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。
@@ -2047,7 +2047,13 @@ class WebGame:
         if not chat_turn_id:
             return
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        self.db.fail_chat_turn(chat_turn_id)
+        row = self.db.conn.execute(
+            "SELECT user_message_id FROM chat_turns WHERE id = ?", (chat_turn_id,),
+        ).fetchone() if hasattr(self.db, "conn") else None
+        if row is not None and row["user_message_id"]:
+            self.db.restore_interrupted_after_failed_retry(chat_turn_id)
+        else:
+            self.db.fail_chat_turn(chat_turn_id)
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
@@ -2692,7 +2698,7 @@ class WebGame:
                         chat_turn_id=chat_turn_id,
                     )
                     payload["history"] = self.chat_projection(minister_name)
-            except Exception:
+            except Exception as error:
                 # #505 finding1：重试再失败——先记本次 session.chat 落下的副作用 diff，再回滚它们
                 # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
                 # 但**绝不删问话/回话**（AC3/AC4 恢复路径永不删账），不静默 fail 掉最后一句。
@@ -2710,6 +2716,13 @@ class WebGame:
                     with cleanup_gate:
                         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                         self.db.restore_interrupted_after_failed_retry(chat_turn_id)
+                        if not isinstance(error, LLMUnavailable):
+                            from ming_sim.audience_night import write_audience_error_pack
+                            pack = write_audience_error_pack(
+                                kind="reply", message=str(error),
+                                detail={"chat_turn_id": chat_turn_id},
+                            )
+                            self.db.set_chat_turn_error_pack(chat_turn_id, pack)
                 except Exception:
                     logger.exception(
                         "retry cleanup: restore_interrupted failed chat_turn_id=%s",
@@ -3653,6 +3666,7 @@ class WebGame:
                 "kind": str(r.get("kind") or "translation_pending"),
                 "retryable": bool(r.get("retryable", True)),
                 "extract_status": str(r.get("extract_status") or "pending"),
+                "error_pack_path": str(r.get("error_pack_path") or ""),
             }
             for r in rows
         ]
@@ -3691,7 +3705,7 @@ class WebGame:
         )
 
         pending_before = list_pending_translations(self.db, chat_turn_id=ctid)
-        if not pending_before:
+        if not pending_before or not pending_before[0].get("retryable"):
             raise HTTPException(
                 status_code=404,
                 detail=f"chat_turn_id={ctid} 没有待补转译。",
@@ -4098,6 +4112,14 @@ class WebGame:
                         # #1465 ④：回话未成终失败 — 与重试起手同形无条件 replace，再 error
                         # （禁「只 put error 不 replace」；客户端已处理空 replace）
                         emit_delta("", replace=True)
+                        if chat_turn_id and not isinstance(error, LLMUnavailable) and hasattr(self.db, "set_chat_turn_error_pack"):
+                            from ming_sim.audience_night import write_audience_error_pack
+                            pack = write_audience_error_pack(
+                                kind="reply", message=str(error),
+                                detail={"chat_turn_id": chat_turn_id},
+                            )
+                            with bare_write_gate:
+                                self.db.set_chat_turn_error_pack(chat_turn_id, pack)
                     if isinstance(error, LLMUnavailable):
                         ev_queue.put({
                             "type": "error",

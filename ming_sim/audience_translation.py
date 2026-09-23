@@ -221,7 +221,12 @@ def list_pending_translations(
         item["minister_name"] = str(row.get("minister_name") or "")
         # 结构化系统提示状态（前端渲染提示行 + 重试钮；本层只交能力）
         item["kind"] = "translation_pending"
-        item["retryable"] = True
+        with _night_inflight_guard:
+            future = next(
+                (f for (_, turn_id), f in _turn_future.items() if turn_id == ctid and not f.done()),
+                None,
+            )
+        item["retryable"] = future is None
         item["extract_status"] = str(row.get("extract_status") or "pending") or "pending"
         out.append(item)
     return out
@@ -336,8 +341,18 @@ def run_turn_translation_job(
                 night_id=nid, chat_turn_id=ctid,
                 minister_name=minister_name, source=source,
             )
-    except Exception:
+    except Exception as exc:
         _mark_translation_pending(db, ctid, write_gate)
+        if ctid > 0 and hasattr(db, "set_chat_turn_error_pack"):
+            from ming_sim.exceptions import LLMUnavailable
+            if not isinstance(exc, LLMUnavailable):
+                from ming_sim.audience_night import write_audience_error_pack
+                pack = write_audience_error_pack(
+                    kind="translation", message=str(exc),
+                    detail={"chat_turn_id": ctid, "night_id": nid},
+                )
+                with _gate_cm():
+                    db.set_chat_turn_error_pack(ctid, pack)
         raise
 
 

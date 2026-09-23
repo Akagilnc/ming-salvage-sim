@@ -1,5 +1,5 @@
 import React from "react";
-import { api } from "./api";
+import { api, ApiRequestError } from "./api";
 import type { AudienceHistoryData, SendChatCallbacks } from "./useAudienceChat";
 import type {
   ChatIdentity,
@@ -200,6 +200,13 @@ export function useChatActions({
       onError: (err) => {
         // 回填归属由 useAudienceChat 的 generation+面板 freshness 门控后才入此回调；
         // 此处再按发起面板守一次，防切大臣后的同 token 尾巴。
+        if (err instanceof ApiRequestError && err.chatIdentity?.chat_turn_id) {
+          setError("");
+          void loadMinisterChat(initiatingPanelName).catch((loadError) =>
+            setError(loadError instanceof Error ? loadError.message : String(loadError))
+          );
+          return;
+        }
         if (fromComposer && selectedMinisterRef.current === initiatingPanelName) {
           setInput(message);
           setComposerIntent(intent);

@@ -1051,6 +1051,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     detail = events[-1][1]
     assert detail.get("code") == "llm_connection_error"
     assert detail.get("message") != CLI_RUNNER_PLAYER_MESSAGE
+    max_a = default_transport_policy().max_attempts
     assert agent.calls == max_a
     attempts = detail.get("transport_attempts") or []
     assert len(attempts) == max_a
@@ -1069,7 +1070,8 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
         "SELECT status FROM chat_turns WHERE id=?", (failed_turn,),
     ).fetchone()
     assert fail_row is not None
-    assert str(fail_row["status"]) == "failed"
+    assert str(fail_row["status"]) == "interrupted"
+    assert web_game.interrupted_reply_retries(minister)[-1]["chat_turn_id"] == failed_turn
 
     # 实际重发：换可成功 agent（#1842：经 create_scene_agent 工厂缝）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)
@@ -1537,7 +1539,7 @@ def test_chat_stream_halfstream_dismiss_exhaust_no_double_side_effect_recovery(
     fail_row = db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (failed_turn,),
     ).fetchone()
-    assert fail_row is not None and str(fail_row["status"]) == "failed"
+    assert fail_row is not None and str(fail_row["status"]) == "interrupted"
 
     # 既有 fail_chat_turn 恢复：本轮 origin/source 绑定的进出账全清（含告退 scaffold）
     open_night = an.get_open_night(db)
