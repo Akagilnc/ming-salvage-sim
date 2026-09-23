@@ -454,10 +454,10 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
     # #1566：route 权威解码——与 Web retry 同核；场外密令不启殿上 scene。
-    from ming_sim.audience_night import decode_chat_turn_route
+    from ming_sim.audience_night import decode_chat_turn_route, recognize_xuan_command
     retry_route = decode_chat_turn_route(target.get("route"))
     try:
-        if retry_route["start_hall_scene"]:
+        if retry_route["start_hall_scene"] and not recognize_xuan_command(question):
             session.start_chat_turn_scene(minister_name, chat_turn_id)
         # #1842：殿上重试走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
         if retry_route["explicit_secret_order"]:
@@ -617,7 +617,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
                     # #498：CLI 与 web 共用 attach_chat_turn_to_night，禁止 night_id=0 旁路
                     # #503/#542：生产路径与 Web/收夜共用真实 scene LLM adapter。
-                    from ming_sim.audience_night import attach_chat_turn_to_night
+                    from ming_sim.audience_night import attach_chat_turn_to_night, recognize_xuan_command
                     _night_id, chat_turn_id = attach_chat_turn_to_night(
                         session.db,
                         session.state,
@@ -627,7 +627,8 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         beat_generator=None,
                         route=cli_route,
                     )
-                    session.start_chat_turn_scene(character.name, chat_turn_id)
+                    if not recognize_xuan_command(question):
+                        session.start_chat_turn_scene(character.name, chat_turn_id)
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,
                 )

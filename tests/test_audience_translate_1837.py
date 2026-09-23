@@ -122,6 +122,9 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
     declaration = {
         "commissions": [{"text": "拟旨赈济"}],
         "commisssions": [{"text": "拼错交办"}],
+        "scene_facts": [
+            {"body": "提及未在册者", "role": "scene", "person_names": ["未在册者"]},
+        ],
     }
     audience_translate.run_audience_turn_translation(
         db,
@@ -150,6 +153,34 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         row["section"] == "commisssions" and row["category"] == "invalid_shape"
         for row in rejected
     )
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM story_ledger_entries WHERE night_id=? AND body=?",
+        (night_id, "提及未在册者"),
+    ).fetchone()[0] == 1
+    malformed = dispatch_declaration(
+        db, state,
+        {"scene_facts": [{"body": "坏形状", "role": ["scene"], "person_names": []}]},
+        minister_name="", night_id=night_id,
+    )
+    assert len(malformed.scene_facts.rejected) == 1
+
+
+def test_scene_stay_attend_uses_actual_protagonist_not_virtual_speaker(game, monkeypatch):
+    from ming_sim.audience_night import (
+        SCENE_CHAT_SPEAKER, list_ledger, set_night_protagonist, summon_enter,
+    )
+
+    db, state, content = game
+    person = _hong_name(db, content)
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    summon_enter(db, night_id, person)
+    set_night_protagonist(db, night_id, person, reason="test")
+    result = _sess(db, state, content, monkeypatch).scene_chat(
+        "留下听着", minister_name=SCENE_CHAT_SPEAKER,
+    )
+    assert result.court_action == "stay_attend"
+    assert list_ledger(db, night_id)[-1]["person_names"] == [person]
 
 
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):

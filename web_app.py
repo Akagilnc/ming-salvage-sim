@@ -890,6 +890,7 @@ class WebGame:
             # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
             if hasattr(self.db, "conn"):
                 self.db.reconcile_interrupted_chat_turns()
+                self.db.reconcile_post_reply_recovery()
             # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
             self._spawn_startup_extraction_catch_up()
         except Exception as init_exc:
@@ -1976,6 +1977,7 @@ class WebGame:
 
     def _start_chat_turn(
         self, minister_name: str, *, attach_to_hall: bool = True, route: str = "",
+        message: str = "",
     ) -> tuple[int, Dict[str, Any]]:
         agno_session_id = self._minister_agno_session_id(minister_name)
         runs_before = self.db.agno_runs_length(agno_session_id)
@@ -1999,7 +2001,8 @@ class WebGame:
                     beat_generator=None,
                     route=route,
                 )
-                if chat_turn_id:
+                from ming_sim.audience_night import recognize_xuan_command
+                if chat_turn_id and not recognize_xuan_command(message):
                     self.session.start_chat_turn_scene(minister_name, chat_turn_id)
             else:
                 night = get_open_night(self.db) or ensure_open_night_for_audience(
@@ -2022,7 +2025,8 @@ class WebGame:
                 runs_before,
                 route=route,
             )
-            if attach_to_hall and chat_turn_id:
+            from ming_sim.audience_night import recognize_xuan_command
+            if attach_to_hall and chat_turn_id and not recognize_xuan_command(message):
                 self.session.start_chat_turn_scene(minister_name, chat_turn_id)
         return chat_turn_id, snapshot
 
@@ -2479,6 +2483,7 @@ class WebGame:
                             from ming_sim.audience_night import encode_chat_turn_route
                             chat_turn_id, before_snapshot = self._start_chat_turn(
                                 minister_name,
+                                message=text,
                                 attach_to_hall=not offsite_turn,
                                 route=encode_chat_turn_route(
                                     explicit_secret_order=explicit_secret_order,
@@ -2640,16 +2645,25 @@ class WebGame:
         """只续已落回话的尾随阶段；绝不再次运行召对模型或插入回话。"""
         chat_turn_id = int(target["chat_turn_id"])
         phase = str(target["recovery_phase"])
-        if phase == "court_break":
-            self.session.close_night_after_chat_if_needed(
-                "court_break", write_gate=self._runtime_write_gate(),
-            )
-        else:
-            self._trail_highlight_judge_after_reply(
-                str(target["answer"]), message_id=int(target["minister_message_id"]),
-                chat_turn_id=chat_turn_id,
-            )
-        self.db.clear_post_reply_failure(chat_turn_id)
+        with self._runtime_write_gate():
+            if not self.db.claim_post_reply_recovery(chat_turn_id, phase):
+                raise HTTPException(status_code=409, detail="本轮后续处理已在恢复，请稍候。")
+        try:
+            if phase == "court_break":
+                self.session.close_night_after_chat_if_needed(
+                    "court_break", write_gate=self._runtime_write_gate(),
+                )
+            else:
+                self._trail_highlight_judge_after_reply(
+                    str(target["answer"]), message_id=int(target["minister_message_id"]),
+                    chat_turn_id=chat_turn_id,
+                )
+            with self._runtime_write_gate():
+                self.db.clear_post_reply_failure(chat_turn_id)
+        except BaseException:
+            with self._runtime_write_gate():
+                self.db.release_post_reply_recovery(chat_turn_id, phase)
+            raise
         return {
             "answer": str(target["answer"]), "chat_turn_id": chat_turn_id,
             "history": self.chat_projection(minister_name),
@@ -2724,7 +2738,8 @@ class WebGame:
                     # 即可 durable 落副作用（dismiss 账/拟旨/任免候选等，session.py tool 环）。捕于
                     # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
                     before_snapshot = self.db.capture_chat_rollback_snapshot()
-                    if retry_route["start_hall_scene"]:
+                    from ming_sim.audience_night import recognize_xuan_command
+                    if retry_route["start_hall_scene"] and not recognize_xuan_command(question):
                         self.session.start_chat_turn_scene(minister_name, chat_turn_id)
                 # #1842：重试入口同切 scene_chat（密令 route 仍走 session.chat）。
                 if retry_route["explicit_secret_order"]:
@@ -2737,6 +2752,7 @@ class WebGame:
                     result = self.session.scene_chat(
                         question, chat_turn_id=chat_turn_id,
                         minister_name=minister_name,
+                        stream_emit=lambda _delta, **_kwargs: None,
                     )
                 proposed = None
                 if result.proposed_directive is not None:
@@ -3972,6 +3988,7 @@ class WebGame:
                     from ming_sim.audience_night import encode_chat_turn_route
                     chat_turn_id, before_snapshot = self._start_chat_turn(
                         minister_name,
+                        message=text,
                         attach_to_hall=not offsite_secret_order,
                         route=encode_chat_turn_route(
                             explicit_secret_order=explicit_secret_order,
@@ -6603,8 +6620,11 @@ async def api_audience_chat_history() -> Dict[str, Any]:
 
 @app.post("/api/audience/reply/retry")
 async def api_retry_audience_reply(chat_turn_id: int = Body(0, embed=True)) -> Dict[str, Any]:
-    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
-    return await run_in_threadpool(get_game().retry_interrupted_reply, SCENE_CHAT_SPEAKER, chat_turn_id or None)
+    from ming_sim.audience_night import AudienceNightError, SCENE_CHAT_SPEAKER
+    try:
+        return await run_in_threadpool(get_game().retry_interrupted_reply, SCENE_CHAT_SPEAKER, chat_turn_id or None)
+    except AudienceNightError as exc:
+        raise _retryable_audience_close_http(exc) from None
 
 
 @app.post("/api/audience/chat/undo")

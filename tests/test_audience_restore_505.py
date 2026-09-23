@@ -360,7 +360,11 @@ def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env
         (ct, "/tmp/post-reply-pack")]
     rt.session.chat = lambda *a, **k: (_ for _ in ()).throw(AssertionError("reply model rerun"))
     calls = []
-    rt.session.close_night_after_chat_if_needed = lambda action, **kw: calls.append(action)
+    def close_once(action, **kw):
+        calls.append(action)
+        with pytest.raises(HTTPException):
+            rt.retry_interrupted_reply(minister, ct)
+    rt.session.close_night_after_chat_if_needed = close_once
     rt.pending_directive_count = lambda: 0
     payload = rt.retry_interrupted_reply(minister, ct)
     assert payload["answer"] == "臣遵旨。"

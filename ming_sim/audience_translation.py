@@ -361,12 +361,12 @@ def run_turn_translation_job(
             from ming_sim.exceptions import LLMUnavailable
             if not isinstance(exc, LLMUnavailable):
                 from ming_sim.audience_night import write_audience_error_pack
-                pack = write_audience_error_pack(
-                    kind="translation", message=str(exc),
-                    detail={"chat_turn_id": ctid, "night_id": nid},
-                    db=db, exc=exc,
-                )
                 with _gate_cm():
+                    pack = write_audience_error_pack(
+                        kind="translation", message=str(exc),
+                        detail={"chat_turn_id": ctid, "night_id": nid},
+                        db=db, exc=exc,
+                    )
                     db.set_chat_turn_error_pack(ctid, pack)
         raise
 

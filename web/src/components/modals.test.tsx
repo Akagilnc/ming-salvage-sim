@@ -17,6 +17,8 @@ import { chatReducer, type ChatAction } from "../mindreading";
 // FAILED assertion (which aborts the test body before any inline cleanup) can never
 // leak a mounted React root into the next test (gemini cmr r1).
 const mountedRoots: Array<{ root: Root; host: HTMLElement }> = [];
+const caretDescriptor = Object.getOwnPropertyDescriptor(document, "caretPositionFromPoint");
+const rangeRectsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
 
 const MINISTER_MOCK: Minister = {
   name: "周延儒",
@@ -286,7 +288,13 @@ afterEach(() => {
   }
   mountedRoots.length = 0;
   document.body.innerHTML = "";
+  if (caretDescriptor) Object.defineProperty(document, "caretPositionFromPoint", caretDescriptor);
+  else Reflect.deleteProperty(document, "caretPositionFromPoint");
+  if (rangeRectsDescriptor) Object.defineProperty(Range.prototype, "getClientRects", rangeRectsDescriptor);
+  else Reflect.deleteProperty(Range.prototype, "getClientRects");
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("EdictModal — #1431 placeholder 去失实具名", () => {
@@ -1258,13 +1266,12 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     Object.defineProperty(document, "caretPositionFromPoint", {
       configurable: true, value: () => ({ offsetNode: storyNode, offset: parts[0].length }),
     });
-    const oldGetClientRects = Range.prototype.getClientRects;
-    Range.prototype.getClientRects = function () {
+    Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: function (this: Range) {
       const segment = this.startContainer.parentElement?.closest(".turn-segment");
       const top = !segment || turn?.querySelectorAll(".turn-segment").length === 1 ? 50
         : segment === turn?.querySelectorAll(".turn-segment")[1] ? 150 : 110;
       return [{ top } as DOMRect] as unknown as DOMRectList;
-    };
+    } });
     stage.scrollTop = 100;
     act(() => stage.dispatchEvent(new Event("scroll", { bubbles: true })));
 
@@ -1274,8 +1281,6 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     expect(turn?.querySelectorAll('.turn-segment')).toHaveLength(translated.length - 1);
     expect(stage.scrollTop).toBe(200);
-    Range.prototype.getClientRects = oldGetClientRects;
-    Reflect.deleteProperty(document, "caretPositionFromPoint");
     expect(document.querySelectorAll(`[data-audience-turn-id="${turnId}"]`)).toHaveLength(1);
     expect(document.querySelector(`[data-audience-turn-id="${turnId}"]`)).toBe(turn);
     expect(turn?.querySelectorAll(".chat-message")).toHaveLength(0);

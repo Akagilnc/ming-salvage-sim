@@ -1844,19 +1844,23 @@ class GameSession:
                     get_night_protagonist,
                     stay_attend_in_audience,
                 )
+                named = str(minister_name or "").strip()
                 anchor = (
-                    str(minister_name or "").strip()
-                    or get_night_protagonist(self.db, night_id)
+                    named if named and named != SCENE_CHAT_SPEAKER
+                    else get_night_protagonist(self.db, night_id)
                 )
                 if anchor:
-                    stay_attend_in_audience(
+                    stay_id = stay_attend_in_audience(
                         self.db, anchor,
                         night_id=night_id,
                         origin_chat_turn_id=ctid,
                     )
+                else:
+                    stay_id = None
                 if ctid > 0:
                     self._mark_control_turn_translation_done(ctid)
-                result.court_action = "stay_attend"
+                if stay_id is not None:
+                    result.court_action = "stay_attend"
                 return result
             if audience_command_verdict == CMD_CLOSE_NIGHT:
                 if ctid != 0:
@@ -1924,6 +1928,9 @@ class GameSession:
                             self.db.conn.commit()
                     if on_protagonist_changed is not None:
                         on_protagonist_changed()
+                    # 宣召的空入殿垫位现已入账，方可发现本轮 enter beat。
+                    if xuan_ctid > 0:
+                        self.start_chat_turn_scene(str(minister_name or ""), xuan_ctid)
 
         # 材料目录：在场诸人各一份；开场最小集 + 只读工具。
         prepared = prepare_scene_materials(self.db, self.state)
@@ -1936,8 +1943,7 @@ class GameSession:
         agent_prompt = message_text
         transport_attempts_box: list = []
         side_effects: dict = {"court_action": ""}
-        if stream_emit is not None:  # noqa: SIM102 — 流式分支完整
-            # Web 流式同核：transport 重试/空转/终失败；delta 经 stream_emit 出 SSE。
+        if stream_emit is not None:
             answer, transport_attempts_box = self._run_scene_agent_transport(
                 agent, agent_prompt, stream_emit,
                 chat_turn_id=int(chat_turn_id or 0),
@@ -1945,9 +1951,27 @@ class GameSession:
                 minister_name=str(minister_name or ""),
             )
         else:
-            run_output = agent.run(agent_prompt)
+            from ming_sim.llm_transport import (
+                audience_transport_policy, bind_transport_sdk_budget,
+                empty_output_failure, run_with_transport,
+                transport_attempts_public, transport_failure_unavailable,
+            )
+            policy = audience_transport_policy(llm_config)
+            def _run_nonstream() -> Any:
+                output = agent.run(agent_prompt)
+                extracted = extract_agent_text(output)
+                if not extracted:
+                    raise transport_failure_unavailable(
+                        empty_output_failure(), attempts=1, exhausted=False,
+                    )
+                return output
+            with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+                run_output, attempts = run_with_transport(
+                    _run_nonstream, policy=policy,
+                )
             _dump_llm_messages(run_output, f"场景召对/{SCENE_CHAT_SPEAKER}")
             answer = extract_agent_text(run_output)
+            transport_attempts_box = transport_attempts_public(attempts)
         result = ChatTurnResult(answer=answer)
         if side_effects.get("court_action"):
             result.court_action = str(side_effects["court_action"])

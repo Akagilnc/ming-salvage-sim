@@ -108,6 +108,16 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     ]);
   });
 
+  it("同一归档轮有两名正式发言人时，两人都能回看整轮", () => {
+    const scroll = [
+      msg({ role: "user", speaker: "朕", content: "同问", beat: "dialogue", chat_turn_id: 30 }),
+      msg({ role: "minister", speaker: "洪承畴", content: "洪答", beat: "dialogue", chat_turn_id: 30 }),
+      msg({ role: "minister", speaker: "许誉卿", content: "许答", beat: "dialogue", chat_turn_id: 30 }),
+    ];
+    expect(filterScrollForSelectedMinister(scroll, "洪承畴")).toEqual(scroll);
+    expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual(scroll);
+  });
+
   it("entrance/divider 软段 + 殿侧他臣插话：不串窗且不误删本段上下文", () => {
     const scroll = softSegmentWithAside();
 

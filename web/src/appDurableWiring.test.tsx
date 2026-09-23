@@ -185,6 +185,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const minister = { name: "洪承畴", office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] };
     const order = { id: 7, title: "整饬边备", content: "查核军饷", status: "active", minister_name: minister.name, year_issued: 1627, period_issued: 10, dossier_progress: [] };
     const calls: Array<{ path: string; body?: string }> = [];
+    let replyStored = false;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       const u = new URL(String(url), "http://t.local");
       calls.push({ path: decodeURIComponent(u.pathname), body: typeof init?.body === "string" ? init.body : undefined });
@@ -192,9 +193,18 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [order] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
-      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, status: "open", messages: [] });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, status: "open", messages: replyStored ? [
+        { role: "minister", speaker: minister.name, content: "臣已入殿", chat_turn_id: 1, beat: "dialogue" },
+      ] : [] });
       if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ campaign_id: "c", night_id: 23, minister, history: [], suggestions: [], can_undo_last_chat: false });
-      if (u.pathname.endsWith("/api/audience/chat/stream")) return sseResp("end", {});
+      if (u.pathname.endsWith("/api/audience/chat/stream")) {
+        replyStored = true;
+        return new Response([
+        'event: delta\ndata: {"content":"臣已入殿"}\n\n',
+        'event: done\ndata: {"history":[{"role":"minister","speaker":"洪承畴","content":"臣已入殿","chat_turn_id":1}],"directives":[],"pending_count":0,"suggestions":[],"can_undo_last_chat":true}\n\n',
+        'event: end\ndata: {}\n\n',
+        ].join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
@@ -209,6 +219,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     });
     expect(calls.some((call) => call.path.includes("/api/ministers/"))).toBe(false);
     expect(calls.some((call) => call.path.endsWith("/api/audience/chat/stream"))).toBe(true);
+    await act(async () => { await vi.waitFor(() => expect(host.textContent).toContain("臣已入殿")); });
   });
 
   it("typed SSE error 经真实召对链只向玩家呈现结构化 message", async () => {
@@ -539,12 +550,12 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await act(async () => { await vi.waitFor(() => expect(translationButton()?.textContent).toBe("重试")); });
     await click(translationButton());
     await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeTruthy()); });
-    expect(host.querySelectorAll('.chat-system-note.danger[role="alert"]')).toHaveLength(3);
+    expect(translationAttempts).toBe(1);
     await click(translationButton());
     await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeFalsy()); });
     await click(replyButton());
     await act(async () => { await vi.waitFor(() => expect(replyButton()).toBeTruthy()); });
-    expect(host.querySelectorAll('.chat-system-note.danger[role="alert"]')).toHaveLength(2);
+    expect(replyAttempts).toBe(1);
     await click(replyButton());
     await act(async () => {
       await vi.waitFor(() => expect(replyButton()).toBeFalsy());

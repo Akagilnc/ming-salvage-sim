@@ -9682,7 +9682,8 @@ class GameDB:
                JOIN chat_messages q ON q.id = t.user_message_id
                JOIN chat_messages a ON a.id = t.minister_message_id
                WHERE t.minister_name = ? AND t.status = 'active'
-                 AND t.post_reply_recovery != '' ORDER BY t.id ASC""",
+                 AND t.post_reply_recovery != ''
+                 AND t.post_reply_recovery NOT LIKE 'recovering:%' ORDER BY t.id ASC""",
             (minister_name,),
         ).fetchall()
         return [{"chat_turn_id": int(r["id"]), "minister_name": str(r["minister_name"]),
@@ -9705,6 +9706,32 @@ class GameDB:
             "UPDATE chat_turns SET post_reply_recovery = '', post_reply_error_pack_path = '' "
             "WHERE id = ? AND status = 'active'",
             (int(chat_turn_id),),
+        )
+        self.conn.commit()
+
+    def claim_post_reply_recovery(self, chat_turn_id: int, phase: str) -> bool:
+        """持运行时写闸调用；同一已落回话只允许一个尾随恢复者。"""
+        cursor = self.conn.execute(
+            "UPDATE chat_turns SET post_reply_recovery = ? WHERE id = ? "
+            "AND status = 'active' AND post_reply_recovery = ?",
+            (f"recovering:{phase}", int(chat_turn_id), phase),
+        )
+        self.conn.commit()
+        return cursor.rowcount == 1
+
+    def release_post_reply_recovery(self, chat_turn_id: int, phase: str) -> None:
+        self.conn.execute(
+            "UPDATE chat_turns SET post_reply_recovery = ? WHERE id = ? "
+            "AND post_reply_recovery = ?",
+            (phase, int(chat_turn_id), f"recovering:{phase}"),
+        )
+        self.conn.commit()
+
+    def reconcile_post_reply_recovery(self) -> None:
+        """仅启动时释放崩溃遗留 claim，保留原错误包供重试。"""
+        self.conn.execute(
+            "UPDATE chat_turns SET post_reply_recovery = substr(post_reply_recovery, 12) "
+            "WHERE post_reply_recovery LIKE 'recovering:%'",
         )
         self.conn.commit()
 

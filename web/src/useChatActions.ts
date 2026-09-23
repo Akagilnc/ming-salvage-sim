@@ -82,6 +82,7 @@ export function useChatActions({
   const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
   const recoveryTimer = React.useRef<number | undefined>(undefined);
   const recoveryRun = React.useRef(0);
+  const summonTargetRef = React.useRef("");
 
   // 仅用花名册查 temporaryActiveMinister；挂 ref 避免 durable setState 整表刷新
   // 重造 loadMinisterChat → 触发 selectedMinister effect → resetPanel 清掉召对面板。
@@ -157,6 +158,8 @@ export function useChatActions({
       setComposerHint("请先问话或点一个奏对题目");
       return;
     }
+    recoveryRun.current += 1;
+    window.clearTimeout(recoveryTimer.current);
 
     const fromComposer = text === input;
     // #526 / ADR 0047：退朝钮与手输口令同一收夜管线（chat stream）；
@@ -233,6 +236,14 @@ export function useChatActions({
     }, intent);
   };
 
+  // Selection resets/loads the scene panel first; only then start its first stream.
+  React.useEffect(() => {
+    if (selectedMinister !== AUDIENCE_SCENE_SPEAKER || !summonTargetRef.current) return;
+    const target = summonTargetRef.current;
+    summonTargetRef.current = "";
+    void sendChat(AUDIENCE_SCENE_SPEAKER, `宣${target}`);
+  }, [selectedMinister]);
+
   const openChat = (minister: Minister) => {
     if (minister.status && minister.status !== "active") {
       setError(`${minister.name}已${minister.status_label}${minister.status_reason ? "（" + minister.status_reason + "）" : ""}，无法召见。`);
@@ -267,10 +278,10 @@ export function useChatActions({
 
   const summonMinister = (ministerName: string) => {
     const scene = { name: AUDIENCE_SCENE_SPEAKER, office: "一夜一卷", status: "active" } as Minister;
+    const switchingToScene = selectedMinister !== AUDIENCE_SCENE_SPEAKER;
+    if (switchingToScene) summonTargetRef.current = ministerName;
     openChat(scene);
-    // The command starts in the same event turn, before React commits selectedMinister.
-    selectedMinisterRef.current = AUDIENCE_SCENE_SPEAKER;
-    void sendChat(AUDIENCE_SCENE_SPEAKER, `宣${ministerName}`);
+    if (!switchingToScene) void sendChat(AUDIENCE_SCENE_SPEAKER, `宣${ministerName}`);
   };
 
   const undoLastChat = async (targetMinisterName: string) => {
@@ -351,9 +362,14 @@ export function useChatActions({
       setChatNotice("本轮恢复完成。");
       invalidateAudienceScroll();
     } catch (err) {
-      await loadMinisterChat(initiatingPanelName).catch((loadError) =>
-        setError(loadError instanceof Error ? loadError.message : String(loadError))
-      );
+      const primaryError = err instanceof Error ? err.message : String(err);
+      try {
+        await loadMinisterChat(initiatingPanelName);
+        setError(primaryError);
+      } catch (reloadError) {
+        setError(`${primaryError}；重新读取失败：${reloadError instanceof Error ? reloadError.message : String(reloadError)}`);
+      }
+      invalidateAudienceScroll();
     } finally {
       setBusy("");
     }
@@ -372,9 +388,14 @@ export function useChatActions({
       await loadMinisterChat(ministerName);
       invalidateAudienceScroll();
     } catch (err) {
-      await loadMinisterChat(ministerName).catch((loadError) =>
-        setError(loadError instanceof Error ? loadError.message : String(loadError))
-      );
+      const primaryError = err instanceof Error ? err.message : String(err);
+      try {
+        await loadMinisterChat(ministerName);
+        setError(primaryError);
+      } catch (reloadError) {
+        setError(`${primaryError}；重新读取失败：${reloadError instanceof Error ? reloadError.message : String(reloadError)}`);
+      }
+      invalidateAudienceScroll();
     } finally {
       setBusy("");
     }

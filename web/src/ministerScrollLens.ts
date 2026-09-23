@@ -15,7 +15,7 @@ export type MinisterScrollLensOptions = {
  * #1511 pure presentation lens: campaign-wide night scroll → selected minister window.
  *
  * Consumes only speaker / chat_turn_id / beat (+ optional window claim). No cache, no durable state.
- * - Messages with chat_turn_id and a named minister turnOwner follow that owner in/out as a whole
+ * - Messages with chat_turn_id follow every named minister in that turn in/out as a whole
  *   turn — segment ownerHint never overrides a formal turn.
  * - Messages without chat_turn_id follow the soft segment ownerHint (side interjections travel
  *   with the named entrance/divider stretch).
@@ -30,17 +30,19 @@ export function filterScrollForSelectedMinister(
 ): AudienceScrollMessage[] {
   if (!selectedMinister || messages.length === 0) return [];
 
-  const turnOwner = new Map<number, string>();
+  const turnOwner = new Map<number, Set<string>>();
   for (const message of messages) {
     const turnId = message.chat_turn_id;
     if (message.role === "minister" && turnId && message.speaker) {
-      turnOwner.set(turnId, message.speaker);
+      const owners = turnOwner.get(turnId) ?? new Set<string>();
+      owners.add(message.speaker);
+      turnOwner.set(turnId, owners);
     }
   }
   // Window-local half-turn claim: only fill a turn that still has no minister owner.
   const claimedTurnId = options?.claimedTurnId;
   if (claimedTurnId && !turnOwner.has(claimedTurnId)) {
-    turnOwner.set(claimedTurnId, selectedMinister);
+    turnOwner.set(claimedTurnId, new Set([selectedMinister]));
   }
 
   type Segment = { ownerHint: string | null; messages: AudienceScrollMessage[] };
@@ -76,7 +78,7 @@ export function filterScrollForSelectedMinister(
       if (turnId) {
         // Formal turn: structured turnOwner wins over any segment ownerHint.
         const owner = turnOwner.get(turnId);
-        if (owner === selectedMinister || (!!options?.sceneSpeaker && owner === options.sceneSpeaker)) {
+        if (owner?.has(selectedMinister) || (!!options?.sceneSpeaker && owner?.has(options.sceneSpeaker))) {
           out.push(message);
         }
         // else: other minister's turn, or orphan turn — drop from this window
@@ -100,7 +102,7 @@ function isNamedSoftSegmentAnchor(message: AudienceScrollMessage): boolean {
 
 function resolveSegmentOwner(
   segment: { ownerHint: string | null; messages: AudienceScrollMessage[] },
-  turnOwner: Map<number, string>,
+  turnOwner: Map<number, Set<string>>,
 ): string | null {
   if (segment.ownerHint) return segment.ownerHint;
   for (const message of segment.messages) {
@@ -115,7 +117,7 @@ function resolveSegmentOwner(
   for (const message of segment.messages) {
     const turnId = message.chat_turn_id;
     if (turnId && turnOwner.has(turnId)) {
-      turnPrincipals.add(turnOwner.get(turnId)!);
+      for (const owner of turnOwner.get(turnId)!) turnPrincipals.add(owner);
     }
   }
   if (turnPrincipals.size === 1) {

@@ -1548,7 +1548,7 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
             # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
             return None
 
-        def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
             from ming_sim.session import ChatTurnResult, GameSession
             agent = self.registry.get(None)
             if stream_emit is not None:
@@ -2457,5 +2457,4 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     ).fetchone()
     assert body0 is not None and str(body0["body"] or "").strip() == gen_ok_body
     executor.shutdown(wait=False)
-
 
