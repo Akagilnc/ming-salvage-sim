@@ -1342,6 +1342,7 @@ def _dispatch_scene_facts(
             or (scroll_role is not None and scroll_role not in {"user", "minister", "attendant", "scene"})
             or not isinstance(person_names, Sequence) or isinstance(person_names, (str, bytes))
             or not all(isinstance(n, str) for n in person_names)
+            or (scroll_role in {"minister", "attendant"} and (not person_names or not person_names[0].strip()))
             or not isinstance(tags, Sequence) or isinstance(tags, (str, bytes))
             or not all(isinstance(t, str) for t in tags)
         ):

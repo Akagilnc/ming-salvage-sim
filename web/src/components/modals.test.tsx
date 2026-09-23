@@ -1098,7 +1098,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     const parts = ["密令：整饬边备。", "臣领旨。", "臣附议。", "王承恩低语。", "殿内烛影摇曳。"];
     const turnId = 11;
     const trailing = { role: "user", speaker: "朕", content: "后续诏问", beat: "dialogue", chat_turn_id: turnId + 1 };
-    const neutral = [{ role: "scene", speaker: "", content: parts.join("\n"), beat: "dialogue", chat_turn_id: turnId }, trailing];
+    const neutral = [{ role: "scene", speaker: "", content: parts.join(""), beat: "dialogue", chat_turn_id: turnId }, trailing];
     const translated = [
       { role: "user", speaker: "朕", content: parts[0], beat: "dialogue", chat_turn_id: turnId },
       { role: "minister", speaker: "洪承畴", content: parts[1], beat: "dialogue", highlights: ["领旨"], chat_turn_id: turnId },
@@ -1107,12 +1107,15 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       { role: "scene", speaker: "", content: parts[4], beat: "dialogue", chat_turn_id: turnId },
       trailing,
     ];
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({
-      ok: true,
-      json: async () => reads++ === 0
-        ? ({ night_id: 23, messages: neutral, translation_pending: true })
-        : ({ night_id: 23, messages: translated, translation_pending: false }),
-    })));
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => {
+      if (reads++ === 1) throw new Error("temporary read failure");
+      return {
+        ok: true,
+        json: async () => reads === 1
+          ? ({ night_id: 23, messages: neutral, translation_pending: true })
+          : ({ night_id: 23, messages: translated, translation_pending: false }),
+      };
+    }));
     renderModal({
       minister: hong,
       ministers: [hong, xu],
@@ -1121,7 +1124,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     const turn = document.querySelector<HTMLElement>(`[data-audience-turn-id="${turnId}"]`);
-    const originalStory = Array.from(turn?.querySelectorAll("p") ?? [], (node) => node.textContent).join("\n");
+    const originalStory = Array.from(turn?.querySelectorAll("p") ?? [], (node) => node.textContent).join("");
     const stage = document.querySelector<HTMLElement>(".chat-stage")!;
     Object.defineProperties(stage, { scrollHeight: { value: 600 }, clientHeight: { value: 200 } });
     vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({ top: 0, left: 0 } as DOMRect);
@@ -1129,16 +1132,24 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     vi.spyOn(storyParagraph, "getBoundingClientRect").mockReturnValue({ top: -20, bottom: 100, left: 14 } as DOMRect);
     const storyNode = storyParagraph.firstChild;
     Object.defineProperty(document, "caretPositionFromPoint", {
-      configurable: true, value: () => ({ offsetNode: storyNode, offset: parts[0].length + parts[1].length + 2 }),
+      configurable: true, value: () => ({ offsetNode: storyNode, offset: parts[0].length }),
     });
     const oldGetClientRects = Range.prototype.getClientRects;
-    Range.prototype.getClientRects = () => [{ top: turn?.querySelectorAll(".turn-segment").length === 1 ? 50 : 110 } as DOMRect] as unknown as DOMRectList;
+    let restoredSegment: Element | null = null;
+    Range.prototype.getClientRects = function () {
+      const segment = this.startContainer.parentElement?.closest(".turn-segment");
+      if (turn?.querySelectorAll(".turn-segment").length !== 1) restoredSegment = segment ?? null;
+      const top = !segment || turn?.querySelectorAll(".turn-segment").length === 1 ? 50
+        : segment === turn?.querySelectorAll(".turn-segment")[1] ? 150 : 110;
+      return [{ top } as DOMRect] as unknown as DOMRectList;
+    };
     stage.scrollTop = 100;
     act(() => stage.dispatchEvent(new Event("scroll", { bubbles: true })));
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     expect(turn?.querySelectorAll('.turn-segment')).toHaveLength(translated.length - 1);
-    expect(stage.scrollTop).toBe(160);
+    expect(restoredSegment).toBe(turn?.querySelectorAll(".turn-segment")[1]);
     Range.prototype.getClientRects = oldGetClientRects;
     Reflect.deleteProperty(document, "caretPositionFromPoint");
     expect(document.querySelectorAll(`[data-audience-turn-id="${turnId}"]`)).toHaveLength(1);
@@ -1148,7 +1159,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     expect(turn?.querySelectorAll(".turn-segment.minister strong.hl")).toHaveLength(2);
     expect(turn?.querySelectorAll(".turn-segment.aside p")).toHaveLength(1);
     expect(turn?.querySelectorAll(".turn-segment.user strong.hl, .turn-segment.aside strong.hl, .turn-segment.scene strong.hl")).toHaveLength(0);
-    expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("\n")).toBe(originalStory);
+    expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("")).toBe(originalStory);
   });
 
   it("removes an unpersisted streamed turn when its request fails", async () => {

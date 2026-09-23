@@ -135,6 +135,7 @@ export function ChatModal({
   React.useEffect(() => {
     let alive = true;
     let retryTimer: number | undefined;
+    let translationPending = false;
     // Once an open night is known, refreshes retain that single authority while loading;
     // first load/minister switches never flash the old per-minister projection.
     setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current) ? current : { kind: "loading" });
@@ -180,13 +181,15 @@ export function ChatModal({
           messages: data.messages || [],
           refreshError: false,
         } : { kind: "none" });
-        if (data.translation_pending) retryTimer = window.setTimeout(refresh, 1500);
+        translationPending = !!data.translation_pending;
+        if (translationPending) retryTimer = window.setTimeout(refresh, 1500);
       })
       .catch(() => {
         if (!alive) return;
         setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current)
           ? { ...current, refreshError: true }
           : { kind: "error" });
+        if (translationPending) retryTimer = window.setTimeout(refresh, 1500);
       });
     refresh();
     return () => { alive = false; window.clearTimeout(retryTimer); };
@@ -286,9 +289,10 @@ export function ChatModal({
         .find((item) => item.dataset.audienceTurnId === turnId);
       if (turn) {
         let remaining = offset;
-        for (const paragraph of turn.querySelectorAll("p")) {
+        const paragraphs = turn.querySelectorAll("p");
+        for (const [index, paragraph] of Array.from(paragraphs).entries()) {
           const length = paragraph.textContent?.length ?? 0;
-          if (remaining > length) { remaining -= length; continue; }
+          if (remaining >= length && index < paragraphs.length - 1) { remaining -= length; continue; }
           const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
           let textNode: Node | null;
           while ((textNode = walker.nextNode())) {

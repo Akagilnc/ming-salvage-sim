@@ -106,6 +106,27 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     assert [m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"] if m.get("chat_turn_id") == turn_id and m["role"] != "user"] == segments
 
 
+def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
+    import pytest
+    import web_app
+    from ming_sim.audience_translate import AudienceTranslateError
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "何解？", "臣领旨。", 10)
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    for role in ("minister", "attendant"):
+        with pytest.raises(AudienceTranslateError):
+            apply_audience_round_translation(db, state, {
+                "scene_facts": [{"body": "臣领旨。", "role": role, "audibility": "殿上公开", "person_names": []}],
+            }, night_id=night_id, chat_turn_id=turn_id)
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+    assert payload["translation_pending"] is True
+    reply = next(m for m in payload["messages"] if m["content"] == "臣领旨。")
+    assert (reply["role"], reply["speaker"]) == ("scene", "")
+
+
 def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats(game, monkeypatch):
     import web_app
 
@@ -139,6 +160,16 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     assert "帘外忽起雨声。" not in contents
     assert [(message["role"], message["speaker"], message["highlights"]) for message in messages
             if message["content"] in {"臣请据实核账。", "边关尚稳。"}] == [("scene", "", []), ("scene", "", [])]
+
+    # An already-settled turn from this same save predates scroll_role tags.
+    # It is not a still-pending neutral reply.
+    message_id = db.conn.execute("SELECT minister_message_id FROM chat_turns WHERE id=?", (first_turn,)).fetchone()[0]
+    db.set_message_highlights(message_id, ["核账"])
+    db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (first_turn,))
+    db.conn.commit()
+    historical = TestClient(web_app.app).get("/api/audience/scroll").json()["messages"]
+    settled = next(m for m in historical if m["content"] == "臣请据实核账。")
+    assert (settled["role"], settled["speaker"], settled["highlights"]) == ("minister", "杨嗣昌", ["核账"])
 
     allowed_message_fields = {
         "role", "speaker", "audibility", "time", "content",
