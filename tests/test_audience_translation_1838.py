@@ -104,6 +104,7 @@ def test_three_speaker_segments_private_whisper_not_in_other_experience(game):
     assert wang_reply in bodies
     assert bi_interject in bodies
     assert wang_whisper not in bodies
+    assert wang_whisper in [e["body"] for e in person_night_experience(db, nid, "王承恩")]
 
     # 转译已承接本轮 → 抽取 / 判官水位推进，不另起旧路径
     row = db.conn.execute(

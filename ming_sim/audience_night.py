@@ -2517,12 +2517,17 @@ def audible_entries_for(
 def person_night_experience(
     db: Any, night_id: int, person_name: str,
 ) -> List[Dict[str, Any]]:
-    """人物经历读时投影（#1838）：按转译标记的在场进出与可闻性取本夜所闻。
-
-    单一真源 = :func:`audible_entries_for`——殿上公开且在场区间内；御前低语
-    （私密）不进不在场者 / 非当事人的经历。不另立第二套可闻性规则。
-    """
-    return audible_entries_for(db, int(night_id), person_name)
+    """人物经历：在场公开所闻，加本人亲历的私密条目。"""
+    name = str(person_name or "").strip()
+    if not name:
+        return []
+    audible_ids = {entry["id"] for entry in audible_entries_for(db, int(night_id), name)}
+    return [
+        entry for entry in list_ledger(db, int(night_id))
+        if entry["id"] in audible_ids
+        or (entry.get("audibility") == AUDIBILITY_PRIVATE
+            and name in (entry.get("person_names") or []))
+    ]
 
 
 def set_night_protagonist(
