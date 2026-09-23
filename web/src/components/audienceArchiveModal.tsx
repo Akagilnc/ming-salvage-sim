@@ -10,6 +10,7 @@ import type { TranslationRetry } from "../types";
 export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => void; ministers: Minister[] }) {
   const [nights, setNights] = React.useState<HistoryTurnItem[]>([]);
   const [selected, setSelected] = React.useState<HistoryTurnItem | null>(null);
+  const selectedNightId = React.useRef<number | null>(null);
   const [messages, setMessages] = React.useState<AudienceScrollMessage[] | null>(null);
   const [pendingTranslationTurnIds, setPendingTranslationTurnIds] = React.useState<number[]>([]);
   const [translationRetries, setTranslationRetries] = React.useState<TranslationRetry[]>([]);
@@ -26,6 +27,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
       if (!alive) return;
       const list = ((data.turns || []) as HistoryTurnItem[]).filter((item) => item.kind === "night");
       setNights(list);
+      selectedNightId.current = list[list.length - 1]?.night_id ?? null;
       setSelected(list[list.length - 1] || null);
     }).catch((reason) => { if (alive) setError(reason?.message || "加载失败"); });
     return () => { alive = false; };
@@ -50,18 +52,21 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
 
   const retryTranslation = async (chatTurnId: number) => {
     if (!selected?.night_id || retrying !== null) return;
+    const nightId = selected.night_id;
     setRetrying(chatTurnId);
     setError("");
     try {
       await api("/api/audience/translation/retry", { method: "POST", body: JSON.stringify({ chat_turn_id: chatTurnId }) });
-      const response = await fetch(`/api/audience/scroll?night_id=${selected.night_id}`);
+      if (selectedNightId.current !== nightId) return;
+      const response = await fetch(`/api/audience/scroll?night_id=${nightId}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
+      if (selectedNightId.current !== nightId) return;
       setMessages(data.messages || []);
       setPendingTranslationTurnIds(data.pending_translation_turn_ids || []);
       setTranslationRetries(data.translation_retries || []);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      if (selectedNightId.current === nightId) setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setRetrying(null);
     }
@@ -70,7 +75,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
   return <FullscreenModal title="起居注：召对记录" subtitle="退朝后同源只读，不可编辑" bgClass="modal-bg-chat" onClose={onClose}>
     <div className="history-modal-body">
       <aside className="history-turn-list"><ul>{nights.slice().reverse().map((night) => <li key={night.night_id}>
-        <button className={`history-turn-item ${night.night_id === selected?.night_id ? "active" : ""}`} onClick={() => setSelected(night)}>
+        <button className={`history-turn-item ${night.night_id === selected?.night_id ? "active" : ""}`} onClick={() => { selectedNightId.current = night.night_id ?? null; setSelected(night); }}>
           <b>{night.title}</b><small>涉及人物：{night.involved_people?.join("、") || "无载"}</small>
         </button>
       </li>)}</ul>{!nights.length && !error ? <p className="long-copy">尚无召对记录。</p> : null}</aside>

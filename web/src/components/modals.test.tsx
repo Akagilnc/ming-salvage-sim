@@ -1421,6 +1421,33 @@ describe("#1480 / #1499 FullscreenModal modal-layout-bare 只随 hideTitle", () 
 });
 
 describe("AudienceArchiveModal — read-only scene archive", () => {
+  it("keeps the selected night when an earlier night's translation retry finishes late", async () => {
+    let releaseRetry: (() => void) | undefined;
+    const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
+    const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
+        { kind: "night", night_id: 32, title: "乙夜", involved_people: [] },
+        { kind: "night", night_id: 31, title: "甲夜", involved_people: [] },
+      ] }) });
+      if (url === "/api/audience/translation/retry" && options?.method === "POST") return retryGate.then(() => ({ ok: true, json: async () => ({ chat_turn_id: 8 }) }));
+      const nightId = url.endsWith("31") ? 31 : 32;
+      return Promise.resolve({ ok: true, json: async () => ({
+        messages: [{ role: "user", content: nightId === 31 ? "甲夜奏对" : "乙夜奏对", chat_turn_id: nightId }],
+        translation_retries: nightId === 31 ? [{ chat_turn_id: 8, night_id: 31, minister_name: "洪承畴", kind: "translation_pending", retryable: true }] : [],
+      }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button')?.click(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item:not(.active)")?.click(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { releaseRetry?.(); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".history-turn-item.active")?.textContent).toContain("乙夜");
+    expect(host.textContent).toContain("乙夜奏对");
+    expect(host.textContent).not.toContain("甲夜奏对");
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
+  });
   it("retries a pending translation on its original closed night", async () => {
     let pending = true;
     const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
