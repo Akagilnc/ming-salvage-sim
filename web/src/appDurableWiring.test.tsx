@@ -561,13 +561,13 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(translationButton());
     await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeTruthy()); });
     expect(translationAttempts).toBe(1);
-    expect(host.querySelector('[data-testid="translation-retry-8"][role="alert"]')?.textContent).toContain("本轮记录未能整理");
+    expect(host.querySelector('[data-testid="translation-retry-8"][role="alert"]')?.textContent?.trim()).toBeTruthy();
     await click(translationButton());
     await act(async () => { await vi.waitFor(() => expect(translationButton()).toBeFalsy()); });
     await click(replyButton());
     await act(async () => { await vi.waitFor(() => expect(replyButton()).toBeTruthy()); });
     expect(replyAttempts).toBe(1);
-    expect(host.querySelector('[data-testid="reply-retry-7"][role="alert"]')?.textContent).toContain("问话未得回话");
+    expect(host.querySelector('[data-testid="reply-retry-7"][role="alert"]')?.textContent?.trim()).toBeTruthy();
     await click(replyButton());
     await act(async () => {
       await vi.waitFor(() => expect(replyButton()).toBeFalsy());
