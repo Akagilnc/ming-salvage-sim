@@ -6615,7 +6615,7 @@ def _require_active_minister(minister_name: str) -> None:
 @app.get("/api/audience/scroll")
 def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     """Shared live/read-only projection of one persisted audience scroll."""
-    from ming_sim.audience_night import get_night, get_open_night, presence_roster, read_night_scroll
+    from ming_sim.audience_night import get_night, get_open_night, presence_roster, read_night_scroll, night_scroll_container, list_ledger, list_chat_turns_for_night
     game = get_game()
     night = get_night(game.db, night_id) if night_id else get_open_night(game.db)
     if night is None:
@@ -6626,6 +6626,7 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     roster = presence_roster(game.db, int(night["id"]))
     protagonist = str(night.get("protagonist_name") or "")
     messages = read_night_scroll(game.db, int(night["id"]))
+    container = night_scroll_container(night, list_ledger(game.db, int(night["id"])), list_chat_turns_for_night(game.db, int(night["id"])))
     names = list(dict.fromkeys(
         [entry["name"] for entry in roster]
         + ([protagonist] if protagonist else [])
@@ -6638,6 +6639,7 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         "night_id": int(night["id"]),
         "status": night["status"],
         "messages": messages,
+        "container": container,
         "protagonist": protagonist,
         "roster": roster,
         "characters": [game.public_character(characters[name]) for name in names if name in characters],

@@ -696,7 +696,7 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     const retryReply = vi.fn();
     const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣", favorite: false };
     const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣", favorite: true };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], translation_retries: [{ chat_turn_id: 1, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/audience-turn-1" }], messages: [
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "越次召对" }, translation_retries: [{ chat_turn_id: 1, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/audience-turn-1" }], messages: [
       { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
       { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次召对" } },
       { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 1 },
@@ -1065,11 +1065,22 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   it("names the live scroll from its persisted container", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
       night_id: 23, protagonist: "", roster: [], translation_pending: false,
+      container: { time_of_day: "戌时", location: "便殿", audience_type: "召对" },
       messages: [{ ...nightScroll[0], container: { time_of_day: "戌时", location: "便殿", audience_type: "召对" } }],
     }) }));
     const host = renderModal({ minister: hong, ministers: [hong], portraitPrefix: "minister_", currentNightId: 23 });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(host.querySelector(".audience-roster h2")?.textContent).toBe("便殿 · 戌时");
+  });
+
+  it("names an empty-scaffold night without relying on projected messages", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      night_id: 23, protagonist: "", roster: [], translation_pending: false,
+      container: { time_of_day: "午时", location: "文华殿", audience_type: "召对" }, messages: [],
+    }) }));
+    const host = renderModal({ minister: hong, ministers: [hong], portraitPrefix: "minister_", currentNightId: 23 });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".audience-roster h2")?.textContent).toBe("文华殿 · 午时");
   });
 
   it("shows portraits for declared people outside the court and talent lists", async () => {

@@ -103,10 +103,23 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
     assert set(live) == set(closed) == {
         "night_id", "status", "messages", "protagonist", "roster", "characters",
-        "translation_pending", "translation_retries", "pending_translation_turn_ids",
+        "translation_pending", "translation_retries", "pending_translation_turn_ids", "container",
     }
     assert live["status"] == "open"
     assert closed["status"] == "closed"
+
+
+def test_empty_open_night_scroll_exposes_persisted_container(game, monkeypatch):
+    import web_app
+
+    db, state, _ = game
+    night_id = int(an.open_night(db, state, time_of_day="午时", location="文华殿", empty_scaffold=True)["id"])
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+
+    assert payload["night_id"] == night_id
+    assert all(not message["content"] for message in payload["messages"])
+    assert payload["container"] == {"time_of_day": "午时", "location": "文华殿", "audience_type": "召对"}
 
 
 def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch):

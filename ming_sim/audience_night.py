@@ -531,6 +531,14 @@ def night_archive_metadata(
     }
 
 
+def night_scroll_container(night: Dict[str, Any], ledgers: List[Dict[str, Any]], turns: List[Dict[str, Any]]) -> Dict[str, str]:
+    return {
+        "time_of_day": night["time_of_day"],
+        "location": night["location"],
+        "audience_type": night_archive_metadata(ledgers, turns)["audience_type"],
+    }
+
+
 def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     """Read one audience night as the shared live/archive scroll contract.
 
@@ -549,12 +557,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     turns = list_chat_turns_for_night(db, night_id)
     # 召法已由引擎作为结构化常量 tag 落在入殿口令账上；它是当前夜容器可用的
     # 真实召对类型来源。抽取账的开放 tags 绝不参与该投影。
-    audience_type = night_archive_metadata(ledgers, turns)["audience_type"]
-    container = {
-        "time_of_day": night["time_of_day"],
-        "location": night["location"],
-        "audience_type": audience_type,
-    }
+    container = night_scroll_container(night, ledgers, turns)
 
     def message(*, role: str, speaker: str, audibility: str, time: Any,
                 content: str, beat: str, soft_boundary: bool = False,

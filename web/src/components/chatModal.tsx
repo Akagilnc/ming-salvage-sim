@@ -111,6 +111,7 @@ export function ChatModal({
       kind: "night";
       nightId: number;
       messages: AudienceScrollMessage[];
+      container: AudienceScrollMessage["container"];
       protagonist: string;
       roster: AudienceRosterEntry[];
       characters: Minister[];
@@ -153,6 +154,7 @@ export function ChatModal({
     const refresh = () => api<{
       night_id: number;
       messages: AudienceScrollMessage[];
+      container: AudienceScrollMessage["container"];
       protagonist: string;
       roster: AudienceRosterEntry[];
       characters?: Minister[];
@@ -194,6 +196,7 @@ export function ChatModal({
           kind: "night",
           nightId: data.night_id,
           messages: data.messages || [],
+          container: data.container,
           protagonist: data.protagonist,
           roster: data.roster || [],
           characters: data.characters || [],
@@ -279,14 +282,11 @@ export function ChatModal({
   const { primary: portraitPrimary, fallback: portraitFallback } = currentMinister
     ? portraitSources(currentMinister, portraitPrefix) : { primary: "", fallback: undefined };
   const visibleSecretOrders = secretOrders.filter((order) => order.minister_name === currentMinister?.name);
-  // Night-level audience_type lives on the raw scroll container — not the filtered lens.
-  // Blank selected-minister windows must still show 召法.
+  // Night-level audience_type lives on the persisted container — not the message projection.
   const audienceType = scrollMode === "audience" && effectiveScrollState.kind === "night"
-    ? effectiveScrollState.messages.find((message) => message.container?.audience_type)?.container?.audience_type ?? ""
+    ? effectiveScrollState.container?.audience_type ?? ""
     : "";
-  const nightContainer = effectiveScrollState.kind === "night"
-    ? effectiveScrollState.messages.find((message) => message.container?.location && message.container?.time_of_day)?.container
-    : undefined;
+  const nightContainer = effectiveScrollState.kind === "night" ? effectiveScrollState.container : undefined;
 
   React.useEffect(() => {
     inputRef.current?.focus();
