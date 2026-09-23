@@ -20,7 +20,7 @@ from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from ming_sim.applier import Provenance, atomic
-from ming_sim.audience_night import set_night_protagonist
+from ming_sim.audience_night import reproject_night_protagonist, set_night_protagonist
 from ming_sim.declaration_dispatch import (
     DeclarationDispatchResult,
     dispatch_declaration,
@@ -127,15 +127,18 @@ def _bind_round_after_dispatch(
     name = ""
     if isinstance(validated, Mapping):
         name = str(validated.get("person_name") or "").strip()
-    if name and night_id > 0:
-        set_night_protagonist(db, night_id, name, reason="translation", commit=False)
     if chat_turn_id <= 0:
+        if name and night_id > 0:
+            set_night_protagonist(db, night_id, name, reason="translation", commit=False)
         return
     if name:
         db.conn.execute(
             "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
             (name, int(chat_turn_id)),
         )
+        # The night value is only a projection of the latest live declaration.
+        # A retry may commit an older round after a newer round (or a xuan cut).
+        reproject_night_protagonist(db, night_id)
     # 转译已声明本轮记录 → 故事抽取与边事件判官退役于本轮（水位 done，收夜 drain 跳过）
     mark_turn_translation_done(db, chat_turn_id, commit=False)
 
@@ -162,17 +165,22 @@ def mark_turn_translation_done(
 
 
 def cancel_turn_translation(chat_turn_id: int, *, write_queue: Any) -> int:
-    """撤回本轮：由 SessionWriteQueue 取消唯一在飞票。"""
+    """撤回本轮：可取消的 Future 即刻放票；运行中的票等 worker 终态。"""
     ctid = int(chat_turn_id or 0)
     if ctid <= 0:
         return 0
-    n = int(write_queue.cancel_key(("audience_translation", ctid)))
-    turn_key = (id(write_queue), ctid)
-    with _night_inflight_guard:
-        fut = _turn_future.get(turn_key)
-    if fut is not None:
-        fut.cancel()
-    return n
+    # Same lock order as admission: gate, then Future map. This also covers the
+    # interval after the ticket was retained but before its Future was recorded.
+    with _translation_write_cm(write_queue.write_gate):
+        turn_key = (id(write_queue), ctid)
+        with _night_inflight_guard:
+            fut = _turn_future.get(turn_key)
+        if fut is not None:
+            # A running Future cannot be cancelled. Its ticket is the close
+            # barrier's owner until _cleanup; never vacate it here.
+            fut.cancel()
+            return 0
+        return int(write_queue.cancel_key(("audience_translation", ctid)))
 
 
 def _observe_finished_future(
@@ -433,6 +441,8 @@ def schedule_audience_turn_translation(
     try:
         # 与撤回路径同锁序：先会话写闸，后 Future 账锁，避免互等。
         with _translation_write_cm(write_gate):
+            if ticket.cancelled:
+                raise CancelledError()
             with _night_inflight_guard:
                 pred = _night_tail.get(night_key)
                 # Future 终态先于 cleanup callback 可见；此窗口内的 tail 已不是

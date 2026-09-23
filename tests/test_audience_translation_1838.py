@@ -275,6 +275,23 @@ def test_protagonist_undo_reprojects_night_current(game, monkeypatch):
     assert get_night_protagonist(db, nid) == ""
 
 
+def test_retry_older_round_keeps_newer_protagonist(game):
+    db, state, _ = game
+    _activate(db, state, "王绍徽", "王承恩")
+    nid = int(open_night(db, state, location="乾清宫", time_of_day="戌时")["id"])
+    older = _active_chat_turn(db, state, nid)
+    newer = _active_chat_turn(db, state, nid)
+    apply_audience_round_translation(
+        db, state, {"protagonist": {"person_name": "王承恩"}},
+        night_id=nid, chat_turn_id=newer,
+    )
+    apply_audience_round_translation(
+        db, state, {"protagonist": {"person_name": "王绍徽"}},
+        night_id=nid, chat_turn_id=older,
+    )
+    assert get_night_protagonist(db, nid) == "王承恩"
+
+
 def test_edge_event_and_public_saying_attach_affair(game):
     """AC4：边事件、公开说法落对应记录并指向事务。"""
     db, state, _ = game

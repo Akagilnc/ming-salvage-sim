@@ -2566,6 +2566,22 @@ def get_night_protagonist(db: Any, night_id: int) -> str:
     return str(row["protagonist_name"] or "")
 
 
+def reproject_night_protagonist(db: Any, night_id: int) -> str:
+    """按存活源轮时序重投影夜当前主角；调用方负责事务提交。"""
+    row = db.conn.execute(
+        "SELECT protagonist_name FROM chat_turns WHERE night_id=? "
+        "AND status NOT IN ('undone','failed') AND protagonist_name != '' "
+        "ORDER BY id DESC LIMIT 1",
+        (int(night_id),),
+    ).fetchone()
+    name = str(row["protagonist_name"] or "") if row is not None else ""
+    db.conn.execute(
+        "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
+        (name, int(night_id)),
+    )
+    return name
+
+
 SCENE_RECAP_HEADER = "【殿上先前所闻】"
 
 

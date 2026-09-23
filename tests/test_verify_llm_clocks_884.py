@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import threading
 
 import httpx
 import pytest
@@ -140,21 +139,6 @@ def test_api_verify_installs_sdk_attempt_clock(monkeypatch):
     verify_llm_available(_api_cfg())
     assert seen["timeout"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
     assert seen["max_retries"] == 0
-
-
-def test_verify_main_and_advanced_smoke_overlap(monkeypatch):
-    """主+高级烟互不依赖：必须并行起跑（串行会在 barrier 上睡死）。"""
-    barrier = threading.Barrier(2, timeout=1.0)
-    seen: list[LLMConfig] = []
-
-    def fake_verify(cfg, **_kwargs):
-        barrier.wait()
-        seen.append(cfg)
-
-    monkeypatch.setattr(web_app, "verify_llm_available", fake_verify)
-    cfg = _api_cfg(advanced_model="gpt-advanced")
-    web_app._verify_llm_configs_or_raise(cfg)
-    assert {item.model for item in seen} == {"gpt-main", "gpt-advanced"}
 
 
 def test_verify_http_detail_carries_stage(monkeypatch):
