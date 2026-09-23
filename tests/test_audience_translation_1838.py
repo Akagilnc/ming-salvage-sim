@@ -47,6 +47,7 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
     wang_reply = "王绍徽跪奏：臣领旨拟明发。"
     bi_interject = "毕自严出班：户部可先挪三十万两垫发。"
     wang_whisper = "王承恩附耳：绍徽面有难色，恐意存观望。"
+    scene_whisper = "御前密语提及王绍徽。"
 
     declaration = {
         "presence": [
@@ -68,9 +69,17 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
             },
             {
                 "body": wang_whisper,
+                "role": "attendant",
                 "audibility": AUDIBILITY_PRIVATE,
                 "person_names": ["王承恩", "王绍徽"],
                 "tags": ["递话"],
+            },
+            {
+                "body": scene_whisper,
+                "role": "scene",
+                "audibility": AUDIBILITY_PRIVATE,
+                "person_names": ["王绍徽"],
+                "tags": [],
             },
         ],
         "protagonist": {"person_name": "王绍徽"},
@@ -80,7 +89,7 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
         db, state, declaration, night_id=nid, chat_turn_id=ctid,
     )
 
-    assert len(result.scene_facts.applied) == 3
+    assert len(result.scene_facts.applied) == 4
     assert result.scene_facts.rejected == []
 
     # 外部可见：按源轮从 ledger 读回三段说话人 + 可闻性（不靠 applied 投影凑数）
@@ -89,7 +98,7 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
         if int(e.get("source_chat_turn_id") or 0) == ctid
         and not e.get("presence_effect")
     ]
-    assert len(segments) == 3
+    assert len(segments) == 4
     by_body = {e["body"]: e for e in segments}
     assert by_body[wang_reply]["person_names"] == ["王绍徽"]
     assert by_body[wang_reply]["audibility"] == AUDIBILITY_PUBLIC
@@ -97,6 +106,7 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
     assert by_body[bi_interject]["audibility"] == AUDIBILITY_PUBLIC
     assert by_body[wang_whisper]["person_names"] == ["王承恩", "王绍徽"]
     assert by_body[wang_whisper]["audibility"] == AUDIBILITY_PRIVATE
+    assert by_body[scene_whisper]["audibility"] == AUDIBILITY_PRIVATE
 
     # 王绍徽在场期间可闻殿上公开；御前低语不进其经历投影
     wang_exp = person_night_experience(db, nid, "王绍徽")
@@ -104,6 +114,7 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
     assert wang_reply in bodies
     assert bi_interject in bodies
     assert wang_whisper not in bodies
+    assert scene_whisper not in bodies
     assert wang_whisper in [e["body"] for e in person_night_experience(db, nid, "王承恩")]
 
     # 转译已承接本轮 → 抽取 / 判官水位推进，不另起旧路径

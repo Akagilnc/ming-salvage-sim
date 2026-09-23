@@ -2519,7 +2519,7 @@ def person_night_experience(
 ) -> List[Dict[str, Any]]:
     """人物经历：在场公开所闻，加本人说出的私密条目。
 
-    转译声明的 person_names 首位是说话人；其余仅为涉及人，不获知低语。
+    只有大臣／近臣分段的首位人名是说话人；场景分段仅列涉及人。
     """
     name = str(person_name or "").strip()
     if not name:
@@ -2529,6 +2529,8 @@ def person_night_experience(
         entry for entry in list_ledger(db, int(night_id))
         if entry["id"] in audible_ids
         or (entry.get("audibility") == AUDIBILITY_PRIVATE
+            and any(tag in {"scroll_role:minister", "scroll_role:attendant"}
+                    for tag in entry.get("tags", []))
             and (entry.get("person_names") or [None])[0] == name)
     ]
 
