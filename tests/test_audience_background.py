@@ -696,6 +696,7 @@ def test_background_audience_recommendation_stages_candidate_snapshot(game, monk
                 },
             }],
             "promises": [],
+            "scene_facts": [{"body": reply, "role": "minister", "audibility": "殿上公开", "person_names": [minister_name]}],
         }
 
     web_game = _web_game(db, state, content, agent, monkeypatch)

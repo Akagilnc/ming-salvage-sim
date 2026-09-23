@@ -1,6 +1,5 @@
 import React from "react";
 import { MinisterPortrait, cacheBust } from "./hud";
-import { parseLeadingStageDirection, stripOrganicMarkdown } from "../format";
 import { matchHighlightPhrases, segmentHighlightedContent } from "../highlights";
 import type { AudienceScrollMessage, ChatDisplayMessage, Minister } from "../types";
 
@@ -25,13 +24,25 @@ export function ScrollMessages({
   ministers: Minister[];
   turnNotices?: ReadonlyMap<number, React.ReactNode>;
 }) {
+  const highlightedContent = (message: ChatDisplayMessage | AudienceScrollMessage) => {
+    const rawHighlights = message.role === "minister" && "highlights" in message ? message.highlights : undefined;
+    const matched = message.role === "minister" ? matchHighlightPhrases(message.content, rawHighlights) : [];
+    return matched.length
+      ? segmentHighlightedContent(message.content, matched).map((segment, segmentIndex) => segment.highlight
+          ? <strong className="hl" key={`h-${segmentIndex}`}>{segment.text}</strong>
+          : <React.Fragment key={`t-${segmentIndex}`}>{segment.text}</React.Fragment>)
+      : message.content;
+  };
   const groups: Array<{ key: string; turnId?: number; messages: typeof messages }> = [];
+  const turnOccurrences = new Map<number, number>();
   messages.forEach((message, index) => {
     const turnId = "chat_turn_id" in message ? message.chat_turn_id : undefined;
     if (turnId != null) {
       let group = groups[groups.length - 1];
       if (!group || group.turnId !== turnId) {
-        group = { key: `turn-${turnId}-${index}`, turnId, messages: [] };
+        const occurrence = turnOccurrences.get(turnId) ?? 0;
+        turnOccurrences.set(turnId, occurrence + 1);
+        group = { key: `turn-${turnId}-${occurrence}`, turnId, messages: [] };
         groups.push(group);
       }
       group.messages.push(message);
@@ -47,43 +58,48 @@ export function ScrollMessages({
     const pending = "pending" in message && message.pending;
     const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
     const beat = "beat" in message ? message.beat : "dialogue";
-    // #1280 / ADR 0045：scene/attendant 与大臣气泡同走 organic markdown 剥离链。
     if (message.role === "scene") {
-      const sceneText = stripOrganicMarkdown(message.content);
       return <div className={`chat-message scene beat-${beat}`} key={persistedId}>
-        {beat === "divider" ? <div className="scene-divider"><hr aria-label={speaker ? `宣${speaker}` : "分隔"} />{speaker ? <strong>{speaker}</strong> : null}</div> : sceneText ? <p>{sceneText}</p> : null}
+        {beat === "divider" ? <div className="scene-divider"><hr aria-label={speaker ? `宣${speaker}` : "分隔"} />{speaker ? <strong>{speaker}</strong> : null}</div> : message.content ? <p>{message.content}</p> : null}
       </div>;
     }
     const isAside = message.role === "attendant" && "audibility" in message && message.audibility === "御前低语";
     const attendant = isAside ? ministers.find((candidate) => candidate.name === speaker) : undefined;
     const attendantPortrait = attendant ? portraitSources(attendant) : undefined;
-    const text = message.role === "user" ? message.content : stripOrganicMarkdown(message.content);
-    const { action, content } = parseLeadingStageDirection(text);
-    // #544 / ADR 0045：只标大臣气泡；短语先过同一剥离链再精确匹配，未命中静默丢弃。
-    const rawHighlights = message.role === "minister" && "highlights" in message
-      ? (message as { highlights?: string[] }).highlights
-      : undefined;
-    const matched = message.role === "minister"
-      ? matchHighlightPhrases(message.content, rawHighlights)
-      : [];
-    const body = matched.length
-      ? segmentHighlightedContent(content, matched).map((seg, segIndex) =>
-          seg.highlight
-            ? <mark className="hl" key={`h-${segIndex}`}>{seg.text}</mark>
-            : <React.Fragment key={`t-${segIndex}`}>{seg.text}</React.Fragment>)
-      : content;
     return <div className={`chat-message ${message.role} ${isAside ? "aside" : ""} ${pending ? "pending" : ""}`} key={persistedId}>
       {isAside ? <MinisterPortrait className="aside-avatar" primary={attendantPortrait?.primary ?? ""} fallback={attendantPortrait?.fallback} name={speaker} /> : null}
       <span>{speaker}</span>
-      {action ? <em className="action">{action}</em> : null}
-      <p>{body}</p>
+      <p>{highlightedContent(message)}</p>
+    </div>;
+  };
+
+  const renderTurnSegment = (message: ChatDisplayMessage | AudienceScrollMessage, index: number) => {
+    const persistedId = "record_id" in message && message.record_id != null
+      ? `record-${message.record_id}`
+      : `${message.role}-${index}`;
+    const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : ministerName;
+    const beat = "beat" in message ? message.beat : "dialogue";
+    const isAside = message.role === "attendant" && "audibility" in message && message.audibility === "御前低语";
+    const attendant = isAside ? ministers.find((candidate) => candidate.name === speaker) : undefined;
+    const attendantPortrait = attendant ? portraitSources(attendant) : undefined;
+    return <div className={`turn-segment ${message.role} ${isAside ? "aside" : ""} beat-${beat}`} key={persistedId}>
+      {isAside ? <MinisterPortrait className="aside-avatar" primary={attendantPortrait?.primary ?? ""} fallback={attendantPortrait?.fallback} name={speaker} /> : null}
+      {message.role === "scene" && beat === "divider"
+        ? <div className="scene-divider"><hr aria-label={speaker ? `宣${speaker}` : "分隔"} />{speaker ? <strong>{speaker}</strong> : null}</div>
+        : <>
+            {message.role !== "scene" && speaker ? <span className="turn-speaker">{speaker}</span> : null}
+            {message.content ? <p>{highlightedContent(message)}</p> : null}
+          </>}
     </div>;
   };
 
   return <>{groups.map((group) => (
     <div className="audience-turn" data-audience-turn-id={group.turnId} key={group.key}>
-      {group.messages.map(renderMessage)}
+      {group.turnId == null
+        ? group.messages.map(renderMessage)
+        : <div className="audience-turn-content">{group.messages.map(renderTurnSegment)}</div>}
       {group.turnId != null ? turnNotices?.get(group.turnId) : null}
+
     </div>
   ))}</>;
 }

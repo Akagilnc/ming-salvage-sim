@@ -144,6 +144,50 @@
   gap: 10px;
 }
 
+.audience-turn-content {
+  display: grid;
+  gap: 8px;
+  width: fit-content;
+  max-width: min(760px, 78%);
+  padding: 10px;
+  border-radius: 5px;
+  background: rgba(255, 238, 198, 0.68);
+}
+
+.turn-segment {
+  display: grid;
+  gap: 4px;
+}
+
+.turn-segment.scene { text-align: center; }
+
+.turn-segment.aside {
+  position: relative;
+  margin-left: 54px;
+  padding-left: 10px;
+  border-left: 2px dashed rgba(111, 83, 46, 0.5);
+  font-style: italic;
+}
+
+.turn-speaker {
+  color: #704c1e;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.turn-segment p {
+  margin: 0;
+  color: #3e3020;
+  white-space: pre-wrap;
+}
+
+.turn-segment.minister .hl,
+.chat-message.minister .hl {
+  color: #8a4f1d;
+  font-weight: 700;
+  background: none;
+}
+
 /* #1370：召对空态引导 chrome（系统层，非叙事） */
 .chat-empty-chrome {
   align-self: center;
@@ -237,14 +281,6 @@
   margin: 0;
   color: #3e3020;
   white-space: pre-wrap;
-}
-
-/* #544 / ADR 0045：大臣承重短语高亮（只标大臣气泡正文） */
-.chat-message.minister mark.hl {
-  background: rgba(196, 148, 58, 0.28);
-  color: inherit;
-  padding: 0 1px;
-  border-radius: 2px;
 }
 
 .chat-composer {

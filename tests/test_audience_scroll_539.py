@@ -137,6 +137,62 @@ def test_scroll_exposes_translation_pending_until_late_declaration_lands(game, m
     assert settled["protagonist"] == "王绍徽"
 
 
+def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeypatch):
+    import web_app
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    story = "臣领旨。王承恩低语。殿内烛影摇曳。"
+    turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "辽饷何解？", story, 10)
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    client = TestClient(web_app.app)
+    before = client.get("/api/audience/scroll").json()["messages"]
+    assert [m["content"] for m in before if m.get("chat_turn_id") == turn_id][-1] == story
+    assert [(m["role"], m["speaker"], m["highlights"]) for m in before if m.get("chat_turn_id") == turn_id][-1] == ("scene", "", [])
+    assert client.get("/api/audience/scroll").json()["translation_pending"] is True
+
+    apply_audience_round_translation(db, state, {
+        "scene_facts": [
+            {"body": "臣领旨。", "role": "minister", "audibility": "殿上公开", "person_names": ["杨嗣昌"]},
+            {"body": "王承恩低语。", "role": "attendant", "audibility": "御前低语", "person_names": ["王承恩"]},
+            {"body": "殿内烛影摇曳。", "role": "scene", "audibility": "殿上公开", "person_names": []},
+        ],
+    }, night_id=night_id, chat_turn_id=turn_id, minister_name="杨嗣昌")
+    after = client.get("/api/audience/scroll").json()["messages"]
+    assert client.get("/api/audience/scroll").json()["translation_pending"] is False
+    segments = [m for m in after if m.get("chat_turn_id") == turn_id and m["role"] != "user"]
+    assert [(m["role"], m["speaker"], m["content"]) for m in segments] == [
+        ("minister", "杨嗣昌", "臣领旨。"), ("attendant", "王承恩", "王承恩低语。"),
+        ("scene", "", "殿内烛影摇曳。"),
+    ]
+    assert segments[1]["audibility"] == "御前低语"
+    assert segments[1]["beat"] == "aside"
+    assert "".join(m["content"] for m in segments) == story
+    assert [m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"] if m.get("chat_turn_id") == turn_id and m["role"] != "user"] == segments
+
+
+def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
+    import pytest
+    import web_app
+    from ming_sim.audience_translate import AudienceTranslateError
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "何解？", "臣领旨。", 10)
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    for role in ("minister", "attendant"):
+        with pytest.raises(AudienceTranslateError):
+            apply_audience_round_translation(db, state, {
+                "scene_facts": [{"body": "臣领旨。", "role": role, "audibility": "殿上公开", "person_names": []}],
+            }, night_id=night_id, chat_turn_id=turn_id)
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+    assert payload["translation_pending"] is True
+    reply = next(m for m in payload["messages"] if m["content"] == "臣领旨。")
+    assert (reply["role"], reply["speaker"]) == ("scene", "")
+
+
 def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats(game, monkeypatch):
     import web_app
 
@@ -168,7 +224,7 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     assert "杨嗣昌以身家作保。" not in contents
     # #1293a：抽取派生（含非对话复述的故事事实）不上 live 卷轴
     assert "帘外忽起雨声。" not in contents
-    assert {message["speaker"] for message in messages if message["role"] == "minister"} == {"杨嗣昌", "洪承畴"}
+    assert [message["content"] for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == ["臣请据实核账。", "边关尚稳。"]
 
     allowed_message_fields = {
         "role", "speaker", "audibility", "time", "content",
@@ -205,8 +261,8 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     assert scroll[0]["container"] == {"time_of_day": "戌时", "location": "乾清宫", "audience_type": "召对"}
     assert [(m["role"], m["speaker"], m["content"]) for m in scroll if m["role"] != "scene"] == [
         ("user", "朕", "辽饷如何？"),
-        ("minister", "杨嗣昌", "臣请据实核账。"),
     ]
+    assert any(m["role"] == "scene" and m["content"] == "臣请据实核账。" for m in scroll)
     assert all({"role", "speaker", "audibility", "time", "soft_boundary", "beat", "highlights", "container"} <= set(m) for m in scroll)
     assert scroll[-1]["beat"] == "coda"
     assert scroll[-1]["content"] == ""

@@ -1335,11 +1335,14 @@ def _dispatch_scene_facts(
         audibility = item.get("audibility") or AUDIBILITY_PUBLIC
         person_names = item.get("person_names") or []
         tags = item.get("tags") or []
+        scroll_role = item.get("role")
         if (
             body is None
             or audibility not in _AUDIBILITIES
+            or (scroll_role is not None and scroll_role not in {"user", "minister", "attendant", "scene"})
             or not isinstance(person_names, Sequence) or isinstance(person_names, (str, bytes))
             or not all(isinstance(n, str) for n in person_names)
+            or (scroll_role in {"minister", "attendant"} and (not person_names or not person_names[0].strip()))
             or not isinstance(tags, Sequence) or isinstance(tags, (str, bytes))
             or not all(isinstance(t, str) for t in tags)
         ):
@@ -1361,7 +1364,8 @@ def _dispatch_scene_facts(
             entry_id = append_ledger_entry(
                 db, int(night_id),
                 person_names=list(person_names), audibility=str(audibility),
-                body=body, tags=list(tags), check_dead=False, origin_ref=origin_ref,
+                body=body, tags=list(tags) + ([f"scroll_role:{scroll_role}"] if scroll_role else []),
+                check_dead=False, origin_ref=origin_ref,
                 source_chat_turn_id=origin_ctid,
                 origin_chat_turn_id=origin_ctid,
             )

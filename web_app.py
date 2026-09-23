@@ -6450,8 +6450,6 @@ def _require_active_minister(minister_name: str) -> None:
 def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     """Shared live/read-only projection of one persisted audience scroll."""
     from ming_sim.audience_night import get_night, get_open_night, presence_roster, read_night_scroll
-    from ming_sim.audience_translation import list_pending_translations
-
     game = get_game()
     night = get_night(game.db, night_id) if night_id else get_open_night(game.db)
     if night is None:
@@ -6460,6 +6458,7 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     protagonist = str(night.get("protagonist_name") or "")
     names = list(dict.fromkeys([entry["name"] for entry in roster] + ([protagonist] if protagonist else [])))
     characters = getattr(getattr(game, "content", None), "characters", {})
+
     return {
         "night_id": int(night["id"]),
         "status": night["status"],
@@ -6467,7 +6466,8 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         "protagonist": protagonist,
         "roster": roster,
         "characters": [game.public_character(characters[name]) for name in names if name in characters],
-        "translation_pending": bool(list_pending_translations(game.db, night_id=int(night["id"]))),
+        "translation_pending": bool(game.db.list_unextracted_replies(night_id=int(night["id"]))),
+
     }
 
 

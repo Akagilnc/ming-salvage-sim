@@ -8,7 +8,6 @@ import { HistoryModal } from "./historyModal";
 import { FullscreenModal } from "./hud";
 import { ReportModal } from "./reportModal";
 import { ScrollMessages } from "./scrollMessages";
-import { parseLeadingStageDirection } from "../format";
 import type { BudgetAccount, ChatMessage, GameState, Minister, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 
@@ -614,7 +613,7 @@ describe("ChatModal — organic markdown display cleanup", () => {
     await act(async () => { await Promise.resolve(); });
     const messages = Array.from(document.querySelectorAll(".chat-message p"));
     expect(messages[0]?.textContent).toBe("朕要看 **原文**。");
-    expect(messages[1]?.textContent).toBe("臣谨奏：\n钱粮已足。");
+    expect(messages[1]?.textContent).toBe("**臣谨奏**：\n- 钱粮已足。");
   });
 
   it("#1280 scene/attendant 角色气泡同走 stripOrganicMarkdown", async () => {
@@ -636,10 +635,8 @@ describe("ChatModal — organic markdown display cleanup", () => {
       currentNightId: 23,
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector(".chat-message.scene p")?.textContent).toBe("殿内 烛影 摇曳\n夜风入户");
-    expect(host.querySelector(".chat-message.attendant p")?.textContent).toBe("低声：边报已至。");
-    expect(host.textContent).not.toContain("**");
-    expect(host.textContent).not.toMatch(/(^|\n)-\s/);
+    expect(host.querySelector(".chat-message.scene p")?.textContent).toBe("殿内 **烛影** 摇曳\n- 夜风入户");
+    expect(host.querySelector(".chat-message.attendant p")?.textContent).toBe("**低声**：边报已至。");
   });
 });
 
@@ -666,15 +663,14 @@ describe("ChatModal — four diegetic roles (#540)", () => {
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
     expect(host.querySelector(".chat-message.scene")?.textContent).toBe("殿门徐启");
-    expect(host.querySelector(".chat-message.user .action")?.textContent).toBe("（搁笔）");
-    expect(host.querySelector(".chat-message.user p")?.textContent).toBe("卿且直言。");
-    expect(host.querySelector(".chat-message.minister")?.textContent).toContain("臣谨奏。");
-    expect(host.querySelector(".chat-message.aside")?.textContent).toContain("有所隐瞒");
+    expect(host.querySelector(".turn-segment.user p")?.textContent).toBe("（搁笔）卿且直言。");
+    expect(host.querySelector(".turn-segment.minister")?.textContent).toContain("臣谨奏。");
+    expect(host.querySelector(".turn-segment.aside")?.textContent).toContain("有所隐瞒");
     const avatars = Array.from(host.querySelectorAll<HTMLImageElement>(".aside-avatar"));
     expect(avatars[0]?.alt).toBe("曹化淳");
     expect(avatars[0]?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%9B%B9%E5%8C%96%E6%B7%B3\?t=/);
     expect(avatars[1]?.getAttribute("src")).toBe("/portraits/minister_attendant-former.png");
-    expect(host.querySelector(".chat-message.attendant:not(.aside)")?.textContent).toContain("公开传话");
+    expect(host.querySelector(".turn-segment.attendant:not(.aside)")?.textContent).toContain("公开传话");
   });
 });
 
@@ -739,16 +735,6 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     expect(divisions).toHaveLength(2);
     expect(divisions[0]?.textContent).toContain("洪承畴");
     expect(divisions[1]?.textContent).not.toMatch(/杨嗣昌|洪承畴/);
-  });
-});
-
-describe("parseLeadingStageDirection", () => {
-  it.each([
-    ["（搁笔）卿且直言。", { action: "（搁笔）", content: "卿且直言。" }],
-    ["卿且（搁笔）直言。", { action: null, content: "卿且（搁笔）直言。" }],
-    ["卿且直言。", { action: null, content: "卿且直言。" }],
-  ])("recognises only an explicit leading full-width parenthetical in %s", (source, expected) => {
-    expect(parseLeadingStageDirection(source)).toEqual(expected);
   });
 });
 
@@ -1219,8 +1205,76 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    await act(async () => { await vi.waitFor(() => expect(document.querySelectorAll('[data-audience-turn-id="11"] .chat-message')).toHaveLength(3)); });
+    await act(async () => { await vi.waitFor(() => expect(document.querySelectorAll('[data-audience-turn-id="11"] .turn-segment')).toHaveLength(3)); });
     expect(document.querySelector('[data-audience-turn-id="11"]')).toBe(streamingTurn);
+  });
+
+  it("adds translated roles and minister emphasis inside the same unchanged turn block", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const parts = ["密令：整饬边备。", "臣领旨。", "臣附议。", "王承恩低语。", "殿内烛影摇曳。"];
+    const turnId = 11;
+    const trailing = { role: "user", speaker: "朕", content: "后续诏问", beat: "dialogue", chat_turn_id: turnId + 1 };
+    const neutral = [{ role: "scene", speaker: "", content: parts.join(""), beat: "dialogue", chat_turn_id: turnId }, trailing];
+    const translated = [
+      { role: "user", speaker: "朕", content: parts[0], beat: "dialogue", chat_turn_id: turnId },
+      { role: "minister", speaker: "洪承畴", content: parts[1], beat: "dialogue", highlights: ["领旨"], chat_turn_id: turnId },
+      { role: "minister", speaker: "许誉卿", content: parts[2], beat: "dialogue", highlights: ["附议"], chat_turn_id: turnId },
+      { role: "attendant", speaker: "王承恩", content: parts[3], beat: "aside", audibility: "御前低语", highlights: ["低语"], chat_turn_id: turnId },
+      { role: "scene", speaker: "", content: parts[4], beat: "dialogue", chat_turn_id: turnId },
+      trailing,
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => {
+      if (reads++ === 1) throw new Error("temporary read failure");
+      return {
+        ok: true,
+        json: async () => reads === 1
+          ? ({ night_id: 23, messages: neutral, translation_pending: true })
+          : ({ night_id: 23, messages: translated, translation_pending: false }),
+      };
+    }));
+    renderModal({
+      minister: hong,
+      ministers: [hong, xu],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const turn = document.querySelector<HTMLElement>(`[data-audience-turn-id="${turnId}"]`);
+    const originalStory = Array.from(turn?.querySelectorAll("p") ?? [], (node) => node.textContent).join("");
+    const stage = document.querySelector<HTMLElement>(".chat-stage")!;
+    Object.defineProperties(stage, { scrollHeight: { value: 600 }, clientHeight: { value: 200 } });
+    vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({ top: 0, left: 0 } as DOMRect);
+    const storyParagraph = turn?.querySelector("p")!;
+    vi.spyOn(storyParagraph, "getBoundingClientRect").mockReturnValue({ top: -20, bottom: 100, left: 14 } as DOMRect);
+    const storyNode = storyParagraph.firstChild;
+    Object.defineProperty(document, "caretPositionFromPoint", {
+      configurable: true, value: () => ({ offsetNode: storyNode, offset: parts[0].length }),
+    });
+    const oldGetClientRects = Range.prototype.getClientRects;
+    Range.prototype.getClientRects = function () {
+      const segment = this.startContainer.parentElement?.closest(".turn-segment");
+      const top = !segment || turn?.querySelectorAll(".turn-segment").length === 1 ? 50
+        : segment === turn?.querySelectorAll(".turn-segment")[1] ? 150 : 110;
+      return [{ top } as DOMRect] as unknown as DOMRectList;
+    };
+    stage.scrollTop = 100;
+    act(() => stage.dispatchEvent(new Event("scroll", { bubbles: true })));
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(turn?.querySelectorAll('.turn-segment')).toHaveLength(translated.length - 1);
+    expect(stage.scrollTop).toBe(200);
+    Range.prototype.getClientRects = oldGetClientRects;
+    Reflect.deleteProperty(document, "caretPositionFromPoint");
+    expect(document.querySelectorAll(`[data-audience-turn-id="${turnId}"]`)).toHaveLength(1);
+    expect(document.querySelector(`[data-audience-turn-id="${turnId}"]`)).toBe(turn);
+    expect(turn?.querySelectorAll(".chat-message")).toHaveLength(0);
+    expect(turn?.querySelectorAll(".turn-segment")).toHaveLength(translated.length - 1);
+    expect(turn?.querySelectorAll(".turn-segment.minister strong.hl")).toHaveLength(2);
+    expect(turn?.querySelectorAll(".turn-segment.aside p")).toHaveLength(1);
+    expect(turn?.querySelectorAll(".turn-segment.user strong.hl, .turn-segment.aside strong.hl, .turn-segment.scene strong.hl")).toHaveLength(0);
+    expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("")).toBe(originalStory);
   });
 
   it("removes an unpersisted streamed turn when its request fails", async () => {
@@ -1272,10 +1326,9 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     expect(document.body.textContent).toContain("密令：整饬边备");
     expect(document.body.textContent).toContain("臣领旨");
     // Single user bubble — claimed persisted turn suppresses the synthetic pending duplicate.
-    const userBubbles = Array.from(document.querySelectorAll(".chat-message.user"))
+    const userBubbles = Array.from(document.querySelectorAll(".turn-segment.user"))
       .filter((node) => node.textContent?.includes("辽饷何解？"));
     expect(userBubbles).toHaveLength(1);
-    expect(userBubbles[0]?.classList.contains("pending")).toBe(false);
   });
 
   it("切回有记录大臣：语义轮完整含朕问/回话/递话", async () => {

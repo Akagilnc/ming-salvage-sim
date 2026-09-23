@@ -116,6 +116,7 @@ export function ChatModal({
   >({ kind: "loading" });
   const followsTailRef = React.useRef(true);
   const restoredNightRef = React.useRef<number | false>(false);
+  const readingAnchorRef = React.useRef<{ turnId: string; offset: number; top: number } | null>(null);
   const withdrawnFromThisScroll = (message: AudienceScrollMessage): boolean => !!(
     undoneChatIdentity
     && undoneChatIdentity.campaign_id === currentCampaignId
@@ -141,6 +142,8 @@ export function ChatModal({
 
   React.useEffect(() => {
     let alive = true;
+    let retryTimer: number | undefined;
+    let translationPending = false;
     // Once an open night is known, refreshes retain that single authority while loading;
     // first load/minister switches never flash the old per-minister projection.
     setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current) ? current : { kind: "loading" });
@@ -148,7 +151,7 @@ export function ChatModal({
       setScrollState({ kind: "none" });
       return () => { alive = false; };
     }
-    api<{
+    const refresh = () => api<{
       night_id: number;
       messages: AudienceScrollMessage[];
       protagonist: string;
@@ -158,6 +161,35 @@ export function ChatModal({
     }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
+        const node = chatLogRef.current;
+        if (node && !followsTailRef.current) {
+          const viewportTop = node.getBoundingClientRect().top;
+          const visibleParagraph = Array.from(node.querySelectorAll<HTMLElement>("[data-audience-turn-id] p"))
+            .find((item) => item.getBoundingClientRect().bottom > viewportTop);
+          const rect = visibleParagraph?.getBoundingClientRect();
+          const x = (rect?.left ?? node.getBoundingClientRect().left) + 8;
+          const y = Math.max(rect?.top ?? viewportTop, viewportTop) + 1;
+          const caret = rect && document.caretPositionFromPoint?.(x, y);
+          const range = caret ? document.createRange() : rect && document.caretRangeFromPoint?.(x, y);
+          if (caret && range) range.setStart(caret.offsetNode, caret.offset);
+          if (range) {
+            range.collapse(true);
+            const paragraph = (range.startContainer.nodeType === Node.TEXT_NODE
+              ? range.startContainer.parentElement : range.startContainer as Element)?.closest("p");
+            const turn = paragraph?.closest<HTMLElement>("[data-audience-turn-id]");
+            if (turn && paragraph) {
+              const paragraphs = Array.from(turn.querySelectorAll("p"));
+              const before = document.createRange();
+              before.selectNodeContents(paragraph);
+              before.setEnd(range.startContainer, range.startOffset);
+              const offset = paragraphs.slice(0, paragraphs.indexOf(paragraph)).reduce(
+                (sum, item) => sum + (item.textContent?.length ?? 0), 0,
+              ) + before.toString().length;
+              const top = range.getClientRects()[0]?.top ?? paragraph.getBoundingClientRect().top;
+              readingAnchorRef.current = { turnId: turn.dataset.audienceTurnId ?? "", offset, top };
+            }
+          }
+        }
         setScrollState(data.night_id ? {
           kind: "night",
           nightId: data.night_id,
@@ -168,14 +200,18 @@ export function ChatModal({
           translationPending: data.translation_pending,
           refreshError: false,
         } : { kind: "none" });
+        translationPending = !!data.translation_pending;
+        if (translationPending) retryTimer = window.setTimeout(refresh, 1500);
       })
       .catch(() => {
         if (!alive) return;
         setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current)
           ? { ...current, refreshError: true }
           : { kind: "error" });
+        if (translationPending) retryTimer = window.setTimeout(refresh, 1500);
       });
-    return () => { alive = false; };
+    refresh();
+    return () => { alive = false; window.clearTimeout(retryTimer); };
   }, [minister.name, scrollMode, currentCampaignId, currentNightId, undoneChatIdentity, failedIdentity,
     // App supplies the explicit durable-settlement generation. Standalone/legacy consumers
     // retain the historical chat-driven refresh contract until they adopt that signal.
@@ -283,7 +319,7 @@ export function ChatModal({
     return () => clearInterval(id);
   }, [busy, streamingMinisterMessage]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const node = chatLogRef.current;
     if (!node) return;
     const nightId = scrollState.kind === "night" ? scrollState.nightId : 0;
@@ -294,7 +330,33 @@ export function ChatModal({
       restoredNightRef.current = nightId;
     } else if (followsTailRef.current) {
       node.scrollTop = node.scrollHeight;
+    } else if (readingAnchorRef.current) {
+      const { turnId, offset, top } = readingAnchorRef.current;
+      const turn = Array.from(node.querySelectorAll<HTMLElement>("[data-audience-turn-id]"))
+        .find((item) => item.dataset.audienceTurnId === turnId);
+      if (turn) {
+        let remaining = offset;
+        const paragraphs = turn.querySelectorAll("p");
+        for (const [index, paragraph] of Array.from(paragraphs).entries()) {
+          const length = paragraph.textContent?.length ?? 0;
+          if (remaining >= length && index < paragraphs.length - 1) { remaining -= length; continue; }
+          const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+          let textNode: Node | null;
+          while ((textNode = walker.nextNode())) {
+            const textLength = textNode.textContent?.length ?? 0;
+            if (remaining > textLength) { remaining -= textLength; continue; }
+            const range = document.createRange();
+            range.setStart(textNode, remaining);
+            range.collapse(true);
+            const rect = range.getClientRects()[0];
+            if (rect) node.scrollTop += rect.top - top;
+            break;
+          }
+          break;
+        }
+      }
     }
+    readingAnchorRef.current = null;
   }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error, replyRetry, translationRetries]);
 
   const handleScroll = () => {

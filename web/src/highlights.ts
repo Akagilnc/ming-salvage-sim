@@ -1,34 +1,15 @@
-import { parseLeadingStageDirection, stripOrganicMarkdown } from "./format";
-
-/**
- * #544 / ADR 0045：判官短语 → 大臣气泡显示文本精确匹配。
- *
- * 匹配基准＝气泡实际正文渲染链：stripOrganicMarkdown 之后、再经
- * parseLeadingStageDirection 切出领头舞台指示后的 content。
- * 短语先过同一剥离函数；落在 action 段的短语按未命中静默丢弃；
- * 单条未命中静默丢弃，整清单不整崩。
- */
-export function ministerDisplayContent(rawContent: string): {
-  action: string | null;
-  content: string;
-} {
-  const stripped = stripOrganicMarkdown(String(rawContent || ""));
-  return parseLeadingStageDirection(stripped);
-}
-
-/** 返回命中显示正文的已剥离短语（保持首次出现顺序，去重）。 */
+/** Match only substrings of the unchanged drama; never match a transformed copy. */
 export function matchHighlightPhrases(
   rawContent: string,
   phrases: readonly string[] | null | undefined,
 ): string[] {
-  const { content } = ministerDisplayContent(rawContent);
-  if (!content || !Array.isArray(phrases) || phrases.length === 0) return [];
+  if (!rawContent || !Array.isArray(phrases) || phrases.length === 0) return [];
   const hit: string[] = [];
   const seen = new Set<string>();
   for (const raw of phrases) {
-    const phrase = stripOrganicMarkdown(String(raw || ""));
+    const phrase = String(raw || "");
     if (!phrase || seen.has(phrase)) continue;
-    if (!content.includes(phrase)) continue;
+    if (!rawContent.includes(phrase)) continue;
     seen.add(phrase);
     hit.push(phrase);
   }
