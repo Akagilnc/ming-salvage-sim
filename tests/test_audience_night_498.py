@@ -89,6 +89,20 @@ def _land_reply(db, state, minister: str, chat_id: int, text: str = "臣遵旨�
     db.conn.commit()
 
 
+def test_legacy_reply_without_segments_stays_neutral_in_night_scroll(game):
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    turn_id = db.create_chat_turn(state, minister, "legacy", 0, night_id=night["id"])
+    _land_reply(db, state, minister, turn_id, "殿上诸人各陈所见。")
+
+    reply = next(m for m in an.read_night_scroll(db, night["id"])
+                 if m.get("chat_turn_id") == turn_id and m["content"] == "殿上诸人各陈所见。")
+    assert reply["role"] == "scene"
+    assert reply["speaker"] == ""
+    assert reply["highlights"] == []
+
+
 # ── AC1/2/5 开夜→宣人→收夜 ──────────────────────────────────────────
 
 
