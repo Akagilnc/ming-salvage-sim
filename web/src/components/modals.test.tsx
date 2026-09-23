@@ -1135,10 +1135,8 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       configurable: true, value: () => ({ offsetNode: storyNode, offset: parts[0].length }),
     });
     const oldGetClientRects = Range.prototype.getClientRects;
-    let restoredSegment: Element | null = null;
     Range.prototype.getClientRects = function () {
       const segment = this.startContainer.parentElement?.closest(".turn-segment");
-      if (turn?.querySelectorAll(".turn-segment").length !== 1) restoredSegment = segment ?? null;
       const top = !segment || turn?.querySelectorAll(".turn-segment").length === 1 ? 50
         : segment === turn?.querySelectorAll(".turn-segment")[1] ? 150 : 110;
       return [{ top } as DOMRect] as unknown as DOMRectList;
@@ -1149,7 +1147,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     expect(turn?.querySelectorAll('.turn-segment')).toHaveLength(translated.length - 1);
-    expect(restoredSegment).toBe(turn?.querySelectorAll(".turn-segment")[1]);
+    expect(stage.scrollTop).toBe(200);
     Range.prototype.getClientRects = oldGetClientRects;
     Reflect.deleteProperty(document, "caretPositionFromPoint");
     expect(document.querySelectorAll(`[data-audience-turn-id="${turnId}"]`)).toHaveLength(1);
