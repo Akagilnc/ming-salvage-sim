@@ -415,25 +415,26 @@ def schedule_audience_turn_translation(
     # 有未完成前驱时只登记占位 Future，前驱终态后再 submit 实活；无前驱则直接提交。
     # 读前驱 + 登记同持非重入锁；done callback 一律锁外挂（已完成 Future 同步回调会死锁）。
     try:
-        with _night_inflight_guard:
-            if ctid > 0 and hasattr(db, "mark_story_extraction_pending"):
-                # 标 pending 与 Future 登记同一临界段：投影不能见到无任务的待补钮。
-                with _translation_write_cm(write_gate):
+        # 与撤回路径同锁序：先会话写闸，后 Future 账锁，避免互等。
+        with _translation_write_cm(write_gate):
+            with _night_inflight_guard:
+                if ctid > 0 and hasattr(db, "mark_story_extraction_pending"):
+                    # 标 pending 与 Future 登记同一临界段：投影不能见到无任务的待补钮。
                     db.mark_story_extraction_pending(ctid)
-            pred = _night_tail.get(night_key)
-            # Future 终态先于 cleanup callback 可见；此窗口内的 tail 已不是
-            # 在飞前驱，新一轮不得继承它的旧失败。
-            if pred is not None and pred.done():
-                pred = None
-            if pred is None:
-                fut: Future = _executor.submit(_run_job)
-                chain_pred: Optional[Future] = None
-            else:
-                fut = Future()
-                chain_pred = pred
-            _night_tail[night_key] = fut
-            if ctid > 0:
-                _turn_future[(id(write_queue), ctid)] = fut
+                pred = _night_tail.get(night_key)
+                # Future 终态先于 cleanup callback 可见；此窗口内的 tail 已不是
+                # 在飞前驱，新一轮不得继承它的旧失败。
+                if pred is not None and pred.done():
+                    pred = None
+                if pred is None:
+                    fut: Future = _executor.submit(_run_job)
+                    chain_pred: Optional[Future] = None
+                else:
+                    fut = Future()
+                    chain_pred = pred
+                _night_tail[night_key] = fut
+                if ctid > 0:
+                    _turn_future[(id(write_queue), ctid)] = fut
     except Exception:
         write_queue.complete(ticket)
         raise
