@@ -11,6 +11,7 @@ import type {
   Minister,
   SecretOrder,
   Suggestion,
+  RetryReadFailure,
   TranslationRetry,
 } from "../types";
 
@@ -40,6 +41,7 @@ export function ChatModal({
   secretOrders,
   replyRetries = [],
   translationRetries = [],
+  retryReadFailure = null,
   onInput,
   onIntent,
   onSend,
@@ -81,6 +83,7 @@ export function ChatModal({
   /** #505：系统层回话重试（崩溃后问话保留）。 */
   replyRetries?: { chat_turn_id: number; question: string; error_pack_path?: string; recovery_phase?: "after_reply" | "court_break" }[];
   translationRetries?: TranslationRetry[];
+  retryReadFailure?: RetryReadFailure | null;
   onInput: (value: string) => void;
   onIntent?: (intent: "secret_order" | undefined) => void;
   onSend: (ministerName: string, text?: string) => void;
@@ -353,21 +356,29 @@ export function ChatModal({
     if (!onRetryReply) continue;
     turnNotices.set(retry.chat_turn_id, (
       <div className="chat-system-note danger chat-failure-note" role="alert" data-testid={`reply-retry-${retry.chat_turn_id}`}>
-        <span>{retry.recovery_phase ? "回话已保存，后续处理失败" : `问话未得回话（「${retry.question}」）`}。{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
+        <span>{retryReadFailure?.kind === "reply" && retryReadFailure.chatTurnId === retry.chat_turn_id
+          ? "召对记录读取失败，请重试。"
+          : <>{retry.recovery_phase ? "回话已保存，后续处理失败" : `问话未得回话（「${retry.question}」）`}。{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</>}</span>
         <button type="button" onClick={() => onRetryReply(scrollMode === "audience" ? AUDIENCE_SCENE_SPEAKER : minister.name, retry.chat_turn_id)} disabled={!!busy}>
           重试
         </button>
       </div>
     ));
   }
-  for (const retry of scrollMode === "audience" && effectiveScrollState.kind === "night"
-    ? effectiveScrollState.translationRetries : translationRetries) {
+  const visibleTranslationRetries: Pick<TranslationRetry, "chat_turn_id" | "retryable" | "error_pack_path">[] = scrollMode === "audience" && effectiveScrollState.kind === "night"
+    ? [...effectiveScrollState.translationRetries] : [...translationRetries];
+  if (retryReadFailure?.kind === "translation" && !visibleTranslationRetries.some((retry) => retry.chat_turn_id === retryReadFailure.chatTurnId)) {
+    visibleTranslationRetries.push({ chat_turn_id: retryReadFailure.chatTurnId, retryable: true });
+  }
+  for (const retry of visibleTranslationRetries) {
     if (!retry.retryable || !onRetryTranslation) continue;
     turnNotices.set(retry.chat_turn_id, (
       <React.Fragment key={`translation-${retry.chat_turn_id}`}>
         {turnNotices.get(retry.chat_turn_id)}
         <div className="chat-system-note danger chat-failure-note" role="alert" data-testid={`translation-retry-${retry.chat_turn_id}`}>
-          <span>本轮记录未能整理。{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
+          <span>{retryReadFailure?.kind === "translation" && retryReadFailure.chatTurnId === retry.chat_turn_id
+            ? "召对记录读取失败，请重试。"
+            : <>本轮记录未能整理。{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</>}</span>
           <button type="button" onClick={() => onRetryTranslation(retry.chat_turn_id)} disabled={!!busy}>
             重试
           </button>

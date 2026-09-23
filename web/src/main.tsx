@@ -150,6 +150,7 @@ export function App() {
     chatNotice,
     replyRetries,
     translationRetries,
+    retryReadFailure,
     canUndoLastChat,
     composerHint,
     setComposerHint,
@@ -731,6 +732,7 @@ export function App() {
             secretOrders={secretOrders.filter((o) => o.status === "active")}
             replyRetries={replyRetries}
             translationRetries={translationRetries}
+            retryReadFailure={retryReadFailure}
             onInput={setInput}
             onIntent={setComposerIntent}
             onSend={sendChat}

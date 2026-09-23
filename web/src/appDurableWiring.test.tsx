@@ -623,6 +623,76 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await tick();
   });
 
+  it("#1853 重试后的记录连续读失败在原轮告知，恢复不重复已成功的 POST", async () => {
+    const minister = { name: "郭允厚", office: "户部尚书", office_type: "户部", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] };
+    let historyReads = 0;
+    let retryPosts = 0;
+    let replyPosts = 0;
+    let translated = false;
+    let replied = false;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url), "http://t.local").pathname;
+      if (path.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (path.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (path.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (path.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister]));
+      if (path.endsWith("/api/audience/scroll")) return jsonResp({
+        night_id: 1, translation_retries: translated ? [] : [{ chat_turn_id: 8, retryable: true }],
+        messages: [
+          { role: "user", speaker: "朕", content: "拟旨赈济", chat_turn_id: 7, beat: "dialogue", highlights: [], container: {} },
+          { role: "scene", speaker: "郭允厚", content: "臣请核实。", chat_turn_id: 8, beat: "dialogue", highlights: [], container: {} },
+        ],
+      });
+      if (path.endsWith("/api/audience/chat") && init?.method !== "POST") {
+        historyReads += 1;
+        if ([2, 3, 5].includes(historyReads)) return new Response(JSON.stringify({ detail: "history unavailable" }), { status: 500 });
+        return jsonResp({ minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1,
+          reply_retries: replied ? [] : [{ chat_turn_id: 7, question: "拟旨赈济" }],
+          translation_retries: translated ? [] : [{ chat_turn_id: 8, retryable: true }] });
+      }
+      if (path.endsWith("/api/audience/translation/retry") && init?.method === "POST") {
+        retryPosts += 1;
+        translated = true;
+        return jsonResp({ status: "completed", retryable: false });
+      }
+      if (path.endsWith("/api/audience/reply/retry") && init?.method === "POST") {
+        replyPosts += 1;
+        if (replyPosts === 1) return new Response(JSON.stringify({ detail: "reply unavailable" }), { status: 500 });
+        replied = true;
+        return jsonResp({ history: [], directives: [], suggestions: [], can_undo_last_chat: false });
+      }
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { trackRoot(host).render(<App />); });
+    await tick();
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await tick();
+    await click(host.querySelector(".court-drawer.open .primary-action"));
+    const notice = () => host.querySelector('[data-testid="translation-retry-8"]');
+    await act(async () => { await vi.waitFor(() => expect(notice()).not.toBeNull()); });
+    await click(notice()?.querySelector("button"));
+    await act(async () => { await vi.waitFor(() => expect(historyReads).toBe(3)); });
+    expect(notice()?.closest('[data-audience-turn-id="8"]')).not.toBeNull();
+    expect(notice()?.textContent).toContain("读取失败");
+    expect(notice()?.querySelector("button")?.disabled).toBe(false);
+    expect(host.querySelectorAll('[data-testid="chat-stage"] > [role="alert"]')).toHaveLength(0);
+    await click(notice()?.querySelector("button"));
+    await act(async () => { await vi.waitFor(() => expect(notice()).toBeNull()); });
+    expect(retryPosts).toBe(1);
+
+    const replyNotice = () => host.querySelector('[data-testid="reply-retry-7"]');
+    await click(replyNotice()?.querySelector("button"));
+    await act(async () => { await vi.waitFor(() => expect(historyReads).toBe(5)); });
+    expect(replyNotice()?.closest('[data-audience-turn-id="7"]')).not.toBeNull();
+    expect(replyNotice()?.textContent).toContain("读取失败");
+    expect(replyNotice()?.querySelector("button")?.disabled).toBe(false);
+    expect(host.querySelectorAll('[data-testid="chat-stage"] > [role="alert"]')).toHaveLength(0);
+    await click(replyNotice()?.querySelector("button"));
+    await act(async () => { await vi.waitFor(() => expect(replyNotice()).toBeNull()); });
+  });
+
 
 
 

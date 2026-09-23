@@ -9,6 +9,7 @@ import type {
   Minister,
   ModalName,
   ReplyRetry,
+  RetryReadFailure,
   SecretOrder,
   ServerChatMessage,
   Suggestion,
@@ -75,6 +76,7 @@ export function useChatActions({
   const [chatNotice, setChatNotice] = React.useState("");
   const [replyRetries, setReplyRetries] = React.useState<ReplyRetry[]>([]);
   const [translationRetries, setTranslationRetries] = React.useState<TranslationRetry[]>([]);
+  const [retryReadFailure, setRetryReadFailure] = React.useState<RetryReadFailure | null>(null);
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
@@ -106,6 +108,7 @@ export function useChatActions({
     // #505：崩溃遗留的中断轮 → 系统层重试入口。
     setReplyRetries(data.reply_retries ?? []);
     setTranslationRetries(data.translation_retries ?? []);
+    setRetryReadFailure(null);
     return data;
   }, [loadHistoryProjection, selectedMinisterRef]);
 
@@ -122,6 +125,7 @@ export function useChatActions({
     resetPanel();
     setSuggestions([]);
     setCanUndoLastChat(false);
+    setRetryReadFailure(null);
     setComposerHint("");
     setComposerIntent(undefined);
     loadMinisterChat(selectedMinister)
@@ -341,6 +345,7 @@ export function useChatActions({
     setBusy(retry.recovery_phase ? "恢复本轮后续处理" : "重新生成回话");
     setError("");
     setChatNotice("");
+    setRetryReadFailure(null);
     try {
       const data = await api<ChatResponse>(audienceRetryPath(targetMinisterName), {
         method: "POST",
@@ -366,6 +371,9 @@ export function useChatActions({
         await loadMinisterChat(initiatingPanelName);
       } catch (reloadError) {
         console.error("Failed to reload audience after reply retry", reloadError);
+        if (selectedMinisterRef.current === initiatingPanelName) {
+          setRetryReadFailure({ kind: "reply", chatTurnId, postSucceeded: false });
+        }
       }
       invalidateAudienceScroll();
     } finally {
@@ -378,11 +386,18 @@ export function useChatActions({
     const ministerName = selectedMinisterRef.current;
     setBusy("重试整理记录");
     setError("");
+    const alreadyPosted = retryReadFailure?.kind === "translation"
+      && retryReadFailure.chatTurnId === chatTurnId && retryReadFailure.postSucceeded;
+    setRetryReadFailure(null);
+    let postSucceeded = alreadyPosted;
     try {
-      await api("/api/audience/translation/retry", {
-        method: "POST",
-        body: JSON.stringify({ chat_turn_id: chatTurnId }),
-      });
+      if (!alreadyPosted) {
+        await api("/api/audience/translation/retry", {
+          method: "POST",
+          body: JSON.stringify({ chat_turn_id: chatTurnId }),
+        });
+        postSucceeded = true;
+      }
       await loadMinisterChat(ministerName);
       invalidateAudienceScroll();
     } catch {
@@ -390,6 +405,9 @@ export function useChatActions({
         await loadMinisterChat(ministerName);
       } catch (reloadError) {
         console.error("Failed to reload audience after translation retry", reloadError);
+        if (selectedMinisterRef.current === ministerName) {
+          setRetryReadFailure({ kind: "translation", chatTurnId, postSucceeded });
+        }
       }
       invalidateAudienceScroll();
     } finally {
@@ -402,6 +420,7 @@ export function useChatActions({
     chatNotice,
     replyRetries,
     translationRetries,
+    retryReadFailure,
     canUndoLastChat,
     composerHint,
     setComposerHint,
