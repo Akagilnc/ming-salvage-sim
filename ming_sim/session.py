@@ -1789,6 +1789,7 @@ class GameSession:
         self, message: str, *, chat_turn_id: int = 0,
         stream_emit: Any = None,
         minister_name: str = "",
+        on_protagonist_changed: Any = None,
     ) -> ChatTurnResult:
         """#1836 T1 / #1837 C1a / #1842 T2：一夜一场入口——一个场景 LLM 演整场。
 
@@ -1921,6 +1922,8 @@ class GameSession:
                             and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
                         ):
                             self.db.conn.commit()
+                    if on_protagonist_changed is not None:
+                        on_protagonist_changed()
 
         # 材料目录：在场诸人各一份；开场最小集 + 只读工具。
         prepared = prepare_scene_materials(self.db, self.state)

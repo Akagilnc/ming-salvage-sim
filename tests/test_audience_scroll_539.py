@@ -49,6 +49,30 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(gam
     assert int(persisted["turn"]) == int(state.turn)
 
 
+def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game, monkeypatch):
+    import json
+    import web_app
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    db, state, content = game
+    runtime = _web_game(db, state, content, _FakeAgent(), monkeypatch)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    client = TestClient(web_app.app)
+
+    response = client.post(
+        "/api/ministers/%E6%B8%A9%E4%BD%93%E4%BB%81/chat/stream",
+        json={"message": "宣王绍徽"},
+    )
+    events = [
+        (block.splitlines()[0].removeprefix("event: "), json.loads(block.splitlines()[1].removeprefix("data: ")))
+        for block in response.text.strip().split("\n\n")
+    ]
+    kinds = [kind for kind, _ in events]
+    assert response.status_code == 200
+    assert kinds.index("accepted") < kinds.index("protagonist_changed") < kinds.index("done")
+    assert client.get("/api/audience/scroll").json()["protagonist"] == "王绍徽"
+
+
 def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     import web_app
 
@@ -66,9 +90,48 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     assert live["night_id"] == closed["night_id"] == night_id
     assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
     assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
-    assert set(live) == set(closed) == {"night_id", "status", "messages"}
+    assert set(live) == set(closed) == {"night_id", "status", "messages", "protagonist", "roster", "translation_pending"}
     assert live["status"] == "open"
     assert closed["status"] == "closed"
+
+
+def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch):
+    import web_app
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    an.summon_enter(db, night_id, "王绍徽")
+    an.summon_enter(db, night_id, "毕自严")
+    an.set_night_protagonist(db, night_id, "王绍徽")
+    an.dismiss_from_audience(db, "王绍徽", night_id=night_id)
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+
+    assert payload["protagonist"] == "王绍徽"
+    assert payload["roster"] == [
+        {"name": "王承恩", "present": True},
+        {"name": "王绍徽", "present": False},
+        {"name": "毕自严", "present": True},
+    ]
+
+
+def test_scroll_exposes_translation_pending_until_late_declaration_lands(game, monkeypatch):
+    import web_app
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    turn, _ = append_night_chat(db, state, night_id, "王绍徽", "请奏", "臣在", 20)
+    db.mark_story_extraction_pending(turn)
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    client = TestClient(web_app.app)
+
+    assert client.get("/api/audience/scroll").json()["translation_pending"] is True
+    apply_audience_round_translation(db, state, {"protagonist": {"person_name": "王绍徽"}}, night_id=night_id, chat_turn_id=turn)
+    settled = client.get("/api/audience/scroll").json()
+    assert settled["translation_pending"] is False
+    assert settled["protagonist"] == "王绍徽"
 
 
 def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats(game, monkeypatch):

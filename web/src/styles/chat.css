@@ -28,9 +28,29 @@
 
 .audience-roster button {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   text-align: left;
+}
+
+.audience-roster button > span {
+  display: flex;
+  flex: 1;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.audience-roster-avatar {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.audience-roster button[data-presence="departed"] {
+  opacity: 0.58;
 }
 
 .audience-roster small {

@@ -2580,6 +2580,23 @@ def persons_present_tonight(db: Any, night_id: int) -> set[str]:
     return present_names_at(db, int(night_id))
 
 
+def presence_roster(db: Any, night_id: int) -> List[Dict[str, Any]]:
+    """Project everyone who entered this night, in first-entry order, with current presence."""
+    present: set[str] = set()
+    ordered: List[str] = []
+    seen: set[str] = set()
+    for entry in list_ledger(db, int(night_id)):
+        delta = _presence_delta(entry)
+        names = [str(name) for name in entry.get("person_names") or []]
+        if delta == PRESENCE_ENTER:
+            for name in names:
+                if name not in seen:
+                    seen.add(name)
+                    ordered.append(name)
+        _apply_presence(present, entry)
+    return [{"name": name, "present": name in present} for name in ordered]
+
+
 def ensure_summon_enter(
     db: Any,
     night_id: int,

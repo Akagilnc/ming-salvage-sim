@@ -66,7 +66,7 @@ function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = fals
     hookRef.current = hook;
     return (
       <ChatModal
-        minister={MINISTER} ministers={[]} portraitPrefix="minister_" scrollMode={scrollMode}
+        minister={MINISTER} ministers={[MINISTER]} portraitPrefix="minister_" scrollMode={scrollMode}
         currentCampaignId={hook.currentCampaignId}
         currentNightId={hook.currentNightId}
         undoneChatIdentity={null}
@@ -103,7 +103,7 @@ const noCbs: SendChatCallbacks = { onDone: () => {}, onLeave: () => {}, onError:
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () => {
-  it("只在 SSE end 后失效并重读公共卷轴的新落账 scene", async () => {
+  it("宣召落账先于回话重读主角，end 后仍重读尾随场景", async () => {
     let scrollCalls = 0;
     let resolveEnd!: () => void;
     let ended = false;
@@ -114,6 +114,8 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
         scrollCalls += 1;
         return jsonResp({
           night_id: 24,
+          protagonist: "温体仁",
+          roster: [{ name: "温体仁", present: true }],
           messages: !ended ? [] : [
             { role: "scene", speaker: "", content: "新落账场景", chat_turn_id: 8 },
             { role: "minister", speaker: "温体仁", content: "臣遵旨。", beat: "dialogue", chat_turn_id: 8 },
@@ -123,10 +125,10 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
       return gatedSse(
         [
           { event: "accepted", data: { campaign_id: "c1", night_id: 24, chat_turn_id: 8 } },
-          { event: "done", data: { history: [], suggestions: [], directives: [] } },
+          { event: "protagonist_changed", data: {} },
         ],
         endGate,
-        [{ event: "end", data: {} }],
+        [{ event: "done", data: { history: [], suggestions: [], directives: [] } }, { event: "end", data: {} }],
       );
     }));
     const { hookRef, rows } = mount("audience", true);
@@ -136,6 +138,8 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     let sending!: Promise<void>;
     act(() => { sending = hookRef.current!.sendChat("温体仁", "请奏", noCbs); });
     await tick();
+    expect(scrollCalls).toBeGreaterThan(1);
+    expect(document.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_温体仁.png");
     const callsBeforeEnd = scrollCalls;
     releaseEnd();
     await act(async () => { await sending; });
@@ -152,7 +156,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
         scrollCalls += 1;
         return jsonResp(scrollCalls === 1 ? { night_id: 0, messages: [] } : {
           night_id: 24,
-          messages: [
+          protagonist: "", roster: [], translation_pending: false, messages: [
             { role: "user", speaker: "圣上", content: "失败问话", chat_turn_id: 8, status: "generating" },
             { role: "user", speaker: "圣上", content: "保留问话", chat_turn_id: 7 },
             { role: "minister", speaker: "温体仁", content: "保留答复", chat_turn_id: 7 },
@@ -178,7 +182,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
   it("accepted 后普通流中断会移除未持久化的半段回话", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (String(url).includes("/api/audience/scroll")) return jsonResp({ night_id: 24, messages: [] });
+      if (String(url).includes("/api/audience/scroll")) return jsonResp({ night_id: 24, protagonist: "", roster: [], translation_pending: false, messages: [] });
       return sse([
         { event: "accepted", data: { campaign_id: "c1", night_id: 24, chat_turn_id: 8 } },
         { event: "delta", data: { content: "未完成回话" } },
@@ -199,7 +203,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
       call += 1;
       if (call === 1 && String(url).includes("/api/audience/scroll")) return jsonResp({
         night_id: 23,
-        messages: [{ role: "minister", speaker: "洪承畴", content: "旧夜他臣", chat_turn_id: 7 }],
+        protagonist: "", roster: [], translation_pending: false, messages: [{ role: "minister", speaker: "洪承畴", content: "旧夜他臣", chat_turn_id: 7 }],
       });
       return sse([
         { event: "accepted", data: { night_id: 24 } },
