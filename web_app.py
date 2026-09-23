@@ -2791,6 +2791,7 @@ class WebGame:
         emit_delta,
         write_gate: Optional[threading.Lock] = None,
         admitted_ticket: Optional[WriteTicket] = None,
+        on_protagonist_changed=None,
     ) -> Dict[str, Any]:
         """#1842：流式殿上入口——scene_chat + transport 流式，保 SSE/重试/失败路径。
 
@@ -2809,6 +2810,7 @@ class WebGame:
             chat_turn_id=int(chat_turn_id or 0),
             stream_emit=_emit,
             minister_name=str(minister_name or ""),
+            on_protagonist_changed=on_protagonist_changed,
         )
         answer = str(getattr(result, "answer", "") or "")
         # 非流式 agent 回整段时 transport 可能未分片 emit——补一次 delta 保 SSE 契约。
@@ -3991,6 +3993,7 @@ class WebGame:
                             accepted_turn, emit_delta,
                             write_gate=write_gate,
                             admitted_ticket=pending_ticket,
+                            on_protagonist_changed=lambda: ev_queue.put({"type": "protagonist_changed"}),
                         )
 
                     answer = str((payload or {}).get("answer") or "")
@@ -6618,6 +6621,8 @@ def _chat_stream_response(minister_name: str, request: ChatRequest) -> Streaming
                     "night_id": item.get("night_id", 0),
                     "chat_turn_id": item.get("chat_turn_id", 0),
                 })
+            elif item_type == "protagonist_changed":
+                yield sse_event("protagonist_changed", {})
             elif item_type == "delta":
                 delta_payload: Dict[str, Any] = {"content": item.get("content", "")}
                 if item.get("replace"):

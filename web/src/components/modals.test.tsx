@@ -706,7 +706,7 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
     const retryReply = vi.fn();
     const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣", favorite: false };
     const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣", favorite: true };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], messages: [
       { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
       { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次召对" } },
       { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 1 },
@@ -1034,7 +1034,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   it("attributes the thinking row to the selected minister", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ night_id: 23, messages: [
+      json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], messages: [
         { role: "scene", speaker: "洪承畴", content: "入殿", beat: "entrance" },
       ] }),
     }));
@@ -1085,7 +1085,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
 
   it("uses roster clicks as summon commands without changing panels", async () => {
     const onSend = vi.fn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: nightScroll }) }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "许誉卿", roster: [{ name: "洪承畴", present: true }, { name: "许誉卿", present: true }], messages: nightScroll }) }));
     renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23, onSend });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     const summon = Array.from(document.querySelectorAll<HTMLButtonElement>(".audience-roster button"))
@@ -1095,23 +1095,43 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
   });
 
   it("renders the declared protagonist while keeping every entrant in the avatar roster", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
-      night_id: 23,
-      protagonist: "洪承畴",
-      roster: [
+    let updateNight!: (nightId: number) => void;
+    let protagonist = "";
+    let nightId = 23;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({
+      night_id: nightId,
+      protagonist,
+      roster: protagonist ? [
         { name: "洪承畴", present: true },
         { name: "许誉卿", present: false },
-      ],
+      ] : [],
       messages: nightScroll,
-    }) }));
-    const host = renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
+    }) })));
+    const host = renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23,
+      registerNightUpdate: (update) => { updateNight = update; } });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".chat-portrait-wrap img")).toBeNull();
+    expect(host.querySelectorAll(".audience-roster button")).toHaveLength(0);
+
+    protagonist = "洪承畴";
+    nightId = 24;
+    await act(async () => { updateNight(24); await Promise.resolve(); await Promise.resolve(); });
 
     expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
     expect(Array.from(host.querySelectorAll(".audience-roster img")).map((node) => node.getAttribute("src")))
       .toEqual(["/portraits/minister_hong.png", "/portraits/minister_xu.png"]);
     expect(host.querySelector('[data-roster-name="许誉卿"]')?.getAttribute("data-presence")).toBe("departed");
     expect(host.querySelectorAll(".minister-side > .chat-portrait-wrap")).toHaveLength(1);
+    act(() => { host.querySelector<HTMLImageElement>(".chat-portrait-wrap img")?.dispatchEvent(new Event("error")); });
+    expect(host.querySelector(".chat-portrait-wrap img")).toBeNull();
+    protagonist = "许誉卿";
+    nightId = 25;
+    await act(async () => { updateNight(25); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_xu.png");
+    protagonist = "名册之外";
+    nightId = 26;
+    await act(async () => { updateNight(26); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".chat-portrait-wrap img")).toBeNull();
   });
 
   it("keeps one turn container while a streamed reply becomes durable", async () => {

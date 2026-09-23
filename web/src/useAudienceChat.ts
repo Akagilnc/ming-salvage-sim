@@ -161,6 +161,7 @@ export function useAudienceChat(
                 setPendingIdentity(identity);
               }
             },
+            onProtagonistChanged: () => onScrollSettled?.(),
             onDone: (doneData) => {
               // 短暂请求态按 token 回收
               if (ownsEphemeral()) {

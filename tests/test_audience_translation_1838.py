@@ -212,10 +212,15 @@ def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
     sess = _scene_session(db, state, content, monkeypatch)
     t1 = _active_chat_turn(db, state, nid)
     # 真入口：scene_chat("宣王绍徽", chat_turn_id=t1) 当场先切并绑源轮
-    r_xuan = sess.scene_chat("宣王绍徽", chat_turn_id=t1)
+    cuts = []
+    r_xuan = sess.scene_chat(
+        "宣王绍徽", chat_turn_id=t1,
+        on_protagonist_changed=lambda: cuts.append(get_night_protagonist(db, nid)),
+    )
     persist_and_schedule_scene(sess, db, r_xuan)
     _drain_scene_owner(sess, db)
     assert get_night_protagonist(db, nid) == "王绍徽"
+    assert cuts == ["王绍徽"]
     assert db.conn.execute(
         "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
     ).fetchone()["protagonist_name"] == "王绍徽"

@@ -183,10 +183,10 @@ export function ChatModal({
   const currentMinister = scrollMode === "audience"
     ? (effectiveScrollState.kind === "night"
         ? ministers.find((candidate) => candidate.name === effectiveScrollState.protagonist)
-        : undefined) ?? minister
+        : undefined)
     : minister;
-  const roster = scrollMode === "audience" && effectiveScrollState.kind === "night" && effectiveScrollState.roster.length
-    ? effectiveScrollState.roster
+  const roster = scrollMode === "audience"
+    ? (effectiveScrollState.kind === "night" ? effectiveScrollState.roster : [])
     : ministers
         .filter((candidate) => !candidate.status || candidate.status === "active")
         .map((candidate) => ({ name: candidate.name, present: true }));
@@ -221,8 +221,9 @@ export function ChatModal({
       chat_turn_id: streamingTurn.chatTurnId,
     } as AudienceScrollMessage);
   }
-  const { primary: portraitPrimary, fallback: portraitFallback } = portraitSources(currentMinister, portraitPrefix);
-  const visibleSecretOrders = secretOrders.filter((order) => order.minister_name === currentMinister.name);
+  const { primary: portraitPrimary, fallback: portraitFallback } = currentMinister
+    ? portraitSources(currentMinister, portraitPrefix) : { primary: "", fallback: undefined };
+  const visibleSecretOrders = secretOrders.filter((order) => order.minister_name === currentMinister?.name);
   // Night-level audience_type lives on the raw scroll container — not the filtered lens.
   // Blank selected-minister windows must still show 召法.
   const audienceType = scrollMode === "audience" && effectiveScrollState.kind === "night"
@@ -320,7 +321,7 @@ export function ChatModal({
             })}
           </div>
         ) : null}
-        {scrollMode === "legacy" ? <div className="minister-profile">
+        {scrollMode === "legacy" && currentMinister ? <div className="minister-profile">
           <div>
             <h2>{currentMinister.name}</h2>
             <p>
@@ -334,9 +335,9 @@ export function ChatModal({
             <Star size={16} fill={currentMinister.favorite ? "currentColor" : "none"} />
           </button>
         </div> : null}
-        {scrollMode === "legacy" ? <p className="profile-copy">{currentMinister.summary}</p> : null}
+        {scrollMode === "legacy" && currentMinister ? <p className="profile-copy">{currentMinister.summary}</p> : null}
         <div className="chat-portrait-wrap">
-          <MinisterPortrait primary={portraitPrimary} fallback={portraitFallback} name={currentMinister.name} />
+          <MinisterPortrait key={portraitPrimary} primary={portraitPrimary} fallback={portraitFallback} name={currentMinister?.name ?? "殿上"} />
         </div>
         {scrollMode === "legacy" && visibleSecretOrders.length > 0 && (
           <div className="chat-secret-orders">
@@ -361,13 +362,13 @@ export function ChatModal({
           {!displayMessages.length && !busy && !streamingMinisterMessage && effectiveScrollState.kind !== "loading" && effectiveScrollState.kind !== "error" && (
             <div className="chat-empty-chrome" role="status">请陛下问话</div>
           )}
-          <ScrollMessages messages={displayMessages} ministerName={currentMinister.name} ministers={ministers} />
+          <ScrollMessages messages={displayMessages} ministerName={currentMinister?.name ?? ""} ministers={ministers} />
           {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
             <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
           )}
           {busy && !streamingMinisterMessage && (
             <div className="chat-message minister thinking">
-              <span>{currentMinister.name}</span>
+              <span>{currentMinister?.name ?? "殿上"}</span>
               <p><Loader2 size={14} />{portraitPrefix === "consort_" ? "思索中..." : "大臣思索中..."}{elapsedSeconds > 0 ? `（${elapsedSeconds}秒）` : ""}</p>
             </div>
           )}
@@ -376,7 +377,7 @@ export function ChatModal({
           {replyRetry && onRetryReply && (
             <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="reply-retry">
               <span>上回问话未得回话（「{replyRetry.question}」），可重新生成回话。</span>
-              <button type="button" onClick={() => onRetryReply(currentMinister.name)} disabled={!!busy}>
+              <button type="button" onClick={() => onRetryReply(currentMinister?.name ?? minister.name)} disabled={!!busy}>
                 重新生成回话
               </button>
             </div>
