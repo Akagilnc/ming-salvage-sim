@@ -23,7 +23,7 @@ from ming_sim.action_clusters import (
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.issues import apply_score_extraction
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 
 def _ctx(db, character, candidates, turn, *, message, reply):
@@ -1938,18 +1938,20 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
 
         def _translate(prompt, _cfg):
             text = str(prompt or "")
+            scene = offline_empty_audience_translate(prompt, _cfg)
             if "【本轮皇帝】准" in text:
                 rows = [
                     r for r in game.db.list_pending_actions(game.state.turn)
                     if r.get("kind") == "directive" and r.get("status") == "pending"
                 ]
                 if not rows:
-                    return {"commissions": [], "promises": []}
+                    return scene
                 return {
-                    "commissions": [],
+                    **scene,
                     "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],
                 }
             return {
+                **scene,
                 "commissions": [{
                     "text": "敕户部发太仓银十五万两协济关宁军前。",
                     "grant": {
@@ -1961,7 +1963,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
                         "target_id": "guanning",
                     },
                 }],
-                "promises": [],
             }
 
         stub_audience_translate(monkeypatch, _translate)

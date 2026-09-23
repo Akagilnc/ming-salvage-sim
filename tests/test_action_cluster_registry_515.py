@@ -37,7 +37,7 @@ from ming_sim.action_clusters import (
 )
 
 # 测试本地固定期望（#515 六类）；非生产常量——删 catalog 行仍红，未来新类不改此集。
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 _EXPECTED_MIGRATED_KINDS = frozenset({
     "none", "confirmation", "secret", "cultivate", "appointment", "draft",
@@ -1015,7 +1015,7 @@ def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
     agent = _SyncAgent(draft_text)
 
     def translate_fn(prompt, llm_config):
-        return {"commissions": [{"text": draft_text}], "promises": []}
+        return {**offline_empty_audience_translate(prompt, llm_config), "commissions": [{"text": draft_text}]}
 
     wg = _wire_web_game(db, state, content, agent, monkeypatch, translate_fn=translate_fn)
 
@@ -1054,8 +1054,8 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
     def translate_fn(prompt, llm_config):
         # 每轮各声明一条新交办（不改写既有行），使撤回第二轮只逆转第二轮产物。
         if "【本轮皇帝】把赈银改成五十万两" in prompt or "五十万两" in prompt and "改成" in prompt:
-            return {"commissions": [{"text": updated}], "promises": []}
-        return {"commissions": [{"text": original}], "promises": []}
+            return {**offline_empty_audience_translate(prompt, llm_config), "commissions": [{"text": updated}]}
+        return {**offline_empty_audience_translate(prompt, llm_config), "commissions": [{"text": original}]}
 
     wg = _wire_web_game(
         db, state, content, PhaseAgent(), monkeypatch, translate_fn=translate_fn,
@@ -1229,6 +1229,7 @@ def test_scene_chat_translation_can_stage_multiple_commissions(game, monkeypatch
 
     def translate_fn(prompt, llm_config):
         return {
+            **offline_empty_audience_translate(prompt, llm_config),
             "commissions": [
                 {"text": "着清核太仓出纳"},
                 {"text": "着陕西巡抚督办赈灾"},

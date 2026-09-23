@@ -1227,7 +1227,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
       trailing,
     ];
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => {
-      reads++;
+      if (reads++ === 1) throw new Error("temporary read failure");
       return {
         ok: true,
         json: async () => reads === 1
@@ -1263,6 +1263,9 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     stage.scrollTop = 100;
     act(() => stage.dispatchEvent(new Event("scroll", { bubbles: true })));
 
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(Array.from(turn?.querySelectorAll(".turn-segment p") ?? [], (node) => node.textContent).join("")).toBe(originalStory);
+    expect(stage.scrollTop).toBe(100);
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     expect(turn?.querySelectorAll('.turn-segment')).toHaveLength(translated.length - 1);
     expect(stage.scrollTop).toBe(200);

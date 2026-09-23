@@ -33,7 +33,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 # ── 矩阵常量 ───────────────────────────────────────────────────────────
 
@@ -224,7 +224,7 @@ def _wire_confirm_translate(game, confirm: _ConfirmStub, monkeypatch) -> None:
     """
 
     def translate_fn(prompt, llm_config):
-        del prompt, llm_config
+        scene = offline_empty_audience_translate(prompt, llm_config)
         confirmation, new_content = confirm.pop()
         pending = _db_pending_secret_new(game)
         if confirmation == "修改":
@@ -238,16 +238,16 @@ def _wire_confirm_translate(game, confirm: _ConfirmStub, monkeypatch) -> None:
                 )
             if pending:
                 game.db.conn.commit()
-            return {"commissions": [], "promises": []}
+            return scene
         if confirmation in {"应允", "拒绝"} and pending:
             return {
-                "commissions": [],
+                **scene,
                 "promises": [{
                     "action_id": int(pending[0]["id"]),
                     "decision": confirmation,
                 }],
             }
-        return {"commissions": [], "promises": []}
+        return scene
 
     stub_audience_translate(monkeypatch, translate_fn)
 

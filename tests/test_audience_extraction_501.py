@@ -429,6 +429,7 @@ def test_engine_close_night_drains_pending_success(game, monkeypatch):
         return {
             "scene_facts": [{
                 "body": "臣作保。",
+                "role": "minister",
                 "audibility": "殿上公开",
                 "person_names": [minister],
                 "tags": [],

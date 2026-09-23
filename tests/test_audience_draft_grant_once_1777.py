@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.test_army_pay_decree_1503 import _set_guanning_arrears
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 _EDICT = "着户部自国库拨银十五万两，专解关宁军前补发欠饷，不得加派于民。钦此。"
 _UTTERANCE = (
@@ -93,18 +93,20 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         # #1842：殿上 scene_chat 双桩——交办 grant+承办/期限 → pending；「准」→ promises。
         def _translate(prompt, _cfg):
             text = str(prompt or "")
+            scene = offline_empty_audience_translate(prompt, _cfg)
             if "【本轮皇帝】准" in text:
                 rows = [
                     r for r in game.db.list_pending_actions(game.state.turn)
                     if r.get("kind") == "directive" and r.get("status") == "pending"
                 ]
                 if not rows:
-                    return {"commissions": [], "promises": []}
+                    return scene
                 return {
-                    "commissions": [],
+                    **scene,
                     "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],
                 }
             return {
+                **scene,
                 "commissions": [{
                     "text": _UTTERANCE,
                     "grant": {
@@ -123,7 +125,6 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
                     }],
                     "due_turn": turn_before + 1,
                 }],
-                "promises": [],
             }
 
         stub_audience_translate(monkeypatch, _translate)
