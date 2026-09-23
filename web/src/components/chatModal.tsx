@@ -107,6 +107,7 @@ export function ChatModal({
       messages: AudienceScrollMessage[];
       protagonist: string;
       roster: AudienceRosterEntry[];
+      characters: Minister[];
       translationPending: boolean;
       refreshError: boolean;
     } | { kind: "error" }
@@ -150,6 +151,7 @@ export function ChatModal({
       messages: AudienceScrollMessage[];
       protagonist: string;
       roster: AudienceRosterEntry[];
+      characters?: Minister[];
       translation_pending: boolean;
     }>("/api/audience/scroll")
       .then((data) => {
@@ -160,6 +162,7 @@ export function ChatModal({
           messages: data.messages || [],
           protagonist: data.protagonist,
           roster: data.roster,
+          characters: data.characters || [],
           translationPending: data.translation_pending,
           refreshError: false,
         } : { kind: "none" });
@@ -180,11 +183,11 @@ export function ChatModal({
     if (scrollMode !== "audience" || scrollState.kind !== "night" || !scrollState.translationPending) return;
     let alive = true;
     const timer = setTimeout(() => {
-      api<{ night_id: number; messages: AudienceScrollMessage[]; protagonist: string; roster: AudienceRosterEntry[]; translation_pending: boolean }>("/api/audience/scroll")
+      api<{ night_id: number; messages: AudienceScrollMessage[]; protagonist: string; roster: AudienceRosterEntry[]; characters?: Minister[]; translation_pending: boolean }>("/api/audience/scroll")
         .then((data) => {
           if (alive && data.night_id === scrollState.nightId) setScrollState({
             kind: "night", nightId: data.night_id, messages: data.messages,
-            protagonist: data.protagonist, roster: data.roster,
+            protagonist: data.protagonist, roster: data.roster, characters: data.characters || [],
             translationPending: data.translation_pending, refreshError: false,
           });
         })
@@ -200,9 +203,11 @@ export function ChatModal({
   if (pendingUserMessage && !pendingAlreadyPersisted) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });
   }
+  const nightCharacters = effectiveScrollState.kind === "night" ? effectiveScrollState.characters : [];
+  const portraitCharacters = [...ministers, ...nightCharacters.filter((person) => !ministers.some((item) => item.name === person.name))];
   const currentMinister = scrollMode === "audience"
     ? (effectiveScrollState.kind === "night"
-        ? ministers.find((candidate) => candidate.name === effectiveScrollState.protagonist)
+        ? portraitCharacters.find((candidate) => candidate.name === effectiveScrollState.protagonist)
         : undefined)
     : minister;
   const roster = scrollMode === "audience"
@@ -331,7 +336,7 @@ export function ChatModal({
           <div className="audience-roster" aria-label="在殿花名册">
             <h2>乾清宫 · 夜</h2>
             {roster.map((entry) => {
-              const candidate = ministers.find((item) => item.name === entry.name);
+              const candidate = portraitCharacters.find((item) => item.name === entry.name);
               const portrait = candidate ? portraitSources(candidate, portraitPrefix) : { primary: "", fallback: undefined };
               return (
                 <button

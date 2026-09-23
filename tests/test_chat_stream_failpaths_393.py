@@ -114,7 +114,7 @@ def _base_runtime(db):
         registry=SimpleNamespace(get=lambda *_a, **_k: None),
     ))
 
-    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+    def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
         from ming_sim.session import ChatTurnResult, GameSession
         agent = None
         reg = getattr(sess, "registry", None)

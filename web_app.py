@@ -6423,12 +6423,17 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     night = get_night(game.db, night_id) if night_id else get_open_night(game.db)
     if night is None:
         return {"night_id": 0, "status": "", "messages": [], "protagonist": "", "roster": [], "translation_pending": False}
+    roster = presence_roster(game.db, int(night["id"]))
+    protagonist = str(night.get("protagonist_name") or "")
+    names = list(dict.fromkeys([entry["name"] for entry in roster] + ([protagonist] if protagonist else [])))
+    characters = getattr(getattr(game, "content", None), "characters", {})
     return {
         "night_id": int(night["id"]),
         "status": night["status"],
         "messages": read_night_scroll(game.db, int(night["id"])),
-        "protagonist": str(night.get("protagonist_name") or ""),
-        "roster": presence_roster(game.db, int(night["id"])),
+        "protagonist": protagonist,
+        "roster": roster,
+        "characters": [game.public_character(characters[name]) for name in names if name in characters],
         "translation_pending": bool(list_pending_translations(game.db, night_id=int(night["id"]))),
     }
 

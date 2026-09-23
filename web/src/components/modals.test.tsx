@@ -1074,6 +1074,19 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     { role: "attendant", speaker: "王承恩", content: "他神色凝重。", beat: "aside", chat_turn_id: 11, audibility: "御前低语", time: null, soft_boundary: false, highlights: [], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "召对" } },
   ];
 
+  it("shows portraits for declared people outside the court and talent lists", async () => {
+    const visitor = { ...MINISTER_MOCK, name: "夜访者", portrait_id: "portrait_guest" };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      night_id: 23, protagonist: visitor.name,
+      roster: [{ name: visitor.name, present: true }], characters: [visitor],
+      translation_pending: false, messages: [],
+    }) }));
+    const host = renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
+    expect(host.querySelector(".audience-roster img")?.getAttribute("src")).toBe("/portraits/minister_夜访者.png");
+  });
+
   it("shows the whole chronological night instead of a selected-minister window", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
     renderModal({ minister: xu, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });

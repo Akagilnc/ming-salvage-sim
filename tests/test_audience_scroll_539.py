@@ -56,6 +56,7 @@ def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game
 
     db, state, content = game
     runtime = _web_game(db, state, content, _FakeAgent(), monkeypatch)
+    runtime.favorites = set()
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     client = TestClient(web_app.app)
 
@@ -70,7 +71,9 @@ def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game
     kinds = [kind for kind, _ in events]
     assert response.status_code == 200
     assert kinds.index("accepted") < kinds.index("protagonist_changed") < kinds.index("done")
-    assert client.get("/api/audience/scroll").json()["protagonist"] == "王绍徽"
+    scroll = client.get("/api/audience/scroll").json()
+    assert scroll["protagonist"] == "王绍徽"
+    assert any(person["name"] == "王绍徽" and person["portrait_id"] == content.characters["王绍徽"].portrait_id for person in scroll["characters"])
 
 
 def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
@@ -90,7 +93,7 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     assert live["night_id"] == closed["night_id"] == night_id
     assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
     assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
-    assert set(live) == set(closed) == {"night_id", "status", "messages", "protagonist", "roster", "translation_pending"}
+    assert set(live) == set(closed) == {"night_id", "status", "messages", "protagonist", "roster", "characters", "translation_pending"}
     assert live["status"] == "open"
     assert closed["status"] == "closed"
 

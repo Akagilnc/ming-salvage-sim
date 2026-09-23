@@ -90,7 +90,7 @@ class _FakeSession(HallAdmissionSessionMixin):
     def pending_count(self):
         return 0
 
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
         # #1842：殿上流式入口走 scene_chat；轻壳驱动既有假 agent，不复活旧 chat 并行链。
         from ming_sim.session import ChatTurnResult
 
