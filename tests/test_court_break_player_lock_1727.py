@@ -203,8 +203,14 @@ def test_court_break_locks_player_writes_and_closes_night(web_game, monkeypatch)
     scroll = an.read_night_scroll(game.db, night_id)
     beats = _named_scene_beats(scroll)
     assert "exit" in beats and "divider" in beats and "closing" in beats, beats
-    # 告退轮仍在：undo 被拒，未抽空本轮（结构化：minister 对话气泡带 chat_turn_id）。
+    # 告退轮仍在：undo 被拒，玩家发话与中性戏文仍归同一轮。
+    user_turn_ids = {
+        int(m["chat_turn_id"]) for m in scroll
+        if m.get("role") == "user" and m.get("chat_turn_id")
+    }
     assert any(
-        m.get("role") == "minister" and int(m.get("chat_turn_id") or 0) > 0
+        m.get("role") != "user"
+        and int(m.get("chat_turn_id") or 0) in user_turn_ids
+        and m.get("beat") == "dialogue"
         for m in scroll
     ), scroll
