@@ -83,6 +83,7 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     client = TestClient(web_app.app)
     before = client.get("/api/audience/scroll").json()["messages"]
     assert [m["content"] for m in before if m.get("chat_turn_id") == turn_id][-1] == story
+    assert [(m["role"], m["speaker"], m["highlights"]) for m in before if m.get("chat_turn_id") == turn_id][-1] == ("scene", "", [])
     assert client.get("/api/audience/scroll").json()["translation_pending"] is True
 
     apply_audience_round_translation(db, state, {
@@ -136,7 +137,8 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     assert "杨嗣昌以身家作保。" not in contents
     # #1293a：抽取派生（含非对话复述的故事事实）不上 live 卷轴
     assert "帘外忽起雨声。" not in contents
-    assert {message["speaker"] for message in messages if message["role"] == "minister"} == {"杨嗣昌", "洪承畴"}
+    assert [(message["role"], message["speaker"], message["highlights"]) for message in messages
+            if message["content"] in {"臣请据实核账。", "边关尚稳。"}] == [("scene", "", []), ("scene", "", [])]
 
     allowed_message_fields = {
         "role", "speaker", "audibility", "time", "content",
@@ -171,9 +173,9 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     scroll = an.read_night_scroll(db, night_id)
 
     assert scroll[0]["container"] == {"time_of_day": "戌时", "location": "乾清宫", "audience_type": "召对"}
-    assert [(m["role"], m["speaker"], m["content"]) for m in scroll if m["role"] != "scene"] == [
+    assert [(m["role"], m["speaker"], m["content"]) for m in scroll if m.get("chat_turn_id")] == [
         ("user", "朕", "辽饷如何？"),
-        ("minister", "杨嗣昌", "臣请据实核账。"),
+        ("scene", "", "臣请据实核账。"),
     ]
     assert all({"role", "speaker", "audibility", "time", "soft_boundary", "beat", "highlights", "container"} <= set(m) for m in scroll)
     assert scroll[-1]["beat"] == "coda"
@@ -566,3 +568,75 @@ def test_657_s4_success_persist_shows_generator_body_only(game):
     scroll = read_night_scroll(db, int(sc["night_id"]))
     entrances = [m for m in scroll if m.get("beat") == "entrance"]
     assert [m.get("content") for m in entrances] == [gen_body]
+
+
+def test_real_chat_entry_delivers_late_segments_and_restores_them(game, monkeypatch):
+    """One persisted reply flows through background translation and the public scroll."""
+    import threading
+    import web_app
+    from tests.conftest import stub_audience_translate
+    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for_pending_writes_to_drain
+
+    db, state, content = game
+    story = "王绍徽领旨。毕自严附议。王承恩低语。殿内烛影摇曳。"
+    entered = threading.Event()
+    release = threading.Event()
+
+    def translate(_prompt, _config):
+        entered.set()
+        release.wait()
+        return {"scene_facts": [
+            {"body": "王绍徽领旨。", "role": "minister", "audibility": "殿上公开", "person_names": ["王绍徽"]},
+            {"body": "毕自严附议。", "role": "minister", "audibility": "殿上公开", "person_names": ["毕自严"]},
+            {"body": "王承恩低语。", "role": "attendant", "audibility": "御前低语", "person_names": ["王承恩"]},
+            {"body": "殿内烛影摇曳。", "role": "scene", "audibility": "殿上公开", "person_names": []},
+        ]}
+
+    runtime = _web_game(db, state, content, _FakeAgent(chunks=[story]), monkeypatch)
+    stub_audience_translate(monkeypatch, translate)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    client = TestClient(web_app.app)
+    try:
+        events = list(runtime.chat_stream("王绍徽", "边饷何解？"))
+        assert any(event.get("type") == "done" for event in events), events
+        assert entered.wait(2)
+        neutral = client.get("/api/audience/scroll").json()
+        night_id = neutral["night_id"]
+        turn_id = next(message["chat_turn_id"] for message in neutral["messages"] if message["content"] == story)
+        assert [(m["role"], m["speaker"], m["content"], m["highlights"])
+                for m in neutral["messages"] if m.get("chat_turn_id") == turn_id][-1] == ("scene", "", story, [])
+        assert neutral["translation_pending"] is True
+    finally:
+        release.set()
+    _wait_for_pending_writes_to_drain(runtime)
+    translated = client.get("/api/audience/scroll").json()
+    segments = [m for m in translated["messages"] if m.get("chat_turn_id") == turn_id and m["role"] != "user"]
+    assert [(m["role"], m["speaker"], m["audibility"]) for m in segments] == [
+        ("minister", "王绍徽", "殿上公开"), ("minister", "毕自严", "殿上公开"),
+        ("attendant", "王承恩", "御前低语"), ("scene", "", "殿上公开"),
+    ]
+    assert "".join(m["content"] for m in segments) == story
+    assert translated["translation_pending"] is False
+    assert [m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"]
+            if m.get("chat_turn_id") == turn_id and m["role"] != "user"] == segments
+
+
+def test_mismatched_background_segments_remain_pending_and_neutral(game, monkeypatch):
+    import web_app
+    from tests.conftest import stub_audience_translate
+    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for_pending_writes_to_drain
+
+    db, state, content = game
+    story = "王绍徽领旨。毕自严附议。"
+    runtime = _web_game(db, state, content, _FakeAgent(chunks=[story]), monkeypatch)
+    stub_audience_translate(monkeypatch, lambda _prompt, _config: {"scene_facts": [
+        {"body": "王绍徽领旨。", "role": "minister", "audibility": "殿上公开", "person_names": ["王绍徽"]},
+    ]})
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    assert any(event.get("type") == "done" for event in runtime.chat_stream("王绍徽", "边饷何解？"))
+    _wait_for_pending_writes_to_drain(runtime)
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+    assert payload["translation_pending"] is True
+    assert [(m["role"], m["speaker"], m["content"]) for m in payload["messages"] if m["content"] == story] == [
+        ("scene", "", story),
+    ]

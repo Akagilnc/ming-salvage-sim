@@ -107,6 +107,10 @@ def apply_audience_round_translation(
             chat_turn_id=ctid,
             source=source,
         )
+        # 分段若有一项拒收，整轮不可标 done；atomic 回滚部分落账，后台保 pending。
+        if ctid > 0 and result.scene_facts.rejected:
+            from ming_sim.audience_translate import AudienceTranslateError
+            raise AudienceTranslateError("说话人分段声明有拒收项")
         # 主角持久化 + 抽取/判官水位：chat_turns 不在前像表，undo 走重投影。
         _bind_round_after_dispatch(db, nid, ctid, result)
     return result
@@ -320,6 +324,16 @@ def run_turn_translation_job(
             llm_config=llm_config,
             translate_fn=translate_fn,
         )
+        # 分段是整轮回话的结构化覆盖声明；不完整或改字不得入账并置 done。
+        # 失败走既有 pending/retry 路径，原戏文继续中性显示。
+        segments = declaration.get("scene_facts")
+        if (
+            not isinstance(segments, list) or not segments
+            or any(not isinstance(item, Mapping) or item.get("role") not in {"user", "minister", "attendant", "scene"}
+                   or not isinstance(item.get("body"), str) for item in segments)
+            or "".join(item["body"] for item in segments) != reply
+        ):
+            raise AudienceTranslateError("说话人分段未逐字覆盖源轮回话")
         with _gate_cm():
             # 落账临界区复查源轮仍存活（ADR 0038：后台写入前须校验目标轮仍存活）。
             if ctid > 0 and hasattr(db, "conn"):

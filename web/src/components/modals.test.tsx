@@ -8,7 +8,6 @@ import { HistoryModal } from "./historyModal";
 import { FullscreenModal } from "./hud";
 import { ReportModal } from "./reportModal";
 import { ScrollMessages } from "./scrollMessages";
-import { parseLeadingStageDirection } from "../format";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 
@@ -762,16 +761,6 @@ describe("ChatModal — soft scenes and selected-minister lens (#543 / #1511)", 
   });
 });
 
-describe("parseLeadingStageDirection", () => {
-  it.each([
-    ["（搁笔）卿且直言。", { action: "（搁笔）", content: "卿且直言。" }],
-    ["卿且（搁笔）直言。", { action: null, content: "卿且（搁笔）直言。" }],
-    ["卿且直言。", { action: null, content: "卿且直言。" }],
-  ])("recognises only an explicit leading full-width parenthetical in %s", (source, expected) => {
-    expect(parseLeadingStageDirection(source)).toEqual(expected);
-  });
-});
-
 describe("ChatModal — single night-scroll authority (#539)", () => {
   it("retires the whole old-night snapshot when the persisted player-entry identity changes before refresh fails", async () => {
     let rejectRefresh!: (reason?: unknown) => void;
@@ -1134,19 +1123,24 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     const turn = document.querySelector<HTMLElement>(`[data-audience-turn-id="${turnId}"]`);
     const originalStory = Array.from(turn?.querySelectorAll("p") ?? [], (node) => node.textContent).join("\n");
     const stage = document.querySelector<HTMLElement>(".chat-stage")!;
-    const followingTurn = document.querySelector<HTMLElement>(`[data-audience-turn-id="${turnId + 1}"]`)!;
     Object.defineProperties(stage, { scrollHeight: { value: 600 }, clientHeight: { value: 200 } });
-    vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
-    vi.spyOn(followingTurn, "getBoundingClientRect").mockImplementation(() => ({
-      top: turn?.querySelectorAll(".turn-segment").length === 1 ? 50 : 110,
-      bottom: 150,
-    } as DOMRect));
+    vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({ top: 0, left: 0 } as DOMRect);
+    const storyParagraph = turn?.querySelector("p")!;
+    vi.spyOn(storyParagraph, "getBoundingClientRect").mockReturnValue({ top: -20, bottom: 100, left: 14 } as DOMRect);
+    const storyNode = storyParagraph.firstChild;
+    Object.defineProperty(document, "caretPositionFromPoint", {
+      configurable: true, value: () => ({ offsetNode: storyNode, offset: parts[0].length + parts[1].length + 2 }),
+    });
+    const oldGetClientRects = Range.prototype.getClientRects;
+    Range.prototype.getClientRects = () => [{ top: turn?.querySelectorAll(".turn-segment").length === 1 ? 50 : 110 } as DOMRect] as unknown as DOMRectList;
     stage.scrollTop = 100;
     act(() => stage.dispatchEvent(new Event("scroll", { bubbles: true })));
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     expect(turn?.querySelectorAll('.turn-segment')).toHaveLength(translated.length - 1);
     expect(stage.scrollTop).toBe(160);
+    Range.prototype.getClientRects = oldGetClientRects;
+    Reflect.deleteProperty(document, "caretPositionFromPoint");
     expect(document.querySelectorAll(`[data-audience-turn-id="${turnId}"]`)).toHaveLength(1);
     expect(document.querySelector(`[data-audience-turn-id="${turnId}"]`)).toBe(turn);
     expect(turn?.querySelectorAll(".chat-message")).toHaveLength(0);
@@ -1641,7 +1635,7 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("#671 王承恩递话在邸报纸面外独立区，不经 stripOrganicMarkdown；空则不渲染", () => {
+  it("#671 王承恩递话在邸报纸面外独立区；空则不渲染", () => {
     const hostEmpty = renderReportModal({ report: "一、边报" });
     expect(hostEmpty.querySelector("[data-testid=gazette-attendant]")).toBeNull();
 

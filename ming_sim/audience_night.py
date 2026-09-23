@@ -609,9 +609,11 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             else:
                 events.append((
                     float(int(turn.get("night_seq") or 0)), 20 + rank,
-                    message(role=role, speaker=speaker, audibility=AUDIBILITY_PUBLIC,
-                            time=row["created_at"], content=content, beat="dialogue",
-                            chat_turn_id=int(turn["id"]), highlights=hl),
+                    message(role="scene" if role == "minister" else role,
+                            speaker="" if role == "minister" else speaker,
+                            audibility=AUDIBILITY_PUBLIC, time=row["created_at"],
+                            content=content, beat="dialogue",
+                            chat_turn_id=int(turn["id"])),
                 ))
         # 递话/读心是对话轮的第三种持久消息，紧随该轮奏对归位；不并入故事账。
         if hasattr(db, "list_mindreading_records"):

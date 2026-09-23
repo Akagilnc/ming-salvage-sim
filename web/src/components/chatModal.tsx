@@ -108,7 +108,7 @@ export function ChatModal({
   >({ kind: "loading" });
   const followsTailRef = React.useRef(true);
   const restoredNightRef = React.useRef<number | false>(false);
-  const readingAnchorRef = React.useRef<{ turnId: string; top: number } | null>(null);
+  const readingAnchorRef = React.useRef<{ turnId: string; offset: number; top: number } | null>(null);
   const withdrawnFromThisScroll = (message: AudienceScrollMessage): boolean => !!(
     undoneChatIdentity
     && undoneChatIdentity.campaign_id === currentCampaignId
@@ -148,12 +148,31 @@ export function ChatModal({
         const node = chatLogRef.current;
         if (node && !followsTailRef.current) {
           const viewportTop = node.getBoundingClientRect().top;
-          const anchor = Array.from(node.querySelectorAll<HTMLElement>("[data-audience-turn-id]"))
-            .find((turn) => turn.getBoundingClientRect().bottom > viewportTop);
-          if (anchor) readingAnchorRef.current = {
-            turnId: anchor.dataset.audienceTurnId ?? "",
-            top: anchor.getBoundingClientRect().top,
-          };
+          const visibleParagraph = Array.from(node.querySelectorAll<HTMLElement>("[data-audience-turn-id] p"))
+            .find((item) => item.getBoundingClientRect().bottom > viewportTop);
+          const rect = visibleParagraph?.getBoundingClientRect();
+          const x = (rect?.left ?? node.getBoundingClientRect().left) + 8;
+          const y = Math.max(rect?.top ?? viewportTop, viewportTop) + 1;
+          const caret = rect && document.caretPositionFromPoint?.(x, y);
+          const range = caret ? document.createRange() : rect && document.caretRangeFromPoint?.(x, y);
+          if (caret && range) range.setStart(caret.offsetNode, caret.offset);
+          if (range) {
+            range.collapse(true);
+            const paragraph = (range.startContainer.nodeType === Node.TEXT_NODE
+              ? range.startContainer.parentElement : range.startContainer as Element)?.closest("p");
+            const turn = paragraph?.closest<HTMLElement>("[data-audience-turn-id]");
+            if (turn && paragraph) {
+              const paragraphs = Array.from(turn.querySelectorAll("p"));
+              const before = document.createRange();
+              before.selectNodeContents(paragraph);
+              before.setEnd(range.startContainer, range.startOffset);
+              const offset = paragraphs.slice(0, paragraphs.indexOf(paragraph)).reduce(
+                (sum, item) => sum + (item.textContent?.length ?? 0), 0,
+              ) + before.toString().length;
+              const top = range.getClientRects()[0]?.top ?? paragraph.getBoundingClientRect().top;
+              readingAnchorRef.current = { turnId: turn.dataset.audienceTurnId ?? "", offset, top };
+            }
+          }
         }
         setScrollState(data.night_id ? {
           kind: "night",
@@ -262,10 +281,29 @@ export function ChatModal({
     } else if (followsTailRef.current) {
       node.scrollTop = node.scrollHeight;
     } else if (readingAnchorRef.current) {
-      const { turnId, top } = readingAnchorRef.current;
-      const anchor = Array.from(node.querySelectorAll<HTMLElement>("[data-audience-turn-id]"))
-        .find((turn) => turn.dataset.audienceTurnId === turnId);
-      if (anchor) node.scrollTop += anchor.getBoundingClientRect().top - top;
+      const { turnId, offset, top } = readingAnchorRef.current;
+      const turn = Array.from(node.querySelectorAll<HTMLElement>("[data-audience-turn-id]"))
+        .find((item) => item.dataset.audienceTurnId === turnId);
+      if (turn) {
+        let remaining = offset;
+        for (const paragraph of turn.querySelectorAll("p")) {
+          const length = paragraph.textContent?.length ?? 0;
+          if (remaining > length) { remaining -= length; continue; }
+          const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+          let textNode: Node | null;
+          while ((textNode = walker.nextNode())) {
+            const textLength = textNode.textContent?.length ?? 0;
+            if (remaining > textLength) { remaining -= textLength; continue; }
+            const range = document.createRange();
+            range.setStart(textNode, remaining);
+            range.collapse(true);
+            const rect = range.getClientRects()[0];
+            if (rect) node.scrollTop += rect.top - top;
+            break;
+          }
+          break;
+        }
+      }
     }
     readingAnchorRef.current = null;
   }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry]);
