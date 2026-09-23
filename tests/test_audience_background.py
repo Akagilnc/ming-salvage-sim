@@ -305,6 +305,27 @@ def test_undo_chat_response_preserves_retryable_failed_secret_order(game):
     assert "密令" in failures[0]["message"]
 
 
+def test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn(game):
+    db, state, content = game
+    minister_name = "毕自严"
+    web_game = _web_game(db, state, content, _FakeAgent())
+    completed = db.create_chat_turn(state, minister_name, "completed", 0)
+    db.update_chat_turn_messages(
+        completed,
+        db.append_chat_message(minister_name, state.turn, "user", "前问"),
+        db.append_chat_message(minister_name, state.turn, "minister", "前答"),
+    )
+    interrupted = db.create_chat_turn(state, minister_name, "interrupted", 0)
+    db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (interrupted,))
+    db.conn.commit()
+
+    assert not web_game.can_undo_last_chat(minister_name)
+    with pytest.raises(Exception) as error:
+        web_game.undo_last_chat(minister_name)
+    assert getattr(error.value, "status_code", None) == 409
+    assert db.get_last_active_chat_turn(minister_name, state.turn)["id"] == completed
+
+
 def test_stream_tool_staged_secret_order_merges_emperor_not_reply(game, monkeypatch):
 
     """#413/#405/#1274 K1：web streaming tool-call 并御旨；reply 不入 content。"""

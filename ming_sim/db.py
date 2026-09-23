@@ -10764,7 +10764,7 @@ class GameDB:
 
     def is_global_last_active_chat_turn(self, chat_turn_id: int) -> bool:
         row = self.conn.execute(
-            "SELECT id FROM chat_turns WHERE status = 'active' ORDER BY id DESC LIMIT 1"
+            "SELECT id FROM chat_turns WHERE status IN ('active', 'interrupted') ORDER BY id DESC LIMIT 1"
         ).fetchone()
         return bool(row and int(row["id"]) == int(chat_turn_id))
 

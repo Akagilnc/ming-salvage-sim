@@ -4,12 +4,16 @@ import { ScrollMessages } from "./scrollMessages";
 import type { AudienceScrollMessage, HistoryTurnItem, Minister } from "../types";
 import { filterScrollForSelectedMinister } from "../ministerScrollLens";
 import { AUDIENCE_SCENE_SPEAKER } from "../audienceScene";
+import { api } from "../api";
+import type { TranslationRetry } from "../types";
 
 export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => void; ministers: Minister[] }) {
   const [nights, setNights] = React.useState<HistoryTurnItem[]>([]);
   const [selected, setSelected] = React.useState<HistoryTurnItem | null>(null);
   const [messages, setMessages] = React.useState<AudienceScrollMessage[] | null>(null);
   const [pendingTranslationTurnIds, setPendingTranslationTurnIds] = React.useState<number[]>([]);
+  const [translationRetries, setTranslationRetries] = React.useState<TranslationRetry[]>([]);
+  const [retrying, setRetrying] = React.useState<number | null>(null);
   const [error, setError] = React.useState("");
   const [ministerFilter, setMinisterFilter] = React.useState("");
 
@@ -35,7 +39,7 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
     void fetch(`/api/audience/scroll?night_id=${selected.night_id}`).then((response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.json();
-    }).then((data) => { if (alive) { setMessages(data.messages || []); setPendingTranslationTurnIds(data.pending_translation_turn_ids || []); } })
+    }).then((data) => { if (alive) { setMessages(data.messages || []); setPendingTranslationTurnIds(data.pending_translation_turn_ids || []); setTranslationRetries(data.translation_retries || []); } })
       .catch((reason) => { if (alive) setError(reason?.message || "加载失败"); });
     return () => { alive = false; };
   }, [selected]);
@@ -43,6 +47,25 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
   React.useEffect(() => {
     setMinisterFilter("");
   }, [selected?.night_id]);
+
+  const retryTranslation = async (chatTurnId: number) => {
+    if (!selected?.night_id || retrying !== null) return;
+    setRetrying(chatTurnId);
+    setError("");
+    try {
+      await api("/api/audience/translation/retry", { method: "POST", body: JSON.stringify({ chat_turn_id: chatTurnId }) });
+      const response = await fetch(`/api/audience/scroll?night_id=${selected.night_id}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      setMessages(data.messages || []);
+      setPendingTranslationTurnIds(data.pending_translation_turn_ids || []);
+      setTranslationRetries(data.translation_retries || []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRetrying(null);
+    }
+  };
 
   return <FullscreenModal title="起居注：召对记录" subtitle="退朝后同源只读，不可编辑" bgClass="modal-bg-chat" onClose={onClose}>
     <div className="history-modal-body">
@@ -59,6 +82,10 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
           </select>
         </label> : null}
         {error ? <p className="long-copy">加载失败：{error}</p> : null}
+        {translationRetries.filter((retry) => retry.retryable).map((retry) => <div key={retry.chat_turn_id} className="chat-system-note danger chat-failure-note" role="alert" data-testid={`archive-translation-retry-${retry.chat_turn_id}`}>
+          本轮记录未能整理。{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}
+          <button type="button" disabled={retrying !== null} onClick={() => void retryTranslation(retry.chat_turn_id)}>重试</button>
+        </div>)}
         {messages ? <ScrollMessages messages={ministerFilter ? filterScrollForSelectedMinister(messages, ministerFilter, { sceneSpeaker: AUDIENCE_SCENE_SPEAKER, pendingTranslationTurnIds }) : messages} ministerName="" ministers={ministers} /> : null}
       </article>
     </div>

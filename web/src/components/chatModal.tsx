@@ -358,7 +358,7 @@ export function ChatModal({
       <div className="chat-system-note danger chat-failure-note" role="alert" data-testid={`reply-retry-${retry.chat_turn_id}`}>
         <span>{retryReadFailure?.kind === "reply" && retryReadFailure.chatTurnId === retry.chat_turn_id
           ? `${retryReadFailure.postSucceeded || retryReadFailure.readFailure ? "召对记录读取失败；" : ""}${!retryReadFailure.postSucceeded ? "回话重试失败：" : ""}${retryReadFailure.message}`
-          : <>{retry.recovery_phase ? "回话已保存，后续处理失败" : `问话未得回话（「${retry.question}」）`}。{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</>}</span>
+          : <>{retry.recovery_phase ? "回话已保存，后续处理失败" : `问话未得回话（「${retry.question}」）`}。</>}{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
         <button type="button" onClick={() => onRetryReply(scrollMode === "audience" ? AUDIENCE_SCENE_SPEAKER : minister.name, retry.chat_turn_id)} disabled={!!busy}>
           重试
         </button>
@@ -378,7 +378,7 @@ export function ChatModal({
         <div className="chat-system-note danger chat-failure-note" role="alert" data-testid={`translation-retry-${retry.chat_turn_id}`}>
           <span>{retryReadFailure?.kind === "translation" && retryReadFailure.chatTurnId === retry.chat_turn_id
             ? `${retryReadFailure.postSucceeded || retryReadFailure.readFailure ? "召对记录读取失败；" : ""}${!retryReadFailure.postSucceeded ? "转译重试失败：" : ""}${retryReadFailure.message}`
-            : <>本轮记录未能整理。{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</>}</span>
+            : <>本轮记录未能整理。</>}{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
           <button type="button" onClick={() => onRetryTranslation(retry.chat_turn_id)} disabled={!!busy}>
             重试
           </button>

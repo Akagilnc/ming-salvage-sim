@@ -1421,6 +1421,30 @@ describe("#1480 / #1499 FullscreenModal modal-layout-bare 只随 hideTitle", () 
 });
 
 describe("AudienceArchiveModal — read-only scene archive", () => {
+  it("retries a pending translation on its original closed night", async () => {
+    let pending = true;
+    const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+      if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
+        { kind: "night", night_id: 31, title: "旧夜", involved_people: [] },
+      ] }) });
+      if (url === "/api/audience/translation/retry" && options?.method === "POST") {
+        pending = false;
+        return Promise.resolve({ ok: true, json: async () => ({ chat_turn_id: 8 }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ messages: [], translation_retries: pending ? [
+        { chat_turn_id: 8, night_id: 31, minister_name: "洪承畴", kind: "translation_pending", retryable: true },
+      ] : [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    const retry = host.querySelector<HTMLButtonElement>('[data-testid="archive-translation-retry-8"] button');
+    expect(retry).not.toBeNull();
+    await act(async () => { retry?.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledWith("/api/audience/translation/retry", expect.objectContaining({ method: "POST", body: JSON.stringify({ chat_turn_id: 8 }) }));
+    expect(host.querySelector('[data-testid="archive-translation-retry-8"]')).toBeNull();
+  });
   it("selects closed scenes through the shared scroll endpoint without a composer", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [

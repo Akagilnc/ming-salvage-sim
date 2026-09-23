@@ -483,6 +483,7 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_
         def get_interrupted_reply_retries(self, minister_name):
             return [{
                 "chat_turn_id": 7,
+                "minister_name": "测试大臣",
                 "question": "辽东军情如何？",
                 "turn": 1,
             }]
