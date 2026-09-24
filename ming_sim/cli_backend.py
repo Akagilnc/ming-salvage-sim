@@ -424,32 +424,6 @@ def _cli_idle_seconds() -> float:
     return float(resolve_transport_policy().idle_timeout_seconds)
 
 
-def _start_cli_subprocess(
-    cmd: List[str],
-    *,
-    stdin_text: Optional[str],
-    env: Optional[Dict[str, str]],
-    cwd: Optional[str],
-    prompt: str,
-) -> Any:
-    """LLM CLI 子进程的唯一启动出口。测试替换本函数，不另开一条启动路径。
-
-    prompt 是调用方已经持有的提示文本。子进程仍只经 argv / stdin 收到它；
-    本参数留给测试替换件记录 prompt 开头，不再从 argv 反推。
-    """
-    del prompt
-    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
-    # 安全审计(Sourcery):list-form argv、无 shell=True → 不经 shell 解析,无注入面。
-    return subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE if stdin_text is not None else None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        cwd=cwd or _AGY_CWD,
-        env=env,
-    )
-
-
 def _terminate_cli_process(proc: Any) -> None:
     """收尾子进程：已退时 terminate 是 no-op；否则 terminate→kill 兜底，防泄漏。"""
     try:
@@ -471,7 +445,6 @@ def _iter_cli_process_lines(
     cwd: Optional[str] = None,
     clock: Optional[Callable[[], float]] = None,
     outcome: Optional[_CliProcessOutcome] = None,
-    prompt: str,
 ) -> Iterator[str]:
     """CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。
 
@@ -490,8 +463,15 @@ def _iter_cli_process_lines(
     )
     tick = clock or _cli_process_clock
     result = outcome if outcome is not None else _CliProcessOutcome()
-    proc = _start_cli_subprocess(
-        cmd, stdin_text=stdin_text, env=env, cwd=cwd, prompt=prompt,
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+    # 安全审计(Sourcery):list-form argv、无 shell=True → 不经 shell 解析,无注入面。
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE if stdin_text is not None else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=cwd or _AGY_CWD,
+        env=env,
     )
     chunks: "queue.Queue[Tuple[str, Optional[bytes]]]" = queue.Queue()
     stderr_parts: List[str] = []
@@ -849,7 +829,7 @@ def _iter_cli_runner_text(
         for line in _iter_cli_process_lines(
                 cmd, stdin_text=stdin_text, env=env,
                 cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
-                clock=clock, outcome=outcome, prompt=prompt,
+                clock=clock, outcome=outcome,
             ):
             if json_events:
                 stripped = line.strip()
