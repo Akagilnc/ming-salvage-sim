@@ -55,6 +55,9 @@ class StagedDeclaration:
     status: str
     created_turn: int
     visible_refs: dict
+    verdict: dict | None = None
+    questions: list | None = None
+    forecast_text: str | None = None
 
 
 class StagedDeclarationStore:
@@ -66,14 +69,25 @@ class StagedDeclarationStore:
     @staticmethod
     def ensure_schema(conn: Any) -> None:
         conn.executescript(_SCHEMA_SQL)
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(staged_declarations)")}
-        if "visible_refs_json" not in columns:
+        cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(staged_declarations)")}
+        if "visible_refs_json" not in cols:
             conn.execute(
                 "ALTER TABLE staged_declarations ADD COLUMN visible_refs_json TEXT NOT NULL DEFAULT '{}'"
             )
+        if "verdict_json" not in cols:
+            conn.execute("ALTER TABLE staged_declarations ADD COLUMN verdict_json TEXT")
+        if "questions_json" not in cols:
+            conn.execute("ALTER TABLE staged_declarations ADD COLUMN questions_json TEXT")
+        if "forecast_text" not in cols:
+            conn.execute("ALTER TABLE staged_declarations ADD COLUMN forecast_text TEXT")
 
-    def stage(self, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
-              visible_refs: Mapping[str, object] | None = None) -> int:
+    def stage(
+        self, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
+        visible_refs: Mapping[str, object] | None = None,
+        verdict: Mapping[str, object] | None = None,
+        questions: list | None = None,
+        forecast_text: str | None = None,
+    ) -> int:
         ref = str(decree_ref or "").strip()
         if not ref:
             raise ValueError("decree_ref 不能为空")
@@ -85,10 +99,23 @@ class StagedDeclarationStore:
                     f"decree_ref 已作废或已结算，不能再暂存新声明：{ref}（如需再起该旨，请用新的 decree_ref）"
                 )
             cur = self._conn.execute(
-                "INSERT INTO staged_declarations (decree_ref, declaration_json, visible_refs_json, status, created_turn) "
-                "VALUES (?, ?, ?, 'staged', ?)",
-                (ref, sanitize_sqlite_text(json.dumps(declaration, ensure_ascii=False)),
-                 json.dumps(visible_refs or {}, ensure_ascii=False), int(turn)),
+                "INSERT INTO staged_declarations "
+                "(decree_ref, declaration_json, visible_refs_json, status, created_turn, "
+                "verdict_json, questions_json, forecast_text) "
+                "VALUES (?, ?, ?, 'staged', ?, ?, ?, ?)",
+                (
+                    ref,
+                    sanitize_sqlite_text(json.dumps(declaration, ensure_ascii=False)),
+                    json.dumps(visible_refs or {}, ensure_ascii=False),
+                    int(turn),
+                    None if verdict is None else sanitize_sqlite_text(
+                        json.dumps(dict(verdict), ensure_ascii=False),
+                    ),
+                    None if questions is None else sanitize_sqlite_text(
+                        json.dumps(list(questions), ensure_ascii=False),
+                    ),
+                    None if forecast_text is None else sanitize_sqlite_text(forecast_text),
+                ),
             )
             return int(cur.lastrowid)
         if connection_owns_transaction(self._conn):
@@ -133,7 +160,8 @@ class StagedDeclarationStore:
     def staged_for(self, decree_ref: str) -> tuple[StagedDeclaration, ...]:
         ref = str(decree_ref or "").strip()
         rows = self._conn.execute(
-            "SELECT id, decree_ref, declaration_json, visible_refs_json, status, created_turn "
+            "SELECT id, decree_ref, declaration_json, visible_refs_json, status, created_turn, "
+            "verdict_json, questions_json, forecast_text "
             "FROM staged_declarations WHERE decree_ref=? AND status='staged' ORDER BY id",
             (ref,),
         ).fetchall()
@@ -169,10 +197,22 @@ class StagedDeclarationStore:
         return int(cur.rowcount or 0)
 
 
+def _load_optional_json(row: Any, column: str) -> object:
+    if column not in row.keys() or row[column] is None:
+        return None
+    return json.loads(row[column])
+
+
 def _row_to_staged(row: Any) -> StagedDeclaration:
+    verdict = _load_optional_json(row, "verdict_json")
+    questions = _load_optional_json(row, "questions_json")
+    forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=str(row["decree_ref"]),
         declaration=json.loads(row["declaration_json"] or "{}"),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
         visible_refs=json.loads(row["visible_refs_json"] or "{}"),
+        verdict=verdict if isinstance(verdict, dict) else None,
+        questions=questions if isinstance(questions, list) else None,
+        forecast_text=None if forecast_text is None else str(forecast_text),
     )

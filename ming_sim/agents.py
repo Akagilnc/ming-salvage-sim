@@ -231,6 +231,7 @@ def run_agent_text(
     *,
     prior_messages: Optional[Sequence[Any]] = None,
     game_db: Any = None,
+    transport_policy: Any = None,
 ) -> str:
     """跑 agent，返回 SDK 终包完整 content（严格 JSON 真源；非 chunk 拼接）。
 
@@ -264,7 +265,7 @@ def run_agent_text(
     run_input = _agent_run_input(prompt, prior_messages)
 
     tlog(f"[{tag}] 开始推演（transport 可观察）")
-    policy = resolve_transport_policy()
+    policy = transport_policy or resolve_transport_policy()
     model = getattr(agent, "model", None)
 
     hist_anchor = _history_backed_truncate_anchor(agent, game_db)
@@ -864,6 +865,32 @@ def create_season_simulator_agent(
     return Agent(
         name="月末推演日讲官",
         id="season-simulator",
+        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
+        instructions=instructions,
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_decree_forecast_agent(
+    llm_config: LLMConfig,
+    simulator_payload: Dict[str, object],
+) -> Agent:
+    """逐旨夜里预推；复用 simulator 模型与盘面投影，不跑月度邸报契约。"""
+    cfg = _llm_for_role(llm_config, "simulator")
+    tlog(f"[decree-forecast] 使用模型 {describe_effective_model(cfg)}")
+    instructions = [
+        _ctx().game_world_prompt,
+        build_simulator_context(simulator_payload),
+        "只推演本次输入中这一道旨在当前盘面上的可能后果。",
+        "这是夜里预推，不推演月度世界事件，也不生成月末邸报。",
+        "若推演需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+    ]
+    if is_minimax_base_url(cfg.base_url):
+        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
+    return Agent(
+        name="逐旨预推者",
+        id="decree-forecast",
         model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
         instructions=instructions,
         add_history_to_context=False,

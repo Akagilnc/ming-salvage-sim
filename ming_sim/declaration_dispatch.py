@@ -463,6 +463,9 @@ def dispatch_declaration(
 
 def stage_declaration(
     db: Any, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
+    verdict: Optional[Mapping[str, object]] = None,
+    questions: Optional[list] = None,
+    forecast_text: Optional[str] = None,
     visible_refs: Optional[Mapping[str, object]] = None,
 ) -> int:
     """旨意夜里预推：把一份声明暂存，不落账、不进材料目录、不上界面（ADR 0157
@@ -476,8 +479,25 @@ def stage_declaration(
     decree_ref（ADR 0157「改旨 = 作废后按新旨重起」）。"""
     return db.staged_declarations.stage(
         decree_ref=decree_ref, declaration=declaration, turn=turn,
+        verdict=verdict, questions=questions, forecast_text=forecast_text,
         visible_refs=visible_refs or {},
     )
+
+
+def pending_action_decree_ref(pending_action_id: int, version: int) -> str:
+    """正在拟议中的旨以 pending_actions 主键及草稿版本共同标识。"""
+    action_id, draft_version = int(pending_action_id), int(version)
+    if action_id <= 0 or draft_version <= 0:
+        raise ValueError("pending decree identity requires positive row id and version")
+    return f"pending-action:{action_id}:v{draft_version}"
+
+
+def held_dossier_decree_ref(dossier_id: int) -> str:
+    """历史留中回流已有案卷，以案卷 id 为预算身份（0051）。"""
+    dossier = int(dossier_id)
+    if dossier <= 0:
+        raise ValueError("held dossier identity requires a positive dossier id")
+    return f"dossier:{dossier}"
 
 
 def discard_staged_declaration(db: Any, decree_ref: str) -> int:
@@ -1040,7 +1060,7 @@ def _dispatch_promises(
         # 另一夜，声明也不得应允/拒绝它——同样按「不存在实体」拒收（不静默
         # 误批，也不当真拒收物理删除他夜暂存）。
         row = db.conn.execute(
-            "SELECT night_id, kind, action FROM pending_actions "
+            "SELECT night_id, kind, action, night_approved FROM pending_actions "
             "WHERE id=? AND turn=? AND status='pending'",
             (action_id, int(state.turn)),
         ).fetchone()
@@ -1081,6 +1101,10 @@ def _dispatch_promises(
                         if oid_i > 0:
                             applied_row["secret_order_id"] = oid_i
                             break
+            elif int(row["night_approved"] or 0) == 1:
+                # 同版已应允：不再列入本轮 applied，夜间预推只在首次转换时起。
+                # 密令不走这里，回填仍读本轮落地行。
+                continue
             else:
                 db.mark_pending_night_approved([action_id], night_id=night_id or None)
         else:

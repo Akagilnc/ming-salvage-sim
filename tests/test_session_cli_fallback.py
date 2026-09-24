@@ -892,6 +892,325 @@ def test_night_approved_midzhi_confirmation_keeps_mode_through_close(game):
     assert dossiers[0]["mode"] == "midzhi"
 
 
+def test_pending_directive_identity_version_increments_on_edit(game):
+    """A decree forecast identity is the durable pending row plus its draft version."""
+    from ming_sim.declaration_dispatch import (
+        pending_action_decree_ref, stage_declaration,
+    )
+    from ming_sim.entities.staged_declaration.store import DecreeAlreadySettled
+
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    pending_id = db.stage_explicit_directive(
+        state.turn, minister, "着户部清核辽饷。",
+    )
+
+    row = db.conn.execute(
+        "SELECT id,version FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    assert (int(row["id"]), int(row["version"])) == (pending_id, 1)
+    old_ref = pending_action_decree_ref(pending_id, int(row["version"]))
+    stage_declaration(db, decree_ref=old_ref, declaration={"commissions": []}, turn=state.turn)
+
+    db.update_directive_candidate(pending_id, {
+        **_POLICY_FIELDS,
+        "text": "着户部重核辽饷。",
+        "actor": minister,
+    })
+    row = db.conn.execute(
+        "SELECT id,version FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    assert (int(row["id"]), int(row["version"])) == (pending_id, 2)
+    assert db.conn.execute(
+        "SELECT status FROM staged_declarations WHERE decree_ref=?",
+        (old_ref,),
+    ).fetchone()["status"] == "discarded"
+    with pytest.raises(DecreeAlreadySettled):
+        stage_declaration(
+            db, decree_ref=old_ref, declaration={"commissions": []}, turn=state.turn,
+        )
+
+
+def test_undo_directive_edit_restores_text_with_new_forecast_version(game):
+    from ming_sim.declaration_dispatch import (
+        pending_action_decree_ref, stage_declaration,
+    )
+
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    pending_id = db.stage_explicit_directive(state.turn, minister, "着户部清核辽饷。")
+    chat_turn_id = db.create_chat_turn(state, minister, "undo-directive-edit", 0)
+    before = db.capture_chat_rollback_snapshot()
+    db.update_directive_candidate(pending_id, {
+        **_POLICY_FIELDS,
+        "text": "着户部重核辽饷。",
+        "actor": minister,
+    })
+    after = db.capture_chat_rollback_snapshot()
+    db.record_chat_turn_rollback_diffs(chat_turn_id, before, after)
+
+    db.undo_chat_turn(chat_turn_id)
+
+    row = db.conn.execute(
+        "SELECT id,version,payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    assert (int(row["id"]), int(row["version"])) == (pending_id, 3)
+    assert json.loads(row["payload_json"])["text"] == "着户部清核辽饷。"
+    restored_ref = pending_action_decree_ref(pending_id, 3)
+    stage_declaration(db, decree_ref=restored_ref, declaration={"commissions": []}, turn=state.turn)
+
+
+def test_withdraw_directive_invalidates_its_forecast(game):
+    from ming_sim.declaration_dispatch import (
+        pending_action_decree_ref, stage_declaration,
+    )
+    from ming_sim.entities.staged_declaration.store import DecreeAlreadySettled
+
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    pending_id = db.stage_explicit_directive(state.turn, minister, "着户部清核辽饷。")
+    forecast_ref = pending_action_decree_ref(pending_id, 1)
+    stage_declaration(
+        db, decree_ref=forecast_ref, declaration={"commissions": []}, turn=state.turn,
+    )
+
+    assert db.withdraw_pending_action(pending_id, state.turn)
+    assert db.conn.execute(
+        "SELECT 1 FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT status FROM staged_declarations WHERE decree_ref=?",
+        (forecast_ref,),
+    ).fetchone()["status"] == "discarded"
+    with pytest.raises(DecreeAlreadySettled):
+        stage_declaration(
+            db, decree_ref=forecast_ref,
+            declaration={"commissions": []}, turn=state.turn,
+        )
+
+
+def _forecast_decision_block():
+    return "<<DECISION>>" + json.dumps({
+        "title": "廷议",
+        "context": "待择",
+        "options": [{"label": "施行"}, {"label": "暂缓"}],
+    }, ensure_ascii=False) + "<<END>>"
+
+
+def _forecast_config():
+    from ming_sim.models import LLMConfig
+
+    return LLMConfig(
+        api_key="test", base_url="https://example.invalid/v1", model="test-model",
+    )
+
+
+def test_approved_directives_forecast_independently_and_keep_midzhi_stage_only(
+    game, monkeypatch,
+):
+    """真实应允入口分别启动逐旨预推；429 不牵连中旨，产物只入 C0 暂存。"""
+    from ming_sim.declaration_dispatch import pending_action_decree_ref
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.session_write_queue import get_session_write_queue
+    import ming_sim.decree as decree_mod
+    import ming_sim.decree_forecast as forecast_mod
+    import ming_sim.month_translate as month_translate
+
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    night = audience_night.open_night(db, state)
+    ordinary_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={**_POLICY_FIELDS, "text": "甲旨", "actor": minister,
+                 "mode": "ordinary"},
+    )
+    midzhi_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={**_POLICY_FIELDS, "text": "乙旨", "actor": minister,
+                 "mode": "ordinary"},
+    )
+    observed_modes = []
+    simulator_calls = []
+    translation_calls = []
+
+    def judge(_agent, prompt, **_kwargs):
+        context = json.loads(prompt)
+        dossier = context["dossiers"][0]
+        observed_modes.append(dossier["mode"])
+        if dossier["mode"] == "ordinary":
+            raise LLMUnavailable("exhausted", code="http_429", status_code=429)
+        return json.dumps({
+            "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        })
+
+    def simulate(_agent, _prompt, **_kwargs):
+        simulator_calls.append(1)
+        return "旨意后果" + _forecast_decision_block() + "问后叙述"
+
+    def translate(prompt, _llm_config, **_kwargs):
+        translation_calls.append(1)
+        return {"commissions": []}
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
+    monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", translate)
+    s = _session(db, state, content=content, llm_config=_forecast_config())
+    s.agno_db = None
+    for pending_id, mode in ((ordinary_id, "ordinary"), (midzhi_id, "midzhi")):
+        GameSession.apply_cli_conversation_actions(
+            s, SimpleNamespace(name=minister, office_type="兵部"),
+            player_message="应允。", answer="臣领旨。", has_directive=False,
+            secret_order_id=None,
+            preclassified_intent={
+                "kind": "confirmation", "confirmation": "应允", "mode": mode,
+            },
+            confirm_target_ids={pending_id},
+        )
+
+    assert get_session_write_queue(s).wait_idle(timeout_s=5)
+    ref = pending_action_decree_ref(midzhi_id, 1)
+    staged = db.conn.execute(
+        "SELECT status FROM staged_declarations WHERE decree_ref=?", (ref,),
+    ).fetchone()
+    assert staged is not None and staged["status"] == "staged"
+    assert db.conn.execute(
+        "SELECT 1 FROM staged_declarations WHERE decree_ref=?",
+        (pending_action_decree_ref(ordinary_id, 1),),
+    ).fetchone() is None
+    assert sorted(observed_modes) == ["midzhi", "ordinary"]
+    assert simulator_calls == [1]
+    assert translation_calls == [1]
+    assert db.conn.execute(
+        "SELECT 1 FROM decree_dossiers WHERE pending_action_id IN (?,?)",
+        (ordinary_id, midzhi_id),
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM story_ledger_entries WHERE origin_ref=?", (ref,),
+    ).fetchone() is None
+
+
+def test_question_first_during_decree_forecast_is_not_translated_or_staged(
+    game, monkeypatch,
+):
+    """问处起首则无问前声明，但请旨与顺颁判决仍留在该旨暂存上。"""
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.session_write_queue import get_session_write_queue
+    import ming_sim.decree as decree_mod
+    import ming_sim.decree_forecast as forecast_mod
+    import ming_sim.month_translate as month_translate
+
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    night = audience_night.open_night(db, state)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={**_POLICY_FIELDS, "text": "中旨", "actor": minister,
+                 "mode": "midzhi"},
+    )
+    translated = []
+
+    def judge(_agent, prompt, **_kwargs):
+        dossier = json.loads(prompt)["dossiers"][0]
+        return json.dumps({
+            "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        })
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(
+        forecast_mod.agents, "run_agent_text",
+        lambda *_a, **_k: _forecast_decision_block() + "question-followup",
+    )
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt",
+        lambda *_a, **_k: translated.append(1) or {"commissions": []},
+    )
+    s = _session(db, state, content=content, llm_config=_forecast_config())
+    s.agno_db = None
+    GameSession.apply_cli_conversation_actions(
+        s, SimpleNamespace(name=minister, office_type="兵部"),
+        player_message="中旨应允。", answer="臣领旨。", has_directive=False,
+        secret_order_id=None,
+        preclassified_intent={
+            "kind": "confirmation", "confirmation": "应允", "mode": "midzhi",
+        },
+        confirm_target_ids={pending_id},
+    )
+
+    assert get_session_write_queue(s).wait_idle(timeout_s=5)
+    assert translated == []
+    from ming_sim.declaration_dispatch import pending_action_decree_ref
+    stored = db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1))
+    assert len(stored) == 1
+    assert stored[0].declaration == {}
+    assert stored[0].verdict["decision"] == "promulgated"
+    assert stored[0].questions and stored[0].questions[0]["title"] == "廷议"
+    assert db.list_pending_decisions(state.turn) == []
+
+
+def test_opening_a_night_forecasts_held_decrees_by_dossier_identity(game, monkeypatch):
+    """A newly opened audience night schedules a held proposal through its dossier id."""
+    from ming_sim.session_write_queue import get_session_write_queue
+    import ming_sim.decree as decree_mod
+    import ming_sim.decree_forecast as forecast_mod
+    import ming_sim.month_translate as month_translate
+
+    db, state, content = game
+    state.turn += 1
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="核议辽饷旧旨",
+        target_kind="issue",
+        target_id="test-policy",
+        payload={**_POLICY_FIELDS},
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='proposed', promulgation_decision='rejected', "
+        "held_turn=?, rescript_pending=0 WHERE id=?",
+        (state.turn - 1, dossier_id),
+    )
+    db.conn.commit()
+
+    def judge(_agent, prompt, **_kwargs):
+        candidate = json.loads(prompt)["dossiers"][0]
+        return json.dumps({
+            "verdicts": [{"dossier_id": candidate["id"], "decision": "promulgated"}],
+        })
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(
+        forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推叙述",
+    )
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt",
+        lambda *_a, **_k: {"commissions": []},
+    )
+    s = _session(db, state, content=content, llm_config=_forecast_config())
+    s.agno_db = None
+    s.consume_audience_admission = types.MethodType(
+        GameSession.consume_audience_admission, s,
+    )
+    s.admit_audience = lambda _character: session_mod.AudienceAdmissionDecision(
+        session_mod.AudienceAdmission.SUMMON_FRESH,
+    )
+    s.consume_audience_admission(
+        SimpleNamespace(name="传召承办官"), origin_id="night-opening-test",
+    )
+
+    assert get_session_write_queue(s).wait_idle(timeout_s=5)
+    staged = db.conn.execute(
+        "SELECT status FROM staged_declarations WHERE decree_ref=?",
+        (f"dossier:{dossier_id}",),
+    ).fetchone()
+    assert staged is not None and staged["status"] == "staged"
+    held = db.get_decree_dossier(dossier_id)
+    assert held["promulgation_decision"] == "rejected"
+    assert db.conn.execute(
+        "SELECT 1 FROM story_ledger_entries WHERE origin_ref=?",
+        (f"dossier:{dossier_id}",),
+    ).fetchone() is None
+
+
 def test_mixed_directive_secret_confirmation_does_not_commit_unmentioned_office(game):
     db, state, content = game
     minister = next(iter(content.characters.values())).name

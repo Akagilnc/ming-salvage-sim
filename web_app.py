@@ -2009,6 +2009,7 @@ class WebGame:
                 get_open_night,
             )
             if attach_to_hall:
+                night_was_open = get_open_night(self.db) is not None
                 _night_id, chat_turn_id = attach_chat_turn_to_night(
                     self.db,
                     self.state,
@@ -2018,13 +2019,20 @@ class WebGame:
                     beat_generator=None,
                     route=route,
                 )
+                if not night_was_open:
+                    from ming_sim.decree_forecast import schedule_held_decree_forecasts
+                    schedule_held_decree_forecasts(self.session)
                 from ming_sim.audience_night import recognize_xuan_command
                 if chat_turn_id and not recognize_xuan_command(message):
                     self.session.start_chat_turn_scene(minister_name, chat_turn_id)
             else:
+                night_was_open = get_open_night(self.db) is not None
                 night = get_open_night(self.db) or ensure_open_night_for_audience(
                     self.db, self.state,
                 )
+                if not night_was_open:
+                    from ming_sim.decree_forecast import schedule_held_decree_forecasts
+                    schedule_held_decree_forecasts(self.session)
                 chat_turn_id = self.db.create_chat_turn(
                     self.state,
                     minister_name,
@@ -2167,6 +2175,21 @@ class WebGame:
         # 不让玩家原样颁出含被撤回指令的陈旧诏书。
         self.session.note_chat_rollback(
             deleted_committed_draft_ids=undone.get("deleted_committed_draft_ids"))
+        restored_ids = [
+            int(item) for item in (undone.get("restored_pending_action_ids") or [])
+        ]
+        if restored_ids:
+            from ming_sim.audience_night import get_open_night
+            from ming_sim.decree_forecast import (
+                bind_forecast_owner, schedule_pending_decree_forecast,
+            )
+            bind_forecast_owner(self.session)
+            open_night_row = get_open_night(self.db)
+            if open_night_row is not None:
+                for pending_id in restored_ids:
+                    schedule_pending_decree_forecast(
+                        self.session, pending_id, night_id=int(open_night_row["id"]),
+                    )
         self.session.refresh_runtime_after_chat_rollback()
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
