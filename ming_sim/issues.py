@@ -4960,26 +4960,35 @@ def _strategic_event_result_preflight_error(
                         )
 
     if explicit_attribution and new_armies:
-        # Field rejections only. Origin stays with the loop below and the real
-        # write, so an invisible affair is itemwise and does not sink a sibling.
-        db.conn.execute("SAVEPOINT strategic_new_army_result_preflight")
-        try:
-            created_probe: List[Dict[str, object]] = []
-            for raw in new_armies:
-                created_probe.extend(db.create_armies_from_extraction(
-                    state, [raw], actor="档房", commit=False, require_origin=False,
-                ))
-        finally:
-            db.conn.execute("ROLLBACK TO SAVEPOINT strategic_new_army_result_preflight")
-            db.conn.execute("RELEASE SAVEPOINT strategic_new_army_result_preflight")
-        for result in created_probe:
-            if result.get("rejected"):
-                return (
-                    f"战略/外敌事件「{event_title or event_id}」新军战果拒收："
-                    f"{result.get('reason') or result.get('category') or ''}"
-                )
-        if not any(_strategic_result_item_has_material_world_state(item) for item in created_probe):
-            return f"战略/外敌事件「{event_title or event_id}」新军战果无真实世界状态变化"
+        # Invisible origins are already itemwise. Do not field-probe them into
+        # an envelope failure; the origin loop and the real write still own them.
+        field_armies = [
+            raw for raw in new_armies
+            if not (
+                isinstance(raw, dict)
+                and (db.effect_origin_rejection(str(raw.get("origin_ref") or "").strip()) or {}).get("category")
+                == "unauthorized_affair_origin"
+            )
+        ]
+        if field_armies:
+            db.conn.execute("SAVEPOINT strategic_new_army_result_preflight")
+            try:
+                created_probe: List[Dict[str, object]] = []
+                for raw in field_armies:
+                    created_probe.extend(db.create_armies_from_extraction(
+                        state, [raw], actor="档房", commit=False, require_origin=False,
+                    ))
+            finally:
+                db.conn.execute("ROLLBACK TO SAVEPOINT strategic_new_army_result_preflight")
+                db.conn.execute("RELEASE SAVEPOINT strategic_new_army_result_preflight")
+            for result in created_probe:
+                if result.get("rejected"):
+                    return (
+                        f"战略/外敌事件「{event_title or event_id}」新军战果拒收："
+                        f"{result.get('reason') or result.get('category') or ''}"
+                    )
+            if not any(_strategic_result_item_has_material_world_state(item) for item in created_probe):
+                return f"战略/外敌事件「{event_title or event_id}」新军战果无真实世界状态变化"
     for raw in new_armies:
         if explicit_attribution:
             continue
