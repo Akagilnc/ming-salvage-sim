@@ -586,6 +586,38 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
     assert state.metrics["国库"] == treasury_before
 
 
+def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    state.year, state.period = 1629, 11
+    state.metrics["民心"] = 50
+    metric_before = state.metrics["民心"]
+    treasury_before = state.metrics["国库"]
+    armies_before = db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
+    dispatch_month_segment(db, state, segment="未知驻地新军", translate_fn=lambda _request, _config: {
+        "effects": [{
+            "event_id": "jisi_lubian",
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "new_armies": [{
+                "origin_ref": "盘面自发", "id": "jisi_bad_station_1840",
+                "name": "驻地不存在的新军", "owner_power": "houjin",
+                "station_region": "no-such-region", "manpower": 1200,
+            }],
+            "metric_delta": {"民心": -3},
+            "economy_moves": [{
+                "origin_ref": "盘面自发", "account": "国库", "delta": -1,
+                "category": "过月支出", "reason": "事件所属军需",
+            }],
+        }],
+    })
+    assert db.has_event_triggered("jisi_lubian") is False
+    assert state.metrics["民心"] == metric_before
+    assert state.metrics["国库"] == treasury_before
+    assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
+
+
 def test_final_strategic_rejection_leaves_no_owned_effects(game):
     """Owned fields and the event ledger stay one envelope.
 

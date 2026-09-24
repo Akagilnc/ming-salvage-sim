@@ -4959,10 +4959,35 @@ def _strategic_event_result_preflight_error(
                             f"{backlash_result.get('reason') or backlash_result.get('category') or ''}"
                         )
 
+    if explicit_attribution and new_armies:
+        # Same writer the settlement uses, rolled back. Do not keep a second
+        # field checklist that can admit what create_armies_from_extraction rejects.
+        db.conn.execute("SAVEPOINT strategic_new_army_result_preflight")
+        try:
+            created_probe: List[Dict[str, object]] = []
+            for raw in new_armies:
+                origin_ref = str(raw.get("origin_ref") or "").strip() if isinstance(raw, dict) else ""
+                created_probe.extend(db.create_armies_from_extraction(
+                    state, [raw], actor="档房", commit=False,
+                    origin_ref=origin_ref, require_origin=True,
+                ))
+        finally:
+            db.conn.execute("ROLLBACK TO SAVEPOINT strategic_new_army_result_preflight")
+            db.conn.execute("RELEASE SAVEPOINT strategic_new_army_result_preflight")
+        for result in created_probe:
+            if result.get("rejected"):
+                return (
+                    f"战略/外敌事件「{event_title or event_id}」新军战果拒收："
+                    f"{result.get('reason') or result.get('category') or ''}"
+                )
+        if not any(_strategic_result_item_has_material_world_state(item) for item in created_probe):
+            return f"战略/外敌事件「{event_title or event_id}」新军战果无真实世界状态变化"
     for raw in new_armies:
+        if explicit_attribution:
+            continue
         if not isinstance(raw, dict):
             return f"战略/外敌事件「{event_title or event_id}」新军战果须为对象"
-        if not explicit_attribution and not _change_mentions_strategic_event(raw, event_id):
+        if not _change_mentions_strategic_event(raw, event_id):
             return f"战略/外敌事件「{event_title or event_id}」新军战果缺 reason/原因 事件锚点"
         item = {ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v for k, v in raw.items()}
         army_id = str(item.get("id") or "").strip()
