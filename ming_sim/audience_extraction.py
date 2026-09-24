@@ -239,18 +239,32 @@ def run_endorsement_batch_for_night(
     write_gate: Any,
     extractor_agent: Any = None,
     join_timeout_s: float | None = None,
+    late_action_ids: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
-    """收夜 endorsement-only 批：LLM 在 write_gate 外；短事务原子落背书。
+    """收夜或迟到补批共用 endorsement-only 入口：LLM 在锁外，落库在短事务。
 
-    - 已 bound → 幂等跳过。
-    - 无候选或无 surviving turns → 确定性 skip 并标 bound。
+    - 正常批以收夜游标、迟到批以待补项标记判定完成，重试幂等。
+    - 无候选或无 surviving turns → 确定性 skip 并标完成。
     - LLM 去重走既有 per-night single-flight（防双跑）；写序由 session 队列屏障覆盖
       （#1353：删除争用 join 舞步）。争用/前 owner 已释放 → 只重读 bound 终态。
     - LLM/shape 失败 → 抛 AudienceNightError（调用方 fail-closed 保持 OPEN；K10b）。
     """
     del join_timeout_s  # 签名兼容；队列屏障后不再 join 争用
     nid = int(night_id)
-    if _is_endorsement_bound(db, nid):
+    late_ids = sorted({int(i) for i in late_action_ids or ()})
+    if late_action_ids is not None and not late_ids:
+        return {"status": "done", "night_id": nid, "already": True, "ids": []}
+
+    def bound() -> bool:
+        if late_action_ids is None:
+            return _is_endorsement_bound(db, nid)
+        return not db.conn.execute(
+            f"SELECT 1 FROM pending_actions WHERE night_id=? AND status='committed' "
+            f"AND late_endorsement_pending=1 AND id IN ({','.join('?' for _ in late_ids)})",
+            (nid, *late_ids),
+        ).fetchone()
+
+    if bound():
         return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
     flight_key = _night_flight_key(db, nid)
@@ -259,7 +273,7 @@ def run_endorsement_batch_for_night(
         # single-flight 只防双跑 LLM；写序归 session 队列。争用/已释放 → 重读终态。
         owner, owned = _claim_single_flight(flight_key)
         if owner is None or not owned:
-            if _is_endorsement_bound(db, nid):
+            if bound():
                 return {"status": "done", "night_id": nid, "already": True, "ids": []}
             raise AudienceNightError(
                 f"收夜背书批未落定（night_id={nid}）",
@@ -267,18 +281,23 @@ def run_endorsement_batch_for_night(
                 detail={"night_id": nid},
             )
 
-        if _is_endorsement_bound(db, nid):
+        if bound():
             return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
-        inputs = db.list_endorsement_batch_inputs(nid)
+        inputs = db.list_endorsement_batch_inputs(
+            nid, action_ids=late_ids if late_action_ids is not None else None,
+        )
         candidates = list(inputs.get("candidates") or [])
         source_turns = list(inputs.get("turns") or [])
 
         if not candidates or not source_turns:
-            # Same short path as settle: advance CLOSE_STEP_ENDORSEMENT_BOUND.
+            # 与有候选分支共用落定点：正常推进游标，迟到清待补标记并补明发。
             with write_gate:
-                if not _is_endorsement_bound(db, nid):
-                    db.settle_endorsement_batch(nid, [])
+                if not bound():
+                    if late_action_ids is None:
+                        db.settle_endorsement_batch(nid, [])
+                    else:
+                        db.settle_endorsement_batch(nid, [], late_action_ids=late_ids)
             return {
                 "status": "skipped",
                 "night_id": nid,
@@ -312,9 +331,14 @@ def run_endorsement_batch_for_night(
         try:
             with write_gate:
                 # Re-check after LLM: another path may have bound via cursor.
-                if _is_endorsement_bound(db, nid):
+                if bound():
                     return {"status": "done", "night_id": nid, "already": True, "ids": []}
-                ids = db.settle_endorsement_batch(nid, items)
+                if late_action_ids is None:
+                    ids = db.settle_endorsement_batch(nid, items)
+                else:
+                    ids = db.settle_endorsement_batch(
+                        nid, items, late_action_ids=late_ids,
+                    )
         except Exception as exc:
             code = getattr(exc, "code", "endorsement_settle_failed")
             message = f"收夜背书批落库失败（{code}）：{exc}"

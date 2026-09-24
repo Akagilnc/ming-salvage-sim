@@ -897,6 +897,7 @@ def append_ledger_entry(
     origin_chat_turn_id: int = 0,
     origin_ref: str = "",
     allow_closing: bool = False,
+    allow_closed_publication: bool = False,
 ) -> int:
     """追加一条故事账。commit=False 时由外层事务统一提交（开夜原子）。
 
@@ -924,7 +925,7 @@ def append_ledger_entry(
                 db, int(night_id), int(source_chat_turn_id), int(night["turn"]),
             )
         )
-    if night["status"] == NIGHT_STATUS_CLOSED and not pending_source:
+    if night["status"] == NIGHT_STATUS_CLOSED and not (pending_source or allow_closed_publication):
         raise AudienceNightError(
             f"夜已收，不能再落账：{night_id}", code="night_closed",
         )
@@ -946,6 +947,12 @@ def append_ledger_entry(
             f"在场效果非法：{presence_effect!r}", code="bad_presence_effect",
         )
     tag_list = [str(t) for t in (tags or []) if str(t)]
+    if allow_closed_publication and not (
+        source_chat_turn_id == 0 and origin_chat_turn_id == 0
+        and TAG_MINGFA in tag_list
+        and any(exact_mingfa_publication_directive_id(t) for t in tag_list)
+    ):
+        raise AudienceNightError("封夜后仅可补记引擎明发账", code="night_closed")
     seq = _allocate_seq(db, night_id)
     origin = str(origin_ref or "").strip()
     cur = db.conn.execute(
@@ -1236,24 +1243,68 @@ def _commit_night_approved(
     return list(applied or [])
 
 
+def publish_night_directives(db: Any, night_id: int) -> None:
+    """背书落定后，以同一入口幂等记本夜已成案拟旨的明发账。"""
+    # 夜内定案的旨落公开层账、标已明发（#502 AC6）——仅 endorsement 成功之后。
+    already_ids = {
+        str(did)
+        for did in engine_command_mingfa_publication_ids(list_ledger(db, night_id))
+    }
+    _mingfa_candidates = db.conn.execute(
+        """
+        SELECT td.id AS directive_id, td.actor, td.text,
+               MIN(d.id) AS dossier_id
+        FROM pending_actions pa
+        JOIN turn_directives td ON td.id = pa.committed_directive_id
+        JOIN decree_dossiers d ON d.pending_action_id = pa.id
+        WHERE pa.night_id = ? AND pa.kind = 'directive'
+          AND pa.status = 'committed' AND pa.committed_directive_id > 0
+        GROUP BY td.id, td.actor, td.text
+        ORDER BY td.id
+        """,
+        (int(night_id),),
+    ).fetchall()
+    for _pd in _mingfa_candidates:
+        _did_int = int(_pd["directive_id"] or 0)
+        _did = str(_did_int)
+        if not _did_int or _did in already_ids:
+            continue
+        dossier_id = int(_pd["dossier_id"] or 0)
+        if dossier_id <= 0:
+            continue
+        origin_ref = f"dossier:{dossier_id}"
+        append_ledger_entry(
+            db, night_id,
+            person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],
+            audibility=AUDIBILITY_PUBLIC,
+            body=f"明发旨意：{str(_pd['text'] or '')}",
+            tags=[TAG_MINGFA, mingfa_publication_tag(_did_int)],
+            check_dead=False,
+            allow_closing=True,
+            allow_closed_publication=True,
+            origin_ref=origin_ref,
+        )
+
+
 def commit_late_night_approved(
     db: Any, state: GameState, *, content: Any, registry: Any,
-    write_gate: Any = None,
+    llm_config: Any = None, write_gate: Any = None,
 ) -> None:
-    """过月 join 补齐转译后，将已封夜迟到的应允按收夜原提交口成案。"""
+    """过月 join 后沿收夜提交、背书、明发入口补完迟到应允。"""
     nights = db.conn.execute(
         "SELECT DISTINCT n.id FROM audience_nights n "
         "JOIN pending_actions pa ON pa.night_id=n.id "
-        "WHERE n.turn=? AND n.status=? AND pa.status='pending' "
-        "AND pa.night_approved=1 ORDER BY n.id",
+        "WHERE n.turn=? AND n.status=? AND "
+        "((pa.status='pending' AND pa.night_approved=1) OR "
+        "(pa.status='committed' AND pa.late_endorsement_pending=1)) ORDER BY n.id",
         (int(state.turn), NIGHT_STATUS_CLOSED),
     ).fetchall()
     if not nights:
         return
     gate = _gate_cm(write_gate)
-    with gate:
-        for night in nights:
-            nid = int(night["id"])
+    for night in nights:
+        nid = int(night["id"])
+        with gate:
             for kinds in (
                 _CLOSE_COMMIT_KINDS_OFFICE,
                 _CLOSE_COMMIT_KINDS_DIRECTIVE,
@@ -1262,6 +1313,16 @@ def commit_late_night_approved(
                 _commit_night_approved(
                     db, state, nid, kinds=kinds, content=content, registry=registry,
                 )
+            late_ids = [int(row["id"]) for row in db.conn.execute(
+                "SELECT id FROM pending_actions WHERE night_id=? AND status='committed' "
+                "AND late_endorsement_pending=1 ORDER BY id", (nid,),
+            ).fetchall()]
+        if late_ids:
+            from ming_sim.audience_extraction import run_endorsement_batch_for_night
+            run_endorsement_batch_for_night(
+                db=db, night_id=nid, llm_config=llm_config, write_gate=gate,
+                late_action_ids=late_ids,
+            )
 
 
 def _drain_pending_translations_or_fail_closed(
@@ -1590,44 +1651,7 @@ def close_night(
                 kinds=_CLOSE_COMMIT_KINDS_FINAL,
                 content=content, registry=registry,
             )
-            # 夜内定案的旨落公开层账、标已明发（#502 AC6）——仅 endorsement 成功之后。
-            already_ids = {
-                str(did)
-                for did in engine_command_mingfa_publication_ids(list_ledger(db, night_id))
-            }
-            _mingfa_candidates = db.conn.execute(
-                """
-                SELECT td.id AS directive_id, td.actor, td.text,
-                       MIN(d.id) AS dossier_id
-                FROM pending_actions pa
-                JOIN turn_directives td ON td.id = pa.committed_directive_id
-                JOIN decree_dossiers d ON d.pending_action_id = pa.id
-                WHERE pa.night_id = ? AND pa.kind = 'directive'
-                  AND pa.status = 'committed' AND pa.committed_directive_id > 0
-                GROUP BY td.id, td.actor, td.text
-                ORDER BY td.id
-                """,
-                (int(night_id),),
-            ).fetchall()
-            for _pd in _mingfa_candidates:
-                _did_int = int(_pd["directive_id"] or 0)
-                _did = str(_did_int)
-                if not _did_int or _did in already_ids:
-                    continue
-                dossier_id = int(_pd["dossier_id"] or 0)
-                if dossier_id <= 0:
-                    continue
-                origin_ref = f"dossier:{dossier_id}"
-                append_ledger_entry(
-                    db, night_id,
-                    person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],
-                    audibility=AUDIBILITY_PUBLIC,
-                    body=f"明发旨意：{str(_pd['text'] or '')}",
-                    tags=[TAG_MINGFA, mingfa_publication_tag(_did_int)],
-                    check_dead=False,
-                    allow_closing=True,
-                    origin_ref=origin_ref,
-                )
+            publish_night_directives(db, int(night_id))
             tags = [TAG_CLOSE_NIGHT]
             if auto:
                 tags.append(TAG_AUTO_CLOSE)

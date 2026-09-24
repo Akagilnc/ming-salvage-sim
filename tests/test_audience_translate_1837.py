@@ -14,11 +14,14 @@ from types import SimpleNamespace
 
 import pytest
 
+import ming_sim.agents as agents_mod
 import ming_sim.audience_translate as audience_translate
 from ming_sim.audience_night import (
     AudienceNightError,
     close_night,
+    engine_command_mingfa_publication_ids,
     list_chat_turns_for_night,
+    list_ledger,
     open_night,
 )
 from ming_sim.audience_translate import normalize_audience_declaration
@@ -118,11 +121,41 @@ def test_pending_round_approval_commits_before_close_or_after_month_join(
         minister_name="", night_id=nid,
     )
     aid = int(action.commissions.applied[0]["id"])
+    early_aid = None
+    if retry_at_month:
+        early = dispatch_declaration(
+            db, state, {"commissions": [{"text": "着兵部核边饷"}]},
+            minister_name="", night_id=nid,
+        )
+        early_aid = int(early.commissions.applied[0]["id"])
+        db.mark_pending_night_approved([early_aid], night_id=nid)
     ctid = _persist_night_chat(db, state, nid, "准", "臣领旨。")
     db.mark_story_extraction_pending(ctid)
     sess = _sess(db, state, content, monkeypatch)
     sess._write_gate = threading.Lock()
     queue = get_session_write_queue(sess)
+    batches = []
+
+    class EndorsementAgent:
+        fail_once = False
+
+        def run(self, materials):
+            payload = json.loads(materials)
+            candidates = payload["可背书案卷"]
+            batches.append([int(c["ref"]["dossier_id"]) for c in candidates])
+            if self.fail_once:
+                self.fail_once = False
+                raise RuntimeError("endorsement unavailable")
+            return json.dumps({"endorsements": [{
+                "dossier_id": int(c["ref"]["dossier_id"]),
+                "form": "御笔手敕", "endorser_id": "", "imperial": True,
+                "source_chat_turn_id": ctid, "decision_key": "",
+            } for c in candidates]}, ensure_ascii=False)
+
+    endorsement_agent = EndorsementAgent()
+    monkeypatch.setattr(
+        agents_mod, "create_endorsement_extractor_agent", lambda _: endorsement_agent,
+    )
 
     def approve(prompt, config):
         return {
@@ -146,9 +179,7 @@ def test_pending_round_approval_commits_before_close_or_after_month_join(
         db, state, content=content, registry=None, llm_config=sess.llm_config,
         write_gate=sess._write_gate, write_queue=queue,
         translate_fn=fail if retry_at_month else recover_on_closing,
-        endorsement_extractor_agent=SimpleNamespace(
-            run=lambda _: SimpleNamespace(content='{"endorsements": []}'),
-        ),
+        endorsement_extractor_agent=endorsement_agent,
     )
     row = db.conn.execute(
         "SELECT status, night_approved, committed_directive_id "
@@ -159,6 +190,20 @@ def test_pending_round_approval_commits_before_close_or_after_month_join(
         with pytest.raises(AudienceNightError, match="夜已收"):
             db.mark_pending_night_approved([aid], night_id=nid)
         stub_audience_translate(monkeypatch, approve)
+        endorsement_agent.fail_once = True
+        with pytest.raises(AudienceNightError, match="背书批抽取失败"):
+            sess.await_translations_before_month()
+        failed_dossier = db.conn.execute(
+            "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (aid,),
+        ).fetchone()
+        assert failed_dossier is not None
+        assert db.list_dossier_endorsements(int(failed_dossier["id"])) == []
+        failed_row = db.conn.execute(
+            "SELECT committed_directive_id FROM pending_actions WHERE id=?", (aid,),
+        ).fetchone()
+        assert int(failed_row["committed_directive_id"]) not in (
+            engine_command_mingfa_publication_ids(list_ledger(db, nid))
+        )
         sess.await_translations_before_month()
         row = db.conn.execute(
             "SELECT status, night_approved, committed_directive_id "
@@ -166,7 +211,30 @@ def test_pending_round_approval_commits_before_close_or_after_month_join(
         ).fetchone()
     assert row["status"] == "committed"
     assert int(row["night_approved"]) == 1
-    assert int(row["committed_directive_id"] or 0) > 0
+    directive_id = int(row["committed_directive_id"] or 0)
+    assert directive_id > 0
+    dossier = db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (aid,),
+    ).fetchone()
+    assert dossier is not None
+    dossier_id = int(dossier["id"])
+    assert len(db.list_dossier_endorsements(dossier_id)) == 1
+    expected_directives = {directive_id}
+    if early_aid is not None:
+        early_row = db.conn.execute(
+            "SELECT committed_directive_id FROM pending_actions WHERE id=?", (early_aid,),
+        ).fetchone()
+        early_directive_id = int(early_row["committed_directive_id"])
+        early_dossier = db.conn.execute(
+            "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (early_aid,),
+        ).fetchone()
+        early_dossier_id = int(early_dossier["id"])
+        assert len(db.list_dossier_endorsements(early_dossier_id)) == 1
+        expected_directives.add(early_directive_id)
+        assert batches == [[early_dossier_id], [dossier_id], [dossier_id]]
+    else:
+        assert batches == [[dossier_id]]
+    assert engine_command_mingfa_publication_ids(list_ledger(db, nid)) == expected_directives
 
 
 def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(

@@ -2544,6 +2544,9 @@ class GameDB:
             "pending_actions", "night_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_actions", "night_approved", "INTEGER NOT NULL DEFAULT 0")
+        # #1871：封夜后迟到应允的补背书待办；背书落库同事务清零。
+        self.ensure_column(
+            "pending_actions", "late_endorsement_pending", "INTEGER NOT NULL DEFAULT 0")
         # fiscal_config 科目元数据列（数据驱动预算目录）：budget_role=fixed 的 base 项靠
         # account/direction/display 由 flows.compute_budget_lines 动态生成预算行；
         # dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式/皇庄专路，这三列留空。
@@ -10245,16 +10248,19 @@ class GameDB:
         )
         self.conn.commit()
 
-    def list_endorsement_candidates(self, night_id: int) -> List[Dict[str, Any]]:
+    def list_endorsement_candidates(
+        self, night_id: int, *, action_ids: Optional[Sequence[int]] = None,
+    ) -> List[Dict[str, Any]]:
         """Eligible dossier refs for the night-level endorsement-only batch.
 
         Only dossiers whose pending_action is bound to this night (Phase-1 draft
         prerequisites). Global proposed dossiers from other nights are excluded.
         """
         nid = int(night_id)
+        ids = {int(i) for i in action_ids} if action_ids is not None else None
         rows = self.conn.execute(
             """
-            SELECT d.id AS id, d.decree_text AS decree_text
+            SELECT d.id AS id, d.decree_text AS decree_text, d.pending_action_id
             FROM decree_dossiers d
             JOIN pending_actions pa ON pa.id = d.pending_action_id
             WHERE pa.night_id = ?
@@ -10268,12 +10274,14 @@ class GameDB:
         return [{
             "ref": {"dossier_id": int(row["id"])},
             "decree_text": str(row["decree_text"] or ""),
-        } for row in rows]
+        } for row in rows if ids is None or int(row["pending_action_id"]) in ids]
 
-    def list_endorsement_batch_inputs(self, night_id: int) -> Dict[str, Any]:
+    def list_endorsement_batch_inputs(
+        self, night_id: int, *, action_ids: Optional[Sequence[int]] = None,
+    ) -> Dict[str, Any]:
         """Immutable snapshot inputs for night-level endorsement-only binding."""
         nid = int(night_id)
-        candidates = self.list_endorsement_candidates(nid)
+        candidates = self.list_endorsement_candidates(nid, action_ids=action_ids)
         turn_rows = self.conn.execute(
             """
             SELECT t.id AS chat_turn_id, t.night_seq, t.minister_name,
@@ -10331,13 +10339,14 @@ class GameDB:
         self,
         night_id: int,
         endorsements: Sequence[Mapping[str, Any]],
+        *, late_action_ids: Optional[Sequence[int]] = None,
     ) -> List[int]:
-        """Atomically persist night-level endorsements + CLOSE_STEP_ENDORSEMENT_BOUND.
+        """Atomically persist normal or late night endorsements and their completion mark.
 
         Invalid items go to the established rejection channel; valid ones INSERT OR
-        IGNORE (retry-idempotent unique key). Bound watermark is the existing
-        close_commit_cursor step (not a parallel column) and always advances in the
-        same short transaction so crash-restore does not re-call the LLM.
+        IGNORE (retry-idempotent unique key). Normal batch advances the existing
+        close_commit_cursor step; late batch clears only its pending action markers
+        and publishes the resulting directives in the same transaction.
 
         dossier_id is checked against the same night candidate snapshot used for the
         batch inputs (not a fresh global proposed scan).
@@ -10349,12 +10358,17 @@ class GameDB:
         )
 
         nid = int(night_id)
-        if night_endorsement_bound(get_night(self, nid)):
+        if late_action_ids is None and night_endorsement_bound(get_night(self, nid)):
+            return []
+        late_ids = sorted({int(i) for i in late_action_ids or ()})
+        if late_action_ids is not None and not late_ids:
             return []
         accepted: List[Mapping[str, Any]] = []
         rejected: List[tuple[Mapping[str, Any], str]] = []
         # One snapshot for both surviving turns and night-scoped candidates.
-        batch_inputs = self.list_endorsement_batch_inputs(nid)
+        batch_inputs = self.list_endorsement_batch_inputs(
+            nid, action_ids=late_ids if late_action_ids is not None else None,
+        )
         surviving = {
             int(t["source_chat_turn_id"])
             for t in (batch_inputs.get("turns") or [])
@@ -10432,12 +10446,23 @@ class GameDB:
                     commit=False,
                 )
                 new_ids.append(int(eid))
-            # Same short transaction as endorsement rows: advance CLOSE_STEPS cursor.
-            self.conn.execute(
-                "UPDATE audience_nights SET close_commit_cursor = ? "
-                "WHERE id = ? AND close_commit_cursor < ?",
-                (int(CLOSE_STEP_ENDORSEMENT_BOUND), nid, int(CLOSE_STEP_ENDORSEMENT_BOUND)),
-            )
+            if late_action_ids is None:
+                # Initial night batch: same transaction as endorsement rows.
+                self.conn.execute(
+                    "UPDATE audience_nights SET close_commit_cursor = ? "
+                    "WHERE id = ? AND close_commit_cursor < ?",
+                    (int(CLOSE_STEP_ENDORSEMENT_BOUND), nid, int(CLOSE_STEP_ENDORSEMENT_BOUND)),
+                )
+            else:
+                self.conn.execute(
+                    f"UPDATE pending_actions SET late_endorsement_pending=0 "
+                    f"WHERE night_id=? AND status='committed' AND late_endorsement_pending=1 "
+                    f"AND id IN ({','.join('?' for _ in late_ids)})",
+                    (nid, *late_ids),
+                )
+                # 补批与明发同一持久提交点；崩溃后不能只剩已背书、未明发。
+                from ming_sim.audience_night import publish_night_directives
+                publish_night_directives(self, nid)
         # 本方法即外层 owner：atomic 提交后镜像（0008-D5；#1745 补缺镜像）。
         if collector is not None:
             from ming_sim.applier import mirror_rejections_after_commit
@@ -18284,9 +18309,10 @@ class GameDB:
             extra = " AND night_id = ?"
             params.append(int(night_id))
         cur = self.conn.execute(
-            f"UPDATE pending_actions SET night_approved = 1 "
+            f"UPDATE pending_actions SET night_approved = 1, "
+            f"late_endorsement_pending = CASE WHEN ? THEN 1 ELSE late_endorsement_pending END "
             f"WHERE id IN ({placeholders}) AND status = 'pending'{extra}",
-            params,
+            [int(bool(pending_source and night is not None and night["status"] == NIGHT_STATUS_CLOSED)), *params],
         )
         if (
             not bool(getattr(self.conn, "_commit_suspended", False))

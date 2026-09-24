@@ -3914,6 +3914,7 @@ class GameSession:
                 self.db, self.state,
                 content=getattr(self, "content", None),
                 registry=getattr(self, "registry", None),
+                llm_config=getattr(self, "llm_config", None),
                 write_gate=catch_gate,
             )
             if after_drain is not None:
