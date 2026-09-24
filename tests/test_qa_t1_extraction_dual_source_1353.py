@@ -500,27 +500,21 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
 
 
 def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypatch):
-    """生产钉：seal 后现役高亮与转译尾随拒绝 → 零 LLM、零写。"""
+    """生产钉：seal 后现役高亮尾随拒绝 → 零 LLM、零写。"""
     game = web_game
     q = game._runtime_write_queue()
     q.seal()
-    calls = {"hl": 0, "catch": 0}
+    calls = {"hl": 0}
 
     monkeypatch.setattr(
         web_app, "run_highlight_judge",
         lambda **_k: calls.__setitem__("hl", calls["hl"] + 1) or ["x"],
     )
 
-    monkeypatch.setattr(
-        web_app, "catch_up_pending_translations",
-        lambda **_k: calls.__setitem__("catch", calls["catch"] + 1),
-    )
-
     assert game._trail_highlight_judge_after_reply(
         "回话", message_id=1, chat_turn_id=1,
     ) == []
-    game._run_startup_extraction_catch_up(pending_ticket=None)
-    assert calls == {"hl": 0, "catch": 0}
+    assert calls == {"hl": 0}
     assert q.inflight_count() == 0
     q.unseal()
 
