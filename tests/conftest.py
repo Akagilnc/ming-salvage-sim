@@ -33,21 +33,9 @@ def _cli_launch_attempts() -> list[tuple[str, str]]:
         return list(_CLI_LAUNCH_ATTEMPTS)
 
 
-def _prompt_head(cmd: list, stdin_text: str | None) -> tuple[str, str]:
-    runner = os.path.basename(str(cmd[0] if cmd else "")) or "?"
-    if stdin_text:
-        text = stdin_text
-    else:
-        text = ""
-        for arg in cmd[1:]:
-            piece = str(arg)
-            if piece.startswith("--print="):
-                text = piece.split("=", 1)[1]
-                break
-        if not text:
-            positional = [str(arg) for arg in cmd[1:] if not str(arg).startswith("-")]
-            text = positional[-1] if positional else ""
-    return runner, " ".join(text.split())[:_PROMPT_HEAD_CHARS]
+def _prompt_head(prompt: str | None) -> str:
+    """启动账只记调用方已持有的 prompt 开头，不从 argv 再解析一份。"""
+    return " ".join(str(prompt or "").split())[:_PROMPT_HEAD_CHARS]
 
 
 def _original_cli_subprocess():
@@ -60,19 +48,21 @@ def _original_cli_subprocess():
 _ORIGINAL_CLI_SUBPROCESS = _original_cli_subprocess()
 
 
-def _guard_cli_subprocess(cmd, *, stdin_text, env, cwd):
+def _guard_cli_subprocess(cmd, *, stdin_text, env, cwd, prompt):
     """测试期的唯一启动出口：不起真实进程。
 
     用例已换成 Popen 替身时，交给生产出口走替身（读循环契约仍在测）。
     否则记下 runner 与 prompt 开头并抛错；后台吞掉异常也不抹掉这笔账。
+    prompt 用调用方传入的原文，不从 argv 反推（-m / --effort 的值不是 prompt）。
     """
     import ming_sim.cli_backend as cli_backend
 
     if cli_backend.subprocess.Popen is not _REAL_CLI_POPEN:
         return _ORIGINAL_CLI_SUBPROCESS(
-            cmd, stdin_text=stdin_text, env=env, cwd=cwd,
+            cmd, stdin_text=stdin_text, env=env, cwd=cwd, prompt=prompt,
         )
-    runner, head = _prompt_head(list(cmd or []), stdin_text)
+    runner = os.path.basename(str(cmd[0] if cmd else "")) or "?"
+    head = _prompt_head(prompt)
     with _CLI_LAUNCH_LOCK:
         _CLI_LAUNCH_ATTEMPTS.append((runner, head))
     raise RuntimeError(f"测试拒绝启动 LLM CLI {runner}: {head}")
