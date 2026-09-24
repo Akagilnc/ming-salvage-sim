@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping
 
+from ming_sim.population_pressure import is_actual_population_transfer
+
 ENTRY_KIND = "covert_levy_exposure"
 PROHIBITION_ACTION = "prohibit_covert_levy"
 
@@ -123,7 +125,8 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
                 prohibition_dossier_id=int(prohibition["id"]),
             )
         levy_transfer = any(
-            successful(x) and x.get("origin_ref") == origin and x.get("reason") == "摊派"
+            is_actual_population_transfer(x)
+            and x.get("origin_ref") == origin and x.get("reason") == "摊派"
             for x in applied.get("population_transfers") or []
         )
         covert_effect = any(
@@ -173,7 +176,7 @@ def write_exposure_todos(
     """由稽核、检举、已成功落库的 #649 民变实况三路写同一待办。"""
     transfers = [
         item for item in (applied or {}).get("population_transfers") or []
-        if isinstance(item, Mapping) and not item.get("rejected")
+        if is_actual_population_transfer(item)
     ]
     written = 0
     for row in db.conn.execute("SELECT id FROM decree_dossiers ORDER BY id").fetchall():

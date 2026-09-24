@@ -19,6 +19,7 @@ from ming_sim.agents import run_agent_text
 from ming_sim.assets import strip_json_fence
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.models import GameState, reign_period_label
+from ming_sim.population_pressure import is_actual_population_transfer
 from ming_sim.token_stats import tlog
 
 
@@ -217,7 +218,7 @@ def effect_brief(applied: Dict[str, object]) -> str:
     # LLM 输入的事实摘要，不复活任何 UI 固定人口模板（P4/P7，#648 W1 已删者不复辟）。
     transfers = [
         t for t in (applied.get("population_transfers") or [])
-        if isinstance(t, dict) and not t.get("rejected")
+        if is_actual_population_transfer(t)
     ]
     if transfers:
         transfer_bits = []
