@@ -10,9 +10,131 @@ import copy
 from contextlib import contextmanager
 import os
 import shutil
+import subprocess
 import tempfile
+import threading
 
 import pytest
+
+# 测试替换前的真实 Popen。cli_backend 与本模块共用同一 subprocess 模块对象。
+_REAL_CLI_POPEN = subprocess.Popen
+_CLI_LAUNCH_LOCK = threading.Lock()
+_CLI_LAUNCH_ATTEMPTS: list[tuple[str, str]] = []
+_PROMPT_HEAD_CHARS = 120
+
+
+def _reset_cli_launch_attempts() -> None:
+    with _CLI_LAUNCH_LOCK:
+        _CLI_LAUNCH_ATTEMPTS.clear()
+
+
+def _cli_launch_attempts() -> list[tuple[str, str]]:
+    with _CLI_LAUNCH_LOCK:
+        return list(_CLI_LAUNCH_ATTEMPTS)
+
+
+def _prompt_head(cmd: list, stdin_text: str | None) -> tuple[str, str]:
+    runner = os.path.basename(str(cmd[0] if cmd else "")) or "?"
+    if stdin_text:
+        text = stdin_text
+    else:
+        text = ""
+        for arg in cmd[1:]:
+            piece = str(arg)
+            if piece.startswith("--print="):
+                text = piece.split("=", 1)[1]
+                break
+        if not text:
+            positional = [str(arg) for arg in cmd[1:] if not str(arg).startswith("-")]
+            text = positional[-1] if positional else ""
+    return runner, " ".join(text.split())[:_PROMPT_HEAD_CHARS]
+
+
+def _original_cli_subprocess():
+    import ming_sim.cli_backend as cli_backend
+
+    return cli_backend._start_cli_subprocess
+
+
+# 绑定生产出口本身，避免替身再查模块属性时叫回自己。
+_ORIGINAL_CLI_SUBPROCESS = _original_cli_subprocess()
+
+
+def _guard_cli_subprocess(cmd, *, stdin_text, env, cwd):
+    """测试期的唯一启动出口：不起真实进程。
+
+    用例已换成 Popen 替身时，交给生产出口走替身（读循环契约仍在测）。
+    否则记下 runner 与 prompt 开头并抛错；后台吞掉异常也不抹掉这笔账。
+    """
+    import ming_sim.cli_backend as cli_backend
+
+    if cli_backend.subprocess.Popen is not _REAL_CLI_POPEN:
+        return _ORIGINAL_CLI_SUBPROCESS(
+            cmd, stdin_text=stdin_text, env=env, cwd=cwd,
+        )
+    runner, head = _prompt_head(list(cmd or []), stdin_text)
+    with _CLI_LAUNCH_LOCK:
+        _CLI_LAUNCH_ATTEMPTS.append((runner, head))
+    raise RuntimeError(f"测试拒绝启动 LLM CLI {runner}: {head}")
+
+
+def _wait_session_queues_idle() -> None:
+    """收尾先等本测试已装上的会话写队列（复用 wait_idle）。"""
+    import web_app
+    from ming_sim import decree_forecast
+
+    owners = []
+    game = getattr(web_app, "web_game", None)
+    if game is not None:
+        owners.append(game)
+    for ref in list(decree_forecast._owners.values()):
+        owner = ref() if ref is not None else None
+        if owner is not None:
+            owners.append(owner)
+    seen: set[int] = set()
+    for owner in owners:
+        for obj in (owner, getattr(owner, "session", None)):
+            queue = getattr(obj, "_write_queue", None)
+            if queue is None or not hasattr(queue, "wait_idle"):
+                continue
+            if id(queue) in seen:
+                continue
+            seen.add(id(queue))
+            queue.wait_idle()
+
+
+@pytest.fixture(autouse=True)
+def _forbid_real_cli_process():
+    """#1875：测试运行时，LLM CLI 的唯一启动出口不启动进程。"""
+    import ming_sim.cli_backend as cli_backend
+
+    _reset_cli_launch_attempts()
+    mp = pytest.MonkeyPatch()
+    mp.setattr(cli_backend, "_start_cli_subprocess", _guard_cli_subprocess)
+    yield
+    mp.undo()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """用例已返回、夹具尚未撤销：等后台队列，再按启动账改判。"""
+    del item
+    if call.when == "call":
+        _wait_session_queues_idle()
+    outcome = yield
+    if call.when != "call":
+        return
+    attempts = _cli_launch_attempts()
+    if not attempts:
+        return
+    report = outcome.get_result()
+    lines = "\n".join(f"- {runner}: {head}" for runner, head in attempts)
+    message = f"本测试期间有 LLM CLI 启动尝试：\n{lines}"
+    if report.passed:
+        report.outcome = "failed"
+        report.longrepr = message
+    else:
+        report.sections.append(("LLM CLI 启动尝试", message))
 
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content as ctx_bind

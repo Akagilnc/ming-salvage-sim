@@ -129,6 +129,14 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
         "run_agent_text",
         lambda *a, **k: '{"body": "本月边饷已清，暗流暗涌。", "tags": ["边饷"]}',
     )
+    # #1861 夜里预推走 agents.run_agent_text。未配置 runner 时生产回落 agy。
+    # 与其余外层缝一样不调模型。抛错发生在启动之前，预推不暂存效果（#1873 仍只记日志）。
+    import ming_sim.decree_forecast as forecast_mod
+
+    def _forecast_without_model(*_a, **_k):
+        raise RuntimeError("夜里预推模型替身")
+
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", _forecast_without_model)
 
 
 @pytest.fixture
