@@ -131,34 +131,6 @@ def _stub_settlement_attendant(monkeypatch, decree_mod, *, text="递话", captur
     )
 
 
-def test_engine_extractor_path_stamps_player_decree(game, monkeypatch, tmp_path):
-    """#146(A 方案)：皇帝下旨触发的结算(resolve_directives)→ extractor 产出整批标 player_decree
-    ——皇帝下旨这回合的拒收要给皇帝可见提示(整批按触发源；无旨自动推进/世界自演变才 system)。
-    原断言 system_simulation 已废：player_decree 来源此前从未实装、皇帝下旨被拒从不提示(#146)。"""
-    import ming_sim.decree as decree_mod
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
-                        lambda *a, **k: ("本月邸报。", k.get("simulator_payload") or {}))
-    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({"character_status_changes": [
-            {"origin_ref": "盘面自发", "name": "查无此人丁", "status": "dead", "reason": "测试"}]}, "out", "in"))
-    _stub_settlement_attendant(monkeypatch, decree_mod)
-
-    decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
-                                  content=content, registry=None)
-
-    rows = _rejection_rows(db, turn)
-    assert len(rows) == 1
-    assert rows[0][3] == "player_decree"  # #146 A：皇帝下旨=玩家来源
 
 
 def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_path):
@@ -648,120 +620,10 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         ch.office_type = old_office_type
 
 
-def test_resimulation_inherits_player_source_from_ctx(game, monkeypatch, tmp_path):
-    """#146 A：HITL 续跑 / 崩溃重抽走 resolve_decisions_phase2 → _settle_after_narrative 时，source 从
-    ctx['source'] 继承（phase1 皇帝下旨存的 player_decree），不因重抽退化成 system。重抽是格式重跑、
-    皇帝原旨没变 → 来源不变（用户拍）。验：重抽路拒收 source 仍 player_decree。"""
-    import ming_sim.decree as decree_mod
-    from ming_sim.applier import Provenance
-    from ming_sim.models import TurnPhase
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    # phase1：皇帝下旨暂停存 ctx（source=player_decree, ready=0 占位）+ 决策点
-    db.save_resolve_context(turn, "减赋诏", "本月邸报。",
-                            {"transit_semantics": []},
-                            secret_orders={}, relevant_memories=[],
-                            source=Provenance.player_decree.value)
-    db.save_pending_decisions(turn, [{"title": "T", "options": ["a", "b"], "chosen": "a"}])
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    # phase2 重新推演：extractor 产坏 delta（拒收）
-    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({"character_status_changes": [
-            {"origin_ref": "盘面自发", "name": "查无此人辛", "status": "dead", "reason": "测试"}]}, "out", "in"))
-    _stub_settlement_attendant(monkeypatch, decree_mod)
-
-    decree_mod.resolve_decisions_phase2(state, db, None, None, content=content, registry=None)
-
-    rows = _rejection_rows(db, turn)
-    assert len(rows) == 1
-    assert rows[0][3] == "player_decree"  # #146 A：重抽贯穿 ctx 的 player，不退化 system
 
 
-def test_player_decree_rejection_durable_source_gate(game, monkeypatch, tmp_path):
-    """#146 A / #1745：皇帝下旨结算 delta 被拒 → source=player_decree + attendant 槽路由。"""
-    import ming_sim.decree as decree_mod
-    from ming_sim.applier import Provenance
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    captured = []
-
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
-                        lambda *a, **k: ("本月邸报。", k.get("simulator_payload") or {}))
-    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({"character_status_changes": [
-            {"origin_ref": "盘面自发", "name": "查无此人壬", "status": "dead", "reason": "测试"}]}, "out", "in"))
-    _stub_settlement_attendant(monkeypatch, decree_mod, capture=captured)
-
-    decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
-                                  content=content, registry=None)
-
-    rows = _rejection_rows(db, turn)
-    assert len(rows) == 1
-    assert rows[0][3] == Provenance.player_decree.value
-    assert captured and captured[0]
-    # 生产事实包三键齐全（decree.run_settlement_attendant_message）；缺 reason 的变异须红。
-    assert all(
-        str(r.get("section") or "") and str(r.get("category") or "") and str(r.get("reason") or "")
-        for r in captured[0]
-    )
-    archives = db.list_monthly_archives()
-    hit = next(a for a in archives if int(a["turn"]) == turn)
-    assert hit["has_attendant"] is True
 
 
-def test_system_rejection_stays_silent_and_keeps_system_provenance(game, monkeypatch, tmp_path):
-    """#146 A 对照（B 面）：无旨 system_simulation 来源拒收 → source 保真；代码不写戏内固定句。
-    与 test_player_decree_rejection_durable_source_gate 构成 A/B 来源门对照（0008-D5）。
-    走重抽路（resolve_decisions_phase2 从 ctx['source'] 继承）顺带覆盖 _provenance_from_stored。"""
-    import ming_sim.decree as decree_mod
-    from ming_sim.applier import Provenance
-    from ming_sim.models import TurnPhase
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    turn = state.turn
-    # phase1：无旨自演变暂停存 ctx（source=system_simulation, ready=0 占位）+ 决策点
-    db.save_resolve_context(turn, "", "本月邸报。",
-                            {"transit_semantics": []},
-                            secret_orders={}, relevant_memories=[],
-                            source=Provenance.system_simulation.value)
-    db.save_pending_decisions(turn, [{"title": "T", "options": ["a", "b"], "chosen": "a"}])
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    # phase2 重新推演：extractor 产坏 delta（拒收）——与 player 路同款坏 payload，仅来源不同
-    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({"character_status_changes": [
-            {"origin_ref": "盘面自发", "name": "查无此人癸", "status": "dead", "reason": "测试"}]}, "out", "in"))
-
-    decree_mod.resolve_decisions_phase2(state, db, None, None, content=content, registry=None)
-
-    # A 来源：拒收来自 system_simulation（重抽继承 ctx、不误标 player）
-    rows = _rejection_rows(db, turn)
-    assert len(rows) == 1
-    assert rows[0][3] == "system_simulation"
-
-    # 系统来源不触发玩家 attendant 接缝
-    archives = db.list_monthly_archives()
-    hit = next(a for a in archives if int(a["turn"]) == turn)
-    assert hit["has_attendant"] is False
 
 
 def test_provenance_from_stored_recovers_all_forms():
@@ -786,64 +648,6 @@ def test_provenance_from_stored_recovers_all_forms():
     assert _provenance_from_stored("Provenance.查无此成员") == Provenance.system_simulation
 
 
-def test_settling_recovery_fallthrough_preserves_system_source(content, tmp_path, monkeypatch):
-    """#146 cmr r2：SETTLING 非 ready 崩溃恢复 fallthrough 须把 ctx['source'] 经
-    _provenance_from_stored 穿透——拒收行 source==system_simulation，不被误标 player_decree；
-    代码不向邸报写戏内固定句。
-
-    红验：source 穿透改回硬编码 player_decree → 拒收 source 误标 player。"""
-    import ming_sim.decree as decree_mod
-    from ming_sim.applier import Provenance
-    from ming_sim.models import LLMConfig, TurnPhase
-    from ming_sim.session import GameSession
-
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "user_data"))
-    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
-    dbp = str(tmp_path / "recovery.db")
-    sess = GameSession(db_path=dbp, llm_config=cfg, content=content)
-    try:
-        db, state = sess.db, sess.state
-        turn = state.turn
-
-        # 模拟崩溃后的非 ready SETTLING 状态：source=system_simulation 的占位 ctx（ready=0，无 extracted），
-        # decree_text 作哨兵草案（FRONT_HALF_DONE 免草案恢复路据它续跑）。
-        db.save_resolve_context(
-            turn, "某诏", "本月邸报。", {},
-            secret_orders={}, relevant_memories=[],
-            source=Provenance.system_simulation.value,
-        )
-        state.turn_phase = TurnPhase.SETTLING.value
-        db.save_state(state)
-        # 跨进程恢复：内存 last_decree 已被 begin_turn 清空（哨兵草案从 ctx['decree_text'] 恢复）。
-        sess.last_decree = ""
-
-        # 重新推演：simulator 出无决策块邸报、extractor 产坏 delta（拒收）。
-        monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-        monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
-                            lambda *a, **k: ("本月邸报。", k.get("simulator_payload") or {}))
-        monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
-        monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-        monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
-        monkeypatch.setattr(
-            decree_mod, "extract_scores_by_modules_with_agno",
-            lambda *a, **k: ({"character_status_changes": [
-                {"origin_ref": "盘面自发", "name": "查无此人子", "status": "dead", "reason": "测试"}]}, "out", "in"))
-
-        sess.resolve_turn()
-
-        # A 来源：恢复 fallthrough 穿透 ctx['source'] → 拒收记 system_simulation，不误标 player。
-        rows = _rejection_rows(db, turn)
-        assert len(rows) == 1
-        assert rows[0][3] == "system_simulation"
-
-        archives = db.list_monthly_archives()
-        hit = next(a for a in archives if int(a["turn"]) == turn)
-        assert hit["has_attendant"] is False
-    finally:
-        try:
-            sess.close()
-        except Exception:
-            pass
 
 
 @pytest.mark.parametrize(

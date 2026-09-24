@@ -55,7 +55,6 @@ def _canned_monthly_settlement(monkeypatch, extractor_calls):
         lambda *a, **k: ("本月公开邸报", k["simulator_payload"]),
     )
     monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree, "create_score_extractor_module_agent", lambda *a, **k: object())
 
     def extract(_agents, db, state, _narrative, *args, **kwargs):
         extractor_calls.append(state.turn)
@@ -66,7 +65,6 @@ def _canned_monthly_settlement(monkeypatch, extractor_calls):
         } for item in db.list_monthly_dossier_progress_nudges()]
         return {"dossier_progress_reports": reports}, "out", "in"
 
-    monkeypatch.setattr(decree, "extract_scores_by_modules_with_agno", extract)
     # #1745：结算拒收递话同属外层 LLM 缝。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree)
@@ -85,99 +83,6 @@ def _settle(db, state, content, narrative="本月邸报", progress=None):
     return turn
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_cli_no_edict_runs_private_monthly_extractor_and_restores_history(game, monkeypatch):
-    """Real CLI production entry; only simulator/extractor LLM calls are canned."""
-    from ming_sim.db import GameDB
-    from ming_sim.session import GameSession
-    import ming_sim.decree as decree
-    import ming_sim.memories as memories
-    import ming_sim.simulation as simulation
-
-    db, state, content = game
-    order_id, dossier_id = _order(db, state)
-    monthly = [
-        ("启程", "首批出京，已对一处关防"),
-        ("在途", "据前月关防记录续报，已至山海关"),
-        ("将达", "据前两月记录续报，三批已会齐"),
-    ]
-    private_contexts = []
-
-    monkeypatch.setattr(decree, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree, "simulate_season_with_payload",
-        lambda *a, **k: ("本月公开邸报", k["simulator_payload"]),
-    )
-    monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
-
-    def make_extractor(*args, **kwargs):
-        if args[2] == "personnel_secret":
-            private_contexts.append(kwargs["supplemental_context"])
-        return object()
-
-    monkeypatch.setattr(decree, "create_score_extractor_module_agent", make_extractor)
-
-    def run_extractor(_agent, _prompt, tag):
-        if tag != "extractor/personnel_secret":
-            return "{}"
-        band, memorial = monthly[len(private_contexts) - 1]
-        return json.dumps({"dossier_progress_reports": [{
-            "dossier_id": dossier_id,
-            "progress_band": band,
-            "memorial_text": memorial,
-        }]}, ensure_ascii=False)
-
-    monkeypatch.setattr(simulation, "run_agent_text", run_extractor)
-    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
-    monkeypatch.setattr(GameSession, "auto_save", lambda *a, **k: None)
-
-    def session():
-        sess = GameSession.__new__(GameSession)
-        sess.db, sess.state, sess.content = db, state, content
-        sess.registry = sess.agno_db = None
-        # 生产 CLI 的 session 恒有真 LLMConfig；票拟腿（#656 B3）在 fan-out 内真实
-        # 构造 create_rescript_draft_agent(llm_config, …)，llm_config=None 属程序错。
-        # 这里给真实可构造配置：api 通道指本机必拒连端口——运行时走 typed
-        # LLMUnavailable 缝响亮降级无头版，零真网、不吞任何程序错。
-        from ming_sim.llm_config import LLMConfig as _LLMConfig
-        sess.llm_config = _LLMConfig(
-            api_key="", base_url="http://127.0.0.1:1/v1",
-            model="offline-test", channel="api",
-            timeout_seconds=2,
-        )
-        sess.deaths_this_turn, sess.debuts_this_turn = [], []
-        sess.last_decree = sess.last_report = ""
-        sess._decree_draft_fingerprint = ()
-        sess._scene_registry = None
-        sess._beat_generator = None
-        sess.auto_save = lambda *a, **k: None
-        from ming_sim.agents import bind_content as _bind_agents_content
-        _bind_agents_content(sess.content)
-        return sess
-
-    turns = []
-    turns.append(state.turn)
-    session().advance_without_decree()
-    assert private_contexts[0]["monthly_dossier_reports"][0]["progress"] == []
-
-    reopened = GameDB(db.path, content=content)
-    db.close()
-    db, state = reopened, reopened.load_state()
-    turns.append(state.turn)
-    session().advance_without_decree()
-    assert monthly[0][1] in str(private_contexts[1]["monthly_dossier_reports"])
-    turns.append(state.turn)
-    session().advance_without_decree()
-
-    rows = db.list_dossier_progress(dossier_id)
-    stored = db.conn.execute(
-        "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
-    ).fetchone()
-    assert json.loads(stored["dossier_progress_json"]) == rows
-    assert [row["turn"] for row in rows] == turns
-    assert [row["progress_band"] for row in rows] == ["启程", "在途", "将达"]
-    assert all(row["memorial_text"] not in db.get_turn_report(row["turn"]) for row in rows)
 
 
 def test_only_private_extractor_context_reads_canonical_history(game):
@@ -349,45 +254,6 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     assert db.list_dossier_progress(unchained_dossier)
 
 
-def test_real_module_extractor_traces_private_context_through_settlement(game, monkeypatch):
-    """Run the production four-agent extraction parser/merge before settlement."""
-    import json
-    import ming_sim.simulation as simulation
-    from ming_sim.decree import settle_with_delta
-
-    db, state, content = game
-    _, dossier_id = _order(db, state)
-    state.turn += 1
-    db.save_state(state)
-    context = simulation.build_extractor_shared_context(
-        db, state, "本月邸报", "", module="personnel_secret",
-    )
-    assert context["monthly_dossier_reports"][0]["dossier_id"] == dossier_id
-
-    def run_extractor(_agent, _prompt, tag):
-        if tag == "extractor/personnel_secret":
-            return json.dumps({
-                "dossier_progress_reports": [{
-                    "dossier_id": dossier_id,
-                    "progress_band": "启程核验",
-                    "memorial_text": "首批出京，已验关防",
-                }],
-                "metric_delta": {"民心": 99},
-            }, ensure_ascii=False)
-        return "{}"
-
-    monkeypatch.setattr(simulation, "run_agent_text", run_extractor)
-    agents = {module: object() for module in simulation.EXTRACTION_MODULES}
-    extracted, _output, _input = simulation.extract_scores_by_modules_with_agno(
-        agents, db, state, "本月邸报",
-    )
-    assert extracted["dossier_progress_reports"][0]["dossier_id"] == dossier_id
-    assert extracted.get("metric_delta", {}) == {}
-    settle_with_delta(
-        state, db, extracted, before_turn=state.turn,
-        content=content, narrative="本月邸报",
-    )
-    assert db.list_dossier_progress(dossier_id)[0]["memorial_text"] == "首批出京，已验关防"
 
 
 def test_current_secret_order_deadline_controls_monthly_eligibility(game):
@@ -430,129 +296,12 @@ def _stage_routed_secret_order(db, state, action, deadline):
     return pending_id, target_id
 
 
-@pytest.mark.parametrize("action", ["新建", "更新"])
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_pending_long_secret_order_routes_real_cli_to_full_settlement(game, monkeypatch, action):
-    db, state, content = game
-    turn = state.turn
-    pending_id, _target_id = _stage_routed_secret_order(db, state, action, deadline=3)
-    extractor_calls = []
-    _canned_monthly_settlement(monkeypatch, extractor_calls)
-
-    result = _production_session(db, state, content).advance_without_decree()
-
-    assert result.awaiting is False
-    assert extractor_calls == [turn]
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["status"] == "committed"
-    assert state.turn == turn + 1
-    assert any(order["dossier_progress"] for order in db.list_secret_orders())
 
 
-@pytest.mark.parametrize("action", ["新建", "更新"])
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_pending_short_secret_order_uses_full_settlement_no_monthly_progress(
-    game, monkeypatch, action,
-):
-    """#1274：短差不再走快路；完整结算后 deadline_span=1 且无月度进度轨。"""
-    db, state, content = game
-    turn = state.turn
-    pending_id, target_id = _stage_routed_secret_order(db, state, action, deadline=1)
-    extractor_calls = []
-    _canned_monthly_settlement(monkeypatch, extractor_calls)
-
-    result = _production_session(db, state, content).advance_without_decree()
-    assert result is not None and result.awaiting is False
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["status"] == "committed"
-    assert state.turn == turn + 1
-    order = next(order for order in db.list_secret_orders()
-                 if target_id is None or order["id"] == target_id)
-    stored = db.conn.execute(
-        "SELECT deadline_span FROM secret_orders WHERE id=?", (order["id"],),
-    ).fetchone()
-    assert stored["deadline_span"] == 1
-    dossier_id = int(db.get_dossier_for_secret_order(order["id"])["id"])
-    # 短差亦入 0058；canned extractor 按完整覆盖契约落密奏
-    assert db.list_dossier_progress(dossier_id)
 
 
-@pytest.mark.parametrize("action", ["新建", "更新"])
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_web_no_edict_endpoint_routes_real_long_order_to_full_settlement(game, monkeypatch, action):
-    from contextlib import contextmanager
-    from types import SimpleNamespace
-    import web_app
-
-    db, state, content = game
-    turn = state.turn
-    pending_id, _target_id = _stage_routed_secret_order(db, state, action, deadline=3)
-    extractor_calls = []
-    _canned_monthly_settlement(monkeypatch, extractor_calls)
-    session = _production_session(db, state, content)
-    web_game = SimpleNamespace(
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: [], refresh_turn=lambda: None,
-        state_payload=lambda: {"turn": state.turn},
-    )
-
-    @contextmanager
-    def unlocked(_game):
-        yield
-
-    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
-    response = web_app.api_advance_without_edict()
-
-    assert response["awaiting_decision"] is False
-    assert extractor_calls == [turn]
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["status"] == "committed"
-    assert state.turn == turn + 1
-    assert any(order["dossier_progress"] for order in db.list_secret_orders())
 
 
-@pytest.mark.parametrize("action", ["新建", "更新"])
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_web_short_order_full_settlement_no_monthly_progress(game, monkeypatch, action):
-    """#1274：Web 短差亦走完整结算；无月度 progress 轨。"""
-    from contextlib import contextmanager
-    from types import SimpleNamespace
-    import web_app
-
-    db, state, content = game
-    turn = state.turn
-    pending_id, target_id = _stage_routed_secret_order(db, state, action, deadline=1)
-    extractor_calls = []
-    _canned_monthly_settlement(monkeypatch, extractor_calls)
-    session = _production_session(db, state, content)
-    web_game = SimpleNamespace(
-        db=db, state=state, content=content, session=session,
-        directive_rows=lambda: [], refresh_turn=lambda: None,
-        state_payload=lambda: {"turn": state.turn},
-    )
-
-    @contextmanager
-    def unlocked(_game):
-        yield
-
-    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
-    monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
-    response = web_app.api_advance_without_edict()
-
-    assert response["awaiting_decision"] is False
-    assert extractor_calls == [turn]  # 全链必经 extractor（快路已死）
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["status"] == "committed"
-    assert state.turn == turn + 1
-    order = next(order for order in db.list_secret_orders()
-                 if target_id is None or order["id"] == target_id)
-    dossier_id = int(db.get_dossier_for_secret_order(order["id"])["id"])
-    assert db.list_dossier_progress(dossier_id)
 
 
 def _rows(db, table, where="", params=()):

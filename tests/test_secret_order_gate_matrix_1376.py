@@ -155,9 +155,6 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None,
-    )
     def _extract(_agents, db, state, _narrative, *args, **kwargs):
         reports = [{
             "dossier_id": item["dossier_id"],
@@ -166,11 +163,6 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
         } for item in db.list_monthly_dossier_progress_nudges()]
         return {"dossier_progress_reports": reports}, "out", "in"
 
-    monkeypatch.setattr(
-        decree_mod,
-        "extract_scores_by_modules_with_agno",
-        _extract,
-    )
     monkeypatch.setattr(
         session_mod, "write_decree_with_agno",
         lambda *a, **k: "奉天承运，诏曰：着户部清核辽饷。",

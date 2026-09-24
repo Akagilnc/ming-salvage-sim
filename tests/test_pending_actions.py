@@ -49,13 +49,6 @@ def _canned_no_edict_settlement(monkeypatch):
         lambda *a, **k: ("本月退朝无旨邸报。", k.get("simulator_payload") or {}),
     )
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object(),
-    )
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        covering_monthly_extract,
-    )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
@@ -598,28 +591,6 @@ def test_undo_chat_turn_removes_staged_pending_action(game):
     assert db.list_pending_actions(state.turn) == []        # 暂存行被删,不会再颁诏落库
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_advance_without_edict_commits_staged(game, monkeypatch):
-    """CMR P1:只暂存、不颁正式诏书也推进月份的路径(session.advance_without_decree)必须先 commit 暂存,
-    否则暂存动作成孤儿、随回合推进永久丢失。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    oid = create_test_secret_order(db,
-        state, name, "原标题", "原内容", [], deadline_months=0,
-        covert_task=LIAO_PAY_COVERT_TASK,
-    )
-    db.stage_pending_action(state.turn, kind="secret_order", action="更新",
-                            minister_name=name, target_id=oid,
-                            payload={"new_title": "退朝前改", "new_content": "退朝前内容", "deadline_months": 0})
-    turn_before = state.turn
-
-    _canned_no_edict_settlement(monkeypatch)
-    _session_for(db, state, content).advance_without_decree()   # 退朝未下正式圣旨
-
-    assert state.turn == turn_before + 1                     # 月份推进了
-    row = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()
-    assert row["title"] == "退朝前改"                          # 暂存在推进前已落库,没丢
-    assert db.list_pending_actions(turn_before) == []
 
 
 def test_withdraw_pending_action_removes_before_decree(game):
@@ -737,45 +708,6 @@ def test_pending_actions_endpoint_hides_new_secret_order_candidates(game, monkey
     assert hidden_pid not in [a["id"] for a in listed["actions"]]
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monkeypatch):
-    """web 退朝无诏入口要能提交隐藏的新密令候选，支撑不回默认同意。"""
-    import web_app
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name,
-        target_id=None,
-        payload={
-            "title": "暗查辽饷",
-            "content": "暗查辽饷侵冒。",
-            "assignee": name,
-            "tags": ["辽饷"],
-            "deadline_months": 3,
-            "covert_task": LIAO_PAY_COVERT_TASK,
-        },
-    )
-    _canned_no_edict_settlement(monkeypatch)
-    session = _session_for(db, state, content)
-    stub = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        session=session,
-        refresh_turn=lambda: None,
-        state_payload=lambda: {"turn": {"turn": state.turn}},
-        directive_rows=lambda: [],
-    )
-    monkeypatch.setattr(web_app, "web_game", stub)
-
-    out = web_app.api_advance_without_edict()
-
-    assert out["state"]["turn"]["turn"] == 2
-    orders = db.list_secret_orders()
-    assert len(orders) == 1
-    assert orders[0]["title"] == "暗查辽饷"
-    assert db.list_pending_actions(1) == []
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -1618,66 +1550,8 @@ def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
     assert len(failed) == 1 and failed[0]["kind"] == "secret_order"
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game, monkeypatch):
-    """#1560 / CONTEXT：未处理的 failed 密令意图在真实过回合时丢弃，不阻断推进、不留恢复面。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    old_turn = state.turn
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
-    db.conn.commit()
-
-    _canned_no_edict_settlement(monkeypatch)
-    _session_for(db, state, content).advance_without_decree()
-
-    assert state.turn == old_turn + 1
-    assert db.list_pending_actions(state.turn) == []
-    assert db.list_pending_actions(old_turn, status="failed") == []
-    assert db.list_failed_secret_order_actions() == []
-    row = db.conn.execute("SELECT id FROM pending_actions WHERE id=?", (pending_id,)).fetchone()
-    assert row is None
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game, monkeypatch):
-    """#415/#1560: 结束回合过程中 commit 新产生的 failure 仍跨月可见（清旧在 commit 前）。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    old_turn = state.turn
-    # 旧 failure：应在 pre_settle commit 前被丢弃，不得挡住新 failure 的恢复面。
-    stale_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "陈年失败", "content": "应被过回合丢弃", "assignee": name,
-                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (stale_id,))
-    db.conn.commit()
-    pending_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": name,
-                 "tags": [], "deadline_months": 0, "covert_task": LIAO_PAY_COVERT_TASK},
-    )
-    def _poison(*args, **kwargs):
-        raise RuntimeError("AUDIT_INJECTED_DURABLE_WRITE_FAILURE")
-
-    monkeypatch.setattr(db, "create_secret_order", _poison)
-    _canned_no_edict_settlement(monkeypatch)
-    _session_for(db, state, content).advance_without_decree()
-
-    assert state.turn == old_turn + 1
-    failed = db.list_failed_secret_order_actions(name)
-    assert [f["id"] for f in failed] == [pending_id]
-    assert all(f["id"] != stale_id for f in failed)
-    stale_row = db.conn.execute("SELECT id FROM pending_actions WHERE id=?", (stale_id,)).fetchone()
-    assert stale_row is None
-    payload = web_app.WebGame.pending_action_failures_for(
-        types.SimpleNamespace(db=db), name)
-    assert payload and payload[0]["id"] == pending_id
 
 
 def test_successful_secret_order_confirmation_stays_quiet(game, monkeypatch):

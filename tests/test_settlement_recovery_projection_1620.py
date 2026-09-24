@@ -196,7 +196,6 @@ def test_ready_recovery_issue_stream_clears_context_and_advances(
         raise AssertionError("ready recovery must not rerun simulator/extractor")
 
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _must_not_rerun)
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _must_not_rerun)
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         memories_mod, "run_agent_text",

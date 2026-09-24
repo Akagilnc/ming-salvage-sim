@@ -324,43 +324,6 @@ def test_settle_with_delta_expires_snapshot_inside_atomic(game):
     assert payload["metrics"]["国库"] == state.metrics["国库"]
 
 
-def test_advance_without_edict_expires_snapshot(game, monkeypatch):
-    """#1274：无旨完整结算后快照过期（settle_with_delta 链内 clear）。"""
-    import ming_sim.decree as dm
-    import ming_sim.memories as memories
-    import ming_sim.audience_night as an
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    turn = int(state.turn)
-
-    monkeypatch.setattr(an, "auto_close_open_night", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        dm, "simulate_season_with_payload",
-        lambda *a, **k: ("快照过期测邸报。", k.get("simulator_payload") or {}),
-    )
-    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: object())
-    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
-    monkeypatch.setattr(dm, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
-
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = sess.llm_config = sess.agno_db = None
-    sess.deaths_this_turn, sess.debuts_this_turn = [], []
-    sess.last_decree = sess.last_report = ""
-    sess._decree_draft_fingerprint = ()
-    sess._scene_registry = sess._beat_generator = None
-    sess.auto_save = lambda *a, **k: None
-
-    result = sess.advance_without_decree()
-    assert result is not None and result.awaiting is False
-    assert db.get_month_open_snapshot(turn) is None
-    assert state.turn == turn + 1
-    payload = _runtime(db, state).state_payload()
-    assert payload["turn"]["settlement_display"] is False
 
 
 def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):

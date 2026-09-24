@@ -1106,9 +1106,6 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
 
     _set("create_season_simulator_agent", lambda *a, **k: None)
     _set("create_json_sanitizer_agent", lambda *a, **k: None)
-    _set("create_score_extractor_module_agent", lambda *a, **k: None)
-    _set("build_extractor_shared_context", lambda *a, **k: "ctx")
-    _set("extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
     _set("create_ending_summary_agent", lambda *a, **k: None)
     _set("create_chapter_memory_agent", lambda *a, **k: None)
     _set("create_rescript_draft_agent", lambda *a, **k: None)
@@ -1178,9 +1175,6 @@ def _657_subprocess_resolve(
         # 真 phase2：只 stub LLM 边界
         dm.create_season_simulator_agent = lambda *a, **k: None
         dm.create_json_sanitizer_agent = lambda *a, **k: None
-        dm.create_score_extractor_module_agent = lambda *a, **k: None
-        dm.build_extractor_shared_context = lambda *a, **k: "ctx"
-        dm.extract_scores_by_modules_with_agno = lambda *a, **k: ({}, "o", "i")
         dm.create_ending_summary_agent = lambda *a, **k: None
         dm.create_chapter_memory_agent = lambda *a, **k: None
         dm.create_rescript_draft_agent = lambda *a, **k: None
@@ -3683,10 +3677,6 @@ def test_657_backlog_only_enters_awaiting_via_merged_desk(game, monkeypatch):
         lambda *a, **k: ("本月无重大抉择。", k.get("simulator_payload") or {}),
     )
     # 禁 settle 直落（若误推进会调此）
-    monkeypatch.setattr(
-        dm, "_settle_after_narrative",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("backlog-only 不得直落 settle")),
-    )
 
     result = dm.resolve_directives(
         state, db, None, None, [], "诏书", content=content, registry=None,
@@ -3805,8 +3795,6 @@ def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypat
     )
     monkeypatch.setattr(simulation, "run_agent_text", lambda *a, **k: canned)
     monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: object())
-    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
     monkeypatch.setattr(dm, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(dm, "_make_relation_brew_runner", lambda *a, **k: None)

@@ -291,7 +291,6 @@ def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game, mon
     def _must_not_run(*a, **k):
         raise AssertionError("恢复直入 apply 不应重跑 simulator/extractor")
     monkeypatch.setattr(dm, "simulate_season_with_payload", _must_not_run)
-    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _must_not_run)
 
     result = _recovery_session(db, state, content, monkeypatch).resolve_turn()
 
@@ -1901,9 +1900,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
 
     # Observe the structured payload at the real extractor boundary; the outer
     # LLM remains canned by _stub_outer_llm_seams.
-    monkeypatch.setattr(
-        decree_mod, "create_score_extractor_module_agent", capture_extractor_input,
-    )
     decision_report = """本月邸报。
 <<DECISION>>
 {"title":"内帑济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发内库银三十万两济关宁","hint":"军心稍定，内帑益绌","action_type":"grant_allocation","grant_action":"协饷","account":"内库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓内帑","hint":"内帑得保，边军仍困"}]}

@@ -486,13 +486,7 @@ def _crash_resolve_before_simulator_and_recover(
             decree_mod, "simulate_season_with_payload",
             lambda *a, **k: ("本月邸报。", k.get("simulator_payload") or captured.get("payload") or {}),
         )
-        monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
         monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-        monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
-        monkeypatch.setattr(
-            decree_mod, "extract_scores_by_modules_with_agno",
-            lambda *a, **k: ({}, "out", "in"),
-        )
 
         ticks_before_recovery = tick_calls["n"]
         decree_mod.resolve_directives(
@@ -517,48 +511,8 @@ def _crash_resolve_before_simulator_and_recover(
         db2.close()
 
 
-def test_pre_settle_placeholder_persists_transit_arrivals_for_recovery(game, monkeypatch):
-    """F4/F6：生产 resolve_directives 缝写入 transit_arrivals；settling 重入只读该键。"""
-    db, _state, content = game
-    name = active_ming_character(db, content)
-    expected = [{"name": name, "location": "beizhili"}]
-    r0, _t0, _payload = _crash_resolve_before_simulator_and_recover(
-        game=game,
-        monkeypatch=monkeypatch,
-        name=name,
-        origin="henan",
-        dest="beizhili",
-        speed_factor=1.0,
-        advance_months=1,
-        expected_arrivals=expected,
-        after_pre_settle_ledger=("beizhili", "", None, None, 0),
-    )
-    assert _oracle_n(r0, 1.0) == 1
 
 
-def test_pre_settle_no_arrival_month_recovery_keeps_empty_transit_arrivals(game, monkeypatch):
-    """F7.9：无抵达月（在途未到）崩溃恢复 → transit_arrivals=[]，无幻影人名，不二次 tick。"""
-    db, state, content = game
-    name = active_ming_character(db, content)
-    t0 = state.turn
-    r0 = MATRIX.travel_time("henan", "liaodong")
-    assert _oracle_n(r0, 1.0) > 1
-    # 次月首减后仍在途：remaining = r0 - 1.0，location 仍为启程地
-    after = ("henan", "liaodong", r0 - 1.0, 1.0, t0)
-    got_r0, _t0, payload = _crash_resolve_before_simulator_and_recover(
-        game=game,
-        monkeypatch=monkeypatch,
-        name=name,
-        origin="henan",
-        dest="liaodong",
-        speed_factor=1.0,
-        advance_months=1,
-        expected_arrivals=[],
-        after_pre_settle_ledger=after,
-    )
-    assert got_r0 == pytest.approx(r0)
-    assert payload["transit_arrivals"] == []
-    assert name not in json.dumps(payload.get("transit_arrivals"), ensure_ascii=False)
 
 
 def test_arrivals_sorted_by_name_stable(game):

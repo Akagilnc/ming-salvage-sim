@@ -145,8 +145,6 @@ def test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick(game, mo
         lambda *a, **k: ("饷率测邸报。", k.get("simulator_payload") or {}),
     )
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 

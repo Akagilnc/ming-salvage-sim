@@ -246,3 +246,28 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     assert advanced.advanced is True
     assert int(state.turn) == closed_turn + 1
     del pending_id
+
+
+def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch):
+    """批红续跑入口在主链停住时不得把回合标成已推进。"""
+    from ming_sim.models import TurnPhase
+
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="批红未推进", origin="旨意", year=state.year, period=state.period, turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        ('[{"title":"是否加赈"}]', ref),
+    )
+    db.save_resolve_context(state.turn, "赈灾诏", "", {})
+    db.conn.commit()
+    closed_turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    session = make_light_session(db, state, content)
+    session.state.turn_phase = TurnPhase.SETTLING.value
+    session.finish_rescript_phase2({"ready_replay": True}, {})
+    assert int(session.state.turn) == closed_turn
+    assert session.state.turn_phase == TurnPhase.SETTLING.value
