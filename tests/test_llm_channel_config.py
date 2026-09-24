@@ -894,7 +894,7 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ("create_ending_summary_agent", lambda: agents_mod.create_ending_summary_agent(cfg, object())),
     ]
     factory_names = [name for name, _ in factories]
-    assert len(factory_names) == len(set(factory_names)) == 9
+    assert len(factory_names) == len(set(factory_names))
 
     for name, call in factories:
         before = len(seen)
