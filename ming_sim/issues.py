@@ -8382,6 +8382,8 @@ def apply_score_extraction(
     dossier_ids_at_input: Optional[set[int]] = None,
     secret_dossier_ids_at_input: Optional[set[int]] = None,
     open_affair_ids_at_input: Optional[set[int]] = None,
+    ordered_army_deltas: Optional[List[tuple[str, Dict[str, object]]]] = None,
+    prior_shape_rejections: Optional[list[tuple[str, dict, str]]] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -8400,6 +8402,7 @@ def apply_score_extraction(
     }
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
+    validate_rejections.extend(prior_shape_rejections or [])
     frozen_open_affairs = (
         set(open_affair_ids_at_input) if isinstance(open_affair_ids_at_input, set) else set()
     )
@@ -8427,6 +8430,7 @@ def apply_score_extraction(
             commit_now=commit_now,
             relation_pre_roster=_relation_pre_roster,
             validate_rejections=validate_rejections,
+            ordered_army_deltas=ordered_army_deltas,
         )
     finally:
         db._batch_authorized_open_affair_ids = _prev_batch_authorized
@@ -8451,6 +8455,7 @@ def _apply_score_extraction_body(
     commit_now: bool,
     relation_pre_roster: set[str],
     validate_rejections: list,
+    ordered_army_deltas: Optional[List[tuple[str, Dict[str, object]]]],
 ) -> Dict[str, object]:
     """Bound apply body; batch affair authority is armed by caller."""
     from uuid import uuid4
@@ -8998,7 +9003,17 @@ def _apply_score_extraction_body(
         region_changes.extend(db.apply_region_deltas(
             state, pseudo_event, None, "档房", {region_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
         ))
-    for army_id, raw_changes in ordinary_army_deltas_raw.items():
+    army_items = ordinary_army_deltas_raw.items()
+    if ordered_army_deltas is not None:
+        army_items = (
+            (army_id, changes)
+            for army_id, changes in ordered_army_deltas
+            if _split_strategic_entity_deltas(
+                {army_id: changes}, "armies", strategic_event_referenced_ids,
+                unambiguous_strategic_event_pool_ids,
+            )[1]
+        )
+    for army_id, raw_changes in army_items:
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
         army_changes.extend(db.apply_army_deltas(

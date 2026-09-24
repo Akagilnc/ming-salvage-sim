@@ -317,11 +317,14 @@ def _dispatch_effects(
         )])
 
     from ming_sim.simulation import EMPTY_EXTRACTION
-    from ming_sim.issues import apply_score_extraction
+    from ming_sim.issues import apply_score_extraction, sanitize_delta_shape
     from ming_sim.decree import _collect_inline_rejections
 
-    reports = []
+    extraction = copy.deepcopy(EMPTY_EXTRACTION)
+    shape_rejections = []
+    ordered_army_deltas = []
     rejected = []
+    has_effect = False
     for item in raw if isinstance(raw, list) else [raw]:
         if not isinstance(item, Mapping):
             rejected.append(RejectedItem(
@@ -329,18 +332,33 @@ def _dispatch_effects(
                 category="invalid_shape", source=source,
             ))
             continue
-        extraction = copy.deepcopy(EMPTY_EXTRACTION)
-        extraction.update(item)
-        refs = visible_refs or {}
-        report = apply_score_extraction(
-            db, state, extraction, content=db.content,
-            open_affair_ids_at_input=set(refs.get("affairs", ())),
-            dossier_ids_at_input=set(refs.get("dossiers", ())),
-            secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
-        )
-        _collect_inline_rejections(collector, report, turn, source)
-        reports.append(report)
-    return SectionResult(applied=reports, rejected=rejected)
+        has_effect = True
+        clean, invalid = sanitize_delta_shape(dict(item))
+        shape_rejections.extend(invalid)
+        for field, value in clean.items():
+            if field not in EMPTY_EXTRACTION:
+                continue
+            if isinstance(value, list):
+                extraction[field].extend(value)
+            elif isinstance(value, dict):
+                extraction[field].update(value)
+                if field == "army_delta":
+                    ordered_army_deltas.extend(value.items())
+            elif value is not None:
+                extraction[field] = value
+    if not has_effect:
+        return SectionResult(applied=[], rejected=rejected)
+    refs = visible_refs or {}
+    report = apply_score_extraction(
+        db, state, extraction, content=db.content,
+        open_affair_ids_at_input=set(refs.get("affairs", ())),
+        dossier_ids_at_input=set(refs.get("dossiers", ())),
+        secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
+        ordered_army_deltas=ordered_army_deltas,
+        prior_shape_rejections=shape_rejections,
+    )
+    _collect_inline_rejections(collector, report, turn, source)
+    return SectionResult(applied=[report], rejected=rejected)
 
 
 def dispatch_declaration(
