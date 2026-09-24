@@ -176,6 +176,10 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
                 "origin_ref": "盘面自发",
                 "source": "农民@shaanxi", "target": "流民@shaanxi",
                 "amount": farmer_before + 100, "reason": "灾害",
+            }, {
+                "origin_ref": "盘面自发",
+                "source": "农民@shaanxi", "target": "流民@shaanxi",
+                "amount": 1, "reason": "灾害",
             }],
             "人物变更": [{
                 "origin_ref": "盘面自发", "name": person, "动作": "任命",
@@ -233,8 +237,10 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     assert manpower_change["new"] == 0
     assert manpower_change["delta"] == -manpower_before
     assert not effect_report["population_transfers_rejections"]
-    transfer, = effect_report["population_transfers"]
+    transfer, depleted_transfer = effect_report["population_transfers"]
     assert transfer["amount"] == farmer_before
+    assert depleted_transfer["amount"] == 0
+    assert not depleted_transfer.get("rejected", False)
     assert db.conn.execute(
         "SELECT population FROM classes WHERE name='农民' AND region_id='shaanxi'"
     ).fetchone()[0] == 0

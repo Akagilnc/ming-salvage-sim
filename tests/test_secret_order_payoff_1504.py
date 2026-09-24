@@ -695,8 +695,15 @@ def test_settle_originated_effects_drive_actual_and_restore(game):
 
     oid = _issue(db, state, name, "一月实办", "限期一月查明", months=1, target=3)
     did = int(db.get_dossier_for_secret_order(oid)["id"])
+    missing_state_oid = _issue(
+        db, state, name, "执行态缺失仍可隔离", "独立密令", months=2, target=5,
+    )
+    missing_state_did = int(db.get_dossier_for_secret_order(missing_state_oid)["id"])
     settle_with_delta(
-        state, db, {"dossier_progress_reports": [_report(did, "发令月密奏")]},
+        state, db, {"dossier_progress_reports": [
+            _report(did, "发令月密奏"),
+            _report(missing_state_did, "独立密令发令月密奏"),
+        ]},
         before_turn=state.turn, content=content,
     )
     assert db.sum_dossier_actual_progress_units(did) == 0.0
@@ -705,14 +712,29 @@ def test_settle_originated_effects_drive_actual_and_restore(game):
         "SELECT loyalty FROM characters WHERE name=?", (name,)
     ).fetchone()["loyalty"])
     before_neiku = int(state.metrics.get("内库", 0))
+    settlement_turn = int(state.turn)
+    second_month = _delta_work(oid, did, memorial="实查有据", eco=-3, report=True)
+    second_month["dossier_progress_reports"].append(
+        _report(missing_state_did, "执行态缺失案卷照常月报")
+    )
     settle_with_delta(
         state, db,
-        _delta_work(oid, did, memorial="实查有据", eco=-3, report=True),
+        second_month,
         before_turn=state.turn,
         content=content,
     )
 
     assert db.sum_dossier_actual_progress_units(did) == 3.0
+    assert db.sum_dossier_actual_progress_units(missing_state_did) == 0.0
+    rejection = db.conn.execute(
+        "SELECT section, category, reason, item_json FROM rejection_reports "
+        "WHERE turn=? AND section='covert_exec_selections'",
+        (settlement_turn,),
+    ).fetchone()
+    assert rejection is not None
+    assert rejection["category"] == "invalid_enum"
+    assert rejection["reason"]
+    assert json.loads(rejection["item_json"]) == {"order_id": missing_state_oid}
     actual_row = db.list_dossier_actual_progress(did)[0]
     assert actual_row["fidelity_state"] == "忠实"
     assert actual_row["origin_ref"] == f"dossier:{did}"

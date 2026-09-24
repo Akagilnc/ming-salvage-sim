@@ -1050,7 +1050,15 @@ def apply_monthly_covert_actual_progress(
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = normalize_fidelity_state(selected)
         if fidelity is None:
-            raise ValueError(f"密令 {oid} 缺少有效执行态")
+            applied.append({
+                "order_id": oid,
+                "rejected": True,
+                "category": "invalid_enum",
+                "report_section": "covert_exec_selections",
+                "reason": f"密令 {oid} 缺少有效执行态",
+                "item": sel or {"order_id": oid},
+            })
+            continue
         inv_target = _investigation_target_of(contract)
         bound_key = ""
         originated = 0.0

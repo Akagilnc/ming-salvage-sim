@@ -2257,21 +2257,21 @@ def _apply_population_transfers(
             continue
         # The declaration is a proposed amount. The classes ledger owns the actual
         # transfer: cap to current source stock, then write the same actual on both
-        # sides. A depleted source produces no transfer, not an invalid declaration.
+        # sides. A depleted source is a legal zero actual, not an invalid declaration;
+        # keep it in the applied feedback even though there is no ledger write.
         amount = min(amount, int(src_row["population"]))
-        if amount == 0:
-            continue
-        # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
-        db.conn.execute(
-            "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE name=? AND region_id=?",
-            (amount, src_cls, src_region),
-        )
-        db.conn.execute(
-            "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE name=? AND region_id=?",
-            (amount, dst_cls, dst_region),
-        )
+        if amount > 0:
+            # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
+            db.conn.execute(
+                "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE name=? AND region_id=?",
+                (amount, src_cls, src_region),
+            )
+            db.conn.execute(
+                "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE name=? AND region_id=?",
+                (amount, dst_cls, dst_region),
+            )
         region_name = str(db.conn.execute(
             "SELECT name FROM regions WHERE id=?", (src_region,)
         ).fetchone()["name"] or "")
