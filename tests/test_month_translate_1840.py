@@ -423,17 +423,18 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
 
 
 @pytest.mark.parametrize(
-    ("initial_pressure", "first_pressure", "second_pressure", "second_morale", "second_reason", "triggered", "pressure", "morale"),
-    [(20, 35, -5, -3, "己巳之变再挫", True, 50, 55),
-     (20, "非法增量", -5, -3, "己巳之变再挫", False, 20, 50),
-     (100, -10, 5, -3, "己巳之变再挫", True, 95, 55),
-     (90, 10, 5, -3, "己巳之变再挫", False, 90, 50),
-     (20, 35, -5, 5, "京营平日操练", True, 50, 63),
-     (20, "非法增量", -5, 5, "京营平日操练", False, 20, 55)],
+    ("initial_pressure", "first_pressure", "second_pressure", "second_morale", "second_reason", "triggered", "pressure", "morale", "first_reason"),
+    [(20, 35, -5, -3, "己巳之变再挫", True, 50, 55, "己巳之变敌逼京畿"),
+     (20, "非法增量", -5, -3, "己巳之变再挫", False, 20, 50, "己巳之变敌逼京畿"),
+     (100, -10, 5, -3, "己巳之变再挫", True, 95, 55, "己巳之变敌逼京畿"),
+     (90, 10, 5, -3, "己巳之变再挫", False, 90, 50, "己巳之变敌逼京畿"),
+     (20, 35, -5, 5, "京营平日操练", True, 50, 63, "己巳之变敌逼京畿"),
+     (20, "非法增量", -5, 5, "京营平日操练", False, 20, 55, "己巳之变敌逼京畿"),
+     (20, 35, None, None, "", False, 20, 50, None)],
 )
 def test_world_segment_repeated_strategic_results_apply_in_order(
     game, initial_pressure, first_pressure, second_pressure, second_morale, second_reason,
-    triggered, pressure, morale,
+    triggered, pressure, morale, first_reason,
 ):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -442,19 +443,27 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
     db.conn.execute("UPDATE regions SET military_pressure=? WHERE id='beizhili'", (initial_pressure,))
     db.conn.execute("UPDATE armies SET morale=50 WHERE id='jingying'")
     db.conn.commit()
-    dispatch_month_segment(db, state, segment="己巳之变两笔战果", translate_fn=lambda r, c: {
-        "effects": [
-            {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-             "事件结局": {"jisi_lubian": "入塞被遏"},
-             "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": first_pressure,
-                                            "reason": "己巳之变敌逼京畿"}},
-             "army_delta": {"jingying": {"origin_ref": "盘面自发", "morale": 8,
-                                        "reason": "己巳之变勤王振奋"}}},
+    first_region = {"origin_ref": "盘面自发", "military_pressure": first_pressure}
+    if first_reason is not None:
+        first_region["reason"] = first_reason
+    first_effect = {
+        "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+        "事件结局": {"jisi_lubian": "入塞被遏"},
+        "region_delta": {"beizhili": first_region},
+    }
+    if first_reason is not None:
+        first_effect["army_delta"] = {"jingying": {
+            "origin_ref": "盘面自发", "morale": 8, "reason": "己巳之变勤王振奋",
+        }}
+    effects = [first_effect]
+    if second_pressure is not None:
+        effects.append(
             {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": second_pressure,
                                             "reason": "己巳之变稍退"}},
              "army_delta": {"jingying": {"origin_ref": "盘面自发", "morale": second_morale,
-                                        "reason": second_reason}}},
-        ],
+                                        "reason": second_reason}}})
+    dispatch_month_segment(db, state, segment="己巳之变两笔战果", translate_fn=lambda r, c: {
+        "effects": effects,
     })
     assert db.has_event_triggered("jisi_lubian") is triggered
     assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure

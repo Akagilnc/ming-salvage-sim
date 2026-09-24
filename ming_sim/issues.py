@@ -4083,9 +4083,25 @@ def _target_union(event_ids: set[str], target_key: str) -> set[str]:
     return targets
 
 
-def _unambiguous_unanchored_event_ids(event_ids: set[str], ordered_deltas: object = None) -> set[str]:
-    # 有序 effects 允许同目标的独立后项；不能仅凭目标/字段推入前项事件。
-    return set(event_ids) if ordered_deltas is None and len(event_ids) == 1 else set()
+def _unambiguous_unanchored_event_ids(
+    event_ids: set[str], ordered_deltas: object = None, effect_event_ids: set[str] | None = None,
+) -> set[str]:
+    # 有序 effects 只能把本项声明的事件作为无锚点候选，不能牵连独立后项。
+    candidates = event_ids if ordered_deltas is None else event_ids & (effect_event_ids or set())
+    return set(candidates) if len(candidates) == 1 else set()
+
+
+def _unanchored_event_ids_for_delta(
+    event_ids: set[str], ordered_deltas: object,
+    ordered_effect_event_ids: dict[str, list[set[str]]] | None,
+    field: str, index: int,
+) -> set[str]:
+    if ordered_deltas is None:
+        return _unambiguous_unanchored_event_ids(event_ids)
+    declared = (ordered_effect_event_ids or {}).get(field, [])
+    return _unambiguous_unanchored_event_ids(
+        event_ids, ordered_deltas, declared[index] if index < len(declared) else set(),
+    )
 
 
 def _split_mapping_by_keys(
@@ -4354,48 +4370,56 @@ def _event_result_delta_event_ids(
     person_changes: List[Dict[str, object]],
     db: GameDB,
     ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]] = None,
+    ordered_effect_event_ids: dict[str, list[set[str]]] | None = None,
 ) -> set[str]:
     unanchored_event_ids = _unambiguous_unanchored_event_ids(strategic_event_pool_ids, ordered_deltas)
 
     def _items(field: str):
         if ordered_deltas is not None:
-            return ordered_deltas[field]
-        return (extracted.get(field) or {}).items()
+            items = ordered_deltas[field]
+        else:
+            items = (extracted.get(field) or {}).items()
+        return (
+            (entity_id, changes, _unanchored_event_ids_for_delta(
+                strategic_event_pool_ids, ordered_deltas, ordered_effect_event_ids, field, index,
+            ))
+            for index, (entity_id, changes) in enumerate(items)
+        )
 
     region_result_event_ids: set[str] = set()
     if isinstance(extracted.get("region_delta"), dict):
-        for region_id, raw_changes in _items("region_delta"):
+        for region_id, raw_changes, item_unanchored_ids in _items("region_delta"):
             region_result_event_ids.update(
                 _strategic_entity_delta_event_ids(
                     str(region_id),
                     raw_changes,
                     "regions",
                     strategic_event_ids,
-                    unanchored_event_ids,
+                    item_unanchored_ids,
                 )
             )
     army_result_event_ids: set[str] = set()
     if isinstance(extracted.get("army_delta"), dict):
-        for army_id, raw_changes in _items("army_delta"):
+        for army_id, raw_changes, item_unanchored_ids in _items("army_delta"):
             army_result_event_ids.update(
                 _strategic_entity_delta_event_ids(
                     str(army_id),
                     raw_changes,
                     "armies",
                     strategic_event_ids,
-                    unanchored_event_ids,
+                    item_unanchored_ids,
                 )
             )
     power_result_event_ids: set[str] = set()
     if isinstance(extracted.get("power_updates"), dict):
-        for power_id, raw_changes in _items("power_updates"):
+        for power_id, raw_changes, item_unanchored_ids in _items("power_updates"):
             power_result_event_ids.update(
                 _strategic_entity_delta_event_ids(
                     str(power_id),
                     raw_changes,
                     "powers",
                     strategic_event_ids,
-                    unanchored_event_ids,
+                    item_unanchored_ids,
                 )
             )
     person_result_event_ids: set[str] = set()
@@ -8385,6 +8409,7 @@ def apply_score_extraction(
     secret_dossier_ids_at_input: Optional[set[int]] = None,
     open_affair_ids_at_input: Optional[set[int]] = None,
     ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]] = None,
+    ordered_effect_event_ids: dict[str, list[set[str]]] | None = None,
     prior_shape_rejections: Optional[list[tuple[str, dict, str]]] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
@@ -8433,6 +8458,7 @@ def apply_score_extraction(
             relation_pre_roster=_relation_pre_roster,
             validate_rejections=validate_rejections,
             ordered_deltas=ordered_deltas,
+            ordered_effect_event_ids=ordered_effect_event_ids,
         )
     finally:
         db._batch_authorized_open_affair_ids = _prev_batch_authorized
@@ -8458,6 +8484,7 @@ def _apply_score_extraction_body(
     relation_pre_roster: set[str],
     validate_rejections: list,
     ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]],
+    ordered_effect_event_ids: dict[str, list[set[str]]] | None,
 ) -> Dict[str, object]:
     """Bound apply body; batch affair authority is armed by caller."""
     from uuid import uuid4
@@ -8680,6 +8707,7 @@ def _apply_score_extraction_body(
         person_changes,
         db,
         ordered_deltas=ordered_deltas,
+        ordered_effect_event_ids=ordered_effect_event_ids,
     )
     strategic_event_label_gate_ids = (
         strategic_event_pool_ids
@@ -9029,10 +9057,12 @@ def _apply_score_extraction_body(
         region_items = ordinary_region_deltas_raw.items()
     else:
         region_items = (
-            (region_id, changes) for region_id, changes in region_items
+            (region_id, changes) for index, (region_id, changes) in enumerate(region_items)
             if _split_strategic_entity_deltas(
                 {region_id: changes}, "regions", strategic_event_referenced_ids,
-                unambiguous_strategic_event_pool_ids,
+                _unanchored_event_ids_for_delta(
+                    strategic_event_pool_ids, ordered_deltas, ordered_effect_event_ids, "region_delta", index,
+                ),
             )[1]
         )
     for region_id, raw_changes in region_items:
@@ -9045,10 +9075,12 @@ def _apply_score_extraction_body(
     if ordered_deltas is not None:
         army_items = (
             (army_id, changes)
-            for army_id, changes in ordered_deltas["army_delta"]
+            for index, (army_id, changes) in enumerate(ordered_deltas["army_delta"])
             if _split_strategic_entity_deltas(
                 {army_id: changes}, "armies", strategic_event_referenced_ids,
-                unambiguous_strategic_event_pool_ids,
+                _unanchored_event_ids_for_delta(
+                    strategic_event_pool_ids, ordered_deltas, ordered_effect_event_ids, "army_delta", index,
+                ),
             )[1]
         )
     for army_id, raw_changes in army_items:
@@ -9084,10 +9116,12 @@ def _apply_score_extraction_body(
         power_items = ordinary_power_updates_raw.items()
     else:
         power_items = (
-            (power_id, changes) for power_id, changes in power_items
+            (power_id, changes) for index, (power_id, changes) in enumerate(power_items)
             if _split_strategic_entity_deltas(
                 {power_id: changes}, "powers", strategic_event_referenced_ids,
-                unambiguous_strategic_event_pool_ids,
+                _unanchored_event_ids_for_delta(
+                    strategic_event_pool_ids, ordered_deltas, ordered_effect_event_ids, "power_updates", index,
+                ),
             )[1]
         )
     for power_id, raw_changes in power_items:
@@ -9196,11 +9230,13 @@ def _apply_score_extraction_body(
 
     def _ordered_strategic_items(field: str, target: str, event_id: str) -> list[tuple[str, object]]:
         items = ordered_deltas[field] if ordered_deltas is not None else (extracted.get(field) or {}).items()
-        unanchored = {event_id} if event_id in unambiguous_strategic_event_pool_ids else set()
         return [
-            (entity_id, changes) for entity_id, changes in items
+            (entity_id, changes) for index, (entity_id, changes) in enumerate(items)
             if event_id in _strategic_entity_delta_event_ids(
-                str(entity_id), changes, target, {event_id}, unanchored,
+                str(entity_id), changes, target, {event_id},
+                _unanchored_event_ids_for_delta(
+                    strategic_event_pool_ids, ordered_deltas, ordered_effect_event_ids, field, index,
+                ),
             )
         ]
 

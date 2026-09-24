@@ -326,6 +326,7 @@ def _dispatch_effects(
         "metric_delta", "faction_delta", "class_delta",
         "region_delta", "army_delta", "power_updates",
     )}
+    ordered_effect_event_ids = {field: [] for field in ("region_delta", "army_delta", "power_updates")}
     rejected = []
     has_effect = False
     for item in raw if isinstance(raw, list) else [raw]:
@@ -338,6 +339,11 @@ def _dispatch_effects(
         has_effect = True
         clean, invalid = sanitize_delta_shape(dict(item))
         shape_rejections.extend(invalid)
+        effect_event_ids = {
+            str(issue.get("id") or issue.get("origin_ref") or "").strip()
+            for issue in clean.get("new_issues", [])
+            if isinstance(issue, dict) and str(issue.get("origin_kind") or "").lower() == "event_pool"
+        }
         for field, value in clean.items():
             if field not in EMPTY_EXTRACTION:
                 continue
@@ -347,6 +353,8 @@ def _dispatch_effects(
                 extraction[field].update(value)
                 if field in ordered_deltas:
                     ordered_deltas[field].extend(value.items())
+                    if field in ordered_effect_event_ids:
+                        ordered_effect_event_ids[field].extend([effect_event_ids] * len(value))
             elif value is not None:
                 extraction[field] = value
     if not has_effect:
@@ -358,6 +366,7 @@ def _dispatch_effects(
         dossier_ids_at_input=set(refs.get("dossiers", ())),
         secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
         ordered_deltas=ordered_deltas,
+        ordered_effect_event_ids=ordered_effect_event_ids,
         prior_shape_rejections=shape_rejections,
     )
     _collect_inline_rejections(collector, report, turn, source)
