@@ -251,7 +251,8 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     did2, _, _, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did2)
     origin2 = f"dossier:{did2}"
-    tacit = apply_score_extraction(db, state, {
+    db.conn.execute("UPDATE classes SET population=0 WHERE name='农民' AND region_id='shaanxi'")
+    tacit_declaration = {
         "population_transfers": [{
             "source": "农民@shaanxi", "target": "流民@shaanxi", "amount": 1,
             "reason": "摊派", "origin_ref": origin2,
@@ -259,12 +260,14 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
         "fiscal_changes": [{
             "key": key, "delta": 1, "origin_ref": origin2, "beyond_intent": True,
         }],
-    }, content, None, dossier_ids_at_input={did2})
+    }
+    tacit = apply_score_extraction(db, state, tacit_declaration, content, None, dossier_ids_at_input={did2})
     assert tacit["population_transfers"] and tacit["fiscal_changes"], tacit["fiscal_changes"]
+    assert tacit["population_transfers"][0]["amount"] == 0
     assert tacit["fiscal_changes"][0]["applied"] is True, tacit["fiscal_changes"]
-    assert settle_exposure_from_canonical_actions(db, state, {
-        **tacit, "fiscal_changes": [],
-    }) == 0
+    assert settle_exposure_from_canonical_actions(db, state, tacit) == 0
+    db.conn.execute("UPDATE classes SET population=1 WHERE name='农民' AND region_id='shaanxi'")
+    tacit = apply_score_extraction(db, state, tacit_declaration, content, None, dossier_ids_at_input={did2})
     assert settle_exposure_from_canonical_actions(db, state, tacit) == 1
 
 
@@ -562,16 +565,22 @@ def test_current_reopened_reminder_prevents_binding_a_later_exposure(game, monke
 
 
 def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch):
-    db, state, _ = game
+    db, state, content = game
     did, _, _, _ = _bound_case(db, state)
     monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
         "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
         "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,
     })
+    db.conn.execute("UPDATE classes SET population=0 WHERE name='农民' AND region_id='shaanxi'")
     extracted = {"population_transfers": [{
         "origin_ref": f"dossier:{did}", "reason": "摊派", "source": "农民@shaanxi",
         "target": "流民@shaanxi", "amount": 1,
     }]}
-    assert write_exposure_todos(db, state, extracted) == 1
+    zero = apply_score_extraction(db, state, extracted, content, None, dossier_ids_at_input={did})
+    assert zero["population_transfers"][0]["amount"] == 0
+    assert write_exposure_todos(db, state, zero) == 0
+    db.conn.execute("UPDATE classes SET population=1 WHERE name='农民' AND region_id='shaanxi'")
+    real = apply_score_extraction(db, state, extracted, content, None, dossier_ids_at_input={did})
+    assert write_exposure_todos(db, state, real) == 1
     todo = db.list_next_audience_todos(status="pending")[0]
     assert todo["payload_json"]["channels"] == ["民变自长"]

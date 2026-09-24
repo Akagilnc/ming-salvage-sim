@@ -1282,8 +1282,8 @@ def build_extractor_shared_context(
         if extra:
             authorized_dossiers = list(authorized_dossiers) + extra
         # #649 F1（判词）：internal extractor 专属机器输入面——按 class@region_id 键合的
-        # 省级阶级人口余额 TSV（population_transfers 守恒转移的源天花板）＋本档
-        # population_unit 列。仅 internal 模块可见，不进玩家可感 simulator 数表
+        # 省级阶级人口余额 TSV（population_transfers 拟转量的余额上下文）＋本档
+        # population_unit 列。applier 按执行时余额封顶并同量双写。仅 internal 模块可见，不进玩家可感 simulator 数表
         # （classes_brief 保持定性档）。
         slim["class_population_balances"] = _auto_table([
             {
@@ -1377,12 +1377,6 @@ def build_extractor_shared_context(
         # #1252/#883: secret-dossier roster read seam — batch only, never public.
         slim["secret_dossier_rosters"] = secret_dossier_rosters_from_orders(
             db, compat["secret_orders"],
-        )
-        # #1504：机械底档带（纯函数快照）注入判官带内选态；结案真源不在此模块。
-        from ming_sim.covert_progress import build_covert_floor_payload
-        from ming_sim.settlement_payload import _select_secret_orders_for_sim
-        slim["covert_exec_floors"] = build_covert_floor_payload(
-            db, _select_secret_orders_for_sim(db),
         )
     if module == "issues":
         # #1483：阈值裸数仅 issues 档房——对照 resolve/fail（民心>60 / bar≥Y）。
@@ -1659,6 +1653,8 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        if "transfer_to" in item:
+            entry["transfer_to"] = item["transfer_to"]
         _copy_item_affair_declaration(item, entry)
         # #622：beyond_intent 无损透传。_canonical_item_fields 已把 旨外/旨外标记/旨外恶果
         # 归一到该键；cleaner 不判值（ADR 0008 决定1），真假判定归 flows 写端

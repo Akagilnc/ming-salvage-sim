@@ -21798,6 +21798,7 @@ class GameDB:
         origin_ref: str = "",
         beyond_intent: object = 0,
         commit: bool = True,
+        apply_income_modifier: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
 
@@ -21812,10 +21813,12 @@ class GameDB:
         帝国修正只对收入（delta>0 正向流水）生效；支出（delta<0）按面值落账（issue #341）——
         即本路径仅以 delta>0 调 apply_legacy_pct（其 base>=0 ×(1+net/100) 分支）；
         apply_legacy_pct 自身的 base<0 ×(1-net/100) 分支由 region/army 等其它调用方使用，本路径不走。
+        双边钱库转移的目标腿不属于外生收入，调用方以 apply_income_modifier=False
+        禁止再次放大已从来源库实扣的数。
         """
         if isinstance(delta, bool) or not isinstance(delta, int):
             raise TypeError("delta must be an integer")
-        if category != "局势遗产":
+        if apply_income_modifier and category != "局势遗产":
             net_pct = int(self.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
             if net_pct and delta > 0:
                 delta = self.apply_legacy_pct(int(delta), net_pct)

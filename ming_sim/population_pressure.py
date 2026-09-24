@@ -9,6 +9,12 @@ from ming_sim.constants import RECOVERY_GRANT_ACTIONS
 from ming_sim.db import POPULATION_UNIT_PERSONS
 
 
+def is_actual_population_transfer(item: object) -> bool:
+    """Applied feedback includes legal zero attempts; only positive amounts moved people."""
+    return (isinstance(item, dict) and not item.get("rejected")
+            and int(item.get("amount") or 0) > 0)
+
+
 def displaced_pool_balance_rows(db: Any) -> List[Dict[str, object]]:
     """#652：机面结构化省级流民池清单（region_id + 余额 + population_unit）。
 
@@ -36,7 +42,7 @@ def displaced_pool_balance_rows(db: Any) -> List[Dict[str, object]]:
 def iter_recent_population_transfers(
     db: Any, *, recent_turns: int = 3,
 ) -> Iterator[Tuple[int, Dict[str, Any]]]:
-    """近窗未 rejected 的 population_transfers 共享读核。
+    """近窗实际发生的 population_transfers 共享读核。
 
     唯一 latest_turn / 窗口 / transfers 扫描；brief 与回流原因投影共同消费。
     yield (turn, item)。
@@ -53,7 +59,7 @@ def iter_recent_population_transfers(
         if not isinstance(applied, dict):
             continue
         for item in applied.get("population_transfers") or []:
-            if not isinstance(item, dict) or item.get("rejected"):
+            if not is_actual_population_transfer(item):
                 continue
             yield turn, item
 
