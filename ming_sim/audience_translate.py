@@ -34,8 +34,11 @@ _DECLARATION_KEYS: tuple[str, ...] = (
     "edge_events",
     "protagonist",
     "registrations",
+    "effects",
 )
-_ARRAY_SECTIONS = frozenset(k for k in _DECLARATION_KEYS if k != "protagonist")
+_ARRAY_SECTIONS = frozenset(
+    k for k in _DECLARATION_KEYS if k not in {"protagonist", "effects"}
+)
 
 
 class AudienceTranslateError(RuntimeError):
@@ -209,8 +212,17 @@ def build_translation_target_grounding(db: Any) -> str:
 
 def build_c0_declaration_shape() -> str:
     """C0 唯一输出形状，召对与过月转译共用。"""
+    # 效果 delta 的唯一形状真源沿用旧结算入口的 EMPTY_EXTRACTION，避免声明层
+    # 另手维护一份平行字段表。
+    from ming_sim.simulation import EMPTY_EXTRACTION
+
     # target_kind 表面唯一真源 = decree_vocabulary.TARGET_KINDS，禁手抄分叉。
     target_kind_hint = "|".join(sorted(TARGET_KINDS))
+    effect_shape = "\n".join(
+        f"    {line}" for line in json.dumps(
+            EMPTY_EXTRACTION, ensure_ascii=False, indent=2,
+        ).splitlines()
+    )
     return (
         "{\n"
         '  "commissions": [\n'
@@ -267,7 +279,8 @@ def build_c0_declaration_shape() -> str:
         '  "protagonist": {"person_name": "本轮御前主角"},\n'
         '  "registrations": [\n'
         '    {"name": "新人名", "office": "官职", "office_type": "文|武|…"}\n'
-        "  ]\n"
+        "  ],\n"
+        '  "effects": ' + effect_shape + "\n"
         "}\n"
     )
 
@@ -349,8 +362,13 @@ def normalize_audience_declaration(raw: object) -> Dict[str, object]:
         if key not in raw:
             if key in _ARRAY_SECTIONS:
                 declaration[key] = []
+            elif key == "effects":
+                declaration[key] = {}
             continue
         value = raw.get(key)
+        if key == "effects":
+            declaration[key] = {} if value is None else value
+            continue
         if key == "protagonist":
             if value is None:
                 continue
