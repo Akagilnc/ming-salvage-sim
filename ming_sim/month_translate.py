@@ -22,12 +22,11 @@ from ming_sim.declaration_dispatch import (
 
 @dataclass(frozen=True)
 class MonthTranslationInput:
-    """供月段转译器使用的完整结构化输入；旨载荷与既有物化效果分列。"""
+    """供月段转译器使用的完整结构化输入；预推旨载荷在过月前尚未物化。"""
 
     segment: str
     target_grounding: str
     decree_payload: Mapping[str, object]
-    materialized_effects: Mapping[str, object]
 
 
 MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
@@ -43,11 +42,11 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         f"形状：\n{build_c0_declaration_shape()}"
         "规则：\n"
         "- 只声明本段已发生或明确交代的内容，按原有先后顺序；不得补造事实或目标 id。\n"
-        "- effects 只列出段内推演新产生、且尚未由旨的结构化载荷物化的效果；"
-        "已物化效果只作理解背景，不得重复落账。\n"
+        "- effects 只声明叙事推演产生、且未由下方旨意结构化载荷表示的效果；"
+        "同类效果若已由结构化载荷表示，不得再重复声明。预推时载荷尚未物化，"
+        "不能把它理解成已经落账。\n"
         "- 过月没有召对夜上下文，promises、presence、scene_facts 均留空；没有对应事实的其它 section 也留空（protagonist 无则省略或 null）。\n"
         f"【旨的结构化载荷】\n{json.dumps(dict(request.decree_payload), ensure_ascii=False, indent=2)}\n"
-        f"【案卷已物化效果】\n{json.dumps(dict(request.materialized_effects), ensure_ascii=False, indent=2)}\n"
         f"{grounding_block}"
         f"【完整段文】\n{request.segment}"
     )
@@ -67,7 +66,6 @@ def translate_month_segment(
     segment: str,
     target_grounding: str = "",
     decree_payload: Mapping[str, object],
-    materialized_effects: Mapping[str, object],
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
 ) -> dict[str, object]:
@@ -76,7 +74,6 @@ def translate_month_segment(
         segment=segment,
         target_grounding=target_grounding,
         decree_payload=decree_payload,
-        materialized_effects=materialized_effects,
     )
     runner = translate_fn or _default_month_translate_runner
     declaration = runner(request, llm_config)
@@ -90,7 +87,6 @@ def stage_month_segment(
     segment: str,
     turn: int,
     decree_payload: Mapping[str, object],
-    materialized_effects: Mapping[str, object],
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
 ) -> int:
@@ -99,7 +95,6 @@ def stage_month_segment(
         segment=segment,
         target_grounding=build_translation_target_grounding(db),
         decree_payload=decree_payload,
-        materialized_effects=materialized_effects,
         llm_config=llm_config,
         translate_fn=translate_fn,
     )
@@ -115,7 +110,6 @@ def dispatch_month_segment(
     segment: str,
     minister_name: str = "",
     decree_payload: Optional[Mapping[str, object]] = None,
-    materialized_effects: Optional[Mapping[str, object]] = None,
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
     source: Provenance = Provenance.system_simulation,
@@ -125,7 +119,6 @@ def dispatch_month_segment(
         segment=segment,
         target_grounding=build_translation_target_grounding(db),
         decree_payload=decree_payload or {},
-        materialized_effects=materialized_effects or {},
         llm_config=llm_config,
         translate_fn=translate_fn,
     )

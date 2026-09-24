@@ -314,6 +314,7 @@ def build_audience_translate_prompt(
         "「不准」「作罢」→ 拒绝。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
         "presence / public_sayings / edge_events，不要写成交办。\n"
+        "- effects 是过月才核算的旨意办理效果；召对夜本轮留空，不得将尚未发生的效果写成当场实况。\n"
         "- public_sayings 的 excluded_names / excluded_offices：皇帝明示排除的读者"
         "保持不知情；无排除则给空数组。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"

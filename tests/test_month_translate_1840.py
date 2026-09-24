@@ -37,9 +37,10 @@ def test_pre_push_segment_translation_stages_declaration_without_world_writes(ga
             "subject_kind": "character", "subject_id": person, "body": "预推段事实",
         }],
     }
-    decree_payload = {"action": "增设营堡", "region_id": "amur_frontier"}
-    materialized_effects = {
-        "new_armies": [{"id": "already-materialized-1840"}],
+    decree_payload = {
+        "appointment": {
+            "name": person, "office": "兵部尚书", "appoint_action": "任命",
+        },
     }
     calls = []
 
@@ -58,14 +59,12 @@ def test_pre_push_segment_translation_stages_declaration_without_world_writes(ga
         segment="完整预推段",
         turn=int(state.turn),
         decree_payload=decree_payload,
-        materialized_effects=materialized_effects,
         translate_fn=translate,
     )
 
     assert staged_id > 0
     assert len(calls) == 1
     assert calls[0][0].decree_payload == decree_payload
-    assert calls[0][0].materialized_effects == materialized_effects
     staged = db.staged_declarations.staged_for("pre-push:1840")
     assert len(staged) == 1
     assert staged[0].declaration["textual_facts"] == declaration["textual_facts"]
@@ -208,7 +207,7 @@ def test_staged_month_declarations_settle_in_given_order_and_effects_are_idempot
     for ref in ("decree:early", "decree:late"):
         stage_month_segment(
             db, decree_ref=ref, segment="推演段", turn=turn,
-            decree_payload={"decree_ref": ref}, materialized_effects={},
+            decree_payload={"decree_ref": ref},
             translate_fn=translate,
         )
 

@@ -243,7 +243,8 @@ def _dispatch_declaration_sections(
     result = DeclarationDispatchResult(
         commissions=commissions,
         effects=_dispatch_effects(
-            db, state, declaration.get("effects"), collector=collector,
+            db, state, declaration.get("effects"), night_id=night_id,
+            collector=collector,
             turn=turn, source=source,
         ),
         promises=_dispatch_promises(
@@ -290,13 +291,23 @@ def _dispatch_effects(
     state: Any,
     raw: object,
     *,
+    night_id: int,
     collector: RejectionCollector,
     turn: int,
     source: Provenance,
 ) -> SectionResult:
-    """把 C0 的效果 envelope 交既有月末效果核算口，不复制领域适配器。"""
+    """把过月 C0 效果 envelope 交既有月末效果核算口，不复制领域适配器。
+
+    召对夜里的 effects 表示旨意办理结果，仍只是预推候选；当场实况由各自
+    section 承接，不能借 effects 绕过 ADR 0157 的过月落账边界。
+    """
     if raw is None or raw == {}:
         return SectionResult(applied=[], rejected=[])
+    if int(night_id or 0) > 0:
+        return SectionResult(applied=[], rejected=[RejectedItem(
+            item={"raw_value": raw}, reason="召对夜不能落旨意办理效果，须待过月核算",
+            category="invalid_state", source=source,
+        )])
     if not isinstance(raw, Mapping):
         return SectionResult(applied=[], rejected=[RejectedItem(
             item={"raw_value": raw}, reason="effects 须为对象",
