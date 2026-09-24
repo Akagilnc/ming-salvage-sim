@@ -126,7 +126,12 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state, content = game
-    army, region = _army_id(db), _region_id(db)
+    army_row = db.conn.execute(
+        "SELECT id, manpower FROM armies WHERE manpower > 0 ORDER BY id LIMIT 1"
+    ).fetchone()
+    assert army_row is not None
+    army, manpower_before = str(army_row["id"]), int(army_row["manpower"])
+    region = _region_id(db)
     person = active_ming_character(db, content)
     old_office = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (person,),
@@ -138,18 +143,39 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     region_before = db.conn.execute(
         "SELECT public_support FROM regions WHERE id=?", (region,),
     ).fetchone()[0]
+    farmer_before = int(db.conn.execute(
+        "SELECT population FROM classes WHERE name='农民' AND region_id='shaanxi'"
+    ).fetchone()[0])
+    displaced_before = int(db.conn.execute(
+        "SELECT population FROM classes WHERE name='流民' AND region_id='shaanxi'"
+    ).fetchone()[0])
     treasury_before = state.metrics["国库"]
+    economy_ledger_count = int(db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger"
+    ).fetchone()[0])
     turn = int(state.turn)
     declaration = {
         "effects": {
             "army_delta": {
-                army: {"origin_ref": "盘面自发", "morale": 2},
+                army: {
+                    "origin_ref": "盘面自发", "morale": 2,
+                    "manpower": -(manpower_before + 100),
+                },
                 "missing-army-1840": {"morale": 1},
             },
             "region_delta": {region: {"origin_ref": "盘面自发", "public_support": 2}},
             "economy_moves": [{
-                "origin_ref": "盘面自发", "account": "国库", "delta": -1,
-                "category": "过月支出", "reason": "军需开支",
+                "origin_ref": "盘面自发", "account": "国库",
+                "delta": -(treasury_before + 100),
+                "category": "超额拨出", "reason": "超过国库现银的拨出",
+            }, {
+                "origin_ref": "盘面自发", "account": "国库", "delta": 7,
+                "category": "一次性进账", "reason": "抄没人物家产",
+            }],
+            "population_transfers": [{
+                "origin_ref": "盘面自发",
+                "source": "农民@shaanxi", "target": "流民@shaanxi",
+                "amount": farmer_before + 100, "reason": "灾害",
             }],
             "人物变更": [{
                 "origin_ref": "盘面自发", "name": person, "动作": "任命",
@@ -177,7 +203,6 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     assert db.conn.execute(
         "SELECT public_support FROM regions WHERE id=?", (region,),
     ).fetchone()[0] == region_before + 2
-    assert state.metrics["国库"] == treasury_before - 1
     rejection = db.conn.execute(
         "SELECT section, reason, category FROM rejection_reports "
         "WHERE turn=? ORDER BY id", (turn,),
@@ -189,6 +214,33 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     assert effect_report["army_changes"][0]["new"] == army_before + 2
     assert effect_report["army_changes"][-1]["rejected"] is True
     assert effect_report["army_changes"][-1]["reason"]
+    economy_deltas = [move["delta"] for move in effect_report["economy_moves"]]
+    assert economy_deltas[0] == -treasury_before
+    # A personal-wealth proposal has no source ledger; keep the existing
+    # one-off treasury income path (income modifiers may change 7 to 6).
+    assert economy_deltas[1] > 0
+    ledger_deltas = [row["delta"] for row in db.conn.execute(
+        "SELECT delta FROM economy_ledger WHERE id > ? ORDER BY id",
+        (economy_ledger_count,),
+    ).fetchall()]
+    assert ledger_deltas == economy_deltas
+    assert state.metrics["国库"] == treasury_before + sum(ledger_deltas)
+    manpower_change = next(
+        change for change in effect_report["army_changes"]
+        if change.get("field") == "manpower"
+    )
+    assert manpower_change["old"] == manpower_before
+    assert manpower_change["new"] == 0
+    assert manpower_change["delta"] == -manpower_before
+    assert not effect_report["population_transfers_rejections"]
+    transfer, = effect_report["population_transfers"]
+    assert transfer["amount"] == farmer_before
+    assert db.conn.execute(
+        "SELECT population FROM classes WHERE name='农民' AND region_id='shaanxi'"
+    ).fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT population FROM classes WHERE name='流民' AND region_id='shaanxi'"
+    ).fetchone()[0] == displaced_before + farmer_before
 
 
 def test_staged_month_declarations_settle_in_given_order_and_effects_are_idempotent(game):

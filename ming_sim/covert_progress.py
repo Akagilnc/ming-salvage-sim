@@ -1,8 +1,6 @@
 """#1504 B 包：密令 covert 差务机械实进度 + 到期交付缺口对账。
 
 真源：
-- ADR 0116 意愿轴机械底档（loyalty + identity×0011-3 立场 + satisfaction/血债）
-- ADR 0092 带内选态只准加重
 - ADR 0073 实况轨（非 0058 奏报）
 - ADR 0118 可数交付缺口；ADR 0120 done/failed 退役为到期对账派生
 - Owner A：确认闸 typed covert-task contract → dossier payload；
@@ -21,7 +19,6 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
 from ming_sim.value_matrix import (
-    mean_aligned_stance,
     normalize_axes,
     normalize_direction,
 )
@@ -38,7 +35,6 @@ PROGRESS_UNITS: Dict[str, float] = {
 
 CONTRACT_KEY = "covert_task_contract"
 CONTRACT_VERSION = 1
-_STANCE_SCORE_SCALE = 18.0
 CANONICAL_UNITS = ("万两", "人犯", "万亩")
 FACT_LANES_KEY = "fact_lanes"
 INVESTIGATION_PROVENANCE_KEY = "investigation_provenance"
@@ -121,56 +117,6 @@ def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
     crime = str(guilt.get("crime") or "无").strip() or "无"
     severity = str(guilt.get("severity") or "无").strip() or "无"
     return not (crime == "无" and severity == "无")
-
-
-def _int_axis(value: object, default: int = 50) -> int:
-    if value is None:
-        return int(default)
-    return int(value)
-
-
-def compute_willingness_floor(
-    *,
-    loyalty: int,
-    identity: int,
-    satisfaction: int,
-    seed_guilt: object = "",
-    faction: object = "",
-    axes: object = None,
-    direction: object = 1,
-) -> str:
-    loy = max(0, min(100, int(loyalty)))
-    ident = max(0, min(100, int(identity)))
-    sat = max(0, min(100, int(satisfaction)))
-    axis_list = normalize_axes(axes)
-    if not axis_list:
-        axis_list = ["实务事功"]
-    direction_i = normalize_direction(direction, default=1)
-
-    score = 0.55 * loy + 0.35 * sat
-    aligned = mean_aligned_stance(faction, axis_list, direction=direction_i)
-    score += (ident / 100.0) * aligned * _STANCE_SCORE_SCALE
-    if ident >= 70 and loy < 55:
-        score -= 18.0
-    if seed_guilt_counts_as_debt(seed_guilt):
-        score -= 12.0
-    if score >= 70.0:
-        return "忠实"
-    if score >= 45.0:
-        return "打折"
-    if score >= 25.0:
-        return "阳奉阴违"
-    return "反噬"
-
-
-def clamp_fidelity_to_floor(floor: object, selected: object) -> str:
-    floor_name = normalize_fidelity_state(floor) or "反噬"
-    selected_name = normalize_fidelity_state(selected)
-    if selected_name is None:
-        return floor_name
-    if _FIDELITY_INDEX[selected_name] < _FIDELITY_INDEX[floor_name]:
-        return floor_name
-    return selected_name
 
 
 def target_progress_units(*, deadline_span: int, due_turn: int, per_month: float = 1.0) -> float:
@@ -632,74 +578,12 @@ def player_facing_secret_order_close_text(
     return ""
 
 
-def build_minister_snapshot(db: Any, minister_name: str) -> Dict[str, object]:
-    name = str(minister_name or "").strip()
-    row = db.conn.execute(
-        "SELECT loyalty, identity, faction, seed_guilt, status FROM characters WHERE name=?",
-        (name,),
-    ).fetchone()
-    if row is None:
-        return {
-            "minister_name": name,
-            "loyalty": 50,
-            "identity": 50,
-            "faction": "",
-            "satisfaction": 50,
-            "seed_guilt": "",
-            "status": "",
-            "present": False,
-        }
-    faction = str(row["faction"] or "")
-    sat = 50
-    if faction:
-        try:
-            sat = int(db.faction_satisfaction(faction))
-        except Exception:
-            sat = 50
-    seed_raw: object = ""
-    if "seed_guilt" in row.keys() and row["seed_guilt"] is not None:
-        seed_raw = row["seed_guilt"]
-    status = str(row["status"] or "") if "status" in row.keys() else ""
-    return {
-        "minister_name": name,
-        "loyalty": _int_axis(row["loyalty"], 50),
-        "identity": _int_axis(row["identity"], 50),
-        "faction": faction,
-        "satisfaction": int(sat),
-        "seed_guilt": seed_raw,
-        "status": status,
-        "present": True,
-    }
-
-
 def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
-    snap = build_minister_snapshot(db, minister_name)
-    return bool(snap.get("present")) and str(snap.get("status") or "") == "active"
-
-
-def compute_floor_for_minister(
-    db: Any,
-    minister_name: str,
-    *,
-    contract: Mapping[str, object],
-) -> str:
-    snap = build_minister_snapshot(db, minister_name)
-    axes, direction = contract_axes_direction(contract)
-    return compute_willingness_floor(
-        loyalty=int(snap["loyalty"]),
-        identity=int(snap["identity"]),
-        satisfaction=int(snap["satisfaction"]),
-        seed_guilt=snap.get("seed_guilt") or "",
-        faction=str(snap.get("faction") or ""),
-        axes=axes,
-        direction=direction,
-    )
-
-
-def _order_contract(db: Any, order: Mapping[str, object]) -> Dict[str, object]:
-    oid = int(order.get("id") or 0)
-    dossier = db.get_dossier_for_secret_order(oid) if oid > 0 else None
-    return require_covert_task_contract(dossier)
+    row = db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=? AND status='active'",
+        (str(minister_name or "").strip(),),
+    ).fetchone()
+    return row is not None
 
 
 def _current_game_turn(db: Any, turn: object = None) -> int:
@@ -1111,43 +995,6 @@ def monthly_actual_units(*, fidelity: object, originated_quantity: float) -> flo
     return progress_units_for_state(fidelity) * quantity
 
 
-def build_covert_floor_payload(db: Any, orders: Sequence[Mapping[str, object]]) -> List[Dict[str, object]]:
-    out: List[Dict[str, object]] = []
-    for order in orders:
-        if not isinstance(order, dict):
-            continue
-        oid = int(order.get("id") or 0)
-        if oid <= 0:
-            continue
-        status = str(order.get("status") or "")
-        if status != "active":
-            continue
-        minister = str(order.get("minister_name") or "")
-        contract = _order_contract(db, order)
-        floor = compute_floor_for_minister(db, minister, contract=contract)
-        dossier = db.get_dossier_for_secret_order(oid)
-        prior_units = 0.0
-        target_units = contract_target_units(contract)
-        if dossier is not None:
-            prior_units = float(db.sum_dossier_actual_progress_units(int(dossier["id"])))
-        axes, direction = contract_axes_direction(contract)
-        out.append({
-            "order_id": oid,
-            "minister_name": minister,
-            "title": str(order.get("title") or ""),
-            "floor": floor,
-            "allowed_states": list(FIDELITY_STATES[_FIDELITY_INDEX[floor]:]),
-            "prior_actual_units": prior_units,
-            "target_units": target_units,
-            "kind": str((contract or {}).get("kind") or ""),
-            "axes": axes,
-            "direction": direction,
-            "due_turn": int(order.get("due_turn") or 0),
-            "deadline_span": int(order.get("deadline_span") or 0),
-        })
-    return out
-
-
 def _selection_map(raw_selections: object) -> Dict[int, Dict[str, object]]:
     mapping: Dict[int, Dict[str, object]] = {}
     for item in raw_selections or []:
@@ -1169,7 +1016,7 @@ def apply_monthly_covert_actual_progress(
     selections: object = None,
     commit: bool = False,
 ) -> List[Dict[str, object]]:
-    """当月实况轨落笔：clamp 执行态 + 当月 origin 真实效果 → dossier_actual_progress。
+    """当月实况轨落笔：推演者执行态 + 当月 origin 真实效果 → dossier_actual_progress。
 
     不发明人物/钱粮/地区固定套餐；奏报永不入 apply。
     """
@@ -1199,10 +1046,11 @@ def apply_monthly_covert_actual_progress(
             continue
         did = int(dossier["id"])
         contract = require_covert_task_contract(dossier)
-        floor = compute_floor_for_minister(db, minister, contract=contract)
         sel = by_sel.get(oid) or {}
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
-        fidelity = clamp_fidelity_to_floor(floor, selected)
+        fidelity = normalize_fidelity_state(selected)
+        if fidelity is None:
+            raise ValueError(f"密令 {oid} 缺少有效执行态")
         inv_target = _investigation_target_of(contract)
         bound_key = ""
         originated = 0.0
@@ -1220,7 +1068,7 @@ def apply_monthly_covert_actual_progress(
         note = str(sel.get("note") or sel.get("备注") or "").strip()
         if not note:
             note = (
-                f"机械实进度：底档{floor}→落态{fidelity}（{units:g}）"
+                f"月度实进度：执行态{fidelity}（{units:g}）"
                 f"；origin_effects={originated}"
             )
         row = db.record_dossier_actual_progress(
@@ -1228,7 +1076,7 @@ def apply_monthly_covert_actual_progress(
             turn,
             units=units,
             fidelity_state=fidelity,
-            floor_state=floor,
+            floor_state="",
             note=note,
             commit=False,
         )
@@ -1238,7 +1086,6 @@ def apply_monthly_covert_actual_progress(
             "dossier_id": did,
             "units": units,
             "fidelity": fidelity,
-            "floor": floor,
             "row_id": row.get("id"),
             "originated_quantity": originated,
             "target_units": contract_target_units(contract),

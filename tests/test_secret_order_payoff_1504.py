@@ -1,7 +1,6 @@
 """#1504 B 包：密令机械实进度 + 到期缺口对账 + 拆 secret_order_closes 真源。
 
 Seams:
-- compute_willingness_floor / clamp_fidelity_to_floor（纯函数 golden）
 - dossier_actual_progress 实况容器（origin 纪律；≠ dossier_progress_json）
 - apply_monthly_covert_actual_progress + settle_due_secret_orders（settle 同 atomic）
 - 正反例：已交付→done、缺口→failed；表报背离不翻实账
@@ -19,14 +18,10 @@ import pytest
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.covert_progress import (
     FACT_LANES_KEY,
-    FIDELITY_STATES,
     INVESTIGATION_PROVENANCE_KEY,
     CovertContractError,
     build_covert_task_contract,
     build_secret_covert_effect_briefs,
-    build_minister_snapshot,
-    clamp_fidelity_to_floor,
-    compute_willingness_floor,
     decide_secret_order_settlement,
     monthly_actual_units,
     progress_units_for_state,
@@ -192,32 +187,6 @@ def _originate_catches(db, state, content, dossier_id, names):
     )
 
 
-# ── 纯函数 golden ─────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    ("loyalty", "identity", "satisfaction", "guilt", "expected"),
-    [
-        (90, 40, 80, "", "忠实"),
-        (55, 50, 55, "", "打折"),
-        (40, 50, 40, "", "阳奉阴违"),
-        (10, 90, 10, "血债", "反噬"),
-        # 真实 seed：{"crime":"无"} 清白，不得当血债
-        (90, 40, 80, json.dumps({"crime": "无", "severity": "无"}, ensure_ascii=False), "忠实"),
-        (90, 40, 80, {"crime": "无", "severity": "无"}, "忠实"),
-        # 合法零值：loyalty=0 / identity=0 不得被 or-default 吞掉
-        (0, 0, 80, "", "阳奉阴违"),
-    ],
-)
-def test_willingness_floor_golden(loyalty, identity, satisfaction, guilt, expected):
-    assert compute_willingness_floor(
-        loyalty=loyalty,
-        identity=identity,
-        satisfaction=satisfaction,
-        seed_guilt=guilt,
-    ) == expected
-
-
 def test_seed_guilt_structured_clean_vs_debt():
     assert not seed_guilt_counts_as_debt("")
     assert not seed_guilt_counts_as_debt(None)
@@ -225,43 +194,6 @@ def test_seed_guilt_structured_clean_vs_debt():
     assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
     assert seed_guilt_counts_as_debt("血债")
     assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
-
-
-def test_build_minister_snapshot_preserves_zero_axes_and_clean_seed(game):
-    db, state, _ = game
-    name = _minister(db)
-    clean = json.dumps({"crime": "无", "severity": "无"}, ensure_ascii=False)
-    db.conn.execute(
-        "UPDATE characters SET loyalty=0, identity=0, seed_guilt=? WHERE name=?",
-        (clean, name),
-    )
-    db.conn.commit()
-    snap = build_minister_snapshot(db, name)
-    assert snap["loyalty"] == 0
-    assert snap["identity"] == 0
-    assert not seed_guilt_counts_as_debt(snap["seed_guilt"])
-    # 清白 seed + 零轴：底档不得被虚假血债/or50 抬到忠实
-    floor = compute_willingness_floor(
-        loyalty=int(snap["loyalty"]),
-        identity=int(snap["identity"]),
-        satisfaction=int(snap["satisfaction"]),
-        seed_guilt=snap["seed_guilt"],
-    )
-    assert floor != "忠实"
-
-
-def test_clamp_only_worsens_never_lightens():
-    assert clamp_fidelity_to_floor("打折", "忠实") == "打折"
-    assert clamp_fidelity_to_floor("打折", "阳奉阴违") == "阳奉阴违"
-    assert clamp_fidelity_to_floor("忠实", None) == "忠实"
-    assert clamp_fidelity_to_floor("忠实", "bogus") == "忠实"
-    # 全序可加重
-    for i, floor in enumerate(FIDELITY_STATES):
-        for j, sel in enumerate(FIDELITY_STATES):
-            out = clamp_fidelity_to_floor(floor, sel)
-            assert FIDELITY_STATES.index(out) >= i
-            if j >= i:
-                assert out == sel
 
 
 def test_decide_settlement_delivery_gap_bidirectional():
@@ -495,11 +427,13 @@ def test_gap_after_months_failed(game):
     name = _minister(db)
     _set_axes(db, name, loyalty=15, identity=85, seed_guilt="旧案")
     oid = _issue(db, state, name, "必败密查", "无人真办", months=2, target=2)
-    # 两月反噬/阳奉 → 0 实进度（跳过发令月）
+    # 两月由推演者选反噬 → 0 实进度（跳过发令月）
     for _ in range(2):
         state.turn += 1
         db.save_state(state)
-        apply_monthly_covert_actual_progress(db, state, selections=None, commit=True)
+        apply_monthly_covert_actual_progress(
+            db, state, selections=[{"order_id": oid, "fidelity": "反噬"}], commit=True,
+        )
     due = db.conn.execute(
         "SELECT due_turn FROM secret_orders WHERE id=?", (oid,)
     ).fetchone()["due_turn"]
@@ -705,23 +639,23 @@ def test_auto_submit_due_no_longer_flips_pending_review(game):
     assert "due_machine" not in payload
 
 
-def test_judge_selection_cannot_lighten_floor(game):
+def test_monthly_actual_progress_preserves_selected_fidelity_in_sqlite(game):
     db, state, _ = game
     name = _minister(db)
-    # 低忠诚 → 底档至少 阳奉/反噬
+    # The old loyalty-derived floor must not rewrite the selected execution state.
     _set_axes(db, name, loyalty=20, identity=80, seed_guilt="x")
-    oid = _issue(db, state, name, "不可洗白", "底档钳制", months=2, target=2)
+    oid = _issue(db, state, name, "执行态由推演者决定", "本月执行态由推演者决定", months=2, target=2)
     state.turn += 1
     db.save_state(state)
     out = apply_monthly_covert_actual_progress(
         db, state,
-        selections=[{"order_id": oid, "fidelity": "忠实"}],  # 试图减轻
+        selections=[{"order_id": oid, "fidelity": "忠实"}],
         commit=True,
     )
     row = next(r for r in out if r["order_id"] == oid)
-    assert row["fidelity"] != "忠实"
-    assert progress_units_for_state(row["fidelity"]) <= progress_units_for_state(row["floor"])
-    assert FIDELITY_STATES.index(row["fidelity"]) >= FIDELITY_STATES.index(row["floor"])
+    assert row["fidelity"] == "忠实"
+    persisted = db.list_dossier_actual_progress(row["dossier_id"])
+    assert persisted[-1]["fidelity_state"] == "忠实"
 
 
 def test_monthly_actual_does_not_invent_generic_world_package(game):

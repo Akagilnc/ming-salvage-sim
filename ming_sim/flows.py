@@ -2126,7 +2126,7 @@ def _apply_population_transfers(
     校验分层（ADR 0015，r4 终态）：section 非 list 已由 sanitize_delta_shape 拒段；
     list 内坏记录逐项拒收留痕（非 dict 项按 0015 F1 {'raw_value':…} 包装），好记录照落。
     逐项拒收面：方向不在矩阵（constants.POPULATION_TRANSFER_REASONS）；reason 枚举
-    非法；amount 非 int/≤0/超源余额；region 未知或两侧不同省；source/target 触及全国
+    非法；requested amount 非 int/≤0；region 未知或两侧不同省；source/target 触及全国
     行；origin_ref 缺失/伪前缀/未颁案卷；白名单外字段。数据拒收永不中止事务；代码
     异常照常上抛由 applier.atomic 回滚（两轴分立）。
 
@@ -2255,13 +2255,11 @@ def _apply_population_transfers(
                 f"（流民池＝classes 省级行，全国行不参与守恒主账）",
             )
             continue
-        if int(src_row["population"]) < amount:
-            _reject(
-                "invalid_enum",
-                f"population_transfers 超源余额：{source!r} 现有 "
-                f"{src_row['population']}（{population_unit}口径）< amount {amount}；"
-                "源阶级省级行是硬天花板，禁凭空造人",
-            )
+        # The declaration is a proposed amount. The classes ledger owns the actual
+        # transfer: cap to current source stock, then write the same actual on both
+        # sides. A depleted source produces no transfer, not an invalid declaration.
+        amount = min(amount, int(src_row["population"]))
+        if amount == 0:
             continue
         # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
         db.conn.execute(
