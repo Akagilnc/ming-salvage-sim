@@ -271,3 +271,54 @@ def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch)
     session.finish_rescript_phase2({"ready_replay": True}, {})
     assert int(session.state.turn) == closed_turn
     assert session.state.turn_phase == TurnPhase.SETTLING.value
+
+
+def test_world_segment_reads_material_directory(game, monkeypatch):
+    """世界段复用列目录／读文件与 CLI materials_dir，不只把 opening 交进上下文。"""
+    from pathlib import Path
+
+    import ming_sim.agents as agents_mod
+    from ming_sim.agents import bind_content
+    from ming_sim.models import LLMConfig
+
+    db, state, content = game
+    bind_content(content)
+    seen = []
+
+    def capture(agent, _message, **_kwargs):
+        tools = {tool.__name__: tool for tool in agent.tools}
+        listing = tools["list_materials"]("")
+        index = tools["read_material"]("INDEX.txt")
+        has_dir = hasattr(agent.model, "materials_dir")
+        materials_dir = getattr(agent.model, "materials_dir", "")
+        seen.append({
+            "listing": listing,
+            "index": index,
+            "has_dir": has_dir,
+            "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
+            "opening": next(part for part in agent.instructions if "盘面：" in str(part)),
+        })
+        return "静"
+
+    monkeypatch.setattr(agents_mod, "run_agent_text", capture)
+    api = LLMConfig(
+        api_key="sk-test", base_url="https://api.example.com/v1",
+        model="gpt-test", channel="api",
+    )
+    assert month_chain.run_world_segment_text(db, state, api) == "静"
+    assert "INDEX.txt" in seen[0]["listing"].splitlines()
+    assert seen[0]["index"].strip()
+    assert seen[0]["has_dir"] is False
+    assert "盘面：" in seen[0]["opening"]
+    # 目录里至少有一份不在开场最小集里的材料。
+    extra = next(
+        line for line in seen[0]["listing"].splitlines()
+        if line and line != "INDEX.txt" and line not in seen[0]["opening"]
+    )
+    assert extra
+
+    cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
+    assert month_chain.run_world_segment_text(db, state, cli) == "静"
+    assert seen[1]["has_dir"] is True
+    assert seen[1]["dir_has_index"] is True
+    assert seen[1]["index"].strip()

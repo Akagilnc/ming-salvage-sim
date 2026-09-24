@@ -291,25 +291,6 @@ def test_underfunded_closed_grants_excluded_from_monthly_targets(game):
     assert dossier_id not in {int(t["dossier_id"]) for t in targets}
 
 
-def test_issues_context_exposes_recon_for_soft_discount(game):
-    """赈济/拨付 issue 软判可读对账数据（读账演化缝）。"""
-    from ming_sim.simulation import build_extractor_shared_context
-
-    db, state, content = game
-    gid = _in_transit_grant(db, state)
-    _settle(db, state, content, reconciliations=[
-        {"dossier_id": gid, "arrived_amount": 16},
-    ])
-    ctx = build_extractor_shared_context(
-        db, state, "", "", module="issues"
-    )
-    assert "grant_reconciliations" in ctx
-    hit = next(r for r in ctx["grant_reconciliations"] if r["dossier_id"] == gid)
-    assert hit["arrived_amount"] == 16
-    assert hit["ordered_amount"] == ORDERED
-    assert hit["loss_amount"] == ORDERED - 16
-
-
 @pytest.mark.parametrize(
     "shape, raw_value",
     [

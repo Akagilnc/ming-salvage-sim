@@ -917,16 +917,6 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
         assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
 
-
-
-
-
-
-
-
-
-
-
 @pytest.mark.parametrize("invalid_id", [True, 1.5, "1.5", 2 ** 63])
 def test_dossier_execution_rejects_non_sqlite_integer_ids(game, invalid_id):
     db, state, content = game
@@ -1622,37 +1612,6 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
     assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -25
 
 
-def test_extractor_context_origin_ref_round_trips_to_commitment(game):
-    from ming_sim.simulation import build_extractor_shared_context
-
-    db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="special_decree", decree_text="今后每月修河",
-        target_kind="issue", target_id="river-works",
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    extractor_context = build_extractor_shared_context(
-        db, state, "河工已经开办", "今后每月修河", module="issues"
-    )
-    origin_ref = next(
-        row["origin_ref"] for row in extractor_context["decree_dossiers"]
-        if row["id"] == dossier_id
-    )
-
-    issue_engine.apply_score_extraction(
-        db, state, {"new_issues": [{
-            "origin_kind": "decree",
-            "origin_ref": origin_ref,
-            "kind": "initiative",
-            "title": "逐月修河",
-            "end_turn": state.turn + 2,
-            "commitment_kind": "until_stop",
-        }]}, content=content,
-    )
-
-    assert db.list_commitments_for_dossier(dossier_id)[0]["origin_ref"] == origin_ref
-
-
 def test_secret_order_progress_persists_executing_until_terminal(game):
     from ming_sim.db import GameDB
 
@@ -1783,8 +1742,6 @@ def test_create_secret_order_has_resumable_dossier(game):
     assert dossier["status"] in {"promulgated", "executing"}
 
 
-
-
 def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
@@ -1815,8 +1772,6 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
         }],
     )
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-
-
 
 
 def test_interim_verdict_rejects_reserved_legal_reason_code(game):
@@ -2275,8 +2230,6 @@ def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
     assert '"category": "invalid_origin_ref"' in json.dumps(result, ensure_ascii=False)
 
 
-
-
 def test_withdrawn_rescript_records_closed_turn(game):
     from ming_sim.db import GameDB
 
@@ -2444,10 +2397,6 @@ def _complete_session(game):
     session._decree_draft_fingerprint = ()
     session._begun = False
     return session
-
-
-
-
 
 
 def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):

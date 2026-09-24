@@ -31,7 +31,7 @@ def run_world_segment_text(
     if str(cheat_directive or "").strip():
         message = str(cheat_directive).strip() + "\n" + message
     try:
-        agent = create_world_segment_agent(llm_config, prepared.opening)
+        agent = create_world_segment_agent(llm_config, prepared)
         return run_agent_text(
             agent, message, tag="world-segment",
             transport_policy=audience_transport_policy(),

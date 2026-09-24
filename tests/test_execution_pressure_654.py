@@ -26,7 +26,7 @@ from ming_sim.execution_pressure import (
     resolve_dossier_region_ids,
 )
 from ming_sim.paths import bundled_path
-from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 
 
 @pytest.fixture
@@ -667,15 +667,6 @@ def test_two_axis_in_simulator_not_extractors(env):
         isinstance(d.get("severity"), str) and d.get("severity")
         for d in block["disaster_rows"]
     )
-
-    issues_ctx = build_extractor_shared_context(
-        db, state, narrative="n", decree_text="d", module="issues",
-    )
-    assert "execution_two_axis" not in issues_ctx
-    other = build_extractor_shared_context(
-        db, state, narrative="n", decree_text="d", module="internal",
-    )
-    assert "execution_two_axis" not in other
 
 
 def test_normalize_payload_locality_and_target_kind(env):
@@ -1398,39 +1389,6 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
 
 
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
-
-
-def test_issues_only_region_id_projection(env):
-    """C：region_id 仅 issues 模块 slim 投影；internal/personnel_secret 等不见该键。"""
-    db, state, _ = env
-    did = db.create_decree_dossier(
-        state,
-        action_type="assignment",
-        decree_text="陕差",
-        target_kind="issue",
-        target_id="x",
-        payload={
-            "target_kind": "issue", "target_id": "x", "locality_scope": "none",
-            "assignee_id": "毕自严", "transaction_category": "清丈",
-        },
-        participants=[
-            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-        ],
-    )
-    _promote_executing(db, did, "shaanxi")
-    sim = build_simulator_payload(state, db, decree_text="d", previous_narrative="n")
-    issues_ctx = build_extractor_shared_context(
-        db, state, narrative="n", decree_text="d", module="issues",
-    )
-    dossiers = issues_ctx["decree_dossiers"]
-    assert dossiers and "region_id" in dossiers[0]
-    assert dossiers[0]["region_id"] == "shaanxi"
-    for module in ("internal", "personnel_secret", "military_external"):
-        other = build_extractor_shared_context(
-            db, state, narrative="n", decree_text="d", module=module,
-        )
-        for row in other.get("decree_dossiers") or []:
-            assert "region_id" not in row, module
 
 
 def test_dutang_three_states(env):

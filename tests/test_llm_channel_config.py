@@ -855,8 +855,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         game_world_prompt="gw",
         decree_writer_prompt="dw",
         season_simulator_prompt="ss",
-        score_extractor_shared_prompt="shared",
-        score_extractor_module_prompts={"economy": "econ"},
         chapter_memory_prompt="cm",
         ending_summary_prompt="es",
     )
@@ -882,7 +880,9 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ("create_mindreading_agent", lambda: agents_mod.create_mindreading_agent(cfg)),
         ("create_highlight_judge_agent", lambda: agents_mod.create_highlight_judge_agent(cfg)),
         ("create_endorsement_extractor_agent", lambda: agents_mod.create_endorsement_extractor_agent(cfg)),
-        ("create_world_segment_agent", lambda: agents_mod.create_world_segment_agent(cfg, "盘面")),
+        ("create_world_segment_agent", lambda: agents_mod.create_world_segment_agent(
+            cfg, SimpleNamespace(root="", opening="盘面"),
+        )),
         ("create_json_sanitizer_agent", lambda: agents_mod.create_json_sanitizer_agent(cfg, object())),
         ("create_chapter_memory_agent", lambda: agents_mod.create_chapter_memory_agent(cfg, object())),
         ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg, object())),

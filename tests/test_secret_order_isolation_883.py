@@ -15,7 +15,7 @@ import pytest
 from ming_sim import issues
 from ming_sim.decree import settle_with_delta
 from tests.conftest import with_monthly_reports
-from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
 
 
@@ -827,29 +827,13 @@ def test_883_public_llm_contexts_never_preload_secret_orders(game):
     simulator_payload = build_simulator_payload(
         state, db, "", "", secret_orders=secret_orders,
     )
-    public_contexts = [
-        build_extractor_shared_context(
-            db, state, "", "", secret_orders=secret_orders, module=module
-        )
-        for module in ("internal", "military_external", "issues")
-    ]
-    secret_context = build_extractor_shared_context(
-        db, state, "", "", secret_orders=secret_orders, module="personnel_secret",
-    )
 
     assert "secret_orders" not in simulator_payload
     assert marker not in str(simulator_payload)
-    assert all(marker not in str(context) for context in public_contexts)
-    assert secret_context["secret_orders"]["在办"][0]["content"] == marker
 
     # 默认路径（不传 secret_orders）：公共 payload 不得出现 secret_orders 键/空壳
     default_sim = build_simulator_payload(state, db, "", "")
     assert "secret_orders" not in default_sim
-    for module in ("internal", "military_external", "issues"):
-        ctx = build_extractor_shared_context(
-            db, state, "", "", module=module
-        )
-        assert "secret_orders" not in ctx
 
 
 def test_976_cross_person_speaker_user_origin_withheld_not_shared(game):

@@ -77,18 +77,14 @@ def _expected_inflow_persons(base_wan: float, support: int) -> int:
 
 # ── AC1：加派旨当回合落逐省累积账；无旨不入账 ─────────────────────────────────
 
-def test_surcharge_prompt_and_schema_only_teach_effect_eligible_dossiers():
+def test_surcharge_schema_only_teaches_effect_eligible_dossiers():
     """加派专属来源契约不得继承其它 delta section 的自然演化哨兵。"""
     root = Path(__file__).parents[1]
-    prompt = (root / "content/prompts/score_extractor_shared.md").read_text(encoding="utf-8")
     schema = (root / "docs/DELTA_SCHEMA.md").read_text(encoding="utf-8")
-    prompt_row = next(line for line in prompt.splitlines() if line.startswith("| `加派` |"))
     surcharge_section = schema.split("### `surcharge_decrees`", 1)[1].split("### `region_delta`", 1)[0]
-
-    for contract in (prompt_row, surcharge_section):
-        assert "dossier:<正整数>" in contract
-        assert "效果资格" in contract
-        assert "不得使用 `盘面自发`" in contract
+    assert "dossier:<正整数>" in surcharge_section
+    assert "效果资格" in surcharge_section
+    assert "不得使用 `盘面自发`" in surcharge_section
 
 
 def test_decree_lands_accumulated_ledger_same_turn(game):

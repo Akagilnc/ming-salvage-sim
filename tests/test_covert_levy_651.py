@@ -8,7 +8,7 @@ from ming_sim.covert_levy import (
 from ming_sim.decree import project_dossiers_for_simulator
 from ming_sim.issues import apply_score_extraction
 from ming_sim.due_review import audience_todo_lane, build_due_review_input, list_due_review_scenes
-from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS, build_extractor_shared_context
+from ming_sim.simulation import EMPTY_EXTRACTION, MODULE_FIELDS
 from ming_sim.beat_orchestration import assemble_beat_inputs, BEAT_OPEN
 from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
@@ -110,16 +110,6 @@ def test_pay_fact_reaches_both_production_judge_inputs(game):
     simulator = project_dossiers_for_simulator(rows, db, state)
     sim_row = next(row for row in simulator if row["id"] == did)
     assert sim_row["army_pay_fact"]["consecutive_pay_shortfall_months"] == 3
-    issues = build_extractor_shared_context(
-        db, state, "", "", module="issues", decree_dossiers=simulator
-    )
-    issue_row = next(row for row in issues["decree_dossiers"] if row["id"] == did)
-    assert issue_row["army_pay_fact"] == sim_row["army_pay_fact"]
-    internal = build_extractor_shared_context(
-        db, state, "", "", module="internal", decree_dossiers=simulator,
-    )
-    internal_row = next(row for row in internal["decree_dossiers"] if row["id"] == did)
-    assert internal_row["army_pay_fact"] == sim_row["army_pay_fact"]
 
 
 def test_rejected_canonical_results_neither_consume_nor_create_channel(game, monkeypatch):

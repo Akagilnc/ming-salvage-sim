@@ -8,7 +8,7 @@ import ming_sim.agents as agents_mod
 from ming_sim.db import GameDB
 from ming_sim.issues import apply_issue_tracker_output, gather_impeachment_surge_candidates, issue_to_payload
 from ming_sim.models import LLMConfig
-from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 
 
 def _candidate_world(db, state, *, participants=None, execution_note="名实已乖，旨外受益"):
@@ -83,11 +83,6 @@ def test_transformed_fact_is_projected_as_namespaced_candidate(game):
     payload = build_simulator_payload(state, db, "", "")
     assert item not in payload["candidate_events"]
     assert all(not str(event["id"]).startswith("impeachment_surge:") for event in payload["candidate_events"])
-    issues_context = build_extractor_shared_context(
-        db, state, "", "", module="issues"
-    )
-    assert item in issues_context["candidate_events"]
-    assert "impeachment_surge_candidates" not in issues_context
     facts = db.build_faction_denunciation_facts()
     assert all(int(row["dossier_id"]) != did for row in facts["forked_dossiers"])
 

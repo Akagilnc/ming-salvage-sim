@@ -18,7 +18,7 @@ from ming_sim.db import GameDB
 from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
-from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
 JUNHU_LIAODONG = 230000
@@ -132,16 +132,7 @@ def test_mutiny_arrears_desertion_real_payload_tracer(game, tmp_path):
         for e in fiscal
     )
 
-    # 2) internal extractor 输入面：该驻地省军户/流民余额可见
-    context = build_extractor_shared_context(
-        db, state, "东江驻军哗变日久，军户私逃为流民。", "", module="internal",
-    )
-    balances = context["class_population_balances"]
-    assert balances["cols"] == ["class_region", "population", "population_unit"]
-    assert any(row[:2] == ["军户@dongjiang_area", JUNHU_DONGJIANG] for row in balances["rows"])
-    assert any(row[:2] == ["流民@dongjiang_area", LIUMIN_DONGJIANG] for row in balances["rows"])
-
-    # 3) S7 军镇压力经 build_simulator_payload 投影面按 station_region 挂属地
+    # S7 军镇压力经 build_simulator_payload 投影面按 station_region 挂属地
     # （契约主钉落 payload 投影，盖住 project 漏键；不新开核、不钉 raw-only）
     _executing_dossier(db, state, "dongjiang_area")
     _executing_dossier(db, state, "liaodong")

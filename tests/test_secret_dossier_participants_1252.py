@@ -60,47 +60,21 @@ def _grouped(db, state, order_ids=None):
 
 def test_s1_private_rail_exposes_secret_dossier_id_and_roster(game):
     """personnel_secret 私轨为本批密令暴露 dossier_id+participant_roster。"""
-    from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+    from ming_sim.simulation import build_simulator_payload
 
     db, state, _content = game
     lead, order_id, dossier_id = _secret(db, state)
-    # Seed an initial roster entry so the read seam has something to show.
     db.append_decree_dossier_participants(dossier_id, [{
         "character_id": lead, "tier": "主办", "role": "密访",
     }], state=state)
-    grouped = _grouped(db, state, [order_id])
 
-    private = build_extractor_shared_context(
-        db, state, "", "", module="personnel_secret", secret_orders=grouped,
-    )
-    assert "secret_dossier_rosters" in private
-    hit = next(
-        item for item in private["secret_dossier_rosters"]
-        if int(item["dossier_id"]) == dossier_id
-    )
-    assert hit["participant_roster"][0]["character_id"] == lead
-    assert hit["participant_roster"][0]["tier"] == "主办"
-
-    # #883: public modules + simulator never see secret dossier ids.
     public = build_simulator_payload(state, db, "", "")
     assert all(
         int(row["id"]) != dossier_id
         for row in public.get("decree_dossiers") or []
         if isinstance(row, dict) and row.get("id") is not None
     )
-    for module in ("issues", "internal", "military_external"):
-        ctx = build_extractor_shared_context(
-            db, state, "", "", module=module, secret_orders=grouped
-        )
-        assert "secret_dossier_rosters" not in ctx
-        assert all(
-            int(row["id"]) != dossier_id
-            for row in ctx.get("decree_dossiers") or []
-            if isinstance(row, dict) and row.get("id") is not None
-        )
-        blob = json.dumps(ctx, ensure_ascii=False)
-        assert f'"id": {dossier_id}' not in blob
-        assert f'"dossier_id": {dossier_id}' not in blob
+    assert str(dossier_id) not in str(public.get("secret_orders") or "")
 
 
 def test_s1_public_projection_filter_unchanged(game):
@@ -369,17 +343,6 @@ def test_s2_driver_persists_secret_orders_and_freezes_secret_authority(game, mon
 
 
 # ── S3: prompt 正向特征化 + DELTA_SCHEMA ─────────────────────
-
-
-def test_s3_prompt_characterizes_secret_dossier_participants():
-    """personnel_secret prompt 正向声明私字段与读缝（字段名最弱存在性）。"""
-    from pathlib import Path
-
-    prompt = Path("content/prompts/score_extractor_personnel_secret.md").read_text(
-        encoding="utf-8",
-    )
-    assert "secret_dossier_participants" in prompt
-    assert "secret_dossier_rosters" in prompt
 
 
 def test_s3_runtime_contract_owns_secret_field():

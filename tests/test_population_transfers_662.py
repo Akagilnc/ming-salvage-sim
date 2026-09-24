@@ -35,7 +35,6 @@ from ming_sim.memories import effect_brief
 from ming_sim.agents import build_simulator_context
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.simulation import (
-    build_extractor_shared_context,
     simulate_season_with_payload,
 )
 
@@ -240,9 +239,3 @@ def test_prompts_keep_displacement_fact_and_soft_quantity_contracts():
     simulator = prompt("season_simulator.md")
     assert "无对应事实不得臆造流民" in simulator
     assert "不得确定人数或推算人口比例" in simulator
-
-    for name in ("score_extractor_internal.md", "score_extractor_shared.md"):
-        extractor = prompt(name)
-        assert "class_population_balances" in extractor
-        assert "population_unit" in extractor
-        assert "不设固定比例或累计 cap" in extractor

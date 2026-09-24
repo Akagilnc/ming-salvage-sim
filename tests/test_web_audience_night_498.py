@@ -113,8 +113,7 @@ class _FakeAgent:
 
 
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
-    """只 fake 月末推演的 simulator/extractor **LLM 调用**；resolve_directives 结算核（含
-    build_extractor_shared_context 这类确定性上下文装配）真跑。"""
+    """只 fake 月末推演的 simulator LLM 调用；resolve_directives 结算核真跑。"""
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts",

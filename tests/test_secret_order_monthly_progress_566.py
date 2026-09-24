@@ -83,31 +83,6 @@ def _settle(db, state, content, narrative="本月邸报", progress=None):
     return turn
 
 
-
-
-def test_only_private_extractor_context_reads_canonical_history(game):
-    from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
-
-    db, state, content = game
-    _order_id, dossier_id = _order(db, state, title="稽核漕账", tags=["稽核"])
-    marker = "已核通州仓第一册566"
-    _settle(db, state, content, progress={
-        "dossier_id": dossier_id, "progress_band": "核账", "memorial_text": marker,
-    })
-
-    public = build_simulator_payload(state, db, "", "")
-    private = build_extractor_shared_context(
-        db, state, "", "", module="personnel_secret",
-    )
-    assert marker not in str(public)
-    assert marker not in str(build_extractor_shared_context(
-        db, state, "", "", module="issues"
-    ))
-    pushed = next(item for item in private["monthly_dossier_reports"]
-                  if item["dossier_id"] == dossier_id)
-    assert pushed["progress"] == db.list_dossier_progress(dossier_id)
-
-
 def test_only_emperor_private_payload_shows_monthly_report(game):
 
     db, state, content = game
@@ -254,8 +229,6 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     assert db.list_dossier_progress(unchained_dossier)
 
 
-
-
 def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     db, state, content = game
     order_id, dossier_id = _order(db, state, deadline=1)
@@ -294,14 +267,6 @@ def _stage_routed_secret_order(db, state, action, deadline):
         }, target_id=target_id,
     )
     return pending_id, target_id
-
-
-
-
-
-
-
-
 
 
 def _rows(db, table, where="", params=()):

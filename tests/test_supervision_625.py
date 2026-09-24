@@ -26,10 +26,6 @@ from ming_sim.due_review import (
     build_due_review_input,
     project_due_review_scene,
 )
-from ming_sim.simulation import (
-    build_extractor_shared_context,
-    build_simulator_payload,
-)
 from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
     write_due_staged_commitment_todos,
@@ -658,45 +654,6 @@ def test_injection_simulator_and_extractor_surfaces(game):
     assert "transformation_tendency_facts" in hit
     assert hit["supervision_history"]
     assert hit["loophole_exposures"]
-
-    payload = build_simulator_payload(state, db, "着清丈", "")
-    # payload 经 project 装配时由调用方传入；此处直接验 project 结果已含槽
-    ctx = build_extractor_shared_context(
-        db, state, "邸报", "", module="issues"
-    )
-    dhit = next(r for r in ctx["decree_dossiers"] if int(r["id"]) == subject_id)
-    assert dhit.get("supervision_history") is not None
-    assert dhit.get("transformation_tendency_facts") is not None
-
-
-def test_extractor_supervision_keys_gated_to_issues_module(game):
-    """⑥监督三键仅 module==issues；其他 extractor 不得见未申报键。"""
-    db, state, _content = game
-    owner, auditor_row = _pair_same_faction(db)
-    subject_id = _subject_dossier(db, state, owner=str(owner["name"]), token="gate")
-    _audit_dossier(
-        db, state, auditor=str(auditor_row["name"]), subject_id=subject_id, token="gate",
-    )
-    db.record_monthly_supervision_presence(state.turn, commit=True)
-
-    issues_ctx = build_extractor_shared_context(
-        db, state, "邸报", "", module="issues"
-    )
-    issues_hit = next(
-        r for r in issues_ctx["decree_dossiers"] if int(r["id"]) == subject_id
-    )
-    for key in SUPERVISION_SURFACE_KEYS:
-        assert key in issues_hit
-
-    for module in ("internal", "military_external", "personnel_secret"):
-        other = build_extractor_shared_context(
-            db, state, "邸报", "", module=module,
-        )
-        other_hit = next(
-            r for r in other["decree_dossiers"] if int(r["id"]) == subject_id
-        )
-        for key in SUPERVISION_SURFACE_KEYS:
-            assert key not in other_hit, f"{module} 不得注入 {key}"
 
 
 def test_due_review_supervision_history_no_longer_hardcoded_empty(game):

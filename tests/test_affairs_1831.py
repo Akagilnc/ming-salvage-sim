@@ -17,7 +17,7 @@ from ming_sim import issues as issues_mod
 from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from ming_sim.session import GameSession
-from ming_sim.simulation import build_extractor_shared_context
+
 
 
 NINGYUAN = "宁远护送"
@@ -208,8 +208,8 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
     assert pubs
     refs = set(db.affairs.origin_refs(affair.id))
     assert {str(entry["origin_ref"]) for entry in pubs} <= refs
-    brief = build_extractor_shared_context(db, state, "宁远护送", "")
-    row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
+    brief = db.affairs.input_brief(db.textual_facts)
+    row = next(item for item in brief if int(item["id"]) == affair.id)
     assert "experiences" not in row
     assert row["current_situation"] == PROGRESS
 
@@ -229,9 +229,9 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         assert restored_pubs
         restored_refs = set(restored.affairs.origin_refs(affair.id))
         assert {str(entry["origin_ref"]) for entry in restored_pubs} <= restored_refs
-        restored_brief = build_extractor_shared_context(restored, state, "宁远护送", "")
+        restored_brief = restored.affairs.input_brief(restored.textual_facts)
         restored_row = next(
-            item for item in restored_brief["open_affairs"] if int(item["id"]) == affair.id
+            item for item in restored_brief if int(item["id"]) == affair.id
         )
         assert "experiences" not in restored_row
         assert restored_row["current_situation"] == PROGRESS
@@ -391,8 +391,8 @@ def test_translation_experience_marks_affair_without_dossier(game):
     assert str(rows[0]["origin_ref"]).startswith(f"affair:{affair.id}/")
     knowledge = db.get_character_knowledge(state, minister)
     assert any(event.get("source_id") == f"story_ledger:{rows[0]['id']}" for event in knowledge["events"])
-    brief = build_extractor_shared_context(db, state, "宁远护送", "")
-    row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
+    brief = db.affairs.input_brief(db.textual_facts)
+    row = next(item for item in brief if int(item["id"]) == affair.id)
     assert "experiences" not in row
 
     path = db.path
