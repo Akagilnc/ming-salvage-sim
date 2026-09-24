@@ -98,7 +98,11 @@ export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => vo
   return <FullscreenModal title="起居注：召对记录" subtitle="退朝后同源只读，不可编辑" bgClass="modal-bg-chat" onClose={onClose}>
     <div className="history-modal-body">
       <aside className="history-turn-list"><ul>{nights.slice().reverse().map((night) => <li key={night.night_id}>
-        <button className={`history-turn-item ${night.night_id === selected?.night_id ? "active" : ""}`} onClick={() => { selectedNightId.current = night.night_id ?? null; completedRetries.current.clear(); setMessages(null); setNightCharacters([]); setPendingTranslationTurnIds([]); setTranslationRetries([]); setRetryError(null); setSelected(night); }}>
+        <button className={`history-turn-item ${night.night_id === selected?.night_id ? "active" : ""}`} onClick={() => {
+          if (night.night_id === selected?.night_id) return;
+          selectedNightId.current = night.night_id ?? null;
+          setSelected(night);
+        }}>
           <b>{night.title}</b><small>涉及人物：{night.involved_people?.join("、") || "无载"}</small>
         </button>
       </li>)}</ul>{!nights.length && !error ? <p className="long-copy">尚无召对记录。</p> : null}</aside>

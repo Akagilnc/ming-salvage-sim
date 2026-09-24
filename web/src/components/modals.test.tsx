@@ -1581,6 +1581,8 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(host.textContent).toContain("召对记录");
     expect(host.textContent).toContain("涉及人物：洪承畴");
     expect(host.textContent).toContain("场次32");
+    await act(async () => { host.querySelector<HTMLButtonElement>(".history-turn-item.active")?.click(); });
+    expect(host.textContent).toContain("场次32");
     const filter = host.querySelector<HTMLSelectElement>('select[aria-label="按臣过滤"]')!;
     await act(async () => {
       filter.value = "洪承畴";
