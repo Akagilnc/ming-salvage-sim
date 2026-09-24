@@ -794,8 +794,12 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
 
 
 @pytest.fixture
-def web_game(tmp_path, monkeypatch):
-    """真实 WebGame（新档、temp DB/saves）；构造即不连 LLM，仅 runtime 配置中和。"""
+def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
+    """真实 WebGame（新档、temp DB/saves）；构造即不连 LLM，仅 runtime 配置中和。
+
+    _start_chat_turn 会在 cli-action-intent 上跑 scene。须在构造前挂上已有的
+    离线节拍替身，否则 sk-test 会打到 api.openai.com。
+    """
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
