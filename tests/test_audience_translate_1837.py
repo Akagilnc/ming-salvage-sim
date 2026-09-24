@@ -109,9 +109,9 @@ def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) ->
     return int(cur.lastrowid)
 
 
-@pytest.mark.parametrize("retry_at_month", [False, True])
-def test_pending_round_approval_commits_before_close_or_after_month_join(
-    game, monkeypatch, retry_at_month,
+@pytest.mark.parametrize("timing", ["before_close", "after_close", "after_bound_crash"])
+def test_pending_round_approval_endorsed_before_close_or_after_month_join(
+    game, monkeypatch, timing,
 ):
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
@@ -122,7 +122,7 @@ def test_pending_round_approval_commits_before_close_or_after_month_join(
     )
     aid = int(action.commissions.applied[0]["id"])
     early_aid = None
-    if retry_at_month:
+    if timing != "before_close":
         early = dispatch_declaration(
             db, state, {"commissions": [{"text": "着兵部核边饷"}]},
             minister_name="", night_id=nid,
@@ -175,20 +175,41 @@ def test_pending_round_approval_commits_before_close_or_after_month_join(
             return fail(prompt, config)
         return approve(prompt, config)
 
-    close_night(
-        db, state, content=content, registry=None, llm_config=sess.llm_config,
+    close_kwargs = dict(
+        content=content, registry=None, llm_config=sess.llm_config,
         write_gate=sess._write_gate, write_queue=queue,
-        translate_fn=fail if retry_at_month else recover_on_closing,
         endorsement_extractor_agent=endorsement_agent,
     )
+    if timing == "after_bound_crash":
+        settle = db.settle_endorsement_batch
+
+        def crash_after_bound(*args, **kwargs):
+            settle(*args, **kwargs)
+            raise KeyboardInterrupt("process died after endorsement watermark")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(db, "settle_endorsement_batch", crash_after_bound)
+            with pytest.raises(KeyboardInterrupt, match="after endorsement watermark"):
+                close_night(db, state, translate_fn=fail, **close_kwargs)
+        close_night(db, state, night_id=nid, translate_fn=approve, **close_kwargs)
+    else:
+        close_night(
+            db, state,
+            translate_fn=fail if timing == "after_close" else recover_on_closing,
+            **close_kwargs,
+        )
     row = db.conn.execute(
         "SELECT status, night_approved, committed_directive_id "
         "FROM pending_actions WHERE id=?", (aid,),
     ).fetchone()
-    if retry_at_month:
-        assert row["status"] == "pending"
+    if timing != "before_close":
+        assert row["status"] == ("pending" if timing == "after_close" else "committed")
         with pytest.raises(AudienceNightError, match="夜已收"):
             db.mark_pending_night_approved([aid], night_id=nid)
+        if timing == "after_bound_crash":
+            assert int(row["committed_directive_id"]) not in (
+                engine_command_mingfa_publication_ids(list_ledger(db, nid))
+            )
         stub_audience_translate(monkeypatch, approve)
         endorsement_agent.fail_once = True
         with pytest.raises(AudienceNightError, match="背书批抽取失败"):

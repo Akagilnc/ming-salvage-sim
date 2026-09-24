@@ -1259,6 +1259,7 @@ def publish_night_directives(db: Any, night_id: int) -> None:
         JOIN decree_dossiers d ON d.pending_action_id = pa.id
         WHERE pa.night_id = ? AND pa.kind = 'directive'
           AND pa.status = 'committed' AND pa.committed_directive_id > 0
+          AND pa.late_endorsement_pending = 0
         GROUP BY td.id, td.actor, td.text
         ORDER BY td.id
         """,

@@ -18280,7 +18280,7 @@ class GameDB:
         from ming_sim.audience_night import (
             AudienceNightError, NIGHT_STATUS_CLOSED, NIGHT_STATUS_CLOSING,
             assert_night_accepts_player_input, get_night,
-            is_pending_source_round,
+            is_pending_source_round, night_endorsement_bound,
         )
         night = get_night(self, int(night_id)) if night_id is not None else None
         pending_source = (
@@ -18312,7 +18312,9 @@ class GameDB:
             f"UPDATE pending_actions SET night_approved = 1, "
             f"late_endorsement_pending = CASE WHEN ? THEN 1 ELSE late_endorsement_pending END "
             f"WHERE id IN ({placeholders}) AND status = 'pending'{extra}",
-            [int(bool(pending_source and night is not None and night["status"] == NIGHT_STATUS_CLOSED)), *params],
+            [int(bool(pending_source and night is not None and (
+                night["status"] == NIGHT_STATUS_CLOSED or night_endorsement_bound(night)
+            ))), *params],
         )
         if (
             not bool(getattr(self.conn, "_commit_suspended", False))
