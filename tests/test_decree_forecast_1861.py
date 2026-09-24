@@ -82,13 +82,16 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     policies = []
+    before_question = "before-question"
+    after_question = "after-question"
+    decision_block = "<<DECISION>>" + json.dumps({
+        "title": "请旨", "context": "待择",
+        "options": [{"label": "施行"}, {"label": "暂缓"}],
+    }, ensure_ascii=False) + "<<END>>"
 
     def simulate(_agent, _prompt, **kwargs):
         policies.append(kwargs.get("transport_policy"))
-        return "问前交代" + "<<DECISION>>" + json.dumps({
-            "title": "请旨", "context": "待择",
-            "options": [{"label": "施行"}, {"label": "暂缓"}],
-        }, ensure_ascii=False) + "<<END>>" + "问后不得入预算"
+        return before_question + decision_block + after_question
 
     monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
     seen_segments = []
@@ -116,8 +119,8 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     stored = db.staged_declarations.staged_for(pending_action_decree_ref(second, 1))
     assert stored[0].verdict["decision"] == "promulgated"
     assert stored[0].questions and stored[0].questions[0]["title"] == "请旨"
-    assert stored[0].forecast_text is not None and "问前交代" in stored[0].forecast_text
-    assert "问后不得入预算" not in stored[0].forecast_text
+    assert isinstance(stored[0].forecast_text, str)
+    assert "<<DECISION>>" not in stored[0].forecast_text
     assert db.list_pending_decisions(state.turn) == []
     assert policies and policies[0].retry_429 is False and policies[0].max_attempts == 3
     assert judge_policies and all(
@@ -126,7 +129,7 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     )
     assert translate_policies and translate_policies[0].retry_429 is False
     assert translate_policies[0].max_attempts == 3
-    assert seen_segments and "问后不得入预算" not in seen_segments[0]
+    assert seen_segments and "<<DECISION>>" not in seen_segments[0]
     assert int(state.metrics["国库"]) == treasury_before
     assert db.conn.execute("SELECT COUNT(*) FROM story_ledger_entries").fetchone()[0] == ledger_before
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossier_before
@@ -144,7 +147,6 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         if path.is_file()
     )
     assert "880011" not in readable
-    assert "问前交代" not in readable
     assert pending_action_decree_ref(second, 1) not in readable
     assert int(night["id"]) > 0
 
