@@ -438,6 +438,7 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
     triggered, pressure, morale, first_reason,
 ):
     from ming_sim.month_translate import dispatch_month_segment
+    from tests.test_refugee_loop_652 import _pop
 
     db, state, _ = game
     state.year, state.period = 1629, 11
@@ -448,6 +449,8 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
         state.metrics["民心"] = 100
     metric_before = state.metrics["民心"]
     treasury_before = state.metrics["国库"]
+    farmers_before = _pop(db, "农民", "shaanxi")
+    refugees_before = _pop(db, "流民", "shaanxi")
     faction = db.conn.execute("SELECT name, satisfaction FROM factions ORDER BY name LIMIT 1").fetchone()
     social_class = db.conn.execute("SELECT name, satisfaction FROM classes ORDER BY name LIMIT 1").fetchone()
     first_region = {"origin_ref": "盘面自发", "military_pressure": first_pressure}
@@ -467,6 +470,8 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
                                    "category": "过月支出", "reason": "被拒战果军需"}],
                 "faction_delta": {faction["name"]: {"satisfaction": -2}},
                 "class_delta": {social_class["name"]: {"satisfaction": -2}},
+                "population_transfers": [{"origin_ref": "盘面自发", "source": "农民@shaanxi",
+                                          "target": "流民@shaanxi", "amount": 300, "reason": "灾害"}],
             })
         first_effect["army_delta"] = {"jingying": {
             "origin_ref": "盘面自发", "morale": 8, "reason": "己巳之变勤王振奋",
@@ -521,6 +526,8 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
         assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE reason='被拒战果军需'").fetchone()[0] == int(triggered)
         assert db.conn.execute("SELECT satisfaction FROM factions WHERE name=?", (faction["name"],)).fetchone()[0] == faction["satisfaction"] + (-2 if triggered else 0)
         assert db.conn.execute("SELECT satisfaction FROM classes WHERE name=?", (social_class["name"],)).fetchone()[0] == social_class["satisfaction"] + (-2 if triggered else 0)
+        assert _pop(db, "农民", "shaanxi") == farmers_before - (300 if triggered else 0)
+        assert _pop(db, "流民", "shaanxi") == refugees_before + (300 if triggered else 0)
     if first_reason is not None:
         declared_army = db.conn.execute(
             "SELECT id FROM armies WHERE id='jisi_declared_1840'"
@@ -531,3 +538,16 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
             "dismissed" if triggered else "active"
         )
         assert db.conn.execute("SELECT status FROM characters WHERE name='孙传庭'").fetchone()[0] == "dismissed"
+    if first_pressure == 35 and second_pressure == -5:
+        before = (state.metrics["民心"], _pop(db, "流民", "shaanxi"))
+        pressure_before = db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0]
+        dispatch_month_segment(db, state, segment="未知归属", translate_fn=lambda r, c: {
+            "effects": [{"event_id": "not_an_event", "metric_delta": {"民心": -1},
+                         "population_transfers": [{"origin_ref": "盘面自发", "source": "农民@shaanxi",
+                                                   "target": "流民@shaanxi", "amount": 100, "reason": "灾害"}],
+                         "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 1}}},
+                        {"metric_delta": {"民心": -1}}],
+        })
+        assert (state.metrics["民心"], _pop(db, "流民", "shaanxi")) == (before[0] - 1, before[1])
+        assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure_before
+        assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure

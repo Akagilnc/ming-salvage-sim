@@ -317,7 +317,7 @@ def _dispatch_effects(
         )])
 
     from ming_sim.simulation import EMPTY_EXTRACTION
-    from ming_sim.issues import apply_score_extraction, sanitize_delta_shape
+    from ming_sim.issues import apply_score_extraction, preflight_declared_event_effects, sanitize_delta_shape
     from ming_sim.decree import _collect_inline_rejections
     from ming_sim.person_delta_adapter import normalize_person_changes
 
@@ -330,6 +330,7 @@ def _dispatch_effects(
     ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
     rejected = []
     has_effect = False
+    clean_items = []
     for item in raw if isinstance(raw, list) else [raw]:
         if not isinstance(item, Mapping):
             rejected.append(RejectedItem(
@@ -347,6 +348,19 @@ def _dispatch_effects(
             clean["人物变更"] = person_changes
             for field in ("appointments", "character_status_changes", "character_power_changes", "office_changes"):
                 clean[field] = []
+        clean_items.append((item, event_id, clean))
+    rejected_events = preflight_declared_event_effects(
+        db, state, [(event_id, clean) for _, event_id, clean in clean_items],
+    )
+    accepted_effect = False
+    for item, event_id, clean in clean_items:
+        if event_id in rejected_events:
+            rejected.append(RejectedItem(
+                item=dict(item), reason=rejected_events[event_id],
+                category="event_rejected", source=source,
+            ))
+            continue
+        accepted_effect = True
         for field, value in clean.items():
             if field not in EMPTY_EXTRACTION:
                 continue
@@ -360,7 +374,7 @@ def _dispatch_effects(
                     ordered_effect_event_ids[field].extend([event_id] * len(value))
             elif value is not None:
                 extraction[field] = value
-    if not has_effect:
+    if not has_effect or not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
     refs = visible_refs or {}
     report = apply_score_extraction(

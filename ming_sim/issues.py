@@ -5028,6 +5028,71 @@ def _strategic_event_result_preflight_error(
     return ""
 
 
+def preflight_declared_event_effects(
+    db: GameDB, state: GameState, items: list[tuple[str, dict]],
+) -> dict[str, str]:
+    """C3: decide an event-owned effect envelope before any of its fields write.
+
+    The legacy extractor has no item ownership and retains its existing late gate.
+    """
+    groups: dict[str, list[dict]] = {}
+    for event_id, item in items:
+        if event_id:
+            groups.setdefault(event_id, []).append(item)
+    if not groups:
+        return {}
+    content = db.content
+    candidates = {event.id for event in gather_candidate_events(state, db)}
+    rejected: dict[str, str] = {}
+    pseudo_event = Event(id="season", title="月末整体推演", kind="月末", summary="",
+                         urgency=0, severity=0, credibility=100, interests=[], audiences=[])
+    for event_id, group in groups.items():
+        event = content.event_by_id.get(event_id)
+        if event is None or not _is_strategic_foreign_node_event(event):
+            rejected[event_id] = f"效果归属的战略事件不存在：{event_id}"
+            continue
+        if event_id not in candidates or db.event_terminal_state(event_id) or event.auto_trigger:
+            rejected[event_id] = f"战略事件当前不能触发：{event_id}"
+            continue
+        if not any(
+            isinstance(issue, dict)
+            and str(issue.get("origin_kind") or "").lower() == "event_pool"
+            and str(issue.get("id") or issue.get("origin_ref") or "").strip() == event_id
+            for item in group for issue in (item.get("new_issues") or [])
+        ):
+            rejected[event_id] = f"战略事件缺 event_pool 声明：{event_id}"
+            continue
+        outcome = {}
+        for item in group:
+            outcome.update(item.get("事件结局") or {})
+        label, error = _strategic_event_outcome_label_or_error(event_id, {"事件结局": outcome}, content)
+        if error:
+            rejected[event_id] = error
+            continue
+        region_items = [(key, value) for item in group for key, value in (item.get("region_delta") or {}).items()]
+        army_items = [(key, value) for item in group for key, value in (item.get("army_delta") or {}).items()]
+        power_items = [(key, value) for item in group for key, value in (item.get("power_updates") or {}).items()]
+        people = _canonicalize_person_change_names(
+            [person for item in group for person in (item.get("人物变更") or [])], content, db,
+        )
+        new_armies = [army for item in group for army in (item.get("new_armies") or [])]
+        if _pending_person_changes_block_event_gate(event, people, db, content=content):
+            rejected[event_id] = f"战略事件被同项人物变更阻断：{event_id}"
+            continue
+        if not (region_items or army_items or power_items or people or new_armies):
+            rejected[event_id] = f"战略事件缺世界状态主账结果：{event_id}"
+            continue
+        error = _strategic_event_result_preflight_error(
+            db, state, event_id, event.title, label, dict(region_items), dict(army_items),
+            dict(power_items), people, new_armies, content, db.llm_config, False, pseudo_event,
+            ordered_region_items=region_items, ordered_army_items=army_items,
+            ordered_power_items=power_items, explicit_attribution=True,
+        )
+        if error:
+            rejected[event_id] = error
+    return rejected
+
+
 def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> bool:
     if item.get("rejected"):
         return False
@@ -8910,93 +8975,57 @@ def _apply_score_extraction_body(
                 db.conn.execute(f"RELEASE {savepoint}")
                 raise
 
-    # C3 的 event_id 属于整项效果，不仅属于地区/军队战果。事件门闩在下方
-    # issue_tracker 之后，先把这些同项普通字段留待门闩通过再落；未标项照旧。
-    def _split_declared_effect_items(field: str, items: list) -> tuple[list, list[tuple[str, object]]]:
-        if ordered_deltas is None:
-            return items, []
-        event_ids = (ordered_effect_event_ids or {}).get(field, [])
-        def target(item: object) -> object:
-            if field == "economy_moves":
-                return item.get("account") if isinstance(item, dict) else None
-            return item[0]
-        deferred_targets = {
-            target(item) for index, item in enumerate(items)
-            if index < len(event_ids) and event_ids[index]
-        }
-        ordinary, declared = [], []
-        for index, item in enumerate(items):
-            event_id = event_ids[index] if index < len(event_ids) else ""
-            if target(item) in deferred_targets:
-                declared.append((event_id, item))
-            else:
-                ordinary.append(item)
-        return ordinary, declared
-
     # 1) metric_delta
     metric_items = (ordered_deltas or {}).get("metric_delta") if ordered_deltas is not None else None
     applied_metric: Dict[str, int] = {}
-    metric_ordinary, metric_declared = _split_declared_effect_items(
-        "metric_delta", list(metric_items if metric_items is not None else (extracted.get("metric_delta") or {}).items()),
-    )
-
-    def _apply_metric_items(items: list[tuple[str, object]]) -> None:
-        for key, value in items:
-            for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
-                applied_metric[metric] = applied_metric.get(metric, 0) + delta
-
-    _apply_metric_items(metric_ordinary)
+    for key, value in metric_items if metric_items is not None else (extracted.get("metric_delta") or {}).items():
+        for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
+            applied_metric[metric] = applied_metric.get(metric, 0) + delta
     # 2) economy_moves
     # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
     # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
     applied_economy: List[Dict[str, object]] = []
     economy_rejections: List[Dict[str, object]] = []
-    economy_ordinary, economy_declared = _split_declared_effect_items(
-        "economy_moves", list(extracted.get("economy_moves") or []),
-    )
-
-    def _apply_economy_items(items: list[object]) -> None:
-        for index, raw_move in enumerate(items):
-            savepoint = f"economy_affair_{index}"
-            db.conn.execute(f"SAVEPOINT {savepoint}")
-            try:
-                move = raw_move
-                if isinstance(move, dict):
-                    origin_ref = _origin_ref_from_result_item(move)
-                    if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
-                        move = {**move, "origin_ref": origin_ref}
-                    # Structured grant dossiers already materialized their fiscal effect.
-                    if origin_ref.startswith("dossier:"):
-                        dossier = _payload_owned_dossier_for_origin(db, origin_ref)
-                        if dossier is not None and str(dossier.get("action_type") or "") == "grant_allocation":
-                            db.conn.execute(f"RELEASE {savepoint}")
-                            continue
-                results = _apply_economy_list(
-                    db, state, [move], commit=False, require_origin=True,
-                )
-                rejected = [row for row in results if row.get("rejected")]
-                if rejected:
-                    db.conn.execute(f"ROLLBACK TO {savepoint}")
-                    economy_rejections.extend(rejected)
-                else:
-                    applied_economy.extend(results)
-                db.conn.execute(f"RELEASE {savepoint}")
-            except UnauthorizedAffairOriginRef as exc:
-                # Narrow LLM origin authorization failure only — not TypeError/
-                # ValueError/KeyError, which stay fail-loud with writer/DB faults.
+    for index, raw_move in enumerate(extracted.get("economy_moves") or []):
+        savepoint = f"economy_affair_{index}"
+        db.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            move = raw_move
+            if isinstance(move, dict):
+                origin_ref = _origin_ref_from_result_item(move)
+                if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
+                    move = {**move, "origin_ref": origin_ref}
+                # Structured grant dossiers already materialized their fiscal effect.
+                if origin_ref.startswith("dossier:"):
+                    dossier = _payload_owned_dossier_for_origin(db, origin_ref)
+                    if dossier is not None and str(dossier.get("action_type") or "") == "grant_allocation":
+                        db.conn.execute(f"RELEASE {savepoint}")
+                        continue
+            results = _apply_economy_list(
+                db, state, [move], commit=False, require_origin=True,
+            )
+            rejected = [row for row in results if row.get("rejected")]
+            if rejected:
                 db.conn.execute(f"ROLLBACK TO {savepoint}")
-                db.conn.execute(f"RELEASE {savepoint}")
-                economy_rejections.append({
-                    "rejected": True, "category": "invalid_enum",
-                    "reason": str(exc), "item": raw_move,
-                })
-            except Exception:
-                # Input rejection belongs to _apply_economy_list.  DB/writer and
-                # other execution failures must not be relabelled as invalid_enum.
-                db.conn.execute(f"ROLLBACK TO {savepoint}")
-                db.conn.execute(f"RELEASE {savepoint}")
-                raise
-    _apply_economy_items(economy_ordinary)
+                economy_rejections.extend(rejected)
+            else:
+                applied_economy.extend(results)
+            db.conn.execute(f"RELEASE {savepoint}")
+        except UnauthorizedAffairOriginRef as exc:
+            # Narrow LLM origin authorization failure only — not TypeError/
+            # ValueError/KeyError, which stay fail-loud with writer/DB faults.
+            db.conn.execute(f"ROLLBACK TO {savepoint}")
+            db.conn.execute(f"RELEASE {savepoint}")
+            economy_rejections.append({
+                "rejected": True, "category": "invalid_enum",
+                "reason": str(exc), "item": raw_move,
+            })
+        except Exception:
+            # Input rejection belongs to _apply_economy_list.  DB/writer and
+            # other execution failures must not be relabelled as invalid_enum.
+            db.conn.execute(f"ROLLBACK TO {savepoint}")
+            db.conn.execute(f"RELEASE {savepoint}")
+            raise
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
@@ -9019,32 +9048,18 @@ def _apply_score_extraction_body(
 
     faction_items = (ordered_deltas or {}).get("faction_delta") if ordered_deltas is not None else None
     applied_factions, faction_rejections = {}, []
-    faction_ordinary, faction_declared = _split_declared_effect_items(
-        "faction_delta", list(faction_items if faction_items is not None else (extracted.get("faction_delta") or {}).items()),
-    )
-
-    def _apply_faction_items(items: list[tuple[str, object]]) -> None:
-        for key, value in items:
-            applied, rejected = _apply_faction_dict(db, {key: value}, commit=commit_now)
-            _merge_applied_deltas(applied_factions, applied)
-            faction_rejections.extend(rejected)
-
-    _apply_faction_items(faction_ordinary)
+    for key, value in faction_items if faction_items is not None else (extracted.get("faction_delta") or {}).items():
+        applied, rejected = _apply_faction_dict(db, {key: value}, commit=commit_now)
+        _merge_applied_deltas(applied_factions, applied)
+        faction_rejections.extend(rejected)
     # #653 F3.2：财政事实只作为 internal extractor 的输入证据；最终方向与幅度由
     # LLM 结合事件、任免等同回合事实综合判断，沿用既有 class_delta 契约原样接收。
     class_items = (ordered_deltas or {}).get("class_delta") if ordered_deltas is not None else None
     applied_classes, class_rejections = {}, []
-    class_ordinary, class_declared = _split_declared_effect_items(
-        "class_delta", list(class_items if class_items is not None else (extracted.get("class_delta") or {}).items()),
-    )
-
-    def _apply_class_items(items: list[tuple[str, object]]) -> None:
-        for key, value in items:
-            applied, rejected = _apply_class_dict(db, {key: value}, commit=commit_now)
-            _merge_applied_deltas(applied_classes, applied)
-            class_rejections.extend(rejected)
-
-    _apply_class_items(class_ordinary)
+    for key, value in class_items if class_items is not None else (extracted.get("class_delta") or {}).items():
+        applied, rejected = _apply_class_dict(db, {key: value}, commit=commit_now)
+        _merge_applied_deltas(applied_classes, applied)
+        class_rejections.extend(rejected)
     # 3.45) surcharge_decrees：明渠加派旨落逐省累积账（#650/0089，P1）。
     applied_surcharges, surcharge_rejections = _apply_surcharge_decrees(
         db,
@@ -9392,7 +9407,6 @@ def _apply_score_extraction_body(
             })
 
     strategic_event_issue_ids_seen: set[str] = set()
-    accepted_strategic_event_ids: set[str] = set()
     for new_issue in (issue_summary.get("new_issues") or []):
         if isinstance(new_issue, dict):
             event_id = str(new_issue.get("id") or "").strip()
@@ -9529,7 +9543,6 @@ def _apply_score_extraction_body(
         )
         if any(_strategic_result_item_has_material_world_state(item) for item in result_items):
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
-            accepted_strategic_event_ids.add(event_id)
             apply_event_cascading_invalidations(state, db, commit=commit_now)
             new_issue["reason"] = "事件已记为触发，软判结果已落主账"
             # Successful person applies already extended applied_person_changes via
@@ -9545,13 +9558,6 @@ def _apply_score_extraction_body(
             new_issue["category"] = "missing_world_state_delta"
             new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队均未成功）"
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""), reason=new_issue["reason"])
-    def _accepted_declared_items(items: list[tuple[str, object]]) -> list[object]:
-        return [item for event_id, item in items if not event_id or event_id in accepted_strategic_event_ids]
-
-    _apply_metric_items(_accepted_declared_items(metric_declared))
-    _apply_economy_items(_accepted_declared_items(economy_declared))
-    _apply_faction_items(_accepted_declared_items(faction_declared))
-    _apply_class_items(_accepted_declared_items(class_declared))
     _apply_person_changes_itemwise(post_issue_person_changes, phase="post")
 
     def _norm_int_leaf(v):
