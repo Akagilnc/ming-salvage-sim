@@ -6,6 +6,8 @@ import sqlite3
 
 import pytest
 
+from tests.conftest import active_ming_character
+
 
 def _character_name(db) -> str:
     row = db.conn.execute(
@@ -123,8 +125,13 @@ def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_or
 def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game):
     from ming_sim.month_translate import dispatch_month_segment
 
-    db, state, _ = game
+    db, state, content = game
     army, region = _army_id(db), _region_id(db)
+    person = active_ming_character(db, content)
+    old_office = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (person,),
+    ).fetchone()["office"]
+    new_office = "陕西总督" if old_office != "陕西总督" else "陕西巡抚"
     army_before = db.conn.execute(
         "SELECT morale FROM armies WHERE id=?", (army,),
     ).fetchone()[0]
@@ -144,6 +151,11 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
                 "origin_ref": "盘面自发", "account": "国库", "delta": -1,
                 "category": "过月支出", "reason": "军需开支",
             }],
+            "人物变更": [{
+                "origin_ref": "盘面自发", "name": person, "动作": "任命",
+                "office": new_office, "office_type": "地方",
+                "region_id": "shaanxi", "reason": "世界段任命",
+            }],
         },
     }
 
@@ -153,6 +165,12 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     )
 
     assert result.effects.applied
+    person_change = result.effects.applied[0]["applied_person_changes"][0]
+    assert not person_change.get("rejected", False)
+    assert person_change["new_office"] == new_office
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (person,),
+    ).fetchone()["office"] == new_office
     assert db.conn.execute(
         "SELECT morale FROM armies WHERE id=?", (army,),
     ).fetchone()[0] == army_before + 2

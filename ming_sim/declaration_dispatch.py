@@ -320,7 +320,7 @@ def _dispatch_effects(
 
     extraction = copy.deepcopy(EMPTY_EXTRACTION)
     extraction.update(raw)
-    report = apply_score_extraction(db, state, extraction)
+    report = apply_score_extraction(db, state, extraction, content=db.content)
     _collect_inline_rejections(collector, report, turn, source)
     return SectionResult(applied=[report], rejected=[])
 
