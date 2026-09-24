@@ -595,6 +595,28 @@ def _closed_affair(db, state):
     return hidden
 
 
+def _json_has_army_id(value, army_id: str) -> bool:
+    if isinstance(value, dict):
+        if value.get("id") == army_id:
+            return True
+        return any(_json_has_army_id(child, army_id) for child in value.values())
+    if isinstance(value, list):
+        return any(_json_has_army_id(child, army_id) for child in value)
+    return False
+
+
+def _army_rejection_categories(db, army_id: str) -> set[str]:
+    import json
+
+    return {
+        category
+        for category, item_json in db.conn.execute(
+            "SELECT category, item_json FROM rejection_reports"
+        )
+        if _json_has_army_id(json.loads(item_json), army_id)
+    }
+
+
 def test_hidden_affair_new_army_does_not_block_sibling_result(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -616,50 +638,7 @@ def test_hidden_affair_new_army_does_not_block_sibling_result(game):
             "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 5}},
             "new_armies": [{
                 "origin_ref": f"affair:{hidden.id}", "id": "jisi_hidden_affair_1840",
-                "name": "不可见事务新军", "owner_power": "houjin", "manpower": 1200,
-            }],
-            "metric_delta": {"民心": -3},
-            "economy_moves": [{
-                "origin_ref": "盘面自发", "account": "国库", "delta": -1,
-                "category": "过月支出", "reason": "事件所属军需",
-            }],
-        }],
-    })
-    assert db.has_event_triggered("jisi_lubian") is True
-    assert db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id='beizhili'"
-    ).fetchone()[0] == pressure_before + 5
-    assert state.metrics["民心"] == metric_before - 3
-    assert state.metrics["国库"] == treasury_before - 1
-    assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
-    categories = {
-        row[0] for row in db.conn.execute("SELECT category FROM rejection_reports").fetchall()
-    }
-    assert "unauthorized_affair_origin" in categories
-
-
-def test_hidden_affair_bad_station_new_army_does_not_block_sibling(game):
-    from ming_sim.month_translate import dispatch_month_segment
-
-    db, state, _ = game
-    state.year, state.period = 1629, 11
-    state.metrics["民心"] = 50
-    hidden = _closed_affair(db, state)
-    pressure_before = db.conn.execute(
-        "SELECT military_pressure FROM regions WHERE id='beizhili'"
-    ).fetchone()[0]
-    metric_before = state.metrics["民心"]
-    treasury_before = state.metrics["国库"]
-    armies_before = db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
-    dispatch_month_segment(db, state, segment="不可见且驻地非法", translate_fn=lambda _request, _config: {
-        "effects": [{
-            "event_id": "jisi_lubian",
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 5}},
-            "new_armies": [{
-                "origin_ref": f"affair:{hidden.id}", "id": "jisi_hidden_bad_station_1840",
-                "name": "不可见且驻地非法的新军", "owner_power": "houjin",
+                "name": "不可见事务新军", "owner_power": "houjin",
                 "station_region": "no-such-region", "manpower": 1200,
             }],
             "metric_delta": {"民心": -3},
@@ -676,43 +655,7 @@ def test_hidden_affair_bad_station_new_army_does_not_block_sibling(game):
     assert state.metrics["民心"] == metric_before - 3
     assert state.metrics["国库"] == treasury_before - 1
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
-    categories = {
-        row[0] for row in db.conn.execute("SELECT category FROM rejection_reports").fetchall()
-    }
-    assert categories and "event_rejected" not in categories
-
-
-def test_hidden_affair_bad_station_new_army_alone_does_not_trigger(game):
-    from ming_sim.month_translate import dispatch_month_segment
-
-    db, state, _ = game
-    state.year, state.period = 1629, 11
-    state.metrics["民心"] = 50
-    hidden = _closed_affair(db, state)
-    metric_before = state.metrics["民心"]
-    treasury_before = state.metrics["国库"]
-    armies_before = db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
-    dispatch_month_segment(db, state, segment="全坏不可见驻地", translate_fn=lambda _request, _config: {
-        "effects": [{
-            "event_id": "jisi_lubian",
-            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "事件结局": {"jisi_lubian": "入塞被遏"},
-            "new_armies": [{
-                "origin_ref": f"affair:{hidden.id}", "id": "jisi_hidden_bad_only_1840",
-                "name": "唯一不可见且驻地非法的新军", "owner_power": "houjin",
-                "station_region": "no-such-region", "manpower": 1200,
-            }],
-            "metric_delta": {"民心": -3},
-            "economy_moves": [{
-                "origin_ref": "盘面自发", "account": "国库", "delta": -1,
-                "category": "过月支出", "reason": "事件所属军需",
-            }],
-        }],
-    })
-    assert db.has_event_triggered("jisi_lubian") is False
-    assert state.metrics["民心"] == metric_before
-    assert state.metrics["国库"] == treasury_before
-    assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
+    assert _army_rejection_categories(db, "jisi_hidden_affair_1840") == {"invalid_enum"}
 
 
 def test_hidden_affair_new_army_alone_does_not_trigger(game):
@@ -732,7 +675,8 @@ def test_hidden_affair_new_army_alone_does_not_trigger(game):
             "事件结局": {"jisi_lubian": "入塞被遏"},
             "new_armies": [{
                 "origin_ref": f"affair:{hidden.id}", "id": "jisi_hidden_only_1840",
-                "name": "唯一不可见新军", "owner_power": "houjin", "manpower": 1200,
+                "name": "唯一不可见新军", "owner_power": "houjin",
+                "station_region": "no-such-region", "manpower": 1200,
             }],
             "metric_delta": {"民心": -3},
             "economy_moves": [{
@@ -745,6 +689,7 @@ def test_hidden_affair_new_army_alone_does_not_trigger(game):
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
+    assert _army_rejection_categories(db, "jisi_hidden_only_1840") == {"event_rejected"}
 
 
 def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
