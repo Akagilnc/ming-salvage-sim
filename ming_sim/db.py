@@ -10258,17 +10258,14 @@ class GameDB:
         """
         nid = int(night_id)
         ids = {int(i) for i in action_ids} if action_ids is not None else None
+        # Normal batch omits late-marked actions; the late batch names them via action_ids.
+        late_sql = "" if ids is not None else " AND pa.late_endorsement_pending = 0"
         rows = self.conn.execute(
-            """
-            SELECT d.id AS id, d.decree_text AS decree_text, d.pending_action_id
-            FROM decree_dossiers d
-            JOIN pending_actions pa ON pa.id = d.pending_action_id
-            WHERE pa.night_id = ?
-              AND pa.night_id > 0
-              AND d.pending_action_id > 0
-              AND d.status = 'proposed'
-            ORDER BY d.id
-            """,
+            "SELECT d.id AS id, d.decree_text AS decree_text, d.pending_action_id "
+            "FROM decree_dossiers d "
+            "JOIN pending_actions pa ON pa.id = d.pending_action_id "
+            "WHERE pa.night_id = ? AND pa.night_id > 0 AND d.pending_action_id > 0 "
+            "AND d.status = 'proposed'" + late_sql + " ORDER BY d.id",
             (nid,),
         ).fetchall()
         return [{
@@ -18278,9 +18275,10 @@ class GameDB:
     ) -> int:
         """标本夜已应允（收夜提交白名单）。返回更新行数。"""
         from ming_sim.audience_night import (
-            AudienceNightError, NIGHT_STATUS_CLOSED, NIGHT_STATUS_CLOSING,
+            AudienceNightError, CLOSE_STEP_TRANSFER_CANDIDATES,
+            NIGHT_STATUS_CLOSED, NIGHT_STATUS_CLOSING,
             assert_night_accepts_player_input, get_night,
-            is_pending_source_round, night_endorsement_bound,
+            is_pending_source_round,
         )
         night = get_night(self, int(night_id)) if night_id is not None else None
         pending_source = (
@@ -18313,7 +18311,8 @@ class GameDB:
             f"late_endorsement_pending = CASE WHEN ? THEN 1 ELSE late_endorsement_pending END "
             f"WHERE id IN ({placeholders}) AND status = 'pending'{extra}",
             [int(bool(pending_source and night is not None and (
-                night["status"] == NIGHT_STATUS_CLOSED or night_endorsement_bound(night)
+                int(night["close_commit_cursor"] or 0)
+                >= CLOSE_STEP_TRANSFER_CANDIDATES
             ))), *params],
         )
         if (

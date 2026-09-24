@@ -109,7 +109,10 @@ def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) ->
     return int(cur.lastrowid)
 
 
-@pytest.mark.parametrize("timing", ["before_close", "after_close", "after_bound_crash"])
+@pytest.mark.parametrize("timing", [
+    "before_close", "after_transfer", "resume_before_bind",
+    "after_close", "after_bound_crash",
+])
 def test_pending_round_approval_endorsed_before_close_or_after_month_join(
     game, monkeypatch, timing,
 ):
@@ -138,8 +141,22 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
 
     class EndorsementAgent:
         fail_once = False
+        approve_during_transfer_window = False
+        interrupt_before_bind = False
 
         def run(self, materials):
+            if self.interrupt_before_bind:
+                self.interrupt_before_bind = False
+                raise KeyboardInterrupt("died before endorsement bind")
+            if self.approve_during_transfer_window:
+                self.approve_during_transfer_window = False
+                from ming_sim.audience_translation import catch_up_pending_translations
+                catch_up_pending_translations(
+                    db, state, night_id=nid, chat_turn_id=ctid,
+                    llm_config=sess.llm_config, translate_fn=approve,
+                    write_gate=sess._write_gate, write_queue=queue,
+                    within_barrier=True,
+                )
             payload = json.loads(materials)
             candidates = payload["可背书案卷"]
             batches.append([int(c["ref"]["dossier_id"]) for c in candidates])
@@ -153,6 +170,8 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
             } for c in candidates]}, ensure_ascii=False)
 
     endorsement_agent = EndorsementAgent()
+    endorsement_agent.approve_during_transfer_window = timing == "after_transfer"
+    endorsement_agent.interrupt_before_bind = timing == "resume_before_bind"
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent", lambda _: endorsement_agent,
     )
@@ -192,6 +211,22 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
             with pytest.raises(KeyboardInterrupt, match="after endorsement watermark"):
                 close_night(db, state, translate_fn=fail, **close_kwargs)
         close_night(db, state, night_id=nid, translate_fn=approve, **close_kwargs)
+    elif timing == "resume_before_bind":
+        with pytest.raises(KeyboardInterrupt, match="before endorsement bind"):
+            close_night(
+                db, state, translate_fn=fail,
+                content=content, registry=None, llm_config=sess.llm_config,
+                write_gate=sess._write_gate, write_queue=None,
+                endorsement_extractor_agent=endorsement_agent,
+            )
+        close_night(db, state, night_id=nid, translate_fn=approve, **close_kwargs)
+    elif timing == "after_transfer":
+        close_night(
+            db, state, translate_fn=fail,
+            content=content, registry=None, llm_config=sess.llm_config,
+            write_gate=sess._write_gate, write_queue=None,
+            endorsement_extractor_agent=endorsement_agent,
+        )
     else:
         close_night(
             db, state,
@@ -203,10 +238,12 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         "FROM pending_actions WHERE id=?", (aid,),
     ).fetchone()
     if timing != "before_close":
-        assert row["status"] == ("pending" if timing == "after_close" else "committed")
+        assert row["status"] == (
+            "pending" if timing in {"after_close", "after_transfer"} else "committed"
+        )
         with pytest.raises(AudienceNightError, match="夜已收"):
             db.mark_pending_night_approved([aid], night_id=nid)
-        if timing == "after_bound_crash":
+        if timing in {"after_bound_crash", "resume_before_bind"}:
             assert int(row["committed_directive_id"]) not in (
                 engine_command_mingfa_publication_ids(list_ledger(db, nid))
             )
