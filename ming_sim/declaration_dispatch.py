@@ -319,6 +319,7 @@ def _dispatch_effects(
     from ming_sim.simulation import EMPTY_EXTRACTION
     from ming_sim.issues import apply_score_extraction, sanitize_delta_shape
     from ming_sim.decree import _collect_inline_rejections
+    from ming_sim.person_delta_adapter import normalize_person_changes
 
     extraction = copy.deepcopy(EMPTY_EXTRACTION)
     shape_rejections = []
@@ -326,7 +327,7 @@ def _dispatch_effects(
         "metric_delta", "faction_delta", "class_delta",
         "region_delta", "army_delta", "power_updates",
     )}
-    ordered_effect_event_ids = {field: [] for field in ("region_delta", "army_delta", "power_updates")}
+    ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
     rejected = []
     has_effect = False
     for item in raw if isinstance(raw, list) else [raw]:
@@ -337,24 +338,26 @@ def _dispatch_effects(
             ))
             continue
         has_effect = True
-        clean, invalid = sanitize_delta_shape(dict(item))
+        # 归属是效果 envelope 的声明，不属于旧 extractor delta 的字段。
+        event_id = str(item.get("event_id") or "").strip()
+        clean, invalid = sanitize_delta_shape({k: v for k, v in item.items() if k != "event_id"})
         shape_rejections.extend(invalid)
-        effect_event_ids = {
-            str(issue.get("id") or issue.get("origin_ref") or "").strip()
-            for issue in clean.get("new_issues") or []
-            if isinstance(issue, dict) and str(issue.get("origin_kind") or "").lower() == "event_pool"
-        }
+        person_changes = normalize_person_changes(clean)
+        if person_changes:
+            clean["人物变更"] = person_changes
+            for field in ("appointments", "character_status_changes", "character_power_changes", "office_changes"):
+                clean[field] = []
         for field, value in clean.items():
             if field not in EMPTY_EXTRACTION:
                 continue
             if isinstance(value, list):
                 extraction[field].extend(value)
+                ordered_effect_event_ids[field].extend([event_id] * len(value))
             elif isinstance(value, dict):
                 extraction[field].update(value)
                 if field in ordered_deltas:
                     ordered_deltas[field].extend(value.items())
-                    if field in ordered_effect_event_ids:
-                        ordered_effect_event_ids[field].extend([effect_event_ids] * len(value))
+                    ordered_effect_event_ids[field].extend([event_id] * len(value))
             elif value is not None:
                 extraction[field] = value
     if not has_effect:
