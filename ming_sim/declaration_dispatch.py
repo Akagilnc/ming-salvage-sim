@@ -397,6 +397,7 @@ def stage_declaration(
     db: Any, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
     verdict: Optional[Mapping[str, object]] = None,
     questions: Optional[list] = None,
+    forecast_text: Optional[str] = None,
 ) -> int:
     """旨意夜里预推：把一份声明暂存，不落账、不进材料目录、不上界面（ADR 0157
     步骤 1）。``decree_ref`` 是该旨自己的标识，落账顺序（下旨先后）与幂等判据
@@ -409,7 +410,7 @@ def stage_declaration(
     decree_ref（ADR 0157「改旨 = 作废后按新旨重起」）。"""
     return db.staged_declarations.stage(
         decree_ref=decree_ref, declaration=declaration, turn=turn,
-        verdict=verdict, questions=questions,
+        verdict=verdict, questions=questions, forecast_text=forecast_text,
     )
 
 

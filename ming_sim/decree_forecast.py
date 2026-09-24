@@ -212,6 +212,7 @@ def _forecast(session: Any, snapshot: Dict[str, Any]) -> None:
     verdict = dict(verdicts[0])
     declaration: Dict[str, object] = {}
     questions = None
+    forecast_text = None
     if str(verdict.get("decision") or "") == "promulgated":
         candidate["settlement_verdict"] = "promulgated"
         candidate["promulgation_decision"] = "promulgated"
@@ -233,6 +234,7 @@ def _forecast(session: Any, snapshot: Dict[str, Any]) -> None:
                 questions = parsed
                 prefix = prefix[:match.start()]
                 break
+        forecast_text = prefix
         if prefix.strip():
             declaration = translate_month_segment(
                 segment=prefix,
@@ -270,6 +272,7 @@ def _forecast(session: Any, snapshot: Dict[str, Any]) -> None:
             turn=int(snapshot["turn"]),
             verdict=verdict,
             questions=questions,
+            forecast_text=forecast_text,
         )
 
     get_session_write_queue(session).run(snapshot["ticket"], stage_if_current)
