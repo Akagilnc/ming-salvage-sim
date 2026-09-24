@@ -68,6 +68,37 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     )
 
 
+def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    db.conn.execute("UPDATE armies SET arrears=6 WHERE id='jingying'")
+    state.metrics["国库"], state.metrics["内库"] = 100, 0
+    move = {
+        "origin_ref": "盘面自发", "account": "国库", "delta": -5,
+        "transfer_to": "内库", "category": "调拨", "reason": "反例",
+        "purpose": "补饷", "target_kind": "army", "target_id": "jingying",
+    }
+    result = dispatch_month_segment(
+        db, state, segment="矛盾钱库声明",
+        translate_fn=lambda request, config: {"effects": {"economy_moves": [move]}},
+    )
+
+    assert result.effects.applied[0]["economy_moves"] == []
+    assert len(result.effects.applied[0]["economy_moves_rejections"]) == 1
+    rejected = result.effects.applied[0]["economy_moves_rejections"][0]
+    assert rejected["account"] == "国库"
+    assert rejected["rejected"] is True
+    assert rejected["category"] == "invalid_enum"
+    assert rejected["item"] == move
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE section='economy_moves_rejections' AND category='invalid_enum'"
+    ).fetchone()[0] == 1
+    assert (state.metrics["国库"], state.metrics["内库"]) == (100, 0)
+    assert db.conn.execute("SELECT arrears FROM armies WHERE id='jingying'").fetchone()[0] == 6
+    assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE category='调拨'").fetchone()[0] == 0
+
+
 def _character_name(db) -> str:
     row = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"

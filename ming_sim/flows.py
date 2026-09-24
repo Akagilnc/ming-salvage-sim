@@ -1181,6 +1181,16 @@ def _apply_economy_list(
         # 校验枚举；非法值退化为"其它"常规扣账
         purpose = raw_purpose if raw_purpose in ECONOMY_PURPOSES else None
         target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
+        if "transfer_to" in move:
+            destination = move["transfer_to"]
+            if (delta >= 0 or destination not in ("国库", "内库")
+                    or destination == account or raw_purpose not in ("", "其它")
+                    or raw_target_kind or raw_target_id):
+                applied.append({
+                    "account": account, "rejected": True, "category": "invalid_enum",
+                    "reason": "转库须从一账户扣款并指定另一账户", "item": move,
+                })
+                continue
 
         # ── 补饷分发：按当前欠额占比分销两累加器 + 同步减 armies.arrears ───────
         # purpose=补饷 必须定向到具体 army_id；非定向补饷需要另立显式契约，
@@ -1298,14 +1308,6 @@ def _apply_economy_list(
             continue
         if "transfer_to" in move:
             destination = move["transfer_to"]
-            if (delta >= 0 or destination not in ("国库", "内库")
-                    or destination == account or raw_purpose not in ("", "其它")
-                    or raw_target_kind or raw_target_id):
-                applied.append({
-                    "account": account, "rejected": True, "category": "invalid_enum",
-                    "reason": "转库须从一账户扣款并指定另一账户", "item": move,
-                })
-                continue
             # A transfer is one declaration: the source ledger determines the amount.
             actual = db.record_issue_economy_move(
                 state, account, delta, category, reason,
