@@ -336,7 +336,7 @@ def run_declaration_translate_prompt(
     raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag=tag, policy=policy)
     obj = _loads_lenient(raw, accepted_types=(dict,))
     if not isinstance(obj, dict):
-        return {}
+        raise AudienceTranslateError("转译输出无法解析为 JSON 对象")
     return obj
 
 

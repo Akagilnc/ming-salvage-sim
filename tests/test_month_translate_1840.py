@@ -305,3 +305,89 @@ def test_world_segment_failure_rolls_back_only_current_segment(game):
         subject_kind="character", subject_id=person,
     )
     assert [fact.body for fact in facts] == ["前一段已落"]
+
+
+def test_world_segment_effects_use_frozen_visible_affairs(game):
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    visible = db.affairs.open(name="可见事务", origin="世界段", year=state.year,
+                              period=state.period, turn=state.turn)
+    hidden = db.affairs.open(name="不可见事务", origin="未供料", year=state.year,
+                             period=state.period, turn=state.turn)
+    db.affairs.declare_closed(hidden.id, turn=state.turn)
+    before = state.metrics["国库"]
+    # 真实入口供料只含未了事务；已了结事务不在本批输入。
+    result = dispatch_month_segment(
+        db, state, segment="两笔事务回指",
+        translate_fn=lambda request, config: {"effects": {"economy_moves": [
+            {"origin_ref": f"affair:{visible.id}", "account": "国库", "delta": -1,
+             "category": "过月支出", "reason": "合法支出"},
+            {"origin_ref": f"affair:{hidden.id}", "account": "国库", "delta": -1,
+             "category": "过月支出", "reason": "越权支出"},
+        ]}},
+    )
+    assert state.metrics["国库"] == before - 1
+    assert result.effects.applied
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE category='invalid_enum'"
+    ).fetchone()[0] >= 1
+
+
+def test_unparseable_month_segment_does_not_stage_or_commit(game, monkeypatch):
+    from ming_sim.audience_translate import AudienceTranslateError
+    from ming_sim.month_translate import dispatch_month_segment, stage_month_segment
+
+    db, state, _ = game
+    monkeypatch.setattr("ming_sim.cli_backend._run_json_extractor_for_config",
+                        lambda *args, **kwargs: ("not-json", ""))
+    with pytest.raises(AudienceTranslateError):
+        stage_month_segment(db, decree_ref="bad-json", segment="推演段",
+                            turn=int(state.turn), decree_payload={})
+    assert db.staged_declarations.staged_for("bad-json") == ()
+    with pytest.raises(AudienceTranslateError):
+        dispatch_month_segment(db, state, segment="世界段")
+    assert db.staged_declarations.staged_for("bad-json") == ()
+
+    with pytest.raises(AudienceTranslateError):
+        dispatch_month_segment(db, state, segment="世界段",
+                               translate_fn=lambda request, config: None)
+
+
+def test_staged_month_effects_keep_input_reference_authority(game):
+    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
+    from ming_sim.month_translate import stage_month_segment
+
+    db, state, _ = game
+    visible = db.affairs.open(name="预推可见", origin="旨意", year=state.year,
+                              period=state.period, turn=state.turn)
+    before = state.metrics["国库"]
+    stage_month_segment(
+        db, decree_ref="frozen-refs", segment="预推段", turn=int(state.turn),
+        decree_payload={}, translate_fn=lambda request, config: {"effects": {"economy_moves": [
+            {"origin_ref": f"affair:{visible.id}", "account": "国库", "delta": -1,
+             "category": "过月支出", "reason": "可见事务"},
+        ]}},
+    )
+    assert state.metrics["国库"] == before
+    hidden = db.affairs.open(name="暂存后新开", origin="世界段", year=state.year,
+                             period=state.period, turn=state.turn)
+    assert hidden.id not in db.staged_declarations.staged_for("frozen-refs")[0].visible_refs["affairs"]
+    settle_staged_declarations_in_decree_order(db, state, ["frozen-refs"])
+    assert state.metrics["国库"] == before - 1
+
+
+def test_world_segment_repeated_army_effects_apply_in_order(game):
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    army = _army_id(db)
+    db.conn.execute("UPDATE armies SET morale=58 WHERE id=?", (army,))
+    db.conn.commit()
+    dispatch_month_segment(db, state, segment="先振奋后受挫", translate_fn=lambda r, c: {
+        "effects": [
+            {"army_delta": {army: {"origin_ref": "盘面自发", "morale": 90}}},
+            {"army_delta": {army: {"origin_ref": "盘面自发", "morale": -30}}},
+        ],
+    })
+    assert db.conn.execute("SELECT morale FROM armies WHERE id=?", (army,)).fetchone()[0] == 70

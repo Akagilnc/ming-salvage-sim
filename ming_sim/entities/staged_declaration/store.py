@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS staged_declarations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     decree_ref TEXT NOT NULL,
     declaration_json TEXT NOT NULL,
+    visible_refs_json TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'staged'
         CHECK(status IN ('staged','discarded','settled')),
     created_turn INTEGER NOT NULL,
@@ -53,6 +54,7 @@ class StagedDeclaration:
     declaration: dict
     status: str
     created_turn: int
+    visible_refs: dict
 
 
 class StagedDeclarationStore:
@@ -64,8 +66,14 @@ class StagedDeclarationStore:
     @staticmethod
     def ensure_schema(conn: Any) -> None:
         conn.executescript(_SCHEMA_SQL)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(staged_declarations)")}
+        if "visible_refs_json" not in columns:
+            conn.execute(
+                "ALTER TABLE staged_declarations ADD COLUMN visible_refs_json TEXT NOT NULL DEFAULT '{}'"
+            )
 
-    def stage(self, *, decree_ref: str, declaration: Mapping[str, object], turn: int) -> int:
+    def stage(self, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
+              visible_refs: Mapping[str, object] | None = None) -> int:
         ref = str(decree_ref or "").strip()
         if not ref:
             raise ValueError("decree_ref 不能为空")
@@ -77,9 +85,10 @@ class StagedDeclarationStore:
                     f"decree_ref 已作废或已结算，不能再暂存新声明：{ref}（如需再起该旨，请用新的 decree_ref）"
                 )
             cur = self._conn.execute(
-                "INSERT INTO staged_declarations (decree_ref, declaration_json, status, created_turn) "
-                "VALUES (?, ?, 'staged', ?)",
-                (ref, sanitize_sqlite_text(json.dumps(declaration, ensure_ascii=False)), int(turn)),
+                "INSERT INTO staged_declarations (decree_ref, declaration_json, visible_refs_json, status, created_turn) "
+                "VALUES (?, ?, ?, 'staged', ?)",
+                (ref, sanitize_sqlite_text(json.dumps(declaration, ensure_ascii=False)),
+                 json.dumps(visible_refs or {}, ensure_ascii=False), int(turn)),
             )
             return int(cur.lastrowid)
         if connection_owns_transaction(self._conn):
@@ -124,7 +133,7 @@ class StagedDeclarationStore:
     def staged_for(self, decree_ref: str) -> tuple[StagedDeclaration, ...]:
         ref = str(decree_ref or "").strip()
         rows = self._conn.execute(
-            "SELECT id, decree_ref, declaration_json, status, created_turn "
+            "SELECT id, decree_ref, declaration_json, visible_refs_json, status, created_turn "
             "FROM staged_declarations WHERE decree_ref=? AND status='staged' ORDER BY id",
             (ref,),
         ).fetchall()
@@ -165,4 +174,5 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
         id=int(row["id"]), decree_ref=str(row["decree_ref"]),
         declaration=json.loads(row["declaration_json"] or "{}"),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
+        visible_refs=json.loads(row["visible_refs_json"] or "{}"),
     )
