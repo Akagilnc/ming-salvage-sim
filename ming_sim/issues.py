@@ -8910,57 +8910,93 @@ def _apply_score_extraction_body(
                 db.conn.execute(f"RELEASE {savepoint}")
                 raise
 
+    # C3 的 event_id 属于整项效果，不仅属于地区/军队战果。事件门闩在下方
+    # issue_tracker 之后，先把这些同项普通字段留待门闩通过再落；未标项照旧。
+    def _split_declared_effect_items(field: str, items: list) -> tuple[list, list[tuple[str, object]]]:
+        if ordered_deltas is None:
+            return items, []
+        event_ids = (ordered_effect_event_ids or {}).get(field, [])
+        def target(item: object) -> object:
+            if field == "economy_moves":
+                return item.get("account") if isinstance(item, dict) else None
+            return item[0]
+        deferred_targets = {
+            target(item) for index, item in enumerate(items)
+            if index < len(event_ids) and event_ids[index]
+        }
+        ordinary, declared = [], []
+        for index, item in enumerate(items):
+            event_id = event_ids[index] if index < len(event_ids) else ""
+            if target(item) in deferred_targets:
+                declared.append((event_id, item))
+            else:
+                ordinary.append(item)
+        return ordinary, declared
+
     # 1) metric_delta
     metric_items = (ordered_deltas or {}).get("metric_delta") if ordered_deltas is not None else None
     applied_metric: Dict[str, int] = {}
-    for key, value in metric_items if metric_items is not None else (extracted.get("metric_delta") or {}).items():
-        for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
-            applied_metric[metric] = applied_metric.get(metric, 0) + delta
+    metric_ordinary, metric_declared = _split_declared_effect_items(
+        "metric_delta", list(metric_items if metric_items is not None else (extracted.get("metric_delta") or {}).items()),
+    )
+
+    def _apply_metric_items(items: list[tuple[str, object]]) -> None:
+        for key, value in items:
+            for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
+                applied_metric[metric] = applied_metric.get(metric, 0) + delta
+
+    _apply_metric_items(metric_ordinary)
     # 2) economy_moves
     # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
     # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
     applied_economy: List[Dict[str, object]] = []
     economy_rejections: List[Dict[str, object]] = []
-    for index, raw_move in enumerate(extracted.get("economy_moves") or []):
-        savepoint = f"economy_affair_{index}"
-        db.conn.execute(f"SAVEPOINT {savepoint}")
-        try:
-            move = raw_move
-            if isinstance(move, dict):
-                origin_ref = _origin_ref_from_result_item(move)
-                if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
-                    move = {**move, "origin_ref": origin_ref}
-                # Structured grant dossiers already materialized their fiscal effect.
-                if origin_ref.startswith("dossier:"):
-                    dossier = _payload_owned_dossier_for_origin(db, origin_ref)
-                    if dossier is not None and str(dossier.get("action_type") or "") == "grant_allocation":
-                        db.conn.execute(f"RELEASE {savepoint}")
-                        continue
-            results = _apply_economy_list(
-                db, state, [move], commit=False, require_origin=True,
-            )
-            rejected = [row for row in results if row.get("rejected")]
-            if rejected:
+    economy_ordinary, economy_declared = _split_declared_effect_items(
+        "economy_moves", list(extracted.get("economy_moves") or []),
+    )
+
+    def _apply_economy_items(items: list[object]) -> None:
+        for index, raw_move in enumerate(items):
+            savepoint = f"economy_affair_{index}"
+            db.conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                move = raw_move
+                if isinstance(move, dict):
+                    origin_ref = _origin_ref_from_result_item(move)
+                    if origin_ref and not str(move.get("origin_ref") or move.get("来源引用") or "").strip():
+                        move = {**move, "origin_ref": origin_ref}
+                    # Structured grant dossiers already materialized their fiscal effect.
+                    if origin_ref.startswith("dossier:"):
+                        dossier = _payload_owned_dossier_for_origin(db, origin_ref)
+                        if dossier is not None and str(dossier.get("action_type") or "") == "grant_allocation":
+                            db.conn.execute(f"RELEASE {savepoint}")
+                            continue
+                results = _apply_economy_list(
+                    db, state, [move], commit=False, require_origin=True,
+                )
+                rejected = [row for row in results if row.get("rejected")]
+                if rejected:
+                    db.conn.execute(f"ROLLBACK TO {savepoint}")
+                    economy_rejections.extend(rejected)
+                else:
+                    applied_economy.extend(results)
+                db.conn.execute(f"RELEASE {savepoint}")
+            except UnauthorizedAffairOriginRef as exc:
+                # Narrow LLM origin authorization failure only — not TypeError/
+                # ValueError/KeyError, which stay fail-loud with writer/DB faults.
                 db.conn.execute(f"ROLLBACK TO {savepoint}")
-                economy_rejections.extend(rejected)
-            else:
-                applied_economy.extend(results)
-            db.conn.execute(f"RELEASE {savepoint}")
-        except UnauthorizedAffairOriginRef as exc:
-            # Narrow LLM origin authorization failure only — not TypeError/
-            # ValueError/KeyError, which stay fail-loud with writer/DB faults.
-            db.conn.execute(f"ROLLBACK TO {savepoint}")
-            db.conn.execute(f"RELEASE {savepoint}")
-            economy_rejections.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": str(exc), "item": raw_move,
-            })
-        except Exception:
-            # Input rejection belongs to _apply_economy_list.  DB/writer and
-            # other execution failures must not be relabelled as invalid_enum.
-            db.conn.execute(f"ROLLBACK TO {savepoint}")
-            db.conn.execute(f"RELEASE {savepoint}")
-            raise
+                db.conn.execute(f"RELEASE {savepoint}")
+                economy_rejections.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": str(exc), "item": raw_move,
+                })
+            except Exception:
+                # Input rejection belongs to _apply_economy_list.  DB/writer and
+                # other execution failures must not be relabelled as invalid_enum.
+                db.conn.execute(f"ROLLBACK TO {savepoint}")
+                db.conn.execute(f"RELEASE {savepoint}")
+                raise
+    _apply_economy_items(economy_ordinary)
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
@@ -8983,18 +9019,32 @@ def _apply_score_extraction_body(
 
     faction_items = (ordered_deltas or {}).get("faction_delta") if ordered_deltas is not None else None
     applied_factions, faction_rejections = {}, []
-    for key, value in faction_items if faction_items is not None else (extracted.get("faction_delta") or {}).items():
-        applied, rejected = _apply_faction_dict(db, {key: value}, commit=commit_now)
-        _merge_applied_deltas(applied_factions, applied)
-        faction_rejections.extend(rejected)
+    faction_ordinary, faction_declared = _split_declared_effect_items(
+        "faction_delta", list(faction_items if faction_items is not None else (extracted.get("faction_delta") or {}).items()),
+    )
+
+    def _apply_faction_items(items: list[tuple[str, object]]) -> None:
+        for key, value in items:
+            applied, rejected = _apply_faction_dict(db, {key: value}, commit=commit_now)
+            _merge_applied_deltas(applied_factions, applied)
+            faction_rejections.extend(rejected)
+
+    _apply_faction_items(faction_ordinary)
     # #653 F3.2：财政事实只作为 internal extractor 的输入证据；最终方向与幅度由
     # LLM 结合事件、任免等同回合事实综合判断，沿用既有 class_delta 契约原样接收。
     class_items = (ordered_deltas or {}).get("class_delta") if ordered_deltas is not None else None
     applied_classes, class_rejections = {}, []
-    for key, value in class_items if class_items is not None else (extracted.get("class_delta") or {}).items():
-        applied, rejected = _apply_class_dict(db, {key: value}, commit=commit_now)
-        _merge_applied_deltas(applied_classes, applied)
-        class_rejections.extend(rejected)
+    class_ordinary, class_declared = _split_declared_effect_items(
+        "class_delta", list(class_items if class_items is not None else (extracted.get("class_delta") or {}).items()),
+    )
+
+    def _apply_class_items(items: list[tuple[str, object]]) -> None:
+        for key, value in items:
+            applied, rejected = _apply_class_dict(db, {key: value}, commit=commit_now)
+            _merge_applied_deltas(applied_classes, applied)
+            class_rejections.extend(rejected)
+
+    _apply_class_items(class_ordinary)
     # 3.45) surcharge_decrees：明渠加派旨落逐省累积账（#650/0089，P1）。
     applied_surcharges, surcharge_rejections = _apply_surcharge_decrees(
         db,
@@ -9342,6 +9392,7 @@ def _apply_score_extraction_body(
             })
 
     strategic_event_issue_ids_seen: set[str] = set()
+    accepted_strategic_event_ids: set[str] = set()
     for new_issue in (issue_summary.get("new_issues") or []):
         if isinstance(new_issue, dict):
             event_id = str(new_issue.get("id") or "").strip()
@@ -9478,6 +9529,7 @@ def _apply_score_extraction_body(
         )
         if any(_strategic_result_item_has_material_world_state(item) for item in result_items):
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
+            accepted_strategic_event_ids.add(event_id)
             apply_event_cascading_invalidations(state, db, commit=commit_now)
             new_issue["reason"] = "事件已记为触发，软判结果已落主账"
             # Successful person applies already extended applied_person_changes via
@@ -9493,6 +9545,13 @@ def _apply_score_extraction_body(
             new_issue["category"] = "missing_world_state_delta"
             new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队均未成功）"
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""), reason=new_issue["reason"])
+    def _accepted_declared_items(items: list[tuple[str, object]]) -> list[object]:
+        return [item for event_id, item in items if not event_id or event_id in accepted_strategic_event_ids]
+
+    _apply_metric_items(_accepted_declared_items(metric_declared))
+    _apply_economy_items(_accepted_declared_items(economy_declared))
+    _apply_faction_items(_accepted_declared_items(faction_declared))
+    _apply_class_items(_accepted_declared_items(class_declared))
     _apply_person_changes_itemwise(post_issue_person_changes, phase="post")
 
     def _norm_int_leaf(v):

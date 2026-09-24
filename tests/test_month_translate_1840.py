@@ -444,6 +444,12 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
     db.conn.execute("UPDATE regions SET military_pressure=? WHERE id='beizhili'", (initial_pressure,))
     db.conn.execute("UPDATE armies SET morale=50 WHERE id='jingying'")
     db.conn.commit()
+    if first_pressure == 35 and second_pressure == -5:
+        state.metrics["民心"] = 100
+    metric_before = state.metrics["民心"]
+    treasury_before = state.metrics["国库"]
+    faction = db.conn.execute("SELECT name, satisfaction FROM factions ORDER BY name LIMIT 1").fetchone()
+    social_class = db.conn.execute("SELECT name, satisfaction FROM classes ORDER BY name LIMIT 1").fetchone()
     first_region = {"origin_ref": "盘面自发", "military_pressure": first_pressure}
     if first_reason is not None:
         first_region["reason"] = first_reason
@@ -454,6 +460,14 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
     }
     if first_reason is not None:
         first_effect["event_id"] = "jisi_lubian"
+        if first_pressure in (35, 10, "非法增量"):
+            first_effect.update({
+                "metric_delta": {"民心": -10 if metric_before == 100 else -2},
+                "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": -1,
+                                   "category": "过月支出", "reason": "被拒战果军需"}],
+                "faction_delta": {faction["name"]: {"satisfaction": -2}},
+                "class_delta": {social_class["name"]: {"satisfaction": -2}},
+            })
         first_effect["army_delta"] = {"jingying": {
             "origin_ref": "盘面自发", "morale": 8, "reason": "己巳之变勤王振奋",
         }}
@@ -489,12 +503,24 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
             "origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置",
             "status": "dismissed", "reason": "己巳之变后另案革职",
         }]})
+    if first_pressure == "非法增量" and first_reason is not None:
+        effects.append({"metric_delta": {"民心": 1}})
+    elif metric_before == 100:
+        effects.append({"metric_delta": {"民心": 5}})
     dispatch_month_segment(db, state, segment="己巳之变两笔战果", translate_fn=lambda r, c: {
         "effects": effects,
     })
     assert db.has_event_triggered("jisi_lubian") is triggered
     assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
     assert db.conn.execute("SELECT morale FROM armies WHERE id='jingying'").fetchone()[0] == morale
+    if first_pressure in (35, 10, "非法增量") and first_reason is not None:
+        declared_delta = (-10 if metric_before == 100 else -2) if triggered else 0
+        independent_delta = 5 if metric_before == 100 else (1 if first_pressure == "非法增量" else 0)
+        assert state.metrics["民心"] == metric_before + declared_delta + independent_delta
+        assert state.metrics["国库"] == treasury_before + (-1 if triggered else 0)
+        assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE reason='被拒战果军需'").fetchone()[0] == int(triggered)
+        assert db.conn.execute("SELECT satisfaction FROM factions WHERE name=?", (faction["name"],)).fetchone()[0] == faction["satisfaction"] + (-2 if triggered else 0)
+        assert db.conn.execute("SELECT satisfaction FROM classes WHERE name=?", (social_class["name"],)).fetchone()[0] == social_class["satisfaction"] + (-2 if triggered else 0)
     if first_reason is not None:
         declared_army = db.conn.execute(
             "SELECT id FROM armies WHERE id='jisi_declared_1840'"
