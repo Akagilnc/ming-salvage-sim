@@ -9447,41 +9447,41 @@ def _apply_score_extraction_body(
         event_region_items = _ordered_strategic_items("region_delta", "regions", event_id)
         event_army_items = _ordered_strategic_items("army_delta", "armies", event_id)
         event_power_items = _ordered_strategic_items("power_updates", "powers", event_id)
-        event_region_deltas = dict(event_region_items)
-        event_army_deltas = dict(event_army_items)
-        event_power_updates = dict(event_power_items)
         event_person_changes = _event_person_changes(event_id)
         event_new_armies = _event_new_armies(event_id)
-        result_preflight_error = _strategic_event_result_preflight_error(
-            db,
-            state,
-            event_id,
-            str(new_issue.get("title") or ""),
-            outcome_label,
-            event_region_deltas,
-            event_army_deltas,
-            event_power_updates,
-            event_person_changes,
-            event_new_armies,
-            content,
-            llm_config,
-            legacy_person_mode,
-            preflight_event=pseudo_event,
-            ordered_region_items=event_region_items,
-            ordered_army_items=event_army_items,
-            ordered_power_items=event_power_items,
-            explicit_attribution=ordered_deltas is not None,
-        )
-        if result_preflight_error:
-            new_issue["rejected"] = True
-            new_issue["category"] = "invalid_event_result_delta"
-            new_issue["reason"] = result_preflight_error
-            _reject_suppressed_strategic_results(
+        # Explicit C3 attribution is already decided by preflight_declared_event_effects
+        # before any owned field is written. Repeating that gate here reads a later
+        # board and can reject after those fields have landed.
+        if ordered_deltas is None:
+            result_preflight_error = _strategic_event_result_preflight_error(
+                db,
+                state,
                 event_id,
                 str(new_issue.get("title") or ""),
-                reason=f"{result_preflight_error}；整组战果不落主账",
+                outcome_label,
+                dict(event_region_items),
+                dict(event_army_items),
+                dict(event_power_items),
+                event_person_changes,
+                event_new_armies,
+                content,
+                llm_config,
+                legacy_person_mode,
+                preflight_event=pseudo_event,
+                ordered_region_items=event_region_items,
+                ordered_army_items=event_army_items,
+                ordered_power_items=event_power_items,
             )
-            continue
+            if result_preflight_error:
+                new_issue["rejected"] = True
+                new_issue["category"] = "invalid_event_result_delta"
+                new_issue["reason"] = result_preflight_error
+                _reject_suppressed_strategic_results(
+                    event_id,
+                    str(new_issue.get("title") or ""),
+                    reason=f"{result_preflight_error}；整组战果不落主账",
+                )
+                continue
         event_region_changes: List[Dict[str, object]] = []
         event_army_changes: List[Dict[str, object]] = []
         event_person_results: List[Dict[str, object]] = []
@@ -9541,7 +9541,10 @@ def _apply_score_extraction_body(
             + event_person_results
             + event_power_changes
         )
-        if any(_strategic_result_item_has_material_world_state(item) for item in result_items):
+        # Admitted C3 events are not re-rejected here: owned metric/economy fields
+        # already landed in settlement order, and a no-material apply is state drift
+        # after that admission, not a second verdict.
+        if any(_strategic_result_item_has_material_world_state(item) for item in result_items) or ordered_deltas is not None:
             db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
             apply_event_cascading_invalidations(state, db, commit=commit_now)
             new_issue["reason"] = "事件已记为触发，软判结果已落主账"
