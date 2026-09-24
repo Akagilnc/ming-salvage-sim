@@ -266,8 +266,12 @@ def test_extraction_order_key_lands_at_source_turn_position(game):
 
 # ── web 真实入口 tracer：回话尾随 → 落账；收夜前 drain 门（AC1/AC5/AC10）─────
 @pytest.fixture
-def web_game(tmp_path, monkeypatch):
-    """真实 WebGame（新档、temp DB）；构造即不连 LLM，仅 runtime 配置中和。"""
+def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
+    """真实 WebGame（新档、temp DB）；构造即不连 LLM，仅 runtime 配置中和。
+
+    _start_chat_turn 会在 cli-action-intent 上跑 scene。须在构造前挂上已有的
+    离线节拍替身，否则 sk-test 会打到 api.openai.com。
+    """
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
