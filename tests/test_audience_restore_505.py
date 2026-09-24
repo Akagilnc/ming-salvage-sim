@@ -1471,10 +1471,11 @@ def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
 
     term._retry_interrupted_reply_cli(sess, remote.name)
 
-    # #1842：CLI retry 前台先返回；后台 schedule 封夜后再断言 CLOSED。
-    from tests.wait_utils import wait_until
+    # #1842：CLI retry 前台先返回；等后台屏障真正完成再读同一 SQLite 连接。
+    # 仅等 open night 消失会在 CLOSING 时提前通过，fixture 随后可能关掉后台仍在用的连接。
+    from ming_sim.session_write_queue import get_session_write_queue
 
-    wait_until(lambda: an.get_open_night(db) is None)
+    get_session_write_queue(sess).wait_idle()
     night_row = an.get_night(db, night_id)
     assert night_row is not None and night_row["status"] == an.NIGHT_STATUS_CLOSED
     assert set(an.persons_present_tonight(db, night_id)) == present_before
