@@ -4531,6 +4531,7 @@ def _strategic_event_result_preflight_error(
     content: Optional[GameContent],
     llm_config: Any,
     legacy_person_mode: bool,
+    preflight_event: Event,
     ordered_region_items: Optional[list[tuple[str, object]]] = None,
     ordered_army_items: Optional[list[tuple[str, object]]] = None,
     ordered_power_items: Optional[list[tuple[str, object]]] = None,
@@ -4665,102 +4666,117 @@ def _strategic_event_result_preflight_error(
     if outcome_profile_error:
         return outcome_profile_error
 
-    for region_id, raw_changes in (ordered_region_items if ordered_region_items is not None else region_deltas.items()):
-        row = db.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
-        if row is None:
-            return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
-        if not isinstance(raw_changes, dict):
-            return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
-        if not _change_mentions_strategic_event(raw_changes, event_id):
-            return f"战略/外敌事件「{event_title or event_id}」地区战果缺 reason/原因 事件锚点：{region_id}"
-        for raw_field, value in raw_changes.items():
-            field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-            if field in ("reason", "origin_ref"):
-                continue
-            if field not in region_valid_fields:
-                return f"战略/外敌事件「{event_title or event_id}」战果引用非法地区字段：{raw_field}"
-            if field in region_numeric_fields:
-                err = _int_delta_error("region", region_id, raw_field, value)
+    preview_state = copy.deepcopy(state)
+    db.conn.execute("SAVEPOINT strategic_entity_result_preflight")
+    try:
+        for region_id, raw_changes in (ordered_region_items if ordered_region_items is not None else region_deltas.items()):
+            row = db.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
+            if row is None:
+                return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
+            if not isinstance(raw_changes, dict):
+                return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
+            if not _change_mentions_strategic_event(raw_changes, event_id):
+                return f"战略/外敌事件「{event_title or event_id}」地区战果缺 reason/原因 事件锚点：{region_id}"
+            for raw_field, value in raw_changes.items():
+                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+                if field in ("reason", "origin_ref"):
+                    continue
+                if field not in region_valid_fields:
+                    return f"战略/外敌事件「{event_title or event_id}」战果引用非法地区字段：{raw_field}"
+                if field in region_numeric_fields:
+                    err = _int_delta_error("region", region_id, raw_field, value)
+                    if err:
+                        return err
+                if field == "controlled_by":
+                    controller = str(value).strip()[:160] if value is not None else ""
+                    if (
+                        value is None
+                        or not controller
+                        or controller.lower() == "null"
+                        or db.conn.execute(
+                            "SELECT 1 FROM powers WHERE id = ? LIMIT 1",
+                            (controller,),
+                        ).fetchone() is None
+                    ):
+                        return (
+                            f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
+                            f"必须是 powers.id 中的非空真实势力 id：{value!r}"
+                        )
+                err = _region_noop_error(region_id, row, raw_field, value)
                 if err:
                     return err
-            if field == "controlled_by":
-                controller = str(value).strip()[:160] if value is not None else ""
-                if (
-                    value is None
-                    or not controller
-                    or controller.lower() == "null"
-                    or db.conn.execute(
-                        "SELECT 1 FROM powers WHERE id = ? LIMIT 1",
-                        (controller,),
-                    ).fetchone() is None
-                ):
-                    return (
-                        f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
-                        f"必须是 powers.id 中的非空真实势力 id：{value!r}"
-                    )
-            err = _region_noop_error(region_id, row, raw_field, value)
-            if err:
-                return err
 
-    for army_id, raw_changes in (ordered_army_items if ordered_army_items is not None else army_deltas.items()):
-        row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
-        if row is None:
-            return f"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}"
-        if not isinstance(raw_changes, dict):
-            return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
-        if not _change_mentions_strategic_event(raw_changes, event_id):
-            return f"战略/外敌事件「{event_title or event_id}」军队战果缺 reason/原因 事件锚点：{army_id}"
-        # #320：loyalty 规范键/别名与写核同语义——先逐叶类型/字段校验，净合计后再一次
-        # 软钳判 no-op；不得按 alias 分项拿旧值独立判 no-op。
-        first_loyalty_raw_field: object | None = None
-        for raw_field, value in raw_changes.items():
-            field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-            if field in ("reason", "origin_ref"):
-                continue
-            if field not in army_valid_fields:
-                return f"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}"
-            if field in army_numeric_fields:
-                err = _int_delta_error("army", army_id, raw_field, value)
+            db.apply_region_deltas(
+                preview_state, preflight_event, None, "档房", {region_id: raw_changes}, commit=False,
+            )
+
+        for army_id, raw_changes in (ordered_army_items if ordered_army_items is not None else army_deltas.items()):
+            row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+            if row is None:
+                return f"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}"
+            if not isinstance(raw_changes, dict):
+                return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
+            if not _change_mentions_strategic_event(raw_changes, event_id):
+                return f"战略/外敌事件「{event_title or event_id}」军队战果缺 reason/原因 事件锚点：{army_id}"
+            # #320：loyalty 规范键/别名与写核同语义——先逐叶类型/字段校验，净合计后再一次
+            # 软钳判 no-op；不得按 alias 分项拿旧值独立判 no-op。
+            first_loyalty_raw_field: object | None = None
+            for raw_field, value in raw_changes.items():
+                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+                if field in ("reason", "origin_ref"):
+                    continue
+                if field not in army_valid_fields:
+                    return f"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}"
+                if field in army_numeric_fields:
+                    err = _int_delta_error("army", army_id, raw_field, value)
+                    if err:
+                        return err
+                if field == "loyalty":
+                    if first_loyalty_raw_field is None:
+                        first_loyalty_raw_field = raw_field
+                    continue  # 净合计后统一 no-op 判定
+                err = _army_noop_error(army_id, row, raw_field, value)
                 if err:
                     return err
-            if field == "loyalty":
-                if first_loyalty_raw_field is None:
-                    first_loyalty_raw_field = raw_field
-                continue  # 净合计后统一 no-op 判定
-            err = _army_noop_error(army_id, row, raw_field, value)
-            if err:
-                return err
-        loyalty_net = fold_loyalty_alias_delta(raw_changes)
-        if loyalty_net is not None:
-            net_pct = int(((legacy_mods.get("armies") or {})
-                           .get(army_id) or {}).get("loyalty", 0) or 0)
-            # #319+#320 同一写缝：post-mod 动态方向门 → ±15/cap 软调；任一步 no-op 则拒整封。
-            effect_delta = int(loyalty_net)
-            if net_pct:
-                effect_delta = db.apply_legacy_pct(effect_delta, net_pct)
-            if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(
-                "loyalty", loyalty_net, effect_delta=effect_delta
-            ):
-                return _noop_error(
-                    "army",
-                    army_id,
-                    first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
+            loyalty_net = fold_loyalty_alias_delta(raw_changes)
+            if loyalty_net is not None:
+                net_pct = int(((legacy_mods.get("armies") or {})
+                               .get(army_id) or {}).get("loyalty", 0) or 0)
+                # #319+#320 同一写缝：post-mod 动态方向门 → ±15/cap 软调；任一步 no-op 则拒整封。
+                effect_delta = int(loyalty_net)
+                if net_pct:
+                    effect_delta = db.apply_legacy_pct(effect_delta, net_pct)
+                if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(
+                    "loyalty", loyalty_net, effect_delta=effect_delta
+                ):
+                    return _noop_error(
+                        "army",
+                        army_id,
+                        first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
+                        loyalty_net,
+                    )
+                _new_loyalty, actual_delta = compute_loyalty_soft_adjust(
+                    int(row["loyalty"]),
                     loyalty_net,
+                    net_pct=net_pct,
+                    mutiny_count=int(row["mutiny_count"] or 0),
+                    redemption_count=int(row["redemption_count"] or 0),
                 )
-            _new_loyalty, actual_delta = compute_loyalty_soft_adjust(
-                int(row["loyalty"]),
-                loyalty_net,
-                net_pct=net_pct,
-                mutiny_count=int(row["mutiny_count"] or 0),
-                redemption_count=int(row["redemption_count"] or 0),
+                if actual_delta == 0:
+                    return _noop_error(
+                        "army",
+                        army_id,
+                        first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
+                        loyalty_net,
+                    )
+
+            db.apply_army_deltas(
+                preview_state, preflight_event, None, "档房", {army_id: raw_changes}, commit=False,
             )
-            if actual_delta == 0:
-                return _noop_error(
-                    "army",
-                    army_id,
-                    first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
-                    loyalty_net,
-                )
+
+    finally:
+        db.conn.execute("ROLLBACK TO SAVEPOINT strategic_entity_result_preflight")
+        db.conn.execute("RELEASE SAVEPOINT strategic_entity_result_preflight")
 
     power_items = ordered_power_items if ordered_power_items is not None else list(power_updates.items())
     if power_items:
@@ -4942,9 +4958,13 @@ def _strategic_event_result_preflight_error(
                     return err
 
     origin_items = (
-        [("地区", item) for item in region_deltas.values()]
-        + [("军队", item) for item in army_deltas.values()]
-        + [("势力", item) for item in power_updates.values()]
+        [("地区", item) for _, item in (
+            ordered_region_items if ordered_region_items is not None else region_deltas.items()
+        )]
+        + [("军队", item) for _, item in (
+            ordered_army_items if ordered_army_items is not None else army_deltas.items()
+        )]
+        + [("势力", item) for _, item in power_items]
         + [("人物", item) for item in person_changes]
         + [("新军", item) for item in new_armies]
     )
@@ -9307,6 +9327,7 @@ def _apply_score_extraction_body(
             content,
             llm_config,
             legacy_person_mode,
+            preflight_event=pseudo_event,
             ordered_region_items=event_region_items,
             ordered_army_items=event_army_items,
             ordered_power_items=event_power_items,
