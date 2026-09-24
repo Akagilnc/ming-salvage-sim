@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from ming_sim.qualitative import power_band, satisfaction_band
 from ming_sim.simulation import (
-    EXTRACTION_MODULES,
     _LEVERAGE_BELOW_SUPPRESSION_MARK,
     _LEVERAGE_SUPPRESSION_LINE,
     build_extractor_shared_context,
@@ -26,7 +25,7 @@ _SENT_LEV_LOW = 25   # leverage<=30 规则内侧
 _SENT_LEV_MID = 35   # 同属「偏弱」band（20–39），但 >30
 
 _THRESHOLD_FIELDS = ("current_state", "regions", "active_issues")
-_NON_ISSUES_MODULES = tuple(m for m in EXTRACTION_MODULES if m != "issues")
+_NON_ISSUES_MODULES = ("internal", "military_external", "personnel_secret", "relations")
 
 
 def _plant(db, state) -> tuple[str, str]:
@@ -111,7 +110,7 @@ def test_threshold_numerics_only_for_issues_module(game):
     for key in _THRESHOLD_FIELDS:
         assert key in issues_ctx, f"issues 必须有 {key}"
 
-    assert _NON_ISSUES_MODULES, "EXTRACTION_MODULES 应含非 issues 模块"
+    assert _NON_ISSUES_MODULES
     for module in _NON_ISSUES_MODULES:
         ctx = build_extractor_shared_context(
             db, state, "邸报正文", "测试诏", module=module, decree_dossiers=[],

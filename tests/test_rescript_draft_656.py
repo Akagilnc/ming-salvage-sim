@@ -16,7 +16,7 @@ import ming_sim.rescript_draft as rescript_mod
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
-from ming_sim.decree import _settle_after_narrative, persist_resolve_context
+from ming_sim.decree import persist_resolve_context
 from ming_sim.error_pack import clear_for_resimulation
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.rescript_draft import (

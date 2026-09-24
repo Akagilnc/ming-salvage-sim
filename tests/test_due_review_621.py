@@ -28,7 +28,6 @@ from ming_sim.due_review import (
 )
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
-from ming_sim.simulation import EXTRACTION_MODULES
 from ming_sim.staged_commitment import (
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
@@ -565,13 +564,10 @@ def test_three_beat_timing_todo_then_scene_then_slot(game):
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
-def test_extraction_modules_cardinality_unchanged():
-    # #633：relations（关系档房）并入既有并发装配（五模块同一 executor）；
-    # 本测试原意是钉 due_review 未增删 extractor 槽，随 #633 授权扩为五模块。
-    assert EXTRACTION_MODULES == (
-        "internal", "military_external", "issues", "personnel_secret", "relations",
-    )
-    assert len(EXTRACTION_MODULES) == 5
+def test_five_module_extractor_fanout_is_retired():
+    from ming_sim import simulation
+    assert not hasattr(simulation, "EXTRACTION_MODULES")
+    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
 
 
 def test_due_review_settle_does_not_pause_or_decision(game):

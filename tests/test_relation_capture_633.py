@@ -23,7 +23,6 @@ from ming_sim.relations import (
 import pytest
 from ming_sim.simulation import (
     EMPTY_EXTRACTION,
-    EXTRACTION_MODULES,
     MODULE_FIELDS,
     _FIELD_OWNER_MODULE,
 )
@@ -41,7 +40,7 @@ def _triplets(rows):
 
 
 def test_relation_edge_events_slot_owned_by_relations_module():
-    assert "relations" in EXTRACTION_MODULES
+    assert "relations" in MODULE_FIELDS
     assert MODULE_FIELDS["relations"] == {"relation_edge_events"}
     assert "relation_edge_events" in EMPTY_EXTRACTION
     assert EMPTY_EXTRACTION["relation_edge_events"] == []

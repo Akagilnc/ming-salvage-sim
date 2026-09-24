@@ -35,9 +35,7 @@ from ming_sim.memories import effect_brief
 from ming_sim.agents import build_simulator_context
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.simulation import (
-    EXTRACTION_MODULES,
     build_extractor_shared_context,
-    extract_scores_by_modules_with_agno,
     simulate_season_with_payload,
 )
 

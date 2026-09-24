@@ -14,13 +14,10 @@ from ming_sim.session_write_queue import get_session_write_queue
 from tests.settlement_seam_helpers import make_light_session
 
 
-def _boom(*_a, **_k):
-    raise AssertionError("玩家过月入口不得再走五模块 extractor")
-
-
 def _forbid_extractor(monkeypatch):
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _boom)
-    monkeypatch.setattr(simulation, "extract_scores_by_modules_with_agno", _boom)
+    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
+    assert not hasattr(simulation, "extract_scores_by_modules_with_agno")
+    assert not hasattr(simulation, "EXTRACTION_MODULES")
     monkeypatch.setattr(
         "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
     )

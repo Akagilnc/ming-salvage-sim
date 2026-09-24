@@ -27,7 +27,6 @@ from ming_sim.agents import (
     create_rescript_draft_agent,
     create_relation_brew_agent,
     create_faction_brew_agent,
-    create_score_extractor_module_agent,
     create_season_simulator_agent,
     create_settlement_attendant_agent,
     parse_agent_json,
@@ -96,10 +95,7 @@ from ming_sim.rescript_draft import (
 )
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.simulation import (
-    EXTRACTION_MODULES,
     build_simulator_payload,
-    build_extractor_shared_context,
-    extract_scores_by_modules_with_agno,
     simulate_season_with_payload,
 )
 from ming_sim.strict_types import (
@@ -1659,229 +1655,6 @@ def persist_resolve_context(
     return cleaned
 
 
-def _settle_after_narrative(
-    state: GameState,
-    db: GameDB,
-    agno_db: SqliteDb,
-    llm_config: LLMConfig,
-    decree_text: str,
-    narrative: str,
-    simulator_payload: Dict[str, object],
-    relevant_memories: List[Dict],
-    secret_orders: Dict[str, object],
-    before_turn: int,
-    _emit: Callable[[str, Any], None],
-    content=None,
-    registry=None,
-    cheat_directive: str = "",
-    decision_directive: str = "",
-    source: Provenance = Provenance.system_simulation,
-    dossier_verdicts: Optional[List[Dict[str, object]]] = None,
-    dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
-    preserve_rescript_drafts: bool = False,
-    attendant_message: str = "",
-) -> str:
-    """phase2：邸报已定（已剥离决策块），跑 extractor→落库→章节记忆→结局→推进。
-    cheat_directive / decision_directive 各自拼到 effective_narrative 最前喂 extractor。
-    source（#146 A，整批按触发源）：本批 extractor 产出的来源——皇帝下旨触发=player_decree
-    （拒收给皇帝可见提示）、无旨/世界自演变=system_simulation（静默）。重抽路从 ctx['source']
-    贯穿、不因重抽改变（用户拍：皇帝原旨没变、来源就没变）。"""
-    secret_orders_for_sim = secret_orders
-    # 2.5) 作弊强制项 + 圣意亲裁：拼到邸报最前面一起喂 extractor（唯一入口）。
-    #      落库前文/turn_report 仍用原始 narrative，effective 版只进 extractor 与留痕。
-    effective_narrative = narrative
-    decision = (decision_directive or "").strip()
-    if decision:
-        effective_narrative = DECISION_NARRATIVE_PREFIX + decision + "\n\n" + effective_narrative
-        tlog(f"[HITL] 圣意亲裁注入 extractor（{len(decision)}字）：{decision[:200]}")
-    cheat = (cheat_directive or "").strip()
-    if cheat:
-        effective_narrative = CHEAT_NARRATIVE_PREFIX + cheat + "\n\n" + effective_narrative
-        tlog(f"[CHEAT] 强制结算项注入 extractor（{len(cheat)}字）：{cheat[:200]}")
-
-    # 3) 结算 agent: 读邸报抽 JSON
-    tlog("结算 3/4 结算 agent（抽 JSON）")
-    _emit("stage", settlement_stage_payload(3))
-    # simulator_payload 的 decree_text 已在 phase1 收敛为本批可执行诏文；extractor
-    # 必须复用同一授权输入，不能重新接回包含封驳案卷的原始聚合文本。
-    executable_decree_text = str(simulator_payload.get("decree_text") or "")
-    # #883: per-module supplemental context so only personnel_secret receives
-    # secret-order prose; other public extractors never pre-read it.
-    extractor_shared_contexts = {
-        module: build_extractor_shared_context(
-            db, state, effective_narrative, executable_decree_text,
-            relevant_memories=relevant_memories,
-            secret_orders=secret_orders_for_sim,
-            module=module,
-            decree_dossiers=(
-                simulator_payload.get("decree_dossiers")
-                if isinstance(simulator_payload.get("decree_dossiers"), list)
-                else []
-            ),
-        )
-        for module in EXTRACTION_MODULES
-    }
-    # Capture the same dynamic input given to the issues extractor.  Same-batch
-    # mutations during apply must not retrospectively veto the role decision.
-    impeachment_surge_candidates_at_input = gather_impeachment_surge_candidates(state, db)
-    sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
-    extractor_input = ""
-    extractor_output = ""
-    # #656 / ADR 0093 前半：phase2 fan-out 的第 N+1 路（N=extractor 模块数）＝票拟生成（F1.3 唯一并行刀口）。
-    # 输入只读邸报正文＋分拣人事实＋既有 issue 盘面投影，零依赖任何 extractor 输出。
-    # 分拣人缺位（首辅掌印均不在任）＝本月无头版，全量邸报照旧可读（F3.1）。
-    # 单腿接缝：腿结果由闭包持有（draft_cell），无外部可变结果容器、无串行备选形态。
-    draft_cell: Dict[str, object] = {}
-    side_leg: Optional[Callable[[], object]] = None
-    # #657：HITL phase2 续跑须保留既有急务（return_revise/decided/跨月 backlog），
-    # 同时仍并行生成本回合 drafts。
-    # 默认 PRESERVE：side_leg 未跑/生成空时不得 DELETE 本回合急务行；
-    # 仅当生成出非空 list 时 save_rescript_drafts 覆写 before_turn（不碰他回合）。
-    if preserve_rescript_drafts:
-        draft_cell["drafts"] = _PRESERVE_RESCRIPT_DRAFTS
-        tlog("[rescript] HITL phase2 续跑：默认保留既有急务票拟行。")
-    triage_actor = select_triage_actor(db)
-    if triage_actor is None:
-        tlog("[rescript] 无在任首辅／掌印，本月无头版（全量邸报照旧）。")
-    else:
-        def _rescript_draft_leg() -> None:
-            # agent/payload 构造是纯程序逻辑（ADR 0005 / r2 裁决 B3）：其错误属代码
-            # 侧错，不在票拟业务降级面内——在腿内构造，程序错经 side_future.result()
-            # 响亮上抛，不再宽吞成无头版。
-            # 自降级契约：业务失败（typed LLMUnavailable/LLMContractError/ValueError）
-            # 内部响亮降级返回 None；程序错响亮上抛（B3）。actor 身份随行落 payload
-            # （F3.2）：分拣人事实钉进每条票拟行，任免后可机械断言。结果写入闭包持有
-            # 的 draft_cell，供 persist 与重跑真源同事务读回（F2.5）。
-            draft_agent = create_rescript_draft_agent(llm_config, agno_db)
-            # #1804：人物目录在票拟入口缝注入；不进共享 simulator_payload（避免
-            # 月度推演/extractor 输入与 resolve-context 存档夹带票拟专用数据）。
-            draft_payload = build_rescript_draft_payload(
-                state, narrative, simulator_payload, triage_actor,
-                character_targets=character_targets_from_db(db),
-            )
-            drafts = generate_rescript_draft(draft_agent, draft_payload, before_turn)
-            if drafts:
-                for d in drafts:
-                    d["actor_name"] = triage_actor["name"]
-                    d["actor_office"] = triage_actor["office"]
-                    d["actor_faction"] = triage_actor["faction"]
-                if preserve_rescript_drafts:
-                    # 追加本回合新票拟，不 DELETE return_revise/decided/跨月 backlog
-                    draft_cell["drafts"] = _AppendRescriptDrafts(drafts)
-                    tlog("[rescript] HITL phase2 续跑：保留既有急务并追加本回合票拟。")
-                else:
-                    draft_cell["drafts"] = drafts
-            elif not preserve_rescript_drafts:
-                draft_cell["drafts"] = drafts
-        side_leg = _rescript_draft_leg
-    try:
-        tlog("结算 3/4 抽取（模块 module）")
-        extractors = {
-            module: create_score_extractor_module_agent(
-                llm_config,
-                agno_db,
-                module,
-                simulator_payload=simulator_payload,
-                supplemental_context=extractor_shared_contexts[module],
-            )
-            for module in EXTRACTION_MODULES
-        }
-        # 月末全部互不依赖 extractor 一律并发（wall-clock≈最慢单个）；合并/落库仍串行单事务（ADR 0008）。
-        # 不按 runner/模型保留串行——owner 2026-08-20：编排器日常并行 N 条 grok 零问题。
-        extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
-            extractors, db, state, effective_narrative, decree_text=executable_decree_text, sanitizer=sanitizer,
-            relevant_memories=relevant_memories,
-            secret_orders=secret_orders_for_sim,
-            parallel=True,
-            side_leg=side_leg,
-        )
-        # 拆不出 section 的 extractor 产物（顶层非 dict / 未知顶层 key）仍属 extractor 失败：
-        # 在 try 内验形，让它走 pack+SettlementAbort 路。ADR0015 下可拆 section/list/entity
-        # 坏项不在这里 abort；persist_resolve_context 会逐项净化并留痕后二次校验净化版。
-        validate_delta_shape(extracted)
-    except Exception as exc:
-        # ADR 0008 决定 3/6（S6）：extractor 失败响亮中止——不再 extracted={} 静默续跑
-        # （整月 delta 蒸发而回合照推=最毒半落库点，本 ADR 立项动机）。此分支在 settle_with_delta
-        # 的 atomic 之外（resolve_context 也只有真成功才 persist），中止后 LLM 产出本未持久化，
-        # 重试=重跑 simulator/extractor（决定 3 明示唯一选择且可接受）；pre_settle 的 settling
-        # 相位已提交，重进被守门跳过前半段直接重推演。错误包在 atomic 外写（backup_to 拒绝事务内备份）。
-        try:
-            pack_path = write_error_pack(
-                db, state, exc=exc, extracted=None,
-                resolve_ctx=db.get_resolve_context(before_turn),
-            )
-        except Exception as pack_exc:
-            # 写包自身炸（磁盘满/路径不可写）不得顶替原 extractor 异常（同 pre_settle
-            # reload 先例 raise exc from ...）：原异常是真因，写包失败是次生。
-            # 只捕 Exception：写包期间（conn.backup 最慢步）落 Ctrl-C/SystemExit 须原样
-            # 传播，降级成普通结算错误会被上游 except Exception 吞掉继续跑（cmr S6 r1）。
-            raise exc from pack_exc
-        raise SettlementAbort(
-            settlement_abort_message(pack_path),
-            turn=before_turn, stage="extract", error_pack_path=pack_path,
-        ) from exc
-
-    # ADR 0008 S2：进入结算后半段（settle_with_delta 动 DB）前，持久化 resolve_context
-    # （extractor delta + 叙事）作重跑真源——跨进程恢复从它重灌，不重跑贵的 simulator/extractor。
-    # ADR0015：持久化会先把可拆坏项逐项拒收留痕、仅把净化版写入 resolve_context；
-    # 净化版再过 validate_delta_shape，防毒 payload 钉进重试真源。
-    # before_turn == state.turn（next_period 尚未执行），与 settle 内 clear 同键。
-    # 走到这里 = extractor 至少可拆 section（不可拆失败已在上方响亮中止）。
-    extracted = persist_resolve_context(
-        db, before_turn, extracted,
-        decree_text=decree_text, narrative=narrative,
-        simulator_payload=simulator_payload,
-        secret_orders=secret_orders_for_sim,
-        relevant_memories=relevant_memories,
-        source=source,  # #146 A：来源贯穿进 ctx，崩溃恢复重抽从 ctx['source'] 继承、不丢
-        rescript_drafts=draft_cell.get("drafts"),  # #656：与重跑真源同事务（F2.5，闭包持有）
-        attendant_message=attendant_message,
-    )
-
-    # 后括号确定性结算核：与探针 driver 共用同一段（ADR 0004）。章节记忆 / 结局总评
-    # 作为注入回调传入（真实流程= LLM agent 闭包；driver= None 跳过）。
-    return settle_with_delta(
-        state,
-        db,
-        extracted,
-        before_turn=before_turn,
-        content=content,
-        registry=registry,
-        decree_text=decree_text,
-        narrative=narrative,
-        trace_narrative=effective_narrative,
-        extractor_input=extractor_input,
-        extractor_output=extractor_output,
-        chapter_recorder=lambda d, s, dt, nr, ap: record_chapter_memory(
-            create_chapter_memory_agent(llm_config, agno_db), d, s, dt, nr, ap
-        ),
-        ending_summarizer=lambda d, s, oc: _generate_ending_summary(
-            d, s, llm_config, agno_db, oc, _emit
-        ),
-        relation_brew_runner=_make_relation_brew_runner(llm_config, agno_db),
-        # 落库走捕获 llm_config 的闭包：issue/office 的通道感知 enrichment 才能按 active
-        # channel 选后端（cli_backend_active(llm_config)）；结算核本体仍不见 llm_config。
-        delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
-            d, s, ex, content=ct, registry=rg, llm_config=llm_config,
-            candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
-            impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
-            dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
-            secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders_for_sim),
-            open_affair_ids_at_input=_open_affair_ids_from_payload(simulator_payload),
-        ),
-        on_stage=lambda payload: _emit("stage", payload),
-        # 来源贯穿（#146 A，整批按触发源）：皇帝下旨触发=player_decree（拒收提示皇帝）、
-        # 无旨/世界自演变=system_simulation（静默）。重抽路从 ctx['source'] 继承、不因重抽改变。
-        source=source,
-        dossier_verdicts=dossier_verdicts,
-        dossier_rescript_actions=dossier_rescript_actions,
-        attendant_message=attendant_message,
-        settlement_attendant_runner=lambda **kw: run_settlement_attendant_message(
-            llm_config, **kw,
-        ),
-    )
-
-
 # 同源恢复刷新的标量字段（与 db.load_state 读盘列对齐）。metrics 单独深刷。
 _RELOAD_SCALAR_FIELDS = ("year", "period", "turn", "turn_phase", "ended", "ending_status")
 
@@ -2974,74 +2747,16 @@ def resolve_decisions_phase2(
         )
         db.clear_pending_decisions(before_turn)
         return result.report
-    # #656 A6：list_pending_decisions 已在 DB 缝收窄 kind='decision'——rescript_draft
-    # 行（本月票拟）不再出现在任何 HITL envelope 消费面，无需调用方重复过滤；
-    # 批红案卷动作仍由 _chosen_rescript_actions 按 dossier: 前缀自筛，行为零变。
-    decisions = db.list_pending_decisions(state.turn)
-    try:
-        decision_directive = _format_decision_directive(decisions)
-    except ValueError as exc:
-        raise LLMContractError(str(exc)) from exc
-    rescript_actions = _chosen_rescript_actions(decisions)
-    # #48 / #883 恢复端闭环：HITL 续跑复用存档的 narrative + simulator_payload（不重推演）。
-    # 密令分组真源在 ctx["secret_orders"]，经独立 rail 喂 personnel_secret extractor
-    # （_recovered_grouped 归一 list/dict）；simulator_payload 是公共轨，不含密令正文。
-    sim_payload = dict(ctx["simulator_payload"]) if isinstance(ctx["simulator_payload"], dict) else {}
-    # Phase1's payload is frozen before the choice creates its dossier.  Bind the
-    # selected stored option and append that canonical row as same-batch evidence.
-    selected_keys: set[str] = set()
-    for decision in decisions:
-        choice = decision.get("choice")
-        if not isinstance(choice, dict):
-            continue
-        try:
-            option = bind_decision_options(decision.get("options") or []).get(
-                str(choice.get("label") or "").strip()
-            )
-        except ValueError as exc:
-            raise LLMContractError(str(exc)) from exc
-        if isinstance(option, dict) and option.get("action_type") == "grant_allocation":
-            selected_keys.add(str(decision["decision_key"]))
-    dossiers = list(sim_payload.get("decree_dossiers") or [])
-    seen_dossiers = {int(row["id"]) for row in dossiers if isinstance(row, dict) and row.get("id")}
-    for row in db.list_decree_dossiers():
-        payload = row["payload"]
-        if (
-            str(payload.get("decision_key") or "") in selected_keys
-            and int(row["id"]) not in seen_dossiers
-        ):
-            late = dict(row)
-            late["_late_decision_dossier"] = True
-            dossiers.append(late)
-            seen_dossiers.add(int(row["id"]))
-    sim_payload["decree_dossiers"] = dossiers
-    # #146 A：来源从 ctx 继承（phase1 皇帝下旨存的 player_decree）。HITL 续跑 / 崩溃重抽都不改来源
-    # ——皇帝原旨没变、来源就没变。非法/缺失回落 system_simulation（旧档兼容，同 resolve_settling_recovery）。
-    ctx_source = _provenance_from_stored(ctx.get("source"))
-    report = _settle_after_narrative(
+    from ming_sim.month_chain import run_player_month_chain
+    result = run_player_month_chain(
         state, db, agno_db, llm_config,
-        decree_text=str(ctx["decree_text"]),
-        narrative=str(ctx["narrative"]),
-        simulator_payload=sim_payload,
-        relevant_memories=ctx["relevant_memories"] if isinstance(ctx["relevant_memories"], list) else [],
-        secret_orders=_recovered_grouped(ctx["secret_orders"]),
-        before_turn=before_turn, _emit=_emit,
-        content=content, registry=registry,
+        decree_text=str(ctx.get("decree_text") or ""),
+        content=content,
+        registry=registry,
+        source=_provenance_from_stored(ctx.get("source")),
         cheat_directive=cheat_directive,
-        decision_directive=decision_directive,
-        source=ctx_source,
-        dossier_verdicts=(
-            sim_payload.get("dossier_verdicts")
-            if isinstance(sim_payload.get("dossier_verdicts"), list) else None
-        ),
-        dossier_rescript_actions=rescript_actions,
-        preserve_rescript_drafts=True,  # #657：禁擦 return_revise/decided 急务行
-        attendant_message=str(ctx.get("attendant_message") or ""),
     )
-    # 结算完清掉暂存决策点（next_period 已在 _settle 内执行，故按 before_turn 清理本回合残留）。
-    # resolve_context 的清理已移入 settle_with_delta 的写序列内（ADR 0008 S3），不在此 post-settle 处清。
-    db.clear_pending_decisions(before_turn)
-    return report
+    return result.report
 
 
 def _generate_ending_summary(

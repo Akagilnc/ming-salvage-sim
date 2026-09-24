@@ -4767,12 +4767,17 @@ class GameSession:
             ctx0 = self.db.get_resolve_context(self.state.turn)
             if ctx0 is not None:
                 self.last_decree = str(ctx0.get("decree_text") or "")
+        before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
             on_event=on_event, content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
-        self.state.turn_phase = TurnPhase.ISSUED.value
+        self.state.turn_phase = (
+            TurnPhase.ISSUED.value
+            if int(self.state.turn) != before_turn or self.state.ended
+            else TurnPhase.SETTLING.value
+        )
         self.db.save_state(self.state)
         return report
 

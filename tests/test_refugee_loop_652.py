@@ -21,7 +21,7 @@ from ming_sim.constants import (
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, grant_arrival_bounds
 from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
-from ming_sim.simulation import EXTRACTION_MODULES, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 from tests.settlement_seam_helpers import canned_full_settlement, make_light_session
 
 FARMER_SHAANXI = 6000000

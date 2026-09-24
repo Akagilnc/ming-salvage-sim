@@ -17,11 +17,7 @@ from ming_sim import issues as issues_mod
 from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from ming_sim.session import GameSession
-from ming_sim.simulation import (
-    EXTRACTION_MODULES,
-    build_extractor_shared_context,
-    extract_scores_by_modules_with_agno,
-)
+from ming_sim.simulation import build_extractor_shared_context
 
 
 NINGYUAN = "宁远护送"

@@ -97,21 +97,10 @@ def canned_full_settlement(
         lambda *_a, **_k: {"effects": {}},
     )
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-
-    def _module_agent(*a, **k):
-        module = a[2] if len(a) > 2 else k.get("module")
-        if modules_seen is not None:
-            modules_seen.append(module)
-        return object()
-
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", _module_agent)
-
-    def _extract(*a, **k):
-        if extract_calls is not None:
-            extract_calls.append(1)
-        return (dict(canned_extract), "out", "in")
-
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _extract)
+    if extract_calls is not None:
+        extract_calls.clear()
+    if modules_seen is not None:
+        modules_seen.clear()
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
