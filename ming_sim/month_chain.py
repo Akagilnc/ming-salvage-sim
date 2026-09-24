@@ -236,6 +236,7 @@ def _advance_after_gazette(
         state.next_period()
         state.turn_phase = "issued"
         db.save_state(state)
+        db.clear_month_open_snapshot(turn)
         chain["advanced"] = True
         chain["stage"] = "advanced"
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
