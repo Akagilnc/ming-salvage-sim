@@ -121,6 +121,24 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
         "run_agent_text",
         lambda *a, **k: '{"body": "本月边饷已清，暗流暗涌。", "tags": ["边饷"]}',
     )
+    monkeypatch.setattr(
+        "ming_sim.month_chain.run_world_segment_text",
+        lambda *a, **k: "本月邸报：边饷已清，流寇未息。",
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_translate.translate_month_segment",
+        lambda *a, **k: {"effects": {}},
+    )
+    monkeypatch.setattr(
+        "ming_sim.decree_forecast.produce_forecast_product",
+        lambda *_a, **_k: {
+            "verdict": {"decision": "promulgated"},
+            "declaration": {"effects": {}},
+            "questions": None,
+            "forecast_text": "边饷已核",
+            "visible_refs": {},
+        },
+    )
 
 
 @pytest.fixture

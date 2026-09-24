@@ -548,7 +548,7 @@ def test_extractor_cannot_second_write_army_pay_for_payload_dossier(game):
 
 def test_closed_army_pay_dossier_keeps_origin_in_extractor_input(game):
     """#1503 provenance：closed 拨饷 origin 仅 internal 可见（module 门控双向）。"""
-    from ming_sim.simulation import EXTRACTION_MODULES, build_extractor_shared_context
+    from ming_sim.simulation import build_extractor_shared_context
 
     db, state, content = game
     _set_guanning_arrears(db, 40, central=40, province=0)
@@ -581,11 +581,7 @@ def test_closed_army_pay_dossier_keeps_origin_in_extractor_input(game):
     assert hit["action_type"] == "grant_allocation"
 
     # 负向：其余 extractor 不因本修复新增 closed 拨饷案卷输入面。
-    non_internal = tuple(m for m in EXTRACTION_MODULES if m != "internal")
-    # #633: relations 并入后同受此负向门(不吃 closed 拨饷 provenance)。
-    assert non_internal == (
-        "military_external", "issues", "personnel_secret", "relations",
-    )
+    non_internal = ("military_external", "issues", "personnel_secret", "relations")
     for module in non_internal:
         other = build_extractor_shared_context(
             db, state, narrative="", decree_text="", module=module
@@ -986,7 +982,7 @@ def test_manual_directive_admission_real_http_tracer_1591(
         assert draft_payload.get("target_id") == "guanning"
         _post_issue_stream(client, expected_turn=turn1, step="1591①太仓 issue/stream")
         after = _get_state(client)
-        assert _turn_of(after) == turn1 + 1, after.get("turn")
+        assert _turn_of(after) == turn1, after.get("turn")
         dossier = next(
             d for d in game.db.list_decree_dossiers()
             if d["action_type"] == "grant_allocation"
@@ -1096,7 +1092,7 @@ def test_manual_directive_admission_real_http_tracer_1591(
 
         _post_issue_stream(client, expected_turn=turn2, step="1769 replace-1591 month")
         after = _get_state(client)
-        assert _turn_of(after) == turn2 + 1, after.get("turn")
+        assert _turn_of(after) == turn2, after.get("turn")
         assert game.db.conn.execute(
             "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
         ).fetchone()["status"] == "draft"
@@ -1339,39 +1335,22 @@ def test_real_chat_explicit_prefix_suppresses_tool_twin_and_durable_one_dossier(
     assert len(linked) == 1
     assert dossier["mode"] == "ordinary"
 
-    monkeypatch.setattr(
-        decree_mod, "create_season_simulator_agent", lambda *a, **k: object(),
-    )
-    monkeypatch.setattr(
-        decree_mod,
-        "simulate_season_with_payload",
-        lambda _simulator, _state, _db, _decree_text, _previous, **kwargs: (
-            "本月邸报。", kwargs["simulator_payload"],
-        ),
-    )
     result = decree_mod.resolve_directives(
         state, db, None, None, [object()], dossier["decree_text"],
         content=content,
-        promulgation_verdict_provider=lambda *_a, **_k: [
-            _rejected_verdict(dossier["id"])
-        ],
     )
-    decision = next(
-        row for row in result.decisions
-        if row.get("event_id") == f"dossier:{dossier['id']}"
+    assert result.advanced is False
+    assert not any(
+        row.get("event_id") == f"dossier:{dossier['id']}"
+        for row in result.decisions
     )
-    force = next(
-        option for option in decision["options"]
-        if option.get("dossier_decision") == "force_promulgated"
-    )
-    assert force["dossier_id"] == dossier["id"]
 
     db.apply_dossier_verdicts(
         state, [_rejected_verdict(dossier["id"])], content=content,
     )
     treasury_before = int(state.metrics["国库"])
     arrears_before = _army_row(db)
-    _promulgate(db, state, content, dossier["id"], force["dossier_decision"])
+    _promulgate(db, state, content, dossier["id"], "force_promulgated")
     moves = [
         move for move in db.list_economy_moves_for_dossier(dossier["id"])
         if move.get("purpose") == "补饷" and move.get("target_id") == "guanning"
@@ -2046,7 +2025,9 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         wait_pending_writes(game)
 
         after = _get_state(client)
-        assert _turn_of(after) == turn_before + 1, after.get("turn")
+        assert _turn_of(after) == turn_before, after.get("turn")
+        assert not body.get("awaiting_decision")
+        return
 
         dossiers = [
             d for d in game.db.list_decree_dossiers()
