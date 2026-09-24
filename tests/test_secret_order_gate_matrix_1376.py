@@ -24,12 +24,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import pytest
 from fastapi.testclient import TestClient
 
-import ming_sim.agents as agents_mod
 import ming_sim.cli_backend as cli_backend
-import ming_sim.decree as decree_mod
-import ming_sim.memories as memories_mod
-import ming_sim.mindreading as mindreading_mod
-import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
@@ -100,34 +95,11 @@ class _CannedAgent:
         return None
 
 
-class _CannedExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"facts":[]}')
-
-
-class _CannedEndorsementExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"endorsements":[]}')
-
-
-class _CannedMindreading:
-    def run(self, _material):
-        return SimpleNamespace(content="近臣低声：边饷事重。")
-
-
-
-
 def _install_settlement_llm_stubs(monkeypatch) -> None:
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(
-        agents_mod, "create_endorsement_extractor_agent",
-        lambda *a, **k: _CannedEndorsementExtractor(),
-    )
-    monkeypatch.setattr(
-        mindreading_mod, "create_mindreading_agent",
-        lambda *a, **k: _CannedMindreading(),
-    )
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+    """玩家过月外层模型缝复用 #1468/#1875 替身，不再只替换已退役的 simulator 缝。"""
+    from tests.test_month_loop_tracer_1468 import _stub_outer_llm_seams
+
+    _stub_outer_llm_seams(monkeypatch)
     monkeypatch.setattr(
         cli_backend,
         "capture_manual_directive_payload",
@@ -137,39 +109,6 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
             "target_id": "secret-order-gate-1376",
             "mode": "ordinary",
         },
-    )
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod,
-        "llm_promulgation_verdicts",
-        lambda dossiers, _state, **_kwargs: [
-            {"dossier_id": row["id"], "decision": "promulgated"} for row in dossiers
-        ],
-    )
-    monkeypatch.setattr(
-        decree_mod,
-        "simulate_season_with_payload",
-        lambda *a, **k: (
-            "本月邸报：边饷静。",
-            k.get("simulator_payload") or {},
-        ),
-    )
-    def _extract(_agents, db, state, _narrative, *args, **kwargs):
-        reports = [{
-            "dossier_id": item["dossier_id"],
-            "progress_band": "在办",
-            "memorial_text": "本月密奏已达",
-        } for item in db.list_monthly_dossier_progress_nudges()]
-        return {"dossier_progress_reports": reports}, "out", "in"
-
-    monkeypatch.setattr(
-        session_mod, "write_decree_with_agno",
-        lambda *a, **k: "奉天承运，诏曰：着户部清核辽饷。",
-    )
-    monkeypatch.setattr(
-        memories_mod,
-        "run_agent_text",
-        lambda *a, **k: '{"body": "本月边饷静。", "tags": ["边饷"]}',
     )
 
 
