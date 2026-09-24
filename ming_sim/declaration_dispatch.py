@@ -212,6 +212,7 @@ def _dispatch_declaration_sections(
     collector: RejectionCollector,
     chat_turn_id: int = 0,
     source_chat_turn_id: int = 0,
+    visible_refs: Optional[Mapping[str, object]] = None,
 ) -> DeclarationDispatchResult:
     """真正跑已知 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
     给定的收集器；只记不落库——落库时机与事务边界由调用方决定（J1 判词打回：
@@ -245,7 +246,7 @@ def _dispatch_declaration_sections(
         effects=_dispatch_effects(
             db, state, declaration.get("effects"), night_id=night_id,
             collector=collector,
-            turn=turn, source=source,
+            turn=turn, source=source, visible_refs=visible_refs,
         ),
         promises=_dispatch_promises(
             db, state, declaration.get("promises"), night_id=night_id, source=source,
@@ -295,6 +296,7 @@ def _dispatch_effects(
     collector: RejectionCollector,
     turn: int,
     source: Provenance,
+    visible_refs: Optional[Mapping[str, object]] = None,
 ) -> SectionResult:
     """把过月 C0 效果 envelope 交既有月末效果核算口，不复制领域适配器。
 
@@ -308,21 +310,85 @@ def _dispatch_effects(
             item={"raw_value": raw}, reason="召对夜不能落旨意办理效果，须待过月核算",
             category="invalid_state", source=source,
         )])
-    if not isinstance(raw, Mapping):
+    if not isinstance(raw, Mapping) and not isinstance(raw, list):
         return SectionResult(applied=[], rejected=[RejectedItem(
-            item={"raw_value": raw}, reason="effects 须为对象",
+            item={"raw_value": raw}, reason="effects 须为对象或有序对象数组",
             category="invalid_shape", source=source,
         )])
 
     from ming_sim.simulation import EMPTY_EXTRACTION
-    from ming_sim.issues import apply_score_extraction
+    from ming_sim.issues import apply_score_extraction, preflight_declared_event_effects, sanitize_delta_shape
     from ming_sim.decree import _collect_inline_rejections
+    from ming_sim.person_delta_adapter import normalize_person_changes
 
     extraction = copy.deepcopy(EMPTY_EXTRACTION)
-    extraction.update(raw)
-    report = apply_score_extraction(db, state, extraction, content=db.content)
+    shape_rejections = []
+    ordered_deltas = {field: [] for field in (
+        "metric_delta", "faction_delta", "class_delta",
+        "region_delta", "army_delta", "power_updates",
+    )}
+    ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
+    rejected = []
+    has_effect = False
+    clean_items = []
+    for item in raw if isinstance(raw, list) else [raw]:
+        if not isinstance(item, Mapping):
+            rejected.append(RejectedItem(
+                item={"raw_value": item}, reason="effects 单项须为对象",
+                category="invalid_shape", source=source,
+            ))
+            continue
+        has_effect = True
+        # 归属是效果 envelope 的声明，不属于旧 extractor delta 的字段。
+        event_id = str(item.get("event_id") or "").strip()
+        clean, invalid = sanitize_delta_shape({k: v for k, v in item.items() if k != "event_id"})
+        shape_rejections.extend(invalid)
+        person_changes = normalize_person_changes(clean)
+        if person_changes:
+            clean["人物变更"] = person_changes
+            for field in ("appointments", "character_status_changes", "character_power_changes", "office_changes"):
+                clean[field] = []
+        clean_items.append((item, event_id, clean))
+    refs = visible_refs or {}
+    rejected_events = preflight_declared_event_effects(
+        db, state, [(event_id, clean) for _, event_id, clean in clean_items],
+        open_affair_ids=set(refs.get("affairs", ())),
+    )
+    accepted_effect = False
+    for item, event_id, clean in clean_items:
+        if event_id in rejected_events:
+            rejected.append(RejectedItem(
+                item=dict(item), reason=rejected_events[event_id],
+                category="event_rejected", source=source,
+            ))
+            continue
+        accepted_effect = True
+        for field, value in clean.items():
+            if field not in EMPTY_EXTRACTION:
+                continue
+            if isinstance(value, list):
+                extraction[field].extend(value)
+                ordered_effect_event_ids[field].extend([event_id] * len(value))
+            elif isinstance(value, dict):
+                extraction[field].update(value)
+                if field in ordered_deltas:
+                    ordered_deltas[field].extend(value.items())
+                    ordered_effect_event_ids[field].extend([event_id] * len(value))
+            elif value is not None:
+                extraction[field] = value
+    if not has_effect or not accepted_effect:
+        return SectionResult(applied=[], rejected=rejected)
+    report = apply_score_extraction(
+        db, state, extraction, content=db.content,
+        open_affair_ids_at_input=set(refs.get("affairs", ())),
+        dossier_ids_at_input=set(refs.get("dossiers", ())),
+        secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
+        ordered_deltas=ordered_deltas,
+        ordered_effect_event_ids=ordered_effect_event_ids,
+        prior_shape_rejections=shape_rejections,
+    )
     _collect_inline_rejections(collector, report, turn, source)
-    return SectionResult(applied=[report], rejected=[])
+    return SectionResult(applied=[report], rejected=rejected)
 
 
 def dispatch_declaration(
@@ -335,6 +401,7 @@ def dispatch_declaration(
     chat_turn_id: int = 0,
     source: Provenance = Provenance.system_simulation,
     source_chat_turn_id: int = 0,
+    visible_refs: Optional[Mapping[str, object]] = None,
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
     承接（ADR 0155）直接分派单条声明时用的公开入口，唯一契约：始终原子、始终
@@ -381,6 +448,7 @@ def dispatch_declaration(
             minister_name=minister_name, night_id=night_id, source=source,
             collector=collector,
             chat_turn_id=origin_ctid,
+            visible_refs=visible_refs,
         )
         collector.flush_to_db(db)
         # 前像与 section/拒收同权威事务提交前写入（0036 R3 / 0038）；
@@ -395,6 +463,7 @@ def dispatch_declaration(
 
 def stage_declaration(
     db: Any, *, decree_ref: str, declaration: Mapping[str, object], turn: int,
+    visible_refs: Optional[Mapping[str, object]] = None,
 ) -> int:
     """旨意夜里预推：把一份声明暂存，不落账、不进材料目录、不上界面（ADR 0157
     步骤 1）。``decree_ref`` 是该旨自己的标识，落账顺序（下旨先后）与幂等判据
@@ -405,7 +474,10 @@ def stage_declaration(
     :class:`~ming_sim.entities.staged_declaration.DecreeAlreadySettled`
     ——不静默接受、不复活作废行；同一件事要再来一轮，调用方发一个新的
     decree_ref（ADR 0157「改旨 = 作废后按新旨重起」）。"""
-    return db.staged_declarations.stage(decree_ref=decree_ref, declaration=declaration, turn=turn)
+    return db.staged_declarations.stage(
+        decree_ref=decree_ref, declaration=declaration, turn=turn,
+        visible_refs=visible_refs or {},
+    )
 
 
 def discard_staged_declaration(db: Any, decree_ref: str) -> int:
@@ -453,6 +525,7 @@ def settle_staged_declarations_in_decree_order(
                             db, state, item.declaration,
                             minister_name=minister_name, night_id=night_id, source=source,
                             collector=collector,
+                            visible_refs=item.visible_refs,
                         ))
                     db.staged_declarations.mark_settled(decree_ref)
                     collector.flush_to_db(db)
