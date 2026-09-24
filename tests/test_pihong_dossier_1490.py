@@ -21,6 +21,7 @@ import threading
 import httpx
 import pytest
 
+import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
 import web_app
@@ -35,6 +36,39 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    def _promulgation_verdicts(dossiers, _state, **kwargs):
+        context = kwargs["prepared_context"]
+        by_id = {int(row["id"]): row for row in context["dossiers"]}
+        faction = str(context["factions"][0]["name"])
+        verdicts = []
+        for dossier in dossiers:
+            dossier_id = int(dossier["id"])
+            row = by_id[dossier_id]
+            if row["mode"] == "midzhi":
+                verdicts.append({
+                    "dossier_id": dossier_id,
+                    "decision": "rejected",
+                    "blocked_layer": "six_offices",
+                    "reason": "测试中留待批红。",
+                    "primary_opponents": [{"kind": "faction", "key": faction}],
+                    "gatekeeper_id": None,
+                    "criteria_snapshot": row["criteria_snapshot_source"],
+                })
+            else:
+                verdicts.append({"dossier_id": dossier_id, "decision": "promulgated"})
+        return verdicts
+
+    monkeypatch.setattr(decree_mod, "llm_promulgation_verdicts", _promulgation_verdicts)
+    real_run_agent_text = agents_mod.run_agent_text
+
+    def _run_month_chain_text(agent, prompt, tag, **kwargs):
+        if tag in {"world-segment", "decree-forecast"}:
+            return ""
+        return real_run_agent_text(agent, prompt, tag, **kwargs)
+
+    monkeypatch.setattr(
+        agents_mod, "run_agent_text", _run_month_chain_text,
+    )
     # 回话后高亮判官属 LLM 边界——离线中和，禁 sk-test 打真网。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
@@ -1319,6 +1353,8 @@ def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title="陕
         {"candidate_events": [], "transit_semantics": []},
         secret_orders=[], relevant_memories=[],
     )
+    # Phase 2 needs its gazette prerequisite before the real month chain can advance.
+    db.save_turn_report(state, "邸报")
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
@@ -3180,6 +3216,7 @@ def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypa
         {"candidate_events": [], "transit_semantics": []},
         secret_orders=[], relevant_memories=[],
     )
+    db.save_turn_report(state, "邸报")
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     before = len(db.list_decree_dossiers())

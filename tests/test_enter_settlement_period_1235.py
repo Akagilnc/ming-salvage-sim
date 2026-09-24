@@ -80,6 +80,20 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
         memories_mod, "run_agent_text",
         lambda *a, **k: '{"body": "本月边饷已清，暗流暗涌。", "tags": ["边饷"]}',
     )
+    monkeypatch.setattr(
+        "ming_sim.month_chain.run_world_segment_text",
+        lambda *a, **k: "",
+    )
+    real_run_agent_text = agents_mod.run_agent_text
+
+    def _run_month_chain_text(agent, prompt, tag, **kwargs):
+        if tag == "decree-forecast":
+            return ""
+        return real_run_agent_text(agent, prompt, tag, **kwargs)
+
+    monkeypatch.setattr(
+        agents_mod, "run_agent_text", _run_month_chain_text,
+    )
 
 
 @pytest.fixture
@@ -777,6 +791,8 @@ def test_disconnect_mid_settlement_reconnect_coherent(web_game, monkeypatch):
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
+    # The real month chain advances only after a gazette archive is present.
+    game.db.save_turn_report(game.state, "本月邸报：边饷已清。")
     before = _click_before(game.state)
     turn_before = int(game.state.turn)
 
