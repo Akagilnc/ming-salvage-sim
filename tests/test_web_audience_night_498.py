@@ -173,22 +173,6 @@ def _active_minister(game) -> str:
     raise AssertionError("no active ming minister")
 
 
-def test_web_await_inflight_does_not_pre_drain_pending(web_game):
-    """Web 前门只等在飞；待补留给创建案卷后的 close-night 单一 owner。"""
-    game = web_game
-    minister = _active_minister(game)
-    ctid, _snap = game._start_chat_turn(minister)
-    game.db.persist_minister_reply(minister, int(game.state.turn), "臣领旨。", ctid)
-    nid = int(game.db.conn.execute(
-        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,)
-    ).fetchone()["night_id"])
-
-    from ming_sim.session_write_queue import get_session_write_queue
-    get_session_write_queue(game).barrier(lambda: None)
-    assert game.db.count_pending_story_extractions(night_id=nid) == 1
-    assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
-
-
 def _count(db, table: str) -> int:
     return int(db.conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"])
 

@@ -25,7 +25,6 @@ export type AudienceHistoryData = {
   suggestions: Suggestion[];
   can_undo_last_chat: boolean;
   pending_action_failures?: PendingActionFailure[];
-  chat_turn_id?: number;
   campaign_id: string;
   /** Persisted current open-night identity; 0 means no open audience night. */
   night_id: number;
