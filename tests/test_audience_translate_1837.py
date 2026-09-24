@@ -21,6 +21,7 @@ from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 from tests.conftest import (
+    offline_empty_audience_translate,
     persist_and_schedule_scene,
     stub_audience_translate,
     stub_scene_agent,
@@ -121,6 +122,9 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
     declaration = {
         "commissions": [{"text": "拟旨赈济"}],
         "commisssions": [{"text": "拼错交办"}],
+        "scene_facts": [
+            {"body": "提及未在册者", "role": "scene", "person_names": ["未在册者"]},
+        ],
     }
     audience_translate.run_audience_turn_translation(
         db,
@@ -130,7 +134,7 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         night_id=night_id,
         chat_turn_id=source,
         minister_name=_hong_name(db, content),
-        translate_fn=lambda _prompt, _config: declaration,
+        translate_fn=lambda prompt, config: {**offline_empty_audience_translate(prompt, config), **declaration},
     )
 
     said = captured["night_said"]
@@ -149,6 +153,34 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         row["section"] == "commisssions" and row["category"] == "invalid_shape"
         for row in rejected
     )
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM story_ledger_entries WHERE night_id=? AND body=?",
+        (night_id, "提及未在册者"),
+    ).fetchone()[0] == 1
+    malformed = dispatch_declaration(
+        db, state,
+        {"scene_facts": [{"body": "坏形状", "role": ["scene"], "person_names": []}]},
+        minister_name="", night_id=night_id,
+    )
+    assert len(malformed.scene_facts.rejected) == 1
+
+
+def test_scene_stay_attend_uses_actual_protagonist_not_virtual_speaker(game, monkeypatch):
+    from ming_sim.audience_night import (
+        SCENE_CHAT_SPEAKER, list_ledger, set_night_protagonist, summon_enter,
+    )
+
+    db, state, content = game
+    person = _hong_name(db, content)
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    summon_enter(db, night_id, person)
+    set_night_protagonist(db, night_id, person, reason="test")
+    result = _sess(db, state, content, monkeypatch).scene_chat(
+        "留下听着", minister_name=SCENE_CHAT_SPEAKER,
+    )
+    assert result.court_action == "stay_attend"
+    assert list_ledger(db, night_id)[-1]["person_names"] == [person]
 
 
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
@@ -218,11 +250,15 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         def translate_fn(prompt, llm_config, _c=commission, _db=db):
             calls["n"] += 1
             if calls["n"] == 1:
-                return {"commissions": [_c], "promises": []}
+                return {
+                    **offline_empty_audience_translate(prompt, llm_config),
+                    "commissions": [_c], "promises": [],
+                }
             rows = _db.conn.execute(
                 "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
             ).fetchall()
             return {
+                **offline_empty_audience_translate(prompt, llm_config),
                 "commissions": [],
                 "promises": [
                     {"action_id": int(r["id"]), "decision": "应允"} for r in rows
@@ -345,7 +381,7 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
     # 不表态：空 promises
     sess = _sess(
         db, state, content, monkeypatch,
-        translate_fn=lambda p, c: {"commissions": [], "promises": []},
+        translate_fn=offline_empty_audience_translate,
     )
     sess.scene_chat("边事如何？")
     row = db.conn.execute(
@@ -356,6 +392,7 @@ def test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved(game, mon
     # 「准」
     def approve_fn(prompt, cfg):
         return {
+            **offline_empty_audience_translate(prompt, cfg),
             "commissions": [],
             "promises": [{"action_id": staged_id, "decision": "应允"}],
         }
@@ -416,7 +453,7 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     for channel in ("api", "cli"):
         def translate_fn(prompt, llm_config, _decl=declaration):
             shapes.append(normalize_audience_declaration(_decl))
-            return _decl
+            return {**offline_empty_audience_translate(prompt, llm_config), **_decl}
 
         sess = _sess(
             db, state, content, monkeypatch,
@@ -534,7 +571,7 @@ def test_translate_empty_success_still_dispatches_without_failure(game, monkeypa
     )
     sess = _sess(
         db, state, content, monkeypatch,
-        translate_fn=lambda p, c: {"commissions": [], "promises": []},
+        translate_fn=offline_empty_audience_translate,
     )
     result = sess.scene_chat("边事如何？")
     assert result.answer == "臣在。"
@@ -601,6 +638,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     sess = _sess(
         db, state, content, monkeypatch,
         translate_fn=lambda p, c: {
+            **offline_empty_audience_translate(p, c),
             "commissions": [{"text": create_text}],
             "promises": [],
         },
@@ -644,6 +682,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     sess = _sess(
         db, state, content, monkeypatch,
         translate_fn=lambda p, c: {
+            **offline_empty_audience_translate(p, c),
             "commissions": [],
             "promises": [{"action_id": approve_id, "decision": "应允"}],
         },
@@ -676,6 +715,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     sess = _sess(
         db, state, content, monkeypatch,
         translate_fn=lambda p, c: {
+            **offline_empty_audience_translate(p, c),
             "commissions": [],
             "promises": [{"action_id": reject_id, "decision": "拒绝"}],
         },
@@ -791,6 +831,7 @@ def test_scene_chat_translation_can_approve_staged_action(game, monkeypatch):
 
     def translate_fn(prompt, llm_config):
         return {
+            **offline_empty_audience_translate(prompt, llm_config),
             "commissions": [],
             "promises": [{"action_id": staged_id, "decision": "应允"}],
         }

@@ -895,7 +895,7 @@ def _write_tree(
     index.append(_COURT_ROSTER_REL)
 
     person_dir = tmp / _PERSON_DIR / _safe_segment(name)
-    _write_text(person_dir / "经历.txt", _experience_text(knowledge))
+    _write_text(person_dir / "经历.txt", _experience_text(knowledge, _person_audience_experience(db, name)))
     index.append(f"{_PERSON_DIR}/{_safe_segment(name)}/经历.txt")
 
     _write_text(
@@ -948,7 +948,7 @@ def _write_tree(
     return index
 
 
-def _experience_text(knowledge: dict) -> str:
+def _experience_text(knowledge: dict, audible_entries: Sequence[dict] = ()) -> str:
     """人物经历投影：知识见闻里本人经历事件，逐条『标题：正文』连写。
 
     Shared by the per-character directory's own 经历.txt (#1830) and the
@@ -961,7 +961,19 @@ def _experience_text(knowledge: dict) -> str:
         body = str(item.get("body") or "").strip()
         if title or body:
             lines.append(f"{title}：{body}".strip("："))
+    lines.extend(str(item["body"]) for item in audible_entries if item.get("body"))
     return "\n".join(lines) or "（无）"
+
+
+def _person_audience_experience(db: Any, name: str) -> list[dict]:
+    """Surviving audience nights, projected through the existing audibility rule."""
+    if not hasattr(db, "conn"):
+        return []
+    from ming_sim.audience_night import person_night_experience
+
+    nights = db.conn.execute("SELECT id FROM audience_nights ORDER BY id").fetchall()
+    return [entry for night in nights
+            for entry in person_night_experience(db, int(night["id"]), name)]
 
 
 def _is_gazette_public_event(item: dict) -> bool:
@@ -1277,7 +1289,7 @@ def _write_world_tree(
         )
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
         rel = f"{person_dir}/经历.txt"
-        _write_text(tmp / rel, _experience_text(knowledge))
+        _write_text(tmp / rel, _experience_text(knowledge, _person_audience_experience(db, name)))
         index.append(rel)
         # #1828/#1834：人物名下按月文字事实（负伤/患病等）单独一份，世界目录
         # 才有；人物私有经历目录（_write_tree）不注入，仍只按其知识见闻投影。
@@ -1523,6 +1535,7 @@ def _write_one_present_person(
     character: Any,
     knowledge: dict,
     matter_lines: list[tuple[str, str, str, str, bool]],
+    night_id: int = 0,
 ) -> list[str]:
     """把一人的可读材料全部写在 人物/<名>/ 之下，不与他人共享路径。
 
@@ -1560,7 +1573,8 @@ def _write_one_present_person(
     index.append(roster_rel)
 
     exp_rel = f"{base}/经历.txt"
-    _write_text(tmp / exp_rel, _experience_text(knowledge))
+    audible = _person_audience_experience(db, name)
+    _write_text(tmp / exp_rel, _experience_text(knowledge, audible))
     index.append(exp_rel)
 
     # #1839 / ADR 0156：文字事实当场落账后须进本夜场景目录（下一句可见）。
@@ -1620,6 +1634,7 @@ def _write_scene_tree(
     state: Any,
     present_rows: Sequence[tuple[str, str]],
     person_payloads: Sequence[tuple[Any, dict, list]],
+    night_id: int = 0,
 ) -> list[str]:
     """为每位在场人物写入互不覆盖的私有材料子树，合并 INDEX。"""
     index: list[str] = []
@@ -1633,6 +1648,7 @@ def _write_scene_tree(
     for character, knowledge, matter_lines in person_payloads:
         for rel in _write_one_present_person(
             tmp, db, state, character, knowledge, matter_lines,
+            night_id,
         ):
             _add(rel)
 
@@ -1654,8 +1670,11 @@ def prepare_scene_materials(
     CLI cwd / API list-read 同树。
     """
     from ming_sim.knowledge import build_character_knowledge
+    from ming_sim.audience_night import get_open_night
 
     present_rows = _scene_present_rows(db, state)
+    night = get_open_night(db)
+    night_id = int(night["id"]) if night is not None else 0
     spoken = _scene_spoken_text(db)
     content = getattr(db, "content", None)
     characters = getattr(content, "characters", None) or {}
@@ -1678,7 +1697,7 @@ def prepare_scene_materials(
     dest, index = _publish_material_tree(
         dest_root,
         scene_materials_root(db, state),
-        lambda tmp: _write_scene_tree(tmp, db, state, present_rows, person_payloads),
+        lambda tmp: _write_scene_tree(tmp, db, state, present_rows, person_payloads, night_id),
     )
     opening = _scene_opening_text(state, present_rows, spoken, handling_by_person)
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))

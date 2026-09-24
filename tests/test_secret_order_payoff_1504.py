@@ -48,7 +48,7 @@ from ming_sim.simulation import (
     build_extractor_shared_context,
     _sanitize_module_output,
 )
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):
@@ -1063,7 +1063,7 @@ def _confirm_investigation(
         "调查对象": target,
     }, ensure_ascii=False)
 
-    def fake_json(_prompt, llm_config=None, tag=""):
+    def fake_json(_prompt, llm_config=None, tag="", *, policy=None):
         return canned, 1
 
     monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json)
@@ -1384,7 +1384,7 @@ def _stub_secret_landing_llm(monkeypatch, *, extract_fn, prose_fn=None):
     monkeypatch.setattr(cb, "_run_api_for_config", _api)
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda prompt, llm_config=None, tag="": (
+        lambda prompt, llm_config=None, tag="", *, policy=None: (
             prose_fn(prompt, llm_config=llm_config, tag=tag)
             if tag in {
                 "secret_order_landing_recovery",
@@ -1830,7 +1830,7 @@ def _web_secret_landing_client(tmp_path, monkeypatch, backend_fn):
         )
         assert response.status_code == 200, response.text
         events = _parse_sse(response.text)
-        assert all(event != "error" for event, _payload in events)
+        assert all(event != "error" for event, _payload in events), events
         return next(payload for event, payload in events if event == "done")
 
     return game, name, _stream, wait_pending_writes
@@ -1872,7 +1872,7 @@ def _secret_landing_good_raw(name: str, body: str) -> str:
 
 def _secret_landing_backend(raw_for_extract, *, tags=None):
     """Web 召对后端桩：分类为密令新建；抽取产物由调用方给。"""
-    def backend(prompt, _config=None, *, tag=""):
+    def backend(prompt, _config=None, *, tag="", policy=None):
         if tags is not None:
             tags.add(tag)
         if tag == "action_intent":
@@ -1984,7 +1984,7 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
     extract_n = {"n": 0}
     recovery_calls = _spy_secret_landing_recovery_compose(monkeypatch)
 
-    def backend(prompt, _config=None, *, tag=""):
+    def backend(prompt, _config=None, *, tag="", policy=None):
         if tag == "action_intent":
             return json.dumps(
                 {"kind": "secret", "secret_action": "新建"}, ensure_ascii=False,
@@ -2031,12 +2031,10 @@ def test_http_chat_stream_secret_landing_cross_turn_affirm_readback(
         # 3) 既有应允：scene_chat + promises（禁旧 extract_confirmation；ADR 0038 即落）
         def _approve_translate(prompt, _cfg):
             text = str(prompt or "")
+            declaration = offline_empty_audience_translate(prompt, _cfg)
             if "【本轮皇帝】准" in text or "准" in text:
-                return {
-                    "commissions": [],
-                    "promises": [{"action_id": int(pid), "decision": "应允"}],
-                }
-            return {"commissions": [], "promises": []}
+                declaration["promises"] = [{"action_id": int(pid), "decision": "应允"}]
+            return declaration
 
         stub_audience_translate(monkeypatch, _approve_translate)
         stream("准，就照此密行", intent=None)

@@ -21,7 +21,7 @@ import ming_sim.cli_backend as cli_backend
 from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
 from ming_sim.matching import army_identity_aliases
 from ming_sim.session import GameSession
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 AUDIENCE_MESSAGE = (
     "着户部从国库拨银十五万两，解赴关宁军前专补欠饷。卿即拟旨呈览。"
@@ -274,7 +274,7 @@ def test_audience_grounded_army_pay_lands_through_close_night(
     _stub_outer_llm_seams(monkeypatch)
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", _real_capture)
 
-    def backend(_prompt, _config=None, *, tag=""):
+    def backend(_prompt, _config=None, *, tag="", policy=None):
         if tag == "action_intent":
             return json.dumps({"kind": "draft"}, ensure_ascii=False), 1
         if tag == "draft_intent":
@@ -302,18 +302,20 @@ def test_audience_grounded_army_pay_lands_through_close_night(
         def _translate(prompt, _cfg):
             # scene_chat 双桩：交办 grant → pending；「准」→ promises 应允。
             text = str(prompt or "")
+            scene = offline_empty_audience_translate(prompt, _cfg)
             if "【本轮皇帝】准" in text:
                 rows = [
                     r for r in game.db.list_pending_actions(game.state.turn)
                     if r.get("kind") == "directive" and r.get("status") == "pending"
                 ]
                 if not rows:
-                    return {"commissions": [], "promises": []}
+                    return scene
                 return {
-                    "commissions": [],
+                    **scene,
                     "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],
                 }
             return {
+                **scene,
                 "commissions": [{
                     "text": AUDIENCE_MESSAGE,
                     "grant": {
@@ -325,7 +327,6 @@ def test_audience_grounded_army_pay_lands_through_close_night(
                         "target_id": "guanning",
                     },
                 }],
-                "promises": [],
             }
 
         stub_audience_translate(monkeypatch, _translate)

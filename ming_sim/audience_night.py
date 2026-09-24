@@ -15,6 +15,7 @@ import logging
 import re
 import sqlite3
 import time
+import traceback
 from datetime import datetime, timezone
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -274,6 +275,8 @@ def write_audience_error_pack(
     kind: str,
     message: str,
     detail: Optional[Dict[str, Any]] = None,
+    db: Any = None,
+    exc: Optional[BaseException] = None,
 ) -> str:
     """落一份夜域错误包到 user-data error_packs（响亮、可发包）。"""
     root = error_packs_root()
@@ -296,6 +299,13 @@ def write_audience_error_pack(
         encoding="utf-8",
     )
     (pack_dir / "message.txt").write_text(message + "\n", encoding="utf-8")
+    if exc is not None:
+        (pack_dir / "traceback.txt").write_text(
+            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            encoding="utf-8",
+        )
+    if db is not None:
+        db.backup_to(str(pack_dir / "save_backup.db"))
     return str(pack_dir.resolve())
 
 
@@ -521,6 +531,14 @@ def night_archive_metadata(
     }
 
 
+def night_scroll_container(night: Dict[str, Any], ledgers: List[Dict[str, Any]], turns: List[Dict[str, Any]]) -> Dict[str, str]:
+    return {
+        "time_of_day": night["time_of_day"],
+        "location": night["location"],
+        "audience_type": night_archive_metadata(ledgers, turns)["audience_type"],
+    }
+
+
 def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     """Read one audience night as the shared live/archive scroll contract.
 
@@ -539,12 +557,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     turns = list_chat_turns_for_night(db, night_id)
     # 召法已由引擎作为结构化常量 tag 落在入殿口令账上；它是当前夜容器可用的
     # 真实召对类型来源。抽取账的开放 tags 绝不参与该投影。
-    audience_type = night_archive_metadata(ledgers, turns)["audience_type"]
-    container = {
-        "time_of_day": night["time_of_day"],
-        "location": night["location"],
-        "audience_type": audience_type,
-    }
+    container = night_scroll_container(night, ledgers, turns)
 
     def message(*, role: str, speaker: str, audibility: str, time: Any,
                 content: str, beat: str, soft_boundary: bool = False,
@@ -564,6 +577,13 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         return result
 
     events: List[tuple[float, int, Dict[str, Any]]] = []
+    translated: Dict[int, List[tuple[str, Dict[str, Any]]]] = {}
+    for entry in ledgers:
+        source_id = int(entry.get("source_chat_turn_id") or 0)
+        role_tags = [tag.removeprefix("scroll_role:") for tag in entry.get("tags", [])
+                     if tag.startswith("scroll_role:")]
+        if source_id and len(role_tags) == 1 and role_tags[0] in {"user", "minister", "attendant", "scene"}:
+            translated.setdefault(source_id, []).append((role_tags[0], entry))
     for turn in turns:
         for rank, (column, role, speaker) in enumerate((
             ("user_message_id", "user", "朕"),
@@ -585,12 +605,29 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                 if role == "minister"
                 else []
             )
-            events.append((
-                float(int(turn.get("night_seq") or 0)), 20 + rank,
-                message(role=role, speaker=speaker, audibility=AUDIBILITY_PUBLIC,
-                        time=row["created_at"], content=content, beat="dialogue",
-                        chat_turn_id=int(turn["id"]), highlights=hl),
-            ))
+            segments = translated.get(int(turn["id"]), []) if role == "minister" else []
+            # Structural, byte-for-byte coverage check: a partial/altered translation
+            # stays neutral rather than replacing any part of the original drama.
+            if segments and "".join(entry["body"] for _, entry in segments) == content:
+                for segment_role, entry in segments:
+                    names = entry.get("person_names") or []
+                    segment_speaker = "朕" if segment_role == "user" else (names[0] if names else "")
+                    events.append((
+                        float(int(turn.get("night_seq") or 0)), 21,
+                        message(role=segment_role, speaker=segment_speaker,
+                                audibility=entry["audibility"], time=row["created_at"],
+                                content=entry["body"], beat="aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "dialogue",
+                                chat_turn_id=int(turn["id"]), highlights=hl),
+                    ))
+            else:
+                events.append((
+                    float(int(turn.get("night_seq") or 0)), 20 + rank,
+                    message(role="scene" if role == "minister" else role,
+                            speaker=speaker if role == "user" else "",
+                            audibility=AUDIBILITY_PUBLIC, time=row["created_at"],
+                            content=content, beat="dialogue",
+                            chat_turn_id=int(turn["id"])),
+                ))
         # 递话/读心是对话轮的第三种持久消息，紧随该轮奏对归位；不并入故事账。
         if hasattr(db, "list_mindreading_records"):
             for record_index, record in enumerate(db.list_mindreading_records(int(turn["id"]))):
@@ -858,17 +895,29 @@ def append_ledger_entry(
     `origin_chat_turn_id`（#506）：口令账由某一轮 attach 创建时绑该轮 chat_turn_id，供
     撤回按轮删除该轮所产的入殿/告退等口令账；0=开夜/员额/收夜等框架账，不随任一轮撤。
 
-    CLOSING 一律拒绝玩家侧新账（默认 allow_closing=False）；收夜自有框架写与
-    close-owned drain 仅显式 allow_closing=True，不得按 source/origin id 漏放。
+    CLOSING 拒绝玩家侧新账（默认 allow_closing=False）；收夜框架写显式
+    allow_closing=True。唯有仍待转译的本月原对话轮可在封夜后补记抽取账。
     """
     night = get_night(db, night_id)
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
-    if night["status"] == NIGHT_STATUS_CLOSED:
+    # A failed translation belongs to an already persisted source round, not to
+    # a new player action. It may finish after the night seals, but never after
+    # the month advances or after its source round has been completed/retracted.
+    pending_source = False
+    if night["status"] in {NIGHT_STATUS_CLOSING, NIGHT_STATUS_CLOSED} and source_chat_turn_id > 0:
+        row = db.conn.execute(
+            "SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 "
+            "WHERE t.id=? AND t.night_id=? AND t.status='active' "
+            "AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?",
+            (int(source_chat_turn_id), int(night_id), int(night["turn"])),
+        ).fetchone()
+        pending_source = row is not None and int(origin_chat_turn_id) == int(source_chat_turn_id)
+    if night["status"] == NIGHT_STATUS_CLOSED and not pending_source:
         raise AudienceNightError(
             f"夜已收，不能再落账：{night_id}", code="night_closed",
         )
-    if night["status"] == NIGHT_STATUS_CLOSING and not allow_closing:
+    if night["status"] == NIGHT_STATUS_CLOSING and not (allow_closing or pending_source):
         raise AudienceNightError(
             f"本夜收夜中，不能再落故事账：{night_id}",
             code="night_closing",
@@ -2467,12 +2516,22 @@ def audible_entries_for(
 def person_night_experience(
     db: Any, night_id: int, person_name: str,
 ) -> List[Dict[str, Any]]:
-    """人物经历读时投影（#1838）：按转译标记的在场进出与可闻性取本夜所闻。
+    """人物经历：在场公开所闻，加本人说出的私密条目。
 
-    单一真源 = :func:`audible_entries_for`——殿上公开且在场区间内；御前低语
-    （私密）不进不在场者 / 非当事人的经历。不另立第二套可闻性规则。
+    只有大臣／近臣分段的首位人名是说话人；场景分段仅列涉及人。
     """
-    return audible_entries_for(db, int(night_id), person_name)
+    name = str(person_name or "").strip()
+    if not name:
+        return []
+    audible_ids = {entry["id"] for entry in audible_entries_for(db, int(night_id), name)}
+    return [
+        entry for entry in list_ledger(db, int(night_id))
+        if entry["id"] in audible_ids
+        or (entry.get("audibility") == AUDIBILITY_PRIVATE
+            and any(tag in {"scroll_role:minister", "scroll_role:attendant"}
+                    for tag in entry.get("tags", []))
+            and (entry.get("person_names") or [None])[0] == name)
+    ]
 
 
 def set_night_protagonist(
@@ -2514,6 +2573,22 @@ def get_night_protagonist(db: Any, night_id: int) -> str:
     if row is None:
         return ""
     return str(row["protagonist_name"] or "")
+
+
+def reproject_night_protagonist(db: Any, night_id: int) -> str:
+    """按存活源轮时序重投影夜当前主角；调用方负责事务提交。"""
+    row = db.conn.execute(
+        "SELECT protagonist_name FROM chat_turns WHERE night_id=? "
+        "AND status NOT IN ('undone','failed') AND protagonist_name != '' "
+        "ORDER BY id DESC LIMIT 1",
+        (int(night_id),),
+    ).fetchone()
+    name = str(row["protagonist_name"] or "") if row is not None else ""
+    db.conn.execute(
+        "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
+        (name, int(night_id)),
+    )
+    return name
 
 
 SCENE_RECAP_HEADER = "【殿上先前所闻】"
@@ -2578,6 +2653,23 @@ def persons_present_tonight(db: Any, night_id: int) -> set[str]:
     只返回已 settle 的账），故待补期间缺账 = 尚未发生、不猜（AC9）；补账落地后自然校正。
     """
     return present_names_at(db, int(night_id))
+
+
+def presence_roster(db: Any, night_id: int) -> List[Dict[str, Any]]:
+    """Project everyone who entered this night, in first-entry order, with current presence."""
+    present: set[str] = set()
+    ordered: List[str] = []
+    seen: set[str] = set()
+    for entry in list_ledger(db, int(night_id)):
+        delta = _presence_delta(entry)
+        names = [str(name) for name in entry.get("person_names") or []]
+        if delta == PRESENCE_ENTER:
+            for name in names:
+                if name not in seen:
+                    seen.add(name)
+                    ordered.append(name)
+        _apply_presence(present, entry)
+    return [{"name": name, "present": name in present} for name in ordered]
 
 
 def ensure_summon_enter(

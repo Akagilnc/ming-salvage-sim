@@ -17,6 +17,7 @@ from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
     append_ledger_entry,
+    close_night,
     open_night,
     summon_enter,
 )
@@ -500,7 +501,7 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
     _nid, ct = attach_chat_turn_to_night(
         db, state, character.name, agno_session_id="sess", agno_runs_before=0,
     )
-    spoken = "SENTINEL_NIGHT_SPOKEN_1830"
+    spoken = "臣已核过边饷册。"
     uid = db.append_chat_message(character.name, state.turn, "user", "问边饷")
     db.update_chat_turn_messages(ct, user_message_id=uid)
     mid = db.append_chat_message(character.name, state.turn, "minister", spoken)
@@ -511,6 +512,8 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
         db, int(night["id"]), person_names=[character.name],
         body=spoken, audibility=AUDIBILITY_PUBLIC,
     )
+    assert close_night(db, state, night_id=int(night["id"]), body="退朝。")['closed']
+    open_night(db, state, location="乾清宫", time_of_day="次夜")
 
     model = SimpleNamespace(materials_dir="")
     registry = SimpleNamespace(agents={character.name: SimpleNamespace(model=model)})
@@ -554,7 +557,7 @@ def test_audience_prompt_rebuilds_from_directory_and_persisted_turns(game):
         tools = {tool.__name__: tool for tool in material_tools(rebuilt_root)}
         rel = next(p for p in rebuilt_index if p.endswith("经历.txt"))
         assert rel in tools["list_materials"]().splitlines()
-        assert tools["read_material"](rel)
+        assert spoken in tools["read_material"](rel)
     finally:
         restored.close()
 

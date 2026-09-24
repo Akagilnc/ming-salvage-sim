@@ -77,7 +77,6 @@ export function EdictModal({
   onDeleteDirective,
   onIssueDecree,
   onAdvanceWithoutEdict,
-  onOpenFailureRecovery,
 }: {
   state: GameState;
   directiveText: string;
@@ -100,7 +99,6 @@ export function EdictModal({
   onIssueDecree: () => void;
   /** #1560：failed-only 确认后退朝；复用既有 advance_without_edict 客户端接缝。 */
   onAdvanceWithoutEdict: () => void;
-  onOpenFailureRecovery: () => void;
 }) {
   // Conversational directives are approved when the audience turn settles (ADR 0049).
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
@@ -126,9 +124,6 @@ export function EdictModal({
   const hasSettleWork =
     hasDrafts || hasCased || hasPendingConversationalDraft || hasNonEdictPendingActions || hasPendingSecretOrders;
   const failedOnly = !hasSettleWork && hasFailedSecretOrders;
-  // 恢复入口：持久桌空 + 失败密令。本地失败 create 卡不挡（非 settle 工作谓词）。
-  const showFailureRecoveryEntry =
-    !hasDrafts && !hasCased && !hasPendingConversationalDraft && hasFailedSecretOrders;
   // 请求按钮禁重复点击：全局 busy 或任一卡在飞。
   const requestLocked =
     !!busy || localDirectives.some((item) => item.phase === "inflight");
@@ -155,10 +150,9 @@ export function EdictModal({
       <small id={errorId} className="local-fail-note" data-role="local-error" role="alert">{message}</small>
     ) : null;
 
-  // 御案两区：草稿（可改删 + 本地 create + 失败密令恢复）/ 已发的旨意（成案只读，0048 无准驳）。
-  // 空区不渲；恢复入口挂草稿区侧，draft 数组为零仍可出区（failed-only 契约）。
+  // 御案两区：草稿（可改删 + 本地 create）/ 已发的旨意（成案只读，0048 无准驳）。
   const showDraftZone =
-    draftDirectives.length > 0 || createLocals.length > 0 || showFailureRecoveryEntry;
+    draftDirectives.length > 0 || createLocals.length > 0;
   const showIssuedZone = casedDirectives.length > 0;
   const draftHeadingId = "edict-zone-draft-title";
   const issuedHeadingId = "edict-zone-issued-title";
@@ -271,11 +265,6 @@ export function EdictModal({
                   );
                 })}
 
-                {showFailureRecoveryEntry ? (
-                  <div className="empty-note failed-secret-note">
-                    <button type="button" onClick={onOpenFailureRecovery} disabled={requestLocked}>处理</button>
-                  </div>
-                ) : null}
               </section>
             ) : null}
 

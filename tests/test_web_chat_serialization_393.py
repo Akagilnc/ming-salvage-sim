@@ -90,7 +90,7 @@ class _FakeSession(HallAdmissionSessionMixin):
     def pending_count(self):
         return 0
 
-    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
         # #1842：殿上流式入口走 scene_chat；轻壳驱动既有假 agent，不复活旧 chat 并行链。
         from ming_sim.session import ChatTurnResult
 
@@ -279,12 +279,12 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     assert runtime.state.turn == 2
 
 
-def test_identity_setup_failure_closes_durable_turn_and_pending_owner_as_terminal_error():
+def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
     runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
     failed = []
     completed = []
     runtime.db.kv_get = lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed"))
-    runtime._fail_chat_turn_and_reload = lambda turn_id, snapshot: failed.append((turn_id, snapshot))
+    runtime._fail_chat_turn_and_reload = lambda turn_id, snapshot, error: failed.append((turn_id, snapshot, error))
     runtime._complete_pending_write = lambda ticket=None: completed.append(True)
 
     events = list(runtime.chat_stream(minister_name, "请奏"))
@@ -293,7 +293,10 @@ def test_identity_setup_failure_closes_durable_turn_and_pending_owner_as_termina
         "type": "error", "message": "identity read failed",
         "campaign_id": "", "night_id": 0, "chat_turn_id": 7,
     }]
-    assert failed == [(7, {})]
+    assert len(failed) == 1
+    assert failed[0][:2] == (7, {})
+    assert str(failed[0][2]) == "identity read failed"
+    assert [m["content"] for m in runtime.db.messages if m["role"] == "user"] == ["请奏"]
     assert completed == [True]
 
 

@@ -23,7 +23,7 @@ import inspect
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable, Iterator, List, Optional, TypeVar
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
@@ -55,9 +55,11 @@ _typed_provider_failure: ContextVar[Optional["ClassifiedFailure"]] = ContextVar(
 
 @dataclass(frozen=True)
 class TransportPolicy:
-    """统一 transport 预算。字段全部来自配置默认或 runtime 覆盖。"""
+    """统一 transport 预算；调用方可在 runtime 预算上收紧特定入口的重试。"""
 
     max_attempts: int = TRANSPORT_DEFAULT_MAX_ATTEMPTS
+    # #1853 召对调用独有例外；其它调用保留 #1465 的 429 自愈。
+    retry_429: bool = True
     # SDK/httpx read 阻塞预算（bind_transport_sdk_budget → model.timeout）。
     attempt_timeout_seconds: float = TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
     # #1792：可重试失败 → 下一 attempt 起手前的固定间隔（秒）。不按失败种类区分。
@@ -149,6 +151,17 @@ def resolve_transport_policy(source: object = None) -> TransportPolicy:
     if runtime:
         return transport_policy_from_mapping(runtime)
     return default_transport_policy()
+
+
+def audience_transport_policy(source: object = None) -> TransportPolicy:
+    """召对回话与转译：429 一次终止，其它瞬断最多尝试三次。"""
+    policy = resolve_transport_policy(source)
+    return replace(
+        policy,
+        max_attempts=min(policy.max_attempts, TRANSPORT_DEFAULT_MAX_ATTEMPTS),
+        retry_429=False,
+        retry_interval_seconds=TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
+    )
 
 
 def _status_retryable(status_i: Optional[int]) -> bool:
@@ -251,8 +264,8 @@ def _typed_status_from_run_error_event(event: Any) -> Optional[int]:
 def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
     """先分类后重试。只认 typed 信号；不从错误散文猜语义（ADR 0142）。
 
-    可重试：瞬断/空转/5xx/408/429/空输出。
-    不可重试：确定性 4xx（#1452 Unknown model 等带 4xx status）。
+    可重试：瞬断/空转/5xx/408/429/空输出；召对 429 例外在调用策略落实。
+    不可重试：其余确定性 4xx（#1452 Unknown model 等带 4xx status）。
     未知（无 status 的笼统 stream/run error）→ 不洗成瞬断，立即上浮。
 
     本函数是 APITimeout/Connection/Status/空输出/RunError → code/retryable/status 的唯一权威
@@ -575,7 +588,8 @@ def run_with_transport(
         except Exception as error:  # noqa: BLE001 — 分类后按契约重试或上浮
             failure = classify_transport_failure(error)
             last = failure
-            will_retry = failure.retryable and index < max_attempts
+            retryable = failure.retryable and (pol.retry_429 or failure.status_code != 429)
+            will_retry = retryable and index < max_attempts
             attempts.append(
                 TransportAttempt(
                     index=index,
@@ -594,7 +608,7 @@ def run_with_transport(
             raise transport_failure_unavailable(
                 failure,
                 attempts=len(attempts),
-                exhausted=failure.retryable and index >= max_attempts,
+                exhausted=retryable and index >= max_attempts,
                 attempt_records=attempts,
             ) from error
 

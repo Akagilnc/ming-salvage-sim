@@ -75,7 +75,7 @@ def _run_conversational_draft(db, state, content, monkeypatch, *,
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(canned, ensure_ascii=False), 1))
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(canned, ensure_ascii=False), 1))
     sess = _fake_session(db, state)
     out = GameSession.apply_cli_conversation_actions(
         sess, ch, player_message=player_message, answer=minister_reply,
@@ -152,7 +152,7 @@ def test_explicit_prefix_stages_same_pending_directive_as_natural_language(game,
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     # canned 带拟旨意图，但显式前缀仍应跳过后置 LLM 检测，使用大臣回话作为润色草案。
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {
                                 "拟旨意图": "拟旨",
                                 "动作类型": "policy",
@@ -272,7 +272,7 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
 
     # 第一次：触发拟旨意图
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="拟旨吧", answer=first_reply,
@@ -287,7 +287,7 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
     # 第二次：皇帝「补充一下」→ LLM 返回合并后新草稿。
     # 注：LLM 判确认（extraction_confirmation_intent）先被调，返回「无」，然后才进草案检测
     # 两次调用都 canned 成 {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}（确认判断时会调但结果被丢弃）
-    def canned_second(prompt, llm_config=None, tag=""):
+    def canned_second(prompt, llm_config=None, tag="", *, policy=None):
         # 确认意图抽取 → 无（别应允/拒绝，只补充草稿）
         if "应允" in prompt or "拒绝" in prompt or "待皇帝定夺" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
@@ -489,7 +489,7 @@ def test_dialogue_affirm_commits_pending_directive_to_later_ui(game, monkeypatch
 
     # 皇帝「应允」：directive 暂存转入 turn_directives.pending，而不是 draft。
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "应允"}, ensure_ascii=False), 1))
     sess = _fake_session(db, state)
     GameSession.apply_cli_conversation_actions(
@@ -517,7 +517,7 @@ def test_dialogue_reject_drops_pending_directive(game, monkeypatch):
     assert len(db.list_pending_actions(state.turn)) == 1
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "拒绝"}, ensure_ascii=False), 1))
     sess = _fake_session(db, state)
     GameSession.apply_cli_conversation_actions(
@@ -536,7 +536,7 @@ def test_explicit_secret_order_prefix_stages_pending_candidate(game, monkeypatch
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
-    def _secret_extract(prompt, llm_config=None, tag=""):
+    def _secret_extract(prompt, llm_config=None, tag="", *, policy=None):
         return (json.dumps({
             "标题": "密查辽饷",
             "内容": "查辽东军饷有无侵冒，并封存兵部辽饷册。",
@@ -578,7 +578,7 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
     db, state, content = game
     name = _active_minister_name(db, content)
 
-    def _extractors(prompt, llm_config=None, tag=""):
+    def _extractors(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "secret_extract":
             return (json.dumps({
                 "标题": "暗查关宁",
@@ -638,7 +638,7 @@ def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeyp
     create_test_secret_order(db, state, name, "暗查辽饷", "密查辽饷侵冒。", [], deadline_months=0)
     calls = []
 
-    def _extractors(prompt, llm_config=None, tag=""):
+    def _extractors(prompt, llm_config=None, tag="", *, policy=None):
         calls.append(tag)
         if tag == "secret_extract":
             return (json.dumps({
@@ -736,7 +736,7 @@ def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, mo
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     oid = create_test_secret_order(db, state, name, "旧令", "旧令内容。", [], deadline_months=0)
 
-    def _extractors(prompt, llm_config=None, tag=""):
+    def _extractors(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "secret_extract":
             return (json.dumps({
                 "标题": "新查粮道",
@@ -799,7 +799,7 @@ def test_dialogue_reject_drops_pending_new_secret_order(game, monkeypatch):
     )
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "拒绝"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch,
@@ -831,7 +831,7 @@ def test_dialogue_affirm_commits_pending_new_secret_order(game, monkeypatch):
     )
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "应允"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch,
@@ -952,7 +952,7 @@ def test_extract_draft_intent_prompt_includes_supplement_hint_when_has_pending(m
     使「再补一条」之类的玩家话语被 LLM 正确归为拟旨意图（codex r5 F1）。"""
     prompts_seen = []
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         prompts_seen.append(prompt)
         return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
 
@@ -975,7 +975,7 @@ def test_extract_draft_intent_supplement_schema_keeps_valid_json_comma(monkeypat
     否则「合并草案」紧跟上一字段会诱导模型输出坏 JSON。"""
     prompts_seen = []
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         prompts_seen.append(prompt)
         return (json.dumps(
             {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": "合并后的完整草案"},
@@ -1002,7 +1002,7 @@ def test_extract_draft_intent_coerces_non_string_existing_draft_text(monkeypatch
     """防御性兜底：existing_draft_text 若被传入非字符串，也不能在 .strip() 处崩；
     空合并草案时 draft_text 回落为 str(coerced)（#1185：不盯 prompt 中文标签）。"""
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         # empty 合并草案 → extract falls back to coerced existing_draft_text
         return (json.dumps(
             {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": ""},
@@ -1026,7 +1026,7 @@ def test_extract_draft_intent_no_supplement_hint_when_no_pending(monkeypatch):
     """has_pending_draft=False（默认）时，prompt 不含补充提示（保持原行为不变）。"""
     prompts_seen = []
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         prompts_seen.append(prompt)
         return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
 
@@ -1050,7 +1050,7 @@ def test_last_write_wins_uses_has_pending_draft_flag(game, monkeypatch):
     db.upsert_pending_directive(state.turn, name,
                                 payload={**_POLICY_FIELDS, "text": "第一版草稿", "actor": name})
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         # 确认意图=无；拟旨意图=拟旨 + 合并草案（LWW 写回）
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
@@ -1098,7 +1098,7 @@ def test_draft_request_with_appointment_content_stages_directive_and_office(game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             raise AssertionError(
                 "#1380 P5: structured multi appointment must not call serial extractor"
@@ -1144,7 +1144,7 @@ def test_api_channel_multi_draft_appointment_not_dropped_by_draft_bias(
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             raise AssertionError(
                 "#1502 multi structured appointment must not call serial extractor"
@@ -1226,7 +1226,7 @@ def test_none_player_message_does_not_crash_draft_probe(read_game, monkeypatch):
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
-    def _none_actions(prompt, llm_config=None, tag=""):
+    def _none_actions(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             return (json.dumps({"任免动作": "无"}, ensure_ascii=False), 1)
         if tag == "draft_intent":
@@ -1288,7 +1288,7 @@ def test_supplement_stores_merged_draft_not_raw_reply(game, monkeypatch):
     db.upsert_pending_directive(state.turn, name,
                                 payload={**_POLICY_FIELDS, "text": original_text, "actor": name})
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "draft_intent":
             return (json.dumps(
                 {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": merged_draft}, ensure_ascii=False), 1)
@@ -1364,7 +1364,7 @@ def test_undo_chat_turn_removes_write_decree_draft(game):
 def test_supplement_mode_falls_back_to_existing_draft_when_merged_empty(monkeypatch):
     """补充模式（has_pending_draft + existing_draft_text）拟旨，但 LLM 未填「合并草案」：
     draft_text 应保留 existing_draft_text，避免用确认回话覆盖旧草案。"""
-    def _canned(prompt, llm_config=None, tag=""):
+    def _canned(prompt, llm_config=None, tag="", *, policy=None):
         # 拟旨意图=拟旨，但故意不带「合并草案」字段
         return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
 
@@ -1383,7 +1383,7 @@ def test_supplement_mode_falls_back_to_existing_draft_when_merged_empty(monkeypa
 def test_supplement_mode_prefers_merged_when_present(monkeypatch):
     """对照组：补充模式 LLM 填了「合并草案」时，draft_text 取合并草案而非大臣回话。
     锚定 719-722 分支两侧（merged 非空走 merged）。"""
-    def _canned(prompt, llm_config=None, tag=""):
+    def _canned(prompt, llm_config=None, tag="", *, policy=None):
         return (json.dumps(
             {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": "合并：着户部及监察御史同查三边粮饷。"},
             ensure_ascii=False), 1)
@@ -1401,7 +1401,7 @@ def test_supplement_mode_prefers_merged_when_present(monkeypatch):
 def test_extract_draft_intent_backend_exception_degrades_to_none(monkeypatch):
     """_run_backend_for_config 抛异常 → _log 兜底、raw 保持空串 → 归一为「无」、空草稿
     （cli_backend.py:714-715 异常路径 + 723-724 默认 draft_text）。"""
-    def _boom(prompt, llm_config=None, tag=""):
+    def _boom(prompt, llm_config=None, tag="", *, policy=None):
         raise RuntimeError("backend down")
 
     logged = []
@@ -1419,7 +1419,7 @@ def test_extract_draft_intent_backend_exception_degrades_to_none(monkeypatch):
 def test_extract_draft_intent_non_object_json_degrades_to_none(monkeypatch):
     """LLM 若返回合法但非对象的 JSON（如数组），也不能在 .get() 处崩；
     应按无拟旨意图降级。"""
-    def _array_payload(prompt, llm_config=None, tag=""):
+    def _array_payload(prompt, llm_config=None, tag="", *, policy=None):
         return (json.dumps(["拟旨"], ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _array_payload)
@@ -1432,7 +1432,7 @@ def test_extract_draft_intent_non_object_json_degrades_to_none(monkeypatch):
 def test_extract_draft_intent_dirty_action_normalized_to_none(monkeypatch):
     """LLM 返回非 {无,拟旨} 的脏「拟旨意图」值 → 归一为「无」（cli_backend.py:718）。
     脏动作不得误触发草案 stage。"""
-    def _dirty(prompt, llm_config=None, tag=""):
+    def _dirty(prompt, llm_config=None, tag="", *, policy=None):
         return (json.dumps({"拟旨意图": "也许吧"}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _dirty)
@@ -1444,7 +1444,7 @@ def test_extract_draft_intent_dirty_action_normalized_to_none(monkeypatch):
 def test_extract_draft_intent_no_intent_returns_empty_draft_text(monkeypatch):
     """LLM 明确判「无」时，draft_text 必须为空串而不是大臣回话。
     调用方当前也看 draft_action，但 helper 契约写的是无意图→空草稿。"""
-    def _no_intent(prompt, llm_config=None, tag=""):
+    def _no_intent(prompt, llm_config=None, tag="", *, policy=None):
         return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _no_intent)
@@ -1468,7 +1468,7 @@ def test_supplement_existing_draft_text_swallows_malformed_payload_json(game, mo
         ("{这不是合法JSON", int(pid)))
     db.conn.commit()
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
         return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
@@ -1518,7 +1518,7 @@ def test_supplement_existing_draft_text_ignores_non_object_payload_json(
         (payload_json, int(pid)))
     db.conn.commit()
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
         return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
@@ -1574,7 +1574,7 @@ def test_supplement_existing_draft_text_accepts_preparsed_payload_json(game, mon
 
     monkeypatch.setattr(db, "list_pending_actions", _list_with_preparsed_payload)
 
-    def _capture(prompt, llm_config=None, tag=""):
+    def _capture(prompt, llm_config=None, tag="", *, policy=None):
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
         return (json.dumps({
@@ -1737,7 +1737,7 @@ def test_confirm_gate_does_not_sweep_conversational_directive(game, monkeypatch)
 
     # 后一轮被判「应允」（语义针对 office 暂存）：directive 必须存活、不被提前 commit
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "应允"}, ensure_ascii=False), 1))
     sess = _fake_session(db, state)
     GameSession.apply_cli_conversation_actions(
@@ -1768,7 +1768,7 @@ def test_confirm_reject_does_not_delete_conversational_directive(game, monkeypat
         payload={"text": "测试任免原文", "name": "某新臣", "office": "兵部主事", "appointer": name})
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "拒绝"}, ensure_ascii=False), 1))
     sess = _fake_session(db, state)
     GameSession.apply_cli_conversation_actions(
@@ -1795,7 +1795,7 @@ def test_targeted_directive_rejection_does_not_drop_secret_order(game, monkeypat
     # 确认判读只许结构化 LLM 枚举（ADR 0028）；stub 拒绝，禁词表快路。
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda prompt, llm_config=None, tag="": (
+        lambda prompt, llm_config=None, tag="", *, policy=None: (
             json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1),
     )
     GameSession.apply_cli_conversation_actions(

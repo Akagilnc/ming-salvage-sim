@@ -5,7 +5,15 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from ming_sim import audience_night as an
+from ming_sim.audience_translation import list_pending_translations
 from tests.conftest import append_night_chat, open_audience_night
+
+
+def _scroll_game(db):
+    return SimpleNamespace(
+        db=db,
+        pending_translation_retries=lambda **kw: list_pending_translations(db, **kw),
+    )
 
 
 def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(game, monkeypatch):
@@ -49,13 +57,40 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(gam
     assert int(persisted["turn"]) == int(state.turn)
 
 
+def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game, monkeypatch):
+    import json
+    import web_app
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    db, state, content = game
+    runtime = _web_game(db, state, content, _FakeAgent(), monkeypatch)
+    runtime.favorites = set()
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    client = TestClient(web_app.app)
+
+    response = client.post(
+        "/api/ministers/%E6%B8%A9%E4%BD%93%E4%BB%81/chat/stream",
+        json={"message": "宣王绍徽"},
+    )
+    events = [
+        (block.splitlines()[0].removeprefix("event: "), json.loads(block.splitlines()[1].removeprefix("data: ")))
+        for block in response.text.strip().split("\n\n")
+    ]
+    kinds = [kind for kind, _ in events]
+    assert response.status_code == 200
+    assert kinds.index("accepted") < kinds.index("protagonist_changed") < kinds.index("done")
+    scroll = client.get("/api/audience/scroll").json()
+    assert scroll["protagonist"] == "王绍徽"
+    assert any(person["name"] == "王绍徽" and person["portrait_id"] == content.characters["王绍徽"].portrait_id for person in scroll["characters"])
+
+
 def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     import web_app
 
     db, state, _ = game
     night_id = open_audience_night(db, state)
     append_night_chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 20)
-    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
     client = TestClient(web_app.app)
 
     live = client.get("/api/audience/scroll").json()
@@ -66,9 +101,140 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     assert live["night_id"] == closed["night_id"] == night_id
     assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
     assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
-    assert set(live) == set(closed) == {"night_id", "status", "messages"}
+    assert set(live) == set(closed) == {
+        "night_id", "status", "messages", "protagonist", "roster", "characters",
+        "translation_pending", "translation_retries", "pending_translation_turn_ids", "container",
+    }
     assert live["status"] == "open"
     assert closed["status"] == "closed"
+
+
+def test_empty_open_night_scroll_exposes_persisted_container(game, monkeypatch):
+    import web_app
+
+    db, state, _ = game
+    night_id = int(an.open_night(db, state, time_of_day="午时", location="文华殿", empty_scaffold=True)["id"])
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+
+    assert payload["night_id"] == night_id
+    assert all(not message["content"] for message in payload["messages"])
+    assert payload["container"] == {"time_of_day": "午时", "location": "文华殿", "audience_type": "召对"}
+
+
+def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch):
+    import web_app
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    an.summon_enter(db, night_id, "王绍徽")
+    an.summon_enter(db, night_id, "毕自严")
+    an.set_night_protagonist(db, night_id, "王绍徽")
+    an.dismiss_from_audience(db, "王绍徽", night_id=night_id)
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
+
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+
+    assert payload["protagonist"] == "王绍徽"
+    assert payload["roster"] == [
+        {"name": "王承恩", "present": True},
+        {"name": "王绍徽", "present": False},
+        {"name": "毕自严", "present": True},
+    ]
+
+
+def test_scroll_projects_portrait_for_legal_aside_speaker_outside_roster(game, monkeypatch):
+    import web_app
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    db, state, content = game
+    night_id = open_audience_night(db, state)
+    an.append_ledger_entry(
+        db, night_id, body="御前密奏。", tags=["scroll_role:attendant"],
+        person_names=["杨嗣昌"], audibility="御前低语",
+    )
+    runtime = _web_game(db, state, content, _FakeAgent(), monkeypatch)
+    runtime.favorites = set()
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+    assert "杨嗣昌" not in [entry["name"] for entry in payload["roster"]]
+    assert any(message["role"] == "attendant" and message["speaker"] == "杨嗣昌" for message in payload["messages"])
+    assert any(person["name"] == "杨嗣昌" and person["portrait_id"] == content.characters["杨嗣昌"].portrait_id for person in payload["characters"])
+
+
+def test_scroll_exposes_translation_pending_until_late_declaration_lands(game, monkeypatch):
+    import web_app
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    turn, _ = append_night_chat(db, state, night_id, "王绍徽", "请奏", "臣在", 20)
+    db.mark_story_extraction_pending(turn)
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
+    client = TestClient(web_app.app)
+
+    assert client.get("/api/audience/scroll").json()["translation_pending"] is True
+    apply_audience_round_translation(db, state, {"protagonist": {"person_name": "王绍徽"}}, night_id=night_id, chat_turn_id=turn)
+    settled = client.get("/api/audience/scroll").json()
+    assert settled["translation_pending"] is False
+    assert settled["protagonist"] == "王绍徽"
+
+
+def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeypatch):
+    import web_app
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    story = "臣领旨。王承恩低语。殿内烛影摇曳。"
+    turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "辽饷何解？", story, 10)
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
+    client = TestClient(web_app.app)
+    before = client.get("/api/audience/scroll").json()["messages"]
+    assert [m["content"] for m in before if m.get("chat_turn_id") == turn_id][-1] == story
+    assert [(m["role"], m["speaker"], m["highlights"]) for m in before if m.get("chat_turn_id") == turn_id][-1] == ("scene", "", [])
+    assert client.get("/api/audience/scroll").json()["translation_pending"] is True
+
+    apply_audience_round_translation(db, state, {
+        "scene_facts": [
+            {"body": "臣领旨。", "role": "minister", "audibility": "殿上公开", "person_names": ["杨嗣昌"]},
+            {"body": "王承恩低语。", "role": "attendant", "audibility": "御前低语", "person_names": ["王承恩"]},
+            {"body": "殿内烛影摇曳。", "role": "scene", "audibility": "殿上公开", "person_names": []},
+        ],
+    }, night_id=night_id, chat_turn_id=turn_id, minister_name="杨嗣昌")
+    after = client.get("/api/audience/scroll").json()["messages"]
+    assert client.get("/api/audience/scroll").json()["translation_pending"] is False
+    segments = [m for m in after if m.get("chat_turn_id") == turn_id and m["role"] != "user"]
+    assert [(m["role"], m["speaker"], m["content"]) for m in segments] == [
+        ("minister", "杨嗣昌", "臣领旨。"), ("attendant", "王承恩", "王承恩低语。"),
+        ("scene", "", "殿内烛影摇曳。"),
+    ]
+    assert segments[1]["audibility"] == "御前低语"
+    assert segments[1]["beat"] == "aside"
+    assert "".join(m["content"] for m in segments) == story
+    assert [m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"] if m.get("chat_turn_id") == turn_id and m["role"] != "user"] == segments
+
+
+def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
+    import pytest
+    import web_app
+    from ming_sim.audience_translate import AudienceTranslateError
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "何解？", "臣领旨。", 10)
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
+    for role in ("minister", "attendant"):
+        with pytest.raises(AudienceTranslateError):
+            apply_audience_round_translation(db, state, {
+                "scene_facts": [{"body": "臣领旨。", "role": role, "audibility": "殿上公开", "person_names": []}],
+            }, night_id=night_id, chat_turn_id=turn_id)
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+    assert payload["translation_pending"] is True
+    reply = next(m for m in payload["messages"] if m["content"] == "臣领旨。")
+    assert (reply["role"], reply["speaker"]) == ("scene", "")
 
 
 def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats(game, monkeypatch):
@@ -90,7 +256,7 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
         person_names=[], source_chat_turn_id=first_turn, order_key=10,
     )
     append_night_chat(db, state, night_id, "洪承畴", "边情如何？", "边关尚稳。", 20)
-    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
 
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
     messages = payload["messages"]
@@ -102,7 +268,7 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     assert "杨嗣昌以身家作保。" not in contents
     # #1293a：抽取派生（含非对话复述的故事事实）不上 live 卷轴
     assert "帘外忽起雨声。" not in contents
-    assert {message["speaker"] for message in messages if message["role"] == "minister"} == {"杨嗣昌", "洪承畴"}
+    assert [message["content"] for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == ["臣请据实核账。", "边关尚稳。"]
 
     allowed_message_fields = {
         "role", "speaker", "audibility", "time", "content",
@@ -139,8 +305,8 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     assert scroll[0]["container"] == {"time_of_day": "戌时", "location": "乾清宫", "audience_type": "召对"}
     assert [(m["role"], m["speaker"], m["content"]) for m in scroll if m["role"] != "scene"] == [
         ("user", "朕", "辽饷如何？"),
-        ("minister", "杨嗣昌", "臣请据实核账。"),
     ]
+    assert any(m["role"] == "scene" and m["content"] == "臣请据实核账。" for m in scroll)
     assert all({"role", "speaker", "audibility", "time", "soft_boundary", "beat", "highlights", "container"} <= set(m) for m in scroll)
     assert scroll[-1]["beat"] == "coda"
     assert scroll[-1]["content"] == ""
@@ -364,7 +530,7 @@ def test_history_turns_lists_every_closed_night_including_night_only_turns(game,
     second = open_audience_night(db, state)
     db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (second,))
     db.conn.commit()
-    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
 
     payload = TestClient(web_app.app).get("/api/history/turns").json()
     entries = [item for item in payload["turns"] if item["turn"] == state.turn]

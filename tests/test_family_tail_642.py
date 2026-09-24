@@ -24,7 +24,7 @@ from ming_sim.models import LLMConfig
 from ming_sim.relation_brew import FOUNDINGS_KEY, MonthEndRelationBrewLeg, RECENT_KEY
 from ming_sim.relations import MINISTER_EDGE_KINDS
 from ming_sim.session import ChatTurnResult, GameSession
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 
 class _CannedJudge:
@@ -98,11 +98,12 @@ def test_yang_typed_failure_blocks_semantic_wash(monkeypatch):
             scene_calls["n"] += 1
             return SimpleNamespace(content="臣杨嗣昌领旨。", tools=[])
 
-    def _coop_only_translate(_prompt, _cfg):
+    def _coop_only_translate(prompt, cfg):
         translate_calls["n"] += 1
+        translated = offline_empty_audience_translate(prompt, cfg)
+        translated["scene_facts"][0].update(role="minister", person_names=["杨嗣昌"])
         return {
-            "commissions": [],
-            "promises": [],
+            **translated,
             "edge_events": list(_COOP_ONLY_EDGES),
         }
 
@@ -220,13 +221,14 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
                 )
             return SimpleNamespace(content=answer, tools=[])
 
-    def _beat_translate(_prompt, _cfg):
+    def _beat_translate(prompt, cfg):
         idx = translate_calls["n"]
         translate_calls["n"] += 1
         edges = _BEAT_EDGE_EVENTS[min(idx, len(_BEAT_EDGE_EVENTS) - 1)]
+        translated = offline_empty_audience_translate(prompt, cfg)
+        translated["scene_facts"][0].update(role="minister", person_names=["杨嗣昌"])
         return {
-            "commissions": [],
-            "promises": [],
+            **translated,
             "edge_events": [dict(e) for e in edges],
         }
 

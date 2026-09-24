@@ -30,7 +30,7 @@ def fresh_session(tmp_path, monkeypatch):
     def _track_verify(cfg):
         raise AssertionError("fresh 构造不得调用 verify_llm_available")
 
-    def _track_backend(prompt, llm_config=None, tag=""):
+    def _track_backend(prompt, llm_config=None, tag="", *, policy=None):
         raise AssertionError(f"fresh 构造不得调用 CLI 后端 tag={tag!r}")
 
     monkeypatch.setattr(llm_mod, "verify_llm_available", _track_verify)

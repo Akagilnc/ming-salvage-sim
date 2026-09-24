@@ -65,7 +65,6 @@ type HookApi = ReturnType<typeof useSettlementFlow>;
 function mountHarness(opts: {
   loadState: () => Promise<GameState | null>;
   initial?: GameState;
-  surfacePendingActionFailures?: (failures?: unknown[]) => Promise<boolean>;
 }) {
   const hookRef = { current: null as HookApi | null };
   const stateRef = { current: opts.initial ?? preClickState };
@@ -91,8 +90,6 @@ function mountHarness(opts: {
       cheatDirective,
       setCheatDirective,
       loadState,
-      surfacePendingActionFailures: opts.surfacePendingActionFailures
-        ?? (async () => false),
       state,
     });
 
@@ -287,9 +284,7 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
     cleanup();
   });
 
-  it("#1808 B pending 消费链 reject 时 phase-1 仍响亮，不静默", async () => {
-    // 真实入口：advanceWithoutEdict catch → surfacePendingActionFailures 内 await 链 reject
-    // → 仍须落到 error / settlementHudError，不得只清 busy。
+  it("#1808 B pending failure remains a loud phase-1 error without a recovery panel", async () => {
     const FAIL_MSG = "退朝失败：欠账未落库（替身）。";
     vi.stubGlobal("fetch", vi.fn(async () => ({
       ok: false,
@@ -310,9 +305,6 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
     const { host, hookRef, cleanup } = mountHarness({
       loadState: async () => preClickState,
       initial: preClickState,
-      surfacePendingActionFailures: async () => {
-        throw new Error("loadState rejected inside pending consume");
-      },
     });
 
     await act(async () => {

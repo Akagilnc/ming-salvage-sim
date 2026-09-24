@@ -1418,6 +1418,9 @@ class GameDB:
                 -- #501 叙事抽取水位（确定性可判、补跑不重复/不漏）：
                 --   ''=未抽 / 'done'=已抽落账 / 'pending'=待补（抽取失败，给玩家原地重试）
                 extract_status TEXT NOT NULL DEFAULT '',
+                error_pack_path TEXT NOT NULL DEFAULT '',
+                post_reply_recovery TEXT NOT NULL DEFAULT '',
+                post_reply_error_pack_path TEXT NOT NULL DEFAULT '',
                 -- #1566/#1716：typed route（'' / offsite / secret_order / secret_order_offsite）；
                 -- 中断重试经 decode_chat_turn_route 恢复 explicit_secret_order / 殿上 scene。
                 route TEXT NOT NULL DEFAULT '',
@@ -2511,6 +2514,9 @@ class GameDB:
         )
         # #501 叙事抽取水位 + 抽取账溯源/在场效果/时序键（旧档补列，schema 升级非 fallback）。
         self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("chat_turns", "error_pack_path", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("chat_turns", "post_reply_recovery", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("chat_turns", "post_reply_error_pack_path", "TEXT NOT NULL DEFAULT ''")
         # #634 召对判官已判水位（ADR 0082）：''=未判 / 'done'=已判落库。逐轮标记即水位，
         # 撤回轮翻 undone 后天然出窗（水位回退），无平行水位表。
         self.ensure_column("chat_turns", "relation_judge_status", "TEXT NOT NULL DEFAULT ''")
@@ -9419,6 +9425,15 @@ class GameDB:
                     })
         return projection
 
+    def list_hall_chat_turns(self, night_id: int) -> List[Dict[str, Any]]:
+        """殿上轮的原始持久身份，含升级前按朝臣存储的轮。"""
+        rows = self.conn.execute(
+            "SELECT id, minister_name, status, user_message_id, minister_message_id FROM chat_turns "
+            "WHERE night_id=? AND route IN ('', 'secret_order') ORDER BY id",
+            (int(night_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def record_mindreading(self, chat_turn_id: int, payload: Mapping[str, object]) -> int:
         """持久化近臣私语；独立于召对逐字稿与共享见闻轨。"""
         cur = self.conn.execute(
@@ -9646,7 +9661,7 @@ class GameDB:
         where = " AND ".join(clauses)
         rows = self.conn.execute(
             f"""
-            SELECT t.id, t.minister_name, t.turn, t.route, m.content AS question
+            SELECT t.id, t.minister_name, t.turn, t.route, t.error_pack_path, m.content AS question
             FROM chat_turns t
             JOIN chat_messages m ON m.id = t.user_message_id
             WHERE {where}
@@ -9661,9 +9676,73 @@ class GameDB:
                 "turn": int(r["turn"]),
                 "question": str(r["question"]),
                 "route": str(r["route"] or ""),
+                "error_pack_path": str(r["error_pack_path"] or ""),
             }
             for r in rows
         ]
+
+    def get_post_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
+        """已落回话的尾随失败：保留原轮身份与错误包，不回到生成态。"""
+        rows = self.conn.execute(
+            """SELECT t.id, t.minister_name, t.turn, t.post_reply_recovery,
+                      t.post_reply_error_pack_path, q.content AS question, a.content AS answer,
+                      t.minister_message_id
+               FROM chat_turns t
+               JOIN chat_messages q ON q.id = t.user_message_id
+               JOIN chat_messages a ON a.id = t.minister_message_id
+               WHERE t.minister_name = ? AND t.status = 'active'
+                 AND t.post_reply_recovery != ''
+                 AND t.post_reply_recovery NOT LIKE 'recovering:%' ORDER BY t.id ASC""",
+            (minister_name,),
+        ).fetchall()
+        return [{"chat_turn_id": int(r["id"]), "minister_name": str(r["minister_name"]),
+                 "turn": int(r["turn"]), "question": str(r["question"]),
+                 "answer": str(r["answer"]), "minister_message_id": int(r["minister_message_id"]),
+                 "recovery_phase": str(r["post_reply_recovery"]),
+                 "error_pack_path": str(r["post_reply_error_pack_path"] or "")}
+                for r in rows]
+
+    def mark_post_reply_failure(self, chat_turn_id: int, phase: str, pack_path: str) -> None:
+        self.conn.execute(
+            "UPDATE chat_turns SET post_reply_recovery = ?, post_reply_error_pack_path = ? "
+            "WHERE id = ? AND status = 'active' AND minister_message_id IS NOT NULL",
+            (phase, pack_path, int(chat_turn_id)),
+        )
+        self.conn.commit()
+
+    def clear_post_reply_failure(self, chat_turn_id: int) -> None:
+        self.conn.execute(
+            "UPDATE chat_turns SET post_reply_recovery = '', post_reply_error_pack_path = '' "
+            "WHERE id = ? AND status = 'active'",
+            (int(chat_turn_id),),
+        )
+        self.conn.commit()
+
+    def claim_post_reply_recovery(self, chat_turn_id: int, phase: str) -> bool:
+        """持运行时写闸调用；同一已落回话只允许一个尾随恢复者。"""
+        cursor = self.conn.execute(
+            "UPDATE chat_turns SET post_reply_recovery = ? WHERE id = ? "
+            "AND status = 'active' AND post_reply_recovery = ?",
+            (f"recovering:{phase}", int(chat_turn_id), phase),
+        )
+        self.conn.commit()
+        return cursor.rowcount == 1
+
+    def release_post_reply_recovery(self, chat_turn_id: int, phase: str) -> None:
+        self.conn.execute(
+            "UPDATE chat_turns SET post_reply_recovery = ? WHERE id = ? "
+            "AND post_reply_recovery = ?",
+            (phase, int(chat_turn_id), f"recovering:{phase}"),
+        )
+        self.conn.commit()
+
+    def reconcile_post_reply_recovery(self) -> None:
+        """仅启动时释放崩溃遗留 claim，保留原错误包供重试。"""
+        self.conn.execute(
+            "UPDATE chat_turns SET post_reply_recovery = substr(post_reply_recovery, 12) "
+            "WHERE post_reply_recovery LIKE 'recovering:%'",
+        )
+        self.conn.commit()
 
     def reopen_interrupted_chat_turn_for_retry(self, chat_turn_id: int) -> bool:
         """重试起手：'interrupted' → 'generating'（重入生成态、与在飞守卫一致，回话落库后升 active）。
@@ -9704,6 +9783,11 @@ class GameDB:
         ).fetchall()
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
+            self.conn.execute(
+                "DELETE FROM story_ledger_entries "
+                "WHERE source_chat_turn_id = ? OR origin_chat_turn_id = ?",
+                (int(chat_turn_id), int(chat_turn_id)),
+            )
             # 空 undone 消息集：只还原业务副作用，一句问话/回话都不删。
             self._restore_chat_rollback_items_in_tx(items, [])
             self.conn.execute(
@@ -9786,6 +9870,7 @@ class GameDB:
         if minister_message_id is not None:
             assignments.append("minister_message_id = ?")
             params.append(int(minister_message_id))
+            assignments.append("error_pack_path = ''")
             # 回话入档 = 轮完成：generating → active（#498 完成态）
             assignments.append("status = CASE WHEN status = 'generating' THEN 'active' ELSE status END")
         if not assignments:
@@ -10160,6 +10245,7 @@ class GameDB:
                     """
                     UPDATE chat_turns
                     SET minister_message_id = ?,
+                        error_pack_path = '',
                         status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
                         mindreading_status = CASE WHEN mindreading_status = ''
                                                  THEN 'running' ELSE mindreading_status END
@@ -10172,6 +10258,7 @@ class GameDB:
                     """
                     UPDATE chat_turns
                     SET minister_message_id = ?,
+                        error_pack_path = '',
                         status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
                         mindreading_status = CASE WHEN mindreading_status IN ('', 'running')
                                                  THEN ? ELSE mindreading_status END
@@ -10233,6 +10320,13 @@ class GameDB:
             (int(chat_turn_id),),
         ).fetchone()
         return str(row["extract_status"] or "") if row is not None else ""
+
+    def set_chat_turn_error_pack(self, chat_turn_id: int, path: str) -> None:
+        self.conn.execute(
+            "UPDATE chat_turns SET error_pack_path = ? WHERE id = ? AND status NOT IN ('failed', 'undone')",
+            (path, int(chat_turn_id)),
+        )
+        self.conn.commit()
 
     def mark_story_extraction_pending(self, chat_turn_id: int) -> None:
         """抽取失败 → 待补（'' / 'pending' → 'pending'）；不覆盖已 'done'。"""
@@ -10589,7 +10683,7 @@ class GameDB:
                     commit=False,
                 )
             self.conn.execute(
-                "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
+                "UPDATE chat_turns SET extract_status = 'done', error_pack_path = '' WHERE id = ?",
                 (cid,),
             )
         # 本方法即外层 owner：atomic 提交后镜像（0008-D5；#1745 补缺镜像）。
@@ -10622,7 +10716,7 @@ class GameDB:
         rows = self.conn.execute(
             f"""
             SELECT t.id AS chat_turn_id, t.minister_name, t.night_id, t.night_seq,
-                   t.extract_status, m.content AS reply
+                   t.extract_status, t.error_pack_path, m.content AS reply
             FROM chat_turns t
             JOIN chat_messages m ON m.id = t.minister_message_id
             WHERE {where}
@@ -10670,7 +10764,7 @@ class GameDB:
 
     def is_global_last_active_chat_turn(self, chat_turn_id: int) -> bool:
         row = self.conn.execute(
-            "SELECT id FROM chat_turns WHERE status = 'active' ORDER BY id DESC LIMIT 1"
+            "SELECT id FROM chat_turns WHERE status IN ('active', 'interrupted') ORDER BY id DESC LIMIT 1"
         ).fetchone()
         return bool(row and int(row["id"]) == int(chat_turn_id))
 
@@ -10925,22 +11019,8 @@ class GameDB:
             # 重投影 audience_nights.protagonist_name；无存活声明则回初态空值。
             # 覆盖转译绑定与宣 X 先切两个写口（二者都写同一夜级缓存）。
             if night_id > 0:
-                prev = self.conn.execute(
-                    """
-                    SELECT protagonist_name FROM chat_turns
-                    WHERE night_id = ?
-                      AND status NOT IN ('undone', 'failed')
-                      AND protagonist_name != ''
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """,
-                    (night_id,),
-                ).fetchone()
-                restored = str(prev["protagonist_name"] or "") if prev is not None else ""
-                self.conn.execute(
-                    "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
-                    (restored, night_id),
-                )
+                from ming_sim.audience_night import reproject_night_protagonist
+                reproject_night_protagonist(self, night_id)
             self._truncate_agno_runs_in_tx(
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),

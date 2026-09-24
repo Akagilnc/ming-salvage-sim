@@ -1,4 +1,5 @@
 import React from "react";
+import { AUDIENCE_SCENE_SPEAKER } from "./audienceScene";
 import { createRoot } from "react-dom/client";
 import { Crown, X } from "lucide-react";
 import { api } from "./api";
@@ -21,7 +22,6 @@ import { ClosedIssuesModal } from "./components/closedIssues";
 import { EdictModal } from "./components/edictModal";
 import { EndingModal } from "./components/endingModal";
 import { HistoryModal } from "./components/historyModal";
-import { PendingFailureNoticePanel } from "./components/pendingFailureNotice";
 import { ReportModal } from "./components/reportModal";
 import { SecretOrdersModal } from "./components/secretOrders";
 import { SettlementLock } from "./components/settlementLock";
@@ -99,6 +99,8 @@ export function App() {
   const [undoneChatIdentity, setUndoneChatIdentity] = React.useState<ChatIdentity | null>(null);
   const [audienceScrollGeneration, setAudienceScrollGeneration] = React.useState(0);
   const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
+  const audienceResumeCheckedRef = React.useRef(false);
+  const audienceResumeGenerationRef = React.useRef(0);
   const invalidateAudienceScroll = React.useCallback(() => {
     setAudienceScrollGeneration((generation) => generation + 1);
   }, []);
@@ -139,28 +141,30 @@ export function App() {
     [refreshDurableProjection],
   );
 
-  // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试/失败恢复。
-  // 须在 useSettlementFlow 之前调用——结算流的 surfacePendingActionFailures 由这里直供。
+  React.useEffect(() => {
+    selectedMinisterRef.current = selectedMinister;
+  }, [selectedMinister]);
+
+  // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试。
   const {
     suggestions,
     chatNotice,
-    chatFailures,
-    activeChatFailures,
-    replyRetry,
+    replyRetries,
+    translationRetries,
+    retryReadFailure,
     canUndoLastChat,
     composerHint,
     setComposerHint,
     input,
     setComposerIntent,
     setInput,
-    failureRecoveryMode,
     activeMinister,
     openChat,
+    summonMinister,
     sendChat,
     undoLastChat,
     retryInterruptedReply,
-    openFailureRecovery,
-    surfacePendingActionFailures,
+    retryTranslation,
   } = useChatActions({
     state,
     setState,
@@ -172,7 +176,6 @@ export function App() {
     selectedMinister,
     setSelectedMinister,
     selectedMinisterRef,
-    suppressNextReportRef,
     setSecretOrders,
     setUndoneChatIdentity,
     loadState,
@@ -225,7 +228,6 @@ export function App() {
     cheatDirective,
     setCheatDirective,
     loadState,
-    surfacePendingActionFailures,
     state,
   });
 
@@ -267,6 +269,8 @@ export function App() {
     // #1808 C：再入局清上一局 settlementHudError，防陈旧失败冒充当前 HUD。
     clearSettlementHudError();
     setUndoneChatIdentity(null);
+    audienceResumeCheckedRef.current = false;
+    audienceResumeGenerationRef.current += 1;
     setAppView("game");
     await loadState();
   }, [loadState, resetLocalEdictState, clearSettlementHudError]);
@@ -279,6 +283,8 @@ export function App() {
     resetLocalEdictState();
     // #1808 C：退菜单清 settlementHudError，接缝归既有退出路径。
     clearSettlementHudError();
+    audienceResumeCheckedRef.current = false;
+    audienceResumeGenerationRef.current += 1;
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
     setUndoneChatIdentity(null);
@@ -360,8 +366,23 @@ export function App() {
   }, [state, gazetteShown, endingDismissed, activeModal]);
 
   React.useEffect(() => {
-    selectedMinisterRef.current = selectedMinister;
-  }, [selectedMinister]);
+    if (!state || appView !== "game" || audienceResumeCheckedRef.current) return;
+    audienceResumeCheckedRef.current = true;
+    const generation = audienceResumeGenerationRef.current;
+    api<{ night_id: number; status: string }>("/api/audience/scroll")
+      .then((scroll) => {
+        if (generation !== audienceResumeGenerationRef.current) return;
+        if (scroll.night_id > 0 && scroll.status === "open") {
+          setSelectedMinister(AUDIENCE_SCENE_SPEAKER);
+          setActiveModal("chat");
+        }
+      })
+      .catch((err) => {
+        if (generation === audienceResumeGenerationRef.current) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      });
+  }, [state, appView]);
 
   // 全局 ESC：按 z-index 优先级，最前面的弹窗先关。
   // ending 须同时 setEndingDismissed，否则自动重开 effect 会立刻弹回。
@@ -618,7 +639,9 @@ export function App() {
         open={drawerOpen}
         onGroupChange={setMinisterGroup}
         onClose={() => setDrawerOpen(false)}
-        onOpenChat={openChat}
+        onOpenAudience={() => {
+          openChat({ name: AUDIENCE_SCENE_SPEAKER, office: "一夜一卷", status: "active" } as Minister);
+        }}
         onOpenEdict={() => openModal("edict")}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
@@ -669,10 +692,7 @@ export function App() {
       <AppointmentDrawer
         ministers={state.ministers}
         open={appointmentDrawerOpen}
-        onOpenChat={openChat}
         onClose={() => setAppointmentDrawerOpen(false)}
-        chatEntryEnabled={chatEntryEnabled}
-        phase={state.turn.phase}
       />
 
       {mapIntelVisible ? (
@@ -696,7 +716,7 @@ export function App() {
       ) : null}
 
       {chatOpen && activeMinister ? (
-        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" hideTitle onClose={() => setActiveModal("none")}>
+        <FullscreenModal title="召对" subtitle={activeMinister.office} bgClass="modal-bg-chat" hideTitle onClose={() => setActiveModal("none")}>
           <ChatModal
             minister={activeMinister}
             ministers={audienceRoster}
@@ -713,18 +733,20 @@ export function App() {
             scrollGeneration={audienceScrollGeneration}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
-            chatFailures={activeChatFailures}
             canUndoLastChat={canUndoLastChat}
             composerHint={composerHint}
             input={input}
             busy={busy}
             error={error}
             secretOrders={secretOrders.filter((o) => o.status === "active")}
-            replyRetry={replyRetry}
+            replyRetries={replyRetries}
+            translationRetries={translationRetries}
+            retryReadFailure={retryReadFailure}
             onInput={setInput}
             onIntent={setComposerIntent}
             onSend={sendChat}
             onRetryReply={retryInterruptedReply}
+            onRetryTranslation={retryTranslation}
             onUndo={undoLastChat}
             onHint={setComposerHint}
             onFavorite={toggleFavorite}
@@ -736,14 +758,6 @@ export function App() {
         </FullscreenModal>
       ) : null}
 
-      {chatOpen && !activeMinister && failureRecoveryMode && chatFailures.length ? (
-        <FullscreenModal title="未落库的政务" subtitle="承办人不可召见" bgClass="modal-bg-chat" onClose={() => setActiveModal("none")}>
-          <PendingFailureNoticePanel
-            failures={chatFailures}
-            error={error}
-          />
-        </FullscreenModal>
-      ) : null}
 
       {edictOpen ? (
         <FullscreenModal
@@ -773,7 +787,6 @@ export function App() {
             onDeleteDirective={deleteDirective}
             onIssueDecree={issueDecree}
             onAdvanceWithoutEdict={advanceWithoutEdict}
-            onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>
       ) : null}
@@ -833,8 +846,7 @@ export function App() {
               setError(settlementClosedReason(state?.turn.phase));
               return;
             }
-            setActiveModal("chat");
-            setSelectedMinister(name);
+            summonMinister(name);
           }}
         />
       ) : null}

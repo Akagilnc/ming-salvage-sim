@@ -92,7 +92,7 @@ def test_draft_reinstatement_yuan_stages_office_and_lands_same_turn(game, monkey
     assert db.get_character_status("袁崇焕")[0] == "offstage"
     assert in_talent_pool(yuan, db, state.year, state.period)
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             raise AssertionError(
                 "#1380 P5: structured multi appointment must not call serial extractor"
@@ -188,7 +188,7 @@ def test_prior_unrelated_office_pending_does_not_block_yuan_reinstatement(
     )
     assert qian_pid
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             raise AssertionError(
                 "structured multi appointment must not call serial extractor"
@@ -240,7 +240,7 @@ def test_draft_without_appointment_intent_does_not_stage_office(game, monkeypatc
     db, state, content = game
     ch = _minister_wang_shaohui(db, content)
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             raise AssertionError(
                 "draft-only structured path must not call serial appointment extractor"
@@ -293,7 +293,7 @@ def test_api_classifier_dispatch_produces_appointment_and_stages_office(
     api_calls: list[str] = []
     backend_calls: list[str] = []
 
-    def _api(prompt, llm_config=None, tag=""):
+    def _api(prompt, llm_config=None, tag="", *, policy=None):
         api_calls.append(tag or "")
         assert tag == "action_intent"
         assert getattr(llm_config, "channel", None) == "api"
@@ -311,7 +311,7 @@ def test_api_classifier_dispatch_produces_appointment_and_stages_office(
         ]
         return (json.dumps(payload, ensure_ascii=False), 1)
 
-    def _backend_must_not_run(prompt, llm_config=None, tag=""):
+    def _backend_must_not_run(prompt, llm_config=None, tag="", *, policy=None):
         backend_calls.append(tag or "")
         raise AssertionError(
             f"API channel must not call CLI-only _run_backend_for_config tag={tag!r}"
@@ -391,7 +391,7 @@ def test_api_natural_language_preclassified_draft_appointment_stages_office(
         },
     )
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             raise AssertionError(
                 "#1502 P5: structured appointment must not call serial extractor"
@@ -433,7 +433,7 @@ def test_api_classifier_empty_list_skips_passthrough_zero_serial_office(game, mo
     db, state, content = game
     ch = _minister_wang_shaohui(db, content)
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             raise AssertionError(
                 "classifier [] must not fall into serial appointment extractor"
@@ -464,7 +464,7 @@ def test_api_classifier_not_run_still_passthrough_early_return(game, monkeypatch
     db, state, content = game
     ch = _minister_wang_shaohui(db, content)
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         raise AssertionError(
             f"API preclassified=None must early-return; unexpected tag={tag!r}"
         )
@@ -538,7 +538,7 @@ def test_api_pure_appointment_does_not_force_directive(game, monkeypatch):
     db, state, content = game
     ch = _minister_wang_shaohui(db, content)
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             raise AssertionError("structured appointment must not serial-extract")
         if tag == "draft_intent":
@@ -578,7 +578,7 @@ def test_api_tool_appointment_not_duplicated_by_preclassified(game, monkeypatch)
         },
     )
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             raise AssertionError("must not serial-extract when structured")
         return ("{}", 1)
@@ -618,7 +618,7 @@ def test_api_confirmation_round_does_not_revive_actions(game, monkeypatch):
         payload={"text": "测试任免原文", "name": "某人", "office": "某职", "appointer": ch.name},
     )
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             raise AssertionError("confirm round must not serial appointment")
         if tag == "draft_intent":
@@ -707,7 +707,7 @@ def test_draft_materialize_silently_drops_non_person_roster(game, monkeypatch):
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
     ).fetchone()["name"])
 
-    def _backend(prompt, llm_config=None, tag=""):
+    def _backend(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "appointment":
             return (json.dumps({
                 "任免动作": "无", "姓名": "", "官职": "",

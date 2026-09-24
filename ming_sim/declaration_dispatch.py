@@ -1317,9 +1317,8 @@ def _dispatch_scene_facts(
     chat_turn_id: int = 0, source_turn_error: Optional[str] = None,
 ) -> SectionResult:
     """说话人分段与可闻性：转译声明自带的一段戏文正文 + 可闻性 + 涉及人物，
-    原样落既有召对夜账本，代码不改写、不合成替代文本（P6/P7）。落账前校验涉及
-    人物全部存在；纯提及不拦死人（同既有 `settle_story_extraction` 口径：死账
-    仅对「进」效果校验），故 `check_dead=False`。
+    原样落既有召对夜账本，代码不改写、不合成替代文本（P6/P7）。旁白可提及
+    未在册人物，说话人须在册；不以生死状态改写戏文，故 `check_dead=False`。
 
     ``chat_turn_id``（#1839）：源轮绑定到 ``origin_chat_turn_id``，撤回本轮删该账。
     夜上下文下源轮缺失/不属本夜时整项 missing_ref，不落 origin=0 孤儿账。
@@ -1335,11 +1334,14 @@ def _dispatch_scene_facts(
         audibility = item.get("audibility") or AUDIBILITY_PUBLIC
         person_names = item.get("person_names") or []
         tags = item.get("tags") or []
+        scroll_role = item.get("role")
         if (
             body is None
-            or audibility not in _AUDIBILITIES
+            or not isinstance(audibility, str) or audibility not in _AUDIBILITIES
+            or (scroll_role is not None and (not isinstance(scroll_role, str) or scroll_role not in {"user", "minister", "attendant", "scene"}))
             or not isinstance(person_names, Sequence) or isinstance(person_names, (str, bytes))
             or not all(isinstance(n, str) for n in person_names)
+            or (scroll_role in {"minister", "attendant"} and (not person_names or not person_names[0].strip()))
             or not isinstance(tags, Sequence) or isinstance(tags, (str, bytes))
             or not all(isinstance(t, str) for t in tags)
         ):
@@ -1348,11 +1350,17 @@ def _dispatch_scene_facts(
                 "invalid_shape", source,
             )
             continue
-        try:
-            _assert_characters_exist(db, person_names)
-        except KeyError as exc:
-            _reject(rejected, item, str(exc), "hallucinated_id", source)
-            continue
+        # 有角色标注时仅首位是说话人；其余名字只是提及。旧无角色声明
+        # 无此区分，仍须拒绝其中凭空的说话人。
+        speaker_names = person_names[:1] if scroll_role in {"minister", "attendant"} else (
+            person_names if scroll_role is None else []
+        )
+        if speaker_names:
+            try:
+                _assert_characters_exist(db, speaker_names)
+            except KeyError as exc:
+                _reject(rejected, item, str(exc), "hallucinated_id", source)
+                continue
         origin_ref, error_category = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
@@ -1361,7 +1369,9 @@ def _dispatch_scene_facts(
             entry_id = append_ledger_entry(
                 db, int(night_id),
                 person_names=list(person_names), audibility=str(audibility),
-                body=body, tags=list(tags), check_dead=False, origin_ref=origin_ref,
+                body=body, tags=[tag for tag in tags if not tag.startswith("scroll_role:")]
+                + ([f"scroll_role:{scroll_role}"] if scroll_role else []),
+                check_dead=False, origin_ref=origin_ref,
                 source_chat_turn_id=origin_ctid,
                 origin_chat_turn_id=origin_ctid,
             )

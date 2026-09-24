@@ -160,7 +160,7 @@ def test_jiaobuyi_lands_initiative_only_after_promulgation(game, monkeypatch):
     """
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下明示下议题名后重拟。", 1),
+        lambda _p, _c=None, *, tag="", policy=None: ("臣请陛下明示下议题名后重拟。", 1),
     )
     db, state, content = game
     actor = _minister(db)

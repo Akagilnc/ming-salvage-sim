@@ -118,7 +118,7 @@ def _drive_intent(db, state, content, monkeypatch, *, canned: dict, player_messa
         ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     oid = create_test_secret_order(db, state, name, "原标题", "原内容", ["甲"], deadline_months=0)
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(canned, ensure_ascii=False), 1))
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(canned, ensure_ascii=False), 1))
     sess = _fake_session(db, state)
     out = GameSession.apply_cli_conversation_actions(
         sess, ch, player_message=player_message, answer="臣遵旨。",
@@ -163,7 +163,7 @@ def test_secret_order_rush_intent_stages_and_commits(game, monkeypatch):
     due_before = db.conn.execute("SELECT due_turn FROM secret_orders WHERE id=?", (oid,)).fetchone()["due_turn"]
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "催办", "目标密令编号": 0}, ensure_ascii=False), 1))
     sess = _fake_session(db, state)
     GameSession.apply_cli_conversation_actions(
@@ -193,7 +193,7 @@ def test_secret_order_rush_intent_preserves_zero_deadline(game, monkeypatch):
     oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=6)
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "催办", "目标密令编号": 0, "期限月数": 0}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch,
@@ -241,7 +241,7 @@ def test_secret_order_submit_intent_stages_and_commits(game, monkeypatch):
     oid = create_test_secret_order(db, state, name, "原标题", "原内容", [], deadline_months=6)
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "提交核议", "目标密令编号": 0}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch, player_message="此事可呈报办结了",
@@ -271,7 +271,7 @@ def test_secret_order_progress_intent_stages_and_commits(game, monkeypatch):
     db.conn.commit()
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "记进展", "目标密令编号": 0}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch, player_message="进展如何",
@@ -1169,7 +1169,7 @@ def test_consort_cultivate_stages_and_commits(game, monkeypatch):
         pytest.skip("基底无 active 后宫角色")
     db, state, content = game
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "无", "调教技能": "理财", "调教性格": ""}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), consort, player_message="教她理财之道",
@@ -1242,7 +1242,7 @@ def test_no_stage_for_non_active_target(game, monkeypatch):
     )
     db.conn.commit()  # #1504：非 active 用终态；submit 不再产 pending_review
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "更新", "目标密令编号": 0, "新标题": "改"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch, player_message="改一下要旨",
@@ -1288,7 +1288,7 @@ def test_appointment_intent_stages_office_action(game, monkeypatch):
         "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone() is None
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"任免动作": "任命", "姓名": new_name,
                              "官职": "兵部右侍郎", "顶替": ""}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
@@ -1316,7 +1316,7 @@ def test_decree_prefix_appointment_not_double_staged(game, monkeypatch):
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"任免动作": "任命", "姓名": "钱某", "官职": "礼部主事", "顶替": ""},
                             ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
@@ -1337,7 +1337,7 @@ def test_commit_appointment_applies_at_decree(game, monkeypatch):
     new_name = "测试新抚甲"
     content.characters.pop(new_name, None)
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"任免动作": "任命", "姓名": new_name,
                              "官职": "陕西巡抚", "任所": "shaanxi", "顶替": ""}, ensure_ascii=False), 1))
     try:
@@ -1370,7 +1370,7 @@ def test_commit_appointment_applies_at_decree(game, monkeypatch):
 def _stage_secret_update(db, state, ch, monkeypatch, oid):
     """第一句:口头改密令 → 暂存(不动真实表)。"""
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "更新", "目标密令编号": oid,
                              "新标题": "改后", "新内容": "改后内容", "期限月数": 0},
                             ensure_ascii=False), 1))
@@ -1394,7 +1394,7 @@ def test_dialogue_affirm_commits_staged_now(game, monkeypatch):
 
     # 第二句:皇帝应允 → 当场 commit
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "应允"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch, player_message="准,就这么办",
@@ -1417,7 +1417,7 @@ def test_dialogue_affirm_does_not_restage_restated_action(game, monkeypatch):
 
     # 应允;同一 canned 还带 密令动作(模拟大臣复述被 extractor 看见会重抽)
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps(
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "应允", "密令动作": "更新", "目标密令编号": oid,
                              "新标题": "改后", "新内容": "改后内容", "期限月数": 0}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
@@ -1442,7 +1442,7 @@ def test_dialogue_reject_drops_staged(game, monkeypatch):
 
     # 第二句:皇帝拒绝 → 丢
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "拒绝"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch, player_message="罢了,不必改",
@@ -1465,7 +1465,7 @@ def test_dialogue_affirm_secret_order_landing_failure_is_reported(game, monkeypa
     )
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "应允"}, ensure_ascii=False), 1))
     monkeypatch.setattr(db, "create_secret_order",
                         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("durable write failed")))
@@ -1607,7 +1607,7 @@ def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
     db.conn.commit()
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "无"}, ensure_ascii=False), 1))
     out = GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch, player_message="说说户部钱粮",
@@ -1692,7 +1692,7 @@ def test_successful_secret_order_confirmation_stays_quiet(game, monkeypatch):
     )
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda prompt, llm_config=None, tag="": (json.dumps(
+                        lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"确认": "应允"}, ensure_ascii=False), 1))
     out = GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch, player_message="准",
@@ -1718,7 +1718,7 @@ def test_dialogue_affirm_commits_office_now(game, monkeypatch):
     try:
         # 第一句:口头任命 → 暂存(不动 characters 表)
         monkeypatch.setattr(cb, "_run_backend_for_config",
-                            lambda prompt, llm_config=None, tag="": (json.dumps(
+                            lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                                 {"任免动作": "任命", "姓名": new_name,
                                  "官职": "太常寺卿", "顶替": ""}, ensure_ascii=False), 1))
         GameSession.apply_cli_conversation_actions(
@@ -1729,7 +1729,7 @@ def test_dialogue_affirm_commits_office_now(game, monkeypatch):
 
         # 第二句:皇帝应允 → 当场建档
         monkeypatch.setattr(cb, "_run_backend_for_config",
-                            lambda prompt, llm_config=None, tag="": (json.dumps(
+                            lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                                 {"确认": "应允"}, ensure_ascii=False), 1))
         GameSession.apply_cli_conversation_actions(
             sess, ch, player_message="准", answer="臣即拟铨。",
@@ -1854,7 +1854,7 @@ def test_commit_appointment_promotes_existing_minister(game, monkeypatch):
     assert old_office != new_office
     try:
         monkeypatch.setattr(cb, "_run_backend_for_config",
-                            lambda prompt, llm_config=None, tag="": (json.dumps(
+                            lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                                 {"任免动作": "任命", "姓名": name,
                                  "官职": new_office, "顶替": ""}, ensure_ascii=False), 1))
         GameSession.apply_cli_conversation_actions(
@@ -1884,7 +1884,7 @@ def test_commit_dismiss_clears_db_and_memory_office(game, monkeypatch):
     saved = (obj.office, obj.status, obj.office_type)
     try:
         monkeypatch.setattr(cb, "_run_backend_for_config",
-                            lambda prompt, llm_config=None, tag="": (json.dumps(
+                            lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                                 {"任免动作": "罢免", "姓名": name,
                                  "官职": "", "顶替": ""}, ensure_ascii=False), 1))
         GameSession.apply_cli_conversation_actions(
@@ -1920,14 +1920,14 @@ def test_dialogue_affirm_filters_by_summoned_minister(game, monkeypatch):
     oid_b = create_test_secret_order(db, state, b.name, "乙原", "乙原内容", [], deadline_months=0)
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps(
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "更新", "目标密令编号": oid_a,
                              "新标题": "甲改", "新内容": "甲改内容", "期限月数": 0}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), a, player_message="改甲密令",
         answer="臣领旨。", has_directive=False, secret_order_id=None)
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps(
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "更新", "目标密令编号": oid_b,
                              "新标题": "乙改", "新内容": "乙改内容", "期限月数": 0}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
@@ -1937,7 +1937,7 @@ def test_dialogue_affirm_filters_by_summoned_minister(game, monkeypatch):
 
     # 只对甲应允 → 只 commit 甲;乙暂存留着、乙真实表不动
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps({"确认": "应允"}, ensure_ascii=False), 1))
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps({"确认": "应允"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), a, player_message="准",
         answer="臣即办。", has_directive=False, secret_order_id=None)
@@ -1962,7 +1962,7 @@ def test_dialogue_no_response_keeps_staged(game, monkeypatch):
     assert any(pa["kind"] == "secret_order" for pa in db.list_pending_actions(state.turn))
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps({"确认": "无"}, ensure_ascii=False), 1))
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps({"确认": "无"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), ch, player_message="近来天象如何",
         answer="回陛下,钦天监奏星象无异。", has_directive=False, secret_order_id=None)
@@ -1982,7 +1982,7 @@ def test_commit_appointment_consort_gets_office_type(game, monkeypatch):
     content.characters.pop(new_consort, None)
     try:
         monkeypatch.setattr(cb, "_run_backend_for_config",
-                            lambda prompt, llm_config=None, tag="": (json.dumps(
+                            lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps(
                                 {"任免动作": "任命", "姓名": new_consort,
                                  "官职": "贵妃", "顶替": ""}, ensure_ascii=False), 1))
         GameSession.apply_cli_conversation_actions(
@@ -2041,7 +2041,7 @@ def test_commit_appointment_existing_minister_by_alias(game, monkeypatch):
     try:
         new_office = "文渊阁大学士"
         monkeypatch.setattr(cb, "_run_backend_for_config",
-                            lambda p, llm_config=None, tag="": (json.dumps(
+                            lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                                 {"任免动作": "任命", "姓名": alias, "官职": new_office},
                                 ensure_ascii=False), 1))
         GameSession.apply_cli_conversation_actions(
@@ -2070,7 +2070,7 @@ def test_commit_reappoint_reactivates_dismissed_minister(game, monkeypatch):
     try:
         new_office = "东阁大学士"
         monkeypatch.setattr(cb, "_run_backend_for_config",
-                            lambda p, llm_config=None, tag="": (json.dumps(
+                            lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                                 {"任免动作": "任命", "姓名": b.name,
                                  "官职": new_office, "顶替": ""}, ensure_ascii=False), 1))
         GameSession.apply_cli_conversation_actions(
@@ -2113,7 +2113,7 @@ def test_commit_appointment_rejects_dead_person(game, monkeypatch):
     objb.status = "dead"
     try:
         monkeypatch.setattr(cb, "_run_backend_for_config",
-                            lambda p, llm_config=None, tag="": (json.dumps(
+                            lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                                 {"任免动作": "任命", "姓名": b.name,
                                  "官职": "兵部尚书", "顶替": ""}, ensure_ascii=False), 1))
         GameSession.apply_cli_conversation_actions(
@@ -2138,7 +2138,7 @@ def test_commit_appointment_empty_office_rejected(game, monkeypatch):
     old_office = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"]
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps(
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"任免动作": "任命", "姓名": name,
                              "官职": "", "顶替": ""}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
@@ -2163,7 +2163,7 @@ def test_commit_dismiss_foreign_actor_noop(game, monkeypatch):
     before = db.conn.execute(
         "SELECT status FROM characters WHERE name=?", (foreign,)).fetchone()["status"]
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps(
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"任免动作": "罢免", "姓名": foreign,
                              "官职": "", "顶替": ""}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
@@ -2188,7 +2188,7 @@ def test_commit_dismiss_nonactive_minister_rejected(game, monkeypatch):
     objb.status = "dead"
     try:
         monkeypatch.setattr(cb, "_run_backend_for_config",
-                            lambda p, llm_config=None, tag="": (json.dumps(
+                            lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                                 {"任免动作": "罢免", "姓名": b.name, "官职": ""}, ensure_ascii=False), 1))
         GameSession.apply_cli_conversation_actions(
             _fake_session(db, state), a, player_message=f"革{b.name}职",
@@ -2235,7 +2235,7 @@ def test_commit_dismiss_refreshes_registry(game, monkeypatch):
         db=db, state=state, llm_config=types.SimpleNamespace(channel="cli"),
         registry=None, content=content)
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps(
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"任免动作": "罢免", "姓名": b.name, "官职": ""}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         sess, a, player_message=f"革{b.name}职", answer="臣遵旨。",
@@ -2323,14 +2323,14 @@ def test_dialogue_reject_filters_by_summoned_minister(game, monkeypatch):
     oid_a = create_test_secret_order(db, state, a.name, "甲原", "甲原内容", [], deadline_months=0)
     oid_b = create_test_secret_order(db, state, b.name, "乙原", "乙原内容", [], deadline_months=0)
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps(
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "更新", "目标密令编号": oid_a,
                              "新标题": "甲改", "新内容": "甲改内容", "期限月数": 0}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), a, player_message="改甲", answer="臣领旨。",
         has_directive=False, secret_order_id=None)
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps(
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps(
                             {"密令动作": "更新", "目标密令编号": oid_b,
                              "新标题": "乙改", "新内容": "乙改内容", "期限月数": 0}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
@@ -2340,7 +2340,7 @@ def test_dialogue_reject_filters_by_summoned_minister(game, monkeypatch):
 
     # 只对甲拒绝 → 只丢甲;乙留着
     monkeypatch.setattr(cb, "_run_backend_for_config",
-                        lambda p, llm_config=None, tag="": (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1))
+                        lambda p, llm_config=None, tag="", *, policy=None: (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         _fake_session(db, state), a, player_message="罢了,不必改",
         answer="臣遵旨。", has_directive=False, secret_order_id=None)
@@ -2481,7 +2481,7 @@ def test_new_consort_registers_after_outer_commit(game, monkeypatch):
     try:
         monkeypatch.setattr(
             cb, "_run_backend_for_config",
-            lambda prompt, llm_config=None, tag="": (json.dumps({
+            lambda prompt, llm_config=None, tag="", *, policy=None: (json.dumps({
                 "任免动作": "任命", "姓名": new_consort, "官职": "贵妃",
             }, ensure_ascii=False), 1),
         )

@@ -21,7 +21,6 @@ export function useSettlementFlow({
   cheatDirective,
   setCheatDirective,
   loadState,
-  surfacePendingActionFailures,
   state,
 }: {
   setBusy: (busy: string) => void;
@@ -29,7 +28,6 @@ export function useSettlementFlow({
   cheatDirective: string;
   setCheatDirective: (text: string) => void;
   loadState: () => Promise<GameState | null>;
-  surfacePendingActionFailures: (failures?: PendingActionFailure[]) => Promise<boolean>;
   state: GameState | null;
 }) {
   const [settleStage, setSettleStage] = React.useState("");
@@ -177,14 +175,6 @@ export function useSettlementFlow({
           // 刷新失败不抵消已落地的 phase-1 呈现；次级真因仍落痕（ADR 0005）。
           console.warn("[settlement] phase-1 failure refresh failed", refreshErr);
         }
-        try {
-          if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
-            return;
-          }
-        } catch (pendingErr) {
-          // pending 消费链失败不得吞主告警；次级真因落痕（ADR 0005）。
-          console.warn("[settlement] phase-1 pending-failure surface failed", pendingErr);
-        }
         setBusy("");
         return;
       }
@@ -202,9 +192,6 @@ export function useSettlementFlow({
         return;
       }
       await forwardSteamEvents(outcome.data);
-      if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
-        return;
-      }
       // 结算完成：强制整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化
       window.location.reload();
       return;
@@ -246,11 +233,6 @@ export function useSettlementFlow({
         // #1620：loadState 刷新合法 pending 时 route 不碰 stream error；pending 保留 → picks 仍在。
         await loadState();
         const msg = typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。");
-        if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
-          setPausedDecisionError(msg);
-          setError(msg);
-          return;
-        }
         setPausedDecisionError(msg);
         setError(msg);
         setBusy("");
@@ -261,9 +243,6 @@ export function useSettlementFlow({
       setDecisionFailures([]);
       setPausedDecisionError("");
       await forwardSteamEvents(outcome.data);
-      if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
-        return;
-      }
       window.location.reload();
       return;
     } catch (err) {
@@ -303,9 +282,6 @@ export function useSettlementFlow({
           ),
         },
       );
-      if (await surfacePendingActionFailures(data.pending_action_failures || [])) {
-        return;
-      }
       // #1433 / #1337 hop 族：退朝若停在批红，消费 awaiting_decision/decisions（同 issueDecree），
       // 不盲 reload——整页刷新只在月完成；批红面经 loadState 状态口投影不丢。
       if (data.awaiting_decision) {
@@ -340,14 +316,6 @@ export function useSettlementFlow({
           ? (detail?.message || "退朝失败。")
           : (err instanceof Error ? err.message : String(err)),
       );
-      try {
-        if (hasPending && await surfacePendingActionFailures(failures)) {
-          return;
-        }
-      } catch (pendingErr) {
-        // pending 消费链 reject 时主告警已响亮；次级真因落痕（ADR 0005）。
-        console.warn("[settlement] phase-1 pending-failure surface failed", pendingErr);
-      }
     } finally {
       setBusy("");
     }

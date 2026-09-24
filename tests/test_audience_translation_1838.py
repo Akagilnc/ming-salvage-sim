@@ -27,7 +27,7 @@ from ming_sim.entities.affair.store import AffairStore
 from ming_sim.public_sayings import list_public_sayings
 from ming_sim.relations import summon_edge_origin
 from ming_sim.session import GameSession
-from tests.conftest import persist_and_schedule_scene
+from tests.conftest import deterministic_test_beat_generator, persist_and_schedule_scene
 
 
 def _activate(db, state, *names: str) -> None:
@@ -36,8 +36,8 @@ def _activate(db, state, *names: str) -> None:
             db.set_character_status(state, name, "active", reason="1838 测试置在场")
 
 
-def test_three_speaker_segments_private_whisper_not_in_other_experience(game):
-    """AC1：王绍徽答 / 毕自严插话 / 王承恩低语 → 三段可闻性；低语不进王绍徽经历。"""
+def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
+    """AC1：三段说话人可闻性；低语只进王承恩经历。"""
     db, state, _ = game
     _activate(db, state, "王绍徽", "毕自严", "王承恩")
     night = open_night(db, state, location="乾清宫", time_of_day="戌时")
@@ -47,6 +47,7 @@ def test_three_speaker_segments_private_whisper_not_in_other_experience(game):
     wang_reply = "王绍徽跪奏：臣领旨拟明发。"
     bi_interject = "毕自严出班：户部可先挪三十万两垫发。"
     wang_whisper = "王承恩附耳：绍徽面有难色，恐意存观望。"
+    scene_whisper = "御前密语提及王绍徽。"
 
     declaration = {
         "presence": [
@@ -68,9 +69,17 @@ def test_three_speaker_segments_private_whisper_not_in_other_experience(game):
             },
             {
                 "body": wang_whisper,
+                "role": "attendant",
                 "audibility": AUDIBILITY_PRIVATE,
-                "person_names": ["王承恩"],
+                "person_names": ["王承恩", "王绍徽"],
                 "tags": ["递话"],
+            },
+            {
+                "body": scene_whisper,
+                "role": "scene",
+                "audibility": AUDIBILITY_PRIVATE,
+                "person_names": ["王绍徽"],
+                "tags": [],
             },
         ],
         "protagonist": {"person_name": "王绍徽"},
@@ -80,7 +89,7 @@ def test_three_speaker_segments_private_whisper_not_in_other_experience(game):
         db, state, declaration, night_id=nid, chat_turn_id=ctid,
     )
 
-    assert len(result.scene_facts.applied) == 3
+    assert len(result.scene_facts.applied) == 4
     assert result.scene_facts.rejected == []
 
     # 外部可见：按源轮从 ledger 读回三段说话人 + 可闻性（不靠 applied 投影凑数）
@@ -89,14 +98,15 @@ def test_three_speaker_segments_private_whisper_not_in_other_experience(game):
         if int(e.get("source_chat_turn_id") or 0) == ctid
         and not e.get("presence_effect")
     ]
-    assert len(segments) == 3
+    assert len(segments) == 4
     by_body = {e["body"]: e for e in segments}
     assert by_body[wang_reply]["person_names"] == ["王绍徽"]
     assert by_body[wang_reply]["audibility"] == AUDIBILITY_PUBLIC
     assert by_body[bi_interject]["person_names"] == ["毕自严"]
     assert by_body[bi_interject]["audibility"] == AUDIBILITY_PUBLIC
-    assert by_body[wang_whisper]["person_names"] == ["王承恩"]
+    assert by_body[wang_whisper]["person_names"] == ["王承恩", "王绍徽"]
     assert by_body[wang_whisper]["audibility"] == AUDIBILITY_PRIVATE
+    assert by_body[scene_whisper]["audibility"] == AUDIBILITY_PRIVATE
 
     # 王绍徽在场期间可闻殿上公开；御前低语不进其经历投影
     wang_exp = person_night_experience(db, nid, "王绍徽")
@@ -104,6 +114,8 @@ def test_three_speaker_segments_private_whisper_not_in_other_experience(game):
     assert wang_reply in bodies
     assert bi_interject in bodies
     assert wang_whisper not in bodies
+    assert scene_whisper not in bodies
+    assert wang_whisper in [e["body"] for e in person_night_experience(db, nid, "王承恩")]
 
     # 转译已承接本轮 → 抽取 / 判官水位推进，不另起旧路径
     row = db.conn.execute(
@@ -182,8 +194,10 @@ def _scene_session(db, state, content, monkeypatch):
     sess.llm_config = SimpleNamespace(channel="")
     sess.temporary_characters = {}
     sess.agno_db = None
-    sess._beat_generator = None
-    sess._scene_registry = None
+    from ming_sim.beat_orchestration import ChatTurnSceneRegistry
+    from ming_sim.session import _CLI_ACTION_INTENT_EXECUTOR
+    sess._beat_generator = deterministic_test_beat_generator
+    sess._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
     sess._write_gate = None
     return sess
 
@@ -212,10 +226,15 @@ def test_protagonist_follows_translation_and_xuan_cut(game, monkeypatch):
     sess = _scene_session(db, state, content, monkeypatch)
     t1 = _active_chat_turn(db, state, nid)
     # 真入口：scene_chat("宣王绍徽", chat_turn_id=t1) 当场先切并绑源轮
-    r_xuan = sess.scene_chat("宣王绍徽", chat_turn_id=t1)
+    cuts = []
+    r_xuan = sess.scene_chat(
+        "宣王绍徽", chat_turn_id=t1,
+        on_protagonist_changed=lambda: cuts.append(get_night_protagonist(db, nid)),
+    )
     persist_and_schedule_scene(sess, db, r_xuan)
     _drain_scene_owner(sess, db)
     assert get_night_protagonist(db, nid) == "王绍徽"
+    assert cuts == ["王绍徽"]
     assert db.conn.execute(
         "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
     ).fetchone()["protagonist_name"] == "王绍徽"
@@ -266,6 +285,23 @@ def test_protagonist_undo_reprojects_night_current(game, monkeypatch):
     # 再撤 t1 → 无存活声明，夜主角回初态空值
     db.undo_chat_turn(t1)
     assert get_night_protagonist(db, nid) == ""
+
+
+def test_retry_older_round_keeps_newer_protagonist(game):
+    db, state, _ = game
+    _activate(db, state, "王绍徽", "王承恩")
+    nid = int(open_night(db, state, location="乾清宫", time_of_day="戌时")["id"])
+    older = _active_chat_turn(db, state, nid)
+    newer = _active_chat_turn(db, state, nid)
+    apply_audience_round_translation(
+        db, state, {"protagonist": {"person_name": "王承恩"}},
+        night_id=nid, chat_turn_id=newer,
+    )
+    apply_audience_round_translation(
+        db, state, {"protagonist": {"person_name": "王绍徽"}},
+        night_id=nid, chat_turn_id=older,
+    )
+    assert get_night_protagonist(db, nid) == "王承恩"
 
 
 def test_edge_event_and_public_saying_attach_affair(game):

@@ -24,6 +24,8 @@ import threading
 
 import httpx
 import pytest
+from ming_sim.exceptions import LLMUnavailable
+from ming_sim.audience_translate import _default_translate_runner as _real_audience_translate_runner
 from tests.conftest import stub_audience_translate, stub_scene_agent
 
 _POLICY_FIELDS = {
@@ -205,6 +207,256 @@ def _count(db, table: str) -> int:
 
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=web_app.app), base_url="http://t")
+
+
+def test_persisted_reply_before_translation_admission_has_no_retry_button(web_game):
+    """A complete reply is not an exhausted translation until the job actually fails."""
+    game = web_game
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    ctid = game.db.create_chat_turn(
+        game.state, "殿上", "sess", 0, night_id=int(night["id"]),
+    )
+    game.db.persist_minister_reply("殿上", int(game.state.turn), "臣领旨。", ctid)
+
+    async def scenario():
+        async with _client() as client:
+            before = (await client.get("/api/audience/chat")).json()
+            retry = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
+            return before, retry
+
+    before, retry = asyncio.run(scenario())
+    assert before["translation_retries"] == []
+    assert retry.status_code == 404
+
+
+def test_old_named_hall_turn_is_visible_and_undoable_from_scene_window(web_game):
+    game = web_game
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    old_speaker = _active_minister(game)
+    turn_id = game.db.create_chat_turn(game.state, old_speaker, "sess", 0, night_id=int(night["id"]))
+    user_id = game.db.append_chat_message(old_speaker, int(game.state.turn), "user", "边务如何？")
+    game.db.update_chat_turn_messages(turn_id, user_message_id=user_id)
+    game.db.persist_minister_reply(old_speaker, int(game.state.turn), "臣领旨。", turn_id)
+
+    async def scenario():
+        async with _client() as client:
+            before = (await client.get("/api/audience/chat")).json()
+            undone = await client.post("/api/audience/chat/undo")
+            after = (await client.get("/api/audience/chat")).json()
+            return before, undone, after
+
+    before, undone, after = asyncio.run(scenario())
+    assert any(message["chat_turn_id"] == turn_id for message in before["history"])
+    assert before["can_undo_last_chat"] is True
+    assert undone.status_code == 200
+    assert all(message["chat_turn_id"] != turn_id for message in after["history"])
+
+
+@pytest.mark.parametrize("night_status", [an.NIGHT_STATUS_CLOSING, an.NIGHT_STATUS_CLOSED])
+def test_pending_translation_retries_original_round_after_night_seal(web_game, monkeypatch, night_status):
+    """A sealed night keeps its failed source round repairable before month advance."""
+    game = web_game
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    ctid = game.db.create_chat_turn(game.state, "殿上", "sess", 0, night_id=nid)
+    game.db.persist_minister_reply("殿上", int(game.state.turn), "臣领旨。", ctid)
+    game.db.mark_story_extraction_pending(ctid)
+    an._set_night_fields(game.db, nid, status=night_status)
+    stub_audience_translate(monkeypatch)
+
+    async def retry():
+        async with _client() as client:
+            return await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
+
+    response = asyncio.run(retry())
+    assert response.status_code == 200
+    assert response.json()["extract_status"] == "done"
+    assert game.pending_translation_retries(chat_turn_id=ctid) == []
+    assert [row["body"] for row in game.db.conn.execute(
+        "SELECT body FROM story_ledger_entries WHERE source_chat_turn_id=?", (ctid,),
+    )] == ["臣领旨。"]
+    assert an.get_night(game.db, nid)["status"] == night_status
+
+
+@pytest.mark.parametrize("failure", ["code", "429", "503", "timeout"])
+def test_translation_failure_retry_and_undo_through_audience_http(web_game, monkeypatch, request, failure, tmp_path):
+    """The source turn owns the failed translation across retry and retraction."""
+    game = web_game
+    stub_scene_agent(monkeypatch, _FakeAgent(answer="臣领旨。"))
+
+    calls: list[float] = []
+    waits: list[float] = []
+    clock = {"now": 0.0}
+    retry_waiting = threading.Event()
+    resume_retry = threading.Event()
+    if failure == "code":
+        def exhausted(_prompt, _config):
+            raise RuntimeError("translation unavailable")
+        stub_audience_translate(monkeypatch, exhausted)
+    else:
+        from dataclasses import replace
+        import ming_sim.cli_backend as cli_backend
+        import ming_sim.llm_config as llm_config_mod
+        import ming_sim.llm_transport as transport
+        path = tmp_path / "runtime_llm.json"
+        path.write_text(json.dumps({"transport": {"max_attempts": 5, "retry_interval_seconds": 1}}), encoding="utf-8")
+        monkeypatch.setattr(llm_config_mod, "RUNTIME_LLM_PATH", str(path))
+        game.session.llm_config = replace(game.session.llm_config, channel="cli", cli_runner="agy")
+
+        def wait(seconds):
+            waits.append(seconds)
+            if len(waits) == 1:
+                retry_waiting.set()
+                assert resume_retry.wait(3), "translation retry was not released"
+            clock["now"] += seconds
+
+        def failed_call(_runner, _prompt, **_kwargs):
+            calls.append(clock["now"])
+            if failure == "timeout":
+                raise LLMUnavailable("timeout", code="llm_timeout")
+            raise LLMUnavailable("provider failed", code="llm_run_error", status_code=int(failure))
+
+        monkeypatch.setattr(transport, "_sleep_retry_interval", wait)
+        monkeypatch.setattr(cli_backend, "_dispatch_cli_runner", failed_call)
+        stub_audience_translate(monkeypatch, _real_audience_translate_runner)
+
+    async def send():
+        async with _client() as client:
+            return await client.post("/api/audience/chat/stream", json={"message": "边饷如何？"})
+
+    async def inspect():
+        async with _client() as client:
+            return (await client.get("/api/audience/chat")).json()
+
+    async def inspect_scroll():
+        async with _client() as client:
+            return (await client.get("/api/audience/scroll")).json()
+
+    response = asyncio.run(send())
+    assert response.status_code == 200
+    if failure in {"503", "timeout"}:
+        try:
+            assert retry_waiting.wait(3)
+            early = asyncio.run(inspect())
+            assert len(early["translation_retries"]) == 1
+            assert all(not row["retryable"] for row in early["translation_retries"])
+        finally:
+            resume_retry.set()
+    assert game._runtime_write_queue().wait_idle()
+
+    failed = asyncio.run(inspect())
+    if failure != "code":
+        assert calls, failed
+    assert len(failed["translation_retries"]) == 1
+    ctid = failed["translation_retries"][0]["chat_turn_id"]
+    assert failed["translation_retries"][0]["retryable"] is True
+    assert failed["translation_retries"][0]["error_pack_path"]
+    scroll = asyncio.run(inspect_scroll())
+    assert scroll["translation_retries"] == failed["translation_retries"]
+    if failure != "code":
+        assert calls == ([0.0] if failure == "429" else [0.0, 5.0, 10.0])
+        assert waits == ([] if failure == "429" else [5.0, 5.0])
+    if failure == "code":
+        source_positions = [
+            (index, item["role"], item["chat_turn_id"])
+            for index, item in enumerate(failed["history"])
+            if item.get("chat_turn_id") == ctid
+        ]
+        assert source_positions
+        async def fail_again():
+            async with _client() as client:
+                return await client.post(
+                    "/api/audience/translation/retry", json={"chat_turn_id": ctid},
+                )
+
+        failed_retry = asyncio.run(fail_again())
+        assert failed_retry.status_code == 200
+        assert failed_retry.json()["retryable"] is True
+        game.session.close()
+        game = web_app.WebGame(fresh=False)
+        request.addfinalizer(game.session.close)
+        monkeypatch.setattr(web_app, "web_game", game)
+        reopened = asyncio.run(inspect())
+        assert [
+            (index, item["role"], item["chat_turn_id"])
+            for index, item in enumerate(reopened["history"])
+            if item.get("chat_turn_id") == ctid
+        ] == source_positions
+        assert [row["chat_turn_id"] for row in reopened["translation_retries"]] == [ctid]
+        assert game._runtime_write_queue().wait_idle()
+    turns_before_retry = _count(game.db, "chat_turns")
+
+    if failure == "code":
+        started = threading.Event()
+        release = threading.Event()
+
+        def delayed(_prompt, _config):
+            started.set()
+            assert release.wait(3), "late translation was not released"
+            return {}
+
+        stub_audience_translate(monkeypatch, delayed)
+
+        async def undo_during_retry():
+            async with _client() as client:
+                retry_task = asyncio.create_task(client.post(
+                    "/api/audience/translation/retry", json={"chat_turn_id": ctid},
+                ))
+                try:
+                    assert await asyncio.to_thread(started.wait, 3)
+                    undo = await asyncio.wait_for(client.post("/api/audience/chat/undo"), 2)
+                finally:
+                    release.set()
+                retry = await retry_task
+                retracted = (await client.get("/api/audience/chat")).json()
+                stale = await client.post(
+                    "/api/audience/translation/retry", json={"chat_turn_id": ctid},
+                )
+                return undo, retry, retracted, stale
+
+        undo, retry, retracted, stale = asyncio.run(undo_during_retry())
+        assert undo.status_code == 200
+        assert retry.status_code == 200
+        assert retracted["translation_retries"] == []
+        assert all(item.get("chat_turn_id") != ctid for item in retracted["history"])
+        assert _count(game.db, "chat_turns") == turns_before_retry
+        assert game.db.conn.execute(
+            "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+        ).fetchone()["status"] == "undone"
+        assert game.db.conn.execute(
+            "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE source_chat_turn_id=?",
+            (ctid,),
+        ).fetchone()["c"] == 0
+        assert stale.status_code == 404
+        return
+
+    stub_audience_translate(monkeypatch)
+
+    async def retry_and_undo():
+        async with _client() as client:
+            retry = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
+            healed = (await client.get("/api/audience/chat")).json()
+            turns_after_retry = _count(game.db, "chat_turns")
+            source_segments_after_retry = game.db.conn.execute(
+                "SELECT body FROM story_ledger_entries WHERE source_chat_turn_id=?",
+                (ctid,),
+            ).fetchall()
+            undo = await client.post("/api/audience/chat/undo")
+            retracted = (await client.get("/api/audience/chat")).json()
+            stale = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
+            return retry, healed, turns_after_retry, source_segments_after_retry, undo, retracted, stale
+
+    retry, healed, turns_after_retry, source_segments_after_retry, undo, retracted, stale = asyncio.run(retry_and_undo())
+    assert retry.status_code == 200
+    assert healed["translation_retries"] == []
+    assert turns_after_retry == turns_before_retry
+    assert [row["body"] for row in source_segments_after_retry] == ["臣领旨。"]
+    assert undo.status_code == 200
+    assert retracted["translation_retries"] == []
+    assert game.db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE source_chat_turn_id=?", (ctid,),
+    ).fetchone()["c"] == 0
+    assert stale.status_code == 404
 
 
 def _parse_sse(text: str) -> list[dict]:

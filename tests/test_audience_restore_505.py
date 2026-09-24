@@ -15,6 +15,7 @@ reconcile 保留问话消息行（区别于 fail_chat_turn 的删问话善后）
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -303,17 +304,18 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     ct = _start_generating_turn(db, state, minister, "剿抚孰先？")
+    later = _start_generating_turn(db, state, minister, "续问军情？")
     db.reconcile_interrupted_chat_turns()
 
     rt = _retry_runtime(db, state, minister)
-    payload = rt.retry_interrupted_reply(minister)
+    payload = rt.retry_interrupted_reply(minister, ct)
 
     assert payload["answer"] == "臣重奏：剿为先。"
     # 记录无重复句：问话仍只一条，回话新落一条。
     users = db.conn.execute(
         "SELECT content FROM chat_messages WHERE role='user'"
     ).fetchall()
-    assert [r["content"] for r in users] == ["剿抚孰先？"]
+    assert [r["content"] for r in users] == ["剿抚孰先？", "续问军情？"]
     replies = db.conn.execute(
         "SELECT content FROM chat_messages WHERE role='minister'"
     ).fetchall()
@@ -325,7 +327,52 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert row["status"] == "active"
     assert row["minister_message_id"]
     # 重试后该轮不再挂在待重试面板。
-    assert db.get_interrupted_reply_retries(minister) == []
+    assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(minister)] == [later]
+
+
+def test_retry_dispatch_failure_recovers_persisted_reply_without_regeneration(restore_env):
+    db, state, content = restore_env.db, restore_env.state, restore_env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    chat_turn_id = _start_generating_turn(db, state, minister, "剿抚孰先？")
+    db.reconcile_interrupted_chat_turns()
+    rt = _retry_runtime(db, state, minister)
+    rt.session.schedule_pending_scene_translation = lambda *_a: (_ for _ in ()).throw(
+        RuntimeError("translation dispatch failed"))
+
+    with pytest.raises(RuntimeError, match="translation dispatch failed"):
+        rt.retry_interrupted_reply(minister, chat_turn_id)
+    assert rt.reply_retries(minister) == []
+    assert [r["chat_turn_id"] for r in rt.pending_translation_retries(chat_turn_id=chat_turn_id)] == [
+        chat_turn_id]
+    assert [(m["role"], m["content"]) for m in rt.chat_projection(minister)] == [
+        ("user", "剿抚孰先？"), ("minister", "臣重奏：剿为先。")]
+
+
+def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env):
+    db, state, content = restore_env.db, restore_env.state, restore_env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    ct = _land_full_turn(db, state, minister, "退朝", "臣遵旨。")
+    db.mark_post_reply_failure(ct, "court_break", "/tmp/post-reply-pack")
+    rt = _retry_runtime(db, state, minister)
+    assert [(r["chat_turn_id"], r["error_pack_path"]) for r in rt.reply_retries(minister)] == [
+        (ct, "/tmp/post-reply-pack")]
+    rt.session.chat = lambda *a, **k: (_ for _ in ()).throw(AssertionError("reply model rerun"))
+    calls = []
+    def close_once(action, **kw):
+        calls.append(action)
+        with pytest.raises(HTTPException):
+            rt.retry_interrupted_reply(minister, ct)
+    rt.session.close_night_after_chat_if_needed = close_once
+    rt.pending_directive_count = lambda: 0
+    payload = rt.retry_interrupted_reply(minister, ct)
+    assert payload["answer"] == "臣遵旨。"
+    assert calls == ["court_break"]
+    assert rt.reply_retries(minister) == []
+    assert [r["content"] for r in db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='minister'"
+    )] == ["臣遵旨。"]
 
 
 
@@ -386,6 +433,11 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     ).fetchone()
     assert row["status"] == "interrupted"
     assert not row["minister_message_id"]
+    pack = Path(db.conn.execute(
+        "SELECT error_pack_path FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()["error_pack_path"])
+    assert (pack / "traceback.txt").is_file()
+    assert (pack / "save_backup.db").is_file()
     assert [r["question"] for r in db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
     assert [
         r["content"] for r in db.conn.execute(
@@ -1419,10 +1471,11 @@ def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
 
     term._retry_interrupted_reply_cli(sess, remote.name)
 
-    # #1842：CLI retry 前台先返回；后台 schedule 封夜后再断言 CLOSED。
-    from tests.wait_utils import wait_until
+    # #1842：CLI retry 前台先返回；等后台屏障真正完成再读同一 SQLite 连接。
+    # 仅等 open night 消失会在 CLOSING 时提前通过，fixture 随后可能关掉后台仍在用的连接。
+    from ming_sim.session_write_queue import get_session_write_queue
 
-    wait_until(lambda: an.get_open_night(db) is None)
+    get_session_write_queue(sess).wait_idle()
     night_row = an.get_night(db, night_id)
     assert night_row is not None and night_row["status"] == an.NIGHT_STATUS_CLOSED
     assert set(an.persons_present_tonight(db, night_id)) == present_before

@@ -2,17 +2,20 @@ import React from "react";
 import { Loader2, Lock, RotateCcw, Send, Star, X } from "lucide-react";
 import { MinisterPlaceOffice, MinisterPortrait } from "./hud";
 import { api } from "../api";
-import { filterScrollForSelectedMinister } from "../ministerScrollLens";
 import { ScrollMessages, portraitSources } from "./scrollMessages";
+import { AUDIENCE_SCENE_SPEAKER } from "../audienceScene";
 import type {
   AudienceScrollMessage,
   ChatDisplayMessage,
   ChatMessage,
   Minister,
-  PendingActionFailure,
   SecretOrder,
   Suggestion,
+  RetryReadFailure,
+  TranslationRetry,
 } from "../types";
+
+type AudienceRosterEntry = { name: string; present: boolean };
 
 export function ChatModal({
   minister,
@@ -30,18 +33,20 @@ export function ChatModal({
   scrollGeneration,
   streamingMinisterMessage,
   chatNotice,
-  chatFailures,
   canUndoLastChat,
   composerHint,
   input,
   busy,
   error,
   secretOrders,
-  replyRetry,
+  replyRetries = [],
+  translationRetries = [],
+  retryReadFailure = null,
   onInput,
   onIntent,
   onSend,
   onRetryReply,
+  onRetryTranslation,
   onUndo,
   onHint,
   onFavorite,
@@ -69,7 +74,6 @@ export function ChatModal({
   scrollGeneration?: number;
   streamingMinisterMessage: string;
   chatNotice: string;
-  chatFailures: PendingActionFailure[];
   canUndoLastChat: boolean;
   composerHint: string;
   input: string;
@@ -77,11 +81,14 @@ export function ChatModal({
   error: string;
   secretOrders: SecretOrder[];
   /** #505：系统层回话重试（崩溃后问话保留）。 */
-  replyRetry?: { chat_turn_id: number; question: string } | null;
+  replyRetries?: { chat_turn_id: number; question: string; error_pack_path?: string; recovery_phase?: "after_reply" | "court_break" }[];
+  translationRetries?: TranslationRetry[];
+  retryReadFailure?: RetryReadFailure | null;
   onInput: (value: string) => void;
   onIntent?: (intent: "secret_order" | undefined) => void;
   onSend: (ministerName: string, text?: string) => void;
-  onRetryReply?: (ministerName: string) => void;
+  onRetryReply?: (ministerName: string, chatTurnId: number) => void;
+  onRetryTranslation?: (chatTurnId: number) => void;
   onUndo: (ministerName: string) => void;
   onHint: (value: string) => void;
   onFavorite: (minister: Minister) => void;
@@ -104,50 +111,39 @@ export function ChatModal({
       kind: "night";
       nightId: number;
       messages: AudienceScrollMessage[];
+      container: AudienceScrollMessage["container"];
+      protagonist: string;
+      roster: AudienceRosterEntry[];
+      characters: Minister[];
+      translationPending: boolean;
+      translationRetries: TranslationRetry[];
       refreshError: boolean;
     } | { kind: "error" }
   >({ kind: "loading" });
   const followsTailRef = React.useRef(true);
   const restoredNightRef = React.useRef<number | false>(false);
+  const readingAnchorRef = React.useRef<{ turnId: string; offset: number; top: number } | null>(null);
   const withdrawnFromThisScroll = (message: AudienceScrollMessage): boolean => !!(
     undoneChatIdentity
     && undoneChatIdentity.campaign_id === currentCampaignId
     && undoneChatIdentity.night_id === currentNightId
     && message.chat_turn_id === undoneChatIdentity.chat_turn_id
   );
-  const failedInThisScroll = (message: AudienceScrollMessage): boolean => !!(
-    failedIdentity
-    && failedIdentity.campaign_id === currentCampaignId
-    && failedIdentity.night_id === currentNightId
-    && message.chat_turn_id === failedIdentity.chat_turn_id
-  );
   const snapshotStillCurrent = (state: typeof scrollState): boolean =>
     state.kind !== "night" || (state.nightId === currentNightId && !state.messages.some(withdrawnFromThisScroll));
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
   // The night scroll is the sole live authority. Personal chat history is only the legacy fallback;
   // mixing it here reintroduces cross-night records and snapshot-difference heuristics.
-  // #1511: open-night branch applies a pure selected-minister lens — never dump the campaign-wide scroll.
-  // Half-turn claim is window-local presentation only (replyRetry / in-flight pendingIdentity).
-  const claimedTurnId = replyRetry?.chat_turn_id
-    ?? (
-      pendingIdentity
-      && pendingIdentity.campaign_id === currentCampaignId
-      && pendingIdentity.night_id === currentNightId
-        ? pendingIdentity.chat_turn_id
-        : null
-    );
   const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollMode === "legacy" || (effectiveScrollState.kind === "none" && currentNightId === 0)
     ? [...chat]
     : effectiveScrollState.kind === "night"
-      ? filterScrollForSelectedMinister(
-        effectiveScrollState.messages.filter((message) => !failedInThisScroll(message)),
-        minister.name,
-        { claimedTurnId },
-      )
+      ? [...effectiveScrollState.messages]
       : [];
 
   React.useEffect(() => {
     let alive = true;
+    let retryTimer: number | undefined;
+    let translationPending = false;
     // Once an open night is known, refreshes retain that single authority while loading;
     // first load/minister switches never flash the old per-minister projection.
     setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current) ? current : { kind: "loading" });
@@ -155,23 +151,71 @@ export function ChatModal({
       setScrollState({ kind: "none" });
       return () => { alive = false; };
     }
-    api<{ night_id: number; messages: AudienceScrollMessage[] }>("/api/audience/scroll")
+    const refresh = () => api<{
+      night_id: number;
+      messages: AudienceScrollMessage[];
+      container: AudienceScrollMessage["container"];
+      protagonist: string;
+      roster: AudienceRosterEntry[];
+      characters?: Minister[];
+      translation_pending: boolean;
+      translation_retries?: TranslationRetry[];
+    }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
+        const node = chatLogRef.current;
+        if (node && !followsTailRef.current) {
+          const viewportTop = node.getBoundingClientRect().top;
+          const visibleParagraph = Array.from(node.querySelectorAll<HTMLElement>("[data-audience-turn-id] p"))
+            .find((item) => item.getBoundingClientRect().bottom > viewportTop);
+          const rect = visibleParagraph?.getBoundingClientRect();
+          const x = (rect?.left ?? node.getBoundingClientRect().left) + 8;
+          const y = Math.max(rect?.top ?? viewportTop, viewportTop) + 1;
+          const caret = rect && document.caretPositionFromPoint?.(x, y);
+          const range = caret ? document.createRange() : rect && document.caretRangeFromPoint?.(x, y);
+          if (caret && range) range.setStart(caret.offsetNode, caret.offset);
+          if (range) {
+            range.collapse(true);
+            const paragraph = (range.startContainer.nodeType === Node.TEXT_NODE
+              ? range.startContainer.parentElement : range.startContainer as Element)?.closest("p");
+            const turn = paragraph?.closest<HTMLElement>("[data-audience-turn-id]");
+            if (turn && paragraph) {
+              const paragraphs = Array.from(turn.querySelectorAll("p"));
+              const before = document.createRange();
+              before.selectNodeContents(paragraph);
+              before.setEnd(range.startContainer, range.startOffset);
+              const offset = paragraphs.slice(0, paragraphs.indexOf(paragraph)).reduce(
+                (sum, item) => sum + (item.textContent?.length ?? 0), 0,
+              ) + before.toString().length;
+              const top = range.getClientRects()[0]?.top ?? paragraph.getBoundingClientRect().top;
+              readingAnchorRef.current = { turnId: turn.dataset.audienceTurnId ?? "", offset, top };
+            }
+          }
+        }
         setScrollState(data.night_id ? {
           kind: "night",
           nightId: data.night_id,
           messages: data.messages || [],
+          container: data.container,
+          protagonist: data.protagonist,
+          roster: data.roster || [],
+          characters: data.characters || [],
+          translationPending: data.translation_pending,
+          translationRetries: data.translation_retries || [],
           refreshError: false,
         } : { kind: "none" });
+        translationPending = !!data.translation_pending;
+        if (translationPending) retryTimer = window.setTimeout(refresh, 1500);
       })
       .catch(() => {
         if (!alive) return;
         setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current)
           ? { ...current, refreshError: true }
           : { kind: "error" });
+        if (translationPending) retryTimer = window.setTimeout(refresh, 1500);
       });
-    return () => { alive = false; };
+    refresh();
+    return () => { alive = false; window.clearTimeout(retryTimer); };
   }, [minister.name, scrollMode, currentCampaignId, currentNightId, undoneChatIdentity, failedIdentity,
     // App supplies the explicit durable-settlement generation. Standalone/legacy consumers
     // retain the historical chat-driven refresh contract until they adopt that signal.
@@ -184,37 +228,65 @@ export function ChatModal({
   if (pendingUserMessage && !pendingAlreadyPersisted) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });
   }
-  // The scroll remains the only authority: derive the sidebar lens from its latest
-  // recognised entrance/divider anchor instead of storing parallel scene state.
-  // Minister dialogue can be an interjection from someone standing at the side.
+  const nightCharacters = effectiveScrollState.kind === "night" ? effectiveScrollState.characters : [];
+  const portraitCharacters = [...nightCharacters, ...ministers.filter((person) => !nightCharacters.some((item) => item.name === person.name))];
   const currentMinister = scrollMode === "audience"
-    ? displayMessages.reduce<Minister | undefined>((current, message) => {
-        if (!("speaker" in message) || !message.speaker) return current;
-        const isAudienceAnchor = message.beat === "entrance" || message.beat === "divider";
-        return isAudienceAnchor ? ministers.find((candidate) => candidate.name === message.speaker) ?? current : current;
-      }, undefined) ?? minister
+    ? (effectiveScrollState.kind === "night"
+        ? portraitCharacters.find((candidate) => candidate.name === effectiveScrollState.protagonist)
+        : undefined)
     : minister;
+  const roster = scrollMode === "audience"
+    ? (effectiveScrollState.kind === "night"
+        ? [
+            ...effectiveScrollState.roster,
+            ...ministers.filter((candidate) => (!candidate.status || candidate.status === "active")
+              && !effectiveScrollState.roster.some((entry) => entry.name === candidate.name))
+              .map((candidate) => ({ name: candidate.name, present: false, waiting: true })),
+          ]
+        : ministers.filter((candidate) => !candidate.status || candidate.status === "active")
+            .map((candidate) => ({ name: candidate.name, present: false, waiting: true })))
+    : ministers
+        .filter((candidate) => !candidate.status || candidate.status === "active")
+        .map((candidate) => ({ name: candidate.name, present: true }));
+  const pendingTurnKey = pendingIdentity
+    ? `${pendingIdentity.campaign_id}:${pendingIdentity.night_id}:${pendingIdentity.chat_turn_id}`
+    : "";
+  const streamingTurnRef = React.useRef<{ key: string; chatTurnId?: number; content: string } | null>(null);
   if (streamingMinisterMessage) {
+    streamingTurnRef.current = { key: pendingTurnKey, chatTurnId: pendingIdentity?.chat_turn_id, content: streamingMinisterMessage };
+  }
+  const streamingTurnAlreadyPersisted = streamingTurnRef.current?.chatTurnId != null
+    && streamingTurnRef.current.key === `${currentCampaignId}:${currentNightId}:${streamingTurnRef.current.chatTurnId}`
+    && displayMessages.some((message) => "chat_turn_id" in message
+      && message.chat_turn_id === streamingTurnRef.current?.chatTurnId);
+  const streamingTurnFailed = !!failedIdentity
+    && streamingTurnRef.current?.key === `${failedIdentity.campaign_id}:${failedIdentity.night_id}:${failedIdentity.chat_turn_id}`;
+  if (!streamingMinisterMessage && (streamingTurnAlreadyPersisted || streamingTurnFailed)) {
+    streamingTurnRef.current = null;
+  }
+  const streamingTurn = streamingTurnRef.current;
+  if (streamingTurn) {
     displayMessages.push({
-      role: "minister",
-      speaker: currentMinister.name,
+      role: "scene",
+      speaker: "",
       audibility: "",
       time: null,
-      content: streamingMinisterMessage,
+      content: streamingTurn.content,
       soft_boundary: false,
       beat: "dialogue",
       highlights: [],
       container: { time_of_day: "", location: "", audience_type: "" },
-      pending: true,
-    } as ChatDisplayMessage & AudienceScrollMessage);
+      chat_turn_id: streamingTurn.chatTurnId,
+    } as AudienceScrollMessage);
   }
-  const { primary: portraitPrimary, fallback: portraitFallback } = portraitSources(currentMinister, portraitPrefix);
-  const visibleSecretOrders = secretOrders.filter((order) => order.minister_name === currentMinister.name);
-  // Night-level audience_type lives on the raw scroll container — not the filtered lens.
-  // Blank selected-minister windows must still show 召法.
+  const { primary: portraitPrimary, fallback: portraitFallback } = currentMinister
+    ? portraitSources(currentMinister, portraitPrefix) : { primary: "", fallback: undefined };
+  const visibleSecretOrders = secretOrders.filter((order) => order.minister_name === currentMinister?.name);
+  // Night-level audience_type lives on the persisted container — not the message projection.
   const audienceType = scrollMode === "audience" && effectiveScrollState.kind === "night"
-    ? effectiveScrollState.messages.find((message) => message.container?.audience_type)?.container?.audience_type ?? ""
+    ? effectiveScrollState.container?.audience_type ?? ""
     : "";
+  const nightContainer = effectiveScrollState.kind === "night" ? effectiveScrollState.container : undefined;
 
   React.useEffect(() => {
     inputRef.current?.focus();
@@ -234,7 +306,7 @@ export function ChatModal({
     return () => clearInterval(id);
   }, [busy, streamingMinisterMessage]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const node = chatLogRef.current;
     if (!node) return;
     const nightId = scrollState.kind === "night" ? scrollState.nightId : 0;
@@ -245,8 +317,34 @@ export function ChatModal({
       restoredNightRef.current = nightId;
     } else if (followsTailRef.current) {
       node.scrollTop = node.scrollHeight;
+    } else if (readingAnchorRef.current) {
+      const { turnId, offset, top } = readingAnchorRef.current;
+      const turn = Array.from(node.querySelectorAll<HTMLElement>("[data-audience-turn-id]"))
+        .find((item) => item.dataset.audienceTurnId === turnId);
+      if (turn) {
+        let remaining = offset;
+        const paragraphs = turn.querySelectorAll("p");
+        for (const [index, paragraph] of Array.from(paragraphs).entries()) {
+          const length = paragraph.textContent?.length ?? 0;
+          if (remaining >= length && index < paragraphs.length - 1) { remaining -= length; continue; }
+          const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+          let textNode: Node | null;
+          while ((textNode = walker.nextNode())) {
+            const textLength = textNode.textContent?.length ?? 0;
+            if (remaining > textLength) { remaining -= textLength; continue; }
+            const range = document.createRange();
+            range.setStart(textNode, remaining);
+            range.collapse(true);
+            const rect = range.getClientRects()[0];
+            if (rect) node.scrollTop += rect.top - top;
+            break;
+          }
+          break;
+        }
+      }
     }
-  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry]);
+    readingAnchorRef.current = null;
+  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, busy, error, replyRetries, translationRetries]);
 
   const handleScroll = () => {
     const node = chatLogRef.current;
@@ -256,6 +354,45 @@ export function ChatModal({
     }
   };
 
+  const turnNotices = new Map<number, React.ReactNode>();
+  for (const retry of replyRetries) {
+    if (!onRetryReply) continue;
+    turnNotices.set(retry.chat_turn_id, (
+      <div className="chat-system-note danger chat-failure-note" role="alert" data-testid={`reply-retry-${retry.chat_turn_id}`}>
+        <span>{retryReadFailure?.kind === "reply" && retryReadFailure.chatTurnId === retry.chat_turn_id
+          ? `${retryReadFailure.postSucceeded || retryReadFailure.readFailure ? "召对记录读取失败；" : ""}${!retryReadFailure.postSucceeded ? "回话重试失败：" : ""}${retryReadFailure.message}`
+          : <>{retry.recovery_phase ? "回话已保存，后续处理失败" : `问话未得回话（「${retry.question}」）`}。</>}{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
+        <button type="button" onClick={() => onRetryReply(scrollMode === "audience" ? AUDIENCE_SCENE_SPEAKER : minister.name, retry.chat_turn_id)} disabled={!!busy}>
+          重试
+        </button>
+      </div>
+    ));
+  }
+  const visibleTranslationRetries: Pick<TranslationRetry, "chat_turn_id" | "retryable" | "error_pack_path">[] = scrollMode === "audience" && effectiveScrollState.kind === "night"
+    ? [...effectiveScrollState.translationRetries] : [...translationRetries];
+  if (retryReadFailure?.kind === "translation" && !visibleTranslationRetries.some((retry) => retry.chat_turn_id === retryReadFailure.chatTurnId)) {
+    visibleTranslationRetries.push({ chat_turn_id: retryReadFailure.chatTurnId, retryable: true });
+  }
+  for (const retry of visibleTranslationRetries) {
+    if (!retry.retryable || !onRetryTranslation) continue;
+    turnNotices.set(retry.chat_turn_id, (
+      <React.Fragment key={`translation-${retry.chat_turn_id}`}>
+        {turnNotices.get(retry.chat_turn_id)}
+        <div className="chat-system-note danger chat-failure-note" role="alert" data-testid={`translation-retry-${retry.chat_turn_id}`}>
+          <span>{retryReadFailure?.kind === "translation" && retryReadFailure.chatTurnId === retry.chat_turn_id
+            ? `${retryReadFailure.postSucceeded || retryReadFailure.readFailure ? "召对记录读取失败；" : ""}${!retryReadFailure.postSucceeded ? "转译重试失败：" : ""}${retryReadFailure.message}`
+            : <>本轮记录未能整理。</>}{retry.error_pack_path ? `错误包：${retry.error_pack_path}；请交给作者。` : ""}</span>
+          <button type="button" onClick={() => onRetryTranslation(retry.chat_turn_id)} disabled={!!busy}>
+            重试
+          </button>
+        </div>
+      </React.Fragment>
+    ));
+  }
+  const unmatchedReplyNotices = replyRetries.filter((retry) => !displayMessages.some(
+    (message) => "chat_turn_id" in message && message.chat_turn_id === retry.chat_turn_id,
+  )).map((retry) => <React.Fragment key={retry.chat_turn_id}>{turnNotices.get(retry.chat_turn_id)}</React.Fragment>);
+
   // #1732 T3：任何会改变「最近一轮」的发送入口先失效确认条，避免陈旧确认误撤新轮。
   const dispatchSend = (ministerName: string, text?: string) => {
     setConfirmUndo(false);
@@ -263,13 +400,13 @@ export function ChatModal({
   };
 
   const handleSend = () => {
-    dispatchSend(currentMinister.name, input);
+    dispatchSend(minister.name, input);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    dispatchSend(currentMinister.name, input);
+    dispatchSend(minister.name, input);
   };
 
   const sendSuggestion = (suggestion: Suggestion) => {
@@ -278,14 +415,36 @@ export function ChatModal({
       onInput(suggestion.text);
       setTimeout(() => inputRef.current?.focus(), 0);
     } else {
-      dispatchSend(currentMinister.name, suggestion.text);
+      dispatchSend(minister.name, suggestion.text);
     }
   };
 
   return (
     <div className="chat-full-grid">
       <aside className="modal-pane minister-side">
-        <div className="minister-profile">
+        {scrollMode === "audience" ? (
+          <div className="audience-roster" aria-label="在殿花名册">
+            <h2>{nightContainer ? `${nightContainer.location} · ${nightContainer.time_of_day}` : "召对"}</h2>
+            {roster.map((entry) => {
+              const candidate = portraitCharacters.find((item) => item.name === entry.name);
+              const portrait = candidate ? portraitSources(candidate, portraitPrefix) : { primary: "", fallback: undefined };
+              return (
+                <button
+                  type="button"
+                  key={entry.name}
+                  data-roster-name={entry.name}
+                  data-presence={entry.present ? "present" : "waiting" in entry ? "waiting" : "departed"}
+                  onClick={() => dispatchSend(minister.name, `宣${entry.name}`)}
+                  disabled={!!busy}
+                >
+                  <MinisterPortrait className="audience-roster-avatar" primary={portrait.primary} fallback={portrait.fallback} name={entry.name} />
+                  <span>{entry.name}<small>{candidate?.office}{entry.present || "waiting" in entry ? "" : " · 已退"}</small></span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {scrollMode === "legacy" && currentMinister ? <div className="minister-profile">
           <div>
             <h2>{currentMinister.name}</h2>
             <p>
@@ -298,12 +457,12 @@ export function ChatModal({
           <button className="icon-button" aria-label="收藏大臣" onClick={() => onFavorite(currentMinister)}>
             <Star size={16} fill={currentMinister.favorite ? "currentColor" : "none"} />
           </button>
-        </div>
-        <p className="profile-copy">{currentMinister.summary}</p>
+        </div> : null}
+        {scrollMode === "legacy" && currentMinister ? <p className="profile-copy">{currentMinister.summary}</p> : null}
         <div className="chat-portrait-wrap">
-          <MinisterPortrait primary={portraitPrimary} fallback={portraitFallback} name={currentMinister.name} />
+          <MinisterPortrait key={portraitPrimary} primary={portraitPrimary} fallback={portraitFallback} name={currentMinister?.name ?? "殿上"} />
         </div>
-        {visibleSecretOrders.length > 0 && (
+        {scrollMode === "legacy" && visibleSecretOrders.length > 0 && (
           <div className="chat-secret-orders">
             <div className="secret-orders-label"><Lock size={12} />密令</div>
             {visibleSecretOrders.map((o) => (
@@ -326,31 +485,18 @@ export function ChatModal({
           {!displayMessages.length && !busy && !streamingMinisterMessage && effectiveScrollState.kind !== "loading" && effectiveScrollState.kind !== "error" && (
             <div className="chat-empty-chrome" role="status">请陛下问话</div>
           )}
-          <ScrollMessages messages={displayMessages} ministerName={currentMinister.name} ministers={ministers} />
-          {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
+          <ScrollMessages messages={displayMessages} ministerName={currentMinister?.name ?? ""} ministers={scrollMode === "audience" ? portraitCharacters : ministers} turnNotices={turnNotices} />
+          {!retryReadFailure && (scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
             <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
           )}
           {busy && !streamingMinisterMessage && (
             <div className="chat-message minister thinking">
-              <span>{currentMinister.name}</span>
+              <span>{currentMinister?.name ?? "殿上"}</span>
               <p><Loader2 size={14} />{portraitPrefix === "consort_" ? "思索中..." : "大臣思索中..."}{elapsedSeconds > 0 ? `（${elapsedSeconds}秒）` : ""}</p>
             </div>
           )}
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
-          {/* #505：系统层恢复——崩溃后问话保留，给重试（非给皇帝的内容选项按钮）。 */}
-          {replyRetry && onRetryReply && (
-            <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="reply-retry">
-              <span>上回问话未得回话（「{replyRetry.question}」），可重新生成回话。</span>
-              <button type="button" onClick={() => onRetryReply(currentMinister.name)} disabled={!!busy}>
-                重新生成回话
-              </button>
-            </div>
-          )}
-          {chatFailures.map((failure) => (
-            <div className="chat-system-note danger chat-failure-note" role="alert" key={failure.id}>
-              <span>{failure.minister_name && failure.minister_name !== minister.name ? `${failure.minister_name}：` : ""}{failure.message}</span>
-            </div>
-          ))}
+          {unmatchedReplyNotices}
           {error && <div className="chat-system-note danger" role="alert">{error}</div>}
         </div>
         <div className="chat-composer">
@@ -379,7 +525,7 @@ export function ChatModal({
               onKeyDown={handleKeyDown}
               placeholder={portraitPrefix === "consort_"
                 ? "询问后宫近况、心思、见闻，或吩咐她做事... Enter 发送，Shift+Enter 换行"
-                : "问大臣军情、钱粮、地方，或要求他拟旨... Enter 发送，Shift+Enter 换行"}
+                : "陛下有何旨意…（宣 X / 退朝 都是话）"}
             />
           </label>
           {confirmUndo ? (
@@ -393,7 +539,7 @@ export function ChatModal({
                   disabled={!!busy || !canUndoLastChat}
                   onClick={() => {
                     setConfirmUndo(false);
-                    onUndo(currentMinister.name);
+                    onUndo(minister.name);
                   }}
                 >
                   继续撤回
@@ -424,7 +570,7 @@ export function ChatModal({
               <X size={15} />
               退出召对
             </button>
-            <button className="secondary-action composer-retreat" onClick={() => dispatchSend(currentMinister.name, "退朝")} disabled={!!busy}>
+            <button className="secondary-action composer-retreat" onClick={() => dispatchSend(minister.name, "退朝")} disabled={!!busy}>
               散夜
             </button>
             {composerHint && <div className="composer-hint">{composerHint}</div>}

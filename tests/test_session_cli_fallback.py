@@ -123,7 +123,7 @@ def _cli_stage_secret_from_prefix(
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     captured = {}
 
-    def fake_extract(prompt, llm_config=None, tag=""):
+    def fake_extract(prompt, llm_config=None, tag="", *, policy=None):
         if capture_prompt:
             captured["prompt"] = prompt
         return (json.dumps(fake_payload, ensure_ascii=False), 1)
@@ -613,7 +613,7 @@ def test_confirmation_mixed_rejection_and_approval_cues_uses_semantic_extractor(
     """“不必多言，准了”这类混合句不能被拒绝子串抢先误删 pending。"""
     calls = []
 
-    def _semantic_confirmation(prompt, llm_config=None, tag=""):
+    def _semantic_confirmation(prompt, llm_config=None, tag="", *, policy=None):
         calls.append((prompt, tag))
         return (json.dumps({"确认": "应允"}, ensure_ascii=False), 1)
 
@@ -635,7 +635,7 @@ def test_confirmation_question_with_approval_words_uses_semantic_extractor(monke
     """“若准奏会如何？”只是追问后果，不能因含“准奏”走快路提交 pending。"""
     calls = []
 
-    def _semantic_confirmation(prompt, llm_config=None, tag=""):
+    def _semantic_confirmation(prompt, llm_config=None, tag="", *, policy=None):
         calls.append((prompt, tag))
         return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
 
@@ -657,7 +657,7 @@ def test_confirmation_negated_approval_phrase_is_rejection(monkeypatch):
     """“不可照办”由结构化 LLM 枚举判拒绝，不靠含“照办”的词表快路。"""
     calls = []
 
-    def _semantic_confirmation(prompt, llm_config=None, tag=""):
+    def _semantic_confirmation(prompt, llm_config=None, tag="", *, policy=None):
         calls.append((prompt, tag))
         return (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1)
 
@@ -679,7 +679,7 @@ def test_confirmation_soft_negated_approval_phrase_is_rejection(monkeypatch):
     """“先别照办”由结构化 LLM 枚举判拒绝，不靠词表快路。"""
     calls = []
 
-    def _semantic_confirmation(prompt, llm_config=None, tag=""):
+    def _semantic_confirmation(prompt, llm_config=None, tag="", *, policy=None):
         calls.append((prompt, tag))
         return (json.dumps({"确认": "拒绝"}, ensure_ascii=False), 1)
 
@@ -1826,7 +1826,7 @@ def test_api_channel_secret_prefix_confirmation_uses_recent_context(game, monkey
     db.append_chat_message(minister, state.turn, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银、查截留。")
     db.append_chat_message(minister, state.turn, "minister", "臣领密旨，当令东厂暗中护送赈银。")
 
-    def fake_extract(prompt, llm_config=None, tag=""):
+    def fake_extract(prompt, llm_config=None, tag="", *, policy=None):
         return (json.dumps({
             "标题": "暗护陕西赈银",
             "内容": "命洪承畴督办陕西赈灾，东厂暗助护赈银并查截留。",
@@ -1865,7 +1865,7 @@ def test_api_channel_secret_prefix_extracts_deadline_without_cli_helper(game, mo
     def forbidden_cli(*_args, **_kwargs):
         raise AssertionError("API 密令字段提取不应调用 CLI-only helper")
 
-    def fake_api_extract(prompt, llm_config=None, tag=""):
+    def fake_api_extract(prompt, llm_config=None, tag="", *, policy=None):
         assert tag == "secret_extract"
         assert getattr(llm_config, "channel", "") == "api"
         return (json.dumps({

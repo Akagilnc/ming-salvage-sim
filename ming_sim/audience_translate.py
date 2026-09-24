@@ -273,6 +273,7 @@ def build_audience_translate_prompt(
         '  "scene_facts": [\n'
         "    {\n"
         '      "body": "本段戏文原样",\n'
+        '      "role": "user|minister|attendant|scene",\n'
         '      "audibility": "殿上公开|御前低语",\n'
         '      "person_names": ["说话/涉及人名"],\n'
         '      "tags": []\n'
@@ -287,6 +288,7 @@ def build_audience_translate_prompt(
         "  ]\n"
         "}\n"
         "规则：\n"
+        "- scene_facts 按原顺序完整分段覆盖本轮回话；各 body 直接拼接须与回话逐字相同（含空白、标点与 Markdown），不得概括、补字或漏字；role 是该段的说话人类别，大臣/近臣的 person_names 首位是说话人（user/scene 可为空）。\n"
         "- 一句话同时含拟旨 + 拨帑 + 任免时，只出一条 commission，载荷挂在同一条上；"
         "不要拆成拟旨 / 拨帑 / 交办三道。\n"
         "- 皇帝对已暂存交办说「准」「照办」等应允语义 → promises 里 decision=应允；"
@@ -307,8 +309,12 @@ def build_audience_translate_prompt(
 
 def _default_translate_runner(prompt: str, llm_config: Any) -> Mapping[str, object]:
     from ming_sim.cli_backend import _loads_lenient, _run_json_extractor_for_config
+    from ming_sim.llm_transport import audience_transport_policy
 
-    raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="audience_translate")
+    raw, _ = _run_json_extractor_for_config(
+        prompt, llm_config, tag="audience_translate",
+        policy=audience_transport_policy(),
+    )
     obj = _loads_lenient(raw, accepted_types=(dict,))
     if not isinstance(obj, dict):
         return {}

@@ -503,6 +503,7 @@ def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_an
     declaration = {
         "scene_facts": [
             {"body": "  臣领旨。  \n", "audibility": "殿上公开", "person_names": [minister]},
+            {"body": "臣提及未在册者。", "role": "minister", "audibility": "殿上公开", "person_names": [minister, "未在册者"]},
             {"body": "低声私语", "audibility": "非法可闻性"},
             {"body": "凭空捏造之人插话。", "audibility": "殿上公开", "person_names": ["子虚乌有之人"]},
         ],
@@ -517,8 +518,8 @@ def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_an
         "SELECT COUNT(*) c FROM story_ledger_entries WHERE night_id=?", (night_id,),
     ).fetchone()["c"]
 
-    assert len(result.scene_facts.applied) == 1
-    assert after - before == 1  # 只有合法项真落账，坏项不留孤儿账
+    assert len(result.scene_facts.applied) == 2
+    assert after - before == 2  # 只有合法项真落账，坏项不留孤儿账
     categories = {r.category for r in result.scene_facts.rejected}
     assert categories == {"invalid_shape", "hallucinated_id"}
 

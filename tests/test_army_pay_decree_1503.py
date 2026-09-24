@@ -23,7 +23,7 @@ from ming_sim.action_clusters import (
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.issues import apply_score_extraction
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 
 def _ctx(db, character, candidates, turn, *, message, reply):
@@ -1604,7 +1604,7 @@ def test_draft_xiexang_batch_failures_share_recovery_and_leave_zero_writes(
 
     recovery_calls = []
 
-    def recovery_backend(_prompt, _config=None, *, tag=""):
+    def recovery_backend(_prompt, _config=None, *, tag="", policy=None):
         recovery_calls.append(tag)
         if recovery_mode == "raise":
             raise RuntimeError("recovery backend unavailable")
@@ -1705,7 +1705,6 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
     from tests.test_menu_continue_stream_1195 import _parse_sse
     from tests.test_month_loop_tracer_1468 import _stub_outer_llm_seams
     from tests.test_session_write_queue_1353 import wait_pending_writes
-    from tests.wait_utils import wait_until
 
     class _AudienceAgent:
         def run(self, *_args, **_kwargs):
@@ -1771,7 +1770,8 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
 
         stub_audience_translate(
             monkeypatch,
-            lambda _prompt, _cfg: {
+            lambda prompt, cfg: {
+                **offline_empty_audience_translate(prompt, cfg),
                 "commissions": [commission],
                 "promises": [],
             },
@@ -1803,7 +1803,8 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
                     return []
                 raise
 
-        wait_until(lambda: len(_ledger()) >= 1)
+        game._runtime_write_queue().barrier(lambda: None)
+        assert _ledger()
         assert [row["id"] for row in game.db.list_pending_actions(turn)] == pending_before
         assert [row["id"] for row in game.db.list_decree_dossiers()] == dossiers_before
         ledger = _ledger()
@@ -1938,18 +1939,20 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
 
         def _translate(prompt, _cfg):
             text = str(prompt or "")
+            scene = offline_empty_audience_translate(prompt, _cfg)
             if "【本轮皇帝】准" in text:
                 rows = [
                     r for r in game.db.list_pending_actions(game.state.turn)
                     if r.get("kind") == "directive" and r.get("status") == "pending"
                 ]
                 if not rows:
-                    return {"commissions": [], "promises": []}
+                    return scene
                 return {
-                    "commissions": [],
+                    **scene,
                     "promises": [{"action_id": int(rows[0]["id"]), "decision": "应允"}],
                 }
             return {
+                **scene,
                 "commissions": [{
                     "text": "敕户部发太仓银十五万两协济关宁军前。",
                     "grant": {
@@ -1961,7 +1964,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
                         "target_id": "guanning",
                     },
                 }],
-                "promises": [],
             }
 
         stub_audience_translate(monkeypatch, _translate)
@@ -2297,7 +2299,7 @@ def test_mixed_batch_valid_and_invalid_xiexang_rolls_back_sibling(
 
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下改说。", 1),
+        lambda _p, _c=None, *, tag="", policy=None: ("臣请陛下改说。", 1),
     )
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, _content = game
@@ -2431,7 +2433,7 @@ def test_non_xiexang_grant_shape_failure_is_typed_rejection(game, monkeypatch, t
 
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下明示银两。", 1),
+        lambda _p, _c=None, *, tag="", policy=None: ("臣请陛下明示银两。", 1),
     )
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, _content = game
@@ -2516,7 +2518,7 @@ def test_batch_draft_combo_failure_cached_and_attributed(game, monkeypatch, tmp_
     monkeypatch.setattr(cb, "extract_draft_intent_with_roster_heal", fake_extract)
     monkeypatch.setattr(
         cb, "_run_backend_for_config",
-        lambda _p, _c=None, *, tag="": ("臣请陛下改说所指地域。", 1),
+        lambda _p, _c=None, *, tag="", policy=None: ("臣请陛下改说所指地域。", 1),
     )
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     db, state, _content = game
@@ -2554,4 +2556,3 @@ def test_batch_draft_combo_failure_cached_and_attributed(game, monkeypatch, tmp_
     assert len(items) == 1
     assert items[0].get("target_id") == "京师"
     assert items[0].get("region_id") == "shaanxi"
-

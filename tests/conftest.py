@@ -338,9 +338,12 @@ class _OfflineSceneRegistry:
 
 
 def offline_empty_audience_translate(prompt, llm_config):
-    """#1842 离线转译边界：空声明，禁 sk-test 真网。"""
-    del prompt, llm_config
-    return {"commissions": [], "promises": []}
+    """离线转译边界：无政务声明，但逐字保留受控输入中的回话。"""
+    del llm_config
+    reply = prompt.split("【本轮回话】", 1)[1].removesuffix("\n")
+    return {"commissions": [], "promises": [], "scene_facts": [
+        {"body": reply, "role": "scene", "audibility": "殿上公开", "person_names": []},
+    ]}
 
 
 @pytest.fixture(scope="session", autouse=True)

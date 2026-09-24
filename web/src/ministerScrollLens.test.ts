@@ -108,6 +108,16 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     ]);
   });
 
+  it("同一归档轮有两名正式发言人时，两人都能回看整轮", () => {
+    const scroll = [
+      msg({ role: "user", speaker: "朕", content: "同问", beat: "dialogue", chat_turn_id: 30 }),
+      msg({ role: "minister", speaker: "洪承畴", content: "洪答", beat: "dialogue", chat_turn_id: 30 }),
+      msg({ role: "minister", speaker: "许誉卿", content: "许答", beat: "dialogue", chat_turn_id: 30 }),
+    ];
+    expect(filterScrollForSelectedMinister(scroll, "洪承畴")).toEqual(scroll);
+    expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual(scroll);
+  });
+
   it("entrance/divider 软段 + 殿侧他臣插话：不串窗且不误删本段上下文", () => {
     const scroll = softSegmentWithAside();
 
@@ -223,5 +233,29 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     expect(hong.some((m) => m.beat === "summon")).toBe(false);
     expect(hong.some((m) => m.speaker === "许誉卿")).toBe(false);
     expect(hong.some((m) => m.beat === "entrance" && m.speaker === "洪承畴")).toBe(true);
+  });
+
+  it("现行单场景轮按参与臣过滤时保留殿上正式对话", () => {
+    const scroll = [
+      msg({ role: "user", speaker: "朕", content: "诸卿以为如何？", beat: "dialogue", chat_turn_id: 30 }),
+      msg({ role: "minister", speaker: "殿上", content: "群臣各陈所见。", beat: "dialogue", chat_turn_id: 30 }),
+      msg({ role: "attendant", speaker: "王承恩", content: "洪承畴亦在列。", beat: "aside", chat_turn_id: 30 }),
+    ];
+    expect(filterScrollForSelectedMinister(scroll, "洪承畴", { sceneSpeaker: "殿上" }).map((m) => m.content)).toEqual([
+      "诸卿以为如何？", "群臣各陈所见。", "洪承畴亦在列。",
+    ]);
+  });
+
+  it("未转译的无主轮保留为中性记录，不将他臣具名轮归给当前臣", () => {
+    const scroll = [
+      msg({ role: "user", speaker: "朕", content: "待整理问话", beat: "dialogue", chat_turn_id: 40 }),
+      msg({ role: "scene", speaker: "", content: "待整理回话", beat: "dialogue", chat_turn_id: 40 }),
+      msg({ role: "minister", speaker: "洪承畴", content: "已具名回话", beat: "dialogue", chat_turn_id: 41 }),
+    ];
+    const visible = filterScrollForSelectedMinister(scroll, "许誉卿", { pendingTranslationTurnIds: [40] });
+    expect(visible.map((message) => ({ role: message.role, speaker: message.speaker, chat_turn_id: message.chat_turn_id }))).toEqual([
+      { role: "user", speaker: "朕", chat_turn_id: 40 },
+      { role: "scene", speaker: "", chat_turn_id: 40 },
+    ]);
   });
 });

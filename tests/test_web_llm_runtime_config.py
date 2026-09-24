@@ -1039,7 +1039,7 @@ def _count_llm_calls(monkeypatch):
         calls.append("verify_llm_available")
         raise AssertionError("入口路径不得调用 verify_llm_available")
 
-    def _track_backend(prompt, llm_config=None, tag=""):
+    def _track_backend(prompt, llm_config=None, tag="", *, policy=None):
         calls.append(f"backend:{tag or ''}")
         raise AssertionError(f"入口路径不得调用 CLI 后端 tag={tag!r}")
 

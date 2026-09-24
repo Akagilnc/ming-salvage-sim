@@ -20,7 +20,7 @@ from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from ming_sim.applier import Provenance, atomic
-from ming_sim.audience_night import set_night_protagonist
+from ming_sim.audience_night import reproject_night_protagonist, set_night_protagonist
 from ming_sim.declaration_dispatch import (
     DeclarationDispatchResult,
     dispatch_declaration,
@@ -107,6 +107,10 @@ def apply_audience_round_translation(
             chat_turn_id=ctid,
             source=source,
         )
+        # 分段若有一项拒收，整轮不可标 done；atomic 回滚部分落账，后台保 pending。
+        if ctid > 0 and result.scene_facts.rejected:
+            from ming_sim.audience_translate import AudienceTranslateError
+            raise AudienceTranslateError("说话人分段声明有拒收项")
         # 主角持久化 + 抽取/判官水位：chat_turns 不在前像表，undo 走重投影。
         _bind_round_after_dispatch(db, nid, ctid, result)
     return result
@@ -123,15 +127,18 @@ def _bind_round_after_dispatch(
     name = ""
     if isinstance(validated, Mapping):
         name = str(validated.get("person_name") or "").strip()
-    if name and night_id > 0:
-        set_night_protagonist(db, night_id, name, reason="translation", commit=False)
     if chat_turn_id <= 0:
+        if name and night_id > 0:
+            set_night_protagonist(db, night_id, name, reason="translation", commit=False)
         return
     if name:
         db.conn.execute(
             "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
             (name, int(chat_turn_id)),
         )
+        # The night value is only a projection of the latest live declaration.
+        # A retry may commit an older round after a newer round (or a xuan cut).
+        reproject_night_protagonist(db, night_id)
     # 转译已声明本轮记录 → 故事抽取与边事件判官退役于本轮（水位 done，收夜 drain 跳过）
     mark_turn_translation_done(db, chat_turn_id, commit=False)
 
@@ -157,18 +164,28 @@ def mark_turn_translation_done(
         db.conn.commit()
 
 
-def cancel_turn_translation(chat_turn_id: int, *, write_queue: Any) -> int:
-    """撤回本轮：由 SessionWriteQueue 取消唯一在飞票。"""
+def cancel_turn_translation(chat_turn_id: int, *, write_queue: Any, gate_held: bool = False) -> int:
+    """撤回本轮：可取消的 Future 即刻放票；运行中的票等 worker 终态。"""
     ctid = int(chat_turn_id or 0)
     if ctid <= 0:
         return 0
-    n = int(write_queue.cancel_key(("audience_translation", ctid)))
-    turn_key = (id(write_queue), ctid)
-    with _night_inflight_guard:
-        fut = _turn_future.get(turn_key)
-    if fut is not None:
-        fut.cancel()
-    return n
+    # Same lock order as admission: gate, then Future map. This also covers the
+    # interval after the ticket was retained but before its Future was recorded.
+    with (contextlib.nullcontext() if gate_held else _translation_write_cm(write_queue.write_gate)):
+        turn_key = (id(write_queue), ctid)
+        with _night_inflight_guard:
+            fut = _turn_future.get(turn_key)
+        if fut is not None:
+            # A running Future cannot be cancelled. Its ticket is the close
+            # barrier's owner until _cleanup; never vacate it here.
+            # A queued placeholder remains the FIFO link until its predecessor
+            # finishes. Cancelling it here would let the next round overtake A.
+            if not fut.running():
+                write_queue.cancel_key(("audience_translation", ctid))
+            else:
+                fut.cancel()
+            return 0
+        return int(write_queue.cancel_key(("audience_translation", ctid)))
 
 
 def _observe_finished_future(
@@ -201,8 +218,9 @@ def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> No
 
 def list_pending_translations(
     db: Any, *, night_id: Optional[int] = None, chat_turn_id: Optional[int] = None,
+    write_queue: Any = None,
 ) -> List[Dict[str, Any]]:
-    """转译待补真源：复用 list_unextracted_replies（extract_status ''/'pending'）。
+    """玩家可重试的转译失败：仅明确失败的 pending，不含刚落库的空水位。
 
     可按夜 / 源轮收窄。返回行附结构化系统提示态（供 0158 决定 6 投影，不做页面）。
     """
@@ -215,13 +233,17 @@ def list_pending_translations(
         ctid = int(row.get("chat_turn_id") or 0)
         if want is not None and ctid != want:
             continue
+        if row.get("extract_status") != "pending":
+            continue
         item = dict(row)
         item["chat_turn_id"] = ctid
         item["night_id"] = int(row.get("night_id") or 0)
         item["minister_name"] = str(row.get("minister_name") or "")
         # 结构化系统提示状态（前端渲染提示行 + 重试钮；本层只交能力）
         item["kind"] = "translation_pending"
-        item["retryable"] = True
+        with _night_inflight_guard:
+            future = _turn_future.get((id(write_queue), ctid)) if write_queue is not None else None
+        item["retryable"] = future is None or future.done()
         item["extract_status"] = str(row.get("extract_status") or "pending") or "pending"
         out.append(item)
     return out
@@ -320,6 +342,16 @@ def run_turn_translation_job(
             llm_config=llm_config,
             translate_fn=translate_fn,
         )
+        # 分段是整轮回话的结构化覆盖声明；不完整或改字不得入账并置 done。
+        # 失败走既有 pending/retry 路径，原戏文继续中性显示。
+        segments = declaration.get("scene_facts")
+        if (
+            not isinstance(segments, list) or not segments
+            or any(not isinstance(item, Mapping) or item.get("role") not in {"user", "minister", "attendant", "scene"}
+                   or not isinstance(item.get("body"), str) for item in segments)
+            or "".join(item["body"] for item in segments) != reply
+        ):
+            raise AudienceTranslateError("说话人分段未逐字覆盖源轮回话")
         with _gate_cm():
             # 落账临界区复查源轮仍存活（ADR 0038：后台写入前须校验目标轮仍存活）。
             if ctid > 0 and hasattr(db, "conn"):
@@ -336,8 +368,19 @@ def run_turn_translation_job(
                 night_id=nid, chat_turn_id=ctid,
                 minister_name=minister_name, source=source,
             )
-    except Exception:
+    except Exception as exc:
         _mark_translation_pending(db, ctid, write_gate)
+        if ctid > 0 and hasattr(db, "set_chat_turn_error_pack"):
+            from ming_sim.exceptions import LLMUnavailable
+            if not isinstance(exc, LLMUnavailable):
+                from ming_sim.audience_night import write_audience_error_pack
+                with _gate_cm():
+                    pack = write_audience_error_pack(
+                        kind="translation", message=str(exc),
+                        detail={"chat_turn_id": ctid, "night_id": nid},
+                        db=db, exc=exc,
+                    )
+                    db.set_chat_turn_error_pack(ctid, pack)
         raise
 
 
@@ -369,15 +412,6 @@ def schedule_audience_turn_translation(
     )
     if ticket is None:
         raise RuntimeError("write queue sealed")
-    try:
-        if ctid > 0 and hasattr(db, "mark_story_extraction_pending"):
-            # 调度线程短标 pending：同属转译持闸类（调用方须已放闸，禁嵌套非重入锁）。
-            with _translation_write_cm(write_gate):
-                db.mark_story_extraction_pending(ctid)
-    except Exception:
-        write_queue.complete(ticket)
-        raise
-
     night_key = (id(write_queue), nid)
 
     def _run_job() -> DeclarationDispatchResult:
@@ -409,21 +443,29 @@ def schedule_audience_turn_translation(
     # 会填满进程级线程池，饿死新会话（票面：新局不等待旧局后台转译）。
     # 有未完成前驱时只登记占位 Future，前驱终态后再 submit 实活；无前驱则直接提交。
     # 读前驱 + 登记同持非重入锁；done callback 一律锁外挂（已完成 Future 同步回调会死锁）。
-    with _night_inflight_guard:
-        pred = _night_tail.get(night_key)
-        # Future 终态先于 cleanup callback 可见；此窗口内的 tail 已不是
-        # 在飞前驱，新一轮不得继承它的旧失败。
-        if pred is not None and pred.done():
-            pred = None
-        if pred is None:
-            fut: Future = _executor.submit(_run_job)
-            chain_pred: Optional[Future] = None
-        else:
-            fut = Future()
-            chain_pred = pred
-        _night_tail[night_key] = fut
-        if ctid > 0:
-            _turn_future[(id(write_queue), ctid)] = fut
+    try:
+        # 与撤回路径同锁序：先会话写闸，后 Future 账锁，避免互等。
+        with _translation_write_cm(write_gate):
+            if ticket.cancelled:
+                raise CancelledError()
+            with _night_inflight_guard:
+                pred = _night_tail.get(night_key)
+                # Future 终态先于 cleanup callback 可见；此窗口内的 tail 已不是
+                # 在飞前驱，新一轮不得继承它的旧失败。
+                if pred is not None and pred.done():
+                    pred = None
+                if pred is None:
+                    fut: Future = _executor.submit(_run_job)
+                    chain_pred: Optional[Future] = None
+                else:
+                    fut = Future()
+                    chain_pred = pred
+                _night_tail[night_key] = fut
+                if ctid > 0:
+                    _turn_future[(id(write_queue), ctid)] = fut
+    except Exception:
+        write_queue.complete(ticket)
+        raise
 
     def _cleanup(
         _f: Future,
@@ -472,6 +514,9 @@ def schedule_audience_turn_translation(
     ) -> None:
         _observe_predecessor(pred_fut)
         if _out.done():
+            return
+        if ticket.cancelled:
+            _out.cancel()
             return
         # 占位 Future：submit 前标 RUNNING，避免 cancel 成功摘账而实活仍在跑。
         if not _out.set_running_or_notify_cancel():
@@ -533,9 +578,10 @@ def catch_up_pending_translations(
     单轮转译/落账失败保持 pending、继续后续轮；源轮查询等代码异常按 ADR 0005 上抛，
     不洗成空原话继续转译。
     """
-    rows = list_pending_translations(
-        db, night_id=night_id, chat_turn_id=chat_turn_id,
-    )
+    # 恢复真源比玩家可重试投影宽：崩溃在回话落库与任务登记之间时，'' 也须补跑。
+    rows = list(db.list_unextracted_replies(night_id=night_id) or [])
+    if chat_turn_id is not None:
+        rows = [r for r in rows if int(r.get("chat_turn_id") or 0) == int(chat_turn_id)]
     extracted = 0
     pending = 0
     scanned = 0

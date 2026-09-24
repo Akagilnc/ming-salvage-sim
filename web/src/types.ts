@@ -631,6 +631,25 @@ export type ReplyRetry = {
   minister_name: string;
   turn: number;
   question: string;
+  error_pack_path?: string;
+  recovery_phase?: "after_reply" | "court_break";
+};
+
+export type TranslationRetry = {
+  chat_turn_id: number;
+  night_id: number;
+  minister_name: string;
+  kind: "translation_pending";
+  retryable: boolean;
+  error_pack_path?: string;
+};
+
+export type RetryReadFailure = {
+  kind: "reply" | "translation";
+  chatTurnId: number;
+  postSucceeded: boolean;
+  message: string;
+  readFailure?: boolean;
 };
 
 /** #501 / #1353：待补叙事抽取诊断状态（不再驱动玩家 CTA）。 */

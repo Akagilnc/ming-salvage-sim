@@ -167,7 +167,8 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     """
     from ming_sim import audience_night as an
 
-    _pin_transport_policy(monkeypatch, tmp_path)
+    # runtime 即使误配为五次，玩家的一次动作仍以票面三次为硬上限。
+    _pin_transport_policy(monkeypatch, tmp_path, max_attempts=5)
     script = install_fake_cli_runner(monkeypatch, [
         {"stdout": ("Authentication required\n",), "returncode": 0},
     ])

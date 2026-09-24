@@ -47,7 +47,7 @@ from tests.test_month_loop_tracer_1468 import (
     tracer_client,  # noqa: F401 — 复用既有 HTTP 入口，不平行造 fixture
 )
 from web_app import WebGame
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 
 def _ctx(
@@ -108,7 +108,7 @@ def _classify_assignment_via_real_entry(
     """
     lead = str(extract_lead or "").strip()
 
-    def _scripted(prompt, llm_config=None, tag=""):
+    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
         if tag == "draft_intent":
             return (json.dumps({
                 "拟旨意图": "无",
@@ -304,17 +304,18 @@ def _text_commission_translate(commission_text: str):
 
     def _fn(prompt, _cfg):
         text = str(prompt or "")
+        scene = offline_empty_audience_translate(prompt, _cfg)
         if "【本轮皇帝】准" in text or text.rstrip().endswith("准。") or "\n准。" in text:
             pid = int(box.get("pending_id") or 0)
             if pid <= 0:
-                return {"commissions": [], "promises": []}
+                return scene
             return {
-                "commissions": [],
+                **scene,
                 "promises": [{"action_id": pid, "decision": "应允"}],
             }
         return {
+            **scene,
             "commissions": [{"text": commission_text}],
-            "promises": [],
         }
 
     return box, _fn
@@ -468,7 +469,7 @@ def test_classify_prompt_carries_turn_and_stop_condition_contract(monkeypatch, g
     db, state, content = game
     captured = {}
 
-    def _scripted(prompt, llm_config=None, tag=""):
+    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
         captured["prompt"] = prompt
         assert tag == "action_intent"
         return (json.dumps({"kind": "none"}, ensure_ascii=False), 0)
@@ -495,7 +496,7 @@ def test_classify_prompt_stop_condition_example_is_single_layer_json(monkeypatch
     db, state, content = game
     captured = {}
 
-    def _scripted(prompt, llm_config=None, tag=""):
+    def _scripted(prompt, llm_config=None, tag="", *, policy=None):
         captured["prompt"] = prompt
         assert tag == "action_intent"
         return (json.dumps({"kind": "none"}, ensure_ascii=False), 0)
@@ -866,10 +867,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
     agent = _PhaseAgent()
     game.session.registry.get = lambda _ch, **_kw: agent
     stub_scene_agent(monkeypatch, agent)
-    stub_audience_translate(
-        monkeypatch,
-        lambda *_a, **_k: {"commissions": [], "promises": []},
-    )
+    stub_audience_translate(monkeypatch, offline_empty_audience_translate)
 
     # ① 纯问事：HTTP chat + 空转译 → 零 pending
     out = client.post(
@@ -1522,7 +1520,7 @@ def test_cross_round_assignment_update_undo_restores_before_image(game, monkeypa
 
     original_title = "核钱粮"
     updated_title = "核钱粮（加紧催办）"
-    empty_translate = lambda *_a, **_k: {"commissions": [], "promises": []}
+    empty_translate = offline_empty_audience_translate
     wg = _wire_web_game(
         db, state, content, _SyncAgent("臣请办核钱粮。"), monkeypatch,
         translate_fn=empty_translate,
