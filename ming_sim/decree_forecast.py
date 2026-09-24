@@ -22,7 +22,11 @@ from ming_sim.declaration_dispatch import (
 )
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_transport import audience_transport_policy
-from ming_sim.month_translate import translate_month_segment
+from ming_sim.month_translate import (
+    _effect_ref_grounding,
+    _visible_effect_refs,
+    translate_month_segment,
+)
 from ming_sim.session_write_queue import get_session_write_queue
 
 logger = logging.getLogger(__name__)
@@ -122,11 +126,13 @@ def _pending_snapshot(session: Any, pending_action_id: int, night_id: int) -> Op
     )
     # Nightly forecasting is limited to this decree, not a second world-event run.
     sim_payload["candidate_events"] = []
+    grounding, refs = _frozen_effect_refs(db, int(state.turn), payload)
     return {
         "candidate": candidate,
         "context": context,
         "simulator_payload": sim_payload,
-        "target_grounding": build_translation_target_grounding(db),
+        "target_grounding": grounding,
+        "visible_refs": refs,
         "decree_ref": decree_ref,
         "pending_action_id": int(pending_action_id),
         "version": version,
@@ -153,15 +159,28 @@ def _held_snapshot(session: Any, dossier_id: int) -> Optional[Dict[str, Any]]:
         decree_dossiers=projected,
     )
     sim_payload["candidate_events"] = []
+    held_payload = candidate.get("payload")
+    grounding, refs = _frozen_effect_refs(
+        db, int(state.turn), held_payload if isinstance(held_payload, dict) else {},
+    )
     return {
         "candidate": candidate,
         "context": context,
         "simulator_payload": sim_payload,
-        "target_grounding": build_translation_target_grounding(db),
+        "target_grounding": grounding,
+        "visible_refs": refs,
         "decree_ref": held_dossier_decree_ref(int(dossier_id)),
         "dossier_id": int(dossier_id),
         "turn": int(state.turn),
     }
+
+
+def _frozen_effect_refs(
+    db: Any, turn: int, payload: Dict[str, Any],
+) -> tuple[str, dict]:
+    """#1840：转译输入与暂存落账共用这一份可见引用，不另建账。"""
+    refs = _visible_effect_refs(db, turn, payload)
+    return build_translation_target_grounding(db) + _effect_ref_grounding(refs), refs
 
 
 def _is_held_for_rejudgment(row: Dict[str, Any], turn: int) -> bool:
@@ -263,6 +282,7 @@ def _forecast(
             verdict=verdict,
             questions=questions,
             forecast_text=forecast_text,
+            visible_refs=snapshot.get("visible_refs"),
         )
 
     def stage() -> None:

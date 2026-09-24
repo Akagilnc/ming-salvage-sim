@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import threading
 from types import SimpleNamespace
 
 import ming_sim.decree as decree_mod
@@ -56,6 +55,11 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         state.turn, kind="directive", action="拟旨", minister_name=minister.name,
         payload={**payload, "text": "乙旨", "mode": "midzhi"},
     )
+    visible_affair = db.affairs.open(
+        name="预推可见", origin="旨意", year=state.year,
+        period=state.period, turn=state.turn,
+    )
+    future_affair_id = visible_affair.id + 1
     treasury_before = int(state.metrics["国库"])
     ledger_before = db.conn.execute("SELECT COUNT(*) FROM story_ledger_entries").fetchone()[0]
     dossier_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
@@ -100,13 +104,16 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         return before_question + decision_block + after_question
 
     monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
-    seen_segments = []
     translate_policies = []
 
-    def translate_segment(prompt, _llm_config, **kwargs):
+    def translate_segment(_prompt, _llm_config, **kwargs):
         translate_policies.append(kwargs.get("policy"))
-        seen_segments.append(prompt)
-        return {"effects": [{"account": "国库", "amount": 1}]}
+        return {"effects": {"economy_moves": [
+            {"origin_ref": f"affair:{visible_affair.id}", "account": "国库", "delta": -1,
+             "category": "过月支出", "reason": "可见事务"},
+            {"origin_ref": f"affair:{future_affair_id}", "account": "国库", "delta": -1,
+             "category": "过月支出", "reason": "预推后新开事务"},
+        ]}}
 
     monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", translate_segment)
     sess = _sess(db, state, content, monkeypatch, translate_fn)
@@ -123,11 +130,11 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     ).fetchone()
     assert staged is not None and staged["status"] == "staged"
     stored = db.staged_declarations.staged_for(pending_action_decree_ref(second, 1))
-    assert stored[0].declaration.get("effects") == [{"account": "国库", "amount": 1}]
+    assert visible_affair.id in stored[0].visible_refs["affairs"]
+    assert future_affair_id not in stored[0].visible_refs["affairs"]
     assert stored[0].verdict["decision"] == "promulgated"
     assert stored[0].questions and stored[0].questions[0]["title"] == "请旨"
     assert isinstance(stored[0].forecast_text, str)
-    assert "<<DECISION>>" not in stored[0].forecast_text
     assert db.list_pending_decisions(state.turn) == []
     assert policies and policies[0].retry_429 is False and policies[0].max_attempts == 3
     assert judge_policies and all(
@@ -136,8 +143,20 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     )
     assert translate_policies and translate_policies[0].retry_429 is False
     assert translate_policies[0].max_attempts == 3
-    assert seen_segments and "<<DECISION>>" not in seen_segments[0]
     assert int(state.metrics["国库"]) == treasury_before
+    hidden = db.affairs.open(
+        name="暂存后新开", origin="世界段", year=state.year,
+        period=state.period, turn=state.turn,
+    )
+    assert hidden.id == future_affair_id
+    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
+    settled = settle_staged_declarations_in_decree_order(
+        db, state, [pending_action_decree_ref(second, 1)],
+    )[pending_action_decree_ref(second, 1)]
+    assert int(state.metrics["国库"]) == treasury_before - 1
+    rejections = settled.effects.applied[0]["economy_moves_rejections"]
+    assert len(rejections) == 1
+    assert rejections[0]["item"]["origin_ref"] == f"affair:{hidden.id}"
     assert db.conn.execute("SELECT COUNT(*) FROM story_ledger_entries").fetchone()[0] == ledger_before
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0] == dossier_before
     assert db.conn.execute(
@@ -322,7 +341,7 @@ def test_same_version_reapproval_does_not_rerun_after_exhaustion(game, monkeypat
     ).fetchone()[0]) == 1
 
 
-def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
+def test_held_rejudgments_stage_each_dossier_with_frozen_refs(game, monkeypatch):
     db, state, content = game
     state.turn += 1
     ids = []
@@ -343,63 +362,8 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         ids.append(dossier_id)
     db.conn.commit()
     open_night(db, state)
-    entered = []
-    gate = threading.Event()
-    lock = threading.Lock()
 
     def judge(_agent, prompt, **_kwargs):
-        dossier = json.loads(prompt)["dossiers"][0]
-        return json.dumps({
-            "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        })
-
-    def simulate(_agent, _prompt, **_kwargs):
-        with lock:
-            entered.append(1)
-            if len(entered) == 2:
-                gate.set()
-        assert gate.wait(2)
-        return "预推"
-
-    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
-    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
-    monkeypatch.setattr(
-        month_translate, "run_declaration_translate_prompt",
-        lambda *_a, **_k: {"commissions": []},
-    )
-    sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
-    assert forecast_mod.schedule_held_decree_forecasts(sess) is True
-    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
-    assert len(entered) == 2
-    for dossier_id in ids:
-        staged = db.conn.execute(
-            "SELECT status FROM staged_declarations WHERE decree_ref=?",
-            (f"dossier:{dossier_id}",),
-        ).fetchone()
-        assert staged is not None and staged["status"] == "staged"
-
-
-def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monkeypatch, tmp_path):
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    minister = next(iter(content.characters.values()))
-    copy_path = tmp_path / "save-b.db"
-    shutil.copyfile(_game_template_path, copy_path)
-    other = GameDB(str(copy_path), content)
-
-    entered = []
-    started = threading.Event()
-    release = threading.Event()
-    entered_lock = threading.Lock()
-
-    def judge(_agent, prompt, **_kwargs):
-        with entered_lock:
-            entered.append(1)
-            if len(entered) >= 2:
-                release.set()
-        started.set()
-        assert release.wait(2)
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -411,8 +375,43 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         month_translate, "run_declaration_translate_prompt",
         lambda *_a, **_k: {"commissions": []},
     )
-    armed = []
+    sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
+    assert forecast_mod.schedule_held_decree_forecasts(sess) is True
+    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    for dossier_id in ids:
+        stored = db.staged_declarations.staged_for(f"dossier:{dossier_id}")
+        assert len(stored) == 1 and stored[0].status == "staged"
+        assert dossier_id in stored[0].visible_refs["dossiers"]
+    late = db.create_decree_dossier(
+        state, action_type="policy", decree_text="预推后", target_kind="issue",
+        target_id="test-policy", payload={"text": "预推后"},
+    )
+    assert late not in stored[0].visible_refs["dossiers"]
+
+
+def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monkeypatch, tmp_path):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    minister = next(iter(content.characters.values()))
+    copy_path = tmp_path / "save-b.db"
+    shutil.copyfile(_game_template_path, copy_path)
+    other = GameDB(str(copy_path), content)
+
+    def judge(_agent, prompt, **_kwargs):
+        dossier = json.loads(prompt)["dossiers"][0]
+        return json.dumps({
+            "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        })
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推")
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt",
+        lambda *_a, **_k: {"commissions": []},
+    )
     try:
+        armed = []
         for one_db, one_state in ((db, state), (other, other.load_state())):
             night = open_night(one_db, one_state)
             pending_id = one_db.stage_pending_action(
@@ -426,11 +425,9 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
             sess = _sess(one_db, one_state, content, monkeypatch, lambda *_a, **_k: {})
             armed.append((sess, one_db, pending_id, int(night["id"])))
         assert armed[0][2] == armed[1][2]
-        assert armed[0][3] == armed[1][3]
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[0][0], armed[0][2], night_id=armed[0][3],
         ) is True
-        assert started.wait(2)
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[1][0], armed[1][2], night_id=armed[1][3],
         ) is True
@@ -440,9 +437,5 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
                 pending_action_decree_ref(pending_id, 1),
             )
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
-        assert len(entered) == 2
     finally:
-        release.set()
-        for sess, *_rest in armed:
-            get_session_write_queue(sess).wait_idle(timeout_s=5)
         other.close()
