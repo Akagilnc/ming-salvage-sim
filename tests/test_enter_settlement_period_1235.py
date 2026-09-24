@@ -337,7 +337,7 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
 # ── 3. 真失败另形：pending 抽取仍失败 → 人话 + 展示态退出 ──────────────
 
 
-def test_true_failure_pending_extraction_exits_display(web_game, monkeypatch, tmp_path):
+def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, tmp_path):
     """AC2 / #1353 fold-in：drain 真失败 → 失败单源 + settlement_display 退出（≠ 未了在办）。"""
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE

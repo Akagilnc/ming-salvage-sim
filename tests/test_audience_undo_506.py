@@ -269,7 +269,7 @@ def test_undo_full_reversal_survives_kill_and_reopen(game):
 # ── AC7：撤回×待补——不重新生成该轮账、无孤儿重试入口 ─────────────────────────
 
 
-def test_undo_pending_extraction_leaves_no_orphan_retry(game):
+def test_undo_pending_translation_leaves_no_orphan_retry(game):
     db, state, content = game
     m = _active_minister(db, content)
 

@@ -2510,9 +2510,6 @@ class GameDB:
         self.ensure_column("chat_turns", "error_pack_path", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("chat_turns", "post_reply_recovery", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("chat_turns", "post_reply_error_pack_path", "TEXT NOT NULL DEFAULT ''")
-        # #634 召对判官已判水位（ADR 0082）：''=未判 / 'done'=已判落库。逐轮标记即水位，
-        # 撤回轮翻 undone 后天然出窗（水位回退），无平行水位表。
-        self.ensure_column("chat_turns", "relation_judge_status", "TEXT NOT NULL DEFAULT ''")
         # #506 轮级撤销：undo_chat_turn 写 undone_at；旧档 chat_turns 建于该列进 CREATE 之前
         # 时缺列，undo 的 UPDATE 会 OperationalError（no such column: undone_at）→ 整撤回回滚。
         self.ensure_column("chat_turns", "undone_at", "TEXT")

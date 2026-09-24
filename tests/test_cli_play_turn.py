@@ -65,8 +65,8 @@ class _Sess:
 @pytest.mark.parametrize("exc", [
     ValueError("有 pending 拟旨待处理，请先处理再颁诏。"),
     SettlementAbort("本月结算失败，进度已保存，可重试。", turn=1, stage="extract"),
-    # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 与结算中止同形——留本回合可重按。
-    LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="pending_extraction"),
+    # 现役 LLM 通路的失败与结算中止同形——留本回合可重按。
+    LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error"),
     # #1700：空 simulator 的 LLMContractError 同形，issue catch 扩员后留本回合。
     LLMContractError("simulator 流式无内容且无终结事件"),
 ])

@@ -1225,57 +1225,6 @@ def _commit_night_approved(
     return list(applied or [])
 
 
-def _pending_extraction_rows(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    """#1353 单真源：挡收夜判定与 pending 呈现共用 list_unextracted_replies。"""
-    if not hasattr(db, "list_unextracted_replies"):
-        return []
-    rows = db.list_unextracted_replies(night_id=int(night_id)) or []
-    out: List[Dict[str, Any]] = []
-    for r in rows:
-        if isinstance(r, Mapping):
-            out.append(dict(r))
-    return out
-
-
-def _raise_pending_extraction(
-    db: Any,
-    night_id: int,
-    *,
-    rows: Optional[Sequence[Mapping[str, Any]]] = None,
-    missing_deps: bool = False,
-) -> None:
-    """欠账抽取耗尽 → 既定失败单源（#1353 fold-in）。
-
-    诊断细节进 error pack / provider_message；玩家 message 唯一走
-    CLI_RUNNER_PLAYER_MESSAGE。禁玩家可见欠账拒绝面与手动补写入口。
-    """
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-
-    snap = list(rows) if rows is not None else _pending_extraction_rows(db, int(night_id))
-    ids = [int(r.get("chat_turn_id") or 0) for r in snap]
-    if missing_deps:
-        technical = (
-            f"收夜中止：本夜仍有 {len(ids)} 条待补抽取，且无 LLM/写锁可清空"
-            f"（chat_turn_ids={ids}）。"
-        )
-    else:
-        technical = (
-            "收夜中止：本夜仍有未抽取落账的回话（待补），"
-            f"chat_turn_ids={ids}。"
-        )
-    write_audience_error_pack(
-        kind="pending_extraction", message=technical,
-        detail={"night_id": int(night_id), "chat_turn_ids": ids},
-    )
-    # code 保留 pending_extraction 供引擎内 heal 重拍；玩家只见单源文案。
-    raise LLMUnavailable(
-        CLI_RUNNER_PLAYER_MESSAGE,
-        code="pending_extraction",
-        provider_message=technical,
-    )
-
-
 def _drain_pending_translations_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
     translate_fn: Any = None,
@@ -1527,7 +1476,6 @@ def close_night(
             write_queue=write_queue,
         )
     except Exception as drain_exc:
-        from ming_sim.exceptions import LLMUnavailable
         cleanup_exc: BaseException | None = None
         if close_started and reg is not None:
             try:
@@ -1543,32 +1491,6 @@ def close_night(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
-        # 清理后按 list_unextracted 单真源重拍。欠账耗尽 → 失败单源（非玩家 CTA 409）。
-        # 不递归重入；空集 → close_retry（竞态全愈，玩家重按过月）。
-        is_pending_block = (
-            isinstance(drain_exc, LLMUnavailable)
-            and getattr(drain_exc, "code", None) == "pending_extraction"
-        )
-        if is_pending_block:
-            # #1353 r7：失败重拍 pending 短持 gate（共享 conn 读）。
-            with gate:
-                still = _pending_extraction_rows(db, int(night_id))
-            if still:
-                try:
-                    # 单点构造 escaping error：禁 `from drain_exc`（stale ids 经 cause 漏出）。
-                    _raise_pending_extraction(db, int(night_id), rows=still)
-                except LLMUnavailable as fresh:
-                    if cleanup_exc is not None:
-                        raise fresh from cleanup_exc
-                    raise fresh
-            retry_exc = AudienceNightError(
-                "收夜中止：请原地重试收夜或颁诏。",
-                code="close_retry",
-                detail={"night_id": int(night_id)},
-            )
-            if cleanup_exc is not None:
-                raise retry_exc from cleanup_exc
-            raise retry_exc
         if cleanup_exc is not None:
             raise drain_exc from cleanup_exc
         raise
