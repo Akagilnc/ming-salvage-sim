@@ -8382,7 +8382,7 @@ def apply_score_extraction(
     dossier_ids_at_input: Optional[set[int]] = None,
     secret_dossier_ids_at_input: Optional[set[int]] = None,
     open_affair_ids_at_input: Optional[set[int]] = None,
-    ordered_army_deltas: Optional[List[tuple[str, Dict[str, object]]]] = None,
+    ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]] = None,
     prior_shape_rejections: Optional[list[tuple[str, dict, str]]] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
@@ -8430,7 +8430,7 @@ def apply_score_extraction(
             commit_now=commit_now,
             relation_pre_roster=_relation_pre_roster,
             validate_rejections=validate_rejections,
-            ordered_army_deltas=ordered_army_deltas,
+            ordered_deltas=ordered_deltas,
         )
     finally:
         db._batch_authorized_open_affair_ids = _prev_batch_authorized
@@ -8455,7 +8455,7 @@ def _apply_score_extraction_body(
     commit_now: bool,
     relation_pre_roster: set[str],
     validate_rejections: list,
-    ordered_army_deltas: Optional[List[tuple[str, Dict[str, object]]]],
+    ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]],
 ) -> Dict[str, object]:
     """Bound apply body; batch affair authority is armed by caller."""
     from uuid import uuid4
@@ -8845,7 +8845,11 @@ def _apply_score_extraction_body(
                 raise
 
     # 1) metric_delta
-    applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
+    metric_items = (ordered_deltas or {}).get("metric_delta") if ordered_deltas is not None else None
+    applied_metric: Dict[str, int] = {}
+    for key, value in metric_items if metric_items is not None else (extracted.get("metric_delta") or {}).items():
+        for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
+            applied_metric[metric] = applied_metric.get(metric, 0) + delta
     # 2) economy_moves
     # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
     # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
@@ -8895,18 +8899,36 @@ def _apply_score_extraction_body(
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
     # 覆盖面板数据（cmr r1 claude：复用同 key 会令面板把拒收项当 dict 误渲染）。
-    applied_factions, faction_rejections = _apply_faction_dict(
-        db,
-        extracted.get("faction_delta") or {},
-        commit=commit_now,
-    )
+    def _merge_applied_deltas(total: dict, applied: dict) -> None:
+        for key, delta in applied.items():
+            if isinstance(delta, dict):
+                previous = total.get(key, {})
+                if not isinstance(previous, dict):
+                    previous = {"satisfaction": previous}
+                for field, amount in delta.items():
+                    previous[field] = previous.get(field, 0) + amount
+                total[key] = previous
+            else:
+                previous = total.get(key, 0)
+                if isinstance(previous, dict):
+                    previous["satisfaction"] = previous.get("satisfaction", 0) + delta
+                else:
+                    total[key] = previous + delta
+
+    faction_items = (ordered_deltas or {}).get("faction_delta") if ordered_deltas is not None else None
+    applied_factions, faction_rejections = {}, []
+    for key, value in faction_items if faction_items is not None else (extracted.get("faction_delta") or {}).items():
+        applied, rejected = _apply_faction_dict(db, {key: value}, commit=commit_now)
+        _merge_applied_deltas(applied_factions, applied)
+        faction_rejections.extend(rejected)
     # #653 F3.2：财政事实只作为 internal extractor 的输入证据；最终方向与幅度由
     # LLM 结合事件、任免等同回合事实综合判断，沿用既有 class_delta 契约原样接收。
-    applied_classes, class_rejections = _apply_class_dict(
-        db,
-        extracted.get("class_delta") or {},
-        commit=commit_now,
-    )
+    class_items = (ordered_deltas or {}).get("class_delta") if ordered_deltas is not None else None
+    applied_classes, class_rejections = {}, []
+    for key, value in class_items if class_items is not None else (extracted.get("class_delta") or {}).items():
+        applied, rejected = _apply_class_dict(db, {key: value}, commit=commit_now)
+        _merge_applied_deltas(applied_classes, applied)
+        class_rejections.extend(rejected)
     # 3.45) surcharge_decrees：明渠加派旨落逐省累积账（#650/0089，P1）。
     applied_surcharges, surcharge_rejections = _apply_surcharge_decrees(
         db,
@@ -8997,17 +9019,28 @@ def _apply_score_extraction_body(
         created_armies.extend(db.create_armies_from_extraction(
             state, [army_item], actor="档房", commit=commit_now, origin_ref=origin_ref, require_origin=True,
         ))
-    for region_id, raw_changes in ordinary_region_deltas_raw.items():
+    region_items = (ordered_deltas or {}).get("region_delta") if ordered_deltas is not None else None
+    if region_items is None:
+        region_items = ordinary_region_deltas_raw.items()
+    else:
+        region_items = (
+            (region_id, changes) for region_id, changes in region_items
+            if _split_strategic_entity_deltas(
+                {region_id: changes}, "regions", strategic_event_referenced_ids,
+                unambiguous_strategic_event_pool_ids,
+            )[1]
+        )
+    for region_id, raw_changes in region_items:
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
         region_changes.extend(db.apply_region_deltas(
             state, pseudo_event, None, "档房", {region_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
         ))
     army_items = ordinary_army_deltas_raw.items()
-    if ordered_army_deltas is not None:
+    if ordered_deltas is not None:
         army_items = (
             (army_id, changes)
-            for army_id, changes in ordered_army_deltas
+            for army_id, changes in ordered_deltas["army_delta"]
             if _split_strategic_entity_deltas(
                 {army_id: changes}, "armies", strategic_event_referenced_ids,
                 unambiguous_strategic_event_pool_ids,
@@ -9041,10 +9074,19 @@ def _apply_score_extraction_body(
     # 代码异常(KeyError/AttributeError 等)上抛到 settle 层回滚整批,绝不吞。
     # #652：流寇实力正增只走 bandit_absorptions；自由 power_updates 正实力拒。
     power_changes: List[Dict[str, object]] = list(absorption_power_changes)
-    if ordinary_power_updates_raw:
-        power_updates_to_apply = dict(ordinary_power_updates_raw)
-        for power_id in sorted(set(power_updates_to_apply) & amnesty_conflict_power_ids):
-            raw_changes = power_updates_to_apply.pop(power_id)
+    power_items = (ordered_deltas or {}).get("power_updates") if ordered_deltas is not None else None
+    if power_items is None:
+        power_items = ordinary_power_updates_raw.items()
+    else:
+        power_items = (
+            (power_id, changes) for power_id, changes in power_items
+            if _split_strategic_entity_deltas(
+                {power_id: changes}, "powers", strategic_event_referenced_ids,
+                unambiguous_strategic_event_pool_ids,
+            )[1]
+        )
+    for power_id, raw_changes in power_items:
+        if power_id in amnesty_conflict_power_ids:
             power_changes.append({
                 "power_id": power_id,
                 "rejected": True,
@@ -9052,11 +9094,10 @@ def _apply_score_extraction_body(
                 "reason": "同一股同一时段已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账",
                 "item": {"power_id": power_id, "changes": raw_changes},
             })
-        for power_id, raw_changes in list(power_updates_to_apply.items()):
-            if not isinstance(raw_changes, dict):
-                continue
-            if not _is_bandit_power_id(str(power_id)):
-                continue
+            continue
+        if not isinstance(raw_changes, dict):
+            continue
+        if _is_bandit_power_id(str(power_id)):
             # 只剥正实力；威望/经济等同包其它字段仍可落。
             stripped: Dict[str, object] = {}
             positive_ms_rejected = False
@@ -9089,16 +9130,14 @@ def _apply_score_extraction_body(
                     ),
                     "item": ms_item or {"power_id": power_id, "changes": raw_changes},
                 })
-            if stripped:
-                power_updates_to_apply[power_id] = stripped
-            else:
-                power_updates_to_apply.pop(power_id, None)
-        for power_id, raw_changes in power_updates_to_apply.items():
-            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            power_changes.extend(db.apply_power_deltas(
-                state, {power_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
-            ))
+            if not stripped:
+                continue
+            raw_changes = stripped
+        origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+        payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+        power_changes.extend(db.apply_power_deltas(
+            state, {power_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
+        ))
 
     _apply_person_changes_itemwise(pre_issue_person_changes, phase="pre")
 

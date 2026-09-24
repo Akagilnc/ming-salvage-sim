@@ -384,30 +384,35 @@ def test_staged_month_effects_keep_input_reference_authority(game):
     assert rejections[0]["item"]["origin_ref"] == f"affair:{hidden.id}"
 
 
-def test_world_segment_repeated_army_effects_apply_in_order(game):
+def test_world_segment_repeated_entity_effects_apply_in_order(game):
     from ming_sim.month_translate import dispatch_month_segment
     from tests.test_refugee_loop_652 import _pop, _recovery_grant
 
     db, state, _ = game
     army = _army_id(db)
+    region = _region_id(db)
     _recovery_grant(db, state, amount=1)
     refugees_before = _pop(db, "流民", "shaanxi")
     affairs_before = db.conn.execute("SELECT COUNT(*) FROM affairs").fetchone()[0]
     db.conn.execute("UPDATE armies SET morale=58 WHERE id=?", (army,))
+    db.conn.execute("UPDATE regions SET public_support=38 WHERE id=?", (region,))
     db.conn.commit()
     dispatch_month_segment(db, state, segment="先振奋后受挫", translate_fn=lambda r, c: {
         "effects": [
             {"army_delta": {army: {"origin_ref": "盘面自发", "morale": 90}},
+             "region_delta": {region: {"origin_ref": "盘面自发", "public_support": 2}},
              "economy_moves": [{"account": "国库", "delta": -1, "category": "过月支出",
                                 "reason": "第一笔", "affair_declaration": {
                                     "attach": "new", "identity": "同段一事", "name": "同段一事", "origin": "世界段"}}]},
             {"army_delta": {army: {"origin_ref": "盘面自发", "morale": -30}},
+             "region_delta": {region: {"origin_ref": "盘面自发", "public_support": -1}},
              "economy_moves": [{"account": "国库", "delta": -1, "category": "过月支出",
                                 "reason": "第二笔", "affair_declaration": {
                                     "attach": "new", "identity": "同段一事", "name": "同段一事", "origin": "世界段"}}]},
         ],
     })
     assert db.conn.execute("SELECT morale FROM armies WHERE id=?", (army,)).fetchone()[0] == 70
+    assert db.conn.execute("SELECT public_support FROM regions WHERE id=?", (region,)).fetchone()[0] == 39
     assert db.conn.execute("SELECT COUNT(*) FROM affairs").fetchone()[0] == affairs_before + 1
     refs = db.conn.execute(
         "SELECT origin_ref FROM economy_ledger WHERE reason IN ('第一笔', '第二笔')"

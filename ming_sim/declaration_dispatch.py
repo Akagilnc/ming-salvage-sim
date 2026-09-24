@@ -322,7 +322,10 @@ def _dispatch_effects(
 
     extraction = copy.deepcopy(EMPTY_EXTRACTION)
     shape_rejections = []
-    ordered_army_deltas = []
+    ordered_deltas = {field: [] for field in (
+        "metric_delta", "faction_delta", "class_delta",
+        "region_delta", "army_delta", "power_updates",
+    )}
     rejected = []
     has_effect = False
     for item in raw if isinstance(raw, list) else [raw]:
@@ -342,8 +345,8 @@ def _dispatch_effects(
                 extraction[field].extend(value)
             elif isinstance(value, dict):
                 extraction[field].update(value)
-                if field == "army_delta":
-                    ordered_army_deltas.extend(value.items())
+                if field in ordered_deltas:
+                    ordered_deltas[field].extend(value.items())
             elif value is not None:
                 extraction[field] = value
     if not has_effect:
@@ -354,7 +357,7 @@ def _dispatch_effects(
         open_affair_ids_at_input=set(refs.get("affairs", ())),
         dossier_ids_at_input=set(refs.get("dossiers", ())),
         secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
-        ordered_army_deltas=ordered_army_deltas,
+        ordered_deltas=ordered_deltas,
         prior_shape_rejections=shape_rejections,
     )
     _collect_inline_rejections(collector, report, turn, source)
