@@ -17,7 +17,9 @@ ADR 0028 后出注记）、既有暂存的应允 / 拒绝、当场实况（人�
 落账，召对场中承接，ADR 0155）与 :func:`stage_declaration` +
 :func:`settle_staged_declarations_in_decree_order`（先暂存、过月按下旨先后幂等
 结算，ADR 0157 步骤 1-2）。C1a（#1837）已把召对转译接到本入口（交办 / 应允）；
-C1b（分段 / 在场 / 边事件）与 C3（过月段）仍在各自票内接线。
+C1b（分段 / 在场 / 边事件）仍在其票内接线。C3 过月段转译沿
+``month_translate`` 使用此声明的暂存 / 分派入口；完整过月编排仍按 ADR 0157
+后续实施。
 
 任一项引用不存在实体（事务 / 人物 / 军队 / 暂存动作 / 夜）单独拒收、留痕于
 对应 ``SectionResult.rejected``，不牵连同批其余合法项（ADR 0015 per-item
@@ -57,6 +59,7 @@ schema 本就没给 LLM 开放 `style` 字段，故其 `style` 目前恒为空�
 from __future__ import annotations
 
 import contextlib
+import copy
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
@@ -135,6 +138,7 @@ class DeclarationDispatchResult:
     edge_events: SectionResult
     protagonist: ProtagonistResult
     registrations: SectionResult
+    effects: SectionResult
 
     def merge(self, other: "DeclarationDispatchResult") -> "DeclarationDispatchResult":
         """按 section 逐个 merge，供 :func:`settle_staged_declarations_in_decree_order`
@@ -150,13 +154,14 @@ class DeclarationDispatchResult:
             edge_events=self.edge_events.merge(other.edge_events),
             protagonist=self.protagonist.merge(other.protagonist),
             registrations=self.registrations.merge(other.registrations),
+            effects=self.effects.merge(other.effects),
         )
 
 
 _SECTION_FIELDS: Tuple[str, ...] = (
     "commissions", "promises", "textual_facts", "public_sayings",
     "on_scene_facts", "presence", "scene_facts", "edge_events",
-    "protagonist", "registrations",
+    "protagonist", "registrations", "effects",
 )
 _KNOWN_SECTIONS = frozenset(_SECTION_FIELDS)
 
@@ -167,13 +172,14 @@ def _empty_dispatch_result() -> DeclarationDispatchResult:
         commissions=empty, promises=empty, textual_facts=empty, public_sayings=empty,
         on_scene_facts=empty, presence=empty, scene_facts=empty, edge_events=empty,
         protagonist=ProtagonistResult(validated=None, rejected=[]), registrations=empty,
+        effects=empty,
     )
 
 
 def _record_section_rejections(
     collector: RejectionCollector, result: DeclarationDispatchResult, turn: int,
 ) -> None:
-    """把十个已知 section 各自产生的拒收统一记进同一个收集器（J1：声明入口
+    """把已知 section 各自产生的拒收统一记进同一个收集器（J1：声明入口
     单一收集，不各自零散处理 durable 化）。"""
     for name in _SECTION_FIELDS:
         for rejected_item in getattr(result, name).rejected:
@@ -184,7 +190,7 @@ def _record_unknown_sections(
     collector: RejectionCollector, declaration: Mapping[str, object], turn: int,
     source: Provenance,
 ) -> None:
-    """顶层键不在十个已知 section 之列（拼错字段名等）→ 逐个记一条
+    """顶层键不在已知 section 之列（拼错字段名等）→ 逐个记一条
     ``invalid_shape`` 拒收，不静默漏项（ADR 0015 决定 7 / 票面 AC1，J2）。"""
     for key in declaration.keys():
         if key in _KNOWN_SECTIONS:
@@ -207,7 +213,7 @@ def _dispatch_declaration_sections(
     chat_turn_id: int = 0,
     source_chat_turn_id: int = 0,
 ) -> DeclarationDispatchResult:
-    """真正跑十个 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
+    """真正跑已知 section 的分派副作用 + 把本次拒收（含未知顶层键）记进调用方
     给定的收集器；只记不落库——落库时机与事务边界由调用方决定（J1 判词打回：
     直接分派与暂存结算两条路径共用同一段执行体，不复制两份分派逻辑）。
 
@@ -233,8 +239,14 @@ def _dispatch_declaration_sections(
         db, state, declaration.get("commissions"),
         minister_name=minister_name, source=source,
     )
+    turn = int(state.turn)
     result = DeclarationDispatchResult(
         commissions=commissions,
+        effects=_dispatch_effects(
+            db, state, declaration.get("effects"), night_id=night_id,
+            collector=collector,
+            turn=turn, source=source,
+        ),
         promises=_dispatch_promises(
             db, state, declaration.get("promises"), night_id=night_id, source=source,
         ),
@@ -269,10 +281,48 @@ def _dispatch_declaration_sections(
         ),
         registrations=registrations,
     )
-    turn = int(state.turn)
     _record_unknown_sections(collector, declaration, turn, source)
     _record_section_rejections(collector, result, turn)
     return result
+
+
+def _dispatch_effects(
+    db: Any,
+    state: Any,
+    raw: object,
+    *,
+    night_id: int,
+    collector: RejectionCollector,
+    turn: int,
+    source: Provenance,
+) -> SectionResult:
+    """把过月 C0 效果 envelope 交既有月末效果核算口，不复制领域适配器。
+
+    召对夜里的 effects 表示旨意办理结果，仍只是预推候选；当场实况由各自
+    section 承接，不能借 effects 绕过 ADR 0157 的过月落账边界。
+    """
+    if raw is None or raw == {}:
+        return SectionResult(applied=[], rejected=[])
+    if int(night_id or 0) > 0:
+        return SectionResult(applied=[], rejected=[RejectedItem(
+            item={"raw_value": raw}, reason="召对夜不能落旨意办理效果，须待过月核算",
+            category="invalid_state", source=source,
+        )])
+    if not isinstance(raw, Mapping):
+        return SectionResult(applied=[], rejected=[RejectedItem(
+            item={"raw_value": raw}, reason="effects 须为对象",
+            category="invalid_shape", source=source,
+        )])
+
+    from ming_sim.simulation import EMPTY_EXTRACTION
+    from ming_sim.issues import apply_score_extraction
+    from ming_sim.decree import _collect_inline_rejections
+
+    extraction = copy.deepcopy(EMPTY_EXTRACTION)
+    extraction.update(raw)
+    report = apply_score_extraction(db, state, extraction, content=db.content)
+    _collect_inline_rejections(collector, report, turn, source)
+    return SectionResult(applied=[report], rejected=[])
 
 
 def dispatch_declaration(
@@ -288,7 +338,7 @@ def dispatch_declaration(
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
     承接（ADR 0155）直接分派单条声明时用的公开入口，唯一契约：始终原子、始终
-    durable——自己开唯一一段 `atomic(db)`，把十个 section 的分派副作用、拒收
+    durable——自己开唯一一段 `atomic(db)`，把各 section 的分派副作用、拒收
     收集与 `flush_to_db` 全部包在同一个事务里，任一步失败（含 flush 本身失败）
     都整体回滚，不会出现「合法 sibling 已落库、其拒收却没落进
     ``rejection_reports``」的半写状态；提交成功后再镜像 jsonl。不建声明专用
