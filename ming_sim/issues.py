@@ -4960,16 +4960,14 @@ def _strategic_event_result_preflight_error(
                         )
 
     if explicit_attribution and new_armies:
-        # Same writer the settlement uses, rolled back. Do not keep a second
-        # field checklist that can admit what create_armies_from_extraction rejects.
+        # Field rejections only. Origin stays with the loop below and the real
+        # write, so an invisible affair is itemwise and does not sink a sibling.
         db.conn.execute("SAVEPOINT strategic_new_army_result_preflight")
         try:
             created_probe: List[Dict[str, object]] = []
             for raw in new_armies:
-                origin_ref = str(raw.get("origin_ref") or "").strip() if isinstance(raw, dict) else ""
                 created_probe.extend(db.create_armies_from_extraction(
-                    state, [raw], actor="档房", commit=False,
-                    origin_ref=origin_ref, require_origin=True,
+                    state, [raw], actor="档房", commit=False, require_origin=False,
                 ))
         finally:
             db.conn.execute("ROLLBACK TO SAVEPOINT strategic_new_army_result_preflight")
