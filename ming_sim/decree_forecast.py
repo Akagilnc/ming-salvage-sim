@@ -28,8 +28,6 @@ from ming_sim.session_write_queue import get_session_write_queue
 logger = logging.getLogger(__name__)
 _owners_guard = threading.Lock()
 _owners: Dict[int, "weakref.ReferenceType[Any]"] = {}
-_inflight_guard = threading.Lock()
-_inflight: set[tuple] = set()
 
 
 def bind_forecast_owner(owner: Any) -> None:
@@ -45,19 +43,6 @@ def _owner_for(db: Any) -> Any:
     with _owners_guard:
         ref = _owners.get(id(db))
     return None if ref is None else ref()
-
-
-def _claim_inflight(key: tuple) -> bool:
-    with _inflight_guard:
-        if key in _inflight:
-            return False
-        _inflight.add(key)
-        return True
-
-
-def _release_inflight(key: tuple) -> None:
-    with _inflight_guard:
-        _inflight.discard(key)
 
 
 def _call_exhausted(exc: BaseException) -> bool:
@@ -189,7 +174,9 @@ def _is_held_for_rejudgment(row: Dict[str, Any], turn: int) -> bool:
     )
 
 
-def _forecast(session: Any, snapshot: Dict[str, Any]) -> None:
+def _forecast(
+    session: Any, snapshot: Dict[str, Any], *, write_lock: Optional[threading.Lock] = None,
+) -> None:
     candidate = snapshot["candidate"]
     payload = candidate.get("payload")
     if not isinstance(payload, dict):
@@ -275,43 +262,55 @@ def _forecast(session: Any, snapshot: Dict[str, Any]) -> None:
             forecast_text=forecast_text,
         )
 
-    get_session_write_queue(session).run(snapshot["ticket"], stage_if_current)
+    def stage() -> None:
+        get_session_write_queue(session).run(snapshot["ticket"], stage_if_current)
+
+    if write_lock is None:
+        stage()
+    else:
+        # One night-start ticket orders the month barrier. Parallel legs must
+        # not enter that ticket's write turn together.
+        with write_lock:
+            stage()
 
 
 def _submit_snapshot_job(
-    session: Any, *, key: tuple, snapshot_fn: Any, inflight_key: tuple,
+    session: Any,
+    *,
+    snapshot_fn: Any,
+    ticket: Any,
+    write_lock: Optional[threading.Lock] = None,
 ) -> bool:
+    """Run one already-claimed forecast ticket on the audience executor."""
     queue = get_session_write_queue(session)
-    ticket = queue.claim(key=key)
-    if ticket is None:
-        _release_inflight(inflight_key)
-        return False
 
     def run() -> None:
         try:
-            snapshot = queue.run(ticket, snapshot_fn)
+            if write_lock is None:
+                snapshot = queue.run(ticket, snapshot_fn)
+            else:
+                with write_lock:
+                    snapshot = queue.run(ticket, snapshot_fn)
             if snapshot is None:
                 return
             snapshot["ticket"] = ticket
             try:
-                _forecast(session, snapshot)
+                _forecast(session, snapshot, write_lock=write_lock)
             except Exception as exc:
                 if _call_exhausted(exc):
                     return
                 raise
         finally:
             queue.complete(ticket)
-            _release_inflight(inflight_key)
 
     try:
         future = audience_translation._executor.submit(run)
     except BaseException:
         queue.complete(ticket)
-        _release_inflight(inflight_key)
         raise
     future.add_done_callback(
         lambda done: audience_translation._observe_finished_future(
-            done, where="decree forecast", key=key,
+            done, where="decree forecast", key=getattr(ticket, "key", None),
         )
     )
     return True
@@ -343,14 +342,16 @@ def schedule_pending_decree_forecast(
     ):
         return False
     version = int(row["version"] or 1)
-    inflight_key = ("pending", action_id, version, nid)
-    if not _claim_inflight(inflight_key):
+    queue = get_session_write_queue(session)
+    ticket = queue.claim_if_absent(
+        [("decree_forecast", action_id, version, nid)],
+    )[0]
+    if ticket is None:
         return False
     return _submit_snapshot_job(
         session,
-        key=("decree_forecast", action_id, version, nid),
         snapshot_fn=lambda: _pending_snapshot(session, action_id, nid),
-        inflight_key=inflight_key,
+        ticket=ticket,
     )
 
 
@@ -379,7 +380,12 @@ def schedule_approved_from_dispatch(db: Any, result: Any, night_id: int) -> None
 
 
 def schedule_held_decree_forecasts(session: Any) -> bool:
-    """At a newly opened night, rejudge and forecast held historical proposals."""
+    """At a newly opened night, rejudge and forecast held historical proposals.
+
+    The scan ticket is claimed before return so a later month barrier waits for
+    every retained leg. Each dossier then uses the existing per-decree submit;
+    model calls overlap, write turns on the shared ticket do not.
+    """
     from ming_sim.audience_night import get_open_night
 
     if not _forecast_configured(session):
@@ -388,50 +394,47 @@ def schedule_held_decree_forecasts(session: Any) -> bool:
     if night is None:
         return False
     night_id = int(night["id"])
-    inflight_key = ("held-scan", night_id)
-    if not _claim_inflight(inflight_key):
+    queue = get_session_write_queue(session)
+    ticket = queue.claim_if_absent([("held_decree_forecast_scan", night_id)])[0]
+    if ticket is None:
         return False
 
-    def snapshot_held_ids() -> list[int]:
-        rows = session.db.list_decree_dossiers_for_simulation(int(session.state.turn))
-        return [
-            int(row["id"]) for row in rows
-            if _is_held_for_rejudgment(row, int(session.state.turn))
-        ]
-
-    def scan_and_forecast() -> None:
-        queue = get_session_write_queue(session)
+    def scan_and_fanout() -> None:
+        # Caller may still hold the session write gate (night-open prologue).
+        # Snapshot on this worker, after that turn ends — never on the caller.
         try:
-            ids = queue.run(scan_ticket, snapshot_held_ids)
+            turn = int(session.state.turn)
+
+            def snapshot_held_ids() -> list[int]:
+                rows = session.db.list_decree_dossiers_for_simulation(turn)
+                return [
+                    int(row["id"]) for row in rows
+                    if _is_held_for_rejudgment(row, turn)
+                ]
+
+            ids = queue.run(ticket, snapshot_held_ids)
+            if not ids:
+                return
+            write_lock = threading.Lock()
             for dossier_id in ids:
-                snapshot = queue.run(
-                    scan_ticket,
-                    lambda dossier_id=dossier_id: _held_snapshot(session, dossier_id),
+                retained = queue.retain(
+                    ticket, ("held_decree_forecast", night_id, int(dossier_id)),
                 )
-                if snapshot is None:
-                    continue
-                snapshot["ticket"] = scan_ticket
-                try:
-                    _forecast(session, snapshot)
-                except Exception as exc:
-                    if _call_exhausted(exc):
-                        continue
-                    raise
+                _submit_snapshot_job(
+                    session,
+                    snapshot_fn=lambda dossier_id=dossier_id: _held_snapshot(
+                        session, dossier_id,
+                    ),
+                    ticket=retained,
+                    write_lock=write_lock,
+                )
         finally:
             queue.complete(ticket)
-            _release_inflight(inflight_key)
 
-    queue = get_session_write_queue(session)
-    ticket = queue.claim(key=("held_decree_forecast_scan", night_id))
-    if ticket is None:
-        _release_inflight(inflight_key)
-        return False
-    scan_ticket = ticket
     try:
-        future = audience_translation._executor.submit(scan_and_forecast)
+        future = audience_translation._executor.submit(scan_and_fanout)
     except BaseException:
-        queue.complete(scan_ticket)
-        _release_inflight(inflight_key)
+        queue.complete(ticket)
         raise
     future.add_done_callback(
         lambda done: audience_translation._observe_finished_future(

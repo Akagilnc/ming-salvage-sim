@@ -27,7 +27,7 @@ from __future__ import annotations
 import time
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Callable, Hashable, Optional, TypeVar
+from typing import Any, Callable, Hashable, Optional, Sequence, TypeVar
 
 T = TypeVar("T")
 
@@ -248,6 +248,15 @@ class SessionWriteQueue:
         with self._cond:
             return any(_is_barrier_ticket(t) for t in self._open.values())
 
+    def _claim_locked(self, key: Optional[Hashable]) -> WriteTicket:
+        seq = self._next_seq
+        self._next_seq += 1
+        ticket = WriteTicket(seq=seq, key=key)
+        self._open[seq] = ticket
+        if key is not None:
+            self._by_key.setdefault(key, set()).add(seq)
+        return ticket
+
     def claim(self, key: Optional[Hashable] = None) -> Optional[WriteTicket]:
         """Synchronously take the next ordering ticket (trail start / barrier).
 
@@ -256,13 +265,28 @@ class SessionWriteQueue:
         with self._cond:
             if self._sealed:
                 return None
-            seq = self._next_seq
-            self._next_seq += 1
-            ticket = WriteTicket(seq=seq, key=key)
-            self._open[seq] = ticket
-            if key is not None:
-                self._by_key.setdefault(key, set()).add(seq)
-            return ticket
+            return self._claim_locked(key)
+
+    def claim_if_absent(
+        self, keys: Sequence[Hashable],
+    ) -> list[Optional[WriteTicket]]:
+        """Claim each key that is not already open, in one critical section.
+
+        Dedup lives on this session queue, not a process-global set. A barrier
+        cannot take a sequence between these tickets. Sealed → all None.
+        """
+        with self._cond:
+            if self._sealed:
+                return [None for _ in keys]
+            out: list[Optional[WriteTicket]] = []
+            seen: set[Hashable] = set()
+            for key in keys:
+                if key in seen or self._by_key.get(key):
+                    out.append(None)
+                    continue
+                seen.add(key)
+                out.append(self._claim_locked(key))
+            return out
 
     def complete(self, ticket: Optional[WriteTicket]) -> None:
         """Release ticket slot (success or empty vacate). Idempotent."""

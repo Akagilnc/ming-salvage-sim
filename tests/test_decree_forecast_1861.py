@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import shutil
+import threading
+from concurrent.futures import Future
 from types import SimpleNamespace
 
 import ming_sim.decree as decree_mod
 import ming_sim.decree_forecast as forecast_mod
 import ming_sim.month_translate as month_translate
-from ming_sim.audience_night import open_night
+from ming_sim.audience_night import mark_actions_night_approved, open_night
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.exceptions import LLMUnavailable
-from ming_sim.materials import prepare_character_materials, prepare_world_materials
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
@@ -58,6 +60,11 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     treasury_before = int(state.metrics["国库"])
     ledger_before = db.conn.execute("SELECT COUNT(*) FROM story_ledger_entries").fetchone()[0]
     dossier_before = db.conn.execute("SELECT COUNT(*) FROM decree_dossiers").fetchone()[0]
+    sources_before = {
+        str(row[0]) for row in db.conn.execute(
+            "SELECT source_id FROM character_knowledge_sources",
+        )
+    }
 
     def translate_fn(prompt, llm_config):
         return {
@@ -100,7 +107,7 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     def translate_segment(prompt, _llm_config, **kwargs):
         translate_policies.append(kwargs.get("policy"))
         seen_segments.append(prompt)
-        return {"effects": [{"account": "国库", "amount": 880011}]}
+        return {"effects": [{"account": "国库", "amount": 1}]}
 
     monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", translate_segment)
     sess = _sess(db, state, content, monkeypatch, translate_fn)
@@ -117,6 +124,7 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     ).fetchone()
     assert staged is not None and staged["status"] == "staged"
     stored = db.staged_declarations.staged_for(pending_action_decree_ref(second, 1))
+    assert stored[0].declaration.get("effects") == [{"account": "国库", "amount": 1}]
     assert stored[0].verdict["decision"] == "promulgated"
     assert stored[0].questions and stored[0].questions[0]["title"] == "请旨"
     assert isinstance(stored[0].forecast_text, str)
@@ -138,16 +146,12 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         (first, second),
     ).fetchone() is None
 
-    character_tree = prepare_character_materials(db, state, minister).root
-    world_tree = prepare_world_materials(db, state).root
-    readable = "\n".join(
-        path.read_text(encoding="utf-8")
-        for root in (character_tree, world_tree)
-        for path in root.rglob("*")
-        if path.is_file()
-    )
-    assert "880011" not in readable
-    assert pending_action_decree_ref(second, 1) not in readable
+    sources_after = {
+        str(row[0]) for row in db.conn.execute(
+            "SELECT source_id FROM character_knowledge_sources",
+        )
+    }
+    assert sources_after == sources_before
     assert int(night["id"]) > 0
 
 
@@ -209,3 +213,173 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     assert db.conn.execute(
         "SELECT 1 FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
     ).fetchone() is None
+
+
+def _policy_payload(actor: str, *, text: str, mode: str = "ordinary") -> dict:
+    return {
+        "dossier_action_type": "policy", "target_kind": "issue",
+        "target_id": "test-policy", "actor": actor, "text": text, "mode": mode,
+    }
+
+
+def test_reapproval_changes_version_and_restarts_only_that_forecast(game, monkeypatch):
+    db, state, content = game
+    open_night(db, state)
+    minister = next(iter(content.characters.values()))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+        payload=_policy_payload(minister.name, text="着户部核饷。"),
+    )
+    modes = []
+
+    def judge(_agent, prompt, **_kwargs):
+        dossier = json.loads(prompt)["dossiers"][0]
+        modes.append(dossier["mode"])
+        return json.dumps({
+            "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        })
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推")
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt",
+        lambda *_a, **_k: {"commissions": []},
+    )
+    sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
+
+    def approve(mode=None):
+        intent = {"kind": "confirmation", "confirmation": "应允"}
+        if mode is not None:
+            intent["mode"] = mode
+        sess.apply_cli_conversation_actions(
+            minister, "应允。", "臣领旨。",
+            has_directive=False, secret_order_id=None,
+            preclassified_intent=intent, confirm_target_ids={pending_id},
+        )
+        assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+
+    approve()
+    assert modes == ["ordinary"]
+    assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1))
+    assert int(db.conn.execute(
+        "SELECT version FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()[0]) == 1
+
+    approve("midzhi")
+    assert modes[-1] == "midzhi"
+    assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
+    restarted = db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 2))
+    assert len(restarted) == 1 and restarted[0].verdict["decision"] == "promulgated"
+    assert int(db.conn.execute(
+        "SELECT version FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()[0]) == 2
+
+    approve("midzhi")
+    assert int(db.conn.execute(
+        "SELECT version FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()[0]) == 2
+    assert len(db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 2))) == 1
+
+
+def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
+    db, state, content = game
+    state.turn += 1
+    ids = []
+    for text in ("旧旨甲", "旧旨乙"):
+        dossier_id = db.create_decree_dossier(
+            state, action_type="policy", decree_text=text,
+            target_kind="issue", target_id="test-policy",
+            payload={
+                "dossier_action_type": "policy", "target_kind": "issue",
+                "target_id": "test-policy", "text": text,
+            },
+        )
+        db.conn.execute(
+            "UPDATE decree_dossiers SET status='proposed', promulgation_decision='rejected', "
+            "held_turn=?, rescript_pending=0 WHERE id=?",
+            (state.turn - 1, dossier_id),
+        )
+        ids.append(dossier_id)
+    db.conn.commit()
+    open_night(db, state)
+    entered = []
+    gate = threading.Event()
+    lock = threading.Lock()
+
+    def judge(_agent, prompt, **_kwargs):
+        dossier = json.loads(prompt)["dossiers"][0]
+        return json.dumps({
+            "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        })
+
+    def simulate(_agent, _prompt, **_kwargs):
+        with lock:
+            entered.append(1)
+            if len(entered) == 2:
+                gate.set()
+        assert gate.wait(2)
+        return "预推"
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt",
+        lambda *_a, **_k: {"commissions": []},
+    )
+    sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
+    assert forecast_mod.schedule_held_decree_forecasts(sess) is True
+    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    assert len(entered) == 2
+    for dossier_id in ids:
+        staged = db.conn.execute(
+            "SELECT status FROM staged_declarations WHERE decree_ref=?",
+            (f"dossier:{dossier_id}",),
+        ).fetchone()
+        assert staged is not None and staged["status"] == "staged"
+
+
+def test_same_local_ids_on_two_saves_both_schedule(game, _game_template_path, monkeypatch, tmp_path):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    minister = next(iter(content.characters.values()))
+    copy_path = tmp_path / "save-b.db"
+    shutil.copyfile(_game_template_path, copy_path)
+    other = GameDB(str(copy_path), content)
+    queued = []
+
+    def submit(fn, *args, **kwargs):
+        del args, kwargs
+        queued.append(fn)
+        done = Future()
+        done.set_result(None)
+        return done
+
+    monkeypatch.setattr(forecast_mod.audience_translation._executor, "submit", submit)
+    try:
+        armed = []
+        for one_db, one_state in ((db, state), (other, other.load_state())):
+            night = open_night(one_db, one_state)
+            pending_id = one_db.stage_pending_action(
+                one_state.turn, kind="directive", action="拟旨",
+                minister_name=minister.name,
+                payload=_policy_payload(minister.name, text="同号旨"),
+            )
+            mark_actions_night_approved(
+                one_db, [pending_id], night_id=int(night["id"]),
+            )
+            sess = _sess(one_db, one_state, content, monkeypatch, lambda *_a, **_k: {})
+            armed.append((sess, pending_id, int(night["id"])))
+        assert armed[0][1] == armed[1][1]
+        assert forecast_mod.schedule_pending_decree_forecast(
+            armed[0][0], armed[0][1], night_id=armed[0][2],
+        ) is True
+        assert forecast_mod.schedule_pending_decree_forecast(
+            armed[1][0], armed[1][1], night_id=armed[1][2],
+        ) is True
+        assert forecast_mod.schedule_pending_decree_forecast(
+            armed[0][0], armed[0][1], night_id=armed[0][2],
+        ) is False
+        assert len(queued) == 2
+    finally:
+        other.close()

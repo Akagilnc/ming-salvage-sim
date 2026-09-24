@@ -2762,8 +2762,43 @@ class GameSession:
                     valid_payloads[int(pending["id"])] = (pending, payload)
                 for pending_id, (pending, payload) in valid_payloads.items():
                     encoded_payload = json.dumps(payload, ensure_ascii=False)
+                    version_sql = ""
+                    if pending["kind"] == "directive":
+                        row = self.db.conn.execute(
+                            "SELECT night_approved, version, payload_json "
+                            "FROM pending_actions WHERE id=?",
+                            (pending_id,),
+                        ).fetchone()
+                        previous: object = None
+                        if row is not None:
+                            try:
+                                previous = json.loads(row["payload_json"] or "{}")
+                            except (ValueError, TypeError):
+                                previous = None
+                        # 再次应允只在载荷本身变了时作废旧预算并递增版本。
+                        # 下划线控制键是本轮书记，不算改旨。
+                        changed = (
+                            not isinstance(previous, dict)
+                            or {
+                                key: value for key, value in previous.items()
+                                if not str(key).startswith("_")
+                            } != {
+                                key: value for key, value in payload.items()
+                                if not str(key).startswith("_")
+                            }
+                        )
+                        if (
+                            row is not None
+                            and int(row["night_approved"] or 0) == 1
+                            and changed
+                        ):
+                            self.db._discard_pending_decree_forecast(
+                                pending_id, int(row["version"] or 1),
+                            )
+                            version_sql = ", version=version+1"
                     self.db.conn.execute(
-                        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                        f"UPDATE pending_actions SET payload_json=?{version_sql} "
+                        "WHERE id=?",
                         (encoded_payload, pending_id),
                     )
                     pending["payload_json"] = encoded_payload
