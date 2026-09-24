@@ -109,21 +109,30 @@ def _forbid_real_cli_process():
     import ming_sim.cli_backend as cli_backend
 
     _reset_cli_launch_attempts()
-    mp = pytest.MonkeyPatch()
-    mp.setattr(cli_backend, "_start_cli_subprocess", _guard_cli_subprocess)
+    # 不在本夹具 teardown 撤掉：addfinalizer 比夹具 teardown 更晚。
+    # 出口替换留到本测试 teardown 报告生成之后再恢复（见 pytest_runtest_makereport）。
+    cli_backend._start_cli_subprocess = _guard_cli_subprocess
     yield
-    mp.undo()
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:
+    """进程内恢复生产出口。"""
+    del session, exitstatus
+    import ming_sim.cli_backend as cli_backend
+
+    cli_backend._start_cli_subprocess = _ORIGINAL_CLI_SUBPROCESS
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """用例已返回、夹具尚未撤销：等后台队列，再按启动账改判。"""
+    """call 结束先等队列（替身还在）；teardown 报告时连同收尾阶段的启动账一起判。"""
     del item
     if call.when == "call":
         _wait_session_queues_idle()
     outcome = yield
-    if call.when != "call":
+    if call.when != "teardown":
         return
+    _wait_session_queues_idle()
     attempts = _cli_launch_attempts()
     if not attempts:
         return
