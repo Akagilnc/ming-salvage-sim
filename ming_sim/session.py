@@ -2760,6 +2760,7 @@ class GameSession:
                         payload["_directive_status"] = "pending"
                         payload.pop("_needs_clarification", None)
                     valid_payloads[int(pending["id"])] = (pending, payload)
+                unchanged_approved_ids: set[int] = set()
                 for pending_id, (pending, payload) in valid_payloads.items():
                     encoded_payload = json.dumps(payload, ensure_ascii=False)
                     version_sql = ""
@@ -2787,15 +2788,17 @@ class GameSession:
                                 if not str(key).startswith("_")
                             }
                         )
-                        if (
-                            row is not None
-                            and int(row["night_approved"] or 0) == 1
-                            and changed
-                        ):
+                        already_approved = (
+                            row is not None and int(row["night_approved"] or 0) == 1
+                        )
+                        if already_approved and changed:
                             self.db._discard_pending_decree_forecast(
                                 pending_id, int(row["version"] or 1),
                             )
                             version_sql = ", version=version+1"
+                        elif already_approved:
+                            # 同版再次应允：不重跑判官/推演/转译，含上次已耗尽未预成。
+                            unchanged_approved_ids.add(pending_id)
                     self.db.conn.execute(
                         f"UPDATE pending_actions SET payload_json=?{version_sql} "
                         "WHERE id=?",
@@ -2824,6 +2827,8 @@ class GameSession:
                                 from ming_sim.decree_forecast import schedule_pending_decree_forecast
 
                                 for pending in directive_confirm_targets:
+                                    if int(pending["id"]) in unchanged_approved_ids:
+                                        continue
                                     schedule_pending_decree_forecast(
                                         self, int(pending["id"]),
                                         night_id=int(open_n["id"]),

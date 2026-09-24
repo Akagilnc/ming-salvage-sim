@@ -177,6 +177,9 @@ def _is_held_for_rejudgment(row: Dict[str, Any], turn: int) -> bool:
 def _forecast(
     session: Any, snapshot: Dict[str, Any], *, write_lock: Optional[threading.Lock] = None,
 ) -> None:
+    # 同一 decree_ref（记录号+版本，或留中案卷 id）已有暂存则不再跑模型链。
+    if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
+        return
     candidate = snapshot["candidate"]
     payload = candidate.get("payload")
     if not isinstance(payload, dict):
@@ -342,6 +345,10 @@ def schedule_pending_decree_forecast(
     ):
         return False
     version = int(row["version"] or 1)
+    if session.db.staged_declarations.staged_for(
+        pending_action_decree_ref(action_id, version),
+    ):
+        return False
     queue = get_session_write_queue(session)
     ticket = queue.claim_if_absent(
         [("decree_forecast", action_id, version, nid)],

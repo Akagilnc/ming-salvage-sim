@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import shutil
 import threading
-from concurrent.futures import Future
 from types import SimpleNamespace
 
 import ming_sim.decree as decree_mod
@@ -274,11 +273,53 @@ def test_reapproval_changes_version_and_restarts_only_that_forecast(game, monkey
         "SELECT version FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()[0]) == 2
 
+    calls_before = len(modes)
     approve("midzhi")
+    assert len(modes) == calls_before
     assert int(db.conn.execute(
         "SELECT version FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()[0]) == 2
     assert len(db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 2))) == 1
+
+
+def test_same_version_reapproval_does_not_rerun_after_exhaustion(game, monkeypatch):
+    db, state, content = game
+    open_night(db, state)
+    minister = next(iter(content.characters.values()))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+        payload=_policy_payload(minister.name, text="着户部核饷。"),
+    )
+    calls = []
+
+    def judge(_agent, _prompt, **_kwargs):
+        calls.append(1)
+        raise LLMUnavailable("rate limited", status_code=429)
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(
+        forecast_mod.agents, "run_agent_text",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("耗尽不得推演")),
+    )
+    sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
+
+    def approve():
+        sess.apply_cli_conversation_actions(
+            minister, "应允。", "臣领旨。",
+            has_directive=False, secret_order_id=None,
+            preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+            confirm_target_ids={pending_id},
+        )
+        assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+
+    approve()
+    assert calls == [1]
+    assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
+    approve()
+    assert calls == [1]
+    assert int(db.conn.execute(
+        "SELECT version FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()[0]) == 1
 
 
 def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
@@ -338,7 +379,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         assert staged is not None and staged["status"] == "staged"
 
 
-def test_same_local_ids_on_two_saves_both_schedule(game, _game_template_path, monkeypatch, tmp_path):
+def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monkeypatch, tmp_path):
     from ming_sim.db import GameDB
 
     db, state, content = game
@@ -346,16 +387,19 @@ def test_same_local_ids_on_two_saves_both_schedule(game, _game_template_path, mo
     copy_path = tmp_path / "save-b.db"
     shutil.copyfile(_game_template_path, copy_path)
     other = GameDB(str(copy_path), content)
-    queued = []
 
-    def submit(fn, *args, **kwargs):
-        del args, kwargs
-        queued.append(fn)
-        done = Future()
-        done.set_result(None)
-        return done
+    def judge(_agent, prompt, **_kwargs):
+        dossier = json.loads(prompt)["dossiers"][0]
+        return json.dumps({
+            "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        })
 
-    monkeypatch.setattr(forecast_mod.audience_translation._executor, "submit", submit)
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推")
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt",
+        lambda *_a, **_k: {"commissions": []},
+    )
     try:
         armed = []
         for one_db, one_state in ((db, state), (other, other.load_state())):
@@ -369,17 +413,19 @@ def test_same_local_ids_on_two_saves_both_schedule(game, _game_template_path, mo
                 one_db, [pending_id], night_id=int(night["id"]),
             )
             sess = _sess(one_db, one_state, content, monkeypatch, lambda *_a, **_k: {})
-            armed.append((sess, pending_id, int(night["id"])))
-        assert armed[0][1] == armed[1][1]
+            armed.append((sess, one_db, pending_id, int(night["id"])))
+        assert armed[0][2] == armed[1][2]
         assert forecast_mod.schedule_pending_decree_forecast(
-            armed[0][0], armed[0][1], night_id=armed[0][2],
+            armed[0][0], armed[0][2], night_id=armed[0][3],
         ) is True
         assert forecast_mod.schedule_pending_decree_forecast(
-            armed[1][0], armed[1][1], night_id=armed[1][2],
+            armed[1][0], armed[1][2], night_id=armed[1][3],
         ) is True
-        assert forecast_mod.schedule_pending_decree_forecast(
-            armed[0][0], armed[0][1], night_id=armed[0][2],
-        ) is False
-        assert len(queued) == 2
+        for sess, one_db, pending_id, _night_id in armed:
+            assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+            stored = one_db.staged_declarations.staged_for(
+                pending_action_decree_ref(pending_id, 1),
+            )
+            assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
     finally:
         other.close()
