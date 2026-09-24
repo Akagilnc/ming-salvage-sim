@@ -4729,7 +4729,7 @@ def _strategic_event_result_preflight_error(
             return f"战略/外敌事件「{event_title or event_id}」军队战果缺 reason/原因 事件锚点：{army_id}"
         if "cannon_transfer_to" in raw_changes:
             target_id = raw_changes["cannon_transfer_to"]
-            target = (db.conn.execute("SELECT cannon_equipment FROM armies WHERE id=?", (target_id,)).fetchone()
+            target = (db.conn.execute("SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (target_id,)).fetchone()
                       if isinstance(target_id, str) and target_id else None)
             cannon_keys = [key for key in raw_changes
                            if ARMY_FIELD_ALIASES.get(key, key) == "cannon_equipment"]
@@ -4739,6 +4739,10 @@ def _strategic_event_result_preflight_error(
                 return f"战略/外敌事件「{event_title or event_id}」随军炮转移目标或负数拟转量非法：{army_id}"
             if int(target["cannon_equipment"]) >= 12:
                 return _noop_error("army", army_id, "cannon_transfer_to", target_id)
+            if bool(target["is_mutinied"]) and not latched_army_field_effect_permitted(
+                "cannon_equipment", -_strict_int(raw_changes[cannon_keys[0]]),
+            ):
+                return _noop_error("army", target_id, "cannon_transfer_to", target_id)
         # #320：loyalty 规范键/别名与写核同语义——先逐叶类型/字段校验，净合计后再一次
         # 软钳判 no-op；不得按 alias 分项拿旧值独立判 no-op。
         first_loyalty_raw_field: object | None = None
@@ -8463,7 +8467,7 @@ def _apply_extracted_army_delta(
         except (TypeError, ValueError):
             requested = 0
         source = db.conn.execute(
-            "SELECT cannon_equipment FROM armies WHERE id=?", (army_id,)
+            "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (army_id,)
         ).fetchone()
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
@@ -8471,7 +8475,7 @@ def _apply_extracted_army_delta(
                                  "item": {"army_id": army_id, "changes": raw_changes}})
             return army_changes
         target = (db.conn.execute(
-            "SELECT cannon_equipment FROM armies WHERE id=?", (target_id,)
+            "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (target_id,)
         ).fetchone() if isinstance(target_id, str) and target_id else None)
         if (len(cannon_keys) != 1 or requested >= 0 or source is None
                 or target is None or target_id == army_id):
@@ -8484,15 +8488,33 @@ def _apply_extracted_army_delta(
             return army_changes
         for key in cannon_keys:
             payload.pop(key)
-        actual = min(-requested, int(source["cannon_equipment"]),
-                     12 - int(target["cannon_equipment"]))
+        writable = all(
+            not bool(row["is_mutinied"]) or latched_army_field_effect_permitted(
+                "cannon_equipment", delta,
+            )
+            for row, delta in ((source, requested), (target, -requested))
+        )
+        actual = (min(-requested, int(source["cannon_equipment"]),
+                      12 - int(target["cannon_equipment"])) if writable else 0)
         if actual > 0:
-            for leg_id, leg_delta in ((army_id, -actual), (target_id, actual)):
-                army_changes.extend(db.apply_army_deltas(
-                    state, pseudo_event, None, "档房",
-                    {leg_id: {"随军大炮": leg_delta, "reason": raw_changes.get("reason")}},
-                    commit=False, origin_ref=origin_ref, require_origin=True,
-                ))
+            db.conn.execute("SAVEPOINT cannon_transfer")
+            try:
+                transfer_changes: List[Dict[str, object]] = []
+                for leg_id, leg_delta in ((army_id, -actual), (target_id, actual)):
+                    leg_changes = db.apply_army_deltas(
+                        state, pseudo_event, None, "档房",
+                        {leg_id: {"随军大炮": leg_delta, "reason": raw_changes.get("reason")}},
+                        commit=False, origin_ref=origin_ref, require_origin=True,
+                    )
+                    if len(leg_changes) != 1 or leg_changes[0].get("delta") != leg_delta:
+                        raise RuntimeError("随军炮转移双边实数不等")
+                    transfer_changes.extend(leg_changes)
+                db.conn.execute("RELEASE SAVEPOINT cannon_transfer")
+            except Exception:
+                db.conn.execute("ROLLBACK TO SAVEPOINT cannon_transfer")
+                db.conn.execute("RELEASE SAVEPOINT cannon_transfer")
+                raise
+            army_changes.extend(transfer_changes)
             if commit_now:
                 db.conn.commit()
         else:

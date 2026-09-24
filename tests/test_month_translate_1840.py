@@ -9,11 +9,12 @@ import pytest
 from tests.conftest import active_ming_character
 
 
-@pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon", [
-    (1, 0, 10, 1), (5, 11, 10, 1), (0, 0, 0, 0),
+@pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon,source_latched,target_latched", [
+    (1, 0, 10, 1, 0, 0), (5, 11, 10, 1, 0, 0), (0, 0, 0, 0, 0, 0),
+    (5, 0, 10, 0, 1, 0), (5, 0, 10, 0, 0, 1),
 ])
 def test_world_segment_explicit_stock_transfers_share_actual_amount(
-    game, source_cannon, target_cannon, treasury, actual_cannon,
+    game, source_cannon, target_cannon, treasury, actual_cannon, source_latched, target_latched,
 ):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -21,8 +22,10 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
     armies = [row[0] for row in db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 2")]
     assert len(armies) == 2
     loser, winner = armies
-    db.conn.execute("UPDATE armies SET cannon_equipment=? WHERE id=?", (source_cannon, loser))
-    db.conn.execute("UPDATE armies SET cannon_equipment=? WHERE id=?", (target_cannon, winner))
+    db.conn.execute("UPDATE armies SET cannon_equipment=?, is_mutinied=? WHERE id=?",
+                    (source_cannon, source_latched, loser))
+    db.conn.execute("UPDATE armies SET cannon_equipment=?, is_mutinied=? WHERE id=?",
+                    (target_cannon, target_latched, winner))
     state.metrics["国库"], state.metrics["内库"] = treasury, 0
     declaration = {"effects": {
         "economy_moves": [{
@@ -56,6 +59,13 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
                   if change.get("field") == "cannon_equipment") == [
                       -actual_cannon, actual_cannon,
                   ]
+    logs = db.conn.execute(
+        "SELECT army_id, delta FROM army_logs WHERE field='cannon_equipment' AND army_id IN (?, ?)",
+        (loser, winner),
+    ).fetchall()
+    assert sorted(row["delta"] for row in logs) == (
+        [-actual_cannon, actual_cannon] if actual_cannon else []
+    )
 
 
 def _character_name(db) -> str:
