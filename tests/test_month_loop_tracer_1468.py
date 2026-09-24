@@ -25,7 +25,6 @@ import ming_sim.agents as agents_mod
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
-import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
@@ -51,11 +50,6 @@ class _CannedEndorsementExtractor:
         return SimpleNamespace(content='{"endorsements":[]}')
 
 
-class _CannedMindreadingAgent:
-    def run(self, _material):
-        return SimpleNamespace(content="近臣低声：边饷事重。")
-
-
 class _CannedMinisterAgent:
     """非流式 session.chat 读 agent.run().content（非 generator）。"""
 
@@ -71,10 +65,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
-    )
-    monkeypatch.setattr(
-        mindreading_mod, "create_mindreading_agent",
-        lambda *a, **k: _CannedMindreadingAgent(),
     )
     # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
     # 票据不归还 → xdist 下 _wait_pending_writes 墙钟假红。

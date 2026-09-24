@@ -645,7 +645,7 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
 
     sess.scene_chat = _scene_chat  # type: ignore[method-assign]
     db.conn.execute(
-        "UPDATE chat_turns SET extract_status='done', mindreading_status='skip' WHERE id=?",
+        "UPDATE chat_turns SET extract_status='done' WHERE id=?",
         (ct,),
     )
     db.conn.commit()

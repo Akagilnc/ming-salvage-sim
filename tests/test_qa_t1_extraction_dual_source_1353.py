@@ -32,8 +32,6 @@ from ming_sim.exceptions import ExitGame, LLMUnavailable
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import GameSession, TurnPhase
 from tests.test_audience_extraction_501 import (
-    _BoomAgent,
-    _FactsAgent,
     _minister,
     _open_night_with_persisted_reply,
 )
@@ -70,7 +68,7 @@ def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypa
         lambda **k: [],
     )
     minister = _minister(db, content)
-    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
@@ -101,7 +99,7 @@ def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
         lambda **k: [],
     )
     minister = _minister(db, content)
-    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
@@ -110,7 +108,7 @@ def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
         db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
         translate_fn=boom_translate,
     )
-    # 外部可见：待补仍在；旧抽取未把水位标 done
+    # 外部可见：转译待补仍在；水位未标 done
     assert db.get_story_extract_status(ctid) in ("", "pending")
     assert int(_pending_api(db)["count"]) >= 1
     assert any(
@@ -129,7 +127,7 @@ def test_debt_exhausted_single_source_no_player_cta(game, tmp_path, monkeypatch)
         lambda **k: [],
     )
     minister = _minister(db, content)
-    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
@@ -155,7 +153,7 @@ def test_partial_heal_single_source_pending_only_fresh(
         lambda **k: [],
     )
     minister = _minister(db, content)
-    nid, ctid_stale, _ = _open_night_with_persisted_reply(db, state, minister, reply="甲。")
+    nid, ctid_stale = _open_night_with_persisted_reply(db, state, minister, reply="甲。")
     ctid_fresh = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
     db.persist_minister_reply(minister, int(state.turn), "乙。", ctid_fresh)
     db.conn.execute(
@@ -186,7 +184,7 @@ def test_close_retry_on_healed_cleanup_no_stale_ids(game, tmp_path, monkeypatch)
         lambda **k: [],
     )
     minister = _minister(db, content)
-    nid, ctid_stale, _ = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid_stale = _open_night_with_persisted_reply(db, state, minister)
     db.conn.execute(
         "UPDATE chat_turns SET extract_status = 'done' "
         "WHERE night_id = ? AND minister_message_id IS NOT NULL",
@@ -214,7 +212,7 @@ def test_close_after_chat_passes_write_gate_like_auto_close(
 
     stub_audience_translate(monkeypatch, boom_translate)
     minister = _minister(db, content)
-    nid, ctid, _ = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     from ming_sim.session import GameSession
 
@@ -461,7 +459,7 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
-    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
     db.conn.execute(
         "UPDATE chat_turns SET status='generating' WHERE id=?", (ctid,)
     )
@@ -502,38 +500,28 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     assert an.list_in_flight_chat_turns(db, nid) == []
 
 
-def test_seal_claim_rejects_active_trail_legs_zero_write(web_game, monkeypatch):
-    """生产钉：seal 后现役尾随腿拒绝 → 零 LLM、零写。"""
+def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypatch):
+    """生产钉：seal 后现役高亮与转译尾随拒绝 → 零 LLM、零写。"""
     game = web_game
     q = game._runtime_write_queue()
     q.seal()
-    calls = {"hl": 0, "mind": 0, "catch": 0}
+    calls = {"hl": 0, "catch": 0}
 
     monkeypatch.setattr(
         web_app, "run_highlight_judge",
         lambda **_k: calls.__setitem__("hl", calls["hl"] + 1) or ["x"],
     )
 
-    def boom_mind(**_k):
-        calls["mind"] += 1
-        return {"id": 1}
-
-    monkeypatch.setattr(web_app, "run_mindreading_for_turn", boom_mind)
     monkeypatch.setattr(
         web_app, "catch_up_pending_translations",
         lambda **_k: calls.__setitem__("catch", calls["catch"] + 1),
     )
 
-    assert game._spawn_pending_write_thread(
-        game._trail_mindreading_after_reply, ("m", "r", 1), "t",
-        ticket_key=("turn", 1),
-    ) is None
     assert game._trail_highlight_judge_after_reply(
         "回话", message_id=1, chat_turn_id=1,
     ) == []
-    assert game._trail_mindreading_after_reply("m", "r", 1) is None
     game._run_startup_extraction_catch_up(pending_ticket=None)
-    assert calls == {"hl": 0, "mind": 0, "catch": 0}
+    assert calls == {"hl": 0, "catch": 0}
     assert q.inflight_count() == 0
     q.unseal()
 

@@ -1413,8 +1413,6 @@ class GameDB:
                 night_id INTEGER NOT NULL DEFAULT 0,
                 -- 与 story_ledger_entries.seq 共用夜内单调序（allocate_night_seq）
                 night_seq INTEGER NOT NULL DEFAULT 0,
-                -- #499 读心终态：''=待生成 / 'failed'=模型失败 / 'skip'=不适用；用于重开轮询判终止。
-                mindreading_status TEXT NOT NULL DEFAULT '',
                 -- #501 叙事抽取水位（确定性可判、补跑不重复/不漏）：
                 --   ''=未抽 / 'done'=已抽落账 / 'pending'=待补（抽取失败，给玩家原地重试）
                 extract_status TEXT NOT NULL DEFAULT '',
@@ -2372,11 +2370,6 @@ class GameDB:
         self._backfill_person_core_character_static_fields()
         self._migrate_character_identity_seed()
         self._backfill_bandit_power_split()
-        if self.ensure_column("chat_turns", "mindreading_status", "TEXT NOT NULL DEFAULT ''"):
-            # 列首次新增：历史已完成轮无 worker，回填 'skip' 终态（不被当 accepted 永挂）。
-            self._backfill_legacy_mindreading_status()
-        # 进程启动对账：上次进程遗留的 'running' 未落库轮 → 终态化 failed（不永挂）。
-        self.reconcile_abandoned_mindreading()
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
@@ -9434,19 +9427,6 @@ class GameDB:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def record_mindreading(self, chat_turn_id: int, payload: Mapping[str, object]) -> int:
-        """持久化近臣私语；独立于召对逐字稿与共享见闻轨。"""
-        cur = self.conn.execute(
-            "INSERT INTO mindreading_records "
-            "(chat_turn_id,reader,target,source,precision,narration) VALUES (?,?,?,?,?,?)",
-            (
-                int(chat_turn_id), payload.get("reader"), payload.get("target"),
-                payload.get("source"), payload.get("precision"), payload.get("narration"),
-            ),
-        )
-        self.conn.commit()
-        return int(cur.lastrowid)
-
     def list_mindreading_records(self, chat_turn_id: int) -> List[Dict[str, object]]:
         # id 是稳定记录身份（#499）：前端按 (chat_turn_id, id) 去重/归位，不依赖 narration 文本。
         rows = self.conn.execute(
@@ -10187,52 +10167,20 @@ class GameDB:
         ).fetchone()
         return self._row_dict(row) if row is not None else None
 
-    def list_pending_mindreading_turns(self, minister_name: str, turn: int) -> List[int]:
-        """本大臣本回合已完成回话（有大臣消息）但读心尚未落库、且未达终态的活跃轮 id（#499）。
-
-        显式 per-turn 任务态（#499）：''=未接受（回话未提交）/'running'=已接受在办 /
-        'failed'/'skip'=终态；record 存在=ready。**只返回 'running' 且未落库**的轮——
-        「已接受、在办、未落库」才 pending，杜绝把 schema 默认空当作 accepted 而永挂。
-        """
-        rows = self.conn.execute(
-            """
-            SELECT ct.id FROM chat_turns ct
-            WHERE ct.minister_name = ? AND ct.turn = ? AND ct.status = 'active'
-              AND ct.minister_message_id IS NOT NULL
-              AND ct.mindreading_status = 'running'
-              AND NOT EXISTS (
-                SELECT 1 FROM mindreading_records mr WHERE mr.chat_turn_id = ct.id
-              )
-            ORDER BY ct.id
-            """,
-            (minister_name, int(turn)),
-        ).fetchall()
-        return [int(row["id"]) for row in rows]
-
     def persist_minister_reply(
         self,
         minister_name: str,
         turn: int,
         content: str,
         chat_turn_id: int,
-        *,
-        mindreading_status: Optional[str] = None,
     ) -> int:
-        """**一个事务**内：插入大臣回话消息 → 取其 id → 链接到 turn → 升 active → 读心任务态
-        → 单次提交。返回 message_id（#499）。
+        """**一个事务**内插入大臣回话、链接到 turn 并升为 active，返回 message_id。
 
-        默认 ''→'running'（接受读心）。Web #1842 退役代码尾随时传入
-        ``mindreading_status='skip'``，与回话同事务落终态，禁分二次提交后 skip 被外层
-        atomic / 并发写冲掉。
-
-        杜绝「回话消息已 commit 但未链接」孤儿：分两次提交时，插入回话已落库、链接+接受
-        未落库时崩溃 → 可见的持久回话却 chat_turn_id 0、active 未链接轮、空任务态、无启动
-        对账、无 pending、in-flight 守卫永挡后续召见。合并进单一事务后此孤儿态整体回滚、不可达。
+        消息插入、turn 链接和状态升级同成同败，避免留下未关联的持久回话。
         知识轨纪律同 append_chat_message：insert 即 'held'，投轨唯一出口是 release（#976）。
         status 升级同 update_chat_turn_messages（#498 挂夜轮以 generating 起笔，回话落库后升 active）——
         本函数是 update_chat_turn_messages(minister_message_id=...) 的原子替代，须同做该升级。
         """
-        target_mind = str(mindreading_status) if mindreading_status is not None else None
         with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）；外层 atomic 内 commit 暂停
             cur = self.conn.execute(
                 "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
@@ -10240,54 +10188,17 @@ class GameDB:
                 (minister_name, int(turn), content),
             )
             message_id = int(cur.lastrowid)
-            if target_mind is None:
-                self.conn.execute(
-                    """
-                    UPDATE chat_turns
-                    SET minister_message_id = ?,
-                        error_pack_path = '',
-                        status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
-                        mindreading_status = CASE WHEN mindreading_status = ''
-                                                 THEN 'running' ELSE mindreading_status END
-                    WHERE id = ?
-                    """,
-                    (message_id, int(chat_turn_id)),
-                )
-            else:
-                self.conn.execute(
-                    """
-                    UPDATE chat_turns
-                    SET minister_message_id = ?,
-                        error_pack_path = '',
-                        status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
-                        mindreading_status = CASE WHEN mindreading_status IN ('', 'running')
-                                                 THEN ? ELSE mindreading_status END
-                    WHERE id = ?
-                    """,
-                    (message_id, target_mind, int(chat_turn_id)),
-                )
+            self.conn.execute(
+                """
+                UPDATE chat_turns
+                SET minister_message_id = ?,
+                    error_pack_path = '',
+                    status = CASE WHEN status = 'generating' THEN 'active' ELSE status END
+                WHERE id = ?
+                """,
+                (message_id, int(chat_turn_id)),
+            )
         return message_id
-
-    def set_mindreading_status(self, chat_turn_id: int, status: str) -> None:
-        """把在办任务落终态（'failed'/'skip'）：模型失败或不适用时落库，让重开轮询能判终止。
-
-        只从非终态（''/'running'）转入，不覆盖已有终态；已 ready 的轮由 record 存在表达终态。
-        外层 atomic / 已开事务时不自 commit（connection_owns_transaction）。
-        """
-        self.conn.execute(
-            "UPDATE chat_turns SET mindreading_status = ? "
-            "WHERE id = ? AND mindreading_status IN ('', 'running')",
-            (str(status), int(chat_turn_id)),
-        )
-        if connection_owns_transaction(self.conn):
-            self.conn.commit()
-
-    def get_mindreading_status(self, chat_turn_id: int) -> str:
-        row = self.conn.execute(
-            "SELECT mindreading_status FROM chat_turns WHERE id = ?",
-            (int(chat_turn_id),),
-        ).fetchone()
-        return str(row["mindreading_status"] or "") if row is not None else ""
 
     # ----- #634 召对判官水位（ADR 0082：逐轮标记即水位，无平行水位表）-----
 
@@ -10312,7 +10223,7 @@ class GameDB:
             total += int(cur.rowcount)
         return total
 
-    # ----- #501 叙事抽取落账（水位 + 原子落账 + 补跑真源）-----
+    # ----- #501 召对转译待补状态（沿用 extract_status）-----
 
     def get_story_extract_status(self, chat_turn_id: int) -> str:
         row = self.conn.execute(
@@ -10329,7 +10240,7 @@ class GameDB:
         self.conn.commit()
 
     def mark_story_extraction_pending(self, chat_turn_id: int) -> None:
-        """抽取失败 → 待补（'' / 'pending' → 'pending'）；不覆盖已 'done'。"""
+        """转译失败 → 待补（'' / 'pending' → 'pending'）；不覆盖已 'done'。"""
         self.conn.execute(
             "UPDATE chat_turns SET extract_status = 'pending' "
             "WHERE id = ? AND extract_status IN ('', 'pending')",
@@ -10537,162 +10448,6 @@ class GameDB:
             mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return new_ids
 
-    def settle_story_extraction(
-        self,
-        chat_turn_id: int,
-        night_id: int,
-        facts: Sequence[Mapping[str, Any]],
-        source_night_seq: int,
-        *,
-        allow_closing: bool = False,
-        authorized_open_ids: Optional[set[int]] = None,
-    ) -> List[int]:
-        """一轮抽取产出的多条账在**同一事务内全有或全无**落库 + 抽取水位 → 'done'（ADR 0036 cmr R3）。
-
-        抽取水位二元（已抽/未抽）：已 'done' → 幂等 no-op（补跑不重复落账）。时序键
-        `order_key` 绑源对话轮原始时序（source_night_seq+0.5，落在源轮之后、后续轮之前），
-        使补跑落回原时间位（AC11）。
-
-        落账走账本唯一写入入口 `append_ledger_entry`（ADR 0035）——不抄第二份 INSERT：
-        closed 夜 / 非法可闻性 / 非法在场效果一律响亮拒写（回滚整轮）；死账仅对「进」效果校验
-        （已死者不能在场；纯提及不拦）。seq/时序键与口令账同源。空 facts（空白回话）合法 →
-        仅推进水位、不落账（不占永久待补，AC10/L4）。
-
-        CLOSING 默认拒写；仅 close_night ordinary drain 显式 `allow_closing=True`，
-        不得仅凭 night.status 自动授权，不加 token/registry/第二写口。
-
-        `authorized_open_ids` 为调用方在 write_gate 首闸内冻结的 open-affair 授权集
-        （LLM 所见即落账所认）；传入时原样使用，不重读 live list_open——否则模型见到
-        的集合与落账认可的集合可在并发下漂移（#1831）。未传（如既有直调测试）保持
-        旧行为：现读现授权。
-        """
-        from ming_sim.audience_night import PRESENCE_ENTER, append_ledger_entry
-        from ming_sim.entities.affair import (
-            ATTACH_EXPERIENCE,
-            UnauthorizedAffairOriginRef,
-            declaration_from_payload,
-        )
-
-        cid = int(chat_turn_id)
-        if self.get_story_extract_status(cid) == "done":
-            return []
-        # #506 撤回安全（ADR 0038 cmr R4）：后台写入前校验目标轮存活——已撤回/失败的轮
-        # 不得被在飞抽取补跑复活（否则留 source_chat_turn_id 指向已撤轮的孤儿账）。与
-        # audience_pipeline 读心尾的死轮闸同判据（status ∈ {failed, undone} = 死轮）。
-        srow = self.conn.execute(
-            "SELECT status FROM chat_turns WHERE id = ?", (cid,),
-        ).fetchone()
-        if srow is not None and str(srow["status"] or "") in {"failed", "undone"}:
-            return []
-        base = float(int(source_night_seq or 0)) + 0.5
-        authorized_open = (
-            set(authorized_open_ids) if authorized_open_ids is not None
-            else {int(row.id) for row in self.affairs.list_open()}
-        )
-        clock = self.conn.execute(
-            "SELECT year, period, turn FROM game_state WHERE id=1"
-        ).fetchone()
-        if clock is None:
-            raise ValueError("存档缺 game_state 时钟")
-        participation_state = self.load_state()
-        accepted: List[Mapping[str, Any]] = []
-        rejected: List[tuple[Mapping[str, Any], str]] = []
-        # Validate model-owned items before opening the all-or-nothing application
-        # transaction. Endorsements are never settled here (#612 night-level batch).
-        # Unauthorized affair origin is the same narrow per-item reject signal as
-        # economy/person paths (ADR 0005/0015): keep siblings, leave structured trace.
-        for fact in facts:
-            if "_rejected_story_fact" in fact:
-                rejected.append((fact.get("_rejected_story_fact") or {}, str(fact.get("_rejection_reason") or "事实形状非法")))
-                continue
-            if isinstance(fact, Mapping) and "endorsement" in fact:
-                rejected.append((dict(fact), "普通故事抽取不得携带 endorsement"))
-                continue
-            if (
-                isinstance(fact, Mapping)
-                and declaration_from_payload(fact, allowed=ATTACH_EXPERIENCE) is not None
-            ):
-                try:
-                    self.affairs.origin_ref_from_result_item(
-                        fact,
-                        year=int(clock["year"]),
-                        period=int(clock["period"]),
-                        turn=int(clock["turn"]),
-                        authorized_ids=authorized_open,
-                    )
-                except UnauthorizedAffairOriginRef as exc:
-                    rejected.append((dict(fact), str(exc)))
-                    continue
-            accepted.append(fact)
-
-        new_ids: List[int] = []
-        collector = None
-        with atomic(self):
-            if rejected:
-                from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
-                turn_row = self.conn.execute("SELECT turn FROM chat_turns WHERE id=?", (cid,)).fetchone()
-                collector = RejectionCollector()
-                for item, reason in rejected:
-                    collector.record("story_facts", RejectedItem(
-                        item=dict(item), reason=reason, category="invalid_item",
-                        source=Provenance.system_simulation,
-                    ), int(turn_row["turn"] if turn_row is not None else 0))
-                collector.flush_to_db(self)
-            for fact in accepted:
-                persons = [
-                    str(n).strip()
-                    for n in (fact.get("person_names") or [])
-                    if str(n).strip()
-                ]
-                presence_effect = str(fact.get("presence_effect") or "")
-                origin_ref = ""
-                parsed = declaration_from_payload(fact, allowed=ATTACH_EXPERIENCE)
-                if parsed is not None:
-                    pointed = self.affairs.origin_ref_from_result_item(
-                        fact,
-                        year=int(clock["year"]),
-                        period=int(clock["period"]),
-                        turn=int(clock["turn"]),
-                        authorized_ids=authorized_open,
-                    )
-                    if pointed:
-                        origin_ref = f"{pointed}/turn:{cid}/{len(new_ids)}"
-                entry_id = append_ledger_entry(
-                    self,
-                    int(night_id),
-                    person_names=persons,
-                    audibility=str(fact.get("audibility") or "殿上公开"),
-                    body=str(fact.get("body") or ""),
-                    tags=[str(t) for t in (fact.get("tags") or []) if str(t)],
-                    check_dead=(presence_effect == PRESENCE_ENTER),
-                    commit=False,
-                    source_chat_turn_id=cid,
-                    presence_effect=presence_effect,
-                    order_key=base,
-                    allow_closing=bool(allow_closing),
-                    origin_ref=origin_ref,
-                )
-                new_ids.append(int(entry_id))
-                self.record_character_participation(
-                    state=participation_state,
-                    participants=persons,
-                    kind="story",
-                    title=str(fact.get("body") or "").strip(),
-                    body=str(fact.get("body") or ""),
-                    source_id=f"story_ledger:{int(entry_id)}",
-                    commit=False,
-                )
-            self.conn.execute(
-                "UPDATE chat_turns SET extract_status = 'done', error_pack_path = '' WHERE id = ?",
-                (cid,),
-            )
-        # 本方法即外层 owner：atomic 提交后镜像（0008-D5；#1745 补缺镜像）。
-        if collector is not None:
-            from ming_sim.applier import mirror_rejections_after_commit
-            from ming_sim.error_pack import rejections_jsonl_path
-            mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
-        return new_ids
-
     def list_unextracted_replies(
         self, *, night_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
@@ -10731,36 +10486,6 @@ class GameDB:
     ) -> int:
         """尚待抽取落账的完整回话轮数（''/'pending' 皆算）；收夜清空待补的判据（AC10）。"""
         return len(self.list_unextracted_replies(night_id=night_id))
-
-    def reconcile_abandoned_mindreading(self) -> int:
-        """进程启动时对账：'running' 但未落库的轮 = 其 worker 已随上次进程消亡，任务被遗弃
-        → 确定性终态化为 'failed'（重开轮询据此终止，不会永挂）。返回对账条数。"""
-        cur = self.conn.execute(
-            """
-            UPDATE chat_turns SET mindreading_status = 'failed'
-            WHERE mindreading_status = 'running'
-              AND NOT EXISTS (
-                SELECT 1 FROM mindreading_records mr WHERE mr.chat_turn_id = chat_turns.id
-              )
-            """
-        )
-        self.conn.commit()
-        return int(cur.rowcount or 0)
-
-    def _backfill_legacy_mindreading_status(self) -> None:
-        """列首次新增时回填历史行：本功能之前的已完成召对轮（有大臣回话、无读心记录）无对应
-        worker，显式落 'skip' 终态——免得空默认被当作 accepted 而在升级存档里永挂 pending。"""
-        self.conn.execute(
-            """
-            UPDATE chat_turns SET mindreading_status = 'skip'
-            WHERE mindreading_status = ''
-              AND minister_message_id IS NOT NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM mindreading_records mr WHERE mr.chat_turn_id = chat_turns.id
-              )
-            """
-        )
-        self.conn.commit()
 
     def is_global_last_active_chat_turn(self, chat_turn_id: int) -> bool:
         row = self.conn.execute(

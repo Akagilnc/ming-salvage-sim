@@ -589,7 +589,7 @@ def _by_pid(db, pid):
 @pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_nonstream_web_chat_surfaces_ambiguous():
     """R1：非流式 WebGame.chat 组装 payload 时透出结构化含糊态（候选集），与 stream 同 surface。
-    临时大臣路径跳过持久化/读心，聚焦 payload 组装是否携带 directive_confirmation_ambiguous。"""
+    临时大臣路径跳过持久化，聚焦 payload 组装是否携带 directive_confirmation_ambiguous。"""
     import threading
     from types import SimpleNamespace
     import web_app

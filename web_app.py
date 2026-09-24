@@ -88,7 +88,6 @@ from ming_sim.session import (
     _pending_action_failure_payload,
     coalesce_pending_action_id,
 )
-from ming_sim.audience_pipeline import run_mindreading_for_turn
 from ming_sim.highlight_judge import (
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
     run_highlight_judge,
@@ -1913,9 +1912,9 @@ class WebGame:
         return minister_name not in self.session.temporary_characters
 
     def chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
-        """召对显示投影（#499 单一真源）：持久大臣 → DB turn-identified 投影（含读心
-        递话按轮归位）；临时召见 → 内存历史（无 chat_turn/无读心）。三处出口（历史
-        入口 / 回话 done / 撤回）共用它，杜绝 setChat(history) 抹掉读心的覆盖竞争。"""
+        """召对显示投影（#499 单一真源）：持久大臣 → DB turn-identified 投影（含既存
+        读心记录按轮归位）；临时召见 → 内存历史（无 chat_turn/无持久读心）。三处出口
+        （历史入口 / 回话 done / 撤回）共用它，杜绝 setChat(history) 抹掉历史记录。"""
         if self._persistent_chat_minister(minister_name):
             # Lightweight stream seams intentionally expose neither a durable connection nor
             # the night-aware projection signature. Production DBs always use the night owner.
@@ -2217,12 +2216,7 @@ class WebGame:
         if minister_name not in self.session.temporary_characters:
             turn = int(self.state.turn if accepted_turn is None else accepted_turn)
             if chat_turn_id:
-                # #499 单一事务：插入回话 → 链接 turn → 接受读心任务（''→'running'）→ 一次提交。
-                # 杜绝「回话已 commit 却未链接」孤儿（否则可见回话 chat_turn_id 0、空任务态、
-                # 无对账、无 pending、in-flight 守卫永挡召见）。worker 崩溃遗留的 running 由启动
-                # 对账终态化，不永挂 pending。
-                # #1842：Web 入口已退役代码触发读心尾随；persist 同事务落 skip，
-                # 禁前端 mindreading_pending 永挂轮询。DB 直调 persist 的残迹契约不变。
+                # 单一事务插入回话、链接 turn 并升为 active，避免提交后出现未链接回话。
                 # 失败须上抛，禁 catch 后仍返回成功。
                 minister_message_id = int(
                     self.db.persist_minister_reply(
@@ -2230,7 +2224,6 @@ class WebGame:
                         turn,
                         answer,
                         chat_turn_id,
-                        mindreading_status="skip",
                     )
                 )
             else:
@@ -2250,8 +2243,8 @@ class WebGame:
             # never infers night ownership from cross-night personal chat history.
             "campaign_id": str(self.db.kv_get("campaign_id") or "") if hasattr(self.db, "kv_get") else "",
             "night_id": int(open_night["id"]) if open_night else 0,
-            # #499 单一投影：user/minister 带 chat_turn_id、既有读心按轮归位；
-            # 前端 setChat 不再抹掉先前浮现的读心递话。
+            # #499 单一投影：user/minister 带 chat_turn_id、既存读心记录按轮归位；
+            # 前端 setChat 不再抹掉历史读心记录。
             "history": self.chat_projection(minister_name),
             "chat_turn_id": int(chat_turn_id or 0),
             # #544：供高亮判官落库锚定（非流式折窗 / 流式补挂）
@@ -2913,47 +2906,6 @@ class WebGame:
         finally:
             self._complete_pending_write(pending_ticket)
 
-    def mindreading_for_minister(
-        self, minister_name: str, chat_turn_id: int = 0,
-    ) -> Dict[str, Any]:
-        """轮询/恢复读取路径：某一轮召对的读心记录（#499 就绪即浮现）。
-
-        `chat_turn_id>0` 时锁定该指定轮（取消/早重开的前端固定 expected 轮轮询，
-        不受新一轮成为 latest 影响、旧轮读心不丢失/不错归）；为 0 时取最近活跃轮
-        （历史入口首拉）。记录带持久 `id`，前端按 (chat_turn_id, id) 去重/归位。
-
-        `pending`/`pending_turn_ids` 只读**持久 per-turn 任务态**（记录 + 终态标 failed/skip），
-        不重算当前资格：读心任务在回话完成时被 worker 接受，接受后近臣关系变化不改其归属——
-        「接受但未落库、未达终态」即 pending，直到 worker 写出记录或落 failed/skip 终态。
-        （不因当前近臣关系变了就报 terminal-false，误停仍在跑的已接受任务。）
-        `pending_turn_ids`=本大臣本回合所有待读心轮（不只最新），供重开路径对每一轮各自轮询、
-        随新一轮发出仍存活（前端按面板/poll-batch 归属维持，不按发送作废）。
-        """
-        records: List[Dict[str, Any]] = []
-        pending = False
-        pending_turn_ids: List[int] = []
-        if self._persistent_chat_minister(minister_name):
-            target_turn = int(chat_turn_id)
-            if target_turn <= 0:
-                row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
-                target_turn = int(row["id"]) if row is not None else 0
-            chat_turn_id = target_turn
-            if chat_turn_id > 0:
-                records = list(self.db.list_mindreading_records(chat_turn_id))
-                if not records:
-                    # 单轮 pending：已接受在办（'running'）且未落库——显式任务态，'' 不算 accepted。
-                    pending = self.db.get_mindreading_status(chat_turn_id) == "running"
-            pending_turn_ids = self.db.list_pending_mindreading_turns(
-                minister_name, self.state.turn,
-            )
-        return {
-            "minister": minister_name,
-            "chat_turn_id": chat_turn_id,
-            "mindreading": records,
-            "mindreading_pending": pending,
-            "pending_turn_ids": pending_turn_ids,
-        }
-
     def _scene_chat_stream_payload(
         self,
         minister_name: str,
@@ -3567,77 +3519,6 @@ class WebGame:
             "secret_order_landing_recovery": res.get("secret_order_landing_recovery"),
         }
 
-    def _trail_mindreading_after_reply(
-        self,
-        minister_name: str,
-        minister_reply: str,
-        chat_turn_id: int,
-        *,
-        pending_ticket: Optional[WriteTicket] = None,
-        owns_pending: bool = False,  # 旧形兼容；新路传 pending_ticket
-    ) -> Optional[Dict[str, Any]]:
-        """P5（#499）：回话 done 后在本 worker 内直接尾随读心（依赖回话、必串于其后）。
-
-        读心是单一依赖任务、调用方随即等其结果——无需另起 executor/Future。回话已完成并
-        落库（读心闸门=非空完整回话，喂真实 reply 而非问句）；写库经票据执行 seam。
-        #1353：spawn 路票据生命周期在 spawner finally；本腿只消费票、不归还交接票。
-        直接调用无票时自领并自还。失败不回滚回话。无票且 seal → 零 LLM 零写。
-        """
-        del owns_pending  # 票据路径取代布尔 ownership
-        own_ticket = False
-        try:
-            reply = str(minister_reply or "")
-            if not chat_turn_id or not reply.strip():
-                return None
-            if pending_ticket is None:
-                pending_ticket = self._mark_pending_write(
-                    key=("turn", int(chat_turn_id)),
-                )
-                own_ticket = pending_ticket is not None
-            if pending_ticket is None:
-                return None  # seal/拒票：无第二入口
-            # 撤回后 ticket 已 cancel：禁复活写（ADR 0038）。
-            if pending_ticket.cancelled or pending_ticket._done:
-                return None
-            write_gate = self._ticketed_write_gate(pending_ticket)
-            # 资格判定唯一入口在 run_mindreading_for_turn 内（不在此重复查询）
-            terminal_status = ""
-            try:
-                result = run_mindreading_for_turn(
-                    db=self.db,
-                    state=self.state,
-                    content_characters=self.content.characters,
-                    minister_name=minister_name,
-                    minister_reply=reply,
-                    llm_config=getattr(self.session, "llm_config", None),
-                    chat_turn_id=chat_turn_id,
-                    write_gate=write_gate,
-                )
-            except TicketCancelled:
-                return None
-            except Exception:
-                # 读心失败：回话已 done，不回滚。落终态 failed 让重开轮询能终止。
-                result = None
-                terminal_status = "failed"
-            else:
-                # 返回非记录（不适用/目标已失效）→ 终态 skip，同样让轮询终止。
-                if not isinstance(result, dict):
-                    terminal_status = "skip"
-            if terminal_status:
-                # 终态落库经同一票据 seam；已 ready 的轮不打标。
-                try:
-                    with write_gate:
-                        self.db.set_mindreading_status(chat_turn_id, terminal_status)
-                except TicketCancelled:
-                    return None
-                except Exception:
-                    pass
-            return result if isinstance(result, dict) else None
-        finally:
-            # 仅自领票由本腿收口；spawn 交接票由 spawner finally 归还（stub 安全）。
-            if own_ticket:
-                self._complete_pending_write(pending_ticket)
-
     def _trail_highlight_judge_after_reply(
         self,
         minister_reply: str,
@@ -3917,7 +3798,7 @@ class WebGame:
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
             return
-        # 整轮（含读心尾随）共用一次队列票据——关闭/fixture 必须等其完成。
+        # 整轮（含转译与高亮尾随）共用一次队列票据——关闭/fixture 必须等其完成。
         pending_ticket = self._mark_pending_write()
         if pending_ticket is None:
             yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
@@ -6701,22 +6582,17 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
     _require_active_minister(minister_name)
     game = get_game()
     character = game.session._character(minister_name)
-    mind = game.mindreading_for_minister(minister_name)
     from ming_sim.audience_night import get_open_night
     open_night = get_open_night(game.db) if hasattr(game.db, "conn") else None
     return {
         "minister": game.public_character(character),
         "campaign_id": str(game.db.kv_get("campaign_id") or ""),
         "night_id": int(open_night["id"]) if open_night else 0,
-        # #499：turn-identified 单一投影，读心递话（role=attendant）已按轮归位于其中
+        # 历史角色投影已按轮归位于其中。
         "history": game.chat_projection(minister_name),
         "suggestions": game.suggestions_for(character),
         "can_undo_last_chat": game.can_undo_last_chat(minister_name),
         "pending_action_failures": game.pending_action_failures_for(minister_name),
-        # 最新活跃轮 + 所有待读心轮 → 前端对每一待读心轮各自固定轮有界轮询（随新一轮发出仍存活）
-        "chat_turn_id": mind["chat_turn_id"],
-        "mindreading_pending": mind["mindreading_pending"],
-        "pending_turn_ids": mind["pending_turn_ids"],
         # #505/#1853：每个原轮各自投影待恢复状态。
         "reply_retries": game.reply_retries(minister_name),
         "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
@@ -6743,17 +6619,6 @@ async def api_retry_interrupted_reply(minister_name: str, chat_turn_id: int = Bo
     except AudienceNightError as e:
         # CLOSING / night admission → 409 (retryable); reuse shared converter, no status fork.
         raise _retryable_audience_close_http(e) from None
-
-
-@app.get("/api/ministers/{minister_name}/chat/mindreading")
-async def api_chat_mindreading(minister_name: str, chat_turn_id: int = 0) -> Dict[str, Any]:
-    """#499 读心轮询入口：回话 done 后后台生成，就绪即可拉取。
-
-    `chat_turn_id` 固定 expected 轮：取消/早重开的前端锁定首拉那一轮轮询，
-    新一轮成为 latest 也不截断旧轮读心。
-    """
-    _require_active_minister(minister_name)
-    return get_game().mindreading_for_minister(minister_name, chat_turn_id)
 
 
 @app.get("/api/audience/extraction/pending")
@@ -6860,13 +6725,7 @@ def _chat_stream_response(minister_name: str, request: ChatRequest) -> Streaming
                     delta_payload["replace"] = True
                 yield sse_event("delta", delta_payload)
             elif item_type == "done":
-                # 回话先可见；流继续至 end，以便读心就绪后浮现（#499 / ADR 0046 递话）
                 yield sse_event("done", item.get("payload", {}))
-            elif item_type == "mindreading":
-                yield sse_event("mindreading", {
-                    "mindreading": item.get("payload"),
-                    "chat_turn_id": item.get("chat_turn_id") or 0,
-                })
             elif item_type == "highlights":
                 # #544：流完补挂高亮清单
                 yield sse_event("highlights", {

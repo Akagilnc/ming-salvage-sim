@@ -1,7 +1,7 @@
 """Per-session single-writer ordered ticket queue (#1353 / ADR 0149).
 
 Design contract:
-- Trailing legs (extraction / highlight / mindreading) claim a ticket at start
+- Trailing legs (translation / highlight) claim a ticket at start
   (barrier/inflight ordering). LLM stays parallel outside the queue (P5).
   DB critical sections run through the ticket execution seam (`run` /
   `TicketedWriteGate`) which orders only **write turns** among open tickets —

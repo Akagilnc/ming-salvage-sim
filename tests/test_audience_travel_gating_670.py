@@ -1859,11 +1859,15 @@ def test_web_chat_formal_secret_order_hangs_night_without_enter(game, stream, mo
     reply = db.conn.execute(
         "SELECT content FROM chat_messages WHERE id=?", (turn["minister_message_id"],),
     ).fetchone()["content"]
-    db.settle_story_extraction(
-        chat_turn_id, int(turn["night_id"]),
-        [{"body": reply, "person_names": [remote.name], "audibility": "殿上公开",
-          "tags": ["scroll_role:minister"]}],
-        int(turn["night_seq"]),
+    from ming_sim.audience_translation import apply_audience_round_translation
+    apply_audience_round_translation(
+        db, state,
+        {"scene_facts": [{
+            "body": reply, "role": "minister", "person_names": [remote.name],
+            "audibility": "殿上公开", "tags": ["scroll_role:minister"],
+        }]},
+        night_id=int(turn["night_id"]), chat_turn_id=chat_turn_id,
+        minister_name=remote.name,
     )
     settled = [m for m in an.read_night_scroll(db, int(turn["night_id"]))
                if int(m.get("chat_turn_id") or 0) == chat_turn_id]

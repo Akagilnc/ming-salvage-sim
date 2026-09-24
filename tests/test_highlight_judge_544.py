@@ -95,15 +95,16 @@ def _minister_turn(db, state, minister: str, reply: str, night_id: int = 0):
     return cid, mid
 
 
-def _settle_minister_reply(db, chat_turn_id: int, night_id: int, minister: str, reply: str):
-    seq = db.conn.execute(
-        "SELECT night_seq FROM chat_turns WHERE id=?", (chat_turn_id,),
-    ).fetchone()["night_seq"]
-    db.settle_story_extraction(
-        chat_turn_id, night_id,
-        [{"body": reply, "person_names": [minister], "audibility": "殿上公开",
-          "tags": ["scroll_role:minister"]}],
-        int(seq),
+def _settle_minister_reply(db, state, chat_turn_id: int, night_id: int, minister: str, reply: str):
+    from ming_sim.audience_translation import apply_audience_round_translation
+
+    apply_audience_round_translation(
+        db, state,
+        {"scene_facts": [{
+            "body": reply, "role": "minister", "audibility": "殿上公开",
+            "person_names": [minister], "tags": ["scroll_role:minister"],
+        }]},
+        night_id=night_id, chat_turn_id=chat_turn_id, minister_name=minister,
     )
 
 
@@ -137,7 +138,7 @@ def test_read_night_scroll_includes_minister_highlights(game):
 
     scroll = an.read_night_scroll(db, night_id)
     assert any(m["role"] == "scene" and m["content"] == "臣请据实核账。" and m["highlights"] == [] for m in scroll)
-    _settle_minister_reply(db, cid, night_id, minister, "臣请据实核账。")
+    _settle_minister_reply(db, state, cid, night_id, minister, "臣请据实核账。")
     scroll = an.read_night_scroll(db, night_id)
     minister_msgs = [m for m in scroll if m["role"] == "minister"]
     assert minister_msgs
@@ -161,7 +162,7 @@ def test_highlights_survive_db_restore(game, content, tmp_path):
     src_db.set_message_highlights(mid, ["军务", "辽饷"])
     assert any(m["role"] == "scene" and m["highlights"] == []
                for m in an.read_night_scroll(src_db, night_id) if m.get("chat_turn_id") == cid)
-    _settle_minister_reply(src_db, cid, night_id, minister, "臣陈军务与辽饷。")
+    _settle_minister_reply(src_db, state, cid, night_id, minister, "臣陈军务与辽饷。")
     # 不关 fixture 库：checkpoint + 文件拷贝后重开，模拟 restore
     src_db.conn.execute("PRAGMA wal_checkpoint(FULL)")
     copy_path = Path(tmp_path) / "restore-hl.db"
@@ -180,13 +181,6 @@ def test_highlights_survive_db_restore(game, content, tmp_path):
 
 
 # ── 通道时序（注入假判官，零真 LLM）────────────────────────────────────
-
-
-def _patch_mindreading_skip(monkeypatch):
-    import web_app as web_app_mod
-
-    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", lambda **_k: None)
-    # 抽取尾随与本票无关；禁真跑以免 fixture teardown 与后台写竞态
 
 
 def _restore_highlight_seams(web_game) -> None:
@@ -217,7 +211,6 @@ def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣", "陈辽饷。"]))
     _restore_highlight_seams(web_game)
-    _patch_mindreading_skip(monkeypatch)
 
     # run_highlight_judge 契约：失败/超时/坏输出只回 []、不抛（一层边界在其内部）。
     monkeypatch.setattr(web_app_mod, "run_highlight_judge", lambda **_k: [])
@@ -246,7 +239,6 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣", "先陈军务。"]))
     _restore_highlight_seams(web_game)
-    _patch_mindreading_skip(monkeypatch)
 
     release = threading.Event()
     seen_reply: List[str] = []
@@ -295,7 +287,6 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣陈辽饷。"]))
     _restore_highlight_seams(web_game)
-    _patch_mindreading_skip(monkeypatch)
 
     # #1842：殿上非流式走 scene_chat
     def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
@@ -326,7 +317,6 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
     minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
     _restore_highlight_seams(web_game)
-    _patch_mindreading_skip(monkeypatch)
 
     def fake_scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         from ming_sim.session import ChatTurnResult

@@ -11,12 +11,13 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Callable, Dict, Mapping, Optional
 
 import pytest
 
 from ming_sim import audience_night as an
 from ming_sim.audience_night import AudienceNightError
+from ming_sim.audience_translation import apply_audience_round_translation, mark_turn_translation_done
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
 
@@ -35,26 +36,19 @@ def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
     raise AssertionError("no active ming minister")
 
 
-def _night_seq_of(db, chat_id: int) -> int:
-    row = db.conn.execute(
-        "SELECT night_seq FROM chat_turns WHERE id = ?", (int(chat_id),)
-    ).fetchone()
-    return int(row["night_seq"] or 0)
-
-
 def _run_round(
     db: GameDB,
     state,
     minister: str,
     *,
     writes: Optional[Callable[[int, int], None]] = None,
-    facts: Optional[Sequence[Dict[str, Any]]] = None,
+    declaration: Optional[Mapping[str, object]] = None,
     reply: str = "臣遵旨。",
 ) -> tuple[int, int]:
     """跑一「轮」——严格复刻 web_app 的轮窗口 seam。
 
     `writes(night_id, chat_id)` 在轮窗口内做该轮的结构化写（暂存/密令落地/入册等）；
-    `facts` 若给出则经抽取唯一入口 `settle_story_extraction` 落抽取账（source_chat_turn_id=轮）。
+    `declaration` 若给出则经现役转译入口落账；否则只推进空轮水位。
     """
     before = db.capture_chat_rollback_snapshot()
     night_id, chat_id = an.attach_chat_turn_to_night(db, state, minister)
@@ -74,18 +68,26 @@ def _run_round(
     )
     if writes is not None:
         writes(int(night_id), int(chat_id))
-    if facts is not None:
-        db.settle_story_extraction(
-            int(chat_id), int(night_id), facts, source_night_seq=_night_seq_of(db, chat_id)
-        )
-    else:
-        db.conn.execute(
-            "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?", (int(chat_id),)
-        )
-        db.conn.commit()
     after = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(int(chat_id), before, after)
+    if declaration is not None:
+        apply_audience_round_translation(
+            db, state, declaration, night_id=int(night_id),
+            chat_turn_id=int(chat_id), minister_name=minister,
+        )
+    else:
+        mark_turn_translation_done(db, int(chat_id))
     return int(night_id), int(chat_id)
+
+
+def _minister_declaration(minister: str, presence_body: str) -> dict[str, object]:
+    return {
+        "presence": [{"person_name": minister, "effect": "enter", "body": presence_body}],
+        "scene_facts": [{
+            "body": "臣遵旨。", "role": "minister", "audibility": "殿上公开",
+            "person_names": [minister], "tags": ["scroll_role:minister"],
+        }],
+    }
 
 
 def _reopen(db: GameDB, content) -> GameDB:
@@ -103,8 +105,7 @@ def test_undo_erases_round_from_night_ledger_and_presence(game):
     m = _active_minister(db, content)
     night_id, chat_id = _run_round(
         db, state, m,
-        facts=[{"person_names": [m], "presence_effect": "enter",
-                "body": "臣入殿奏对辽饷。", "tags": ["军务"]}],
+        declaration=_minister_declaration(m, "臣入殿奏对辽饷。"),
     )
     # 轮内：该轮抽取账在册、入殿账使其在场
     assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
@@ -135,7 +136,7 @@ def test_undo_rejected_after_night_closed(game):
     m = _active_minister(db, content)
     night_id, chat_id = _run_round(
         db, state, m,
-        facts=[{"person_names": [m], "presence_effect": "enter", "body": "奏对。"}],
+        declaration=_minister_declaration(m, "奏对。"),
     )
     an.close_night(db, state, night_id=night_id)
     assert an.get_night(db, night_id)["status"] == "closed"
@@ -146,33 +147,6 @@ def test_undo_rejected_after_night_closed(game):
 
 
 # ── AC8：撤回终结异步残余——后台写入前校验目标轮存活，不写已撤/失败轮 ────────────
-
-
-def test_settle_extraction_skips_dead_round_but_writes_live_round(game):
-    db, state, content = game
-    m = _active_minister(db, content)
-
-    # 活轮：抽取正常落账（正向）
-    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    live_id = db.create_chat_turn(state, m, "", 0, night_id=int(night["id"]))
-    db.settle_story_extraction(
-        int(live_id), int(night["id"]),
-        [{"person_names": [m], "presence_effect": "enter", "body": "臣在。"}],
-        source_night_seq=_night_seq_of(db, live_id),
-    )
-    assert any(e["source_chat_turn_id"] == live_id for e in an.list_ledger(db, int(night["id"])))
-
-    # 死轮：目标轮 undone → 后台抽取写入被拦，零孤儿账（负向）
-    dead_id = db.create_chat_turn(state, m, "", 0, night_id=int(night["id"]))
-    db.conn.execute("UPDATE chat_turns SET status = 'undone' WHERE id = ?", (int(dead_id),))
-    db.conn.commit()
-    written = db.settle_story_extraction(
-        int(dead_id), int(night["id"]),
-        [{"person_names": [m], "presence_effect": "enter", "body": "不该落。"}],
-        source_night_seq=_night_seq_of(db, dead_id),
-    )
-    assert written == []
-    assert not any(e["source_chat_turn_id"] == dead_id for e in an.list_ledger(db, int(night["id"])))
 
 
 # ── AC3：夜内真实盘面直写走可枚举白名单；越权直写被审计咬住 ──────────────────────
@@ -200,7 +174,7 @@ def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
         )
     legal_night, _ = _run_round(
         db, state, m, writes=_land_secret,
-        facts=[{"person_names": [m], "presence_effect": "enter", "body": "领旨。"}],
+        declaration=_minister_declaration(m, "领旨。"),
     )
     assert "密令落地" in an.audit_night_direct_writes(db, legal_night)
     an.close_night(db, state, night_id=legal_night)
@@ -275,7 +249,7 @@ def test_undo_full_reversal_survives_kill_and_reopen(game):
         create_test_secret_order(db, state, m, "密查军资", "密查蓟镇军资挪用", ["军务"])
     night_id, chat_id = _run_round(
         db, state, m, writes=_land_secret,
-        facts=[{"person_names": [m], "presence_effect": "enter", "body": "领旨。"}],
+        declaration=_minister_declaration(m, "领旨。"),
     )
     assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 1
 
@@ -332,7 +306,7 @@ def test_undo_reversal_is_atomic_on_midway_crash(game, monkeypatch):
         create_test_secret_order(db, state, m, "密查漕运", "密查漕运折耗", ["漕运"])
     night_id, chat_id = _run_round(
         db, state, m, writes=_land_secret,
-        facts=[{"person_names": [m], "presence_effect": "enter", "body": "领旨。"}],
+        declaration=_minister_declaration(m, "领旨。"),
     )
 
     # 注入撤回逆转事务内的崩溃（末步 agno 截断处）
@@ -437,7 +411,7 @@ def test_undo_landed_secret_decree_removes_all_structured_records(game):
         )
     night_id, chat_id = _run_round(
         db, state, m, writes=_land,
-        facts=[{"person_names": [m], "presence_effect": "enter", "body": "领旨。"}],
+        declaration=_minister_declaration(m, "领旨。"),
     )
     order_id = int(db.conn.execute("SELECT id FROM secret_orders").fetchone()["id"])
     # 落地时结构化字段（标题/期限/标签/排除名单/机构级映射）+ 简报（承办人/知情圈）齐备

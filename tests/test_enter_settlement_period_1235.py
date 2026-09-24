@@ -25,7 +25,6 @@ import web_app
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
-import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
@@ -52,13 +51,6 @@ class _CannedEndorsementExtractor:
     def run(self, _material):
         class _R:
             content = '{"endorsements":[]}'
-        return _R()
-
-
-class _CannedMindreadingAgent:
-    def run(self, _material):
-        class _R:
-            content = "近臣低声：此人心里另有盘算。"
         return _R()
 
 
@@ -98,10 +90,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
-    )
-    monkeypatch.setattr(
-        mindreading_mod, "create_mindreading_agent",
-        lambda *a, **k: _CannedMindreadingAgent(),
     )
     # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])

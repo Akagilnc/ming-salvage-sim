@@ -435,7 +435,7 @@ def test_audience_agent_exposes_directory_tools_and_min_instructions(game, tmp_p
         "list_regions", "inspect_region", "read_past_report", "search_memories",
         "inspect_treasury_ledger", "check_treasury", "list_memorials",
         "inspect_memorial", "list_buildings", "inspect_building",
-        "estimate_resistance", "query_court_roster", "query_army_roster",
+        "estimate_resistance", "query_army_roster",
         "allocate_payroll", "audit_tax_arrears",
     }
     assert not (tool_names & retired_reads)

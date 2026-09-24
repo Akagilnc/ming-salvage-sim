@@ -14,7 +14,7 @@ import { audienceHistoryPath } from "./audienceScene";
  *   load 都推进 generation，陈旧快照（更旧的 GET 迟到）据此丢弃，不抹掉新完成的轮。
  *   close 推进同一代次，使离面后迟到的非 Abort 失败不得再回调 composer 回填。
  * - 持久后果（草案/密令/换人/退下/loadState 等）：done 载荷到手即由 App 幂等消费（不按 token
- *   门控），不拖到 SSE end——读心可延后 end 达 120s，期间起新轮不得吞掉已完成的旧轮后果。
+ *   门控），不拖到 SSE end；期间起新轮不得吞掉已完成的旧轮后果。
  * - 提交完成投影（成案等尾随落账）：SSE end 表示抽取/收夜等已 join，App 经 onEnd 再读权威
  *   durable state；不延迟 done 回话呈现。观察者离面无 end 时，重入拟诏等面经既有 loadState 接缝。
  */
@@ -51,7 +51,7 @@ export function useAudienceChat(
   selectedMinisterRef: React.MutableRefObject<string>,
   // 召对面板是否打开（App 传 activeModal==="chat"）。本 hook 内置**唯一 chat-exit 归属**：
   // 面板一关（任何 departure：关闭/Escape/转诏书/切模态/退菜单都令其为 false）即取消实时流
-  // 观察者 + 作废重开 poll-batch。归属逻辑在 App 真实消费的 hook 里，不散落各 departure。
+  // 观察者 + 作废旧快照。归属逻辑在 App 真实消费的 hook 里，不散落各 departure。
   chatOpen: boolean,
   /** 公共卷轴尾随写入落账后的唯一失效出口。 */
   onScrollSettled?: () => void,

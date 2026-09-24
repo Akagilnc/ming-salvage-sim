@@ -344,7 +344,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], roster));
       if (u.pathname.endsWith("/api/decree/advance_without_edict")) return jsonResp({ state: makeState(2, [], roster), pending_action_failures: [] });
       if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣等恭送", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, pending_action_failures: [], court_action: "court_break" });
-      if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ minister: roster[0], history: [], suggestions: [], campaign_id: "c1", night_id: 77, pending_turn_ids: [] });
+      if (u.pathname.endsWith("/api/audience/chat")) return jsonResp({ minister: roster[0], history: [], suggestions: [], campaign_id: "c1", night_id: 77 });
       if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       return jsonResp({});
     }));
@@ -414,7 +414,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
         return jsonResp(vacuum);
       }
       if (u.pathname.endsWith("/api/audience/chat")) {
-        return jsonResp({ minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1, pending_turn_ids: [] });
+        return jsonResp({ minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1 });
       }
       if (u.pathname.endsWith("/chat/stream")) {
         return sseResp("done", {
@@ -509,7 +509,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       }
       if (u.pathname.endsWith("/api/audience/chat") && init?.method !== "POST") {
         return jsonResp({
-          minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1, pending_turn_ids: [],
+          minister, history: [], suggestions: [], campaign_id: "c1", night_id: 1,
           can_undo_last_chat: retryDone,
           reply_retries: retryDone ? [{ chat_turn_id: 9, minister_name: "殿上", turn: 1, question: "续问赈济" }] : [
             { chat_turn_id: 7, minister_name: "殿上", turn: 1, question: "拟旨赈济" },
@@ -2844,7 +2844,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       if (u.pathname.endsWith("/api/audience/chat")) {
         return jsonResp({
           minister, history: [], suggestions: [], pending_action_failures: [],
-          pending_turn_ids: [], night_id: 1, can_undo_last_chat: false,
+          night_id: 1, can_undo_last_chat: false,
         });
       }
       return jsonResp({});

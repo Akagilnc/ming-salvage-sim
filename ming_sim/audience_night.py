@@ -628,7 +628,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                             content=content, beat="dialogue",
                             chat_turn_id=int(turn["id"])),
                 ))
-        # 递话/读心是对话轮的第三种持久消息，紧随该轮奏对归位；不并入故事账。
+        # 历史递话记录是对话轮的持久消息，紧随该轮奏对归位；不并入故事账。
         if hasattr(db, "list_mindreading_records"):
             for record_index, record in enumerate(db.list_mindreading_records(int(turn["id"]))):
                 narration = str(record.get("narration") or "").strip()
@@ -1276,20 +1276,19 @@ def _raise_pending_extraction(
     )
 
 
-def _drain_story_extraction_or_fail_closed(
+def _drain_pending_translations_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
-    extractor_agent: Any = None,
     translate_fn: Any = None,
     game_state: Any = None,
     write_queue: Any = None,
 ) -> None:
-    """收夜 phase-2：转译已在 OPEN 期 join；此处再 catch-up 待补。
+    """收夜 phase-2：转译已在 OPEN 期 join；此处再 catch-up 待补转译。
 
     ADR 0036 后出注记 / #1842：待补不再 fail-closed 中止收夜。join/补跑后仍
     pending 的留给过月 join / 原地重试（0157）。
 
     ``extract_status`` 由转译通路独占；未完成的轮次留给过月 join /
-    原地重试，不再有平行的故事抽取通路。
+    原地重试，不再保留旧故事抽取通路。
 
     write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)。
     """
@@ -1336,20 +1335,19 @@ def close_night(
     knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    extractor_agent: Any = None,
     endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
     translate_fn: Any = None,
     write_queue: Any = None,
 ) -> Dict[str, Any]:
-    """收夜：短写前提 → 无锁普通补抽 + 夜级 endorsement-only 批 → 短写终局。
+    """收夜：短写前提 → 无锁待补转译 + 夜级 endorsement-only 批 → 短写终局。
 
     分相：
-    1. OPEN 期：等在飞回话清；有限 join 普通抽取 single-flight owner 后重读 DB；
+    1. OPEN 期：等在飞回话清；有限 join 转译 single-flight owner 后重读 DB；
        经调用方既有 ChatTurnSceneRegistry start_close（不立即 join）；持 write_gate
        原子复查并冻结 CLOSING、提交 draft 前提。不得自建第二 registry/executor/Thread。
-    2. 释放 gate：清空普通 story 待补（CLOSING restore drain 作崩溃恢复口）；
+    2. 释放 gate：补跑待补转译（CLOSING restore drain 作崩溃恢复口）；
        endorsement-only LLM 与 close scene 并行（无 DB transaction / 无 runtime write
        gate）；终局写入前 join close scene。
     3. 重取 gate：原子落背书水位；consort/明发/收夜账/CLOSED。
@@ -1517,14 +1515,14 @@ def close_night(
 
     # #1842 / ADR 0155：收夜旧边事件判官退役——转译已在场中声明边事件并落账；
     # 不再 prepare/invoke/finalize relation judge，也不为判官另建 scaffold 轮。
-    # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
-    # Ordinary story drain (LLM outside settle lock). CLOSING restore drain =
+    # ── Phase 2: gate-free translation catch-up + endorsement-only LLM ───────
+    # Translation retry drain. CLOSING restore drain =
     # ADR 0036 崩溃恢复口；OPEN 期 join 已汇合在飞 owner，此处只清真欠账。
     # drain 失败走 abandon（与 early cleanup 同形），禁 join 拉长双源窗。
     try:
-        _drain_story_extraction_or_fail_closed(
+        _drain_pending_translations_or_fail_closed(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-            extractor_agent=extractor_agent, game_state=state,
+            game_state=state,
             translate_fn=translate_fn,
             write_queue=write_queue,
         )
@@ -1743,7 +1741,6 @@ def auto_close_open_night(
     knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    extractor_agent: Any = None,
     endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
@@ -1776,7 +1773,6 @@ def auto_close_open_night(
         knowledge_provider=knowledge_provider,
         llm_config=llm_config,
         write_gate=write_gate,
-        extractor_agent=extractor_agent,
         endorsement_extractor_agent=endorsement_extractor_agent,
         scene_registry=scene_registry,
         close_chat_turn_id=int(close_chat_turn_id or 0),

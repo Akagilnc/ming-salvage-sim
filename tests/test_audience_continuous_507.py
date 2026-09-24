@@ -32,19 +32,6 @@ def _public(db, nid, name, body):
     )
 
 
-def _extract_exit(db, state, nid, name, body):
-    """经真实 S3 抽取管线落一条抽取账 presence_effect='exit'（机器可读出场，无 TAG_EXIT）。"""
-    ctid = db.create_chat_turn(state, name, "s", 0, night_id=nid)
-    seq = db.conn.execute(
-        "SELECT night_seq FROM chat_turns WHERE id=?", (ctid,)
-    ).fetchone()["night_seq"]
-    db.settle_story_extraction(
-        ctid, nid,
-        [{"person_names": [name], "body": body, "presence_effect": "exit"}],
-        int(seq),
-    )
-
-
 # ── AC2/AC3：侍立者补话组装取其在场时段殿上公开对话；未在场者取空 ──────────
 
 
@@ -211,29 +198,8 @@ def test_audience_prompt_excludes_hall_dialogue_after_command_dismiss(game):
     assert "九边军饷全无着落" not in prompt      # 负向：退后公开对话越出侍立区间、不入组装
 
 
-def test_audience_prompt_excludes_hall_dialogue_after_extraction_exit(game):
-    """出殿边界·抽取 presence_effect='exit' 路径（无 TAG_EXIT）：机器可读出场后的殿上
-    公开对话不入其组装——修前 recap 只认 tags、漏抽取出场，区间终点错（AC2/AC3 回归钉）。"""
-    db, state, content = game
-    _activate(db, state, "毕自严", "徐光启")
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(night["id"])
-    an.summon_enter(db, nid, "毕自严")
-    an.summon_enter(db, nid, "徐光启")
-    _public(db, nid, "徐光启", "徐光启奏：陕西糜烂当速定督抚。")  # 毕自严退前所闻
-    _extract_exit(db, state, nid, "毕自严", "毕自严自请退至殿侧。")  # 抽取出场（无 TAG_EXIT）
-    _public(db, nid, "徐光启", "徐光启续奏：九边军饷全无着落。")  # 毕自严退后
-
-    session = SimpleNamespace(db=db, state=state)
-    prompt = GameSession._audience_prompt_for_message(
-        session, "卿以为如何？", content.characters["毕自严"])
-    assert "陕西糜烂当速定督抚" in prompt        # 正向：退前所闻仍在
-    assert "九边军饷全无着落" not in prompt      # 负向：抽取出场后公开对话不入组装
-
-
-def test_present_roster_reflects_both_exit_paths_single_core(game):
-    """单一在场步进（_presence_delta）：command dismiss 与抽取 presence_effect='exit' 两条
-    出场路径都从在场名单去人——修前 persons_present_tonight 漏 command 出、recap 漏抽取出（双真源）。"""
+def test_present_roster_reflects_command_dismissal(game):
+    """召退命令从现役在场名单移除召入者，并保留仍侍立者。"""
     db, state, content = game
     _activate(db, state, "毕自严", "徐光启")
     night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
@@ -242,8 +208,7 @@ def test_present_roster_reflects_both_exit_paths_single_core(game):
     an.summon_enter(db, nid, "徐光启")
     assert {"毕自严", "徐光启"} <= an.persons_present_tonight(db, nid)  # 正向：宣入皆在场
 
-    an.dismiss_from_audience(db, "毕自严", night_id=nid)          # command 出
-    _extract_exit(db, state, nid, "徐光启", "徐光启告退。")        # 抽取出
+    an.dismiss_from_audience(db, "毕自严", night_id=nid)
     present = an.persons_present_tonight(db, nid)
-    assert "毕自严" not in present   # 负向：command dismiss 去人（修前漏）
-    assert "徐光启" not in present   # 负向：抽取 presence_effect=exit 去人
+    assert "毕自严" not in present
+    assert "徐光启" in present

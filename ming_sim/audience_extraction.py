@@ -15,140 +15,21 @@ import threading
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.audience_night import (
-    AUDIBILITY_PRIVATE,
-    AUDIBILITY_PUBLIC,
     NIGHT_STATUS_CLOSING,
-    PRESENCE_EFFECTS,
     AudienceNightError,
     get_night,
     night_endorsement_bound,
     persons_present_tonight,
     write_audience_error_pack,
 )
-from ming_sim.entities.affair import ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
 
-_AUDIBILITIES = frozenset({AUDIBILITY_PUBLIC, AUDIBILITY_PRIVATE})
 _ENDORSEMENT_FORMS = frozenset({"会签", "当面站台", "御笔手敕"})
 
 
 class ExtractionShapeError(AudienceNightError):
     """抽取输出垃圾 shape：响亮失败、可发包（不静默丢戏，AC3）。"""
-
-
-def _coerce_facts_container(raw: Any) -> List[Any]:
-    """把模型输出（JSON 文本 / dict / list）归一成 facts 列表；结构对不上即响亮拒收。"""
-    data: Any = raw
-    if isinstance(raw, str):
-        text = raw.strip()
-        if not text:
-            raise ExtractionShapeError(
-                "抽取输出为空文本", code="extraction_bad_shape",
-                detail={"raw": raw},
-            )
-        try:
-            data = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            raise ExtractionShapeError(
-                f"抽取输出非合法 JSON：{exc}", code="extraction_bad_shape",
-                detail={"raw": raw},
-            ) from None
-    if isinstance(data, Mapping):
-        if "facts" not in data:
-            raise ExtractionShapeError(
-                "抽取输出缺 facts 字段", code="extraction_bad_shape",
-                detail={"keys": sorted(str(k) for k in data.keys())},
-            )
-        data = data["facts"]
-    if not isinstance(data, list):
-        raise ExtractionShapeError(
-            f"facts 须为数组，得到 {type(data).__name__}",
-            code="extraction_bad_shape",
-            detail={"type": type(data).__name__},
-        )
-    return data
-
-
-def parse_extraction_facts(raw: Any) -> List[Dict[str, Any]]:
-    """校验并规整普通故事事实列表；任一条对不上契约即响亮拒收（AC3）。
-
-    合法事实：body 非空字符串；audibility ∈ {殿上公开,御前低语}（缺省公开）；
-    presence_effect ∈ {'',enter,exit}；person_names/tags 为字符串数组；
-    可选 typed 事务声明仅 existing（affair_id），指向已开事务。
-    空 facts（无显著情节）合法——返回 []。
-    不含 endorsement（背书走夜级 endorsement-only 批处理）。
-    """
-    container = _coerce_facts_container(raw)
-    facts: List[Dict[str, Any]] = []
-    for idx, item in enumerate(container):
-        if not isinstance(item, Mapping):
-            raise ExtractionShapeError(
-                f"第 {idx} 条抽取事实非对象：{type(item).__name__}",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        if "endorsement" in item:
-            raise ExtractionShapeError(
-                f"第 {idx} 条普通事实不得含 endorsement（背书走夜级批处理）",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        body = item.get("body")
-        if not isinstance(body, str) or not body.strip():
-            raise ExtractionShapeError(
-                f"第 {idx} 条抽取事实缺正文 body",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        audibility = item.get("audibility") or AUDIBILITY_PUBLIC
-        if audibility not in _AUDIBILITIES:
-            raise ExtractionShapeError(
-                f"第 {idx} 条可闻性非法：{audibility!r}",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        presence_effect = item.get("presence_effect") or ""
-        if presence_effect not in PRESENCE_EFFECTS:
-            raise ExtractionShapeError(
-                f"第 {idx} 条在场效果非法：{presence_effect!r}",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        person_names_raw = item.get("person_names") or []
-        if not isinstance(person_names_raw, list) or not all(
-            isinstance(n, str) for n in person_names_raw
-        ):
-            raise ExtractionShapeError(
-                f"第 {idx} 条 person_names 须为字符串数组",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        tags_raw = item.get("tags") or []
-        if not isinstance(tags_raw, list) or not all(
-            isinstance(t, str) for t in tags_raw
-        ):
-            raise ExtractionShapeError(
-                f"第 {idx} 条 tags 须为字符串数组",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        fact = {
-            "person_names": [n.strip() for n in person_names_raw if n.strip()],
-            "audibility": str(audibility),
-            "body": body.strip(),
-            "tags": [t for t in tags_raw if t],
-            "presence_effect": str(presence_effect),
-        }
-        if item.get("affair_declaration") is not None or item.get("事务声明") is not None:
-            try:
-                parsed = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
-            except ValueError as exc:
-                raise ExtractionShapeError(
-                    f"第 {idx} 条事务声明非法：{exc}",
-                    code="extraction_bad_shape", detail={"index": idx},
-                ) from None
-            if parsed is None:
-                raise ExtractionShapeError(
-                    f"第 {idx} 条事务声明非法",
-                    code="extraction_bad_shape", detail={"index": idx},
-                )
-            fact["affair_declaration"] = dict(parsed)
-        facts.append(fact)
-    return facts
 
 
 def _parse_dossier_id(raw: Mapping[str, Any], *, idx: int) -> int:
@@ -289,9 +170,7 @@ def extract_endorsements_for_night(
     return parse_endorsement_batch(output)
 
 
-# One process-local single-flight table shared by turn extraction and night
-# endorsement batch. Keys distinguish domains: ("turn", db_id, turn_id) /
-# ("night", db_id, night_id).
+# One process-local single-flight table for the night endorsement batch.
 _single_flight_guard = threading.Lock()
 _single_flight_ownership: Dict[tuple[Any, ...], list[Any]] = {}
 

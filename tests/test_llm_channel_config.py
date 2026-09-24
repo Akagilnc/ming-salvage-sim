@@ -879,7 +879,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
 
     # ming_sim.agents 现役工厂——逐项命名调用，漏一个即红
     factories = [
-        ("create_mindreading_agent", lambda: agents_mod.create_mindreading_agent(cfg)),
         ("create_highlight_judge_agent", lambda: agents_mod.create_highlight_judge_agent(cfg)),
         ("create_endorsement_extractor_agent", lambda: agents_mod.create_endorsement_extractor_agent(cfg)),
         (
@@ -898,7 +897,7 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ("create_ending_summary_agent", lambda: agents_mod.create_ending_summary_agent(cfg, object())),
     ]
     factory_names = [name for name, _ in factories]
-    assert len(factory_names) == len(set(factory_names)) == 10
+    assert len(factory_names) == len(set(factory_names)) == 9
 
     for name, call in factories:
         before = len(seen)

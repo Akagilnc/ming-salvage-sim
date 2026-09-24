@@ -988,9 +988,8 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     wg._complete_pending_write = lambda ticket=None: wg._write_queue.complete(ticket)  # type: ignore
     wg.favorites = set()
     wg.suggestions_for = lambda _c: []
-    # trail helpers no-op (avoid mindreading/extraction noise)
+    # Keep unrelated background trails quiet.
     wg._spawn_pending_write_thread = lambda *a, **k: None
-    wg._trail_mindreading_after_reply = lambda *a, **k: None
     wg._trail_highlight_judge_after_reply = lambda *a, **k: []
     return wg
 

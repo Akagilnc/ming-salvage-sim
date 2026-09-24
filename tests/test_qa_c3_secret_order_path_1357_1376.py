@@ -88,7 +88,7 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
     runtime.directive_payload = lambda row: row
     runtime.suggestions_for = lambda _ch: []
     runtime.can_undo_last_chat = lambda _name: False
-    # 读心/抽取尾随不进本密令路测范围；高亮判官写库缝必须真走（禁 no-op stub 掩死锁）。
+    # 转译尾随不进本密令路测范围；高亮判官写库缝必须真走（禁 no-op stub 掩死锁）。
     runtime._spawn_pending_write_thread = lambda *_a, **_k: None
     runtime.character_power_id = lambda c: web_app._character_power_id(c, db)
     # Production methods under test — NOT mocked.
@@ -306,7 +306,6 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
     from fastapi.testclient import TestClient
 
     import ming_sim.agents as agents_mod
-    import ming_sim.mindreading as mindreading_mod
     from ming_sim import audience_night as an
     from tests.wait_utils import wait_until
 
@@ -325,22 +324,14 @@ def test_confirm_secret_order_http_returns_id_and_list_visible(
         def run(self, _material):
             return SimpleNamespace(content='{"facts":[]}')
 
-    class _CannedMindreading:
-        def run(self, _material):
-            return SimpleNamespace(content="近臣低声：此人心里另有盘算。")
-
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    # 回话后尾随 LLM 边界离线中和（禁 sk-test 打真网）；被测缝 scene_chat 不 stub。
+    # 收夜 LLM 边界离线中和（禁 sk-test 打真网）；被测缝 scene_chat 不 stub。
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedExtractor(),
-    )
-    monkeypatch.setattr(
-        mindreading_mod, "create_mindreading_agent",
-        lambda *a, **k: _CannedMindreading(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
 

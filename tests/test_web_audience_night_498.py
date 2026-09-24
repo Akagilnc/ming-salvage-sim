@@ -38,21 +38,10 @@ import web_app
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
-import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
 from ming_sim.session import ChatTurnResult
-
-
-class _CannedExtractor:
-    """#501 叙事抽取员离线边界：回话尾随 / 收夜前 drain 会调它——默认抽出空 facts
-    （不改本文件既有账本/收夜断言，仅把新 LLM 边界中和成离线）。"""
-
-    def run(self, _material):
-        class _R:
-            content = '{"facts":[]}'
-        return _R()
 
 
 class _CannedEndorsementExtractor:
@@ -62,17 +51,6 @@ class _CannedEndorsementExtractor:
         class _R:
             content = '{"endorsements":[]}'
         return _R()
-
-
-class _CannedMindreadingAgent:
-    """#499 读心尾随离线边界：回话 done 后 worker 会调 create_mindreading_agent——
-    deterministic 一句旁白，绝不触网（定义真源 = mindreading.create_mindreading_agent）。"""
-
-    def run(self, _material):
-        class _R:
-            content = "近臣低声：此人心里另有盘算。"
-        return _R()
-
 
 
 
@@ -148,7 +126,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
     允许 canned seam（定义真源 / runtime lookup，本 fixture 唯一 fake 面）：
     - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
-    - mindreading.create_mindreading_agent → 回话 done 后读心尾随（#499）
     - GameSession._start/_finish_cli_action_intent → 动作意图分类器（禁 sk-test 真网）
     - web_app.run_highlight_judge → 回话 done 后高亮判官（#544；禁 sk-test 真网）
     - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
@@ -163,11 +140,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
-    )
-    # #499 读心：runtime lookup = mindreading.create_mindreading_agent（模块级绑定）。
-    monkeypatch.setattr(
-        mindreading_mod, "create_mindreading_agent",
-        lambda *a, **k: _CannedMindreadingAgent(),
     )
     # 动作意图分类器：chat stream 在 payload 前可并发启动；取证定位为另一 sk-test 401 源。
     # 本 fixture 只钉夜/在飞接缝，分类确定性空返，禁真网（与 #1727 fixture 同边界）。
@@ -199,6 +171,22 @@ def _active_minister(game) -> str:
         if game.db.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("no active ming minister")
+
+
+def test_web_await_inflight_does_not_pre_drain_pending(web_game):
+    """Web 前门只等在飞；待补留给创建案卷后的 close-night 单一 owner。"""
+    game = web_game
+    minister = _active_minister(game)
+    ctid, _snap = game._start_chat_turn(minister)
+    game.db.persist_minister_reply(minister, int(game.state.turn), "臣领旨。", ctid)
+    nid = int(game.db.conn.execute(
+        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,)
+    ).fetchone()["night_id"])
+
+    from ming_sim.session_write_queue import get_session_write_queue
+    get_session_write_queue(game).barrier(lambda: None)
+    assert game.db.count_pending_story_extractions(night_id=nid) == 1
+    assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
 
 
 def _count(db, table: str) -> int:
@@ -608,7 +596,7 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
 
     night, chat_events, issue_events = asyncio.run(scenario())
 
-    # #499：done 先于读心可见，end 才是终态终止事件。
+    # 回话 done 先于流结束；end 表示回话尾随写入已 join。
     assert chat_events[-1]["event"] == "end"
     # 回话真实入档 + 对话轮升 active
     assert game.db.conn.execute(
@@ -671,7 +659,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
         game.state, minister, "朕准此旨。", 0, night_id=night_id,
     )
     game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿作保。", chat_turn_id)
-    # Scheme A: ordinary story extraction is immediate (already done before close).
+    # 回话转译已完成；本用例聚焦收夜中的背书批处理。
     game.db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' WHERE id=?", (chat_turn_id,),
     )
