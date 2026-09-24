@@ -4083,8 +4083,9 @@ def _target_union(event_ids: set[str], target_key: str) -> set[str]:
     return targets
 
 
-def _unambiguous_unanchored_event_ids(event_ids: set[str]) -> set[str]:
-    return set(event_ids) if len(event_ids) == 1 else set()
+def _unambiguous_unanchored_event_ids(event_ids: set[str], ordered_deltas: object = None) -> set[str]:
+    # 有序 effects 允许同目标的独立后项；不能仅凭目标/字段推入前项事件。
+    return set(event_ids) if ordered_deltas is None and len(event_ids) == 1 else set()
 
 
 def _split_mapping_by_keys(
@@ -4354,7 +4355,7 @@ def _event_result_delta_event_ids(
     db: GameDB,
     ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]] = None,
 ) -> set[str]:
-    unanchored_event_ids = _unambiguous_unanchored_event_ids(strategic_event_pool_ids)
+    unanchored_event_ids = _unambiguous_unanchored_event_ids(strategic_event_pool_ids, ordered_deltas)
 
     def _items(field: str):
         if ordered_deltas is not None:
@@ -8693,7 +8694,9 @@ def _apply_score_extraction_body(
         _strategic_event_outcome_label_or_error(event_id, extracted, runtime_content)
     strategic_event_delta_ids = set(strategic_event_result_delta_event_ids)
     strategic_event_referenced_ids = strategic_event_pool_ids | strategic_event_delta_ids
-    unambiguous_strategic_event_pool_ids = _unambiguous_unanchored_event_ids(strategic_event_pool_ids)
+    unambiguous_strategic_event_pool_ids = _unambiguous_unanchored_event_ids(
+        strategic_event_pool_ids, ordered_deltas,
+    )
 
     def _split_pre_issue_person_changes(changes: List[Dict[str, object]]) -> tuple[List[Dict[str, object]], List[Dict[str, object]]]:
         pre_issue: List[Dict[str, object]] = []

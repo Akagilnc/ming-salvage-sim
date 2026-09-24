@@ -423,14 +423,17 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
 
 
 @pytest.mark.parametrize(
-    ("initial_pressure", "first_pressure", "second_pressure", "triggered", "pressure", "morale"),
-    [(20, 35, -5, True, 50, 55),
-     (20, "非法增量", -5, False, 20, 50),
-     (100, -10, 5, True, 95, 55),
-     (90, 10, 5, False, 90, 50)],
+    ("initial_pressure", "first_pressure", "second_pressure", "second_morale", "second_reason", "triggered", "pressure", "morale"),
+    [(20, 35, -5, -3, "己巳之变再挫", True, 50, 55),
+     (20, "非法增量", -5, -3, "己巳之变再挫", False, 20, 50),
+     (100, -10, 5, -3, "己巳之变再挫", True, 95, 55),
+     (90, 10, 5, -3, "己巳之变再挫", False, 90, 50),
+     (20, 35, -5, 5, "京营平日操练", True, 50, 63),
+     (20, "非法增量", -5, 5, "京营平日操练", False, 20, 55)],
 )
 def test_world_segment_repeated_strategic_results_apply_in_order(
-    game, initial_pressure, first_pressure, second_pressure, triggered, pressure, morale,
+    game, initial_pressure, first_pressure, second_pressure, second_morale, second_reason,
+    triggered, pressure, morale,
 ):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -449,8 +452,8 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
                                         "reason": "己巳之变勤王振奋"}}},
             {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": second_pressure,
                                             "reason": "己巳之变稍退"}},
-             "army_delta": {"jingying": {"origin_ref": "盘面自发", "morale": -3,
-                                        "reason": "己巳之变再挫"}}},
+             "army_delta": {"jingying": {"origin_ref": "盘面自发", "morale": second_morale,
+                                        "reason": second_reason}}},
         ],
     })
     assert db.has_event_triggered("jisi_lubian") is triggered
