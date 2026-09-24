@@ -869,6 +869,18 @@ def assert_persons_not_dead(
     )
 
 
+def is_pending_source_round(db: Any, night_id: int, chat_turn_id: int, turn: int) -> bool:
+    """封夜后只承接同月、同夜仍待补的既有回话，不开放新玩家输入。"""
+    if chat_turn_id <= 0:
+        return False
+    return db.conn.execute(
+        "SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 "
+        "WHERE t.id=? AND t.night_id=? AND t.status='active' "
+        "AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?",
+        (int(chat_turn_id), int(night_id), int(turn)),
+    ).fetchone() is not None
+
+
 def append_ledger_entry(
     db: Any,
     night_id: int,
@@ -906,13 +918,12 @@ def append_ledger_entry(
     # the month advances or after its source round has been completed/retracted.
     pending_source = False
     if night["status"] in {NIGHT_STATUS_CLOSING, NIGHT_STATUS_CLOSED} and source_chat_turn_id > 0:
-        row = db.conn.execute(
-            "SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 "
-            "WHERE t.id=? AND t.night_id=? AND t.status='active' "
-            "AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?",
-            (int(source_chat_turn_id), int(night_id), int(night["turn"])),
-        ).fetchone()
-        pending_source = row is not None and int(origin_chat_turn_id) == int(source_chat_turn_id)
+        pending_source = (
+            int(origin_chat_turn_id) == int(source_chat_turn_id)
+            and is_pending_source_round(
+                db, int(night_id), int(source_chat_turn_id), int(night["turn"]),
+            )
+        )
     if night["status"] == NIGHT_STATUS_CLOSED and not pending_source:
         raise AudienceNightError(
             f"夜已收，不能再落账：{night_id}", code="night_closed",
@@ -1225,13 +1236,41 @@ def _commit_night_approved(
     return list(applied or [])
 
 
+def commit_late_night_approved(
+    db: Any, state: GameState, *, content: Any, registry: Any,
+    write_gate: Any = None,
+) -> None:
+    """过月 join 补齐转译后，将已封夜迟到的应允按收夜原提交口成案。"""
+    nights = db.conn.execute(
+        "SELECT DISTINCT n.id FROM audience_nights n "
+        "JOIN pending_actions pa ON pa.night_id=n.id "
+        "WHERE n.turn=? AND n.status=? AND pa.status='pending' "
+        "AND pa.night_approved=1 ORDER BY n.id",
+        (int(state.turn), NIGHT_STATUS_CLOSED),
+    ).fetchall()
+    if not nights:
+        return
+    gate = _gate_cm(write_gate)
+    with gate:
+        for night in nights:
+            nid = int(night["id"])
+            for kinds in (
+                _CLOSE_COMMIT_KINDS_OFFICE,
+                _CLOSE_COMMIT_KINDS_DIRECTIVE,
+                _CLOSE_COMMIT_KINDS_FINAL,
+            ):
+                _commit_night_approved(
+                    db, state, nid, kinds=kinds, content=content, registry=registry,
+                )
+
+
 def _drain_pending_translations_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
     translate_fn: Any = None,
     game_state: Any = None,
     write_queue: Any = None,
 ) -> None:
-    """收夜 phase-2：转译已在 OPEN 期 join；此处再 catch-up 待补转译。
+    """收夜提交前：转译已在 OPEN 期 join；此处再 catch-up 待补转译。
 
     ADR 0036 后出注记 / #1842：待补不再 fail-closed 中止收夜。join/补跑后仍
     pending 的留给过月 join / 原地重试（0157）。
@@ -1296,7 +1335,7 @@ def close_night(
     1. OPEN 期：等在飞回话清；有限 join 转译 single-flight owner 后重读 DB；
        经调用方既有 ChatTurnSceneRegistry start_close（不立即 join）；持 write_gate
        原子复查并冻结 CLOSING、提交 draft 前提。不得自建第二 registry/executor/Thread。
-    2. 释放 gate：补跑待补转译（CLOSING restore drain 作崩溃恢复口）；
+    2. 提交前先补跑待补转译（CLOSING restore 同路）；之后
        endorsement-only LLM 与 close scene 并行（无 DB transaction / 无 runtime write
        gate）；终局写入前 join close scene。
     3. 重取 gate：原子落背书水位；consort/明发/收夜账/CLOSED。
@@ -1383,8 +1422,8 @@ def close_night(
             wait_in_flight_clear(
                 db, night_id, timeout_s=wait_timeout_s, write_gate=write_gate,
             )
-            # #1842：封夜提交 join 最后一轮转译须在 OPEN 期完成——CLOSING 会拒
-            # mark_pending_night_approved（「本夜收夜中，暂不能应允暂存」）。
+            # #1842：封夜提交 join 最后一轮转译须在 OPEN 期完成；CLOSING
+            # 只允许待补既有源轮的应允，其余玩家输入仍拒绝。
             # join / catch-up 在闸外（LLM + 串行锁）；落账自持 write_gate。
             # 屏障未清空不得 catch-up / 置 CLOSING——timeout 仅轮询上限，保持 OPEN 续等。
             from ming_sim.audience_translation import catch_up_pending_translations
@@ -1414,7 +1453,7 @@ def close_night(
             assert night is not None
         else:
             # Resume CLOSING：仍无 body 时 start 同一 registry 缝（不自建平行生命周期）。
-            # CLOSING restore drain 留作 ADR 0036 崩溃恢复口（下方 phase-2 drain）。
+            # CLOSING restore drain 留作 ADR 0036 崩溃恢复口（下方提交前补跑）。
             # 与 OPEN 同：start_close 短读持 gate；重读 night 同持。
             with gate:
                 _start_close_scene()
@@ -1437,23 +1476,31 @@ def close_night(
                     detail={"night_id": int(night_id), "step": int(step)},
                 )
 
+        # 本夜待补先补跑再提交应允；CLOSING restore 亦须在游标前补跑。
+        # 仍待补的轮次不挡退朝，过月 join 后另走迟到应允成案口。
+        _drain_pending_translations_or_fail_closed(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+        )
+
         # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
         with gate:
+            # 恢复态游标可能已越过前两步；新补到的同夜应允仍须提交。
+            _commit_night_approved(
+                db, state, int(night_id),
+                kinds=_CLOSE_COMMIT_KINDS_OFFICE,
+                content=content, registry=registry,
+            )
             if cursor < CLOSE_STEP_COMMIT_OFFICE:
-                _commit_night_approved(
-                    db, state, int(night_id),
-                    kinds=_CLOSE_COMMIT_KINDS_OFFICE,
-                    content=content, registry=registry,
-                )
                 _advance(CLOSE_STEP_COMMIT_OFFICE)
 
+            _commit_night_approved(
+                db, state, int(night_id),
+                kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
+                content=content, registry=registry,
+                directive_status="draft",
+            )
             if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
-                _commit_night_approved(
-                    db, state, int(night_id),
-                    kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
-                    content=content, registry=registry,
-                    directive_status="draft",
-                )
                 # Draft dossiers / turn_directives are durable prerequisites only.
                 _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
     except BaseException as early_exc:
@@ -1464,37 +1511,6 @@ def close_night(
 
     # #1842 / ADR 0155：收夜旧边事件判官退役——转译已在场中声明边事件并落账；
     # 不再 prepare/invoke/finalize relation judge，也不为判官另建 scaffold 轮。
-    # ── Phase 2: gate-free translation catch-up + endorsement-only LLM ───────
-    # Translation retry drain. CLOSING restore drain =
-    # ADR 0036 崩溃恢复口；OPEN 期 join 已汇合在飞 owner，此处只清真欠账。
-    # drain 失败走 abandon（与 early cleanup 同形），禁 join 拉长双源窗。
-    try:
-        _drain_pending_translations_or_fail_closed(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-            game_state=state,
-            translate_fn=translate_fn,
-            write_queue=write_queue,
-        )
-    except Exception as drain_exc:
-        cleanup_exc: BaseException | None = None
-        if close_started and reg is not None:
-            try:
-                if hasattr(reg, "abandon"):
-                    reg.abandon(int(close_ctid))
-                if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
-                    with gate:
-                        db.fail_chat_turn(int(close_ctid))
-            except BaseException as exc:
-                cleanup_exc = exc
-        with gate:
-            _set_night_fields(
-                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
-                close_commit_cursor=0,
-            )
-        if cleanup_exc is not None:
-            raise drain_exc from cleanup_exc
-        raise
-
     # ── Phase 2: endorsement LLM ∥ close scene (join before finalize) ──────
     # Both branches end before finalize or reopen. No ExceptionGroup bus /
     # second registry/executor/Thread. First observed failure propagates;

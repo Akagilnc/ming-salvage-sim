@@ -18249,13 +18249,31 @@ class GameDB:
 
     def mark_pending_night_approved(
         self, action_ids: Iterable[int], *, night_id: Optional[int] = None,
+        source_chat_turn_id: int = 0,
     ) -> int:
         """标本夜已应允（收夜提交白名单）。返回更新行数。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        if night_id is not None:
-            assert_night_accepts_player_input(self, int(night_id), what="应允暂存")
-        else:
-            assert_night_accepts_player_input(self, what="应允暂存")
+        from ming_sim.audience_night import (
+            AudienceNightError, NIGHT_STATUS_CLOSED, NIGHT_STATUS_CLOSING,
+            assert_night_accepts_player_input, get_night,
+            is_pending_source_round,
+        )
+        night = get_night(self, int(night_id)) if night_id is not None else None
+        pending_source = (
+            night is not None
+            and night["status"] in {NIGHT_STATUS_CLOSING, NIGHT_STATUS_CLOSED}
+            and is_pending_source_round(
+                self, int(night_id), int(source_chat_turn_id), int(night["turn"]),
+            )
+        )
+        if night is not None and night["status"] == NIGHT_STATUS_CLOSED and not pending_source:
+            raise AudienceNightError(
+                f"夜已收，不能再应允暂存：{night_id}", code="night_closed",
+            )
+        if not pending_source:
+            assert_night_accepts_player_input(
+                self, int(night_id) if night_id is not None else None,
+                what="应允暂存",
+            )
         ids = [int(i) for i in action_ids]
         if not ids:
             return 0

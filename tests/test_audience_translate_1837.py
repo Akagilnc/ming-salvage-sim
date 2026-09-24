@@ -9,10 +9,14 @@ Seams:
 from __future__ import annotations
 
 import json
+import threading
 from types import SimpleNamespace
+
+import pytest
 
 import ming_sim.audience_translate as audience_translate
 from ming_sim.audience_night import (
+    AudienceNightError,
     close_night,
     list_chat_turns_for_night,
     open_night,
@@ -20,6 +24,7 @@ from ming_sim.audience_night import (
 from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
+from ming_sim.session_write_queue import get_session_write_queue
 from tests.conftest import (
     offline_empty_audience_translate,
     persist_and_schedule_scene,
@@ -99,6 +104,69 @@ def _persist_night_chat(db, state, night_id: int, user_text: str, reply: str) ->
     )
     db.conn.commit()
     return int(cur.lastrowid)
+
+
+@pytest.mark.parametrize("retry_at_month", [False, True])
+def test_pending_round_approval_commits_before_close_or_after_month_join(
+    game, monkeypatch, retry_at_month,
+):
+    db, state, content = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    action = dispatch_declaration(
+        db, state, {"commissions": [{"text": "着户部备赈济"}]},
+        minister_name="", night_id=nid,
+    )
+    aid = int(action.commissions.applied[0]["id"])
+    ctid = _persist_night_chat(db, state, nid, "准", "臣领旨。")
+    db.mark_story_extraction_pending(ctid)
+    sess = _sess(db, state, content, monkeypatch)
+    sess._write_gate = threading.Lock()
+    queue = get_session_write_queue(sess)
+
+    def approve(prompt, config):
+        return {
+            **offline_empty_audience_translate(prompt, config),
+            "promises": [{"action_id": aid, "decision": "应允"}],
+        }
+
+    def fail(_prompt, _config):
+        raise RuntimeError("translation unavailable")
+
+    attempts = 0
+
+    def recover_on_closing(prompt, config):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return fail(prompt, config)
+        return approve(prompt, config)
+
+    close_night(
+        db, state, content=content, registry=None, llm_config=sess.llm_config,
+        write_gate=sess._write_gate, write_queue=queue,
+        translate_fn=fail if retry_at_month else recover_on_closing,
+        endorsement_extractor_agent=SimpleNamespace(
+            run=lambda _: SimpleNamespace(content='{"endorsements": []}'),
+        ),
+    )
+    row = db.conn.execute(
+        "SELECT status, night_approved, committed_directive_id "
+        "FROM pending_actions WHERE id=?", (aid,),
+    ).fetchone()
+    if retry_at_month:
+        assert row["status"] == "pending"
+        with pytest.raises(AudienceNightError, match="夜已收"):
+            db.mark_pending_night_approved([aid], night_id=nid)
+        stub_audience_translate(monkeypatch, approve)
+        sess.await_translations_before_month()
+        row = db.conn.execute(
+            "SELECT status, night_approved, committed_directive_id "
+            "FROM pending_actions WHERE id=?", (aid,),
+        ).fetchone()
+    assert row["status"] == "committed"
+    assert int(row["night_approved"]) == 1
+    assert int(row["committed_directive_id"] or 0) > 0
 
 
 def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
