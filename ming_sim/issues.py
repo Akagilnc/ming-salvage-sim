@@ -5011,29 +5011,41 @@ def _strategic_event_result_preflight_error(
         + [("人物", item) for item in person_changes]
         + [("新军", item) for item in new_armies]
     )
+    admissible_origin = False
+    saw_unauthorized = False
     for kind, item in origin_items:
         origin_ref = item.get("origin_ref") if isinstance(item, dict) else None
         origin_error = db.effect_origin_rejection(origin_ref)
-        if origin_error:
-            # Batch-unauthorized affair is itemwise at apply (economy/person
-            # siblings continue). Envelope preflight only blocks missing/invalid
-            # provenance existence failures.
-            if origin_error.get("category") == "unauthorized_affair_origin":
-                continue
-            return (
-                f"战略/外敌事件「{event_title or event_id}」{kind}战果来源拒收："
-                f"{origin_error.get('reason') or origin_error.get('category') or ''}"
-            )
+        if not origin_error:
+            admissible_origin = True
+            continue
+        # A single unauthorized affair stays itemwise at apply so a sibling
+        # result can still carry the event. If every world result is outside
+        # the frozen visible set, the envelope has no admissible battle result.
+        if origin_error.get("category") == "unauthorized_affair_origin":
+            saw_unauthorized = True
+            continue
+        return (
+            f"战略/外敌事件「{event_title or event_id}」{kind}战果来源拒收："
+            f"{origin_error.get('reason') or origin_error.get('category') or ''}"
+        )
+    if explicit_attribution and origin_items and not admissible_origin and saw_unauthorized:
+        return (
+            f"战略/外敌事件「{event_title or event_id}」战果来源不在本段冻结可见引用内"
+        )
 
     return ""
 
 
 def preflight_declared_event_effects(
     db: GameDB, state: GameState, items: list[tuple[str, dict]],
+    open_affair_ids: set[int] | None = None,
 ) -> dict[str, str]:
     """C3: decide an event-owned effect envelope before any of its fields write.
 
     The legacy extractor has no item ownership and retains its existing late gate.
+    ``open_affair_ids`` is the same frozen visible set apply will arm, so origin
+    checks here and at write share one authority.
     """
     groups: dict[str, list[dict]] = {}
     for event_id, item in items:
@@ -5041,6 +5053,23 @@ def preflight_declared_event_effects(
             groups.setdefault(event_id, []).append(item)
     if not groups:
         return {}
+    previous_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+    previous_frozen = getattr(db, "_batch_frozen_open_affair_ids", None)
+    if open_affair_ids is not None:
+        frozen_affairs = set(open_affair_ids)
+        db._batch_authorized_open_affair_ids = frozen_affairs
+        db._batch_frozen_open_affair_ids = frozen_affairs
+    try:
+        return _preflight_declared_event_groups(db, state, groups)
+    finally:
+        if open_affair_ids is not None:
+            db._batch_authorized_open_affair_ids = previous_authorized
+            db._batch_frozen_open_affair_ids = previous_frozen
+
+
+def _preflight_declared_event_groups(
+    db: GameDB, state: GameState, groups: dict[str, list[dict]],
+) -> dict[str, str]:
     content = db.content
     candidates = {event.id for event in gather_candidate_events(state, db)}
     rejected: dict[str, str] = {}

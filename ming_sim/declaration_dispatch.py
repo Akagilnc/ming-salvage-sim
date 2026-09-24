@@ -349,8 +349,10 @@ def _dispatch_effects(
             for field in ("appointments", "character_status_changes", "character_power_changes", "office_changes"):
                 clean[field] = []
         clean_items.append((item, event_id, clean))
+    refs = visible_refs or {}
     rejected_events = preflight_declared_event_effects(
         db, state, [(event_id, clean) for _, event_id, clean in clean_items],
+        open_affair_ids=set(refs.get("affairs", ())),
     )
     accepted_effect = False
     for item, event_id, clean in clean_items:
@@ -376,7 +378,6 @@ def _dispatch_effects(
                 extraction[field] = value
     if not has_effect or not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
-    refs = visible_refs or {}
     report = apply_score_extraction(
         db, state, extraction, content=db.content,
         open_affair_ids_at_input=set(refs.get("affairs", ())),
