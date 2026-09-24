@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 from types import SimpleNamespace
 
 import ming_sim.decree as decree_mod
@@ -379,7 +380,7 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
     ).fetchone()["night_approved"]) == 1
 
 
-def test_held_rejudgments_stage_each_dossier_with_frozen_refs(game, monkeypatch):
+def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
     db, state, content = game
     state.turn += 1
     ids = []
@@ -400,6 +401,9 @@ def test_held_rejudgments_stage_each_dossier_with_frozen_refs(game, monkeypatch)
         ids.append(dossier_id)
     db.conn.commit()
     open_night(db, state)
+    entered = []
+    gate = threading.Event()
+    lock = threading.Lock()
 
     def judge(_agent, prompt, **_kwargs):
         dossier = json.loads(prompt)["dossiers"][0]
@@ -407,8 +411,16 @@ def test_held_rejudgments_stage_each_dossier_with_frozen_refs(game, monkeypatch)
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         })
 
+    def simulate(_agent, _prompt, **_kwargs):
+        with lock:
+            entered.append(1)
+            if len(entered) == 2:
+                gate.set()
+        assert gate.wait(2)
+        return "预推"
+
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
-    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推")
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
     monkeypatch.setattr(
         month_translate, "run_declaration_translate_prompt",
         lambda *_a, **_k: {"commissions": []},
@@ -416,6 +428,7 @@ def test_held_rejudgments_stage_each_dossier_with_frozen_refs(game, monkeypatch)
     sess = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     assert forecast_mod.schedule_held_decree_forecasts(sess) is True
     assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    assert len(entered) == 2
     for dossier_id in ids:
         stored = db.staged_declarations.staged_for(f"dossier:{dossier_id}")
         assert len(stored) == 1 and stored[0].status == "staged"
@@ -436,7 +449,18 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
     shutil.copyfile(_game_template_path, copy_path)
     other = GameDB(str(copy_path), content)
 
+    entered = []
+    started = threading.Event()
+    release = threading.Event()
+    entered_lock = threading.Lock()
+
     def judge(_agent, prompt, **_kwargs):
+        with entered_lock:
+            entered.append(1)
+            if len(entered) >= 2:
+                release.set()
+        started.set()
+        assert release.wait(2)
         dossier = json.loads(prompt)["dossiers"][0]
         return json.dumps({
             "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
@@ -448,8 +472,8 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
         month_translate, "run_declaration_translate_prompt",
         lambda *_a, **_k: {"commissions": []},
     )
+    armed = []
     try:
-        armed = []
         for one_db, one_state in ((db, state), (other, other.load_state())):
             night = open_night(one_db, one_state)
             pending_id = one_db.stage_pending_action(
@@ -463,9 +487,11 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
             sess = _sess(one_db, one_state, content, monkeypatch, lambda *_a, **_k: {})
             armed.append((sess, one_db, pending_id, int(night["id"])))
         assert armed[0][2] == armed[1][2]
+        assert armed[0][3] == armed[1][3]
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[0][0], armed[0][2], night_id=armed[0][3],
         ) is True
+        assert started.wait(2)
         assert forecast_mod.schedule_pending_decree_forecast(
             armed[1][0], armed[1][2], night_id=armed[1][3],
         ) is True
@@ -475,5 +501,9 @@ def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monke
                 pending_action_decree_ref(pending_id, 1),
             )
             assert len(stored) == 1 and stored[0].verdict["decision"] == "promulgated"
+        assert len(entered) == 2
     finally:
+        release.set()
+        for sess, *_rest in armed:
+            get_session_write_queue(sess).wait_idle(timeout_s=5)
         other.close()
