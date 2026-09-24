@@ -650,6 +650,7 @@ def llm_promulgation_verdicts(
     prepared_context: Optional[Dict[str, object]] = None,
     judge_session: Optional[_PromulgationJudgeSession] = None,
     correction_feedback: str = "",
+    transport_policy: object | None = None,
 ) -> List[Dict[str, object]]:
     """Run exactly one LLM call for one reviewed promulgation batch.
 
@@ -680,7 +681,10 @@ def llm_promulgation_verdicts(
     # #1465 ②：history-backed transport 重试截 run 走 GameDB.truncate_agno_session_runs
     # （与召对 truncate_chat_turn_agno_runs 同接缝）；不新造历史机制。
     # GameDB 经入参契约显式交给 run_agent_text，不挂 agent 私有属性。
-    raw = run_agent_text(judge, prompt, tag="promulgation-judge", game_db=db)
+    raw = run_agent_text(
+        judge, prompt, tag="promulgation-judge", game_db=db,
+        transport_policy=transport_policy,
+    )
     parsed = parse_agent_json(raw, "颁布判官")
     return _require_promulgation_verdict_list(
         parsed.get("verdicts"), raw_value=parsed,

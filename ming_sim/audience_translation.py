@@ -113,6 +113,8 @@ def apply_audience_round_translation(
             raise AudienceTranslateError("说话人分段声明有拒收项")
         # 主角持久化 + 抽取/判官水位：chat_turns 不在前像表，undo 走重投影。
         _bind_round_after_dispatch(db, nid, ctid, result)
+    from ming_sim.decree_forecast import schedule_approved_from_dispatch
+    schedule_approved_from_dispatch(db, result, nid)
     return result
 
 

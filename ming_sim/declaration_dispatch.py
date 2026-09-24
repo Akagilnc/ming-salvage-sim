@@ -408,6 +408,22 @@ def stage_declaration(
     return db.staged_declarations.stage(decree_ref=decree_ref, declaration=declaration, turn=turn)
 
 
+def pending_action_decree_ref(pending_action_id: int, version: int) -> str:
+    """正在拟议中的旨以 pending_actions 主键及草稿版本共同标识。"""
+    action_id, draft_version = int(pending_action_id), int(version)
+    if action_id <= 0 or draft_version <= 0:
+        raise ValueError("pending decree identity requires positive row id and version")
+    return f"pending-action:{action_id}:v{draft_version}"
+
+
+def held_dossier_decree_ref(dossier_id: int) -> str:
+    """历史留中回流已有案卷，以案卷 id 为预算身份（0051）。"""
+    dossier = int(dossier_id)
+    if dossier <= 0:
+        raise ValueError("held dossier identity requires a positive dossier id")
+    return f"dossier:{dossier}"
+
+
 def discard_staged_declaration(db: Any, decree_ref: str) -> int:
     """撤旨 / 改旨作废该旨全部仍暂存的预推产物；返回被作废的条数。已经结算过
     的旨不受影响（ADR 0157：改旨＝作废后按新旨重起，不追改已落账的历史）。"""

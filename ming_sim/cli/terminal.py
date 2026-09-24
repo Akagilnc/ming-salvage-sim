@@ -617,7 +617,10 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
                     # #498：CLI 与 web 共用 attach_chat_turn_to_night，禁止 night_id=0 旁路
                     # #503/#542：生产路径与 Web/收夜共用真实 scene LLM adapter。
-                    from ming_sim.audience_night import attach_chat_turn_to_night, recognize_xuan_command
+                    from ming_sim.audience_night import (
+                        attach_chat_turn_to_night, get_open_night, recognize_xuan_command,
+                    )
+                    night_was_open = get_open_night(session.db) is not None
                     _night_id, chat_turn_id = attach_chat_turn_to_night(
                         session.db,
                         session.state,
@@ -627,6 +630,9 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         beat_generator=None,
                         route=cli_route,
                     )
+                    if not night_was_open:
+                        from ming_sim.decree_forecast import schedule_held_decree_forecasts
+                        schedule_held_decree_forecasts(session)
                     if not recognize_xuan_command(question):
                         session.start_chat_turn_scene(character.name, chat_turn_id)
                 user_message_id = session.db.append_chat_message(

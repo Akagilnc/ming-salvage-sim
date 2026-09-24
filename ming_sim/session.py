@@ -1056,6 +1056,8 @@ class GameSession:
             from ming_sim.session_write_queue import SessionWriteQueue
             self._write_queue = SessionWriteQueue()
             self._write_gate = self._write_queue.write_gate
+            from ming_sim.decree_forecast import bind_forecast_owner
+            bind_forecast_owner(self)
             if fresh_save:
                 self.auto_save("begin")
         except Exception as init_exc:
@@ -1369,14 +1371,21 @@ class GameSession:
             if decision.result is AudienceAdmission.SUMMON_FRESH
             else record_summon_in_transit
         )
+        opened_new_night = False
         with atomic(self.db):
-            night = get_open_night(self.db) or open_night(self.db, active_state)
+            night = get_open_night(self.db)
+            if night is None:
+                night = open_night(self.db, active_state)
+                opened_new_night = True
             recorder(
                 self.db, int(night["id"]), character.name,
                 origin_id=str(origin_id).strip(),
                 origin_chat_turn_id=int(origin_chat_turn_id or 0),
                 **({"travel_tone": travel_tone} if recorder is record_summon_fresh else {}),
             )
+        if opened_new_night:
+            from ming_sim.decree_forecast import schedule_held_decree_forecasts
+            schedule_held_decree_forecasts(self)
         return decision
 
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
@@ -1819,11 +1828,16 @@ class GameSession:
         message_text = str(message or "").strip()
         if not message_text:
             raise ValueError("问话不能为空。")
+        from ming_sim.decree_forecast import bind_forecast_owner
+        bind_forecast_owner(self)
 
         # 开夜（若需）；一夜一场不绑单人 minister 入口。
-        night = get_open_night(self.db) or ensure_open_night_for_audience(
-            self.db, self.state,
-        )
+        night = get_open_night(self.db)
+        opened_new_night = night is None
+        if opened_new_night:
+            night = ensure_open_night_for_audience(self.db, self.state)
+            from ming_sim.decree_forecast import schedule_held_decree_forecasts
+            schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
         # 收夜 / 留侍口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
@@ -2210,6 +2224,8 @@ class GameSession:
         from ming_sim.session_write_queue import get_session_write_queue
 
         write_queue = get_session_write_queue(self)
+        from ming_sim.decree_forecast import bind_forecast_owner
+        bind_forecast_owner(self)
 
         return schedule_audience_turn_translation(
             self.db,
@@ -2769,6 +2785,14 @@ class GameSession:
                         if defer_ids:
                             mark_actions_night_approved(
                                 self.db, sorted(defer_ids), night_id=int(open_n["id"]))
+                            if directive_confirm_targets:
+                                from ming_sim.decree_forecast import schedule_pending_decree_forecast
+
+                                for pending in directive_confirm_targets:
+                                    schedule_pending_decree_forecast(
+                                        self, int(pending["id"]),
+                                        night_id=int(open_n["id"]),
+                                    )
                         if immediate_ids:
                             from ming_sim.applier import (
                                 RejectionCollector, mirror_rejections_after_commit,
