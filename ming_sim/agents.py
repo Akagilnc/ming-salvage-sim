@@ -898,6 +898,28 @@ def create_decree_forecast_agent(
     )
 
 
+def create_world_segment_agent(llm_config: LLMConfig, opening: str) -> Agent:
+    """过月世界段：只看落账后的一份盘面，不写邸报。"""
+    cfg = _llm_for_role(llm_config, "simulator")
+    tlog(f"[world-segment] 使用模型 {describe_effective_model(cfg)}")
+    instructions = [
+        _ctx().game_world_prompt,
+        "你只推演本月旨意之外的世界事件。不要重算已经落账的旨，也不要写月末邸报。",
+        "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+        opening,
+    ]
+    if is_minimax_base_url(cfg.base_url):
+        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
+    return Agent(
+        name="世界段推演者",
+        id="world-segment",
+        model=create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True),
+        instructions=instructions,
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_score_extractor_module_agent(
     llm_config: LLMConfig,
     agno_db: SqliteDb,

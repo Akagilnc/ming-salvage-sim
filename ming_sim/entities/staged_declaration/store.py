@@ -184,6 +184,26 @@ class StagedDeclarationStore:
         ).fetchone()
         return row is not None
 
+    def questions_for(self, decree_ref: str) -> list:
+        """该旨未作废行上的请旨；已结算行仍保留，供过月重试判断是否还在等答复。"""
+        ref = str(decree_ref or "").strip()
+        if not ref:
+            return []
+        rows = self._conn.execute(
+            "SELECT questions_json FROM staged_declarations "
+            "WHERE decree_ref=? AND status!='discarded' ORDER BY id",
+            (ref,),
+        ).fetchall()
+        questions: list = []
+        for row in rows:
+            raw = row["questions_json"]
+            if not raw:
+                continue
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                questions.extend(parsed)
+        return questions
+
     def mark_settled(self, decree_ref: str) -> int:
         ref = str(decree_ref or "").strip()
         owns = connection_owns_transaction(self._conn)

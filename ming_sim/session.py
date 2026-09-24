@@ -4201,13 +4201,14 @@ class GameSession:
             scene_registry=self._scene_registry,
             **resolve_kwargs,
         )
-        if result.awaiting:
+        if getattr(result, "advanced", True):
+            # 主链已推进；阶段标 issued。未推进的批红/邸报交接保持 settling，重入接着跑。
+            self.state.turn_phase = TurnPhase.ISSUED.value
+        elif result.awaiting:
             # 决策点暂停：回合未推进，存 awaiting 态供刷新恢复；待 submit_decisions 续跑。
             self.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-            self.db.save_state(self.state)
-            return result
-        # resolve_directives 已 next_period + save_state；阶段标 issued
-        self.state.turn_phase = TurnPhase.ISSUED.value
+        else:
+            self.state.turn_phase = TurnPhase.SETTLING.value
         self.db.save_state(self.state)
         return result
 

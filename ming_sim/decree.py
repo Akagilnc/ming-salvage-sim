@@ -169,12 +169,16 @@ from ming_sim.settlement_payload import (  # noqa: E402
 
 @dataclass
 class ResolveResult:
-    """resolve phase1 的返回。awaiting=True 时表示需皇帝亲裁，已存决策点暂停，
-    report 为空、回合未推进；调用方据此置 awaiting_decision 态弹窗。
-    awaiting=False 时 report 为完整结算报告（含诏书+邸报+结局），回合已推进。"""
+    """过月入口的返回。advanced 才表示回合已推进。
+
+    awaiting 只留给仍走旧亲裁暂停的路径。ADR 0157 的批红/邸报交接用
+    stage，不把未完成的主链标成已推进。
+    """
     awaiting: bool
     report: str = ""
     decisions: List[Dict[str, object]] = field(default_factory=list)
+    advanced: bool = True
+    stage: str = ""
 
 
 def collect_new_arrival_waiting_audience(
@@ -1367,7 +1371,7 @@ def resolve_directives(
     promulgation_verdict_provider: Optional[PromulgationVerdictProvider] = None,
     scene_registry=None,
 ) -> ResolveResult:
-    """phase1：跑固定财政 + simulator 写邸报，解析 HITL 决策点。
+    """玩家过月入口：前括号之后走 ADR 0157 主链，不再用 extractor 落账。
 
     source（#146 cmr r2）：本回合结算 delta 的来源。默认 player_decree——正常皇帝下旨路
     行为不变。崩溃恢复 fallthrough（SETTLING 非 ready ctx 重走本函数）须把存档 ctx['source']
@@ -1378,20 +1382,18 @@ def resolve_directives(
     kind ∈ {stage, thinking, text}；stage 为 settlement_stage_payload 字典
     （content + typed current/total），thinking/text 为增量字符串。
 
-    cheat_directive: 作弊控制台（Ctrl+~）下的强制结算指令。非空时拼到当期邸报最前面
-    一起喂给 extractor，按字面当既成事实落库。唯一入口——只此一处写入标记前缀（见
-    CHEAT_NARRATIVE_PREFIX），别处不得复用。
+    cheat_directive: 作弊控制台（Ctrl+~）下的强制结算指令。非空时交给本月世界段，
+    按字面当既成事实，不另开 extractor。
 
-    返回 ResolveResult：simulator 邸报含决策点 → 存上下文+决策点暂停（awaiting=True，
-    回合未推进）；无决策点 → 直接续跑 extractor 结算，返回完整报告（awaiting=False）。
+    返回 ResolveResult。advanced 为假时主链停在批红或邸报交接，回合不推进。
     """
     def _emit(kind: str, data: Any) -> None:
         if on_event:
             on_event(kind, data)
 
-    # #1274 QA J-1：无旨（directives=[]）不再分流快路——与有旨月同走
-    # pre_settle + simulator + settle_with_delta 全链（ADR 0004；decrees=[]）。
-    # source 由调用方灌注：退朝无旨 = system_simulation；皇帝下旨 = player_decree。
+    # #1274 / ADR 0157：无旨不再分流快路。有旨、无旨都走同一过月主链：
+    # 前括号之后按旨序核算，再跑世界段。批红、邸报与推进是后续阶段的交接，
+    # 不在本入口用 extractor 落账。
 
     before_turn = state.turn
 
@@ -1408,512 +1410,17 @@ def resolve_directives(
         on_stage=lambda payload: _emit("stage", payload),
     )
 
-    proposed_dossiers = db.list_decree_dossiers(status="proposed")
-    # #658：判官/stub/stored 校验/后续消费共用「可颁布」集合；stalled 保持 proposed 走惯性
-    promulgable_dossiers = _promulgable_proposed_dossiers(proposed_dossiers)
-    verdict_rows: List[Dict[str, object]] = []
-    rejected_verdict_batch: object = None
-    reviewed_dossier_ids: Optional[set[int]] = None
-    prepared_context: Optional[Dict[str, object]] = None
-    proposed_modes: Dict[int, str] = {}
-    try:
-        if promulgable_dossiers:
-            reviewed, exempt = [], []
-            for dossier in promulgable_dossiers:
-                payload = _dossier_payload_dict(dossier)
-                proposed_modes[int(dossier["id"])] = str(payload.get("mode") or "ordinary")
-                (reviewed if dossier_action_policy(
-                    dossier.get("action_type"), payload,
-                )["external_review"] else exempt).append(dossier)
-            # One prepared object is the judge input and validator truth source.
-            # Exempt dossiers are included only for ID/mode validation; they are
-            # never sent to the LLM.
-            prepared_context = build_promulgation_judge_context(db, state, reviewed)
-            reviewed_dossier_ids = {int(row["id"]) for row in reviewed}
-            # A validated batch is durable before any simulator work.  Recovery is
-            # turn-scoped: an old hold verdict can never suppress this month's call.
-            stored = db.get_pending_promulgation_verdicts(state.turn)
-            if stored:
-                rejected_verdict_batch = stored
-                verdict_rows = validate_promulgation_verdicts(
-                    stored, promulgable_dossiers, db, prepared_context=prepared_context,
-                )
-            else:
-                provider = promulgation_verdict_provider
-                if provider is not None:
-                    # 测试/注入 seam：单次校验，不走 LLM 有界补交（补交只辖真 LLM 会话）。
-                    generated = provider(reviewed, state) if reviewed else []
-                    rejected_verdict_batch = generated
-                    verdict_rows = _validate_and_save_promulgation_batch(
-                        generated,
-                        exempt=exempt,
-                        state=state,
-                        db=db,
-                        promulgable_dossiers=promulgable_dossiers,
-                        prepared_context=prepared_context,
-                    )
-                elif not reviewed:
-                    # 空待判不调 LLM；豁免自动顺颁。
-                    verdict_rows = _validate_and_save_promulgation_batch(
-                        [],
-                        exempt=exempt,
-                        state=state,
-                        db=db,
-                        promulgable_dossiers=promulgable_dossiers,
-                        prepared_context=prepared_context,
-                    )
-                else:
-                    # #1753：同一 LLM 会话有界纠正补交；3=单一真源；耗尽 fail-closed。
-                    # 判官仅在 llm_promulgation_verdicts 真执行时经 judge_session 创建。
-                    judge_session = _PromulgationJudgeSession(
-                        llm_config=llm_config,
-                        agno_db=agno_db,
-                        turn=int(state.turn),
-                    )
-                    correction = ""
-                    bad_outputs: List[object] = []
-                    compliant_verdicts: List[Dict[str, object]] = []
-                    verdict_rows = []
-                    for attempt in range(PROMULGATION_VERDICT_HEAL_RETRIES + 1):
-                        attempt_batch: object = None
-                        try:
-                            attempt_batch = llm_promulgation_verdicts(
-                                reviewed, state, db=db, agno_db=agno_db,
-                                llm_config=llm_config,
-                                prepared_context=prepared_context,
-                                judge_session=judge_session,
-                                correction_feedback=correction,
-                            )
-                            rejected_verdict_batch = attempt_batch
-                            verdict_rows = _validate_and_save_promulgation_batch(
-                                attempt_batch,
-                                exempt=exempt,
-                                state=state,
-                                db=db,
-                                promulgable_dossiers=promulgable_dossiers,
-                                prepared_context=prepared_context,
-                            )
-                            break
-                        except LLMContractError as heal_exc:
-                            raw_for_attempt = (
-                                attempt_batch
-                                if attempt_batch is not None
-                                else heal_exc.raw_value
-                            )
-                            rejected_verdict_batch = raw_for_attempt
-                            bad_outputs.append(raw_for_attempt)
-                            # 跨轮并集：前轮已合规判决不得被后轮缺席冲掉。
-                            compliant_verdicts = (
-                                _merge_compliant_promulgation_items(
-                                    compliant_verdicts,
-                                    _collect_compliant_promulgation_items(
-                                        raw_for_attempt,
-                                        db,
-                                        proposed_modes=proposed_modes,
-                                        prepared_context=prepared_context,
-                                        reviewed_dossier_ids=(
-                                            reviewed_dossier_ids
-                                        ),
-                                    ),
-                                )
-                            )
-                            if attempt >= PROMULGATION_VERDICT_HEAL_RETRIES:
-                                raise LLMContractError(
-                                    str(heal_exc),
-                                    raw_value=(
-                                        heal_exc.raw_value
-                                        if heal_exc.raw_value is not None
-                                        else raw_for_attempt
-                                    ),
-                                    heal_evidence=PromulgationHealEvidence(
-                                        bad_outputs=tuple(bad_outputs),
-                                        compliant_verdicts=tuple(
-                                            compliant_verdicts
-                                        ),
-                                    ),
-                                ) from heal_exc
-                            correction = (
-                                promulgation_verdict_correction_feedback(
-                                    heal_exc,
-                                    raw_output=raw_for_attempt,
-                                    required_dossier_ids=sorted(
-                                        reviewed_dossier_ids
-                                    ),
-                                )
-                            )
-    except LLMContractError as exc:
-        # Attribute item failures through the same validator used above.  Synthetic
-        # exempt stubs never enter this provider audit input.
-        heal_evidence = exc.heal_evidence
-        if isinstance(heal_evidence, PromulgationHealEvidence):
-            # #1753：首次 + 每次补交各留一份坏输出证据（最多 1+3=4）。
-            rejected_items = [
-                (
-                    {"raw_value": batch, "heal_attempt": index},
-                    str(exc),
-                )
-                for index, batch in enumerate(heal_evidence.bad_outputs)
-            ]
-        elif exc.raw_value is not None:
-            rejected_items = [(exc.raw_value, str(exc))]
-        elif isinstance(rejected_verdict_batch, list):
-            rejected_items = []
-            seen_provider_ids: set[int] = set()
-            for candidate in rejected_verdict_batch:
-                try:
-                    valid_candidate = _validate_promulgation_verdict_item(
-                        candidate, db,
-                        proposed_modes=proposed_modes,
-                        prepared_context=prepared_context,
-                    )
-                except LLMContractError as item_exc:
-                    rejected_items.append((candidate, str(item_exc)))
-                    continue
-                if reviewed_dossier_ids is not None:
-                    dossier_id = int(valid_candidate["dossier_id"])
-                    if dossier_id not in reviewed_dossier_ids or dossier_id in seen_provider_ids:
-                        rejected_items.append((candidate, str(exc)))
-                    seen_provider_ids.add(dossier_id)
-            # Missing coverage has no guilty item: retain the provider batch once
-            # as raw batch evidence instead of mislabelling every valid verdict.
-            if not rejected_items:
-                rejected_items = [({"raw_value": rejected_verdict_batch}, str(exc))]
-        else:
-            rejected_items = [(rejected_verdict_batch, str(exc))]
-        collector = RejectionCollector(attempt=_next_attempt(state.turn))
-        with atomic(db):
-            for rejected_verdict, rejection_reason in rejected_items:
-                collector.record(
-                    "promulgation_verdicts",
-                    RejectedItem(
-                        item=(
-                            rejected_verdict if isinstance(rejected_verdict, dict)
-                            else {"raw_value": rejected_verdict}
-                        ),
-                        reason=rejection_reason,
-                        category="invalid_shape",
-                        source=Provenance(source),
-                    ),
-                    state.turn,
-                )
-            collector.flush_to_db(db)
-        mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
-        pack_extracted = None
-        if isinstance(heal_evidence, PromulgationHealEvidence):
-            pack_extracted = {
-                "promulgation_heal_bad_outputs": list(heal_evidence.bad_outputs),
-                "promulgation_compliant_verdicts": list(
-                    heal_evidence.compliant_verdicts
-                ),
-            }
-        try:
-            pack_path = write_error_pack(
-                db, state, exc=exc, extracted=pack_extracted,
-                resolve_ctx=db.get_resolve_context(state.turn),
-            )
-        except Exception as pack_exc:
-            raise exc from pack_exc
-        raise SettlementAbort(
-            settlement_abort_message(pack_path), turn=state.turn,
-            stage="promulgation", error_pack_path=pack_path,
-        ) from exc
-
-    verdict_by_id = {
-        int(row["dossier_id"]): str(row.get("decision") or "")
-        for row in verdict_rows
-    }
-    simulation_visible_dossiers = [
-        {
-            **(
-                {
-                    key: value for key, value in row.items()
-                    if key != "promulgation_decision"
-                }
-                if int(row["id"]) in verdict_by_id else row
-            ),
-            **(
-                {"settlement_verdict": verdict_by_id[int(row["id"])]}
-                if int(row["id"]) in verdict_by_id else {}
-            ),
-        }
-        for row in db.list_decree_dossiers_for_simulation(state.turn)
-    ]
-    dossier_payload = project_dossiers_for_simulator(
-        simulation_visible_dossiers, db=db, state=state,
-    )
-    current_decree_ids = set(verdict_by_id)
-    current_decree_ids.update(
-        db.executable_decree_dossier_ids(simulation_visible_dossiers)
-    )
-    executable_decree_text = "\n".join(
-        str(row.get("decree_text") or "").strip()
-        for row in dossier_payload
-        if int(row["id"]) in current_decree_ids
-        and str(row.get("decree_text") or "").strip()
-    )
-
-    # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
-    relevant_memories: List[Dict] = []
-    secret_orders_for_sim: Dict[str, list] = {}  # try 外初始化：检索失败也不能让后续 NameError
-    try:
-        _emit("stage", settlement_stage_payload(1))
-        # state.turn 此刻仍是本回合（尚未 next_period），章节记忆存的是 turn-1 及更早的已结算回合。
-        relevant_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
-        tlog(f"[memory/chapters] inject={len(relevant_memories)} upto_turn={state.turn}")
-    except Exception as exc:
-        tlog(f"[memory/chapters] 失败，跳过：{exc}")
-
-    # 密令期限到期送核议已挪进 pre_settle 事务（ADR 0008 S4）——此处不再单独调用，
-    # 否则二次写在 pre_settle 提交后散落事务外。下面只读注入推演（active 密令）。
-
-    # 密令注入推演：仅 active；结案改 settle 对账（#1504）
-    try:
-        active_orders = _select_secret_orders_for_sim(db)  # 仅 active；due_commitment 另由 augment 进待核议
-        # 分组承载、剥英文 status：simulator/extractor 收到的密令零英文 enum（#48）。
-        secret_orders_for_sim = group_secret_orders_for_sim(active_orders)
-        secret_orders_for_sim = augment_secret_orders_with_due_commitments(secret_orders_for_sim, db, state)
-        n_active = len(secret_orders_for_sim["在办"])
-        n_pending = len(secret_orders_for_sim["待核议"])
-        tlog(f"[secret_order] 注入推演 在办={n_active} 待核议={n_pending}"
-             + (f" titles={[o['title'] for o in active_orders]}" if active_orders else ""))
-    except Exception as exc:
-        tlog(f"[secret_order] 注入失败，跳过：{exc}")
-
-    # 2) 推演 agent: 写邸报
-    tlog("结算 2/4 推演 agent（月末邸报）")
-    _emit("stage", settlement_stage_payload(2))
-    previous_narrative = db.previous_turn_summary(state) or ""
-    # #668：transit_arrivals 只读 pending_resolve_context 占位键（首跑与 settling 恢复同一真源；不重跑 tick）。
-    durable_arrivals: List[Dict[str, object]] = []
-    resolve_placeholder = db.get_resolve_context(state.turn)
-    if isinstance(resolve_placeholder, dict):
-        prev_sim = resolve_placeholder.get("simulator_payload")
-        if isinstance(prev_sim, dict):
-            raw_arrivals = prev_sim.get("transit_arrivals")
-            if isinstance(raw_arrivals, list):
-                durable_arrivals = [
-                    item for item in raw_arrivals
-                    if isinstance(item, dict)
-                ]
-    simulator_payload = build_simulator_payload(
-        state, db, executable_decree_text, previous_narrative,
-        deaths_this_turn=deaths_this_turn,
-        debuts_this_turn=debuts_this_turn,
-        relevant_memories=relevant_memories,
-        secret_orders=secret_orders_for_sim,
-        decree_dossiers=dossier_payload,
-        transit_arrivals=durable_arrivals,
-    )
-    simulator_payload["dossier_verdicts"] = verdict_rows
-    simulator_payload["promulgation_instruction"] = (
-        "颁布判决是硬约束：可演新旨意以 decree_dossiers 为权威；"
-        "dossier_verdicts 承载本月判决（含打回）。"
-        "纯打回未颁（verdict decision=rejected 且未入 decree_dossiers）"
-        "只在 dossier_verdicts；严禁写成已办成、已生效、已到任或银已出库，"
-        "只据 verdict 字段写封驳／等待批红，不得假定案卷列表有其全文。"
-        "列表内 decision 为「打回」且 status 为 promulgated／executing"
-        "乃强颁组合态（颁布格留打回本值、案已入办）：按已颁／在途演，"
-        "确已落地可标已办成，禁写成封驳待批红；识别以 decision+status 为准，"
-        "勿单靠 stigma 是否含强颁。顺颁与上述入列表者均可进入本月办理。"
-        "decree_text 仅为兼容摘要，不得覆盖案卷列表与判决。"
-    )
-    # #671：本月新抵京∩候见 → 王承恩独立声部（与 simulator 真并行；输入不读 sim 输出）
-    arrival_waiting = collect_new_arrival_waiting_audience(
-        durable_arrivals,
-        simulator_payload.get("waiting_audience")
-        if isinstance(simulator_payload.get("waiting_audience"), list) else [],
-    )
-    for row in arrival_waiting:
-        row["year"] = int(state.year)
-        row["period"] = int(state.period)
-    # #671：引擎已求交的本月新抵京∩候见列表——simulator 只读此键，勿让 LLM 自算交集
-    simulator_payload["arrival_waiting"] = list(arrival_waiting)
-
-    # #671 companion checkpoint：仅 payload 独有 bool 命中才跳过 sim、只重试 companion。
-    # 禁止用 narrative 非空 / ready=0 作判别（撞 clear_for_resimulation / ADR 0008）。
-    prior_resolve_ctx = db.get_resolve_context(state.turn)
-    prior_sim_payload = (
-        prior_resolve_ctx.get("simulator_payload")
-        if isinstance(prior_resolve_ctx, dict)
-        else None
-    )
-    companion_sim_done = (
-        isinstance(prior_sim_payload, dict)
-        and prior_sim_payload.get(ARRIVAL_COMPANION_SIM_DONE_KEY) is True
-    )
-
-    attendant_message = ""
-    narrative = ""
-    # companion 腿刚成功（含 checkpoint 重试叫通）时须在下游前 durable；
-    # 仅复用已持久 attendant / 无 companion 在飞 不置位——避免给 clear_for_resimulation 重推演误打标记。
-    companion_just_succeeded = False
-
-    if companion_sim_done:
-        # 复用存档叙事与世界结果；勿被本轮 build_simulator_payload 盖掉。
-        narrative = str(prior_resolve_ctx.get("narrative") or "")
-        simulator_payload = dict(prior_sim_payload)
-        archived_waiting = simulator_payload.get("arrival_waiting")
-        if isinstance(archived_waiting, list):
-            arrival_waiting = [row for row in archived_waiting if isinstance(row, dict)]
-        archived_attendant = str(prior_resolve_ctx.get("attendant_message") or "")
-        if archived_attendant:
-            attendant_message = archived_attendant
-        elif arrival_waiting:
-            # companion 仍失败则原样上抛；完成态行（标记）保持，再重试仍不重跑 sim
-            attendant_message = str(
-                run_arrival_attendant_message(
-                    llm_config,
-                    year=int(state.year),
-                    period=int(state.period),
-                    arrivals=arrival_waiting,
-                ) or ""
-            )
-            companion_just_succeeded = True
-    else:
-        simulator = create_season_simulator_agent(
-            llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
-        )
-        # #671：clear_for_resimulation 后 marker 已剥但 attendant 可能已持久——
-        # 复用已有递话，不重叫 companion、不以空覆盖；sim 仍按 ADR 0008 重跑。
-        archived_attendant = (
-            str(prior_resolve_ctx.get("attendant_message") or "")
-            if isinstance(prior_resolve_ctx, dict)
-            else ""
-        )
-        if archived_attendant:
-            attendant_message = archived_attendant
-        # companion future.result() 禁止落入 simulator 宽 except（否则误标 sim 失败并吞递话）
-        pool = (
-            ThreadPoolExecutor(max_workers=1, thread_name_prefix="arrival-attendant")
-            if arrival_waiting and not archived_attendant else None
-        )
-        try:
-            attendant_future = None
-            if pool is not None:
-                attendant_future = pool.submit(
-                    run_arrival_attendant_message,
-                    llm_config,
-                    year=int(state.year),
-                    period=int(state.period),
-                    arrivals=arrival_waiting,
-                )
-            try:
-                narrative, simulator_payload = simulate_season_with_payload(
-                    simulator, state, db, executable_decree_text, previous_narrative,
-                    deaths_this_turn=deaths_this_turn,
-                    debuts_this_turn=debuts_this_turn,
-                    relevant_memories=relevant_memories,
-                    secret_orders=secret_orders_for_sim,
-                    simulator_payload=simulator_payload,
-                    on_thinking=lambda c: _emit("thinking", c),
-                    on_text=lambda c: _emit("text", c),
-                )
-            except Exception as sim_exc:
-                # 两腿已并行起跑：sim 失败仍须收割 companion。成功递话写入
-                # ready=0 checkpoint 后重抛原异常；双失败由 companion 主报、sim 作因。
-                if attendant_future is not None:
-                    try:
-                        attendant_message = str(attendant_future.result() or "")
-                    except Exception as companion_exc:
-                        raise companion_exc from sim_exc
-                    if attendant_message:
-                        checkpoint_payload = (
-                            dict(simulator_payload)
-                            if isinstance(simulator_payload, dict)
-                            else {}
-                        )
-                        checkpoint_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
-                        db.save_resolve_context(
-                            state.turn, decree_text, "", checkpoint_payload,
-                            secret_orders=secret_orders_for_sim,
-                            relevant_memories=relevant_memories,
-                            source=Provenance(source).value,
-                            attendant_message=attendant_message,
-                        )
-                raise
-            # sim 真成功且 companion 在飞：join 前落 durable 完成态（ready=0 + 标记）。
-            # companion 未在飞时不写空 attendant（避免覆盖 clear_for_resimulation 已保留原文）。
-            if attendant_future is not None:
-                ckpt_payload = (
-                    dict(simulator_payload)
-                    if isinstance(simulator_payload, dict)
-                    else {}
-                )
-                ckpt_payload[ARRIVAL_COMPANION_SIM_DONE_KEY] = True
-                db.save_resolve_context(
-                    state.turn, decree_text, narrative, ckpt_payload,
-                    secret_orders=secret_orders_for_sim,
-                    relevant_memories=relevant_memories,
-                    source=Provenance(source).value,
-                    attendant_message="",
-                )
-            # 同作用域 join：companion 异常归属独立，不被 simulator fallback 吞掉
-            if attendant_future is not None:
-                attendant_message = str(attendant_future.result() or "")
-                companion_just_succeeded = True
-        finally:
-            if pool is not None:
-                pool.shutdown(wait=True)
-
-    # #671：companion 成功后、进 parse_decision_blocks / extractor / 票拟前，
-    # 同一 simulator 叙事/payload 与原样 attendant 一并 durable。
-    # 真 sim 成功：checkpoint 带 ARRIVAL_COMPANION_SIM_DONE_KEY，下游失败重试
-    # 既不重跑 sim 也不重叫 companion。
-    # 随后 HITL/settle 整行 upsert 用已 pop 的内存 payload 清标转存。
-    if companion_just_succeeded and attendant_message:
-        ckpt_payload = (
-            dict(simulator_payload) if isinstance(simulator_payload, dict) else {}
-        )
-        ckpt_payload[ARRIVAL_COMPANION_SIM_DONE_KEY] = True
-        db.save_resolve_context(
-            state.turn, decree_text, narrative, ckpt_payload,
-            secret_orders=secret_orders_for_sim,
-            relevant_memories=relevant_memories,
-            source=Provenance(source).value,
-            attendant_message=attendant_message,
-        )
-    if isinstance(simulator_payload, dict):
-        simulator_payload.pop(ARRIVAL_COMPANION_SIM_DONE_KEY, None)
-
-    # 2.4) HITL 决策点：从邸报抽 <<DECISION>> 块。有 → 存上下文+决策点，暂停等皇帝亲裁。
-    #      剥离后的干净邸报落库/展示；决策点选完由 resolve_decisions_phase2 续跑结算。
-    # #657：desk = backlog 急务 ∪ 本月 decision；非空 → AWAITING（含仅急务 backlog）。
-    narrative, decisions = parse_decision_blocks(narrative)
-    decisions = _rescript_decisions(verdict_rows, proposed_dossiers) + (
-        bind_decisions_to_candidate_events(decisions, simulator_payload)
-    )
-    paused = _maybe_pause_for_rescript_desk(
-        state, db, decree_text, narrative, simulator_payload,
-        secret_orders=secret_orders_for_sim,
-        relevant_memories=relevant_memories,
-        source=source,
+    from ming_sim.month_chain import run_player_month_chain
+    return run_player_month_chain(
+        state, db, agno_db, llm_config,
+        decree_text=decree_text,
+        before_turn=before_turn,
+        on_event=on_event,
         content=content,
         registry=registry,
-        new_decisions=decisions,
-        attendant_message=attendant_message,
-    )
-    if paused is not None:
-        return paused
-
-    # 双空（无 decision 且无 backlog 急务）：透明续跑结算（cheat 仍可叠加）。
-    # 来源贯穿 source 参数（默认 player_decree：皇帝下旨拒收提示皇帝；恢复 fallthrough
-    # 穿透 ctx 真源，system 重跑仍记 system 静默——#146 cmr r2）。
-    report = _settle_after_narrative(
-        state, db, agno_db, llm_config, decree_text, narrative,
-        simulator_payload=simulator_payload,
-        relevant_memories=relevant_memories,
-        secret_orders=secret_orders_for_sim,
-        before_turn=before_turn, _emit=_emit,
-        content=content, registry=registry,
-        cheat_directive=cheat_directive,
         source=source,
-        dossier_verdicts=(
-            simulator_payload.get("dossier_verdicts")
-            if isinstance(simulator_payload, dict) else None
-        ),
-        attendant_message=attendant_message,
+        cheat_directive=cheat_directive,
     )
-    return ResolveResult(awaiting=False, report=report)
 
 
 def _provenance_from_stored(value: object) -> Provenance:

@@ -28,6 +28,7 @@ def make_light_session(db, state, content):
     session._decree_draft_fingerprint = ()
     session._scene_registry = None
     session._beat_generator = None
+    session._write_gate = None
     session.auto_save = lambda *a, **k: None
     return session
 
@@ -85,6 +86,16 @@ def canned_full_settlement(
         return text, payload
 
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
+
+    def _world(*_a, **_k):
+        simulator_calls.append({"world": True, "narrative": narrative})
+        return narrative
+
+    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _world)
+    monkeypatch.setattr(
+        "ming_sim.month_translate.translate_month_segment",
+        lambda *_a, **_k: {"effects": {}},
+    )
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
 
     def _module_agent(*a, **k):
