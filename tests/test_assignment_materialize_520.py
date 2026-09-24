@@ -1457,7 +1457,6 @@ def _wire_web_game(db, state, content, agent, monkeypatch, *, translate_fn=None)
     wg.favorites = set()
     wg.suggestions_for = lambda _c: []
     wg._spawn_pending_write_thread = lambda *a, **k: None
-    wg._trail_mindreading_after_reply = lambda *a, **k: None
     wg._trail_highlight_judge_after_reply = lambda *a, **k: []
 
     return wg

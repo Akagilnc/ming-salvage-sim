@@ -520,12 +520,8 @@ class _GapBDB:
         return None
 
     def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
-        # #499/#1842：同事务回话+可选 mindreading_status；stub 只记账 message id
+        # 同事务回话；stub 只记账 message id
         return self.append_chat_message(minister_name, turn, "minister", content)
-
-    def set_mindreading_status(self, chat_turn_id, status):
-        # #1842：_chat_payload persist 后 skip 退役读心；轻壳记账 no-op
-        return None
 
     def record_chat_turn_rollback_diffs(self, *_a, **_k):
         return None

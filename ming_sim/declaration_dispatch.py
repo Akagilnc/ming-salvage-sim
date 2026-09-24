@@ -236,7 +236,8 @@ def _dispatch_declaration_sections(
     result = DeclarationDispatchResult(
         commissions=commissions,
         promises=_dispatch_promises(
-            db, state, declaration.get("promises"), night_id=night_id, source=source,
+            db, state, declaration.get("promises"), night_id=night_id,
+            chat_turn_id=origin_ctid, source=source,
         ),
         # 第四类夜绑定 section 统一消费源轮校验（ADR 0038 / #1839 AC3）：
         # 缺源轮或不属本夜 → 逐项 missing_ref，零落账；过月 night_id<=0 不拦。
@@ -891,7 +892,8 @@ def _commission_fallback_actor(db: Any) -> str:
 
 
 def _dispatch_promises(
-    db: Any, state: Any, raw: object, *, night_id: int, source: Provenance,
+    db: Any, state: Any, raw: object, *, night_id: int,
+    chat_turn_id: int, source: Provenance,
 ) -> SectionResult:
     from ming_sim.strict_types import strict_int
 
@@ -959,7 +961,10 @@ def _dispatch_promises(
                             applied_row["secret_order_id"] = oid_i
                             break
             else:
-                db.mark_pending_night_approved([action_id], night_id=night_id or None)
+                db.mark_pending_night_approved(
+                    [action_id], night_id=night_id or None,
+                    source_chat_turn_id=chat_turn_id,
+                )
         else:
             db.withdraw_pending_action(action_id, int(state.turn))
         applied.append(applied_row)

@@ -861,7 +861,7 @@ def character_office_archive_text(db: Any, state: Any, character: Any, knowledge
 
 
 def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> str:
-    """Processed court roster for on-demand read (retired query_court_roster)."""
+    """Processed court roster for on-demand read."""
     from ming_sim.knowledge import project_court_roster_rows
 
     office_type = str(

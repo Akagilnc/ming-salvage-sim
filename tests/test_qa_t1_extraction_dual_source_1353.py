@@ -28,17 +28,14 @@ import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
-from ming_sim.exceptions import ExitGame, LLMUnavailable
-from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
+from ming_sim.exceptions import ExitGame
 from ming_sim.session import GameSession, TurnPhase
 from tests.test_audience_extraction_501 import (
-    _BoomAgent,
-    _FactsAgent,
     _minister,
     _open_night_with_persisted_reply,
 )
 from tests.test_no_edict_full_settlement_1274 import _canned_full_settlement
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_audience_translate
 
 
 def _pending_api(db) -> dict:
@@ -70,7 +67,7 @@ def test_drain_fail_cleanup_does_not_hide_blocking_turn(game, tmp_path, monkeypa
         lambda **k: [],
     )
     minister = _minister(db, content)
-    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
@@ -101,7 +98,7 @@ def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
         lambda **k: [],
     )
     minister = _minister(db, content)
-    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
@@ -110,7 +107,7 @@ def test_drain_fail_concurrent_heal_asks_retry_no_dual_source(
         db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
         translate_fn=boom_translate,
     )
-    # 外部可见：待补仍在；旧抽取未把水位标 done
+    # 外部可见：转译待补仍在；水位未标 done
     assert db.get_story_extract_status(ctid) in ("", "pending")
     assert int(_pending_api(db)["count"]) >= 1
     assert any(
@@ -129,7 +126,7 @@ def test_debt_exhausted_single_source_no_player_cta(game, tmp_path, monkeypatch)
         lambda **k: [],
     )
     minister = _minister(db, content)
-    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     def boom_translate(prompt, llm_config):
         raise RuntimeError("translate exhausted")
@@ -155,7 +152,7 @@ def test_partial_heal_single_source_pending_only_fresh(
         lambda **k: [],
     )
     minister = _minister(db, content)
-    nid, ctid_stale, _ = _open_night_with_persisted_reply(db, state, minister, reply="甲。")
+    nid, ctid_stale = _open_night_with_persisted_reply(db, state, minister, reply="甲。")
     ctid_fresh = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
     db.persist_minister_reply(minister, int(state.turn), "乙。", ctid_fresh)
     db.conn.execute(
@@ -186,7 +183,7 @@ def test_close_retry_on_healed_cleanup_no_stale_ids(game, tmp_path, monkeypatch)
         lambda **k: [],
     )
     minister = _minister(db, content)
-    nid, ctid_stale, _ = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid_stale = _open_night_with_persisted_reply(db, state, minister)
     db.conn.execute(
         "UPDATE chat_turns SET extract_status = 'done' "
         "WHERE night_id = ? AND minister_message_id IS NOT NULL",
@@ -214,7 +211,7 @@ def test_close_after_chat_passes_write_gate_like_auto_close(
 
     stub_audience_translate(monkeypatch, boom_translate)
     minister = _minister(db, content)
-    nid, ctid, _ = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
 
     from ming_sim.session import GameSession
 
@@ -461,7 +458,7 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     minister = _minister(db, content)
-    nid, ctid, _seq = _open_night_with_persisted_reply(db, state, minister)
+    nid, ctid = _open_night_with_persisted_reply(db, state, minister)
     db.conn.execute(
         "UPDATE chat_turns SET status='generating' WHERE id=?", (ctid,)
     )
@@ -502,38 +499,22 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     assert an.list_in_flight_chat_turns(db, nid) == []
 
 
-def test_seal_claim_rejects_active_trail_legs_zero_write(web_game, monkeypatch):
-    """生产钉：seal 后现役尾随腿拒绝 → 零 LLM、零写。"""
+def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypatch):
+    """生产钉：seal 后现役高亮尾随拒绝 → 零 LLM、零写。"""
     game = web_game
     q = game._runtime_write_queue()
     q.seal()
-    calls = {"hl": 0, "mind": 0, "catch": 0}
+    calls = {"hl": 0}
 
     monkeypatch.setattr(
         web_app, "run_highlight_judge",
         lambda **_k: calls.__setitem__("hl", calls["hl"] + 1) or ["x"],
     )
 
-    def boom_mind(**_k):
-        calls["mind"] += 1
-        return {"id": 1}
-
-    monkeypatch.setattr(web_app, "run_mindreading_for_turn", boom_mind)
-    monkeypatch.setattr(
-        web_app, "catch_up_pending_translations",
-        lambda **_k: calls.__setitem__("catch", calls["catch"] + 1),
-    )
-
-    assert game._spawn_pending_write_thread(
-        game._trail_mindreading_after_reply, ("m", "r", 1), "t",
-        ticket_key=("turn", 1),
-    ) is None
     assert game._trail_highlight_judge_after_reply(
         "回话", message_id=1, chat_turn_id=1,
     ) == []
-    assert game._trail_mindreading_after_reply("m", "r", 1) is None
-    game._run_startup_extraction_catch_up(pending_ticket=None)
-    assert calls == {"hl": 0, "mind": 0, "catch": 0}
+    assert calls == {"hl": 0}
     assert q.inflight_count() == 0
     q.unseal()
 
@@ -568,100 +549,6 @@ def test_ticketed_write_gate_rejects_none(web_game):
         game._ticketed_write_gate(None)  # type: ignore[arg-type]
 
 
-
-
-def test_stream_close_pending_extraction_emits_error_not_hang(web_game, monkeypatch):
-    """#1353 r10/r11 / 66nX：流式收夜欠账耗尽须 error+end 双终态，禁永阻。"""
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-    from tests.web_audience_test_doubles import install_hall_admission
-
-    game = web_game
-    # 在册在京有资格人物 + 既有 hall admission seam；本测只钉 pending extraction 终态，
-    # 不得依赖 temporary 直通，亦不得放宽生产 temporary 拒绝。
-    minister = next(iter(game.content.characters))
-    install_hall_admission(game.session)
-    events: list[dict] = []
-
-    class _Agent:
-        def run(self, *_a, **_k):
-            # 最小流：一个 content + RunOutput
-            yield SimpleNamespace(event="RunContent", content="臣已知晓。")
-            yield SimpleNamespace(
-                event="RunCompletedEvent",
-                content="臣已知晓。",
-                tools=[],
-                messages=[],
-                status="COMPLETED",
-            )
-
-    agent = _Agent()
-    game.session.registry.get = lambda _ch, **_kw: agent
-    stub_scene_agent(monkeypatch, agent)
-    game.session.join_chat_turn_scene = lambda *_a, **_k: []
-    game.session.persist_chat_turn_scene = lambda *_a, **_k: None
-    game.session.abandon_chat_turn_scene = lambda *_a, **_k: None
-    # 避免真实开夜/落库依赖：非持久路径或 stub 持久
-    monkeypatch.setattr(game, "_persistent_chat_minister", lambda _n: False)
-    monkeypatch.setattr(
-        game, "_chat_stream_interpret_tools",
-        lambda *a, **k: {
-            "answer": "臣已知晓。",
-            "court_action": "close_night",
-            "next_minister": "",
-            "proposed": None,
-            "appointed": "",
-            "registered": "",
-            "displaced": "",
-            "secret_order_id": 0,
-            "pending_action_id": 0,
-            "pending_action_failures": [],
-            "directive_ambiguous": None,
-        },
-    )
-    monkeypatch.setattr(
-        game, "_chat_payload",
-        lambda *a, **k: {"answer": "臣已知晓。", "minister_message_id": 0},
-    )
-
-    def boom_close(_action="", *, write_gate=None):
-        raise LLMUnavailable(
-            CLI_RUNNER_PLAYER_MESSAGE,
-            code="pending_extraction",
-            provider_message="欠账耗尽",
-        )
-
-    game.session.close_night_after_chat_if_needed = boom_close
-
-    gen = game.chat_stream(minister, "边饷如何？")
-    # 有界消费：须收到 end 才算终态；error 后若无 end → 挂死护栏咬住
-    done = threading.Event()
-    box: dict = {}
-
-    def consume() -> None:
-        try:
-            for item in gen:
-                events.append(item)
-                if item.get("type") == "end":
-                    break
-            box["ok"] = True
-        except Exception as exc:
-            box["exc"] = exc
-        finally:
-            done.set()
-
-    th = threading.Thread(target=consume, daemon=True)
-    th.start()
-    done.wait()
-    th.join()
-    assert box.get("ok") is True, box
-    types = [e.get("type") for e in events]
-    assert "error" in types, events
-    assert types[-1] == "end", events
-    # error 紧邻 end 之前（双终态序）；done 可先于 close 失败
-    err_idx = types.index("error")
-    assert types[err_idx + 1] == "end", types
-    err = next(e for e in events if e.get("type") == "error")
-    assert "detail" in err or "message" in err
 
 
 def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(web_game, monkeypatch):

@@ -528,10 +528,19 @@ def _enter_body(db, night_id, person):
 
 
 def _land_reply(db, state, minister, chat_id, night_id, text="臣遵旨。"):
-    """回话入档（清在飞态）+ 落抽取水位（清待补），使收夜守卫（在飞/#501 drain）不误挡。"""
+    """回话入档（清在飞态）+ 推进空轮转译水位，使收夜守卫不误挡。"""
+    from ming_sim.audience_translation import apply_audience_round_translation
+
     mid = db.append_chat_message(minister, state.turn, "minister", text)
     db.update_chat_turn_messages(chat_id, minister_message_id=int(mid))
-    db.settle_story_extraction(int(chat_id), int(night_id), [], 0)
+    apply_audience_round_translation(
+        db, state,
+        {"scene_facts": [{
+            "body": text, "role": "minister", "audibility": "殿上公开",
+            "person_names": [minister], "tags": ["scroll_role:minister"],
+        }]},
+        night_id=int(night_id), chat_turn_id=int(chat_id), minister_name=minister,
+    )
 
 
 # ── AC1：入殿账随（身份/召法/时地）输入不同而不同；时地取自夜容器持久属性 ──
@@ -850,7 +859,15 @@ def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
     game.db.update_chat_turn_messages(ctid, user_message_id=int(uid))
     game.session.persist_chat_turn_scene(game.session.join_chat_turn_scene(int(ctid)))
     game.db.persist_minister_reply(minister, game.state.turn, "臣请据实核账。", int(ctid))
-    game.db.settle_story_extraction(int(ctid), night_id, [], 0)
+    from ming_sim.audience_translation import apply_audience_round_translation
+    apply_audience_round_translation(
+        game.db, game.state,
+        {"scene_facts": [{
+            "body": "臣请据实核账。", "role": "minister", "audibility": "殿上公开",
+            "person_names": [minister], "tags": ["scroll_role:minister"],
+        }]},
+        night_id=night_id, chat_turn_id=int(ctid), minister_name=minister,
+    )
     game.db.conn.commit()
     game.session.close_night_after_chat_if_needed("court_break")
     scroll = an.read_night_scroll(game.db, night_id)
@@ -1623,7 +1640,6 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     rt._start_chat_turn = lambda _n, **_k: (11, {})
     rt._record_chat_rollback_items = lambda *_a, **_k: None
     rt._chat_payload = lambda *a, **k: {"answer": "臣遵旨。", "minister_message_id": 1}
-    rt._trail_mindreading_after_reply = lambda *_a, **_k: None
     rt._trail_highlight_judge_after_reply = lambda *_a, **_k: []
     rt._complete_pending_write = lambda ticket=None: q.complete(ticket)
     rt._mark_pending_write = lambda key=None: q.claim(key=key or ("pending",))
@@ -2457,4 +2473,3 @@ def test_657_s2_s3_lock_boundary_and_parallel_summons(game, monkeypatch):
     ).fetchone()
     assert body0 is not None and str(body0["body"] or "").strip() == gen_ok_body
     executor.shutdown(wait=False)
-

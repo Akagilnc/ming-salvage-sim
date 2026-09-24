@@ -287,7 +287,7 @@ def _retry_runtime(db, state, minister, *, session=None):
     rt.can_undo_last_chat = lambda name: False
     rt.pending_action_failures_for = lambda name: []
     rt._audience_turn_in_flight = lambda name: False
-    # 整轮 pending 由 retry 本体持有；尾随（读心/抽取）在本单元测试外——不起后台线程。
+    # 整轮 pending 由 retry 本体持有；转译与高亮尾随在本单元测试外——不起后台线程。
     from ming_sim.session_write_queue import SessionWriteQueue
     rt._write_queue = SessionWriteQueue()
     rt._write_gate = rt._write_queue.write_gate
@@ -1464,7 +1464,7 @@ def test_cli_retry_ordinary_offsite_court_break_closes_night(game, monkeypatch):
     )
     # #1842：CLI 重试不再跑 trail/judge；收夜前标转译水位以免假 pending。
     db.conn.execute(
-        "UPDATE chat_turns SET extract_status='done', mindreading_status='skip' WHERE id=?",
+        "UPDATE chat_turns SET extract_status='done' WHERE id=?",
         (ct,),
     )
     db.conn.commit()

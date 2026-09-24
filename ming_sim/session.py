@@ -3909,6 +3909,14 @@ class GameSession:
                     stage="audience_translation_exhausted",
                     error_pack_path=pack_path,
                 ) from exc
+            from ming_sim.audience_night import commit_late_night_approved
+            commit_late_night_approved(
+                self.db, self.state,
+                content=getattr(self, "content", None),
+                registry=getattr(self, "registry", None),
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=catch_gate,
+            )
             if after_drain is not None:
                 after_drain()
 

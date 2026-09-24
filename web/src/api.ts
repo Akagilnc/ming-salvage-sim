@@ -82,7 +82,7 @@ export type StreamChatOptions = {
   /** 玩家问话已持久化并开夜；先于模型生成/失败返回。 */
   onAccepted?: (payload: { campaign_id: string; night_id: number; chat_turn_id: number }) => void;
   onProtagonistChanged?: () => void;
-  /** 回话 done 时立刻回调，便于清 busy / 展示回话，不等读心 */
+  /** 回话 done 时立刻回调，便于清 busy / 展示回话，不等流收尾 */
   onDone?: (payload: ChatResponse) => void;
   /** 服务端 end 表示回话尾随写入均已 join、公共卷轴可安全重读。 */
   onEnd?: () => void;

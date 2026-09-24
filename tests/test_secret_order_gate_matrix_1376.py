@@ -28,7 +28,6 @@ import ming_sim.agents as agents_mod
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
-import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
@@ -110,11 +109,6 @@ class _CannedEndorsementExtractor:
         return SimpleNamespace(content='{"endorsements":[]}')
 
 
-class _CannedMindreading:
-    def run(self, _material):
-        return SimpleNamespace(content="近臣低声：边饷事重。")
-
-
 
 
 def _install_settlement_llm_stubs(monkeypatch) -> None:
@@ -122,10 +116,6 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
-    )
-    monkeypatch.setattr(
-        mindreading_mod, "create_mindreading_agent",
-        lambda *a, **k: _CannedMindreading(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     monkeypatch.setattr(

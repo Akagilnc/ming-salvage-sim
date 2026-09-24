@@ -15,140 +15,21 @@ import threading
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.audience_night import (
-    AUDIBILITY_PRIVATE,
-    AUDIBILITY_PUBLIC,
     NIGHT_STATUS_CLOSING,
-    PRESENCE_EFFECTS,
     AudienceNightError,
     get_night,
     night_endorsement_bound,
     persons_present_tonight,
     write_audience_error_pack,
 )
-from ming_sim.entities.affair import ATTACH_EXPERIENCE, declaration_from_payload
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
 
-_AUDIBILITIES = frozenset({AUDIBILITY_PUBLIC, AUDIBILITY_PRIVATE})
 _ENDORSEMENT_FORMS = frozenset({"会签", "当面站台", "御笔手敕"})
 
 
 class ExtractionShapeError(AudienceNightError):
     """抽取输出垃圾 shape：响亮失败、可发包（不静默丢戏，AC3）。"""
-
-
-def _coerce_facts_container(raw: Any) -> List[Any]:
-    """把模型输出（JSON 文本 / dict / list）归一成 facts 列表；结构对不上即响亮拒收。"""
-    data: Any = raw
-    if isinstance(raw, str):
-        text = raw.strip()
-        if not text:
-            raise ExtractionShapeError(
-                "抽取输出为空文本", code="extraction_bad_shape",
-                detail={"raw": raw},
-            )
-        try:
-            data = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            raise ExtractionShapeError(
-                f"抽取输出非合法 JSON：{exc}", code="extraction_bad_shape",
-                detail={"raw": raw},
-            ) from None
-    if isinstance(data, Mapping):
-        if "facts" not in data:
-            raise ExtractionShapeError(
-                "抽取输出缺 facts 字段", code="extraction_bad_shape",
-                detail={"keys": sorted(str(k) for k in data.keys())},
-            )
-        data = data["facts"]
-    if not isinstance(data, list):
-        raise ExtractionShapeError(
-            f"facts 须为数组，得到 {type(data).__name__}",
-            code="extraction_bad_shape",
-            detail={"type": type(data).__name__},
-        )
-    return data
-
-
-def parse_extraction_facts(raw: Any) -> List[Dict[str, Any]]:
-    """校验并规整普通故事事实列表；任一条对不上契约即响亮拒收（AC3）。
-
-    合法事实：body 非空字符串；audibility ∈ {殿上公开,御前低语}（缺省公开）；
-    presence_effect ∈ {'',enter,exit}；person_names/tags 为字符串数组；
-    可选 typed 事务声明仅 existing（affair_id），指向已开事务。
-    空 facts（无显著情节）合法——返回 []。
-    不含 endorsement（背书走夜级 endorsement-only 批处理）。
-    """
-    container = _coerce_facts_container(raw)
-    facts: List[Dict[str, Any]] = []
-    for idx, item in enumerate(container):
-        if not isinstance(item, Mapping):
-            raise ExtractionShapeError(
-                f"第 {idx} 条抽取事实非对象：{type(item).__name__}",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        if "endorsement" in item:
-            raise ExtractionShapeError(
-                f"第 {idx} 条普通事实不得含 endorsement（背书走夜级批处理）",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        body = item.get("body")
-        if not isinstance(body, str) or not body.strip():
-            raise ExtractionShapeError(
-                f"第 {idx} 条抽取事实缺正文 body",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        audibility = item.get("audibility") or AUDIBILITY_PUBLIC
-        if audibility not in _AUDIBILITIES:
-            raise ExtractionShapeError(
-                f"第 {idx} 条可闻性非法：{audibility!r}",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        presence_effect = item.get("presence_effect") or ""
-        if presence_effect not in PRESENCE_EFFECTS:
-            raise ExtractionShapeError(
-                f"第 {idx} 条在场效果非法：{presence_effect!r}",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        person_names_raw = item.get("person_names") or []
-        if not isinstance(person_names_raw, list) or not all(
-            isinstance(n, str) for n in person_names_raw
-        ):
-            raise ExtractionShapeError(
-                f"第 {idx} 条 person_names 须为字符串数组",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        tags_raw = item.get("tags") or []
-        if not isinstance(tags_raw, list) or not all(
-            isinstance(t, str) for t in tags_raw
-        ):
-            raise ExtractionShapeError(
-                f"第 {idx} 条 tags 须为字符串数组",
-                code="extraction_bad_shape", detail={"index": idx},
-            )
-        fact = {
-            "person_names": [n.strip() for n in person_names_raw if n.strip()],
-            "audibility": str(audibility),
-            "body": body.strip(),
-            "tags": [t for t in tags_raw if t],
-            "presence_effect": str(presence_effect),
-        }
-        if item.get("affair_declaration") is not None or item.get("事务声明") is not None:
-            try:
-                parsed = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
-            except ValueError as exc:
-                raise ExtractionShapeError(
-                    f"第 {idx} 条事务声明非法：{exc}",
-                    code="extraction_bad_shape", detail={"index": idx},
-                ) from None
-            if parsed is None:
-                raise ExtractionShapeError(
-                    f"第 {idx} 条事务声明非法",
-                    code="extraction_bad_shape", detail={"index": idx},
-                )
-            fact["affair_declaration"] = dict(parsed)
-        facts.append(fact)
-    return facts
 
 
 def _parse_dossier_id(raw: Mapping[str, Any], *, idx: int) -> int:
@@ -289,9 +170,7 @@ def extract_endorsements_for_night(
     return parse_endorsement_batch(output)
 
 
-# One process-local single-flight table shared by turn extraction and night
-# endorsement batch. Keys distinguish domains: ("turn", db_id, turn_id) /
-# ("night", db_id, night_id).
+# One process-local single-flight table for the night endorsement batch.
 _single_flight_guard = threading.Lock()
 _single_flight_ownership: Dict[tuple[Any, ...], list[Any]] = {}
 
@@ -360,18 +239,32 @@ def run_endorsement_batch_for_night(
     write_gate: Any,
     extractor_agent: Any = None,
     join_timeout_s: float | None = None,
+    late_action_ids: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
-    """收夜 endorsement-only 批：LLM 在 write_gate 外；短事务原子落背书。
+    """收夜或迟到补批共用 endorsement-only 入口：LLM 在锁外，落库在短事务。
 
-    - 已 bound → 幂等跳过。
-    - 无候选或无 surviving turns → 确定性 skip 并标 bound。
+    - 正常批以收夜游标、迟到批以待补项标记判定完成，重试幂等。
+    - 无候选或无 surviving turns → 确定性 skip 并标完成。
     - LLM 去重走既有 per-night single-flight（防双跑）；写序由 session 队列屏障覆盖
       （#1353：删除争用 join 舞步）。争用/前 owner 已释放 → 只重读 bound 终态。
     - LLM/shape 失败 → 抛 AudienceNightError（调用方 fail-closed 保持 OPEN；K10b）。
     """
     del join_timeout_s  # 签名兼容；队列屏障后不再 join 争用
     nid = int(night_id)
-    if _is_endorsement_bound(db, nid):
+    late_ids = sorted({int(i) for i in late_action_ids or ()})
+    if late_action_ids is not None and not late_ids:
+        return {"status": "done", "night_id": nid, "already": True, "ids": []}
+
+    def bound() -> bool:
+        if late_action_ids is None:
+            return _is_endorsement_bound(db, nid)
+        return not db.conn.execute(
+            f"SELECT 1 FROM pending_actions WHERE night_id=? AND status='committed' "
+            f"AND late_endorsement_pending=1 AND id IN ({','.join('?' for _ in late_ids)})",
+            (nid, *late_ids),
+        ).fetchone()
+
+    if bound():
         return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
     flight_key = _night_flight_key(db, nid)
@@ -380,7 +273,7 @@ def run_endorsement_batch_for_night(
         # single-flight 只防双跑 LLM；写序归 session 队列。争用/已释放 → 重读终态。
         owner, owned = _claim_single_flight(flight_key)
         if owner is None or not owned:
-            if _is_endorsement_bound(db, nid):
+            if bound():
                 return {"status": "done", "night_id": nid, "already": True, "ids": []}
             raise AudienceNightError(
                 f"收夜背书批未落定（night_id={nid}）",
@@ -388,18 +281,23 @@ def run_endorsement_batch_for_night(
                 detail={"night_id": nid},
             )
 
-        if _is_endorsement_bound(db, nid):
+        if bound():
             return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
-        inputs = db.list_endorsement_batch_inputs(nid)
+        inputs = db.list_endorsement_batch_inputs(
+            nid, action_ids=late_ids if late_action_ids is not None else None,
+        )
         candidates = list(inputs.get("candidates") or [])
         source_turns = list(inputs.get("turns") or [])
 
         if not candidates or not source_turns:
-            # Same short path as settle: advance CLOSE_STEP_ENDORSEMENT_BOUND.
+            # 与有候选分支共用落定点：正常推进游标，迟到清待补标记并补明发。
             with write_gate:
-                if not _is_endorsement_bound(db, nid):
-                    db.settle_endorsement_batch(nid, [])
+                if not bound():
+                    if late_action_ids is None:
+                        db.settle_endorsement_batch(nid, [])
+                    else:
+                        db.settle_endorsement_batch(nid, [], late_action_ids=late_ids)
             return {
                 "status": "skipped",
                 "night_id": nid,
@@ -433,9 +331,14 @@ def run_endorsement_batch_for_night(
         try:
             with write_gate:
                 # Re-check after LLM: another path may have bound via cursor.
-                if _is_endorsement_bound(db, nid):
+                if bound():
                     return {"status": "done", "night_id": nid, "already": True, "ids": []}
-                ids = db.settle_endorsement_batch(nid, items)
+                if late_action_ids is None:
+                    ids = db.settle_endorsement_batch(nid, items)
+                else:
+                    ids = db.settle_endorsement_batch(
+                        nid, items, late_action_ids=late_ids,
+                    )
         except Exception as exc:
             code = getattr(exc, "code", "endorsement_settle_failed")
             message = f"收夜背书批落库失败（{code}）：{exc}"

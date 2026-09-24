@@ -97,7 +97,7 @@ export function useChatActions({
   }, [state?.ministers, state?.consorts]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string) => {
-    // #499：历史投影 + 每一待读心轮的轮询由 hook 独占派发。返回 null=被 generation 守卫拒收
+    // #499：历史投影的派发由 hook 独占。返回 null=被 generation 守卫拒收
     // 的陈旧快照 → App 一并跳过全部面板外围写入（建议/可撤回/失败/临时大臣），不回覆新完成的轮。
     const data = await loadHistoryProjection(ministerName);
     if (!data || selectedMinisterRef.current !== ministerName) return null;
@@ -179,8 +179,8 @@ export function useChatActions({
     const initiatingPanelName = selectedMinisterRef.current;
     // 流式/请求归属/派发由 hook 独占；App 只在 done 到手即幂等消费持久后果 + 面板态。
     await runAudienceTurn(targetMinisterName, message, {
-      // 回话 done：done 载荷即含全部持久后果，立即消费——不拖到 SSE end（读心可延后 end 达
-      // 120s），不按请求 token 门控（后果持久）。全局态无条件落；面板态按当前大臣归属落。
+      // 回话 done：done 载荷即含全部持久后果，立即消费——不拖到 SSE end，
+      // 不按请求 token 门控（后果持久）。全局态无条件落；面板态按当前大臣归属落。
       onDone: (data) => {
         // 单调即时字段直接落 done 载荷（各 done 递新，无竞争）：指令 / pending 计数。
         // #1716：pending_directive_count 同落——拟诏台 hasSettleWork 不得等 refresh 竞态。

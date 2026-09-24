@@ -277,7 +277,6 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
     assert brew_calls["n"] >= 1
     assert result["summon_edge_ids"], result
     assert not direct_write_origins, direct_write_origins
-    assert structural["judge_watermark_done"] is True
     assert structural["origins_bind_chat_turn"] is True
     assert structural["edge_ids_present"] is True
     assert structural["month_advanced_each_settle"] is True
@@ -297,10 +296,6 @@ def test_yang_acceptance_tracer_production_chain_not_direct_write(monkeypatch):
     assert {
         int(p["edge_id"]) for p in tension_ptrs if int(p.get("edge_id") or 0) > 0
     } & beat2_face_ptrs
-    assert all(
-        str((beat.get("judge") or {}).get("relation_judge_status") or "") == "done"
-        for beat in result["beats"]
-    )
     assert all(
         "|chat_turn:" in str(origin)
         for beat in result["beats"]

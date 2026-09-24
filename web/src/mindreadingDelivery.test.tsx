@@ -102,7 +102,7 @@ const noCbs: SendChatCallbacks = { onDone: () => {}, onLeave: () => {}, onError:
 
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
-describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () => {
+describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () => {
   it("宣召落账先于回话重读主角，end 后仍重读尾随场景", async () => {
     let scrollCalls = 0;
     let resolveEnd!: () => void;
@@ -234,7 +234,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     expect(rows()).not.toContain("minister:旧夜他臣");
   });
 
-  it("持久后果在 done 到手即消费：读心延后 end 期间起新轮，旧轮后果不被丢弃", async () => {
+  it("持久后果在 done 到手即消费：end 延后期间起新轮，旧轮后果不被丢弃", async () => {
     const { hookRef } = mount();
     const hook = hookRef.current!;
     const durablesSeen: number[] = [];
@@ -246,7 +246,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     vi.stubGlobal("fetch", vi.fn(async () => {
       call += 1;
       if (call === 1) {
-        // 流 1：done1 携持久后果（密令 #7），随后门控挂起（模拟读心拖后 end）
+        // 流 1：done1 携持久后果（密令 #7），随后门控挂起（模拟尾随处理拖后 end）
         return gatedSse(
           [{ event: "done", data: { history: [U("问1", 10), M("答1", 10)], suggestions: [], directives: [], secret_order_id: 7 } }],
           gate1,
@@ -262,7 +262,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     // done1 到手即消费持久后果（不拖到 end）
     expect(durablesSeen).toEqual([7]);
 
-    // 读心尚未就绪、end 未到时起第 2 轮（token 自增作废流 1）
+    // end 未到时起第 2 轮（token 自增作废流 1）
     act(() => { void hook.sendChat("温体仁", "问2", noCbs); });
     await tick();
     releaseEnd1();  // 流 1 收尾——绝不因 token 已变而回补/丢弃已消费的后果

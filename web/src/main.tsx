@@ -105,7 +105,7 @@ export function App() {
     setAudienceScrollGeneration((generation) => generation + 1);
   }, []);
 
-  // #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE / 历史 / 读心轮询 / 请求归属
+  // #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE / 历史 / 请求归属
   // (token) / reducer 派发。所有召对显示态写入都过它并按请求归属门控——旧流尾巴绝不改动
   // 更新请求的待答文/流式文/取消句柄/busy。App 只经回调补全外围态。
   const {
@@ -122,7 +122,7 @@ export function App() {
     loadHistory: loadHistoryProjection,
     sendChat: runAudienceTurn,
     cancelChat,
-    // chatOpen=activeModal==="chat"：hook 内置的唯一 chat-exit 归属据此取消流 + 作废 poll-batch。
+    // chatOpen=activeModal==="chat"：hook 内置的唯一 chat-exit 归属据此取消流 + 作废旧快照。
   } = useAudienceChat(setBusy, selectedMinisterRef, activeModal === "chat", invalidateAudienceScroll);
 
   // 持久投影落 UI 的稳定 applier（供 latest-wins 协调器代次门控后调用）。

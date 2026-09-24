@@ -397,7 +397,6 @@ def persist_and_schedule_scene(sess, db, result, *, speaker: str = "殿上"):
     answer = str(getattr(result, "answer", "") or "")
     db.persist_minister_reply(
         speaker, int(sess.state.turn), answer, ctid,
-        mindreading_status="skip",
     )
     return sess.schedule_pending_scene_translation(result)
 
