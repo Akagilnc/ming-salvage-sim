@@ -1653,6 +1653,8 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        if "transfer_to" in item:
+            entry["transfer_to"] = item["transfer_to"]
         _copy_item_affair_declaration(item, entry)
         # #622：beyond_intent 无损透传。_canonical_item_fields 已把 旨外/旨外标记/旨外恶果
         # 归一到该键；cleaner 不判值（ADR 0008 决定1），真假判定归 flows 写端

@@ -9,6 +9,55 @@ import pytest
 from tests.conftest import active_ming_character
 
 
+@pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon", [
+    (1, 0, 10, 1), (5, 11, 10, 1), (0, 0, 0, 0),
+])
+def test_world_segment_explicit_stock_transfers_share_actual_amount(
+    game, source_cannon, target_cannon, treasury, actual_cannon,
+):
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    armies = [row[0] for row in db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 2")]
+    assert len(armies) == 2
+    loser, winner = armies
+    db.conn.execute("UPDATE armies SET cannon_equipment=? WHERE id=?", (source_cannon, loser))
+    db.conn.execute("UPDATE armies SET cannon_equipment=? WHERE id=?", (target_cannon, winner))
+    state.metrics["国库"], state.metrics["内库"] = treasury, 0
+    declaration = {"effects": {
+        "economy_moves": [{
+            "origin_ref": "盘面自发", "account": "国库", "transfer_to": "内库",
+            "delta": -100, "category": "转库", "reason": "调拨",
+        }],
+        "army_delta": {loser: {
+            "origin_ref": "盘面自发", "随军大炮": -100,
+            "cannon_transfer_to": winner, "reason": "缴获",
+        }},
+    }}
+    result = dispatch_month_segment(
+        db, state, segment="调拨和缴获", translate_fn=lambda request, config: declaration,
+    )
+    effects = result.effects.applied[0]
+    assert [move["delta"] for move in effects["economy_moves"]] == [-treasury, treasury]
+    assert (state.metrics["国库"], state.metrics["内库"]) == (0, treasury)
+    rows = db.conn.execute(
+        "SELECT account, delta FROM economy_ledger WHERE category='转库' ORDER BY id"
+    ).fetchall()
+    assert [(row["account"], row["delta"]) for row in rows] == (
+        [("国库", -10), ("内库", 10)] if treasury else []
+    )
+    cannon = db.conn.execute(
+        "SELECT id, cannon_equipment FROM armies WHERE id IN (?, ?) ORDER BY id", (loser, winner)
+    ).fetchall()
+    assert {row["id"]: row["cannon_equipment"] for row in cannon} == {
+        loser: source_cannon - actual_cannon, winner: target_cannon + actual_cannon,
+    }
+    assert sorted(change["delta"] for change in effects["army_changes"]
+                  if change.get("field") == "cannon_equipment") == [
+                      -actual_cannon, actual_cannon,
+                  ]
+
+
 def _character_name(db) -> str:
     row = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"

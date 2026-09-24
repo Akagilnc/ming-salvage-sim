@@ -1296,6 +1296,41 @@ def _apply_economy_list(
         if origin_error:
             applied.append({"account": account, **origin_error, "item": move})
             continue
+        if "transfer_to" in move:
+            destination = move["transfer_to"]
+            if (delta >= 0 or destination not in ("国库", "内库")
+                    or destination == account or raw_purpose not in ("", "其它")
+                    or raw_target_kind or raw_target_id):
+                applied.append({
+                    "account": account, "rejected": True, "category": "invalid_enum",
+                    "reason": "转库须从一账户扣款并指定另一账户", "item": move,
+                })
+                continue
+            # A transfer is one declaration: the source ledger determines the amount.
+            actual = db.record_issue_economy_move(
+                state, account, delta, category, reason,
+                purpose="其它", origin_ref=effective_origin_ref,
+                beyond_intent=beyond_raw, commit=False,
+            )
+            received = 0
+            if actual:
+                received = db.record_issue_economy_move(
+                    state, destination, -actual, category, reason,
+                    origin_ref=effective_origin_ref, beyond_intent=beyond_raw,
+                    commit=False, apply_income_modifier=False,
+                )
+                if received != -actual:
+                    raise RuntimeError("钱库互拨双边实数不等")
+            if commit:
+                db.conn.commit()
+            from ming_sim.covert_levy import canonical_fiscal_result
+            for leg_account, leg_delta in ((account, actual), (destination, received)):
+                applied.append(canonical_fiscal_result(
+                    db, move, applied=actual != 0,
+                    effective_origin_ref=effective_origin_ref,
+                    account=leg_account, delta=leg_delta, reason=reason,
+                ))
+            continue
         actual = db.record_issue_economy_move(
             state, account, delta, category, reason,
             purpose=purpose or "其它" if delta < 0 else None,
