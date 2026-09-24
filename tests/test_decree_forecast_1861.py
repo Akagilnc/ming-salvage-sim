@@ -341,6 +341,44 @@ def test_same_version_reapproval_does_not_rerun_after_exhaustion(game, monkeypat
     ).fetchone()[0]) == 1
 
 
+def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypatch):
+    db, state, content = game
+    open_night(db, state)
+    minister = next(iter(content.characters.values()))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+        payload=_policy_payload(minister.name, text="着户部核饷。"),
+    )
+    calls = []
+
+    def judge(_agent, _prompt, **_kwargs):
+        calls.append(1)
+        raise LLMUnavailable("rate limited", status_code=429)
+
+    def translate_fn(prompt, llm_config):
+        return {
+            **offline_empty_audience_translate(prompt, llm_config),
+            "promises": [{"action_id": pending_id, "decision": "应允"}],
+        }
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(
+        forecast_mod.agents, "run_agent_text",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("耗尽不得推演")),
+    )
+    sess = _sess(db, state, content, monkeypatch, translate_fn)
+    sess.scene_chat("准这道")
+    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    assert calls == [1]
+    assert db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1)) == ()
+    sess.scene_chat("再准这道")
+    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+    assert calls == [1]
+    assert int(db.conn.execute(
+        "SELECT night_approved, version FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["night_approved"]) == 1
+
+
 def test_held_rejudgments_stage_each_dossier_with_frozen_refs(game, monkeypatch):
     db, state, content = game
     state.turn += 1

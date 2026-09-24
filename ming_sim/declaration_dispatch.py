@@ -1060,7 +1060,7 @@ def _dispatch_promises(
         # 另一夜，声明也不得应允/拒绝它——同样按「不存在实体」拒收（不静默
         # 误批，也不当真拒收物理删除他夜暂存）。
         row = db.conn.execute(
-            "SELECT night_id, kind, action FROM pending_actions "
+            "SELECT night_id, kind, action, night_approved FROM pending_actions "
             "WHERE id=? AND turn=? AND status='pending'",
             (action_id, int(state.turn)),
         ).fetchone()
@@ -1101,6 +1101,10 @@ def _dispatch_promises(
                         if oid_i > 0:
                             applied_row["secret_order_id"] = oid_i
                             break
+            elif int(row["night_approved"] or 0) == 1:
+                # 同版已应允：不再列入本轮 applied，夜间预推只在首次转换时起。
+                # 密令不走这里，回填仍读本轮落地行。
+                continue
             else:
                 db.mark_pending_night_approved([action_id], night_id=night_id or None)
         else:
