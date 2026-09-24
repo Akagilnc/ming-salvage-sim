@@ -220,7 +220,8 @@ def build_c0_declaration_shape() -> str:
     target_kind_hint = "|".join(sorted(TARGET_KINDS))
     effect_shape = "\n".join(
         f"    {line}" for line in json.dumps(
-            EMPTY_EXTRACTION, ensure_ascii=False, indent=2,
+            {"event_id": "仅属某事件战果时填事件 id；未填即独立", **EMPTY_EXTRACTION},
+            ensure_ascii=False, indent=2,
         ).splitlines()
     )
     return (
@@ -280,7 +281,7 @@ def build_c0_declaration_shape() -> str:
         '  "registrations": [\n'
         '    {"name": "新人名", "office": "官职", "office_type": "文|武|…"}\n'
         "  ],\n"
-        '  "effects": ' + effect_shape + "\n"
+        '  "effects": [' + effect_shape + "]\n"
         "}\n"
     )
 
@@ -336,7 +337,7 @@ def run_declaration_translate_prompt(
     raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag=tag, policy=policy)
     obj = _loads_lenient(raw, accepted_types=(dict,))
     if not isinstance(obj, dict):
-        return {}
+        raise AudienceTranslateError("转译输出无法解析为 JSON 对象")
     return obj
 
 
