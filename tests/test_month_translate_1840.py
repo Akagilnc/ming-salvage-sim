@@ -399,7 +399,8 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
     db.conn.commit()
     dispatch_month_segment(db, state, segment="先振奋后受挫", translate_fn=lambda r, c: {
         "effects": [
-            {"army_delta": {army: {"origin_ref": "盘面自发", "morale": 90}},
+            {"new_issues": None,
+             "army_delta": {army: {"origin_ref": "盘面自发", "morale": 90}},
              "region_delta": {region: {"origin_ref": "盘面自发", "public_support": 2}},
              "economy_moves": [{"account": "国库", "delta": -1, "category": "过月支出",
                                 "reason": "第一笔", "affair_declaration": {

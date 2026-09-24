@@ -341,7 +341,7 @@ def _dispatch_effects(
         shape_rejections.extend(invalid)
         effect_event_ids = {
             str(issue.get("id") or issue.get("origin_ref") or "").strip()
-            for issue in clean.get("new_issues", [])
+            for issue in clean.get("new_issues") or []
             if isinstance(issue, dict) and str(issue.get("origin_kind") or "").lower() == "event_pool"
         }
         for field, value in clean.items():
