@@ -252,7 +252,6 @@ def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_beha
     import ming_sim.decree as decree_mod
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
 
     decision_narrative = (
         "本月邸报正文。\n<<DECISION>>"

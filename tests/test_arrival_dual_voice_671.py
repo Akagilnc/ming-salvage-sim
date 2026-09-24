@@ -52,7 +52,6 @@ def _stub_settlement_llms(decree_mod, memories, monkeypatch, *, simulate, attend
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", simulate)
     if attendant is not None:
         monkeypatch.setattr(decree_mod, "run_arrival_attendant_message", attendant)
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
     # #1745：结算拒收递话同属外层 LLM 缝。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)

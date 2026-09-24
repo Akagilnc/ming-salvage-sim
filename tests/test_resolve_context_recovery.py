@@ -246,7 +246,6 @@ def test_advance_without_edict_clears_stale_context(game, monkeypatch):
         decree_mod, "simulate_season_with_payload",
         lambda *a, **k: ("stale-ctx 测邸报。", k.get("simulator_payload") or {}),
     )
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 

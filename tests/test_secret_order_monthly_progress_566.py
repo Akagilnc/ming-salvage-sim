@@ -54,7 +54,6 @@ def _canned_monthly_settlement(monkeypatch, extractor_calls):
         decree, "simulate_season_with_payload",
         lambda *a, **k: ("本月公开邸报", k["simulator_payload"]),
     )
-    monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
 
     def extract(_agents, db, state, _narrative, *args, **kwargs):
         extractor_calls.append(state.turn)

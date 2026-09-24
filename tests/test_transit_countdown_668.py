@@ -486,7 +486,6 @@ def _crash_resolve_before_simulator_and_recover(
             decree_mod, "simulate_season_with_payload",
             lambda *a, **k: ("本月邸报。", k.get("simulator_payload") or captured.get("payload") or {}),
         )
-        monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
 
         ticks_before_recovery = tick_calls["n"]
         decree_mod.resolve_directives(

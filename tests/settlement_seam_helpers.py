@@ -96,7 +96,6 @@ def canned_full_settlement(
         "ming_sim.month_translate.translate_month_segment",
         lambda *_a, **_k: {"effects": {}},
     )
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
     if extract_calls is not None:
         extract_calls.clear()
     if modules_seen is not None:

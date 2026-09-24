@@ -75,7 +75,6 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
         decree_mod, "simulate_season_with_payload",
         lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
     )
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     monkeypatch.setattr(
         memories_mod, "run_agent_text",

@@ -1105,7 +1105,6 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
             setattr(dm, name, value)
 
     _set("create_season_simulator_agent", lambda *a, **k: None)
-    _set("create_json_sanitizer_agent", lambda *a, **k: None)
     _set("create_ending_summary_agent", lambda *a, **k: None)
     _set("create_chapter_memory_agent", lambda *a, **k: None)
     _set("create_rescript_draft_agent", lambda *a, **k: None)
@@ -1174,7 +1173,6 @@ def _657_subprocess_resolve(
 
         # 真 phase2：只 stub LLM 边界
         dm.create_season_simulator_agent = lambda *a, **k: None
-        dm.create_json_sanitizer_agent = lambda *a, **k: None
         dm.create_ending_summary_agent = lambda *a, **k: None
         dm.create_chapter_memory_agent = lambda *a, **k: None
         dm.create_rescript_draft_agent = lambda *a, **k: None
@@ -3794,7 +3792,6 @@ def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypat
         '"secret_order_updates": []}'
     )
     monkeypatch.setattr(simulation, "run_agent_text", lambda *a, **k: canned)
-    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(dm, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(dm, "_make_relation_brew_runner", lambda *a, **k: None)

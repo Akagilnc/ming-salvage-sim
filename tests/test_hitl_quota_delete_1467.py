@@ -49,7 +49,6 @@ def _stub_full_settlement(monkeypatch, *, narrative: str, payload_spy=None):
         return narrative, payload
 
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 

@@ -932,25 +932,6 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     )
 
 
-def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """非思考 + response_format=json_object 的 fallback 整理器。一次性，不持久化。"""
-    del agno_db
-    return Agent(
-        name="JSON 修复匠",
-        id="json-sanitizer",
-        model=create_chat_model(
-            llm_config,
-            temperature=0.0,
-            top_p=0.7,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=[JSON_SANITIZER_PROMPT],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
 def _rescript_option_instructions(
     *,
     character_targets_supplied: bool = False,

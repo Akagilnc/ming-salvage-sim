@@ -154,7 +154,6 @@ def _install_settlement_llm_stubs(monkeypatch) -> None:
             k.get("simulator_payload") or {},
         ),
     )
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
     def _extract(_agents, db, state, _narrative, *args, **kwargs):
         reports = [{
             "dossier_id": item["dossier_id"],

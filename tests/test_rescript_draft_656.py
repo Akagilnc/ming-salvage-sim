@@ -1066,7 +1066,6 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
 
 def _stub_settle_agents(monkeypatch) -> None:
     import ming_sim.decree as decree_mod
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)

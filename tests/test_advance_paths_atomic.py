@@ -280,7 +280,6 @@ def test_recover_after_simulation_crash_can_resettle(saved_game, monkeypatch):
 
     # 恢复：simulator/extractor 重跑成功（stub）。无决策块 → 直接续跑结算。
     monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
 
     calls = {"sim": 0, "extract": 0}
 

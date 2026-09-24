@@ -883,7 +883,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ("create_world_segment_agent", lambda: agents_mod.create_world_segment_agent(
             cfg, SimpleNamespace(root="", opening="盘面"),
         )),
-        ("create_json_sanitizer_agent", lambda: agents_mod.create_json_sanitizer_agent(cfg, object())),
         ("create_chapter_memory_agent", lambda: agents_mod.create_chapter_memory_agent(cfg, object())),
         ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg, object())),
         ("create_season_simulator_agent", lambda: agents_mod.create_season_simulator_agent(cfg, object())),
@@ -895,7 +894,7 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ("create_ending_summary_agent", lambda: agents_mod.create_ending_summary_agent(cfg, object())),
     ]
     factory_names = [name for name, _ in factories]
-    assert len(factory_names) == len(set(factory_names)) == 10
+    assert len(factory_names) == len(set(factory_names)) == 9
 
     for name, call in factories:
         before = len(seen)

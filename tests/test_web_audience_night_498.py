@@ -124,7 +124,6 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     )
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
                         lambda *a, **k: (narrative, k.get("simulator_payload") or {}))
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
     # #1745：结算拒收递话同属外层 LLM 缝（与 1468 _stub_outer_llm_seams 同源）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
