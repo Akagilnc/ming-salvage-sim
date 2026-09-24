@@ -420,3 +420,36 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
     assert len(refs) == 2
     assert refs[0][0] == refs[1][0]
     assert _pop(db, "流民", "shaanxi") == refugees_before - 2000
+
+
+@pytest.mark.parametrize(
+    ("first_pressure", "triggered", "pressure", "morale"),
+    [(35, True, 50, 55), ("非法增量", False, 20, 50)],
+)
+def test_world_segment_repeated_strategic_results_apply_in_order(
+    game, first_pressure, triggered, pressure, morale,
+):
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    state.year, state.period = 1629, 11
+    db.conn.execute("UPDATE regions SET military_pressure=20 WHERE id='beizhili'")
+    db.conn.execute("UPDATE armies SET morale=50 WHERE id='jingying'")
+    db.conn.commit()
+    dispatch_month_segment(db, state, segment="己巳之变两笔战果", translate_fn=lambda r, c: {
+        "effects": [
+            {"new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+             "事件结局": {"jisi_lubian": "入塞被遏"},
+             "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": first_pressure,
+                                            "reason": "己巳之变敌逼京畿"}},
+             "army_delta": {"jingying": {"origin_ref": "盘面自发", "morale": 8,
+                                        "reason": "己巳之变勤王振奋"}}},
+            {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": -5,
+                                            "reason": "己巳之变稍退"}},
+             "army_delta": {"jingying": {"origin_ref": "盘面自发", "morale": -3,
+                                        "reason": "己巳之变再挫"}}},
+        ],
+    })
+    assert db.has_event_triggered("jisi_lubian") is triggered
+    assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
+    assert db.conn.execute("SELECT morale FROM armies WHERE id='jingying'").fetchone()[0] == morale

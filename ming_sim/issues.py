@@ -4220,29 +4220,6 @@ def _split_strategic_entity_deltas(
     return strategic, other
 
 
-def _entity_deltas_for_strategic_event(
-    raw: object,
-    target_key: str,
-    event_id: str,
-    *,
-    allow_unanchored: bool = True,
-) -> Dict[str, object]:
-    if not isinstance(raw, dict):
-        return {}
-    unanchored_event_ids = {event_id} if allow_unanchored else set()
-    return {
-        entity_id: raw_changes
-        for entity_id, raw_changes in raw.items()
-        if event_id in _strategic_entity_delta_event_ids(
-            str(entity_id),
-            raw_changes,
-            target_key,
-            {event_id},
-            unanchored_event_ids,
-        )
-    }
-
-
 def _new_army_has_strategic_shape(item: Dict[str, object]) -> bool:
     owner_power = str(item.get("owner_power") or item.get("controller") or "").strip().lower()
     if owner_power and owner_power not in {"ming", "明", "明军"}:
@@ -4375,11 +4352,18 @@ def _event_result_delta_event_ids(
     extracted: Dict[str, object],
     person_changes: List[Dict[str, object]],
     db: GameDB,
+    ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]] = None,
 ) -> set[str]:
     unanchored_event_ids = _unambiguous_unanchored_event_ids(strategic_event_pool_ids)
+
+    def _items(field: str):
+        if ordered_deltas is not None:
+            return ordered_deltas[field]
+        return (extracted.get(field) or {}).items()
+
     region_result_event_ids: set[str] = set()
     if isinstance(extracted.get("region_delta"), dict):
-        for region_id, raw_changes in (extracted.get("region_delta") or {}).items():
+        for region_id, raw_changes in _items("region_delta"):
             region_result_event_ids.update(
                 _strategic_entity_delta_event_ids(
                     str(region_id),
@@ -4391,7 +4375,7 @@ def _event_result_delta_event_ids(
             )
     army_result_event_ids: set[str] = set()
     if isinstance(extracted.get("army_delta"), dict):
-        for army_id, raw_changes in (extracted.get("army_delta") or {}).items():
+        for army_id, raw_changes in _items("army_delta"):
             army_result_event_ids.update(
                 _strategic_entity_delta_event_ids(
                     str(army_id),
@@ -4403,7 +4387,7 @@ def _event_result_delta_event_ids(
             )
     power_result_event_ids: set[str] = set()
     if isinstance(extracted.get("power_updates"), dict):
-        for power_id, raw_changes in (extracted.get("power_updates") or {}).items():
+        for power_id, raw_changes in _items("power_updates"):
             power_result_event_ids.update(
                 _strategic_entity_delta_event_ids(
                     str(power_id),
@@ -4547,6 +4531,9 @@ def _strategic_event_result_preflight_error(
     content: Optional[GameContent],
     llm_config: Any,
     legacy_person_mode: bool,
+    ordered_region_items: Optional[list[tuple[str, object]]] = None,
+    ordered_army_items: Optional[list[tuple[str, object]]] = None,
+    ordered_power_items: Optional[list[tuple[str, object]]] = None,
 ) -> str:
     """ADR0014：战略事件战果是同一信封，落库前先拦整组可预见拒收项。"""
     legacy_mods = db.legacy_modifiers(state)
@@ -4659,30 +4646,26 @@ def _strategic_event_result_preflight_error(
     def _jisi_outcome_profile_error() -> str:
         if event_id != "jisi_lubian" or outcome_label not in {"挡于边墙", "入塞被遏"}:
             return ""
-        raw_changes = region_deltas.get("beizhili")
-        if not isinstance(raw_changes, dict):
-            return ""
-        controlled_by = None
-        for raw_field, value in raw_changes.items():
-            field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-            if field == "controlled_by":
-                controlled_by = value
-                break
-        if controlled_by is None:
-            return ""
-        new_controller = str(controlled_by).strip()
-        if new_controller and new_controller != "ming":
-            return (
-                f"战略/外敌事件「{event_title or event_id}」事件结局「{outcome_label}」"
-                f"与北直隶控制权战果矛盾：{new_controller}"
-            )
+        for region_id, raw_changes in (ordered_region_items if ordered_region_items is not None else region_deltas.items()):
+            if region_id != "beizhili" or not isinstance(raw_changes, dict):
+                continue
+            for raw_field, value in raw_changes.items():
+                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+                if field != "controlled_by" or value is None:
+                    continue
+                new_controller = str(value).strip()
+                if new_controller and new_controller != "ming":
+                    return (
+                        f"战略/外敌事件「{event_title or event_id}」事件结局「{outcome_label}」"
+                        f"与北直隶控制权战果矛盾：{new_controller}"
+                    )
         return ""
 
     outcome_profile_error = _jisi_outcome_profile_error()
     if outcome_profile_error:
         return outcome_profile_error
 
-    for region_id, raw_changes in region_deltas.items():
+    for region_id, raw_changes in (ordered_region_items if ordered_region_items is not None else region_deltas.items()):
         row = db.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
         if row is None:
             return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
@@ -4719,7 +4702,7 @@ def _strategic_event_result_preflight_error(
             if err:
                 return err
 
-    for army_id, raw_changes in army_deltas.items():
+    for army_id, raw_changes in (ordered_army_items if ordered_army_items is not None else army_deltas.items()):
         row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
         if row is None:
             return f"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}"
@@ -4779,24 +4762,22 @@ def _strategic_event_result_preflight_error(
                     loyalty_net,
                 )
 
-    if power_updates:
-        for power_id, raw_changes in power_updates.items():
+    power_items = ordered_power_items if ordered_power_items is not None else list(power_updates.items())
+    if power_items:
+        for power_id, raw_changes in power_items:
             if not isinstance(raw_changes, dict):
                 return f"战略/外敌事件「{event_title or event_id}」势力战果须为对象：{power_id}"
             if not _change_mentions_strategic_event(raw_changes, event_id):
                 return f"战略/外敌事件「{event_title or event_id}」势力战果缺 reason/原因 事件锚点：{power_id}"
         power_results: List[Dict[str, object]] = []
-        clean_power_updates = {
-            power_id: {key: value for key, value in raw_changes.items() if key != "origin_ref"}
-            for power_id, raw_changes in power_updates.items()
-        }
         db.conn.execute("SAVEPOINT strategic_power_result_preflight")
         try:
-            power_results = db.apply_power_deltas(
-                state,
-                clean_power_updates,
-                commit=False,
-            )
+            for power_id, raw_changes in power_items:
+                power_results.extend(db.apply_power_deltas(
+                    state,
+                    {power_id: {key: value for key, value in raw_changes.items() if key != "origin_ref"}},
+                    commit=False,
+                ))
         finally:
             db.conn.execute("ROLLBACK TO SAVEPOINT strategic_power_result_preflight")
             db.conn.execute("RELEASE SAVEPOINT strategic_power_result_preflight")
@@ -4807,8 +4788,8 @@ def _strategic_event_result_preflight_error(
                     f"{result.get('reason') or result.get('category') or ''}"
                 )
         if not any(_strategic_result_item_has_material_world_state(result) for result in power_results):
-            power_id = next(iter(power_updates))
-            return _noop_error("power", str(power_id), "power_updates", power_updates.get(power_id))
+            power_id, raw_changes = power_items[0]
+            return _noop_error("power", str(power_id), "power_updates", raw_changes)
 
     if person_changes:
         for item in person_changes:
@@ -8677,6 +8658,7 @@ def _apply_score_extraction_body(
         extracted,
         person_changes,
         db,
+        ordered_deltas=ordered_deltas,
     )
     strategic_event_label_gate_ids = (
         strategic_event_pool_ids
@@ -8971,19 +8953,19 @@ def _apply_score_extraction_body(
     army_deltas_raw = extracted.get("army_delta") or {}
     power_updates_raw = extracted.get("power_updates") or {}
     new_armies_raw = extracted.get("new_armies") or []
-    strategic_region_deltas_raw, ordinary_region_deltas_raw = _split_strategic_entity_deltas(
+    _, ordinary_region_deltas_raw = _split_strategic_entity_deltas(
         region_deltas_raw,
         "regions",
         strategic_event_referenced_ids,
         unambiguous_strategic_event_pool_ids,
     )
-    strategic_army_deltas_raw, ordinary_army_deltas_raw = _split_strategic_entity_deltas(
+    _, ordinary_army_deltas_raw = _split_strategic_entity_deltas(
         army_deltas_raw,
         "armies",
         strategic_event_referenced_ids,
         unambiguous_strategic_event_pool_ids,
     )
-    strategic_power_updates_raw, ordinary_power_updates_raw = _split_strategic_entity_deltas(
+    _, ordinary_power_updates_raw = _split_strategic_entity_deltas(
         power_updates_raw,
         "powers",
         strategic_event_referenced_ids,
@@ -9189,25 +9171,20 @@ def _apply_score_extraction_body(
         ongoing = loads_effect_dict(row["ongoing_effects"])
         commitment_economy_carriers.extend(_monthly_economy_items(ongoing))
 
+    def _ordered_strategic_items(field: str, target: str, event_id: str) -> list[tuple[str, object]]:
+        items = ordered_deltas[field] if ordered_deltas is not None else (extracted.get(field) or {}).items()
+        unanchored = {event_id} if event_id in unambiguous_strategic_event_pool_ids else set()
+        return [
+            (entity_id, changes) for entity_id, changes in items
+            if event_id in _strategic_entity_delta_event_ids(
+                str(entity_id), changes, target, {event_id}, unanchored,
+            )
+        ]
+
     def _reject_suppressed_strategic_results(event_id: str, event_title: str, reason: str = "") -> None:
-        event_region_deltas = _entity_deltas_for_strategic_event(
-            strategic_region_deltas_raw,
-            "regions",
-            event_id,
-            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
-        )
-        event_army_deltas = _entity_deltas_for_strategic_event(
-            strategic_army_deltas_raw,
-            "armies",
-            event_id,
-            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
-        )
-        event_power_updates = _entity_deltas_for_strategic_event(
-            strategic_power_updates_raw,
-            "powers",
-            event_id,
-            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
-        )
+        event_region_items = _ordered_strategic_items("region_delta", "regions", event_id)
+        event_army_items = _ordered_strategic_items("army_delta", "armies", event_id)
+        event_power_items = _ordered_strategic_items("power_updates", "powers", event_id)
         event_person_changes = [
             item
             for item in strategic_person_result_changes
@@ -9219,7 +9196,7 @@ def _apply_score_extraction_body(
             allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
         )
         reason = reason or f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
-        for region_id, raw_changes in event_region_deltas.items():
+        for region_id, raw_changes in event_region_items:
             region_changes.append({
                 "region_id": region_id,
                 "rejected": True,
@@ -9227,7 +9204,7 @@ def _apply_score_extraction_body(
                 "reason": reason,
                 "item": {"event_id": event_id, "region_id": region_id, "changes": raw_changes},
             })
-        for army_id, raw_changes in event_army_deltas.items():
+        for army_id, raw_changes in event_army_items:
             army_changes.append({
                 "army_id": army_id,
                 "rejected": True,
@@ -9235,7 +9212,7 @@ def _apply_score_extraction_body(
                 "reason": reason,
                 "item": {"event_id": event_id, "army_id": army_id, "changes": raw_changes},
             })
-        for power_id, raw_changes in event_power_updates.items():
+        for power_id, raw_changes in event_power_items:
             power_changes.append({
                 "power_id": power_id,
                 "rejected": True,
@@ -9300,24 +9277,12 @@ def _apply_score_extraction_body(
             new_issue["reason"] = outcome_error
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""))
             continue
-        event_region_deltas = _entity_deltas_for_strategic_event(
-            strategic_region_deltas_raw,
-            "regions",
-            event_id,
-            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
-        )
-        event_army_deltas = _entity_deltas_for_strategic_event(
-            strategic_army_deltas_raw,
-            "armies",
-            event_id,
-            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
-        )
-        event_power_updates = _entity_deltas_for_strategic_event(
-            strategic_power_updates_raw,
-            "powers",
-            event_id,
-            allow_unanchored=event_id in unambiguous_strategic_event_pool_ids,
-        )
+        event_region_items = _ordered_strategic_items("region_delta", "regions", event_id)
+        event_army_items = _ordered_strategic_items("army_delta", "armies", event_id)
+        event_power_items = _ordered_strategic_items("power_updates", "powers", event_id)
+        event_region_deltas = dict(event_region_items)
+        event_army_deltas = dict(event_army_items)
+        event_power_updates = dict(event_power_items)
         event_person_changes = [
             item
             for item in strategic_person_result_changes
@@ -9342,6 +9307,9 @@ def _apply_score_extraction_body(
             content,
             llm_config,
             legacy_person_mode,
+            ordered_region_items=event_region_items,
+            ordered_army_items=event_army_items,
+            ordered_power_items=event_power_items,
         )
         if result_preflight_error:
             new_issue["rejected"] = True
@@ -9365,7 +9333,7 @@ def _apply_score_extraction_body(
                 origin_ref=origin_ref, require_origin=True,
             ))
         created_armies.extend(event_created_armies)
-        for region_id, raw_changes in event_region_deltas.items():
+        for region_id, raw_changes in event_region_items:
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             event_region_changes.extend(db.apply_region_deltas(
@@ -9373,7 +9341,7 @@ def _apply_score_extraction_body(
                 commit=commit_now, origin_ref=origin_ref, require_origin=True,
             ))
         region_changes.extend(event_region_changes)
-        for army_id, raw_changes in event_army_deltas.items():
+        for army_id, raw_changes in event_army_items:
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             event_army_changes.extend(db.apply_army_deltas(
@@ -9397,7 +9365,7 @@ def _apply_score_extraction_body(
             event_person_results.extend(_apply_normalized_person_changes(
                 [clean_item], legacy=legacy_person_mode, origin_ref=origin_ref, require_origin=True,
             ))
-        for power_id, raw_changes in event_power_updates.items():
+        for power_id, raw_changes in event_power_items:
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             event_power_changes.extend(db.apply_power_deltas(
