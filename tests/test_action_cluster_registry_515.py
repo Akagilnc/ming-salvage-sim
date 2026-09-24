@@ -1149,7 +1149,7 @@ def test_undo_restored_approved_decree_restarts_forecast_for_new_version(game, m
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     monkeypatch.setattr(
-        forecast_mod.agents, "run_agent_stream_text",
+        forecast_mod.agents, "run_agent_text",
         lambda *_a, **_k: "预推叙述" + "<<DECISION>>{}<<END>>" + "问后叙述",
     )
     monkeypatch.setattr(

@@ -209,33 +209,37 @@ def _forecast(session: Any, snapshot: Dict[str, Any]) -> None:
     verdicts = decree.validate_promulgation_verdicts(
         raw, [candidate], session.db, prepared_context=snapshot["context"],
     )
-    if str(verdicts[0].get("decision") or "") != "promulgated":
-        return
-
-    candidate["settlement_verdict"] = "promulgated"
-    candidate["promulgation_decision"] = "promulgated"
-    candidate["promulgated_turn"] = int(snapshot["turn"])
-    agent = agents.create_decree_forecast_agent(
-        session.llm_config, snapshot["simulator_payload"],
-    )
-    narrative = agents.run_agent_stream_text(
-        agent,
-        json.dumps({"instruction": "推演这一道旨在当前盘面上的可能后果。"}, ensure_ascii=False),
-        tag="decree-forecast",
-    )
-    prefix = str(narrative or "")
-    for match in decree._DECISION_RE.finditer(prefix):
-        if decree.parse_decision_blocks(match.group(0))[1]:
-            prefix = prefix[:match.start()]
-            break
-    if not prefix.strip():
-        return
-    declaration = translate_month_segment(
-        segment=prefix,
-        target_grounding=str(snapshot["target_grounding"]),
-        decree_payload=payload,
-        llm_config=session.llm_config,
-    )
+    verdict = dict(verdicts[0])
+    declaration: Dict[str, object] = {}
+    questions = None
+    if str(verdict.get("decision") or "") == "promulgated":
+        candidate["settlement_verdict"] = "promulgated"
+        candidate["promulgation_decision"] = "promulgated"
+        candidate["promulgated_turn"] = int(snapshot["turn"])
+        agent = agents.create_decree_forecast_agent(
+            session.llm_config, snapshot["simulator_payload"],
+        )
+        narrative = agents.run_agent_text(
+            agent,
+            json.dumps({"instruction": "推演这一道旨在当前盘面上的可能后果。"}, ensure_ascii=False),
+            tag="decree-forecast",
+            transport_policy=audience_transport_policy(),
+        )
+        prefix = str(narrative or "")
+        questions = []
+        for match in decree._DECISION_RE.finditer(prefix):
+            parsed = decree.parse_decision_blocks(match.group(0))[1]
+            if parsed:
+                questions = parsed
+                prefix = prefix[:match.start()]
+                break
+        if prefix.strip():
+            declaration = translate_month_segment(
+                segment=prefix,
+                target_grounding=str(snapshot["target_grounding"]),
+                decree_payload=payload,
+                llm_config=session.llm_config,
+            )
 
     def stage_if_current() -> None:
         if "pending_action_id" in snapshot:
@@ -264,6 +268,8 @@ def _forecast(session: Any, snapshot: Dict[str, Any]) -> None:
             decree_ref=str(snapshot["decree_ref"]),
             declaration=declaration,
             turn=int(snapshot["turn"]),
+            verdict=verdict,
+            questions=questions,
         )
 
     get_session_write_queue(session).run(snapshot["ticket"], stage_if_current)

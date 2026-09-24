@@ -1052,7 +1052,7 @@ def test_approved_directives_forecast_independently_and_keep_midzhi_stage_only(
         return {"commissions": []}
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
-    monkeypatch.setattr(forecast_mod.agents, "run_agent_stream_text", simulate)
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
     monkeypatch.setattr(month_translate, "run_declaration_translate_prompt", translate)
     s = _session(db, state, content=content, llm_config=_forecast_config())
     s.agno_db = None
@@ -1092,7 +1092,7 @@ def test_approved_directives_forecast_independently_and_keep_midzhi_stage_only(
 def test_question_first_during_decree_forecast_is_not_translated_or_staged(
     game, monkeypatch,
 ):
-    """A formal decision as the first block leaves no declaration segment to stage."""
+    """问处起首则无问前声明，但请旨与顺颁判决仍留在该旨暂存上。"""
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.session_write_queue import get_session_write_queue
     import ming_sim.decree as decree_mod
@@ -1117,7 +1117,7 @@ def test_question_first_during_decree_forecast_is_not_translated_or_staged(
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     monkeypatch.setattr(
-        forecast_mod.agents, "run_agent_stream_text",
+        forecast_mod.agents, "run_agent_text",
         lambda *_a, **_k: _forecast_decision_block() + "question-followup",
     )
     monkeypatch.setattr(
@@ -1138,10 +1138,13 @@ def test_question_first_during_decree_forecast_is_not_translated_or_staged(
 
     assert get_session_write_queue(s).wait_idle(timeout_s=5)
     assert translated == []
-    assert db.conn.execute(
-        "SELECT 1 FROM staged_declarations WHERE decree_ref LIKE ?",
-        (f"pending-action:{pending_id}:%",),
-    ).fetchone() is None
+    from ming_sim.declaration_dispatch import pending_action_decree_ref
+    stored = db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1))
+    assert len(stored) == 1
+    assert stored[0].declaration == {}
+    assert stored[0].verdict["decision"] == "promulgated"
+    assert stored[0].questions and stored[0].questions[0]["title"] == "廷议"
+    assert db.list_pending_decisions(state.turn) == []
 
 
 def test_opening_a_night_forecasts_held_decrees_by_dossier_identity(game, monkeypatch):
@@ -1176,7 +1179,7 @@ def test_opening_a_night_forecasts_held_decrees_by_dossier_identity(game, monkey
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
     monkeypatch.setattr(
-        forecast_mod.agents, "run_agent_stream_text", lambda *_a, **_k: "预推叙述",
+        forecast_mod.agents, "run_agent_text", lambda *_a, **_k: "预推叙述",
     )
     monkeypatch.setattr(
         month_translate, "run_declaration_translate_prompt",

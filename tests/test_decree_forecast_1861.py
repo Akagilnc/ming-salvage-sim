@@ -68,7 +68,10 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
             ],
         }
 
-    def judge(_agent, prompt, **_kwargs):
+    judge_policies = []
+
+    def judge(_agent, prompt, **kwargs):
+        judge_policies.append(kwargs.get("transport_policy"))
         dossier = json.loads(prompt)["dossiers"][0]
         if dossier["decree_text"] == "甲旨":
             raise LLMUnavailable("exhausted", code="http_429", status_code=429)
@@ -78,16 +81,21 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         })
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
-    monkeypatch.setattr(
-        forecast_mod.agents, "run_agent_stream_text",
-        lambda *_a, **_k: "问前交代" + "<<DECISION>>" + json.dumps({
+    policies = []
+
+    def simulate(_agent, _prompt, **kwargs):
+        policies.append(kwargs.get("transport_policy"))
+        return "问前交代" + "<<DECISION>>" + json.dumps({
             "title": "请旨", "context": "待择",
             "options": [{"label": "施行"}, {"label": "暂缓"}],
-        }, ensure_ascii=False) + "<<END>>" + "问后不得入预算",
-    )
-    seen_segments = []
+        }, ensure_ascii=False) + "<<END>>" + "问后不得入预算"
 
-    def translate_segment(prompt, _llm_config, **_kwargs):
+    monkeypatch.setattr(forecast_mod.agents, "run_agent_text", simulate)
+    seen_segments = []
+    translate_policies = []
+
+    def translate_segment(prompt, _llm_config, **kwargs):
+        translate_policies.append(kwargs.get("policy"))
         seen_segments.append(prompt)
         return {"effects": [{"account": "国库", "amount": 880011}]}
 
@@ -105,6 +113,17 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         (pending_action_decree_ref(second, 1),),
     ).fetchone()
     assert staged is not None and staged["status"] == "staged"
+    stored = db.staged_declarations.staged_for(pending_action_decree_ref(second, 1))
+    assert stored[0].verdict["decision"] == "promulgated"
+    assert stored[0].questions and stored[0].questions[0]["title"] == "请旨"
+    assert db.list_pending_decisions(state.turn) == []
+    assert policies and policies[0].retry_429 is False and policies[0].max_attempts == 3
+    assert judge_policies and all(
+        item is not None and item.retry_429 is False and item.max_attempts == 3
+        for item in judge_policies
+    )
+    assert translate_policies and translate_policies[0].retry_429 is False
+    assert translate_policies[0].max_attempts == 3
     assert seen_segments and "问后不得入预算" not in seen_segments[0]
     assert int(state.metrics["国库"]) == treasury_before
     assert db.conn.execute("SELECT COUNT(*) FROM story_ledger_entries").fetchone()[0] == ledger_before
@@ -125,3 +144,62 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     assert "880011" not in readable
     assert pending_action_decree_ref(second, 1) not in readable
     assert int(night["id"]) > 0
+
+
+def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
+    game, monkeypatch,
+):
+    db, state, content = game
+    open_night(db, state)
+    minister = next(iter(content.characters.values()))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "test-policy", "actor": minister.name, "mode": "ordinary",
+            "text": "着户部另核辽饷。",
+        },
+    )
+
+    def translate_fn(prompt, llm_config):
+        return {
+            **offline_empty_audience_translate(prompt, llm_config),
+            "promises": [{"action_id": pending_id, "decision": "应允"}],
+        }
+
+    def judge(_agent, prompt, **_kwargs):
+        context = json.loads(prompt)
+        dossier = context["dossiers"][0]
+        faction = context["factions"][0]["name"]
+        return json.dumps({"verdicts": [{
+            "dossier_id": dossier["id"],
+            "decision": "rejected",
+            "blocked_layer": "palace_rescript",
+            "reason": "越制",
+            "primary_opponents": [{"kind": "faction", "key": faction}],
+            "gatekeeper_id": None,
+            "affected_parties": [{
+                "kind": "faction", "key": faction,
+                "direction": "negative", "intensity": "weak",
+            }],
+            "criteria_snapshot": dossier["criteria_snapshot_source"],
+        }]})
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(
+        forecast_mod.agents, "run_agent_text",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("打回不得推演")),
+    )
+    sess = _sess(db, state, content, monkeypatch, translate_fn)
+    sess.scene_chat("准这道")
+    assert get_session_write_queue(sess).wait_idle(timeout_s=5)
+
+    stored = db.staged_declarations.staged_for(pending_action_decree_ref(pending_id, 1))
+    assert len(stored) == 1
+    assert stored[0].verdict["decision"] == "rejected"
+    assert stored[0].questions is None
+    assert stored[0].declaration == {}
+    assert db.list_pending_decisions(state.turn) == []
+    assert db.conn.execute(
+        "SELECT 1 FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
+    ).fetchone() is None

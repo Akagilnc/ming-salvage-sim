@@ -55,9 +55,13 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
 def _default_month_translate_runner(
     request: MonthTranslationInput, llm_config: Any,
 ) -> Mapping[str, object]:
+    from ming_sim.llm_transport import audience_transport_policy
+
+    # ADR 0157：转译与预推共用同一预算（最多三次，429 不重试，间隔五秒）。
     return run_declaration_translate_prompt(
         build_month_segment_translate_prompt(request),
         llm_config, tag="month_segment_translate",
+        policy=audience_transport_policy(),
     )
 
 
