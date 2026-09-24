@@ -80,6 +80,7 @@
 | `purpose` | 可选 `补饷` / `其它` | 补饷会跟 army arrears 联动 |
 | `target_kind` | `purpose=补饷` 时必填 `army` | 配合 target_id 用 |
 | `target_id` | `purpose=补饷` 时必填合法 army_id | 缺失或不存在则整条拒收不扣账 |
+| `transfer_to` | 可选，另一钱库账户 | 国库↔内库互拨只写来源负数这一项；引擎按来源实扣数在目标入同额，不再另写正数项。独立收入不填 |
 | `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发` | 案卷引用必须存在且已颁；自然演化必须写精确哨兵。缺失、伪前缀及未授权案卷逐项拒收 |
 | `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`） | #622 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
@@ -104,11 +105,12 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 |---|---|
 | `source` | `<class_name>@<region_id>` 省级行（如 `农民@shaanxi`）；全国行（region_id 空）不合法 |
 | `target` | 同上；须与 source **同 region_id**（跨省在途归 #475 预留，本契约不做） |
-| `amount` | 正整数（严格 int，拒数字串/float/bool）；单位随存档 `population_unit`（新档「人」、legacy「万」），全线禁混刻度 |
+| `amount` | 拟转正整数（严格 int，拒数字串/float/bool）；单位随存档 `population_unit`（新档「人」、legacy「万」），全线禁混刻度 |
 | `reason` | 枚举×方向矩阵：`加派`/`摊派`/`灾害`＝农民→流民；`兵灾`＝农民→流民、军户→流民；`逃亡`＝军户→流民；`回流`＝流民→农民（**仅引擎 recovery 单核可写**，extractor 申报整项拒收，#652）。方向出阵即拒 |
 | `origin_ref` | **必填** `dossier:<id>`（须存在且已颁）或精确哨兵 `盘面自发`——来源追溯契约与 `reason` 机制枚举两槽并存、职责互斥 |
 
-- 逐项拒收面（坏项留痕、同批合法项照落，ADR 0015/0008）：方向出阵、reason 枚举外、amount 非严格 int/≤0/超实时源余额、region 未知或两侧不同省、source/target 触全国行、origin_ref 缺失/伪前缀/未颁案卷、白名单外字段（任何形式的绝对值覆写均不合法——人口只经本原语守恒变动，禁凭空造人/单侧写）。
+- applier 将拟转数额封顶为当时 source 省级行实有余额，并在同一事务中 source 减、target 增同一实数额；已应用记录的 `amount` 是实际转移量。
+- 逐项拒收面（坏项留痕、同批合法项照落，ADR 0015/0008）：方向出阵、reason 枚举外、amount 非严格 int/≤0、region 未知或两侧不同省、source/target 触全国行、origin_ref 缺失/伪前缀/未颁案卷、白名单外字段（任何形式的绝对值覆写均不合法——人口只经本原语守恒变动，禁凭空造人/单侧写）。
 - 灾害／兵灾入口（#662/S14）：发生与否及具体量级由 internal extractor 依据既有盘面（region `natural_disaster`/`human_disaster` 字段、military_pressure 定性档、活跃局势 issue）、`class_population_balances` 与 `population_unit` 软判；无事实支撑不得申报该 reason（无灾不入）。代码仅校验上述物理不变量并守恒记账，不建引擎侧自动触发（与 extractor 无双驱动并存）。origin 标即 `reason` 枚举本身，无第二 origin 字段；与加派/摊派入口合流同一 classes 行池账，下游只认账不认来源。
 - item 字段中英别名：`源`/`源阶级`→source、`目标`/`目标阶级`→target、`数额`/`口数`→amount、`原因`→reason（prompt 中文 shape 教 `原因`，与 `ITEM_FIELD_ALIASES` 单一真源；勿另教别名表外标签如「缘由」）。接口层：internal extractor 专属输入面带按 class@region_id 键合的省级人口余额＋本档 population_unit 的 `class_population_balances` TSV（不进玩家可感 simulator 数表）。simulator 另有机面 `displaced_pool_balances`（省级流民池 `region_id`+余额+单位，#652 投贼吃池顶；classes_brief 仍定性）。
 
@@ -191,6 +193,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
   - quantity：`manpower`
   - text：`station` `station_region` `commander` `controller` `troop_type` `status` `owner_power`
 - 中文别名都吃
+- 败军随军炮缴获：只在败军 value 写负数 `随军大炮` 和 `cannon_transfer_to`（胜军 army_id）；引擎按败军实有、胜军可容门数取共同实数并双边落账。胜军不再另写正数炮项；独立造炮/损耗不填此键。
 - `station` 是人读细地点；`station_region`（别名 `实际驻地` / `驻地省`）是已入库的 `regions.id`。调防时两者同改；地图驻军只按 `station_region` 挂点，空值不从 `station` 文本反推。
 - `army_delta.arrears` / `欠饷` 只允许既有军**正值外生加欠**（如剧情罚欠、战役拖欠），cutover 下引擎按饷源比例拆入省/中央累加器；`欠饷` 负值拒收。真钱补饷、减欠、核销必须走 `economy_moves`（`purpose=补饷`）或显式核销路径，不能用负数 `arrears` 绕过预算流。新军初始欠饷固定为 0，`new_armies` 不写 `欠饷`。
 - ⚠️ `maintenance_per_turn`（维护费）#173 **列已物理删除**：别名（维护费/军费）已移除，写它当非法字段逐项拒收留痕（`invalid_enum`）。月饷由引擎 `army_needed`（=`ceil(manpower × salary_rate / 10000)`，仅 ming）唯一承载；调月饷改 `manpower`。

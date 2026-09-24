@@ -982,9 +982,10 @@ def test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta(gam
     state.period = 11
     db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
     db.conn.execute(
-        "UPDATE armies SET manpower = ?, morale = ? WHERE id = ?",
-        (30000, 50, "jingying"),
+        "UPDATE armies SET manpower = ?, morale = ?, cannon_equipment = ? WHERE id = ?",
+        (30000, 50, 5, "jingying"),
     )
+    db.conn.execute("UPDATE armies SET cannon_equipment = 11 WHERE id = 'guanning'")
 
     assert any(ev.id == "jisi_lubian" for ev in issues.gather_candidate_events(state, db))
 
@@ -995,7 +996,8 @@ def test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta(gam
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
             "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "controlled_by": "ming", "reason": "己巳之变软判敌逼京畿"}},
-            "army_delta": {"jingying": {"origin_ref": "盘面自发", "manpower": -5000, "morale": -8, "reason": "己巳之变勤王战损"}},
+            "army_delta": {"jingying": {"origin_ref": "盘面自发", "manpower": -5000, "morale": -8,
+                                        "随军大炮": -100, "cannon_transfer_to": "guanning", "reason": "己巳之变勤王战损"}},
         },
         content=content,
     )
@@ -1013,6 +1015,8 @@ def test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta(gam
     assert region["controlled_by"] == "ming"
     assert army["manpower"] == 25000
     assert army["morale"] == 42
+    assert db.conn.execute("SELECT cannon_equipment FROM armies WHERE id='jingying'").fetchone()[0] == 4
+    assert db.conn.execute("SELECT cannon_equipment FROM armies WHERE id='guanning'").fetchone()[0] == 12
 
 
 def test_strategic_event_result_delta_is_all_or_nothing_on_rejected_item(game):

@@ -151,7 +151,7 @@ def test_direction_matrix_violations_rejected_per_item(game):
 
 
 def test_amount_and_balance_validation_per_item(game):
-    """amount 非 int/≤0/超源余额逐项拒收；源阶级省级行余额是硬天花板。"""
+    """amount 非严格正整数逐项拒收；实有封顶由真实过月入口覆盖。"""
     db, state, content = game
     bad_items = [
         _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=0, reason="加派"),
@@ -159,7 +159,6 @@ def test_amount_and_balance_validation_per_item(game):
         _transfer(source="农民@shaanxi", target="流民@shaanxi", amount="30", reason="加派"),
         _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=1.5, reason="加派"),
         _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=True, reason="加派"),
-        _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=FARMER_SHAANXI + 1, reason="加派"),
     ]
     applied = apply_score_extraction(db, state, {"population_transfers": bad_items}, content, None)
     rejections = applied["population_transfers_rejections"]
@@ -307,9 +306,8 @@ def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
 
 # ── 双单位（F3）：新档 sub-万精确；legacy 万口径、sub-万不可表达 ──────────────
 
-def test_legacy_wan_unit_transfer_lands_and_sub_wan_inexpressible(legacy_game):
-    """legacy 档 amount 按「万」读写：±3（万）精确落账；3000 人级在其上不可表达
-    （=3000 万超源余额被拒），不为旧档引入换算层。"""
+def test_legacy_wan_unit_transfer_caps_to_stock_without_unit_conversion(legacy_game):
+    """legacy 档 amount 按「万」读写：±3（万）精确落账；超源请求按万口径封顶。"""
     db, state, content, _path = legacy_game
     assert db.population_unit == POPULATION_UNIT_WAN
     applied = apply_score_extraction(db, state, {
@@ -323,13 +321,19 @@ def test_legacy_wan_unit_transfer_lands_and_sub_wan_inexpressible(legacy_game):
     assert _pop(db, "农民", "shaanxi") == LEGACY_FARMER_SHAANXI - 3
     assert _pop(db, "流民", "shaanxi") == LEGACY_DISPLACED_SHAANXI + 3
 
+    source_before = _pop(db, "农民", "shaanxi")
+    displaced_before = _pop(db, "流民", "shaanxi")
     applied2 = apply_score_extraction(db, state, {
         "population_transfers": [
             _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=3000, reason="灾害"),
         ],
     }, content, None)
-    assert len(applied2["population_transfers_rejections"]) == 1
-    assert "余额" in applied2["population_transfers_rejections"][0]["reason"]
+    assert not applied2["population_transfers_rejections"]
+    capped = applied2["population_transfers"][0]
+    assert capped["amount"] == source_before
+    assert capped["population_unit"] == POPULATION_UNIT_WAN
+    assert _pop(db, "农民", "shaanxi") == 0
+    assert _pop(db, "流民", "shaanxi") == displaced_before + source_before
 
 
 def test_new_save_unit_is_persons(game):

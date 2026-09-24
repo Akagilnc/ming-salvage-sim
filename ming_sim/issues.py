@@ -4761,12 +4761,30 @@ def _strategic_event_result_preflight_error(
                 return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
             if not explicit_attribution and not _change_mentions_strategic_event(raw_changes, event_id):
                 return f"战略/外敌事件「{event_title or event_id}」军队战果缺 reason/原因 事件锚点：{army_id}"
+            if "cannon_transfer_to" in raw_changes:
+                target_id = raw_changes["cannon_transfer_to"]
+                target = (db.conn.execute("SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (target_id,)).fetchone()
+                          if isinstance(target_id, str) and target_id else None)
+                cannon_keys = [key for key in raw_changes
+                               if ARMY_FIELD_ALIASES.get(key, key) == "cannon_equipment"]
+                if (target is None or target_id == army_id or len(cannon_keys) != 1
+                        or _int_delta_error("army", army_id, cannon_keys[0], raw_changes[cannon_keys[0]])
+                        or _strict_int(raw_changes[cannon_keys[0]]) >= 0):
+                    return f"战略/外敌事件「{event_title or event_id}」随军炮转移目标或负数拟转量非法：{army_id}"
+                if int(target["cannon_equipment"]) >= 12:
+                    return _noop_error("army", army_id, "cannon_transfer_to", target_id)
+                if bool(target["is_mutinied"]) and not latched_army_field_effect_permitted(
+                    "cannon_equipment", -_strict_int(raw_changes[cannon_keys[0]]),
+                ):
+                    return _noop_error("army", target_id, "cannon_transfer_to", target_id)
             # #320：loyalty 规范键/别名与写核同语义——先逐叶类型/字段校验，净合计后再一次
             # 软钳判 no-op；不得按 alias 分项拿旧值独立判 no-op。
             first_loyalty_raw_field: object | None = None
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
+                    continue
+                if field == "cannon_transfer_to":
                     continue
                 if field not in army_valid_fields:
                     return f"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}"
@@ -8609,6 +8627,85 @@ def apply_score_extraction(
         db._batch_frozen_open_affair_ids = _prev_batch_frozen
 
 
+def _apply_extracted_army_delta(
+    db: GameDB, state: GameState, pseudo_event: Event, army_id: str,
+    raw_changes: Dict[str, object], *, commit_now: bool,
+) -> List[Dict[str, object]]:
+    """Apply one extracted army item, including an explicit paired cannon transfer."""
+    army_changes: List[Dict[str, object]] = []
+    origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+    payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+    if "cannon_transfer_to" in payload:
+        target_id = payload.pop("cannon_transfer_to")
+        cannon_keys = [k for k in payload if ARMY_FIELD_ALIASES.get(k, k) == "cannon_equipment"]
+        try:
+            requested = _strict_int(payload[cannon_keys[0]]) if len(cannon_keys) == 1 else 0
+        except (TypeError, ValueError):
+            requested = 0
+        source = db.conn.execute(
+            "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (army_id,)
+        ).fetchone()
+        origin_error = db.effect_origin_rejection(origin_ref)
+        if origin_error:
+            army_changes.append({"army_id": army_id, **origin_error,
+                                 "item": {"army_id": army_id, "changes": raw_changes}})
+            return army_changes
+        target = (db.conn.execute(
+            "SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (target_id,)
+        ).fetchone() if isinstance(target_id, str) and target_id else None)
+        if (len(cannon_keys) != 1 or requested >= 0 or source is None
+                or target is None or target_id == army_id):
+            army_changes.append({
+                "army_id": army_id, "rejected": True,
+                "category": "missing_ref" if source is None or target is None else "invalid_enum",
+                "reason": "随军炮转移须指定在册来源、去向及负数拟转量",
+                "item": {"army_id": army_id, "changes": raw_changes},
+            })
+            return army_changes
+        for key in cannon_keys:
+            payload.pop(key)
+        writable = all(
+            not bool(row["is_mutinied"]) or latched_army_field_effect_permitted(
+                "cannon_equipment", delta,
+            )
+            for row, delta in ((source, requested), (target, -requested))
+        )
+        actual = (min(-requested, int(source["cannon_equipment"]),
+                      12 - int(target["cannon_equipment"])) if writable else 0)
+        if actual > 0:
+            db.conn.execute("SAVEPOINT cannon_transfer")
+            try:
+                transfer_changes: List[Dict[str, object]] = []
+                for leg_id, leg_delta in ((army_id, -actual), (target_id, actual)):
+                    leg_changes = db.apply_army_deltas(
+                        state, pseudo_event, None, "档房",
+                        {leg_id: {"随军大炮": leg_delta, "reason": raw_changes.get("reason")}},
+                        commit=False, origin_ref=origin_ref, require_origin=True,
+                    )
+                    if len(leg_changes) != 1 or leg_changes[0].get("delta") != leg_delta:
+                        raise RuntimeError("随军炮转移双边实数不等")
+                    transfer_changes.extend(leg_changes)
+                db.conn.execute("RELEASE SAVEPOINT cannon_transfer")
+            except Exception:
+                db.conn.execute("ROLLBACK TO SAVEPOINT cannon_transfer")
+                db.conn.execute("RELEASE SAVEPOINT cannon_transfer")
+                raise
+            army_changes.extend(transfer_changes)
+            if commit_now:
+                db.conn.commit()
+        else:
+            for leg_id in (army_id, target_id):
+                army_changes.append({
+                    "army_id": leg_id, "field": "cannon_equipment",
+                    "delta": 0, "applied": False, "reason": raw_changes.get("reason"),
+                })
+    army_changes.extend(db.apply_army_deltas(
+        state, pseudo_event, None, "档房", {army_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
+    ))
+
+    return army_changes
+
+
 def _apply_score_extraction_body(
     db: GameDB,
     state: GameState,
@@ -9243,12 +9340,9 @@ def _apply_score_extraction_body(
             )
         )
     for army_id, raw_changes in army_items:
-        origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-        payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-        army_changes.extend(db.apply_army_deltas(
-            state, pseudo_event, None, "档房", {army_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
+        army_changes.extend(_apply_extracted_army_delta(
+            db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
         ))
-
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
@@ -9564,11 +9658,8 @@ def _apply_score_extraction_body(
             ))
         region_changes.extend(event_region_changes)
         for army_id, raw_changes in event_army_items:
-            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            event_army_changes.extend(db.apply_army_deltas(
-                state, pseudo_event, None, "档房", {army_id: payload},
-                commit=commit_now, origin_ref=origin_ref, require_origin=True,
+            event_army_changes.extend(_apply_extracted_army_delta(
+                db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
             ))
         army_changes.extend(event_army_changes)
         for item in event_person_changes:

@@ -1181,6 +1181,16 @@ def _apply_economy_list(
         # 校验枚举；非法值退化为"其它"常规扣账
         purpose = raw_purpose if raw_purpose in ECONOMY_PURPOSES else None
         target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
+        if "transfer_to" in move:
+            destination = move["transfer_to"]
+            if (delta >= 0 or destination not in ("国库", "内库")
+                    or destination == account or raw_purpose not in ("", "其它")
+                    or raw_target_kind or raw_target_id):
+                applied.append({
+                    "account": account, "rejected": True, "category": "invalid_enum",
+                    "reason": "转库须从一账户扣款并指定另一账户", "item": move,
+                })
+                continue
 
         # ── 补饷分发：按当前欠额占比分销两累加器 + 同步减 armies.arrears ───────
         # purpose=补饷 必须定向到具体 army_id；非定向补饷需要另立显式契约，
@@ -1295,6 +1305,33 @@ def _apply_economy_list(
         origin_error = db.effect_origin_rejection(effective_origin_ref) if require_origin else None
         if origin_error:
             applied.append({"account": account, **origin_error, "item": move})
+            continue
+        if "transfer_to" in move:
+            destination = move["transfer_to"]
+            # A transfer is one declaration: the source ledger determines the amount.
+            actual = db.record_issue_economy_move(
+                state, account, delta, category, reason,
+                purpose="其它", origin_ref=effective_origin_ref,
+                beyond_intent=beyond_raw, commit=False,
+            )
+            received = 0
+            if actual:
+                received = db.record_issue_economy_move(
+                    state, destination, -actual, category, reason,
+                    origin_ref=effective_origin_ref, beyond_intent=beyond_raw,
+                    commit=False, apply_income_modifier=False,
+                )
+                if received != -actual:
+                    raise RuntimeError("钱库互拨双边实数不等")
+            if commit:
+                db.conn.commit()
+            from ming_sim.covert_levy import canonical_fiscal_result
+            for leg_account, leg_delta in ((account, actual), (destination, received)):
+                applied.append(canonical_fiscal_result(
+                    db, move, applied=actual != 0,
+                    effective_origin_ref=effective_origin_ref,
+                    account=leg_account, delta=leg_delta, reason=reason,
+                ))
             continue
         actual = db.record_issue_economy_move(
             state, account, delta, category, reason,
@@ -2126,7 +2163,7 @@ def _apply_population_transfers(
     校验分层（ADR 0015，r4 终态）：section 非 list 已由 sanitize_delta_shape 拒段；
     list 内坏记录逐项拒收留痕（非 dict 项按 0015 F1 {'raw_value':…} 包装），好记录照落。
     逐项拒收面：方向不在矩阵（constants.POPULATION_TRANSFER_REASONS）；reason 枚举
-    非法；amount 非 int/≤0/超源余额；region 未知或两侧不同省；source/target 触及全国
+    非法；requested amount 非 int/≤0；region 未知或两侧不同省；source/target 触及全国
     行；origin_ref 缺失/伪前缀/未颁案卷；白名单外字段。数据拒收永不中止事务；代码
     异常照常上抛由 applier.atomic 回滚（两轴分立）。
 
@@ -2255,25 +2292,23 @@ def _apply_population_transfers(
                 f"（流民池＝classes 省级行，全国行不参与守恒主账）",
             )
             continue
-        if int(src_row["population"]) < amount:
-            _reject(
-                "invalid_enum",
-                f"population_transfers 超源余额：{source!r} 现有 "
-                f"{src_row['population']}（{population_unit}口径）< amount {amount}；"
-                "源阶级省级行是硬天花板，禁凭空造人",
+        # The declaration is a proposed amount. The classes ledger owns the actual
+        # transfer: cap to current source stock, then write the same actual on both
+        # sides. A depleted source is a legal zero actual, not an invalid declaration;
+        # keep it in the applied feedback even though there is no ledger write.
+        amount = min(amount, int(src_row["population"]))
+        if amount > 0:
+            # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
+            db.conn.execute(
+                "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE name=? AND region_id=?",
+                (amount, src_cls, src_region),
             )
-            continue
-        # 单记录双写：同一事务内源减目标增，任一腿失败整体回滚（ADR 0008 决定 2）。
-        db.conn.execute(
-            "UPDATE classes SET population = population - ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE name=? AND region_id=?",
-            (amount, src_cls, src_region),
-        )
-        db.conn.execute(
-            "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE name=? AND region_id=?",
-            (amount, dst_cls, dst_region),
-        )
+            db.conn.execute(
+                "UPDATE classes SET population = population + ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE name=? AND region_id=?",
+                (amount, dst_cls, dst_region),
+            )
         region_name = str(db.conn.execute(
             "SELECT name FROM regions WHERE id=?", (src_region,)
         ).fetchone()["name"] or "")
