@@ -251,6 +251,27 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         release_material_tree(world.root)
 
 
+def test_author_unknown_route_raises_before_writing(game, monkeypatch):
+    """未知 chat_turns.route 由权威解码失败，作者不得把它当成非密令继续供料。"""
+    db, state, _content = game
+    db.conn.execute(
+        "INSERT INTO chat_turns (minister_name, turn, year, period, route) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("未名", int(state.turn), int(state.year), int(state.period), "mystery"),
+    )
+    db.conn.commit()
+    called: list[str] = []
+    monkeypatch.setattr(
+        "ming_sim.agents.run_agent_text",
+        lambda *_a, **_k: called.append("called") or json.dumps(
+            {"title": _TITLE, "report": _REPORT}, ensure_ascii=False,
+        ),
+    )
+    with pytest.raises(ValueError, match="mystery"):
+        month_chain.run_gazette_text(db, state, _llm(), {})
+    assert called == []
+
+
 def test_gazette_failure_retries_report_only(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
