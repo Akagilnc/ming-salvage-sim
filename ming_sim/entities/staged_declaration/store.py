@@ -204,6 +204,21 @@ class StagedDeclarationStore:
                 questions.extend(parsed)
         return questions
 
+    def clear_questions(self, decree_ref: str) -> int:
+        """批红答复已持久化后清请旨；问前声明与结算标记不动。"""
+        ref = str(decree_ref or "").strip()
+        if not ref:
+            return 0
+        owns = connection_owns_transaction(self._conn)
+        cur = self._conn.execute(
+            "UPDATE staged_declarations SET questions_json=NULL "
+            "WHERE decree_ref=? AND status!='discarded' AND questions_json IS NOT NULL",
+            (ref,),
+        )
+        if owns:
+            self._conn.commit()
+        return int(cur.rowcount or 0)
+
     def mark_settled(self, decree_ref: str) -> int:
         ref = str(decree_ref or "").strip()
         owns = connection_owns_transaction(self._conn)

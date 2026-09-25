@@ -1364,7 +1364,14 @@ def apply_rescript_batch(
                 # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
                 _cas_decided(db, item)
                 event_id = str(item.row.get("event_id") or "").strip()
-                if event_id and not event_id.startswith("dossier:"):
+                # 请旨身份（world-question: / decree-question:）不是 events 表事件；
+                # 与 dossier: 同属案头身份前缀，不得进 event_triggers。
+                if (
+                    event_id
+                    and not event_id.startswith("dossier:")
+                    and not event_id.startswith("world-question:")
+                    and not event_id.startswith("decree-question:")
+                ):
                     db.record_event_decision_choice(
                         state, event_id, item.choice, commit=False,
                     )

@@ -1,7 +1,7 @@
 """ADR 0157 玩家过月主链：步骤 1–3，以及步骤 4–6 的继续条件。
 
-批红答复、邸报作者、推进后的机械尾不在这里实现。本链只在那些阶段的
-持久前置已经成立时继续，不另建无旨快路，也不再走五模块 extractor。
+#1847：步骤 4 请旨/打回三选统一收口既有 HITL 案头；答复后从问处续推再交步骤 5。
+批红文书页呈现归 #1826；邸报作者归 #1862。不另造平行机制。
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 from ming_sim.applier import Provenance, atomic
 
 _CHAIN_KEY = "month_chain"
+_WORLD_QUESTION_PREFIX = "world-question:"
+_DECREE_QUESTION_PREFIX = "decree-question:"
 
 
 def run_world_segment_text(
@@ -41,6 +43,106 @@ def run_world_segment_text(
         release_material_tree(prepared.root)
 
 
+def continue_world_after_answers(
+    session: Any, chain: Dict[str, Any], *, answers: List[Dict[str, object]], source: Provenance,
+) -> Optional[Dict[str, object]]:
+    """批红答复后从问处续推世界段一次；问前已落不动，整段不重推。"""
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state = session.db, session.state
+    turn = int(state.turn)
+    if chain.get("world_continued"):
+        chain["world_questions"] = []
+        _save_chain(db, turn, chain, source=source)
+        return chain.get("declaration_outcome")
+    text = _run_world_continuation_text(session, chain, answers)
+    outcome = None
+    if str(text or "").strip():
+        def mark(result: Any) -> None:
+            nonlocal outcome
+            candidate = _ending_from_dispatch_result(result)
+            if candidate is not None:
+                chain["declaration_outcome"] = candidate
+                outcome = candidate
+            _save_chain(db, turn, chain, source=source)
+
+        result = dispatch_month_segment(
+            db, state, segment=str(text), llm_config=session.llm_config, source=source,
+            alongside=mark,
+        )
+        outcome = _ending_from_dispatch_result(result) or outcome
+    chain["world_questions"] = []
+    chain["world_continued"] = True
+    _save_chain(db, turn, chain, source=source)
+    return outcome
+
+
+def continue_decree_after_answers(
+    session: Any, *, decree_ref: str, answers: List[Dict[str, object]],
+    source: Provenance = Provenance.player_decree,
+) -> None:
+    """批红答复后从问处续推该旨一次；问前已落声明不动。
+
+    同一 decree_ref 问前声明可能已 settled，续推声明直接分派，不另造平行暂存身份。
+    """
+    from ming_sim.declaration_dispatch import dispatch_declaration
+    from ming_sim.month_translate import translate_month_segment
+
+    db, state = session.db, session.state
+    db.staged_declarations.clear_questions(decree_ref)
+    if session.llm_config is None:
+        return
+    dossier = _dossier_for_decree_ref(db, decree_ref)
+    if dossier is None:
+        return
+    text = _run_decree_continuation_text(session, dossier, answers)
+    if not str(text or "").strip():
+        return
+    prefix, _extra = _split_at_question(str(text))
+    if not prefix.strip():
+        return
+    payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
+    declaration = translate_month_segment(
+        segment=prefix,
+        target_grounding="",
+        decree_payload=payload if isinstance(payload, dict) else {},
+        llm_config=session.llm_config,
+    ) or {}
+    if declaration:
+        dispatch_declaration(db, state, declaration, source=source)
+
+
+def _run_decree_continuation_text(
+    session: Any, dossier: Dict[str, Any], answers: List[Dict[str, object]],
+) -> str:
+    import json
+
+    from ming_sim.agents import create_decree_forecast_agent, run_agent_text
+    from ming_sim.llm_transport import audience_transport_policy
+    from ming_sim import decree as decree_mod
+    from ming_sim import simulation
+
+    db, state = session.db, session.state
+    visible = dict(dossier)
+    visible["promulgation_decision"] = "promulgated"
+    projected = decree_mod.project_dossiers_for_simulator([visible], db, state)
+    sim_payload = simulation.build_simulator_payload(
+        state, db, str(dossier.get("decree_text") or ""), "",
+        decree_dossiers=projected,
+    )
+    sim_payload["rescript_answers"] = list(answers)
+    agent = create_decree_forecast_agent(session.llm_config, sim_payload)
+    return run_agent_text(
+        agent,
+        json.dumps({
+            "instruction": "皇帝已批红答复本旨请旨。只续写问后后果，勿重写问前已落之事。",
+            "answers": answers,
+        }, ensure_ascii=False),
+        tag="decree-forecast-continue",
+        transport_policy=audience_transport_policy(),
+    )
+
+
 def run_player_month_chain(
     state: Any,
     db: Any,
@@ -67,6 +169,7 @@ def run_player_month_chain(
     session = SimpleNamespace(
         db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
     )
+    _consume_rescript_answers(session, chain, source=source)
     _run_opening_levy(db, chain, turn, decree_text, source)
     def persist_declaration_outcome(outcome: Dict[str, object]) -> None:
         chain["declaration_outcome"] = outcome
@@ -78,8 +181,11 @@ def run_player_month_chain(
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
     _run_month_drift(db, state, chain, turn, decree_text, source)
-    if _waiting_for_rescript(db, state, chain):
-        return _pause(db, turn, chain, decree_text, source, "rescript")
+    desk = _materialize_rescript_desk(db, state, chain)
+    if desk is not None:
+        return ResolveResult(
+            awaiting=True, decisions=desk, advanced=False, stage="rescript",
+        )
     archive = db.get_turn_report_archive(turn)
     if archive is None or not str(archive.get("report") or "").strip():
         return _pause(db, turn, chain, decree_text, source, "gazette")
@@ -287,16 +393,245 @@ def _run_month_drift(
 
 
 def _waiting_for_rescript(db: Any, state: Any, chain: Dict[str, Any]) -> bool:
+    return bool(_open_rescript_items(db, state, chain))
+
+
+def _open_rescript_items(
+    db: Any, state: Any, chain: Dict[str, Any],
+) -> Dict[str, Any]:
+    """本回合待答：打回三选 + 旨意请旨 + 世界段请旨。上月已答项不入。"""
     from ming_sim.decree_forecast import decree_ref_for_dossier
 
-    if chain.get("world_questions"):
-        return True
+    turn = int(state.turn)
+    triad = _this_turn_rescript_dossiers(db, turn)
+    decree_questions: List[tuple[str, list]] = []
+    seen_refs: set[str] = set()
     for dossier in db.list_decree_dossiers():
-        if dossier.get("rescript_pending"):
-            return True
-        if db.staged_declarations.questions_for(decree_ref_for_dossier(db, dossier)):
-            return True
-    return False
+        ref = decree_ref_for_dossier(db, dossier)
+        if ref in seen_refs:
+            continue
+        seen_refs.add(ref)
+        questions = db.staged_declarations.questions_for(ref)
+        if questions:
+            # 未答请旨不论案卷创建回合，均须本回合收口（#1847 / 留中回流同审）。
+            decree_questions.append((ref, questions))
+    world_questions = [
+        q for q in (chain.get("world_questions") or []) if isinstance(q, dict)
+    ]
+    return {
+        "triad": triad,
+        "decree_questions": decree_questions,
+        "world_questions": world_questions,
+    }
+
+
+def _this_turn_rescript_dossiers(db: Any, turn: int) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for dossier in db.list_decree_dossiers():
+        if not dossier.get("rescript_pending"):
+            continue
+        if not _dossier_rejection_is_this_turn(db, dossier, turn):
+            continue
+        out.append(dossier)
+    return out
+
+
+def _dossier_rejection_is_this_turn(db: Any, dossier: Dict[str, Any], turn: int) -> bool:
+    dossier_id = int(dossier["id"])
+    if int(dossier.get("created_turn") or 0) == turn:
+        return True
+    row = db.conn.execute(
+        "SELECT turn, rescript_action FROM decree_dossier_decisions "
+        "WHERE dossier_id=? AND decision='rejected' ORDER BY id DESC LIMIT 1",
+        (dossier_id,),
+    ).fetchone()
+    if row is None:
+        return False
+    # 上月已作三选（hold/withdrawn/force）的旧件即使残留 pending 也不再挡本月。
+    if str(row["rescript_action"] or "").strip():
+        return False
+    return int(row["turn"] or 0) == turn
+
+
+def _materialize_rescript_desk(
+    db: Any, state: Any, chain: Dict[str, Any],
+) -> Optional[List[Dict[str, object]]]:
+    from ming_sim.decree import _rescript_decisions
+
+    open_items = _open_rescript_items(db, state, chain)
+    if not (
+        open_items["triad"]
+        or open_items["decree_questions"]
+        or open_items["world_questions"]
+    ):
+        chain["stage"] = chain.get("stage") or ""
+        return None
+    decisions: List[Dict[str, object]] = []
+    if open_items["triad"]:
+        verdicts = []
+        for dossier in open_items["triad"]:
+            hist = db.list_decree_dossier_decisions(int(dossier["id"]))
+            latest = hist[-1] if hist else {}
+            verdicts.append({
+                "dossier_id": int(dossier["id"]),
+                "decision": "rejected",
+                "reason": str(
+                    dossier.get("promulgation_reason") or latest.get("reason") or ""
+                ),
+                "primary_opponents": (
+                    dossier.get("primary_opponents")
+                    or latest.get("primary_opponents")
+                    or []
+                ),
+                "midzhi_unpromulgatable": bool(
+                    (latest or {}).get("midzhi_unpromulgatable")
+                ),
+            })
+        decisions.extend(_rescript_decisions(verdicts, open_items["triad"]))
+    for ref, questions in open_items["decree_questions"]:
+        for idx, question in enumerate(questions):
+            if not isinstance(question, dict):
+                continue
+            decisions.append(_question_as_decision(
+                question, event_id=f"{_DECREE_QUESTION_PREFIX}{ref}:{idx}",
+            ))
+    turn = int(state.turn)
+    for idx, question in enumerate(open_items["world_questions"]):
+        decisions.append(_question_as_decision(
+            question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
+        ))
+    if not decisions:
+        return None
+    db.save_pending_decisions(turn, decisions)
+    chain["stage"] = "rescript"
+    _save_chain(db, turn, chain, source=Provenance.system_simulation)
+    return db.list_rescript_desk(turn)
+
+
+def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
+    options = question.get("options") if isinstance(question.get("options"), list) else []
+    cleaned = []
+    for opt in options:
+        if not isinstance(opt, dict):
+            continue
+        label = str(opt.get("label") or "").strip()
+        if not label:
+            continue
+        cleaned.append({
+            "label": label,
+            "hint": str(opt.get("hint") or "").strip(),
+            **{
+                key: opt[key] for key in opt
+                if key not in {"label", "hint"} and opt[key] is not None
+            },
+        })
+    return {
+        "event_id": event_id,
+        "title": str(question.get("title") or "").strip() or "请旨",
+        "context": str(question.get("context") or "").strip(),
+        "options": cleaned,
+    }
+
+
+def _consume_rescript_answers(
+    session: Any, chain: Dict[str, Any], *, source: Provenance,
+) -> None:
+    """把已裁批红接回案卷 / 请旨续推；幂等，已落不动。"""
+    db, state = session.db, session.state
+    turn = int(state.turn)
+    rows = db.list_pending_decisions(turn)
+    decided = [r for r in rows if str(r.get("status") or "") == "decided"]
+    if not decided:
+        return
+    world_answers: List[Dict[str, object]] = []
+    decree_answers: Dict[str, List[Dict[str, object]]] = {}
+    for row in decided:
+        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        event_id = str(row.get("event_id") or "")
+        if event_id.startswith("dossier:"):
+            _apply_decided_triad(db, state, row, choice, content=session.content)
+            continue
+        answer = {
+            "label": str(choice.get("label") or "").strip(),
+            "hint": str(choice.get("hint") or "").strip(),
+            "note": str(choice.get("note") or "").strip(),
+            "event_id": event_id,
+            "title": str(row.get("title") or ""),
+        }
+        if event_id.startswith(_WORLD_QUESTION_PREFIX):
+            world_answers.append(answer)
+        elif event_id.startswith(_DECREE_QUESTION_PREFIX):
+            body = event_id[len(_DECREE_QUESTION_PREFIX):]
+            ref = body.rsplit(":", 1)[0] if ":" in body else body
+            decree_answers.setdefault(ref, []).append(answer)
+    for ref, answers in decree_answers.items():
+        continue_decree_after_answers(
+            session, decree_ref=ref, answers=answers, source=source,
+        )
+    if world_answers and chain.get("world_questions"):
+        continue_world_after_answers(
+            session, chain, answers=world_answers, source=source,
+        )
+
+
+def _apply_decided_triad(
+    db: Any, state: Any, row: Dict[str, object], choice: Dict[str, object], *, content: Any,
+) -> None:
+    event_id = str(row.get("event_id") or "")
+    raw_id = event_id.split(":", 1)[1] if ":" in event_id else ""
+    if not raw_id.isdigit():
+        return
+    dossier_id = int(raw_id)
+    dossier = db.get_decree_dossier(dossier_id)
+    if dossier is None or not dossier.get("rescript_pending"):
+        return
+    decision = str(
+        choice.get("dossier_decision") or choice.get("action") or ""
+    ).strip()
+    if decision not in {"force_promulgated", "withdrawn", "hold"}:
+        return
+    db.apply_dossier_promulgation(
+        state, dossier_id, decision, content=content,
+    )
+
+
+def _run_world_continuation_text(
+    session: Any, chain: Dict[str, Any], answers: List[Dict[str, object]],
+) -> str:
+    if session.llm_config is None:
+        return ""
+    from ming_sim.agents import create_world_segment_agent, run_agent_text
+    from ming_sim.llm_transport import audience_transport_policy
+    from ming_sim.materials import prepare_world_materials, release_material_tree
+    import json
+
+    prepared = prepare_world_materials(session.db, session.state)
+    try:
+        agent = create_world_segment_agent(session.llm_config, prepared)
+        payload = {
+            "instruction": "皇帝已批红答复世界段请旨。只续写问后后果，勿重写问前已落之事。",
+            "answers": answers,
+            "prior_world_text": str(chain.get("world_text") or ""),
+        }
+        return run_agent_text(
+            agent, json.dumps(payload, ensure_ascii=False), tag="world-segment-continue",
+            transport_policy=audience_transport_policy(),
+        )
+    finally:
+        release_material_tree(prepared.root)
+
+
+def _dossier_for_decree_ref(db: Any, decree_ref: str) -> Optional[Dict[str, Any]]:
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+
+    for dossier in db.list_decree_dossiers():
+        if decree_ref_for_dossier(db, dossier) == decree_ref:
+            return dossier
+    if decree_ref.startswith("dossier:"):
+        raw = decree_ref.split(":", 1)[1]
+        if raw.isdigit():
+            return db.get_decree_dossier(int(raw))
+    return None
 
 
 def _advance_after_gazette(
