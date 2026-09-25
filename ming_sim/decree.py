@@ -165,7 +165,7 @@ class ResolveResult:
     awaiting: bool
     report: str = ""
     decisions: List[Dict[str, object]] = field(default_factory=list)
-    advanced: bool = True
+    advanced: bool = False
     stage: str = ""
 
 
@@ -317,35 +317,6 @@ def stub_promulgation_verdicts(
         {"dossier_id": int(row["id"]), "decision": "promulgated"}
         for row in dossiers
     ]
-
-
-def promulgation_verdict_correction_feedback(
-    exc: BaseException,
-    *,
-    raw_output: object,
-    required_dossier_ids: Sequence[int],
-) -> str:
-    """有界补交回喂：同会话续接，附原始产出与校验失败原因（#1753）。
-
-    形状对齐 draft/rescript 的 combination_correction_feedback 骨架——只回填结构化
-    verdict 契约（0052 两格 / 0066），不另造第三套 heal，不代填判向。
-    required_dossier_ids：待判全集（调用方必传非空 reviewed 集），漏盖时补交侧
-    知道缺哪一道（不依赖 history 是否已生效）。
-    """
-    raw_text = json.dumps(raw_output, ensure_ascii=False, sort_keys=True)
-    ids = list(required_dossier_ids)
-    return (
-        "【颁布判决契约校验失败，请按结构化 verdict 契约整批补交】\n"
-        f"校验失败原因：{exc}\n"
-        f"原始产出：{raw_text}\n"
-        f"待判案卷 dossier_id 全集（须逐案恰好一项）：{ids}\n"
-        "须返回 {\"verdicts\":[...]}，逐案恰好一项；"
-        "dossier_id 必须为输入快照中的有效 SQLite 正整数；"
-        "decision 只能为 promulgated 或 rejected；"
-        "须逐案覆盖全部待判案卷，不能静默跳过；"
-        "打回须含 blocked_layer/reason/primary_opponents/gatekeeper_id/"
-        "criteria_snapshot 等既有结构化字段（0052/0066）。\n"
-    )
 
 
 def _collect_compliant_promulgation_items(
@@ -1428,7 +1399,7 @@ def resolve_settling_recovery(
             except Exception as clear_exc:
                 raise abort_exc from clear_exc
         raise
-    return ResolveResult(awaiting=False, report=report)
+    return ResolveResult(awaiting=False, report=report, advanced=True)
 
 
 def _replay_settle(

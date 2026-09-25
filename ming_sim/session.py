@@ -4011,6 +4011,7 @@ class GameSession:
             return ResolveResult(
                 awaiting=True,
                 decisions=self.db.list_rescript_desk(int(self.state.turn)),
+                advanced=False,
             )
         # ADR 0008 S7（决定 3）：settling 态崩溃恢复分流。settling 只意味着「前半段已完成」，
         # 不意味着后半段就绪——查 resolve_context 判别：
@@ -4201,7 +4202,7 @@ class GameSession:
             scene_registry=self._scene_registry,
             **resolve_kwargs,
         )
-        if getattr(result, "advanced", True):
+        if result.advanced and not result.awaiting:
             # 主链已推进；阶段标 issued。未推进的批红/邸报交接保持 settling，重入接着跑。
             self.state.turn_phase = TurnPhase.ISSUED.value
         elif result.awaiting:

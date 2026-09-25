@@ -1046,6 +1046,7 @@ def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, 
 def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, monkeypatch):
     """已有 draft 时 Web 结束回合走正常结算，而不是无诏快进。"""
     import web_app
+    from ming_sim.decree import ResolveResult
 
     db, state, content = game
     db.add_directive(state, None, "着户部清核辽饷。", "手动新增")
@@ -1056,7 +1057,7 @@ def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, mon
         # 真 GameSession.resolve_turn 在返回前把生成稿落回 last_decree；
         # 替身照抄该顺序，端点才能在 end_turn/refresh 前取到本月成案旨。
         session.last_decree = "诏曰：着户部清核辽饷。"
-        return types.SimpleNamespace(awaiting=False, decisions=[])
+        return ResolveResult(awaiting=False, advanced=True)
 
     session = types.SimpleNamespace(
         registry=None,

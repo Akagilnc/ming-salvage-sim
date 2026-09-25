@@ -7064,7 +7064,8 @@ def api_advance_without_edict(
                 )
                 advanced = bool(
                     settlement_result is not None
-                    and getattr(settlement_result, "advanced", True)
+                    and not awaiting
+                    and settlement_result.advanced
                 )
                 if advanced:
                     game.session.end_turn()

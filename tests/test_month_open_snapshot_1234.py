@@ -392,7 +392,7 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
         db.clear_month_open_snapshot(int(state.turn))
         state.turn_phase = TurnPhase.SUMMONING.value
         db.save_state(state)
-        return ResolveResult(awaiting=False, report="ok")
+        return ResolveResult(awaiting=False, report="ok", advanced=True)
 
     runtime.session.advance_without_decree = _observe_then_done
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
