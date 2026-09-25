@@ -212,6 +212,14 @@ def _is_applied_revise_anchor(row: Mapping[str, object], choice: Mapping[str, ob
     return int(row.get("revision_round") or 0) == applied_from_i + 1
 
 
+def row_is_applied_return_revise(row: Mapping[str, object]) -> bool:
+    """已应用改票锚。刷新投影、空 POST、月链待裁共用这一行事实。"""
+    choice = row.get("choice")
+    if not isinstance(choice, dict):
+        return False
+    return _is_applied_revise_anchor(row, choice)
+
+
 def _option_by_capability(row: Mapping[str, object]) -> Dict[str, Dict[str, object]]:
     out: Dict[str, Dict[str, object]] = {}
     for opt in row.get("options") or []:
@@ -368,21 +376,21 @@ def validate_all(
         # pending 行
         kind = str(row.get("kind") or "decision")
 
-        # 已应用 return_revise 锚：先于空 action 默认 hold（§B.3 重试批不重新默认）
+        # 已应用 return_revise 锚：先于空 action 默认 hold（§B.3 重试批不重新默认）。
+        # 请求缺这一行（刷新后的空 POST）沿用行上锚，不留中、不重跑改票。
         if (
-            req is not None
-            and not _choice_empty(stored_choice)
+            not _choice_empty(stored_choice)
             and isinstance(stored_choice, dict)
             and _is_applied_revise_anchor(row, stored_choice)
         ):
-            if _choices_equal(stored_choice, req):
+            if req is None or _choices_equal(stored_choice, req):
                 batch.items.append(ValidatedItem(
                     decision_key=key,
                     kind=kind,
                     source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
                     idx=int(row.get("idx") or 0),
                     row=row,
-                    choice=req,
+                    choice=req if req is not None else canonical_choice(stored_choice),
                     already_applied=True,
                 ))
                 continue

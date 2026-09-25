@@ -734,25 +734,17 @@ def _materialize_rescript_desk(
         db.save_pending_decisions(turn, decisions)
     # 已应用 return_revise 仍 pending，但是本批已办，不是新待裁。
     # 清锚仍只走推进事务里的 clear_return_revise_choice_anchors。
+    from ming_sim.rescript_actions import row_is_applied_return_revise
+
     desk = [
         row for row in db.list_rescript_desk(turn)
-        if not _row_is_applied_return_revise(row)
+        if not row_is_applied_return_revise(row)
     ]
     if not desk:
         return None
     chain["stage"] = "rescript"
     _save_chain(db, turn, chain, source=Provenance.system_simulation)
     return desk
-
-
-def _row_is_applied_return_revise(row: Dict[str, object]) -> bool:
-    """行上已应用改票锚。谓词只认 rescript_actions._is_applied_revise_anchor。"""
-    from ming_sim.rescript_actions import _is_applied_revise_anchor
-
-    choice = row.get("choice")
-    if not isinstance(choice, dict):
-        return False
-    return _is_applied_revise_anchor(row, choice)
 
 
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
