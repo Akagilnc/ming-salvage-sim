@@ -59,6 +59,22 @@ def _categories(db):
     ]
 
 
+def _prepare_player_month(db, state, content, monkeypatch, *, world=None, translate=None):
+    """换掉世界段与转译的模型缝，返回尚未过月的 session。不含在飞屏障。"""
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text",
+        world if world is not None else (lambda *_a, **_k: ""),
+    )
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment",
+        translate if translate is not None else (lambda *_a, **_k: {"effects": {}}),
+    )
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+    return session
+
+
 def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
@@ -96,11 +112,9 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
         translate_calls.append(1)
         return {"effects": {}}
 
-    _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
-    session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
+    session = _prepare_player_month(
+        db, state, content, monkeypatch, world=world, translate=translate,
+    )
     queue = get_session_write_queue(session)
     ticket = queue.claim_if_absent([("mechanical-tail", closed_turn)])[0]
     joined = {}
@@ -110,9 +124,11 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
         queue.complete(ticket)
 
     threading.Thread(target=finish_prior).start()
-    result = session.resolve_turn(allow_empty_decree=True, on_event=lambda kind, data: events.append((kind, data)))
-
+    result = session.resolve_turn(
+        allow_empty_decree=True, on_event=lambda kind, data: events.append((kind, data)),
+    )
     assert joined.get("done") is True
+
     assert world_calls and world_calls[0]["edicts"][:2] == ["宁远补饷", "陕西赈灾"]
     ledger = list(db.conn.execute(
         "SELECT category, delta FROM economy_ledger WHERE category IN ('宁远补饷','陕西赈灾','大凌河') ORDER BY id",
