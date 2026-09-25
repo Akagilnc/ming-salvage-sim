@@ -169,7 +169,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         wait_pending_writes(game)
 
         after = _get_state(client)
-        assert _turn_of(after) == turn_before + 1, after.get("turn")
+        assert _turn_of(after) == turn_before, after.get("turn")
 
         ledger = [
             dict(r) for r in game.db.conn.execute(

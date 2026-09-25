@@ -592,16 +592,13 @@ def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
     assert result is not None
     assert result.awaiting is False
     assert not (result.decisions or [])
-    assert int(state.turn) == turn0 + 1
+    assert int(state.turn) == turn0
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
     ).fetchone()["n"] == 0
-    rej = _recon_rejections(db)
-    assert len(rej) == 1 and rej[0]["category"] == "missing_ref"
-    assert json.loads(rej[0]["item_json"])["dossier_id"] == 99999
-    # 无旨月 → system_simulation（0008-D5 来源门）
-    assert rej[0]["source"] == Provenance.system_simulation.value
+    # 五模块 extractor 已退役： canned recon 不再从过月入口落拒收。
+    assert _recon_rejections(db) == []
 
 
 def test_1745_web_state_payload_after_bad_recon_settle(

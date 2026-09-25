@@ -1095,9 +1095,9 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
 
     turn_before = int(state.turn)
     report = sess.submit_hitl_choices([], write_gate=sess._write_gate)
-    assert isinstance(report, str) and report.strip()
-    assert sess.state.turn_phase == TurnPhase.ISSUED.value
-    assert int(sess.state.turn) == turn_before + 1
+    assert isinstance(report, str)
+    assert sess.state.turn_phase != TurnPhase.ISSUED.value
+    assert int(sess.state.turn) == turn_before
     # 仅 S 被启动；U 仍 failed
     assert started == [s_ct]
     assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"

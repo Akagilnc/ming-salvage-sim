@@ -11,7 +11,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Protocol, Sequence
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence
 
 from agno.db.sqlite import SqliteDb
 from openai import APIConnectionError, APIStatusError, APITimeoutError
@@ -308,14 +308,6 @@ def run_settlement_attendant_message(
     if not text.strip():
         raise LLMContractError("王承恩结算拒收递话返回空文")
     return text  # 原文，含首尾空白（P6：零删改）
-
-
-class PromulgationVerdictProvider(Protocol):
-    """颁布判决注入 seam；实现不得写 DB，判决在后半段 atomic 内统一落库。"""
-
-    def __call__(
-        self, dossiers: Sequence[Dict[str, object]], state: GameState,
-    ) -> List[Dict[str, object]]: ...
 
 
 # #1753 decision key promulgation-verdict-heal-by-resume-then-fail-closed：
@@ -621,26 +613,6 @@ class _PromulgationJudgeSession:
                 num_history_runs=PROMULGATION_VERDICT_HEAL_RETRIES + 1,
             )
         return self.agent
-
-
-def _validate_and_save_promulgation_batch(
-    reviewed_generated: object,
-    *,
-    exempt: Sequence[Dict[str, object]],
-    state: GameState,
-    db: GameDB,
-    promulgable_dossiers: Sequence[Dict[str, object]],
-    prepared_context: Optional[Dict[str, object]],
-) -> List[Dict[str, object]]:
-    """Provider 与 LLM 共用：拼豁免 stub → 校验 → 持久化 pending（单一装配）。"""
-    full_batch = _require_promulgation_verdict_list(reviewed_generated) + (
-        stub_promulgation_verdicts(exempt, state) if exempt else []
-    )
-    verdict_rows = validate_promulgation_verdicts(
-        full_batch, promulgable_dossiers, db, prepared_context=prepared_context,
-    )
-    db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
-    return verdict_rows
 
 
 def llm_promulgation_verdicts(
@@ -1363,7 +1335,6 @@ def resolve_directives(
     registry=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
-    promulgation_verdict_provider: Optional[PromulgationVerdictProvider] = None,
     scene_registry=None,
 ) -> ResolveResult:
     """玩家过月入口：前括号之后走 ADR 0157 主链，不再用 extractor 落账。

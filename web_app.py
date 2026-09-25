@@ -7062,7 +7062,11 @@ def api_advance_without_edict(
                 awaiting = bool(
                     settlement_result is not None and settlement_result.awaiting
                 )
-                if not awaiting:
+                advanced = bool(
+                    settlement_result is not None
+                    and getattr(settlement_result, "advanced", True)
+                )
+                if advanced:
                     game.session.end_turn()
                     game.refresh_turn()
                 # §2.2：end_turn/refresh 后、return 前直查并立即赋 holder（失败进原异常链）。
@@ -7080,11 +7084,11 @@ def api_advance_without_edict(
                 }
                 if awaiting:
                     return payload
-                # 真空退朝 last_decree 空 → 不发 STAT_DECREES_ISSUED；仅非空才计已颁。
                 return steam_events.with_events(
                     payload,
                     _settlement_steam_events(
                         game, decree=decree or "", was_ended=was_ended,
+                        advanced=advanced,
                     ),
                 )
             except HTTPException:
@@ -7165,9 +7169,12 @@ def _settlement_steam_events(
     game, *,
     decree: str = "",
     was_ended: bool = False,
+    advanced: bool = False,
 ) -> List[Dict[str, Any]]:
-    """过月 steam 计数。#1769：仅确有成案旨时发 STAT_DECREES_ISSUED
-    （零成案耗尽与退朝无旨同形，不计已颁；混合好旨 decree 非空仍计）。"""
+    """过月 steam 计数。月份未推进（邸报未写成）不计过月。
+    #1769：仅确有成案旨时发 STAT_DECREES_ISSUED。"""
+    if not advanced:
+        return []
     events: List[Dict[str, Any]] = [
         steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
         steam_events.set_stat(
@@ -7220,10 +7227,13 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
                         "awaiting_decision": True,
                     }
                 report = result.report
-                game.session.end_turn()
-                game.refresh_turn()
+                advanced = bool(getattr(result, "advanced", True))
+                if advanced:
+                    game.session.end_turn()
+                    game.refresh_turn()
                 events = _settlement_steam_events(
                     game, decree=decree or "", was_ended=was_ended,
+                    advanced=advanced,
                 )
                 return steam_events.with_events(_settlement_player_payload(
                     decree=decree,
@@ -7322,10 +7332,13 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                         ))
                     else:
                         report = result.report
-                        game.session.end_turn()
-                        game.refresh_turn()
+                        advanced = bool(getattr(result, "advanced", True))
+                        if advanced:
+                            game.session.end_turn()
+                            game.refresh_turn()
                         events = _settlement_steam_events(
                             game, decree=decree or "", was_ended=was_ended,
+                            advanced=advanced,
                         )
                         terminal = ("__done__", _settlement_player_payload(
                             decree=decree,
@@ -7455,10 +7468,13 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                         failure_snapshot = _new_secret_order_failure_payloads_for_turn(
                             game, turn_before, failed_before,
                         )
-                        game.session.end_turn()
-                        game.refresh_turn()
+                        advanced = int(game.state.turn) != turn_before
+                        if advanced:
+                            game.session.end_turn()
+                            game.refresh_turn()
                     events = _settlement_steam_events(
                         game, decree=decree or "", was_ended=was_ended,
+                        advanced=advanced,
                     )
                     terminal = ("__done__", _settlement_player_payload(
                         decree=decree,

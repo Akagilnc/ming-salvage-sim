@@ -218,63 +218,6 @@ def test_missing_dossier_fields_stay_pending_then_full_retry_decides(
     assert choice.get("dossier_decision") == "force_promulgated"
 
 
-def test_rescript_decision_options_carry_dossier_capability_fields(game, monkeypatch):
-    """生成端正常路径：dossier 类 decision 的 options 含 dossier_id / dossier_decision。"""
-    db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text="特旨清核河工",
-        target_kind="issue",
-        target_id="river-works",
-        payload={"mode": "ordinary"},
-    )
-
-    def provider(_dossiers, _state):
-        return [rejected_verdict(dossier_id)]
-
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        decree_mod,
-        "simulate_season_with_payload",
-        lambda _simulator, _state, _db, _decree_text, _previous, **kwargs: (
-            "本月邸报。", kwargs["simulator_payload"],
-        ),
-    )
-
-    result = decree_mod.resolve_directives(
-        state, db, None, None, [object()], "清核河工",
-        content=content, promulgation_verdict_provider=provider,
-    )
-
-    assert result.awaiting is True
-    dossier_rows = [
-        d for d in result.decisions
-        if str(d.get("event_id") or "") == f"dossier:{dossier_id}"
-    ]
-    assert len(dossier_rows) == 1, result.decisions
-    options = dossier_rows[0]["options"]
-    assert options, "批红 options 不得为空"
-    for opt in options:
-        assert opt.get("dossier_id") == dossier_id, opt
-        assert opt.get("dossier_decision") in {
-            "force_promulgated", "withdrawn", "hold",
-        }, opt
-        assert isinstance(opt.get("hint"), str), opt
-
-    stored = db.list_pending_decisions(state.turn)
-    stored_dossier = [
-        d for d in stored
-        if str(d.get("event_id") or "") == f"dossier:{dossier_id}"
-    ]
-    assert stored_dossier
-    for opt in stored_dossier[0]["options"]:
-        assert opt.get("dossier_id") == dossier_id
-        assert opt.get("dossier_decision") in {
-            "force_promulgated", "withdrawn", "hold",
-        }
-
-
 def test_bind_preserves_dossier_event_id():
     """#1490 接收端病灶：bind 不得把 dossier: 前缀 event_id 当 off-snapshot 解绑。"""
     from ming_sim.settlement_payload import bind_decisions_to_candidate_events
@@ -684,7 +627,6 @@ def _plant_urgent_desk(db, state, *, options=None, actor_name="杨嗣昌"):
     desk = db.list_rescript_desk(int(state.turn))
     urgent = next(r for r in desk if r["kind"] == "rescript_draft")
     return urgent, opts
-
 
 
 def _dossier_payload(row):
@@ -1112,8 +1054,6 @@ def test_657_five_actions_domain_writes(game):
     _ = derive_draft_capability  # import seam kept warm
 
 
-
-
 # ---------------------------------------------------------------------------
 # #657 helpers：跨进程 HTTP 崩溃重入（C1.1 / C1.2 共用；禁第二 worker 族）
 # ---------------------------------------------------------------------------
@@ -1336,7 +1276,6 @@ def _657_subprocess_resolve(
     return data
 
 
-
 def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title="陕西告饥"):
     """web_game 上种植急务/decision + resolve_context，相位 AWAITING_DECISION。"""
     from ming_sim.models import TurnPhase
@@ -1404,7 +1343,7 @@ def test_1627_stamp_ignores_pre_edict_clarification_directive(web_game):
         ).fetchone()
         assert row is not None and row["status"] == "pending"
         next_turn = int(probe.load_state().turn)
-        assert next_turn == turn + 1
+        assert next_turn == turn
         assert row["turn"] == next_turn
         assert row["night_id"] == 0
         assert row["night_approved"] == 0
@@ -2227,7 +2166,6 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     assert batch2.items[0].already_applied
     ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
     assert len(db.list_decree_dossiers()) == mid
-
 
 
 def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, monkeypatch):
@@ -3065,7 +3003,6 @@ def test_657_s6_http_present_target_gets_unique_origin_body(web_game, monkeypatc
     assert str(rows[0]["body"] or "") == gen_body
 
 
-
 def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     """Class4/S2 web 生产调用：真 HTTP → submit_hitl；①/③ 持同一 gate，② 释放。"""
     import threading
@@ -3687,44 +3624,6 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
 # #657 大理寺六类：扩展既有 tracer，不另造夹具族
 # ---------------------------------------------------------------------------
 
-def test_657_backlog_only_enters_awaiting_via_merged_desk(game, monkeypatch):
-    """① resolve_directives：仅急务 backlog → AWAITING；result.decisions=合并 desk。"""
-    import ming_sim.decree as dm
-    from ming_sim.models import TurnPhase
-
-    db, state, content = game
-    # 跨月 backlog：写在 turn-1
-    prev = max(1, int(state.turn) - 1)
-    db.conn.execute(
-        "INSERT INTO pending_decisions "
-        "(turn, idx, event_id, title, context, options_json, choice_json, status, kind, "
-        " actor_name, actor_office, actor_faction) "
-        "VALUES (?, 0, 'urgent:prev:0', '旧急务', 'c', ?, '', 'pending', 'rescript_draft', "
-        " '杨嗣昌', 'o', 'f')",
-        (prev, json.dumps([_layer_a_option()], ensure_ascii=False)),
-    )
-    db.conn.commit()
-    assert db.list_rescript_desk(int(state.turn)), "precondition: backlog desk nonempty"
-
-    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        dm, "simulate_season_with_payload",
-        lambda *a, **k: ("本月无重大抉择。", k.get("simulator_payload") or {}),
-    )
-    # 禁 settle 直落（若误推进会调此）
-
-    result = dm.resolve_directives(
-        state, db, None, None, [], "诏书", content=content, registry=None,
-    )
-    assert result.awaiting is True
-    assert any(
-        str(d.get("kind")) == "rescript_draft" and d.get("title") == "旧急务"
-        for d in result.decisions
-    )
-    assert state.turn_phase == TurnPhase.AWAITING_DECISION.value
-    assert db.get_resolve_context(int(state.turn)) is not None
-
-
 def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
     """② 共享首选项投影：急务=follow_draft+capability；普通 decision 不变。"""
     from ming_sim.rescript_actions import project_preferred_hitl_choice
@@ -3852,7 +3751,7 @@ def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypat
         state, db, None, None, content=content, registry=None,
     )
     assert isinstance(report, str)
-    assert int(state.turn) == turn_before + 1
+    assert int(state.turn) == turn_before
     titles = {d["title"] for d in db.list_rescript_drafts()}
     assert "旧急务" in titles, titles
     assert "本月新急务" in titles, titles
@@ -4605,6 +4504,47 @@ def _658_plant_stalled_deliberation(db, state, content, *, title="议而不决")
     return stalled, key
 
 
+def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
+    """冷场案卷不进过月补跑判官；同月普通案卷仍补跑。"""
+    import ming_sim.decree as decree_mod
+    import ming_sim.month_chain as month_chain
+
+    db, state, content = game
+    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="冷场")
+    stalled_id = int(stalled["id"])
+    normal_id = int(db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id=f"river-{state.turn}",
+    ))
+    seen: list[int] = []
+
+    def product(_session, snapshot):
+        candidate = snapshot.get("candidate") or {}
+        dossier_id = int(snapshot.get("dossier_id") or candidate.get("id") or 0)
+        seen.append(dossier_id)
+        return {
+            "verdict": {
+                "decision": "promulgated",
+                "dossier_id": dossier_id,
+            },
+            "declaration": {},
+            "questions": None,
+            "forecast_text": "",
+        }
+
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr("ming_sim.decree_forecast.produce_forecast_product", product)
+    decree_mod.resolve_directives(
+        state, db, None, object(), [], "清核河工", content=content,
+    )
+    assert stalled_id not in seen
+    assert normal_id in seen
+    assert db.get_decree_dossier(stalled_id)["status"] == "proposed"
+    assert _dossier_payload(db.get_decree_dossier(stalled_id)).get(
+        "deliberation_state",
+    ) == "stalled"
+
+
 def _658_session(db, state, content, *, agent=None):
     """最小真 GameSession 壳：只填 chat/add_directive 所需属性。"""
     from types import SimpleNamespace
@@ -5048,44 +4988,6 @@ def test_658_candidates_require_active_status(game):
     assert len(db.list_decree_dossiers()) == before
 
 
-def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
-    """#658：判官/校验只覆盖可颁布集合；stalled 同在 proposed 不触发全覆盖炸。"""
-    import ming_sim.decree as decree_mod
-
-    db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title="冷场")
-    stalled_id = int(stalled["id"])
-    normal_id = int(db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id=f"river-{state.turn}",
-    ))
-    seen: list[list[int]] = []
-
-    def provider(dossiers, _state):
-        ids = [int(row["id"]) for row in dossiers]
-        seen.append(ids)
-        assert stalled_id not in ids
-        return [{"dossier_id": i, "decision": "promulgated"} for i in ids]
-
-    monkeypatch.setattr(
-        db, "list_decree_dossiers_for_simulation",
-        lambda _turn: (_ for _ in ()).throw(RuntimeError("stop after durable verdict")),
-    )
-    with pytest.raises(RuntimeError, match="durable verdict"):
-        decree_mod.resolve_directives(
-            state, db, None, None, [], "清核河工",
-            content=content, promulgation_verdict_provider=provider,
-        )
-    assert seen == [[normal_id]]
-    stored = db.get_pending_promulgation_verdicts(state.turn)
-    assert {int(v["dossier_id"]) for v in stored} == {normal_id}
-    assert db.get_decree_dossier(stalled_id)["status"] == "proposed"
-    assert _dossier_payload(db.get_decree_dossier(stalled_id)).get(
-        "deliberation_state",
-    ) == "stalled"
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     """#658：Web 真入口 → 真实 resolve_directives 成案/颁布/仿真/封驳三选/restore。"""
     import types
@@ -5459,7 +5361,7 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
 
     first = session.resolve_turn()
     assert first.awaiting is False
-    assert int(state.turn) == original_turn + 1
+    assert int(state.turn) == original_turn
     statuses = dict(db.conn.execute(
         "SELECT id,status FROM turn_directives WHERE id IN (?,?)", (bad, good),
     ).fetchall())

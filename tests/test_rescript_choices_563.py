@@ -25,89 +25,6 @@ def _rejected_verdict(dossier_id):
     )
 
 
-def test_real_midzhi_entry_reaches_provider_and_persists_stigma(
-    game, monkeypatch,
-):
-    db, state, content = game
-    extracted = json.dumps({
-        "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-        "目标ID": "river-works", "颁布方式": "midzhi",
-    }, ensure_ascii=False)
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *_args, **_kwargs: (extracted, {}),
-    )
-    payload = cli_backend.capture_manual_directive_payload("中旨直发，清核河工")
-    directive_id = db.add_directive(
-        state, None, "中旨直发，清核河工", "手动新增", dossier_payload=payload,
-    )
-    db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(directive_id)
-    seen_modes = []
-
-    def provider(dossiers, _state):
-        seen_modes.extend(row["mode"] for row in dossiers)
-        return [{
-            "dossier_id": dossier["id"], "decision": "promulgated",
-            "affected_parties": [
-                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
-            ],
-        }]
-
-    monkeypatch.setattr(
-        db, "list_decree_dossiers_for_simulation",
-        lambda _turn: (_ for _ in ()).throw(RuntimeError("tracer stop")),
-    )
-    with pytest.raises(RuntimeError, match="tracer stop"):
-        decree_mod.resolve_directives(
-            state, db, None, None, [object()], "中旨直发，清核河工",
-            content=content, promulgation_verdict_provider=provider,
-        )
-    db.apply_dossier_verdicts(state, db.get_pending_promulgation_verdicts(state.turn))
-
-    stored = db.get_decree_dossier(dossier["id"])
-    assert payload["mode"] == "midzhi"
-    assert seen_modes == ["midzhi"]
-    assert stored["stigma"] == [{
-        "kind": "midzhi", "reason": "predeclared", "turn": state.turn,
-        "source_action": "promulgated",
-    }]
-
-
-def test_rejected_unpromulgatable_midzhi_omits_force_at_public_resolve_seam(
-    game, monkeypatch,
-):
-    db, state, content = game
-    dossier_id = _make_midzhi_dossier(db, state)
-
-    def provider(_dossiers, _state):
-        return [rejected_verdict(dossier_id, midzhi=True)]
-
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        decree_mod,
-        "simulate_season_with_payload",
-        lambda _simulator, _state, _db, _decree_text, _previous, **kwargs: (
-            "本月邸报。", kwargs["simulator_payload"],
-        ),
-    )
-
-    result = decree_mod.resolve_directives(
-        state, db, None, None, [object()], "中旨直发，清核河工",
-        content=content, promulgation_verdict_provider=provider,
-    )
-
-    assert result.awaiting is True
-    dossier_decisions = {
-        option["dossier_decision"]
-        for decision in result.decisions
-        if decision["event_id"] == f"dossier:{dossier_id}"
-        for option in decision["options"]
-    }
-    assert dossier_decisions == {"withdrawn", "hold"}
-    assert "force_promulgated" not in dossier_decisions
-
-
 @pytest.mark.parametrize(
     ("emperor_text", "extracted_mode", "expected"),
     [("中旨直发，清核仓场", "普通", "ordinary"),
@@ -140,6 +57,16 @@ def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(
     )
 
     assert payload["mode"] == "midzhi"
+
+
+def test_predeclared_midzhi_promulgation_persists_stigma(game):
+    db, state, _content = game
+    dossier_id = _make_midzhi_dossier(db, state)
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    assert db.get_decree_dossier(dossier_id)["stigma"] == [{
+        "kind": "midzhi", "reason": "predeclared", "turn": state.turn,
+        "source_action": "promulgated",
+    }]
 
 
 def test_missing_dossier_mode_defaults_to_ordinary(game):

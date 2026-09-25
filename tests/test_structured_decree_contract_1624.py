@@ -355,7 +355,7 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     _post_issue_stream(
         tracer_client, expected_turn=turn_before, step="#1624 owner seal",
     )
-    assert game.state.turn == turn_before + 1
+    assert game.state.turn == turn_before
     dossiers = [dict(d) for d in game.db.list_decree_dossiers()]
     matched = [
         d for d in dossiers
@@ -447,7 +447,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
         step="#1790 beyond-fifteen issue/stream",
     )
     assert not body.get("awaiting_decision"), body
-    assert int(game.state.turn) == turn_before + 1
+    assert int(game.state.turn) == turn_before
 
     assert db.count_active_initiatives() >= 16
     matched = [

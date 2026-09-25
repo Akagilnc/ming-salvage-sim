@@ -1972,8 +1972,8 @@ def test_http_chat_stream_secret_landing_a_path_abandon_no_default(
             if hasattr(game, "refresh_turn"):
                 game.refresh_turn()
 
-        assert int(game.state.turn) == turn_before + 1, (
-            f"退朝须推进回合，got turn={game.state.turn} from {turn_before}"
+        assert int(game.state.turn) == turn_before, (
+            f"邸报写成前不得推进，got turn={game.state.turn} from {turn_before}"
         )
         # 本道密令无候选、无默认落库
         assert game.db.list_secret_orders() == []

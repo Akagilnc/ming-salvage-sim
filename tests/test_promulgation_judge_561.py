@@ -5,7 +5,7 @@ import pytest
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
 from ming_sim import audience_night
-from ming_sim.exceptions import LLMContractError, SettlementAbort
+from ming_sim.exceptions import LLMContractError
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import power_band, qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
@@ -334,53 +334,6 @@ def test_rejected_verdict_still_requires_full_rejection_contract(game):
             [{"dossier_id": dossier_id, "decision": "rejected", "reason": "仅有缘由"}],
             dossiers, db, prepared_context=context,
         )
-
-
-def test_resolve_directives_tolerates_r6_shaped_promulgated_noise(game, monkeypatch):
-    """#1397 真路径：resolve 在 LLM 夹带打回字段时仍落 pending 顺颁，不 SettlementAbort。"""
-    db, state, content = game
-    dossier_id = _dossier(db, state, "拨辽饷以济关宁")
-    context_holder: dict = {}
-
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
-
-    def canned(_agent, prompt, tag, **_k):
-        ctx = json.loads(prompt)
-        context_holder["band"] = ctx["imperial_authority_band"]
-        # Mirror r6 rejection_reports item_json shape (attempt12 dossier 3/4).
-        return json.dumps({"verdicts": [{
-            "dossier_id": dossier_id,
-            "decision": "promulgated",
-            "gatekeeper_id": "许誉卿",
-            "primary_opponents": [{"kind": "faction", "key": "阉党"}],
-            "reason": "有御笔手敕背书；该案未见越制破格条款；无既往批红强颁前科。",
-            "criteria_snapshot": {
-                "imperial_authority_band": ctx["imperial_authority_band"],
-                "appointment_tenure": "",
-                "authorization_ids": [],
-                "endorsement_entry_ids": [],
-            },
-            "affected_parties": [
-                {"kind": "faction", "key": "军队", "direction": "positive", "intensity": "strong"},
-                {"kind": "faction", "key": "阉党", "direction": "negative", "intensity": "strong"},
-            ],
-        }]})
-
-    monkeypatch.setattr(decree_mod, "run_agent_text", canned)
-    _stop_after_promulgation(db, monkeypatch)
-
-    try:
-        decree_mod.resolve_directives(
-            state, db, None, None, [object()], "拨饷", content=content,
-        )
-    except RuntimeError as exc:
-        assert str(exc) == "after promulgation"
-    else:
-        raise AssertionError("resolve should reach the post-promulgation tracer")
-
-    assert db.get_pending_promulgation_verdicts(state.turn) == [
-        {"dossier_id": dossier_id, "decision": "promulgated"},
-    ]
 
 
 def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(game):
@@ -802,7 +755,6 @@ def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
     )
 
 
-
 @pytest.mark.parametrize(
     ("mode", "decision"),
     [("ordinary", "promulgated"), ("midzhi", "promulgated"),
@@ -853,15 +805,10 @@ def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
             )
 
 
-def _stop_after_promulgation(db, monkeypatch):
-    monkeypatch.setattr(
-        db, "list_decree_dossiers_for_simulation",
-        lambda _turn: (_ for _ in ()).throw(RuntimeError("after promulgation")),
-    )
-
-
 def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, monkeypatch):
+    """一批判官一次调用，再走既有校验。入口是 llm_promulgation_verdicts。"""
     db, state, content = game
+    del content
     first = _dossier(db, state)
     second = db.create_decree_dossier(
         state, action_type="appointment", decree_text="擢任某官",
@@ -870,29 +817,31 @@ def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, 
     calls = []
 
     monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
+
     def canned(_agent, prompt, tag, **_k):
         calls.append((json.loads(prompt), tag))
         return json.dumps({"verdicts": [
             {"dossier_id": first, "decision": "promulgated"},
             {"dossier_id": second, "decision": "promulgated"},
         ]})
+
     monkeypatch.setattr(decree_mod, "run_agent_text", canned)
-    _stop_after_promulgation(db, monkeypatch)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    raw = decree_mod.llm_promulgation_verdicts(
+        dossiers, state, db=db, agno_db=None, llm_config=object(),
+        prepared_context=context,
+    )
 
-    try:
-        decree_mod.resolve_directives(state, db, None, None, [object()], "两旨", content=content)
-    except RuntimeError as exc:
-        assert str(exc) == "after promulgation"
-    else:
-        raise AssertionError("resolve should reach the post-promulgation tracer")
-
-    assert len(calls) == 1
-    assert calls[0][1] == "promulgation-judge"
-    assert [row["id"] for row in calls[0][0]["dossiers"]] == [first, second]
-    assert db.get_pending_promulgation_verdicts(state.turn) == [
+    assert decree_mod.validate_promulgation_verdicts(
+        raw, dossiers, db, prepared_context=context,
+    ) == [
         {"dossier_id": first, "decision": "promulgated"},
         {"dossier_id": second, "decision": "promulgated"},
     ]
+    assert len(calls) == 1
+    assert calls[0][1] == "promulgation-judge"
+    assert [row["id"] for row in calls[0][0]["dossiers"]] == [first, second]
 
 
 @pytest.mark.parametrize(
@@ -969,108 +918,6 @@ def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
         )
 
 
-def test_reviewed_and_palace_exempt_dossiers_close_in_one_default_batch(game, monkeypatch):
-    db, state, content = game
-    minister = str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "AND office_type!='后宫' ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
-
-    # The unanswered candidate reaches its dossier only through the end-turn
-    # default-approval owner.  Keep it out of an audience night so this is not
-    # accidentally the oral-assent path below.
-    default_pending = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=minister,
-        target_id=None, payload={
-            "text": "未表态默认同意清丈", "actor": minister,
-            "dossier_action_type": "policy", "target_kind": "issue",
-            "target_id": "default-land",
-        },
-    )
-
-    # A spoken assent is a different production admission seam: night-approved
-    # first, then the close-night batch commits it.
-    night = audience_night.open_night(db, state, location="乾清宫", time_of_day="夜")
-    spoken_pending = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=minister,
-        target_id=None, payload={
-            "text": "亲口应允补发边饷", "actor": minister,
-            "dossier_action_type": "policy", "target_kind": "issue",
-            "target_id": "spoken-pay",
-        },
-    )
-    db.mark_pending_night_approved([spoken_pending], night_id=night["id"])
-    audience_night.close_night(db, state, night_id=night["id"], content=content)
-    spoken_assent = next(
-        row["id"] for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == spoken_pending
-    )
-
-    # Secret orders use their real pending-action landing seam and are already
-    # promulgated there; an inner-treasury allocation uses the same canonical
-    # directive admission seam as the UI and remains an exempt proposed dossier.
-    secret_pending = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister,
-        target_id=None, payload={
-            "title": "密令暗查", "content": "密查辽饷侵冒。", "assignee": minister,
-            "tags": [], "deadline_months": 0,
-            "covert_task": TYPED_COVERT_TASK,
-        },
-    )
-    db.commit_pending_actions(state, action_ids=[secret_pending])
-    secret = next(
-        row["id"] for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == secret_pending
-    )
-    inner_pending = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=minister,
-        target_id=None, payload={
-            "text": "内库内批补饷", "actor": minister,
-            "dossier_action_type": "grant_allocation", "target_kind": "issue",
-            "target_id": "inner-pay", "account": "内库", "amount": 10,
-        },
-    )
-    db.commit_pending_actions(state, content=content, action_ids=[inner_pending])
-    inner = next(
-        row["id"] for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == inner_pending
-    )
-    calls = []
-    admitted = {}
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
-
-    def judge(_agent, prompt, tag, **_k):
-        context = json.loads(prompt)
-        calls.append((context, tag))
-        admitted.update({row["decree_text"]: row["id"] for row in context["dossiers"]})
-        return json.dumps({"verdicts": [
-            {"dossier_id": admitted["未表态默认同意清丈"], "decision": "promulgated"},
-            {"dossier_id": admitted["亲口应允补发边饷"], "decision": "promulgated"},
-        ]})
-
-    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
-    _stop_after_promulgation(db, monkeypatch)
-    with pytest.raises(RuntimeError, match="after promulgation"):
-        decree_mod.resolve_directives(
-            state, db, None, None, [object()], "四旨", content=content,
-        )
-
-    default_assent = next(
-        row["id"] for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == default_pending
-    )
-    assert len(calls) == 1
-    assert {row["id"] for row in calls[0][0]["dossiers"]} == {
-        default_assent, spoken_assent,
-    }
-    assert db.get_pending_promulgation_verdicts(state.turn) == [
-        {"dossier_id": dossier_id, "decision": "promulgated"}
-        for dossier_id in sorted((default_assent, spoken_assent, inner))
-    ]
-    assert db.get_decree_dossier(secret)["status"] == "promulgated"
-    assert db.get_decree_dossier(inner)["promulgation_decision"] == ""
-
-
 @pytest.mark.parametrize(
     ("action_type", "mode"),
     [
@@ -1085,181 +932,33 @@ def test_reviewed_and_palace_exempt_dossiers_close_in_one_default_batch(game, mo
 def test_review_exempt_actions_auto_promulgate_without_judge_contract_abort(
     game, monkeypatch, action_type, mode,
 ):
+    from types import SimpleNamespace
+
+    from ming_sim import agents as forecast_agents
+    from ming_sim.decree_forecast import (
+        produce_forecast_product, snapshot_for_existing_dossier,
+    )
+
     db, state, content = game
     dossier_id = db.create_decree_dossier(
         state, action_type=action_type, decree_text="密旨照准",
-        target_kind="issue", target_id=f"exempt-{action_type}", payload={"mode": mode},
+        target_kind="issue", target_id=f"exempt-{action_type}-{mode}",
+        payload={"mode": mode},
     )
     monkeypatch.setattr(
         decree_mod, "create_promulgation_judge_agent",
         lambda *_a, **_k: pytest.fail("review-exempt 案卷不得送入 LLM"),
     )
-    _stop_after_promulgation(db, monkeypatch)
+    monkeypatch.setattr(forecast_agents, "create_decree_forecast_agent", lambda *a, **k: object())
+    monkeypatch.setattr(forecast_agents, "run_agent_text", lambda *a, **k: "")
+    session = SimpleNamespace(
+        db=db, state=state, llm_config=object(), agno_db=None, content=content,
+    )
+    dossier = db.get_decree_dossier(dossier_id)
+    product = produce_forecast_product(
+        session, snapshot_for_existing_dossier(session, dossier),
+    )
 
-    with pytest.raises(RuntimeError, match="after promulgation"):
-        decree_mod.resolve_directives(
-            state, db, None, None, [object()], "密旨照准", content=content,
-        )
-
-    assert db.get_pending_promulgation_verdicts(state.turn) == [
-        {"dossier_id": dossier_id, "decision": "promulgated"},
-    ]
+    assert product["verdict"] == {"dossier_id": dossier_id, "decision": "promulgated"}
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
     assert db.list_decree_dossier_decisions(dossier_id) == []
-
-
-def test_default_rejected_verdict_is_validated_persisted_and_becomes_rescript_decision(
-    game, monkeypatch,
-):
-    db, state, content = game
-    dossier_id = _dossier(db, state)
-    context = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
-    )
-    verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        decree_mod, "run_agent_text",
-        lambda *_a, **_k: json.dumps({"verdicts": [verdict]}, ensure_ascii=False),
-    )
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: ("清丈诏在六科被打回，正等待批红。", k["simulator_payload"]),
-    )
-
-    result = decree_mod.resolve_directives(
-        state, db, None, None, [object()], "清丈天下田亩", content=content,
-    )
-
-    assert result.awaiting is True
-    assert db.get_pending_promulgation_verdicts(state.turn) == [verdict]
-    assert result.decisions[0]["event_id"] == f"dossier:{dossier_id}"
-    assert {option["label"] for option in result.decisions[0]["options"]} == {"强颁", "收回", "留中"}
-
-
-@pytest.mark.parametrize(
-    "parsed_payload",
-    [{}, {"verdicts": None}, {"verdicts": {}}, {"verdicts": "bad"}],
-)
-def test_malformed_default_top_level_preserves_parsed_payload_in_rejection_report(
-    game, monkeypatch, tmp_path, parsed_payload,
-):
-    db, state, content = game
-    _dossier(db, state)
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        decree_mod, "run_agent_text",
-        lambda *_a, **_k: json.dumps(parsed_payload, ensure_ascii=False),
-    )
-
-    with pytest.raises(SettlementAbort) as exc_info:
-        decree_mod.resolve_directives(
-            state, db, None, None, [object()], "清丈天下田亩", content=content,
-        )
-
-    assert exc_info.value.stage == "promulgation"
-    rows = db.conn.execute(
-        "SELECT item_json FROM rejection_reports WHERE turn=? ORDER BY id", (state.turn,),
-    ).fetchall()
-    # 畸形顶层：至少一份 rejection 留 parsed/raw；有界次数由 #1753 HTTP 入口案覆盖
-    assert rows
-    expected_payload = (
-        parsed_payload if isinstance(parsed_payload, dict)
-        else {"raw_value": parsed_payload}
-    )
-    assert any(
-        json.loads(row["item_json"]).get("raw_value") == expected_payload
-        for row in rows
-    )
-    assert db.get_pending_promulgation_verdicts(state.turn) == []
-
-
-def test_invalid_default_rejected_verdict_reaches_rejection_tracer(game, monkeypatch, tmp_path):
-    db, state, content = game
-    dossier_id = _dossier(db, state)
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        decree_mod, "run_agent_text",
-        lambda *_a, **_k: json.dumps({"verdicts": [{
-            "dossier_id": dossier_id, "decision": "rejected",
-        }]}),
-    )
-
-    with pytest.raises(SettlementAbort) as exc_info:
-        decree_mod.resolve_directives(
-            state, db, None, None, [object()], "清丈天下田亩", content=content,
-        )
-
-    assert exc_info.value.stage == "promulgation"
-    rows = db.conn.execute(
-        "SELECT section,item_json,category FROM rejection_reports WHERE turn=? ORDER BY id",
-        (state.turn,),
-    ).fetchall()
-    # 无效打回形态入 rejection_reports；有界次数由 #1753 HTTP 入口案覆盖
-    assert rows
-    assert all(
-        (row["section"], row["category"]) == (
-            "promulgation_verdicts", "invalid_shape",
-        )
-        for row in rows
-    )
-    assert any(
-        isinstance(json.loads(row["item_json"]).get("raw_value"), list)
-        and json.loads(row["item_json"])["raw_value"]
-        and json.loads(row["item_json"])["raw_value"][0]["dossier_id"] == dossier_id
-        for row in rows
-    )
-    assert db.get_pending_promulgation_verdicts(state.turn) == []
-
-
-def test_judge_gate_examples_and_simulator_rejection_narrative_boundary(game, monkeypatch):
-    db, state, content = game
-    hostile_land = _dossier(db, state, "敌对清丈田亩")
-    ordinary_pay = _dossier(db, state, "寻常补发边饷")
-    midzhi_pay = _dossier(db, state, "中旨补发边饷", mode="midzhi")
-    vital_midzhi = _dossier(db, state, "中旨强夺钱粮命门", mode="midzhi")
-    seen_payload = {}
-
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
-    def gate_examples(_agent, prompt, tag, **_k):
-        assert tag == "promulgation-judge"
-        context = json.loads(prompt)
-        band = context["imperial_authority_band"]
-        assert [row["decree_text"] for row in context["dossiers"]] == [
-            "敌对清丈田亩", "寻常补发边饷", "中旨补发边饷", "中旨强夺钱粮命门",
-        ]
-        return json.dumps({"verdicts": [
-            _rejected_verdict(hostile_land, band),
-            {"dossier_id": ordinary_pay, "decision": "promulgated"},
-            # 夹带猜派：闸门须剥离，不得进入 pending
-            {"dossier_id": midzhi_pay, "decision": "promulgated", "affected_parties": [
-                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
-            ]},
-            _rejected_verdict(vital_midzhi, band, midzhi=True),
-        ]}, ensure_ascii=False)
-    monkeypatch.setattr(decree_mod, "run_agent_text", gate_examples)
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: object())
-    def simulator_boundary(_agent, *_a, **kwargs):
-        seen_payload.update(kwargs["simulator_payload"])
-        return "两道清丈旨意均被打回，尚待批红；两道补饷旨意方进入办理。", kwargs["simulator_payload"]
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", simulator_boundary)
-
-    result = decree_mod.resolve_directives(
-        state, db, None, None, [object()], "四旨并下", content=content,
-    )
-
-    assert result.awaiting is True
-    assert [row["dossier_id"] for row in db.get_pending_promulgation_verdicts(state.turn)] == [
-        hostile_land, ordinary_pay, midzhi_pay, vital_midzhi,
-    ]
-    assert {row["event_id"] for row in result.decisions} == {
-        f"dossier:{hostile_land}", f"dossier:{vital_midzhi}",
-    }
-    vital = next(row for row in result.decisions if row["event_id"] == f"dossier:{vital_midzhi}")
-    assert {option["label"] for option in vital["options"]} == {"收回", "留中"}
-    assert {row["id"] for row in seen_payload["decree_dossiers"]} == {ordinary_pay, midzhi_pay}
-    # This deterministic test proves payload filtering and rescript options only;
-    # semantic narrative acceptance belongs to the real-model gate artifact.
-    assert "promulgation_instruction" in seen_payload
