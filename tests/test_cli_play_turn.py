@@ -764,4 +764,3 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
     assert int(session.state.turn) == turn_before + 1
     assert session.current_phase() == TurnPhase.SUMMONING
     assert db.load_state().turn_phase == TurnPhase.SUMMONING.value
-
