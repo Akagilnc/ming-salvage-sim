@@ -578,3 +578,126 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     assert int(state.metrics["国库"]) == int(db.conn.execute(
         "SELECT balance FROM economy_accounts WHERE account='国库'",
     ).fetchone()["balance"])
+
+
+def _month_chain_of(db, turn):
+    return (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+        "month_chain", {},
+    )
+
+
+def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
+    game, monkeypatch, tmp_path,
+):
+    """步骤 2 落账代码异常从过月入口停住：错误包与失败标记在，重试只落一次。"""
+    import ming_sim.declaration_dispatch as declaration_dispatch
+    import ming_sim.month_chain as month_chain
+    import ming_sim.month_translate as month_translate
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    minister = next(iter(content.characters.values())).name
+    state.metrics["国库"] = 500_000
+    db.save_state(state)
+    ref = _stage_settled_ready_edict(db, state, minister, delta=-6)
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}},
+    )
+    real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
+    calls = {"n": 0}
+
+    def settle_once(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("edict settle crashed")
+        return real_settle(*args, **kwargs)
+
+    monkeypatch.setattr(
+        declaration_dispatch, "settle_staged_declarations_in_decree_order", settle_once,
+    )
+    session = make_light_session(db, state, content)
+    session.llm_config = SimpleNamespace(model="m", advanced_model="m")
+
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+
+    assert int(state.turn) == turn
+    assert state.turn_phase == TurnPhase.SETTLING.value
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert "edict settle crashed" in str(caught.value.__cause__)
+    assert caught.value.error_pack_path
+    assert not db.staged_declarations.is_settled(ref)
+    assert _ningyuan_ledger_rows(db) == []
+    failure = _month_chain_of(db, turn).get("call_failure") or {}
+    assert failure.get("kind") == "code_exception"
+    assert failure.get("error_pack_path") == caught.value.error_pack_path
+
+    session.resolve_turn(allow_empty_decree=True)
+    assert db.staged_declarations.is_settled(ref)
+    rows = _ningyuan_ledger_rows(db)
+    assert len(rows) == 1 and int(rows[0]["delta"]) == -6
+    assert calls["n"] == 2
+
+
+def test_error_pack_failure_keeps_original_fault_and_retry_phase(
+    game, monkeypatch, tmp_path,
+):
+    """错误包写失败不冒充已有包，原故障与可重试相位仍留下。"""
+    import ming_sim.declaration_dispatch as declaration_dispatch
+    import ming_sim.error_pack as error_pack
+    import ming_sim.month_chain as month_chain
+    import ming_sim.month_translate as month_translate
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    minister = next(iter(content.characters.values())).name
+    state.metrics["国库"] = 500_000
+    db.save_state(state)
+    ref = _stage_settled_ready_edict(db, state, minister, delta=-6)
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}},
+    )
+    real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
+    calls = {"n": 0}
+
+    def settle_once(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("edict settle crashed")
+        return real_settle(*args, **kwargs)
+
+    monkeypatch.setattr(
+        declaration_dispatch, "settle_staged_declarations_in_decree_order", settle_once,
+    )
+
+    def unwritable(*_args, **_kwargs):
+        raise OSError("error pack unwritable")
+
+    monkeypatch.setattr(error_pack, "write_error_pack", unwritable)
+    session = make_light_session(db, state, content)
+    session.llm_config = SimpleNamespace(model="m", advanced_model="m")
+
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+
+    assert caught.value.error_pack_path is None
+    assert caught.value.message == "edict settle crashed"
+    assert isinstance(caught.value.__cause__, OSError)
+    assert not db.staged_declarations.is_settled(ref)
+    assert _ningyuan_ledger_rows(db) == []
+    failure = _month_chain_of(db, turn).get("call_failure") or {}
+    assert failure.get("kind") == "code_exception"
+    assert "edict settle crashed" in str(failure.get("message") or "")
+    assert not failure.get("error_pack_path")
+
+    session.resolve_turn(allow_empty_decree=True)
+    assert db.staged_declarations.is_settled(ref)
+    rows = _ningyuan_ledger_rows(db)
+    assert len(rows) == 1 and int(rows[0]["delta"]) == -6
+    assert calls["n"] == 2

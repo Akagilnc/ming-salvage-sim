@@ -141,6 +141,8 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
 
 
 def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(game, monkeypatch):
+    from ming_sim.exceptions import SettlementAbort
+
     db, state, content = game
     minister = next(iter(content.characters.values())).name
     affair = db.affairs.open(
@@ -191,8 +193,9 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     session._write_gate = threading.Lock()
     try:
         session.resolve_turn(allow_empty_decree=True)
-    except RuntimeError as exc:
-        assert "过月中断" in str(exc)
+    except SettlementAbort as exc:
+        assert isinstance(exc.__cause__, RuntimeError)
+        assert "过月中断" in str(exc.__cause__)
     assert db.staged_declarations.is_settled(first_ref)
     assert not db.staged_declarations.is_settled(second_ref)
     first_rows = db.conn.execute(

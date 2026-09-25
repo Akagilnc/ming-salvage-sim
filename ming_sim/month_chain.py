@@ -68,10 +68,46 @@ def run_player_month_chain(
 ) -> Any:
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
     del on_event, before_turn
+    turn = int(state.turn)
+    chain = _load_chain(db, turn)
+    try:
+        return _run_loaded_month_chain(
+            state, db, agno_db, llm_config, chain,
+            decree_text=decree_text, content=content, registry=registry,
+            source=source, cheat_directive=cheat_directive,
+        )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+        if isinstance(exc, SettlementAbort):
+            raise
+        _abort_month_call(
+            db, state, chain, decree_text=decree_text, source=source,
+            step=str(getattr(exc, "stage", None) or "month_chain"),
+            exc=exc,
+            kind="model_exhausted" if isinstance(exc, LLMUnavailable) else "code_exception",
+        )
+    raise AssertionError("month chain abort must raise")
+
+
+def _run_loaded_month_chain(
+    state: Any,
+    db: Any,
+    agno_db: Any,
+    llm_config: Any,
+    chain: Dict[str, Any],
+    *,
+    decree_text: str,
+    content: Any,
+    registry: Any,
+    source: Provenance,
+    cheat_directive: str,
+) -> Any:
+    """已装入的月链。代码异常由入口收成同一条 call_failure，不在这里另做恢复。"""
     from ming_sim.decree import ResolveResult
 
     turn = int(state.turn)
-    chain = _load_chain(db, turn)
     if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
         chain["cheat_directive"] = str(cheat_directive).strip()
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
@@ -80,6 +116,7 @@ def run_player_month_chain(
         db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
     )
     _run_opening_levy(db, chain, turn, decree_text, source)
+
     def persist_declaration_outcome(outcome: Dict[str, object]) -> None:
         chain["declaration_outcome"] = outcome
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
@@ -187,22 +224,33 @@ def _abort_month_call(
         committed["translate_exhaust_stops"] = stops
         escape_armed = stops >= 2
     original = str(getattr(exc, "message", None) or exc)
-    pack_path = write_error_pack(
-        db, state, exc=exc, extracted=None, resolve_ctx=None,
-    )
+    pack_path = ""
+    pack_exc: Optional[BaseException] = None
+    try:
+        pack_path = write_error_pack(
+            db, state, exc=exc, extracted=None, resolve_ctx=None,
+        )
+    except Exception as caught_pack:
+        # 写包失败不得顶替原故障，也不得挡住已提交相位上的失败标记。
+        pack_exc = caught_pack
     failure: Dict[str, Any] = {
         "kind": kind,
         "step": step,
         "message": original,
-        "error_pack_path": pack_path,
         "escape_armed": escape_armed,
     }
+    if pack_path:
+        failure["error_pack_path"] = pack_path
     if decree_ref:
         failure["decree_ref"] = decree_ref
     committed["call_failure"] = failure
     chain.clear()
     chain.update(committed)
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+    if pack_exc is not None:
+        raise SettlementAbort(
+            original, turn=turn, stage=step, error_pack_path=None,
+        ) from pack_exc
     abort_message = (
         settlement_abort_message(pack_path) if kind == "code_exception" else original
     )
