@@ -59,6 +59,9 @@ def continue_world_after_answers(
         chain["world_questions"] = []
         _save_chain(db, turn, chain, source=source)
         return chain.get("declaration_outcome")
+    if session.llm_config is None:
+        from ming_sim.exceptions import LLMUnavailable
+        raise LLMUnavailable("世界段续推缺少模型配置", stage="world-segment-continue")
     text = _run_world_continuation_text(session, chain, answers)
     outcome = None
 
@@ -96,18 +99,16 @@ def continue_decree_after_answers(
     同一 decree_ref 问前声明可能已 settled，续推声明直接分派，不另造平行暂存身份。
     幂等：questions 已清则视为已续，同回合重入零新增效果。
     消费事实（清问）与落账同事务——先跑续推 LLM，失败保留 questions 可重试；
-    有声明则 clear_questions 走 dispatch_declaration 的 alongside（ADR 0157）。
+    有声明则 clear_questions 走既有段分派的 alongside（ADR 0157）。
     """
-    from ming_sim.declaration_dispatch import dispatch_declaration
-    from ming_sim.month_translate import translate_month_segment
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.month_translate import dispatch_month_segment
 
     db, state = session.db, session.state
     if not db.staged_declarations.questions_for(decree_ref):
         return
     if session.llm_config is None:
-        # 无模型可续：视作无问后后果的终态，清问以免案头永挂。
-        db.staged_declarations.clear_questions(decree_ref)
-        return
+        raise LLMUnavailable("旨意续推缺少模型配置", stage="decree-forecast-continue")
     dossier = _dossier_for_decree_ref(db, decree_ref)
     if dossier is None:
         return
@@ -118,21 +119,16 @@ def continue_decree_after_answers(
         db.staged_declarations.clear_questions(decree_ref)
         return
     payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
-    declaration = translate_month_segment(
-        segment=prefix,
-        target_grounding="",
-        decree_payload=payload if isinstance(payload, dict) else {},
-        llm_config=session.llm_config,
-    ) or {}
-    if not declaration:
-        db.staged_declarations.clear_questions(decree_ref)
-        return
 
     def consume(_result: Any) -> None:
         db.staged_declarations.clear_questions(decree_ref)
 
-    dispatch_declaration(
-        db, state, declaration, source=source, alongside=consume,
+    dispatch_month_segment(
+        db, state, segment=prefix,
+        decree_payload=payload if isinstance(payload, dict) else {},
+        llm_config=session.llm_config,
+        source=source,
+        alongside=consume,
     )
 
 
@@ -142,11 +138,13 @@ def _run_decree_continuation_text(
     import json
 
     from ming_sim.agents import create_decree_forecast_agent, run_agent_text
+    from ming_sim.decree_forecast import decree_ref_for_dossier
     from ming_sim.llm_transport import audience_transport_policy
     from ming_sim import decree as decree_mod
     from ming_sim import simulation
 
     db, state = session.db, session.state
+    decree_ref = decree_ref_for_dossier(db, dossier)
     visible = dict(dossier)
     visible["promulgation_decision"] = "promulgated"
     projected = decree_mod.project_dossiers_for_simulator([visible], db, state)
@@ -160,6 +158,8 @@ def _run_decree_continuation_text(
         agent,
         json.dumps({
             "instruction": "皇帝已批红答复本旨请旨。只续写问后后果，勿重写问前已落之事。",
+            "prior_forecast_text": db.staged_declarations.forecast_text_for(decree_ref),
+            "questions": db.staged_declarations.questions_for(decree_ref),
             "answers": answers,
         }, ensure_ascii=False),
         tag="decree-forecast-continue",
@@ -479,12 +479,7 @@ def _materialize_rescript_desk(
     from ming_sim.decree import _rescript_decisions
 
     open_items = _open_rescript_items(db, state, chain)
-    if not (
-        open_items["triad"]
-        or open_items["decree_questions"]
-        or open_items["world_questions"]
-    ):
-        return None
+    turn = int(state.turn)
     decisions: List[Dict[str, object]] = []
     if open_items["triad"]:
         verdicts = []
@@ -514,17 +509,18 @@ def _materialize_rescript_desk(
             decisions.append(_question_as_decision(
                 question, event_id=f"{_DECREE_QUESTION_PREFIX}{ref}:{idx}",
             ))
-    turn = int(state.turn)
     for idx, question in enumerate(open_items["world_questions"]):
         decisions.append(_question_as_decision(
             question, event_id=f"{_WORLD_QUESTION_PREFIX}{turn}:{idx}",
         ))
-    if not decisions:
+    if decisions:
+        db.save_pending_decisions(turn, decisions)
+    desk = db.list_rescript_desk(turn)
+    if not desk:
         return None
-    db.save_pending_decisions(turn, decisions)
     chain["stage"] = "rescript"
     _save_chain(db, turn, chain, source=Provenance.system_simulation)
-    return db.list_rescript_desk(turn)
+    return desk
 
 
 def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict[str, object]:
@@ -572,6 +568,7 @@ def _consume_rescript_answers(
             "label": str(choice.get("label") or "").strip(),
             "hint": str(choice.get("hint") or "").strip(),
             "note": str(choice.get("note") or "").strip(),
+            "context": str(row.get("context") or "").strip(),
             "event_id": str(row.get("event_id") or ""),
             "title": str(row.get("title") or ""),
         }
@@ -641,7 +638,8 @@ def _run_world_continuation_text(
     session: Any, chain: Dict[str, Any], answers: List[Dict[str, object]],
 ) -> str:
     if session.llm_config is None:
-        return ""
+        from ming_sim.exceptions import LLMUnavailable
+        raise LLMUnavailable("世界段续推缺少模型配置", stage="world-segment-continue")
     from ming_sim.agents import create_world_segment_agent, run_agent_text
     from ming_sim.llm_transport import audience_transport_policy
     from ming_sim.materials import prepare_world_materials, release_material_tree

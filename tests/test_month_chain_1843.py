@@ -226,7 +226,11 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
+    session.llm_config = object()
     session._write_gate = threading.Lock()
+    monkeypatch.setattr(
+        month_chain, "_run_decree_continuation_text", lambda *a, **k: "",
+    )
     held = session.resolve_turn(allow_empty_decree=True)
     assert held.stage == "rescript"
     assert held.awaiting is True

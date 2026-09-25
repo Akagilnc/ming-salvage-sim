@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 import threading
 
-import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
+from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import TurnPhase
 from tests.settlement_seam_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
@@ -327,13 +327,11 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
     def fake_decree_text(session, dossier, answers):
         return "加赈落实，仓廪出十万。"
 
-    real_dispatch = declaration_dispatch.dispatch_declaration
+    real_dispatch = month_translate.dispatch_declaration
 
-    def spy_dispatch(db_, state_, declaration, *, source, alongside=None):
+    def spy_dispatch(db_, state_, declaration, **kwargs):
         dispatch_count.append(dict(declaration) if isinstance(declaration, dict) else declaration)
-        return real_dispatch(
-            db_, state_, declaration, source=source, alongside=alongside,
-        )
+        return real_dispatch(db_, state_, declaration, **kwargs)
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
@@ -345,7 +343,7 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
             "category": "加赈", "reason": "批红后续推",
         }]}},
     )
-    monkeypatch.setattr(declaration_dispatch, "dispatch_declaration", spy_dispatch)
+    monkeypatch.setattr(month_translate, "dispatch_declaration", spy_dispatch)
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -409,13 +407,11 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
             raise RuntimeError("模型调用耗尽")
         return "加赈落实，仓廪出十万。"
 
-    real_dispatch = declaration_dispatch.dispatch_declaration
+    real_dispatch = month_translate.dispatch_declaration
 
-    def spy_dispatch(db_, state_, declaration, *, source, alongside=None):
+    def spy_dispatch(db_, state_, declaration, **kwargs):
         dispatch_count.append(1)
-        return real_dispatch(
-            db_, state_, declaration, source=source, alongside=alongside,
-        )
+        return real_dispatch(db_, state_, declaration, **kwargs)
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
@@ -427,7 +423,7 @@ def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypa
             "category": "加赈", "reason": "批红后续推",
         }]}},
     )
-    monkeypatch.setattr(declaration_dispatch, "dispatch_declaration", spy_dispatch)
+    monkeypatch.setattr(month_translate, "dispatch_declaration", spy_dispatch)
 
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -498,3 +494,241 @@ def test_decree_question_and_world_question_share_one_desk(game, monkeypatch):
     assert result.awaiting is True
     titles = {row["title"] for row in session.pending_decisions()}
     assert titles == {"是否加赈", "是否增援宁远"}
+
+
+def _hitl_payload(desk_row):
+    choice = desk_row["options"][0]
+    return [{
+        "decision_key": desk_row["decision_key"],
+        "label": choice["label"],
+        "hint": choice.get("hint") or "",
+    }]
+
+
+def test_missing_model_keeps_decree_question_until_retry(game, monkeypatch):
+    """缺模型不得清问；原批红入口重试后才续推。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="缺模型续推", origin="旨意", year=state.year, period=state.period,
+        turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(
+        db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id,
+    )
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        (json.dumps([{
+            "title": "是否加赈",
+            "context": "灾民待哺",
+            "options": [
+                {"label": "准", "hint": "出仓"},
+                {"label": "驳", "hint": "缓"},
+            ],
+        }], ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+    session = make_light_session(db, state, content)
+    session.llm_config = None
+    session._write_gate = threading.Lock()
+    session.resolve_turn(allow_empty_decree=True)
+    desk_row = session.pending_decisions()[0]
+    payload = _hitl_payload(desk_row)
+
+    try:
+        session.submit_hitl_choices(payload, write_gate=session._write_gate)
+        raised = None
+    except LLMUnavailable as exc:
+        raised = exc
+    assert raised is not None
+    assert db.staged_declarations.questions_for(ref)
+    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
+
+    calls = []
+
+    def continuation(session_, dossier, answers):
+        calls.append(answers)
+        return "问后无新账。"
+
+    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", continuation)
+    session.llm_config = object()
+    session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    assert calls
+    assert not db.staged_declarations.questions_for(ref)
+    assert session.state.turn_phase == TurnPhase.SETTLING.value
+
+
+def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
+    """世界段缺模型不得记 world_continued；重试才从问处续推。"""
+    db, state, content = game
+    closed_turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+    )
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+    session = make_light_session(db, state, content)
+    session.llm_config = None
+    session._write_gate = threading.Lock()
+    session.resolve_turn(allow_empty_decree=True)
+    desk_row = session.pending_decisions()[0]
+    payload = _hitl_payload(desk_row)
+
+    try:
+        session.submit_hitl_choices(payload, write_gate=session._write_gate)
+        raised = None
+    except LLMUnavailable as exc:
+        raised = exc
+    assert raised is not None
+    chain = month_chain._load_chain(db, closed_turn)
+    assert chain.get("world_continued") is not True
+    assert chain.get("world_questions")
+    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
+
+    monkeypatch.setattr(
+        month_chain, "_run_world_continuation_text",
+        lambda *a, **k: "准调关宁，关宁增戍。",
+    )
+    session.llm_config = object()
+    session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    chain = month_chain._load_chain(db, closed_turn)
+    assert chain.get("world_continued") is True
+    assert chain.get("world_questions") in (None, [], ())
+
+
+def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
+    """本月零请旨时，既有跨月急务仍走同一案头，不得直接交邸报。"""
+    db, state, content = game
+    closed_turn = int(state.turn)
+    prior = closed_turn - 1
+    db.conn.execute(
+        "INSERT INTO pending_decisions "
+        "(turn, idx, event_id, title, context, options_json, choice_json, "
+        " status, kind, actor_name, actor_office, actor_faction, "
+        " revision_round, prior_options_json) "
+        "VALUES (?, 0, 'urgent:old:0', '旧急务甲', '跨月待批', ?, '', "
+        " 'pending', 'rescript_draft', '首辅', '内阁首辅', '东林', 0, '[]')",
+        (
+            prior,
+            json.dumps([
+                {"label": "发帑", "hint": "饥民"},
+                {"label": "留中", "hint": "待查"},
+            ], ensure_ascii=False),
+        ),
+    )
+    db.conn.commit()
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.awaiting is True
+    assert result.stage == "rescript"
+    assert result.advanced is False
+    assert int(state.turn) == closed_turn
+    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
+    titles = [row["title"] for row in session.pending_decisions()]
+    assert titles == ["旧急务甲"]
+    assert session.pending_decisions()[0]["kind"] == "rescript_draft"
+
+
+def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkeypatch):
+    """问后续推读已存问前段与请旨语境，并以冻结引用落下 affair 来源效果。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="问后落账", origin="旨意", year=state.year, period=state.period,
+        turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(
+        db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id,
+    )
+    question_context = "灾民待哺于关中，短选项不足以自明"
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        (json.dumps([{
+            "title": "是否加赈",
+            "context": question_context,
+            "options": [
+                {"label": "准", "hint": "出仓"},
+                {"label": "驳", "hint": "缓"},
+            ],
+        }], ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+    captured = {}
+
+    def fake_agent(llm_config, sim_payload):
+        del llm_config, sim_payload
+        return object()
+
+    def fake_run(agent, message, tag="", transport_policy=None):
+        del agent, transport_policy
+        captured["tag"] = tag
+        captured["message"] = message
+        return "加赈落实，仓廪出十万。"
+
+    def translate(*_a, **kwargs):
+        captured["grounding"] = kwargs.get("target_grounding") or ""
+        segment = str(kwargs.get("segment") or "")
+        if "仓廪出十万" not in segment:
+            return {"effects": {}}
+        return {"effects": {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}",
+            "account": "国库",
+            "delta": -10,
+            "category": "问后加赈",
+            "reason": "批红后续推",
+        }]}}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", fake_agent)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", fake_run)
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+    session.resolve_turn(allow_empty_decree=True)
+    before = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
+    ).fetchone()[0]
+    pre_rows = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
+    ).fetchone()[0]
+    desk_row = next(
+        row for row in session.pending_decisions() if row["title"] == "是否加赈"
+    )
+
+    session.submit_hitl_choices(
+        _hitl_payload(desk_row), write_gate=session._write_gate,
+    )
+
+    message = str(captured.get("message") or "")
+    assert "预推不可见:陕西赈灾" in message
+    assert question_context in message
+    assert str(affair.id) in str(captured.get("grounding") or "")
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
+    ).fetchone()[0] == before + 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='陕西赈灾'",
+    ).fetchone()[0] == pre_rows
+    assert not db.staged_declarations.questions_for(ref)
+
+    session.resolve_turn(allow_empty_decree=True)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
+    ).fetchone()[0] == before + 1

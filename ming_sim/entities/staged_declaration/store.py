@@ -204,6 +204,24 @@ class StagedDeclarationStore:
                 questions.extend(parsed)
         return questions
 
+    def forecast_text_for(self, decree_ref: str) -> str:
+        """问前段文。已结算行仍保留，续推只读，不重推、不重落。"""
+        ref = str(decree_ref or "").strip()
+        if not ref:
+            return ""
+        rows = self._conn.execute(
+            "SELECT forecast_text FROM staged_declarations "
+            "WHERE decree_ref=? AND status!='discarded' "
+            "AND forecast_text IS NOT NULL ORDER BY id",
+            (ref,),
+        ).fetchall()
+        parts = [
+            str(row["forecast_text"]).strip()
+            for row in rows
+            if str(row["forecast_text"] or "").strip()
+        ]
+        return "\n".join(parts)
+
     def clear_questions(self, decree_ref: str) -> int:
         """批红答复已持久化后清请旨；问前声明与结算标记不动。"""
         ref = str(decree_ref or "").strip()
