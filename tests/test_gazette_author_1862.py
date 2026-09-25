@@ -47,6 +47,9 @@ def test_prompt_drops_extractor_decision_block():
     assert "<<DECISION>>" not in prompt
     assert "delta 直接从此抽取" not in prompt
     assert "档房" not in prompt
+    assert "奏章固定顺序" not in prompt
+    assert "150-300" not in prompt
+    assert "必写" not in prompt
     assert "软提示" in prompt
     assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
     assert not hasattr(simulation, "EXTRACTION_MODULES")
