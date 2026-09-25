@@ -16,8 +16,6 @@ from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.llm_transport import (
     TRANSPORT_DEFAULT_MAX_ATTEMPTS,
     TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS,
-    audience_transport_policy,
-    run_with_transport,
 )
 from ming_sim.models import TurnPhase
 from tests.settlement_seam_helpers import make_light_session
@@ -69,6 +67,12 @@ def _ningyuan_ledger_rows(db):
     ))
 
 
+def _world_ledger_rows(db):
+    return list(db.conn.execute(
+        "SELECT delta FROM economy_ledger WHERE category='世界段饷' ORDER BY id",
+    ))
+
+
 def _http_status_error(status: int) -> APIStatusError:
     response = SimpleNamespace(status_code=status, headers={}, request=None)
     return APIStatusError(
@@ -78,55 +82,69 @@ def _http_status_error(status: int) -> APIStatusError:
     )
 
 
-def test_month_call_policy_stops_on_429_without_auto_retry(monkeypatch):
-    """ADR 0157：过月/召对共用策略——429 一次终止，不自动重试。"""
-    sleeps: list[float] = []
-    monkeypatch.setattr(
-        "ming_sim.llm_transport._sleep_retry_interval",
-        lambda seconds: sleeps.append(float(seconds)),
-    )
-    calls = {"n": 0}
-
-    def boom():
-        calls["n"] += 1
-        raise _http_status_error(429)
-
-    with pytest.raises(LLMUnavailable) as caught:
-        run_with_transport(boom, policy=audience_transport_policy())
-
-    assert calls["n"] == 1
-    assert sleeps == []
-    assert caught.value.status_code == 429
-    assert (caught.value.transport_attempts or [])[0]["outcome"] == "terminal_fail"
-
-
-def test_month_call_policy_retries_5xx_and_timeout_up_to_three_with_five_second_gap(
-    monkeypatch,
+@pytest.mark.parametrize("failure", ["429", "retryable"])
+def test_month_entry_world_push_follows_audience_transport_policy(
+    game, monkeypatch, tmp_path, failure,
 ):
-    """本身 + 两次重试共三次；5xx / 超时隔五秒再试。"""
+    """过月入口的世界推演走 ADR 0157 策略：429 一次终止；5xx/超时隔五秒，共三次。"""
+    from ming_sim.agents import Agent, bind_content
+    from ming_sim.models import LLMConfig
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    bind_content(content)
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
     sleeps: list[float] = []
     monkeypatch.setattr(
         "ming_sim.llm_transport._sleep_retry_interval",
         lambda seconds: sleeps.append(float(seconds)),
     )
-    sequence = [
-        _http_status_error(500),
-        APITimeoutError(request=None),
-        _http_status_error(503),
-    ]
+    sequence = (
+        [_http_status_error(429)]
+        if failure == "429"
+        else [
+            _http_status_error(500),
+            APITimeoutError(request=None),
+            _http_status_error(503),
+        ]
+    )
     calls = {"n": 0}
 
-    def boom():
+    def boom(self, *_args, **_kwargs):
+        assert getattr(self, "id", None) == "world-segment"
         calls["n"] += 1
         raise sequence[calls["n"] - 1]
 
-    with pytest.raises(LLMUnavailable):
-        run_with_transport(boom, policy=audience_transport_policy())
-
-    assert calls["n"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
-    assert sleeps == [TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS] * (
-        TRANSPORT_DEFAULT_MAX_ATTEMPTS - 1
+    monkeypatch.setattr(Agent, "run", boom)
+    session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://api.example.com/v1",
+        model="gpt-test", channel="api",
     )
+
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+
+    if failure == "429":
+        assert calls["n"] == 1
+        assert sleeps == []
+    else:
+        assert calls["n"] == TRANSPORT_DEFAULT_MAX_ATTEMPTS
+        assert sleeps == [TRANSPORT_DEFAULT_RETRY_INTERVAL_SECONDS] * (
+            TRANSPORT_DEFAULT_MAX_ATTEMPTS - 1
+        )
+    assert int(state.turn) == turn
+    assert state.turn_phase == TurnPhase.SETTLING.value
+    assert caught.value.stage == "world_text"
+    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+        "month_chain", {},
+    )
+    failure_row = chain.get("call_failure") or {}
+    assert failure_row.get("kind") == "model_exhausted"
+    assert failure_row.get("step") == "world_text"
+    assert not chain.get("world_text_ready")
+    assert not chain.get("world_committed")
 
 
 def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, tmp_path):
@@ -472,3 +490,91 @@ def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
     assert chain.get("world_text_ready") is True
     assert chain.get("world_text") == "段文已存"
     assert not chain.get("world_committed")
+
+
+def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
+    game, monkeypatch, tmp_path,
+):
+    """alongside 已写入完成标记后事务提交失败：已落旨不重复，未落世界段重试仍落。"""
+    import json
+    import ming_sim.month_chain as month_chain
+    import ming_sim.month_translate as month_translate
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    minister = next(iter(content.characters.values())).name
+    state.metrics["国库"] = 500_000
+    db.save_state(state)
+    ref = _stage_settled_ready_edict(db, state, minister, delta=-4)
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+
+    world_calls = {"n": 0}
+    translate_calls = {"n": 0}
+
+    def world(*_a, **_k):
+        world_calls["n"] += 1
+        return "世界段已成文。"
+
+    def translate(*_a, **_k):
+        translate_calls["n"] += 1
+        return {"effects": {"economy_moves": [{
+            "origin_ref": "盘面自发", "account": "国库", "delta": -9,
+            "category": "世界段饷", "reason": "世界段饷",
+        }]}}
+
+    monkeypatch.setattr(month_chain, "run_world_segment_text", world)
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    failed = {"done": False}
+    original_commit = db.conn.commit
+
+    def commit():
+        if not failed["done"] and not getattr(db.conn, "_commit_suspended", False):
+            row = db.conn.execute(
+                "SELECT simulator_payload_json FROM pending_resolve_context WHERE turn=?",
+                (turn,),
+            ).fetchone()
+            if row is not None:
+                payload = json.loads(row["simulator_payload_json"] or "{}")
+                pending = (payload.get("month_chain") or {})
+                if pending.get("world_committed"):
+                    failed["done"] = True
+                    raise RuntimeError("world commit failed")
+        return original_commit()
+
+    monkeypatch.setattr(db.conn, "commit", commit)
+    session = make_light_session(db, state, content)
+    session.llm_config = SimpleNamespace(model="m", advanced_model="m")
+
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+
+    assert failed["done"] is True
+    assert caught.value.stage == "world_commit"
+    assert db.staged_declarations.is_settled(ref)
+    assert len(_ningyuan_ledger_rows(db)) == 1
+    assert _world_ledger_rows(db) == []
+    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+        "month_chain", {},
+    )
+    assert (chain.get("call_failure") or {}).get("kind") == "code_exception"
+    assert not chain.get("world_committed")
+    assert chain.get("world_text") == "世界段已成文。"
+    account = int(db.conn.execute(
+        "SELECT balance FROM economy_accounts WHERE account='国库'",
+    ).fetchone()["balance"])
+    assert int(state.metrics["国库"]) == account
+    assert world_calls["n"] == 1
+    assert translate_calls["n"] == 1
+
+    session.resolve_turn(allow_empty_decree=True)
+    assert db.staged_declarations.is_settled(ref)
+    assert len(_ningyuan_ledger_rows(db)) == 1
+    assert int(_ningyuan_ledger_rows(db)[0]["delta"]) == -4
+    world_rows = _world_ledger_rows(db)
+    assert len(world_rows) == 1 and int(world_rows[0]["delta"]) == -9
+    assert translate_calls["n"] == 2
+    assert world_calls["n"] == 1
+    assert int(state.metrics["国库"]) == int(db.conn.execute(
+        "SELECT balance FROM economy_accounts WHERE account='国库'",
+    ).fetchone()["balance"])

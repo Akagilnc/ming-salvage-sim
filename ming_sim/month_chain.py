@@ -172,10 +172,19 @@ def _abort_month_call(
     from ming_sim.exceptions import SettlementAbort
 
     turn = int(state.turn)
+    # 事务已回滚时，失败记录只叠在已提交链上。调用方链在 alongside 里改过的
+    # 内存相位（world_committed 等）不随失败写回。
+    if (
+        kind == "code_exception"
+        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+    ):
+        from ming_sim.decree import reload_state_from_db
+        reload_state_from_db(db, state, content=getattr(db, "content", None))
+    committed = _load_chain(db, turn)
     escape_armed = False
     if kind == "model_exhausted" and step in _TRANSLATE_ESCAPE_STEPS:
-        stops = int(chain.get("translate_exhaust_stops") or 0) + 1
-        chain["translate_exhaust_stops"] = stops
+        stops = int(committed.get("translate_exhaust_stops") or 0) + 1
+        committed["translate_exhaust_stops"] = stops
         escape_armed = stops >= 2
     original = str(getattr(exc, "message", None) or exc)
     pack_path = write_error_pack(
@@ -190,7 +199,9 @@ def _abort_month_call(
     }
     if decree_ref:
         failure["decree_ref"] = decree_ref
-    chain["call_failure"] = failure
+    committed["call_failure"] = failure
+    chain.clear()
+    chain.update(committed)
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
     abort_message = (
         settlement_abort_message(pack_path) if kind == "code_exception" else original
@@ -360,12 +371,18 @@ def _run_world_segment(
     chain["world_questions"] = questions
 
     def mark(result: Any) -> None:
+        # 完成标记与世界效果同一事务；调用方链要等提交成功后再采纳。
+        persisted = dict(chain)
         outcome = _ending_from_dispatch_result(result)
         if outcome is not None:
-            chain["declaration_outcome"] = outcome
-        chain["world_committed"] = True
-        chain.pop("translate_exhaust_stops", None)
-        _save_chain(db, turn, chain, source=source)
+            persisted["declaration_outcome"] = outcome
+        persisted["world_committed"] = True
+        persisted.pop("translate_exhaust_stops", None)
+        _save_chain(db, turn, persisted, source=source)
+
+    def adopt_committed() -> None:
+        chain.clear()
+        chain.update(_load_chain(db, turn))
 
     if prefix.strip():
         result = _guard_month_call(
@@ -376,9 +393,11 @@ def _run_world_segment(
                 alongside=mark,
             ),
         )
+        adopt_committed()
         return _ending_from_dispatch_result(result)
     with atomic(db):
         mark(None)
+    adopt_committed()
     return None
 
 
