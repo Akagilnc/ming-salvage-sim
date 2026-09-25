@@ -1088,8 +1088,8 @@ def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, obj
 def _write_gazette_index(
     tmp: Path, rows: Sequence[dict[str, object]], *, prefix: str,
 ) -> list[str]:
-    """历月邸报一行索引入目录（章节记忆退役，M3；0155/0157 后出注记）：每回合一份
-    全文文件，根 INDEX 里天然是一行一项——不再压缩/摘要成第二套机制。
+    """历月邸报一行索引入目录（章节记忆退役，M3／#1845；0155/0157 后出注记）：
+    每回合一份全文文件，根 INDEX 里一行一项（年月路径即索引），按需自读全文。
 
     ``prefix`` differs by reader: characters use ``公开说法/邸报``; world simulation
     keeps top-level ``邸报`` (#1833 docs / #1834 world directory).

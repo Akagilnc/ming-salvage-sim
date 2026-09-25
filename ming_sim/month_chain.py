@@ -1,7 +1,8 @@
 """ADR 0157 玩家过月主链：步骤 1–3，以及步骤 4–6 的继续条件。
 
-批红答复、邸报作者、推进后的机械尾不在这里实现。本链只在那些阶段的
-持久前置已经成立时继续，不另建无旨快路，也不再走五模块 extractor。
+批红答复、邸报作者不在这里实现。推进后的机械尾（#1845：关系／派系酿制与
+结局总评）由本链在推进成功后调度到 SessionWriteQueue 后台票，下次过月前 join。
+本链不另建无旨快路，也不再走五模块 extractor。
 """
 
 from __future__ import annotations
@@ -58,6 +59,8 @@ def run_player_month_chain(
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
     del on_event, before_turn
     from ming_sim.decree import ResolveResult
+    from ming_sim.decree_forecast import _owner_for
+    from ming_sim.mechanical_tail import ensure_mechanical_tails
 
     turn = int(state.turn)
     chain = _load_chain(db, turn)
@@ -67,6 +70,18 @@ def run_player_month_chain(
     session = SimpleNamespace(
         db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
     )
+    # #1845：下次过月前 join／重开续接上月机械尾（票在 SessionWriteQueue；barrier 等终态）
+    owner = _owner_for(db) or session
+    if getattr(owner, "db", None) is None:
+        owner = session
+    else:
+        # 保持活 state／模型配置与本链一致
+        owner.state = state
+        if getattr(owner, "llm_config", None) is None:
+            owner.llm_config = llm_config
+        if getattr(owner, "agno_db", None) is None:
+            owner.agno_db = agno_db
+    ensure_mechanical_tails(owner)
     _run_opening_levy(db, chain, turn, decree_text, source)
     def persist_declaration_outcome(outcome: Dict[str, object]) -> None:
         chain["declaration_outcome"] = outcome
@@ -86,6 +101,7 @@ def run_player_month_chain(
     advanced = _advance_after_gazette(
         db, state, chain, turn, decree_text, source, content=content,
         declaration_outcome=declaration_outcome,
+        llm_config=llm_config, agno_db=agno_db,
     )
     return ResolveResult(
         awaiting=False, advanced=advanced, stage="advanced" if advanced else "gazette",
@@ -302,6 +318,7 @@ def _waiting_for_rescript(db: Any, state: Any, chain: Dict[str, Any]) -> bool:
 def _advance_after_gazette(
     db: Any, state: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
     *, content: Any = None, declaration_outcome: Optional[Dict[str, object]] = None,
+    llm_config: Any = None, agno_db: Any = None,
 ) -> bool:
     if chain.get("advanced"):
         return True
@@ -311,6 +328,8 @@ def _advance_after_gazette(
     )
     from ming_sim.rescript_actions import clear_return_revise_choice_anchors
 
+    settled_year, settled_period = int(state.year), int(state.period)
+    ending_outcome: Optional[Dict[str, object]] = None
     with atomic_and_reload(db, state, content=content):
         if not state.ended:
             outcome = declaration_outcome or chain.get("declaration_outcome") or victory_status(db, state)
@@ -326,6 +345,11 @@ def _advance_after_gazette(
             if isinstance(outcome, dict) and outcome.get("status") != ENDING_ONGOING:
                 state.ended = True
                 state.ending_status = str(outcome.get("status") or "")
+                ending_outcome = dict(outcome)
+        elif isinstance(declaration_outcome, dict):
+            ending_outcome = dict(declaration_outcome)
+        elif isinstance(chain.get("declaration_outcome"), dict):
+            ending_outcome = dict(chain["declaration_outcome"])
         db.mark_directives_issued(state)
         clear_return_revise_choice_anchors(db, None)
         state.next_period()
@@ -336,6 +360,27 @@ def _advance_after_gazette(
         chain["advanced"] = True
         chain["stage"] = "advanced"
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+    # #1845：推进后启动机械尾（后台；不挡新月前台）。结局总评属尾，判定已在上面完成。
+    from ming_sim.decree_forecast import _owner_for
+    from ming_sim.mechanical_tail import schedule_mechanical_tail_after_advance
+
+    owner = _owner_for(db) or SimpleNamespace(
+        db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
+    )
+    if getattr(owner, "db", None) is db:
+        owner.state = state
+        if llm_config is not None:
+            owner.llm_config = llm_config
+        if agno_db is not None:
+            owner.agno_db = agno_db
+    schedule_mechanical_tail_after_advance(
+        owner,
+        closed_turn=int(turn),
+        settled_year=settled_year,
+        settled_period=settled_period,
+        ending_outcome=ending_outcome,
+        source=source,
+    )
     return True
 
 

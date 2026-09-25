@@ -1,0 +1,332 @@
+"""#1845：月份推进后的机械尾（关系／派系酿制、结局总评）后台化。
+
+复用 SessionWriteQueue 票键与 audience 执行器——与夜里预推同形，不另造平行调度。
+持久未完态写在 closed turn 的 month_chain；重开／下次过月 ensure 续接。
+召对高亮不在此列（ADR 0045）。
+"""
+
+from __future__ import annotations
+
+import logging
+from types import SimpleNamespace
+from typing import Any, Dict, Optional
+
+from ming_sim.applier import Provenance
+from ming_sim.exceptions import LLMUnavailable
+from ming_sim.relation_brew import run_month_end_relation_brew
+from ming_sim.session_write_queue import get_session_write_queue
+
+logger = logging.getLogger(__name__)
+
+_TAIL_STATUS_PENDING = "pending"
+_TAIL_STATUS_DONE = "done"
+_TAIL_STATUS_DEGRADED = "degraded"
+
+
+def mechanical_tail_key(closed_turn: int) -> tuple:
+    return ("mechanical-tail", int(closed_turn))
+
+
+def mark_mechanical_tail_pending(
+    db: Any,
+    closed_turn: int,
+    *,
+    settled_year: int,
+    settled_period: int,
+    ending_outcome: Optional[Dict[str, object]] = None,
+    source: Provenance = Provenance.system_simulation,
+) -> None:
+    """推进后落盘未完尾——恢复真源，不靠内存票。"""
+    from ming_sim import month_chain
+
+    chain = month_chain._load_chain(db, int(closed_turn))
+    chain["mechanical_tail"] = {
+        "status": _TAIL_STATUS_PENDING,
+        "settled_year": int(settled_year),
+        "settled_period": int(settled_period),
+        "ending_outcome": ending_outcome,
+    }
+    month_chain._save_chain(db, int(closed_turn), chain, source=source)
+
+
+def _set_tail_status(
+    db: Any, closed_turn: int, status: str, *, source: Provenance,
+) -> None:
+    from ming_sim import month_chain
+
+    chain = month_chain._load_chain(db, int(closed_turn))
+    tail = dict(chain.get("mechanical_tail") or {})
+    if not tail:
+        return
+    tail["status"] = status
+    chain["mechanical_tail"] = tail
+    month_chain._save_chain(db, int(closed_turn), chain, source=source)
+
+
+def _call_exhausted(exc: BaseException) -> bool:
+    if isinstance(exc, LLMUnavailable):
+        return True
+    status = getattr(exc, "status_code", None)
+    try:
+        return int(status) == 429
+    except (TypeError, ValueError):
+        return False
+
+
+def generate_ending_summary_for_tail(
+    db: Any,
+    closed_state: Any,
+    outcome: Dict[str, object],
+    *,
+    llm_config: Any = None,
+    agno_db: Any = None,
+) -> str:
+    """结局总评：读历月邸报／时间线，不再依赖章节记忆。"""
+    from ming_sim.agents import create_ending_summary_agent, run_agent_text
+    from ming_sim.memories import build_timeline
+    import json
+
+    reports = []
+    if hasattr(db, "list_turn_reports"):
+        for row in db.list_turn_reports():
+            turn = int(row.get("turn") or 0)
+            if turn > int(closed_state.turn):
+                continue
+            body = str(row.get("report") or row.get("body") or "").strip()
+            if not body:
+                continue
+            reports.append({
+                "turn": turn,
+                "year": int(row.get("year") or 0),
+                "period": int(row.get("period") or 0),
+                "body": body,
+            })
+    timeline = build_timeline(db, upto_turn=int(closed_state.turn))
+    summary_text = ""
+    if llm_config is not None:
+        try:
+            ending_agent = create_ending_summary_agent(llm_config, agno_db)
+            payload = {
+                "ending": {
+                    "status": outcome.get("status"),
+                    "summary": outcome.get("summary"),
+                },
+                "gazettes": reports,
+                "timeline": timeline,
+                "final_state": {
+                    "year": closed_state.year,
+                    "period": closed_state.period,
+                    "turn": closed_state.turn,
+                    "metrics": dict(getattr(closed_state, "metrics", {}) or {}),
+                },
+            }
+            summary_text = run_agent_text(
+                ending_agent,
+                json.dumps(payload, ensure_ascii=False, sort_keys=False),
+                tag="ending-summary",
+            ).strip()
+        except Exception as exc:
+            logger.info("[mechanical-tail] ending-summary LLM 降级：%s", exc)
+
+    if not summary_text:
+        bits = [str(outcome.get("summary") or "")]
+        for row in reports[-6:]:
+            bits.append(f"{row['year']}年{row['period']}月：{row['body']}")
+        summary_text = "\n".join(b for b in bits if b)
+
+    try:
+        db.save_ending_summary(
+            closed_state,
+            str(outcome.get("status") or ""),
+            summary_text,
+            timeline,
+        )
+    except Exception as exc:
+        logger.info("[mechanical-tail] ending-summary 落库失败：%s", exc)
+    return summary_text
+
+
+def _brew_fn_for_session(session: Any):
+    """生产路径注入真实 LLM；测试无模型时用空串保底。"""
+    llm_config = getattr(session, "llm_config", None)
+    agno_db = getattr(session, "agno_db", None)
+    if llm_config is None:
+        return lambda _payload: ""
+
+    from ming_sim.agents import (
+        create_faction_brew_agent,
+        create_relation_brew_agent,
+        run_agent_text,
+    )
+    from ming_sim.faction_brew import VIEW_FACTION_STANCE
+    from ming_sim.llm_model import llm_unavailable_from_error
+    from openai import APIConnectionError, APIStatusError, APITimeoutError
+    import json
+
+    def _brew(payload_json: str) -> str:
+        payload = json.loads(payload_json)
+        agent = (
+            create_faction_brew_agent(llm_config, agno_db)
+            if payload.get("view") == VIEW_FACTION_STANCE
+            else create_relation_brew_agent(llm_config, agno_db)
+        )
+        try:
+            return run_agent_text(agent, payload_json, tag="relation-brew")
+        except (APITimeoutError, APIConnectionError, APIStatusError) as error:
+            raise llm_unavailable_from_error(error, "关系酿制") from error
+
+    return _brew
+
+
+def _run_tail_body(
+    session: Any,
+    *,
+    closed_turn: int,
+    settled_year: int,
+    settled_period: int,
+    ending_outcome: Optional[Dict[str, object]],
+) -> str:
+    db, state = session.db, session.state
+    closed_state = SimpleNamespace(
+        turn=int(closed_turn),
+        year=int(settled_year),
+        period=int(settled_period),
+        metrics=dict(getattr(state, "metrics", {}) or {}),
+        ended=bool(getattr(state, "ended", False)),
+    )
+    run_month_end_relation_brew(
+        db, state, _brew_fn_for_session(session),
+        settled_turn=int(closed_turn),
+        settled_year=int(settled_year),
+        settled_period=int(settled_period),
+    )
+    if isinstance(ending_outcome, dict) and ending_outcome.get("status"):
+        generate_ending_summary_for_tail(
+            db, closed_state, ending_outcome,
+            llm_config=getattr(session, "llm_config", None),
+            agno_db=getattr(session, "agno_db", None),
+        )
+    return _TAIL_STATUS_DONE
+
+
+def _submit_tail(
+    session: Any,
+    *,
+    closed_turn: int,
+    settled_year: int,
+    settled_period: int,
+    ending_outcome: Optional[Dict[str, object]],
+    source: Provenance,
+) -> bool:
+    from ming_sim import audience_translation
+
+    queue = get_session_write_queue(session)
+    ticket = queue.claim_if_absent([mechanical_tail_key(closed_turn)])[0]
+    if ticket is None:
+        return False
+
+    def run() -> None:
+        status = _TAIL_STATUS_DONE
+        try:
+            status = _run_tail_body(
+                session,
+                closed_turn=closed_turn,
+                settled_year=settled_year,
+                settled_period=settled_period,
+                ending_outcome=ending_outcome,
+            )
+        except BaseException as exc:
+            if _call_exhausted(exc):
+                status = _TAIL_STATUS_DEGRADED
+                logger.info(
+                    "[mechanical-tail] turn=%s 耗尽降级留痕：%s", closed_turn, exc,
+                )
+            else:
+                status = _TAIL_STATUS_DEGRADED
+                logger.info(
+                    "[mechanical-tail] turn=%s 失败降级终结（防下月永久卡住）：%s",
+                    closed_turn, exc,
+                )
+        finally:
+            try:
+                _set_tail_status(session.db, closed_turn, status, source=source)
+            finally:
+                queue.complete(ticket)
+
+    try:
+        future = audience_translation._executor.submit(run)
+    except BaseException:
+        queue.complete(ticket)
+        raise
+    future.add_done_callback(
+        lambda done: audience_translation._observe_finished_future(
+            done, where="mechanical tail", key=getattr(ticket, "key", None),
+        )
+    )
+    return True
+
+
+def schedule_mechanical_tail_after_advance(
+    session: Any,
+    *,
+    closed_turn: int,
+    settled_year: int,
+    settled_period: int,
+    ending_outcome: Optional[Dict[str, object]] = None,
+    source: Provenance = Provenance.system_simulation,
+) -> None:
+    """#1843 主链推进后启动本月机械尾；无会话写队列则只落 pending。"""
+    mark_mechanical_tail_pending(
+        session.db, closed_turn,
+        settled_year=settled_year,
+        settled_period=settled_period,
+        ending_outcome=ending_outcome,
+        source=source,
+    )
+    try:
+        get_session_write_queue(session)
+    except Exception:
+        return
+    _submit_tail(
+        session,
+        closed_turn=closed_turn,
+        settled_year=settled_year,
+        settled_period=settled_period,
+        ending_outcome=ending_outcome,
+        source=source,
+    )
+
+
+def ensure_mechanical_tails(session: Any) -> None:
+    """重开或下次过月前：按 DB pending 续接未完尾（claim_if_absent 防重复执行）。"""
+    from ming_sim import month_chain
+
+    db = session.db
+    try:
+        get_session_write_queue(session)
+    except Exception:
+        return
+    pending_turns: list[tuple[int, Dict[str, Any]]] = []
+    seen: set[int] = set()
+    current = int(getattr(session.state, "turn", 0) or 0)
+    # 扫当前与之前若干回合的 month_chain 持久态（推进后 resolve_context 仍在）
+    for turn in range(max(0, current - 6), current + 1):
+        if turn in seen:
+            continue
+        chain = month_chain._load_chain(db, turn)
+        tail = chain.get("mechanical_tail")
+        if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_PENDING:
+            pending_turns.append((turn, tail))
+            seen.add(turn)
+
+    source = Provenance.system_simulation
+    for turn, tail in pending_turns:
+        _submit_tail(
+            session,
+            closed_turn=turn,
+            settled_year=int(tail.get("settled_year") or 0),
+            settled_period=int(tail.get("settled_period") or 0),
+            ending_outcome=tail.get("ending_outcome")
+            if isinstance(tail.get("ending_outcome"), dict) else None,
+            source=source,
+        )

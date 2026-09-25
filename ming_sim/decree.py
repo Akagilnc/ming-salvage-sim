@@ -2479,41 +2479,13 @@ def _generate_ending_summary(
     outcome: Dict[str, object],
     _emit: Callable[[str, Any], None],
 ) -> str:
-    """国史编纂官读全部章节记忆生成结局总评，落库 ending_summary（含逐回合时间线）。
-    LLM 失败时用章节拼保底总评。返回总评正文（也已落库）。"""
-    chapters = db.list_chapter_memories(upto_turn=state.turn)
-    timeline = build_timeline(db, upto_turn=state.turn)
-    summary_text = ""
-    try:
-        _emit("stage", settlement_ending_stage_payload())
-        ending_agent = create_ending_summary_agent(llm_config, agno_db)
-        payload = {
-            "ending": {"status": outcome.get("status"), "summary": outcome.get("summary")},
-            "chapters": chapters,
-            "final_state": {
-                "year": state.year, "period": state.period, "turn": state.turn,
-                "metrics": dict(state.metrics),
-            },
-        }
-        payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
-        tlog(f"[ending-summary/INPUT] chapters={len(chapters)} ({len(payload_json)}字)")
-        summary_text = run_agent_text(ending_agent, payload_json, tag="ending-summary").strip()
-        tlog(f"[ending-summary/OUTPUT] ({len(summary_text)}字)")
-    except Exception as exc:
-        tlog(f"[ending-summary] LLM 失败，走保底：{exc}")
+    """国史编纂官读历月邸报生成结局总评，落库 ending_summary（含逐回合时间线）。
 
-    if not summary_text:
-        bits = [str(outcome.get("summary") or "")]
-        for c in chapters[-6:]:
-            body = (c.get("body") or "").strip()
-            if body:
-                bits.append(f"{c['year']}年{c['period']}月：{body}")
-        summary_text = "\n".join(b for b in bits if b)
+    #1845：章节记忆退役；旧核 settle_with_delta 注入路径改走邸报。失败时用邸报拼保底。
+    """
+    from ming_sim.mechanical_tail import generate_ending_summary_for_tail
 
-    try:
-        db.save_ending_summary(
-            state, str(outcome.get("status") or ""), summary_text, timeline,
-        )
-    except Exception as exc:
-        tlog(f"[ending-summary] 落库失败：{exc}")
-    return summary_text
+    _emit("stage", settlement_ending_stage_payload())
+    return generate_ending_summary_for_tail(
+        db, state, outcome, llm_config=llm_config, agno_db=agno_db,
+    )

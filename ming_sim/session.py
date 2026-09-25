@@ -4001,7 +4001,10 @@ class GameSession:
         尚未归档时 awaiting=False、advanced=False，仍停 settling；归档后才置 issued。
         """
         # #1842：过月前转译 join/catch-up/耗尽判定（闸外契约，见 await_translations_before_month）。
+        # #1845：先按 DB 续接未完机械尾，再进 barrier——与上月尾同闸等待。
         if not write_gate_already_held:
+            from ming_sim.mechanical_tail import ensure_mechanical_tails
+            ensure_mechanical_tails(self)
             self.await_translations_before_month()
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))

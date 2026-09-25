@@ -243,12 +243,15 @@ def effect_brief(applied: Dict[str, object]) -> str:
 
 
 def build_timeline(db: GameDB, upto_turn: Optional[int] = None) -> List[Dict[str, object]]:
-    """从已落库的 turn_extractions 逐回合抽「干了啥 + 效果」，供结局时间线 / 总结 agent。
+    """从已落库月档逐回合抽「干了啥 + 效果」，供结局时间线 / 总结 agent。
 
     decree_text 取诏书摘要；extractor_output 解析后走 effect_brief 拼效果。
-    若该回合有章节记忆（chapter_summary），优先用章节正文当叙事。
+    #1845：章节记忆退役后，叙事优先用历月邸报正文，不再读 chapter_summary。
     """
-    chapters = {c["turn"]: c for c in db.list_chapter_memories(upto_turn=upto_turn)}
+    gazettes = {
+        int(r["turn"]): r
+        for r in (db.list_turn_reports() if hasattr(db, "list_turn_reports") else ())
+    }
     timeline: List[Dict[str, object]] = []
     for meta in db.list_monthly_archives():
         turn = int(meta["turn"])
@@ -263,14 +266,17 @@ def build_timeline(db: GameDB, upto_turn: Optional[int] = None) -> List[Dict[str
             applied_like = _coerce_extractor_output(raw_out)
             if applied_like:
                 effect = effect_brief(applied_like)
-        ch = chapters.get(turn)
+        gazette = gazettes.get(turn) or {}
+        gazette_body = str(gazette.get("report") or gazette.get("body") or "")
         timeline.append({
             "turn": turn,
             "year": int(meta["year"]),
             "period": int(meta["period"]),
             "decree_brief": decree_brief,
             "effect_brief": effect,
-            "chapter": (ch["body"] if ch else "") or (ch["title"] if ch else ""),
+            "gazette": gazette_body,
+            # 兼容旧读者键名：不再填章节正文
+            "chapter": "",
         })
     return timeline
 

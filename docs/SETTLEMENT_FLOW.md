@@ -2,7 +2,7 @@
 
 > 玩家入口已接入 ADR 0157。下方 S1/phase2 是旧核资料；`driver.py` 只复用其确定性结算部分，不运行旧 phase2。它不是 Web／GameSession 的现行过月顺序；规则以 [ADR 0157](adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) 为准。
 
-**玩家链**：`GameSession.resolve_turn → decree.resolve_directives → month_chain.run_player_month_chain`；颁诏、退朝同链。收夜与 `pre_settle` 提交后，逐旨消费暂存声明、推演并转译世界段；未完成请旨停在批红前，邸报归档后才判结局并推进月份。各段幂等恢复，不重放旧 extractor ready delta；旧档 ready 产物先降级，保留原诏与来源后续跑新链。章节记忆不再由玩家链生成。
+**玩家链**：`GameSession.resolve_turn → decree.resolve_directives → month_chain.run_player_month_chain`；颁诏、退朝同链。收夜与 `pre_settle` 提交后，逐旨消费暂存声明、推演并转译世界段；未完成请旨停在批红前，邸报归档后才判结局并推进月份。推进后机械尾（关系／派系酿制、结局总评；#1845）经 `SessionWriteQueue` 票键 `("mechanical-tail", closed_turn)` 后台跑，不挡新月前台；未完态写在 closed turn 的 month_chain，重开 `ensure_mechanical_tails` 续接，下次过月 barrier join。各段幂等恢复，不重放旧 extractor ready delta；旧档 ready 产物先降级，保留原诏与来源后续跑新链。章节记忆不再由玩家链生成；历月邸报以年月一行索引入材料目录。
 **driver 核**：`driver.py` 仍复用 `pre_settle`、`settle_with_delta`（ADR 0004／0008）；其 delta ready 重放只属于 driver，不得据此推断玩家流程。
 
 ## #571 S1 案卷颁布关（旧核资料；非玩家月链）

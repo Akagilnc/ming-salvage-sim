@@ -15,6 +15,9 @@ from ming_sim.session import GameSession
 
 def make_light_session(db, state, content):
     """Minimal GameSession shell for advance_without_decree tracers."""
+    from ming_sim.decree_forecast import bind_forecast_owner
+    from ming_sim.session_write_queue import get_session_write_queue
+
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = state
@@ -30,6 +33,8 @@ def make_light_session(db, state, content):
     session._beat_generator = None
     session._write_gate = None
     session.auto_save = lambda *a, **k: None
+    bind_forecast_owner(session)
+    get_session_write_queue(session)
     return session
 
 
