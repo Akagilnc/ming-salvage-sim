@@ -488,6 +488,21 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
         for dossier_id in ids
     )
+    for dossier_id, pending_id in zip(ids, pending_ids):
+        stale_ref = pending_action_decree_ref(pending_id, 1)
+        held_ref = held_dossier_decree_ref(dossier_id)
+        assert not db.staged_declarations.is_settled(stale_ref)
+        assert db.staged_declarations.is_settled(held_ref)
+
+    # 再次进入月链结算：留中案卷仍保持 dossier 身份，旧 pending-action 暂存不被冒名结算
+    _settle_edicts(sess, registry=None)
+    for dossier_id, pending_id in zip(ids, pending_ids):
+        stale_ref = pending_action_decree_ref(pending_id, 1)
+        held_ref = held_dossier_decree_ref(dossier_id)
+        assert not db.staged_declarations.is_settled(stale_ref)
+        assert db.staged_declarations.is_settled(held_ref)
+        dossier = db.get_decree_dossier(dossier_id)
+        assert forecast_mod.decree_ref_for_dossier(db, dossier) == held_ref
     late = db.create_decree_dossier(
         state, action_type="policy", decree_text="预推后", target_kind="issue",
         target_id="test-policy", payload={"text": "预推后"},

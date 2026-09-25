@@ -460,6 +460,91 @@ def test_failed_declaration_commit_reloads_memory_from_db(game):
     assert not db.staged_declarations.is_settled(decree_ref)
 
 
+def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monkeypatch):
+    db, state, content = game
+    state.turn = 2
+    db.save_state(state)
+    from ming_sim.declaration_dispatch import (
+        held_dossier_decree_ref, pending_action_decree_ref, stage_declaration,
+    )
+    from types import SimpleNamespace
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+    from ming_sim.month_chain import _settle_edicts
+    import ming_sim.month_chain as mc
+
+    minister = next(iter(content.characters.values()))
+    pending_id = db.stage_pending_action(
+        1, kind="directive", action="拟旨",
+        minister_name=minister.name,
+        payload={"dossier_action_type": "policy", "target_kind": "issue",
+                 "target_id": "test-issue", "text": "留中重判案卷"},
+    )
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="留中重判案卷",
+        target_kind="issue", target_id="test-issue",
+        pending_action_id=pending_id,
+        payload={"dossier_action_type": "policy", "target_kind": "issue",
+                 "target_id": "test-issue", "text": "留中重判案卷"},
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='proposed', promulgation_decision='rejected', "
+        "held_turn=1, rescript_pending=0 WHERE id=?",
+        (dossier_id,),
+    )
+    db.conn.commit()
+
+    stale_ref = pending_action_decree_ref(pending_id, 1)
+    held_ref = held_dossier_decree_ref(dossier_id)
+
+    stage_declaration(
+        db, decree_ref=stale_ref, turn=1,
+        declaration={}, verdict={"decision": "rejected"},
+    )
+    stage_declaration(
+        db, decree_ref=held_ref, turn=2,
+        declaration={"effects": {"economy_moves": []}},
+        verdict={"decision": "promulgated"},
+        visible_refs={"dossiers": [dossier_id]},
+    )
+
+    sess = SimpleNamespace(
+        db=db, state=state, llm_config=None, agno_db=None, content=content,
+    )
+
+    # 首次结算失败：暂存保持未落账，旧打回暂存不被破坏
+    import ming_sim.declaration_dispatch as dd
+    real_settle = dd.settle_staged_declarations_in_decree_order
+    fail_once = True
+
+    def fail_first(*args, **kwargs):
+        nonlocal fail_once
+        if fail_once:
+            fail_once = False
+            raise RuntimeError("transient settlement crash")
+        return real_settle(*args, **kwargs)
+
+    monkeypatch.setattr(dd, "settle_staged_declarations_in_decree_order", fail_first)
+
+    with pytest.raises(RuntimeError, match="transient settlement crash"):
+        _settle_edicts(sess, registry=None)
+
+    assert not db.staged_declarations.is_settled(held_ref)
+    assert not db.staged_declarations.is_settled(stale_ref)
+
+    # 结算失败重试：以 held_ref 身份续跑并成功落账
+    _settle_edicts(sess, registry=None)
+    assert db.staged_declarations.is_settled(held_ref)
+    assert not db.staged_declarations.is_settled(stale_ref)
+    assert db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
+
+    # 再次进入月链结算：保持 held_ref 案卷身份，旧 pending-action 不被冒名结算
+    _settle_edicts(sess, registry=None)
+    assert db.staged_declarations.is_settled(held_ref)
+    assert not db.staged_declarations.is_settled(stale_ref)
+    dossier = db.get_decree_dossier(dossier_id)
+    assert decree_ref_for_dossier(db, dossier) == held_ref
+
+
 def test_advance_uses_staged_declaration_ending(game, monkeypatch):
     db, state, content = game
     turn = int(state.turn)

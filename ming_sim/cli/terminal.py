@@ -925,9 +925,14 @@ def play_turn(session: GameSession) -> None:
             )
             if result is not None:
                 print(report)
-                if result.advanced:
+                if getattr(session.state, "ended", False):
+                    return
+                if getattr(result, "advanced", False):
                     session.end_turn()
-            return
+                    return
+            else:
+                return
+            continue
         if action == "issue":
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
@@ -947,10 +952,16 @@ def play_turn(session: GameSession) -> None:
             _print_pending_action_failures(
                 _new_secret_order_failure_payloads(session, turn_before, failed_before)
             )
-            print(report)
-            if result.advanced:
-                session.end_turn()
-            return
+            if result is not None:
+                print(report)
+                if getattr(session.state, "ended", False):
+                    return
+                if getattr(result, "advanced", False):
+                    session.end_turn()
+                    return
+            else:
+                return
+            continue
 
 
 def run_cli(
@@ -996,6 +1007,7 @@ def run_cli(
         print(f"当前 LLM：{model} @ {base_url}{adv_hint}")
         print(f"数据库：{db_path}\n")
         while True:
+            turn_start = int(session.state.turn)
             play_turn(session)
             if session.state.ended:
                 from ming_sim.context import ENDING_LABELS
@@ -1007,7 +1019,11 @@ def run_cli(
                 print("\n（本局已终结。）")
                 input("\n按回车退出游戏：")
                 break
-            raw = input(f"\n按回车继续下一{TURN_UNIT}，或输入 exit 退出游戏：").strip()
+            if int(session.state.turn) > turn_start:
+                prompt = f"\n按回车继续下一{TURN_UNIT}，或输入 exit 退出游戏："
+            else:
+                prompt = f"\n按回车继续本{TURN_UNIT}，或输入 exit 退出游戏："
+            raw = input(prompt).strip()
             if raw.lower() in EXIT_COMMANDS:
                 break
     except ExitGame:

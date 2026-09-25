@@ -87,23 +87,77 @@ def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
 @pytest.mark.parametrize("action", ["issue", "skip"])
 def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
     class Session(_Sess):
+        def __init__(self):
+            super().__init__(None)
+            self.step = 0
+
         def resolve_turn(self):
             self.calls.append("resolve")
-            return SimpleNamespace(advanced=False)
+            advanced = self.step > 0
+            self.step += 1
+            if advanced:
+                self.state.turn += 1
+            return SimpleNamespace(advanced=advanced)
 
         def advance_without_decree(self):
             self.calls.append("advance")
-            return SimpleNamespace(advanced=False)
+            advanced = self.step > 0
+            self.step += 1
+            if advanced:
+                self.state.turn += 1
+            return SimpleNamespace(advanced=advanced)
 
-    sess = Session(None)
-    monkeypatch.setattr(term, "review_directives", lambda _s: action)
+    sess = Session()
+    actions = iter([action, action])
+    monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
     monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
 
     term.play_turn(sess)
 
-    assert "end" not in sess.calls
+    call_name = "resolve" if action == "issue" else "advance"
+    # 未推进时留在本回合交互循环不调 end_turn，再次推进后才调 end_turn 退出
+    assert sess.calls == ["begin", call_name, call_name, "end"]
+
+
+def test_run_cli_prompts_current_turn_when_unadvanced_and_next_when_advanced(monkeypatch, tmp_path):
+    class DummySession:
+        def __init__(self):
+            self.state = SimpleNamespace(turn=1, ended=False, ending_status="")
+            self.db = SimpleNamespace(get_ending_summary=lambda: None)
+
+    sess = DummySession()
+    import ming_sim.llm_config as llm_config_mod
+    monkeypatch.setattr(
+        llm_config_mod, "load_llm_config",
+        lambda *a, **k: SimpleNamespace(advanced_model="", advanced_base_url=""),
+    )
+    monkeypatch.setattr(term, "GameSession", lambda *a, **k: sess)
+    monkeypatch.setattr(term, "_cli_write_gate", lambda s: None)
+
+    turn_advances = iter([False, True])
+
+    def fake_play_turn(session):
+        adv = next(turn_advances)
+        if adv:
+            session.state.turn += 1
+
+    monkeypatch.setattr(term, "play_turn", fake_play_turn)
+
+    prompts = []
+    user_inputs = iter(["", "exit"])
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt="": (prompts.append(prompt), next(user_inputs))[1],
+    )
+
+    term.run_cli("http://fake", "fake-model", str(tmp_path / "game.db"))
+
+    assert len(prompts) == 2
+    assert f"下一{term.TURN_UNIT}" not in prompts[0]
+    assert f"下一{term.TURN_UNIT}" in prompts[1]
+    assert sess.state.turn == 2
 
 
 def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
