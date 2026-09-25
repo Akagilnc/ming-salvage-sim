@@ -68,7 +68,10 @@ def run_player_month_chain(
         db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
     )
     _run_opening_levy(db, chain, turn, decree_text, source)
-    _settle_edicts(session, registry=registry)
+    declaration_outcome = _settle_edicts(session, registry=registry)
+    if declaration_outcome is not None:
+        chain["declaration_outcome"] = declaration_outcome
+        _save_chain(db, turn, chain, decree_text=decree_text, source=source)
     _run_world_segment(session, chain, source=source)
     _run_month_drift(db, state, chain, turn, decree_text, source)
     if _waiting_for_rescript(db, state, chain):
@@ -78,6 +81,7 @@ def run_player_month_chain(
         return _pause(db, turn, chain, decree_text, source, "gazette")
     advanced = _advance_after_gazette(
         db, state, chain, turn, decree_text, source, content=content,
+        declaration_outcome=declaration_outcome,
     )
     return ResolveResult(
         awaiting=False, advanced=advanced, stage="advanced" if advanced else "gazette",
@@ -109,7 +113,7 @@ def _run_opening_levy(
         mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
 
 
-def _settle_edicts(session: Any, *, registry: Any) -> None:
+def _settle_edicts(session: Any, *, registry: Any) -> Optional[Dict[str, object]]:
     from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
     from ming_sim.decree import _is_stalled_deliberation
     from ming_sim.decree_forecast import (
@@ -121,6 +125,7 @@ def _settle_edicts(session: Any, *, registry: Any) -> None:
     )
 
     db, state = session.db, session.state
+    outcome = None
     for dossier in db.list_decree_dossiers():
         if _is_stalled_deliberation(dossier):
             continue
@@ -173,9 +178,16 @@ def _settle_edicts(session: Any, *, registry: Any) -> None:
                     )
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
-            settle_staged_declarations_in_decree_order(
+            settled = settle_staged_declarations_in_decree_order(
                 db, state, [ref], source=Provenance.player_decree,
             )
+            result = settled.get(ref)
+            if result is not None:
+                for report in result.effects.applied:
+                    candidate = report.get("victory_status") if isinstance(report, dict) else None
+                    if isinstance(candidate, dict) and candidate.get("status") != "ongoing":
+                        outcome = candidate
+    return outcome
 
 
 def _run_world_segment(session: Any, chain: Dict[str, Any], *, source: Provenance) -> None:
@@ -264,17 +276,19 @@ def _waiting_for_rescript(db: Any, state: Any, chain: Dict[str, Any]) -> bool:
 
 def _advance_after_gazette(
     db: Any, state: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
-    *, content: Any = None,
+    *, content: Any = None, declaration_outcome: Optional[Dict[str, object]] = None,
 ) -> bool:
     if chain.get("advanced"):
         return True
     from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
-    from ming_sim.decree import TIMEOUT_TURN, _carry_pending_clarification_actions
+    from ming_sim.decree import (
+        TIMEOUT_TURN, _carry_pending_clarification_actions, atomic_and_reload,
+    )
     from ming_sim.rescript_actions import clear_return_revise_choice_anchors
 
-    with atomic(db):
+    with atomic_and_reload(db, state, content=content):
         if not state.ended:
-            outcome = victory_status(db, state)
+            outcome = declaration_outcome or chain.get("declaration_outcome") or victory_status(db, state)
             if (
                 isinstance(outcome, dict)
                 and outcome.get("status") == ENDING_ONGOING

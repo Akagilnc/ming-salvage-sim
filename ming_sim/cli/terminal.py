@@ -917,7 +917,8 @@ def play_turn(session: GameSession) -> None:
             )
             if result is not None:
                 print(report)
-                session.end_turn()
+                if result.advanced:
+                    session.end_turn()
             return
         if action == "issue":
             turn_before = int(session.state.turn)
@@ -939,7 +940,8 @@ def play_turn(session: GameSession) -> None:
                 _new_secret_order_failure_payloads(session, turn_before, failed_before)
             )
             print(report)
-            session.end_turn()
+            if result.advanced:
+                session.end_turn()
             return
 
 

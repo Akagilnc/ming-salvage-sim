@@ -84,6 +84,28 @@ def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
     assert str(exc) in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("action", ["issue", "skip"])
+def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
+    class Session(_Sess):
+        def resolve_turn(self):
+            self.calls.append("resolve")
+            return SimpleNamespace(advanced=False)
+
+        def advance_without_decree(self):
+            self.calls.append("advance")
+            return SimpleNamespace(advanced=False)
+
+    sess = Session(None)
+    monkeypatch.setattr(term, "review_directives", lambda _s: action)
+    monkeypatch.setattr(term, "_print_header", lambda _s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
+    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
+
+    term.play_turn(sess)
+
+    assert "end" not in sess.calls
+
+
 def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
     """CLI issue reaches the end-turn owner without reviving decree preview/review."""
 
@@ -465,7 +487,7 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
                 "kind": "secret_order",
                 "action": "新建",
             })
-            return SimpleNamespace(awaiting=False, report="月报")
+            return SimpleNamespace(awaiting=False, advanced=True, report="月报")
 
         def end_turn(self):
             self.calls.append("end")
@@ -489,7 +511,7 @@ def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypat
     session = _Sess(RuntimeError("unused"))
     session.current_phase = lambda: TurnPhase.REVIEWING
     session.advance_without_decree = lambda: SimpleNamespace(
-        awaiting=False, report="留中案卷本月重判月报",
+        awaiting=False, advanced=True, report="留中案卷本月重判月报",
     )
     monkeypatch.setattr(term, "review_directives", lambda _s: "skip")
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
