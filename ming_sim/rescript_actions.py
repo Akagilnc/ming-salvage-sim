@@ -453,10 +453,34 @@ def validate_all(
             ))
             continue
 
-        # 普通 decision（打回三选等）：按 label 匹配 option
+        # 普通 decision：票拟按 label 命中。请旨另许仅有亲笔 note 的答复，
+        # 不把批语改写成某条票拟。
         if kind == "decision":
-            labels = bind_decision_options(row.get("options") or [])
+            from ming_sim.month_chain import (
+                _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
+            )
+
+            event_id = str(row.get("event_id") or "")
             label = str(req.get("label") or "").strip()
+            note = str(req.get("note") or "").strip()
+            if (
+                not label
+                and note
+                and (
+                    event_id.startswith(_DECREE_QUESTION_PREFIX)
+                    or event_id.startswith(_WORLD_QUESTION_PREFIX)
+                )
+            ):
+                batch.items.append(ValidatedItem(
+                    decision_key=key,
+                    kind=kind,
+                    source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
+                    idx=int(row.get("idx") or 0),
+                    row=row,
+                    choice=req,
+                ))
+                continue
+            labels = bind_decision_options(row.get("options") or [])
             if label not in labels:
                 raise ValueError(f"decision 选项不在当前 options：{key}")
             matched = labels[label]

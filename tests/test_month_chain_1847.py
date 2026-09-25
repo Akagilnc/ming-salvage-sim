@@ -671,7 +671,8 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     captured = {}
 
     def fake_agent(llm_config, sim_payload):
-        del llm_config, sim_payload
+        del llm_config
+        captured["sim_payload"] = sim_payload
         return object()
 
     def fake_run(agent, message, tag="", transport_policy=None):
@@ -693,11 +694,21 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
             "reason": "批红后续推",
         }]}}
 
+    import ming_sim.simulation as simulation
+
+    real_payload = simulation.build_simulator_payload
+
+    def payload_with_world_event(*args, **kwargs):
+        payload = real_payload(*args, **kwargs)
+        payload["candidate_events"] = [{"id": "ev-boundary", "title": "边警"}]
+        return payload
+
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr("ming_sim.agents.create_decree_forecast_agent", fake_agent)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", fake_run)
     monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(simulation, "build_simulator_payload", payload_with_world_event)
     session = make_light_session(db, state, content)
     session.llm_config = object()
     session._write_gate = threading.Lock()
@@ -719,6 +730,7 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     message = str(captured.get("message") or "")
     assert "预推不可见:陕西赈灾" in message
     assert question_context in message
+    assert captured["sim_payload"]["candidate_events"] == []
     assert str(affair.id) in str(captured.get("grounding") or "")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
@@ -732,3 +744,146 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='问后加赈'",
     ).fetchone()[0] == before + 1
+
+
+def test_decree_forecast_keeps_every_question_and_translates_prefix_once(
+    game, monkeypatch,
+):
+    """同一旨的合法请旨全部上案头；只转译、暂存首问前的段文。"""
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="secret_authorization", decree_text="密旨两问",
+        target_kind="issue", target_id="two-questions",
+        payload={"mode": "ordinary"},
+    )
+    narrative = (
+        "问前事实。"
+        + _decision_block("问一", "准", "驳")
+        + "中段。"
+        + _decision_block("问二", "甲", "乙")
+        + "问后不入预推。"
+    )
+    segments = []
+
+    def translate(*_a, **kwargs):
+        segments.append(str(kwargs.get("segment") or ""))
+        return {"effects": {}}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        "ming_sim.decree_forecast.agents.create_decree_forecast_agent",
+        lambda *a, **k: object(),
+    )
+    monkeypatch.setattr(
+        "ming_sim.decree_forecast.agents.run_agent_text",
+        lambda *a, **k: narrative,
+    )
+    monkeypatch.setattr(
+        "ming_sim.decree_forecast.translate_month_segment", translate,
+    )
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.awaiting is True
+    assert [row["title"] for row in result.decisions] == ["问一", "问二"]
+    assert segments == ["问前事实。"]
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+    ref = decree_ref_for_dossier(db, db.get_decree_dossier(dossier_id))
+    stored = db.staged_declarations.questions_for(ref)
+    assert [item["title"] for item in stored] == ["问一", "问二"]
+    assert db.staged_declarations.forecast_text_for(ref) == "问前事实。"
+
+
+def test_question_note_only_is_kept_and_other_decisions_still_require_label(
+    game, monkeypatch,
+):
+    """请旨可只交亲笔 note；普通选项仍须命中票拟，批语不改写成选项。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="亲笔请旨", origin="旨意", year=state.year, period=state.period,
+        turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(
+        db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id,
+    )
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        (json.dumps([{
+            "title": "是否加赈",
+            "context": "灾民待哺",
+            "options": [
+                {"label": "准", "hint": "出仓"},
+                {"label": "驳", "hint": "缓"},
+            ],
+        }], ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+    answers = []
+
+    def continuation(_session, _dossier, got):
+        answers.append(list(got))
+        return ""
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", continuation)
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+    session.resolve_turn(allow_empty_decree=True)
+    desk_row = session.pending_decisions()[0]
+    bad = [{
+        "decision_key": desk_row["decision_key"],
+        "label": "不是票拟",
+        "note": "着户部另议",
+    }]
+    try:
+        session.submit_hitl_choices(bad, write_gate=session._write_gate)
+        rejected = None
+    except ValueError as exc:
+        rejected = exc
+    assert rejected is not None and "选项不在当前 options" in str(rejected)
+    assert db.staged_declarations.questions_for(ref)
+    assert desk_row["status"] == "pending"
+
+    session.submit_hitl_choices(
+        [{
+            "decision_key": desk_row["decision_key"],
+            "note": "着户部另议",
+        }],
+        write_gate=session._write_gate,
+    )
+    assert answers and answers[0][0]["note"] == "着户部另议"
+    assert answers[0][0]["label"] == ""
+    assert not db.staged_declarations.questions_for(ref)
+
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    db.save_pending_decisions(int(state.turn), [{
+        "event_id": "season:1",
+        "title": "旧抉择",
+        "context": "非请旨",
+        "options": [
+            {"label": "甲", "hint": ""},
+            {"label": "乙", "hint": ""},
+        ],
+    }])
+    ordinary = session.pending_decisions()[0]
+    try:
+        session.submit_hitl_choices(
+            [{"decision_key": ordinary["decision_key"], "note": "只写批语"}],
+            write_gate=session._write_gate,
+        )
+        ordinary_rejected = None
+    except ValueError as exc:
+        ordinary_rejected = exc
+    assert ordinary_rejected is not None and "选项不在当前 options" in str(ordinary_rejected)
+    assert session.pending_decisions()[0]["status"] == "pending"

@@ -152,6 +152,8 @@ def _run_decree_continuation_text(
         state, db, str(dossier.get("decree_text") or ""), "",
         decree_dossiers=projected,
     )
+    # 与夜里逐旨预推同一边界：续推这一道旨，不带世界候选事件。
+    sim_payload["candidate_events"] = []
     sim_payload["rescript_answers"] = list(answers)
     agent = create_decree_forecast_agent(session.llm_config, sim_payload)
     return run_agent_text(
