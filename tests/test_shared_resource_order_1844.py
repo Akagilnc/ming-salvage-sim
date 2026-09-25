@@ -7,7 +7,6 @@ import sqlite3
 
 import pytest
 
-import ming_sim.month_chain as month_chain
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.month_translate import dispatch_month_segment
 from tests.test_month_chain_1843 import _prepare_player_month
@@ -48,6 +47,52 @@ def _resolve_player_month(db, state, content, monkeypatch):
     return session.resolve_turn(allow_empty_decree=True)
 
 
+def _quiesce_treasury_tick(db):
+    """入口前的财政输入：让真实月初财政对国库净额为零。
+
+    诊断：substrate hub 的 apply_fixed_period_flows 在国库够付时净 +11，
+    不够付时支出被封顶，落账存量最低也停在约 204。只改开局国库到不了 120。
+    固定支基、建筑、中央饷源与省侧起运/盐商改为 0 后，同一前半段不再改国库。
+    """
+    db.conn.execute(
+        """UPDATE fiscal_config SET value=0 WHERE key IN (
+            '田赋_rate','辽饷_base','辽饷_rate','盐税_base','盐税_rate',
+            '商税_base','商税_rate','宗室禄米_base','官俸_base','工程_base','赈灾_base'
+        )"""
+    )
+    db.conn.execute("UPDATE buildings SET output_amount=0, maintenance=0")
+    db.conn.execute(
+        """UPDATE armies
+           SET province_pay_share = province_pay_share + central_pay_share,
+               central_pay_share = 0
+           WHERE owner_power='ming' AND is_tusi=0 AND self_funded_pay=0"""
+    )
+    for row in db.conn.execute(
+        "SELECT id, fiscal FROM regions WHERE controlled_by='ming'"
+    ):
+        fiscal = json.loads(row["fiscal"] or "{}")
+        settle = fiscal.get("settle")
+        if isinstance(settle, dict):
+            p = settle.get("p")
+            if isinstance(p, dict):
+                p["起运定额"] = 0
+                p["三饷应征"] = 0
+                p["拨付gross"] = 0
+            meta = settle.get("_meta")
+            if isinstance(meta, dict):
+                # 饷率通道会按这些基线重写起运定额；置 0 后重写结果仍是 0。
+                for key in ("正赋起运基线", "辽饷九厘基线", "剿饷基线", "练饷基线", "加派基线"):
+                    if key in meta:
+                        meta[key] = 0
+        fiscal["salt_tax"] = 0
+        fiscal["commerce_tax"] = 0
+        db.conn.execute(
+            "UPDATE regions SET fiscal=? WHERE id=?",
+            (json.dumps(fiscal, ensure_ascii=False), row["id"]),
+        )
+    db.conn.commit()
+
+
 def test_player_decrees_soft_cap_shared_treasury_in_order(game, monkeypatch):
     """存量 120，先扣 100、后支 30 → 实扣 100、实拨 20、库清零；名义留在暂存。"""
     db, state, content = game
@@ -55,6 +100,7 @@ def test_player_decrees_soft_cap_shared_treasury_in_order(game, monkeypatch):
     affair = db.affairs.open(
         name="争库可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
     )
+    _quiesce_treasury_tick(db)
     state.metrics["国库"] = 120
     db.save_state(state)
     first_ref = _stage_player_edict(
@@ -73,15 +119,6 @@ def test_player_decrees_soft_cap_shared_treasury_in_order(game, monkeypatch):
         }]},
         "后支三十万",
     )
-    # 月初财政先于旨意改账。争库的给定存量是两旨落账时的 120，不是月初结余。
-    real_settle = month_chain._settle_edicts
-
-    def given_stock(session, **kwargs):
-        session.state.metrics["国库"] = 120
-        session.db.save_state(session.state)
-        return real_settle(session, **kwargs)
-
-    monkeypatch.setattr(month_chain, "_settle_edicts", given_stock)
     _resolve_player_month(db, state, content, monkeypatch)
 
     assert _settled_declaration(db, first_ref)["effects"]["economy_moves"][0]["delta"] == -100
