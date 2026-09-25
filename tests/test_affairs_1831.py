@@ -11,7 +11,6 @@ import ming_sim.audience_night as audience_night
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 import ming_sim.simulation as simulation
-from ming_sim.audience_extraction import parse_extraction_facts
 from ming_sim.db import GameDB
 from ming_sim import issues as issues_mod
 from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
@@ -47,16 +46,6 @@ def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
     return body
 
 
-def _persist_reply(db, state, minister, reply="臣记下此事。"):
-    night = audience_night.open_night(db, state)
-    nid = int(night["id"])
-    audience_night.summon_enter(db, nid, minister)
-    ctid = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
-    db.persist_minister_reply(minister, int(state.turn), reply, ctid)
-    row = db.conn.execute(
-        "SELECT night_seq FROM chat_turns WHERE id=?", (ctid,)
-    ).fetchone()
-    return nid, ctid, int(row["night_seq"])
 
 
 def _session(db, state, content, *, reply):
@@ -366,44 +355,6 @@ def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
         )
 
 
-def test_translation_experience_marks_affair_without_dossier(game):
-    db, state, content = game
-    minister = _minister(db)
-    affair = db.affairs.open(
-        name=NINGYUAN, origin=ORIGIN,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    assert db.affairs.dossiers(affair.id) == ()
-    nid, ctid, seq = _persist_reply(db, state, minister)
-    facts = parse_extraction_facts({
-        "facts": [{
-            "person_names": [minister],
-            "body": "护送途中闻边报，尚无案卷",
-            "事务声明": _declaration(attach="existing", affair_id=affair.id),
-        }],
-    })
-    db.settle_story_extraction(
-        ctid, nid, facts, seq, authorized_open_ids={affair.id},
-    )
-    rows = db.affairs.experiences(affair.id)
-    assert len(rows) == 1
-    assert minister in rows[0]["person_names"]
-    assert str(rows[0]["origin_ref"]).startswith(f"affair:{affair.id}/")
-    knowledge = db.get_character_knowledge(state, minister)
-    assert any(event.get("source_id") == f"story_ledger:{rows[0]['id']}" for event in knowledge["events"])
-    brief = db.affairs.input_brief(db.textual_facts)
-    row = next(item for item in brief if int(item["id"]) == affair.id)
-    assert "experiences" not in row
-
-    path = db.path
-    db.close()
-    restored = GameDB(path, content)
-    try:
-        restored_rows = restored.affairs.experiences(affair.id)
-        assert minister in restored_rows[0]["person_names"]
-        assert restored_rows[0]["origin_ref"] == rows[0]["origin_ref"]
-    finally:
-        restored.close()
 
 
 
@@ -449,45 +400,6 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
     )
 
 
-def test_story_extraction_rejects_unauthorized_affair_origin_itemwise(game):
-    """越权经历挂接只拒该项：合法 sibling 落账、水位完成、拒收留痕。"""
-    db, state, content = game
-    minister = _minister(db)
-    authorized = db.affairs.open(
-        name=NINGYUAN, origin=ORIGIN,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    unauthorized = db.affairs.open(
-        name="另事", origin="另一件交办",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    nid, ctid, seq = _persist_reply(db, state, minister)
-    facts = parse_extraction_facts({
-        "facts": [
-            {
-                "person_names": [minister],
-                "body": "越权挂接经历",
-                "事务声明": _declaration(attach="existing", affair_id=unauthorized.id),
-            },
-            {
-                "person_names": [minister],
-                "body": "合法经历 sibling",
-                "事务声明": _declaration(attach="existing", affair_id=authorized.id),
-            },
-        ],
-    })
-    ids = db.settle_story_extraction(
-        ctid, nid, facts, seq, authorized_open_ids={authorized.id},
-    )
-    assert len(ids) == 1
-    assert db.get_story_extract_status(ctid) == "done"
-    assert len(db.affairs.experiences(authorized.id)) == 1
-    assert db.affairs.experiences(unauthorized.id) == ()
-    rows = db.conn.execute(
-        "SELECT section, reason FROM rejection_reports WHERE section = ?",
-        ("story_facts",),
-    ).fetchall()
-    assert any("事务不在本批" in str(row["reason"]) for row in rows)
 
 
 def test_strategic_event_unauthorized_person_origin_reaches_final_projection(game):

@@ -87,8 +87,7 @@ def apply_audience_round_translation(
 
     - ``night_id``：本轮所属召对夜（在场进出、说话人分段挂此夜）
     - ``chat_turn_id``：源对话轮；>0 时 ledger 写 ``source_chat_turn_id``、主角
-      写到该轮与夜当前值，并把 ``extract_status`` / ``relation_judge_status``
-      标 ``done``（转译已承接，收夜不再跑故事抽取 / 边事件判官）
+      写到该轮与夜当前值，并把 ``extract_status`` 标 ``done``
 
     第四类落账委托公开入口 :func:`dispatch_declaration`——入口自记撤回前像，
     后台 worker 直接调用本函数时 undo 亦可逆转，不另造第二份 capture/record。
@@ -111,7 +110,7 @@ def apply_audience_round_translation(
         if ctid > 0 and result.scene_facts.rejected:
             from ming_sim.audience_translate import AudienceTranslateError
             raise AudienceTranslateError("说话人分段声明有拒收项")
-        # 主角持久化 + 抽取/判官水位：chat_turns 不在前像表，undo 走重投影。
+        # 主角持久化 + 转译水位：chat_turns 不在前像表，undo 走重投影。
         _bind_round_after_dispatch(db, nid, ctid, result)
     from ming_sim.decree_forecast import schedule_approved_from_dispatch
     schedule_approved_from_dispatch(db, result, nid)
@@ -124,7 +123,7 @@ def _bind_round_after_dispatch(
     chat_turn_id: int,
     result: DeclarationDispatchResult,
 ) -> None:
-    """主角持久化 + 本轮抽取/判官水位。须在调用方 atomic 内。"""
+    """主角持久化 + 本轮转译水位。须在调用方 atomic 内。"""
     validated = result.protagonist.validated
     name = ""
     if isinstance(validated, Mapping):
@@ -141,19 +140,19 @@ def _bind_round_after_dispatch(
         # The night value is only a projection of the latest live declaration.
         # A retry may commit an older round after a newer round (or a xuan cut).
         reproject_night_protagonist(db, night_id)
-    # 转译已声明本轮记录 → 故事抽取与边事件判官退役于本轮（水位 done，收夜 drain 跳过）
+    # 转译已声明本轮记录，推进源轮水位。
     mark_turn_translation_done(db, chat_turn_id, commit=False)
 
 
 def mark_turn_translation_done(
     db: Any, chat_turn_id: int, *, commit: bool = True,
 ) -> None:
-    """水位单真源：源轮 extract/relation_judge → done（控制口令早退与转译落账共用）。"""
+    """水位单真源：源轮 extract_status → done（控制口令早退与转译落账共用）。"""
     ctid = int(chat_turn_id or 0)
     if ctid <= 0 or not hasattr(db, "conn"):
         return
     db.conn.execute(
-        "UPDATE chat_turns SET extract_status='done', relation_judge_status='done' "
+        "UPDATE chat_turns SET extract_status='done' "
         "WHERE id=? AND status NOT IN ('failed','undone')",
         (ctid,),
     )

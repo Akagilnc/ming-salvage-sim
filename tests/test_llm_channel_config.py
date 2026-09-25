@@ -877,7 +877,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
 
     # ming_sim.agents 现役工厂——逐项命名调用，漏一个即红
     factories = [
-        ("create_mindreading_agent", lambda: agents_mod.create_mindreading_agent(cfg)),
         ("create_highlight_judge_agent", lambda: agents_mod.create_highlight_judge_agent(cfg)),
         ("create_endorsement_extractor_agent", lambda: agents_mod.create_endorsement_extractor_agent(cfg)),
         ("create_world_segment_agent", lambda: agents_mod.create_world_segment_agent(

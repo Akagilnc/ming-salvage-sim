@@ -162,12 +162,8 @@ class _RecordingDB:
     def persist_minister_reply(
         self, minister_name: str, turn: int, content: str, chat_turn_id: int, **_kw,
     ):
-        # #499/#1842：同事务回话+可选 mindreading_status；stub 只记账 message id
+        # 同事务回话；stub 只记账 message id
         return self.append_chat_message(minister_name, turn, "minister", content)
-
-    def set_mindreading_status(self, chat_turn_id: int, status: str):
-        # #1842：_chat_payload persist 后 skip 退役读心；轻壳记账 no-op
-        return None
 
     def fail_chat_turn(self, *_a, **_k):
         # 流式失败尾声 / identity 失败路径会调此口

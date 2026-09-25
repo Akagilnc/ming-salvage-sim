@@ -13,7 +13,6 @@ from ming_sim import beat_orchestration as bo
 from ming_sim.audience_extraction import (
     ExtractionShapeError,
     parse_endorsement_batch,
-    parse_extraction_facts,
 )
 from ming_sim.audience_translation import apply_audience_round_translation
 from ming_sim.db import GameDB
@@ -520,7 +519,7 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
     drain_abandoned = threading.Event()
 
     def _boom_drain(*_a, **_k):
-        raise RuntimeError("story drain boom")
+        raise RuntimeError("translation drain boom")
 
     def _ok_beat(_inputs):
         return "不应落账的收夜旁白"
@@ -531,13 +530,13 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
         drain_abandoned.set()
         return real_abandon(ctid)
 
-    monkeypatch.setattr(an, "_drain_story_extraction_or_fail_closed", _boom_drain)
+    monkeypatch.setattr(an, "_drain_pending_translations_or_fail_closed", _boom_drain)
     monkeypatch.setattr(scene_registry, "abandon", _track_abandon)
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda cfg: _SkipBind(),
     )
-    with pytest.raises(RuntimeError, match="story drain boom") as ei5:
+    with pytest.raises(RuntimeError, match="translation drain boom") as ei5:
         an.close_night(
             db, state, night_id=night_id5, content=content,
             llm_config=object(), write_gate=threading.Lock(),

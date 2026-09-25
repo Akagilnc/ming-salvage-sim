@@ -117,13 +117,12 @@ def test_three_speaker_segments_private_whisper_reaches_only_participant(game):
     assert scene_whisper not in bodies
     assert wang_whisper in [e["body"] for e in person_night_experience(db, nid, "王承恩")]
 
-    # 转译已承接本轮 → 抽取 / 判官水位推进，不另起旧路径
+    # 转译已承接本轮 → 转译水位推进，不另起旧路径
     row = db.conn.execute(
-        "SELECT extract_status, relation_judge_status FROM chat_turns WHERE id=?",
+        "SELECT extract_status FROM chat_turns WHERE id=?",
         (ctid,),
     ).fetchone()
     assert row["extract_status"] == "done"
-    assert row["relation_judge_status"] == "done"
 
 
 def test_presence_enter_exit_from_translation(game):

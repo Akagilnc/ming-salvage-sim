@@ -19,7 +19,6 @@ import httpx
 import pytest
 
 import ming_sim.agents as agents_mod
-import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
@@ -34,11 +33,6 @@ class _CannedExtractor:
 class _CannedEndorsementExtractor:
     def run(self, _material):
         return SimpleNamespace(content='{"endorsements":[]}')
-
-
-class _CannedMindreadingAgent:
-    def run(self, _material):
-        return SimpleNamespace(content="近臣低声：边饷事重。")
 
 
 
@@ -61,10 +55,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
-    )
-    monkeypatch.setattr(
-        mindreading_mod, "create_mindreading_agent",
-        lambda *a, **k: _CannedMindreadingAgent(),
     )
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     # stream worker 在 payload 前启动 _start_cli_action_intent → 真 classify LLM；

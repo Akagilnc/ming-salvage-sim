@@ -1,24 +1,15 @@
-"""近臣读心内容生成（#491）。
-
-这是内容层 seam，不负责 UI 或召对编排：回话正文必须由调用方显式传入，
-因此可以在回话流式完成后后台排队，而不会让生成器偷偷等待另一条会话管线。
-读心者只携带角色见闻投影，按自己所知给判断；不直读目标忠诚 / 派系 /
-身份 / 罪证真值。
-"""
+"""御前近臣职位识别，供召对与夜内场景复用。"""
 
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, Mapping
+from typing import Mapping
 
-from ming_sim.agents import create_mindreading_agent
 from ming_sim.db import normalize_office
-from ming_sim.exceptions import LLMUnavailable
-from ming_sim.llm_model import extract_agent_text
-from ming_sim.models import Character
 
 
 _INNER_COURT_ATTENDANT_OFFICES = frozenset({"信邸内官随驾", "御前近臣"})
+
+
 def _character_field(character: object, field: str) -> object:
     if isinstance(character, Mapping) or hasattr(character, "keys"):
         try:
@@ -29,148 +20,12 @@ def _character_field(character: object, field: str) -> object:
 
 
 def is_inner_court_attendant(character: object) -> bool:
-    """按御前近臣的职位识别读心者，不把王承恩姓名写死。"""
+    """按御前近臣的职位识别近侍，不把具体姓名写死。"""
     offices = normalize_office(str(_character_field(character, "office") or ""))
-    # 内廷/司礼监是机构，不是御前唯一近臣位。读心权是由当前占据的
+    # 内廷/司礼监是机构，不是御前唯一近臣位。近臣资格由当前占据的
     # 槽位授予，而非职位描述中碰巧出现的词；例如「御前近臣候补」不能
     # 因包含槽名而取得旁人底账。名称可变，已登记的槽位标题不可泛化。
     return any(
         office in _INNER_COURT_ATTENDANT_OFFICES
         for office in offices.split(",")
     )
-
-
-def current_inner_court_attendant_name(db: Any) -> str:
-    """返回当前唯一御前近臣位者；空缺或重位时不授权任何人读心。"""
-    if not hasattr(db, "conn"):
-        return ""
-    rows = db.conn.execute(
-        "SELECT name, office, office_type FROM characters "
-        "WHERE status='active' ORDER BY name"
-    ).fetchall()
-    eligible = [str(row["name"]) for row in rows if is_inner_court_attendant(row)]
-    return eligible[0] if len(eligible) == 1 else ""
-
-
-def intelligence_precision(target_factor: float = 1.0, channel_factor: float = 1.0) -> str:
-    """读心/查探共用的精度口径；探针期目标侧因子恒为常量但保留参数。"""
-    try:
-        score = max(0.0, min(1.0, float(target_factor) * float(channel_factor)))
-    except (TypeError, ValueError):
-        score = 0.0
-    if score >= 0.75:
-        return "清晰"
-    if score >= 0.4:
-        return "隐约"
-    return "模糊"
-
-
-def build_scouting_precision_payload(
-    target_factor: float = 1.0,
-    channel_factor: float = 1.0,
-) -> Dict[str, str]:
-    """为后续锦衣卫查探链提供精度 payload，复用读心的同一口径。"""
-    return {
-        "source": "锦衣卫查探预留",
-        "precision": intelligence_precision(target_factor, channel_factor),
-    }
-
-
-def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]:
-    from ming_sim.materials import (
-        character_hearing_records,
-        character_office_archive_text,
-    )
-
-    knowledge = db.get_character_knowledge(state, reader.name)
-    # 听闻只取 title/body（character_hearing_records）；公事档案与目录同一份。
-    # 读心 payload 转译人物底账，不把无关盘面混入而重现裸人物分值。
-    return {
-        "heard": character_hearing_records(knowledge),
-        "公事档案": character_office_archive_text(db, state, reader, knowledge),
-    }
-
-
-def build_mindreading_materials(
-    db: Any,
-    state: Any,
-    reader: Character,
-    target: Character,
-    minister_reply: str,
-    *,
-    target_factor: float = 1.0,
-    channel_factor: float = 1.0,
-) -> Dict[str, object]:
-    """锁内组装读心所需的纯材料，不调用模型。
-
-    ``minister_reply`` 是已经完成的大臣回话原文；除空白判定外不做任何
-    解析或改写，锁外模型与最终 payload 都消费同一份原文。
-    """
-    current_reader: object = reader
-    if hasattr(db, "conn"):
-        row = db.conn.execute(
-            "SELECT office, office_type FROM characters WHERE name=?",
-            (reader.name,),
-        ).fetchone()
-        if row is not None:
-            current_reader = row
-        if current_inner_court_attendant_name(db) != reader.name:
-            raise ValueError("读心 payload 只能由当前唯一御前近臣位生成")
-    if not is_inner_court_attendant(current_reader):
-        raise ValueError("读心 payload 只能由御前近臣位生成")
-    if not str(minister_reply or "").strip():
-        raise ValueError("读心 payload 需要显式的大臣回话正文")
-
-    reader_context = _reader_context(db, state, reader)
-    return {
-        "reader": reader.name,
-        "target": target.name,
-        "source": "见闻",
-        "precision": intelligence_precision(target_factor, channel_factor),
-        "reader_context": reader_context,
-        "reply_text": minister_reply,
-    }
-
-
-def generate_mindreading_payload(
-    materials: Mapping[str, object],
-    llm_config: object,
-    *,
-    mindreading_agent: Any = None,
-) -> Dict[str, object] | None:
-    """仅凭纯材料生成尾随旁白；不得读取 DB 或会话状态。
-
-    #1474：无真增量时模型空返回 → None（本轮缺席，非失败）。
-    """
-    reader_context = materials.get("reader_context")
-    if not isinstance(reader_context, Mapping):
-        raise ValueError("读心材料缺少近臣见闻")
-    model_materials = {
-        "当轮回话": materials.get("reply_text"),
-        "近臣自身见闻": reader_context.get("heard", []),
-        "近臣公事档案": reader_context.get("公事档案", ""),
-    }
-    agent = mindreading_agent
-    if agent is None:
-        if llm_config is None:
-            raise LLMUnavailable("当前会话没有可用的模型配置")
-        agent = create_mindreading_agent(llm_config)
-    subtext = extract_agent_text(agent.run(json.dumps(model_materials, ensure_ascii=False)))
-    # #671：extract 不 strip；判空用临时副本（纯空白 = 合法缺席）
-    if not str(subtext or "").strip():
-        # 宁缺毋滥：空返回 = 本轮不递话（合法缺席）
-        return None
-
-    return {
-        "reader": materials.get("reader"),
-        "target": materials.get("target"),
-        "source": materials.get("source"),
-        "precision": materials.get("precision"),
-        "narration": subtext,
-    }
-
-
-# P5（#499）：读心语义依赖当轮完整回话，不可与回话生成并行；编排层据此串行尾随。
-generate_mindreading_payload.parallel_safe = False
-generate_mindreading_payload.dependencies = frozenset({"minister_reply"})
-build_mindreading_materials.dependencies = frozenset({"minister_reply"})

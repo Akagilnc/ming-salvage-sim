@@ -275,14 +275,6 @@ def _production_summon_turn(
     }
 
 
-def _relation_judge_status(db: Any, chat_turn_id: int) -> str:
-    row = db.conn.execute(
-        "SELECT relation_judge_status FROM chat_turns WHERE id=?",
-        (int(chat_turn_id),),
-    ).fetchone()
-    return str(row["relation_judge_status"] or "") if row is not None else ""
-
-
 def _close_night_production_judge(
     sess: GameSession,
     cfg: LLMConfig,
@@ -613,7 +605,6 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
                 for e in sess.db.get_relation_edge_events()
                 if str(e.get("origin") or "").startswith(origin_prefix)
             ]
-            judge_status = _relation_judge_status(sess.db, ctid)
             settle_meta = _settle_with_brew(sess, content, cfg)
             settle_traces.append(settle_meta)
             summaries_after = _tracked_summary_pointers(sess.db)
@@ -646,7 +637,6 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
                 },
                 "close": close_meta,
                 "judge": {
-                    "relation_judge_status": judge_status,
                     "edges": len(events_after),
                     "edge_ids": [int(e["id"]) for e in events_after],
                     "origins": sorted({
@@ -702,10 +692,6 @@ def _run_yang_anchor(cfg: LLMConfig, content: GameContent) -> Dict[str, Any]:
                 int(b["chat"]["answer_chars"]) > 0 for b in beat_traces
             ),
             "nights_closed": all(bool(b.get("close", {}).get("closed")) for b in beat_traces),
-            "judge_watermark_done": all(
-                str((b.get("judge") or {}).get("relation_judge_status") or "") == "done"
-                for b in beat_traces
-            ),
             "judge_wrote_edges": len(summon_origin_edges) > 0,
             "edge_ids_present": all(
                 int(e.get("id") or 0) > 0 for e in summon_origin_edges

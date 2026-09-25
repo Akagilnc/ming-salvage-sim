@@ -628,7 +628,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                             content=content, beat="dialogue",
                             chat_turn_id=int(turn["id"])),
                 ))
-        # 递话/读心是对话轮的第三种持久消息，紧随该轮奏对归位；不并入故事账。
+        # 历史递话记录是对话轮的持久消息，紧随该轮奏对归位；不并入故事账。
         if hasattr(db, "list_mindreading_records"):
             for record_index, record in enumerate(db.list_mindreading_records(int(turn["id"]))):
                 narration = str(record.get("narration") or "").strip()
@@ -869,6 +869,18 @@ def assert_persons_not_dead(
     )
 
 
+def is_pending_source_round(db: Any, night_id: int, chat_turn_id: int, turn: int) -> bool:
+    """封夜后只承接同月、同夜仍待补的既有回话，不开放新玩家输入。"""
+    if chat_turn_id <= 0:
+        return False
+    return db.conn.execute(
+        "SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 "
+        "WHERE t.id=? AND t.night_id=? AND t.status='active' "
+        "AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?",
+        (int(chat_turn_id), int(night_id), int(turn)),
+    ).fetchone() is not None
+
+
 def append_ledger_entry(
     db: Any,
     night_id: int,
@@ -885,6 +897,7 @@ def append_ledger_entry(
     origin_chat_turn_id: int = 0,
     origin_ref: str = "",
     allow_closing: bool = False,
+    allow_closed_publication: bool = False,
 ) -> int:
     """追加一条故事账。commit=False 时由外层事务统一提交（开夜原子）。
 
@@ -906,14 +919,13 @@ def append_ledger_entry(
     # the month advances or after its source round has been completed/retracted.
     pending_source = False
     if night["status"] in {NIGHT_STATUS_CLOSING, NIGHT_STATUS_CLOSED} and source_chat_turn_id > 0:
-        row = db.conn.execute(
-            "SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 "
-            "WHERE t.id=? AND t.night_id=? AND t.status='active' "
-            "AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?",
-            (int(source_chat_turn_id), int(night_id), int(night["turn"])),
-        ).fetchone()
-        pending_source = row is not None and int(origin_chat_turn_id) == int(source_chat_turn_id)
-    if night["status"] == NIGHT_STATUS_CLOSED and not pending_source:
+        pending_source = (
+            int(origin_chat_turn_id) == int(source_chat_turn_id)
+            and is_pending_source_round(
+                db, int(night_id), int(source_chat_turn_id), int(night["turn"]),
+            )
+        )
+    if night["status"] == NIGHT_STATUS_CLOSED and not (pending_source or allow_closed_publication):
         raise AudienceNightError(
             f"夜已收，不能再落账：{night_id}", code="night_closed",
         )
@@ -935,6 +947,12 @@ def append_ledger_entry(
             f"在场效果非法：{presence_effect!r}", code="bad_presence_effect",
         )
     tag_list = [str(t) for t in (tags or []) if str(t)]
+    if allow_closed_publication and not (
+        source_chat_turn_id == 0 and origin_chat_turn_id == 0
+        and TAG_MINGFA in tag_list
+        and any(exact_mingfa_publication_directive_id(t) for t in tag_list)
+    ):
+        raise AudienceNightError("封夜后仅可补记引擎明发账", code="night_closed")
     seq = _allocate_seq(db, night_id)
     origin = str(origin_ref or "").strip()
     cur = db.conn.execute(
@@ -1225,71 +1243,102 @@ def _commit_night_approved(
     return list(applied or [])
 
 
-def _pending_extraction_rows(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    """#1353 单真源：挡收夜判定与 pending 呈现共用 list_unextracted_replies。"""
-    if not hasattr(db, "list_unextracted_replies"):
-        return []
-    rows = db.list_unextracted_replies(night_id=int(night_id)) or []
-    out: List[Dict[str, Any]] = []
-    for r in rows:
-        if isinstance(r, Mapping):
-            out.append(dict(r))
-    return out
+def publish_night_directives(db: Any, night_id: int) -> None:
+    """背书落定后，以同一入口幂等记本夜已成案拟旨的明发账。"""
+    # 夜内定案的旨落公开层账、标已明发（#502 AC6）——仅 endorsement 成功之后。
+    already_ids = {
+        str(did)
+        for did in engine_command_mingfa_publication_ids(list_ledger(db, night_id))
+    }
+    _mingfa_candidates = db.conn.execute(
+        """
+        SELECT td.id AS directive_id, td.actor, td.text,
+               MIN(d.id) AS dossier_id
+        FROM pending_actions pa
+        JOIN turn_directives td ON td.id = pa.committed_directive_id
+        JOIN decree_dossiers d ON d.pending_action_id = pa.id
+        WHERE pa.night_id = ? AND pa.kind = 'directive'
+          AND pa.status = 'committed' AND pa.committed_directive_id > 0
+          AND pa.late_endorsement_pending = 0
+        GROUP BY td.id, td.actor, td.text
+        ORDER BY td.id
+        """,
+        (int(night_id),),
+    ).fetchall()
+    for _pd in _mingfa_candidates:
+        _did_int = int(_pd["directive_id"] or 0)
+        _did = str(_did_int)
+        if not _did_int or _did in already_ids:
+            continue
+        dossier_id = int(_pd["dossier_id"] or 0)
+        if dossier_id <= 0:
+            continue
+        origin_ref = f"dossier:{dossier_id}"
+        append_ledger_entry(
+            db, night_id,
+            person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],
+            audibility=AUDIBILITY_PUBLIC,
+            body=f"明发旨意：{str(_pd['text'] or '')}",
+            tags=[TAG_MINGFA, mingfa_publication_tag(_did_int)],
+            check_dead=False,
+            allow_closing=True,
+            allow_closed_publication=True,
+            origin_ref=origin_ref,
+        )
 
 
-def _raise_pending_extraction(
-    db: Any,
-    night_id: int,
-    *,
-    rows: Optional[Sequence[Mapping[str, Any]]] = None,
-    missing_deps: bool = False,
+def commit_late_night_approved(
+    db: Any, state: GameState, *, content: Any, registry: Any,
+    llm_config: Any = None, write_gate: Any = None,
 ) -> None:
-    """欠账抽取耗尽 → 既定失败单源（#1353 fold-in）。
+    """过月 join 后沿收夜提交、背书、明发入口补完迟到应允。"""
+    nights = db.conn.execute(
+        "SELECT DISTINCT n.id FROM audience_nights n "
+        "JOIN pending_actions pa ON pa.night_id=n.id "
+        "WHERE n.turn=? AND n.status=? AND "
+        "((pa.status='pending' AND pa.night_approved=1) OR "
+        "(pa.status='committed' AND pa.late_endorsement_pending=1)) ORDER BY n.id",
+        (int(state.turn), NIGHT_STATUS_CLOSED),
+    ).fetchall()
+    if not nights:
+        return
+    gate = _gate_cm(write_gate)
+    for night in nights:
+        nid = int(night["id"])
+        with gate:
+            for kinds in (
+                _CLOSE_COMMIT_KINDS_OFFICE,
+                _CLOSE_COMMIT_KINDS_DIRECTIVE,
+                _CLOSE_COMMIT_KINDS_FINAL,
+            ):
+                _commit_night_approved(
+                    db, state, nid, kinds=kinds, content=content, registry=registry,
+                )
+            late_ids = [int(row["id"]) for row in db.conn.execute(
+                "SELECT id FROM pending_actions WHERE night_id=? AND status='committed' "
+                "AND late_endorsement_pending=1 ORDER BY id", (nid,),
+            ).fetchall()]
+        if late_ids:
+            from ming_sim.audience_extraction import run_endorsement_batch_for_night
+            run_endorsement_batch_for_night(
+                db=db, night_id=nid, llm_config=llm_config, write_gate=gate,
+                late_action_ids=late_ids,
+            )
 
-    诊断细节进 error pack / provider_message；玩家 message 唯一走
-    CLI_RUNNER_PLAYER_MESSAGE。禁玩家可见欠账拒绝面与手动补写入口。
-    """
-    from ming_sim.exceptions import LLMUnavailable
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
-    snap = list(rows) if rows is not None else _pending_extraction_rows(db, int(night_id))
-    ids = [int(r.get("chat_turn_id") or 0) for r in snap]
-    if missing_deps:
-        technical = (
-            f"收夜中止：本夜仍有 {len(ids)} 条待补抽取，且无 LLM/写锁可清空"
-            f"（chat_turn_ids={ids}）。"
-        )
-    else:
-        technical = (
-            "收夜中止：本夜仍有未抽取落账的回话（待补），"
-            f"chat_turn_ids={ids}。"
-        )
-    write_audience_error_pack(
-        kind="pending_extraction", message=technical,
-        detail={"night_id": int(night_id), "chat_turn_ids": ids},
-    )
-    # code 保留 pending_extraction 供引擎内 heal 重拍；玩家只见单源文案。
-    raise LLMUnavailable(
-        CLI_RUNNER_PLAYER_MESSAGE,
-        code="pending_extraction",
-        provider_message=technical,
-    )
-
-
-def _drain_story_extraction_or_fail_closed(
+def _drain_pending_translations_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
-    extractor_agent: Any = None,
     translate_fn: Any = None,
     game_state: Any = None,
     write_queue: Any = None,
 ) -> None:
-    """收夜 phase-2：转译已在 OPEN 期 join；此处再 catch-up 待补。
+    """收夜提交前：转译已在 OPEN 期 join；此处再 catch-up 待补转译。
 
     ADR 0036 后出注记 / #1842：待补不再 fail-closed 中止收夜。join/补跑后仍
     pending 的留给过月 join / 原地重试（0157）。
 
     ``extract_status`` 由转译通路独占；未完成的轮次留给过月 join /
-    原地重试，不再有平行的故事抽取通路。
+    原地重试，不再保留旧故事抽取通路。
 
     write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)。
     """
@@ -1336,20 +1385,19 @@ def close_night(
     knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    extractor_agent: Any = None,
     endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
     translate_fn: Any = None,
     write_queue: Any = None,
 ) -> Dict[str, Any]:
-    """收夜：短写前提 → 无锁普通补抽 + 夜级 endorsement-only 批 → 短写终局。
+    """收夜：短写前提 → 无锁待补转译 + 夜级 endorsement-only 批 → 短写终局。
 
     分相：
-    1. OPEN 期：等在飞回话清；有限 join 普通抽取 single-flight owner 后重读 DB；
+    1. OPEN 期：等在飞回话清；有限 join 转译 single-flight owner 后重读 DB；
        经调用方既有 ChatTurnSceneRegistry start_close（不立即 join）；持 write_gate
        原子复查并冻结 CLOSING、提交 draft 前提。不得自建第二 registry/executor/Thread。
-    2. 释放 gate：清空普通 story 待补（CLOSING restore drain 作崩溃恢复口）；
+    2. 提交前先补跑待补转译（CLOSING restore 同路）；之后
        endorsement-only LLM 与 close scene 并行（无 DB transaction / 无 runtime write
        gate）；终局写入前 join close scene。
     3. 重取 gate：原子落背书水位；consort/明发/收夜账/CLOSED。
@@ -1436,8 +1484,8 @@ def close_night(
             wait_in_flight_clear(
                 db, night_id, timeout_s=wait_timeout_s, write_gate=write_gate,
             )
-            # #1842：封夜提交 join 最后一轮转译须在 OPEN 期完成——CLOSING 会拒
-            # mark_pending_night_approved（「本夜收夜中，暂不能应允暂存」）。
+            # #1842：封夜提交 join 最后一轮转译须在 OPEN 期完成；CLOSING
+            # 只允许待补既有源轮的应允，其余玩家输入仍拒绝。
             # join / catch-up 在闸外（LLM + 串行锁）；落账自持 write_gate。
             # 屏障未清空不得 catch-up / 置 CLOSING——timeout 仅轮询上限，保持 OPEN 续等。
             from ming_sim.audience_translation import catch_up_pending_translations
@@ -1467,7 +1515,7 @@ def close_night(
             assert night is not None
         else:
             # Resume CLOSING：仍无 body 时 start 同一 registry 缝（不自建平行生命周期）。
-            # CLOSING restore drain 留作 ADR 0036 崩溃恢复口（下方 phase-2 drain）。
+            # CLOSING restore drain 留作 ADR 0036 崩溃恢复口（下方提交前补跑）。
             # 与 OPEN 同：start_close 短读持 gate；重读 night 同持。
             with gate:
                 _start_close_scene()
@@ -1490,23 +1538,31 @@ def close_night(
                     detail={"night_id": int(night_id), "step": int(step)},
                 )
 
+        # 本夜待补先补跑再提交应允；CLOSING restore 亦须在游标前补跑。
+        # 仍待补的轮次不挡退朝，过月 join 后另走迟到应允成案口。
+        _drain_pending_translations_or_fail_closed(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            game_state=state, translate_fn=translate_fn, write_queue=write_queue,
+        )
+
         # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
         with gate:
+            # 恢复态游标可能已越过前两步；新补到的同夜应允仍须提交。
+            _commit_night_approved(
+                db, state, int(night_id),
+                kinds=_CLOSE_COMMIT_KINDS_OFFICE,
+                content=content, registry=registry,
+            )
             if cursor < CLOSE_STEP_COMMIT_OFFICE:
-                _commit_night_approved(
-                    db, state, int(night_id),
-                    kinds=_CLOSE_COMMIT_KINDS_OFFICE,
-                    content=content, registry=registry,
-                )
                 _advance(CLOSE_STEP_COMMIT_OFFICE)
 
+            _commit_night_approved(
+                db, state, int(night_id),
+                kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
+                content=content, registry=registry,
+                directive_status="draft",
+            )
             if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
-                _commit_night_approved(
-                    db, state, int(night_id),
-                    kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
-                    content=content, registry=registry,
-                    directive_status="draft",
-                )
                 # Draft dossiers / turn_directives are durable prerequisites only.
                 _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
     except BaseException as early_exc:
@@ -1517,64 +1573,6 @@ def close_night(
 
     # #1842 / ADR 0155：收夜旧边事件判官退役——转译已在场中声明边事件并落账；
     # 不再 prepare/invoke/finalize relation judge，也不为判官另建 scaffold 轮。
-    # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
-    # Ordinary story drain (LLM outside settle lock). CLOSING restore drain =
-    # ADR 0036 崩溃恢复口；OPEN 期 join 已汇合在飞 owner，此处只清真欠账。
-    # drain 失败走 abandon（与 early cleanup 同形），禁 join 拉长双源窗。
-    try:
-        _drain_story_extraction_or_fail_closed(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-            extractor_agent=extractor_agent, game_state=state,
-            translate_fn=translate_fn,
-            write_queue=write_queue,
-        )
-    except Exception as drain_exc:
-        from ming_sim.exceptions import LLMUnavailable
-        cleanup_exc: BaseException | None = None
-        if close_started and reg is not None:
-            try:
-                if hasattr(reg, "abandon"):
-                    reg.abandon(int(close_ctid))
-                if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
-                    with gate:
-                        db.fail_chat_turn(int(close_ctid))
-            except BaseException as exc:
-                cleanup_exc = exc
-        with gate:
-            _set_night_fields(
-                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
-                close_commit_cursor=0,
-            )
-        # 清理后按 list_unextracted 单真源重拍。欠账耗尽 → 失败单源（非玩家 CTA 409）。
-        # 不递归重入；空集 → close_retry（竞态全愈，玩家重按过月）。
-        is_pending_block = (
-            isinstance(drain_exc, LLMUnavailable)
-            and getattr(drain_exc, "code", None) == "pending_extraction"
-        )
-        if is_pending_block:
-            # #1353 r7：失败重拍 pending 短持 gate（共享 conn 读）。
-            with gate:
-                still = _pending_extraction_rows(db, int(night_id))
-            if still:
-                try:
-                    # 单点构造 escaping error：禁 `from drain_exc`（stale ids 经 cause 漏出）。
-                    _raise_pending_extraction(db, int(night_id), rows=still)
-                except LLMUnavailable as fresh:
-                    if cleanup_exc is not None:
-                        raise fresh from cleanup_exc
-                    raise fresh
-            retry_exc = AudienceNightError(
-                "收夜中止：请原地重试收夜或颁诏。",
-                code="close_retry",
-                detail={"night_id": int(night_id)},
-            )
-            if cleanup_exc is not None:
-                raise retry_exc from cleanup_exc
-            raise retry_exc
-        if cleanup_exc is not None:
-            raise drain_exc from cleanup_exc
-        raise
-
     # ── Phase 2: endorsement LLM ∥ close scene (join before finalize) ──────
     # Both branches end before finalize or reopen. No ExceptionGroup bus /
     # second registry/executor/Thread. First observed failure propagates;
@@ -1654,44 +1652,7 @@ def close_night(
                 kinds=_CLOSE_COMMIT_KINDS_FINAL,
                 content=content, registry=registry,
             )
-            # 夜内定案的旨落公开层账、标已明发（#502 AC6）——仅 endorsement 成功之后。
-            already_ids = {
-                str(did)
-                for did in engine_command_mingfa_publication_ids(list_ledger(db, night_id))
-            }
-            _mingfa_candidates = db.conn.execute(
-                """
-                SELECT td.id AS directive_id, td.actor, td.text,
-                       MIN(d.id) AS dossier_id
-                FROM pending_actions pa
-                JOIN turn_directives td ON td.id = pa.committed_directive_id
-                JOIN decree_dossiers d ON d.pending_action_id = pa.id
-                WHERE pa.night_id = ? AND pa.kind = 'directive'
-                  AND pa.status = 'committed' AND pa.committed_directive_id > 0
-                GROUP BY td.id, td.actor, td.text
-                ORDER BY td.id
-                """,
-                (int(night_id),),
-            ).fetchall()
-            for _pd in _mingfa_candidates:
-                _did_int = int(_pd["directive_id"] or 0)
-                _did = str(_did_int)
-                if not _did_int or _did in already_ids:
-                    continue
-                dossier_id = int(_pd["dossier_id"] or 0)
-                if dossier_id <= 0:
-                    continue
-                origin_ref = f"dossier:{dossier_id}"
-                append_ledger_entry(
-                    db, night_id,
-                    person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],
-                    audibility=AUDIBILITY_PUBLIC,
-                    body=f"明发旨意：{str(_pd['text'] or '')}",
-                    tags=[TAG_MINGFA, mingfa_publication_tag(_did_int)],
-                    check_dead=False,
-                    allow_closing=True,
-                    origin_ref=origin_ref,
-                )
+            publish_night_directives(db, int(night_id))
             tags = [TAG_CLOSE_NIGHT]
             if auto:
                 tags.append(TAG_AUTO_CLOSE)
@@ -1743,7 +1704,6 @@ def auto_close_open_night(
     knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
-    extractor_agent: Any = None,
     endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
@@ -1776,7 +1736,6 @@ def auto_close_open_night(
         knowledge_provider=knowledge_provider,
         llm_config=llm_config,
         write_gate=write_gate,
-        extractor_agent=extractor_agent,
         endorsement_extractor_agent=endorsement_extractor_agent,
         scene_registry=scene_registry,
         close_chat_turn_id=int(close_chat_turn_id or 0),

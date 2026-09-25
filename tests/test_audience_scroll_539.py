@@ -9,6 +9,16 @@ from ming_sim.audience_translation import list_pending_translations
 from tests.conftest import append_night_chat, open_audience_night
 
 
+def _archive_mindreading(db, chat_turn_id, *, target, narration):
+    db.conn.execute(
+        "INSERT INTO mindreading_records "
+        "(chat_turn_id, reader, target, source, precision, narration) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (chat_turn_id, "王承恩", target, "察言观色", "约略", narration),
+    )
+    db.conn.commit()
+
+
 def _scroll_game(db):
     return SimpleNamespace(
         db=db,
@@ -243,10 +253,9 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     db, state, _ = game
     night_id = open_audience_night(db, state)
     first_turn, _ = append_night_chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 10)
-    db.record_mindreading(first_turn, {
-        "reader": "王承恩", "target": "杨嗣昌", "source": "察言观色",
-        "precision": "约略", "narration": "万岁爷，他尚有保留。",
-    })
+    _archive_mindreading(
+        db, first_turn, target="杨嗣昌", narration="万岁爷，他尚有保留。",
+    )
     an.append_ledger_entry(
         db, night_id, body="杨嗣昌以身家作保。", tags=["站台", "作保"],
         person_names=["杨嗣昌"], source_chat_turn_id=first_turn, order_key=10,
@@ -356,10 +365,9 @@ def test_scroll_merges_mindreading_and_uses_structured_dedup_boundaries(game):
     db, state, _ = game
     night_id = open_audience_night(db, state)
     turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "卿可担名？", "臣愿当面作保。", 10)
-    db.record_mindreading(turn_id, {
-        "reader": "王承恩", "target": "杨嗣昌", "source": "察言观色",
-        "precision": "约略", "narration": "万岁爷，他这话留了半分。",
-    })
+    _archive_mindreading(
+        db, turn_id, target="杨嗣昌", narration="万岁爷，他这话留了半分。",
+    )
     an.append_ledger_entry(
         db, night_id, body="杨嗣昌以身家作保。", tags=["站台", "作保"],
         person_names=["杨嗣昌"], source_chat_turn_id=turn_id, order_key=10,
@@ -399,78 +407,6 @@ def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):
     assert "只是提到了入殿旧事。" not in contents
     assert "又提到了告退旧事。" not in contents
     assert not any(message["beat"] == "divider" and message["speaker"] == "洪承畴" for message in scroll)
-
-
-def test_extraction_derived_facts_stay_off_live_scroll_but_remain_in_ledger(game):
-    """#1293a：结构 provenance（source_chat_turn_id>0）排除抽取派生卡出 live 卷轴。
-
-    正向：对话原话 + beat/旁白/divider/coda 在；转述/抽取散文不在。
-    负向：list_ledger 记忆读端仍见 story facts（抽取照跑照入档）。
-    """
-    db, state, _ = game
-    night_id = open_audience_night(db, state)
-    an.summon_enter(db, night_id, "杨嗣昌")
-    turn_id, _ = append_night_chat(
-        db, state, night_id, "杨嗣昌",
-        "辽饷如何？", "臣请据实核账，不敢欺瞒。", 10,
-    )
-    db.record_mindreading(turn_id, {
-        "reader": "王承恩", "target": "杨嗣昌", "source": "察言观色",
-        "precision": "约略", "narration": "万岁爷，他话里留了半分。",
-    })
-    # 经抽取唯一入口落账——结构上 source_chat_turn_id=轮（非盯文本）
-    paraphrase = "皇帝询问辽饷，杨嗣昌答称当据实核账。"
-    atmosphere = "殿角烛火轻颤。"
-    db.settle_story_extraction(
-        turn_id, night_id,
-        [
-            {
-                "person_names": ["杨嗣昌"],
-                "audibility": "殿上公开",
-                "body": paraphrase,
-                "tags": ["对话摘要"],
-                "presence_effect": "",
-            },
-            {
-                "person_names": [],
-                "audibility": "殿上公开",
-                "body": atmosphere,
-                "tags": ["场景"],
-                "presence_effect": "",
-            },
-        ],
-        10,
-    )
-    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id, body="杨嗣昌退下。")
-
-    scroll = an.read_night_scroll(db, night_id)
-    contents = [m["content"] for m in scroll]
-    beats = {m["beat"] for m in scroll}
-
-    # 正向：原话在
-    assert "辽饷如何？" in contents
-    assert "臣请据实核账，不敢欺瞒。" in contents
-    # 正向：王承恩旁白 / entrance·exit beat / divider / coda 在
-    assert "万岁爷，他话里留了半分。" in contents
-    assert "entrance" in beats
-    assert "exit" in beats
-    assert "divider" in beats
-    assert scroll[-1]["beat"] == "coda"
-    # 正向：抽取转述与派生场景卡零出现
-    assert paraphrase not in contents
-    assert atmosphere not in contents
-    assert not any(
-        m["role"] == "scene" and m["content"] in {paraphrase, atmosphere}
-        for m in scroll
-    )
-
-    # 负向：记忆读端（list_ledger）仍见 story facts
-    ledger_bodies = {
-        e["body"] for e in an.list_ledger(db, night_id)
-        if int(e.get("source_chat_turn_id") or 0) == turn_id
-    }
-    assert paraphrase in ledger_bodies
-    assert atmosphere in ledger_bodies
 
 
 def test_scroll_container_presents_audience_type_from_persisted_summon_method(game):
