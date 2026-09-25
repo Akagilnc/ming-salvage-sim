@@ -7,9 +7,10 @@ import sqlite3
 
 import pytest
 
+import ming_sim.month_chain as month_chain
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.month_translate import dispatch_month_segment
-from tests.test_month_chain_1843 import _enter_player_month
+from tests.test_month_chain_1843 import _prepare_player_month
 
 
 def _settled_declaration(db, decree_ref: str) -> dict:
@@ -42,22 +43,27 @@ def _stage_player_edict(db, state, minister, affair_id, effects, text):
     return ref
 
 
+def _resolve_player_month(db, state, content, monkeypatch):
+    session = _prepare_player_month(db, state, content, monkeypatch)
+    return session.resolve_turn(allow_empty_decree=True)
+
+
 def test_player_decrees_soft_cap_shared_treasury_in_order(game, monkeypatch):
-    """两旨争库走玩家过月：先旨按当时国库封顶扣尽，后旨实拨为 0；暂存保留名义。"""
+    """存量 120，先扣 100、后支 30 → 实扣 100、实拨 20、库清零；名义留在暂存。"""
     db, state, content = game
     minister = next(iter(content.characters.values())).name
     affair = db.affairs.open(
         name="争库可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
     )
-    state.metrics["国库"] = 500_000
+    state.metrics["国库"] = 120
     db.save_state(state)
     first_ref = _stage_player_edict(
         db, state, minister, affair.id,
         {"economy_moves": [{
-            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -10**12,
-            "category": "先扣尽库", "reason": "先扣尽库",
+            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -100,
+            "category": "先扣百万", "reason": "先扣百万",
         }]},
-        "先扣尽库",
+        "先扣百万",
     )
     second_ref = _stage_player_edict(
         db, state, minister, affair.id,
@@ -67,21 +73,27 @@ def test_player_decrees_soft_cap_shared_treasury_in_order(game, monkeypatch):
         }]},
         "后支三十万",
     )
+    # 月初财政先于旨意改账。争库的给定存量是两旨落账时的 120，不是月初结余。
+    real_settle = month_chain._settle_edicts
 
-    _enter_player_month(db, state, content, monkeypatch)
+    def given_stock(session, **kwargs):
+        session.state.metrics["国库"] = 120
+        session.db.save_state(session.state)
+        return real_settle(session, **kwargs)
 
-    assert _settled_declaration(db, first_ref)["effects"]["economy_moves"][0]["delta"] == -10**12
+    monkeypatch.setattr(month_chain, "_settle_edicts", given_stock)
+    _resolve_player_month(db, state, content, monkeypatch)
+
+    assert _settled_declaration(db, first_ref)["effects"]["economy_moves"][0]["delta"] == -100
     assert _settled_declaration(db, second_ref)["effects"]["economy_moves"][0]["delta"] == -30
-    first = db.conn.execute(
-        "SELECT delta, balance_after FROM economy_ledger WHERE category='先扣尽库'"
+    ledger = db.conn.execute(
+        "SELECT category, delta FROM economy_ledger "
+        "WHERE category IN ('先扣百万','后支三十万') ORDER BY id"
     ).fetchall()
-    assert len(first) == 1
-    assert int(first[0]["delta"]) < 0
-    assert int(first[0]["delta"]) != -10**12
-    assert int(first[0]["balance_after"]) == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE category='后支三十万' AND delta != 0"
-    ).fetchone()[0] == 0
+    assert [(row["category"], row["delta"]) for row in ledger] == [
+        ("先扣百万", -100), ("后支三十万", -20),
+    ]
+    assert int(state.metrics["国库"]) == 0
 
 
 def test_player_decree_missing_entity_rejection_persists_for_feed(game, monkeypatch, tmp_path):
@@ -100,7 +112,7 @@ def test_player_decree_missing_entity_rejection_persists_for_feed(game, monkeypa
         }]},
         "补饷坏目标",
     )
-    _enter_player_month(db, state, content, monkeypatch)
+    _resolve_player_month(db, state, content, monkeypatch)
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='补饷坏目标' AND delta != 0"
     ).fetchone()[0] == 0
@@ -157,7 +169,7 @@ def test_player_decrees_sequential_army_station_reads_updated_roster(game, monke
         }}},
         "第二道调遣",
     )
-    _enter_player_month(db, state, content, monkeypatch)
+    _resolve_player_month(db, state, content, monkeypatch)
     assert db.conn.execute(
         "SELECT station_region FROM armies WHERE id=?", (army,),
     ).fetchone()[0] == second_station
