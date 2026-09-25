@@ -115,6 +115,10 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
         lambda *a, **k: "本月邸报：边饷已清，流寇未息。",
     )
     monkeypatch.setattr(
+        "ming_sim.month_chain.run_gazette_text",
+        lambda *a, **k: ("边饷已清", "本月邸报：边饷已清，流寇未息。"),
+    )
+    monkeypatch.setattr(
         "ming_sim.month_translate.translate_month_segment",
         lambda *a, **k: {"effects": {}},
     )

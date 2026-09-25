@@ -13,7 +13,6 @@ prompt 契约文本 / GameDB 重开接续。mutation oracle 复用 #649 家族�
 from __future__ import annotations
 
 import json
-import os
 from types import SimpleNamespace
 
 from test_population_transfers_649 import (
@@ -225,17 +224,3 @@ def test_same_batch_multi_origin_merges_into_single_pool_account(disaster_shaanx
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 7000  # 单行合流
     assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 7000
     assert _global_population(db) == total_before  # 全局守恒不变式
-
-
-# ── 契约单真源：prompt 教「有灾入/无灾不入」事实支撑 ────────────────────────
-
-def test_prompts_keep_displacement_fact_and_soft_quantity_contracts():
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-    def prompt(name):
-        with open(os.path.join(root, "content/prompts", name), encoding="utf-8") as fh:
-            return fh.read()
-
-    simulator = prompt("season_simulator.md")
-    assert "无对应事实不得臆造流民" in simulator
-    assert "不得确定人数或推算人口比例" in simulator

@@ -81,6 +81,8 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     def _run_month_chain_text(agent, prompt, tag, **kwargs):
         if tag == "decree-forecast":
             return ""
+        if tag == "gazette":
+            return '{"title":"邸报","report":"本月边饷已清。"}'
         return real_run_agent_text(agent, prompt, tag, **kwargs)
 
     monkeypatch.setattr(

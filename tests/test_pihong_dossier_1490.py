@@ -64,6 +64,8 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     def _run_month_chain_text(agent, prompt, tag, **kwargs):
         if tag in {"world-segment", "decree-forecast"}:
             return ""
+        if tag == "gazette":
+            return '{"title":"邸报","report":"本月实况。"}'
         return real_run_agent_text(agent, prompt, tag, **kwargs)
 
     monkeypatch.setattr(

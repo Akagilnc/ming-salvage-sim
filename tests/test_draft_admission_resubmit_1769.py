@@ -183,7 +183,10 @@ def _assert_error_pack_from(game, turn: int, marker: str) -> None:
 
 
 def _finish_month_after_gazette(game, turn: int) -> None:
-    """ADR 0157：写成邸报后主链才推进。测试只补这份交接物。"""
+    """ADR 0157：写成邸报后主链才推进。作者替身已写成时不再推进第二次。"""
+    if int(game.state.turn) > int(turn):
+        assert int(game.state.turn) == int(turn) + 1
+        return
     game.db.conn.execute(
         "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
         (int(turn), int(game.state.year), int(game.state.period), "邸报已成"),
@@ -263,7 +266,7 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     )
 
     _post_issue_stream(client, expected_turn=turn, step="1769 resubmit")
-    assert _turn_of(_get_state(client)) == turn
+    assert _turn_of(_get_state(client)) == turn + 1
 
     # 两次 LLM 重写；入参含失败事实 + 原产物（结构化字段，不扫 prompt）
     assert len(resubmit_calls) == 2
@@ -314,7 +317,7 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     source_turn = int(game.db.get_directive(did)["turn"])
 
     body = _post_issue_stream(client, expected_turn=turn, step="1769 exhaust")
-    assert _turn_of(_get_state(client)) == turn
+    assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
     row = game.db.get_directive(did)
     assert row is not None and str(row["status"]) == "draft"
@@ -406,7 +409,7 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     assert bad_id != good_id
 
     _post_issue_stream(client, expected_turn=turn, step="1769 mixed")
-    assert _turn_of(_get_state(client)) == turn
+    assert _turn_of(_get_state(client)) == turn + 1
     assert game.db.get_dossier_for_directive(good_id) is not None
     _finish_month_after_gazette(game, turn)
     assert str(game.db.get_directive(good_id)["status"]) == "issued"
@@ -503,7 +506,7 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     assert first.get("dossier_action_type") == "pay_order_override"
 
     _post_issue_stream(client, expected_turn=turn, step="1769 non-intent rewrite")
-    assert _turn_of(_get_state(client)) == turn
+    assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
 
     row = game.db.get_directive(did)
@@ -554,7 +557,7 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
         client, expected_turn=turn, step="1769 pending product-error",
     )
     assert body.get("_event") in (None, "done", "")
-    assert _turn_of(_get_state(client)) == turn
+    assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
 
     row = game.db.get_directive(did)
@@ -598,7 +601,7 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
     body = _post_issue_stream(
         client, expected_turn=turn, step="1769 zero-exhaust system_simulation",
     )
-    assert _turn_of(_get_state(client)) == turn
+    assert _turn_of(_get_state(client)) == turn + 1
     assert str(game.db.get_directive(did)["status"]) == "draft"
     assert game.db.get_dossier_for_directive(did) is None
 
@@ -615,10 +618,10 @@ def test_exhaust_zero_dossier_system_simulation_no_steam_decree(
         isinstance(e, dict) and e.get("name") == "STAT_DECREES_ISSUED"
         for e in steam
     ), f"零成案不得计已颁: {steam!r}"
-    assert not any(
+    assert any(
         isinstance(e, dict) and e.get("name") == "STAT_TURNS_PLAYED"
         for e in steam
-    ), f"邸报前不得计过月: {steam!r}"
+    ), f"邸报写成后应计过月: {steam!r}"
 
 
 def test_pending_preview_turn_key_no_keyerror_on_issue(
@@ -671,7 +674,7 @@ def test_pending_preview_turn_key_no_keyerror_on_issue(
         client, expected_turn=turn, step="1769 pending preview turn",
     )
     assert body.get("_event") in (None, "done", "")
-    assert _turn_of(_get_state(client)) == turn
+    assert _turn_of(_get_state(client)) == turn + 1
     assert captured, "须经 write_decree_with_agno 真实入口"
     feed_dirs = captured[0].get("directives") or []
     assert feed_dirs, f"拟诏 feed 不得空: {captured[0]!r}"
@@ -698,14 +701,14 @@ def test_advance_without_edict_vacuum_steam_no_decree_issued(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body.get("awaiting_decision") is False
-    assert _turn_of(_get_state(client)) == turn
+    assert _turn_of(_get_state(client)) == turn + 1
 
     steam = body.get("steam_events") or []
     names = [
         e.get("name") for e in steam if isinstance(e, dict)
     ]
-    assert "STAT_TURNS_PLAYED" not in names, f"邸报前不得计过月: {steam!r}"
-    assert "STAT_MAX_TURN_REACHED" not in names, f"邸报前不得计最大月: {steam!r}"
+    assert "STAT_TURNS_PLAYED" in names, f"邸报写成后应计过月: {steam!r}"
+    assert "STAT_MAX_TURN_REACHED" in names, f"邸报写成后应计最大月: {steam!r}"
     assert "STAT_DECREES_ISSUED" not in names, (
         f"真空退朝不得计已颁: {steam!r}"
     )

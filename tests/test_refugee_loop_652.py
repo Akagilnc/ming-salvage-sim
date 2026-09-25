@@ -570,6 +570,8 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     monkeypatch.setattr(month_translate, "translate_month_segment", real_translate)
 
     def _world_model(_agent, _message, tag, **_kwargs):
+        if tag == "gazette":
+            return '{"title":"邸报","report":"本月赈灾实况。"}'
         assert tag == "world-segment"
         return "handled"
 
@@ -596,8 +598,8 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     )
     result = session.advance_without_decree()
     assert result is not None and result.awaiting is False
-    assert result.advanced is False
-    assert int(state.turn) == closed_turn
+    assert result.advanced is True
+    assert int(state.turn) == closed_turn + 1
 
     expected = int(round(
         amount * RECOVERY_PERSONS_PER_WAN * RECOVERY_OUTCOME_FACTORS["fulfilled"]

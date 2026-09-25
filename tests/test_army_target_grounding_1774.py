@@ -358,7 +358,7 @@ def test_audience_grounded_army_pay_lands_through_close_night(
             )
         wait_pending_writes(game)
 
-        assert _turn_of(_get_state(client)) == turn_before
+        assert _turn_of(_get_state(client)) == turn_before + 1
         pay = [
             d for d in game.db.list_decree_dossiers()
             if d["action_type"] == "grant_allocation" and d["target_id"] == "guanning"
