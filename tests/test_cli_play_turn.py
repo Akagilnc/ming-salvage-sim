@@ -121,7 +121,7 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
     assert sess.calls == ["begin", call_name, call_name, "end"]
 
 
-def test_run_cli_prompts_current_turn_when_unadvanced_and_next_when_advanced(monkeypatch, tmp_path):
+def test_run_cli_reenters_play_turn_after_unadvanced_turn(monkeypatch, tmp_path):
     class DummySession:
         def __init__(self):
             self.state = SimpleNamespace(turn=1, ended=False, ending_status="")
@@ -143,20 +143,19 @@ def test_run_cli_prompts_current_turn_when_unadvanced_and_next_when_advanced(mon
         if adv:
             session.state.turn += 1
 
-    monkeypatch.setattr(term, "play_turn", fake_play_turn)
+    play_turn_calls = []
 
-    prompts = []
+    def track_play_turn(session):
+        play_turn_calls.append(session.state.turn)
+        fake_play_turn(session)
+
+    monkeypatch.setattr(term, "play_turn", track_play_turn)
     user_inputs = iter(["", "exit"])
-    monkeypatch.setattr(
-        "builtins.input",
-        lambda prompt="": (prompts.append(prompt), next(user_inputs))[1],
-    )
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(user_inputs))
 
     term.run_cli("http://fake", "fake-model", str(tmp_path / "game.db"))
 
-    assert len(prompts) == 2
-    assert f"下一{term.TURN_UNIT}" not in prompts[0]
-    assert f"下一{term.TURN_UNIT}" in prompts[1]
+    assert play_turn_calls == [1, 1]
     assert sess.state.turn == 2
 
 
