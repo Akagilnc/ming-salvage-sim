@@ -284,8 +284,7 @@ def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(
     web_game, monkeypatch,
 ):
     """#1492 A 真 HTTP：due-commitment 形提交后不落 poisoned decided、不批红卡死。
-    无能力字段 → 不作批红轨；phase2 _chosen_rescript_actions 不得抛。"""
-    from ming_sim.decree import _chosen_rescript_actions
+    无能力字段 → 不作批红轨，且不落 poisoned decided。"""
 
     db, state = web_game.db, web_game.state
     _plant_due_commitment_shaped_awaiting(db, state, dossier_id=12)
@@ -294,9 +293,6 @@ def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(
 
     def _phase2(_state, _db, *_a, **_k):
         rows = list(_db.list_pending_decisions(int(_state.turn)))
-        # 真消费缝：即便 DB 仍留 dossier: 前缀，无能力 options 也不得抛批红非法
-        actions = _chosen_rescript_actions(rows)
-        assert actions == [], actions
         phase2_calls.append(rows)
         _db.clear_pending_decisions(int(_state.turn))
         return "邸报：承诺已核。"

@@ -41,7 +41,6 @@ from ming_sim.error_pack import (
     ARRIVAL_COMPANION_SIM_DONE_KEY,
     _next_attempt,
     clear_for_resimulation,
-    complete_error_packs_for_ready,
     rejections_jsonl_path,
     settlement_abort_message,
     write_error_pack,
@@ -143,7 +142,6 @@ from ming_sim.settlement_payload import (  # noqa: E402
     _DECISION_RE,
     _format_decision_directive,
     _player_visible_extractor_output,
-    _recovered_grouped,
     _select_secret_orders_for_sim,
     _strip_player_internal_fields,
     augment_secret_orders_with_due_commitments,
@@ -853,32 +851,6 @@ def _rescript_decisions(
     return decisions
 
 
-def _chosen_rescript_actions(
-    decisions: List[Dict[str, object]],
-) -> List[Dict[str, object]]:
-    from ming_sim.settlement_payload import (
-        decision_has_rescript_capability,
-        parse_rescript_capability_pair,
-    )
-
-    actions: List[Dict[str, object]] = []
-    for decision in decisions:
-        # #1492 A / #1494：批红轨 = event_id dossier: 前缀 AND options 含合法能力对。
-        # 裸 origin_ref 同形（due-commitment 等）跳过，不抛「批红决策载荷非法」。
-        if not str(decision.get("event_id") or "").startswith("dossier:"):
-            continue
-        if not decision_has_rescript_capability(decision):
-            continue
-        choice = decision.get("choice")
-        if not isinstance(choice, dict):
-            raise LLMContractError("批红决策缺少玩家选择")
-        pair = parse_rescript_capability_pair(choice)
-        if pair is None:
-            raise LLMContractError("批红决策载荷非法")
-        actions.append({"dossier_id": pair[0], "decision": pair[1]})
-    return actions
-
-
 def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
     if not isinstance(simulator_payload, dict):
         return set()
@@ -925,19 +897,6 @@ def secret_dossier_ids_from_secret_orders(db: GameDB, secret_orders: object) -> 
             continue
         out.add(int(dossier["id"]))
     return out
-
-
-def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Optional[set[str]]:
-    if not isinstance(simulator_payload, dict):
-        return None
-    raw = simulator_payload.get("candidate_events")
-    if not isinstance(raw, list):
-        return None
-    return {
-        str(item.get("id") or "").strip()
-        for item in raw
-        if isinstance(item, dict) and str(item.get("id") or "").strip()
-    }
 
 
 def _record_settlement_narrative_sources(
@@ -1339,128 +1298,6 @@ def _provenance_from_stored(value: object) -> Provenance:
     return Provenance.system_simulation
 
 
-def resolve_settling_recovery(
-    state: GameState,
-    db: GameDB,
-    agno_db: SqliteDb,
-    llm_config: LLMConfig,
-    ctx: Dict[str, object],
-    *,
-    on_event: Optional[Callable[[str, Any], None]] = None,
-    content=None,
-    registry=None,
-) -> ResolveResult:
-    """ADR 0008 S7（决定 3）：settling 态崩溃恢复的「直入 apply」——ready context 已带
-    extractor delta，不重跑贵的 simulator/extractor，直接调 settle_with_delta 后半段。
-
-    ctx = db.get_resolve_context(before_turn)，要求 ctx["extracted"] is not None（ready）。
-    跨进程恢复无原 extractor_input（那些在崩溃进程的易失内存里）；turn_extractions 的
-    extractor_output 会由 applied 结果重建。章节记忆/结局总评是便宜调用，
-    按真实流程同款构造（决定 3/4 明示重调可接受）。pre_settle 的 settling 相位已提交，恢复路
-    不重跑前半段（财政不二跑）。
-    """
-    def _emit(kind: str, data: Any) -> None:
-        if on_event:
-            on_event(kind, data)
-
-    extracted = ctx["extracted"]
-    if not isinstance(extracted, dict):
-        # 不应到此（调用方已判 ready）；防御性响亮，免把 None/坏值喂进 settle。
-        raise LLMContractError("恢复直入 apply 要求 ctx 带 ready 的 extractor delta。")
-    before_turn = state.turn
-    decree_text = str(ctx.get("decree_text") or "")
-    narrative = str(ctx.get("narrative") or "")
-    # 恢复重放沿用持久化的原始拒收来源（#144）：玩家来源(player_decree/hitl)拒收恢复后仍给玩家
-    # 邸报提示，不被记成 system_simulation 而静默。非法/缺失值回落 system_simulation（旧档兼容）。
-    source = _provenance_from_stored(ctx.get("source"))
-    # 暂存动作 commit 已下沉进 settle_with_delta 的 atomic 体内（与结算同生死，
-    # cmr S7 r4）——此处不再事务外预 commit。
-    try:
-        report = _replay_settle(
-            state, db, agno_db, llm_config, extracted,
-            before_turn=before_turn, decree_text=decree_text, narrative=narrative,
-            simulator_payload=ctx.get("simulator_payload"),
-            secret_orders=_recovered_grouped(ctx.get("secret_orders")),
-            dossier_rescript_actions=_chosen_rescript_actions(
-                db.list_pending_decisions(state.turn)
-            ),
-            content=content, registry=registry, _emit=_emit, source=source,
-            attendant_message=str(ctx.get("attendant_message") or ""),
-        )
-    except SettlementAbort as abort_exc:
-        # First failure keeps the ready context for an ordinary atomic retry.
-        # A repeated failure of that same ready payload may downgrade only after
-        # both attempts have produced ADR0008 error packs.  If pack creation
-        # failed, no matching directories exist and the evidence is preserved.
-        packed_attempts = complete_error_packs_for_ready(db.path, before_turn, extracted)
-        if len(packed_attempts) >= 2:
-            try:
-                clear_for_resimulation(db, before_turn)
-            except Exception as clear_exc:
-                raise abort_exc from clear_exc
-        raise
-    return ResolveResult(awaiting=False, report=report, advanced=True)
-
-
-def _replay_settle(
-    state: GameState,
-    db: GameDB,
-    agno_db: SqliteDb,
-    llm_config: LLMConfig,
-    extracted: Dict[str, object],
-    *,
-    before_turn: int,
-    decree_text: str,
-    narrative: str,
-    simulator_payload: object = None,
-    secret_orders: object = None,
-    dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
-    content=None,
-    registry=None,
-    _emit: Callable[[str, Any], None],
-    source: Provenance = Provenance.system_simulation,
-    attendant_message: str = "",
-) -> str:
-    report = settle_with_delta(
-        state,
-        db,
-        extracted,
-        before_turn=before_turn,
-        content=content,
-        registry=registry,
-        decree_text=decree_text,
-        narrative=narrative,
-        extractor_output="[恢复重灌] 从 resolve_context 直入 apply（未重跑 extractor）。",
-        chapter_recorder=lambda d, s, dt, nr, ap: record_chapter_memory(
-            create_chapter_memory_agent(llm_config, agno_db), d, s, dt, nr, ap
-        ),
-        ending_summarizer=lambda d, s, oc: _generate_ending_summary(
-            d, s, llm_config, agno_db, oc, _emit
-        ),
-        relation_brew_runner=_make_relation_brew_runner(llm_config, agno_db),
-        delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
-            d, s, ex, content=ct, registry=rg, llm_config=llm_config,
-            candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
-            impeachment_surge_candidates_at_input=gather_impeachment_surge_candidates(s, d),
-            dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
-            secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders),
-            open_affair_ids_at_input=_open_affair_ids_from_payload(simulator_payload),
-        ),
-        on_stage=lambda payload: _emit("stage", payload),
-        source=source,  # 恢复重放沿用原始来源（#144）：玩家来源拒收恢复后仍给提示，不被记成 system
-        dossier_verdicts=(
-            simulator_payload.get("dossier_verdicts")
-            if isinstance(simulator_payload, dict) else None
-        ),
-        dossier_rescript_actions=dossier_rescript_actions,
-        attendant_message=attendant_message,
-        settlement_attendant_runner=lambda **kw: run_settlement_attendant_message(
-            llm_config, **kw,
-        ),
-    )
-    return report
-
-
 # #657：HITL phase2 续跑时 persist 不得触碰急务票拟行（return_revise 等跨 phase2 存活）。
 # 与 None/[]（#656 空票拟 → DELETE 本回合 draft）三态分立。
 _PRESERVE_RESCRIPT_DRAFTS = object()
@@ -1491,15 +1328,15 @@ def persist_resolve_context(
 ) -> Dict[str, object]:
     """ADR 0008 S2：每回合进入结算后半段前无条件持久化 resolve_context（extractor delta + 叙事）。
 
-    source（#144）：拒收 provenance 一并持久化，崩溃恢复重放（resolve_settling_recovery）据此还原
+    source（#144）：拒收 provenance 一并持久化，driver 崩溃恢复据此还原
     原始来源——否则玩家来源(player_decree/hitl)拒收被恢复路记成 system_simulation、静默不提示。
 
-    重跑真源：跨进程恢复从此重灌，不重跑贵的 simulator/extractor。
+    driver 重跑真源：跨进程恢复从此重灌；玩家月链改用暂存声明及落账状态。
     **持久化前先过 validate_delta_shape**——形状畸形的 delta 绝不入 resolve_context
     （否则钉进重试真源：apply 永崩、而「重跑 extractor」被「context 已存在」挡死=soft-lock）。
     校验失败响亮抛 ValueError，save 不执行。注意此门只挡形状毒：shape 合法但值级
     必炸的 payload（如 new_armies 项里非数值兵力）由 ADR 0008 决定 6 的「重新推演」
-    逃生口兜底（清 context 重产 delta），S4 恢复入口不得假设 ready=1 即重放安全。
+    逃生口兜底（清 context 重产 delta）；driver 不能假设 ready=1 即重放安全。
     """
     cleaned, rejections = sanitize_delta_shape(extracted)
     validate_delta_shape(cleaned)  # sanitized ready context must itself satisfy the shape gate
@@ -2618,22 +2455,10 @@ def resolve_decisions_phase2(
         raise LLMContractError("无待决推演上下文，无法续跑结算（phase1 未暂停或已结算）。")
     before_turn = state.turn
     if ctx.get("extracted") is not None:
-        # ready context = 上次 phase2 已抽取并持久化、settle 曾中止。直入重放，不重跑贵的
-        # simulator/extractor（决定 3；重抽还会 upsert 覆盖 ready 真源，cmr S7 r2 codex）。
-        # 亲裁指令已在上次抽取时拼进 narrative 并体现在 ready delta 中。重放炸 →
-        # resolve_settling_recovery 的逃生口降级 context，下次重试重新推演。
-        # 重试新传的 cheat_directive 在重放叉被忽略（重放使用崩溃前真源），留痕（cmr S7 r4）。
-        if (cheat_directive or "").strip():
-            tlog("[恢复重放] 本次传入的 cheat_directive 被忽略（重放使用崩溃前真源）。")
-        # 走到此叉必有重交的亲裁选择（submit_decisions 已 overwrite choice_json），同样
-        # 被忽略——重放体现的是崩溃前已抽取的旧选择（cmr S7 r5）。
-        tlog("[恢复重放] 本次重交的亲裁选择被忽略（重放使用崩溃前真源）。")
-        result = resolve_settling_recovery(
-            state, db, agno_db, llm_config, ctx,
-            on_event=on_event, content=content, registry=registry,
-        )
-        db.clear_pending_decisions(before_turn)
-        return result.report
+        # 旧 phase2 ready delta 不是新月链的恢复真源；保留原诏/来源与已裁记录，
+        # 废弃旧整段落账产物后从现役暂存声明继续。
+        clear_for_resimulation(db, before_turn)
+        ctx = db.get_resolve_context(before_turn) or ctx
     from ming_sim.month_chain import run_player_month_chain
     result = run_player_month_chain(
         state, db, agno_db, llm_config,

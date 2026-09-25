@@ -228,6 +228,18 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     assert held.advanced is False
     assert int(state.turn) == closed_turn
 
+    # 历史留中回流的同一请旨仍未答，不能因案卷创建于前月越过批红。
+    from ming_sim.decree_forecast import decree_ref_for_dossier
+    dossier = next(d for d in db.list_decree_dossiers() if decree_ref_for_dossier(db, d) == ref)
+    db.conn.execute(
+        "UPDATE decree_dossiers SET created_turn=? WHERE id=?",
+        (closed_turn - 1, int(dossier["id"])),
+    )
+    db.conn.commit()
+    held_again = session.resolve_turn(allow_empty_decree=True)
+    assert held_again.stage == "rescript"
+    assert int(state.turn) == closed_turn
+
     db.conn.execute(
         "UPDATE staged_declarations SET questions_json=NULL WHERE decree_ref=?",
         (ref,),
@@ -246,6 +258,30 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     assert advanced.advanced is True
     assert int(state.turn) == closed_turn + 1
     del pending_id
+
+
+def test_player_recovery_discards_legacy_ready_delta(game, monkeypatch):
+    """旧 extractor ready 不能在玩家入口落账；原诏及来源仍用于新月链续跑。"""
+    db, state, content = game
+    turn = int(state.turn)
+    decree_mod.pre_settle(state, db, content=content)
+    db.save_resolve_context(
+        turn, "崩溃前原诏", "旧叙事", {},
+        extracted={"metric_delta": {"民心": -40}}, source="player_decree",
+    )
+    support = db.load_state().metrics["民心"]
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    session = make_light_session(db, state, content)
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.stage == "gazette"
+    assert int(state.turn) == turn
+    assert db.load_state().metrics["民心"] > support - 40
+    assert session.last_decree == "崩溃前原诏"
+    ctx = db.get_resolve_context(turn)
+    assert ctx["extracted"] is None
+    assert ctx["source"] == "player_decree"
 
 
 def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch):

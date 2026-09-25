@@ -127,7 +127,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
     game, monkeypatch, decision, expected_status, expect_force_costs,
 ):
     """P-2：越级任命打回三格 → 批红三选参数化 → TD-4 三要素 restore 同档。"""
-    from ming_sim.decree import _chosen_rescript_actions, settle_with_delta
+    from ming_sim.decree import settle_with_delta
 
     db, state, content = game
     board = _board_with_td4_three(db, state, content)
@@ -201,28 +201,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
     assert _sat(restored, "factions", "东林") == before_faction
     assert _cost_events(restored, dossier_id) == []
 
-    # 现行 rendered 契约：服务端 options 带 dossier_id/dossier_decision + hint
-    # （#1492 A / #1494：_chosen_rescript_actions 靠 options 合法能力对识别批红轨）
-    rescript_options = [
-        {
-            "label": "强颁", "hint": "以中旨强行颁出",
-            "dossier_id": dossier_id, "dossier_decision": "force_promulgated",
-        },
-        {
-            "label": "收回", "hint": "收回此道准旨",
-            "dossier_id": dossier_id, "dossier_decision": "withdrawn",
-        },
-        {
-            "label": "留中", "hint": "留待下月重判",
-            "dossier_id": dossier_id, "dossier_decision": "hold",
-        },
-    ]
-    actions = _chosen_rescript_actions([{
-        "event_id": f"dossier:{dossier_id}",
-        "options": rescript_options,
-        "choice": {"dossier_id": dossier_id, "dossier_decision": decision},
-    }])
-    assert actions == [{"dossier_id": dossier_id, "decision": decision}]
+    actions = [{"dossier_id": dossier_id, "decision": decision}]
 
     def _forbid_verdicts(*_a, **_k):
         raise AssertionError(

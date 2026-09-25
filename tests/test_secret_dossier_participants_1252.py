@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import types
 
 import pytest
 
@@ -89,7 +88,7 @@ def test_s1_public_projection_filter_unchanged(game):
 # ── S2: 私字段 + 冻结授权 + apply ───────────────────────────
 
 
-def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monkeypatch):
+def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game):
     """① 真实 settle 入口落密令 roster；recovery 同冻结 ctx 重放一致。"""
     import driver
     import ming_sim.decree as decree
@@ -152,13 +151,7 @@ def test_s2_secret_field_appends_via_real_settle_and_recovery_replays(game, monk
         secret_orders=grouped,
         extracted=with_monthly_reports(db, delta),
     )
-    ctx = db.get_resolve_context(state.turn)
-    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree, "record_chapter_memory", lambda *a, **k: None)
-    result = decree.resolve_settling_recovery(
-        state, db, None, types.SimpleNamespace(), ctx, content=content,
-    )
-    assert result.awaiting is False
+    driver.run_settle(db, state, content, with_monthly_reports(db, delta))
     roster2 = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert any(
         row.get("character_id") == worker and row.get("tier") == "协办"

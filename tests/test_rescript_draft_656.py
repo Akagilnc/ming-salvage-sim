@@ -1064,44 +1064,6 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
 # F1.3/F2.5 崩溃恢复：不重跑票拟步（持久层读回）＋restore 往返无损
 # ---------------------------------------------------------------------------
 
-def test_ready_context_recovery_reads_drafts_back_without_rerun(game, monkeypatch):
-    """崩溃恢复（ready 重放）不重跑票拟：票拟行已在持久层，重放路零票拟 LLM 调用。"""
-    import ming_sim.decree as decree_mod
-
-    db, state, content = game
-    turn = state.turn
-    persist_resolve_context(
-        db, turn, {},
-        decree_text="诏", narrative="邸报",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
-        rescript_drafts=[{"title": "急务", "context": "导语", "options": [
-            {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
-            "actor_name": "测试首辅", "actor_office": "内阁首辅", "actor_faction": "阉党",
-        }],
-    )
-    assert db.get_resolve_context(turn) is not None
-
-    calls: list[str] = []
-
-    def _forbidden_draft_run(agent, prompt, tag, **_kwargs):
-        calls.append(tag)
-        raise AssertionError("恢复重放不得重跑票拟生成步")
-
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
-    monkeypatch.setattr(rescript_mod, "run_agent_text", _forbidden_draft_run)
-
-    result = decree_mod.resolve_decisions_phase2(
-        state, db, None, None, content=content,
-    )
-    assert isinstance(result, str)  # 重放路返回结算报告
-    assert calls == []
-    # 重放完成（clear 只清 decision 行）→ 票拟行无损留存
-    drafts = db.list_rescript_drafts()
-    assert len(drafts) == 1 and drafts[0]["title"] == "急务"
-
-
 def test_restore_roundtrip_preserves_draft_rows_field_by_field(game):
     """F2.5 restore 断言（结算中存档点）：ready context＋票拟已落，restore 后逐字段无损。"""
     db, state, content = game

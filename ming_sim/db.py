@@ -2633,7 +2633,7 @@ class GameDB:
         self.ensure_column("pending_resolve_context", "resolve_contract_version", "INTEGER NOT NULL DEFAULT 0")
         # 拒收 provenance source（#144 / ADR 0008 决定 5）：崩溃恢复重放须用原始来源，否则玩家
         # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
-        # 'system_simulation'（与原 resolve_settling_recovery 硬编值一致，行为不变）。
+        # 'system_simulation'（旧档缺来源时的默认值）。
         self.ensure_column("pending_resolve_context", "source", "TEXT NOT NULL DEFAULT 'system_simulation'")
         # #671：抵京月王承恩独立递话（与官方 report 分栏；HITL 暂停→完成月同缝转存）
         self.ensure_column(

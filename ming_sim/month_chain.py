@@ -208,8 +208,6 @@ def _waiting_for_rescript(db: Any, state: Any, chain: Dict[str, Any]) -> bool:
     for dossier in db.list_decree_dossiers():
         if dossier.get("rescript_pending"):
             return True
-        if int(dossier.get("created_turn") or 0) != int(state.turn):
-            continue
         if db.staged_declarations.questions_for(decree_ref_for_dossier(db, dossier)):
             return True
     return False

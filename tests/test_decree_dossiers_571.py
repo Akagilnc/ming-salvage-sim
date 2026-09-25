@@ -393,7 +393,7 @@ def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypat
     assert len(db.get_decree_dossier(created["id"])["participant_roster"]) == 1
 
 
-def test_settlement_replay_uses_only_persisted_dossier_authority(game, monkeypatch):
+def test_settlement_replay_uses_only_persisted_dossier_authority(game):
     import ming_sim.decree as decree
 
     db, state, content = game
@@ -417,22 +417,14 @@ def test_settlement_replay_uses_only_persisted_dossier_authority(game, monkeypat
         state.turn, "", "", {"decree_dossiers": [{"id": allowed}]},
         extracted=extracted,
     )
-    ctx = db.get_resolve_context(state.turn)
-    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *args, **kwargs: None)
-    monkeypatch.setattr(decree, "record_chapter_memory", lambda *args, **kwargs: None)
-
-    result = decree.resolve_settling_recovery(
-        state, db, None, types.SimpleNamespace(), ctx, content=content,
-    )
-
-    assert result.awaiting is False
+    import driver
+    driver.run_settle(db, state, content, extracted)
     assert len(db.get_decree_dossier(allowed)["participant_roster"]) == 2
     assert len(db.get_decree_dossier(denied)["participant_roster"]) == 1
 
 
 def test_driver_crash_persists_frozen_dossier_authority_for_replay(game, monkeypatch):
     import driver
-    import ming_sim.decree as decree
 
     db, state, content = game
     lead, worker = _active_people(db, 2)
@@ -445,6 +437,7 @@ def test_driver_crash_persists_frozen_dossier_authority_for_replay(game, monkeyp
         "dossier_id": dossier_id, "character_id": worker,
         "tier": "协办", "delegator_id": lead,
     }]}
+    real_settle = driver.settle_with_delta
     monkeypatch.setattr(
         driver, "settle_with_delta",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("crash after ready")),
@@ -456,12 +449,8 @@ def test_driver_crash_persists_frozen_dossier_authority_for_replay(game, monkeyp
 
     ctx = db.get_resolve_context(state.turn)
     assert ctx["simulator_payload"]["decree_dossiers"] == [{"id": dossier_id}]
-    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *args, **kwargs: None)
-    monkeypatch.setattr(decree, "record_chapter_memory", lambda *args, **kwargs: None)
-    result = decree.resolve_settling_recovery(
-        state, db, None, types.SimpleNamespace(), ctx, content=content,
-    )
-    assert result.awaiting is False
+    monkeypatch.setattr(driver, "settle_with_delta", real_settle)
+    driver.run_settle(db, state, content, delta)
     assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 2
 
 

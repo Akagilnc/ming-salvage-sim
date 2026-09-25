@@ -32,8 +32,8 @@ def test_persist_resolve_context_stores_extracted_delta(game):
 
 
 def test_persist_resolve_context_stores_source_for_recovery(game):
-    """#144 / ADR 0008 决定 5：provenance source 一并持久化，崩溃恢复重放（resolve_settling_recovery
-    读 ctx['source'] → _replay_settle → settle source）据此还原原始来源——否则玩家来源拒收被恢复路
+    """#144 / ADR 0008 决定 5：provenance source 一并持久化，driver 崩溃恢复
+    读 ctx['source'] → settle source 据此还原原始来源——否则玩家来源拒收被恢复路
     记成 system_simulation、静默不提示。"""
     from ming_sim.applier import Provenance
     db, state, content = game
