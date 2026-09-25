@@ -141,6 +141,7 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
         assert payload["decisions"] == [{"title": "辽饷", "context": "家赀约十万两，是否发帑"}]
     else:
         assert payload["report"] == "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
+        assert payload["advanced"] is False
     structured_keys: set[str] = set()
     pending = [payload]
     while pending:
@@ -154,6 +155,23 @@ def test_settlement_sse_routes_serialize_only_player_narrative(
         {"state", "extraction", "extractor_output", "character", "loyalty", "ability", "integrity", "courage"}
         & structured_keys
     )
+
+
+def test_issue_terminals_keep_unadvanced_month_visible(monkeypatch):
+    game = _SettlementGame()
+    game.session.resolve_turn = lambda **_kwargs: SimpleNamespace(
+        awaiting=False, advanced=False, report="", stage="gazette",
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+
+    event, streamed = asyncio.run(_serialized_terminal_event("issue"))
+    synced = web_app.api_issue_decree()
+
+    assert event == "done"
+    assert streamed["advanced"] is False
+    assert synced["advanced"] is False
+    assert game.state.turn == 9
+    assert game.session.actions == []
 
 
 def test_cli_skill_card_command_uses_qualitative_character_bands(capsys, monkeypatch):

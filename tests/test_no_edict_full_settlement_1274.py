@@ -193,6 +193,7 @@ def test_web_no_edict_endpoint_routes_to_full_settlement(game, monkeypatch):
     response = web_app.api_advance_without_edict()
 
     assert response.get("awaiting_decision") is False
+    assert response["advanced"] is False
     assert len(sim_calls) == 1
     assert int(state.turn) == closed_turn
     assert not db.get_turn_report(closed_turn)

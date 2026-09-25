@@ -4396,6 +4396,7 @@ def _settlement_player_payload(
     decisions: Optional[List[Dict[str, Any]]] = None,
     pending_action_failures: Optional[List[Dict[str, Any]]] = None,
     steam_events: Optional[List[Dict[str, Any]]] = None,
+    advanced: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """One player-facing seam for every settlement SSE terminal event."""
     payload: Dict[str, Any] = {
@@ -4408,6 +4409,8 @@ def _settlement_player_payload(
         payload["pending_action_failures"] = pending_action_failures
     if steam_events is not None:
         payload["steam_events"] = steam_events
+    if advanced is not None:
+        payload["advanced"] = advanced
     return payload
 
 
@@ -7076,6 +7079,7 @@ def api_advance_without_edict(
                 payload = {
                     "state": game.state_payload(),
                     "awaiting_decision": awaiting,
+                    "advanced": advanced,
                     "decisions": (
                         settlement_result.decisions
                         if settlement_result is not None and settlement_result.awaiting
@@ -7240,6 +7244,7 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
                     decree=decree,
                     report=report,
                     pending_action_failures=failure_snapshot,
+                    advanced=advanced,
                 ), events)
             except HTTPException:
                 raise
@@ -7346,6 +7351,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                             report=report,
                             steam_events=events,
                             pending_action_failures=failure_snapshot,
+                            advanced=advanced,
                         ))
                 except HTTPException:
                     raise
@@ -7482,6 +7488,7 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                         report=report,
                         steam_events=events,
                         pending_action_failures=failure_snapshot,
+                        advanced=advanced,
                     ))
                 except Exception as body_exc:
                     # §3.1：唯一次生窗；hold_gate=True 短持；删静默 = []。
