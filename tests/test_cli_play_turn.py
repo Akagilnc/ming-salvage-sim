@@ -122,12 +122,28 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
 
 
 def test_run_cli_reenters_play_turn_after_unadvanced_turn(monkeypatch, tmp_path):
-    class DummySession:
+    class Session(_Sess):
         def __init__(self):
+            super().__init__(None)
+            self.step = 0
             self.state = SimpleNamespace(turn=1, ended=False, ending_status="")
-            self.db = SimpleNamespace(get_ending_summary=lambda: None)
+            self.db = SimpleNamespace(
+                get_ending_summary=lambda: None,
+                list_pending_actions=lambda *a, **k: [],
+            )
 
-    sess = DummySession()
+        def advance_without_decree(self):
+            self.calls.append("advance")
+            if self.step == 0:
+                self.step += 1
+                return None
+            advanced = self.step > 1
+            self.step += 1
+            if advanced:
+                self.state.turn += 1
+            return SimpleNamespace(advanced=advanced)
+
+    sess = Session()
     import ming_sim.llm_config as llm_config_mod
     monkeypatch.setattr(
         llm_config_mod, "load_llm_config",
@@ -135,27 +151,21 @@ def test_run_cli_reenters_play_turn_after_unadvanced_turn(monkeypatch, tmp_path)
     )
     monkeypatch.setattr(term, "GameSession", lambda *a, **k: sess)
     monkeypatch.setattr(term, "_cli_write_gate", lambda s: None)
+    monkeypatch.setattr(term, "_print_header", lambda _s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
+    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
+    monkeypatch.setattr(term, "review_directives", lambda _s: "skip")
 
-    turn_advances = iter([False, True])
-
-    def fake_play_turn(session):
-        adv = next(turn_advances)
-        if adv:
-            session.state.turn += 1
-
-    play_turn_calls = []
-
-    def track_play_turn(session):
-        play_turn_calls.append(session.state.turn)
-        fake_play_turn(session)
-
-    monkeypatch.setattr(term, "play_turn", track_play_turn)
     user_inputs = iter(["", "exit"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(user_inputs))
 
     term.run_cli("http://fake", "fake-model", str(tmp_path / "game.db"))
 
-    assert play_turn_calls == [1, 1]
+    # 从真实 run_cli 入口实际执行 play_turn：
+    # 1. 结果为 None 时退出 play_turn 且不调 end_turn，run_cli 同月重入 play_turn；
+    # 2. advanced=False 时留在 play_turn 循环内部继续交互；
+    # 3. 推进成功后才调 end_turn 并结构化推进月份。
+    assert sess.calls == ["begin", "advance", "begin", "advance", "advance", "end"]
     assert sess.state.turn == 2
 
 
