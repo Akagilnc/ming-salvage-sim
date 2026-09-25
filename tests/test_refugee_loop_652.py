@@ -540,8 +540,7 @@ def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi
 def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     """次月无旨：真实强颁留下的在途赈灾，经世界段与转译落账，读档后仍在。
 
-    模型替身只接外部调用。转译声明只承接段文里世界段实际拿到的案卷。
-    引擎不代选成败。
+    模型替身只接外部调用，不读开场或段文。引擎不代选成败。
     """
     import ming_sim.month_chain as month_chain
     import ming_sim.month_translate as month_translate
@@ -555,16 +554,10 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     amount = 40
     _reset_shaanxi_pool(db)
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount * 2 + 50)
-    decree_text = "拨银赈灾"
     shaanxi_id = _force_in_transit_recovery_grant(db, state, amount=amount, tag="west")
     henan_id = _in_transit_recovery_grant(
         db, state, amount=amount, region_id="henan", tag="east",
     )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET decree_text=? WHERE id IN (?, ?)",
-        (decree_text, shaanxi_id, henan_id),
-    )
-    db.conn.commit()
     state.next_period()
     db.save_state(state)
 
@@ -576,30 +569,13 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     monkeypatch.setattr(month_chain, "run_world_segment_text", real_world)
     monkeypatch.setattr(month_translate, "translate_month_segment", real_translate)
 
-    def _handed(opening: str, target_id: str) -> bool:
-        return any(
-            decree_text in line and target_id in line
-            for line in opening.splitlines()
-        )
-
-    def _world_model(agent, _message, tag, **_kwargs):
+    def _world_model(_agent, _message, tag, **_kwargs):
         assert tag == "world-segment"
-        instructions = list(getattr(agent, "instructions", None) or [])
-        opening = str(instructions[-1]) if instructions else ""
-        # 段文只带世界段开场里已经同时给出旨文与目标的案卷。
-        return " ".join(
-            str(dossier_id) for dossier_id, target_id in (
-                (shaanxi_id, "shaanxi"), (henan_id, "henan"),
-            )
-            if _handed(opening, target_id)
-        )
+        return "handled"
 
-    def _translate_model(prompt, _llm_config, *, tag, policy=None):
-        del policy
+    def _translate_model(_prompt, _llm_config, *, tag, policy=None):
+        del _prompt, policy
         assert tag == "month_segment_translate"
-        segment_ids = set((prompt or "").rstrip().split("\n")[-1].split())
-        if str(shaanxi_id) not in segment_ids:
-            return {"effects": {}}
         return {"effects": {"dossier_executions": [{
             "dossier_id": shaanxi_id,
             "outcome": "fulfilled",
