@@ -329,9 +329,11 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
 
     real_dispatch = declaration_dispatch.dispatch_declaration
 
-    def spy_dispatch(db_, state_, declaration, *, source):
+    def spy_dispatch(db_, state_, declaration, *, source, alongside=None):
         dispatch_count.append(dict(declaration) if isinstance(declaration, dict) else declaration)
-        return real_dispatch(db_, state_, declaration, source=source)
+        return real_dispatch(
+            db_, state_, declaration, source=source, alongside=alongside,
+        )
 
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
@@ -370,6 +372,95 @@ def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monk
     assert len(dispatch_count) == 1, (
         f"旨意请旨续推在同回合二次入链时重复分派：1 -> {len(dispatch_count)}"
     )
+
+
+def test_decree_continuation_survives_llm_exhaustion_then_retries(game, monkeypatch):
+    """ADR 0157：续推 LLM 耗尽后 questions 须保留；恢复口重试须再续推落账。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="续推耗尽恢复", origin="旨意", year=state.year, period=state.period,
+        turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(
+        db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id,
+    )
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        (json.dumps([{
+            "title": "是否加赈",
+            "context": "灾民待哺",
+            "options": [
+                {"label": "加赈十万", "hint": "国库吃紧"},
+                {"label": "照旧", "hint": "勉力支撑"},
+            ],
+        }], ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+
+    llm_calls = []
+    dispatch_count = []
+    fail_once = {"armed": True}
+
+    def flaky_decree_text(session, dossier, answers):
+        llm_calls.append(1)
+        if fail_once["armed"]:
+            fail_once["armed"] = False
+            raise RuntimeError("模型调用耗尽")
+        return "加赈落实，仓廪出十万。"
+
+    real_dispatch = declaration_dispatch.dispatch_declaration
+
+    def spy_dispatch(db_, state_, declaration, *, source, alongside=None):
+        dispatch_count.append(1)
+        return real_dispatch(
+            db_, state_, declaration, source=source, alongside=alongside,
+        )
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", flaky_decree_text)
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment",
+        lambda *a, **k: {"effects": {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -10,
+            "category": "加赈", "reason": "批红后续推",
+        }]}},
+    )
+    monkeypatch.setattr(declaration_dispatch, "dispatch_declaration", spy_dispatch)
+
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+    session.resolve_turn(allow_empty_decree=True)
+    desk_row = session.pending_decisions()[0]
+    choice = desk_row["options"][0]
+    payload = [{
+        "decision_key": desk_row["decision_key"],
+        "label": choice["label"],
+        "hint": choice.get("hint") or "",
+    }]
+
+    try:
+        session.submit_hitl_choices(payload, write_gate=session._write_gate)
+        raised = None
+    except RuntimeError as exc:
+        raised = exc
+    assert raised is not None and "模型调用耗尽" in str(raised)
+    assert db.staged_declarations.questions_for(ref), (
+        "续推失败后 questions 已清，恢复将无法再续推"
+    )
+    assert len(llm_calls) == 1
+    assert len(dispatch_count) == 0
+
+    # 真实恢复口：携原 decision_key 重交 → already_applied → phase2 续跑月链。
+    session.submit_hitl_choices(payload, write_gate=session._write_gate)
+    assert len(llm_calls) == 2
+    assert len(dispatch_count) == 1, (
+        "旨意问后后果永久丢失：重试未再续推（questions 已清，闸跳过）"
+    )
+    assert not db.staged_declarations.questions_for(ref)
+    assert session.state.turn_phase == TurnPhase.SETTLING.value
 
 
 def test_decree_question_and_world_question_share_one_desk(game, monkeypatch):

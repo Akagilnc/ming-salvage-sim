@@ -46,7 +46,11 @@ def run_world_segment_text(
 def continue_world_after_answers(
     session: Any, chain: Dict[str, Any], *, answers: List[Dict[str, object]], source: Provenance,
 ) -> Optional[Dict[str, object]]:
-    """批红答复后从问处续推世界段一次；问前已落不动，整段不重推。"""
+    """批红答复后从问处续推世界段一次；问前已落不动，整段不重推。
+
+    消费事实（清问 + world_continued）与落账同事务：LLM 先跑，失败零消费可重试；
+    成功则随 dispatch_month_segment 的 alongside 原子落旗（ADR 0157 恢复幂等）。
+    """
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state = session.db, session.state
@@ -57,26 +61,29 @@ def continue_world_after_answers(
         return chain.get("declaration_outcome")
     text = _run_world_continuation_text(session, chain, answers)
     outcome = None
+
+    def mark_continued(result: Any = None) -> None:
+        nonlocal outcome
+        candidate = _ending_from_dispatch_result(result)
+        if candidate is not None:
+            chain["declaration_outcome"] = candidate
+            outcome = candidate
+        chain["world_questions"] = []
+        chain["world_continued"] = True
+        _save_chain(db, turn, chain, source=source)
+
     if str(text or "").strip():
         # 续推若再吐 DECISION 机标，只落问前缀文，勿把机标喂进转译。
         prefix, _extra = _split_at_question(str(text))
         if prefix.strip():
-            def mark(result: Any) -> None:
-                nonlocal outcome
-                candidate = _ending_from_dispatch_result(result)
-                if candidate is not None:
-                    chain["declaration_outcome"] = candidate
-                    outcome = candidate
-                _save_chain(db, turn, chain, source=source)
-
             result = dispatch_month_segment(
                 db, state, segment=prefix, llm_config=session.llm_config, source=source,
-                alongside=mark,
+                alongside=mark_continued,
             )
-            outcome = _ending_from_dispatch_result(result) or outcome
-    chain["world_questions"] = []
-    chain["world_continued"] = True
-    _save_chain(db, turn, chain, source=source)
+            return _ending_from_dispatch_result(result) or outcome
+    # 空续推：无落账后果，仍须原子记下已续，避免重入再烧。
+    with atomic(db):
+        mark_continued(None)
     return outcome
 
 
@@ -88,6 +95,8 @@ def continue_decree_after_answers(
 
     同一 decree_ref 问前声明可能已 settled，续推声明直接分派，不另造平行暂存身份。
     幂等：questions 已清则视为已续，同回合重入零新增效果。
+    消费事实（清问）与落账同事务——先跑续推 LLM，失败保留 questions 可重试；
+    有声明则 clear_questions 走 dispatch_declaration 的 alongside（ADR 0157）。
     """
     from ming_sim.declaration_dispatch import dispatch_declaration
     from ming_sim.month_translate import translate_month_segment
@@ -95,17 +104,18 @@ def continue_decree_after_answers(
     db, state = session.db, session.state
     if not db.staged_declarations.questions_for(decree_ref):
         return
-    db.staged_declarations.clear_questions(decree_ref)
     if session.llm_config is None:
+        # 无模型可续：视作无问后后果的终态，清问以免案头永挂。
+        db.staged_declarations.clear_questions(decree_ref)
         return
     dossier = _dossier_for_decree_ref(db, decree_ref)
     if dossier is None:
         return
     text = _run_decree_continuation_text(session, dossier, answers)
-    if not str(text or "").strip():
-        return
-    prefix, _extra = _split_at_question(str(text))
+    prefix, _extra = _split_at_question(str(text or ""))
     if not prefix.strip():
+        # LLM 已成功且无问后文：空后果终态，方可清问。
+        db.staged_declarations.clear_questions(decree_ref)
         return
     payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
     declaration = translate_month_segment(
@@ -114,8 +124,16 @@ def continue_decree_after_answers(
         decree_payload=payload if isinstance(payload, dict) else {},
         llm_config=session.llm_config,
     ) or {}
-    if declaration:
-        dispatch_declaration(db, state, declaration, source=source)
+    if not declaration:
+        db.staged_declarations.clear_questions(decree_ref)
+        return
+
+    def consume(_result: Any) -> None:
+        db.staged_declarations.clear_questions(decree_ref)
+
+    dispatch_declaration(
+        db, state, declaration, source=source, alongside=consume,
+    )
 
 
 def _run_decree_continuation_text(
