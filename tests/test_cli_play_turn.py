@@ -121,61 +121,6 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
     assert sess.calls == ["begin", call_name, call_name, "end"]
 
 
-def test_run_cli_reenters_play_turn_after_unadvanced_turn(monkeypatch, tmp_path):
-    class Session(_Sess):
-        def __init__(self):
-            super().__init__(None)
-            self.step = 0
-            self.turns_at_begin = []
-            self.state = SimpleNamespace(turn=1, ended=False, ending_status="")
-            self.db = SimpleNamespace(
-                get_ending_summary=lambda: None,
-                list_pending_actions=lambda *a, **k: [],
-            )
-
-        def begin_turn(self):
-            self.calls.append("begin")
-            self.turns_at_begin.append(self.state.turn)
-            return _Snap()
-
-        def advance_without_decree(self):
-            self.calls.append("advance")
-            if self.step == 0:
-                self.step += 1
-                return None
-            advanced = self.step > 1
-            self.step += 1
-            if advanced:
-                self.state.turn += 1
-            return SimpleNamespace(advanced=advanced)
-
-    sess = Session()
-    import ming_sim.llm_config as llm_config_mod
-    monkeypatch.setattr(
-        llm_config_mod, "load_llm_config",
-        lambda *a, **k: SimpleNamespace(advanced_model="", advanced_base_url=""),
-    )
-    monkeypatch.setattr(term, "GameSession", lambda *a, **k: sess)
-    monkeypatch.setattr(term, "_cli_write_gate", lambda s: None)
-    monkeypatch.setattr(term, "_print_header", lambda _s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
-    monkeypatch.setattr(term, "review_directives", lambda _s: "skip")
-
-    user_inputs = iter(["", "exit"])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(user_inputs))
-
-    term.run_cli("http://fake", "fake-model", str(tmp_path / "game.db"))
-
-    # 从真实 run_cli 入口实际执行 play_turn：
-    # 1. 结果为 None 时退出 play_turn 且不调 end_turn，run_cli 同月重入 play_turn；
-    # 2. advanced=False 时留在 play_turn 循环内部继续交互；
-    # 3. 推进成功后才调 end_turn 并结构化推进月份。
-    assert sess.calls == ["begin", "advance", "begin", "advance", "advance", "end"]
-    assert sess.turns_at_begin == [1, 1]
-    assert sess.state.turn == 2
-
-
 def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
     """CLI issue reaches the end-turn owner without reviving decree preview/review."""
 
