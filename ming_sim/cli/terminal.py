@@ -927,7 +927,7 @@ def play_turn(session: GameSession) -> None:
                 print(report)
                 if getattr(session.state, "ended", False):
                     return
-                if getattr(result, "advanced", False):
+                if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
                     session.end_turn()
                     return
             else:
@@ -956,7 +956,7 @@ def play_turn(session: GameSession) -> None:
                 print(report)
                 if getattr(session.state, "ended", False):
                     return
-                if getattr(result, "advanced", False):
+                if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
                     session.end_turn()
                     return
             else:
