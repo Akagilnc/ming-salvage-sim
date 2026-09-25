@@ -2,6 +2,9 @@
 
 批红答复、邸报作者、推进后的机械尾不在这里实现。本链只在那些阶段的
 持久前置已经成立时继续，不另建无旨快路，也不再走五模块 extractor。
+
+#1846：模型调用用尽 / 代码异常停在当前过月 run，恢复真源 = 暂存声明 + 落账
+状态 + 本链 call_failure；玩家重试只续未完成步，转译逃生口由同一颗重试触发。
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from ming_sim.applier import Provenance, atomic
 
 _CHAIN_KEY = "month_chain"
+_TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate"})
 
 
 def run_world_segment_text(
@@ -22,7 +26,7 @@ def run_world_segment_text(
     del agno_db
     if llm_config is None:
         from ming_sim.exceptions import LLMUnavailable
-        raise LLMUnavailable("世界段缺少模型配置", stage="world-segment")
+        raise LLMUnavailable("世界段缺少模型配置", stage="world_text")
     from ming_sim.agents import create_world_segment_agent, run_agent_text
     from ming_sim.llm_transport import audience_transport_policy
     from ming_sim.materials import prepare_world_materials, release_material_tree
@@ -41,6 +45,13 @@ def run_world_segment_text(
         release_material_tree(prepared.root)
 
 
+def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
+    """核账期恢复投影只读：本月链上未消费的调用失败（无则 None）。"""
+    chain = _load_chain(db, int(turn))
+    failure = chain.get("call_failure")
+    return dict(failure) if isinstance(failure, dict) else None
+
+
 def run_player_month_chain(
     state: Any,
     db: Any,
@@ -57,23 +68,61 @@ def run_player_month_chain(
 ) -> Any:
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
     del on_event, before_turn
+    turn = int(state.turn)
+    chain = _load_chain(db, turn)
+    try:
+        return _run_loaded_month_chain(
+            state, db, agno_db, llm_config, chain,
+            decree_text=decree_text, content=content, registry=registry,
+            source=source, cheat_directive=cheat_directive,
+        )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+        if isinstance(exc, SettlementAbort):
+            raise
+        _abort_month_call(
+            db, state, chain, decree_text=decree_text, source=source,
+            step=str(getattr(exc, "stage", None) or "month_chain"),
+            exc=exc,
+            kind="model_exhausted" if isinstance(exc, LLMUnavailable) else "code_exception",
+        )
+    raise AssertionError("month chain abort must raise")
+
+
+def _run_loaded_month_chain(
+    state: Any,
+    db: Any,
+    agno_db: Any,
+    llm_config: Any,
+    chain: Dict[str, Any],
+    *,
+    decree_text: str,
+    content: Any,
+    registry: Any,
+    source: Provenance,
+    cheat_directive: str,
+) -> Any:
+    """已装入的月链。代码异常由入口收成同一条 call_failure，不在这里另做恢复。"""
     from ming_sim.decree import ResolveResult
 
     turn = int(state.turn)
-    chain = _load_chain(db, turn)
     if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
         chain["cheat_directive"] = str(cheat_directive).strip()
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+    _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
     session = SimpleNamespace(
         db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
     )
     _run_opening_levy(db, chain, turn, decree_text, source)
+
     def persist_declaration_outcome(outcome: Dict[str, object]) -> None:
         chain["declaration_outcome"] = outcome
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
     declaration_outcome = _settle_edicts(
-        session, registry=registry, on_outcome=persist_declaration_outcome,
+        session, registry=registry, chain=chain, on_outcome=persist_declaration_outcome,
     )
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
@@ -117,8 +166,136 @@ def _run_opening_levy(
         mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
 
 
+def _consume_call_failure_for_retry(
+    db: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
+) -> None:
+    """玩家点「重试」再入主链：按需丢段，然后清失败标记，只续未完成步。"""
+    failure = chain.get("call_failure")
+    if not isinstance(failure, dict):
+        return
+    step = str(failure.get("step") or "")
+    if failure.get("escape_armed") and step in _TRANSLATE_ESCAPE_STEPS:
+        _discard_segment_for_escape(chain, failure)
+        chain["translate_exhaust_stops"] = 0
+    chain.pop("call_failure", None)
+    _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+
+
+def _discard_segment_for_escape(
+    chain: Dict[str, Any], failure: Dict[str, Any],
+) -> None:
+    """完整段文转译反复用尽后的逃生口：丢未落段文，已落账不动。"""
+    step = str(failure.get("step") or "")
+    if step == "world_translate":
+        chain.pop("world_text", None)
+        chain["world_text_ready"] = False
+        chain.pop("world_questions", None)
+
+
+def _abort_month_call(
+    db: Any,
+    state: Any,
+    chain: Dict[str, Any],
+    *,
+    decree_text: str,
+    source: Provenance,
+    step: str,
+    exc: BaseException,
+    kind: str,
+    decree_ref: str = "",
+) -> None:
+    """停住当前过月 run：持久化相位内 call_failure + 错误包，再 SettlementAbort。"""
+    from ming_sim.error_pack import settlement_abort_message, write_error_pack
+    from ming_sim.exceptions import SettlementAbort
+
+    turn = int(state.turn)
+    # 事务已回滚时，失败记录只叠在已提交链上。调用方链在 alongside 里改过的
+    # 内存相位（world_committed 等）不随失败写回。
+    if (
+        kind == "code_exception"
+        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+    ):
+        from ming_sim.decree import reload_state_from_db
+        reload_state_from_db(db, state, content=getattr(db, "content", None))
+    committed = _load_chain(db, turn)
+    escape_armed = False
+    if kind == "model_exhausted" and step in _TRANSLATE_ESCAPE_STEPS:
+        stops = int(committed.get("translate_exhaust_stops") or 0) + 1
+        committed["translate_exhaust_stops"] = stops
+        escape_armed = stops >= 2
+    original = str(getattr(exc, "message", None) or exc)
+    pack_path = ""
+    pack_exc: Optional[BaseException] = None
+    try:
+        pack_path = write_error_pack(
+            db, state, exc=exc, extracted=None, resolve_ctx=None,
+        )
+    except Exception as caught_pack:
+        # 写包失败不得顶替原故障，也不得挡住已提交相位上的失败标记。
+        pack_exc = caught_pack
+    failure: Dict[str, Any] = {
+        "kind": kind,
+        "step": step,
+        "message": original,
+        "escape_armed": escape_armed,
+    }
+    if pack_path:
+        failure["error_pack_path"] = pack_path
+    if decree_ref:
+        failure["decree_ref"] = decree_ref
+    committed["call_failure"] = failure
+    chain.clear()
+    chain.update(committed)
+    _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+    if pack_exc is not None:
+        raise SettlementAbort(
+            original, turn=turn, stage=step, error_pack_path=None,
+        ) from pack_exc
+    abort_message = (
+        settlement_abort_message(pack_path) if kind == "code_exception" else original
+    )
+    raise SettlementAbort(
+        abort_message,
+        turn=turn,
+        stage=step,
+        error_pack_path=pack_path,
+    ) from exc
+
+
+def _guard_month_call(
+    db: Any,
+    state: Any,
+    chain: Dict[str, Any],
+    *,
+    decree_text: str,
+    source: Provenance,
+    step: str,
+    operation: Any,
+    decree_ref: str = "",
+    code_step: Optional[str] = None,
+) -> Any:
+    """模型用尽 → 停住可重试；其它代码异常 → 错误包后停住；中断类原样上浮。"""
+    from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+
+    try:
+        return operation()
+    except LLMUnavailable as exc:
+        _abort_month_call(
+            db, state, chain, decree_text=decree_text, source=source,
+            step=step, exc=exc, kind="model_exhausted", decree_ref=decree_ref,
+        )
+    except (KeyboardInterrupt, SystemExit, SettlementAbort):
+        raise
+    except Exception as exc:
+        _abort_month_call(
+            db, state, chain, decree_text=decree_text, source=source,
+            step=code_step or step, exc=exc, kind="code_exception", decree_ref=decree_ref,
+        )
+    raise AssertionError("month call abort must raise")
+
+
 def _settle_edicts(
-    session: Any, *, registry: Any, on_outcome: Any = None,
+    session: Any, *, registry: Any, chain: Dict[str, Any], on_outcome: Any = None,
 ) -> Optional[Dict[str, object]]:
     from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
     from ming_sim.decree import _is_stalled_deliberation
@@ -158,7 +335,14 @@ def _settle_edicts(
             verdict = staged[0].verdict if staged else None
             if verdict is None and session.llm_config is not None:
                 snapshot = snapshot_for_existing_dossier(session, dossier)
-                product = produce_forecast_product(session, snapshot)
+
+                def _produce() -> Dict[str, Any]:
+                    return produce_forecast_product(session, snapshot)
+
+                product = _guard_month_call(
+                    db, state, chain, decree_text="", source=Provenance.player_decree,
+                    step="edict_forecast", operation=_produce, decree_ref=ref,
+                )
                 stage_declaration(
                     db, decree_ref=ref,
                     declaration=product["declaration"] or {},
@@ -217,9 +401,15 @@ def _run_world_segment(
     db, state = session.db, session.state
     turn = int(state.turn)
     if not chain.get("world_text_ready"):
-        chain["world_text"] = run_world_segment_text(
-            db, state, session.llm_config, session.agno_db,
-            cheat_directive=str(chain.get("cheat_directive") or ""),
+        def _push() -> str:
+            return run_world_segment_text(
+                db, state, session.llm_config, session.agno_db,
+                cheat_directive=str(chain.get("cheat_directive") or ""),
+            )
+
+        chain["world_text"] = _guard_month_call(
+            db, state, chain, decree_text="", source=source,
+            step="world_text", operation=_push,
         )
         chain["world_text_ready"] = True
         _save_chain(db, turn, chain, decree_text="", source=source)
@@ -229,20 +419,33 @@ def _run_world_segment(
     chain["world_questions"] = questions
 
     def mark(result: Any) -> None:
+        # 完成标记与世界效果同一事务；调用方链要等提交成功后再采纳。
+        persisted = dict(chain)
         outcome = _ending_from_dispatch_result(result)
         if outcome is not None:
-            chain["declaration_outcome"] = outcome
-        chain["world_committed"] = True
-        _save_chain(db, turn, chain, source=source)
+            persisted["declaration_outcome"] = outcome
+        persisted["world_committed"] = True
+        persisted.pop("translate_exhaust_stops", None)
+        _save_chain(db, turn, persisted, source=source)
+
+    def adopt_committed() -> None:
+        chain.clear()
+        chain.update(_load_chain(db, turn))
 
     if prefix.strip():
-        result = dispatch_month_segment(
-            db, state, segment=prefix, llm_config=session.llm_config, source=source,
-            alongside=mark,
+        result = _guard_month_call(
+            db, state, chain, decree_text="", source=source,
+            step="world_translate", code_step="world_commit",
+            operation=lambda: dispatch_month_segment(
+                db, state, segment=prefix, llm_config=session.llm_config, source=source,
+                alongside=mark,
+            ),
         )
+        adopt_committed()
         return _ending_from_dispatch_result(result)
     with atomic(db):
         mark(None)
+    adopt_committed()
     return None
 
 
