@@ -9737,7 +9737,7 @@ class GameDB:
         self.conn.commit()
         return cur.rowcount > 0
 
-    def restore_interrupted_after_failed_retry(self, chat_turn_id: int) -> None:
+    def restore_interrupted_after_failed_retry(self, chat_turn_id: int) -> List[int]:
         """重试再失败的善后（#505 finding1）：回滚本次重试在 session.chat 落下的副作用
         （dismiss 账 / 拟旨 / 任免候选等，已由调用方 record_chat_turn_rollback_diffs 记为
         rollback items）+ 截断本轮 agno runs，把重入生成态的轮翻回 'interrupted' 保持可再
@@ -9751,10 +9751,10 @@ class GameDB:
             "SELECT * FROM chat_turns WHERE id = ?", (int(chat_turn_id),)
         ).fetchone()
         if row is None:
-            return
+            return []
         turn_row = self._row_dict(row)
         if turn_row["status"] != "generating" or turn_row.get("minister_message_id"):
-            return
+            return []
         items = self.conn.execute(
             """
             SELECT * FROM chat_turn_rollback_items
@@ -9763,6 +9763,7 @@ class GameDB:
             """,
             (int(chat_turn_id),),
         ).fetchall()
+        restored_pending_action_ids: List[int] = []
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
             self.conn.execute(
@@ -9771,7 +9772,7 @@ class GameDB:
                 (int(chat_turn_id), int(chat_turn_id)),
             )
             # 空 undone 消息集：只还原业务副作用，一句问话/回话都不删。
-            self._restore_chat_rollback_items_in_tx(items, [])
+            restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(items, [])
             self.conn.execute(
                 "DELETE FROM chat_turn_rollback_items WHERE chat_turn_id = ?",
                 (int(chat_turn_id),),
@@ -9784,6 +9785,7 @@ class GameDB:
                 "UPDATE chat_turns SET status = 'interrupted' WHERE id = ?",
                 (int(chat_turn_id),),
             )
+        return restored_pending_action_ids
 
     def create_chat_turn(
         self,
@@ -9872,14 +9874,14 @@ class GameDB:
         )
         self.conn.commit()
 
-    def fail_chat_turn(self, chat_turn_id: int) -> None:
+    def fail_chat_turn(self, chat_turn_id: int) -> List[int]:
         """Mark an incomplete audience turn failed and remove its partial user-visible writes."""
         row = self.conn.execute(
             "SELECT * FROM chat_turns WHERE id = ?",
             (int(chat_turn_id),),
         ).fetchone()
         if row is None:
-            return
+            return []
         turn_row = self._row_dict(row)
         if turn_row["status"] not in {"active", "generating"}:
             self.conn.execute(
@@ -9887,7 +9889,7 @@ class GameDB:
                 (int(chat_turn_id),),
             )
             self.conn.commit()
-            return
+            return []
         items = self.conn.execute(
             """
             SELECT * FROM chat_turn_rollback_items
@@ -9901,6 +9903,7 @@ class GameDB:
             for mid in (turn_row.get("user_message_id"), turn_row.get("minister_message_id"))
             if mid
         ]
+        restored_pending_action_ids: List[int] = []
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
             # Same family as undo_chat_turn: drop enter/exit placeholders bound to this
@@ -9910,7 +9913,7 @@ class GameDB:
                 "WHERE source_chat_turn_id = ? OR origin_chat_turn_id = ?",
                 (int(chat_turn_id), int(chat_turn_id)),
             )
-            self._restore_chat_rollback_items_in_tx(items, message_ids)
+            restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(items, message_ids)
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)
                 self.conn.execute(
@@ -9934,6 +9937,7 @@ class GameDB:
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),
             )
+        return restored_pending_action_ids
 
     def record_chat_turn_rollback_diffs(
         self,
@@ -19787,6 +19791,15 @@ class GameDB:
                 tuple(params),
             ).fetchall()
         ]
+        directive_ids = [
+            int(row["id"])
+            for row in self.conn.execute(
+                f"SELECT id FROM pending_actions WHERE {where} AND kind='directive'",
+                tuple(params),
+            ).fetchall()
+        ]
+        for pending_id in directive_ids:
+            self._discard_deleted_directive_forecast(pending_id)
         cur = self.conn.execute(
             f"DELETE FROM pending_actions WHERE {where}",
             tuple(params),
@@ -19804,6 +19817,12 @@ class GameDB:
         须在 commit_pending_actions 之前调用，防止 commit 把草案插成孤儿 turn_directives
         行——退朝路不颁诏，孤儿 draft 永不经 extractor、不可见（codex r5 F2）。
         返回删除条数。"""
+        rows = self.conn.execute(
+            "SELECT id FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
+            (int(turn),),
+        ).fetchall()
+        for row in rows:
+            self._discard_deleted_directive_forecast(int(row["id"]))
         cur = self.conn.execute(
             "DELETE FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
             (int(turn),),

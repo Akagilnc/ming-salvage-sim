@@ -4434,8 +4434,8 @@ def _event_result_delta_event_ids(
     person_result_event_ids: set[str] = set()
     for index, item in enumerate(person_changes):
         if ordered_deltas is not None:
-            declared = (ordered_effect_event_ids or {}).get("人物变更", [])
-            person_result_event_ids.update({declared[index]} & strategic_event_ids if index < len(declared) else set())
+            event_id = str(item.get("_effect_event_id") or "")
+            person_result_event_ids.update({event_id} & strategic_event_ids if event_id else set())
         else:
             person_result_event_ids.update(_strategic_person_result_event_ids(item, strategic_event_ids, db))
     new_army_result_event_ids: set[str] = set()
@@ -8736,6 +8736,14 @@ def _apply_score_extraction_body(
     )
 
     batch_new_identities: dict[str, tuple[str, str, str]] = {}
+    person_items = extracted.get("人物变更")
+    person_event_ids = (ordered_effect_event_ids or {}).get("人物变更", [])
+    if isinstance(person_items, list) and person_event_ids:
+        extracted["人物变更"] = [
+            {**item, "_effect_event_id": person_event_ids[index]}
+            if isinstance(item, dict) and index < len(person_event_ids) else item
+            for index, item in enumerate(person_items)
+        ]
 
     def _stamp_batch_new_declaration(item: object) -> tuple[object, str | None]:
         """Stamp a shared birth_key onto same-identity siblings, or hand back a
@@ -8941,10 +8949,9 @@ def _apply_score_extraction_body(
     declared_person_event_by_item = None
     declared_new_army_event_by_item = None
     if ordered_deltas is not None:
-        person_ids = (ordered_effect_event_ids or {}).get("人物变更", [])
         declared_person_event_by_item = {
-            id(item): person_ids[index] if index < len(person_ids) else ""
-            for index, item in enumerate(person_changes)
+            id(item): str(item.get("_effect_event_id") or "")
+            for item in person_changes
         }
         army_ids = (ordered_effect_event_ids or {}).get("new_armies", [])
         declared_new_army_event_by_item = {
@@ -8963,6 +8970,8 @@ def _apply_score_extraction_body(
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=ordered_effect_event_ids,
     )
+    for item in person_changes:
+        item.pop("_effect_event_id", None)
     strategic_event_label_gate_ids = (
         strategic_event_pool_ids
         & strategic_event_result_delta_event_ids

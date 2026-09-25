@@ -470,32 +470,23 @@ def _insert_shaanxi_disaster(db, state):
     )
 
 
-def _canned_judge(monkeypatch, *, outcome, dossier_id, sim_calls, extract_calls, modules_seen):
+def _canned_judge(monkeypatch, *, outcome, dossier_id, sim_calls):
     """共享 canned_full_settlement + 本票 issues 抄录/噪声跳过。"""
     if outcome is None:
         narrative = (
             f"本月陕西饥情仍重，案卷 dossier:{dossier_id} 赈银尚在途中押解，"
             f"地方尚未回报办差结局。"
         )
-        extract_result: dict = {"dossier_executions": []}
     else:
         note = _NOTE_BY[outcome]
         narrative = (
             f"案卷 dossier:{dossier_id} 陕西赈灾执行结果已明：{note}。"
             f"灾情挤占下成色如上。"
         )
-        extract_result = {
-            "dossier_executions": [{
-                "dossier_id": dossier_id, "outcome": outcome, "note": note,
-            }],
-        }
     canned_full_settlement(
         monkeypatch,
         narrative=narrative,
         simulator_calls=sim_calls,
-        extract_result=extract_result,
-        extract_calls=extract_calls,
-        modules_seen=modules_seen,
         skip_fixed_flows=True,
         skip_relation_brew=True,
     )
@@ -525,11 +516,9 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
     dossier_id = _in_transit_recovery_grant(db, state, amount=amount, tag="fulfilled")
 
     sim_calls: list = []
-    extract_calls: list = []
-    modules_seen: list = []
     _canned_judge(
         monkeypatch, outcome="fulfilled", dossier_id=dossier_id,
-        sim_calls=sim_calls, extract_calls=extract_calls, modules_seen=modules_seen,
+        sim_calls=sim_calls,
     )
 
     displaced_before = _pop(db, "流民", "shaanxi")
@@ -562,12 +551,10 @@ def test_month_settle_carries_disaster_rows_to_judge(game, monkeypatch):
     dossier_id = _in_transit_recovery_grant(db, state, amount=40, tag="dis-in")
 
     sim_calls: list = []
-    extract_calls: list = []
-    modules_seen: list = []
     # 成色任意——只为走完月结；不借此证「必折损」。
     _canned_judge(
         monkeypatch, outcome="degraded", dossier_id=dossier_id,
-        sim_calls=sim_calls, extract_calls=extract_calls, modules_seen=modules_seen,
+        sim_calls=sim_calls,
     )
 
     result = make_light_session(db, state, content).advance_without_decree()
@@ -589,11 +576,8 @@ def test_no_explicit_outcome_no_judge_fill(game, monkeypatch):
     displaced_before = _pop(db, "流民", "shaanxi")
 
     sim_calls: list = []
-    extract_calls: list = []
-    modules_seen: list = []
     _canned_judge(
-        monkeypatch, outcome=None, dossier_id=dossier_id,
-        sim_calls=sim_calls, extract_calls=extract_calls, modules_seen=modules_seen,
+        monkeypatch, outcome=None, dossier_id=dossier_id, sim_calls=sim_calls,
     )
 
     closed_turn = int(state.turn)

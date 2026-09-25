@@ -169,7 +169,7 @@ def _held_snapshot(session: Any, dossier_id: int) -> Optional[Dict[str, Any]]:
         "simulator_payload": sim_payload,
         "target_grounding": grounding,
         "visible_refs": refs,
-        "decree_ref": held_dossier_decree_ref(int(dossier_id)),
+        "decree_ref": decree_ref_for_dossier(db, candidate),
         "dossier_id": int(dossier_id),
         "turn": int(state.turn),
     }

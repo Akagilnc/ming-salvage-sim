@@ -581,11 +581,6 @@ def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
     canned_full_settlement(
         monkeypatch,
         narrative="十一月边饷邸报。",
-        extract_result={
-            "dossier_reconciliations": [
-                {"dossier_id": 99999, "arrived_amount": 10},
-            ],
-        },
         skip_relation_brew=True,
     )
     result = make_light_session(db, state, content).advance_without_decree()

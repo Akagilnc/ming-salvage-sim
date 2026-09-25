@@ -2095,6 +2095,21 @@ class WebGame:
             )
         return True
 
+    def _schedule_restored_decree_forecasts(self, pending_ids: List[int]) -> None:
+        if not pending_ids:
+            return
+        from ming_sim.decree_forecast import bind_forecast_owner, schedule_pending_decree_forecast
+
+        bind_forecast_owner(self.session)
+        for pending_id in pending_ids:
+            row = self.db.conn.execute(
+                "SELECT night_id FROM pending_actions WHERE id=?", (int(pending_id),),
+            ).fetchone()
+            if row is not None and int(row["night_id"] or 0) > 0:
+                schedule_pending_decree_forecast(
+                    self.session, int(pending_id), night_id=int(row["night_id"]),
+                )
+
     def _fail_chat_turn_and_reload(
         self, chat_turn_id: int, before_snapshot: Dict[str, Any],
         error: Optional[BaseException] = None,
@@ -2113,7 +2128,8 @@ class WebGame:
             "SELECT user_message_id FROM chat_turns WHERE id = ?", (chat_turn_id,),
         ).fetchone() if hasattr(self.db, "conn") else None
         if row is not None and row["user_message_id"]:
-            self.db.restore_interrupted_after_failed_retry(chat_turn_id)
+            restored_ids = self.db.restore_interrupted_after_failed_retry(chat_turn_id)
+            self._schedule_restored_decree_forecasts(restored_ids)
             if error is not None and not isinstance(error, LLMUnavailable):
                 from ming_sim.audience_night import write_audience_error_pack
                 pack = write_audience_error_pack(
@@ -2122,7 +2138,8 @@ class WebGame:
                 )
                 self.db.set_chat_turn_error_pack(chat_turn_id, pack)
         else:
-            self.db.fail_chat_turn(chat_turn_id)
+            restored_ids = self.db.fail_chat_turn(chat_turn_id)
+            self._schedule_restored_decree_forecasts(restored_ids)
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
@@ -2890,7 +2907,8 @@ class WebGame:
                         )
                         if not reply_persisted:
                             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                            self.db.restore_interrupted_after_failed_retry(chat_turn_id)
+                            restored_ids = self.db.restore_interrupted_after_failed_retry(chat_turn_id)
+                            self._schedule_restored_decree_forecasts(restored_ids)
                         if not reply_persisted and not isinstance(error, LLMUnavailable):
                             from ming_sim.audience_night import write_audience_error_pack
                             pack = write_audience_error_pack(

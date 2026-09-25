@@ -496,9 +496,22 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
                     chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
                 )
             if hasattr(db, "restore_interrupted_after_failed_retry"):
-                db.restore_interrupted_after_failed_retry(chat_turn_id)
+                restored_ids = db.restore_interrupted_after_failed_retry(chat_turn_id)
+                if restored_ids:
+                    from ming_sim.decree_forecast import bind_forecast_owner, schedule_pending_decree_forecast
+                    from ming_sim.audience_night import get_open_night
+
+                    bind_forecast_owner(session)
+                    night = get_open_night(db)
+                    if night is not None:
+                        for pending_id in restored_ids:
+                            schedule_pending_decree_forecast(
+                                session, int(pending_id), night_id=int(night["id"]),
+                            )
         except Exception:
-            pass
+            logger.exception(
+                "CLI retry rollback/forecast recovery failed chat_turn_id=%s", chat_turn_id,
+            )
         session.abandon_chat_turn_scene(chat_turn_id)
         print(f"重试回话失败：{exc}\n")
         return None

@@ -1246,6 +1246,27 @@ def test_none_player_message_does_not_crash_draft_probe(read_game, monkeypatch):
     assert db.list_pending_actions(state.turn) == []
 
 
+def test_bulk_directive_deletion_discards_forecast(game):
+    from ming_sim.declaration_dispatch import pending_action_decree_ref
+    from ming_sim.decree_forecast import stage_declaration
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    for delete in (
+        lambda: db.drop_pending_actions_for_minister(state.turn, name),
+        lambda: db.discard_pending_directives(state.turn),
+    ):
+        pending_id = db.upsert_pending_directive(
+            state.turn, name, payload={**_POLICY_FIELDS, "text": "草稿", "actor": name},
+        )
+        ref = pending_action_decree_ref(pending_id, 1)
+        stage_declaration(db, decree_ref=ref, declaration={"commissions": []}, turn=state.turn)
+        assert db.staged_declarations.staged_for(ref)
+
+        assert delete() == 1
+        assert not db.staged_declarations.staged_for(ref)
+
+
 def test_discard_pending_directives_does_not_commit_outer_transaction(game):
     """discard_pending_directives 只做删除，不拥有 commit；
     外层事务若回滚，被丢弃的 directive pending 必须恢复。"""

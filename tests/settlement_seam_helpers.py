@@ -40,20 +40,14 @@ def canned_full_settlement(
     decisions: Optional[List[Dict[str, object]]] = None,
     simulator_calls: Optional[list] = None,
     source_spy: Optional[list] = None,
-    extract_result: Optional[Dict[str, object]] = None,
-    extract_calls: Optional[list] = None,
-    modules_seen: Optional[list] = None,
     skip_fixed_flows: bool = False,
     skip_relation_brew: bool = False,
 ) -> list:
     """Replace only external LLM seams; keep production settlement spine.
 
-    extract_result: canned merged extractor payload (English keys).
     """
     simulator_calls = simulator_calls if simulator_calls is not None else []
     decisions = list(decisions or [])
-    canned_extract = dict(extract_result or {})
-
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
     # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁。
@@ -96,10 +90,6 @@ def canned_full_settlement(
         "ming_sim.month_translate.translate_month_segment",
         lambda *_a, **_k: {"effects": {}},
     )
-    if extract_calls is not None:
-        extract_calls.clear()
-    if modules_seen is not None:
-        modules_seen.clear()
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
