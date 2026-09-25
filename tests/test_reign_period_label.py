@@ -37,38 +37,6 @@ def test_1629_plus_uses_chinese_ordinal_not_arabic():
     assert reign_period_label(1638, 2) == "崇祯十一年二月"
 
 
-def test_chapter_memory_title_uses_reign_projection(game, monkeypatch):
-    """memories.record_chapter_memory 标题走年号投影，不再硬编码崇祯+西历。"""
-    from ming_sim import memories as memories_mod
-
-    db, state, _content = game
-    state.year = 1627
-    state.period = 10
-
-    captured: dict = {}
-
-    def _fake_save(st, title, body, tags=None, **kwargs):
-        captured["title"] = title
-        return 1
-
-    monkeypatch.setattr(db, "save_chapter_memory", _fake_save)
-    monkeypatch.setattr(
-        memories_mod, "run_agent_text",
-        lambda *a, **k: '{"body": "本月朝局略。", "tags": []}',
-    )
-
-    # agent 形参只透传，不调用其方法
-    memories_mod.record_chapter_memory(
-        agent=object(),
-        db=db,
-        state=state,
-        decree_text="着户部核饷。",
-        narrative="边饷告急。",
-        applied={},
-    )
-    assert captured["title"] == "天启七年十月"
-
-
 def test_save_chapter_memory_fallback_title_uses_reign_projection(game):
     """db.save_chapter_memory 空 title 回落亦走年号投影（db.py 锚点）。"""
     db, state, _content = game

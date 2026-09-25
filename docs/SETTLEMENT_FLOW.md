@@ -105,8 +105,7 @@
      driver 与引擎共用 `prepare_resolve_front_half`：`driver prepare` 写入 ready=0（含 transit_arrivals handoff），
      外部据已提交盘面产叙事+delta 后再 `driver settle --delta` 升 ready=1（见 8.5）。
 
-  4. chapter_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
-     secret_orders = group_secret_orders_for_sim(active 行)  # 密令只进「在办」；#1504 结案不靠 pending 核议
+  4. secret_orders = group_secret_orders_for_sim(active 行)  # 密令只进「在办」；#1504 结案不靠 pending 核议
      secret_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
        ↳ form③ 承诺（有 end_turn、无 ongoing_effects）到期时写入「待核议」分组（entry_kind=due_commitment）
        ↳ #883 分流：分组只喂 personnel_secret extractor 独立 rail；
@@ -178,7 +177,6 @@
   12. db.save_turn_extraction(...)                  # inertia 合并后才存：玩家明细 / 时间线含 inertia 人物变更
 
   13. [我产 chapter memory {body, tags}]  ← 起居注史官身份
-      → record_chapter_memory(state, {body, tags})  # 仅旧核；玩家链章节记忆已退役
 
   14. clear_gated_legacies(db, state)              # 开局负面修正按 clear_gate 程序判定消除
 

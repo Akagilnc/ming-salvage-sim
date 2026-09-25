@@ -1076,9 +1076,7 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
 
     _set("create_season_simulator_agent", lambda *a, **k: None)
     _set("create_ending_summary_agent", lambda *a, **k: None)
-    _set("create_chapter_memory_agent", lambda *a, **k: None)
     # 章节/关系酿制：禁 sk-test 打真网；record 空操作
-    _set("record_chapter_memory", lambda *a, **k: None)
     _set("_make_relation_brew_runner", lambda *a, **k: None)
     # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
@@ -1143,8 +1141,6 @@ def _657_subprocess_resolve(
         # 真 phase2：只 stub LLM 边界
         dm.create_season_simulator_agent = lambda *a, **k: None
         dm.create_ending_summary_agent = lambda *a, **k: None
-        dm.create_chapter_memory_agent = lambda *a, **k: None
-        dm.record_chapter_memory = lambda *a, **k: None
         dm._make_relation_brew_runner = lambda *a, **k: None
         import ming_sim.decree_forecast as decree_forecast
         import ming_sim.month_chain as month_chain

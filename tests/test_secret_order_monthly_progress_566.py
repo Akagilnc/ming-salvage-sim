@@ -67,7 +67,6 @@ def _canned_monthly_settlement(monkeypatch, extractor_calls):
     # #1745：结算拒收递话同属外层 LLM 缝。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree)
-    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
 

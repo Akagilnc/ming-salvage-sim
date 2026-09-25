@@ -1,26 +1,12 @@
-"""章节记忆：把每回合的诏书 + 月末邸报 + 落库数值浓缩成一段叙事章节，落 event_memories
-（event_type='chapter_summary'）。章节记忆取代旧的多主体原子事件卡，统一接管：
-- 大臣对话「近来朝局」检索（registry）
-- 月末推演历史脉络注入（simulation 的 relevant_memories）
-- 结局总结的全程素材（国史编纂官读全部章节）
-
-每回合一条，importance=5 永久保留。L5（依赖 agents/db/models）。
-"""
+"""结构化结算效果摘要与历月邸报时间线读模型。"""
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Dict, Iterable, List, Mapping, Optional
-
-from agno.agent import Agent
-
-from ming_sim.agents import run_agent_text
-from ming_sim.assets import strip_json_fence
+from typing import Dict, List, Optional
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
-from ming_sim.models import GameState, reign_period_label
 from ming_sim.population_pressure import is_actual_population_transfer
-from ming_sim.token_stats import tlog
 
 
 def _short(text: object, limit: int = 80) -> str:
@@ -30,76 +16,13 @@ def _short(text: object, limit: int = 80) -> str:
     return s[: limit - 1] + "…"
 
 
-def _parse_chapter_output(raw: str) -> tuple[str, List[str]]:
-    """解析章节 agent 的 {body, tags} JSON。
-
-    铁律不抛断：解析失败就把整段原文当 body、tags 空。tags 去重、限长、限 16 个。
-    """
-    text = strip_json_fence(raw).strip()
-    data: object = None
-    try:
-        data = json.loads(text)
-    except Exception:
-        start, end = text.find("{"), text.rfind("}")
-        if 0 <= start < end:
-            try:
-                data = json.loads(text[start : end + 1])
-            except Exception:
-                data = None
-    if not isinstance(data, dict):
-        # 非 JSON：原样当正文
-        return text, []
-    body = str(data.get("body") or "").strip()
-    tags: List[str] = []
-    raw_tags = data.get("tags")
-    if isinstance(raw_tags, list):
-        for t in raw_tags:
-            s = str(t).strip()[:40]
-            if s and s not in tags:
-                tags.append(s)
-    return body, tags[:16]
-
-
 def _directive_summary(text: str) -> str:
     s = re.sub(r"奉天承运皇帝诏曰[:：]?", "", text or "").strip()
     s = s.replace("钦此。", "").replace("钦此", "").strip()
     return _short(s, 80)
 
 
-def _public_chapter_counterpart(
-    items: Iterable[Mapping[str, object]],
-) -> Optional[str]:
-    """Return only independently public source material for a chapter write.
-
-    A chapter body is LLM-rendered aggregate prose, so it cannot itself grant a
-    reader access when the turn also contains restricted sources.  Give the
-    archive writer a separate public counterpart made from the source-scoped
-    turn items; the writer keeps legacy aggregate behaviour only when there
-    are no source items to project.
-    """
-    source_items = list(items)
-    items = [
-        item for item in source_items
-        # Archive rows are derived read-model projections, not independently
-        # authorizable source material.  A chapter counterpart may aggregate
-        # only the source rows that existed before either archive was written.
-        if not str(item.get("source_id") or "").startswith(
-            ("turn_report:", "chapter_source:", "projection:", "settlement:narrative:")
-        )
-    ]
-    if not items:
-        # ``None`` means no source snapshot exists, retaining the legacy body
-        # fallback.  An empty string means this turn has only derived rows and
-        # must not publish the chapter aggregate a second time.
-        return "" if source_items else None
-    return "\n".join(
-        str(item.get("body") or item.get("title") or "")
-        for item in items
-        if not item.get("excluded_names")
-    )
-
-
-# ── 结构化效果摘要：从 applied（已落库增量）拼一句「本月效果」，喂章节 agent + 时间线兜底 ──
+# ── 结构化效果摘要：从 applied（已落库增量）拼结算效果与时间线 ──
 
 def effect_brief(applied: Dict[str, object]) -> str:
     """把本回合落库的关键增量拼成一句话效果摘要（不调 LLM）。"""
@@ -290,60 +213,3 @@ def _coerce_extractor_output(raw: object) -> Dict[str, object]:
         except Exception:
             return {}
     return {}
-
-
-# ── 章节记忆生成（LLM 每回合浓缩一段叙事） ──
-
-def record_chapter_memory(
-    agent: Agent,
-    db: GameDB,
-    state: GameState,
-    decree_text: str,
-    narrative: str,
-    applied: Dict[str, object],
-) -> int:
-    """调章节记忆 agent 把本回合浓缩成一段叙事章节，落 event_memories。
-
-    失败降级：直接用 effect_brief + 邸报首段拼一段保底章节（铁律：不抛断游戏）。
-    返回 memory_id（0=未落库）。
-    """
-    title = reign_period_label(state.year, state.period)
-    effect = effect_brief(applied)
-    body = ""
-    tags: list[str] = []
-    try:
-        payload = {
-            "turn": {"year": state.year, "period": state.period, "turn": state.turn},
-            "title": title,
-            "decree_summary": _directive_summary(decree_text),
-            "narrative": narrative,
-            "effect_brief": effect,
-            "instruction": (
-                "把本月朝局浓缩成一段连贯叙事章节（150 字内），"
-                "点明本月皇帝做了什么、引出什么效果、留下什么暗流，史笔笔法，不分点不列数值表；"
-                "再抽出本月涉及的人物/地点/派系/事件动作召回标签。"
-                "只输出 {\"body\":..., \"tags\":[...]} JSON。"
-            ),
-        }
-        payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=False)
-        tlog(f"[chapter-memory/INPUT] turn={state.turn} ({len(payload_json)}字)")
-        raw = run_agent_text(agent, payload_json, tag="chapter-memory").strip()
-        tlog(f"[chapter-memory/OUTPUT] turn={state.turn} ({len(raw)}字):\n{raw}")
-        body, tags = _parse_chapter_output(raw)
-    except Exception as exc:
-        tlog(f"[chapter-memory] LLM 失败，走保底：{exc}")
-
-    if not body:
-        head = _short(narrative, 100)
-        body = f"本月：{effect}。{head}".strip("。") + "。"
-
-    knowledge_items = db.knowledge_items_for_turn(state.turn)
-    public_body = _public_chapter_counterpart(knowledge_items)
-    memory_id = db.save_chapter_memory(
-        state, title=title, body=body, tags=tags,
-        knowledge_items=knowledge_items,
-        public_body=public_body,
-        commit=False,
-    )
-    tlog(f"[chapter-memory] saved id={memory_id} turn={state.turn}")
-    return memory_id

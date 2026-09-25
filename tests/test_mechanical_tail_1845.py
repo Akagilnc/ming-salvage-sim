@@ -11,7 +11,7 @@ Seams:
 from __future__ import annotations
 
 import threading
-import time
+from concurrent.futures import Future
 
 import pytest
 
@@ -38,21 +38,16 @@ def _archive_and_stub_world(db, state, monkeypatch):
     )
 
 
-def test_advance_starts_mechanical_tail_without_blocking_new_month(game, monkeypatch):
-    """推进后机械尾后台跑；前台立刻进入新月，不等酿制结束。"""
+def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monkeypatch):
+    """提交到受管后台票；无需线程即可核实尾工作不在前台调用栈执行。"""
     db, state, content = game
     closed_turn = int(state.turn)
     closed_year, closed_period = int(state.year), int(state.period)
     _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
-
-    brew_started = threading.Event()
-    brew_release = threading.Event()
     brew_calls = []
 
-    def slow_brew(_session, **kwargs):
-        brew_started.set()
-        assert brew_release.wait(timeout=5)
+    def recording_brew(_session, **kwargs):
         brew_calls.append({
             "year": kwargs.get("settled_year"),
             "period": kwargs.get("settled_period"),
@@ -60,80 +55,33 @@ def test_advance_starts_mechanical_tail_without_blocking_new_month(game, monkeyp
         })
         return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
 
-    monkeypatch.setattr(
-        "ming_sim.mechanical_tail._run_relation_brew", slow_brew,
-    )
-
+    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", recording_brew)
     session = make_light_session(db, state, content)
     session._write_gate = threading.Lock()
     session.llm_config = object()
     session.agno_db = object()
 
+    class DeferredExecutor:
+        def submit(self, fn):
+            self.fn = fn
+            self.future = Future()
+            return self.future
+
+    executor = DeferredExecutor()
+    monkeypatch.setattr("ming_sim.audience_translation._executor", executor)
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.advanced is True
     assert int(state.turn) == closed_turn + 1
-    assert brew_started.wait(timeout=2), "机械尾应在推进后立即启动"
-    # 前台已在新月；酿制仍可被拦住 → 证明不等待
     assert not brew_calls
-    brew_release.set()
-    queue = get_session_write_queue(session)
-    assert queue.wait_idle(timeout_s=5)
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+
+    executor.fn()
+    executor.future.set_result(None)
+    assert get_session_write_queue(session).wait_idle(timeout_s=1)
     assert brew_calls == [{
         "year": closed_year, "period": closed_period, "turn": closed_turn,
     }]
-    chain = month_chain._load_chain(db, closed_turn)
-    assert chain.get("mechanical_tail", {}).get("status") == "done"
-
-
-def test_next_month_waits_for_prior_mechanical_tail(game, monkeypatch):
-    """下次过月在主链前 join 上月尾；未终结则等待，不跳过。"""
-    db, state, content = game
-    closed_turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
-    _archive_and_stub_world(db, state, monkeypatch)
-
-    brew_started = threading.Event()
-    brew_release = threading.Event()
-    order = []
-
-    def slow_brew(*_a, **_k):
-        order.append("brew-start")
-        brew_started.set()
-        assert brew_release.wait(timeout=5)
-        order.append("brew-done")
-        return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
-
-    monkeypatch.setattr(
-        "ming_sim.mechanical_tail._run_relation_brew", slow_brew,
-    )
-    session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
-    session.llm_config = object()
-    session.agno_db = object()
-
-    assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    assert brew_started.wait(timeout=2), "上月机械尾应已启动"
-    assert "brew-done" not in order
-
-    # 新月再过月：须等上月尾结束
-    db.save_turn_report(state, "新月邸报")
-    next_started = threading.Event()
-
-    def mark_world(*_a, **_k):
-        next_started.set()
-        return ""
-
-    monkeypatch.setattr(month_chain, "run_world_segment_text", mark_world)
-
-    def finish_later():
-        time.sleep(0.05)
-        brew_release.set()
-
-    threading.Thread(target=finish_later).start()
-    result = session.resolve_turn(allow_empty_decree=True)
-    assert "brew-done" in order
-    assert next_started.is_set()
-    assert result.stage in {"gazette", "advanced", "rescript"}
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
 
 def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
@@ -212,6 +160,97 @@ def test_exhausted_mechanical_tail_degrades_and_unblocks_next_month(game, monkey
     }
 
 
+def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
+    """Web 共用过月 barrier 入口先恢复 pending 尾，再等待队列。"""
+    import ming_sim.audience_translation as audience_translation
+    from ming_sim.mechanical_tail import mark_mechanical_tail_pending
+
+    db, state, content = game
+    closed_turn = max(0, int(state.turn) - 1)
+    mark_mechanical_tail_pending(
+        db, closed_turn, settled_year=state.year, settled_period=state.period,
+    )
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+    session.llm_config = object()
+    session.agno_db = object()
+    queue = get_session_write_queue(session)
+    order = []
+
+    class InlineExecutor:
+        def submit(self, fn):
+            future = Future()
+            try:
+                future.set_result(fn())
+            except Exception as exc:
+                future.set_exception(exc)
+            return future
+
+    monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
+    monkeypatch.setattr(
+        "ming_sim.mechanical_tail._run_relation_brew",
+        lambda *_a, **_k: order.append("tail-done"),
+    )
+    monkeypatch.setattr(
+        "ming_sim.audience_translation.catch_up_pending_translations",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "ming_sim.audience_translation.list_pending_translations", lambda *_a: [],
+    )
+    monkeypatch.setattr(
+        "ming_sim.audience_night.commit_late_night_approved", lambda *_a, **_k: None,
+    )
+    original_barrier = queue.barrier
+
+    def barrier(fn):
+        order.append("barrier")
+        assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
+        return original_barrier(fn)
+
+    monkeypatch.setattr(queue, "barrier", barrier)
+    session.await_translations_before_month()
+    assert order == ["tail-done", "barrier"]
+
+
+def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch):
+    """后台程序异常须传播至 Future 观察面并保留 pending，后续入口能重提。"""
+    import ming_sim.audience_translation as audience_translation
+
+    db, state, content = game
+    closed_turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    _archive_and_stub_world(db, state, monkeypatch)
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+    session.llm_config = object()
+    session.agno_db = object()
+    calls = []
+
+    class InlineExecutor:
+        def submit(self, fn):
+            future = Future()
+            try:
+                future.set_result(fn())
+            except Exception as exc:
+                future.set_exception(exc)
+            return future
+
+    monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
+
+    def fail(*_a, **_k):
+        calls.append(1)
+        raise RuntimeError("internal failure")
+
+    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", fail)
+    assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+    from ming_sim.mechanical_tail import ensure_mechanical_tails
+    ensure_mechanical_tails(session)
+    assert len(calls) == 2
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+
+
 def test_ending_summary_runs_in_mechanical_tail_after_advance(game, monkeypatch):
     """结局判定在推进前；结局总评属推进后机械尾。"""
     db, state, content = game
@@ -258,23 +297,20 @@ def test_chapter_memory_retired_from_three_readers(game):
     from ming_sim.materials import prepare_world_materials, list_materials, release_material_tree
 
     db, state, content = game
-    marker = "章节记忆退役哨兵-不得出现"
-    db.save_chapter_memory(state, "朝局", marker)
-    db.save_turn_report(state, "历月邸报正文可供自读")
+    db.save_chapter_memory(state, "朝局", "旧档章节内容")
+    db.save_turn_report(state, "历月邸报正文")
 
     # 大臣知识面
     name = next(iter(content.characters))
     knowledge = build_character_knowledge(db, state, name)
-    blob = str(knowledge)
-    assert marker not in blob
     public = knowledge.get("public_events") or []
     assert all(row.get("kind") != "chapter_summary" for row in public)
-    assert any("历月邸报正文" in str(row.get("body") or "") for row in public)
+    assert any(str(row.get("source_id") or "").startswith("projection:turn_report:") for row in public)
 
     # 结局时间线：改读邸报，不再灌章节正文
     timeline = build_timeline(db, upto_turn=state.turn)
-    assert all(marker not in str(row.get("chapter") or "") for row in timeline)
-    assert any("历月邸报正文" in str(row.get("gazette") or "") for row in timeline)
+    assert all("chapter" not in row for row in timeline)
+    assert all("gazette" in row for row in timeline)
 
     # 材料目录：有邸报索引，无章节记忆路径
     prepared = prepare_world_materials(db, state)

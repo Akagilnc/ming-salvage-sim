@@ -15,6 +15,22 @@ from ming_sim.applier import Provenance, atomic
 _CHAIN_KEY = "month_chain"
 
 
+def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: Any):
+    from ming_sim.decree_forecast import _owner_for
+
+    owner = _owner_for(db)
+    if owner is None or getattr(owner, "db", None) is not db:
+        return SimpleNamespace(
+            db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
+        )
+    owner.state = state
+    if llm_config is not None:
+        owner.llm_config = llm_config
+    if agno_db is not None:
+        owner.agno_db = agno_db
+    return owner
+
+
 def run_world_segment_text(
     db: Any, state: Any, llm_config: Any, agno_db: Any = None,
     cheat_directive: str = "",
@@ -59,7 +75,6 @@ def run_player_month_chain(
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
     del on_event, before_turn
     from ming_sim.decree import ResolveResult
-    from ming_sim.decree_forecast import _owner_for
     from ming_sim.mechanical_tail import ensure_mechanical_tails
 
     turn = int(state.turn)
@@ -67,21 +82,9 @@ def run_player_month_chain(
     if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
         chain["cheat_directive"] = str(cheat_directive).strip()
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
-    session = SimpleNamespace(
-        db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
-    )
     # #1845：下次过月前 join／重开续接上月机械尾（票在 SessionWriteQueue；barrier 等终态）
-    owner = _owner_for(db) or session
-    if getattr(owner, "db", None) is None:
-        owner = session
-    else:
-        # 保持活 state／模型配置与本链一致
-        owner.state = state
-        if getattr(owner, "llm_config", None) is None:
-            owner.llm_config = llm_config
-        if getattr(owner, "agno_db", None) is None:
-            owner.agno_db = agno_db
-    ensure_mechanical_tails(owner)
+    session = _session_owner(db, state, llm_config, agno_db, content)
+    ensure_mechanical_tails(session)
     _run_opening_levy(db, chain, turn, decree_text, source)
     def persist_declaration_outcome(outcome: Dict[str, object]) -> None:
         chain["declaration_outcome"] = outcome
@@ -367,18 +370,9 @@ def _advance_after_gazette(
         chain["stage"] = "advanced"
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
     # #1845：推进后启动机械尾（后台；不挡新月前台）。结局总评属尾，判定已在上面完成。
-    from ming_sim.decree_forecast import _owner_for
     from ming_sim.mechanical_tail import schedule_mechanical_tail_after_advance
 
-    owner = _owner_for(db) or SimpleNamespace(
-        db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
-    )
-    if getattr(owner, "db", None) is db:
-        owner.state = state
-        if llm_config is not None:
-            owner.llm_config = llm_config
-        if agno_db is not None:
-            owner.agno_db = agno_db
+    owner = _session_owner(db, state, llm_config, agno_db, content)
     schedule_mechanical_tail_after_advance(
         owner,
         closed_turn=int(turn),

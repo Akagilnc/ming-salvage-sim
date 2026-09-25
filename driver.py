@@ -275,11 +275,6 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         # 无默认零宽桩（P7/#1745）：由调用方注入真实文本 runner；缺则玩家拒收诚实失败。
         settlement_attendant_runner=settlement_attendant_runner,
     )
-    # settle 成功推进后才记审计：driver 不注入 chapter_recorder（无 llm_config，章节记忆由对话方另产），
-    # 留一条痕迹便于事后查「哪回合没记起居注」（忘补=静默缺口，#19）。须在 settle 成功之后——
-    # 若 settle 中途 SettlementAbort/ValueError，回合未推进、可重试，不该误记一条「已跳章节记忆」
-    # 的未完成回合（codex PR#133 P3）。
-    tlog(f"[driver] 跳过章节记忆(driver 模式)，turn {before_turn}→{before_turn + 1}（章节记忆由对话方另产）")
     return report
 
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 import ming_sim.decree as decree_mod
-import ming_sim.memories as memories
 from ming_sim.session import GameSession
 
 
@@ -99,10 +98,6 @@ def canned_full_settlement(
     # #1745：复用单一 agent 边界夹具（不整换 run_settlement_attendant_message）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
-    monkeypatch.setattr(
-        memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}',
-    )
-
     if skip_fixed_flows:
         monkeypatch.setattr(decree_mod, "apply_fixed_period_flows", lambda *_a, **_k: None)
 
