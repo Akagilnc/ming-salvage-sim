@@ -1810,26 +1810,42 @@ class WebGame:
             )
             # #1620 / ADR 0008 决定 6/7：settling 恢复面投影既有 abort message + ready 判别。
             # ready_replay=True → 续跑结算（重放 apply）；False → 重新推演（fallthrough）。
+            # #1846 / ADR 0157：月链 call_failure 优先——不再假装 legacy ready 重放。
             settlement_recovery = None
             if turn_phase == TurnPhase.SETTLING.value:
                 from ming_sim.error_pack import (
                     latest_error_pack_for_turn,
                     settlement_abort_message,
                 )
+                from ming_sim.month_chain import month_chain_call_failure
                 ctx = self.db.get_resolve_context(self.state.turn)
-                ready_replay = ctx is not None and ctx.get("extracted") is not None
+                month_failure = month_chain_call_failure(self.db, int(self.state.turn))
                 pack_path = latest_error_pack_for_turn(
                     self.db.path, int(self.state.turn),
                 )
-                settlement_recovery = {
-                    "ready_replay": bool(ready_replay),
-                    "error_pack_path": pack_path or "",
-                    "message": (
-                        settlement_abort_message(pack_path)
-                        if pack_path
-                        else "上月结算未完成（进度已保存）。"
-                    ),
-                }
+                if month_failure is not None:
+                    failure_pack = str(month_failure.get("error_pack_path") or "") or (
+                        pack_path or ""
+                    )
+                    settlement_recovery = {
+                        "ready_replay": False,
+                        "retryable": True,
+                        "error_pack_path": failure_pack,
+                        "message": str(month_failure.get("message") or ""),
+                        "stage": str(month_failure.get("step") or ""),
+                    }
+                else:
+                    ready_replay = ctx is not None and ctx.get("extracted") is not None
+                    settlement_recovery = {
+                        "ready_replay": bool(ready_replay),
+                        "retryable": True,
+                        "error_pack_path": pack_path or "",
+                        "message": (
+                            settlement_abort_message(pack_path)
+                            if pack_path
+                            else "上月结算未完成（进度已保存）。"
+                        ),
+                    }
         # #1726：奏疏收件箱与未读数同份 list，禁每请求双跑 list_player_memorials。
         memorials = self.memorial_payloads()
         return {

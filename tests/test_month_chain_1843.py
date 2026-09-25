@@ -367,14 +367,19 @@ def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatc
     session = make_light_session(db, state, content)
     session._write_gate = threading.Lock()
 
-    with pytest.raises(RuntimeError, match="interrupted after decree settlement"):
+    from ming_sim.exceptions import SettlementAbort
+
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
+    assert "interrupted after decree settlement" in str(caught.value.__cause__)
     assert db.staged_declarations.is_settled(ref)
+    assert caught.value.error_pack_path
 
     waiting = session.resolve_turn(allow_empty_decree=True)
     assert waiting.stage == "gazette"
     payload = db.get_resolve_context(turn)["simulator_payload"]
     assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_abdicate"
+    assert "call_failure" not in payload["month_chain"]
 
     db.conn.execute(
         "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
@@ -587,15 +592,16 @@ def test_advance_reloads_memory_after_transaction_rollback(game, monkeypatch):
 
 
 def test_missing_world_model_stops_before_world_commit(game, monkeypatch):
-    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
     session = make_light_session(db, state, content)
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(SettlementAbort) as caught:
         session.resolve_turn(allow_empty_decree=True)
     assert int(state.turn) == turn
+    assert caught.value.stage == "world_text"
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
     assert int(state.turn) == turn
