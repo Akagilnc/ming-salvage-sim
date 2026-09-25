@@ -453,10 +453,34 @@ def validate_all(
             ))
             continue
 
-        # 普通 decision（打回三选等）：按 label 匹配 option
+        # 普通 decision：票拟按 label 命中。请旨另许仅有亲笔 note 的答复，
+        # 不把批语改写成某条票拟。
         if kind == "decision":
-            labels = bind_decision_options(row.get("options") or [])
+            from ming_sim.month_chain import (
+                _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
+            )
+
+            event_id = str(row.get("event_id") or "")
             label = str(req.get("label") or "").strip()
+            note = str(req.get("note") or "").strip()
+            if (
+                not label
+                and note
+                and (
+                    event_id.startswith(_DECREE_QUESTION_PREFIX)
+                    or event_id.startswith(_WORLD_QUESTION_PREFIX)
+                )
+            ):
+                batch.items.append(ValidatedItem(
+                    decision_key=key,
+                    kind=kind,
+                    source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
+                    idx=int(row.get("idx") or 0),
+                    row=row,
+                    choice=req,
+                ))
+                continue
+            labels = bind_decision_options(row.get("options") or [])
             if label not in labels:
                 raise ValueError(f"decision 选项不在当前 options：{key}")
             matched = labels[label]
@@ -1364,7 +1388,17 @@ def apply_rescript_batch(
                 # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
                 _cas_decided(db, item)
                 event_id = str(item.row.get("event_id") or "").strip()
-                if event_id and not event_id.startswith("dossier:"):
+                # 请旨身份前缀真源 = month_chain；此处局部导入以免与月链形成模块环。
+                from ming_sim.month_chain import (
+                    _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
+                )
+                # 请旨身份不是 events 表事件；与 dossier: 同属案头身份前缀，不得进 event_triggers。
+                if (
+                    event_id
+                    and not event_id.startswith("dossier:")
+                    and not event_id.startswith(_WORLD_QUESTION_PREFIX)
+                    and not event_id.startswith(_DECREE_QUESTION_PREFIX)
+                ):
                     db.record_event_decision_choice(
                         state, event_id, item.choice, commit=False,
                     )

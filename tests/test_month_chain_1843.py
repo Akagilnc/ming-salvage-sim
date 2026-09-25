@@ -238,36 +238,53 @@ def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, mo
     pending_id, ref = _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
     db.conn.execute(
         "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
-        ('[{"title":"是否加赈"}]', ref),
+        ('[{"title":"是否加赈","context":"c","options":[{"label":"加","hint":"h1"},{"label":"否","hint":"h2"}]}]', ref),
     )
     db.conn.commit()
     closed_turn = int(state.turn)
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
+    session.llm_config = object()
     session._write_gate = threading.Lock()
+    monkeypatch.setattr(
+        month_chain, "_run_decree_continuation_text", lambda *a, **k: "",
+    )
     held = session.resolve_turn(allow_empty_decree=True)
     assert held.stage == "rescript"
+    assert held.awaiting is True
     assert held.advanced is False
     assert int(state.turn) == closed_turn
+    assert any(row["title"] == "是否加赈" for row in held.decisions)
 
     # 历史留中回流的同一请旨仍未答，不能因案卷创建于前月越过批红。
     from ming_sim.decree_forecast import decree_ref_for_dossier
+    from ming_sim.models import TurnPhase
     dossier = next(d for d in db.list_decree_dossiers() if decree_ref_for_dossier(db, d) == ref)
     db.conn.execute(
         "UPDATE decree_dossiers SET created_turn=? WHERE id=?",
         (closed_turn - 1, int(dossier["id"])),
     )
     db.conn.commit()
+    # 仍停在待裁；幂等回读案头，不二跑世界段。
     held_again = session.resolve_turn(allow_empty_decree=True)
-    assert held_again.stage == "rescript"
+    assert held_again.awaiting is True
+    assert any(row["title"] == "是否加赈" for row in held_again.decisions)
     assert int(state.turn) == closed_turn
 
-    db.conn.execute(
-        "UPDATE staged_declarations SET questions_json=NULL WHERE decree_ref=?",
-        (ref,),
+    # 亲裁答复后清请旨，主链才能进邸报交接。
+    desk_row = session.pending_decisions()[0]
+    opt = desk_row["options"][0]
+    session.submit_hitl_choices(
+        [{
+            "decision_key": desk_row["decision_key"],
+            "label": opt["label"],
+            "hint": opt.get("hint") or "",
+        }],
+        write_gate=session._write_gate,
     )
-    db.conn.commit()
+    assert not db.staged_declarations.questions_for(ref)
+    assert session.state.turn_phase == TurnPhase.SETTLING.value
     waiting_gazette = session.resolve_turn(allow_empty_decree=True)
     assert waiting_gazette.stage == "gazette"
     assert int(state.turn) == closed_turn
