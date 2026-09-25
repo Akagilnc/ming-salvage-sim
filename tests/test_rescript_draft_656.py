@@ -1061,30 +1061,6 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 集成：_settle_after_narrative 落库序列（F2.5）＋原样落库（F3.3）
-# ---------------------------------------------------------------------------
-
-def _stub_settle_agents(monkeypatch) -> None:
-    import ming_sim.decree as decree_mod
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_rescript_draft_agent", lambda *a, **k: object())
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ---------------------------------------------------------------------------
 # F1.3/F2.5 崩溃恢复：不重跑票拟步（持久层读回）＋restore 往返无损
 # ---------------------------------------------------------------------------
 

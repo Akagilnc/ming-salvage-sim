@@ -1081,7 +1081,6 @@ def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
     _set("create_season_simulator_agent", lambda *a, **k: None)
     _set("create_ending_summary_agent", lambda *a, **k: None)
     _set("create_chapter_memory_agent", lambda *a, **k: None)
-    _set("create_rescript_draft_agent", lambda *a, **k: None)
     # 章节/关系酿制：禁 sk-test 打真网；record 空操作
     _set("record_chapter_memory", lambda *a, **k: None)
     _set("_make_relation_brew_runner", lambda *a, **k: None)
@@ -1149,7 +1148,6 @@ def _657_subprocess_resolve(
         dm.create_season_simulator_agent = lambda *a, **k: None
         dm.create_ending_summary_agent = lambda *a, **k: None
         dm.create_chapter_memory_agent = lambda *a, **k: None
-        dm.create_rescript_draft_agent = lambda *a, **k: None
         dm.record_chapter_memory = lambda *a, **k: None
         dm._make_relation_brew_runner = lambda *a, **k: None
         import ming_sim.decree_forecast as decree_forecast
