@@ -219,6 +219,7 @@ def run_gazette_text(
         include_fact=_gazette_public_fact,
         include_event=_gazette_public_event,
         ledger_origin_prefix_excluded="secret_order:",
+        exclude_secret_order_audience=True,
     )
     message = json.dumps(_gazette_feed(db, state, chain), ensure_ascii=False)
     try:

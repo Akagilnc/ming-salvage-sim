@@ -10,6 +10,7 @@ import pytest
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.materials import (
     prepare_character_materials,
@@ -17,6 +18,7 @@ from ming_sim.materials import (
     release_material_tree,
 )
 from ming_sim.models import LLMConfig
+from tests.conftest import append_night_chat, open_audience_night
 from tests.dossier_test_helpers import create_test_secret_order
 from tests.settlement_seam_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
@@ -28,6 +30,8 @@ _SECRET_REJ = "SECRET_REJ_1862"
 _PUBLIC_FACT = "PUBLIC_FACT_1862"
 _PUBLIC_REJ = "PUBLIC_REJ_1862"
 _SECRET_BRIEF = "SECRET_BRIEF_BODY_1862"
+_SECRET_AUDIENCE = "AUD_SECRET_SRC_1862"
+_PRIVATE_KEEP = "AUD_PRIVATE_KEEP_1862"
 _TITLE = "关山烽火"
 _REPORT = "本月实况正文"
 
@@ -129,6 +133,27 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     db.upsert_secret_order_brief(
         state, order_id, minister, "密报题", _SECRET_BRIEF,
     )
+    night_id = open_audience_night(db, state)
+    secret_turn, _mid = append_night_chat(db, state, night_id, minister, "问密", "答密", 1)
+    plain_turn, _mid = append_night_chat(db, state, night_id, minister, "问私", "答私", 2)
+    db.conn.execute(
+        "UPDATE chat_turns SET route='secret_order' WHERE id=?", (secret_turn,),
+    )
+    db.conn.commit()
+    append_ledger_entry(
+        db, night_id, person_names=[minister], audibility=AUDIBILITY_PRIVATE,
+        body=_SECRET_AUDIENCE, tags=["scroll_role:minister"],
+        source_chat_turn_id=secret_turn, origin_chat_turn_id=secret_turn,
+    )
+    append_ledger_entry(
+        db, night_id, person_names=[minister], audibility=AUDIBILITY_PRIVATE,
+        body=_PRIVATE_KEEP, tags=["scroll_role:minister"],
+        source_chat_turn_id=plain_turn, origin_chat_turn_id=plain_turn,
+    )
+    db.conn.execute(
+        "UPDATE audience_nights SET status='closed' WHERE id=?", (night_id,),
+    )
+    db.conn.commit()
     db.conn.execute(
         "INSERT INTO pending_decisions "
         "(turn, idx, event_id, title, context, options_json, choice_json, status) "
@@ -190,6 +215,8 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert _PUBLIC_FACT in seen["files"]
     assert _SECRET_FACT not in seen["files"]
     assert _SECRET_BRIEF not in seen["files"]
+    assert _SECRET_AUDIENCE not in seen["files"]
+    assert _PRIVATE_KEEP in seen["files"]
     assert "SECRET_LEDGER" not in seen["files"]
     assert "密令账" not in seen["files"]
     knowledge = db.get_character_knowledge(state, minister)
@@ -204,7 +231,10 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         text = (prepared.root / gazette).read_text(encoding="utf-8")
         assert text.strip() == _REPORT
         experience = next(path for path in prepared.index_lines if path.endswith("/经历.txt"))
-        assert _SECRET_BRIEF in (prepared.root / experience).read_text(encoding="utf-8")
+        experience_text = (prepared.root / experience).read_text(encoding="utf-8")
+        assert _SECRET_BRIEF in experience_text
+        assert _SECRET_AUDIENCE in experience_text
+        assert _PRIVATE_KEEP in experience_text
     finally:
         release_material_tree(prepared.root)
     world = prepare_world_materials(db, state)
@@ -215,6 +245,8 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             if rel.endswith("/经历.txt")
         )
         assert _SECRET_BRIEF in world_experience
+        assert _SECRET_AUDIENCE in world_experience
+        assert _PRIVATE_KEEP in world_experience
     finally:
         release_material_tree(world.root)
 
