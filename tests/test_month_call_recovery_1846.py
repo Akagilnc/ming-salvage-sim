@@ -441,9 +441,28 @@ def test_settlement_recovery_projects_month_call_failure(
     chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
-    assert (chain.get("call_failure") or {}).get("error_pack_path") == recovery[
-        "error_pack_path"
-    ]
+    first_pack = (chain.get("call_failure") or {}).get("error_pack_path")
+    assert first_pack == recovery["error_pack_path"]
+
+    import ming_sim.error_pack as error_pack
+
+    def unwritable(*_args, **_kwargs):
+        raise OSError("error pack unwritable")
+
+    monkeypatch.setattr(error_pack, "write_error_pack", unwritable)
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
+
+    recovery_again = web_game.state_payload().get("settlement_recovery")
+    assert isinstance(recovery_again, dict)
+    assert recovery_again.get("error_pack_path") == ""
+    assert recovery_again.get("error_pack_path") != first_pack
+    chain_again = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+        "month_chain", {},
+    )
+    assert recovery_again.get("message") == (
+        (chain_again.get("call_failure") or {}).get("message")
+    )
     web_game.session.close()
 
 

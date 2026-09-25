@@ -1820,21 +1820,19 @@ class WebGame:
                 from ming_sim.month_chain import month_chain_call_failure
                 ctx = self.db.get_resolve_context(self.state.turn)
                 month_failure = month_chain_call_failure(self.db, int(self.state.turn))
-                pack_path = latest_error_pack_for_turn(
-                    self.db.path, int(self.state.turn),
-                )
                 if month_failure is not None:
-                    failure_pack = str(month_failure.get("error_pack_path") or "") or (
-                        pack_path or ""
-                    )
+                    # 本次失败记录是诊断包真源；没有本次包就空着，不借同月旧包。
                     settlement_recovery = {
                         "ready_replay": False,
                         "retryable": True,
-                        "error_pack_path": failure_pack,
+                        "error_pack_path": str(month_failure.get("error_pack_path") or ""),
                         "message": str(month_failure.get("message") or ""),
                         "stage": str(month_failure.get("step") or ""),
                     }
                 else:
+                    pack_path = latest_error_pack_for_turn(
+                        self.db.path, int(self.state.turn),
+                    )
                     ready_replay = ctx is not None and ctx.get("extracted") is not None
                     settlement_recovery = {
                         "ready_replay": bool(ready_replay),
