@@ -126,11 +126,17 @@ def test_run_cli_reenters_play_turn_after_unadvanced_turn(monkeypatch, tmp_path)
         def __init__(self):
             super().__init__(None)
             self.step = 0
+            self.turns_at_begin = []
             self.state = SimpleNamespace(turn=1, ended=False, ending_status="")
             self.db = SimpleNamespace(
                 get_ending_summary=lambda: None,
                 list_pending_actions=lambda *a, **k: [],
             )
+
+        def begin_turn(self):
+            self.calls.append("begin")
+            self.turns_at_begin.append(self.state.turn)
+            return _Snap()
 
         def advance_without_decree(self):
             self.calls.append("advance")
@@ -166,6 +172,7 @@ def test_run_cli_reenters_play_turn_after_unadvanced_turn(monkeypatch, tmp_path)
     # 2. advanced=False 时留在 play_turn 循环内部继续交互；
     # 3. 推进成功后才调 end_turn 并结构化推进月份。
     assert sess.calls == ["begin", "advance", "begin", "advance", "advance", "end"]
+    assert sess.turns_at_begin == [1, 1]
     assert sess.state.turn == 2
 
 
