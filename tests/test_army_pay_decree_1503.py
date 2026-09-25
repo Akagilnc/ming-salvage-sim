@@ -251,11 +251,10 @@ def test_revise_away_from_xiexang_clears_pay_only_fields(game):
 
 # ── ② 颁布缝一次消费：扣库+销欠同回合 ────────────────────────────
 
-def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game, monkeypatch):
-    """颁布缝落账恰一次；ready=1 恢复重放不二扣。"""
-    import ming_sim.decree as dm
-    from ming_sim.decree import persist_resolve_context, pre_settle
-    from ming_sim.session import TurnPhase
+def test_promulgation_recovery_does_not_double_debit(game, monkeypatch):
+    """已颁补饷按实账恰扣一次；旧 ready 降级与邸报等待不二扣。"""
+    import ming_sim.month_chain as month_chain
+    from ming_sim.decree import pre_settle
     from tests.test_advance_paths_atomic import _recovery_session
 
     db, state, content = game
@@ -268,35 +267,19 @@ def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game, mon
 
     turn = state.turn
     pre_settle(state, db, content=content)
-    assert state.turn_phase == TurnPhase.SETTLING.value
     arrears_after_pre = _army_row(db)["arrears"]
-
-    persist_resolve_context(
-        db, turn,
-        {},
-        decree_text="拨饷诏",
-        narrative="已存邸报……",
-        simulator_payload={
-            "dossier_verdicts": [{"dossier_id": did, "decision": "promulgated"}],
-        },
-        secret_orders=[],
-        relevant_memories=[],
+    _promulgate(db, state, content, did)
+    db.save_resolve_context(
+        turn, "拨饷诏", "旧邸报", {}, extracted={"metric_delta": {"民心": -30}},
     )
-    ready = db.get_resolve_context(turn)
-    assert ready is not None and ready.get("extracted") is not None
-    assert (ready.get("simulator_payload") or {}).get("dossier_verdicts") == [
-        {"dossier_id": did, "decision": "promulgated"},
-    ]
-
-    def _must_not_run(*a, **k):
-        raise AssertionError("恢复直入 apply 不应重跑 simulator/extractor")
-    monkeypatch.setattr(dm, "simulate_season_with_payload", _must_not_run)
-
-    result = _recovery_session(db, state, content, monkeypatch).resolve_turn()
-
-    assert result.awaiting is False
-    assert state.turn == turn + 1
-    assert db.get_resolve_context(turn) is None
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    session = _recovery_session(db, state, content, monkeypatch)
+    result = session.resolve_turn()
+    assert result.stage == "gazette"
+    assert state.turn == turn
+    assert db.get_resolve_context(turn)["extracted"] is None
+    session.resolve_turn()
+    assert state.turn == turn
     moves = db.list_economy_moves_for_dossier(did)
     assert len(moves) == 1
     assert int(moves[0]["delta"]) == -15
@@ -1247,6 +1230,8 @@ def test_real_chat_explicit_prefix_suppresses_tool_twin_and_durable_one_dossier(
     assert len(linked) == 1
     assert dossier["mode"] == "ordinary"
 
+    import ming_sim.month_chain as month_chain
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     result = decree_mod.resolve_directives(
         state, db, None, None, [object()], dossier["decree_text"],
         content=content,

@@ -152,11 +152,11 @@ def test_settle_code_exception_writes_pack_and_aborts(game, monkeypatch, tmp_pat
 
 
 # ---------------------------------------------------------------------------
-# B. 恢复入口消费（决定 3）：settling + ready context → 直入 apply，不重跑贵调用
+# B. 恢复入口消费：旧 ready 选择验证后由玩家月链续跑；driver 核另行保留
 # ---------------------------------------------------------------------------
 
 def _recovery_session(db, state, content, monkeypatch):
-    """装一个最小 GameSession（__new__ 跳过重型 __init__），供 resolve_turn 恢复分流。"""
+    """装一个最小 GameSession（__new__ 跳过重型 __init__），供真实恢复入口。"""
     import ming_sim.session as session_mod
     from ming_sim.session import GameSession
 
@@ -180,6 +180,10 @@ def _recovery_session(db, state, content, monkeypatch):
     sess.debuts_this_turn = []
     sess.last_decree = ""
     sess.last_report = ""
+    sess._beat_generator = None
+    sess._scene_registry = None
+    sess._decree_draft_fingerprint = ()
+    sess._write_gate = None
     monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
     return sess
 

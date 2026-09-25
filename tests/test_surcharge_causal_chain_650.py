@@ -304,71 +304,31 @@ def test_settlement_drives_deterministic_pool_inflow(game):
     assert _pop(db, "流民", "shaanxi") == pool_before + want
 
 
-def test_phase2_reopen_consumes_old_levy_once_and_records_it(game, monkeypatch):
-    """phase2 后段失败整批回滚；ready 真源跨进程恢复后恰好重放一次。"""
-    import ming_sim.decree as decree_mod
-    from ming_sim.applier import Provenance
-    from ming_sim.models import LLMConfig, TurnPhase
-    from ming_sim.session import GameSession
+def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
+    """玩家月链消费月初旧加派账，邸报前重入不重复搬迁人口。"""
+    import ming_sim.month_chain as month_chain
+    from tests.test_advance_paths_atomic import _recovery_session
 
     db, state, content = game
     apply_score_extraction(db, state, {
         "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
     }, content, None)
     want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
-    before_turn = state.turn
+    turn = int(state.turn)
     before = _pop(db, "流民", "shaanxi")
     pre_settle(state, db, content=content)
-    persist_resolve_context = decree_mod.persist_resolve_context
-    persist_resolve_context(
-        db, before_turn, {}, decree_text="测试诏", narrative="测试邸报",
-        simulator_payload={}, secret_orders={}, relevant_memories=[],
-        source=Provenance.system_simulation,
+    db.save_resolve_context(
+        turn, "测试诏", "旧邸报", {}, extracted={"metric_delta": {"民心": -30}},
     )
-    assert state.turn_phase == TurnPhase.SETTLING.value
-
-    real_apply = decree_mod.apply_score_extraction
-    attempts = 0
-
-    def fail_after_apply(*args, **kwargs):
-        nonlocal attempts
-        applied = real_apply(*args, **kwargs)
-        attempts += 1
-        if attempts == 1:
-            raise RuntimeError("phase2 after levy transfer")
-        return applied
-
-    monkeypatch.setattr(decree_mod, "apply_score_extraction", fail_after_apply)
-    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
-    session = object.__new__(GameSession)
-    session.db, session.state, session.content = db, state, content
-    session.llm_config, session.agno_db, session.registry = cfg, None, None
-    session.last_decree = session.last_report = ""
-
-    with pytest.raises(SettlementAbort):
-        session.resolve_turn()
-    assert _pop(db, "流民", "shaanxi") == before
-    assert db.get_turn_extraction(before_turn) is None
-    assert db.get_resolve_context(before_turn)["extracted"] == {}
-
-    path = db.path
-    db.close()
-    reopened = GameDB(path, content)
-    restored = reopened.load_state()
-    resumed = object.__new__(GameSession)
-    resumed.db, resumed.state, resumed.content = reopened, restored, content
-    resumed.llm_config, resumed.agno_db, resumed.registry = cfg, None, None
-    resumed.last_decree = resumed.last_report = ""
-    resumed.resolve_turn()
-
-    assert _pop(reopened, "流民", "shaanxi") == before + want
-    applied = reopened.get_turn_extraction(before_turn)["extractor_output"]
-    transfers = [item for item in applied["population_transfers"] if item.get("reason") == "加派"]
-    assert len(transfers) == 1
-    assert transfers[0]["amount"] == want
-    assert reopened.get_resolve_context(before_turn) is None
-    assert resumed.state.turn == before_turn + 1
-    assert resumed.state.turn_phase == TurnPhase.ISSUED.value
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    session = _recovery_session(db, state, content, monkeypatch)
+    result = session.resolve_turn()
+    assert result.stage == "gazette"
+    assert _pop(db, "流民", "shaanxi") == before + want
+    session.resolve_turn()
+    assert _pop(db, "流民", "shaanxi") == before + want
+    assert int(state.turn) == turn
+    assert db.get_resolve_context(turn)["extracted"] is None
 
 
 def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits(game):

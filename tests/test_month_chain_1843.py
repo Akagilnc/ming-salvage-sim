@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
@@ -12,6 +14,7 @@ import ming_sim.simulation as simulation
 from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.settlement_seam_helpers import make_light_session
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _forbid_extractor(monkeypatch):
@@ -302,11 +305,67 @@ def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch)
     db.conn.commit()
     closed_turn = int(state.turn)
     _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
     session.state.turn_phase = TurnPhase.SETTLING.value
     session.finish_rescript_phase2({"ready_replay": True}, {})
     assert int(session.state.turn) == closed_turn
     assert session.state.turn_phase == TurnPhase.SETTLING.value
+
+
+def test_missing_world_model_stops_before_world_commit(game, monkeypatch):
+    from ming_sim.exceptions import LLMUnavailable
+
+    db, state, content = game
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    session = make_light_session(db, state, content)
+    with pytest.raises(LLMUnavailable):
+        session.resolve_turn(allow_empty_decree=True)
+    assert int(state.turn) == turn
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+    assert int(state.turn) == turn
+
+
+def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monkeypatch, tmp_path):
+    """邸报前确定性尾：到期密令结案，自然结案的容忍拒收留痕。"""
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    db, state, content = game
+    turn = int(state.turn)
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = create_test_secret_order(
+        db, state, actor, "密查", "核验田亩", [], deadline_months=1,
+    )
+    db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (turn, order_id))
+    army_id = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
+    db.insert_issue(
+        state, kind="initiative", title="惯性留痕", origin_kind="decree",
+        origin_ref="", bar_value=99, bar_good_meaning="成", bar_bad_meaning="败",
+        inertia=5, stage_text="", severity=50, region_hint="", faction_hint="",
+        tags=[], ongoing_effects={}, cancellable="decree", cancel_cost={},
+        effect_on_resolve={"army_delta": {army_id: {"origin_ref": "盘面自发", "士气大振": 9}}},
+        effect_on_fail={}, resolve_condition="", fail_condition="",
+    )
+    db.conn.commit()
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    session = make_light_session(db, state, content)
+    assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
+    assert db.get_secret_order(order_id)["status"] == "failed"
+    rows = db.conn.execute(
+        "SELECT section FROM rejection_reports WHERE turn=? AND section='issue_inertia.entity_rejections'",
+        (turn,),
+    ).fetchall()
+    assert len(rows) == 1
+    session.resolve_turn(allow_empty_decree=True)
+    assert db.get_secret_order(order_id)["status"] == "failed"
+    assert len(db.conn.execute(
+        "SELECT id FROM rejection_reports WHERE turn=? AND section='issue_inertia.entity_rejections'",
+        (turn,),
+    ).fetchall()) == 1
 
 
 def test_world_segment_reads_material_directory(game, monkeypatch):

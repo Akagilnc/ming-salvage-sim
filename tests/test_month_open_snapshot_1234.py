@@ -474,8 +474,9 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
 
 
 def test_recovery_path_keeps_settlement_display(game, monkeypatch):
-    """改造回归：settling 恢复路径上核账展示态仍在；完成后态清。"""
+    """settling 恢复停在邸报前仍展示月初快照；归档推进后清。"""
     import ming_sim.decree as dm
+    import ming_sim.month_chain as month_chain
     from tests.test_advance_paths_atomic import _recovery_session
 
     db, state, content = game
@@ -497,9 +498,20 @@ def test_recovery_path_keeps_settlement_display(game, monkeypatch):
         decree_text="d", narrative="n",
         simulator_payload={}, secret_orders=[], relevant_memories=[],
     )
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     sess = _recovery_session(db, state, content, monkeypatch)
     result = sess.resolve_turn()
     assert result.awaiting is False
+    assert result.stage == "gazette"
+    assert state.turn == turn
+    assert db.get_month_open_snapshot(turn) is not None
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (turn, state.year, state.period, "邸报已成"),
+    )
+    db.conn.commit()
+    result = sess.resolve_turn()
+    assert result.advanced is True
     assert state.turn == turn + 1
     assert db.get_month_open_snapshot(turn) is None
     done = _runtime(db, state).state_payload()

@@ -14,8 +14,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-import ming_sim.decree as decree_mod
-import ming_sim.memories as memories_mod
+import ming_sim.month_chain as month_chain
 import web_app
 from ming_sim.decree import persist_resolve_context
 from ming_sim.error_pack import (
@@ -162,10 +161,10 @@ def _terminal_sse(response: httpx.Response) -> tuple[str, object]:
     return event, data
 
 
-def test_ready_recovery_issue_stream_clears_context_and_advances(
+def test_ready_recovery_issue_stream_waits_for_gazette_then_advances(
     recovery_web_game, monkeypatch,
 ):
-    """current-schema ready → 真 HTTP /api/decree/issue/stream → 清 context、离 settling、turn+1 与 year/period 一次推进。
+    """旧 ready 经真 HTTP 降级；邸报前不推进，归档后仅推进一次。
 
     复用 ASGI seam；不覆盖 version=0 旧档，不 mock 掉恢复入口。
     """
@@ -192,15 +191,7 @@ def test_ready_recovery_issue_stream_clears_context_and_advances(
     recovery = game.state_payload().get("settlement_recovery")
     assert isinstance(recovery, dict) and recovery["ready_replay"] is True
 
-    def _must_not_rerun(*_a, **_k):
-        raise AssertionError("ready recovery must not rerun simulator/extractor")
-
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _must_not_rerun)
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        memories_mod, "run_agent_text",
-        lambda *a, **k: '{"body": "月记", "tags": []}',
-    )
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
 
     async def _issue():
         transport = httpx.ASGITransport(app=web_app.app)
@@ -214,10 +205,20 @@ def test_ready_recovery_issue_stream_clears_context_and_advances(
     assert resp.status_code == 200, resp.text
     event, _data = _terminal_sse(resp)
     assert event == "done", resp.text
+    assert int(game.state.turn) == turn
+    assert db.get_resolve_context(turn)["extracted"] is None
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (turn, state.year, state.period, "邸报已成"),
+    )
+    db.conn.commit()
+    resp = asyncio.run(_issue())
+    assert resp.status_code == 200, resp.text
+    event, _data = _terminal_sse(resp)
+    assert event == "done", resp.text
 
     assert int(game.state.turn) == turn + 1
     assert int(game.state.year) == expected_year
     assert int(game.state.period) == expected_period
     assert game.state.turn_phase != TurnPhase.SETTLING.value
-    assert db.get_resolve_context(turn) is None
     assert game.state_payload().get("settlement_recovery") is None

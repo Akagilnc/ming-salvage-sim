@@ -18,10 +18,11 @@ def run_world_segment_text(
     db: Any, state: Any, llm_config: Any, agno_db: Any = None,
     cheat_directive: str = "",
 ) -> str:
-    """落账后的盘面只推演一次。无模型配置时不发明世界事件。"""
+    """落账后的盘面只推演一次；缺模型时停在本段，不伪造已完成。"""
     del agno_db
     if llm_config is None:
-        return ""
+        from ming_sim.exceptions import LLMUnavailable
+        raise LLMUnavailable("世界段缺少模型配置", stage="world-segment")
     from ming_sim.agents import create_world_segment_agent, run_agent_text
     from ming_sim.llm_transport import audience_transport_policy
     from ming_sim.materials import prepare_world_materials, release_material_tree
@@ -66,6 +67,7 @@ def run_player_month_chain(
     session = SimpleNamespace(
         db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
     )
+    _run_opening_levy(db, chain, turn, decree_text, source)
     _settle_edicts(session, registry=registry)
     _run_world_segment(session, chain, source=source)
     _run_month_drift(db, state, chain, turn, decree_text, source)
@@ -80,6 +82,31 @@ def run_player_month_chain(
     return ResolveResult(
         awaiting=False, advanced=advanced, stage="advanced" if advanced else "gazette",
     )
+
+
+def _run_opening_levy(
+    db: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
+) -> None:
+    """月初旧账只消费一次，先于本月旨意改账。"""
+    if chain.get("opening_levy_done"):
+        return
+    from ming_sim.issues import _apply_levy_driven_transfers
+    from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
+    from ming_sim.decree import _collect_inline_rejections
+    from ming_sim.error_pack import rejections_jsonl_path
+
+    collector = RejectionCollector()
+    with atomic(db):
+        _applied, rejected = _apply_levy_driven_transfers(db, commit=False)
+        if rejected:
+            _collect_inline_rejections(
+                collector, {"population_transfers_rejections": rejected}, turn,
+                Provenance.system_simulation,
+            )
+            collector.flush_to_db(db)
+        chain["opening_levy_done"] = True
+        _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+        mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
 
 
 def _settle_edicts(session: Any, *, registry: Any) -> None:
@@ -190,14 +217,36 @@ def _run_month_drift(
     from ming_sim.issues import apply_issue_inertia_and_ongoing, clear_gated_legacies
     from ming_sim.due_review import apply_pending_due_reviews
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
+    from ming_sim.breach_plea import expire_breach_pleas_on_due, scan_and_write_breach_pleas
+    from ming_sim.covert_progress import settle_due_secret_orders
+    from ming_sim.urge_lever import consume_pending_urge_audience_todos
+    from ming_sim.audience_night import retire_unsettled_summons_for_inactive
+    from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
+    from ming_sim.decree import _collect_inline_rejections
+    from ming_sim.error_pack import rejections_jsonl_path
 
+    collector = RejectionCollector()
     with atomic(db):
-        apply_issue_inertia_and_ongoing(db, state)
+        db.record_monthly_supervision_presence(turn, commit=False)
+        retire_unsettled_summons_for_inactive(db)
+        rejections = apply_issue_inertia_and_ongoing(db, state)
+        if rejections:
+            _collect_inline_rejections(
+                collector, {"issue_inertia": {"entity_rejections": rejections}},
+                turn, source,
+            )
+            collector.flush_to_db(db)
+        db.recompute_all_faction_leverage()
         clear_gated_legacies(db, state)
         apply_pending_due_reviews(db, state, commit=False)
+        settle_due_secret_orders(db, state, commit=False)
+        expire_breach_pleas_on_due(db, state, commit=False)
+        consume_pending_urge_audience_todos(db, state, commit=False)
         write_due_staged_commitment_todos(db, state, commit=False)
+        scan_and_write_breach_pleas(db, state, commit=False)
         chain["inertia_done"] = True
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+        mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
 
 
 def _waiting_for_rescript(db: Any, state: Any, chain: Dict[str, Any]) -> bool:
