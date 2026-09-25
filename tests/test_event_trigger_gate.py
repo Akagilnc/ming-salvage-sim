@@ -2127,6 +2127,11 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
     assert db.get_character_status("孙传庭")[0] == "active"
     assert len(out["applied_person_changes"]) == 1
     assert out["applied_person_changes"][0]["rejected"] is True
+    assert all(
+        "_effect_event_id" not in rejection["item"]
+        for rejection in out["validate_shape_rejections"]
+        if isinstance(rejection.get("item"), dict)
+    )
     assert "战果不落" in out["applied_person_changes"][0]["reason"]
 
 

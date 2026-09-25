@@ -10167,7 +10167,10 @@ def _apply_score_extraction_body(
     validate_rejection_items = [
         {
             "rejected": True,
-            "item": item,
+            "item": (
+                {key: value for key, value in item.items() if key != "_effect_event_id"}
+                if isinstance(item, dict) else item
+            ),
             "reason": reason,
             "category": "invalid_shape",
             "report_section": _section,

@@ -414,6 +414,52 @@ def test_staged_ending_is_available_inside_its_settlement_transaction(game):
     assert db.staged_declarations.is_settled("ending-decree")
 
 
+def test_failed_declaration_commit_reloads_memory_from_db(game):
+    db, state, _content = game
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import (
+        settle_staged_declarations_in_decree_order, stage_declaration,
+    )
+
+    before_metrics = dict(state.metrics)
+    before_treasury = db.conn.execute(
+        "SELECT balance FROM economy_accounts WHERE account='国库'",
+    ).fetchone()["balance"]
+    affair = db.affairs.open(
+        name="事务回滚探针", origin="旨意", year=state.year,
+        period=state.period, turn=state.turn,
+    )
+    decree_ref = "failed-ending-decree"
+    stage_declaration(
+        db, decree_ref=decree_ref, turn=int(state.turn),
+        declaration={"effects": {
+            "economy_moves": [{
+                "origin_ref": f"affair:{affair.id}",
+                "account": "国库", "delta": -25, "category": "test",
+                "reason": "atomic rollback probe",
+            }],
+            "emperor_fate": "abdicate",
+        }},
+        visible_refs={"affairs": [affair.id]},
+    )
+
+    def fail_after_effects(*_args):
+        assert state.metrics["国库"] == before_metrics["国库"] - 25
+        raise RuntimeError("chain persistence failed")
+
+    with pytest.raises(RuntimeError, match="chain persistence failed"):
+        settle_staged_declarations_in_decree_order(
+            db, state, [decree_ref], source=Provenance.player_decree,
+            alongside=fail_after_effects,
+        )
+
+    assert state.metrics == before_metrics
+    assert db.conn.execute(
+        "SELECT balance FROM economy_accounts WHERE account='国库'",
+    ).fetchone()["balance"] == before_treasury
+    assert not db.staged_declarations.is_settled(decree_ref)
+
+
 def test_advance_uses_staged_declaration_ending(game, monkeypatch):
     db, state, content = game
     turn = int(state.turn)

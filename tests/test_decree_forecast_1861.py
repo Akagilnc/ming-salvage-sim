@@ -11,7 +11,9 @@ import ming_sim.decree as decree_mod
 import ming_sim.decree_forecast as forecast_mod
 import ming_sim.month_translate as month_translate
 from ming_sim.audience_night import mark_actions_night_approved, open_night
-from ming_sim.declaration_dispatch import pending_action_decree_ref
+from ming_sim.declaration_dispatch import (
+    held_dossier_decree_ref, pending_action_decree_ref, stage_declaration,
+)
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
@@ -408,6 +410,7 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
 def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
     db, state, content = game
     state.turn += 1
+    db.save_state(state)
     ids = []
     pending_ids = []
     minister = next(iter(content.characters.values()))
@@ -432,6 +435,11 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
             "UPDATE decree_dossiers SET status='proposed', promulgation_decision='rejected', "
             "held_turn=?, rescript_pending=0 WHERE id=?",
             (state.turn - 1, dossier_id),
+        )
+        stage_declaration(
+            db, decree_ref=pending_action_decree_ref(pending_id, 1),
+            declaration={}, turn=int(state.turn) - 1,
+            verdict={"decision": "rejected"},
         )
         ids.append(dossier_id)
     db.conn.commit()
@@ -465,16 +473,26 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     assert get_session_write_queue(sess).wait_idle(timeout_s=5)
     assert len(entered) == 2
     for dossier_id, pending_id in zip(ids, pending_ids):
-        ref = pending_action_decree_ref(pending_id, 1)
-        stored = db.staged_declarations.staged_for(ref)
-        assert len(stored) == 1 and stored[0].status == "staged"
-        assert db.staged_declarations.staged_for(f"dossier:{dossier_id}") == ()
-        assert dossier_id in stored[0].visible_refs["dossiers"]
+        stale_ref = pending_action_decree_ref(pending_id, 1)
+        held_ref = held_dossier_decree_ref(dossier_id)
+        stale = db.staged_declarations.staged_for(stale_ref)
+        fresh = db.staged_declarations.staged_for(held_ref)
+        assert stale[0].verdict["decision"] == "rejected"
+        assert len(fresh) == 1 and fresh[0].status == "staged"
+        assert fresh[0].verdict["decision"] == "promulgated"
+        assert dossier_id in fresh[0].visible_refs["dossiers"]
+    from ming_sim.month_chain import _settle_edicts
+
+    _settle_edicts(sess, registry=None)
+    assert all(
+        db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
+        for dossier_id in ids
+    )
     late = db.create_decree_dossier(
         state, action_type="policy", decree_text="预推后", target_kind="issue",
         target_id="test-policy", payload={"text": "预推后"},
     )
-    assert late not in stored[0].visible_refs["dossiers"]
+    assert late not in fresh[0].visible_refs["dossiers"]
 
 
 def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monkeypatch, tmp_path):

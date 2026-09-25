@@ -194,7 +194,13 @@ def _is_held_for_rejudgment(row: Dict[str, Any], turn: int) -> bool:
 
 
 def decree_ref_for_dossier(db: Any, dossier: Dict[str, Any]) -> str:
-    """过月与夜里预推共用的旨身份：有暂存记录则记录号+版本，否则案卷 id。"""
+    """过月与夜里预推共用身份；留中重判暂用案卷身份，与原旨暂存隔离。"""
+    if (
+        str(dossier.get("status") or "") == "proposed"
+        and str(dossier.get("promulgation_decision") or "") == "rejected"
+        and int(dossier.get("held_turn") or 0) > 0
+    ):
+        return held_dossier_decree_ref(int(dossier["id"]))
     pending_id = int(dossier.get("pending_action_id") or 0)
     if pending_id > 0:
         row = db.conn.execute(

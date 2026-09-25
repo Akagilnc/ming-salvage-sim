@@ -1703,12 +1703,12 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             game.session.close()
 
 
-def test_http_chat_issue_stream_pay_decree_advances_month(
+def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """原轨真 HTTP：召对户部「拨关宁军饷十五万两」→「准」→ issue/stream（必要时 resolve）过月。
+    """原轨真 HTTP：召对户部拨饷并请求 issue/stream；本链路不推进月份。
 
-    stub 仅 LLM 边界；不得用 store helper 代替收夜/颁布/结算 HTTP 链。
+    stub 仅 LLM 边界；不得用 store helper 代替收夜/颁布 HTTP 链。
     """
     from fastapi.testclient import TestClient
 

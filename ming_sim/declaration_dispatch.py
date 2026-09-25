@@ -536,11 +536,13 @@ def settle_staged_declarations_in_decree_order(
     私有执行体 :func:`_dispatch_declaration_sections`，让同旨下每条声明的
     分派副作用与 `mark_settled` 共处这一个事务。
     """
+    from ming_sim.decree import atomic_and_reload
+
     results: Dict[str, DeclarationDispatchResult] = {}
     for decree_ref in decree_refs_in_order:
         collector = RejectionCollector()
         merged: Optional[DeclarationDispatchResult] = None
-        with atomic(db):
+        with atomic_and_reload(db, state, content=getattr(db, "content", None)):
             if not db.staged_declarations.is_settled(decree_ref):
                 staged = db.staged_declarations.staged_for(decree_ref)
                 if staged:
