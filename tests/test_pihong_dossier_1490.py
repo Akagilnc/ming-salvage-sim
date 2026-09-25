@@ -4402,7 +4402,7 @@ def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
 
 def test_657_applied_revise_refresh_resumes_without_hold(web_game, monkeypatch):
     """已应用 return_revise 仍 pending：真 GET 不把它当待裁；空 POST 清锚、不留中、不双增。"""
-    from ming_sim.rescript_actions import canonical_choice
+    from ming_sim import rescript_actions as ra
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     db, state = web_game.db, web_game.state
@@ -4422,24 +4422,58 @@ def test_657_applied_revise_refresh_resumes_without_hold(web_game, monkeypatch):
         "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
     }])
     key = desk[0]["decision_key"]
-    choice = canonical_choice({
+    old_caps = {
+        str(row.get("draft_capability") or "")
+        for row in desk[0]["options"] if isinstance(row, dict)
+    }
+    old_caps.discard("")
+    batch = ra.validate_all(desk, [{
         "decision_key": key,
         "action": "return_revise",
         "label": "发回改票",
-        "applied_from_revision_round": 0,
         "draft_capability": opt["draft_capability"],
-    })
-    kind, turn_s, idx_s = key.split(":")
-    db.conn.execute(
-        "UPDATE pending_decisions SET choice_json=?, revision_round=1, prior_options_json=? "
-        "WHERE kind=? AND turn=? AND idx=?",
-        (
-            json.dumps(choice, ensure_ascii=False),
-            json.dumps([[{"label": "旧"}]], ensure_ascii=False),
-            kind, int(turn_s), int(idx_s),
-        ),
+    }])
+    ra.apply_rescript_batch(
+        db, state, batch,
+        ra.PrewriteResults(revise_by_key={key: [
+            {"label": "新拟甲", "hint": "h1",
+             "action_type": "assignment", "target_kind": "region",
+             "target_id": "shaanxi", "locality_scope": "single",
+             "region_id": "shaanxi", "assignee_name": "",
+             "transaction_category": "督赈", "deadline_months": 2,
+             "participant_roster": [
+                 {"character_id": "毕自严", "tier": "主办",
+                  "role": "", "delegator_id": None},
+             ]},
+            {"label": "新拟乙", "hint": "h2",
+             "action_type": "assignment", "target_kind": "region",
+             "target_id": "shaanxi", "locality_scope": "single",
+             "region_id": "shaanxi", "assignee_name": "杨嗣昌",
+             "transaction_category": "",
+             "participant_roster": [
+                 {"character_id": "杨嗣昌", "tier": "主办",
+                  "role": "", "delegator_id": None},
+             ]},
+        ]}),
+        content=web_game.content,
     )
-    db.conn.commit()
+    planted = next(row for row in db.list_rescript_drafts() if row["title"] == "改票急务")
+    new_caps = {
+        str(row.get("draft_capability") or "")
+        for row in (planted["options"] or []) if isinstance(row, dict)
+    }
+    prior_caps = {
+        str(row.get("draft_capability") or "")
+        for generation in (planted["prior_options_json"] or [])
+        for row in generation if isinstance(row, dict)
+    }
+    assert old_caps
+    assert new_caps
+    assert old_caps <= prior_caps
+    assert old_caps.isdisjoint(new_caps)
+    assert int(planted["revision_round"] or 0) == 1
+    assert planted["status"] == "pending"
+    assert (planted["choice"] or {}).get("action") == "return_revise"
 
     payload = asyncio.run(_get_state())
     assert payload.get("resume_phase2") is True
