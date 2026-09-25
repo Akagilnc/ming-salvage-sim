@@ -19,7 +19,6 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 from ming_sim.agents import (
     _dump_llm_messages,
     create_arrival_attendant_agent,
-    create_chapter_memory_agent,
     create_decree_writer_agent,
     create_promulgation_judge_agent,
     create_ending_summary_agent,
@@ -83,7 +82,6 @@ from ming_sim.decree_vocabulary import (
     qualitative_dossier_outcome,
     qualitative_promulgation_slot,
 )
-from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.simulation import (
     build_simulator_payload,
@@ -2469,23 +2467,3 @@ def resolve_decisions_phase2(
         cheat_directive=cheat_directive,
     )
     return result.report
-
-
-def _generate_ending_summary(
-    db: GameDB,
-    state: GameState,
-    llm_config: LLMConfig,
-    agno_db: SqliteDb,
-    outcome: Dict[str, object],
-    _emit: Callable[[str, Any], None],
-) -> str:
-    """国史编纂官读历月邸报生成结局总评，落库 ending_summary（含逐回合时间线）。
-
-    #1845：章节记忆退役；旧核 settle_with_delta 注入路径改走邸报。失败时用邸报拼保底。
-    """
-    from ming_sim.mechanical_tail import generate_ending_summary_for_tail
-
-    _emit("stage", settlement_ending_stage_payload())
-    return generate_ending_summary_for_tail(
-        db, state, outcome, llm_config=llm_config, agno_db=agno_db,
-    )

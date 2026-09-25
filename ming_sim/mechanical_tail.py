@@ -12,9 +12,9 @@ from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from ming_sim.applier import Provenance
-from ming_sim.exceptions import LLMUnavailable
-from ming_sim.relation_brew import run_month_end_relation_brew
+from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.session_write_queue import get_session_write_queue
+from ming_sim.decree_forecast import _call_exhausted
 
 logger = logging.getLogger(__name__)
 
@@ -63,16 +63,6 @@ def _set_tail_status(
     month_chain._save_chain(db, int(closed_turn), chain, source=source)
 
 
-def _call_exhausted(exc: BaseException) -> bool:
-    if isinstance(exc, LLMUnavailable):
-        return True
-    status = getattr(exc, "status_code", None)
-    try:
-        return int(status) == 429
-    except (TypeError, ValueError):
-        return False
-
-
 def generate_ending_summary_for_tail(
     db: Any,
     closed_state: Any,
@@ -80,6 +70,7 @@ def generate_ending_summary_for_tail(
     *,
     llm_config: Any = None,
     agno_db: Any = None,
+    save_fn: Any = None,
 ) -> str:
     """结局总评：读历月邸报／时间线，不再依赖章节记忆。"""
     from ming_sim.agents import create_ending_summary_agent, run_agent_text
@@ -134,15 +125,13 @@ def generate_ending_summary_for_tail(
             bits.append(f"{row['year']}年{row['period']}月：{row['body']}")
         summary_text = "\n".join(b for b in bits if b)
 
-    try:
-        db.save_ending_summary(
-            closed_state,
-            str(outcome.get("status") or ""),
-            summary_text,
-            timeline,
-        )
-    except Exception as exc:
-        logger.info("[mechanical-tail] ending-summary 落库失败：%s", exc)
+    save = save_fn or db.save_ending_summary
+    save(
+        closed_state,
+        str(outcome.get("status") or ""),
+        summary_text,
+        timeline,
+    )
     return summary_text
 
 
@@ -178,6 +167,26 @@ def _brew_fn_for_session(session: Any):
     return _brew
 
 
+def _run_relation_brew(
+    session: Any,
+    *,
+    closed_turn: int,
+    settled_year: int,
+    settled_period: int,
+    queue: Any,
+    ticket: Any,
+) -> None:
+    leg = MonthEndRelationBrewLeg(
+        session.db, session.state, _brew_fn_for_session(session),
+        settled_turn=int(closed_turn),
+        settled_year=int(settled_year),
+        settled_period=int(settled_period),
+    )
+    if queue.run(ticket, leg.prepare):
+        leg.brew()
+        queue.run(ticket, leg.persist)
+
+
 def _run_tail_body(
     session: Any,
     *,
@@ -185,6 +194,8 @@ def _run_tail_body(
     settled_year: int,
     settled_period: int,
     ending_outcome: Optional[Dict[str, object]],
+    queue: Any,
+    ticket: Any,
 ) -> str:
     db, state = session.db, session.state
     closed_state = SimpleNamespace(
@@ -194,17 +205,18 @@ def _run_tail_body(
         metrics=dict(getattr(state, "metrics", {}) or {}),
         ended=bool(getattr(state, "ended", False)),
     )
-    run_month_end_relation_brew(
-        db, state, _brew_fn_for_session(session),
-        settled_turn=int(closed_turn),
-        settled_year=int(settled_year),
-        settled_period=int(settled_period),
+    _run_relation_brew(
+        session, closed_turn=closed_turn, settled_year=settled_year,
+        settled_period=settled_period, queue=queue, ticket=ticket,
     )
     if isinstance(ending_outcome, dict) and ending_outcome.get("status"):
         generate_ending_summary_for_tail(
             db, closed_state, ending_outcome,
             llm_config=getattr(session, "llm_config", None),
             agno_db=getattr(session, "agno_db", None),
+            save_fn=lambda *args: queue.run(
+                ticket, lambda: db.save_ending_summary(*args),
+            ),
         )
     return _TAIL_STATUS_DONE
 
@@ -234,24 +246,28 @@ def _submit_tail(
                 settled_year=settled_year,
                 settled_period=settled_period,
                 ending_outcome=ending_outcome,
+                queue=queue,
+                ticket=ticket,
             )
-        except BaseException as exc:
-            if _call_exhausted(exc):
-                status = _TAIL_STATUS_DEGRADED
-                logger.info(
-                    "[mechanical-tail] turn=%s 耗尽降级留痕：%s", closed_turn, exc,
+            queue.run(ticket, lambda: _set_tail_status(
+                session.db, closed_turn, status, source=source,
+            ))
+        except Exception as exc:
+            if not _call_exhausted(exc):
+                logger.exception(
+                    "[mechanical-tail] turn=%s 后台执行失败，保留 pending 供续接",
+                    closed_turn,
                 )
-            else:
-                status = _TAIL_STATUS_DEGRADED
-                logger.info(
-                    "[mechanical-tail] turn=%s 失败降级终结（防下月永久卡住）：%s",
-                    closed_turn, exc,
-                )
+                raise
+            status = _TAIL_STATUS_DEGRADED
+            logger.info(
+                "[mechanical-tail] turn=%s 耗尽降级留痕：%s", closed_turn, exc,
+            )
+            queue.run(ticket, lambda: _set_tail_status(
+                session.db, closed_turn, status, source=source,
+            ))
         finally:
-            try:
-                _set_tail_status(session.db, closed_turn, status, source=source)
-            finally:
-                queue.complete(ticket)
+            queue.complete(ticket)
 
     try:
         future = audience_translation._executor.submit(run)
@@ -274,15 +290,17 @@ def schedule_mechanical_tail_after_advance(
     settled_period: int,
     ending_outcome: Optional[Dict[str, object]] = None,
     source: Provenance = Provenance.system_simulation,
+    pending_already_marked: bool = False,
 ) -> None:
-    """#1843 主链推进后启动本月机械尾；无会话写队列则只落 pending。"""
-    mark_mechanical_tail_pending(
-        session.db, closed_turn,
-        settled_year=settled_year,
-        settled_period=settled_period,
-        ending_outcome=ending_outcome,
-        source=source,
-    )
+    """#1843 主链推进后启动本月机械尾；无会话写队列则只保留 pending。"""
+    if not pending_already_marked:
+        mark_mechanical_tail_pending(
+            session.db, closed_turn,
+            settled_year=settled_year,
+            settled_period=settled_period,
+            ending_outcome=ending_outcome,
+            source=source,
+        )
     try:
         get_session_write_queue(session)
     except Exception:
@@ -307,17 +325,13 @@ def ensure_mechanical_tails(session: Any) -> None:
     except Exception:
         return
     pending_turns: list[tuple[int, Dict[str, Any]]] = []
-    seen: set[int] = set()
     current = int(getattr(session.state, "turn", 0) or 0)
-    # 扫当前与之前若干回合的 month_chain 持久态（推进后 resolve_context 仍在）
-    for turn in range(max(0, current - 6), current + 1):
-        if turn in seen:
-            continue
+    # 下月 barrier 保证最多只有紧邻的已结束月份可以遗留 pending。
+    for turn in range(max(0, current - 1), current + 1):
         chain = month_chain._load_chain(db, turn)
         tail = chain.get("mechanical_tail")
         if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_PENDING:
             pending_turns.append((turn, tail))
-            seen.add(turn)
 
     source = Provenance.system_simulation
     for turn, tail in pending_turns:

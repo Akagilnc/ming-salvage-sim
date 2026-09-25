@@ -50,18 +50,18 @@ def test_advance_starts_mechanical_tail_without_blocking_new_month(game, monkeyp
     brew_release = threading.Event()
     brew_calls = []
 
-    def slow_brew(db_, state_, brew_fn, **kwargs):
+    def slow_brew(_session, **kwargs):
         brew_started.set()
         assert brew_release.wait(timeout=5)
         brew_calls.append({
             "year": kwargs.get("settled_year"),
             "period": kwargs.get("settled_period"),
-            "turn": kwargs.get("settled_turn"),
+            "turn": kwargs.get("closed_turn"),
         })
         return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
 
     monkeypatch.setattr(
-        "ming_sim.mechanical_tail.run_month_end_relation_brew", slow_brew,
+        "ming_sim.mechanical_tail._run_relation_brew", slow_brew,
     )
 
     session = make_light_session(db, state, content)
@@ -104,7 +104,7 @@ def test_next_month_waits_for_prior_mechanical_tail(game, monkeypatch):
         return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
 
     monkeypatch.setattr(
-        "ming_sim.mechanical_tail.run_month_end_relation_brew", slow_brew,
+        "ming_sim.mechanical_tail._run_relation_brew", slow_brew,
     )
     session = make_light_session(db, state, content)
     session._write_gate = threading.Lock()
@@ -153,12 +153,12 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
 
     calls = []
 
-    def recording_brew(*_a, **kwargs):
-        calls.append(kwargs.get("settled_turn"))
+    def recording_brew(_session, **kwargs):
+        calls.append(kwargs.get("closed_turn"))
         return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
 
     monkeypatch.setattr(
-        "ming_sim.mechanical_tail.run_month_end_relation_brew", recording_brew,
+        "ming_sim.mechanical_tail._run_relation_brew", recording_brew,
     )
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
     get_session_write_queue(session).wait_idle(timeout_s=5)
@@ -193,7 +193,7 @@ def test_exhausted_mechanical_tail_degrades_and_unblocks_next_month(game, monkey
         raise LLMUnavailable("酿制耗尽", stage="relation-brew")
 
     monkeypatch.setattr(
-        "ming_sim.mechanical_tail.run_month_end_relation_brew", boom,
+        "ming_sim.mechanical_tail._run_relation_brew", boom,
     )
     session = make_light_session(db, state, content)
     session._write_gate = threading.Lock()
@@ -220,8 +220,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(game, monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
 
     monkeypatch.setattr(
-        "ming_sim.mechanical_tail.run_month_end_relation_brew",
-        lambda *a, **k: {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0},
+        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
     )
     summary_turns = []
 
@@ -293,8 +292,7 @@ def test_mechanical_tail_does_not_schedule_audience_highlight(game, monkeypatch)
     _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
     monkeypatch.setattr(
-        "ming_sim.mechanical_tail.run_month_end_relation_brew",
-        lambda *a, **k: {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0},
+        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
     )
     highlight_calls = []
 

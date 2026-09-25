@@ -95,8 +95,6 @@ def canned_full_settlement(
         "ming_sim.month_translate.translate_month_segment",
         lambda *_a, **_k: {"effects": {}},
     )
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
     # #1745：复用单一 agent 边界夹具（不整换 run_settlement_attendant_message）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub

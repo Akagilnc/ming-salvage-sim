@@ -275,8 +275,6 @@ def build_timeline(db: GameDB, upto_turn: Optional[int] = None) -> List[Dict[str
             "decree_brief": decree_brief,
             "effect_brief": effect,
             "gazette": gazette_body,
-            # 兼容旧读者键名：不再填章节正文
-            "chapter": "",
         })
     return timeline
 

@@ -571,7 +571,7 @@ def test_ending_timeline_consumes_monthly_archive_once_not_scene_rows():
 
     assert build_timeline(FakeDB()) == [{
         "turn": 7, "year": 1628, "period": 3,
-        "decree_brief": "", "effect_brief": "", "chapter": "",
+        "decree_brief": "", "effect_brief": "", "gazette": "",
     }]
 
 

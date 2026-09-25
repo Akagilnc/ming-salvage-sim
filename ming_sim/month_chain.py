@@ -350,6 +350,12 @@ def _advance_after_gazette(
             ending_outcome = dict(declaration_outcome)
         elif isinstance(chain.get("declaration_outcome"), dict):
             ending_outcome = dict(chain["declaration_outcome"])
+        from ming_sim.mechanical_tail import mark_mechanical_tail_pending
+        mark_mechanical_tail_pending(
+            db, turn, settled_year=settled_year, settled_period=settled_period,
+            ending_outcome=ending_outcome, source=source,
+        )
+        chain = _load_chain(db, turn)
         db.mark_directives_issued(state)
         clear_return_revise_choice_anchors(db, None)
         state.next_period()
@@ -380,6 +386,7 @@ def _advance_after_gazette(
         settled_period=settled_period,
         ending_outcome=ending_outcome,
         source=source,
+        pending_already_marked=True,
     )
     return True
 

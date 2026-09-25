@@ -3938,6 +3938,8 @@ class GameSession:
         调用方已持闸时须显式声明；其余路径始终传递真实 gate，
         不得把“他线程正持有”误判为本线程可无锁访问 SQLite。
         """
+        from ming_sim.mechanical_tail import ensure_mechanical_tails
+        ensure_mechanical_tails(self)
         from ming_sim.audience_translation import (
             catch_up_pending_translations,
             list_pending_translations,
