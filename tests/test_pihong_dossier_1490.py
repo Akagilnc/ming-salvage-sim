@@ -4400,6 +4400,63 @@ def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
     assert int(web_game.state.turn) == turn_before + 1
 
 
+def test_657_applied_revise_refresh_resumes_without_hold(web_game, monkeypatch):
+    """已应用 return_revise 仍 pending：真 GET 不把它当待裁；空 POST 清锚、不留中、不双增。"""
+    from ming_sim.rescript_actions import canonical_choice
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "发帑赈济", "hint": "所安者饥民",
+        "action_type": "assignment", "assignee_name": "",
+        "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈", "deadline_months": 2,
+        "participant_roster": [
+            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
+        ],
+    })
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "改票急务", "context": "c",
+        "options": [opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+    }])
+    key = desk[0]["decision_key"]
+    choice = canonical_choice({
+        "decision_key": key,
+        "action": "return_revise",
+        "label": "发回改票",
+        "applied_from_revision_round": 0,
+        "draft_capability": opt["draft_capability"],
+    })
+    kind, turn_s, idx_s = key.split(":")
+    db.conn.execute(
+        "UPDATE pending_decisions SET choice_json=?, revision_round=1, prior_options_json=? "
+        "WHERE kind=? AND turn=? AND idx=?",
+        (
+            json.dumps(choice, ensure_ascii=False),
+            json.dumps([[{"label": "旧"}]], ensure_ascii=False),
+            kind, int(turn_s), int(idx_s),
+        ),
+    )
+    db.conn.commit()
+
+    payload = asyncio.run(_get_state())
+    assert payload.get("resume_phase2") is True
+    assert payload["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert [row.get("decision_key") for row in payload.get("pending_decisions") or []] == []
+
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    turn_before = int(state.turn)
+    posted = asyncio.run(_post_resolve([]))
+    assert posted.status_code == 200
+    assert int(web_game.state.turn) == turn_before + 1
+    hit = next(row for row in db.list_rescript_drafts() if row["title"] == "改票急务")
+    assert int(hit["revision_round"] or 0) == 1
+    assert hit["status"] == "pending"
+    assert not (hit["choice"] or {})
+
+
 def _summonable_name(db, content):
     from ming_sim import rescript_actions as ra
     ids = ra.list_deliberation_candidate_ids(db, content)
