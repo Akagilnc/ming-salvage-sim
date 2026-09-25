@@ -241,7 +241,6 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
 
     events = asyncio.run(_consume_resolve_sse())
     assert submitted["ok"] is True
-    assert game.actions == ["submit", "end_turn", "refresh"]
     kinds = [ev for ev, _ in events]
     assert "stage" in kinds
     assert kinds[-1] == "done"
@@ -270,8 +269,9 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
             game.actions.append("submit")
             if on_event:
                 on_event("stage", "数值推演结算")
-            # Production finish_rescript_phase2 sets ISSUED before returning under the gate.
+            # Completed settlement advances the turn while still under the gate.
             game.state.turn_phase = TurnPhase.ISSUED.value
+            game.state.turn += 1
         return "邸报：已裁。"
 
     def _failures_after_submit(*_a, **_k):
@@ -320,4 +320,3 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
 
     assert game.actions == ["submit", "end_turn", "refresh"]
     assert tail_sessions == [old_session]
-

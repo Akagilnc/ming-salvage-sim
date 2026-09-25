@@ -15,7 +15,6 @@ from ming_sim.person_delta_adapter import normalize_person_changes
 from ming_sim.simulation import (
     MODULE_FIELDS,
     build_simulator_payload,
-    _extractor_context_payload,
     _localized_extraction,
     _sanitize_module_output,
 )
@@ -2195,18 +2194,6 @@ def test_apply_score_extraction_applies_person_travel_and_exposes_transit_to(gam
         transit_index = roster["cols"].index("transit_to")
         name_index = roster["cols"].index("name")
         assert any(row[name_index] == name and row[transit_index] == "liaodong" for row in roster["rows"])
-
-        extractor_payload = _extractor_context_payload(
-            db, state, narrative="", decree_text=""
-        )
-        assert "transit_to" in extractor_payload["active_ministers"]["cols"]
-        active_transit_index = extractor_payload["active_ministers"]["cols"].index("transit_to")
-        active_name_index = extractor_payload["active_ministers"]["cols"].index("name")
-        assert any(
-            row[active_name_index] == name and row[active_transit_index] == "liaodong"
-            for row in extractor_payload["active_ministers"]["rows"]
-        )
-        assert "transit_to" in extractor_payload["offstage_ministers"]["cols"]
     finally:
         content.characters[name].location = old_location
         content.characters[name].transit_to = old_transit_to
@@ -2297,16 +2284,6 @@ def test_simulator_court_roster_excludes_active_prince(read_game):
     roster = payload["court_roster"]
     nidx = roster["cols"].index("name")
     assert name not in [r[nidx] for r in roster["rows"]], f"宗藩 {name} 漏进 simulator court_roster"
-
-
-def test_extractor_active_ministers_excludes_active_prince(read_game):
-    """extractor 上下文 active_ministers 与 court_roster 同口径排除宗藩。"""
-    db, state, content = read_game
-    name = _materialize_active_prince(db, state, content)
-    payload = _extractor_context_payload(db, state, narrative="", decree_text="")
-    am = payload["active_ministers"]
-    nidx = am["cols"].index("name")
-    assert name not in [r[nidx] for r in am["rows"]], f"宗藩 {name} 漏进 extractor active_ministers"
 
 
 def test_talent_pool_excludes_prince_unfilled_and_future_debut(saved_game):
@@ -2486,17 +2463,6 @@ def test_pending_dismiss_rejects_vassal_prince(read_game):
     ok = db._commit_office_action(state, {"action": "罢免"}, {"name": name}, content, None)
     assert ok == set()
     assert db.get_character_status(name)[0] == "active"  # 未被罢、状态不变
-
-
-def test_extractor_active_ministers_ming_noncourt_only(read_game):
-    """5b r1 PR#106（CodeRabbit Major，roster-scope coverage-drift 第 4 处）：extractor 上下文的
-    active_ministers 须与 court_roster 同口径 = 大明、非后宫。否则 active 外臣（皇太极）/active 后宫漏入。"""
-    db, state, content = read_game
-    payload = _extractor_context_payload(db, state, narrative="", decree_text="")
-    am = payload["active_ministers"]
-    pidx = am["cols"].index("power_id")
-    nonming = [r for r in am["rows"] if r[pidx] != "ming"]
-    assert nonming == [], f"extractor active_ministers 混进非明势力：{nonming}"
 
 
 def test_person_log_normalized_not_truncated(game):

@@ -12,7 +12,7 @@ from ming_sim.appointment_tenure import (
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGES, AUTHORITY_PRIVILEGE_SET
 from ming_sim.db import GameDB
 import ming_sim.decree as decree_mod
-from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 from tests.test_authority_ledger_611 import (
     _eligible_dossier,
     _grant,
@@ -235,19 +235,6 @@ def test_execution_and_sim_assembly_reuse_611_projection_not_payload(game):
     assert sim["appointment_tenure"] == "署理"
     assert "payload-auth" not in sim["authorization_ids"]
     assert "payload-list" not in sim["authorization_ids"]
-
-    # Extractor 装配链同一投影，不另造 side-channel
-    extractor = build_extractor_shared_context(
-        db, state, narrative="试", decree_text="",
-        decree_dossiers=sim_rows,
-    )
-    ext = next(
-        row for row in extractor["decree_dossiers"]
-        if int(row["id"]) == int(consumer["id"])
-    )
-    assert ext["held_authorities"] == exec_row["held_authorities"]
-    assert ext["authorization_ids"] == [str(authority_id)]
-    assert ext["appointment_tenure"] == "署理"
 
 
 def test_authority_lifecycle_grant_revoke_restore_on_real_assembly(game):

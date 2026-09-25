@@ -1,12 +1,11 @@
-# SETTLEMENT_FLOW.md — 月末结算管线（driver 调引擎的顺序）
+# SETTLEMENT_FLOW.md — 玩家过月与 driver 结算边界
 
-> 本文描述**现行代码**的结算顺序；文中带〔V2 设计注记〕的句子指向 proposed 的 ADR 0155 / 0157 / 0158（设计分支，未实施），在实现接入前一律以本文的现行描述为准，注记只标「将来会改到哪里、由 #1816 认领同步」。
+> 玩家入口已接入 ADR 0157。下方 S1/phase2 是旧核资料；`driver.py` 只复用其确定性结算部分，不运行旧 phase2。它不是 Web／GameSession 的现行过月顺序；规则以 [ADR 0157](adr/0157-v2-month-waits-for-exhausted-model-call-recovery.md) 为准。
 
-**真相源**：`ming_sim/decree.py:resolve_directives + _settle_after_narrative`，可复用核为 `pre_settle` + `settle_with_delta`（driver 与真实流程同核，ADR 0004）。
-**事务边界与崩溃恢复**：见 `docs/adr/0008-settlement-applier-contract-and-transaction-boundary.md`（v0.8.0.0 起）。一句话：前半段 `pre_settle` 提交后保持已落，后半段 `settle_with_delta` 整段单一 `applier.atomic`、全有或全无。
-原版是 simulator/extractor 两步 LLM；探针 step1 我**一次产 delta**，driver 把两步合一。
+**玩家链**：`GameSession.resolve_turn → decree.resolve_directives → month_chain.run_player_month_chain`；颁诏、退朝同链。收夜与 `pre_settle` 提交后，逐旨消费暂存声明、推演并转译世界段；未完成请旨停在批红前，邸报归档后才判结局并推进月份。各段幂等恢复，不重放旧 extractor ready delta；旧档 ready 产物先降级，保留原诏与来源后续跑新链。章节记忆不再由玩家链生成。
+**driver 核**：`driver.py` 仍复用 `pre_settle`、`settle_with_delta`（ADR 0004／0008）；其 delta ready 重放只属于 driver，不得据此推断玩家流程。
 
-## #571 S1 案卷颁布关（当前实码顺序）
+## #571 S1 案卷颁布关（旧核资料；非玩家月链）
 
 `pre_settle` 提交后，结算读取 DB 中的 `proposed` 案卷作为待判集；有待判案卷时只调用一次批量颁布判官，并要求 verdict 覆盖全集。随后将已颁与本回合可执行的案卷过滤进 simulator/extractor：被拒案卷的效果文本不进入执行输入。若判决产生批红动作，先保存 rescript 决策并暂停；皇帝选择后，verdict/rescript 与 pending actions 在 `settle_with_delta` 的同一 atomic 中应用。无诏推进若存在待判案卷，也走同一判决与原子应用链，不绕过颁布关。批红三选＝强颁（中旨，代价 0056）／收回（零皇威/派系代价）／留中（押后下月再判）。密令与内库内批豁免颁布关（应允即落地，0055）；经外廷受判类在 `commit_pending_actions` 只物化案卷、效果经颁布判决后落。
 
@@ -16,7 +15,7 @@
 
 这段只描述 #571 S1 与 #609 已实现的案卷判决与执行闸；其它案卷扩展不属于本契约。
 
-## S1 结算顺序（按调用先后）
+## S1 旧核结算顺序（资料；driver 仅复用确定性核）
 
 ```
 [step1：召见 / 拟旨阶段]
@@ -179,7 +178,7 @@
   12. db.save_turn_extraction(...)                  # inertia 合并后才存：玩家明细 / 时间线含 inertia 人物变更
 
   13. [我产 chapter memory {body, tags}]  ← 起居注史官身份
-      → record_chapter_memory(state, {body, tags})  # 必须在结局判定前；记的 applied 已含 inertia 人物变更  # 〔V2 设计注记（ADR 0157，proposed）：章节记忆退役，历月邸报入材料目录索引自读；接入时同步（#1816）〕
+      → record_chapter_memory(state, {body, tags})  # 仅旧核；玩家链章节记忆已退役
 
   14. clear_gated_legacies(db, state)              # 开局负面修正按 clear_gate 程序判定消除
 
@@ -203,7 +202,7 @@
 ## 无诏推进（玩家退朝未下旨）
 
 #1274 QA J-1 / owner B-2：无旨月 = decrees=[] 的**正常月**，禁止 16ms 快跳。
-日历走一个月，朝政也必须发生（simulator 邸报 / 种子局势 / 议题惯性 / 结局判定全链）。
+日历走一个月，朝政也必须发生；无旨仍走玩家月链，历史留中与世界段照常处理。
 
 ```
 session.advance_without_decree / POST /api/decree/advance_without_edict:
@@ -211,12 +210,12 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
   无草案 → resolve_turn(allow_empty_decree=True, source=system_simulation)
            → accept_settlement_period + auto_close_open_night(..., scene_registry=)
            → resolve_directives(directives=[], decree_text="")
-           → pre_settle + simulator + settle_with_delta   # ADR 0004 同核
+           → pre_settle + month_chain.run_player_month_chain
   # #1274 r1：decree.advance_without_edict 空壳已删；prep（快照+收夜）归 resolve_turn。
   # #498 退朝遇开夜顺势自动收夜；#542 scene_registry 调用方所有（session._scene_registry）
 ```
 
-#1467：无 hitl_min_decisions 配额；无旨月 simulator 仍可产局势决策 → 批红；真零决策则既有空批/all-decided 链路走通。
+#1467：无 hitl_min_decisions 配额；无旨月世界段仍可请旨 → 批红，零待批则续至邸报。
 批量跳 N 月 = 另票 #1425，本片不做。
 
 ## 关系酿制腿（#636/#637/#642；月末增量重酿）
@@ -243,30 +242,29 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 
 **禁止**：把召对口/seed 口写成「结算 extractor 一步」；禁止文档或实现对酿制输出做字数 clamp（CLAUDE.md P6 / ADR 0142）。普通读面仍是「摘要＋最近事件」五字段 DTO（`project_relation_ledger`）；完整历史只进 coda 酿制输入。
 
-## 崩溃 / 中止恢复（ADR 0008 PR1，v0.8.0.0）
+## 旧核崩溃 / 中止恢复（ADR 0008 PR1，driver）
 
-重开档（或同进程重试）按相位分流（`session.py` 恢复入口）：
+以下 ready=1 重放仅属旧核／driver。玩家 `session.py` 在 settling 恢复时降级旧 ready extractor 产物，并由 ADR 0157 暂存声明及落账状态接续：
 
-- `awaiting_decision` → 幂等返回已存决策点等亲裁，不二跑 simulator。
-- `settling` + ready=1 的 resolve_context → `resolve_settling_recovery` 直入后半段重放落库，**不重跑贵的 simulator/extractor**；诏书原文从存档真源回填。
-- `settling` + 无 ready context（崩在推演期）→ 落回正常流程重跑推演；`pre_settle` 被 settling 守门跳过=财政不二落。
+- `awaiting_decision` → 幂等返回已存决策点等亲裁，不推进月份。
+- driver `settling` + ready=1 的 resolve_context → `driver.run_settle` 消费已存 delta，不重跑其外部生成步骤；玩家入口不走此路。
+- 玩家 `settling` → 若有旧 ready delta，先降级；新月链从已暂存／已落账状态接续。`pre_settle` 被 settling 守门跳过，财政不二落。
 - settling 恢复窗口内**冻结改盘操作**：
   - 下旨草案/撤回/跳过等 7 个入口（`session._refuse_if_settling`；web 对应端点 409，CLI 打印恢复指引并留在本回合交互循环不重印回合头）。
-  - 全部聊天侧新写入一并冻（`_proposal_blocked` 总闸）：任免候选暂存（`_stage_appointment_candidate`）、编外人物登记、密令房 tool 四个 action（issue/progress/submit/rush，`tools.py` dispatcher 一处冻）、CLI 前缀密令 upsert——这些写入在 settle 重试事务边界外，重放中止回滚不会回滚它们。
-  - 自然语言抽取的**新暂存动作**短路不入档（抽取器 LLM 调用一并跳过）——窗内新 stage 会被重试 settle 的 commit_pending_actions 落进「保存的 delta 推演时并不知道」的旧回合。
-  - 窗**前**已暂存的 pending 不受影响：对话确认（应允延迟提交/拒绝丢弃）保持可用，仍随 settle 事务统一提交。
-- ready 但值级坏掉的 payload 反复重放失败 → 「重新推演」逃生口 `error_pack.clear_for_resimulation`：把 context **降级为非 ready**（保留邸报字段），不删行，崩溃循环切断。
-- 每次中止落一份五件套错误包（DB 快照/上下文/错误链/manifest/拒收记录），**永不覆盖旧包**。
+  - 全部聊天侧新写入一并冻（`_proposal_blocked` 总闸）：任免候选暂存、编外人物登记、密令房 tool、CLI 前缀密令 upsert；恢复期不得把新动作插入已冻结的旧回合。
+  - 窗前已暂存的记录由各自原有提交边界处理；玩家月链只消费其暂存声明及落账状态。
+- 旧核 ready payload 值级失败时，`error_pack.clear_for_resimulation` 可降级 context；玩家入口遇旧 ready 也先降级，保留原诏与来源。
+- 旧核中止的五件套错误包不覆盖旧包；玩家月链错误边界见 ADR 0157／0158。
 
 ## 不变式 / 雷区
 
-- **顺序不能改**：`auto_trigger_seed_issues` 必须在产邸报前；`apply_issue_inertia_and_ongoing` 必须在 `save_turn_extraction` + `chapter memory` 之前（inertia 追加的玩家可见人物变更要先并进 `applied` 再存 / 记，否则玩家明细与起居注漏 inertia 人物变更）；`chapter memory` 必须在结局判定前。（注：`apply_issue_inertia_and_ongoing` 的 `touched_ids=` 入参已不再用作跳过过滤——`issues.py` 内 `_ = touched_ids`、惯性漂吃全部 active issue；decree 仍按 advances 计算并传入只为保留调用签名，非不变式。） 〔V2 设计注记（ADR 0157，proposed）：过月按 0157 重排（旨意夜里预推暂存、按序落账、世界事件、批红、邸报）、章节记忆退役；接入时同步（#1816）〕
-- **assert turn==before_turn+1**：phase2 完整跑完必须推进一回合，没推进就是 bug。
+- **旧核顺序**：以下 `save_turn_extraction`、`chapter memory` 先后约束属于旧核资料；driver 跳过章节记忆，玩家顺序以 ADR 0157 与 `month_chain.py` 为准。
+- **推进条件**：玩家月链停在批红／邸报时 `advanced=False`；只有邸报已归档、完成推进时 turn 才加一。
 - **HITL 暂停时不要推进**：return awaiting=True 时 state.turn 不动，玩家亲裁后续跑 phase2 才推。
 - **结算只判一次结局**：state.ended=True 后保持不动，继续推月只走 fixed flows。
-- **推进尾唯一正轨**：只有 simulator 成功并完成 extractor 后，`settle_with_delta` 才在 atomic 内同笔做完「清 resolve_context → next_period → 相位复位 summoning → save_state」。simulator 异常不进 extractor、不产邸报、不推进，保留 `settling` 供原月重试；并行 companion 若已成功则只存 ready=0 递话 checkpoint。#1274：无旨月推进只经 settle_with_delta（decree.advance_without_edict 空壳已删）。
+- **玩家推进尾**：只有批红及请旨续落完成、邸报已归档，`month_chain._advance_after_gazette` 才推进；无旨月同链。`settle_with_delta` 是 driver 旧核的推进尾。
 - **回滚后必 reload**：事务回滚只回 SQLite，内存副作用（metrics 直加 / 脏 settling 相位）必须 `reload_state_from_db` 刷净——脏 settling 被 pre_settle 守门跳过=下月财政永久丢。atomic 体内禁止 reload（读到未提交脏写）；嵌套时只有最外层回滚后才重载。
-- **毒 payload 不入真源**：`persist_resolve_context` 前必过 `validate_delta_shape`；shape 垃圾走 SettlementAbort+错误包，不许静默吞、也不许钉进 ready=1 重试真源。
+- **旧核毒 payload 不入真源**：`persist_resolve_context` 前必过 `validate_delta_shape`；shape 垃圾走 SettlementAbort+错误包。
 - **settling 可见 ⟹ context 行可见**：settling 相位与 resolve_context 行（引擎/driver 共用 prepare 的 ready=0 占位）必须同一事务提交；driver settle 再把 ready=0 升 ready=1。prepare 不许拆成两笔——拆了就是「相位卡 settling、恢复入口无米下锅、玩家手改旨意原文蒸发」。
 
 ## 已知接口层（确定性↔我，别让我自己数数）
@@ -281,7 +279,8 @@ session.advance_without_decree / POST /api/decree/advance_without_edict:
 
 | 文件 | 看什么 |
 |---|---|
-| `ming_sim/decree.py` | `resolve_directives` + `_settle_after_narrative` 编排；可复用核 `pre_settle` / `settle_with_delta`；二者均转发调用方 `scene_registry`（#542）；`resolve_settling_recovery` / `persist_resolve_context` 恢复机械；月末关系酿制 Future 的 start/join/drain |
+| `ming_sim/decree.py` | `resolve_directives` 转入玩家月链；`pre_settle` 由玩家与 driver 共用；`settle_with_delta`、`persist_resolve_context` 是 driver 旧核；旧核关系酿制 Future 的 start/join/drain |
+| `ming_sim/month_chain.py` | 玩家过月逐旨落账、世界段、请旨等待、邸报后推进及分段恢复 |
 | `ming_sim/relation_brew.py` | `MonthEndRelationBrewLeg` prepare/brew/persist；`select_brew_targets` / `build_brew_input`（含 #642 prior_events） |
 | `ming_sim/relation_read.py` | `project_relation_ledger` 五字段读面；`load_relation_history_before` coda 历史读缝 |
 | `ming_sim/session_write_queue.py` | per-session 单写者有序票据队列（#1353 / ADR 0149）：尾随领票、写经 `TicketedWriteGate`/`run`、过月=`barrier`、失败空放行、撤回 `cancel_key`；屏障只等工人终态（K10a 无 elapsed 熔断） |

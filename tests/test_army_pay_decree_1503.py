@@ -251,11 +251,10 @@ def test_revise_away_from_xiexang_clears_pay_only_fields(game):
 
 # ── ② 颁布缝一次消费：扣库+销欠同回合 ────────────────────────────
 
-def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game, monkeypatch):
-    """颁布缝落账恰一次；ready=1 恢复重放不二扣。"""
-    import ming_sim.decree as dm
-    from ming_sim.decree import persist_resolve_context, pre_settle
-    from ming_sim.session import TurnPhase
+def test_promulgation_recovery_does_not_double_debit(game, monkeypatch):
+    """已颁补饷按实账恰扣一次；旧 ready 降级与邸报等待不二扣。"""
+    import ming_sim.month_chain as month_chain
+    from ming_sim.decree import pre_settle
     from tests.test_advance_paths_atomic import _recovery_session
 
     db, state, content = game
@@ -268,36 +267,19 @@ def test_promulgation_settle_applies_once_ready_replay_no_double_debit(game, mon
 
     turn = state.turn
     pre_settle(state, db, content=content)
-    assert state.turn_phase == TurnPhase.SETTLING.value
     arrears_after_pre = _army_row(db)["arrears"]
-
-    persist_resolve_context(
-        db, turn,
-        {},
-        decree_text="拨饷诏",
-        narrative="已存邸报……",
-        simulator_payload={
-            "dossier_verdicts": [{"dossier_id": did, "decision": "promulgated"}],
-        },
-        secret_orders=[],
-        relevant_memories=[],
+    _promulgate(db, state, content, did)
+    db.save_resolve_context(
+        turn, "拨饷诏", "旧邸报", {}, extracted={"metric_delta": {"民心": -30}},
     )
-    ready = db.get_resolve_context(turn)
-    assert ready is not None and ready.get("extracted") is not None
-    assert (ready.get("simulator_payload") or {}).get("dossier_verdicts") == [
-        {"dossier_id": did, "decision": "promulgated"},
-    ]
-
-    def _must_not_run(*a, **k):
-        raise AssertionError("恢复直入 apply 不应重跑 simulator/extractor")
-    monkeypatch.setattr(dm, "simulate_season_with_payload", _must_not_run)
-    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _must_not_run)
-
-    result = _recovery_session(db, state, content, monkeypatch).resolve_turn()
-
-    assert result.awaiting is False
-    assert state.turn == turn + 1
-    assert db.get_resolve_context(turn) is None
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    session = _recovery_session(db, state, content, monkeypatch)
+    result = session.resolve_turn()
+    assert result.stage == "gazette"
+    assert state.turn == turn
+    assert db.get_resolve_context(turn)["extracted"] is None
+    session.resolve_turn()
+    assert state.turn == turn
     moves = db.list_economy_moves_for_dossier(did)
     assert len(moves) == 1
     assert int(moves[0]["delta"]) == -15
@@ -545,98 +527,6 @@ def test_extractor_cannot_second_write_army_pay_for_payload_dossier(game):
     assert int(state.metrics["国库"]) == treasury_before - 10
     assert len(db.list_economy_moves_for_dossier(dossier["id"])) == 1
     assert _army_row(db)["arrears"] == pytest.approx(arrears_mid)
-
-
-def test_closed_army_pay_dossier_keeps_origin_in_extractor_input(game):
-    """#1503 provenance：closed 拨饷 origin 仅 internal 可见（module 门控双向）。"""
-    from ming_sim.simulation import EXTRACTION_MODULES, build_extractor_shared_context
-
-    db, state, content = game
-    _set_guanning_arrears(db, 40, central=40, province=0)
-    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
-
-    ctx = _stage_xiexang(db, state.turn, amount=10, target_id="guanning")
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    did = int(dossier["id"])
-    _promulgate(db, state, content, did)
-    closed = db.get_decree_dossier(did)
-    assert closed["status"] == "closed"
-    assert closed["execution_outcome"] == "fulfilled"
-    # 模拟可见集可不再含 closed；extractor 输入接缝必须保留身份。
-    assert did not in {
-        int(r["id"]) for r in db.list_decree_dossiers_for_simulation(state.turn)
-    }
-    assert did in {
-        int(r["id"])
-        for r in db.list_closed_army_pay_dossiers_for_provenance(state.turn)
-    }
-
-    # 正向：唯一拥有 economy_moves 的 internal 能见 closed 拨饷 provenance。
-    payload = build_extractor_shared_context(
-        db, state, narrative="", decree_text="", module="internal",
-    )
-    slim = payload.get("decree_dossiers") or []
-    hit = next((r for r in slim if int(r["id"]) == did), None)
-    assert hit is not None
-    assert hit["origin_ref"] == f"dossier:{did}"
-    assert hit["action_type"] == "grant_allocation"
-
-    # 负向：其余 extractor 不因本修复新增 closed 拨饷案卷输入面。
-    non_internal = tuple(m for m in EXTRACTION_MODULES if m != "internal")
-    # #633: relations 并入后同受此负向门(不吃 closed 拨饷 provenance)。
-    assert non_internal == (
-        "military_external", "issues", "personnel_secret", "relations",
-    )
-    for module in non_internal:
-        other = build_extractor_shared_context(
-            db, state, narrative="", decree_text="", module=module
-        )
-        other_ids = {int(r["id"]) for r in (other.get("decree_dossiers") or [])}
-        assert did not in other_ids, (
-            f"module={module!r} 不应吃 closed 拨饷 provenance；ids={sorted(other_ids)}"
-        )
-
-
-def test_closed_army_pay_provenance_injects_when_decree_dossiers_prepassed(game):
-    """#1507-F1：生产 settle 预传 decree_dossiers（list，非 None）时 internal 仍须注入。
-
-    旧门 `decree_dossiers is None` 在 decree.py 必传 list 下永假，provenance 死门。
-    """
-    from ming_sim.simulation import build_extractor_shared_context
-
-    db, state, content = game
-    _set_guanning_arrears(db, 40, central=40, province=0)
-    state.metrics["国库"] = max(int(state.metrics["国库"]), 100)
-
-    ctx = _stage_xiexang(db, state.turn, amount=10, target_id="guanning")
-    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
-    did = int(dossier["id"])
-    _promulgate(db, state, content, did)
-    assert db.get_decree_dossier(did)["status"] == "closed"
-
-    # 生产同形：预传模拟可见集（closed 拨饷已不在内；或显式空 list）
-    sim_rows = list(db.list_decree_dossiers_for_simulation(state.turn))
-    assert did not in {int(r["id"]) for r in sim_rows}
-
-    for prepassed in (sim_rows, []):
-        payload = build_extractor_shared_context(
-            db, state, narrative="", decree_text="",
-            module="internal", decree_dossiers=prepassed,
-        )
-        hit = next(
-            (r for r in (payload.get("decree_dossiers") or []) if int(r["id"]) == did),
-            None,
-        )
-        assert hit is not None, f"prepassed={prepassed!r} 须注入 closed 拨饷 provenance"
-        assert hit["origin_ref"] == f"dossier:{did}"
-
-        # 非 internal 预传同 list 仍不得吃 closed 拨饷
-        other = build_extractor_shared_context(
-            db, state, narrative="", decree_text="",
-            module="issues", decree_dossiers=prepassed
-        )
-        other_ids = {int(r["id"]) for r in (other.get("decree_dossiers") or [])}
-        assert did not in other_ids
 
 
 def test_army_pay_already_cleared_spent_zero_is_fulfilled(game):
@@ -987,7 +877,7 @@ def test_manual_directive_admission_real_http_tracer_1591(
         assert draft_payload.get("target_id") == "guanning"
         _post_issue_stream(client, expected_turn=turn1, step="1591①太仓 issue/stream")
         after = _get_state(client)
-        assert _turn_of(after) == turn1 + 1, after.get("turn")
+        assert _turn_of(after) == turn1, after.get("turn")
         dossier = next(
             d for d in game.db.list_decree_dossiers()
             if d["action_type"] == "grant_allocation"
@@ -1097,7 +987,7 @@ def test_manual_directive_admission_real_http_tracer_1591(
 
         _post_issue_stream(client, expected_turn=turn2, step="1769 replace-1591 month")
         after = _get_state(client)
-        assert _turn_of(after) == turn2 + 1, after.get("turn")
+        assert _turn_of(after) == turn2, after.get("turn")
         assert game.db.conn.execute(
             "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
         ).fetchone()["status"] == "draft"
@@ -1340,39 +1230,24 @@ def test_real_chat_explicit_prefix_suppresses_tool_twin_and_durable_one_dossier(
     assert len(linked) == 1
     assert dossier["mode"] == "ordinary"
 
-    monkeypatch.setattr(
-        decree_mod, "create_season_simulator_agent", lambda *a, **k: object(),
-    )
-    monkeypatch.setattr(
-        decree_mod,
-        "simulate_season_with_payload",
-        lambda _simulator, _state, _db, _decree_text, _previous, **kwargs: (
-            "本月邸报。", kwargs["simulator_payload"],
-        ),
-    )
+    import ming_sim.month_chain as month_chain
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     result = decree_mod.resolve_directives(
         state, db, None, None, [object()], dossier["decree_text"],
         content=content,
-        promulgation_verdict_provider=lambda *_a, **_k: [
-            _rejected_verdict(dossier["id"])
-        ],
     )
-    decision = next(
-        row for row in result.decisions
-        if row.get("event_id") == f"dossier:{dossier['id']}"
+    assert result.advanced is False
+    assert not any(
+        row.get("event_id") == f"dossier:{dossier['id']}"
+        for row in result.decisions
     )
-    force = next(
-        option for option in decision["options"]
-        if option.get("dossier_decision") == "force_promulgated"
-    )
-    assert force["dossier_id"] == dossier["id"]
 
     db.apply_dossier_verdicts(
         state, [_rejected_verdict(dossier["id"])], content=content,
     )
     treasury_before = int(state.metrics["国库"])
     arrears_before = _army_row(db)
-    _promulgate(db, state, content, dossier["id"], force["dossier_decision"])
+    _promulgate(db, state, content, dossier["id"], "force_promulgated")
     moves = [
         move for move in db.list_economy_moves_for_dossier(dossier["id"])
         if move.get("purpose") == "补饷" and move.get("target_id") == "guanning"
@@ -1828,12 +1703,12 @@ def test_http_chat_stream_exposes_typed_decree_validation_recovery(
             game.session.close()
 
 
-def test_http_chat_issue_stream_pay_decree_advances_month(
+def test_http_chat_issue_stream_pay_decree_keeps_month_unadvanced(
     tmp_path, monkeypatch, _offline_scene_beat_generator,
 ):
-    """原轨真 HTTP：召对户部「拨关宁军饷十五万两」→「准」→ issue/stream（必要时 resolve）过月。
+    """原轨真 HTTP：召对户部拨饷并请求 issue/stream；本链路不推进月份。
 
-    stub 仅 LLM 边界；不得用 store helper 代替收夜/颁布/结算 HTTP 链。
+    stub 仅 LLM 边界；不得用 store helper 代替收夜/颁布 HTTP 链。
     """
     from fastapi.testclient import TestClient
 
@@ -1890,20 +1765,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
     # The first grant enters through audience night; the second is a season
     # decision whose selected server option is its legal origin.
     import ming_sim.decree as decree_mod
-    extractor_inputs = {}
-
-    def capture_extractor_input(_config, _agno_db, module, **kwargs):
-        extractor_inputs[module] = [
-            (int(row["id"]), str(row["status"]), str(row.get("decision_key") or ""))
-            for row in kwargs["supplemental_context"].get("decree_dossiers") or []
-        ]
-        return None
-
-    # Observe the structured payload at the real extractor boundary; the outer
-    # LLM remains canned by _stub_outer_llm_seams.
-    monkeypatch.setattr(
-        decree_mod, "create_score_extractor_module_agent", capture_extractor_input,
-    )
     decision_report = """本月邸报。
 <<DECISION>>
 {"title":"内帑济关宁","context":"关宁欠饷尚重，奏请圣裁","options":[{"label":"发内库银三十万两济关宁","hint":"军心稍定，内帑益绌","action_type":"grant_allocation","grant_action":"协饷","account":"内库","amount":30,"purpose":"补饷","target_kind":"army","target_id":"guanning","cadence":"一次性"},{"label":"暂缓内帑","hint":"内帑得保，边军仍困"}]}
@@ -1972,11 +1833,7 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
         game.db.save_state(game.state)
         treasury_before = int(game.state.metrics["国库"])
-        inner_treasury_before = int(game.state.metrics["内库"])
         arrears_before = _army_row(game.db)
-        liaodong_issue_before = dict(game.db.conn.execute(
-            "SELECT id, status, bar_value FROM issues WHERE title='辽东索饷'"
-        ).fetchone())
         turn_before = int(game.state.turn)
 
         client = TestClient(web_app.app)
@@ -2050,7 +1907,8 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         wait_pending_writes(game)
 
         after = _get_state(client)
-        assert _turn_of(after) == turn_before + 1, after.get("turn")
+        assert _turn_of(after) == turn_before, after.get("turn")
+        assert not body.get("awaiting_decision")
 
         dossiers = [
             d for d in game.db.list_decree_dossiers()
@@ -2058,45 +1916,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
             and d["target_id"] == "guanning"
         ]
         dossier = next(d for d in dossiers if d["pending_action_id"] == pending_id)
-        decision_dossiers = [d for d in dossiers if d["id"] != dossier["id"]]
-        assert len(decision_dossiers) == 2, dossiers
-        decision_payloads = {
-            json.loads(game.db.conn.execute(
-                "SELECT payload_json FROM decree_dossiers WHERE id=?", (d["id"],),
-            ).fetchone()[0])["account"]: d
-            for d in decision_dossiers
-        }
-        assert set(decision_payloads) == {"内库", "国库"}
-        inner_dossier = decision_payloads["内库"]
-        decision_dossier = decision_payloads["国库"]
-        for account, selected_dossier in decision_payloads.items():
-            payload = json.loads(game.db.conn.execute(
-                "SELECT payload_json FROM decree_dossiers WHERE id=?",
-                (selected_dossier["id"],),
-            ).fetchone()[0])
-            assert payload["decision_key"] == decisions_by_account[account]["decision_key"]
-        assert inner_dossier["status"] == "closed"
-        assert inner_dossier["promulgation_decision"]
-        assert len(game.db.list_decree_dossier_decisions(inner_dossier["id"])) == 1
-        assert decision_dossier["status"] == "proposed"
-        assert not decision_dossier["promulgation_decision"]
-        late_fact = (
-            int(decision_dossier["id"]), "proposed",
-            decisions_by_account["国库"]["decision_key"],
-        )
-        assert late_fact in extractor_inputs["issues"]
-        assert late_fact not in extractor_inputs["internal"]
-        assert all(
-            late_fact not in extractor_inputs[module]
-            for module in ("military_external", "personnel_secret", "relations")
-        )
-        assert game.db.list_decree_dossier_decisions(decision_dossier["id"]) == []
-        assert game.db.list_economy_moves_for_dossier(decision_dossier["id"]) == []
-        inner_moves = game.db.list_economy_moves_for_dossier(inner_dossier["id"])
-        assert len(inner_moves) == 1, inner_moves
-        assert inner_moves[0]["account"] == "内库"
-        assert int(inner_moves[0]["delta"]) == -30
-        assert inner_moves[0]["purpose"] == "补饷"
         moves = game.db.list_economy_moves_for_dossier(dossier["id"])
         pay_moves = [
             m for m in moves
@@ -2117,28 +1936,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         assert len(ledger) == 1
         assert int(ledger[0]["delta"]) == -15
         assert ledger[0]["account"] == "国库"
-        inner_ledger = [
-            dict(r) for r in game.db.conn.execute(
-                """
-                SELECT account, delta, purpose, origin_ref FROM economy_ledger
-                WHERE purpose='补饷' AND target_id='guanning' AND origin_ref=?
-                """,
-                (f"dossier:{inner_dossier['id']}",),
-            ).fetchall()
-        ]
-        assert len(inner_ledger) == 1
-        assert inner_ledger[0]["account"] == "内库"
-        assert int(inner_ledger[0]["delta"]) == -30
-        decision_ledger = [
-            dict(r) for r in game.db.conn.execute(
-                """
-                SELECT account, delta, origin_ref FROM economy_ledger
-                WHERE purpose='补饷' AND target_id='guanning' AND origin_ref=?
-                """,
-                (f"dossier:{decision_dossier['id']}",),
-            ).fetchall()
-        ]
-        assert decision_ledger == []
         logs = [
             dict(row) for row in game.db.conn.execute(
                 """
@@ -2151,61 +1948,6 @@ def test_http_chat_issue_stream_pay_decree_advances_month(
         ]
         assert len(logs) == 1
         assert float(logs[0]["delta"]) == pytest.approx(-15)
-        inner_logs = game.db.conn.execute(
-            """
-            SELECT delta, new_value FROM army_logs
-            WHERE army_id='guanning' AND field='arrears' AND origin_ref=?
-            """,
-            (f"dossier:{inner_dossier['id']}",),
-        ).fetchall()
-        assert len(inner_logs) == 1
-        assert float(inner_logs[0]["delta"]) == pytest.approx(-30)
-        after_army = _army_row(game.db)
-        assert int(after["metrics"]["国库"]) == int(game.state.metrics["国库"])
-        assert int(after["metrics"]["内库"]) == int(game.state.metrics["内库"])
-        fixed_treasury_flow = int(after["metrics"]["国库"]) - treasury_before + 15
-        fixed_inner_flow = int(after["metrics"]["内库"]) - inner_treasury_before + 30
-        assert fixed_treasury_flow == -12
-        assert fixed_inner_flow == 22
-        fixed_arrears_flow = after_army["arrears"] - arrears_before["arrears"] + 45
-        fixed_central_arrears_flow = (
-            after_army["central_pay_arrears"]
-            - arrears_before["central_pay_arrears"] + 45
-        )
-        assert fixed_arrears_flow == pytest.approx(1)
-        assert fixed_central_arrears_flow == pytest.approx(1)
-        liaodong_issue_after = dict(game.db.conn.execute(
-            "SELECT id, status, bar_value FROM issues WHERE id=?",
-            (liaodong_issue_before["id"],),
-        ).fetchone())
-        assert liaodong_issue_after["status"] in {
-            liaodong_issue_before["status"], "resolved",
-        }
-        active_liaodong = [
-            issue for issue in after["issues"]
-            if issue["id"] == liaodong_issue_after["id"]
-        ]
-        closed_liaodong = [
-            issue for issue in after["closed_this_turn"]
-            if issue["id"] == liaodong_issue_after["id"]
-        ]
-        assert len(active_liaodong) + len(closed_liaodong) == 1
-        if liaodong_issue_after["status"] == "resolved":
-            assert not active_liaodong
-            assert len(closed_liaodong) == 1
-        else:
-            assert len(active_liaodong) == 1
-            assert not closed_liaodong
-        visible_liaodong = (active_liaodong + closed_liaodong)[0]
-        assert visible_liaodong["bar_value"] == liaodong_issue_after["bar_value"]
-        decision_logs = game.db.conn.execute(
-            """
-            SELECT delta, new_value FROM army_logs
-            WHERE army_id='guanning' AND field='arrears' AND origin_ref=?
-            """,
-            (f"dossier:{decision_dossier['id']}",),
-        ).fetchall()
-        assert decision_logs == []
 
     finally:
         try:

@@ -359,6 +359,40 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
     assert len(malformed.scene_facts.rejected) == 1
 
 
+def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
+    """召对夜只接当场实况；旨意办理效果只能在过月时落账。"""
+    db, state, _ = game
+    night = open_night(db, state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
+    chat_turn_id = _active_chat_turn(db, state, night_id)
+    army_row = db.conn.execute("SELECT id, morale FROM armies ORDER BY id LIMIT 1").fetchone()
+    assert army_row is not None
+    army_id, morale_before = str(army_row["id"]), int(army_row["morale"])
+
+    result = audience_translate.apply_audience_turn_translation(
+        db, state,
+        {"effects": {"army_delta": {
+            army_id: {"origin_ref": "夜里预推", "morale": 1},
+        }}},
+        night_id=night_id,
+        chat_turn_id=chat_turn_id,
+    )
+
+    assert result.effects.applied == []
+    assert len(result.effects.rejected) == 1
+    assert int(db.conn.execute(
+        "SELECT morale FROM armies WHERE id=?", (army_id,),
+    ).fetchone()[0]) == morale_before
+    rejection = db.conn.execute(
+        "SELECT section, category, reason FROM rejection_reports "
+        "WHERE turn=? AND section='effects' ORDER BY id DESC LIMIT 1",
+        (int(state.turn),),
+    ).fetchone()
+    assert rejection is not None
+    assert rejection["category"] == "invalid_state"
+    assert rejection["reason"]
+
+
 def test_scene_stay_attend_uses_actual_protagonist_not_virtual_speaker(game, monkeypatch):
     from ming_sim.audience_night import (
         SCENE_CHAT_SPEAKER, list_ledger, set_night_protagonist, summon_enter,

@@ -1,14 +1,7 @@
-"""#1274 QA J-1 — 无旨月完整结算（删 16ms 快路）。
+"""#1274 / #1843 — 无旨月走同一过月主链，不走 16ms 快路。
 
-Owner 拍板：没有旨意只是这个月没有旨意；之前下的旨、在做的事、局势惯性
-都要继续跑。无旨月 = decrees=[] 的正常月，走 pre_settle + simulator +
-settle_with_delta 全链（ADR 0004），禁止跳过 simulator 的快跳分支。
-
-钉测：
-1. 退朝无旨 → turn+1 且邸报叙事落库 + 局势惯性推进
-2. 负向：不存在跳过 simulator 的路径（快路分支已死）
-3. 有旨月回归：resolve_turn 有草案仍走完整结算
-4. simulator 真零决策 → 按既有空批链路走通，不卡死
+没有旨意只是这个月没有旨意。ADR 0157 把推进放到邸报写成之后，
+无旨月仍跑前括号、世界段和局势惯性，但不在邸报未写时自行推进。
 """
 
 from __future__ import annotations
@@ -60,16 +53,12 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
 
     assert result is not None
     assert result.awaiting is False
-    assert int(state.turn) == closed_turn + 1
-    # simulator 必经（负向：快路已死）
+    assert result.advanced is False
+    assert result.stage == "gazette"
+    assert int(state.turn) == closed_turn
+    # 世界段必经（负向：快路已死，也不再走 extractor）
     assert len(sim_calls) == 1
-    # 邸报叙事落库（正常链 save_turn_report，非快路固定套话）
-    report = db.get_turn_report(closed_turn)
-    assert report is not None
-    assert "边事自演" in report or "邸报" in report
-    # 禁快路固定套话独占月档（若 simulator 叙事在，正常链已接管）
-    assert "诸事仍待来月处置" not in (report or "")
-    # 来源 = system_simulation（无旨/世界自演变）
+    assert not db.get_turn_report(closed_turn)
     assert any(s == Provenance.system_simulation or s == Provenance.system_simulation.value
                or s is Provenance.system_simulation for s in sources) or sources == []
     # 局势 bar：惯性推进后至少有一条变化，或 inertia 路径已跑过（空盘面也允许全不变）
@@ -89,7 +78,7 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
-    """负向：decree.advance_without_edict 空壳已删；空旨 resolve 必经 simulator。"""
+    """负向：快路壳已删；空旨过月走世界段，不推进、不走 extractor。"""
     # 1) grep 级缺席：生产码不再定义/导出 advance_without_edict 快路壳
     import ming_sim.decree as decree_pkg
     assert not hasattr(decree_pkg, "advance_without_edict")
@@ -111,14 +100,15 @@ def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
         source=Provenance.system_simulation,
     )
     assert result.awaiting is False
+    assert result.advanced is False
     assert len(sim_calls) == 1
-    assert int(state.turn) == closed_turn + 1
-    assert db.get_turn_report(closed_turn)
+    assert int(state.turn) == closed_turn
+    assert not db.get_turn_report(closed_turn)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_no_edict_zero_decisions_completes_without_stuck(game, monkeypatch):
-    """simulator 真零决策 → 既有空批/all-decided 链路走通，不卡在 awaiting。"""
+    """无新旨月份走同一主链，不停在 awaiting，也不在邸报前推进。"""
     db, state, content = game
     closed_turn = int(state.turn)
     _canned_full_settlement(
@@ -129,15 +119,15 @@ def test_no_edict_zero_decisions_completes_without_stuck(game, monkeypatch):
     result = _session(db, state, content).advance_without_decree()
     assert result is not None
     assert result.awaiting is False
+    assert result.advanced is False
     assert result.decisions in (None, [])
-    assert int(state.turn) == closed_turn + 1
-    # 相位不停在 awaiting_decision
+    assert int(state.turn) == closed_turn
     assert state.turn_phase != "awaiting_decision"
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
-    """有旨月回归：带草案 resolve_turn 仍走 simulator 全链，行为不退化。"""
+    """有旨月与无旨月同一主链：世界段跑一次，邸报未写则不推进。"""
     db, state, content = game
     closed_turn = int(state.turn)
     db.add_directive(
@@ -162,11 +152,10 @@ def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
 
     result = _session(db, state, content).resolve_turn()
     assert result.awaiting is False
+    assert result.advanced is False
     assert len(sim_calls) == 1
-    assert int(state.turn) == closed_turn + 1
-    report = db.get_turn_report(closed_turn)
-    assert report is not None
-    assert "辽饷" in report or "邸报" in report or "奉诏" in report
+    assert int(state.turn) == closed_turn
+    assert not db.get_turn_report(closed_turn)
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -204,6 +193,7 @@ def test_web_no_edict_endpoint_routes_to_full_settlement(game, monkeypatch):
     response = web_app.api_advance_without_edict()
 
     assert response.get("awaiting_decision") is False
+    assert response["advanced"] is False
     assert len(sim_calls) == 1
-    assert int(state.turn) == closed_turn + 1
-    assert db.get_turn_report(closed_turn)
+    assert int(state.turn) == closed_turn
+    assert not db.get_turn_report(closed_turn)

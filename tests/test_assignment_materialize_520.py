@@ -800,7 +800,7 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
     _post_issue_stream(
         client, expected_turn=turn_before, step="#1565 验收2 issue/stream",
     )
-    assert int(game.state.turn) == turn_before + 1
+    assert int(game.state.turn) == turn_before
 
     pending_after = db.conn.execute(
         "SELECT status, committed_directive_id FROM pending_actions WHERE id=?",
@@ -823,7 +823,7 @@ def test_ordinary_assignment_without_commitment_lands(tracer_client, monkeypatch
 
     # ④ GET /api/game/state：回合推进；案卷可经恢复读回
     state1 = _get_state(client)
-    assert _turn_of(state1) == turn_before + 1
+    assert _turn_of(state1) == turn_before
     reload_state_from_db(db, state, content=content)
     restored = db.get_decree_dossier(dossier["id"])
     assert int(restored.get("pending_action_id") or 0) == pending_id
@@ -935,7 +935,7 @@ def test_pure_inquiry_stages_zero_mechanical_matters(tracer_client, monkeypatch)
     )
     assert dossier["action_type"] == "special_decree"
     state_after = _get_state(client)
-    assert _turn_of(state_after) == turn_before + 1
+    assert _turn_of(state_after) == turn_before
     assert len(_active_initiatives(db)) == before_initiatives
     reload_state_from_db(db, state, content=content)
     restored = db.get_decree_dossier(dossier["id"])

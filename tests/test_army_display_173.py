@@ -141,7 +141,7 @@ def test_army_payload_exposes_approx_arrears_text_not_raw(game):
 
 def test_simulator_payload_exposes_army_needed(game):
     """simulator/extractor 盘面须暴露引擎实扣 army_needed。"""
-    from ming_sim.simulation import build_simulator_payload, _extractor_context_payload
+    from ming_sim.simulation import build_simulator_payload
 
     db, _state, _ = game
     aid = db.conn.execute(
@@ -157,7 +157,6 @@ def test_simulator_payload_exposes_army_needed(game):
 
     for payload in (
         build_simulator_payload(_state, db, "x", "y"),
-        _extractor_context_payload(db, _state, "y", "x"),
     ):
         armies = payload["armies"]
         assert "army_needed" in armies["cols"]

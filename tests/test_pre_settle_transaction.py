@@ -252,12 +252,6 @@ def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_beha
     import ming_sim.decree as decree_mod
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
-    )
 
     decision_narrative = (
         "本月邸报正文。\n<<DECISION>>"
@@ -278,38 +272,8 @@ def _drive_resolve_directives(db, state, content, monkeypatch, *, simulator_beha
     )
 
 
-def test_simulator_failure_keeps_settling_for_retry(game, monkeypatch):
-    """simulator 失败响亮中止，保留 pre_settle 相位供原月重试。"""
-    db, state, content = game
-    turn = state.turn
-
-    with pytest.raises(RuntimeError, match="simulated simulator crash"):
-        _drive_resolve_directives(db, state, content, monkeypatch,
-                                  simulator_behavior="fail")
-
-    assert state.turn == turn
-    assert db.get_turn_report(turn) == ""
-    row = db.conn.execute(
-        "SELECT turn, turn_phase FROM game_state"
-    ).fetchone()
-    assert tuple(row) == (turn, "settling")
 
 
-def test_hitl_pause_persists_awaiting_phase_durably(game, monkeypatch):
-    """HITL 暂停时 AWAITING_DECISION 随决策点同笔持久化（cmr S4 r2 F2a）。
-
-    靠 session 事后另笔写的话，崩在窗口里 DB 停在 settling 而决策已存，
-    web submit_decisions 只认 AWAITING=恢复死路。
-    """
-    db, state, content = game
-    turn = state.turn
-    res = _drive_resolve_directives(db, state, content, monkeypatch,
-                                    simulator_behavior="decision")
-    assert res.awaiting is True
-    assert state.turn == turn  # 回合未推进
-    row = db.conn.execute("SELECT turn_phase FROM game_state").fetchone()
-    assert row[0] == "awaiting_decision"  # DB 持久化的相位，非内存
-    db.clear_resolve_context(turn)
 
 
 def test_pre_settle_guard_covers_awaiting_decision(game):
@@ -466,33 +430,6 @@ def test_write_decree_raises_at_awaiting_not_resolveresult(game):
         sess.write_decree()
 
 
-def test_hitl_pause_crash_reloads_memory(game, monkeypatch):
-    """HITL 暂停 atomic 崩溃后内存与 DB 同源（ship-pre r2，五事务块唯一漏 reload 的）。
-
-    不 reload 的话内存留 awaiting/DB 回滚回 settling，进程内重试走 awaiting 幂等叉
-    读到空决策=死胡同。
-    """
-    db, state, content = game
-    turn = state.turn
-
-    real_save = type(db).save_state
-    calls = {"n": 0}
-    def _boom_save(self, st):
-        # pre_settle 尾的 save 照常；HITL 暂停块里的 save（phase=awaiting 时）炸
-        if st.turn_phase == "awaiting_decision":
-            raise RuntimeError("save_state crash in HITL pause")
-        return real_save(self, st)
-    monkeypatch.setattr(type(db), "save_state", _boom_save)
-
-    with pytest.raises(RuntimeError, match="HITL pause"):
-        _drive_resolve_directives(db, state, content, monkeypatch,
-                                  simulator_behavior="decision")
-
-    monkeypatch.setattr(type(db), "save_state", real_save)
-    # 内存与 DB 同源：回滚后都应是 settling（pre_settle 已提交的真相）
-    assert state.turn_phase == "settling"
-    assert db.load_state().turn_phase == "settling"
-    assert db.list_pending_decisions(turn) == []  # 决策随回滚消失
 
 
 def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):

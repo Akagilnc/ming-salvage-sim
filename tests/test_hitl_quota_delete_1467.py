@@ -49,12 +49,6 @@ def _stub_full_settlement(monkeypatch, *, narrative: str, payload_spy=None):
         return narrative, payload
 
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
-    )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
@@ -96,79 +90,7 @@ def test_hitl_quota_mechanism_fully_deleted():
     assert "hitl_min_decisions" not in prompt
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_stale_persisted_quota_ineffective_zero_decision_month(game, monkeypatch):
-    """失效钉：旧 runtime_game.json 正值落在真实用户数据位时，无真实抉择月仍 0 题过月。"""
-    # 经现行 user_data_path 写到生产原先真实用户数据位置（隔离 fixture 下）
-    stale = Path(user_data_path("runtime_game.json"))
-    stale.write_text(json.dumps({"hitl_min_decisions": 5}), encoding="utf-8")
-
-    db, state, content = game
-    closed_turn = int(state.turn)
-    payloads = []
-    _stub_full_settlement(
-        monkeypatch,
-        narrative="本月无值得亲裁的新决策，朝局按惯性推移。",
-        payload_spy=payloads,
-    )
-
-    result = decree_mod.resolve_directives(
-        state, db, None, None, [], "",
-        content=content, registry=None,
-    )
-
-    assert result.awaiting is False
-    assert result.decisions in (None, [])
-    assert db.list_pending_decisions(closed_turn) == []
-    assert int(state.turn) == closed_turn + 1
-    assert state.turn_phase != "awaiting_decision"
-    assert db.list_pending_decisions(int(state.turn)) == []
-    # payload 不得再携带配额字段（旧存值自然失效）
-    assert payloads, "simulator must have been invoked"
-    for p in payloads:
-        assert "hitl_min_decisions" not in p
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_zero_decision_month_pending_empty_month_advances(game, monkeypatch):
-    """无新决策月：pending_decisions 为空（0 题合法），过月不被批红闸卡。"""
-    db, state, content = game
-    closed_turn = int(state.turn)
-    _stub_full_settlement(
-        monkeypatch,
-        narrative="本月无值得亲裁的新决策，朝局按惯性推移。",
-    )
-
-    result = decree_mod.resolve_directives(
-        state, db, None, None, [], "",
-        content=content, registry=None,
-    )
-
-    assert result.awaiting is False
-    assert result.decisions in (None, [])
-    assert db.list_pending_decisions(closed_turn) == []
-    assert int(state.turn) == closed_turn + 1
-    assert state.turn_phase != "awaiting_decision"
-    assert db.list_pending_decisions(int(state.turn)) == []
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_real_decision_month_still_surfaces_pending(game, monkeypatch):
-    """有真实新决策月：照常出题，正向不回退。"""
-    db, state, content = game
-    closed_turn = int(state.turn)
-    _stub_full_settlement(monkeypatch, narrative=_DECISION_BLOCK)
-
-    result = decree_mod.resolve_directives(
-        state, db, None, None, [1], "减赋诏",
-        content=content, registry=None,
-    )
-
-    assert result.awaiting is True
-    assert int(state.turn) == closed_turn  # 亲裁前不推进
-    pending = db.list_pending_decisions(closed_turn)
-    assert len(pending) >= 1
-    assert any("内帑" in str(d.get("title") or "") for d in pending)
-    assert state.turn_phase == "awaiting_decision"
-    assert result.decisions
-    assert len(result.decisions) == len(pending)

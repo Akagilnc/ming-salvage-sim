@@ -7,7 +7,7 @@ from ming_sim.issues import (
     commitment_progress_payload,
     show_active_issues,
 )
-from ming_sim.simulation import _extractor_context_payload, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 
 
 def _promulgated_commitment_origin(db, state, token: str) -> str:
@@ -568,12 +568,6 @@ def test_commitment_progress_contexts_are_structured(game, capsys):
     assert sim_issue["commitment_progress"]["remaining_arrears"] == 15
     assert "已第1月" in sim_issue["待办未解进度"]
     assert "直到补齐" in sim_issue["待办未解进度"]
-
-    extractor_issue = next(
-        issue for issue in _extractor_context_payload(db, state, "", "")["active_issues"]
-        if issue["issue_id"] == issue_id
-    )
-    assert extractor_issue["commitment_progress"] == sim_issue["commitment_progress"]
 
     show_active_issues(db)
     output = capsys.readouterr().out

@@ -4613,6 +4613,16 @@ def _materialize_prohibit_covert_levy(ctx: MaterializeCtx) -> None:
         int(ctx.session.state.turn), str(ctx.character.name), payload=payload,
     )
     mark_actions_night_approved(ctx.session.db, [pending_id])
+    from ming_sim.audience_night import get_open_night
+    from ming_sim.decree_forecast import (
+        bind_forecast_owner, schedule_pending_decree_forecast,
+    )
+    open_night_row = get_open_night(ctx.session.db)
+    if open_night_row is not None:
+        bind_forecast_owner(ctx.session)
+        schedule_pending_decree_forecast(
+            ctx.session, int(pending_id), night_id=int(open_night_row["id"]),
+        )
     ctx.out["pending_action_id"] = pending_id
 
 

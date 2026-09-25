@@ -208,7 +208,9 @@ def _fail_cli_chat_turn_scene(
                 (int(entry_id),),
             )
             session.db.conn.commit()
-        session.db.fail_chat_turn(int(chat_turn_id))
+        restored_ids = session.db.fail_chat_turn(int(chat_turn_id))
+        from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+        schedule_restored_decree_forecasts(session, restored_ids)
         return
     if entry_id:
         # Prior Q&A turn must stay intact; only drop the failed exit placeholder.
@@ -496,9 +498,13 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
                     chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
                 )
             if hasattr(db, "restore_interrupted_after_failed_retry"):
-                db.restore_interrupted_after_failed_retry(chat_turn_id)
+                restored_ids = db.restore_interrupted_after_failed_retry(chat_turn_id)
+                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+                schedule_restored_decree_forecasts(session, restored_ids)
         except Exception:
-            pass
+            logger.exception(
+                "CLI retry rollback/forecast recovery failed chat_turn_id=%s", chat_turn_id,
+            )
         session.abandon_chat_turn_scene(chat_turn_id)
         print(f"重试回话失败：{exc}\n")
         return None
@@ -617,7 +623,10 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
                     # #498：CLI 与 web 共用 attach_chat_turn_to_night，禁止 night_id=0 旁路
                     # #503/#542：生产路径与 Web/收夜共用真实 scene LLM adapter。
-                    from ming_sim.audience_night import attach_chat_turn_to_night, recognize_xuan_command
+                    from ming_sim.audience_night import (
+                        attach_chat_turn_to_night, get_open_night, recognize_xuan_command,
+                    )
+                    night_was_open = get_open_night(session.db) is not None
                     _night_id, chat_turn_id = attach_chat_turn_to_night(
                         session.db,
                         session.state,
@@ -627,6 +636,9 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         beat_generator=None,
                         route=cli_route,
                     )
+                    if not night_was_open:
+                        from ming_sim.decree_forecast import schedule_held_decree_forecasts
+                        schedule_held_decree_forecasts(session)
                     if not recognize_xuan_command(question):
                         session.start_chat_turn_scene(character.name, chat_turn_id)
                 user_message_id = session.db.append_chat_message(
@@ -683,7 +695,9 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),
                     )
-                    session.db.fail_chat_turn(chat_turn_id)
+                    restored_ids = session.db.fail_chat_turn(chat_turn_id)
+                    from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+                    schedule_restored_decree_forecasts(session, restored_ids)
                 elif user_message_id is not None and result is None:
                     session.db.delete_chat_messages([user_message_id])
             except BaseException as cleanup_error:
@@ -911,8 +925,14 @@ def play_turn(session: GameSession) -> None:
             )
             if result is not None:
                 print(report)
-                session.end_turn()
-            return
+                if getattr(session.state, "ended", False):
+                    return
+                if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
+                    session.end_turn()
+                    return
+            else:
+                return
+            continue
         if action == "issue":
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
@@ -932,9 +952,16 @@ def play_turn(session: GameSession) -> None:
             _print_pending_action_failures(
                 _new_secret_order_failure_payloads(session, turn_before, failed_before)
             )
-            print(report)
-            session.end_turn()
-            return
+            if result is not None:
+                print(report)
+                if getattr(session.state, "ended", False):
+                    return
+                if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
+                    session.end_turn()
+                    return
+            else:
+                return
+            continue
 
 
 def run_cli(
@@ -980,6 +1007,7 @@ def run_cli(
         print(f"当前 LLM：{model} @ {base_url}{adv_hint}")
         print(f"数据库：{db_path}\n")
         while True:
+            turn_start = int(session.state.turn)
             play_turn(session)
             if session.state.ended:
                 from ming_sim.context import ENDING_LABELS
@@ -991,7 +1019,11 @@ def run_cli(
                 print("\n（本局已终结。）")
                 input("\n按回车退出游戏：")
                 break
-            raw = input(f"\n按回车继续下一{TURN_UNIT}，或输入 exit 退出游戏：").strip()
+            if int(session.state.turn) > turn_start:
+                prompt = f"\n按回车继续下一{TURN_UNIT}，或输入 exit 退出游戏："
+            else:
+                prompt = f"\n按回车继续本{TURN_UNIT}，或输入 exit 退出游戏："
+            raw = input(prompt).strip()
             if raw.lower() in EXIT_COMMANDS:
                 break
     except ExitGame:

@@ -56,7 +56,7 @@ from ming_sim.issues import (
     apply_score_extraction,
 )
 from ming_sim.models import TurnPhase, loads_effect_dict
-from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 from ming_sim.staged_commitment import TODO_STATUS_PENDING
 
 
@@ -955,46 +955,3 @@ def test_ac6_presentation_sentinel_distinct_from_625(game):
     assert "失败（）" not in (f"失败（{bad}）" if bad else "失败")
 
 
-def test_extractor_commitment_backlash_facts_gated_to_issues_module(game):
-    """#626 P3：commitment_backlash_facts 仅 module==issues；他模块不得见。"""
-    db, state, _content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-
-    did, holder = _executing_policy_dossier(db, state, token="xgate")
-    bar = _seed_halfway(db, state, did=did)
-    _insert_commitment(
-        db, state, title="门控之诺", origin_ref=f"dossier:{did}",
-        bar_value=bar,
-        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
-    )
-    db.record_dossier_execution(
-        did, "failed", "期限已过，诸事不济", int(state.turn),
-        close=True, commit=True,
-    )
-    state.turn = int(state.turn) + 1
-    hits = db.trigger_commitment_backlashes(state, commit=True)
-    assert hits
-
-    issues_ctx = build_extractor_shared_context(
-        db, state, "邸报", "", module="issues"
-    )
-    assert "commitment_backlash_facts" in issues_ctx
-    assert issues_ctx["commitment_backlash_facts"]
-    assert int(issues_ctx["commitment_backlash_facts"][0]["issue_id"]) == int(
-        hits[0]["issue_id"]
-    )
-
-    for module in ("internal", "military_external", "personnel_secret"):
-        other = build_extractor_shared_context(
-            db, state, "邸报", "", module=module,
-        )
-        assert "commitment_backlash_facts" not in other, (
-            f"{module} 不得注入 commitment_backlash_facts"
-        )
-
-    # 无门副本已撤：_extractor_context_payload 不再常驻该键
-    from ming_sim.simulation import _extractor_context_payload
-
-    base = _extractor_context_payload(db, state, "邸报", "")
-    assert "commitment_backlash_facts" not in base

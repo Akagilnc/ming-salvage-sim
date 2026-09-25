@@ -539,7 +539,7 @@ def test_no_active_weishi_in_summonable_roster_including_1642_1645(game):
 
     钉张煌言(debut 1642)/郑成功(debut 1645) 等同型诸生童生——不靠单一史可法 seed status。
     """
-    from ming_sim.simulation import _extractor_context_payload, build_simulator_payload
+    from ming_sim.simulation import build_simulator_payload
 
     db, state, content = game
     sess = _session_stub(db, content)
@@ -575,10 +575,6 @@ def test_no_active_weishi_in_summonable_roster_including_1642_1645(game):
     assert "史可法" not in str(sim.get("court_roster", ""))
     assert "张煌言" not in str(sim.get("court_roster", ""))
     assert "郑成功" not in str(sim.get("court_roster", ""))
-    ext = _extractor_context_payload(db, state, narrative="", decree_text="")
-    assert "史可法" not in str(ext.get("active_ministers", ""))
-    assert "张煌言" not in str(ext.get("active_ministers", ""))
-    assert "郑成功" not in str(ext.get("active_ministers", ""))
 
 
 def test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file(game):

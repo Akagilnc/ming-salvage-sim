@@ -84,6 +84,43 @@ def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
     assert str(exc) in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("action", ["issue", "skip"])
+def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
+    class Session(_Sess):
+        def __init__(self):
+            super().__init__(None)
+            self.step = 0
+
+        def resolve_turn(self):
+            self.calls.append("resolve")
+            advanced = self.step > 0
+            self.step += 1
+            if advanced:
+                self.state.turn += 1
+            return SimpleNamespace(advanced=advanced)
+
+        def advance_without_decree(self):
+            self.calls.append("advance")
+            advanced = self.step > 0
+            self.step += 1
+            if advanced:
+                self.state.turn += 1
+            return SimpleNamespace(advanced=advanced)
+
+    sess = Session()
+    actions = iter([action, action])
+    monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
+    monkeypatch.setattr(term, "_print_header", lambda _s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
+    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
+
+    term.play_turn(sess)
+
+    call_name = "resolve" if action == "issue" else "advance"
+    # 未推进时留在本回合交互循环不调 end_turn，再次推进后才调 end_turn 退出
+    assert sess.calls == ["begin", call_name, call_name, "end"]
+
+
 def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
     """CLI issue reaches the end-turn owner without reviving decree preview/review."""
 
@@ -465,7 +502,7 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
                 "kind": "secret_order",
                 "action": "新建",
             })
-            return SimpleNamespace(awaiting=False, report="月报")
+            return SimpleNamespace(awaiting=False, advanced=True, report="月报")
 
         def end_turn(self):
             self.calls.append("end")
@@ -489,7 +526,7 @@ def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypat
     session = _Sess(RuntimeError("unused"))
     session.current_phase = lambda: TurnPhase.REVIEWING
     session.advance_without_decree = lambda: SimpleNamespace(
-        awaiting=False, report="留中案卷本月重判月报",
+        awaiting=False, advanced=True, report="留中案卷本月重判月报",
     )
     monkeypatch.setattr(term, "review_directives", lambda _s: "skip")
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
@@ -686,3 +723,44 @@ def test_cli_write_gate_canonical_session_attr():
     assert getattr(session, "_write_gate", None) is gate
     # 二次调用同锁
     assert term._cli_write_gate(session) is gate
+
+
+@pytest.mark.parametrize("action", ["skip", "issue"])
+def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
+    """#1843/PR #1876: HITL 续跑实际推进月份后，play_turn 必须调用 end_turn 并结束本回合。"""
+    from tests.settlement_seam_helpers import make_light_session
+
+    db, state, content = game
+    turn_before = int(state.turn)
+    db.save_pending_decisions(turn_before, [{
+        "title": "急务亲裁",
+        "context": "辽东饷银案卷",
+        "options": [{"label": "发饷", "hint": "拨银五万两"}],
+    }])
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    db.save_resolve_context(
+        turn_before, "测试诏书", "月报",
+        {"candidate_events": [], "transit_semantics": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    db.save_turn_report(state, "邸报已成")
+
+    session = make_light_session(db, state, content)
+
+    # 中和外部 LLM 边界，推演主链与亲裁续跑全走真实逻辑
+    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr("ming_sim.month_translate.translate_month_segment", lambda *a, **k: {"effects": {}})
+
+    # 单次操作迭代器：未正确 end_turn + return 时若重入交互循环，next 会抛 StopIteration
+    actions = iter([action])
+    monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
+    monkeypatch.setattr(term, "_print_header", lambda _s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
+
+    term.play_turn(session)
+
+    # 验证月份已真实推进，且 end_turn 已被调用将 turn_phase 重置为 summoning
+    assert int(session.state.turn) == turn_before + 1
+    assert session.current_phase() == TurnPhase.SUMMONING
+    assert db.load_state().turn_phase == TurnPhase.SUMMONING.value

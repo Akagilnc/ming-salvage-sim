@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import json
 import re
 from pathlib import Path
@@ -15,7 +14,7 @@ from ming_sim.decree_vocabulary import (
     SIM_DOSSIER_NARRATIVE_KEYS,
     render_referenceable_dossier_brief,
 )
-from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict as _rejected_verdict
 from tests.dossier_test_helpers import create_test_secret_order
 
@@ -69,36 +68,6 @@ def test_a_monthly_progress_public_safe_projection(game):
     assert int(hit["turn"]) == state.turn
     assert hit["progress_band"] == "在途核验"
     assert "memorial_text" not in hit
-
-
-def test_a_personnel_secret_rail_and_secret_order_exclusion_unchanged(game):
-    db, state, _content = game
-    _order_id, dossier_id, secret_title, memorial = _long_secret(db, state)
-
-    private = build_extractor_shared_context(
-        db, state, "邸报", "", module="personnel_secret",
-    )
-    assert any(
-        int(item["dossier_id"]) == dossier_id
-        for item in private["monthly_dossier_reports"]
-    )
-    private_dump = json.dumps(private, ensure_ascii=False)
-    assert memorial in private_dump or any(
-        any(
-            str(p.get("memorial_text") or "") == memorial
-            for p in (item.get("progress") or [])
-        )
-        for item in private["monthly_dossier_reports"]
-    )
-
-    public_ids = {
-        int(row["id"]) for row in db.list_decree_dossiers_for_simulation(state.turn)
-    }
-    assert dossier_id not in public_ids
-    assert all(
-        row.get("action_type") != "secret_order"
-        for row in db.list_decree_dossiers_for_simulation(state.turn)
-    )
 
 
 # ── B. 结构化案卷投影契约 ───────────────────────────────────────────
@@ -172,30 +141,6 @@ def test_c_decree_text_retained_and_extractor_surface_untouched(game):
     payload = build_simulator_payload(state, db, "着户部核辽饷", "")
     assert payload.get("decree_text") == "着户部核辽饷"
     assert payload["decree_text"]
-
-    src = (_REPO / "ming_sim" / "simulation.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    fn = next(
-        node for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "build_extractor_shared_context"
-    )
-    # extractor 仍按既有 slim 字段投影，不吃 simulator 全量案卷键
-    body = ast.get_source_segment(src, fn) or ""
-    assert 'origin_ref' in body
-    assert "monthly_progress" not in body
-
-    prompt_dir = _REPO / "content" / "prompts"
-    for name in (
-        "score_extractor_shared.md",
-        "score_extractor_issues.md",
-        "score_extractor_personnel_secret.md",
-        "score_extractor_military_external.md",
-        "score_extractor_economy_internal.md",
-    ):
-        path = prompt_dir / name
-        if path.exists():
-            # 本片不得改 extractor prompt：以 git 为证在 test 外；此处只钉仍存在
-            assert path.read_text(encoding="utf-8").strip()
 
 
 # ── D. 对账输入位 ───────────────────────────────────────────────────

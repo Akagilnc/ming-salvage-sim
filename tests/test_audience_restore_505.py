@@ -407,6 +407,41 @@ class _FailingRetrySession(_RetrySession):
         )
 
 
+@pytest.mark.parametrize("rollback_method", ["fail_chat_turn", "restore_interrupted_after_failed_retry"])
+def test_failed_chat_rollback_returns_restored_directive_ids(restore_env, rollback_method):
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={"text": "原拟旨"},
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET night_approved=1, night_id=? WHERE id=?",
+        (int(night["id"]), pending_id),
+    )
+    db.conn.commit()
+    chat_turn_id = _start_generating_turn(db, state, minister, "回滚拟旨？")
+    before = db.capture_chat_rollback_snapshot()
+    db.conn.execute(
+        "UPDATE pending_actions SET payload_json=?, version=version+1 WHERE id=?",
+        ('{"text":"变更后的拟旨"}', pending_id),
+    )
+    db.conn.commit()
+    db.record_chat_turn_rollback_diffs(
+        chat_turn_id, before, db.capture_chat_rollback_snapshot(),
+    )
+
+    restored = getattr(db, rollback_method)(chat_turn_id)
+
+    assert restored == [pending_id]
+    row = db.conn.execute(
+        "SELECT status, night_approved FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    assert row["status"] == "pending" and row["night_approved"] == 1
+
+
 def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
@@ -794,8 +829,12 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
 
 
 @pytest.fixture
-def web_game(tmp_path, monkeypatch):
-    """真实 WebGame（新档、temp DB/saves）；构造即不连 LLM，仅 runtime 配置中和。"""
+def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
+    """真实 WebGame（新档、temp DB/saves）；构造即不连 LLM，仅 runtime 配置中和。
+
+    _start_chat_turn 会在 cli-action-intent 上跑 scene。须在构造前挂上已有的
+    离线节拍替身，否则 sk-test 会打到 api.openai.com。
+    """
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -1088,12 +1127,14 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
 
     from tests.test_pihong_dossier_1490 import _657_install_real_phase2_llm_boundary
     _657_install_real_phase2_llm_boundary(monkeypatch)
+    import ming_sim.month_chain as month_chain
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
 
     turn_before = int(state.turn)
     report = sess.submit_hitl_choices([], write_gate=sess._write_gate)
-    assert isinstance(report, str) and report.strip()
-    assert sess.state.turn_phase == TurnPhase.ISSUED.value
-    assert int(sess.state.turn) == turn_before + 1
+    assert isinstance(report, str)
+    assert sess.state.turn_phase != TurnPhase.ISSUED.value
+    assert int(sess.state.turn) == turn_before
     # 仅 S 被启动；U 仍 failed
     assert started == [s_ct]
     assert db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (u_ct,)).fetchone()["status"] == "failed"

@@ -30,12 +30,6 @@ def _canned(monkeypatch, narrative="本月退朝未下正式圣旨，边事自�
         decree_mod, "simulate_season_with_payload",
         lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
     )
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
-    )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
@@ -87,103 +81,12 @@ def _web_runtime(db, state, content, *, monkeypatch, session=None):
     return runtime
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_no_edict_full_chain_writes_turn_report_and_public_gazette(game, monkeypatch):
-    """无旨完整结算后：closed turn 有正式 turn_report + 邸报公共知识事件。"""
-    db, state, content = game
-    closed_turn = int(state.turn)
-    narrative = "本月退朝未下正式圣旨，边事自演。"
-    _canned(monkeypatch, narrative)
-
-    result = _session(db, state, content).advance_without_decree()
-    assert result is not None and result.awaiting is False
-    assert int(state.turn) == closed_turn + 1
-
-    report = db.get_turn_report(closed_turn)
-    assert report == narrative
-
-    archives = db.list_monthly_archives()
-    month = next((row for row in archives if int(row["turn"]) == closed_turn), None)
-    assert month is not None
-    assert month["has_report"] is True
-
-    row = db.conn.execute(
-        """
-        SELECT title, body, source_id FROM character_knowledge_events
-        WHERE character_name='' AND turn=? AND title=?
-        ORDER BY id DESC LIMIT 1
-        """,
-        (closed_turn, "邸报"),
-    ).fetchone()
-    assert row is not None
-    assert str(row["source_id"] or "") == f"turn_report:{closed_turn}:public"
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_no_edict_previous_turn_summary_hits_narrative(game, monkeypatch):
-    """推进后 previous_turn_summary 命中 simulator 叙事。"""
-    db, state, content = game
-    narrative = "本月退朝未下正式圣旨，诸事仍待来月处置——世界自演。"
-    _canned(monkeypatch, narrative)
-    _session(db, state, content).advance_without_decree()
-
-    summary = db.previous_turn_summary(state)
-    assert summary == narrative
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_no_edict_http_last_report_matches_durable_and_history(game, monkeypatch):
-    """#1382：无旨 HTTP 结算响应 / 跨实例 load_state 恢复 / history 三者同 turn_reports 原文。"""
-    db, state, content = game
-    closed_turn = int(state.turn)
-    narrative = "无旨月邸报原文钉测·边事自演。"
-    _canned(monkeypatch, narrative)
-    runtime = _web_runtime(db, state, content, monkeypatch=monkeypatch)
-    assert runtime.state_payload()["last_report"] == ""
-
-    body = web_app.AdvanceWithoutEdictRequest(expected_turn=closed_turn)
-    response = web_app.api_advance_without_edict(body)
-
-    durable = db.get_turn_report(closed_turn)
-    assert durable  # 结构化：闭月有落库行；正文同值由下方三方相等钉，不盯措辞
-    assert int(state.turn) == closed_turn + 1
-    assert response.get("awaiting_decision") is False
-
-    # 1) 结算响应内嵌 state.last_report ≡ 落库原文
-    assert response["state"]["last_report"] == durable
-
-    # 2) 跨连接恢复：新 GameDB + runtime 只读已提交的 turn_reports 原文
-    reopened = GameDB(db.path, content=content)
-    try:
-        restored_state = reopened.load_state()
-        _web_runtime(reopened, restored_state, content, monkeypatch=monkeypatch)
-        assert asyncio.run(web_app.api_state())["last_report"] == durable
-
-        # 3) history/turn/{closed_turn} 同份原文
-        history = asyncio.run(web_app.api_history_turn(closed_turn))
-        assert history["exists"] is True
-        assert history["report"] == durable
-    finally:
-        reopened.close()
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_double_token_only_one_month_archive(game, monkeypatch):
-    """A1×A2 联验：同令牌连发两次 → 第二次 409，史册只多一档月报。"""
-    db, state, content = game
-    start = int(state.turn)
-    before_archives = len(db.list_monthly_archives())
-    _canned(monkeypatch, "令牌联验无旨月邸报。")
-    _web_runtime(db, state, content, monkeypatch=monkeypatch)
-
-    body = web_app.AdvanceWithoutEdictRequest(expected_turn=start)
-    web_app.api_advance_without_edict(body)
-    with pytest.raises(HTTPException) as ei:
-        web_app.api_advance_without_edict(body)
-    assert ei.value.status_code == 409
-    assert int(state.turn) == start + 1
-    assert len(db.list_monthly_archives()) == before_archives + 1
-    assert db.get_turn_report(start)
 
 
 def test_advance_without_edict_shell_absent():

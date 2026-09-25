@@ -91,8 +91,7 @@ class _FakeAgent:
 
 
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
-    """只 fake 月末推演的 simulator/extractor **LLM 调用**；resolve_directives 结算核（含
-    build_extractor_shared_context 这类确定性上下文装配）真跑。"""
+    """只 fake 月末推演的 simulator LLM 调用；resolve_directives 结算核真跑。"""
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "llm_promulgation_verdicts",
@@ -103,14 +102,27 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     )
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
                         lambda *a, **k: (narrative, k.get("simulator_payload") or {}))
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno",
-                        lambda *a, **k: (delta or {}, "out", "in"))
     # #1745：结算拒收递话同属外层 LLM 缝（与 1468 _stub_outer_llm_seams 同源）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
+    monkeypatch.setattr(
+        "ming_sim.month_chain.run_world_segment_text", lambda *a, **k: narrative,
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_translate.translate_month_segment",
+        lambda *a, **k: {"effects": {}},
+    )
+    monkeypatch.setattr(
+        "ming_sim.decree_forecast.produce_forecast_product",
+        lambda *_a, **_k: {
+            "verdict": {"decision": "promulgated"},
+            "declaration": {"effects": {}},
+            "questions": None,
+            "forecast_text": narrative,
+            "visible_refs": {},
+        },
+    )
     # 章节记忆的唯一 LLM 输出边界（memories.run_agent_text 仅被 record_chapter_memory 调用）；
     # record_chapter_memory 与其确定性装配仍真跑。
     monkeypatch.setattr(memories_mod, "run_agent_text",
@@ -512,6 +524,90 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
 
 
 # ── ① AC10 成功等待分支：在飞时触发颁诏 → 回话在超时内落档 → 收夜后颁诏、推进回合 ──
+
+
+# ── ② 对话内应允候选：收夜提交即准旨，月末玩家流零二次准驳 ─────────────
+
+
+
+
+
+
+# ── ③ #1353 K10a：挂起在飞不按 elapsed 造 409；工人终态后过月续跑 ──
+
+
+# ── ③ 同步退朝端点 offload 不冻结 event loop（真实 ASGI + 并发在飞 + ticker）──────
+
+
+# ── ④ TOCTOU：等 gate 期间相位翻到亲裁 → 持锁内权威复查经真实 /chat/stream SSE 拒 ──
+def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
+    game = web_game
+    minister = _active_minister(game)
+    # 装好 fake LLM：删掉持锁内复查时，失败只会因非法开夜/建轮（而非缺 API key 401）。
+    _agent = _FakeAgent()
+    game.session.registry.get = lambda ch, **_kw: _agent
+    stub_scene_agent(monkeypatch, _agent)
+    game.state.turn_phase = TurnPhase.SUMMONING.value  # 锁前快速查通过
+    nights0, turns0 = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")
+
+    async def scenario():
+        async with _client() as client:
+            game._write_gate.acquire()  # 扮演结算 worker 持真实 write gate
+            try:
+                chat_task = asyncio.create_task(
+                    client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
+                # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
+                await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
+                game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
+            finally:
+                game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
+            return _parse_sse((await chat_task).text)
+
+    events = asyncio.run(scenario())
+
+    # 相位拒绝：SSE error + 零新夜/新 chat（wire 无 phase code；不改生产协议）。
+    assert events and events[-1]["event"] == "error"
+    assert _count(game.db, "audience_nights") == nights0
+    assert _count(game.db, "chat_turns") == turns0
+
+
+# ── ⑤ 已成案旨无公开拟诏、改稿、删除工作面 ─────────────────────────────
+def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
+    game = web_game
+    directive_id = game.db.add_directive(
+        game.state, None, "着户部核边饷", "手动新增",
+        dossier_payload=_POLICY_FIELDS,
+    )
+    game.db.ensure_dossiers_for_draft_directives(game.state)
+
+    registered_paths = {route.path for route in web_app.app.routes}
+    assert "/api/decree/write" not in registered_paths
+
+    async def scenario():
+        async with _client() as client:
+            return (
+                await client.patch(
+                    f"/api/directives/{directive_id}", json={"text": "改稿"},
+                ),
+                await client.delete(f"/api/directives/{directive_id}"),
+                await client.get("/api/game/state"),
+            )
+
+    edit, delete, state = asyncio.run(scenario())
+    assert edit.status_code == 404
+    assert delete.status_code == 409
+    body = state.json()
+    # 候选列表仍滤掉已成案（list_directives 语义不变）
+    assert directive_id not in {row["id"] for row in body["directives"]}
+    # #1764：已成案·待盖玺只读投影（0051 proposed）；不另立事实源
+    cased = body.get("cased_directives") or []
+    match = next((row for row in cased if int(row["id"]) == int(directive_id)), None)
+    assert match is not None
+    assert int(match["dossier_id"]) > 0
+    assert match["dossier_status"] == "proposed"
+    assert match["source"] == "手动新增"
+    assert "着户部核边饷" in str(match["text"])
+
 def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monkeypatch):
     """AC10「回话完成入档后才收夜再颁诏」：#1353 过月屏障等 chat 整轮票清零后收夜再颁诏。
 
@@ -591,11 +687,10 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     # 颁诏成功（done）+ 真实结算核：收夜封夜 + 推进回合 + 持久化
     assert issue_events[-1]["event"] == "done"
     assert an.get_night(game.db, night["id"])["status"] == "closed"
-    assert int(game.state.turn) == turn_before + 1
-    assert int(game.db.load_state().turn) == turn_before + 1
+    assert int(game.state.turn) == turn_before
+    assert int(game.db.load_state().turn) == turn_before
 
 
-# ── ② 对话内应允候选：收夜提交即准旨，月末玩家流零二次准驳 ─────────────
 def test_night_approved_directive_closes_into_month_end_without_second_review(web_game, monkeypatch):
     game = web_game
     minister = _active_minister(game)
@@ -621,10 +716,13 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
     assert events[-1]["event"] == "done"
     assert not ({"confirm", "reject", "pending_review"} & {event["event"] for event in events})
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
-    assert int(game.state.turn) == turn_before + 1
+    assert int(game.state.turn) == turn_before
     assert not game.db.list_night_approved_pending(int(night["id"]), kind="directive")
-    settled = game.db.list_directives_by_turn(turn_before)
-    assert any(d["text"] == text for d in settled), "收夜应将已应允候选直接提交并进入月末结算"
+    rows = game.db.conn.execute(
+        "SELECT status, text FROM turn_directives WHERE turn=?",
+        (turn_before,),
+    ).fetchall()
+    assert any(str(row["text"] or "") == text for row in rows), rows
 
 
 def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(web_game, monkeypatch):
@@ -974,10 +1072,9 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
     assert len(closes) == 1
     dossier = game.db.get_dossier_for_directive(directive_id)
     assert dossier is not None
-    assert int(game.db.load_state().turn) == turn_before + 1
+    assert int(game.db.load_state().turn) == turn_before
 
 
-# ── ③ #1353 K10a：挂起在飞不按 elapsed 造 409；工人终态后过月续跑 ──
 def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch):
     """#1353 K10a：在飞回话挂起时颁诏等待工人终态，不按墙钟伪造 in_flight 409。
 
@@ -1045,11 +1142,10 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
     # 非伪造 in-flight：等待期间 issue 未完成（scenario 内）；工人终态后续跑成功。
     assert issue_events[-1]["event"] == "done", issue_events
     assert an.get_night(game.db, night["id"])["status"] == "closed"
-    assert int(game.state.turn) == turn_before + 1
-    assert int(game.db.load_state().turn) == turn_before + 1
+    assert int(game.state.turn) == turn_before
+    assert int(game.db.load_state().turn) == turn_before
 
 
-# ── ③ 同步退朝端点 offload 不冻结 event loop（真实 ASGI + 并发在飞 + ticker）──────
 def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
     game = web_game
     minister = _active_minister(game)
@@ -1097,72 +1193,3 @@ def test_sync_advance_endpoint_does_not_stall_event_loop(web_game, monkeypatch):
     # #1353 K10a：工人终态后继续，不按在飞 elapsed 造 409
     assert status == 200, f"advance after chat terminal expected 200, got {status}"
 
-
-# ── ④ TOCTOU：等 gate 期间相位翻到亲裁 → 持锁内权威复查经真实 /chat/stream SSE 拒 ──
-def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
-    game = web_game
-    minister = _active_minister(game)
-    # 装好 fake LLM：删掉持锁内复查时，失败只会因非法开夜/建轮（而非缺 API key 401）。
-    _agent = _FakeAgent()
-    game.session.registry.get = lambda ch, **_kw: _agent
-    stub_scene_agent(monkeypatch, _agent)
-    game.state.turn_phase = TurnPhase.SUMMONING.value  # 锁前快速查通过
-    nights0, turns0 = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")
-
-    async def scenario():
-        async with _client() as client:
-            game._write_gate.acquire()  # 扮演结算 worker 持真实 write gate
-            try:
-                chat_task = asyncio.create_task(
-                    client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
-                # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
-                await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
-                game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
-            finally:
-                game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
-            return _parse_sse((await chat_task).text)
-
-    events = asyncio.run(scenario())
-
-    # 相位拒绝：SSE error + 零新夜/新 chat（wire 无 phase code；不改生产协议）。
-    assert events and events[-1]["event"] == "error"
-    assert _count(game.db, "audience_nights") == nights0
-    assert _count(game.db, "chat_turns") == turns0
-
-
-# ── ⑤ 已成案旨无公开拟诏、改稿、删除工作面 ─────────────────────────────
-def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
-    game = web_game
-    directive_id = game.db.add_directive(
-        game.state, None, "着户部核边饷", "手动新增",
-        dossier_payload=_POLICY_FIELDS,
-    )
-    game.db.ensure_dossiers_for_draft_directives(game.state)
-
-    registered_paths = {route.path for route in web_app.app.routes}
-    assert "/api/decree/write" not in registered_paths
-
-    async def scenario():
-        async with _client() as client:
-            return (
-                await client.patch(
-                    f"/api/directives/{directive_id}", json={"text": "改稿"},
-                ),
-                await client.delete(f"/api/directives/{directive_id}"),
-                await client.get("/api/game/state"),
-            )
-
-    edit, delete, state = asyncio.run(scenario())
-    assert edit.status_code == 404
-    assert delete.status_code == 409
-    body = state.json()
-    # 候选列表仍滤掉已成案（list_directives 语义不变）
-    assert directive_id not in {row["id"] for row in body["directives"]}
-    # #1764：已成案·待盖玺只读投影（0051 proposed）；不另立事实源
-    cased = body.get("cased_directives") or []
-    match = next((row for row in cased if int(row["id"]) == int(directive_id)), None)
-    assert match is not None
-    assert int(match["dossier_id"]) > 0
-    assert match["dossier_status"] == "proposed"
-    assert match["source"] == "手动新增"
-    assert "着户部核边饷" in str(match["text"])

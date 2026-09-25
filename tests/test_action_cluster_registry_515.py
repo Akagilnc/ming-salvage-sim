@@ -1099,6 +1099,84 @@ def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkey
     assert int(remaining[0]["id"]) == pid
 
 
+def test_undo_restored_approved_decree_restarts_forecast_for_new_version(game, monkeypatch):
+    """撤回恢复旧批稿后，以新版本身份重新暂存预推。"""
+    from ming_sim.declaration_dispatch import pending_action_decree_ref, stage_declaration
+    from ming_sim.session_write_queue import get_session_write_queue
+    import ming_sim.audience_night as audience_night
+    import ming_sim.decree as decree_mod
+    import ming_sim.decree_forecast as forecast_mod
+    import ming_sim.month_translate as month_translate
+
+    db, state, content = game
+    minister = _active_ch(db, content)
+    night = audience_night.open_night(db, state)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "test-policy", "text": "着户部清核辽饷。",
+            "actor": minister.name, "mode": "ordinary",
+        },
+    )
+    db.mark_pending_night_approved([pending_id], night_id=int(night["id"]))
+    old_ref = pending_action_decree_ref(pending_id, 1)
+    stage_declaration(db, decree_ref=old_ref, declaration={"commissions": []}, turn=state.turn)
+
+    chat_turn_id = db.create_chat_turn(
+        state, minister.name, "undo-approved-decree", 0, night_id=int(night["id"]),
+    )
+    db.update_chat_turn_messages(
+        chat_turn_id,
+        db.append_chat_message(minister.name, state.turn, "user", "改拟旨。"),
+        db.append_chat_message(minister.name, state.turn, "minister", "臣遵旨。"),
+    )
+    before = db.capture_chat_rollback_snapshot()
+    db.update_directive_candidate(pending_id, {
+        "dossier_action_type": "policy", "target_kind": "issue",
+        "target_id": "test-policy", "text": "着户部重核辽饷。", "actor": minister.name,
+    })
+    db.record_chat_turn_rollback_diffs(
+        chat_turn_id, before, db.capture_chat_rollback_snapshot(),
+    )
+
+    def judge(_agent, prompt, **_kwargs):
+        dossier_id = json.loads(prompt)["dossiers"][0]["id"]
+        return json.dumps({
+            "verdicts": [{"dossier_id": dossier_id, "decision": "promulgated"}],
+        })
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(
+        forecast_mod.agents, "run_agent_text",
+        lambda *_a, **_k: "预推叙述" + "<<DECISION>>{}<<END>>" + "问后叙述",
+    )
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt",
+        lambda *_a, **_k: {"commissions": []},
+    )
+    wg = _wire_web_game(db, state, content, _SyncAgent("无关回话。"), monkeypatch)
+    from ming_sim.models import LLMConfig
+    wg.session.llm_config = LLMConfig(
+        api_key="test", base_url="https://example.invalid/v1", model="test-model",
+    )
+
+    wg.undo_last_chat(minister.name)
+    assert get_session_write_queue(wg.session).wait_idle(timeout_s=5)
+
+    restored = db.conn.execute(
+        "SELECT version,night_approved FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    assert (int(restored["version"]), int(restored["night_approved"])) == (3, 1)
+    assert db.conn.execute(
+        "SELECT status FROM staged_declarations WHERE decree_ref=?", (old_ref,),
+    ).fetchone()["status"] == "discarded"
+    new_ref = pending_action_decree_ref(pending_id, 3)
+    assert db.conn.execute(
+        "SELECT status FROM staged_declarations WHERE decree_ref=?", (new_ref,),
+    ).fetchone()["status"] == "staged"
+
+
 # ── #1744：分类粒度 / draft 共存边界 → chat → HTTP 可见 ──
 # 独有契约（本区）：
 # - one_intent_probe_raw_chat_to_pending_api：冻结 probe-shaped raw 经 classify 入口归一

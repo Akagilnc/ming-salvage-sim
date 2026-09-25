@@ -36,6 +36,17 @@ const awaitingState = {
   pending_decisions: [validDecision],
 } as unknown as GameState;
 
+const settlingState = {
+  ...awaitingState,
+  turn: { ...awaitingState.turn, phase: "settling" },
+  pending_decisions: [],
+} as GameState;
+
+function sseUnadvancedResponse(): Response {
+  const body = `event: done\ndata: ${JSON.stringify({ advanced: false, report: "" })}\n\n`;
+  return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+}
+
 function sseDecisionsResponse(): Response {
   const body = [
     "event: decisions",
@@ -472,6 +483,42 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     expect(host.querySelector("[data-testid=pending-count]")?.textContent).toBe("1");
     expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
 
+    cleanup();
+  });
+});
+
+describe("#1843 未推进的过月终包", () => {
+  it.each([
+    ["issueDecree", "/api/decree/issue/stream"],
+    ["submitDecisions", "/api/decree/resolve_decisions/stream"],
+    ["advanceWithoutEdict", "/api/decree/advance_without_edict"],
+  ] as const)("%s 留在账本核账态而非按完成 reload", async (action, path) => {
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+    const loadState = vi.fn(async () => settlingState);
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url !== path) throw new Error(`unexpected fetch: ${url}`);
+      return action === "advanceWithoutEdict"
+        ? new Response(JSON.stringify({ advanced: false, state: settlingState }))
+        : sseUnadvancedResponse();
+    }));
+    const { host, hookRef, cleanup } = mountHarness({
+      loadState,
+      initial: action === "submitDecisions" ? awaitingState : preClickState,
+    });
+
+    await act(async () => {
+      if (action === "submitDecisions") await hookRef.current!.submitDecisions([]);
+      else await hookRef.current![action]();
+    });
+
+    expect(loadState).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="phase"]')?.textContent).toBe("settling");
+    expect(host.querySelector('[data-testid="busy"]')?.textContent).toBe("");
     cleanup();
   });
 });

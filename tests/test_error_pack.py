@@ -17,96 +17,7 @@ import ming_sim.decree as decree_mod
 from ming_sim.exceptions import SettlementAbort
 
 
-def _drive_extractor_failure(db, state, content, monkeypatch):
-    """以 stub 驱动真实 _settle_after_narrative，令 extractor 抛错。
 
-    返回 before_turn。期望 _settle_after_narrative 上抛 SettlementAbort。
-    """
-    monkeypatch.setattr(decree_mod, "build_extractor_shared_context",
-                        lambda *a, **k: "ctx")
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent",
-                        lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent",
-                        lambda *a, **k: None)
-
-    def _stub_extract(*a, **k):
-        raise RuntimeError("simulated extractor crash")
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _stub_extract)
-    return state.turn
-
-
-def test_extractor_failure_raises_settlement_abort(game, monkeypatch, tmp_path):
-    """tracer bullet：extractor 抛错 → 响亮中止（SettlementAbort），回合未推进。"""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    before = _drive_extractor_failure(db, state, content, monkeypatch)
-
-    with pytest.raises(SettlementAbort) as ei:
-        decree_mod._settle_after_narrative(
-            state, db, None, None,
-            "减赋诏", "本月邸报……", {"k": "v", "transit_semantics": []}, [], [],
-            before, lambda *a: None,
-            content=content, registry=None,
-        )
-
-    assert ei.value.turn == before
-    assert state.turn == before  # 回合未推进
-
-
-def test_error_pack_written_with_five_files(game, monkeypatch, tmp_path):
-    """中止时落错误包：目录存在、五件齐、manifest 字段对、save_backup.db 可被 sqlite3 打开。"""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    before = _drive_extractor_failure(db, state, content, monkeypatch)
-
-    with pytest.raises(SettlementAbort) as ei:
-        decree_mod._settle_after_narrative(
-            state, db, None, None,
-            "减赋诏", "本月邸报……", {"k": "v", "transit_semantics": []}, [], [],
-            before, lambda *a: None,
-            content=content, registry=None,
-        )
-
-    pack = Path(ei.value.error_pack_path)
-    assert pack.is_dir()
-    for fname in ("traceback.txt", "delta.json", "resolve_context.json",
-                  "save_backup.db", "manifest.json"):
-        assert (pack / fname).exists(), f"缺 {fname}"
-
-    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["turn"] == before
-    assert manifest["attempt"] == 1
-    assert manifest["exception_type"] == "RuntimeError"
-    assert "simulated extractor crash" in manifest["exception_message"]
-    assert manifest["db_path"] == db.path
-
-    # save_backup.db 能被 sqlite3 打开且含 game_state 行。
-    conn = sqlite3.connect(str(pack / "save_backup.db"))
-    try:
-        n = conn.execute("SELECT COUNT(*) FROM game_state").fetchone()[0]
-        assert n >= 1
-    finally:
-        conn.close()
-
-
-def test_abort_leaves_no_db_settlement_writes(game, monkeypatch, tmp_path):
-    """中止 → 无 turn_report / turn_extraction 落库、resolve_context 无 ready 行。"""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    before = _drive_extractor_failure(db, state, content, monkeypatch)
-
-    with pytest.raises(SettlementAbort):
-        decree_mod._settle_after_narrative(
-            state, db, None, None,
-            "减赋诏", "本月邸报……", {"k": "v", "transit_semantics": []}, [], [],
-            before, lambda *a: None,
-            content=content, registry=None,
-        )
-
-    assert db.get_turn_report(before) == ""
-    assert db.get_turn_extraction(before) is None
-    ctx = db.get_resolve_context(before)
-    assert ctx is None or ctx["extracted"] is None  # 无 ready delta 行
 
 
 def test_attempt_derived_from_existing_dirs(game, monkeypatch, tmp_path):
@@ -139,33 +50,6 @@ def test_write_error_pack_inside_atomic_is_rejected(game, monkeypatch, tmp_path)
                              extracted=None, resolve_ctx=None)
 
 
-def test_pack_write_failure_does_not_mask_original(game, monkeypatch, tmp_path):
-    """写包中途失败 → 原结算异常不被顶替（链式保留）。"""
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    before = _drive_extractor_failure(db, state, content, monkeypatch)
-
-    # 令写包炸（backup_to 失败模拟磁盘故障）。
-    def _boom_backup(*a, **k):
-        raise OSError("disk full while backing up")
-    monkeypatch.setattr(db, "backup_to", _boom_backup)
-
-    with pytest.raises(BaseException) as ei:
-        decree_mod._settle_after_narrative(
-            state, db, None, None,
-            "减赋诏", "本月邸报……", {"k": "v", "transit_semantics": []}, [], [],
-            before, lambda *a: None,
-            content=content, registry=None,
-        )
-
-    # 原 extractor 异常（RuntimeError simulated extractor crash）须在异常链里可寻。
-    chain = []
-    e = ei.value
-    while e is not None:
-        chain.append(e)
-        e = e.__cause__ or e.__context__
-    assert any("simulated extractor crash" in str(c) for c in chain), \
-        f"原异常被顶替丢失：{[type(c).__name__ for c in chain]}"
 
 
 def test_clear_for_resimulation_downgrades_context_keeps_settling(game):
@@ -292,23 +176,6 @@ def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
     assert len(lines) == 1
 
 
-def test_pack_write_interrupt_propagates_as_interrupt(game, tmp_path, monkeypatch):
-    """写包期间 Ctrl-C 原样传播，不降级成普通结算错误（cmr S6 r1 F4）。"""
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    import ming_sim.decree as decree_mod
-    from tests.test_resolve_context_recovery import _drive_settle_after_narrative
-
-    def _interrupt(*a, **k):
-        raise KeyboardInterrupt()
-    monkeypatch.setattr(decree_mod, "write_error_pack", _interrupt)
-
-    db, state, content = game
-    with pytest.raises(KeyboardInterrupt):
-        _drive_settle_after_narrative(db, state, content, monkeypatch,
-                                      extractor_behavior="fail",
-                                      error_pack_dir=tmp_path)
-
-
 def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     """SettlementAbort 在 /api/decree/issue 回结构化非 500，玩家看得到指引（cmr S6 r2 codex）。"""
     import asyncio
@@ -346,33 +213,6 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     assert "错误包" in str(ei.value.detail)
 
 
-def test_shape_garbage_extractor_product_is_sanitized_and_recorded(game, monkeypatch, tmp_path):
-    """ADR0015：可拆 shape 垃圾不再中止整月，拒收留痕后净化落库。"""
-    from tests.test_resolve_context_recovery import _drive_settle_after_narrative
-    import ming_sim.decree as dm
-
-    db, state, content = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    # stub extractor 返回 shape 垃圾（region_delta 应为 dict 实得 list）
-    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
-    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
-                        lambda *a, **k: ({"region_delta": ["garbage"]}, "o", "i"))
-
-    turn = state.turn
-    report = dm._settle_after_narrative(
-        state, db, None, None,
-        "诏", "邸报", {"transit_semantics": []}, [], [],
-        turn, lambda *a: None,
-        content=content, registry=None,
-    )
-    assert "邸报" in report
-    assert db.get_resolve_context(turn) is None  # 成功推进后清理真源
-    row = db.conn.execute("SELECT section, item_json FROM rejection_reports WHERE turn=?", (turn,)).fetchone()
-    assert row["section"] == "region_delta"
-    assert '"raw_value"' in row["item_json"]
 
 
 def test_next_attempt_skips_malformed_and_foreign_entries(game, monkeypatch, tmp_path):
@@ -410,64 +250,6 @@ def test_version_read_failure_falls_back_to_unknown(game, monkeypatch, tmp_path)
 
     m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
     assert m["version"] == "unknown"
-
-
-def test_complete_ready_packs_match_database_turn_digest_and_manifest_shape(game, monkeypatch, tmp_path):
-    """Ready retry evidence is scoped by db path + turn + digest; malformed manifests are ignored."""
-    from ming_sim.error_pack import complete_error_packs_for_ready, ready_payload_digest
-
-    db, state, _ = game
-    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
-    from ming_sim.error_pack import error_packs_root
-    root = error_packs_root()
-    root.mkdir(parents=True)
-    payload = {"metric_delta": {"民心": 1}}
-    required = ("traceback.txt", "delta.json", "resolve_context.json", "save_backup.db")
-
-    def pack(name, manifest):
-        path = root / name
-        path.mkdir()
-        for filename in required:
-            (path / filename).write_text("x", encoding="utf-8")
-        (path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-        return path
-
-    good = pack(f"turn{state.turn}_attempt1", {"db_path": db.path, "turn": state.turn,
-                         "ready_payload_digest": ready_payload_digest(payload)})
-    pack(f"turn{state.turn}_attempt2", {"db_path": db.path + ".other", "turn": state.turn,
-                      "ready_payload_digest": ready_payload_digest(payload)})
-    pack(f"turn{state.turn}_attempt3", {"db_path": db.path, "turn": state.turn + 1,
-                        "ready_payload_digest": ready_payload_digest(payload)})
-    pack(f"turn{state.turn}_attempt4", ["not", "an", "object"])
-
-    assert complete_error_packs_for_ready(db.path, state.turn, payload) == [good]
-
-    # 目录 exists / 惰性 glob 枚举 OSError → []（SettlementAbort 恢复缝不得被覆盖）
-    import ming_sim.error_pack as error_pack_mod
-
-    class _BoomExists:
-        def exists(self):
-            raise OSError("root stat failed")
-
-        def glob(self, _pattern):
-            raise AssertionError("glob must not run after exists OSError")
-
-    monkeypatch.setattr(error_pack_mod, "error_packs_root", lambda: _BoomExists())
-    assert complete_error_packs_for_ready(db.path, state.turn, payload) == []
-
-    class _BoomGlob:
-        def exists(self):
-            return True
-
-        def glob(self, _pattern):
-            def _iter():
-                raise OSError("root enumeration failed")
-                yield  # pragma: no cover — makes this a generator
-
-            return _iter()
-
-    monkeypatch.setattr(error_pack_mod, "error_packs_root", lambda: _BoomGlob())
-    assert complete_error_packs_for_ready(db.path, state.turn, payload) == []
 
 
 def test_clear_for_resimulation_preserves_audience_decree_rows(game):

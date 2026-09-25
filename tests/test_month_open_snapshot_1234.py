@@ -324,43 +324,6 @@ def test_settle_with_delta_expires_snapshot_inside_atomic(game):
     assert payload["metrics"]["国库"] == state.metrics["国库"]
 
 
-def test_advance_without_edict_expires_snapshot(game, monkeypatch):
-    """#1274：无旨完整结算后快照过期（settle_with_delta 链内 clear）。"""
-    import ming_sim.decree as dm
-    import ming_sim.memories as memories
-    import ming_sim.audience_night as an
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    turn = int(state.turn)
-
-    monkeypatch.setattr(an, "auto_close_open_night", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        dm, "simulate_season_with_payload",
-        lambda *a, **k: ("快照过期测邸报。", k.get("simulator_payload") or {}),
-    )
-    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: object())
-    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
-    monkeypatch.setattr(dm, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
-
-    sess = GameSession.__new__(GameSession)
-    sess.db, sess.state, sess.content = db, state, content
-    sess.registry = sess.llm_config = sess.agno_db = None
-    sess.deaths_this_turn, sess.debuts_this_turn = [], []
-    sess.last_decree = sess.last_report = ""
-    sess._decree_draft_fingerprint = ()
-    sess._scene_registry = sess._beat_generator = None
-    sess.auto_save = lambda *a, **k: None
-
-    result = sess.advance_without_decree()
-    assert result is not None and result.awaiting is False
-    assert db.get_month_open_snapshot(turn) is None
-    assert state.turn == turn + 1
-    payload = _runtime(db, state).state_payload()
-    assert payload["turn"]["settlement_display"] is False
 
 
 def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
@@ -429,7 +392,7 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
         db.clear_month_open_snapshot(int(state.turn))
         state.turn_phase = TurnPhase.SUMMONING.value
         db.save_state(state)
-        return ResolveResult(awaiting=False, report="ok")
+        return ResolveResult(awaiting=False, report="ok", advanced=True)
 
     runtime.session.advance_without_decree = _observe_then_done
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
@@ -511,8 +474,9 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
 
 
 def test_recovery_path_keeps_settlement_display(game, monkeypatch):
-    """改造回归：settling 恢复路径上核账展示态仍在；完成后态清。"""
+    """settling 恢复停在邸报前仍展示月初快照；归档推进后清。"""
     import ming_sim.decree as dm
+    import ming_sim.month_chain as month_chain
     from tests.test_advance_paths_atomic import _recovery_session
 
     db, state, content = game
@@ -534,9 +498,20 @@ def test_recovery_path_keeps_settlement_display(game, monkeypatch):
         decree_text="d", narrative="n",
         simulator_payload={}, secret_orders=[], relevant_memories=[],
     )
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     sess = _recovery_session(db, state, content, monkeypatch)
     result = sess.resolve_turn()
     assert result.awaiting is False
+    assert result.stage == "gazette"
+    assert state.turn == turn
+    assert db.get_month_open_snapshot(turn) is not None
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (turn, state.year, state.period, "邸报已成"),
+    )
+    db.conn.commit()
+    result = sess.resolve_turn()
+    assert result.advanced is True
     assert state.turn == turn + 1
     assert db.get_month_open_snapshot(turn) is None
     done = _runtime(db, state).state_payload()

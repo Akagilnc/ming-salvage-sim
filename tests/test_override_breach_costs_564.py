@@ -542,7 +542,7 @@ def test_breach_charges_authority_ministers_and_related_factions_once(game):
         ("hold", "proposed", False),
     ],
 )
-def test_chosen_rescript_actions_settle_via_promulgation_path(
+def test_driver_rescript_actions_settle_via_promulgation_path(
     game, monkeypatch, decision, expected_status, expect_override_authority,
 ):
     """三路对照：#657 §C.8 中旨打回零派系扇出；收回/留中不追加；强颁只加皇威。
@@ -550,7 +550,7 @@ def test_chosen_rescript_actions_settle_via_promulgation_path(
     Player disposition rows settle through apply_dossier_promulgation only.
     #614 零代价验的是批红三选不再追加强颁账。
     """
-    from ming_sim.decree import _chosen_rescript_actions, settle_with_delta
+    from ming_sim.decree import settle_with_delta
 
     db, state, content = game
     dossier_id = _dossier(db, state, mode="midzhi")
@@ -564,28 +564,7 @@ def test_chosen_rescript_actions_settle_via_promulgation_path(
     assert [x for x in _cost_events(db, dossier_id) if x["cost_kind"] == "satisfaction"] == []
     settle_turn = state.turn
 
-    # 现行 rendered 契约：服务端 options 带 dossier_id/dossier_decision + hint
-    # （#1492 A / #1494：_chosen_rescript_actions 靠 options 合法能力对识别批红轨）
-    rescript_options = [
-        {
-            "label": "强颁", "hint": "以中旨强行颁出",
-            "dossier_id": dossier_id, "dossier_decision": "force_promulgated",
-        },
-        {
-            "label": "收回", "hint": "收回此道准旨",
-            "dossier_id": dossier_id, "dossier_decision": "withdrawn",
-        },
-        {
-            "label": "留中", "hint": "留待下月重判",
-            "dossier_id": dossier_id, "dossier_decision": "hold",
-        },
-    ]
-    actions = _chosen_rescript_actions([{
-        "event_id": f"dossier:{dossier_id}",
-        "options": rescript_options,
-        "choice": {"dossier_id": dossier_id, "dossier_decision": decision},
-    }])
-    assert actions == [{"dossier_id": dossier_id, "decision": decision}]
+    actions = [{"dossier_id": dossier_id, "decision": decision}]
 
     def _forbid_verdicts(*_a, **_k):
         raise AssertionError(

@@ -2,9 +2,9 @@
 
 四面：
 1. simulator  payload（build_simulator_payload · 待办未解进度）
-2. extractor  payload（_extractor_context_payload · 待办未解进度）
-3. web        issue_payloads（commitment_progress_text）
-4. CLI        show_active_issues + minister tool 字段
+2. web        issue_payloads（commitment_progress_text）
+3. CLI        show_active_issues
+4. minister tool 字段
 
 对照：arrears 承诺仍可用「尚欠…万两」；loyalty/goal 门只用定性措辞。
 """
@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import web_app
 from ming_sim.issues import show_active_issues
-from ming_sim.simulation import _extractor_context_payload, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 from ming_sim.tools import _commitment_tool_fields
 
 
@@ -99,18 +99,7 @@ def test_loyalty_commitment_no_wanliang_on_four_surfaces(game, capsys):
     # simulator 投影后 remaining_to_goal 为定性
     assert sim["commitment_progress"]["remaining_to_goal"] == "距达标仍有差距"
 
-    # 2) extractor（机面可保留 remaining_to_goal 数值键，但显示串仍禁万两）
-    ext = next(
-        i for i in _extractor_context_payload(db, state, "", "")["active_issues"]
-        if i["issue_id"] == issue_id
-    )
-    ext_text = str(ext.get("待办未解进度") or "")
-    assert "直到达标" in ext_text
-    assert "万两" not in ext_text
-    assert "remaining_to_goal" in (ext.get("commitment_progress") or {})
-    assert "remaining_arrears" not in (ext.get("commitment_progress") or {})
-
-    # 3) web
+    # web
     web_item = next(p for p in _web_issue_payloads(db, state) if p["id"] == issue_id)
     web_text = str(web_item.get("commitment_progress_text") or "")
     assert "直到达标" in web_text
@@ -144,12 +133,6 @@ def test_arrears_commitment_keeps_wanliang_on_four_surfaces(game, capsys):
     )
     assert "万两" in str(sim.get("待办未解进度") or "")
     assert "尚欠" in str(sim.get("待办未解进度") or "")
-
-    ext = next(
-        i for i in _extractor_context_payload(db, state, "", "")["active_issues"]
-        if i["issue_id"] == issue_id
-    )
-    assert "万两" in str(ext.get("待办未解进度") or "")
 
     web_item = next(p for p in _web_issue_payloads(db, state) if p["id"] == issue_id)
     assert "万两" in str(web_item.get("commitment_progress_text") or "")

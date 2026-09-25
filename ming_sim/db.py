@@ -2544,6 +2544,8 @@ class GameDB:
             "pending_actions", "night_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_actions", "night_approved", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column(
+            "pending_actions", "version", "INTEGER NOT NULL DEFAULT 1")
         # #1871：封夜后迟到应允的补背书待办；背书落库同事务清零。
         self.ensure_column(
             "pending_actions", "late_endorsement_pending", "INTEGER NOT NULL DEFAULT 0")
@@ -2624,7 +2626,7 @@ class GameDB:
         self.ensure_column("pending_resolve_context", "resolve_contract_version", "INTEGER NOT NULL DEFAULT 0")
         # 拒收 provenance source（#144 / ADR 0008 决定 5）：崩溃恢复重放须用原始来源，否则玩家
         # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
-        # 'system_simulation'（与原 resolve_settling_recovery 硬编值一致，行为不变）。
+        # 'system_simulation'（旧档缺来源时的默认值）。
         self.ensure_column("pending_resolve_context", "source", "TEXT NOT NULL DEFAULT 'system_simulation'")
         # #671：抵京月王承恩独立递话（与官方 report 分栏；HITL 暂停→完成月同缝转存）
         self.ensure_column(
@@ -9735,7 +9737,7 @@ class GameDB:
         self.conn.commit()
         return cur.rowcount > 0
 
-    def restore_interrupted_after_failed_retry(self, chat_turn_id: int) -> None:
+    def restore_interrupted_after_failed_retry(self, chat_turn_id: int) -> List[int]:
         """重试再失败的善后（#505 finding1）：回滚本次重试在 session.chat 落下的副作用
         （dismiss 账 / 拟旨 / 任免候选等，已由调用方 record_chat_turn_rollback_diffs 记为
         rollback items）+ 截断本轮 agno runs，把重入生成态的轮翻回 'interrupted' 保持可再
@@ -9749,10 +9751,10 @@ class GameDB:
             "SELECT * FROM chat_turns WHERE id = ?", (int(chat_turn_id),)
         ).fetchone()
         if row is None:
-            return
+            return []
         turn_row = self._row_dict(row)
         if turn_row["status"] != "generating" or turn_row.get("minister_message_id"):
-            return
+            return []
         items = self.conn.execute(
             """
             SELECT * FROM chat_turn_rollback_items
@@ -9761,6 +9763,7 @@ class GameDB:
             """,
             (int(chat_turn_id),),
         ).fetchall()
+        restored_pending_action_ids: List[int] = []
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
             self.conn.execute(
@@ -9769,7 +9772,7 @@ class GameDB:
                 (int(chat_turn_id), int(chat_turn_id)),
             )
             # 空 undone 消息集：只还原业务副作用，一句问话/回话都不删。
-            self._restore_chat_rollback_items_in_tx(items, [])
+            restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(items, [])
             self.conn.execute(
                 "DELETE FROM chat_turn_rollback_items WHERE chat_turn_id = ?",
                 (int(chat_turn_id),),
@@ -9782,6 +9785,7 @@ class GameDB:
                 "UPDATE chat_turns SET status = 'interrupted' WHERE id = ?",
                 (int(chat_turn_id),),
             )
+        return restored_pending_action_ids
 
     def create_chat_turn(
         self,
@@ -9870,14 +9874,14 @@ class GameDB:
         )
         self.conn.commit()
 
-    def fail_chat_turn(self, chat_turn_id: int) -> None:
+    def fail_chat_turn(self, chat_turn_id: int) -> List[int]:
         """Mark an incomplete audience turn failed and remove its partial user-visible writes."""
         row = self.conn.execute(
             "SELECT * FROM chat_turns WHERE id = ?",
             (int(chat_turn_id),),
         ).fetchone()
         if row is None:
-            return
+            return []
         turn_row = self._row_dict(row)
         if turn_row["status"] not in {"active", "generating"}:
             self.conn.execute(
@@ -9885,7 +9889,7 @@ class GameDB:
                 (int(chat_turn_id),),
             )
             self.conn.commit()
-            return
+            return []
         items = self.conn.execute(
             """
             SELECT * FROM chat_turn_rollback_items
@@ -9899,6 +9903,7 @@ class GameDB:
             for mid in (turn_row.get("user_message_id"), turn_row.get("minister_message_id"))
             if mid
         ]
+        restored_pending_action_ids: List[int] = []
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
             # Same family as undo_chat_turn: drop enter/exit placeholders bound to this
@@ -9908,7 +9913,7 @@ class GameDB:
                 "WHERE source_chat_turn_id = ? OR origin_chat_turn_id = ?",
                 (int(chat_turn_id), int(chat_turn_id)),
             )
-            self._restore_chat_rollback_items_in_tx(items, message_ids)
+            restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(items, message_ids)
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)
                 self.conn.execute(
@@ -9932,6 +9937,7 @@ class GameDB:
                 str(turn_row.get("agno_session_id") or ""),
                 int(turn_row.get("agno_runs_before") or 0),
             )
+        return restored_pending_action_ids
 
     def record_chat_turn_rollback_diffs(
         self,
@@ -10582,9 +10588,10 @@ class GameDB:
 
     def _restore_chat_rollback_items_in_tx(
         self, items: Iterable[sqlite3.Row], undone_message_ids: Iterable[int],
-    ) -> None:
+    ) -> List[int]:
         undone = {int(message_id) for message_id in undone_message_ids}
         rollback_items = list(items)
+        restored_directive_ids: set[int] = set()
 
         def dependency_order(item: sqlite3.Row) -> int:
             table = str(item["target_table"])
@@ -10606,6 +10613,8 @@ class GameDB:
             strategy = str(item["rollback_strategy"])
             target_id = str(item["target_id"])
             if strategy == "delete_inserted_row":
+                if table == "pending_actions":
+                    self._discard_deleted_directive_forecast(target_id)
                 self._delete_row_in_tx(table, target_id)
                 # #1839：公开说法写口附带 character_knowledge_sources（source_id=
                 # public_saying:<id>，仅承载排除名单）；前像删行时同步清掉，避免
@@ -10617,6 +10626,20 @@ class GameDB:
                     )
             elif strategy in {"restore_row", "restore_deleted_row"}:
                 before_row = self._json_load_row(item["before_json"])
+                if table == "pending_actions" and before_row.get("kind") == "directive":
+                    pending_id = int(before_row["id"])
+                    restored_directive_ids.add(pending_id)
+                    before_version = int(before_row.get("version") or 1)
+                    current = self.conn.execute(
+                        "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
+                        (pending_id,),
+                    ).fetchone()
+                    current_version = int(current["version"] or 1) if current is not None else 0
+                    self._discard_pending_decree_forecast(pending_id, before_version)
+                    if current_version:
+                        self._discard_pending_decree_forecast(pending_id, current_version)
+                    # 0038 的恢复是一次新改草：身份号继续递增，不把已作废版本复活。
+                    before_row["version"] = max(before_version, current_version) + 1
                 self._restore_row_in_tx(table, before_row)
                 if table == "secret_orders":
                     raw_pins = before_row.get("_rollback_brief_origin_chat_message_ids")
@@ -10632,6 +10655,16 @@ class GameDB:
                     self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)
             else:
                 raise ValueError(f"不支持的回滚策略：{strategy}")
+        if not restored_directive_ids:
+            return []
+        placeholders = ",".join("?" for _ in restored_directive_ids)
+        rows = self.conn.execute(
+            "SELECT id FROM pending_actions WHERE id IN (" + placeholders + ") "
+            "AND kind='directive' AND action='拟旨' AND status='pending' "
+            "AND night_approved=1 AND night_id>0",
+            sorted(restored_directive_ids),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
 
     def undo_chat_turn(self, chat_turn_id: int) -> Dict[str, Any]:
         row = self.conn.execute(
@@ -10728,7 +10761,9 @@ class GameDB:
                 "DELETE FROM decree_dossier_endorsements WHERE source_chat_turn_id = ?",
                 (int(chat_turn_id),),
             )
-            self._restore_chat_rollback_items_in_tx(items, message_ids)
+            restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(
+                items, message_ids,
+            )
             # 只精确删除本召对 commit 出来的 draft 行（保留同 actor 的无关 draft）。
             for draft_id in draft_ids_to_delete:
                 self.conn.execute(
@@ -10773,6 +10808,7 @@ class GameDB:
         # 上层据此让已生成的诏书正文（last_decree）失效——否则若另有 draft 残留，玩家仍能
         # 原样颁出含被撤回指令的陈旧诏书。无删除则为空，普通撤回不触发上层清稿。
         turn_row["deleted_committed_draft_ids"] = list(draft_ids_to_delete)
+        turn_row["restored_pending_action_ids"] = restored_pending_action_ids
         return turn_row
 
     # ----- event memories（渐进式记忆：摘要卡 + 来源摘录） -----
@@ -16014,46 +16050,6 @@ class GameDB:
             decisions.append(item)
         return decisions
 
-    def list_closed_army_pay_dossiers_for_provenance(
-        self, turn: int,
-    ) -> List[Dict[str, object]]:
-        """#1503：本回合已关闭的拨饷/协饷案卷，供 extractor provenance 保留 dossier 身份。
-
-        immediate 拨饷颁布即 close，不再进入 list_decree_dossiers_for_simulation；
-        若不把 origin_ref=dossier:<id> 送回 extractor 输入，回声只能落成「盘面自发」。
-        此读缝只服务 provenance，不重开执行权、不改模拟可见集。
-        """
-        rows = self.conn.execute(
-            """
-            SELECT d.*
-            FROM decree_dossiers d
-            WHERE d.status='closed'
-              AND d.closed_turn=?
-              AND d.action_type='grant_allocation'
-              AND d.promulgation_decision='promulgated'
-            ORDER BY d.id
-            """,
-            (int(turn),),
-        ).fetchall()
-        out: List[Dict[str, object]] = []
-        for row in rows:
-            try:
-                payload = json.loads(str(row["payload_json"] or "{}"))
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(payload, dict):
-                continue
-            if not self._is_army_pay_grant_payload(payload):
-                continue
-            # 仅保留本回合已有 dossier 源补饷流水的案卷（已消费身份）。
-            if not any(
-                str(m.get("purpose") or "") == "补饷"
-                for m in self.list_economy_moves_for_dossier(int(row["id"]))
-            ):
-                continue
-            out.append(self._dossier_row(row))
-        return out
-
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
         """本月新生/重判案卷及所有未结案执行中案卷。
 
@@ -18383,8 +18379,10 @@ class GameDB:
             ).fetchone()
             merged = self._merge_directive_payload(
                 existing_payload["payload_json"] if existing_payload else "{}", payload or {})
+            self._discard_pending_decree_forecast(int(row["id"]))
             self.conn.execute(
-                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
+                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
+                "version=version+1 WHERE id=?",
                 (json.dumps(merged, ensure_ascii=False),
                  self._current_open_night_id(), int(row["id"])),
             )
@@ -18423,6 +18421,8 @@ class GameDB:
             "text": text,
             "actor": minister_name,
             "mode": resolve_directive_mode(extracted=mode),
+            "dossier_action_type": "special_decree",
+            "target_kind": "policy",
         }
         existing = [
             p for p in self.list_pending_actions(int(turn), minister_name=minister_name)
@@ -18437,13 +18437,19 @@ class GameDB:
                 int(turn), minister_name, payload,
             )
         # 显式 tool/前缀入口没有另跑语义抽取；以该候选自身作为叙事案卷的
-        # canonical target，避免旧载荷在成案规范化时被拒绝。
-        self.update_directive_candidate(candidate_id, {
-            **payload,
-            "dossier_action_type": "special_decree",
-            "target_kind": "policy",
-            "target_id": f"pending-directive:{candidate_id}",
-        })
+        # canonical target，避免旧载荷在成案规范化时被拒绝。初次写入即完整，
+        # 不再对新候选执行第二次「改草」递增版本。
+        candidate = self.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (int(candidate_id),),
+        ).fetchone()
+        if candidate is not None:
+            stored = json.loads(candidate["payload_json"] or "{}")
+            stored["target_id"] = f"pending-directive:{candidate_id}"
+            self.conn.execute(
+                "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                (json.dumps(stored, ensure_ascii=False), int(candidate_id)),
+            )
+            self.conn.commit()
         return candidate_id
 
     def update_office_candidate_payload(
@@ -18490,7 +18496,7 @@ class GameDB:
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="改草")
         row = self.conn.execute(
-            "SELECT id,payload_json,status FROM pending_actions "
+            "SELECT id,payload_json,status,version FROM pending_actions "
             "WHERE id=? AND kind='directive'",
             (int(candidate_id),),
         ).fetchone()
@@ -18499,13 +18505,46 @@ class GameDB:
         if row["status"] != "pending":
             raise ValueError("已成案旨意不得改草")
         merged = self._merge_directive_payload(row["payload_json"], payload)
+        self._discard_pending_decree_forecast(int(row["id"]), int(row["version"] or 1))
         self.conn.execute(
-            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
+            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
+            "version=version+1 WHERE id=?",
             (json.dumps(merged, ensure_ascii=False),
              self._current_open_night_id(), int(candidate_id)),
         )
         self.conn.commit()
         return int(candidate_id)
+
+    def _discard_deleted_directive_forecast(self, target_id: object) -> None:
+        try:
+            pending_id = int(target_id)
+        except (TypeError, ValueError):
+            return
+        row = self.conn.execute(
+            "SELECT kind, version FROM pending_actions WHERE id=?",
+            (pending_id,),
+        ).fetchone()
+        if row is None or str(row["kind"] or "") != "directive":
+            return
+        self._discard_pending_decree_forecast(pending_id, int(row["version"] or 1))
+
+    def _discard_pending_decree_forecast(
+        self, candidate_id: int, version: Optional[int] = None,
+    ) -> int:
+        if version is None:
+            row = self.conn.execute(
+                "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
+                (int(candidate_id),),
+            ).fetchone()
+            if row is None:
+                return 0
+            version = int(row["version"] or 1)
+        from ming_sim.declaration_dispatch import (
+            discard_staged_declaration, pending_action_decree_ref,
+        )
+        return discard_staged_declaration(
+            self, pending_action_decree_ref(int(candidate_id), int(version)),
+        )
 
     @staticmethod
     def _merge_underscore_control_keys(
@@ -19667,12 +19706,16 @@ class GameDB:
             or self.conn.in_transaction
         )
         row = self.conn.execute(
-            "SELECT id, kind FROM pending_actions "
+            "SELECT id, kind, version FROM pending_actions "
             "WHERE id=? AND turn=? AND status='pending'",
             (int(action_id), int(turn)),
         ).fetchone()
         if row is None:
             return False
+        if str(row["kind"] or "") == "directive":
+            self._discard_pending_decree_forecast(
+                int(action_id), int(row["version"] or 1),
+            )
         cur = self.conn.execute(
             "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
             (int(action_id), int(turn)),
@@ -19748,6 +19791,15 @@ class GameDB:
                 tuple(params),
             ).fetchall()
         ]
+        directive_ids = [
+            int(row["id"])
+            for row in self.conn.execute(
+                f"SELECT id FROM pending_actions WHERE {where} AND kind='directive'",
+                tuple(params),
+            ).fetchall()
+        ]
+        for pending_id in directive_ids:
+            self._discard_deleted_directive_forecast(pending_id)
         cur = self.conn.execute(
             f"DELETE FROM pending_actions WHERE {where}",
             tuple(params),
@@ -19765,6 +19817,12 @@ class GameDB:
         须在 commit_pending_actions 之前调用，防止 commit 把草案插成孤儿 turn_directives
         行——退朝路不颁诏，孤儿 draft 永不经 extractor、不可见（codex r5 F2）。
         返回删除条数。"""
+        rows = self.conn.execute(
+            "SELECT id FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
+            (int(turn),),
+        ).fetchall()
+        for row in rows:
+            self._discard_deleted_directive_forecast(int(row["id"]))
         cur = self.conn.execute(
             "DELETE FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
             (int(turn),),
@@ -21486,6 +21544,7 @@ class GameDB:
         origin_ref: str = "",
         beyond_intent: object = 0,
         commit: bool = True,
+        apply_income_modifier: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
 
@@ -21500,10 +21559,12 @@ class GameDB:
         帝国修正只对收入（delta>0 正向流水）生效；支出（delta<0）按面值落账（issue #341）——
         即本路径仅以 delta>0 调 apply_legacy_pct（其 base>=0 ×(1+net/100) 分支）；
         apply_legacy_pct 自身的 base<0 ×(1-net/100) 分支由 region/army 等其它调用方使用，本路径不走。
+        双边钱库转移的目标腿不属于外生收入，调用方以 apply_income_modifier=False
+        禁止再次放大已从来源库实扣的数。
         """
         if isinstance(delta, bool) or not isinstance(delta, int):
             raise TypeError("delta must be an integer")
-        if category != "局势遗产":
+        if apply_income_modifier and category != "局势遗产":
             net_pct = int(self.legacy_modifiers(state).get(account, 0) or 0)  # type: ignore[arg-type]
             if net_pct and delta > 0:
                 delta = self.apply_legacy_pct(int(delta), net_pct)

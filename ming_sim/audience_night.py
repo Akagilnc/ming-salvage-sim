@@ -1466,7 +1466,9 @@ def close_night(
                     reg.abandon(int(close_ctid))
                 if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
                     with gate:
-                        db.fail_chat_turn(int(close_ctid))
+                        restored_ids = db.fail_chat_turn(int(close_ctid))
+                    from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+                    schedule_restored_decree_forecasts(db, restored_ids)
             except BaseException as exc:
                 cleanup_exc = exc
         with gate:
@@ -1610,7 +1612,9 @@ def close_night(
     if primary_exc is not None or join_exc is not None:
         with gate:
             if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
-                db.fail_chat_turn(int(close_ctid))
+                restored_ids = db.fail_chat_turn(int(close_ctid))
+                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+                schedule_restored_decree_forecasts(db, restored_ids)
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
@@ -1633,7 +1637,9 @@ def close_night(
             # Restore OPEN so the player can retry (ADR 0036); keep code + diagnostics.
             fault_cursor = int(cursor)
             if close_scaffold_owned and close_ctid and hasattr(db, "fail_chat_turn"):
-                db.fail_chat_turn(int(close_ctid))
+                restored_ids = db.fail_chat_turn(int(close_ctid))
+                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+                schedule_restored_decree_forecasts(db, restored_ids)
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,

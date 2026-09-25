@@ -28,6 +28,7 @@ def make_light_session(db, state, content):
     session._decree_draft_fingerprint = ()
     session._scene_registry = None
     session._beat_generator = None
+    session._write_gate = None
     session.auto_save = lambda *a, **k: None
     return session
 
@@ -39,20 +40,14 @@ def canned_full_settlement(
     decisions: Optional[List[Dict[str, object]]] = None,
     simulator_calls: Optional[list] = None,
     source_spy: Optional[list] = None,
-    extract_result: Optional[Dict[str, object]] = None,
-    extract_calls: Optional[list] = None,
-    modules_seen: Optional[list] = None,
     skip_fixed_flows: bool = False,
     skip_relation_brew: bool = False,
 ) -> list:
     """Replace only external LLM seams; keep production settlement spine.
 
-    extract_result: canned merged extractor payload (English keys).
     """
     simulator_calls = simulator_calls if simulator_calls is not None else []
     decisions = list(decisions or [])
-    canned_extract = dict(extract_result or {})
-
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
     # #658：真实 ensure 成案后颁布判官亦为外部 LLM 缝——canned 默认全顺颁。
@@ -85,26 +80,19 @@ def canned_full_settlement(
         return text, payload
 
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
 
-    def _module_agent(*a, **k):
-        module = a[2] if len(a) > 2 else k.get("module")
-        if modules_seen is not None:
-            modules_seen.append(module)
-        return object()
+    def _world(*_a, **_k):
+        simulator_calls.append({"world": True, "narrative": narrative})
+        return narrative
 
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", _module_agent)
-
-    def _extract(*a, **k):
-        if extract_calls is not None:
-            extract_calls.append(1)
-        return (dict(canned_extract), "out", "in")
-
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _extract)
+    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _world)
+    monkeypatch.setattr(
+        "ming_sim.month_translate.translate_month_segment",
+        lambda *_a, **_k: {"effects": {}},
+    )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_ending_summary_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_rescript_draft_agent", lambda *a, **k: object())
     # #1745：复用单一 agent 边界夹具（不整换 run_settlement_attendant_message）。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)

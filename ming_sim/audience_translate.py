@@ -34,8 +34,11 @@ _DECLARATION_KEYS: tuple[str, ...] = (
     "edge_events",
     "protagonist",
     "registrations",
+    "effects",
 )
-_ARRAY_SECTIONS = frozenset(k for k in _DECLARATION_KEYS if k != "protagonist")
+_ARRAY_SECTIONS = frozenset(
+    k for k in _DECLARATION_KEYS if k not in {"protagonist", "effects"}
+)
 
 
 class AudienceTranslateError(RuntimeError):
@@ -207,29 +210,21 @@ def build_translation_target_grounding(db: Any) -> str:
     )
 
 
-def build_audience_translate_prompt(
-    *,
-    emperor_message: str,
-    reply: str,
-    night_said: Sequence[str],
-    pending_summaries: Sequence[str],
-    target_grounding: str = "",
-) -> str:
-    """转译输入：本轮皇帝原话 + 回话 + 本场已说 + 本夜暂存清单。
+def build_c0_declaration_shape() -> str:
+    """C0 唯一输出形状，召对与过月转译共用。"""
+    # 效果 delta 的唯一形状真源沿用旧结算入口的 EMPTY_EXTRACTION，避免声明层
+    # 另手维护一份平行字段表。
+    from ming_sim.simulation import EMPTY_EXTRACTION
 
-    产出契约 = C0 全 section（交办/应允/当场实况/文字事实/公开说法/在场/
-    分段/边事件/主角/入册）。不解析自由散文——模型直接给结构化声明。
-    """
-    said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
-    pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
-    grounding = str(target_grounding or "").strip()
-    grounding_block = f"{grounding}\n" if grounding else ""
     # target_kind 表面唯一真源 = decree_vocabulary.TARGET_KINDS，禁手抄分叉。
     target_kind_hint = "|".join(sorted(TARGET_KINDS))
+    effect_shape = "\n".join(
+        f"    {line}" for line in json.dumps(
+            {"event_id": "仅属某事件战果时填事件 id；未填即独立", **EMPTY_EXTRACTION},
+            ensure_ascii=False, indent=2,
+        ).splitlines()
+    )
     return (
-        "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
-        "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
-        "形状：\n"
         "{\n"
         '  "commissions": [\n'
         "    {\n"
@@ -285,8 +280,33 @@ def build_audience_translate_prompt(
         '  "protagonist": {"person_name": "本轮御前主角"},\n'
         '  "registrations": [\n'
         '    {"name": "新人名", "office": "官职", "office_type": "文|武|…"}\n'
-        "  ]\n"
+        "  ],\n"
+        '  "effects": [' + effect_shape + "]\n"
         "}\n"
+    )
+
+
+def build_audience_translate_prompt(
+    *,
+    emperor_message: str,
+    reply: str,
+    night_said: Sequence[str],
+    pending_summaries: Sequence[str],
+    target_grounding: str = "",
+) -> str:
+    """转译输入：本轮皇帝原话 + 回话 + 本场已说 + 本夜暂存清单。
+
+    产出契约 = C0 全 section（交办/应允/当场实况/文字事实/公开说法/在场/
+    分段/边事件/主角/入册）。不解析自由散文——模型直接给结构化声明。
+    """
+    said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
+    pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
+    grounding = str(target_grounding or "").strip()
+    grounding_block = f"{grounding}\n" if grounding else ""
+    return (
+        "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
+        "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"
+        f"形状：\n{build_c0_declaration_shape()}"
         "规则：\n"
         "- scene_facts 按原顺序完整分段覆盖本轮回话；各 body 直接拼接须与回话逐字相同（含空白、标点与 Markdown），不得概括、补字或漏字；role 是该段的说话人类别，大臣/近臣的 person_names 首位是说话人（user/scene 可为空）。\n"
         "- 一句话同时含拟旨 + 拨帑 + 任免时，只出一条 commission，载荷挂在同一条上；"
@@ -295,6 +315,7 @@ def build_audience_translate_prompt(
         "「不准」「作罢」→ 拒绝。皇帝本轮未表态 → promises 为空（默认不应允）。\n"
         "- 当场已发生（斩杀/拿下/伤臂/告退等）走 on_scene_facts / textual_facts / "
         "presence / public_sayings / edge_events，不要写成交办。\n"
+        "- effects 是过月才核算的旨意办理效果；召对夜本轮留空，不得将尚未发生的效果写成当场实况。\n"
         "- public_sayings 的 excluded_names / excluded_offices：皇帝明示排除的读者"
         "保持不知情；无排除则给空数组。\n"
         "- 无对应事实的 section 输出空数组（protagonist 无则省略或 null），不要编造。\n"
@@ -307,18 +328,26 @@ def build_audience_translate_prompt(
     )
 
 
-def _default_translate_runner(prompt: str, llm_config: Any) -> Mapping[str, object]:
+def run_declaration_translate_prompt(
+    prompt: str, llm_config: Any = None, *, tag: str, policy: Any = None,
+) -> Mapping[str, object]:
+    """共用声明转译 runner：沿现有宿主 extractor 与 JSON 解析接缝。"""
     from ming_sim.cli_backend import _loads_lenient, _run_json_extractor_for_config
+
+    raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag=tag, policy=policy)
+    obj = _loads_lenient(raw, accepted_types=(dict,))
+    if not isinstance(obj, dict):
+        raise AudienceTranslateError("转译输出无法解析为 JSON 对象")
+    return obj
+
+
+def _default_translate_runner(prompt: str, llm_config: Any) -> Mapping[str, object]:
     from ming_sim.llm_transport import audience_transport_policy
 
-    raw, _ = _run_json_extractor_for_config(
+    return run_declaration_translate_prompt(
         prompt, llm_config, tag="audience_translate",
         policy=audience_transport_policy(),
     )
-    obj = _loads_lenient(raw, accepted_types=(dict,))
-    if not isinstance(obj, dict):
-        return {}
-    return obj
 
 
 def normalize_audience_declaration(raw: object) -> Dict[str, object]:
@@ -335,8 +364,13 @@ def normalize_audience_declaration(raw: object) -> Dict[str, object]:
         if key not in raw:
             if key in _ARRAY_SECTIONS:
                 declaration[key] = []
+            elif key == "effects":
+                declaration[key] = {}
             continue
         value = raw.get(key)
+        if key == "effects":
+            declaration[key] = {} if value is None else value
+            continue
         if key == "protagonist":
             if value is None:
                 continue

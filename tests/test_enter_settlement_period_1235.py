@@ -67,16 +67,24 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
         decree_mod, "simulate_season_with_payload",
         lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
     )
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: (delta or {}, "out", "in"),
-    )
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     monkeypatch.setattr(
         memories_mod, "run_agent_text",
         lambda *a, **k: '{"body": "本月边饷已清，暗流暗涌。", "tags": ["边饷"]}',
+    )
+    monkeypatch.setattr(
+        "ming_sim.month_chain.run_world_segment_text",
+        lambda *a, **k: "",
+    )
+    real_run_agent_text = agents_mod.run_agent_text
+
+    def _run_month_chain_text(agent, prompt, tag, **kwargs):
+        if tag == "decree-forecast":
+            return ""
+        return real_run_agent_text(agent, prompt, tag, **kwargs)
+
+    monkeypatch.setattr(
+        agents_mod, "run_agent_text", _run_month_chain_text,
     )
 
 
@@ -172,128 +180,10 @@ def _runtime_payload(db, state):
 # ── 1. 未了续跑：未落账回话退朝不 409，自动接续至月完 ────────────────────
 
 
-def test_advance_with_unextracted_reply_accepts_and_continues(web_game, monkeypatch):
-    """AC1：存在未落账回话时退朝 → 不打回/409；收夜 drain 后自动推进。"""
-    game = web_game
-    minister = _active_minister(game)
-    _fake_settlement_llm(monkeypatch)
-    before = _click_before(game.state)
-    turn_before = int(game.state.turn)
-    nid, _ctid = _open_night_with_unextracted_reply(game, minister)
-    assert game.db.get_month_open_snapshot(turn_before) is None
-
-    # 观测：close 前点即入已 capture 点击前四键（可证时序，非恒真 sanity）
-    saw_capture = {}
-    real_close = web_app._auto_close_open_night_gate_free
-
-    def _close_observing(g, **kw):
-        saw_capture["snap"] = g.db.get_month_open_snapshot(int(g.state.turn))
-        return real_close(g, **kw)
-
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _close_observing)
-
-    async def go():
-        async with _client() as client:
-            return await client.post("/api/decree/advance_without_edict")
-
-    resp = asyncio.run(go())
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    # 月完：快照过期、展示态清；夜已封
-    assert int(game.state.turn) == turn_before + 1
-    assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_CLOSED
-    assert game.db.get_month_open_snapshot(turn_before) is None
-    assert body["state"]["turn"]["settlement_display"] is False
-    assert saw_capture.get("snap") == before
 
 
-def test_issue_stream_retries_failed_simulator_on_same_turn(web_game, monkeypatch):
-    game = web_game
-    minister = _active_minister(game)
-    _fake_settlement_llm(monkeypatch)
-    turn = int(game.state.turn)
-    calls = {"simulator": 0, "extractor": 0}
-
-    game.db.add_directive(
-        game.state, None, "着户部核边饷", "retry-1700", actor=minister,
-        status="draft",
-        dossier_payload={
-            "dossier_action_type": "policy",
-            "target_kind": "issue",
-            "target_id": "retry-1700",
-        },
-    )
-
-    def _simulate(*_args, **kwargs):
-        calls["simulator"] += 1
-        if calls["simulator"] == 1:
-            raise RuntimeError("simulator unavailable")
-        return ("月报", kwargs.get("simulator_payload") or {})
-
-    def _extract(*_args, **_kwargs):
-        calls["extractor"] += 1
-        return ({}, "out", "in")
-
-    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _simulate)
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _extract)
-
-    async def issue():
-        async with _client() as client:
-            return await client.post(
-                "/api/decree/issue/stream", json={"expected_turn": turn},
-            )
-
-    first = asyncio.run(issue())
-    assert first.status_code == 200
-    assert _terminal_sse(first)[0] == "error"
-    assert int(game.state.turn) == turn
-    assert game.db.list_turn_reports() == []
-    assert calls == {"simulator": 1, "extractor": 0}
-
-    retry = asyncio.run(issue())
-    assert retry.status_code == 200
-    assert _terminal_sse(retry)[0] == "done"
-    assert int(game.state.turn) == turn + 1
-    reports = game.db.list_turn_reports()
-    assert len(reports) == 1
-    assert int(reports[0]["turn"]) == turn
-    assert calls == {"simulator": 2, "extractor": 1}
 
 
-def test_issue_with_unextracted_reply_accepts_and_continues(web_game, monkeypatch):
-    """AC1 颁布入口：未落账回话 → 不 409；自动收夜+结算接续。"""
-    game = web_game
-    minister = _active_minister(game)
-    _fake_settlement_llm(monkeypatch)
-    turn_before = int(game.state.turn)
-    nid, _ctid = _open_night_with_unextracted_reply(game, minister)
-    # 颁布至少一条草案（与生产拟诏门槛同）
-    game.db.add_directive(
-        game.state, None, "着户部核边饷", "t1235", actor=minister,
-        status="draft",
-        dossier_payload={
-            "dossier_action_type": "policy",
-            "target_kind": "issue",
-            "target_id": "border-pay-1235",
-        },
-    )
-
-    async def go():
-        async with _client() as client:
-            return await client.post("/api/decree/issue", json={})
-
-    resp = asyncio.run(go())
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    # 完成或 awaiting 皆可；不得 409 打回
-    assert "awaiting_decision" in body or "report" in body or "decree" in body
-    assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_CLOSED
-    if body.get("awaiting_decision"):
-        assert game.db.get_month_open_snapshot(turn_before) is not None
-        payload = game.state_payload()
-        assert payload["turn"]["settlement_display"] is True
-    else:
-        assert int(game.state.turn) == turn_before + 1
 
 
 # ── 2. 点即入：capture 先于 await/close（失败前已入核账，失败后出展示态）──
@@ -889,6 +779,8 @@ def test_disconnect_mid_settlement_reconnect_coherent(web_game, monkeypatch):
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
+    # The real month chain advances only after a gazette archive is present.
+    game.db.save_turn_report(game.state, "本月邸报：边饷已清。")
     before = _click_before(game.state)
     turn_before = int(game.state.turn)
 

@@ -53,7 +53,6 @@ from ming_sim.decree import (
     _requires_full_settlement,
     resolve_decisions_phase2,
     resolve_directives,
-    resolve_settling_recovery,
     write_decree_with_agno,
 )
 from ming_sim.error_pack import clear_for_resimulation
@@ -1056,6 +1055,8 @@ class GameSession:
             from ming_sim.session_write_queue import SessionWriteQueue
             self._write_queue = SessionWriteQueue()
             self._write_gate = self._write_queue.write_gate
+            from ming_sim.decree_forecast import bind_forecast_owner
+            bind_forecast_owner(self)
             if fresh_save:
                 self.auto_save("begin")
         except Exception as init_exc:
@@ -1369,14 +1370,21 @@ class GameSession:
             if decision.result is AudienceAdmission.SUMMON_FRESH
             else record_summon_in_transit
         )
+        opened_new_night = False
         with atomic(self.db):
-            night = get_open_night(self.db) or open_night(self.db, active_state)
+            night = get_open_night(self.db)
+            if night is None:
+                night = open_night(self.db, active_state)
+                opened_new_night = True
             recorder(
                 self.db, int(night["id"]), character.name,
                 origin_id=str(origin_id).strip(),
                 origin_chat_turn_id=int(origin_chat_turn_id or 0),
                 **({"travel_tone": travel_tone} if recorder is record_summon_fresh else {}),
             )
+        if opened_new_night:
+            from ming_sim.decree_forecast import schedule_held_decree_forecasts
+            schedule_held_decree_forecasts(self)
         return decision
 
     def _start_cli_action_intent(self, character: Character, message: str) -> Optional[Future]:
@@ -1819,11 +1827,16 @@ class GameSession:
         message_text = str(message or "").strip()
         if not message_text:
             raise ValueError("问话不能为空。")
+        from ming_sim.decree_forecast import bind_forecast_owner
+        bind_forecast_owner(self)
 
         # 开夜（若需）；一夜一场不绑单人 minister 入口。
-        night = get_open_night(self.db) or ensure_open_night_for_audience(
-            self.db, self.state,
-        )
+        night = get_open_night(self.db)
+        opened_new_night = night is None
+        if opened_new_night:
+            night = ensure_open_night_for_audience(self.db, self.state)
+            from ming_sim.decree_forecast import schedule_held_decree_forecasts
+            schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
         # 收夜 / 留侍口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
@@ -2210,6 +2223,8 @@ class GameSession:
         from ming_sim.session_write_queue import get_session_write_queue
 
         write_queue = get_session_write_queue(self)
+        from ming_sim.decree_forecast import bind_forecast_owner
+        bind_forecast_owner(self)
 
         return schedule_audience_turn_translation(
             self.db,
@@ -2744,10 +2759,48 @@ class GameSession:
                         payload["_directive_status"] = "pending"
                         payload.pop("_needs_clarification", None)
                     valid_payloads[int(pending["id"])] = (pending, payload)
+                unchanged_approved_ids: set[int] = set()
                 for pending_id, (pending, payload) in valid_payloads.items():
                     encoded_payload = json.dumps(payload, ensure_ascii=False)
+                    version_sql = ""
+                    if pending["kind"] == "directive":
+                        row = self.db.conn.execute(
+                            "SELECT night_approved, version, payload_json "
+                            "FROM pending_actions WHERE id=?",
+                            (pending_id,),
+                        ).fetchone()
+                        previous: object = None
+                        if row is not None:
+                            try:
+                                previous = json.loads(row["payload_json"] or "{}")
+                            except (ValueError, TypeError):
+                                previous = None
+                        # 再次应允只在载荷本身变了时作废旧预算并递增版本。
+                        # 下划线控制键是本轮书记，不算改旨。
+                        changed = (
+                            not isinstance(previous, dict)
+                            or {
+                                key: value for key, value in previous.items()
+                                if not str(key).startswith("_")
+                            } != {
+                                key: value for key, value in payload.items()
+                                if not str(key).startswith("_")
+                            }
+                        )
+                        already_approved = (
+                            row is not None and int(row["night_approved"] or 0) == 1
+                        )
+                        if already_approved and changed:
+                            self.db._discard_pending_decree_forecast(
+                                pending_id, int(row["version"] or 1),
+                            )
+                            version_sql = ", version=version+1"
+                        elif already_approved:
+                            # 同版再次应允：不重跑判官/推演/转译，含上次已耗尽未预成。
+                            unchanged_approved_ids.add(pending_id)
                     self.db.conn.execute(
-                        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                        f"UPDATE pending_actions SET payload_json=?{version_sql} "
+                        "WHERE id=?",
                         (encoded_payload, pending_id),
                     )
                     pending["payload_json"] = encoded_payload
@@ -2769,6 +2822,16 @@ class GameSession:
                         if defer_ids:
                             mark_actions_night_approved(
                                 self.db, sorted(defer_ids), night_id=int(open_n["id"]))
+                            if directive_confirm_targets:
+                                from ming_sim.decree_forecast import schedule_pending_decree_forecast
+
+                                for pending in directive_confirm_targets:
+                                    if int(pending["id"]) in unchanged_approved_ids:
+                                        continue
+                                    schedule_pending_decree_forecast(
+                                        self, int(pending["id"]),
+                                        night_id=int(open_n["id"]),
+                                    )
                         if immediate_ids:
                             from ming_sim.applier import (
                                 RejectionCollector, mirror_rejections_after_commit,
@@ -3934,8 +3997,8 @@ class GameSession:
             （source=system_simulation）；颁诏 issue 路径保持默认 False（无草案 → 400）。
 
         返回 ResolveResult：含决策点 → awaiting=True，置 awaiting_decision 态，回合未推进，
-        调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
-        回合已结算推进，置 issued 态。
+        调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点但邸报
+        尚未归档时 awaiting=False、advanced=False，仍停 settling；归档后才置 issued。
         """
         # #1842：过月前转译 join/catch-up/耗尽判定（闸外契约，见 await_translations_before_month）。
         if not write_gate_already_held:
@@ -3955,58 +4018,24 @@ class GameSession:
             return ResolveResult(
                 awaiting=True,
                 decisions=self.db.list_rescript_desk(int(self.state.turn)),
+                advanced=False,
             )
-        # ADR 0008 S7（决定 3）：settling 态崩溃恢复分流。settling 只意味着「前半段已完成」，
-        # 不意味着后半段就绪——查 resolve_context 判别：
-        #   有 ready context（extractor 已产出并 persist）→ 直入 apply，不重跑贵的 simulator/
-        #     extractor（验收③的对偶：跨进程恢复从真源重灌）。完成后照常置 ISSUED。
-        #   无 ready context（崩在推演/抽取期间，LLM 产出本就没持久化）→ 落到下方正常流程
-        #     重跑推演（pre_settle 被 settling 守门跳过=前半段不二跑，simulator/extractor 重跑，
-        #     = ADR「重跑是唯一选择」，即验收③）。
-        # 恢复 fallthrough 用：仅当来自非 ready SETTLING ctx 时被赋真源（#146 cmr r2）；
-        # 正常颁诏路保持 None → 下方 resolve_directives 走默认 player_decree。
+        # settling 仅证明前半段已提交；旧档 ready extractor delta 不是 ADR 0157 的
+        # 暂存声明真源。先降级旧产物，再由现役月链按持久落账状态续跑，财政不二落。
         recovered_source = None
         if self.state.turn_phase == TurnPhase.SETTLING.value:
             ctx = self.db.get_resolve_context(self.state.turn)
-            if (
-                ctx is not None
-                and ctx.get("extracted") is not None
-                and int(ctx.get("resolve_contract_version") or 0) == 0
-            ):
+            if ctx is not None and ctx.get("extracted") is not None:
                 clear_for_resimulation(self.db, self.state.turn)
                 ctx = self.db.get_resolve_context(self.state.turn)
-            if ctx is not None and ctx.get("extracted") is not None:
-                # 与正常路同守门：恢复期大臣新拟的 pending 旨未核定不得推进——
-                # 重放跳过守门会把它孤儿在旧回合（cmr S7 r8）。
-                # 重试新传的 decree/cheat 在重放叉被忽略（重放使用崩溃前真源），留痕（cmr S7 r4）。
-                if (decree or "").strip() or (cheat_directive or "").strip():
-                    from ming_sim.token_stats import tlog
-                    tlog("[恢复重放] 本次传入的 decree/cheat_directive 被忽略（重放使用崩溃前真源）。")
-                # 跨进程恢复时内存 last_decree 已被 begin_turn 清空——web 成功响应读它
-                # 作诏书展示，从真源恢复（cmr S7 r7）。
-                self.last_decree = str(ctx.get("decree_text") or "")
-                result = resolve_settling_recovery(
-                    self.state, self.db, self.agno_db, self.llm_config, ctx,
-                    on_event=on_event, content=self.content, registry=self.registry,
-                )
-                self.state.turn_phase = TurnPhase.ISSUED.value
-                self.db.save_state(self.state)
-                return result
-            # 无 ready context：fallthrough 到正常流程重跑推演（前半段被守门跳过）。
-            # 来源按构造保真（#146 cmr r2）：恢复 fallthrough 把存档 ctx['source'] 经
-            # _provenance_from_stored 穿透传入下方 resolve_directives，provenance 不依赖
-            # 「非 ready SETTLING ctx 恒 player」这一脆弱不变式（clear_for_resimulation 会把
-            # ready ctx 降级为 ready=0 且保留 source、driver 也能 persist system 来源 ctx，
-            # 都能留下非 ready SETTLING 占位）。system 来源重跑仍记 system、对玩家静默。
-            # 占位真源补诏（ship-pre r5）：begin_turn 已清内存 last_decree，跨进程恢复
-            # 用存的原诏，不让 LLM 重新生成顶替玩家手改稿。
+            # 从 context 恢复来源和原诏；前半段 settling 守门保证财政不二落。
             if ctx is not None:
                 # 仅恢复态（来自非 ready SETTLING ctx）才覆盖默认 player——正常颁诏路不进此分支。
                 recovered_source = _provenance_from_stored(ctx.get("source"))
-                if not (self.last_decree or "").strip():
-                    stored = str(ctx.get("decree_text") or "").strip()
-                    if stored:
-                        self.last_decree = stored
+                stored = str(ctx.get("decree_text") or "").strip()
+                if stored:
+                    self.last_decree = stored
+                    decree = stored
         # #1234/#1235：点击受理即独立提交月初快照（不进 pre_settle 事务）。
         # accept_settlement_period：FRONT_HALF_DONE 跳过（恢复态已有快照/半程活值不可重写）。
         # Web 入口另在 await/close 前先 capture（点即入时序）；此处幂等兜底 CLI/直调。
@@ -4145,13 +4174,14 @@ class GameSession:
             scene_registry=self._scene_registry,
             **resolve_kwargs,
         )
-        if result.awaiting:
+        if result.advanced and not result.awaiting:
+            # 主链已推进；阶段标 issued。未推进的批红/邸报交接保持 settling，重入接着跑。
+            self.state.turn_phase = TurnPhase.ISSUED.value
+        elif result.awaiting:
             # 决策点暂停：回合未推进，存 awaiting 态供刷新恢复；待 submit_decisions 续跑。
             self.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-            self.db.save_state(self.state)
-            return result
-        # resolve_directives 已 next_period + save_state；阶段标 issued
-        self.state.turn_phase = TurnPhase.ISSUED.value
+        else:
+            self.state.turn_phase = TurnPhase.SETTLING.value
         self.db.save_state(self.state)
         return result
 
@@ -4202,7 +4232,7 @@ class GameSession:
         req = list(choices)
         # C1.1：① 已落 decided、③ phase2 未写 extracted 的崩溃重入——
         # list_rescript_desk 只 pending，须把请求键对应 decided 行并入 desk
-        # 供 validate already_applied；ready_replay（extracted 非空）仍短路。
+        # 供 validate already_applied；旧 ready 的选择已落，不再二次写选择。
         desk_keys = {str(r.get("decision_key") or "") for r in desk}
         missing_keys = [
             str(c.get("decision_key") or "").strip()
@@ -4217,7 +4247,7 @@ class GameSession:
         if ready_replay:
             # #1589 Spec-1：ready-replay 短路前仍须过 validate_all 同一权威请求索引
             # 校验（缺键/重复键/desk 外键整批拒）；只校 envelope/key membership，
-            # 不比较/采纳重交 choice 内容——冻结 extracted 语义不变（§B.3）。
+            # 不比较/采纳重交 choice 内容；下游先废弃旧 extracted，再续新月链。
             ra.validate_request_keys(desk, req)
             return {
                 "ready_replay": True,
@@ -4461,7 +4491,7 @@ class GameSession:
     ) -> str:
         """#657 ③ 短写（调用方已持 write_gate）：persist + 门闩 + phase2。
 
-        return_revise 清锚在 settle_with_delta 单一终态完成（与 next_period 同 atomic）。
+        return_revise 清锚在月份推进事务完成（与 next_period 同 atomic）。
         """
         from ming_sim.applier import atomic
 
@@ -4559,14 +4589,18 @@ class GameSession:
             if ctx0 is not None:
                 self.last_decree = str(ctx0.get("decree_text") or "")
 
+        before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
             on_event=on_event, content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
-        # return_revise 清锚已纳入 settle_with_delta 单一终态（与 next_period 同 atomic）
-
-        self.state.turn_phase = TurnPhase.ISSUED.value
+        # 批红续跑与 submit_decisions 同一规则：主链未推进不得标 ISSUED。
+        self.state.turn_phase = (
+            TurnPhase.ISSUED.value
+            if int(self.state.turn) != before_turn or self.state.ended
+            else TurnPhase.SETTLING.value
+        )
         self.db.save_state(self.state)
         return report
 
@@ -4694,7 +4728,7 @@ class GameSession:
     def submit_decisions(
         self, choices: List[Dict[str, object]], on_event=None, cheat_directive: str = ""
     ) -> str:
-        """空 desk 续跑：复算既有 decided 行 / 重放 ready-replay，零新增领域写。
+        """空 desk 续跑：复算既有 decided 行，零新增领域写。
 
         #657/#1589：本方法仅接受空 choices——旧 choices[idx] 位置补键/猜绑写协议
         已删；已裁批（含纯 decision/#1490）一律须经 resolve_rescript_decisions /
@@ -4710,12 +4744,17 @@ class GameSession:
             ctx0 = self.db.get_resolve_context(self.state.turn)
             if ctx0 is not None:
                 self.last_decree = str(ctx0.get("decree_text") or "")
+        before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
             on_event=on_event, content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
         )
-        self.state.turn_phase = TurnPhase.ISSUED.value
+        self.state.turn_phase = (
+            TurnPhase.ISSUED.value
+            if int(self.state.turn) != before_turn or self.state.ended
+            else TurnPhase.SETTLING.value
+        )
         self.db.save_state(self.state)
         return report
 
