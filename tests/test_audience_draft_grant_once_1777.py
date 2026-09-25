@@ -169,7 +169,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         wait_pending_writes(game)
 
         after = _get_state(client)
-        assert _turn_of(after) == turn_before + 1, after.get("turn")
+        assert _turn_of(after) == turn_before, after.get("turn")
 
         ledger = [
             dict(r) for r in game.db.conn.execute(
@@ -232,15 +232,27 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         assert len(pay_logs) == 1, pay_logs
         assert float(pay_logs[0]["delta"]) == pytest.approx(-15)
 
-        # 验收 3：受控推进 → 0076 到期复核 → 执行格（钱已落＝fulfilled，0076 既有映射）
-        from ming_sim.decree import settle_with_delta
+        # 验收 3：邸报写成后月份才到期限，再走既有到期复核。
+        from ming_sim.month_chain import run_player_month_chain
+        closed = int(game.state.turn)
+        game.db.conn.execute(
+            "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+            (closed, game.state.year, game.state.period, "邸报已成"),
+        )
+        game.db.conn.commit()
+        advanced = run_player_month_chain(
+            game.state, game.db, game.session.agno_db, game.session.llm_config,
+        )
+        assert advanced.advanced is True
+        assert int(game.state.turn) == closed + 1
         from ming_sim.due_review import list_due_review_scenes
         from ming_sim.staged_commitment import TODO_STATUS_PENDING
 
-        settle_with_delta(
-            game.state, game.db, {}, before_turn=int(game.state.turn),
+        waiting = run_player_month_chain(
+            game.state, game.db, game.session.agno_db, game.session.llm_config,
             content=game.content,
         )
+        assert waiting.advanced is False
         assert game.db.list_next_audience_todos(status=TODO_STATUS_PENDING)
         scenes = list_due_review_scenes(game.db, game.state)
         # 验收 3：场面属本案到期复核，不得冒出断供哭谏
@@ -252,8 +264,14 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         assert due_scenes, scenes
         assert not any(s.get("kind") == "breach_plea" for s in scenes), scenes
 
-        settle_with_delta(
-            game.state, game.db, {}, before_turn=int(game.state.turn),
+        game.db.save_turn_report(game.state, "邸报已成")
+        advanced = run_player_month_chain(
+            game.state, game.db, game.session.agno_db, game.session.llm_config,
+            content=game.content,
+        )
+        assert advanced.advanced is True
+        run_player_month_chain(
+            game.state, game.db, game.session.agno_db, game.session.llm_config,
             content=game.content,
         )
         after_due = game.db.get_decree_dossier(dossier_id)

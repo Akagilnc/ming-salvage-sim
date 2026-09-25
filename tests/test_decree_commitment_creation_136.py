@@ -3,7 +3,6 @@ from pathlib import Path
 
 import ming_sim.issues as I
 from ming_sim.db import _has_stop_condition
-from ming_sim.simulation import _extractor_context_payload
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,14 +82,6 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     assert json.loads(payload["stop_condition"]) == stop_condition
     assert payload["结案条件"] == "(未填)"
     assert payload["condition_role"] == "commitment_stop_condition"
-    extractor_payload = _extractor_context_payload(db, state, "", "")
-    extractor_issue = next(
-        item for item in extractor_payload["active_issues"]
-        if item["title"] == "每月补关宁军饷直到补齐"
-    )
-    assert extractor_issue["commitment_kind"] == "until_stop"
-    assert json.loads(extractor_issue["stop_condition"]) == stop_condition
-    assert extractor_issue["condition_role"] == "commitment_stop_condition"
 
 
 def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeypatch):

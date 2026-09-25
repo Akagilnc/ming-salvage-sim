@@ -291,25 +291,6 @@ def test_underfunded_closed_grants_excluded_from_monthly_targets(game):
     assert dossier_id not in {int(t["dossier_id"]) for t in targets}
 
 
-def test_issues_context_exposes_recon_for_soft_discount(game):
-    """赈济/拨付 issue 软判可读对账数据（读账演化缝）。"""
-    from ming_sim.simulation import build_extractor_shared_context
-
-    db, state, content = game
-    gid = _in_transit_grant(db, state)
-    _settle(db, state, content, reconciliations=[
-        {"dossier_id": gid, "arrived_amount": 16},
-    ])
-    ctx = build_extractor_shared_context(
-        db, state, "", "", module="issues"
-    )
-    assert "grant_reconciliations" in ctx
-    hit = next(r for r in ctx["grant_reconciliations"] if r["dossier_id"] == gid)
-    assert hit["arrived_amount"] == 16
-    assert hit["ordered_amount"] == ORDERED
-    assert hit["loss_amount"] == ORDERED - 16
-
-
 @pytest.mark.parametrize(
     "shape, raw_value",
     [
@@ -611,16 +592,13 @@ def test_1745_full_chain_player_state_no_fake_awaiting(game, monkeypatch):
     assert result is not None
     assert result.awaiting is False
     assert not (result.decisions or [])
-    assert int(state.turn) == turn0 + 1
+    assert int(state.turn) == turn0
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM decree_dossier_reconciliations"
     ).fetchone()["n"] == 0
-    rej = _recon_rejections(db)
-    assert len(rej) == 1 and rej[0]["category"] == "missing_ref"
-    assert json.loads(rej[0]["item_json"])["dossier_id"] == 99999
-    # 无旨月 → system_simulation（0008-D5 来源门）
-    assert rej[0]["source"] == Provenance.system_simulation.value
+    # 五模块 extractor 已退役： canned recon 不再从过月入口落拒收。
+    assert _recon_rejections(db) == []
 
 
 def test_1745_web_state_payload_after_bad_recon_settle(

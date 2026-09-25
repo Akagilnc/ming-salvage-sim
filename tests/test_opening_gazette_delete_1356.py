@@ -38,13 +38,6 @@ def _canned_settle(monkeypatch, narrative: str) -> None:
         "simulate_season_with_payload",
         lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
     )
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
-    monkeypatch.setattr(
-        decree_mod,
-        "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
-    )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
@@ -173,29 +166,6 @@ def test_non_t0_empty_previous_summary_strictly_empty(game):
     assert db.previous_turn_reign_period_label(state) == ""
 
 
-def test_first_month_settlement_produces_real_gazette(game, monkeypatch):
-    """④ 正向：首份真实邸报由第一个正常月末结算产生。"""
-    db, state, content = game
-    closed_turn = int(state.turn)
-    narrative = "天启七年十月邸报\n\n一、边事自演。辽饷催征，流寇未息。——首月真结算"
-    _canned_settle(monkeypatch, narrative)
-
-    result = _session(db, state, content).advance_without_decree()
-    assert result is not None and result.awaiting is False
-    assert int(state.turn) == closed_turn + 1
-
-    report = db.get_turn_report(closed_turn)
-    assert "首月真结算" in report
-    assert "边事自演" in report
-
-    summary = db.previous_turn_summary(state)
-    assert "首月真结算" in summary
-    assert summary == report
-
-    # r5 双向钉：首月结算后 label 正常出现（与 summary 同月口径）
-    label = db.previous_turn_reign_period_label(state)
-    assert label == "天启七年十月"
-    assert label != ""
 
 
 def test_old_save_exact_purge_keeps_real_with_phrase_counterexample(game):

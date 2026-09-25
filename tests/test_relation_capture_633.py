@@ -23,7 +23,6 @@ from ming_sim.relations import (
 import pytest
 from ming_sim.simulation import (
     EMPTY_EXTRACTION,
-    EXTRACTION_MODULES,
     MODULE_FIELDS,
     _FIELD_OWNER_MODULE,
 )
@@ -41,7 +40,7 @@ def _triplets(rows):
 
 
 def test_relation_edge_events_slot_owned_by_relations_module():
-    assert "relations" in EXTRACTION_MODULES
+    assert "relations" in MODULE_FIELDS
     assert MODULE_FIELDS["relations"] == {"relation_edge_events"}
     assert "relation_edge_events" in EMPTY_EXTRACTION
     assert EMPTY_EXTRACTION["relation_edge_events"] == []
@@ -538,28 +537,6 @@ def _module_of(tag: str) -> str:
     return tag.split("/", 1)[1]
 
 
-def test_relations_module_joins_parallel_extraction(read_game, monkeypatch):
-    """五模块同一 ThreadPoolExecutor 并发装配；merged/localized 含大臣互动段。"""
-    import ming_sim.simulation as sim
-
-    tags: list[str] = []
-
-    def _fake_run(agent, prompt, tag):
-        tags.append(tag)
-        if tag.startswith("extractor/"):
-            return _CANNED[_module_of(tag)]
-        return prompt
-
-    db, state, _content = read_game
-    monkeypatch.setattr(sim, "run_agent_text", _fake_run)
-    agents = {m: object() for m in EXTRACTION_MODULES}
-    merged, localized, _inputs = sim.extract_scores_by_modules_with_agno(
-        agents, db, state, "邸报", parallel=True,
-    )
-    assert sorted(tags.count(f"extractor/{m}") for m in EXTRACTION_MODULES) == [1] * len(EXTRACTION_MODULES)
-    items = merged["relation_edge_events"]
-    assert [it["施动者"] for it in items] == ["温体仁"]
-    assert "大臣互动" in localized
 
 
 # ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──

@@ -8,7 +8,7 @@ import ming_sim.decree as decree_mod
 from ming_sim import issues as issue_engine
 from ming_sim.db import GameDB
 from ming_sim.models import Character
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, _cost_events, _sat
+from tests.dossier_test_helpers import _cost_events, _sat
 
 
 BLOCKED_LAYERS = {"cabinet_drafting", "palace_rescript", "six_offices"}
@@ -127,7 +127,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
     game, monkeypatch, decision, expected_status, expect_force_costs,
 ):
     """P-2：越级任命打回三格 → 批红三选参数化 → TD-4 三要素 restore 同档。"""
-    from ming_sim.decree import _chosen_rescript_actions, settle_with_delta
+    from ming_sim.decree import settle_with_delta
 
     db, state, content = game
     board = _board_with_td4_three(db, state, content)
@@ -201,28 +201,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
     assert _sat(restored, "factions", "东林") == before_faction
     assert _cost_events(restored, dossier_id) == []
 
-    # 现行 rendered 契约：服务端 options 带 dossier_id/dossier_decision + hint
-    # （#1492 A / #1494：_chosen_rescript_actions 靠 options 合法能力对识别批红轨）
-    rescript_options = [
-        {
-            "label": "强颁", "hint": "以中旨强行颁出",
-            "dossier_id": dossier_id, "dossier_decision": "force_promulgated",
-        },
-        {
-            "label": "收回", "hint": "收回此道准旨",
-            "dossier_id": dossier_id, "dossier_decision": "withdrawn",
-        },
-        {
-            "label": "留中", "hint": "留待下月重判",
-            "dossier_id": dossier_id, "dossier_decision": "hold",
-        },
-    ]
-    actions = _chosen_rescript_actions([{
-        "event_id": f"dossier:{dossier_id}",
-        "options": rescript_options,
-        "choice": {"dossier_id": dossier_id, "dossier_decision": decision},
-    }])
-    assert actions == [{"dossier_id": dossier_id, "decision": decision}]
+    actions = [{"dossier_id": dossier_id, "decision": decision}]
 
     def _forbid_verdicts(*_a, **_k):
         raise AssertionError(
@@ -270,101 +249,3 @@ def test_break_rank_appointment_rescript_td4_tracer(
     if decision == "withdrawn":
         assert row["promulgation_decision"] == "rejected"
     restored.close()
-
-
-def test_secret_order_0055_exempt_not_in_rescript_with_break_rank(game, monkeypatch):
-    """P-3：密令应允即颁、不入批红集；同回合明发越级旨仍走打回批红。"""
-    db, state, content = game
-    minister = _minister(db)
-    appointee = "密令对照越级乙"
-    _add_white_body(db, state, appointee)
-
-    secret_pending = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister,
-        target_id=None, payload={
-            "title": "密查仓场", "content": "密查仓场侵冒，不得外泄。",
-            "assignee": minister, "tags": [], "deadline_months": 0,
-            "covert_task": TYPED_COVERT_TASK,
-        },
-    )
-    office_pending = db.stage_pending_action(
-        state.turn, kind="office", action="任命",
-        minister_name=minister, target_id=None,
-        payload={"text": "测试任免原文", "name": appointee, "office": "陕西巡抚", "任别": "署理"},
-    )
-    db.commit_pending_actions(state, content=content, registry=None)
-
-    secret = next(
-        row for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == secret_pending
-    )
-    appointment = next(
-        row for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == office_pending
-    )
-    assert secret["action_type"] == "secret_order"
-    assert secret["status"] == "promulgated"
-    assert appointment["status"] == "proposed"
-    payload = json.loads(str(appointment["payload_json"] or "{}"))
-    assert payload.get("break_rank", {}).get("is_break_rank") is True
-
-    context = decree_mod.build_promulgation_judge_context(
-        db, state, [db.get_decree_dossier(appointment["id"])],
-    )
-    snapshot = context["dossiers"][0]["criteria_snapshot_source"]
-    verdict = {
-        "dossier_id": int(appointment["id"]),
-        "decision": "rejected",
-        "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "gatekeeper_id": None,
-        "reason": "越级任命封驳。",
-        "criteria_snapshot": snapshot,
-        "affected_parties": [
-            {
-                "kind": "faction", "key": "东林",
-                "direction": "negative", "intensity": "weak",
-            },
-        ],
-    }
-
-    monkeypatch.setattr(
-        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object(),
-    )
-    monkeypatch.setattr(
-        decree_mod, "run_agent_text",
-        lambda *_a, **_k: json.dumps({"verdicts": [verdict]}, ensure_ascii=False),
-    )
-    monkeypatch.setattr(
-        decree_mod, "create_season_simulator_agent", lambda *a, **k: object(),
-    )
-    monkeypatch.setattr(
-        decree_mod,
-        "simulate_season_with_payload",
-        lambda *a, **k: ("越级旨被封驳，待批红。", k["simulator_payload"]),
-    )
-
-    result = decree_mod.resolve_directives(
-        state, db, None, None, [object()], "密令对照越级", content=content,
-    )
-
-    assert result.awaiting is True
-    # 密令应允即颁；awaiting 时打回 verdict 仍在 pending，批红决策只挂明发越级旨。
-    assert db.get_decree_dossier(secret["id"])["status"] == "promulgated"
-    pending = db.get_pending_promulgation_verdicts(state.turn)
-    assert pending == [verdict]
-    assert all(int(item["dossier_id"]) != int(secret["id"]) for item in pending)
-    rescript_ids = {
-        int(str(decision["event_id"]).split(":", 1)[1])
-        for decision in result.decisions
-        if str(decision.get("event_id") or "").startswith("dossier:")
-    }
-    assert int(appointment["id"]) in rescript_ids
-    assert int(secret["id"]) not in rescript_ids
-    labels = {
-        option["label"]
-        for decision in result.decisions
-        if decision.get("event_id") == f"dossier:{appointment['id']}"
-        for option in decision.get("options") or []
-    }
-    assert labels == {"强颁", "收回", "留中"}

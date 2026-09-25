@@ -1,5 +1,5 @@
 // 颁诏/续裁共用：消费 SSE 推演流，stage/thinking/text 实时更新进度区，
-// 返回结束态：done（已结算）/ decisions（暂停待裁）/ error。
+// 返回传输终态：done（是否过月由 data.advanced 判定）/ decisions（暂停待裁）/ error。
 export type SettleStreamOutcome = { kind: "done" | "decisions" | "error"; data: any };
 
 /** Stage SSE payload. current/total are typed wait-progress facts from the backend. */

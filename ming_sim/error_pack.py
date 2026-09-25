@@ -100,35 +100,6 @@ def _read_complete_pack_manifest(path: Path) -> Optional[Dict[str, object]]:
     return manifest if isinstance(manifest, dict) else None
 
 
-def complete_error_packs_for_ready(db_path: object, turn: int, payload: object) -> list[Path]:
-    """Return complete packs for this database, turn, and exact ready payload.
-
-    目录 exists / 惰性 glob 枚举的 OSError 视为无匹配包——不得拖垮
-    SettlementAbort 恢复缝（ADR 0008 保留 ready／降级重新推演）。
-    """
-    expected = ready_payload_digest(payload)
-    expected_db_path = str(db_path)
-    root = error_packs_root()
-    try:
-        if not root.exists():
-            return []
-        candidates = list(root.glob(f"turn{int(turn)}_attempt*"))
-    except OSError:
-        return []
-    matches: list[Path] = []
-    for path in candidates:
-        manifest = _read_complete_pack_manifest(path)
-        if manifest is None:
-            continue
-        if (
-            str(manifest.get("db_path")) == expected_db_path
-            and manifest.get("turn") == int(turn)
-            and manifest.get("ready_payload_digest") == expected
-        ):
-            matches.append(path)
-    return matches
-
-
 def settlement_abort_message(pack_path: str) -> str:
     """中止时的玩家可见提示（决定 7：自带路径指引）。"""
     return (
@@ -141,7 +112,7 @@ def settlement_abort_message(pack_path: str) -> str:
 def latest_error_pack_for_turn(db_path: object, turn: int) -> Optional[str]:
     """同 DB + turn 最新完整错误包绝对路径；无则 None（ADR 0008 决定 7 恢复面）。
 
-    身份与 complete_error_packs_for_ready 同缝：manifest.db_path + turn，
+    身份取 manifest.db_path + turn，
     禁跨存档串包（同 user-data 下另一 DB 的更高 attempt 不得入选）。
     目录扫描/条目 stat 的 OSError 视为无诊断包——不得拖垮 settling 恢复面。
     """
@@ -268,14 +239,16 @@ ARRIVAL_COMPANION_SIM_DONE_KEY = "arrival_companion_sim_done"
 
 
 def clear_for_resimulation(db: Any, turn: int) -> None:
-    """「重新推演」逃生口（ADR 0008 决定 6）：把 resolve_context 降级为非 ready，
-    让重试重跑 simulator/extractor。
+    """作废旧 ready 产物：把 resolve_context 降级为非 ready。
+
+    旧核据 ADR 0008 决定 6 重跑 simulator/extractor；玩家入口据 ADR 0157
+    从暂存声明及已落账状态续跑月链，不重放旧 delta。
 
     **降级而非删行**（cmr S7 r3，2/2）：决定 6 的「清」指清 LLM 段产出（extracted），
     phase1 字段（叙事/诏书/payload/亲裁上下文）是 HITL 重抽的数据依赖、且是唯一持久副本
     ——整行删除会把 HITL 叉钉进「awaiting+决策在+context 没了 → phase2 永远拒收」的新
     软死锁。降级后：settling 叉重试 extracted=None → 恢复分流不命中 → fallthrough 重新
-    推演；HITL 叉重试走 phase2 非 ready 分支用存的叙事+亲裁指令重抽。
+    推演；旧 HITL 叉保留原诏、来源及已裁记录，续跑玩家月链。
 
     **settling 相位不清**：pre_settle 前半段确实提交了（固定财政 + 暂存动作），重推演
     只重跑 LLM 段，前半段不可重跑（否则二次 tick）。

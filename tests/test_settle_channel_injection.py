@@ -44,48 +44,6 @@ def _cli_cfg() -> LLMConfig:
     )
 
 
-def test_real_flow_injects_channel_enrichment_into_settle(game, monkeypatch):
-    """_settle_after_narrative 须把 llm_config 经 delta_applier 闭包送进结算核：
-    CLI 通道 + enrich 空 → 新国策落 floor（民心+1），证明通道未被静默关掉。"""
-    db, state, content = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    # enrich 返回空 → 触发 CLI floor 兜底（与 test_issue_entities 同款探针）。
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
-    # 绕过真实 extractor LLM：直接喂一份 canonical delta。
-    delta = {"new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "注入通道国策", "kind": "initiative"}]}
-    monkeypatch.setattr(decree, "build_extractor_shared_context", lambda *a, **k: "")
-    monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree, "create_score_extractor_module_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree, "extract_scores_by_modules_with_agno",
-                        lambda *a, **k: (delta, "extractor-out", "extractor-in"))
-    # 本用例只验 channel-aware delta_applier 的闭包注入；章节记忆是同一真实
-    # settle 路径上的另一条 LLM 调用。若不封闭它，全量共享进程里前序测试已
-    # bind agents content，factory 会成功并真的 spawn chapter-memory（约 19s）；
-    # 单跑则因未 bind 而立即降级，仅 0.02s。
-    chapter_calls = []
-    chapter_agent = object()
-    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *a, **k: chapter_agent)
-    monkeypatch.setattr(
-        decree,
-        "record_chapter_memory",
-        lambda *args, **kwargs: chapter_calls.append((args, kwargs)),
-    )
-
-    decree._settle_after_narrative(
-        state, db, None, _cli_cfg(),
-        decree_text="试旨", narrative="本月邸报。",
-        simulator_payload={"transit_semantics": []}, relevant_memories=[], secret_orders=[],
-        before_turn=state.turn, _emit=lambda *a, **k: None,
-        content=content, registry=None,
-    )
-
-    row = db.conn.execute(
-        "SELECT effect_on_resolve FROM issues WHERE title='注入通道国策'").fetchone()
-    assert row is not None
-    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
-    assert len(chapter_calls) == 1
-    assert chapter_calls[0][0][0] is chapter_agent
 
 
 def test_driver_path_no_env_is_deterministic(game, monkeypatch):

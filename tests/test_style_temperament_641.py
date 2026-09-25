@@ -369,16 +369,6 @@ def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
     assert dto["summary"] != dto["summary"].strip()
 
 
-def test_score_extractor_prompts_project_person_actions_from_canonical():
-    projected = format_person_actions()
-    assert projected  # canonical tuple → non-empty projection string
-    content = GameContent.load()
-    shared = content.score_extractor_shared_prompt
-    personnel = content.score_extractor_module_prompts["personnel_secret"]
-    assert projected in shared
-    assert projected in personnel
-
-
 def test_relation_edge_events_do_not_mutate_style(game):
     db, state, content = game
     source, target = "毕自严", "王绍徽"

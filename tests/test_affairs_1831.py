@@ -17,11 +17,7 @@ from ming_sim import issues as issues_mod
 from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
 from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from ming_sim.session import GameSession
-from ming_sim.simulation import (
-    EXTRACTION_MODULES,
-    build_extractor_shared_context,
-    extract_scores_by_modules_with_agno,
-)
+
 
 
 NINGYUAN = "宁远护送"
@@ -159,17 +155,6 @@ def _promulgated_origin(db, state, minister):
     return f"dossier:{dossier_id}"
 
 
-def _extract(monkeypatch, db, state, canned):
-    def _fake_run(_agent, _prompt, tag):
-        if str(tag).startswith("extractor/"):
-            return canned[tag.split("/", 1)[1]]
-        return _prompt
-
-    monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
-    return extract_scores_by_modules_with_agno(
-        {module: object() for module in EXTRACTION_MODULES},
-        db, state, "宁远护送已毕。", parallel=False,
-    )
 
 
 def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
@@ -223,8 +208,8 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
     assert pubs
     refs = set(db.affairs.origin_refs(affair.id))
     assert {str(entry["origin_ref"]) for entry in pubs} <= refs
-    brief = build_extractor_shared_context(db, state, "宁远护送", "")
-    row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
+    brief = db.affairs.input_brief(db.textual_facts)
+    row = next(item for item in brief if int(item["id"]) == affair.id)
     assert "experiences" not in row
     assert row["current_situation"] == PROGRESS
 
@@ -244,9 +229,9 @@ def test_ningyuan_close_night_one_affair_three_dossiers(game, monkeypatch):
         assert restored_pubs
         restored_refs = set(restored.affairs.origin_refs(affair.id))
         assert {str(entry["origin_ref"]) for entry in restored_pubs} <= restored_refs
-        restored_brief = build_extractor_shared_context(restored, state, "宁远护送", "")
+        restored_brief = restored.affairs.input_brief(restored.textual_facts)
         restored_row = next(
-            item for item in restored_brief["open_affairs"] if int(item["id"]) == affair.id
+            item for item in restored_brief if int(item["id"]) == affair.id
         )
         assert "experiences" not in restored_row
         assert restored_row["current_situation"] == PROGRESS
@@ -329,403 +314,6 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
 
 
-def test_extractor_result_declarations_survive_sanitize_and_bind(game, monkeypatch):
-    db, state, content = game
-    minister = _minister(db)
-    origin = _promulgated_origin(db, state, minister)
-    first = db.affairs.open(
-        name=NINGYUAN, origin=ORIGIN,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    second = db.affairs.open(
-        name="另事", origin="另一件交办",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    grouped = _declaration(identity="ningyuan-escort")
-    canned = {
-        "internal": json.dumps({
-            "钱粮收支": [{
-                "账户": "国库", "增量": -1, "分类": "善后", "原因": "无案卷后果",
-                "事务声明": grouped,
-            }],
-        }, ensure_ascii=False),
-        "military_external": '{"new_armies": []}',
-        "issues": json.dumps({
-            "局势推进": [],
-            "新立局势": [{
-                "origin_kind": "decree",
-                "origin_ref": origin,
-                "kind": "situation",
-                "title": "推演新起",
-                "事务声明": grouped,
-            }],
-            "事件结局": {}, "撤销局势": [], "结案局势": [],
-            "案卷执行": [], "案卷参与人": [], "拨帑对账": [], "政敌检举": [],
-            "事务声明": [],
-        }, ensure_ascii=False),
-        "personnel_secret": json.dumps({
-            "人物变更": [{
-                "name": minister, "动作": "评定", "loyalty": 1,
-                "事务声明": grouped,
-            }],
-        }, ensure_ascii=False),
-        "relations": '{"大臣互动": []}',
-    }
-    merged, _localized, _inputs = _extract(monkeypatch, db, state, canned)
-    applied = apply_score_extraction(
-        db, state, merged, content=content,
-        open_affair_ids_at_input={first.id, second.id},
-    )
-    created = applied["issue_summary"]["new_issues"][0]
-    assert created["rejected"] is False
-    born = db.affairs.affair_id_for_issue(int(created["issue_id"]))
-    assert born > 0
-    affair_ref = db.affairs.origin_ref(born)
-    assert db.conn.execute(
-        "SELECT origin_ref FROM economy_ledger WHERE origin_ref=?",
-        (affair_ref,),
-    ).fetchone()
-    assert db.conn.execute(
-        "SELECT origin_ref FROM person_logs WHERE origin_ref=?",
-        (affair_ref,),
-    ).fetchone()
-    # canonical affair 来源精确匹配：故事经历后缀不得被 durable-effect 来源校验放行。
-    assert db.effect_origin_rejection(f"{affair_ref}/turn:1/0") is not None
-
-    denied = apply_score_extraction(
-        db, state,
-        {"new_issues": [{
-            "origin_kind": "decree", "origin_ref": origin,
-            "kind": "situation", "title": "越权挂接",
-            "affair_declaration": _declaration(attach="existing", affair_id=second.id),
-        }]},
-        content=content, open_affair_ids_at_input={first.id},
-    )
-    assert denied["issue_summary"]["new_issues"][0]["rejected"] is True
-
-    raw_denied = apply_score_extraction(
-        db, state,
-        {"economy_moves": [{
-            "account": "国库", "delta": -1, "category": "善后", "reason": "越权来源",
-            "origin_ref": db.affairs.origin_ref(second.id),
-        }]},
-        content=content, open_affair_ids_at_input={first.id},
-    )
-    assert raw_denied["economy_moves_rejections"][0]["rejected"] is True
-    assert db.conn.execute(
-        "SELECT 1 FROM economy_ledger WHERE origin_ref=?",
-        (db.affairs.origin_ref(second.id),),
-    ).fetchone() is None
-
-    before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "国库", "delta": -2, "category": "善后", "reason": "另起",
-                "affair_declaration": _declaration(identity="escort-a"),
-            }],
-            "人物变更": [{
-                "name": minister, "动作": "评定", "loyalty": 1,
-                "affair_declaration": _declaration(identity="escort-b"),
-            }],
-        },
-        content=content, open_affair_ids_at_input={first.id, second.id},
-    )
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before + 2
-
-    caller_frozen = {first.id, second.id}
-    frozen_snapshot = set(caller_frozen)
-
-    pending_id = 91003
-    born_dossier_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="另起护送案",
-        target_kind="issue", target_id="ningyuan-general",
-        executor_kind="character", executor_id=minister,
-        pending_action_id=pending_id, payload={"assignee_id": minister},
-    )
-    existing_dossier_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="另案待挂",
-        target_kind="issue", target_id="ningyuan-general",
-        executor_kind="character", executor_id=minister,
-        pending_action_id=91004, payload={"assignee_id": minister},
-    )
-    injected = {}
-    original_body = issues_mod._apply_score_extraction_body
-
-    def reuse_dossier_then_apply(*args, **kwargs):
-        db.create_decree_dossiers(
-            state, action_type="assignment", decree_text="另起护送案",
-            target_kind="issue", target_id="ningyuan-general",
-            executor_kind="character", executor_id=minister,
-            pending_action_id=pending_id,
-            payload={
-                "assignee_id": minister,
-                "affair_declaration": _declaration(identity="dossier-born-batch"),
-            },
-        )
-        born_id = int(db.conn.execute(
-            "SELECT affair_id FROM decree_dossiers WHERE id = ?", (born_dossier_id,),
-        ).fetchone()["affair_id"])
-        injected["born_id"] = born_id
-        try:
-            db.create_decree_dossiers(
-                state, action_type="assignment", decree_text="另案待挂",
-                target_kind="issue", target_id="ningyuan-general",
-                executor_kind="character", executor_id=minister,
-                pending_action_id=91004,
-                payload={
-                    "assignee_id": minister,
-                    "affair_declaration": _declaration(attach="existing", affair_id=born_id),
-                },
-            )
-        except ValueError:
-            pass
-        extracted = args[2]
-        extracted["economy_moves"] = [{
-            "account": "国库", "delta": -1, "category": "善后", "reason": "案卷同批后果",
-            "origin_ref": db.affairs.origin_ref(born_id),
-        }]
-        extracted["affair_declarations"] = [
-            _declaration(attach="close", affair_id=born_id),
-        ]
-        return original_body(*args, **kwargs)
-
-    monkeypatch.setattr(issues_mod, "_apply_score_extraction_body", reuse_dossier_then_apply)
-    try:
-        dossier_batch = apply_score_extraction(
-            db, state, {}, content=content, open_affair_ids_at_input=caller_frozen,
-        )
-    finally:
-        monkeypatch.setattr(issues_mod, "_apply_score_extraction_body", original_body)
-    dossier_born_id = injected["born_id"]
-    assert db.conn.execute(
-        "SELECT affair_id FROM decree_dossiers WHERE id = ?", (born_dossier_id,),
-    ).fetchone()["affair_id"] == dossier_born_id
-    assert db.conn.execute(
-        "SELECT affair_id FROM decree_dossiers WHERE id = ?", (existing_dossier_id,),
-    ).fetchone()["affair_id"] == 0
-    assert db.affairs.get(dossier_born_id).status == "open"
-    assert not dossier_batch["economy_moves_rejections"]
-    assert any(
-        row["report_section"] == "affair_declarations"
-        for row in dossier_batch["validate_shape_rejections"]
-    )
-    # new_issues birth must expand the single internal working set so a later
-    # post-issue carrier (explicit origin_ref, no re-add) can use that newborn.
-    expected_born_id = int(
-        db.conn.execute("SELECT COALESCE(MAX(id), 0) AS n FROM affairs").fetchone()["n"]
-    ) + 1
-    batch_born = apply_score_extraction(
-        db, state,
-        {
-            "new_issues": [{
-                "origin_kind": "decree", "origin_ref": origin,
-                "kind": "situation", "title": "同批新生局势",
-                "affair_declaration": _declaration(identity="issue-born-batch"),
-            }],
-            # 处置 is post-issue; explicit origin_ref checks membership without add().
-            "人物变更": [{
-                "name": minister, "动作": "处置", "status": "active",
-                "origin_ref": f"affair:{expected_born_id}",
-                "reason": "同批引用新生",
-            }],
-        },
-        content=content, open_affair_ids_at_input=caller_frozen,
-    )
-    assert caller_frozen == frozen_snapshot == {first.id, second.id}
-    created = batch_born["issue_summary"]["new_issues"][0]
-    assert created["rejected"] is False
-    born_id = int(db.affairs.affair_id_for_issue(int(created["issue_id"])))
-    assert born_id == expected_born_id
-    assert born_id not in frozen_snapshot
-    # Post-issue carrier resolved origin_ref against the expanded working set
-    # (explicit origin_ref checks membership without add). Auth passed the gate:
-    # business invalid_transition for 处置→active, not unauthorized-origin reject.
-    assert any(
-        str(row.get("origin_ref") or "") == db.affairs.origin_ref(born_id)
-        and row.get("category") == "invalid_transition"
-        for row in batch_born["applied_person_changes"]
-    )
-    # Closing authority remains the immutable input snapshot, not the expanded
-    # effect working set: a same-batch newborn without an active issue stays open.
-    close_born_id = int(
-        db.conn.execute("SELECT COALESCE(MAX(id), 0) AS n FROM affairs").fetchone()["n"]
-    ) + 1
-    close_born = apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "国库", "delta": -1, "category": "善后", "reason": "同批另起",
-                "affair_declaration": _declaration(identity="close-born-batch"),
-            }],
-            "affair_declarations": [
-                _declaration(attach="close", affair_id=close_born_id),
-            ],
-        },
-        content=content, open_affair_ids_at_input=caller_frozen,
-    )
-    assert db.affairs.get(close_born_id).status == "open"
-    assert any(row["report_section"] == "affair_declarations"
-               for row in close_born["validate_shape_rejections"])
-
-    # subsequent call with the original frozen set still rejects that prior-batch newborn.
-    follow = apply_score_extraction(
-        db, state,
-        {"economy_moves": [{
-            "account": "国库", "delta": -1, "category": "善后", "reason": "跨批越权",
-            "origin_ref": db.affairs.origin_ref(born_id),
-        }]},
-        content=content, open_affair_ids_at_input=caller_frozen,
-    )
-    assert caller_frozen == frozen_snapshot
-    assert follow["economy_moves_rejections"][0]["rejected"] is True
-    assert db.conn.execute(
-        "SELECT 1 FROM economy_ledger WHERE origin_ref=?",
-        (db.affairs.origin_ref(born_id),),
-    ).fetchone() is None
-
-    planted = _declaration(birth_key="result:planted-key")
-    before_planted = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    apply_score_extraction(
-        db, state,
-        {"economy_moves": [{
-            "account": "国库", "delta": -3, "category": "善后", "reason": "跨次甲",
-            "affair_declaration": planted,
-        }]},
-        content=content, open_affair_ids_at_input={first.id, second.id},
-    )
-    apply_score_extraction(
-        db, state,
-        {"人物变更": [{
-            "name": minister, "动作": "评定", "loyalty": 1,
-            "affair_declaration": planted,
-        }]},
-        content=content, open_affair_ids_at_input={first.id, second.id},
-    )
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM affairs",
-    ).fetchone()["n"] == before_planted + 2
-
-    # 同批同 identity 但 name/origin 冲突：坏项逐项拒收，合法 sibling 照落——不
-    # 得从预处理抛穿中止整批（ADR 0005，#1831）。
-    before_conflict = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    conflict_result = apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "国库", "delta": -4, "category": "善后", "reason": "冲突甲",
-                "affair_declaration": _declaration(identity="conflict-id"),
-            }],
-            "人物变更": [{
-                "name": minister, "动作": "评定", "loyalty": 1,
-                "affair_declaration": {
-                    "attach": "new", "name": "另一名", "origin": "另一起因",
-                    "identity": "conflict-id",
-                },
-            }],
-        },
-        content=content, open_affair_ids_at_input={first.id, second.id},
-    )
-    # sibling（economy_moves，先声明 identity 的一项）照落，新建一事务。
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM affairs",
-    ).fetchone()["n"] == before_conflict + 1
-    # 冲突项（人物变更，identity 相同但 name/origin 不符）单项拒收，不落地。
-    assert conflict_result["applied_person_changes"] == []
-    assert any(
-        rejection.get("report_section") == "人物变更"
-        and rejection.get("category") == "invalid_shape"
-        and isinstance(rejection.get("item"), dict)
-        and (rejection["item"].get("affair_declaration") or {}).get("identity") == "conflict-id"
-        for rejection in conflict_result["validate_shape_rejections"]
-    )
-
-    # Carrier validation and affair birth are one itemwise transaction.
-    before_invalid = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    invalid = apply_score_extraction(
-        db, state,
-        {
-            "economy_moves": [{
-                "account": "不存在账户", "delta": -1, "category": "善后", "reason": "坏载体",
-                "affair_declaration": _declaration(identity="invalid-economy"),
-            }],
-            "人物变更": [{
-                "name": minister, "动作": "瞎搞一通",
-                "affair_declaration": _declaration(identity="invalid-person"),
-            }],
-        },
-        content=content, open_affair_ids_at_input={first.id, second.id},
-    )
-    assert invalid["economy_moves_rejections"][0]["rejected"] is True
-    assert any(row.get("rejected") for row in invalid["applied_person_changes"])
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before_invalid
-
-    # A conflicting new-issue declaration is dropped before either its issue or affair is born.
-    issues_before = db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"]
-    affairs_before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    new_conflict = apply_score_extraction(
-        db, state,
-        {"new_issues": [
-            {"origin_kind": "decree", "kind": "situation", "title": "合法同批项",
-             "affair_declaration": _declaration(identity="new-conflict")},
-            {"origin_kind": "decree", "kind": "situation", "title": "冲突项",
-             "affair_declaration": {
-                 "attach": "new", "name": "另一事务", "origin": "另一来源",
-                 "identity": "new-conflict",
-             }},
-        ]},
-        content=content, open_affair_ids_at_input={first.id, second.id},
-    )
-    assert len(new_conflict["issue_summary"]["new_issues"]) == 1
-    assert any(row.get("report_section") == "new_issues"
-               for row in new_conflict["validate_shape_rejections"])
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM issues").fetchone()["n"] == issues_before + 1
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == affairs_before + 1
-
-    region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()["id"]
-    unrest_before = db.conn.execute(
-        "SELECT unrest FROM regions WHERE id=?", (region_id,),
-    ).fetchone()["unrest"]
-    region_denied = apply_score_extraction(
-        db, state,
-        {"region_delta": {
-            region_id: {
-                "origin_ref": db.affairs.origin_ref(second.id),
-                "unrest": 1,
-            },
-        }},
-        content=content, open_affair_ids_at_input={first.id},
-    )
-    assert any(row.get("rejected") for row in region_denied["region_changes"])
-    assert db.conn.execute(
-        "SELECT unrest FROM regions WHERE id=?", (region_id,),
-    ).fetchone()["unrest"] == unrest_before
-
-    treasury_before = state.metrics["国库"]
-    affairs_before_malformed = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    malformed = apply_score_extraction(
-        db, state,
-        {"economy_moves": [
-            {
-                "account": "国库", "delta": -1, "category": "善后", "reason": "坏声明",
-                "affair_declaration": True,
-            },
-            {
-                "account": "国库", "delta": -2, "category": "善后", "reason": "合法同批",
-                "affair_declaration": _declaration(identity="legal-sibling"),
-            },
-        ]},
-        content=content, open_affair_ids_at_input={first.id, second.id},
-    )
-    assert any(
-        row.get("report_section") == "economy_moves"
-        for row in malformed["validate_shape_rejections"]
-    )
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM affairs",
-    ).fetchone()["n"] == affairs_before_malformed + 1
-    assert state.metrics["国库"] == treasury_before - 2
 
 
 def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
@@ -803,8 +391,8 @@ def test_translation_experience_marks_affair_without_dossier(game):
     assert str(rows[0]["origin_ref"]).startswith(f"affair:{affair.id}/")
     knowledge = db.get_character_knowledge(state, minister)
     assert any(event.get("source_id") == f"story_ledger:{rows[0]['id']}" for event in knowledge["events"])
-    brief = build_extractor_shared_context(db, state, "宁远护送", "")
-    row = next(item for item in brief["open_affairs"] if int(item["id"]) == affair.id)
+    brief = db.affairs.input_brief(db.textual_facts)
+    row = next(item for item in brief if int(item["id"]) == affair.id)
     assert "experiences" not in row
 
     path = db.path
@@ -818,48 +406,6 @@ def test_translation_experience_marks_affair_without_dossier(game):
         restored.close()
 
 
-def test_close_requires_open_affairs_visible_in_batch(game, monkeypatch):
-    db, state, _ = game
-    first = db.affairs.open(
-        name=NINGYUAN, origin=ORIGIN,
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    second = db.affairs.open(
-        name="另事", origin="另一件交办",
-        year=state.year, period=state.period, turn=state.turn,
-    )
-    extractor_input = build_extractor_shared_context(db, state, "宁远护送已毕，此事了结。", "")
-    input_ids = {int(row["id"]) for row in extractor_input["open_affairs"]}
-    canned = {
-        "internal": '{"economy_moves": []}',
-        "military_external": '{"new_armies": []}',
-        "issues": json.dumps({
-            "局势推进": [], "新立局势": [], "事件结局": {},
-            "撤销局势": [], "结案局势": [],
-            "案卷执行": [], "案卷参与人": [], "拨帑对账": [], "政敌检举": [],
-            "事务声明": [{"attach": "close", "affair_id": first.id}],
-        }, ensure_ascii=False),
-        "personnel_secret": '{"secret_order_updates": []}',
-        "relations": '{"大臣互动": []}',
-    }
-    merged, _localized, _inputs = _extract(monkeypatch, db, state, canned)
-    apply_score_extraction(db, state, merged, open_affair_ids_at_input={second.id})
-    assert db.affairs.get(first.id).status == "open"
-
-    issue_id = db.conn.execute(
-        "INSERT INTO issues (kind, title, origin_turn, affair_id) VALUES (?, ?, ?, ?)",
-        ("situation", "护送仍在途中", state.turn, first.id),
-    ).lastrowid
-    rejected = apply_score_extraction(
-        db, state, merged, open_affair_ids_at_input=input_ids,
-    )
-    assert db.affairs.get(first.id).status == "open"
-    assert rejected["validate_shape_rejections"][0]["report_section"] == "affair_declarations"
-
-    db.conn.execute("UPDATE issues SET status='resolved' WHERE id=?", (issue_id,))
-    apply_score_extraction(db, state, merged, open_affair_ids_at_input=input_ids)
-    assert db.affairs.get(first.id).status == "closed"
-    assert db.affairs.get(second.id).status == "open"
 
 
 def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):

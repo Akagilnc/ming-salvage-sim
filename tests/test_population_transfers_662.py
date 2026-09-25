@@ -35,9 +35,6 @@ from ming_sim.memories import effect_brief
 from ming_sim.agents import build_simulator_context
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 from ming_sim.simulation import (
-    EXTRACTION_MODULES,
-    build_extractor_shared_context,
-    extract_scores_by_modules_with_agno,
     simulate_season_with_payload,
 )
 
@@ -115,76 +112,8 @@ def _module_response(module, transfers):
     return json.dumps(payload, ensure_ascii=False)
 
 
-@pytest.mark.parametrize("fact_sql,reason,source,amount", [
-    ("UPDATE regions SET natural_disaster='大旱蝗灾' WHERE id='shaanxi'", "灾害", "农民@shaanxi", 30000),
-    ("UPDATE regions SET human_disaster='战事过境焚掠', military_pressure=90 WHERE id='shaanxi'", "兵灾", "军户@shaanxi", 5000),
-])
-def test_disaster_war_real_payload_extractor_settlement_and_echo(
-    game, fact_sql, reason, source, amount
-):
-    """只 fake LLM 返回；真实 payload→模块抽取→settle→报告/玩家面回读。"""
-    db, state, content = game
-    db.conn.execute(fact_sql)
-    db.conn.commit()
-    before_turn = state.turn
-    qualitative = f"陕西{source.split('@')[0]}因{reason}离乡，流民渐多"
-    narrative, simulator_payload = simulate_season_with_payload(
-        _SimulatorAgent(qualitative), state, db, "", ""
-    )
-    assert narrative == qualitative
-    assert "class_population_balances" not in simulator_payload
-    rendered = build_simulator_context(simulator_payload)
-    assert "class_population_balances" not in rendered
-    assert str(FARMER_SHAANXI) not in rendered
-    context = build_extractor_shared_context(db, state, narrative, "", module="internal")
-    balances = context["class_population_balances"]
-    assert balances["cols"] == ["class_region", "population", "population_unit"]
-    assert any(row[:2] == ["农民@shaanxi", FARMER_SHAANXI] for row in balances["rows"])
-    assert context["turn"]["turn"] == before_turn
-
-    transfer = _transfer(source=source, target="流民@shaanxi", amount=amount, reason=reason)
-    agents = {m: _ExtractorAgent(_module_response(m, [transfer] if m == "internal" else []))
-              for m in EXTRACTION_MODULES}
-    extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
-        agents, db, state, context["narrative"], parallel=False
-    )
-    report = settle_with_delta(
-        state, db, extracted, before_turn=before_turn, content=content,
-        narrative=context["narrative"], extractor_input=extractor_input,
-        extractor_output=extractor_output,
-    )
-    assert reason in effect_brief(extracted)
-    assert "流民" in db.class_report(audience=True)
-    assert reason in report
-    minister = next(iter(content.characters.values()))
-    prepared = prepare_character_materials(db, state, minister)
-    audience = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    assert reason in audience
-    assert "流民" in audience
-    assert str(_pop(db, *source.split("@"))) not in audience
-    assert str(_pop(db, "流民", "shaanxi")) not in audience
-    saved = db.get_turn_extraction(before_turn)["extractor_output"]["population_transfers"]
-    assert saved[0]["reason"] == reason
 
 
-def test_no_disaster_war_fact_real_simulation_and_extraction_declares_nothing(game):
-    """无事实反例也走真实 simulator/extractor 接缝：定性叙事不造灾，档房不申报，DB 不动。"""
-    db, state, _content = game
-    before = _snap(db)
-    narrative, payload = simulate_season_with_payload(
-        _SimulatorAgent("本月各省安靖，无灾无兵祸，百姓安土。"), state, db, "", ""
-    )
-    context = build_extractor_shared_context(db, state, narrative, "", module="internal")
-    agents = {m: _ExtractorAgent(_module_response(m, [])) for m in EXTRACTION_MODULES}
-    extracted, _, _ = extract_scores_by_modules_with_agno(
-        agents, db, state, context["narrative"], parallel=False
-    )
-    assert "class_population_balances" not in payload
-    assert extracted["population_transfers"] == []
-    assert _snap(db) == before
 
 
 # ── 守恒与 mutation：沿 S2 断言族扩展（复用 #649 oracle，不另立机制）─────────
@@ -310,9 +239,3 @@ def test_prompts_keep_displacement_fact_and_soft_quantity_contracts():
     simulator = prompt("season_simulator.md")
     assert "无对应事实不得臆造流民" in simulator
     assert "不得确定人数或推算人口比例" in simulator
-
-    for name in ("score_extractor_internal.md", "score_extractor_shared.md"):
-        extractor = prompt(name)
-        assert "class_population_balances" in extractor
-        assert "population_unit" in extractor
-        assert "不设固定比例或累计 cap" in extractor

@@ -32,8 +32,8 @@ def test_persist_resolve_context_stores_extracted_delta(game):
 
 
 def test_persist_resolve_context_stores_source_for_recovery(game):
-    """#144 / ADR 0008 决定 5：provenance source 一并持久化，崩溃恢复重放（resolve_settling_recovery
-    读 ctx['source'] → _replay_settle → settle source）据此还原原始来源——否则玩家来源拒收被恢复路
+    """#144 / ADR 0008 决定 5：provenance source 一并持久化，driver 崩溃恢复
+    读 ctx['source'] → settle source 据此还原原始来源——否则玩家来源拒收被恢复路
     记成 system_simulation、静默不提示。"""
     from ming_sim.applier import Provenance
     db, state, content = game
@@ -190,89 +190,6 @@ def test_hitl_phase1_save_path_not_regressed(game):
 # cmr S2+S3 r1 修复回归（F1 判别位 + F3 端到端接线）
 # ---------------------------------------------------------------------------
 
-def _drive_settle_after_narrative(db, state, content, monkeypatch, *, extractor_behavior,
-                                  error_pack_dir=None):
-    """以 stub 驱动真实 _settle_after_narrative。
-
-    extractor_behavior:
-      "ok"/"ok_empty"：extractor 成功，settle 前以哨兵中断（验 persist）。
-      "fail"：extractor 抛错 → S6 响亮中止（SettlementAbort），不达 settle。
-    fail 时须传 error_pack_dir（隔离错误包，绝不写真实 user-data）。
-    返回 (before_turn, stub_delta or None)。
-    """
-    import ming_sim.decree as decree_mod
-    from ming_sim.exceptions import SettlementAbort
-
-    stub_delta = {"region_delta": {"shanxi": {"unrest": 2}}}
-
-    monkeypatch.setattr(decree_mod, "build_extractor_shared_context",
-                        lambda *a, **k: "ctx")
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent",
-                        lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent",
-                        lambda *a, **k: None)
-
-    def _stub_extract(*a, **k):
-        if extractor_behavior == "fail":
-            raise RuntimeError("simulated extractor crash")
-        delta = stub_delta if extractor_behavior == "ok" else {}
-        return delta, "raw-out", "raw-in"
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", _stub_extract)
-
-    class _Sentinel(Exception):
-        pass
-
-    def _abort_settle(*a, **k):
-        raise _Sentinel("stop before settle writes")
-    monkeypatch.setattr(decree_mod, "settle_with_delta", _abort_settle)
-
-    before_turn = state.turn
-    if extractor_behavior == "fail":
-        assert error_pack_dir is not None, "fail 路径须隔离错误包目录"
-        monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(error_pack_dir))
-        expected = SettlementAbort
-    else:
-        expected = _Sentinel
-    with pytest.raises(expected):
-        decree_mod._settle_after_narrative(
-            state, db, None, None,
-            "减赋诏", "本月邸报……", {"k": "v", "transit_semantics": []}, [], [],
-            before_turn, lambda *a: None,
-            content=content, registry=None,
-        )
-    return before_turn, (stub_delta if extractor_behavior == "ok" else None)
-
-
-def test_e2e_persist_happens_in_real_settle_flow(game, monkeypatch):
-    """端到端：extractor 成功后 persist 发生在真实流程里（cmr S2+S3 r1 F3）。
-
-    删掉 _settle_after_narrative 里的 persist 调用，本测试必红。
-    """
-    db, state, content = game
-    turn, stub_delta = _drive_settle_after_narrative(
-        db, state, content, monkeypatch, extractor_behavior="ok")
-
-    ctx = db.get_resolve_context(turn)
-    assert ctx is not None
-    assert ctx["extracted"] == stub_delta
-    db.clear_resolve_context(turn)
-
-
-def test_extractor_failure_never_persists_as_ready(game, monkeypatch, tmp_path):
-    """extractor 抛错 → 失败产物绝不入重跑真源（cmr S2+S3 r1 F1 案 ii）。
-
-    S6 后该路径响亮中止（SettlementAbort），但原断言意图保持：失败的占位/空 delta
-    绝不作 ready resolve_context 落库（否则 S4 恢复入口当真 delta 重放=整月效果静默丢）。
-    """
-    db, state, content = game
-    turn, _ = _drive_settle_after_narrative(
-        db, state, content, monkeypatch, extractor_behavior="fail",
-        error_pack_dir=tmp_path)
-
-    ctx = db.get_resolve_context(turn)
-    assert ctx is None or ctx["extracted"] is None
-    if ctx is not None:
-        db.clear_resolve_context(turn)
 
 
 def test_hitl_phase1_placeholder_extracted_is_none(game):
@@ -303,32 +220,13 @@ def test_genuinely_empty_delta_distinguishable_from_placeholder(game):
     db.clear_resolve_context(turn)
 
 
-def test_e2e_genuinely_empty_delta_persists_as_ready(game, monkeypatch):
-    """端到端：extractor 成功产出空 delta → 真实流程 persist 为 ready（{} 非 None）。"""
-    db, state, content = game
-    turn, _ = _drive_settle_after_narrative(
-        db, state, content, monkeypatch, extractor_behavior="ok_empty")
-
-    ctx = db.get_resolve_context(turn)
-    assert ctx is not None
-    assert ctx["extracted"] == {}
-    assert ctx["extracted"] is not None
-    db.clear_resolve_context(turn)
-
-
 # ---------------------------------------------------------------------------
 # cmr S2+S3 r4 修复回归（F1 stale context / F3 corruption）
 # ---------------------------------------------------------------------------
 
-def test_advance_without_edict_clears_stale_context(game, monkeypatch):
-    """退朝无诏推进回合时清掉本回合 stale context（cmr S2+S3 r4 F1）。
-
-    #1274：无旨走完整结算；settle_with_delta 尾 clear_resolve_context。
-    崩溃重试后改走无诏路推进，留下的 ready=1 行会被 S4 恢复入口
-    当「未完成回合」重放=double-apply。推进回合的路都得清。
-    """
-    import ming_sim.decree as decree_mod
-    import ming_sim.memories as memories
+def test_advance_without_edict_ignores_stale_ready_context(game, monkeypatch):
+    """退朝无诏不重放旧 ready delta；邸报未成时仍停在本月。"""
+    import ming_sim.month_chain as month_chain
     from ming_sim.session import GameSession
 
     db, state, content = game
@@ -337,16 +235,7 @@ def test_advance_without_edict_clears_stale_context(game, monkeypatch):
                             relevant_memories=[], extracted={"metric_delta": {"国库": 1}})
     assert db.get_resolve_context(turn) is not None
 
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: ("stale-ctx 测邸报。", k.get("simulator_payload") or {}),
-    )
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
 
     sess = GameSession.__new__(GameSession)
     sess.db, sess.state, sess.content = db, state, content
@@ -358,8 +247,9 @@ def test_advance_without_edict_clears_stale_context(game, monkeypatch):
     sess.auto_save = lambda *a, **k: None
     sess.advance_without_decree()
 
-    assert state.turn == turn + 1
-    assert db.get_resolve_context(turn) is None
+    # #1843：无旨也走主链，邸报未成不得推进，也不重放旧 extractor ready delta。
+    assert state.turn == turn
+    assert state.turn_phase != "issued"
 
 
 def test_corrupt_extracted_json_returns_none_not_empty(game):

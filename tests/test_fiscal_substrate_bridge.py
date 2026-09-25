@@ -4775,9 +4775,6 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
         decree_mod, "simulate_season_with_payload",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应到 simulator")),
     )
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
-    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 

@@ -1119,13 +1119,11 @@ def test_fiscal_fact_brief_haircut_and_relief_facts(game):
 
 # ═══════════════ F3 LLM 综合归因边界 ═══════════════
 
-def test_extraction_modules_unchanged_parallel():
-    """F3 三断言之①：零新增 LLM 调用——模块清单与开工 head 动态一致，
-    class_delta 仍由 internal 槽独占。"""
-    from ming_sim.simulation import EXTRACTION_MODULES, MODULE_FIELDS
-    baseline_modules = tuple(MODULE_FIELDS)
-    assert EXTRACTION_MODULES == baseline_modules
-    assert len(EXTRACTION_MODULES) == len(baseline_modules)
+def test_class_delta_stays_on_internal_slot():
+    """class_delta 仍由 internal 槽独占；五模块 extractor 扇出已退役。"""
+    from ming_sim import simulation
+    from ming_sim.simulation import MODULE_FIELDS
+    assert not hasattr(simulation, "EXTRACTION_MODULES")
     assert "class_delta" in MODULE_FIELDS["internal"]
     assert sum("class_delta" in fields for fields in MODULE_FIELDS.values()) == 1
 

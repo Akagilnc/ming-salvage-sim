@@ -22,7 +22,7 @@ if TYPE_CHECKING:  # GameDB 仅用于 _select_secret_orders_for_sim 的类型注
     from ming_sim.db import GameDB  # 惰性字符串）；不在运行时 import db，使本模块运行时零 db 依赖（线上 sourcery）
     from ming_sim.models import GameState
 
-# 批红玩家 disposition 动作枚举（与 _chosen_rescript_actions / 生成端 options 同集）
+# 批红玩家 disposition 动作枚举（生成端 options 同集）
 RESCRIPT_CAPABILITY_DECISIONS = frozenset({
     "force_promulgated", "withdrawn", "hold",
 })

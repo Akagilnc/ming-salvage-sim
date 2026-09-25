@@ -769,8 +769,6 @@ class GameContent:
 
     decree_writer_prompt: str = ""
     season_simulator_prompt: str = ""
-    score_extractor_shared_prompt: str = ""
-    score_extractor_module_prompts: Dict[str, str] = field(default_factory=dict)
     chapter_memory_prompt: str = ""
     ending_summary_prompt: str = ""
     rescript_draft_prompt: str = ""
@@ -833,14 +831,6 @@ class GameContent:
             consort_agent_prompt=load_text_asset("prompts/consort_agent.md"),
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             season_simulator_prompt=load_text_asset("prompts/season_simulator.md"),
-            score_extractor_shared_prompt=load_text_asset("prompts/score_extractor_shared.md"),
-            score_extractor_module_prompts={
-                "internal": load_text_asset("prompts/score_extractor_internal.md"),
-                "military_external": load_text_asset("prompts/score_extractor_military_external.md"),
-                "issues": load_text_asset("prompts/score_extractor_issues.md"),
-                "personnel_secret": load_text_asset("prompts/score_extractor_personnel_secret.md"),
-                "relations": load_text_asset("prompts/score_extractor_relations.md"),
-            },
             chapter_memory_prompt=load_text_asset("prompts/chapter_memory.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
             rescript_draft_prompt=load_text_asset("prompts/rescript_draft.md"),

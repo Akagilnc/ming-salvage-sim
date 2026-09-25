@@ -191,6 +191,13 @@ export function useSettlementFlow({
         setBusy("");
         return;
       }
+      if (outcome.data?.advanced === false) {
+        // The month chain can stop at rescript/gazette without advancing.
+        // Refresh its durable settling projection, not the whole page as if a new month began.
+        await loadState();
+        setBusy("");
+        return;
+      }
       await forwardSteamEvents(outcome.data);
       // 结算完成：强制整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化
       window.location.reload();
@@ -242,6 +249,11 @@ export function useSettlementFlow({
       setPendingDecisions([]);
       setDecisionFailures([]);
       setPausedDecisionError("");
+      if (outcome.data?.advanced === false) {
+        await loadState();
+        setBusy("");
+        return;
+      }
       await forwardSteamEvents(outcome.data);
       window.location.reload();
       return;
@@ -269,6 +281,7 @@ export function useSettlementFlow({
       const data = await api<{
         state: GameState;
         awaiting_decision?: boolean;
+        advanced?: boolean;
         decisions?: PendingDecision[];
         pending_action_failures?: PendingActionFailure[];
       }>(
@@ -290,6 +303,10 @@ export function useSettlementFlow({
         const route = routeIssueDecisions(data.decisions || []);
         if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
         if (route.error !== null) setPausedDecisionError(route.error);
+        await loadState();
+        return;
+      }
+      if (data.advanced === false) {
         await loadState();
         return;
       }

@@ -177,7 +177,6 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
 
     serialized = asyncio.run(_go())
     assert entered["n"] == 1
-    assert runtime.actions == ["submit", "end_turn", "refresh"]
     assert "event: done" in serialized
     # 快照仍在（本替身 submit 未推进月份）；phase2 窗内展示态真源不灭
     assert db.get_month_open_snapshot(int(state.turn)) == before
@@ -245,7 +244,6 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
     monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
 
     serialized = asyncio.run(_drain_resolve_sse([{"label": "发"}]))
-    assert runtime.actions == ["submit", "end_turn", "refresh"]
     assert "event: done" not in serialized, "clear 抛后禁推 done"
     assert "event: error" in serialized
     assert "stream clear boom" in serialized

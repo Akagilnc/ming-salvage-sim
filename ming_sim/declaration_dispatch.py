@@ -61,7 +61,7 @@ from __future__ import annotations
 import contextlib
 import copy
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
@@ -402,6 +402,7 @@ def dispatch_declaration(
     source: Provenance = Provenance.system_simulation,
     source_chat_turn_id: int = 0,
     visible_refs: Optional[Mapping[str, object]] = None,
+    alongside: Optional[Callable[[], None]] = None,
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
     承接（ADR 0155）直接分派单条声明时用的公开入口，唯一契约：始终原子、始终
@@ -457,6 +458,8 @@ def dispatch_declaration(
             db.record_chat_turn_rollback_diffs(
                 origin_ctid, before, db.capture_chat_rollback_snapshot(),
             )
+        if alongside is not None:
+            alongside()
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
     return result
 

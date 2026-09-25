@@ -526,10 +526,8 @@ def test_mutation_oracle_four_mutations_all_bitten(game):
 # ── F1 闭环：真实 extractor 契约（prompt 中文 shape → canonicalize → apply）───
 
 def test_exact_prompt_shape_canonicalizes_and_lands(game):
-    """prompt（score_extractor_shared.md:44 / internal.md:89）教的真实中文 shape
-    （源/目标/数额/原因/来源引用）经 canonicalize_extraction（生产管线同缝，
-    _sanitize_module_output 同一真源）后必须落账，不得被白名单拒收
-    （判词 F1：字段契约未闭环则真产出字段会被丢/拒）。"""
+    """中文 shape（源/目标/数额/原因/来源引用）经 canonicalize_extraction
+    后必须落账，不得被白名单拒收。"""
     db, state, content = game
     from ming_sim.simulation import canonicalize_extraction
     applied = apply_score_extraction(
@@ -550,38 +548,3 @@ def test_exact_prompt_shape_canonicalizes_and_lands(game):
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 3000
 
 
-def test_prompts_teach_reason_label_matching_alias_table():
-    """契约单真源：两份 prompt 的 人口转移 字段 shape 必须用 ITEM_FIELD_ALIASES
-    已收的中文标签「原因」，不得再教别名表外的「缘由」（否则 canonicalize 保留
-    缘由、白名单逐项拒收——#649 判词 F1 本症）；接口层 TSV 指针同步在列。"""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for rel in ("content/prompts/score_extractor_shared.md",
-                "content/prompts/score_extractor_internal.md"):
-        with open(os.path.join(root, rel), encoding="utf-8") as fh:
-            lines = [ln for ln in fh if "人口转移" in ln]
-        assert lines, f"{rel}: 缺 人口转移 契约行"
-        for ln in lines:
-            assert "缘由" not in ln, f"{rel}: 人口转移 行仍教别名表外的 缘由：{ln!r}"
-        assert any("原因" in ln for ln in lines), f"{rel}: 人口转移 行未教 原因 标签"
-    shared = open(os.path.join(root, "content/prompts/score_extractor_shared.md"),
-                  encoding="utf-8").read()
-    assert "class_population_balances" in shared
-
-
-def test_internal_extractor_context_has_province_population_tsv(game):
-    """接口层 TSV（判词 F1）：internal extractor 专属输入面带按 class@region_id
-    键合的省级人口余额＋本档 population_unit；非 internal 模块不吃
-    （不进玩家可感 simulator 数表）。"""
-    from ming_sim.simulation import build_extractor_shared_context
-    db, state, content = game
-    ctx = build_extractor_shared_context(db, state, "", "", module="internal")
-    tsv = ctx["class_population_balances"]
-    assert tsv["cols"] == ["class_region", "population", "population_unit"]
-    rows = dict(r for r in zip(tsv["cols"], next(
-        row for row in tsv["rows"] if row[0] == "农民@shaanxi")))
-    assert rows["population"] == FARMER_SHAANXI
-    assert rows["population_unit"] == POPULATION_UNIT_PERSONS
-    other = build_extractor_shared_context(
-        db, state, "", "", module="issues"
-    )
-    assert "class_population_balances" not in other

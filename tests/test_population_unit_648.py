@@ -20,7 +20,7 @@ from ming_sim.issues import (
     auto_trigger_seed_issues,
     bind_content as issues_bind_content,
 )
-from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+from ming_sim.simulation import build_simulator_payload
 
 # ── F3/r2 冻结 seed oracle（独立真源=票面冻结表，非实现推导）──────────────────
 AGENDA_FROZEN = "就食求赈，流徙谋生"
@@ -200,9 +200,6 @@ def test_prompt_contract_new_save_persons(game):
     db, state, content = game
     issues_bind_content(content)
 
-    ctx = build_extractor_shared_context(db, state, "邸报", "诏文")
-    assert ctx["population_unit"] == POPULATION_UNIT_PERSONS
-
     payload = build_simulator_payload(state, db, "诏文", "")
     rows = payload["regions"]["rows"]
     cols = payload["regions"]["cols"]
@@ -212,22 +209,10 @@ def test_prompt_contract_new_save_persons(game):
     # 玩家可感 LLM 输入：约N万口定性（P4 正向投影），无裸大数直出
     assert beizhili[pop_col] == "约720万口"
 
-    # 机面（extractor issues 档阈值裸数视图）：裸人数
-    issues_ctx = build_extractor_shared_context(
-        db, state, "邸报", "诏文", module="issues"
-    )
-    issue_region_rows = issues_ctx["regions"]["rows"]
-    issue_cols = issues_ctx["regions"]["cols"]
-    bz = next(r for r in issue_region_rows if r[issue_cols.index("id")] == "beizhili")
-    assert bz[issue_cols.index("population")] == BEIZHILI_POP_PERSONS
-
 
 def test_prompt_contract_legacy_save_wan(legacy_game):
     """⑤ 旧档写端契约：缺 DB 标 → population_unit=万人，展示沿 legacy 原样不加换算。"""
     db, state = legacy_game
-
-    ctx = build_extractor_shared_context(db, state, "邸报", "诏文")
-    assert ctx["population_unit"] == POPULATION_UNIT_WAN
 
     payload = build_simulator_payload(state, db, "诏文", "")
     rows = payload["regions"]["rows"]

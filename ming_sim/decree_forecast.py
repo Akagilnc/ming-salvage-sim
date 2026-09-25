@@ -193,12 +193,54 @@ def _is_held_for_rejudgment(row: Dict[str, Any], turn: int) -> bool:
     )
 
 
-def _forecast(
-    session: Any, snapshot: Dict[str, Any], *, write_lock: Optional[threading.Lock] = None,
-) -> None:
-    # 同一 decree_ref（记录号+版本，或留中案卷 id）已有暂存则不再跑模型链。
-    if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
-        return
+def decree_ref_for_dossier(db: Any, dossier: Dict[str, Any]) -> str:
+    """过月与夜里预推共用的旨身份：有暂存记录则记录号+版本，否则案卷 id。"""
+    pending_id = int(dossier.get("pending_action_id") or 0)
+    if pending_id > 0:
+        row = db.conn.execute(
+            "SELECT version FROM pending_actions WHERE id=?",
+            (pending_id,),
+        ).fetchone()
+        version = int(row["version"] or 1) if row is not None else 1
+        return pending_action_decree_ref(pending_id, version)
+    return held_dossier_decree_ref(int(dossier["id"]))
+
+
+def snapshot_for_existing_dossier(session: Any, dossier: Dict[str, Any]) -> Dict[str, Any]:
+    """过月补跑用当前案卷与当前盘面组一份预推快照，不另建判官或推演入口。"""
+    db, state = session.db, session.state
+    candidate = dict(dossier)
+    payload = candidate.get("payload")
+    if not isinstance(payload, dict):
+        payload = json.loads(str(candidate.get("payload_json") or "{}"))
+        candidate["payload"] = payload
+    decree_ref = decree_ref_for_dossier(db, candidate)
+    candidate["decree_ref"] = decree_ref
+    context = decree.build_promulgation_judge_context(db, state, [candidate])
+    visible = dict(candidate)
+    visible["promulgation_decision"] = "promulgated"
+    projected = decree.project_dossiers_for_simulator([visible], db, state)
+    sim_payload = simulation.build_simulator_payload(
+        state, db, str(candidate.get("decree_text") or ""), "",
+        decree_dossiers=projected,
+    )
+    sim_payload["candidate_events"] = []
+    grounding, refs = _frozen_effect_refs(
+        db, int(state.turn), payload if isinstance(payload, dict) else {},
+    )
+    return {
+        "candidate": candidate,
+        "context": context,
+        "simulator_payload": sim_payload,
+        "target_grounding": grounding,
+        "visible_refs": refs,
+        "decree_ref": decree_ref,
+        "turn": int(state.turn),
+    }
+
+
+def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """判官、逐旨推演、过月段转译三步。只产出暂存物，不落账。"""
     candidate = snapshot["candidate"]
     payload = candidate.get("payload")
     if not isinstance(payload, dict):
@@ -251,6 +293,25 @@ def _forecast(
                 decree_payload=payload,
                 llm_config=session.llm_config,
             )
+    return {
+        "verdict": verdict,
+        "declaration": declaration,
+        "questions": questions,
+        "forecast_text": forecast_text,
+    }
+
+
+def _forecast(
+    session: Any, snapshot: Dict[str, Any], *, write_lock: Optional[threading.Lock] = None,
+) -> None:
+    # 同一 decree_ref（记录号+版本，或留中案卷 id）已有暂存则不再跑模型链。
+    if session.db.staged_declarations.staged_for(str(snapshot["decree_ref"])):
+        return
+    product = produce_forecast_product(session, snapshot)
+    verdict = product["verdict"]
+    declaration = product["declaration"]
+    questions = product["questions"]
+    forecast_text = product["forecast_text"]
 
     def stage_if_current() -> None:
         if "pending_action_id" in snapshot:

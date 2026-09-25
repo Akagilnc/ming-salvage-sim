@@ -40,7 +40,6 @@ from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
 from ming_sim.simulation import (
-    build_extractor_shared_context,
     _sanitize_module_output,
 )
 from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
@@ -928,75 +927,6 @@ def test_1376_candidate_confirm_freezes_explicit_typed_contract(game):
     assert contract["delivery"]["unit"] == "万两"
     assert contract["delivery"]["target_units"] == 5.0
     assert contract["kind"] != "稽核"
-
-
-def test_internal_extractor_receives_origin_linked_typed_briefs_without_secret_prose(game):
-    """真实 extractor 装配只证明结构化输入契约；LLM 产出不以手造结果冒充。"""
-    db, state, _ = game
-    name = _minister(db)
-    secret_prose = "乙巳密查辽饷侵冒正文不得进公共档房"
-    fiscal_id = _issue(
-        db, state, name, "补发边饷", secret_prose,
-        months=1, target=5, kind="补发饷银", axes=["既得利益"], unit="万两",
-        tags=["辽饷"],
-    )
-    catch_id = _issue(
-        db, state, name, "缉私枭", secret_prose,
-        months=1, target=3, kind="缉获人犯", unit="人犯", tags=["密查"],
-    )
-    assert all(
-        int(b.get("order_id") or 0) not in {fiscal_id, catch_id}
-        for b in build_secret_covert_effect_briefs(db, turn=state.turn)
-    )
-    state.turn += 1
-    db.save_state(state)
-
-    internal_ctx = build_extractor_shared_context(db, state, "", "", module="internal")
-    assert secret_prose not in str(internal_ctx)
-    assert "secret_orders" not in internal_ctx
-    briefs = {
-        int(brief["order_id"]): brief
-        for brief in internal_ctx["secret_covert_effect_briefs"]
-    }
-    assert briefs[fiscal_id]["origin_ref"].startswith("dossier:")
-    assert briefs[fiscal_id]["delivery"]["unit"] == "万两"
-    assert briefs[fiscal_id]["delivery"] == {
-        "unit": "万两", "target_units": 5.0, "effect_sign": -1,
-        "canonical_fields": ["economy_moves"],
-        "purpose": "其它", "category": "密令差务", "account": "内库",
-    }
-    assert briefs[fiscal_id]["canonical_fields"] == ["economy_moves"]
-    assert briefs[fiscal_id]["prior_actual_units"] == 0.0
-    assert briefs[fiscal_id]["remaining_units"] == briefs[fiscal_id]["delivery"]["target_units"]
-    assert catch_id not in briefs
-    personnel_ctx = build_extractor_shared_context(db, state, "", "", module="personnel_secret")
-    assert secret_prose not in str(personnel_ctx)
-    pbriefs = {
-        int(brief["order_id"]): brief
-        for brief in personnel_ctx["secret_covert_effect_briefs"]
-    }
-    assert fiscal_id not in pbriefs
-    assert pbriefs[catch_id]["canonical_fields"] == ["人物变更"]
-    assert pbriefs[catch_id]["delivery"]["unit"] == "人犯"
-    assert pbriefs[catch_id]["delivery"]["person_action"] == "处置"
-    assert pbriefs[catch_id]["delivery"]["target_units"] == 3.0
-
-    did = int(db.get_dossier_for_secret_order(fiscal_id)["id"])
-    db.record_dossier_actual_progress(
-        did, state.turn, units=5.0, fidelity_state="忠实", floor_state="忠实",
-        note="满标实况",
-    )
-    state.turn += 1
-    db.save_state(state)
-    later = {
-        int(brief["order_id"]): brief
-        for brief in build_extractor_shared_context(
-            db, state, "", "", module="internal",
-        )["secret_covert_effect_briefs"]
-    }
-    assert later[fiscal_id]["prior_actual_units"] == later[fiscal_id]["delivery"]["target_units"]
-    assert later[fiscal_id]["remaining_units"] == 0.0
-    assert later[fiscal_id]["delivery"]["target_units"] == 5.0
 
 
 def _confirm_investigation(
@@ -2042,8 +1972,8 @@ def test_http_chat_stream_secret_landing_a_path_abandon_no_default(
             if hasattr(game, "refresh_turn"):
                 game.refresh_turn()
 
-        assert int(game.state.turn) == turn_before + 1, (
-            f"退朝须推进回合，got turn={game.state.turn} from {turn_before}"
+        assert int(game.state.turn) == turn_before, (
+            f"邸报写成前不得推进，got turn={game.state.turn} from {turn_before}"
         )
         # 本道密令无候选、无默认落库
         assert game.db.list_secret_orders() == []

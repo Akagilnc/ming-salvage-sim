@@ -898,65 +898,35 @@ def create_decree_forecast_agent(
     )
 
 
-def create_score_extractor_module_agent(
-    llm_config: LLMConfig,
-    agno_db: SqliteDb,
-    module: str,
-    simulator_payload: Optional[Dict[str, object]] = None,
-    supplemental_context: Optional[Dict[str, object]] = None,
-) -> Agent:
-    """模块化打分提取员。module 对应 GameContent.score_extractor_module_prompts。"""
-    del agno_db  # 一次性 agent，不持久化，免撑爆 .emperor.db
-    ctx = _ctx()
-    prompt = ctx.score_extractor_module_prompts.get(module)
-    if not prompt:
-        raise RuntimeError(f"未知结算提取模块：{module}")
-    cfg = _llm_for_role(llm_config, "extractor")
-    tlog(f"[extractor/{module}] 使用模型 {describe_effective_model(cfg)}")
-    # 与 simulator 共用同一函数 → simulator_context 字节级一致 → 命中 simulator 暖好的前缀缓存。
-    simulator_context = build_simulator_context(simulator_payload)
-    supplemental = (
-        "【结算补充上下文 extractor_context】\n"
-        + json.dumps(supplemental_context or {}, ensure_ascii=False, sort_keys=False)
-    )
+def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
+    """过月世界段：开场最小集在上下文，其余材料沿现有目录接缝自读。
+
+    与召对同一读法（ADR 0155）：API 用列目录／读文件工具，CLI 把材料目录
+    设为 cwd。不另造读取机制。
+    """
+    from ming_sim.materials import material_tools
+
+    cfg = _llm_for_role(llm_config, "simulator")
+    tlog(f"[world-segment] 使用模型 {describe_effective_model(cfg)}")
+    model = create_chat_model(cfg, temperature=0.9, top_p=0.95, enable_thinking=True)
+    root = getattr(prepared, "root", "")
+    if hasattr(model, "materials_dir"):
+        model.materials_dir = str(root or "")
+    instructions = [
+        _ctx().game_world_prompt,
+        "你只推演本月旨意之外的世界事件。不要重算已经落账的旨，也不要写月末邸报。",
+        "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
+        "开场只有最小集。其余材料在当前目录，按需自读。",
+        str(getattr(prepared, "opening", "") or ""),
+    ]
+    if is_minimax_base_url(cfg.base_url):
+        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
     return Agent(
-        name=f"档房书办-{module}",
-        id=f"score-extractor-{module}",
-        model=create_chat_model(
-            cfg,
-            temperature=0.1,
-            top_p=0.7,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=[ctx.game_world_prompt, simulator_context, ctx.score_extractor_shared_prompt, supplemental, prompt],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-JSON_SANITIZER_PROMPT = (
-    "你是 JSON 修复匠。下面给你一段被污染的 JSON（可能混了思考过程、```json fence、注释、尾随逗号、"
-    "重复字段、Markdown 标题等），请只输出**修复后的合法 JSON 字符串**，不要加任何解释、前后缀或 fence。\n"
-    "保持原数据结构与字段不变，只做语法清理。若彻底无法识别为 JSON，请尝试抽取里面最像 JSON 的那一段。\n"
-    "请按照 json 格式输出。"
-)
-
-
-def create_json_sanitizer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """非思考 + response_format=json_object 的 fallback 整理器。一次性，不持久化。"""
-    del agno_db
-    return Agent(
-        name="JSON 修复匠",
-        id="json-sanitizer",
-        model=create_chat_model(
-            llm_config,
-            temperature=0.0,
-            top_p=0.7,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=[JSON_SANITIZER_PROMPT],
+        name="世界段推演者",
+        id="world-segment",
+        model=model,
+        instructions=instructions,
+        tools=material_tools(root),
         add_history_to_context=False,
         markdown=False,
     )

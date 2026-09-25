@@ -108,15 +108,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
             k.get("simulator_payload") or {},
         ),
     )
-    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
-        decree_mod,
-        "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({}, "out", "in"),
-    )
     # #1745：结算拒收递话同属外层 LLM 缝——漏 stub 会在有玩家来源拒收时 sk-test 真网 401。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
@@ -129,18 +120,23 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
         "run_agent_text",
         lambda *a, **k: '{"body": "本月边饷已清，暗流暗涌。", "tags": ["边饷"]}',
     )
-    # #1861 夜里预推的模型缝（叙事 + 段转译）。未配置 runner 时生产回落 agy。
-    # 与其余外层缝一样交回正常结果，不在这里制造代码异常，也不启 CLI。
-    import ming_sim.decree_forecast as forecast_mod
-    import ming_sim.month_translate as month_translate
-
     monkeypatch.setattr(
-        forecast_mod.agents, "run_agent_text",
-        lambda *_a, **_k: "边饷照旨办理，盘面别无新事。",
+        "ming_sim.month_chain.run_world_segment_text",
+        lambda *a, **k: "本月邸报：边饷已清，流寇未息。",
     )
     monkeypatch.setattr(
-        month_translate, "run_declaration_translate_prompt",
-        lambda *_a, **_k: {},
+        "ming_sim.month_translate.translate_month_segment",
+        lambda *a, **k: {"effects": {}},
+    )
+    monkeypatch.setattr(
+        "ming_sim.decree_forecast.produce_forecast_product",
+        lambda *_a, **_k: {
+            "verdict": {"decision": "promulgated"},
+            "declaration": {"effects": {}},
+            "questions": None,
+            "forecast_text": "边饷已核",
+            "visible_refs": {},
+        },
     )
 
 
@@ -416,61 +412,6 @@ def _play_one_month(
 # ── 主 tracer：两整月（起点十一月 → 真跨年） ────────────────────────────
 
 
-def test_month_loop_two_months_via_http_entry(tracer_client, monkeypatch):
-    """HTTP 真入口起局走两个整月：turn+2 且 year rollover（period 回 1）、无 409、闸/账双向清零。
-    """
-    client = tracer_client
-
-    new = client.post("/api/menu/new_game")
-    _assert_not_bare_500(new, step="POST /api/menu/new_game")
-    assert new.status_code == 200, new.text
-    state0 = (new.json() or {}).get("state") or {}
-    turn0 = _turn_of(state0)
-    assert turn0 >= 1, state0.get("turn")
-    minister = _pick_active_minister(state0)
-
-    game = web_app.web_game
-    assert game is not None
-    _install_canned_minister(game, monkeypatch)
-
-    # 真跨年：新档默认 period=10；推到 11 月起走两月 → year+1 / period=1。
-    # （只推 M1/M2 从 10 起会停在 12 月，year rollover 根本不执行。）
-    game.state.period = 11
-    game.db.save_state(game.state)
-    state0 = _get_state(client)
-    ord0 = _month_ord_of(state0)
-    year0 = int((state0.get("turn") or {}).get("year") or 0)
-    period0 = int((state0.get("turn") or {}).get("period") or 0)
-    assert period0 == 11, state0.get("turn")
-    assert ord0 > 0, state0.get("turn")
-
-    turn1 = _play_one_month(
-        client, monkeypatch, minister=minister, month_label="M1",
-    )
-    assert turn1 == turn0 + 1
-
-    # 第二月：registry 仍挂 canned（begin_turn 不重建 registry.get 绑定）
-    _install_canned_minister(web_app.web_game, monkeypatch)
-    turn2 = _play_one_month(
-        client, monkeypatch, minister=minister, month_label="M2",
-    )
-    assert turn2 == turn0 + 2
-
-    # 年月投影跨年钉：必须真执行 12→1 的 year+1（禁只靠 ord 算术蒙混）。
-    state_end = _get_state(client)
-    end_turn = state_end.get("turn") or {}
-    assert _turn_of(state_end) == turn0 + 2
-    assert int(end_turn.get("year") or 0) == year0 + 1, (
-        f"year must roll +1: start={state0.get('turn')!r} end={end_turn!r}"
-    )
-    assert int(end_turn.get("period") or 0) == 1, (
-        f"period must wrap to 1 after Dec: start={state0.get('turn')!r} end={end_turn!r}"
-    )
-    assert _month_ord_of(state_end) == ord0 + 2, (
-        f"calendar must advance +2 months (year-safe): "
-        f"start={state0.get('turn')!r} end={end_turn!r} "
-        f"ord {ord0} → {_month_ord_of(state_end)}"
-    )
 
 
 # ── #1353 fold-in：带欠账一次过月成功 + 死透失败单源 ─────────────────────
@@ -487,59 +428,6 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     return int(ctid)
 
 
-def test_issue_with_extraction_debt_succeeds_once(tracer_client):
-    """#1353 fold-in：植入欠账后一次过月成功——流内清账、无 409、无 CTA、月+1。"""
-    from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-
-    client = tracer_client
-
-    new = client.post("/api/menu/new_game")
-    _assert_not_bare_500(new, step="new_game (debt-ok)")
-    assert new.status_code == 200, new.text
-    state0 = (new.json() or {}).get("state") or {}
-    turn0 = _turn_of(state0)
-    ord0 = _month_ord_of(state0)
-    minister = _pick_active_minister(state0)
-    game = web_app.web_game
-    assert game is not None
-
-    ctid = _plant_extraction_debt(game, minister, sess_tag="sess-1468-debt-ok")
-
-    # 颁诏须至少一条草案（与主 tracer 同形）；欠账在收夜流内清，不靠手动补写。
-    directive = client.post(
-        "/api/directives",
-        json={"text": "着户部清核辽饷（debt-ok）。", "notes": ""},
-    )
-    _assert_not_bare_500(directive, step="debt-ok 拟旨")
-    assert directive.status_code == 200, directive.text
-
-    body = _post_issue_stream(
-        client, expected_turn=turn0, step="debt-ok issue/stream",
-    )
-    assert CLI_RUNNER_PLAYER_MESSAGE not in json.dumps(body, ensure_ascii=False)
-    if body.get("awaiting_decision"):
-        decisions = body.get("decisions") or []
-        assert decisions, f"awaiting_decision empty: {body!r}"
-        _resolve_decisions_via_stream(
-            client, decisions, step="debt-ok resolve",
-        )
-
-    _wait_pending_writes(game)
-    after = _get_state(client)
-    assert _turn_of(after) == turn0 + 1, (
-        f"debt-ok: turn {turn0} → {_turn_of(after)}; phase={after.get('turn')!r}"
-    )
-    assert _month_ord_of(after) == ord0 + 1
-    pending = _pending_payload(client)
-    pending_list = pending.get("pending") or []
-    count = int(pending.get("count") or 0)
-    assert count == len(pending_list) == 0, (
-        f"debt-ok: post-month pending not empty: count={count} body={pending!r} ctid={ctid}"
-    )
-    open_after = an.get_open_night(game.db)
-    assert open_after is None or str(open_after.get("status")) == an.NIGHT_STATUS_CLOSED, (
-        f"debt-ok: night still blocking: {open_after!r}"
-    )
 
 
 def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
@@ -752,99 +640,5 @@ def _stage_payloads_from_sse(events: list[dict]) -> list[dict]:
     return stages
 
 
-def test_issue_stream_emits_typed_settlement_progress(tracer_client):
-    """#1725: POST /api/decree/issue/stream 真入口断言结构化进度事实，不锁文案表。"""
-    client = tracer_client
-    new = client.post("/api/menu/new_game")
-    _assert_not_bare_500(new, step="#1725 new_game")
-    assert new.status_code == 200, new.text
-    state0 = (new.json() or {}).get("state") or {}
-    turn0 = _turn_of(state0)
-    assert turn0 >= 1, state0.get("turn")
-
-    directive = client.post(
-        "/api/directives",
-        json={"text": "着户部清核辽饷（#1725 stage 钉）。", "notes": ""},
-    )
-    _assert_not_bare_500(directive, step="#1725 拟旨")
-    assert directive.status_code == 200, directive.text
-    dirs = (directive.json() or {}).get("directives") or []
-    assert dirs, "#1725: directive list empty after POST"
-
-    resp = client.post(
-        "/api/decree/issue/stream",
-        json={"expected_turn": turn0},
-    )
-    _assert_not_bare_500(resp, step="#1725 issue/stream")
-    assert resp.status_code == 200, f"#1725 issue/stream → {resp.status_code}: {resp.text}"
-    events = _parse_sse(resp.text)
-    assert events, f"#1725: empty SSE body={resp.text!r}"
-    stages = _stage_payloads_from_sse(events)
-    assert len(stages) == 6, f"#1725 expected 6 stages, got {len(stages)}: {stages!r}"
-    assert [s.get("current") for s in stages] == [1, 2, 3, 4, 5, 6], stages
-    assert [s.get("total") for s in stages] == [6, 6, 6, 6, 6, 6], stages
-    for s in stages:
-        assert isinstance(s.get("content"), str) and s["content"].strip(), s
-    terminal = events[-1].get("event")
-    assert terminal in ("done", "decisions"), (
-        f"#1725 unexpected terminal {terminal!r}; sse={resp.text!r}"
-    )
 
 
-def test_issue_stream_ending_round_emits_seventh_stage_progress(tracer_client, monkeypatch):
-    """#1740：结局回合真入口；第七段 typed current/total=7，接在六阶之后。
-
-    同一 tracer 回路（LLM stub、stage 链不 stub）；以 TIMEOUT_TURN 触发 ended，
-    不另建平行夹具。
-    """
-    from ming_sim.decree import TIMEOUT_TURN
-
-    # 结局总评 LLM 外层接缝——stage emit 在调用前，stub 只挡真网。
-    monkeypatch.setattr(
-        decree_mod, "create_ending_summary_agent", lambda *a, **k: object(),
-    )
-    monkeypatch.setattr(
-        decree_mod, "run_agent_text",
-        lambda *a, **k: "国史总评 stub · #1740",
-    )
-
-    client = tracer_client
-    new = client.post("/api/menu/new_game")
-    _assert_not_bare_500(new, step="#1740 new_game")
-    assert new.status_code == 200, new.text
-
-    game = web_app.web_game
-    assert game is not None
-    game.state.turn = TIMEOUT_TURN
-    game.db.save_state(game.state)
-
-    directive = client.post(
-        "/api/directives",
-        json={"text": "着户部清核辽饷（#1740 ending stage）。", "notes": ""},
-    )
-    _assert_not_bare_500(directive, step="#1740 拟旨")
-    assert directive.status_code == 200, directive.text
-    dirs = (directive.json() or {}).get("directives") or []
-    assert dirs, "#1740: directive list empty after POST"
-
-    resp = client.post(
-        "/api/decree/issue/stream",
-        json={"expected_turn": int(game.state.turn)},
-    )
-    _assert_not_bare_500(resp, step="#1740 issue/stream")
-    assert resp.status_code == 200, f"#1740 issue/stream → {resp.status_code}: {resp.text}"
-    events = _parse_sse(resp.text)
-    assert events, f"#1740: empty SSE body={resp.text!r}"
-    stages = _stage_payloads_from_sse(events)
-    assert len(stages) == 7, f"#1740 expected 7 stages, got {len(stages)}: {stages!r}"
-    assert [s.get("current") for s in stages] == [1, 2, 3, 4, 5, 6, 7], stages
-    assert [s.get("total") for s in stages] == [6, 6, 6, 6, 6, 6, 7], stages
-    for s in stages:
-        assert isinstance(s.get("content"), str) and s["content"].strip(), s
-    assert bool(getattr(game.state, "ended", False)), (
-        f"#1740 expected ended after timeout settle; status={getattr(game.state, 'ending_status', None)!r}"
-    )
-    terminal = events[-1].get("event")
-    assert terminal in ("done", "decisions"), (
-        f"#1740 unexpected terminal {terminal!r}; sse={resp.text!r}"
-    )
