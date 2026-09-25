@@ -212,12 +212,10 @@ def test_f_season_simulator_whitelist_and_untouched_chapters():
     headings = re.findall(r"^### .+$", text, re.M)
     assert "### 军事（有军务盘面动作才写）" in headings
     assert "### 探子回报" in headings
-    # 权威改为案卷列表
-    assert "decree_dossiers" in text
-    assert "照账演" in text
-    assert "monthly_progress" in text or "月度进展" in text
-    assert "reconciliation_inputs" in text or "对账" in text
-    assert "打回" in text and ("不得写成已办成" in text or "禁写成办成" in text or "严禁写成" in text)
+    # #1862：作者据已落定实况写报，不再按旧推演字段判新情势。
+    assert "candidate_events" not in text
+    assert "decree_dossiers" not in text
+    assert "打回" in text and "不得写成已办成" in text
 
     military = re.search(r"### 军事（有军务盘面动作才写）.+?(?=\n### |\Z)", text, re.S)
     assert military is not None
@@ -271,8 +269,8 @@ def test_g_midzhi_stigma_projected_and_prompt_has_ledger_play(game):
         for item in (hit.get("stigma") or [])
     )
     prompt = _SEASON_SIM.read_text(encoding="utf-8")
-    assert "照账演" in prompt
-    assert "传奉" in prompt or "辞让" in prompt or "科参" in prompt
+    assert "不得写成已办成" in prompt
+    assert "照账演" not in prompt
 
 
 # ── H. 只读守门（本片测试不写 execution_outcome / stigma） ───────────

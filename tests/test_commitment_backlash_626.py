@@ -931,13 +931,11 @@ def test_ac6_presentation_sentinel_distinct_from_625(game):
     assert "bar_bad_meaning" not in advance_src
     root = Path(__file__).resolve().parents[1]
     sim_prompt = (root / "content/prompts/season_simulator.md").read_text(encoding="utf-8")
-    # 反噬段不得再要求 LLM 长出进度条两端文案（甲：无 bar 写口）
-    bl_idx = sim_prompt.find("commitment_backlash_facts")
-    assert bl_idx >= 0
-    bl_section = sim_prompt[bl_idx: bl_idx + 600]
-    assert "bar 语义" not in bl_section
-    assert "进度条两端文案不在本步填写" in bl_section
-    assert "标题/阶段/叙述/bar" not in bl_section
+    # 邸报作者不再读反噬事实包，也不再长进度条文案。
+    assert "commitment_backlash_facts" not in sim_prompt
+    assert "bar_good_meaning" not in sim_prompt
+    assert "bar_bad_meaning" not in sim_prompt
+    assert "进度条两端" not in sim_prompt
     web_src = (root / "web/src/components/situation.tsx").read_text(encoding="utf-8")
     assert "outcomeHead" in web_src
     assert "barLabel" in web_src
