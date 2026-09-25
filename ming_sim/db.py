@@ -2635,6 +2635,10 @@ class GameDB:
         self.ensure_column(
             "turn_reports", "attendant_message", "TEXT NOT NULL DEFAULT ''",
         )
+        # #1862：当期邸报作者自写的标题，随正文入档，供历月索引取用。
+        self.ensure_column(
+            "turn_reports", "title", "TEXT NOT NULL DEFAULT ''",
+        )
         # 后宫调教记录
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS consort_traits (
@@ -6801,7 +6805,10 @@ class GameDB:
             "transit_loss": int(values.get("hub_京运损耗", 0)),
         }
 
-    def treasury_report(self, state: GameState, limit: int | None = 6) -> str:
+    def treasury_report(
+        self, state: GameState, limit: int | None = 6, *,
+        exclude_origin_prefix: str = "",
+    ) -> str:
         account_rows = self.conn.execute(
             "SELECT account, balance FROM economy_accounts ORDER BY account DESC"
         ).fetchall()
@@ -6810,17 +6817,23 @@ class GameDB:
         else:
             account_text = "，".join(f"{row['account']}{format_money(int(row['balance']))}" for row in account_rows)
 
+        origin_clause = ""
+        origin_params: Tuple[object, ...] = ()
+        prefix = str(exclude_origin_prefix or "")
+        if prefix:
+            origin_clause = " AND origin_ref NOT LIKE ?"
+            origin_params = (prefix + "%",)
         period_rows = self.conn.execute(
-            """
+            f"""
             SELECT account,
                    SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END) AS income,
                    SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS expense
             FROM economy_ledger
-            WHERE turn = ?
+            WHERE turn = ?{origin_clause}
             GROUP BY account
             ORDER BY account DESC
             """,
-            (state.turn,),
+            (state.turn, *origin_params),
         ).fetchall()
         period_text = "；".join(
             f"{row['account']}入{format_money(int(row['income'] or 0))}出{format_money(int(row['expense'] or 0))}"
@@ -6831,11 +6844,18 @@ class GameDB:
 
         # limit=None：不截断（#1834 推演者盘面全量——与 region_rows/army_rows
         # 同一「None = 无 LIMIT 子句」约定，不是另造一套语义）。
-        ledger_sql = "SELECT year, period, account, delta, category, reason, actor FROM economy_ledger ORDER BY id DESC"
-        ledger_params: Tuple[object, ...] = ()
+        ledger_sql = (
+            "SELECT year, period, account, delta, category, reason, actor FROM economy_ledger"
+        )
+        ledger_params_list: list[object] = []
+        if prefix:
+            ledger_sql += " WHERE origin_ref NOT LIKE ?"
+            ledger_params_list.append(prefix + "%")
+        ledger_sql += " ORDER BY id DESC"
         if limit is not None:
             ledger_sql += " LIMIT ?"
-            ledger_params = (limit,)
+            ledger_params_list.append(limit)
+        ledger_params = tuple(ledger_params_list)
         ledger_rows = self.conn.execute(ledger_sql, ledger_params).fetchall()
         recent = []
         for row in reversed(ledger_rows):
@@ -11222,6 +11242,7 @@ class GameDB:
         public_body: Optional[str] = None,
         *,
         attendant_message: str = "",
+        title: str = "",
         commit: bool = True,
     ) -> None:
         """每回合月末奏报单独存档（turn_reports），与 turn_logs 解耦。
@@ -11263,18 +11284,23 @@ class GameDB:
         # (public LLMs never preload secrets; private briefs are not knowledge_items).
         self.conn.execute(
             """
-            INSERT INTO turn_reports (turn, year, period, report, attendant_message)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO turn_reports (turn, year, period, report, attendant_message, title)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(turn) DO UPDATE SET
                 year = excluded.year,
                 period = excluded.period,
                 report = excluded.report,
-                attendant_message = excluded.attendant_message
+                attendant_message = excluded.attendant_message,
+                title = CASE
+                    WHEN excluded.title = '' THEN turn_reports.title
+                    ELSE excluded.title
+                END
             """,
             (
                 state.turn, state.year, state.period,
                 sanitize_sqlite_text(public_report),
                 sanitize_sqlite_text(str(attendant_message or "")),
+                sanitize_sqlite_text(str(title or "")),
             ),
         )
         # Aggregate prose cannot authorize an audience read: removing known
@@ -11292,7 +11318,7 @@ class GameDB:
     def get_turn_report_archive(self, turn: int) -> Optional[Dict[str, object]]:
         """#671：一次读 turn_reports 行（year/period/report/attendant）；无行→None。"""
         row = self.conn.execute(
-            "SELECT year, period, report, attendant_message FROM turn_reports WHERE turn = ?",
+            "SELECT year, period, report, attendant_message, title FROM turn_reports WHERE turn = ?",
             (int(turn),),
         ).fetchone()
         if row is None:
@@ -11302,6 +11328,7 @@ class GameDB:
             "period": int(row["period"] or 0),
             "report": str(row["report"] or ""),
             "attendant_message": str(row["attendant_message"] or ""),
+            "title": str(row["title"] or ""),
         }
 
     def get_turn_report(self, turn: int) -> str:
@@ -11325,11 +11352,12 @@ class GameDB:
     def list_turn_reports(self) -> List[Dict[str, object]]:
         """Return the durable gazette archive in chronological order."""
         rows = self.conn.execute(
-            "SELECT turn, year, period, report FROM turn_reports ORDER BY turn, rowid"
+            "SELECT turn, year, period, report, title FROM turn_reports ORDER BY turn, rowid"
         ).fetchall()
         return [
             {"turn": int(row["turn"]), "year": int(row["year"]),
-             "period": int(row["period"]), "report": row["report"] or ""}
+             "period": int(row["period"]), "report": row["report"] or "",
+             "title": str(row["title"] or "")}
             for row in rows
         ]
 

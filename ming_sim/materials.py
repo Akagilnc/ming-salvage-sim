@@ -1109,7 +1109,9 @@ def _write_gazette_index(
     return index
 
 
-def _write_world_textual_fact_files(tmp: Path, db: Any) -> list[str]:
+def _write_world_textual_fact_files(
+    tmp: Path, db: Any, include_fact: Any = None,
+) -> list[str]:
     """World directory: character/army/region textual facts once from store.
 
     affair facts already ride 事务/*/当前情况.txt — do not mint a second carrier.
@@ -1130,7 +1132,9 @@ def _write_world_textual_fact_files(tmp: Path, db: Any) -> list[str]:
             continue
         facts = store.readable_materials(subject_kind=kind, subject_id=subject_id)
         body = "\n".join(
-            str(fact.body or "").strip() for fact in facts if str(fact.body or "").strip()
+            str(fact.body or "").strip()
+            for fact in facts
+            if _keep_fact(fact, include_fact) and str(fact.body or "").strip()
         )
         if not body:
             continue
@@ -1168,14 +1172,18 @@ def world_materials_root(db: Any, state: Any) -> Path:
     return _materials_campaign_dir(db) / key / "世界推演"
 
 
-def _world_board_text(db: Any, state: Any) -> str:
+def _world_board_text(
+    db: Any, state: Any, *, ledger_origin_prefix_excluded: str = "",
+) -> str:
     """盘面全量：未按职位裁切的实况账本（0034 后出注记：仅人物按职位读衙门底账，
     推演者不受此限）。各段落直取账本读方法，不经任何奏报/邸报文本中转——满足
     「推演者读到的是实况数不是奏报数」。"""
     # limit=None：与 region_rows/army_rows/treasury_report 的既有「None=不截断」
     # 约定一致，真正的全量——不是拿一个更大的数顶替旧上限（#1834 大理寺 bounce）。
     sections = (
-        ("国库", db.treasury_report(state, limit=None)),
+        ("国库", db.treasury_report(
+            state, limit=None, exclude_origin_prefix=ledger_origin_prefix_excluded,
+        )),
         ("军务", db.army_report(limit=None)),
         ("地方", db.region_report(limit=None)),
         ("营建", db.buildings_report(qualitative=True)),
@@ -1198,7 +1206,13 @@ def _world_roster_text(db: Any, state: Any) -> str:
     )
 
 
-def _world_affair_lines(db: Any) -> list[tuple[str, str, str, str]]:
+def _keep_fact(fact: Any, include_fact: Any) -> bool:
+    if include_fact is None:
+        return True
+    return bool(include_fact(fact))
+
+
+def _world_affair_lines(db: Any, include_fact: Any = None) -> list[tuple[str, str, str, str]]:
     """全部开着的事务及其当前情况（不按人物过滤——推演者看全量，非某人经手）。
 
     Each line is (dir_key, title, directory_text, opening_text): directory_text
@@ -1214,6 +1228,7 @@ def _world_affair_lines(db: Any) -> list[tuple[str, str, str, str]]:
             store.current_situation(textual_facts, affair.id)
             if textual_facts is not None else ()
         )
+        facts = tuple(fact for fact in facts if _keep_fact(fact, include_fact))
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         directory_text = "\n".join(fact_lines) if fact_lines else "见目录。"
         # #1812 P6：raw body 是文字事实自由正文，不得 strip。
@@ -1249,7 +1264,9 @@ def _world_subject_ids(db: Any, table: str) -> list[str]:
     ]
 
 
-def _textual_facts_text(textual_facts: Any, *, subject_kind: str, subject_id: str) -> str:
+def _textual_facts_text(
+    textual_facts: Any, *, subject_kind: str, subject_id: str, include_fact: Any = None,
+) -> str:
     """这个对象名下全部文字事实（ADR 0156），按月连写、最新的在最后；无记录
     给占位——世界目录按 character/army/region/affair 四类对象统一走这一条投影
     （#1812/#1828/#1834：写口早接好，之前没有任何读口，人物伤势等只能落库、
@@ -1257,6 +1274,7 @@ def _textual_facts_text(textual_facts: Any, *, subject_kind: str, subject_id: st
     if textual_facts is None:
         return "（无）"
     facts = textual_facts.readable_materials(subject_kind=subject_kind, subject_id=subject_id)
+    facts = tuple(fact for fact in facts if _keep_fact(fact, include_fact))
     if not facts:
         return "（无）"
     return "\n".join(f"{fact.occurred_month}：{fact.body}" for fact in facts)
@@ -1269,6 +1287,7 @@ def _write_world_tree(
     public_events: list,
     affair_lines: list[tuple[str, str, str, str]],
     board_text: str,
+    include_fact: Any = None,
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
 
@@ -1296,6 +1315,7 @@ def _write_world_tree(
         facts_rel = f"{person_dir}/按月实况.txt"
         _write_text(tmp / facts_rel, _textual_facts_text(
             textual_facts, subject_kind="character", subject_id=name,
+            include_fact=include_fact,
         ))
         index.append(facts_rel)
 
@@ -1303,6 +1323,7 @@ def _write_world_tree(
         rel = f"{_ARMY_DIR}/{army_id}/按月实况.txt"
         _write_text(tmp / rel, _textual_facts_text(
             textual_facts, subject_kind="army", subject_id=army_id,
+            include_fact=include_fact,
         ))
         index.append(rel)
 
@@ -1310,6 +1331,7 @@ def _write_world_tree(
         rel = f"{_REGION_DIR}/{region_id}/按月实况.txt"
         _write_text(tmp / rel, _textual_facts_text(
             textual_facts, subject_kind="region", subject_id=region_id,
+            include_fact=include_fact,
         ))
         index.append(rel)
 
@@ -1320,7 +1342,7 @@ def _write_world_tree(
         _write_text(tmp / rel, body)
         index.append(rel)
 
-    index.extend(_write_world_textual_fact_files(tmp, db))
+    index.extend(_write_world_textual_fact_files(tmp, db, include_fact=include_fact))
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
         tmp, db.list_turn_reports() if hasattr(db, "list_turn_reports") else (),
@@ -1754,6 +1776,8 @@ def prepare_world_materials(
     state: Any,
     *,
     dest_root: Optional[Path] = None,
+    include_fact: Any = None,
+    ledger_origin_prefix_excluded: str = "",
 ) -> PreparedMaterials:
     """过月推演者材料目录：盘面全量 + 开着的事务清单进开场最小集；人物经历、
     公开说法、历月邸报按需自读（#1834）。写入（拒收/实况回目录、下月材料）不
@@ -1765,17 +1789,19 @@ def prepare_world_materials(
     # 不另建一套「世界公开说法」查询。
     knowledge = build_character_knowledge(db, state, "")
     public_events = knowledge.get("public_events") or []
-    affair_lines = _world_affair_lines(db)
+    affair_lines = _world_affair_lines(db, include_fact)
     dossier_facts = continuing_dossier_facts(db, int(state.turn))
     # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
-    board_text = _world_board_text(db, state)
+    board_text = _world_board_text(
+        db, state, ledger_origin_prefix_excluded=ledger_origin_prefix_excluded,
+    )
 
     dest, index = _publish_material_tree(
         dest_root,
         world_materials_root(db, state),
         lambda tmp: _write_world_tree(
-            tmp, db, state, public_events, affair_lines, board_text,
+            tmp, db, state, public_events, affair_lines, board_text, include_fact,
         ),
     )
 

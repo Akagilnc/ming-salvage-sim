@@ -904,6 +904,39 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     )
 
 
+def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
+    """邸报作者：沿现有邸报写作提示与推演者目录，一次写出标题和正文。"""
+    from ming_sim.materials import material_tools
+
+    cfg = _llm_for_role(llm_config, "simulator")
+    tlog(f"[gazette] 使用模型 {describe_effective_model(cfg)}")
+    model = create_chat_model(
+        cfg, temperature=0.9, top_p=0.95, enable_thinking=True, force_json_output=True,
+    )
+    root = getattr(prepared, "root", "")
+    if hasattr(model, "materials_dir"):
+        model.materials_dir = str(root or "")
+    instructions = [
+        _ctx().game_world_prompt,
+        _ctx().season_simulator_prompt,
+        "你写本期邸报。盘面与历月材料沿当前目录，按需自读。",
+        "用 json 返回两个字段：title 是你为本期写的标题，report 是呈皇帝的全文。",
+        "不要输出决策块，也不要为抽取器安排格式。章节只是软提示。",
+        str(getattr(prepared, "opening", "") or ""),
+    ]
+    if is_minimax_base_url(cfg.base_url):
+        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
+    return Agent(
+        name="邸报作者",
+        id="gazette-author",
+        model=model,
+        instructions=instructions,
+        tools=material_tools(root),
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def _rescript_option_instructions(
     *,
     character_targets_supplied: bool = False,
