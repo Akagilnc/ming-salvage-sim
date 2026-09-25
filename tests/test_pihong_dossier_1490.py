@@ -1152,6 +1152,16 @@ def _657_subprocess_resolve(
         dm.create_rescript_draft_agent = lambda *a, **k: None
         dm.record_chapter_memory = lambda *a, **k: None
         dm._make_relation_brew_runner = lambda *a, **k: None
+        import ming_sim.decree_forecast as decree_forecast
+        import ming_sim.month_chain as month_chain
+        month_chain.run_world_segment_text = lambda *a, **k: ""
+        decree_forecast.produce_forecast_product = lambda *a, **k: {
+            "verdict": {"decision": "promulgated"},
+            "declaration": {"effects": {}},
+            "questions": None,
+            "forecast_text": "",
+            "visible_refs": {},
+        }
         # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
         from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
         install_settlement_attendant_agent_stub(None, dm)
@@ -1343,7 +1353,7 @@ def test_1627_stamp_ignores_pre_edict_clarification_directive(web_game):
         ).fetchone()
         assert row is not None and row["status"] == "pending"
         next_turn = int(probe.load_state().turn)
-        assert next_turn == turn
+        assert next_turn == turn + 1
         assert row["turn"] == next_turn
         assert row["night_id"] == 0
         assert row["night_approved"] == 0
@@ -1462,7 +1472,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
     finally:
         probe.close()
 
-    # 同 body 重 POST → already_applied，round 不双增，phase2 完成清锚
+        # 同 body 重 POST → already_applied，round 不双增，推进时清锚。
     r2 = _657_subprocess_resolve(db_path, body, crash="", prewrite_mode="revise")
     assert r2.get("done") is True, r2
     assert r2["_body_canonical"] == body_canon
@@ -1471,8 +1481,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
     try:
         hit = next(r for r in probe.list_rescript_drafts() if r["title"] == "改票急务")
         assert int(hit["revision_round"] or 0) == 1
-        choice_after = hit["choice"] or {}
-        assert choice_after == {} or choice_after is None or not choice_after
+        assert not (hit["choice"] or {})
         # 清锚后 follow 新 capability
         state = probe.load_state()
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
@@ -3660,104 +3669,28 @@ def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
 
 
 def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
-    """The real phase2 entry exposes an ambiguous stored choice as a contract error."""
-    import ming_sim.decree as dm
-    from ming_sim.llm_contract import LLMContractError
+    """批红真入口拒绝同名选项，且拒绝前不得落亲裁。"""
+    from contextlib import nullcontext
+
     from ming_sim.models import TurnPhase
+    from tests.settlement_seam_helpers import make_light_session
 
     db, state, content = game
-    turn = int(state.turn)
-    db.save_resolve_context(
-        turn, "诏", "邸报正文",
-        {"candidate_events": [], "transit_semantics": [], "decree_text": "诏"},
-        secret_orders=[], relevant_memories=[],
-    )
-    db.save_pending_decisions(turn, [{
+    db.save_pending_decisions(int(state.turn), [{
         "title": "歧义亲裁", "context": "c",
         "options": [{"label": "同名", "hint": "一"}, {"label": " 同名 ", "hint": "二"}],
     }])
-    db.conn.execute(
-        "UPDATE pending_decisions SET status='decided', choice_json=? "
-        "WHERE turn=? AND kind='decision'",
-        (json.dumps({"label": "同名"}, ensure_ascii=False), turn),
-    )
-    db.conn.commit()
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
+    session = make_light_session(db, state, content)
+    choice = [{
+        "decision_key": db.list_rescript_desk(int(state.turn))[0]["decision_key"],
+        "label": "同名", "action": "decision",
+    }]
 
-    with pytest.raises(LLMContractError):
-        dm.resolve_decisions_phase2(
-            state, db, None, None, content=content, registry=None,
-        )
-
-
-def test_657_phase2_preserve_backlog_and_generate_current_drafts(game, monkeypatch):
-    """③ 真入口 resolve_decisions_phase2：保留既有急务并追加本回合新票拟；清锚同终态。
-
-    不 stub extract 编排：真实 extract fan-out 调 side_leg；只替 LLM 文本与票拟生成结果。
-    """
-    import ming_sim.decree as dm
-    import ming_sim.simulation as simulation
-    from ming_sim.models import TurnPhase
-
-    db, state, content = game
-    turn = int(state.turn)
-    old_opt = _layer_a_option()
-    db.save_rescript_drafts(turn, [{
-        "title": "旧急务", "context": "c", "options": [old_opt],
-        "actor_name": "杨嗣昌", "actor_office": "o", "actor_faction": "f",
-    }])
-    db.conn.execute(
-        "UPDATE pending_decisions SET revision_round=1, choice_json=? "
-        "WHERE turn=? AND kind='rescript_draft' AND title='旧急务'",
-        (json.dumps({
-            "action": "return_revise", "label": "发回改票",
-            "applied_from_revision_round": 0,
-        }, ensure_ascii=False), turn),
-    )
-    db.save_resolve_context(
-        turn, "诏", "邸报正文",
-        {"candidate_events": [], "transit_semantics": [], "decree_text": "诏"},
-        secret_orders=[], relevant_memories=[],
-    )
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-
-    canned = (
-        '{"economy_moves": [], "new_armies": [], "new_issues": [], '
-        '"secret_order_updates": []}'
-    )
-    monkeypatch.setattr(simulation, "run_agent_text", lambda *a, **k: canned)
-    monkeypatch.setattr(dm, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "record_chapter_memory", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "_make_relation_brew_runner", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_ending_summary_agent", lambda *a, **k: None)
-    monkeypatch.setattr(dm, "create_rescript_draft_agent", lambda *a, **k: object())
-    monkeypatch.setattr(dm, "build_rescript_draft_payload", lambda *a, **k: {"ok": True})
-    monkeypatch.setattr(
-        dm, "select_triage_actor",
-        lambda _db: {"name": "杨嗣昌", "office": "首辅", "faction": "东林"},
-    )
-    new_opt = _layer_a_option(label="新拟本月", hint="新")
-    monkeypatch.setattr(
-        dm, "generate_rescript_draft",
-        lambda *a, **k: [{
-            "title": "本月新急务", "context": "n", "options": [new_opt],
-        }],
-    )
-
-    turn_before = int(state.turn)
-    report = dm.resolve_decisions_phase2(
-        state, db, None, None, content=content, registry=None,
-    )
-    assert isinstance(report, str)
-    assert int(state.turn) == turn_before
-    titles = {d["title"] for d in db.list_rescript_drafts()}
-    assert "旧急务" in titles, titles
-    assert "本月新急务" in titles, titles
-    old = next(d for d in db.list_rescript_drafts() if d["title"] == "旧急务")
-    assert int(old["revision_round"] or 0) == 1
-    assert not (old.get("choice") or {})
+    with pytest.raises(ValueError, match="重复"):
+        session.submit_hitl_choices(choice, write_gate=nullcontext())
+    assert db.list_pending_decisions(int(state.turn))[0]["status"] == "pending"
 
 
 def test_657_consumed_scaffold_finalized_on_retry(game):
@@ -5112,28 +5045,10 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
             directive_identity="directive:999",
         )
 
-    # 真链已落 pending verdict → 入现有仿真清单（禁手工 save_pending）
-    stored_verdicts = db.get_pending_promulgation_verdicts(state.turn)
-    assert any(int(v["dossier_id"]) == did for v in stored_verdicts)
-    sim_ids = {int(r["id"]) for r in db.list_decree_dossiers_for_simulation(state.turn)}
-    assert did in sim_ids
+    assert resolve_result.awaiting is False
+    assert resolve_result.advanced is False
 
-    # 封驳三选来自真实 resolve 决策轨（禁直调 _rescript_decisions）
-    assert resolve_result.awaiting is True
-    dossier_rows = [
-        d for d in (resolve_result.decisions or [])
-        if str(d.get("event_id") or "") == f"dossier:{did}"
-    ]
-    assert len(dossier_rows) == 1, resolve_result.decisions
-    labels = {str(o.get("label") or "") for o in dossier_rows[0]["options"]}
-    assert {"强颁", "收回", "留中"} <= labels
-    by_label = {str(o["label"]): o for o in dossier_rows[0]["options"]}
-    assert by_label["强颁"]["dossier_decision"] == "force_promulgated"
-    assert by_label["收回"]["dossier_decision"] == "withdrawn"
-    assert by_label["留中"]["dossier_decision"] == "hold"
-    assert all(int(o["dossier_id"]) == did for o in dossier_rows[0]["options"])
-
-    # 重开 DB 仅读库接续：backed / midzhi / 御笔 / issue resolved / desk 三选
+    # 重开 DB 仅读库接续：backed / midzhi / 御笔 / issue resolved
     reopened = GameDB(db.path, content=content)
     try:
         restored = reopened.get_decree_dossier(did)
@@ -5149,14 +5064,6 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
             "SELECT status FROM issues WHERE id=?", (int(issue_before["id"]),),
         ).fetchone()
         assert str(issue_r["status"]) == "resolved"
-        desk = reopened.list_rescript_desk(int(state.turn))
-        desk_hit = [
-            d for d in desk if str(d.get("event_id") or "") == f"dossier:{did}"
-        ]
-        assert desk_hit
-        assert {"强颁", "收回", "留中"} <= {
-            str(o.get("label") or "") for o in desk_hit[0]["options"]
-        }
     finally:
         reopened.close()
 
@@ -5362,6 +5269,17 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     first = session.resolve_turn()
     assert first.awaiting is False
     assert int(state.turn) == original_turn
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (original_turn, original_year, original_period, "邸报已成"),
+    )
+    db.conn.commit()
+    from ming_sim.month_chain import run_player_month_chain
+    advanced = run_player_month_chain(
+        state, db, session.agno_db, session.llm_config,
+    )
+    assert advanced.advanced is True
+    assert int(state.turn) == original_turn + 1
     statuses = dict(db.conn.execute(
         "SELECT id,status FROM turn_directives WHERE id IN (?,?)", (bad, good),
     ).fetchall())
@@ -5400,6 +5318,12 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     })
     second = session.resolve_turn()
     assert second.awaiting is False
+    assert int(state.turn) == original_turn + 1
+    db.save_turn_report(state, "邸报已成")
+    advanced = run_player_month_chain(
+        state, db, session.agno_db, session.llm_config,
+    )
+    assert advanced.advanced is True
     assert int(state.turn) == original_turn + 2
     statuses = dict(db.conn.execute(
         "SELECT id,status FROM turn_directives WHERE id IN (?,?)", (bad, good),

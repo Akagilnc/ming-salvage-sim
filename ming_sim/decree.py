@@ -889,60 +889,6 @@ def _rescript_decisions(
     return decisions
 
 
-def _maybe_pause_for_rescript_desk(
-    state: GameState,
-    db: GameDB,
-    decree_text: str,
-    narrative: str,
-    simulator_payload: Dict[str, object],
-    *,
-    secret_orders,
-    relevant_memories,
-    source: Provenance,
-    content=None,
-    registry=None,
-    new_decisions: Optional[List[Dict[str, object]]] = None,
-    attendant_message: str = "",
-) -> Optional[ResolveResult]:
-    """#657：desk=backlog 急务 ∪ 本月 decision 非空 → AWAITING；返回合并 desk。
-
-    仅急务 backlog（无新 decision）也入相，禁直落 settle 推进。
-    """
-    decisions = list(new_decisions or [])
-    # 先落本月 decision（若有），再读合并 desk（含跨月 pending 急务）
-    if decisions:
-        tlog(
-            f"[HITL] 检测到 {len(decisions)} 个决策点，暂停等皇帝亲裁："
-            f"{[d.get('title') for d in decisions]}"
-        )
-    # 预读 backlog：无新 decision 时若 desk 已有急务也须入相
-    if not decisions:
-        desk_preview = db.list_rescript_desk(int(state.turn))
-        if not desk_preview:
-            return None
-        tlog(
-            f"[HITL] 急务 backlog {len(desk_preview)} 条，暂停等批红："
-            f"{[d.get('title') for d in desk_preview]}"
-        )
-    # 暂停态三件（上下文+决策点+AWAITING 相位）同事务落库（cmr S4 r2）
-    with atomic_and_reload(db, state, content=content, registry=registry):
-        db.save_resolve_context(
-            state.turn, decree_text, narrative, simulator_payload,
-            secret_orders=secret_orders,
-            relevant_memories=relevant_memories,
-            source=Provenance(source).value,
-            attendant_message=attendant_message,
-        )
-        if decisions:
-            db.save_pending_decisions(state.turn, decisions)
-        state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        db.save_state(state)
-    return ResolveResult(
-        awaiting=True,
-        decisions=db.list_rescript_desk(int(state.turn)),
-    )
-
-
 def _chosen_rescript_actions(
     decisions: List[Dict[str, object]],
 ) -> List[Dict[str, object]]:
@@ -1319,6 +1265,20 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
         row.get("kind") == "directive"
         for row in db.list_pending_actions(state.turn)
     )
+
+
+def _carry_pending_clarification_actions(
+    db: GameDB, state: GameState, before_turn: int, *, content=None,
+) -> None:
+    """Keep unresolved pre-edict drafts discoverable in the new month."""
+    for pending_action in db.list_pending_actions(before_turn):
+        prepared = db._prepare_pending_directive(state, pending_action, content=content)
+        if prepared["classification"] == "needs_clarification":
+            db.conn.execute(
+                "UPDATE pending_actions "
+                "SET turn=?, night_id=0, night_approved=0 WHERE id=?",
+                (int(state.turn), int(pending_action["id"])),
+            )
 
 
 def resolve_directives(
@@ -2643,14 +2603,7 @@ def _settle_after_extract_body(
     state.next_period()
     # 颁诏前要求澄清的拟旨不会在 commit_pending_actions 中落印；推进后把它们移交新回合，
     # 使当前 turn 的唯一发现口仍能供后续召对核定，并解除已关闭召对夜的绑定。
-    for pending_action in db.list_pending_actions(before_turn):
-        prepared = db._prepare_pending_directive(state, pending_action, content=content)
-        if prepared["classification"] == "needs_clarification":
-            db.conn.execute(
-                "UPDATE pending_actions "
-                "SET turn=?, night_id=0, night_approved=0 WHERE id=?",
-                (int(state.turn), int(pending_action["id"])),
-            )
+    _carry_pending_clarification_actions(db, state, before_turn, content=content)
     # 不变式先验后再写：assert 排在 clear 之后的话，失败时重试真源已被删（cmr r4 codex）。
     assert state.turn == before_turn + 1
     # settling 随推进复位（同笔 save_state 落库）：不复位的话下一回合 pre_settle 被守门

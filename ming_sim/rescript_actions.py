@@ -7,7 +7,7 @@
 边界：
 - validate_all / run_prewrite_llms：内存零 DB 写；prewrite 在 write_gate 外
 - apply_rescript_batch：单 DB 事务纯代码；由 ① 持 gate 时调用
-- 清锚：phase2 成功后由 ③ 调用 clear_return_revise_choice_anchors
+- 清锚：月份推进事务内调用 clear_return_revise_choice_anchors
 - 禁模块内持 write_gate；禁 resolve_context 承载本批 choices
 """
 
@@ -1459,8 +1459,8 @@ def clear_return_revise_choice_anchors(
     """清已应用 return_revise 行 choice 锚（唯一清锚动作；无 consumed_epoch）。
 
     - 传 keys：只清本批键（兼容旧调用）
-    - keys is None：按行事实扫描全部已应用 revise 锚（settle 终态单缝）
-    须在 settle atomic 内、next_period 前调用，与回合推进同生共死。
+    - keys is None：按行事实扫描全部已应用 revise 锚（月推进单缝）
+    须在推进事务内、next_period 前调用，与回合推进同生共死。
     """
     if applied_revise_keys is not None:
         for key in applied_revise_keys:

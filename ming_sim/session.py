@@ -4518,7 +4518,7 @@ class GameSession:
     ) -> str:
         """#657 ③ 短写（调用方已持 write_gate）：persist + 门闩 + phase2。
 
-        return_revise 清锚在 settle_with_delta 单一终态完成（与 next_period 同 atomic）。
+        return_revise 清锚在月份推进事务完成（与 next_period 同 atomic）。
         """
         from ming_sim.applier import atomic
 

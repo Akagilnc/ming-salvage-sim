@@ -74,7 +74,9 @@ def run_player_month_chain(
     archive = db.get_turn_report_archive(turn)
     if archive is None or not str(archive.get("report") or "").strip():
         return _pause(db, turn, chain, decree_text, source, "gazette")
-    advanced = _advance_after_gazette(db, state, chain, turn, decree_text, source)
+    advanced = _advance_after_gazette(
+        db, state, chain, turn, decree_text, source, content=content,
+    )
     return ResolveResult(
         awaiting=False, advanced=advanced, stage="advanced" if advanced else "gazette",
     )
@@ -186,10 +188,14 @@ def _run_month_drift(
     if chain.get("inertia_done") or not chain.get("world_committed"):
         return
     from ming_sim.issues import apply_issue_inertia_and_ongoing, clear_gated_legacies
+    from ming_sim.due_review import apply_pending_due_reviews
+    from ming_sim.staged_commitment import write_due_staged_commitment_todos
 
     with atomic(db):
         apply_issue_inertia_and_ongoing(db, state)
         clear_gated_legacies(db, state)
+        apply_pending_due_reviews(db, state, commit=False)
+        write_due_staged_commitment_todos(db, state, commit=False)
         chain["inertia_done"] = True
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
@@ -211,11 +217,13 @@ def _waiting_for_rescript(db: Any, state: Any, chain: Dict[str, Any]) -> bool:
 
 def _advance_after_gazette(
     db: Any, state: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
+    *, content: Any = None,
 ) -> bool:
     if chain.get("advanced"):
         return True
     from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
-    from ming_sim.decree import TIMEOUT_TURN
+    from ming_sim.decree import TIMEOUT_TURN, _carry_pending_clarification_actions
+    from ming_sim.rescript_actions import clear_return_revise_choice_anchors
 
     with atomic(db):
         if not state.ended:
@@ -233,7 +241,9 @@ def _advance_after_gazette(
                 state.ended = True
                 state.ending_status = str(outcome.get("status") or "")
         db.mark_directives_issued(state)
+        clear_return_revise_choice_anchors(db, None)
         state.next_period()
+        _carry_pending_clarification_actions(db, state, turn, content=content)
         state.turn_phase = "issued"
         db.save_state(state)
         db.clear_month_open_snapshot(turn)
