@@ -224,15 +224,9 @@ def test_genuinely_empty_delta_distinguishable_from_placeholder(game):
 # cmr S2+S3 r4 修复回归（F1 stale context / F3 corruption）
 # ---------------------------------------------------------------------------
 
-def test_advance_without_edict_clears_stale_context(game, monkeypatch):
-    """退朝无诏推进回合时清掉本回合 stale context（cmr S2+S3 r4 F1）。
-
-    #1274：无旨走完整结算；settle_with_delta 尾 clear_resolve_context。
-    崩溃重试后改走无诏路推进，留下的 ready=1 行会被 S4 恢复入口
-    当「未完成回合」重放=double-apply。推进回合的路都得清。
-    """
-    import ming_sim.decree as decree_mod
-    import ming_sim.memories as memories
+def test_advance_without_edict_ignores_stale_ready_context(game, monkeypatch):
+    """退朝无诏不重放旧 ready delta；邸报未成时仍停在本月。"""
+    import ming_sim.month_chain as month_chain
     from ming_sim.session import GameSession
 
     db, state, content = game
@@ -241,13 +235,7 @@ def test_advance_without_edict_clears_stale_context(game, monkeypatch):
                             relevant_memories=[], extracted={"metric_delta": {"国库": 1}})
     assert db.get_resolve_context(turn) is not None
 
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: ("stale-ctx 测邸报。", k.get("simulator_payload") or {}),
-    )
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
 
     sess = GameSession.__new__(GameSession)
     sess.db, sess.state, sess.content = db, state, content

@@ -39,17 +39,10 @@ from tests.conftest import covering_monthly_extract
 
 
 def _canned_no_edict_settlement(monkeypatch):
-    """#1274：无旨全链只罐装外部 LLM 缝。"""
-    import ming_sim.decree as decree_mod
-    import ming_sim.memories as memories
+    """#1274：无旨全链只替现役世界段外部模型缝。"""
+    import ming_sim.month_chain as month_chain
 
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: ("本月退朝无旨邸报。", k.get("simulator_payload") or {}),
-    )
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
 
 
 def _session_for(db, state, content):

@@ -101,7 +101,7 @@ def _run_opening_levy(
         if rejected:
             _collect_inline_rejections(
                 collector, {"population_transfers_rejections": rejected}, turn,
-                Provenance.system_simulation,
+                source,
             )
             collector.flush_to_db(db)
         chain["opening_levy_done"] = True

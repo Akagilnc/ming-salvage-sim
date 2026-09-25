@@ -126,8 +126,7 @@ def test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick(ga
 
 def test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick(game, monkeypatch):
     """#1274：无旨完整结算 pre_settle 内历史饷率事件仍在 fiscal tick 前触发。"""
-    import ming_sim.decree as decree_mod
-    import ming_sim.memories as memories
+    import ming_sim.month_chain as month_chain
     from ming_sim.session import GameSession
 
     db, state, content = game
@@ -139,13 +138,7 @@ def test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick(game, mo
     seed_liao = before["p"]["三饷应征"]
     target_liao = seed_liao * 4.0 / 3.0
 
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
-    monkeypatch.setattr(
-        decree_mod, "simulate_season_with_payload",
-        lambda *a, **k: ("饷率测邸报。", k.get("simulator_payload") or {}),
-    )
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
 
     sess = GameSession.__new__(GameSession)
     sess.db, sess.state, sess.content = db, state, content

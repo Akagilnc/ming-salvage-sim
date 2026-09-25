@@ -1092,6 +1092,8 @@ def test_657_s12_reconciles_s_u_q_and_finishes_summon(game, monkeypatch):
 
     from tests.test_pihong_dossier_1490 import _657_install_real_phase2_llm_boundary
     _657_install_real_phase2_llm_boundary(monkeypatch)
+    import ming_sim.month_chain as month_chain
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
 
     turn_before = int(state.turn)
     report = sess.submit_hitl_choices([], write_gate=sess._write_gate)
