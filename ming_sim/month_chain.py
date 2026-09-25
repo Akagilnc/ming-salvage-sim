@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from ming_sim.applier import Provenance, atomic
 
 _CHAIN_KEY = "month_chain"
-_TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate", "edict_translate"})
+_TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate"})
 
 
 def run_world_segment_text(
@@ -85,7 +85,7 @@ def run_player_month_chain(
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
     declaration_outcome = _settle_edicts(
-        session, registry=registry, on_outcome=persist_declaration_outcome,
+        session, registry=registry, chain=chain, on_outcome=persist_declaration_outcome,
     )
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
@@ -138,14 +138,14 @@ def _consume_call_failure_for_retry(
         return
     step = str(failure.get("step") or "")
     if failure.get("escape_armed") and step in _TRANSLATE_ESCAPE_STEPS:
-        _discard_segment_for_escape(db, chain, failure)
+        _discard_segment_for_escape(chain, failure)
         chain["translate_exhaust_stops"] = 0
     chain.pop("call_failure", None)
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
 
 def _discard_segment_for_escape(
-    db: Any, chain: Dict[str, Any], failure: Dict[str, Any],
+    chain: Dict[str, Any], failure: Dict[str, Any],
 ) -> None:
     """完整段文转译反复用尽后的逃生口：丢未落段文，已落账不动。"""
     step = str(failure.get("step") or "")
@@ -153,12 +153,6 @@ def _discard_segment_for_escape(
         chain.pop("world_text", None)
         chain["world_text_ready"] = False
         chain.pop("world_questions", None)
-        return
-    if step == "edict_translate":
-        ref = str(failure.get("decree_ref") or "").strip()
-        if ref:
-            from ming_sim.declaration_dispatch import discard_staged_declaration
-            discard_staged_declaration(db, ref)
 
 
 def _abort_month_call(
@@ -219,6 +213,7 @@ def _guard_month_call(
     step: str,
     operation: Any,
     decree_ref: str = "",
+    code_step: Optional[str] = None,
 ) -> Any:
     """模型用尽 → 停住可重试；其它代码异常 → 错误包后停住；中断类原样上浮。"""
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
@@ -235,13 +230,13 @@ def _guard_month_call(
     except Exception as exc:
         _abort_month_call(
             db, state, chain, decree_text=decree_text, source=source,
-            step=step, exc=exc, kind="code_exception", decree_ref=decree_ref,
+            step=code_step or step, exc=exc, kind="code_exception", decree_ref=decree_ref,
         )
     raise AssertionError("month call abort must raise")
 
 
 def _settle_edicts(
-    session: Any, *, registry: Any, on_outcome: Any = None,
+    session: Any, *, registry: Any, chain: Dict[str, Any], on_outcome: Any = None,
 ) -> Optional[Dict[str, object]]:
     from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
     from ming_sim.decree import _is_stalled_deliberation
@@ -254,8 +249,6 @@ def _settle_edicts(
     )
 
     db, state = session.db, session.state
-    turn = int(state.turn)
-    chain = _load_chain(db, turn)
     outcome = None
     for dossier in db.list_decree_dossiers():
         if _is_stalled_deliberation(dossier):
@@ -375,30 +368,14 @@ def _run_world_segment(
         _save_chain(db, turn, chain, source=source)
 
     if prefix.strip():
-        def _dispatch() -> Any:
-            return dispatch_month_segment(
+        result = _guard_month_call(
+            db, state, chain, decree_text="", source=source,
+            step="world_translate", code_step="world_commit",
+            operation=lambda: dispatch_month_segment(
                 db, state, segment=prefix, llm_config=session.llm_config, source=source,
                 alongside=mark,
-            )
-
-        from ming_sim.exceptions import LLMUnavailable
-        try:
-            result = _dispatch()
-        except LLMUnavailable as exc:
-            _abort_month_call(
-                db, state, chain, decree_text="", source=source,
-                step="world_translate", exc=exc, kind="model_exhausted",
-            )
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception as exc:
-            from ming_sim.exceptions import SettlementAbort
-            if isinstance(exc, SettlementAbort):
-                raise
-            _abort_month_call(
-                db, state, chain, decree_text="", source=source,
-                step="world_commit", exc=exc, kind="code_exception",
-            )
+            ),
+        )
         return _ending_from_dispatch_result(result)
     with atomic(db):
         mark(None)

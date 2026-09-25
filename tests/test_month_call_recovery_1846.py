@@ -129,6 +129,72 @@ def test_month_call_policy_retries_5xx_and_timeout_up_to_three_with_five_second_
     )
 
 
+def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, tmp_path):
+    """补跑用尽只写失败标记，不得覆盖先前已提交的结局事实。"""
+    import ming_sim.decree_forecast as decree_forecast
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    minister = next(iter(content.characters.values())).name
+    from ming_sim.declaration_dispatch import pending_action_decree_ref
+
+    first_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={"dossier_action_type": "policy", "target_kind": "issue",
+                 "target_id": "ending", "actor": minister, "mode": "ordinary",
+                 "text": "退位"},
+    )
+    first_ref = pending_action_decree_ref(first_id, 1)
+    db.staged_declarations.stage(
+        decree_ref=first_ref,
+        declaration={"effects": {"emperor_fate": "abdicate"}},
+        turn=int(state.turn), verdict={"decision": "promulgated"},
+    )
+    second_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={"dossier_action_type": "policy", "target_kind": "issue",
+                 "target_id": "needs-forecast", "actor": minister, "mode": "ordinary",
+                 "text": "补跑失败"},
+    )
+    turn = int(state.turn)
+    _forbid_extractor(monkeypatch)
+    failed = {"once": True}
+
+    def produce(*_a, **_k):
+        if failed["once"]:
+            failed["once"] = False
+            raise LLMUnavailable("catch-up exhausted")
+        return {
+            "verdict": {"decision": "promulgated"},
+            "declaration": {"effects": {}},
+            "questions": None,
+            "forecast_text": "补跑完成",
+        }
+
+    monkeypatch.setattr(decree_forecast, "produce_forecast_product", produce)
+    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *_a, **_k: "")
+    session = make_light_session(db, state, content)
+    session.llm_config = SimpleNamespace(model="m", advanced_model="m")
+
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
+
+    chain = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
+        "month_chain", {},
+    )
+    assert db.staged_declarations.is_settled(first_ref)
+    assert (chain.get("declaration_outcome") or {}).get("status") == "emperor_abdicate"
+    assert (chain.get("call_failure") or {}).get("kind") == "model_exhausted"
+    assert db.get_decree_dossier(second_id) is not None
+
+    db.save_turn_report(state, "邸报已成")
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.advanced is True
+    assert state.ended is True
+    assert state.ending_status == "emperor_abdicate"
+    assert db.staged_declarations.is_settled(first_ref)
+
+
 def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatch, tmp_path):
     """步骤 3 世界推演用尽：停住当前过月 run，已落旨不动，留错误包与可续相位。"""
     import ming_sim.month_chain as month_chain
