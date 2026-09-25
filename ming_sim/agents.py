@@ -921,7 +921,6 @@ def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         _ctx().season_simulator_prompt,
         "你写本期邸报。盘面与历月材料沿当前目录，按需自读。",
         "用 json 返回两个字段：title 是你为本期写的标题，report 是呈皇帝的全文。",
-        "不要输出决策块，也不要为抽取器安排格式。章节只是软提示。",
         str(getattr(prepared, "opening", "") or ""),
     ]
     if is_minimax_base_url(cfg.base_url):

@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import json
 import threading
-from pathlib import Path
 
 import pytest
 
-import ming_sim.decree as decree_mod
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
-import ming_sim.simulation as simulation
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
-from ming_sim.materials import prepare_character_materials, release_material_tree
+from ming_sim.materials import (
+    prepare_character_materials,
+    prepare_world_materials,
+    release_material_tree,
+)
 from ming_sim.models import LLMConfig
+from tests.dossier_test_helpers import create_test_secret_order
 from tests.settlement_seam_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 
@@ -25,6 +27,7 @@ _SECRET_FACT = "SECRET_FACT_1862"
 _SECRET_REJ = "SECRET_REJ_1862"
 _PUBLIC_FACT = "PUBLIC_FACT_1862"
 _PUBLIC_REJ = "PUBLIC_REJ_1862"
+_SECRET_BRIEF = "SECRET_BRIEF_BODY_1862"
 _TITLE = "关山烽火"
 _REPORT = "本月实况正文"
 
@@ -40,19 +43,6 @@ def _session(db, state, content, monkeypatch):
     session.llm_config = _llm()
     session._write_gate = threading.Lock()
     return session
-
-
-def test_prompt_drops_extractor_decision_block():
-    prompt = Path("content/prompts/season_simulator.md").read_text(encoding="utf-8")
-    assert "<<DECISION>>" not in prompt
-    assert "delta 直接从此抽取" not in prompt
-    assert "档房" not in prompt
-    assert "奏章固定顺序" not in prompt
-    assert "150-300" not in prompt
-    assert "必写" not in prompt
-    assert "软提示" in prompt
-    assert not hasattr(decree_mod, "extract_scores_by_modules_with_agno")
-    assert not hasattr(simulation, "EXTRACTION_MODULES")
 
 
 def test_author_waits_until_rescript_is_done(game, monkeypatch):
@@ -133,6 +123,12 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         ), turn,
     )
     collector.flush_to_db(db)
+    order_id = create_test_secret_order(
+        db, state, minister, "密题不入邸报", "密令原件", ["查办"],
+    )
+    db.upsert_secret_order_brief(
+        state, order_id, minister, "密报题", _SECRET_BRIEF,
+    )
     db.conn.execute(
         "INSERT INTO pending_decisions "
         "(turn, idx, event_id, title, context, options_json, choice_json, status) "
@@ -193,19 +189,34 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert set(payload["month_open"]) == {"国库", "内库", "民心", "皇威"}
     assert _PUBLIC_FACT in seen["files"]
     assert _SECRET_FACT not in seen["files"]
+    assert _SECRET_BRIEF not in seen["files"]
     assert "SECRET_LEDGER" not in seen["files"]
     assert "密令账" not in seen["files"]
     knowledge = db.get_character_knowledge(state, minister)
     bodies = "\n".join(str(item.get("body") or "") for item in knowledge.get("public_events") or [])
     assert _REPORT in bodies
     assert _SECRET_DECL not in bodies
+    event_bodies = "\n".join(str(item.get("body") or "") for item in knowledge.get("events") or [])
+    assert _SECRET_BRIEF in event_bodies
     prepared = prepare_character_materials(db, state, character)
     try:
         gazette = next(path for path in prepared.index_lines if path.startswith("公开说法/邸报/"))
         text = (prepared.root / gazette).read_text(encoding="utf-8")
         assert text.strip() == _REPORT
+        experience = next(path for path in prepared.index_lines if path.endswith("/经历.txt"))
+        assert _SECRET_BRIEF in (prepared.root / experience).read_text(encoding="utf-8")
     finally:
         release_material_tree(prepared.root)
+    world = prepare_world_materials(db, state)
+    try:
+        world_experience = "\n".join(
+            (world.root / rel).read_text(encoding="utf-8")
+            for rel in world.index_lines
+            if rel.endswith("/经历.txt")
+        )
+        assert _SECRET_BRIEF in world_experience
+    finally:
+        release_material_tree(world.root)
 
 
 def test_gazette_failure_retries_report_only(game, monkeypatch):

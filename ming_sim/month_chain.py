@@ -52,6 +52,17 @@ def _gazette_public_fact(fact: Any) -> bool:
     return not str(getattr(fact, "origin_ref", "") or "").startswith("secret_order:")
 
 
+def _gazette_public_event(event: Any) -> bool:
+    """作者经历投影：密令简报仍留在大臣自己的知识里，不写入作者可读经历。"""
+    if not isinstance(event, dict):
+        return True
+    kind = str(event.get("kind") or "")
+    source = str(event.get("source_id") or "")
+    if kind in {"secret_order", "secret_order_brief"}:
+        return False
+    return not source.startswith("secret_order")
+
+
 def _secret_sourced(value: object) -> bool:
     if isinstance(value, dict):
         if str(value.get("kind") or "") == "secret_order":
@@ -206,6 +217,7 @@ def run_gazette_text(
     prepared = prepare_world_materials(
         db, state,
         include_fact=_gazette_public_fact,
+        include_event=_gazette_public_event,
         ledger_origin_prefix_excluded="secret_order:",
     )
     message = json.dumps(_gazette_feed(db, state, chain), ensure_ascii=False)

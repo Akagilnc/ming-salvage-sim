@@ -1212,6 +1212,19 @@ def _keep_fact(fact: Any, include_fact: Any) -> bool:
     return bool(include_fact(fact))
 
 
+def _knowledge_for_experience(knowledge: dict, include_event: Any) -> dict:
+    """经历投影的可选事件筛。缺省原样；筛过的调用方拿到一份不改原知识的副本。"""
+    if include_event is None:
+        return knowledge
+    events = list(knowledge.get("events") or [])
+    kept = [item for item in events if include_event(item)]
+    if len(kept) == len(events):
+        return knowledge
+    projected = dict(knowledge)
+    projected["events"] = kept
+    return projected
+
+
 def _world_affair_lines(db: Any, include_fact: Any = None) -> list[tuple[str, str, str, str]]:
     """全部开着的事务及其当前情况（不按人物过滤——推演者看全量，非某人经手）。
 
@@ -1288,6 +1301,7 @@ def _write_world_tree(
     affair_lines: list[tuple[str, str, str, str]],
     board_text: str,
     include_fact: Any = None,
+    include_event: Any = None,
 ) -> list[str]:
     from ming_sim.knowledge import build_character_knowledge
 
@@ -1308,7 +1322,10 @@ def _write_world_tree(
         )
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
         rel = f"{person_dir}/经历.txt"
-        _write_text(tmp / rel, _experience_text(knowledge, _person_audience_experience(db, name)))
+        _write_text(tmp / rel, _experience_text(
+            _knowledge_for_experience(knowledge, include_event),
+            _person_audience_experience(db, name),
+        ))
         index.append(rel)
         # #1828/#1834：人物名下按月文字事实（负伤/患病等）单独一份，世界目录
         # 才有；人物私有经历目录（_write_tree）不注入，仍只按其知识见闻投影。
@@ -1777,6 +1794,7 @@ def prepare_world_materials(
     *,
     dest_root: Optional[Path] = None,
     include_fact: Any = None,
+    include_event: Any = None,
     ledger_origin_prefix_excluded: str = "",
 ) -> PreparedMaterials:
     """过月推演者材料目录：盘面全量 + 开着的事务清单进开场最小集；人物经历、
@@ -1801,7 +1819,8 @@ def prepare_world_materials(
         dest_root,
         world_materials_root(db, state),
         lambda tmp: _write_world_tree(
-            tmp, db, state, public_events, affair_lines, board_text, include_fact,
+            tmp, db, state, public_events, affair_lines, board_text,
+            include_fact, include_event,
         ),
     )
 
