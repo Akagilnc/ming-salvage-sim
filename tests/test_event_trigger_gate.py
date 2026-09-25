@@ -2109,14 +2109,23 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-            "人物变更": [{"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "松锦替补战死"}],
+            "人物变更": [
+                {"origin_ref": "盘面自发", "affair_declaration": {"attach": "new"}},
+                {"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "松锦替补战死"},
+            ],
         },
         content=content,
+        ordered_deltas={
+            "army_delta": [], "region_delta": [], "power_updates": [],
+            "new_armies": [],
+        },
+        ordered_effect_event_ids={"人物变更": ["", "songshan_battle"]},
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
     assert "候选" in out["issue_summary"]["new_issues"][0]["reason"]
     assert db.get_character_status("孙传庭")[0] == "active"
+    assert len(out["applied_person_changes"]) == 1
     assert out["applied_person_changes"][0]["rejected"] is True
     assert "战果不落" in out["applied_person_changes"][0]["reason"]
 

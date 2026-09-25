@@ -971,7 +971,9 @@ def join_close_scene_on_registry(
                 scene_registry.abandon(ctid)
             if ctid and hasattr(db, "fail_chat_turn"):
                 with gate:
-                    db.fail_chat_turn(int(ctid))
+                    restored_ids = db.fail_chat_turn(int(ctid))
+                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+                schedule_restored_decree_forecasts(db, restored_ids)
         except BaseException as cleanup_exc:
             raise scene_exc from cleanup_exc
         raise

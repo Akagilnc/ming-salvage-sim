@@ -208,7 +208,9 @@ def _fail_cli_chat_turn_scene(
                 (int(entry_id),),
             )
             session.db.conn.commit()
-        session.db.fail_chat_turn(int(chat_turn_id))
+        restored_ids = session.db.fail_chat_turn(int(chat_turn_id))
+        from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+        schedule_restored_decree_forecasts(session, restored_ids)
         return
     if entry_id:
         # Prior Q&A turn must stay intact; only drop the failed exit placeholder.
@@ -497,17 +499,8 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
                 )
             if hasattr(db, "restore_interrupted_after_failed_retry"):
                 restored_ids = db.restore_interrupted_after_failed_retry(chat_turn_id)
-                if restored_ids:
-                    from ming_sim.decree_forecast import bind_forecast_owner, schedule_pending_decree_forecast
-                    from ming_sim.audience_night import get_open_night
-
-                    bind_forecast_owner(session)
-                    night = get_open_night(db)
-                    if night is not None:
-                        for pending_id in restored_ids:
-                            schedule_pending_decree_forecast(
-                                session, int(pending_id), night_id=int(night["id"]),
-                            )
+                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+                schedule_restored_decree_forecasts(session, restored_ids)
         except Exception:
             logger.exception(
                 "CLI retry rollback/forecast recovery failed chat_turn_id=%s", chat_turn_id,
@@ -702,7 +695,9 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),
                     )
-                    session.db.fail_chat_turn(chat_turn_id)
+                    restored_ids = session.db.fail_chat_turn(chat_turn_id)
+                    from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+                    schedule_restored_decree_forecasts(session, restored_ids)
                 elif user_message_id is not None and result is None:
                     session.db.delete_chat_messages([user_message_id])
             except BaseException as cleanup_error:

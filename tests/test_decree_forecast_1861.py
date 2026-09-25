@@ -380,14 +380,49 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
     ).fetchone()["night_approved"]) == 1
 
 
+def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
+    db, state, content = game
+    night = open_night(db, state)
+    minister = next(iter(content.characters.values()))
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister.name,
+        payload={"text": "回滚后续推"},
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET night_approved=1, night_id=? WHERE id=?",
+        (int(night["id"]), pending_id),
+    )
+    db.conn.commit()
+    scheduled = []
+    monkeypatch.setattr(
+        forecast_mod, "schedule_pending_decree_forecast",
+        lambda session, action_id, *, night_id: scheduled.append((action_id, night_id)),
+    )
+
+    session = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
+    forecast_mod.schedule_restored_decree_forecasts(session, [pending_id])
+
+    assert scheduled == [(pending_id, int(night["id"]))]
+
+
 def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
     db, state, content = game
     state.turn += 1
     ids = []
+    pending_ids = []
+    minister = next(iter(content.characters.values()))
     for text in ("旧旨甲", "旧旨乙"):
+        pending_id = db.stage_pending_action(
+            state.turn, kind="directive", action="拟旨",
+            minister_name=minister.name,
+            payload={"dossier_action_type": "policy", "target_kind": "issue",
+                     "target_id": "test-policy", "text": text},
+        )
+        pending_ids.append(pending_id)
         dossier_id = db.create_decree_dossier(
             state, action_type="policy", decree_text=text,
             target_kind="issue", target_id="test-policy",
+            pending_action_id=pending_id,
             payload={
                 "dossier_action_type": "policy", "target_kind": "issue",
                 "target_id": "test-policy", "text": text,
@@ -429,9 +464,11 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
     assert forecast_mod.schedule_held_decree_forecasts(sess) is True
     assert get_session_write_queue(sess).wait_idle(timeout_s=5)
     assert len(entered) == 2
-    for dossier_id in ids:
-        stored = db.staged_declarations.staged_for(f"dossier:{dossier_id}")
+    for dossier_id, pending_id in zip(ids, pending_ids):
+        ref = pending_action_decree_ref(pending_id, 1)
+        stored = db.staged_declarations.staged_for(ref)
         assert len(stored) == 1 and stored[0].status == "staged"
+        assert db.staged_declarations.staged_for(f"dossier:{dossier_id}") == ()
         assert dossier_id in stored[0].visible_refs["dossiers"]
     late = db.create_decree_dossier(
         state, action_type="policy", decree_text="预推后", target_kind="issue",

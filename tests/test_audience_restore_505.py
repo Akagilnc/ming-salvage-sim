@@ -407,6 +407,41 @@ class _FailingRetrySession(_RetrySession):
         )
 
 
+@pytest.mark.parametrize("rollback_method", ["fail_chat_turn", "restore_interrupted_after_failed_retry"])
+def test_failed_chat_rollback_returns_restored_directive_ids(restore_env, rollback_method):
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={"text": "原拟旨"},
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET night_approved=1, night_id=? WHERE id=?",
+        (int(night["id"]), pending_id),
+    )
+    db.conn.commit()
+    chat_turn_id = _start_generating_turn(db, state, minister, "回滚拟旨？")
+    before = db.capture_chat_rollback_snapshot()
+    db.conn.execute(
+        "UPDATE pending_actions SET payload_json=?, version=version+1 WHERE id=?",
+        ('{"text":"变更后的拟旨"}', pending_id),
+    )
+    db.conn.commit()
+    db.record_chat_turn_rollback_diffs(
+        chat_turn_id, before, db.capture_chat_rollback_snapshot(),
+    )
+
+    restored = getattr(db, rollback_method)(chat_turn_id)
+
+    assert restored == [pending_id]
+    row = db.conn.execute(
+        "SELECT status, night_approved FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    assert row["status"] == "pending" and row["night_approved"] == 1
+
+
 def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content

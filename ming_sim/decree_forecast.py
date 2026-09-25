@@ -443,6 +443,25 @@ def schedule_pending_decree_forecast(
     )
 
 
+def schedule_restored_decree_forecasts(owner_or_db: Any, pending_action_ids: list[int]) -> None:
+    """Requeue forecasts for approved directives restored by chat rollback."""
+    if not pending_action_ids:
+        return
+    session = owner_or_db if hasattr(owner_or_db, "db") else _owner_for(owner_or_db)
+    if session is None:
+        return
+    db = session.db
+    bind_forecast_owner(session)
+    for action_id in pending_action_ids:
+        row = db.conn.execute(
+            "SELECT night_id FROM pending_actions WHERE id=?", (int(action_id),),
+        ).fetchone()
+        if row is not None and int(row["night_id"] or 0) > 0:
+            schedule_pending_decree_forecast(
+                session, int(action_id), night_id=int(row["night_id"]),
+            )
+
+
 def schedule_approved_from_dispatch(db: Any, result: Any, night_id: int) -> None:
     """应允落账后为拟旨起预推。无登记会话则不动（测试直调分派不烧模型）。"""
     owner = _owner_for(db)
