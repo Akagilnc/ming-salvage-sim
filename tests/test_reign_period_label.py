@@ -35,5 +35,3 @@ def test_1629_plus_uses_chinese_ordinal_not_arabic():
     assert reign_period_label(1630, 12) == "崇祯三年十二月"
     assert reign_period_label(1637, 6) == "崇祯十年六月"
     assert reign_period_label(1638, 2) == "崇祯十一年二月"
-
-

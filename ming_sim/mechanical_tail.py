@@ -202,7 +202,7 @@ def _run_tail_body(
         settled_period=settled_period, queue=queue, ticket=ticket,
     )
     if isinstance(ending_outcome, dict) and ending_outcome.get("status"):
-        generate_ending_summary_for_tail(
+        summary = generate_ending_summary_for_tail(
             db, closed_state, ending_outcome,
             llm_config=getattr(session, "llm_config", None),
             agno_db=getattr(session, "agno_db", None),
@@ -210,6 +210,12 @@ def _run_tail_body(
                 ticket, lambda: db.save_ending_summary(*args),
             ),
         )
+        if not str(summary or "").strip():
+            logger.info(
+                "[mechanical-tail] turn=%s 结局总评无正文，降级留痕",
+                closed_turn,
+            )
+            return _TAIL_STATUS_DEGRADED
     return _TAIL_STATUS_DONE
 
 

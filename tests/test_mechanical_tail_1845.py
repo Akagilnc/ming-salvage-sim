@@ -251,25 +251,28 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
 
 
-def test_ending_summary_runs_in_mechanical_tail_after_advance(game, monkeypatch):
-    """结局判定在推进前；结局总评属推进后机械尾。"""
+@pytest.mark.parametrize("model_text,tail_status,visible", [
+    ("史评", "done", "史评"),
+    ("  ", "degraded", ""),
+])
+def test_ending_summary_runs_in_mechanical_tail_after_advance(
+    game, monkeypatch, model_text, tail_status, visible,
+):
+    """过月入口：模型原文落总评；空输出不落库，尾状态降级留痕。"""
+    from ming_sim.cli.terminal import _printed_ending_summary
+
     db, state, content = game
     closed_turn = int(state.turn)
     _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
-
     monkeypatch.setattr(
         "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
     )
-    summary_turns = []
-
-    def fake_summary(db_, state_, outcome, **_k):
-        summary_turns.append(int(state_.turn))
-        db_.save_ending_summary(state_, str(outcome.get("status") or ""), "史评", [])
-        return "史评"
-
     monkeypatch.setattr(
-        "ming_sim.mechanical_tail.generate_ending_summary_for_tail", fake_summary,
+        "ming_sim.agents.create_ending_summary_agent", lambda *_a, **_k: object(),
+    )
+    monkeypatch.setattr(
+        "ming_sim.agents.run_agent_text", lambda *_a, **_k: model_text,
     )
     monkeypatch.setattr(
         "ming_sim.context.victory_status",
@@ -284,10 +287,15 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(game, monkeypatch)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
     assert state.ended is True
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
-    assert summary_turns == [closed_turn]
+    tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
+    assert tail["status"] == tail_status
     ending = db.get_ending_summary()
-    assert ending is not None
-    assert ending["summary"] == "史评"
+    if visible:
+        assert ending is not None
+        assert ending["summary"] == visible
+    else:
+        assert ending is None
+    assert _printed_ending_summary(session) == visible
 
 
 def test_chapter_memory_retired_from_three_readers(game):
@@ -363,57 +371,3 @@ def test_mechanical_tail_does_not_schedule_audience_highlight(game, monkeypatch)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
     get_session_write_queue(session).wait_idle(timeout_s=5)
     assert highlight_calls == []
-
-
-def test_ending_summary_keeps_llm_text_and_drops_empty(game, monkeypatch):
-    """空输出与调用失败都不落固定年月句式。失败原样抛出。"""
-    from ming_sim.mechanical_tail import generate_ending_summary_for_tail
-
-    db, state, _content = game
-    db.save_turn_report(state, "邸报原文")
-    outcome = {"status": "emperor_abdicate", "summary": "退位"}
-    monkeypatch.setattr(
-        "ming_sim.agents.create_ending_summary_agent", lambda *_a, **_k: object(),
-    )
-
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *_a, **_k: "  ")
-    assert generate_ending_summary_for_tail(
-        db, state, outcome, llm_config=object(),
-    ) == ""
-    assert db.get_ending_summary() is None
-
-    def explode(*_a, **_k):
-        raise RuntimeError("model down")
-
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", explode)
-    with pytest.raises(RuntimeError, match="model down"):
-        generate_ending_summary_for_tail(db, state, outcome, llm_config=object())
-    assert db.get_ending_summary() is None
-
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", lambda *_a, **_k: "史评正文")
-    assert generate_ending_summary_for_tail(
-        db, state, outcome, llm_config=object(),
-    ) == "史评正文"
-    saved = db.get_ending_summary()
-    assert saved is not None
-    assert saved["summary"] == "史评正文"
-
-
-def test_cli_ending_reads_summary_after_open_tail_ticket(game, monkeypatch):
-    """CLI 终局先等写队列里的尾票，再读总评。"""
-    from ming_sim.cli.terminal import _printed_ending_summary
-    from ming_sim.session_write_queue import SessionWriteQueue, get_session_write_queue
-
-    db, state, content = game
-    session = make_light_session(db, state, content)
-    queue = get_session_write_queue(session)
-    ticket = queue.claim(key=("mechanical-tail", int(state.turn)))
-    original = SessionWriteQueue.wait_idle
-
-    def land_then_wait(self, **kwargs):
-        db.save_ending_summary(state, "emperor_abdicate", "史评正文", [])
-        self.complete(ticket)
-        return original(self, **kwargs)
-
-    monkeypatch.setattr(SessionWriteQueue, "wait_idle", land_then_wait)
-    assert _printed_ending_summary(session) == "史评正文"
