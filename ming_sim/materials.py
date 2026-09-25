@@ -1331,7 +1331,45 @@ def _write_world_tree(
     return index
 
 
-def _world_opening_text(state: Any, board_text: str, affair_lines: list[tuple[str, str, str, str]]) -> str:
+def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
+    """本月世界段要接着办的案卷：模拟清单里仍在执行的。
+
+    真实强颁在同一次颁布里会把在途案卷转入 executing，或把终局载荷结案，
+    不会带着 promulgated 进入次月。
+    """
+    rows = db.list_decree_dossiers_for_simulation(int(turn))
+    facts: list[dict[str, object]] = []
+    for row in rows:
+        status = str(row.get("status") or "")
+        if status != "executing":
+            continue
+        dossier_id = int(row["id"])
+        paid = sum(
+            max(0, -int(move.get("delta") or 0))
+            for move in db.list_economy_moves_for_dossier(dossier_id)
+        )
+        payload = row.get("payload") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        facts.append({
+            "id": dossier_id,
+            "status": status,
+            "decree_text": str(row.get("decree_text") or ""),
+            "action_type": str(row.get("action_type") or ""),
+            "target_kind": str(row.get("target_kind") or ""),
+            "target_id": str(row.get("target_id") or ""),
+            "grant_action": str(payload.get("grant_action") or ""),
+            "paid": paid,
+        })
+    return facts
+
+
+def _world_opening_text(
+    state: Any,
+    board_text: str,
+    affair_lines: list[tuple[str, str, str, str]],
+    dossier_facts: list[dict[str, object]],
+) -> str:
     parts = [
         f"日期：{int(state.year)}年{int(state.period)}月",
         "盘面：",
@@ -1339,6 +1377,14 @@ def _world_opening_text(state: Any, board_text: str, affair_lines: list[tuple[st
         "开着的事务：" if affair_lines else "开着的事务：（无）",
     ]
     parts.extend(f"- {title}：{opening_text}" for _key, title, _directory_text, opening_text in affair_lines)
+    parts.append("在途办理案卷：" if dossier_facts else "在途办理案卷：（无）")
+    for fact in dossier_facts:
+        parts.append(
+            f"- dossier:{fact['id']} {fact['decree_text']}；"
+            f"办理动作：{fact['action_type']}；"
+            f"目标：{fact['target_kind']}:{fact['target_id']}；"
+            f"拨款：{fact['grant_action']}；实付：{fact['paid']}万两"
+        )
     parts.append("人物经历、公开说法、历月邸报在当前目录，按需自读。根目录 INDEX 一行一项。")
     return "\n".join(parts)
 
@@ -1720,6 +1766,7 @@ def prepare_world_materials(
     knowledge = build_character_knowledge(db, state, "")
     public_events = knowledge.get("public_events") or []
     affair_lines = _world_affair_lines(db)
+    dossier_facts = continuing_dossier_facts(db, int(state.turn))
     # #1834 大理寺 bounce 3：与人物经历同一纪律——本次 prepare 只算一次盘面全量
     # 投影，目录写入与 opening 共用同一份冻结结果，不重复查两遍账本。
     board_text = _world_board_text(db, state)
@@ -1727,8 +1774,10 @@ def prepare_world_materials(
     dest, index = _publish_material_tree(
         dest_root,
         world_materials_root(db, state),
-        lambda tmp: _write_world_tree(tmp, db, state, public_events, affair_lines, board_text),
+        lambda tmp: _write_world_tree(
+            tmp, db, state, public_events, affair_lines, board_text,
+        ),
     )
 
-    opening = _world_opening_text(state, board_text, affair_lines)
+    opening = _world_opening_text(state, board_text, affair_lines, dossier_facts)
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))

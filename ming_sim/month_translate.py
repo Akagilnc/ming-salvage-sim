@@ -47,6 +47,7 @@ class MonthTranslationInput:
     segment: str
     target_grounding: str
     decree_payload: Mapping[str, object]
+    continuing_dossiers: tuple[Mapping[str, object], ...] = ()
 
 
 MonthTranslateFn = Callable[[MonthTranslationInput, Any], Mapping[str, object]]
@@ -62,6 +63,11 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         f"形状：\n{build_c0_declaration_shape()}"
         "规则：\n"
         "- 只声明本段已发生或明确交代的内容，按原有先后顺序；不得补造事实或目标 id。\n"
+        "- 【在途办理案卷】给出 id 与目标身份。段文明确交代其中某案的办理结果时，"
+        "在 effects.dossier_executions 按其 id 声明 dossier_id、outcome"
+        "（fulfilled/degraded/failed/transformed）和原文依据 note。"
+        "段文只点到目标、未复述 id 时，只认该清单里的目标身份对应，不得另选或编造。"
+        "清单没有的案卷，或段文未明确结果的，留空，不得推断结案。\n"
         "- effects 可为一份效果对象，或按段文顺序排列的效果对象数组；同一人物或军队"
         "的多次交代须逐项排列，不合并为净增量。effects 只声明叙事推演产生、"
         "且未由下方旨意结构化载荷表示的效果；每项效果若属事件战果，须在该项顶层 "
@@ -71,6 +77,7 @@ def build_month_segment_translate_prompt(request: MonthTranslationInput) -> str:
         "不能把它理解成已经落账。\n"
         "- 过月没有召对夜上下文，promises、presence、scene_facts 均留空；没有对应事实的其它 section 也留空（protagonist 无则省略或 null）。\n"
         f"【旨的结构化载荷】\n{json.dumps(dict(request.decree_payload), ensure_ascii=False, indent=2)}\n"
+        f"【在途办理案卷】\n{json.dumps(list(request.continuing_dossiers), ensure_ascii=False)}\n"
         f"{grounding_block}"
         f"【完整段文】\n{request.segment}"
     )
@@ -96,12 +103,14 @@ def translate_month_segment(
     decree_payload: Mapping[str, object],
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
+    continuing_dossiers: tuple[Mapping[str, object], ...] | list[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     """一次完整段转译为 C0 声明；调用失败原样上抛，不伪装成空声明。"""
     request = MonthTranslationInput(
         segment=segment,
         target_grounding=target_grounding,
         decree_payload=decree_payload,
+        continuing_dossiers=tuple(continuing_dossiers),
     )
     runner = translate_fn or _default_month_translate_runner
     declaration = runner(request, llm_config)
@@ -148,6 +157,8 @@ def dispatch_month_segment(
     alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
 ) -> DeclarationDispatchResult:
     """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。"""
+    from ming_sim.materials import continuing_dossier_facts
+
     payload = decree_payload or {}
     refs = _visible_effect_refs(db, int(state.turn), payload)
     declaration = translate_month_segment(
@@ -156,6 +167,7 @@ def dispatch_month_segment(
         decree_payload=payload,
         llm_config=llm_config,
         translate_fn=translate_fn,
+        continuing_dossiers=continuing_dossier_facts(db, int(state.turn)),
     )
     return dispatch_declaration(
         db, state, declaration,
