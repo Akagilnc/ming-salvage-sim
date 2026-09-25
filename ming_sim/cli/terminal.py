@@ -964,6 +964,17 @@ def play_turn(session: GameSession) -> None:
             continue
 
 
+def _printed_ending_summary(session: GameSession) -> str:
+    """终局总评在机械尾写队列票落地后读取。"""
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    get_session_write_queue(session).wait_idle()
+    ending = session.db.get_ending_summary()
+    if ending and ending.get("summary"):
+        return str(ending["summary"])
+    return ""
+
+
 def run_cli(
     base_url: str,
     model: str,
@@ -1013,9 +1024,9 @@ def run_cli(
                 from ming_sim.context import ENDING_LABELS
                 label = ENDING_LABELS.get(session.state.ending_status, "结局")
                 print(f"\n══════════ 结局·{label} ══════════")
-                ending = session.db.get_ending_summary()
-                if ending and ending.get("summary"):
-                    print(ending["summary"])
+                summary = _printed_ending_summary(session)
+                if summary:
+                    print(summary)
                 print("\n（本局已终结。）")
                 input("\n按回车退出游戏：")
                 break

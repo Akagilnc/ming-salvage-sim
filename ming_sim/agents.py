@@ -1014,7 +1014,7 @@ def create_rescript_deliberate_agent(llm_config: LLMConfig, agno_db: SqliteDb) -
 
 
 def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """国史编纂官：读全程章节记忆 + 结局类型，生成史评式结局总结（纯文本流式）。一次性，不持久化。"""
+    """国史编纂官：读所给历月邸报与时间线，生成史评式结局总结（纯文本）。一次性，不持久化。"""
     del agno_db
     ctx = _ctx()
     return Agent(

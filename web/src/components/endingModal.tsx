@@ -48,8 +48,8 @@ export function EndingModal({ ending, onClose }: { ending: EndingPayload; onClos
                     <span>{it.period}月</span>
                   </div>
                   <div className="ending-timeline-body">
-                    {it.chapter ? (
-                      <p className="ending-timeline-chapter">{it.chapter}</p>
+                    {it.gazette ? (
+                      <p className="ending-timeline-chapter">{it.gazette}</p>
                     ) : null}
                     {it.decree_brief ? (
                       <p className="ending-timeline-decree">诏：{it.decree_brief}</p>

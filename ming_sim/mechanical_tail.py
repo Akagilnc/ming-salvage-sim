@@ -77,6 +77,8 @@ def generate_ending_summary_for_tail(
     from ming_sim.memories import build_timeline
     import json
 
+    if llm_config is None:
+        return ""
     reports = []
     if hasattr(db, "list_turn_reports"):
         for row in db.list_turn_reports():
@@ -93,38 +95,28 @@ def generate_ending_summary_for_tail(
                 "body": body,
             })
     timeline = build_timeline(db, upto_turn=int(closed_state.turn))
-    summary_text = ""
-    if llm_config is not None:
-        try:
-            ending_agent = create_ending_summary_agent(llm_config, agno_db)
-            payload = {
-                "ending": {
-                    "status": outcome.get("status"),
-                    "summary": outcome.get("summary"),
-                },
-                "gazettes": reports,
-                "timeline": timeline,
-                "final_state": {
-                    "year": closed_state.year,
-                    "period": closed_state.period,
-                    "turn": closed_state.turn,
-                    "metrics": dict(getattr(closed_state, "metrics", {}) or {}),
-                },
-            }
-            summary_text = run_agent_text(
-                ending_agent,
-                json.dumps(payload, ensure_ascii=False, sort_keys=False),
-                tag="ending-summary",
-            ).strip()
-        except Exception as exc:
-            logger.info("[mechanical-tail] ending-summary LLM 降级：%s", exc)
-
+    ending_agent = create_ending_summary_agent(llm_config, agno_db)
+    payload = {
+        "ending": {
+            "status": outcome.get("status"),
+            "summary": outcome.get("summary"),
+        },
+        "gazettes": reports,
+        "timeline": timeline,
+        "final_state": {
+            "year": closed_state.year,
+            "period": closed_state.period,
+            "turn": closed_state.turn,
+            "metrics": dict(getattr(closed_state, "metrics", {}) or {}),
+        },
+    }
+    summary_text = run_agent_text(
+        ending_agent,
+        json.dumps(payload, ensure_ascii=False, sort_keys=False),
+        tag="ending-summary",
+    ).strip()
     if not summary_text:
-        bits = [str(outcome.get("summary") or "")]
-        for row in reports[-6:]:
-            bits.append(f"{row['year']}年{row['period']}月：{row['body']}")
-        summary_text = "\n".join(b for b in bits if b)
-
+        return ""
     save = save_fn or db.save_ending_summary
     save(
         closed_state,

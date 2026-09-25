@@ -37,15 +37,3 @@ def test_1629_plus_uses_chinese_ordinal_not_arabic():
     assert reign_period_label(1638, 2) == "崇祯十一年二月"
 
 
-def test_save_chapter_memory_fallback_title_uses_reign_projection(game):
-    """db.save_chapter_memory 空 title 回落亦走年号投影（db.py 锚点）。"""
-    db, state, _content = game
-    state.year = 1628
-    state.period = 1
-
-    mid = db.save_chapter_memory(state, title="", body="章节正文。", tags=[])
-    assert mid > 0
-    row = db.conn.execute(
-        "SELECT title FROM event_memories WHERE id=?", (mid,)
-    ).fetchone()
-    assert row["title"] == "崇祯元年正月"

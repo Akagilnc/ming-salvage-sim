@@ -476,7 +476,7 @@ export type GameState = {
 
 export type EndingTimelineItem = {
   turn: number; year: number; period: number;
-  decree_brief: string; effect_brief: string; chapter: string;
+  decree_brief: string; effect_brief: string; gazette: string;
 };
 
 export type EndingPayload = {
