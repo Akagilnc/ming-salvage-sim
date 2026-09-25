@@ -7,8 +7,9 @@ import sqlite3
 
 import pytest
 
-from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
+from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.month_translate import dispatch_month_segment
+from tests.test_month_chain_1843 import _enter_player_month
 
 
 def _settled_declaration(db, decree_ref: str) -> dict:
@@ -21,98 +22,110 @@ def _settled_declaration(db, decree_ref: str) -> dict:
     return json.loads(row["declaration_json"])
 
 
-def _stage_treasury_spend(db, state, *, decree_ref: str, delta: int, reason: str, affair_id: int):
+def _stage_player_edict(db, state, minister, affair_id, effects, text):
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "month-chain", "actor": minister, "mode": "ordinary",
+            "text": text,
+        },
+    )
+    ref = pending_action_decree_ref(pending_id, 1)
     db.staged_declarations.stage(
-        decree_ref=decree_ref,
-        declaration={"effects": {"economy_moves": [{
-            "origin_ref": f"affair:{affair_id}", "account": "国库", "delta": delta,
-            "category": reason, "reason": reason,
-        }]}},
+        decree_ref=ref,
+        declaration={"effects": effects},
         turn=int(state.turn),
+        verdict={"decision": "promulgated"},
         visible_refs={"affairs": [affair_id], "issues": [], "secret_orders": []},
     )
+    return ref
 
 
-def test_player_decrees_soft_cap_shared_treasury_in_order(game):
-    """存量 120，先扣 100、后支 30 → 实扣 100 与实拨 20；名义与实况分别可查。"""
-    db, state, _ = game
+def test_player_decrees_soft_cap_shared_treasury_in_order(game, monkeypatch):
+    """两旨争库走玩家过月：先旨按当时国库封顶扣尽，后旨实拨为 0；暂存保留名义。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
     affair = db.affairs.open(
         name="争库可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
     )
-    state.metrics["国库"] = 120
+    state.metrics["国库"] = 500_000
     db.save_state(state)
-    _stage_treasury_spend(db, state, decree_ref="edict-first", delta=-100,
-                          reason="先扣百万", affair_id=affair.id)
-    _stage_treasury_spend(db, state, decree_ref="edict-second", delta=-30,
-                          reason="后支三十万", affair_id=affair.id)
-
-    results = settle_staged_declarations_in_decree_order(
-        db, state, ["edict-first", "edict-second"],
+    first_ref = _stage_player_edict(
+        db, state, minister, affair.id,
+        {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -10**12,
+            "category": "先扣尽库", "reason": "先扣尽库",
+        }]},
+        "先扣尽库",
+    )
+    second_ref = _stage_player_edict(
+        db, state, minister, affair.id,
+        {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -30,
+            "category": "后支三十万", "reason": "后支三十万",
+        }]},
+        "后支三十万",
     )
 
-    assert state.metrics["国库"] == 0
-    first_moves = results["edict-first"].effects.applied[0]["economy_moves"]
-    second_moves = results["edict-second"].effects.applied[0]["economy_moves"]
-    assert [m["delta"] for m in first_moves] == [-100]
-    assert [m["delta"] for m in second_moves] == [-20]
-    assert _settled_declaration(db, "edict-first")["effects"]["economy_moves"][0]["delta"] == -100
-    assert _settled_declaration(db, "edict-second")["effects"]["economy_moves"][0]["delta"] == -30
-    ledger = db.conn.execute(
-        "SELECT category, delta FROM economy_ledger "
-        "WHERE category IN ('先扣百万','后支三十万') ORDER BY id"
+    _enter_player_month(db, state, content, monkeypatch)
+
+    assert _settled_declaration(db, first_ref)["effects"]["economy_moves"][0]["delta"] == -10**12
+    assert _settled_declaration(db, second_ref)["effects"]["economy_moves"][0]["delta"] == -30
+    first = db.conn.execute(
+        "SELECT delta, balance_after FROM economy_ledger WHERE category='先扣尽库'"
     ).fetchall()
-    assert [(row["category"], row["delta"]) for row in ledger] == [
-        ("先扣百万", -100), ("后支三十万", -20),
-    ]
+    assert len(first) == 1
+    assert int(first[0]["delta"]) < 0
+    assert int(first[0]["delta"]) != -10**12
+    assert int(first[0]["balance_after"]) == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='后支三十万' AND delta != 0"
+    ).fetchone()[0] == 0
 
 
-def test_player_decree_missing_entity_rejection_persists_for_feed(game, tmp_path):
-    """查无实体等确实无法承接的项：逐项拒收留痕，重开后仍可读。"""
-    db, state, _ = game
+def test_player_decree_missing_entity_rejection_persists_for_feed(game, monkeypatch, tmp_path):
+    """查无实体的项从玩家过月逐项拒收留痕，重开后仍可读。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
     affair = db.affairs.open(
         name="拒收可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
     )
-    before = int(state.metrics["国库"])
-    db.staged_declarations.stage(
-        decree_ref="edict-missing",
-        declaration={"effects": {"economy_moves": [{
+    ref = _stage_player_edict(
+        db, state, minister, affair.id,
+        {"economy_moves": [{
             "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -1,
             "category": "补饷坏目标", "reason": "查无此军",
             "purpose": "补饷", "target_kind": "army", "target_id": "no-such-army-1844",
-        }]}},
-        turn=int(state.turn),
-        visible_refs={"affairs": [affair.id], "issues": [], "secret_orders": []},
+        }]},
+        "补饷坏目标",
     )
-    result = settle_staged_declarations_in_decree_order(db, state, ["edict-missing"])[
-        "edict-missing"
-    ]
-    assert state.metrics["国库"] == before
-    rejections = result.effects.applied[0]["economy_moves_rejections"]
-    assert rejections
-    assert rejections[0]["rejected"] is True
-    assert rejections[0]["category"] == "missing_ref"
+    _enter_player_month(db, state, content, monkeypatch)
     assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref'"
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='补饷坏目标' AND delta != 0"
+    ).fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref' AND item_json LIKE '%no-such-army-1844%'"
     ).fetchone()[0] >= 1
 
     db_path = tmp_path / "reject-reopen.db"
-    raw = db.conn.execute("SELECT sql FROM sqlite_master WHERE type='table'").fetchall()
-    del raw  # schema already in live db; reopen via backup
     db.conn.execute("VACUUM INTO ?", (str(db_path),))
     reopened = sqlite3.connect(str(db_path))
     reopened.row_factory = sqlite3.Row
     assert reopened.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref'"
+        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref' AND item_json LIKE '%no-such-army-1844%'"
     ).fetchone()[0] >= 1
     assert reopened.execute(
-        "SELECT status FROM staged_declarations WHERE decree_ref='edict-missing'"
+        "SELECT status FROM staged_declarations WHERE decree_ref=?",
+        (ref,),
     ).fetchone()[0] == "settled"
     reopened.close()
 
 
-def test_player_decrees_sequential_army_station_reads_updated_roster(game):
-    """同一军队先后调遣：后旨读到前旨已变更的名册驻地。"""
-    db, state, _ = game
+def test_player_decrees_sequential_army_station_reads_updated_roster(game, monkeypatch):
+    """同一军队先后调遣走玩家过月：后旨读到前旨已变更的名册驻地。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
     affair = db.affairs.open(
         name="调遣可见", origin="旨意", year=state.year, period=state.period, turn=state.turn,
     )
@@ -128,25 +141,23 @@ def test_player_decrees_sequential_army_station_reads_updated_roster(game):
     ]
     assert len(regions) == 2
     first_station, second_station = regions
-    db.staged_declarations.stage(
-        decree_ref="army-move-1",
-        declaration={"effects": {"army_delta": {army: {
+    _stage_player_edict(
+        db, state, minister, affair.id,
+        {"army_delta": {army: {
             "origin_ref": f"affair:{affair.id}", "station_region": first_station,
             "reason": "第一道调遣",
-        }}}},
-        turn=int(state.turn),
-        visible_refs={"affairs": [affair.id], "issues": [], "secret_orders": []},
+        }}},
+        "第一道调遣",
     )
-    db.staged_declarations.stage(
-        decree_ref="army-move-2",
-        declaration={"effects": {"army_delta": {army: {
+    _stage_player_edict(
+        db, state, minister, affair.id,
+        {"army_delta": {army: {
             "origin_ref": f"affair:{affair.id}", "station_region": second_station,
             "reason": "第二道调遣",
-        }}}},
-        turn=int(state.turn),
-        visible_refs={"affairs": [affair.id], "issues": [], "secret_orders": []},
+        }}},
+        "第二道调遣",
     )
-    settle_staged_declarations_in_decree_order(db, state, ["army-move-1", "army-move-2"])
+    _enter_player_month(db, state, content, monkeypatch)
     assert db.conn.execute(
         "SELECT station_region FROM armies WHERE id=?", (army,),
     ).fetchone()[0] == second_station

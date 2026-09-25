@@ -8573,7 +8573,6 @@ def apply_score_extraction(
     ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]] = None,
     ordered_effect_event_ids: dict[str, list[str]] | None = None,
     prior_shape_rejections: Optional[list[tuple[str, dict, str]]] = None,
-    affair_identity_keys: Optional[Dict[str, tuple[str, str, str]]] = None,
     effect_sequence: Optional[list[tuple[
         Dict[str, object],
         Dict[str, list[tuple[str, object]]],
@@ -8584,9 +8583,6 @@ def apply_score_extraction(
 
     content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
     缺省则跳过（向后兼容老调用）。
-
-    ``affair_identity_keys``：跨多次 apply 共享的 identity→(birth_key,name,origin)
-    映射（#1844 段内按交代先后逐笔落账时，同 identity 新生事务须共用 birth_key）。
 
     ``effect_sequence``：C0 effects 数组的逐笔 payload；提供时按交代先后交错
     落各笔的普通字段，批次副作用仍只跑一次（#1844）。
@@ -8634,7 +8630,6 @@ def apply_score_extraction(
             validate_rejections=validate_rejections,
             ordered_deltas=ordered_deltas,
             ordered_effect_event_ids=ordered_effect_event_ids,
-            affair_identity_keys=affair_identity_keys,
             effect_sequence=effect_sequence,
         )
     finally:
@@ -8741,7 +8736,6 @@ def _apply_score_extraction_body(
     validate_rejections: list,
     ordered_deltas: Optional[Dict[str, list[tuple[str, object]]]],
     ordered_effect_event_ids: dict[str, list[str]] | None,
-    affair_identity_keys: Optional[Dict[str, tuple[str, str, str]]] = None,
     effect_sequence: Optional[list[tuple[
         Dict[str, object],
         Dict[str, list[tuple[str, object]]],
@@ -8756,9 +8750,7 @@ def _apply_score_extraction_body(
         declaration_from_payload,
     )
 
-    batch_new_identities: dict[str, tuple[str, str, str]] = (
-        affair_identity_keys if affair_identity_keys is not None else {}
-    )
+    batch_new_identities: dict[str, tuple[str, str, str]] = {}
     person_items = extracted.get("人物变更")
     person_event_ids = (ordered_effect_event_ids or {}).get("人物变更", [])
     if isinstance(person_items, list) and person_event_ids:

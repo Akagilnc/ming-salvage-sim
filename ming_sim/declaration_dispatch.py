@@ -405,19 +405,18 @@ def _dispatch_effects(
             clean, event_id, empty_extraction=EMPTY_EXTRACTION,
         )
         effect_sequence.append((step_extraction, step_ordered, step_event_ids))
-        for field, value in clean.items():
-            if field not in EMPTY_EXTRACTION:
-                continue
-            if isinstance(value, list):
-                extraction[field].extend(value)
-                ordered_effect_event_ids[field].extend([event_id] * len(value))
-            elif isinstance(value, dict):
-                extraction[field].update(value)
-                if field in ordered_deltas:
-                    ordered_deltas[field].extend(value.items())
-                    ordered_effect_event_ids[field].extend([event_id] * len(value))
-            elif value is not None:
+        for field, value in step_extraction.items():
+            current = extraction[field]
+            if isinstance(value, list) and isinstance(current, list):
+                current.extend(value)
+            elif isinstance(value, dict) and isinstance(current, dict):
+                current.update(value)
+            elif value is not None and not isinstance(value, (list, dict)):
                 extraction[field] = value
+        for field, pairs in step_ordered.items():
+            ordered_deltas[field].extend(pairs)
+        for field, event_ids in step_event_ids.items():
+            ordered_effect_event_ids[field].extend(event_ids)
     if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
     report = apply_score_extraction(
