@@ -58,19 +58,22 @@ def continue_world_after_answers(
     text = _run_world_continuation_text(session, chain, answers)
     outcome = None
     if str(text or "").strip():
-        def mark(result: Any) -> None:
-            nonlocal outcome
-            candidate = _ending_from_dispatch_result(result)
-            if candidate is not None:
-                chain["declaration_outcome"] = candidate
-                outcome = candidate
-            _save_chain(db, turn, chain, source=source)
+        # 续推若再吐 DECISION 机标，只落问前缀文，勿把机标喂进转译。
+        prefix, _extra = _split_at_question(str(text))
+        if prefix.strip():
+            def mark(result: Any) -> None:
+                nonlocal outcome
+                candidate = _ending_from_dispatch_result(result)
+                if candidate is not None:
+                    chain["declaration_outcome"] = candidate
+                    outcome = candidate
+                _save_chain(db, turn, chain, source=source)
 
-        result = dispatch_month_segment(
-            db, state, segment=str(text), llm_config=session.llm_config, source=source,
-            alongside=mark,
-        )
-        outcome = _ending_from_dispatch_result(result) or outcome
+            result = dispatch_month_segment(
+                db, state, segment=prefix, llm_config=session.llm_config, source=source,
+                alongside=mark,
+            )
+            outcome = _ending_from_dispatch_result(result) or outcome
     chain["world_questions"] = []
     chain["world_continued"] = True
     _save_chain(db, turn, chain, source=source)
@@ -84,11 +87,14 @@ def continue_decree_after_answers(
     """批红答复后从问处续推该旨一次；问前已落声明不动。
 
     同一 decree_ref 问前声明可能已 settled，续推声明直接分派，不另造平行暂存身份。
+    幂等：questions 已清则视为已续，同回合重入零新增效果。
     """
     from ming_sim.declaration_dispatch import dispatch_declaration
     from ming_sim.month_translate import translate_month_segment
 
     db, state = session.db, session.state
+    if not db.staged_declarations.questions_for(decree_ref):
+        return
     db.staged_declarations.clear_questions(decree_ref)
     if session.llm_config is None:
         return
@@ -392,10 +398,6 @@ def _run_month_drift(
         mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
 
 
-def _waiting_for_rescript(db: Any, state: Any, chain: Dict[str, Any]) -> bool:
-    return bool(_open_rescript_items(db, state, chain))
-
-
 def _open_rescript_items(
     db: Any, state: Any, chain: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -464,7 +466,6 @@ def _materialize_rescript_desk(
         or open_items["decree_questions"]
         or open_items["world_questions"]
     ):
-        chain["stage"] = chain.get("stage") or ""
         return None
     decisions: List[Dict[str, object]] = []
     if open_items["triad"]:
@@ -536,41 +537,64 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
 def _consume_rescript_answers(
     session: Any, chain: Dict[str, Any], *, source: Provenance,
 ) -> None:
-    """把已裁批红接回案卷 / 请旨续推；幂等，已落不动。"""
+    """把已裁批红接回案卷 / 请旨续推；幂等，已落不动。
+
+    同一旨 / 同一世界段多问须全部答完才续推一次（ADR 0157 步骤 4）。
+    """
     db, state = session.db, session.state
     turn = int(state.turn)
     rows = db.list_pending_decisions(turn)
     decided = [r for r in rows if str(r.get("status") or "") == "decided"]
     if not decided:
         return
-    world_answers: List[Dict[str, object]] = []
-    decree_answers: Dict[str, List[Dict[str, object]]] = {}
-    for row in decided:
+
+    def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
-        event_id = str(row.get("event_id") or "")
-        if event_id.startswith("dossier:"):
-            _apply_decided_triad(db, state, row, choice, content=session.content)
-            continue
-        answer = {
+        return {
             "label": str(choice.get("label") or "").strip(),
             "hint": str(choice.get("hint") or "").strip(),
             "note": str(choice.get("note") or "").strip(),
-            "event_id": event_id,
+            "event_id": str(row.get("event_id") or ""),
             "title": str(row.get("title") or ""),
         }
-        if event_id.startswith(_WORLD_QUESTION_PREFIX):
-            world_answers.append(answer)
-        elif event_id.startswith(_DECREE_QUESTION_PREFIX):
-            body = event_id[len(_DECREE_QUESTION_PREFIX):]
-            ref = body.rsplit(":", 1)[0] if ":" in body else body
-            decree_answers.setdefault(ref, []).append(answer)
-    for ref, answers in decree_answers.items():
-        continue_decree_after_answers(
-            session, decree_ref=ref, answers=answers, source=source,
-        )
-    if world_answers and chain.get("world_questions"):
+
+    for row in decided:
+        event_id = str(row.get("event_id") or "")
+        if not event_id.startswith("dossier:"):
+            continue
+        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        _apply_decided_triad(db, state, row, choice, content=session.content)
+
+    world_rows = [
+        r for r in rows
+        if str(r.get("event_id") or "").startswith(_WORLD_QUESTION_PREFIX)
+    ]
+    if (
+        world_rows
+        and all(str(r.get("status") or "") == "decided" for r in world_rows)
+        and chain.get("world_questions")
+    ):
         continue_world_after_answers(
-            session, chain, answers=world_answers, source=source,
+            session, chain,
+            answers=[_answer_from_row(r) for r in world_rows],
+            source=source,
+        )
+
+    decree_rows_by_ref: Dict[str, List[Dict[str, object]]] = {}
+    for row in rows:
+        event_id = str(row.get("event_id") or "")
+        if not event_id.startswith(_DECREE_QUESTION_PREFIX):
+            continue
+        body = event_id[len(_DECREE_QUESTION_PREFIX):]
+        ref = body.rsplit(":", 1)[0] if ":" in body else body
+        decree_rows_by_ref.setdefault(ref, []).append(row)
+    for ref, ref_rows in decree_rows_by_ref.items():
+        if not all(str(r.get("status") or "") == "decided" for r in ref_rows):
+            continue
+        continue_decree_after_answers(
+            session, decree_ref=ref,
+            answers=[_answer_from_row(r) for r in ref_rows],
+            source=source,
         )
 
 
@@ -685,13 +709,21 @@ def _pause(
 
 
 def _split_at_question(text: str) -> tuple[str, List[dict]]:
+    """前缀 = 首个合法 DECISION 之前；questions = 该段全部合法请旨块。"""
     from ming_sim.decree import _DECISION_RE, parse_decision_blocks
 
+    questions: List[dict] = []
+    first_start: Optional[int] = None
     for match in _DECISION_RE.finditer(text):
         parsed = parse_decision_blocks(match.group(0))[1]
-        if parsed:
-            return text[:match.start()], list(parsed)
-    return text, []
+        if not parsed:
+            continue
+        if first_start is None:
+            first_start = match.start()
+        questions.extend(parsed)
+    if first_start is None:
+        return text, []
+    return text[:first_start], questions
 
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:

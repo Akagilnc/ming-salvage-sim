@@ -1364,13 +1364,16 @@ def apply_rescript_batch(
                 # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
                 _cas_decided(db, item)
                 event_id = str(item.row.get("event_id") or "").strip()
-                # 请旨身份（world-question: / decree-question:）不是 events 表事件；
-                # 与 dossier: 同属案头身份前缀，不得进 event_triggers。
+                # 请旨身份前缀真源 = month_chain；此处局部导入以免与月链形成模块环。
+                from ming_sim.month_chain import (
+                    _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
+                )
+                # 请旨身份不是 events 表事件；与 dossier: 同属案头身份前缀，不得进 event_triggers。
                 if (
                     event_id
                     and not event_id.startswith("dossier:")
-                    and not event_id.startswith("world-question:")
-                    and not event_id.startswith("decree-question:")
+                    and not event_id.startswith(_WORLD_QUESTION_PREFIX)
+                    and not event_id.startswith(_DECREE_QUESTION_PREFIX)
                 ):
                     db.record_event_decision_choice(
                         state, event_id, item.choice, commit=False,

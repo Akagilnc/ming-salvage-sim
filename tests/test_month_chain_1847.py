@@ -1,6 +1,7 @@
 """#1847：请旨停在问处 → 批红案头统一收口 → 答复后续推。
 
 沿既有 HITL / pending_decisions / month_chain 接缝，不另造平行机制。
+LLM 外缝可打；续推函数本身保持真实实现。
 """
 
 from __future__ import annotations
@@ -8,6 +9,7 @@ from __future__ import annotations
 import json
 import threading
 
+import ming_sim.declaration_dispatch as declaration_dispatch
 import ming_sim.month_chain as month_chain
 import ming_sim.month_translate as month_translate
 from ming_sim.models import TurnPhase
@@ -24,6 +26,24 @@ _WORLD_WITH_QUESTION = (
     "]}"
     "<<END>>"
     "余波未尽。"
+)
+
+_WORLD_WITH_TWO_QUESTIONS = (
+    "边警叠至。"
+    "<<DECISION>>"
+    '{"title":"问一","context":"c1","options":['
+    '{"label":"甲","hint":"h甲"},'
+    '{"label":"乙","hint":"h乙"}'
+    "]}"
+    "<<END>>"
+    "中段。"
+    "<<DECISION>>"
+    '{"title":"问二","context":"c2","options":['
+    '{"label":"丙","hint":"h丙"},'
+    '{"label":"丁","hint":"h丁"}'
+    "]}"
+    "<<END>>"
+    "尾声。"
 )
 
 
@@ -63,6 +83,27 @@ def test_world_question_opens_rescript_desk_and_awaits(game, monkeypatch):
     assert desk[0]["title"] == "是否增援宁远"
     assert {opt["label"] for opt in desk[0]["options"]} == {"准调关宁", "暂缓"}
     assert desk[0]["status"] == "pending"
+
+
+def test_world_segment_multiple_questions_share_one_desk(game, monkeypatch):
+    """同段多问：全部 DECISION 块上案头，不得只收第一问。"""
+    db, state, content = game
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text",
+        lambda *a, **k: _WORLD_WITH_TWO_QUESTIONS,
+    )
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.awaiting is True
+    titles = {row["title"] for row in session.pending_decisions()}
+    assert titles == {"问一", "问二"}
 
 
 def test_prior_month_answered_rescript_does_not_block_or_reappear(game, monkeypatch):
@@ -197,41 +238,38 @@ def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch):
 
 
 def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch):
+    """真实 continue_world_after_answers：只打 LLM 外缝，续推闸与清问须落库可见。"""
     db, state, content = game
     closed_turn = int(state.turn)
-    continues = []
-    translates = []
-
-    def world(*_a, **_k):
-        return _WORLD_WITH_QUESTION
-
-    def translate(*_a, **kwargs):
-        translates.append(kwargs.get("segment") or _a[2] if len(_a) > 2 else kwargs)
-        return {"effects": {"economy_moves": [{
-            "origin_ref": "affair:world-q", "account": "国库", "delta": -1,
-            "category": "宁远续援", "reason": "准调关宁后落账",
-        }]}} if continues else {"effects": {}}
-
-    def continue_world(session, chain, *, answers, source):
-        continues.append(list(answers))
-        # 续推只交问后声明；前缀已落、世界段不重推。
-        from ming_sim.month_translate import dispatch_month_segment
-        from ming_sim.applier import Provenance
-        result = dispatch_month_segment(
-            session.db, session.state, segment="准调关宁，关宁增戍。",
-            llm_config=session.llm_config, source=source or Provenance.system_simulation,
-        )
-        chain["world_questions"] = []
-        chain["world_continued"] = True
-        month_chain._save_chain(session.db, int(session.state.turn), chain, source=source)
-        return result
+    continuation_calls = []
+    dispatched_segments = []
 
     _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(month_chain, "run_world_segment_text", world)
-    monkeypatch.setattr(month_translate, "translate_month_segment",
-                        lambda *a, **k: {"effects": {}})
-    monkeypatch.setattr(month_chain, "continue_world_after_answers", continue_world)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+    )
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
+    )
+
+    def fake_continuation(session, chain, answers):
+        continuation_calls.append(list(answers))
+        return "准调关宁，关宁增戍。"
+
+    real_dispatch = month_translate.dispatch_month_segment
+
+    def spy_dispatch(db_, state_, *, segment, llm_config, source, alongside=None):
+        dispatched_segments.append(str(segment))
+        return real_dispatch(
+            db_, state_, segment=segment, llm_config=llm_config,
+            source=source, alongside=alongside,
+        )
+
+    monkeypatch.setattr(month_chain, "_run_world_continuation_text", fake_continuation)
+    monkeypatch.setattr(month_translate, "dispatch_month_segment", spy_dispatch)
+
     session = make_light_session(db, state, content)
+    session.llm_config = object()
     session._write_gate = threading.Lock()
     session.resolve_turn(allow_empty_decree=True)
     desk_row = session.pending_decisions()[0]
@@ -246,14 +284,92 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
         write_gate=session._write_gate,
     )
 
-    assert continues and continues[0][0]["label"] == choice["label"]
+    assert continuation_calls and continuation_calls[0][0]["label"] == choice["label"]
+    assert any("关宁增戍" in seg for seg in dispatched_segments)
     assert session.state.turn_phase == TurnPhase.SETTLING.value
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_questions") in (None, [], ())
     assert chain.get("world_continued") is True
+
     again = session.resolve_turn(allow_empty_decree=True)
     assert again.stage == "gazette"
     assert again.awaiting is False
+    # 同回合重入不得再烧续推。
+    assert len(continuation_calls) == 1
+
+
+def test_decree_question_continuation_idempotent_on_same_turn_reentry(game, monkeypatch):
+    """旨意请旨续推：同回合二次入链不得重复分派声明。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="旨意续推幂等", origin="旨意", year=state.year, period=state.period,
+        turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(
+        db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id,
+    )
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        (json.dumps([{
+            "title": "是否加赈",
+            "context": "灾民待哺",
+            "options": [
+                {"label": "加赈十万", "hint": "国库吃紧"},
+                {"label": "照旧", "hint": "勉力支撑"},
+            ],
+        }], ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+
+    dispatch_count = []
+
+    def fake_decree_text(session, dossier, answers):
+        return "加赈落实，仓廪出十万。"
+
+    real_dispatch = declaration_dispatch.dispatch_declaration
+
+    def spy_dispatch(db_, state_, declaration, *, source):
+        dispatch_count.append(dict(declaration) if isinstance(declaration, dict) else declaration)
+        return real_dispatch(db_, state_, declaration, source=source)
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", fake_decree_text)
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment",
+        lambda *a, **k: {"effects": {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -10,
+            "category": "加赈", "reason": "批红后续推",
+        }]}},
+    )
+    monkeypatch.setattr(declaration_dispatch, "dispatch_declaration", spy_dispatch)
+
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+    session.resolve_turn(allow_empty_decree=True)
+    desk_row = session.pending_decisions()[0]
+    choice = desk_row["options"][0]
+
+    session.submit_hitl_choices(
+        [{
+            "decision_key": desk_row["decision_key"],
+            "label": choice["label"],
+            "hint": choice.get("hint") or "",
+        }],
+        write_gate=session._write_gate,
+    )
+    assert len(dispatch_count) == 1
+    assert not db.staged_declarations.questions_for(ref)
+
+    # 邸报交接重入 / SETTLING 恢复：已落不动。
+    again = session.resolve_turn(allow_empty_decree=True)
+    assert again.awaiting is False
+    assert again.stage == "gazette"
+    assert len(dispatch_count) == 1, (
+        f"旨意请旨续推在同回合二次入链时重复分派：1 -> {len(dispatch_count)}"
+    )
 
 
 def test_decree_question_and_world_question_share_one_desk(game, monkeypatch):
