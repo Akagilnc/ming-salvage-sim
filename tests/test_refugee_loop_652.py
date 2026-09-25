@@ -507,40 +507,54 @@ def _assert_two_axis_projection(payload, *, expect_disaster: bool = False):
         assert shaanxi.get("disaster_rows"), "有灾 fixture 时须含灾情占用字段"
 
 
-def _plant_prior_force_promulgation(db, state, *, target_id: str) -> int:
-    """前月强颁、状态仍是 promulgated：模拟清单的次月可执行标记认这笔。"""
+def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag="赈"):
+    """真实强颁：打回后强颁。在途赈灾付银后停在 executing，不留 promulgated。"""
+    from tests.dossier_test_helpers import rejected_verdict
+
+    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount + 50)
     dossier_id = db.create_decree_dossier(
-        state, action_type="special_decree", decree_text="拨银赈灾",
-        target_kind="region", target_id=target_id,
+        state,
+        action_type="grant_allocation",
+        decree_text=f"赈灾{region_id}-{tag}",
+        target_kind="region",
+        target_id=region_id,
+        region_id=region_id,
+        payload={
+            "grant_action": "赈灾",
+            "account": "内库",
+            "amount": amount,
+            "execution_surface": "in_transit",
+            "cadence": "一次性",
+        },
     )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='promulgated', created_turn=? WHERE id=?",
-        (int(state.turn) - 1, dossier_id),
-    )
-    db.conn.execute(
-        "INSERT INTO decree_dossier_decisions "
-        "(dossier_id,turn,decision,blocked_layer,rescript_action,reason) "
-        "VALUES (?,?,'rejected','','force_promulgated','批红强颁')",
-        (dossier_id, int(state.turn) - 1),
-    )
+    db.apply_dossier_verdicts(state, [rejected_verdict(dossier_id)])
+    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    row = db.get_decree_dossier(dossier_id)
+    assert row["status"] == "executing"
+    assert str(row["execution_outcome"] or "") == ""
+    assert any(int(move.get("delta") or 0) < 0 for move in db.list_economy_moves_for_dossier(dossier_id))
     return dossier_id
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
-    """无旨入口：模型声明的办理结果经供料与转译落账，关档重开后仍在。
+    """次月无旨：真实强颁留下的在途赈灾，经世界段与转译落账，读档后仍在。
 
-    两案旨文相同，目标只在案卷身份上。引擎不代选成败。
+    模型替身只接外部调用。引擎不代选成败。
     """
-    from ming_sim import materials as materials_mod
-    from ming_sim.materials import prepare_world_materials, release_material_tree
-    from ming_sim.month_translate import translate_month_segment as real_translate
+    import ming_sim.month_chain as month_chain
+    import ming_sim.month_translate as month_translate
+    from ming_sim.materials import continuing_dossier_facts
+    from ming_sim.models import LLMConfig
+
+    real_world = month_chain.run_world_segment_text
+    real_translate = month_translate.translate_month_segment
 
     db, state, content = game
     amount = 40
     _reset_shaanxi_pool(db)
     state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), amount * 2 + 50)
-    shaanxi_id = _in_transit_recovery_grant(db, state, amount=amount, tag="west")
+    shaanxi_id = _force_in_transit_recovery_grant(db, state, amount=amount, tag="west")
     henan_id = _in_transit_recovery_grant(
         db, state, amount=amount, region_id="henan", tag="east",
     )
@@ -548,101 +562,67 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
         "UPDATE decree_dossiers SET decree_text=? WHERE id IN (?, ?)",
         ("拨银赈灾", shaanxi_id, henan_id),
     )
-    force_id = _plant_prior_force_promulgation(db, state, target_id="shanxi")
-    stale_id = db.create_decree_dossier(
-        state, action_type="special_decree", decree_text="拨银赈灾",
-        target_kind="region", target_id="henan",
-    )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='promulgated', created_turn=?, "
-        "promulgation_decision='' WHERE id=?",
-        (int(state.turn) - 4, stale_id),
-    )
     db.conn.commit()
+    state.next_period()
+    db.save_state(state)
 
     sim_calls: list = []
     _canned_judge(
         monkeypatch, outcome="fulfilled", dossier_id=shaanxi_id,
         sim_calls=sim_calls,
     )
-    opening_facts: list = []
-    real_opening = materials_mod._world_opening_text
+    monkeypatch.setattr(month_chain, "run_world_segment_text", real_world)
+    monkeypatch.setattr(month_translate, "translate_month_segment", real_translate)
 
-    def _opening(state_, board, affairs, facts):
-        opening_facts.append(list(facts))
-        return real_opening(state_, board, affairs, facts)
-
-    monkeypatch.setattr(materials_mod, "_world_opening_text", _opening)
-
-    def _world(db_, state_, *_args, **_kwargs):
-        prepared = prepare_world_materials(db_, state_)
-        release_material_tree(prepared.root)
+    def _world_model(_agent, _message, tag, **_kwargs):
+        assert tag == "world-segment"
         return "handled"
 
-    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _world)
+    def _translate_model(_prompt, _llm_config, *, tag, policy=None):
+        del policy
+        assert tag == "month_segment_translate"
+        return {"effects": {"dossier_executions": [{
+            "dossier_id": shaanxi_id,
+            "outcome": "fulfilled",
+            "note": "declared",
+        }]}}
 
-    def _translate(**kwargs):
-        def runner(request, _config):
-            by_id = {int(row["id"]): row for row in request.continuing_dossiers}
-            assert shaanxi_id in by_id and henan_id in by_id and force_id in by_id
-            assert stale_id not in by_id
-            assert by_id[shaanxi_id]["target_kind"] == "region"
-            assert by_id[shaanxi_id]["target_id"] == "shaanxi"
-            assert by_id[henan_id]["target_id"] == "henan"
-            assert by_id[force_id]["target_id"] == "shanxi"
-            assert by_id[force_id]["status"] == "promulgated"
-            chosen = by_id[shaanxi_id]
-            return {"effects": {"dossier_executions": [{
-                "dossier_id": int(chosen["id"]),
-                "outcome": "fulfilled",
-                "note": "declared",
-            }]}}
-
-        kwargs["translate_fn"] = runner
-        return real_translate(**kwargs)
-
-    monkeypatch.setattr("ming_sim.month_translate.translate_month_segment", _translate)
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", _world_model)
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt", _translate_model,
+    )
 
     displaced_before = _pop(db, "流民", "shaanxi")
     farmer_before = _pop(db, "农民", "shaanxi")
     closed_turn = int(state.turn)
-
-    result = make_light_session(db, state, content).advance_without_decree()
+    session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(
+        api_key="test", base_url="http://127.0.0.1:9", model="test", channel="api",
+    )
+    result = session.advance_without_decree()
     assert result is not None and result.awaiting is False
     assert result.advanced is False
     assert int(state.turn) == closed_turn
-    assert opening_facts
-    opened = {int(row["id"]): row for row in opening_facts[0]}
-    assert opened[shaanxi_id]["target_id"] == "shaanxi"
-    assert opened[henan_id]["target_id"] == "henan"
-    assert opened[force_id]["status"] == "promulgated"
-    assert stale_id not in opened
 
     expected = int(round(
         amount * RECOVERY_PERSONS_PER_WAN * RECOVERY_OUTCOME_FACTORS["fulfilled"]
     ))
-    with sqlite3.connect(_database_path(db)) as reopened:
-        status, outcome, closed = reopened.execute(
-            "SELECT status, execution_outcome, closed_turn FROM decree_dossiers WHERE id=?",
-            (shaanxi_id,),
-        ).fetchone()
-        assert status == "closed" and outcome == "fulfilled" and int(closed) == closed_turn
-        henan_status, henan_outcome = reopened.execute(
-            "SELECT status, COALESCE(execution_outcome, '') FROM decree_dossiers WHERE id=?",
-            (henan_id,),
-        ).fetchone()
-        assert henan_status == "executing" and henan_outcome == ""
-        assert reopened.execute(
-            "SELECT status FROM decree_dossiers WHERE id=?", (force_id,),
-        ).fetchone()[0] == "promulgated"
-        displaced = reopened.execute(
-            "SELECT population FROM classes WHERE name='流民' AND region_id='shaanxi'",
-        ).fetchone()[0]
-        farmers = reopened.execute(
-            "SELECT population FROM classes WHERE name='农民' AND region_id='shaanxi'",
-        ).fetchone()[0]
-    assert displaced == displaced_before - expected
-    assert farmers == farmer_before + expected
+    loaded = GameDB(_database_path(db), content)
+    try:
+        loaded_state = loaded.load_state()
+        landed = loaded.get_decree_dossier(shaanxi_id)
+        assert landed["status"] == "closed"
+        assert landed["execution_outcome"] == "fulfilled"
+        assert int(landed["closed_turn"] or 0) == closed_turn
+        other = loaded.get_decree_dossier(henan_id)
+        assert other["status"] == "executing"
+        assert str(other["execution_outcome"] or "") == ""
+        still = {int(row["id"]) for row in continuing_dossier_facts(loaded, loaded_state.turn)}
+        assert henan_id in still and shaanxi_id not in still
+        assert _pop(loaded, "流民", "shaanxi") == displaced_before - expected
+        assert _pop(loaded, "农民", "shaanxi") == farmer_before + expected
+    finally:
+        loaded.close()
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

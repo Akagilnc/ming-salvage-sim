@@ -1332,19 +1332,16 @@ def _write_world_tree(
 
 
 def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
-    """本月世界段要接着办的案卷。
+    """本月世界段要接着办的案卷：模拟清单里仍在执行的。
 
-    执行中的都在。已颁的只收模拟清单上的可执行标记（含前月强颁、次月可办），
-    不把其余 promulgated 案卷再推一遍。
+    真实强颁在同一次颁布里会把在途案卷转入 executing，或把终局载荷结案，
+    不会带着 promulgated 进入次月。
     """
     rows = db.list_decree_dossiers_for_simulation(int(turn))
-    executable = db.executable_decree_dossier_ids(rows)
     facts: list[dict[str, object]] = []
     for row in rows:
         status = str(row.get("status") or "")
-        if status != "executing" and not (
-            status == "promulgated" and int(row["id"]) in executable
-        ):
+        if status != "executing":
             continue
         dossier_id = int(row["id"])
         paid = sum(
