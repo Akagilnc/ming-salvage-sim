@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 
 import pytest
@@ -311,6 +312,106 @@ def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch)
     session.finish_rescript_phase2({"ready_replay": True}, {})
     assert int(session.state.turn) == closed_turn
     assert session.state.turn_phase == TurnPhase.SETTLING.value
+
+
+def test_world_segment_persists_declaration_ending_with_commit(game, monkeypatch):
+    db, state, content = game
+    from ming_sim.applier import Provenance
+
+    monkeypatch.setattr(
+        month_translate, "translate_month_segment",
+        lambda *_a, **_k: {"effects": {"emperor_fate": "suicide"}},
+    )
+    chain = {"world_text_ready": True, "world_text": "世界段"}
+    session = make_light_session(db, state, content)
+
+    outcome = month_chain._run_world_segment(
+        session, chain, source=Provenance.system_simulation,
+    )
+
+    expected = {"status": "emperor_suicide", "summary": "崇祯帝自尽殉国，煤山一缢，大明社稷俱亡。"}
+    assert outcome == expected
+    assert chain["declaration_outcome"] == expected
+    payload = db.get_resolve_context(int(state.turn))["simulator_payload"]
+    assert payload["month_chain"]["declaration_outcome"] == expected
+
+
+def test_player_entry_recovers_ending_after_interrupted_segment(game, monkeypatch):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="结局承接", origin="旨意", year=state.year, period=state.period, turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(
+        db, state, minister, "禅位", "宁远补饷", -1, affair.id,
+    )
+    staged = db.staged_declarations.staged_for(ref)[0]
+    staged.declaration["effects"] = {"emperor_fate": "abdicate"}
+    db.conn.execute(
+        "UPDATE staged_declarations SET declaration_json=? WHERE decree_ref=?",
+        (json.dumps(staged.declaration, ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+    turn = int(state.turn)
+    calls = []
+
+    def world(*_args, **_kwargs):
+        calls.append("world")
+        if len(calls) == 1:
+            raise RuntimeError("interrupted after decree settlement")
+        return "世界段完成"
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", world)
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}})
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    with pytest.raises(RuntimeError, match="interrupted after decree settlement"):
+        session.resolve_turn(allow_empty_decree=True)
+    assert db.staged_declarations.is_settled(ref)
+
+    waiting = session.resolve_turn(allow_empty_decree=True)
+    assert waiting.stage == "gazette"
+    payload = db.get_resolve_context(turn)["simulator_payload"]
+    assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_abdicate"
+
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (turn, state.year, state.period, "邸报已成"),
+    )
+    db.conn.commit()
+    advanced = session.resolve_turn(allow_empty_decree=True)
+
+    assert advanced.advanced is True
+    assert state.ended is True
+    assert state.ending_status == "emperor_abdicate"
+    assert int(state.turn) == turn + 1
+
+
+def test_staged_ending_is_available_inside_its_settlement_transaction(game):
+    db, state, _content = game
+    from ming_sim.applier import Provenance
+    from ming_sim.declaration_dispatch import (
+        settle_staged_declarations_in_decree_order, stage_declaration,
+    )
+
+    stage_declaration(
+        db, decree_ref="ending-decree", turn=int(state.turn),
+        declaration={"effects": {"emperor_fate": "abdicate"}},
+    )
+    committed = {}
+    settled = settle_staged_declarations_in_decree_order(
+        db, state, ["ending-decree"], source=Provenance.player_decree,
+        alongside=lambda ref, result: committed.update(
+            ref=ref, outcome=month_chain._ending_from_dispatch_result(result),
+        ),
+    )
+
+    assert "ending-decree" in settled
+    assert committed["ref"] == "ending-decree"
+    assert committed["outcome"]["status"] == "emperor_abdicate"
+    assert db.staged_declarations.is_settled("ending-decree")
 
 
 def test_advance_uses_staged_declaration_ending(game, monkeypatch):

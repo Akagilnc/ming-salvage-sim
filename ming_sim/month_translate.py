@@ -145,7 +145,7 @@ def dispatch_month_segment(
     llm_config: Any = None,
     translate_fn: Optional[MonthTranslateFn] = None,
     source: Provenance = Provenance.system_simulation,
-    alongside: Optional[Callable[[], None]] = None,
+    alongside: Optional[Callable[[DeclarationDispatchResult], None]] = None,
 ) -> DeclarationDispatchResult:
     """世界段转译一次，整份声明沿 C0 唯一原子分派入口提交。"""
     payload = decree_payload or {}

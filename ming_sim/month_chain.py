@@ -68,11 +68,15 @@ def run_player_month_chain(
         db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
     )
     _run_opening_levy(db, chain, turn, decree_text, source)
-    declaration_outcome = _settle_edicts(session, registry=registry)
-    if declaration_outcome is not None:
-        chain["declaration_outcome"] = declaration_outcome
+    def persist_declaration_outcome(outcome: Dict[str, object]) -> None:
+        chain["declaration_outcome"] = outcome
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
-    _run_world_segment(session, chain, source=source)
+
+    declaration_outcome = _settle_edicts(
+        session, registry=registry, on_outcome=persist_declaration_outcome,
+    )
+    world_outcome = _run_world_segment(session, chain, source=source)
+    declaration_outcome = world_outcome or declaration_outcome
     _run_month_drift(db, state, chain, turn, decree_text, source)
     if _waiting_for_rescript(db, state, chain):
         return _pause(db, turn, chain, decree_text, source, "rescript")
@@ -113,7 +117,9 @@ def _run_opening_levy(
         mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
 
 
-def _settle_edicts(session: Any, *, registry: Any) -> Optional[Dict[str, object]]:
+def _settle_edicts(
+    session: Any, *, registry: Any, on_outcome: Any = None,
+) -> Optional[Dict[str, object]]:
     from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
     from ming_sim.decree import _is_stalled_deliberation
     from ming_sim.decree_forecast import (
@@ -178,19 +184,34 @@ def _settle_edicts(session: Any, *, registry: Any) -> Optional[Dict[str, object]
                     )
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
-            settled = settle_staged_declarations_in_decree_order(
+            def persist_result(_ref: str, result: Any) -> None:
+                nonlocal outcome
+                candidate = _ending_from_dispatch_result(result)
+                if candidate is not None:
+                    outcome = candidate
+                    if on_outcome is not None:
+                        on_outcome(candidate)
+
+            settle_staged_declarations_in_decree_order(
                 db, state, [ref], source=Provenance.player_decree,
+                alongside=persist_result,
             )
-            result = settled.get(ref)
-            if result is not None:
-                for report in result.effects.applied:
-                    candidate = report.get("victory_status") if isinstance(report, dict) else None
-                    if isinstance(candidate, dict) and candidate.get("status") != "ongoing":
-                        outcome = candidate
     return outcome
 
 
-def _run_world_segment(session: Any, chain: Dict[str, Any], *, source: Provenance) -> None:
+def _ending_from_dispatch_result(result: Any) -> Optional[Dict[str, object]]:
+    if result is None:
+        return None
+    for report in result.effects.applied:
+        candidate = report.get("victory_status") if isinstance(report, dict) else None
+        if isinstance(candidate, dict) and candidate.get("status") != "ongoing":
+            return candidate
+    return None
+
+
+def _run_world_segment(
+    session: Any, chain: Dict[str, Any], *, source: Provenance,
+) -> Optional[Dict[str, object]]:
     from ming_sim.month_translate import dispatch_month_segment
 
     db, state = session.db, session.state
@@ -203,22 +224,26 @@ def _run_world_segment(session: Any, chain: Dict[str, Any], *, source: Provenanc
         chain["world_text_ready"] = True
         _save_chain(db, turn, chain, decree_text="", source=source)
     if chain.get("world_committed"):
-        return
+        return chain.get("declaration_outcome")
     prefix, questions = _split_at_question(str(chain.get("world_text") or ""))
     chain["world_questions"] = questions
 
-    def mark() -> None:
+    def mark(result: Any) -> None:
+        outcome = _ending_from_dispatch_result(result)
+        if outcome is not None:
+            chain["declaration_outcome"] = outcome
         chain["world_committed"] = True
         _save_chain(db, turn, chain, source=source)
 
     if prefix.strip():
-        dispatch_month_segment(
+        result = dispatch_month_segment(
             db, state, segment=prefix, llm_config=session.llm_config, source=source,
             alongside=mark,
         )
-        return
+        return _ending_from_dispatch_result(result)
     with atomic(db):
-        mark()
+        mark(None)
+    return None
 
 
 def _run_month_drift(
