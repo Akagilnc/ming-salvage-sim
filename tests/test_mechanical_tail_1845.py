@@ -280,13 +280,33 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     )
 
     session = make_light_session(db, state, content)
-    session._write_gate = threading.Lock()
     session.llm_config = object()
     session.agno_db = object()
+    gate = get_session_write_queue(session).write_gate
+    tail_reads_under_gate = []
+    main_saves_under_gate = []
+    orig_reports = db.list_turn_reports
+    orig_save_state = db.save_state
+
+    def _reports():
+        if threading.current_thread() is not threading.main_thread():
+            tail_reads_under_gate.append(bool(gate.locked()))
+        return orig_reports()
+
+    def _save_state(game_state):
+        if threading.current_thread() is threading.main_thread():
+            main_saves_under_gate.append(bool(gate.locked()))
+        return orig_save_state(game_state)
+
+    monkeypatch.setattr(db, "list_turn_reports", _reports)
+    monkeypatch.setattr(db, "save_state", _save_state)
 
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
     assert state.ended is True
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
+    assert tail_reads_under_gate
+    assert all(tail_reads_under_gate)
+    assert main_saves_under_gate[-1] is True
     tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
     assert tail["status"] == tail_status
     ending = db.get_ending_summary()

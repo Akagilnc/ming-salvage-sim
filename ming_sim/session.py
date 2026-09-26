@@ -4187,7 +4187,14 @@ class GameSession:
             self.state.turn_phase = TurnPhase.AWAITING_DECISION.value
         else:
             self.state.turn_phase = TurnPhase.SETTLING.value
-        self.db.save_state(self.state)
+        # 机械尾已在推进后占用同一条连接。这次落相位走写队列那把闸
+        # （与尾部读写票同一对象）；调用方已持闸时不再重入。
+        if write_gate_already_held:
+            self.db.save_state(self.state)
+        else:
+            from ming_sim.session_write_queue import get_session_write_queue
+            with get_session_write_queue(self).write_gate:
+                self.db.save_state(self.state)
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:

@@ -71,30 +71,39 @@ def generate_ending_summary_for_tail(
     llm_config: Any = None,
     agno_db: Any = None,
     save_fn: Any = None,
+    gate_run: Any = None,
 ) -> str:
-    """结局总评：读历月邸报／时间线，不再依赖章节记忆。"""
+    """结局总评：读历月邸报／时间线，不再依赖章节记忆。
+
+    SQLite 读与落库走 gate_run（会话既有写闸）。模型调用留在闸外。
+    """
     from ming_sim.agents import create_ending_summary_agent, run_agent_text
     from ming_sim.memories import build_timeline
     import json
 
     if llm_config is None:
         return ""
-    reports = []
-    if hasattr(db, "list_turn_reports"):
-        for row in db.list_turn_reports():
-            turn = int(row.get("turn") or 0)
-            if turn > int(closed_state.turn):
-                continue
-            body = str(row.get("report") or row.get("body") or "").strip()
-            if not body:
-                continue
-            reports.append({
-                "turn": turn,
-                "year": int(row.get("year") or 0),
-                "period": int(row.get("period") or 0),
-                "body": body,
-            })
-    timeline = build_timeline(db, upto_turn=int(closed_state.turn))
+    under = gate_run if gate_run is not None else (lambda fn: fn())
+
+    def _load():
+        loaded = []
+        if hasattr(db, "list_turn_reports"):
+            for row in db.list_turn_reports():
+                turn = int(row.get("turn") or 0)
+                if turn > int(closed_state.turn):
+                    continue
+                body = str(row.get("report") or row.get("body") or "").strip()
+                if not body:
+                    continue
+                loaded.append({
+                    "turn": turn,
+                    "year": int(row.get("year") or 0),
+                    "period": int(row.get("period") or 0),
+                    "body": body,
+                })
+        return loaded, build_timeline(db, upto_turn=int(closed_state.turn))
+
+    reports, timeline = under(_load)
     ending_agent = create_ending_summary_agent(llm_config, agno_db)
     payload = {
         "ending": {
@@ -118,12 +127,16 @@ def generate_ending_summary_for_tail(
     if not summary_text:
         return ""
     save = save_fn or db.save_ending_summary
-    save(
-        closed_state,
-        str(outcome.get("status") or ""),
-        summary_text,
-        timeline,
-    )
+
+    def _save():
+        save(
+            closed_state,
+            str(outcome.get("status") or ""),
+            summary_text,
+            timeline,
+        )
+
+    under(_save)
     return summary_text
 
 
@@ -206,9 +219,7 @@ def _run_tail_body(
             db, closed_state, ending_outcome,
             llm_config=getattr(session, "llm_config", None),
             agno_db=getattr(session, "agno_db", None),
-            save_fn=lambda *args: queue.run(
-                ticket, lambda: db.save_ending_summary(*args),
-            ),
+            gate_run=lambda fn: queue.run(ticket, fn),
         )
         if not str(summary or "").strip():
             logger.info(
