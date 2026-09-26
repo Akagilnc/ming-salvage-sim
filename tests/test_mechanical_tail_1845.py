@@ -38,6 +38,26 @@ def _archive_and_stub_world(db, state, monkeypatch):
     )
 
 
+class _DeferredExecutor:
+    """已有接缝：提交只记账，由测试在调用线程上执行。"""
+
+    def submit(self, fn):
+        self.fn = fn
+        self.future = Future()
+        return self.future
+
+
+def _install_deferred(monkeypatch):
+    executor = _DeferredExecutor()
+    monkeypatch.setattr("ming_sim.audience_translation._executor", executor)
+    return executor
+
+
+def _run_deferred(executor):
+    executor.fn()
+    executor.future.set_result(None)
+
+
 def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monkeypatch):
     """提交到受管后台票；无需线程即可核实尾工作不在前台调用栈执行。"""
     db, state, content = game
@@ -61,22 +81,14 @@ def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monke
     session.llm_config = object()
     session.agno_db = object()
 
-    class DeferredExecutor:
-        def submit(self, fn):
-            self.fn = fn
-            self.future = Future()
-            return self.future
-
-    executor = DeferredExecutor()
-    monkeypatch.setattr("ming_sim.audience_translation._executor", executor)
+    executor = _install_deferred(monkeypatch)
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.advanced is True
     assert int(state.turn) == closed_turn + 1
     assert not brew_calls
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
 
-    executor.fn()
-    executor.future.set_result(None)
+    _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=1)
     assert brew_calls == [{
         "year": closed_year, "period": closed_period, "turn": closed_turn,
@@ -108,7 +120,9 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     monkeypatch.setattr(
         "ming_sim.mechanical_tail._run_relation_brew", recording_brew,
     )
+    executor = _install_deferred(monkeypatch)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    _run_deferred(executor)
     get_session_write_queue(session).wait_idle(timeout_s=5)
     assert calls == [closed_turn]
 
@@ -123,6 +137,7 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     month_chain._save_chain(db, closed_turn, chain, source=Provenance.system_simulation)
     calls.clear()
     ensure_mechanical_tails(session)
+    _run_deferred(executor)
     get_session_write_queue(session).wait_idle(timeout_s=5)
     assert calls == [closed_turn]
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
@@ -147,8 +162,10 @@ def test_exhausted_mechanical_tail_degrades_and_unblocks_next_month(game, monkey
     session._write_gate = threading.Lock()
     session.llm_config = object()
     session.agno_db = object()
+    executor = _install_deferred(monkeypatch)
 
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
     status = month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"]
     assert status == "degraded"
@@ -271,9 +288,13 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     monkeypatch.setattr(
         "ming_sim.agents.create_ending_summary_agent", lambda *_a, **_k: object(),
     )
-    monkeypatch.setattr(
-        "ming_sim.agents.run_agent_text", lambda *_a, **_k: model_text,
-    )
+    seen_thread = []
+
+    def _agent(*_a, **_k):
+        seen_thread.append(threading.current_thread())
+        return model_text
+
+    monkeypatch.setattr("ming_sim.agents.run_agent_text", _agent)
     monkeypatch.setattr(
         "ming_sim.context.victory_status",
         lambda *_a, **_k: {"status": "emperor_abdicate", "summary": "退位"},
@@ -283,13 +304,15 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     session.llm_config = object()
     session.agno_db = object()
     gate = get_session_write_queue(session).write_gate
+    executor = _install_deferred(monkeypatch)
     tail_reads_under_gate = []
     main_saves_under_gate = []
     orig_reports = db.list_turn_reports
     orig_save_state = db.save_state
+    in_tail = False
 
     def _reports():
-        if threading.current_thread() is not threading.main_thread():
+        if in_tail:
             tail_reads_under_gate.append(bool(gate.locked()))
         return orig_reports()
 
@@ -303,10 +326,16 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
 
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
     assert state.ended is True
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+    assert db.get_ending_summary() is None
+    assert main_saves_under_gate[-1] is True
+    in_tail = True
+    _run_deferred(executor)
+    in_tail = False
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
+    assert seen_thread == [threading.main_thread()]
     assert tail_reads_under_gate
     assert all(tail_reads_under_gate)
-    assert main_saves_under_gate[-1] is True
     tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
     assert tail["status"] == tail_status
     ending = db.get_ending_summary()
@@ -388,6 +417,8 @@ def test_mechanical_tail_does_not_schedule_audience_highlight(game, monkeypatch)
     session._write_gate = threading.Lock()
     session.llm_config = object()
     session.agno_db = object()
+    executor = _install_deferred(monkeypatch)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    _run_deferred(executor)
     get_session_write_queue(session).wait_idle(timeout_s=5)
     assert highlight_calls == []
