@@ -196,6 +196,14 @@ def _run_relation_brew(
     if queue.run(ticket, leg.prepare):
         leg.brew()
         queue.run(ticket, leg.persist)
+        # Persist the successful items first; their cleared pending claims prevent
+        # retry from applying them again. The remaining failures belong to the
+        # tail's existing failure/retry path, not a discarded degraded report.
+        for _job, parsed, error in leg.outcomes:
+            if error is not None:
+                raise error
+            if parsed is None:
+                raise RuntimeError("关系／派系酿制无结果")
 
 
 def _run_tail_body(
