@@ -2,7 +2,7 @@ import { Crown, Landmark, ScrollText } from "lucide-react";
 import { FullscreenModal } from "./hud";
 import type { EndingPayload } from "../types";
 
-export function EndingModal({ ending, onClose, onRetry }: { ending: EndingPayload; onClose: () => void; onRetry?: () => void }) {
+export function EndingModal({ ending, failure, onClose, onRetry }: { ending: EndingPayload; failure?: { error?: string; error_pack_path?: string } | null; onClose: () => void; onRetry?: () => void }) {
   const lastTimeline = ending.timeline?.[ending.timeline.length - 1];
   const endingDate = lastTimeline ? `${lastTimeline.year}年${lastTimeline.period}月` : "终局";
   const timelineCount = ending.timeline?.length ?? 0;
@@ -31,8 +31,8 @@ export function EndingModal({ ending, onClose, onRetry }: { ending: EndingPayloa
             <ScrollText size={17} />
             <span>国史编纂官总评</span>
           </div>
-          {ending.tail_failure && <div role="alert">
-            机械尾执行失败。错误包：{ending.tail_failure.error_pack_path}，请把它发给作者。
+          {failure && <div role="alert">
+            机械尾执行失败：{failure.error}。错误包：{failure.error_pack_path}，请把它发给作者。
             <button type="button" onClick={onRetry}>重试</button>
           </div>}
           <pre

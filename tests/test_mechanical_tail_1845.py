@@ -143,8 +143,8 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
 
-def test_exhausted_mechanical_tail_degrades_and_unblocks_next_month(game, monkeypatch):
-    """模型耗尽按既有降级留痕终结，下次过月不永久卡住。"""
+def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch):
+    """模型耗尽须留下失败凭据并阻断下次过月。"""
     from ming_sim.exceptions import LLMUnavailable
 
     db, state, content = game
@@ -165,16 +165,16 @@ def test_exhausted_mechanical_tail_degrades_and_unblocks_next_month(game, monkey
     executor = _install_deferred(monkeypatch)
 
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
-    _run_deferred(executor)
+    with pytest.raises(LLMUnavailable):
+        _run_deferred(executor)
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
     status = month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"]
-    assert status == "degraded"
+    assert status == "failed"
 
     db.save_turn_report(state, "下月邸报")
-    # 不得因上月尾永久阻塞
-    assert session.resolve_turn(allow_empty_decree=True).stage in {
-        "gazette", "advanced", "rescript",
-    }
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
 
 
 def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
@@ -270,7 +270,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     from types import SimpleNamespace
     state.ended = True
     payload = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
-    assert payload["tail_failure"]["error_pack_path"]
+    assert WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state))["error"] == "internal failure"
     assert payload["summary_pending"] is False
     state.ended = False
 
@@ -307,7 +307,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 def test_ending_summary_runs_in_mechanical_tail_after_advance(
     game, monkeypatch, model_text, tail_status, visible,
 ):
-    """过月入口：模型原文落总评；空输出不落库，尾状态降级留痕。"""
+    """过月入口：模型原文落总评。"""
     from ming_sim.cli.terminal import _printed_ending_summary
 
     db, state, content = game

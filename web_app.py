@@ -1774,7 +1774,7 @@ class WebGame:
         from ming_sim.mechanical_tail import failed_mechanical_tail
 
         failure = failed_mechanical_tail(self.db, self.state)
-        return {"error_pack_path": failure[1].get("error_pack_path")} if failure else None
+        return {"error_pack_path": failure[1].get("error_pack_path"), "error": failure[1].get("error")} if failure else None
 
     def ending_payload(self) -> Optional[Dict[str, Any]]:
         """结局已触发时返回 {status,label,summary,timeline,summary_pending}，否则 None。
@@ -1785,9 +1785,7 @@ class WebGame:
         if not self.state.ended:
             return None
         from ming_sim.context import ENDING_LABELS
-        from ming_sim.mechanical_tail import ending_summary_pending, failed_mechanical_tail
-        failed = failed_mechanical_tail(self.db, self.state)
-        failure = {"error_pack_path": failed[1].get("error_pack_path")} if failed else None
+        from ming_sim.mechanical_tail import ending_summary_pending
         row = self.db.get_ending_summary() or {}
         summary = row.get("summary", "") or ""
         return {
@@ -1796,9 +1794,6 @@ class WebGame:
             "summary": summary,
             "timeline": row.get("timeline", []),
             "summary_pending": ending_summary_pending(self.db, self.state) if not summary else False,
-            "tail_failure": (
-                failure if failure else None
-            ),
         }
 
     def state_payload(self) -> Dict[str, Any]:

@@ -14,13 +14,11 @@ from typing import Any, Dict, Optional
 from ming_sim.applier import Provenance
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.session_write_queue import get_session_write_queue
-from ming_sim.decree_forecast import _call_exhausted
 
 logger = logging.getLogger(__name__)
 
 _TAIL_STATUS_PENDING = "pending"
 _TAIL_STATUS_DONE = "done"
-_TAIL_STATUS_DEGRADED = "degraded"
 _TAIL_STATUS_FAILED = "failed"
 
 
@@ -228,11 +226,7 @@ def _run_tail_body(
             gate_run=lambda fn: queue.run(ticket, fn),
         )
         if not summary:
-            logger.info(
-                "[mechanical-tail] turn=%s 结局总评无正文，降级留痕",
-                closed_turn,
-            )
-            return _TAIL_STATUS_DEGRADED
+            raise RuntimeError("结局总评无正文")
     return _TAIL_STATUS_DONE
 
 
@@ -263,13 +257,12 @@ def _submit_tail(
                 and tail.get("status") == _TAIL_STATUS_PENDING
             )
 
-        status = _TAIL_STATUS_DONE
         try:
             # 扫描见到 pending 之后，上一张票可能已经终结。写闸内再读，
             # 避免把已完成的尾再跑一遍。
             if not queue.run(ticket, still_pending):
                 return
-            status = _run_tail_body(
+            _run_tail_body(
                 session,
                 closed_turn=closed_turn,
                 settled_year=settled_year,
@@ -279,35 +272,28 @@ def _submit_tail(
                 ticket=ticket,
             )
             queue.run(ticket, lambda: _set_tail_status(
-                session.db, closed_turn, status, source=source,
+                session.db, closed_turn, _TAIL_STATUS_DONE, source=source,
             ))
         except Exception as exc:
-            if not _call_exhausted(exc):
-                logger.exception(
-                    "[mechanical-tail] turn=%s 后台执行失败，等待玩家重试",
-                    closed_turn,
+            logger.exception("[mechanical-tail] turn=%s 后台执行失败，等待玩家重试", closed_turn)
+            from ming_sim.error_pack import write_error_pack
+
+            def record_failure() -> None:
+                pack_path = write_error_pack(
+                    session.db, session.state, exc=exc,
+                    extracted=None, resolve_ctx=None,
                 )
-                from ming_sim.error_pack import write_error_pack
+                from ming_sim import month_chain
+                chain = month_chain._load_chain(session.db, closed_turn)
+                chain["mechanical_tail"]["error"] = str(exc)
+                month_chain._save_chain(session.db, closed_turn, chain, source=source)
+                _set_tail_status(
+                    session.db, closed_turn, _TAIL_STATUS_FAILED,
+                    source=source, error_pack_path=pack_path,
+                )
 
-                def record_failure() -> None:
-                    pack_path = write_error_pack(
-                        session.db, session.state, exc=exc,
-                        extracted=None, resolve_ctx=None,
-                    )
-                    _set_tail_status(
-                        session.db, closed_turn, _TAIL_STATUS_FAILED,
-                        source=source, error_pack_path=pack_path,
-                    )
-
-                queue.run(ticket, record_failure)
-                raise
-            status = _TAIL_STATUS_DEGRADED
-            logger.info(
-                "[mechanical-tail] turn=%s 耗尽降级留痕：%s", closed_turn, exc,
-            )
-            queue.run(ticket, lambda: _set_tail_status(
-                session.db, closed_turn, status, source=source,
-            ))
+            queue.run(ticket, record_failure)
+            raise
         finally:
             queue.complete(ticket)
 
