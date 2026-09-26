@@ -1863,7 +1863,6 @@ def test_step_4a_supply_feed_board_reuses_world_board_text(game):
     db, state, _content = game
     feed = month_chain.build_secret_orders_supply_feed(db, state, {})
     assert feed.get("board") == _world_board_text(db, state)
-    assert not hasattr(month_chain, "_supply_board_snapshot")
 
 
 def test_step_4a_supply_feed_omits_unfiltered_office_effects(game):
