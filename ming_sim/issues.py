@@ -8794,10 +8794,18 @@ def _apply_score_extraction_body(
         }
         return {**item, "affair_declaration": stamped}, None
 
-    for field in (
+    stamp_fields = (
         "economy_moves", "new_issues", "人物变更",
         "office_changes", "character_status_changes", "appointments",
-    ):
+    )
+    # Steps share these objects with the merged lists, except 人物变更
+    # clones made above to attach _effect_event_id. Stamp the merged object
+    # once and project that result back. A second stamp repeats the rejection
+    # and can mint another birth_key. Unmatched step objects are not judged
+    # again; apply reads the stamped merged 人物变更, not the step copy.
+    stamped_by_origin: dict[int, object] = {}
+    rejected_origin_ids: set[int] = set()
+    for field in stamp_fields:
         raw_items = extracted.get(field)
         if isinstance(raw_items, list):
             kept: List[object] = []
@@ -8805,30 +8813,24 @@ def _apply_score_extraction_body(
                 stamped, conflict_reason = _stamp_batch_new_declaration(raw_item)
                 if conflict_reason is not None:
                     validate_rejections.append((field, raw_item, conflict_reason))
+                    rejected_origin_ids.add(id(raw_item))
                     continue
+                stamped_by_origin[id(raw_item)] = stamped
                 kept.append(stamped)
             extracted[field] = kept
 
-    # #1844：effect_sequence 各笔与合并 extraction 共用同一 identity→birth_key，
-    # 否则逐笔落账会把同 identity 新生事务拆成多条。
     if effect_sequence is not None:
         stamped_sequence = []
         for step_extracted, step_ordered, step_event_ids in effect_sequence:
             stamped_step = dict(step_extracted)
-            for field in (
-                "economy_moves", "new_issues", "人物变更",
-                "office_changes", "character_status_changes", "appointments",
-            ):
+            for field in stamp_fields:
                 raw_items = stamped_step.get(field)
                 if isinstance(raw_items, list):
-                    kept = []
-                    for raw_item in raw_items:
-                        stamped, conflict_reason = _stamp_batch_new_declaration(raw_item)
-                        if conflict_reason is not None:
-                            validate_rejections.append((field, raw_item, conflict_reason))
-                            continue
-                        kept.append(stamped)
-                    stamped_step[field] = kept
+                    stamped_step[field] = [
+                        stamped_by_origin.get(id(raw_item), raw_item)
+                        for raw_item in raw_items
+                        if id(raw_item) not in rejected_origin_ids
+                    ]
             stamped_sequence.append((stamped_step, step_ordered, step_event_ids))
         effect_sequence = stamped_sequence
 
