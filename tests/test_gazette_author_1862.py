@@ -309,26 +309,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         release_material_tree(world.root)
 
 
-def test_world_segment_input_asks_for_settled_results(monkeypatch):
-    """世界推演输入正向要求写结果。不读、不改模型写出的文字。"""
-    from types import SimpleNamespace
-
-    import ming_sim.agents as agents_mod
-
-    monkeypatch.setattr(agents_mod, "_ctx", lambda: SimpleNamespace(game_world_prompt="gw"))
-    monkeypatch.setattr(agents_mod, "create_chat_model", lambda *_a, **_k: object())
-    monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
-    monkeypatch.setattr(agents_mod, "tlog", lambda *_a, **_k: None)
-    monkeypatch.setattr(agents_mod, "describe_effective_model", lambda _cfg: "m")
-    monkeypatch.setattr(agents_mod, "is_minimax_base_url", lambda _url: False)
-    monkeypatch.setattr(agents_mod, "_llm_for_role", lambda cfg, _role: cfg)
-    agent = agents_mod.create_world_segment_agent(
-        _llm(), SimpleNamespace(root="", opening="盘面"),
-    )
-    text = "\n".join(str(part) for part in agent["instructions"])
-    assert "本段写已经落定的结果。" in text
-
-
 def test_author_unknown_route_raises_before_writing(game, monkeypatch):
     """未知 chat_turns.route 由权威解码失败，作者不得把它当成非密令继续供料。"""
     db, state, _content = game

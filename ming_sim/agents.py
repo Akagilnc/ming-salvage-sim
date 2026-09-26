@@ -887,7 +887,7 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         _ctx().game_world_prompt,
         "你推演本月旨意之外的世界事件，并承接开场列出的在途办理案卷。"
         "已经落账的旨不要重算，也不要写月末邸报。",
-        "本段写已经落定的结果。",
+        "本段只写推演结果。",
         "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
         "开场只有最小集。其余材料在当前目录，按需自读。",
         str(getattr(prepared, "opening", "") or ""),
