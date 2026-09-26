@@ -255,8 +255,8 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 
     monkeypatch.setattr(audience_translation, "_executor", InlineExecutor())
 
-    def fail(*_a, **_k):
-        calls.append(1)
+    def fail(*_a, **kwargs):
+        calls.append(kwargs.get("closed_turn"))
         raise RuntimeError("internal failure")
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", fail)
@@ -264,7 +264,17 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
     from ming_sim.mechanical_tail import ensure_mechanical_tails
     ensure_mechanical_tails(session)
-    assert len(calls) == 2
+    assert calls == [closed_turn, closed_turn]
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+
+    # 再过一月后旧尾已离开两回合窗口，仍须按 pending 续接，不得丢弃。
+    db.save_turn_report(state, "下月邸报")
+    assert session.resolve_turn(allow_empty_decree=True).advanced is True
+    assert int(state.turn) == closed_turn + 2
+    calls.clear()
+    ensure_mechanical_tails(session)
+    assert closed_turn in calls
+    assert int(state.turn) - 1 != closed_turn
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
 
 
@@ -328,6 +338,12 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     assert state.ended is True
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
     assert db.get_ending_summary() is None
+    from types import SimpleNamespace
+    from web_app import WebGame
+    pending_payload = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
+    assert pending_payload is not None
+    assert pending_payload["summary_pending"] is True
+    assert pending_payload["summary"] == ""
     assert main_saves_under_gate[-1] is True
     in_tail = True
     _run_deferred(executor)
@@ -339,11 +355,16 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
     assert tail["status"] == tail_status
     ending = db.get_ending_summary()
+    landed = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
+    assert landed is not None
+    assert landed["summary_pending"] is False
     if visible:
         assert ending is not None
         assert ending["summary"] == visible
+        assert landed["summary"] == visible
     else:
         assert ending is None
+        assert landed["summary"] == ""
     assert _printed_ending_summary(session) == visible
 
 

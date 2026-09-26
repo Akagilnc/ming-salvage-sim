@@ -1766,16 +1766,27 @@ class WebGame:
         return budget
 
     def ending_payload(self) -> Optional[Dict[str, Any]]:
-        """结局已触发时返回 {status,label,summary,timeline}，否则 None。"""
+        """结局已触发时返回 {status,label,summary,timeline,summary_pending}，否则 None。
+
+        总评在机械尾后台写完。空总评且尾仍 pending 时 summary_pending 为真，
+        前台先开页，完成后重取才能看见；不把尚未写完说成没有总评。
+        """
         if not self.state.ended:
             return None
         from ming_sim.context import ENDING_LABELS
+        from ming_sim.mechanical_tail import ending_summary_pending
         row = self.db.get_ending_summary() or {}
+        summary = row.get("summary", "") or ""
         return {
             "status": self.state.ending_status,
             "label": ENDING_LABELS.get(self.state.ending_status, "结局"),
-            "summary": row.get("summary", ""),
+            "summary": summary,
             "timeline": row.get("timeline", []),
+            "summary_pending": (
+                ending_summary_pending(self.db, self.state)
+                if not str(summary).strip()
+                else False
+            ),
         }
 
     def state_payload(self) -> Dict[str, Any]:

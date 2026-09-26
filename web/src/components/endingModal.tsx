@@ -31,7 +31,10 @@ export function EndingModal({ ending, onClose }: { ending: EndingPayload; onClos
             <ScrollText size={17} />
             <span>国史编纂官总评</span>
           </div>
-          <pre className="ending-summary-text">{ending.summary || "（无总评）"}</pre>
+          <pre
+            className="ending-summary-text"
+            aria-busy={ending.summary_pending ? true : undefined}
+          >{ending.summary || (ending.summary_pending ? "" : "（无总评）")}</pre>
         </section>
 
         {ending.timeline && ending.timeline.length > 0 && (

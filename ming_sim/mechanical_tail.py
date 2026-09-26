@@ -247,8 +247,22 @@ def _submit_tail(
         return False
 
     def run() -> None:
+        from ming_sim import month_chain
+
+        def still_pending() -> bool:
+            chain = month_chain._load_chain(session.db, int(closed_turn))
+            tail = chain.get("mechanical_tail")
+            return (
+                isinstance(tail, dict)
+                and tail.get("status") == _TAIL_STATUS_PENDING
+            )
+
         status = _TAIL_STATUS_DONE
         try:
+            # 扫描见到 pending 之后，上一张票可能已经终结。写闸内再读，
+            # 避免把已完成的尾再跑一遍。
+            if not queue.run(ticket, still_pending):
+                return
             status = _run_tail_body(
                 session,
                 closed_turn=closed_turn,
@@ -324,23 +338,54 @@ def schedule_mechanical_tail_after_advance(
     )
 
 
-def ensure_mechanical_tails(session: Any) -> None:
-    """重开或下次过月前：按 DB pending 续接未完尾（claim_if_absent 防重复执行）。"""
+def _resolve_context_turns(db: Any, current_turn: int) -> list[int]:
+    """有月链记录的回合。无连接的替身才退回 0..current。"""
+    conn = getattr(db, "conn", None)
+    if conn is None:
+        return list(range(0, int(current_turn) + 1))
+    rows = conn.execute(
+        "SELECT turn FROM pending_resolve_context ORDER BY turn"
+    ).fetchall()
+    return [int(row["turn"]) for row in rows]
+
+
+def _pending_mechanical_tails(
+    db: Any, *, current_turn: int,
+) -> list[tuple[int, Dict[str, Any]]]:
+    """全部未终结机械尾。非耗尽失败会完成队列票并留下 pending，
+    过月 barrier 挡不住「只有紧邻月份还未完」。"""
     from ming_sim import month_chain
 
+    pending: list[tuple[int, Dict[str, Any]]] = []
+    for turn in _resolve_context_turns(db, current_turn):
+        chain = month_chain._load_chain(db, turn)
+        tail = chain.get("mechanical_tail")
+        if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_PENDING:
+            pending.append((turn, tail))
+    return pending
+
+
+def ending_summary_pending(db: Any, state: Any) -> bool:
+    """结局总评尾尚未终结。前台不等；完成前呈现层据此重取。"""
+    if not bool(getattr(state, "ended", False)):
+        return False
+    current = int(getattr(state, "turn", 0) or 0)
+    for _turn, tail in _pending_mechanical_tails(db, current_turn=current):
+        outcome = tail.get("ending_outcome")
+        if isinstance(outcome, dict) and outcome.get("status"):
+            return True
+    return False
+
+
+def ensure_mechanical_tails(session: Any) -> None:
+    """重开或下次过月前：按 DB pending 续接未完尾（claim_if_absent 防重复执行）。"""
     db = session.db
     try:
         get_session_write_queue(session)
     except Exception:
         return
-    pending_turns: list[tuple[int, Dict[str, Any]]] = []
     current = int(getattr(session.state, "turn", 0) or 0)
-    # 下月 barrier 保证最多只有紧邻的已结束月份可以遗留 pending。
-    for turn in range(max(0, current - 1), current + 1):
-        chain = month_chain._load_chain(db, turn)
-        tail = chain.get("mechanical_tail")
-        if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_PENDING:
-            pending_turns.append((turn, tail))
+    pending_turns = _pending_mechanical_tails(db, current_turn=current)
 
     source = Provenance.system_simulation
     for turn, tail in pending_turns:

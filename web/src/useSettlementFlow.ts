@@ -86,6 +86,30 @@ export function useSettlementFlow({
     if (route.error !== null) setPausedDecisionError(route.error);
   }, [state, loadState]);
 
+  // #1845：结局总评在机械尾后台完成。前台先开页；未终结时沿结算观察刷新重取，
+  // 完成结果写进已开的结局页。不等尾再打开。
+  React.useEffect(() => {
+    if (!state?.ending?.summary_pending) return;
+    let cancelled = false;
+    let refreshTimer = 0;
+    const refresh = () => {
+      refreshTimer = window.setTimeout(() => {
+        void loadState()
+          .catch((err) => {
+            console.warn("[ending] summary refresh failed", err);
+          })
+          .finally(() => {
+            if (!cancelled) refresh();
+          });
+      }, 1000);
+    };
+    refresh();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(refreshTimer);
+    };
+  }, [state?.ending?.summary_pending, loadState]);
+
   const applyStage = (update: SettlementStageUpdate) => {
     setSettleStage(update.content);
     // Progress only from typed facts on the SSE payload — never reverse-lookup labels.

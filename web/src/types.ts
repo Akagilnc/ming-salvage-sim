@@ -485,6 +485,8 @@ export type EndingTimelineItem = {
 
 export type EndingPayload = {
   status: string; label: string; summary: string; timeline: EndingTimelineItem[];
+  /** 结局总评机械尾尚未终结。前台先开页；完成后由观察刷新补上。 */
+  summary_pending?: boolean;
 };
 
 export type ChatMessage = {
