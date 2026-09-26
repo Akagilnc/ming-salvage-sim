@@ -257,7 +257,7 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
 
     def fail(*_a, **kwargs):
         calls.append(kwargs.get("closed_turn"))
-        raise RuntimeError("internal failure")
+        raise ValueError("internal failure")
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", fail)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
@@ -277,11 +277,14 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert caught.value.error_pack_path
     pack = Path(caught.value.error_pack_path)
     assert pack.is_dir()
-    diagnostic = (pack / "traceback.txt").read_text(encoding="utf-8")
-    assert "internal failure" in diagnostic
-    assert "_run_relation_brew" in diagnostic
+    import json
+    manifest = json.loads((pack / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["exception_type"] == "ValueError"
+    assert manifest["turn"] == closed_turn + 1
     assert int(state.turn) == closed_turn + 1
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+    tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
+    assert tail["status"] == "pending"
+    assert tail["error_pack_path"] == caught.value.error_pack_path
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", lambda *_a, **_k: None)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
