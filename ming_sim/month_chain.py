@@ -802,7 +802,7 @@ def _settle_edicts(
             if isinstance(verdict, dict) and verdict.get("decision"):
                 current = db.get_decree_dossier(int(dossier["id"])) or dossier
                 if str(current.get("status") or "") == "proposed":
-                    # 判决及其批红资格元数据必须同一事务落定；内层 atomic 不提前提交。
+                    # 判决与元数据、预声明中旨代价同一事务；两种入口共用 DB 写口。
                     with atomic(db):
                         db.apply_dossier_promulgation(
                             state, int(dossier["id"]), str(verdict["decision"]),
@@ -814,7 +814,7 @@ def _settle_edicts(
                             criteria_snapshot=verdict.get("criteria_snapshot") or {},
                             content=session.content, registry=registry,
                         )
-                        _persist_verdict_metadata(db, int(dossier["id"]), verdict)
+                        db._record_dossier_verdict_metadata(state, int(dossier["id"]), verdict)
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
         if str(current.get("promulgation_decision") or "") == "promulgated":
             def persist_result(_ref: str, result: Any) -> None:
@@ -1081,28 +1081,6 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
         "context": str(question.get("context") or "").strip(),
         "options": cleaned,
     }
-
-
-def _persist_verdict_metadata(db: Any, dossier_id: int, verdict: Dict[str, Any]) -> None:
-    """与 apply_dossier_verdicts 同一笔：typed 反应与中旨亦不可颁标记同落判决行。"""
-    from ming_sim.applier import safe_json_dumps
-
-    current = db.get_decree_dossier(int(dossier_id)) or {}
-    parties_json = (
-        "[]"
-        if str(current.get("mode") or "") == "midzhi"
-        else safe_json_dumps(verdict.get("affected_parties") or [], ensure_ascii=False)
-    )
-    db.conn.execute(
-        """UPDATE decree_dossier_decisions
-           SET affected_parties_json=?, midzhi_unpromulgatable=?
-           WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
-        (
-            parties_json,
-            1 if verdict.get("midzhi_unpromulgatable") is True else 0,
-            int(dossier_id),
-        ),
-    )
 
 
 def _consume_rescript_answers(

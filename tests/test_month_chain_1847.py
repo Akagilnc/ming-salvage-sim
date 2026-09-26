@@ -153,21 +153,7 @@ def test_prior_month_answered_rescript_does_not_block_or_reappear(game, monkeypa
 def test_this_turn_rejection_opens_triad_on_same_desk(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
-    affair = db.affairs.open(
-        name="打回三选", origin="旨意", year=state.year, period=state.period, turn=state.turn,
-    )
-    pending_id, ref = _stage_edict(db, state, minister, "河工", "河工", -1, affair.id)
-    # 预推打回：过月落判决后应进批红三选，不得直接落账。
-    db.conn.execute(
-        "UPDATE staged_declarations SET verdict_json=? WHERE decree_ref=?",
-        (json.dumps({
-            "decision": "rejected",
-            "reason": "科参未允",
-            "blocked_layer": "six_offices",
-            "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        }, ensure_ascii=False), ref),
-    )
-    db.conn.commit()
+    pending_id = _stage_rejected_edict(db, state, minister)
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
@@ -187,25 +173,15 @@ def test_this_turn_rejection_opens_triad_on_same_desk(game, monkeypatch):
     labels = {opt["label"] for opt in desk[key]["options"]}
     assert labels >= {"强颁", "收回", "留中"}
     assert db.get_decree_dossier(int(dossier["id"]))["rescript_pending"] is True
+    assert db.list_decree_dossier_decisions(int(dossier["id"]))[-1]["affected_parties"] == (
+        _rejected_verdict(db)["affected_parties"]
+    )
 
 
 def test_answering_triad_applies_and_releases_rescript_gate(game, monkeypatch):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
-    affair = db.affairs.open(
-        name="收回放行", origin="旨意", year=state.year, period=state.period, turn=state.turn,
-    )
-    pending_id, ref = _stage_edict(db, state, minister, "河工", "河工", -1, affair.id)
-    db.conn.execute(
-        "UPDATE staged_declarations SET verdict_json=? WHERE decree_ref=?",
-        (json.dumps({
-            "decision": "rejected",
-            "reason": "科参未允",
-            "blocked_layer": "six_offices",
-            "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        }, ensure_ascii=False), ref),
-    )
-    db.conn.commit()
+    pending_id = _stage_rejected_edict(db, state, minister)
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr(
@@ -904,7 +880,28 @@ def _rejected_verdict(db):
             "kind": "faction", "key": faction,
             "direction": "negative", "intensity": "weak",
         }],
+        "criteria_snapshot": {
+            "imperial_authority_band": "中等", "appointment_tenure": "",
+            "authorization_ids": [], "endorsement_entry_ids": [],
+        },
+        "gatekeeper_id": None,
     }
+
+
+def _stage_rejected_edict(db, state, minister):
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "month-chain", "actor": minister, "mode": "ordinary",
+            "text": "河工",
+        },
+    )
+    db.staged_declarations.stage(
+        decree_ref=pending_action_decree_ref(pending_id, 1),
+        declaration={}, turn=int(state.turn), verdict=_rejected_verdict(db),
+    )
+    return pending_id
 
 
 def _choice(row, *, decision=""):
@@ -971,19 +968,57 @@ def test_fatal_midzhi_rejection_hides_force_option(game, monkeypatch):
         ).fetchone()[0] == 1
 
 
+def test_midzhi_promulgation_records_authority_cost_once(game, monkeypatch):
+    """预声明中旨顺颁由权威判决入口落皇威代价，不扇出猜派反应。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "month-chain", "actor": minister, "mode": "midzhi",
+            "text": "中旨顺颁",
+        },
+    )
+    db.staged_declarations.stage(
+        decree_ref=pending_action_decree_ref(pending_id, 1),
+        declaration={"effects": {}}, turn=int(state.turn),
+        verdict={"decision": "promulgated"},
+    )
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    session.resolve_turn(allow_empty_decree=True)
+
+    dossier_id = db.conn.execute(
+        "SELECT id FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
+    ).fetchone()[0]
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_cost_events WHERE dossier_id=? "
+        "AND cost_kind='authority' AND cost_identity='override'",
+        (dossier_id,),
+    ).fetchone()[0] == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_cost_events WHERE dossier_id=? AND cost_kind='satisfaction'",
+        (dossier_id,),
+    ).fetchone()[0] == 0
+
+
 def test_midzhi_verdict_and_metadata_roll_back_together(game, monkeypatch):
-    """落标若中断，判决也不得先提交，重开仍为待判。"""
+    """共享元数据写口落标后中断，判决同事务回滚，重开仍为待判。"""
     from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
     pending_id = _stage_fatal_midzhi(db, state, content)
-    original = month_chain._persist_verdict_metadata
+    original = db._record_dossier_verdict_metadata
 
-    def interrupted(db_, dossier_id, verdict):
-        original(db_, dossier_id, verdict)
+    def interrupted(*args, **kwargs):
+        original(*args, **kwargs)
         raise RuntimeError("判决落标中断")
 
-    monkeypatch.setattr(month_chain, "_persist_verdict_metadata", interrupted)
+    monkeypatch.setattr(db, "_record_dossier_verdict_metadata", interrupted)
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
