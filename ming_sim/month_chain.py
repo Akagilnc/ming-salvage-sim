@@ -379,6 +379,7 @@ def continue_world_after_answers(
 
 def continue_decree_after_answers(
     session: Any, *, decree_ref: str, answers: List[Dict[str, object]],
+    chain: Optional[Dict[str, Any]] = None,
     source: Provenance = Provenance.player_decree,
 ) -> None:
     """批红答复后从问处续推该旨一次；问前已落声明不动。
@@ -407,7 +408,11 @@ def continue_decree_after_answers(
         return
     payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
 
-    def consume(_result: Any) -> None:
+    def consume(result: Any) -> None:
+        candidate = _ending_from_dispatch_result(result)
+        if candidate is not None and chain is not None:
+            chain["declaration_outcome"] = candidate
+            _save_chain(db, int(state.turn), chain, source=source)
         db.staged_declarations.clear_questions(decree_ref)
 
     dispatch_month_segment(
@@ -545,12 +550,14 @@ def _run_loaded_month_chain(
     )
     world_outcome = _run_world_segment(session, chain, source=source)
     declaration_outcome = world_outcome or declaration_outcome
-    _run_month_drift(db, state, chain, turn, decree_text, source)
     desk = _materialize_rescript_desk(db, state, chain)
     if desk is not None:
         return ResolveResult(
             awaiting=True, decisions=desk, advanced=False, stage="rescript",
         )
+    # 问后续推与强颁问前效果都在案头清空后才齐。惯性、到期密令、派系杠杆与
+    # 门控遗产读的是这些写入，须晚于它们；催办/待核只消费上月待办，并入这一次即可。
+    _run_month_drift(db, state, chain, turn, decree_text, source)
     archive = db.get_turn_report_archive(turn)
     if archive is None or not str(archive.get("report") or "").strip():
         from ming_sim.models import LLMConfig
@@ -755,12 +762,11 @@ def _settle_edicts(
         created = int(dossier.get("created_turn") or 0)
         held = _is_held_for_rejudgment(dossier, int(state.turn))
         ref = decree_ref_for_dossier(db, dossier)
-        promulgated = str(dossier.get("promulgation_decision") or "") in {
-            "promulgated", "force_promulgated",
-        } or status == "promulgated"
+        # 强颁后 decision 仍是打回，status 也可能已进 executing；资格与问后续推同一读端。
+        authorizes = db.dossier_authorizes_effects(int(dossier["id"]))
         this_month = created == int(state.turn) or held
         pending_settle = (
-            promulgated and not db.staged_declarations.is_settled(ref)
+            authorizes and not db.staged_declarations.is_settled(ref)
             and bool(db.staged_declarations.staged_for(ref))
         )
         if not (this_month and status == "proposed") and not pending_settle:
@@ -805,8 +811,9 @@ def _settle_edicts(
                         criteria_snapshot=verdict.get("criteria_snapshot") or {},
                         content=session.content, registry=registry,
                     )
+                    _persist_verdict_affected_parties(db, int(dossier["id"]), verdict)
         current = db.get_decree_dossier(int(dossier["id"])) or dossier
-        if str(current.get("promulgation_decision") or "") == "promulgated":
+        if db.dossier_authorizes_effects(int(current["id"])):
             def persist_result(_ref: str, result: Any) -> None:
                 nonlocal outcome
                 candidate = _ending_from_dispatch_result(result)
@@ -907,6 +914,10 @@ def _run_month_drift(
     collector = RejectionCollector()
     with atomic(db):
         db.record_monthly_supervision_presence(turn, commit=False)
+        db.record_monthly_grant_reconciliations(
+            turn, [], rejection_collector=collector, source=source,
+        )
+        db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         retire_unsettled_summons_for_inactive(db)
         rejections = apply_issue_inertia_and_ongoing(db, state)
         if rejections:
@@ -919,6 +930,8 @@ def _run_month_drift(
         clear_gated_legacies(db, state)
         apply_pending_due_reviews(db, state, commit=False)
         settle_due_secret_orders(db, state, commit=False)
+        # 密令分类与到期结算已完成；全局放行须在邸报供料之前，withheld 密源钉不放。
+        db.release_held_audience_knowledge(commit=False)
         expire_breach_pleas_on_due(db, state, commit=False)
         consume_pending_urge_audience_todos(db, state, commit=False)
         write_due_staged_commitment_todos(db, state, commit=False)
@@ -1067,6 +1080,63 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
     }
 
 
+def _persist_verdict_affected_parties(db: Any, dossier_id: int, verdict: Dict[str, Any]) -> None:
+    """与 apply_dossier_verdicts 同一笔：普通打回的 typed 反应须落在判决行上，强颁才读得到。"""
+    from ming_sim.applier import safe_json_dumps
+
+    current = db.get_decree_dossier(int(dossier_id)) or {}
+    parties_json = (
+        "[]"
+        if str(current.get("mode") or "") == "midzhi"
+        else safe_json_dumps(verdict.get("affected_parties") or [], ensure_ascii=False)
+    )
+    db.conn.execute(
+        """UPDATE decree_dossier_decisions
+           SET affected_parties_json=?
+           WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
+        (parties_json, int(dossier_id)),
+    )
+    if not getattr(db.conn, "in_transaction", False):
+        db.conn.commit()
+
+
+def _decree_question_disposition(db: Any, decree_ref: str) -> str:
+    """已颁或强颁才续推；三选尚未落地则留问；收回/留中清问，不当已颁落问后效果。"""
+    dossier = _dossier_for_decree_ref(db, decree_ref)
+    if dossier is None:
+        return "clear"
+    if db.dossier_authorizes_effects(int(dossier["id"])):
+        return "continue"
+    if dossier.get("rescript_pending"):
+        return "defer"
+    return "clear"
+
+
+def _settle_authorized_staged(
+    session: Any, decree_ref: str, chain: Dict[str, Any], source: Provenance,
+) -> None:
+    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
+
+    db, state = session.db, session.state
+    dossier = _dossier_for_decree_ref(db, decree_ref)
+    if dossier is None or not db.dossier_authorizes_effects(int(dossier["id"])):
+        return
+    if db.staged_declarations.is_settled(decree_ref):
+        return
+    if not db.staged_declarations.staged_for(decree_ref):
+        return
+
+    def persist_result(_ref: str, result: Any) -> None:
+        candidate = _ending_from_dispatch_result(result)
+        if candidate is not None:
+            chain["declaration_outcome"] = candidate
+            _save_chain(db, int(state.turn), chain, source=source)
+
+    settle_staged_declarations_in_decree_order(
+        db, state, [decree_ref], source=source, alongside=persist_result,
+    )
+
+
 def _consume_rescript_answers(
     session: Any, chain: Dict[str, Any], *, source: Provenance,
 ) -> None:
@@ -1125,8 +1195,16 @@ def _consume_rescript_answers(
     for ref, ref_rows in decree_rows_by_ref.items():
         if not all(str(r.get("status") or "") == "decided" for r in ref_rows):
             continue
+        disposition = _decree_question_disposition(db, ref)
+        if disposition == "defer":
+            continue
+        if disposition == "clear":
+            db.staged_declarations.clear_questions(ref)
+            continue
+        # 强颁当回合才取得问前结算资格；须先于问后续推，续推才读得到已落声明。
+        _settle_authorized_staged(session, ref, chain, source)
         continue_decree_after_answers(
-            session, decree_ref=ref,
+            session, decree_ref=ref, chain=chain,
             answers=[_answer_from_row(r) for r in ref_rows],
             source=source,
         )

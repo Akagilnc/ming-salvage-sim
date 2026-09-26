@@ -317,6 +317,45 @@ def _effect_extraction_from_clean(
     return extraction, ordered_deltas, ordered_effect_event_ids
 
 
+def _persist_specialized_extraction(
+    db: Any,
+    state: Any,
+    extraction: Mapping[str, object],
+    *,
+    collector: RejectionCollector,
+    turn: int,
+    source: Provenance,
+) -> None:
+    """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
+
+    密奏须先有本回合稽核在场扫描，origin 才带得上同派标记。对账只落本段提案，
+    未提案目标的中位默认留到月末一次补，避免后段中位覆盖前段实抵。
+    """
+    reports = extraction.get("dossier_progress_reports") or []
+    if isinstance(reports, list) and reports:
+        db.record_monthly_supervision_presence(int(turn), commit=False)
+        db.record_monthly_dossier_progress(int(turn), reports)
+    denunciations = extraction.get("faction_denunciations") or []
+    if isinstance(denunciations, list) and denunciations:
+        db.accept_faction_denunciations(state, denunciations, commit=False)
+    proposals = extraction.get("dossier_reconciliations") or []
+    if isinstance(proposals, list) and proposals:
+        db.record_monthly_grant_reconciliations(
+            int(turn), proposals, rejection_collector=collector, source=source,
+        )
+    selections = extraction.get("covert_exec_selections") or []
+    if isinstance(selections, list) and selections:
+        from ming_sim.covert_progress import apply_monthly_covert_actual_progress
+        from ming_sim.decree import _collect_inline_rejections
+
+        rows = apply_monthly_covert_actual_progress(
+            db, state, selections=selections, only_supplied=True, commit=False,
+        )
+        _collect_inline_rejections(
+            collector, {"covert_exec_selections": rows}, int(turn), source,
+        )
+
+
 def _dispatch_effects(
     db: Any,
     state: Any,
@@ -430,6 +469,9 @@ def _dispatch_effects(
         effect_sequence=effect_sequence if isinstance(raw, list) else None,
     )
     _collect_inline_rejections(collector, report, turn, source)
+    _persist_specialized_extraction(
+        db, state, extraction, collector=collector, turn=turn, source=source,
+    )
     return SectionResult(applied=[report], rejected=rejected)
 
 

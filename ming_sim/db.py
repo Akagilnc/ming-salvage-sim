@@ -13328,6 +13328,14 @@ class GameDB:
                     ordered, proposed, escorted=escorted,
                 )
             else:
+                # 分段过月会多次调本写入。本次没有提案的路已有本回合行，不得用中位覆盖先前段落下的实抵。
+                existing = self.conn.execute(
+                    "SELECT 1 FROM decree_dossier_reconciliations "
+                    "WHERE dossier_id=? AND turn=?",
+                    (int(dossier_id), int(turn)),
+                ).fetchone()
+                if existing is not None:
+                    continue
                 lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
                 arrived = (lo + hi) // 2
                 note = ""

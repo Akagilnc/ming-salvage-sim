@@ -887,3 +887,227 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
         ordinary_rejected = exc
     assert ordinary_rejected is not None and "选项不在当前 options" in str(ordinary_rejected)
     assert session.pending_decisions()[0]["status"] == "pending"
+
+
+def _rejected_verdict(db):
+    faction = db.conn.execute("SELECT name FROM factions LIMIT 1").fetchone()["name"]
+    return {
+        "decision": "rejected",
+        "reason": "科参未允",
+        "blocked_layer": "six_offices",
+        "primary_opponents": [{"kind": "faction", "key": faction}],
+        "affected_parties": [{
+            "kind": "faction", "key": faction,
+            "direction": "negative", "intensity": "weak",
+        }],
+    }
+
+
+def _choice(row, *, decision=""):
+    option = row["options"][0]
+    if decision:
+        option = next(opt for opt in row["options"] if opt.get("dossier_decision") == decision)
+    payload = {
+        "decision_key": row["decision_key"],
+        "label": option["label"],
+        "hint": option.get("hint") or "",
+    }
+    if decision:
+        payload["dossier_id"] = option["dossier_id"]
+        payload["dossier_decision"] = decision
+    return payload
+
+
+def test_force_promulgation_settles_staged_prequestion_effects(game, monkeypatch):
+    """强颁后问前暂存效果落账，不得因 promulgation_decision 仍为打回而跳过。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="强颁落账", origin="旨意", year=state.year, period=state.period, turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(db, state, minister, "强颁河工", "强颁河工", -1, affair.id)
+    db.conn.execute(
+        "UPDATE staged_declarations SET verdict_json=? WHERE decree_ref=?",
+        (json.dumps(_rejected_verdict(db), ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+    session.resolve_turn(allow_empty_decree=True)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='强颁河工'",
+    ).fetchone()[0] == 0
+    triad = next(
+        row for row in session.pending_decisions() if str(row["event_id"]).startswith("dossier:")
+    )
+    session.submit_hitl_choices(
+        [_choice(triad, decision="force_promulgated")], write_gate=session._write_gate,
+    )
+
+    again = session.resolve_turn(allow_empty_decree=True)
+
+    assert again.stage == "gazette"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='强颁河工'",
+    ).fetchone()[0] == 1
+
+
+def test_withdrawn_decree_question_does_not_land_suffix_effects(game, monkeypatch):
+    """收回后请旨清掉且不续推，问后效果不得当成已颁落下。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="收回不续", origin="旨意", year=state.year, period=state.period, turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(db, state, minister, "河工", "河工", -1, affair.id)
+    db.conn.execute(
+        "UPDATE staged_declarations SET verdict_json=?, questions_json=? WHERE decree_ref=?",
+        (
+            json.dumps(_rejected_verdict(db), ensure_ascii=False),
+            json.dumps([{
+                "title": "是否仍办", "context": "科参已驳",
+                "options": [{"label": "仍办", "hint": "强推"}, {"label": "作罢", "hint": "停"}],
+            }], ensure_ascii=False),
+            ref,
+        ),
+    )
+    db.conn.commit()
+    calls = []
+
+    def continuation(*_a, **_k):
+        calls.append(True)
+        return "收回后不该落。"
+
+    def translate(*_a, **kwargs):
+        if "收回后不该落" not in str(kwargs.get("segment") or ""):
+            return {"effects": {}}
+        return {"effects": {"economy_moves": [{
+            "origin_ref": f"affair:{affair.id}", "account": "国库", "delta": -8,
+            "category": "收回后账", "reason": "不该落",
+        }]}}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", continuation)
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+    session.resolve_turn(allow_empty_decree=True)
+    desk = {row["event_id"]: row for row in session.pending_decisions()}
+    triad = next(row for key, row in desk.items() if str(key).startswith("dossier:"))
+    question = next(row for key, row in desk.items() if str(key).startswith("decree-question:"))
+    session.submit_hitl_choices(
+        [_choice(triad, decision="withdrawn"), _choice(question)],
+        write_gate=session._write_gate,
+    )
+
+    again = session.resolve_turn(allow_empty_decree=True)
+
+    assert calls == []
+    assert not db.staged_declarations.questions_for(ref)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='收回后账'",
+    ).fetchone()[0] == 0
+    assert again.stage == "gazette"
+
+
+def test_decree_continuation_ending_ends_the_month(game, monkeypatch):
+    """旨意问后续推的退位结局写入月链，推进不得当成 ongoing。"""
+    from ming_sim.models import LLMConfig
+
+    db, state, content = game
+    closed_turn = int(state.turn)
+    minister = next(iter(content.characters.values())).name
+    affair = db.affairs.open(
+        name="问后结局", origin="旨意", year=state.year, period=state.period, turn=state.turn,
+    )
+    _pending_id, ref = _stage_edict(db, state, minister, "逊国", "逊国", -1, affair.id)
+    db.conn.execute(
+        "UPDATE staged_declarations SET questions_json=? WHERE decree_ref=?",
+        (json.dumps([{
+            "title": "是否逊国", "context": "国势已去",
+            "options": [{"label": "逊", "hint": "退位"}, {"label": "守", "hint": "不退"}],
+        }], ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+
+    def translate(*_a, **kwargs):
+        if "煤山" not in str(kwargs.get("segment") or ""):
+            return {"effects": {}}
+        return {"effects": {"emperor_fate": "abdicate"}}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_chain, "_run_decree_continuation_text", lambda *a, **k: "煤山已定。")
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(month_chain, "run_gazette_text", lambda *a, **k: ("邸报", "逊国已闻"))
+    monkeypatch.setattr("ming_sim.mechanical_tail._run_tail_body", lambda *a, **k: "done")
+    session = make_light_session(db, state, content)
+    session.llm_config = LLMConfig(
+        api_key="sk-test", base_url="https://example.invalid", model="test",
+    )
+    session._write_gate = threading.Lock()
+    session.resolve_turn(allow_empty_decree=True)
+    question = session.pending_decisions()[0]
+    session.submit_hitl_choices([_choice(question)], write_gate=session._write_gate)
+
+    again = session.resolve_turn(allow_empty_decree=True)
+
+    assert again.advanced is True
+    assert state.ended is True
+    assert state.ending_status == "emperor_abdicate"
+    assert month_chain._load_chain(db, closed_turn)["declaration_outcome"]["status"] == "emperor_abdicate"
+
+
+def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
+    """问后续推落下的局面，当月惯性才看得到；未答完不得先跑惯性。"""
+    db, state, content = game
+    db.conn.execute(
+        "INSERT INTO issues (kind, title, origin_turn, inertia, bar_value, status) "
+        "VALUES ('situation', '边警自走', ?, 5, 40, 'active')",
+        (int(state.turn),),
+    )
+    issue_id = int(db.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+    db.conn.commit()
+
+    def translate(*_a, **kwargs):
+        if "问后结案" not in str(kwargs.get("segment") or ""):
+            return {"effects": {}}
+        return {"effects": {"close_issues": [{
+            "issue_id": issue_id, "reason": "resolved",
+        }]}}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+    )
+    monkeypatch.setattr(
+        month_chain, "_run_world_continuation_text", lambda *a, **k: "问后结案。",
+    )
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+    paused = session.resolve_turn(allow_empty_decree=True)
+    assert paused.awaiting is True
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='inertia'",
+        (issue_id,),
+    ).fetchone()[0] == 0
+    session.submit_hitl_choices(
+        [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
+    )
+
+    session.resolve_turn(allow_empty_decree=True)
+
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()["status"] != "active"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='inertia'",
+        (issue_id,),
+    ).fetchone()[0] == 0
