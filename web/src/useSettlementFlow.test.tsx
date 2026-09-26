@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { EndingModal } from "./components/endingModal";
 import { yearMonthLabel } from "./settlementPresentation";
 import type { GameState, PendingDecision } from "./types";
 import { useSettlementFlow } from "./useSettlementFlow";
@@ -119,6 +120,7 @@ function mountHarness(opts: {
         <div data-testid="pending-count">{String(hookRef.current.pendingDecisions.length)}</div>
         <div data-testid="phase">{turn?.phase || ""}</div>
         <div data-testid="settlement-display">{String(Boolean(turn?.settlement_display))}</div>
+        {state?.ending ? <EndingModal ending={state.ending} onClose={() => {}} /> : null}
       </div>
     );
   }
@@ -200,6 +202,70 @@ describe("#1625 useSettlementFlow — observation refresh convergence", () => {
     expect(host.querySelector('[data-testid="pending-count"]')?.textContent).toBe("1");
     expect(host.querySelector('[data-testid="error"]')?.textContent).toBe("");
     expect(vi.getTimerCount()).toBe(0);
+    cleanup();
+  });
+});
+
+describe("#1845 ending summary stays background and becomes visible", () => {
+  it("opens with a pending summary and shows it when the tail lands", async () => {
+    vi.useFakeTimers();
+    const pendingEnding = {
+      ...preClickState,
+      ending: {
+        status: "emperor_abdicate",
+        label: "退位",
+        summary: "",
+        timeline: [],
+        summary_pending: true,
+      },
+    } as GameState;
+    const landed = {
+      ...pendingEnding,
+      ending: {
+        ...pendingEnding.ending,
+        summary: "史评",
+        summary_pending: false,
+      },
+    } as GameState;
+    const loadState = vi.fn<() => Promise<GameState | null>>().mockResolvedValue(landed);
+    const { host, cleanup } = mountHarness({ initial: pendingEnding, loadState });
+
+    const summary = () => host.querySelector(".ending-summary-text");
+    expect(host.querySelector(".modal-bg-ending")).not.toBeNull();
+    expect(summary()?.getAttribute("aria-busy")).toBe("true");
+    expect(summary()?.textContent).toBe("");
+    expect(loadState).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(loadState).toHaveBeenCalledTimes(1);
+    expect(summary()?.getAttribute("aria-busy")).toBeNull();
+    expect(summary()?.textContent).toBe("史评");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(loadState).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    cleanup();
+  });
+});
+
+describe("#1845 background tail failure observation", () => {
+  it("refreshes a non-ending month while the tail runs, then stops on persisted failure", async () => {
+    vi.useFakeTimers();
+    const running = { ...preClickState, mechanical_tail_pending: true } as GameState;
+    const failed = {
+      ...running, mechanical_tail_pending: false,
+      mechanical_tail_failure: { error_pack_path: "/tmp/tail-error" },
+    } as GameState;
+    const loadState = vi.fn<() => Promise<GameState | null>>().mockResolvedValue(failed);
+    const { cleanup } = mountHarness({ initial: running, loadState });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(loadState).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(loadState).toHaveBeenCalledTimes(1);
     cleanup();
   });
 });
