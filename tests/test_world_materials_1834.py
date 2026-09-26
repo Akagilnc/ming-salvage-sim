@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ming_sim.db import GameDB
 from ming_sim.materials import (
-    index_entry_path, list_materials, prepare_world_materials, read_material,
+    list_materials, prepare_world_materials, read_material,
     world_materials_root,
 )
 
@@ -47,14 +47,22 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
     assert any(p.startswith("邸报/") for p in names)
 
     index = read_material(prepared.root, "INDEX.txt")
+    listed = set(names)
     for line in index.splitlines():
-        if line.strip():
-            assert index_entry_path(line) in names
-            assert read_material(prepared.root, line)
+        stripped = line.strip()
+        if not stripped:
+            continue
+        assert stripped in listed or any(
+            stripped.startswith(rel + " ") for rel in listed
+        )
+    for rel in listed:
+        if rel != "INDEX.txt":
+            assert read_material(prepared.root, rel)
     from ming_sim.models import reign_period_label
     gazette_rel = f"邸报/{past_year}年{past_period}月.txt"
     gazette_line = next(
-        line for line in index.splitlines() if index_entry_path(line) == gazette_rel
+        line for line in index.splitlines()
+        if line.strip() == gazette_rel or line.strip().startswith(gazette_rel + " ")
     )
     assert reign_period_label(past_year, past_period) in gazette_line.split()
     assert "辽东告急" in gazette_line.split()

@@ -13,9 +13,10 @@ from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.audience_night import AUDIBILITY_PRIVATE, append_ledger_entry
 from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.materials import (
-    index_entry_path,
+    list_materials,
     prepare_character_materials,
     prepare_world_materials,
+    read_material,
     release_material_tree,
 )
 from ming_sim.audience_night import record_summon_in_transit
@@ -328,8 +329,15 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert _SECRET_BRIEF in event_bodies
     prepared = prepare_character_materials(db, state, character)
     try:
-        gazette = next(path for path in prepared.index_lines if path.startswith("公开说法/邸报/"))
-        text = (prepared.root / index_entry_path(gazette)).read_text(encoding="utf-8")
+        rel = next(
+            path for path in list_materials(prepared.root)
+            if path.startswith("公开说法/邸报/")
+        )
+        text = read_material(prepared.root, rel)
+        gazette = next(
+            line for line in prepared.index_lines
+            if line == rel or line.startswith(rel + " ")
+        )
         assert text.strip() == _REPORT
         assert _TITLE in gazette.split()
         assert _REPORT not in gazette

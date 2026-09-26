@@ -252,22 +252,9 @@ def list_materials(root: Path, path: str = "") -> List[str]:
     return out
 
 
-_GAZETTE_INDEX_LINE = re.compile(
-    r"^(?P<path>(?:公开说法/)?邸报/\S+\.txt)(?:\s+\S.*)?$"
-)
-
-
-def index_entry_path(line: str) -> str:
-    """邸报索引行在路径后附年月与标题；其余行整段就是路径，空格属于路径。"""
-    text = str(line or "").strip()
-    if not text:
-        return ""
-    match = _GAZETTE_INDEX_LINE.match(text)
-    return match.group("path") if match else text
-
-
 def read_material(root: Path, path: str) -> str:
-    target = _resolve_inside(root, index_entry_path(path))
+    """按材料目录内的相对路径读文件。索引展示行不是路径。"""
+    target = _resolve_inside(root, path)
     if not target.is_file():
         raise FileNotFoundError(path)
     return target.read_text(encoding="utf-8")

@@ -26,7 +26,6 @@ from ming_sim.materials import (
     _handled_affair_lines,
     _safe_segment,
     _visible_affair_lines,
-    index_entry_path,
     list_materials,
     material_tools,
     prepare_character_materials,
@@ -79,10 +78,15 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
     assert any(line.startswith("密令/") for line in index.splitlines())
     assert any(line.startswith("荐人/") for line in index.splitlines())
     assert any(line.startswith("事实/") for line in index.splitlines())
+    listed = set(names)
     for line in index.splitlines():
-        if line.strip():
-            assert index_entry_path(line) in names
-            assert read_material(prepared.root, line.strip())
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped in listed:
+            assert read_material(prepared.root, stripped)
+        else:
+            assert any(stripped.startswith(rel + " ") for rel in listed)
     roster = read_material(prepared.root, "人物/朝臣名册.txt")
     status, _reason = db.get_character_status(character.name)
     assert character.name in roster
@@ -408,6 +412,17 @@ def test_read_material_stays_inside_directory(game, tmp_path):
     listing = tools["list_materials"]("")
     assert spaced_rel in listing.splitlines()
     assert tools["read_material"](spaced_rel) == "经历正文\n"
+    gazette_rel = "邸报/1627年9月.txt"
+    gazette_path = prepared.root / gazette_rel
+    gazette_path.parent.mkdir(parents=True, exist_ok=True)
+    gazette_path.write_text("本月邸报\n", encoding="utf-8")
+    display = f"{gazette_rel} 任意非路径后缀"
+    assert tools["read_material"](gazette_rel) == "本月邸报\n"
+    with pytest.raises(FileNotFoundError):
+        read_material(prepared.root, display)
+    miss = tools["read_material"](display)
+    assert miss.startswith("无法读取：")
+    assert "本月邸报" not in miss
 
 
 def test_audience_agent_exposes_directory_tools_and_min_instructions(game, tmp_path):
@@ -622,11 +637,12 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
         assert any(f"1627年{month}月.txt" in p for p in gazette_paths)
         assert f"PUBLIC_GAZETTE_MONTH_{month}" in blob
     index_lines = read_material(prepared.root, "INDEX.txt").splitlines()
+    rel = next(p for p in gazette_paths if p.endswith("1627年1月.txt"))
     titled = next(
         line for line in index_lines
-        if index_entry_path(line).endswith("1627年1月.txt")
+        if line.strip() == rel or line.strip().startswith(rel + " ")
     )
-    assert index_entry_path(titled).startswith("公开说法/邸报/")
+    assert rel.startswith("公开说法/邸报/")
     assert reign_period_label(1627, 1) in titled.split()
     assert "辽东标题" in titled.split()
     assert "PUBLIC_GAZETTE_MONTH_1" not in titled
