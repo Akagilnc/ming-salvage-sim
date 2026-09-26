@@ -267,15 +267,17 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert calls == [closed_turn, closed_turn]
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
 
-    # 再过一月后旧尾已离开两回合窗口，仍须按 pending 续接，不得丢弃。
+    # 再过月须等尾终结。worker 虽已异常完成票，持久 pending 不可放行。
     db.save_turn_report(state, "下月邸报")
+    with pytest.raises(RuntimeError, match="机械尾未终结"):
+        session.resolve_turn(allow_empty_decree=True)
+    assert int(state.turn) == closed_turn + 1
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+
+    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", lambda *_a, **_k: None)
     assert session.resolve_turn(allow_empty_decree=True).advanced is True
     assert int(state.turn) == closed_turn + 2
-    calls.clear()
-    ensure_mechanical_tails(session)
-    assert closed_turn in calls
-    assert int(state.turn) - 1 != closed_turn
-    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
+    assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
 
 @pytest.mark.parametrize("model_text,tail_status,visible", [

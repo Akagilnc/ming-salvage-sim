@@ -3952,6 +3952,16 @@ class GameSession:
         # 既受理转译、欠账补跑和调用方收夜，不留重新准入窗口。
         write_queue = get_session_write_queue(self)
         def _drain_catch_up_and_continue() -> None:
+            # 票的完成只表示本次 worker 已终止，不代表机械尾已终结。
+            # 屏障等完票后复查持久状态；非耗尽异常留下 pending 时不能过月。
+            from ming_sim.mechanical_tail import _pending_mechanical_tails
+            pending_tails = _pending_mechanical_tails(
+                self.db, current_turn=int(self.state.turn),
+            )
+            if pending_tails:
+                raise RuntimeError(
+                    f"机械尾未终结，不能过月：{[turn for turn, _ in pending_tails]}"
+                )
             catch_gate = None if write_gate_already_held else self._write_gate
             catch_up_pending_translations(
                 self.db, self.state,
