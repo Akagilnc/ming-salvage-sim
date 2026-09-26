@@ -253,6 +253,7 @@ def list_materials(root: Path, path: str = "") -> List[str]:
 
 
 def read_material(root: Path, path: str) -> str:
+    """按材料目录内的相对路径读文件。索引展示行不是路径。"""
     target = _resolve_inside(root, path)
     if not target.is_file():
         raise FileNotFoundError(path)
@@ -931,7 +932,9 @@ def _write_tree(
     public_events = knowledge.get("public_events") or []
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
-        tmp, _character_gazette_rows(public_events), prefix=_CHARACTER_GAZETTE_DIR,
+        tmp,
+        _with_archived_gazette_titles(_character_gazette_rows(public_events), db),
+        prefix=_CHARACTER_GAZETTE_DIR,
     ))
 
     secret_rel = _write_secret_order_file(tmp, db, state, character)
@@ -1107,14 +1110,46 @@ def _character_gazette_rows(public_events: Sequence[dict]) -> list[dict[str, obj
     return rows
 
 
+def _with_archived_gazette_titles(
+    rows: Sequence[dict[str, object]], db: Any,
+) -> list[dict[str, object]]:
+    """标题只取 turn_reports 已入档字段。缺标题留空，不读正文。"""
+    archived: dict[int, str] = {}
+    if hasattr(db, "list_turn_reports"):
+        for item in db.list_turn_reports():
+            archived[int(item.get("turn") or 0)] = str(item.get("title") or "")
+    stamped: list[dict[str, object]] = []
+    for row in rows:
+        current = str(row.get("title") or "")
+        if current.strip():
+            stamped.append(row)
+            continue
+        copy = dict(row)
+        copy["title"] = archived.get(int(row.get("turn") or 0), "")
+        stamped.append(copy)
+    return stamped
+
+
+def _gazette_index_line(rel: str, year: int, period: int, title: str) -> str:
+    """一行 = 路径、年月、已入档标题。无标题时只留路径，不另造标题。"""
+    if not str(title or "").strip():
+        return rel
+    from ming_sim.models import reign_period_label
+
+    label = reign_period_label(year, period) if year and 1 <= period <= 12 else ""
+    shown = str(title)
+    if "\n" in shown or "\r" in shown:
+        shown = shown.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    return f"{rel} {label} {shown}".strip() if label else f"{rel} {shown}".strip()
+
+
 def _write_gazette_index(
     tmp: Path, rows: Sequence[dict[str, object]], *, prefix: str,
 ) -> list[str]:
-    """历月邸报一行索引入目录（章节记忆退役，M3；0155/0157 后出注记）：每回合一份
-    全文文件，根 INDEX 里天然是一行一项——不再压缩/摘要成第二套机制。
+    """历月邸报一行索引入目录（#1845：年月 + #1862 已入档标题）。
 
-    ``prefix`` differs by reader: characters use ``公开说法/邸报``; world simulation
-    keeps top-level ``邸报`` (#1833 docs / #1834 world directory).
+    全文仍是 ``{年}年{月}月.txt``。索引行不解析正文。
+    ``prefix``：人物用 ``公开说法/邸报``，推演者用顶层 ``邸报``。
     """
     index: list[str] = []
     for row in rows:
@@ -1127,7 +1162,7 @@ def _write_gazette_index(
             continue
         rel = f"{prefix}/{fname}"
         _write_text(tmp / rel, body)
-        index.append(rel)
+        index.append(_gazette_index_line(rel, year, period, str(row.get("title") or "")))
     return index
 
 
@@ -1414,7 +1449,10 @@ def _write_world_tree(
     index.extend(_write_world_textual_fact_files(tmp, db, include_fact=include_fact))
     index.extend(_write_public_by_month(tmp, public_events))
     index.extend(_write_gazette_index(
-        tmp, db.list_turn_reports() if hasattr(db, "list_turn_reports") else (),
+        tmp,
+        _with_archived_gazette_titles(
+            db.list_turn_reports() if hasattr(db, "list_turn_reports") else (), db,
+        ),
         prefix=_WORLD_GAZETTE_DIR,
     ))
 

@@ -1047,29 +1047,8 @@ def create_rescript_deliberate_agent(llm_config: LLMConfig, agno_db: SqliteDb) -
     )
 
 
-def create_chapter_memory_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """章节记忆：把本回合诏书+邸报+落库效果浓缩成 {body, tags} JSON（body 叙事，tags 召回标签）。
-    一次性，不持久化。"""
-    del agno_db
-    ctx = _ctx()
-    return Agent(
-        name="起居注史官",
-        id="chapter-memory",
-        model=create_chat_model(
-            llm_config,
-            temperature=0.5,
-            top_p=0.85,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=[ctx.game_world_prompt, ctx.chapter_memory_prompt],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
 def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """国史编纂官：读全程章节记忆 + 结局类型，生成史评式结局总结（纯文本流式）。一次性，不持久化。"""
+    """国史编纂官：读所给历月邸报与时间线，生成史评式结局总结（纯文本）。一次性，不持久化。"""
     del agno_db
     ctx = _ctx()
     return Agent(

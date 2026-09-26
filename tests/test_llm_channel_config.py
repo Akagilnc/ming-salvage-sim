@@ -855,7 +855,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         game_world_prompt="gw",
         decree_writer_prompt="dw",
         season_simulator_prompt="ss",
-        chapter_memory_prompt="cm",
         ending_summary_prompt="es",
     )
     monkeypatch.setattr(agents_mod, "_ctx", lambda: fake_ctx)
@@ -882,7 +881,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ("create_world_segment_agent", lambda: agents_mod.create_world_segment_agent(
             cfg, SimpleNamespace(root="", opening="盘面"),
         )),
-        ("create_chapter_memory_agent", lambda: agents_mod.create_chapter_memory_agent(cfg, object())),
         ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg, object())),
         ("create_season_simulator_agent", lambda: agents_mod.create_season_simulator_agent(cfg, object())),
         ("create_promulgation_judge_agent", lambda: agents_mod.create_promulgation_judge_agent(

@@ -20,7 +20,6 @@ import pytest
 
 import ming_sim.decree as decree_mod
 import ming_sim.llm_config as llm_config
-import ming_sim.memories as memories
 import ming_sim.simulation as simulation
 import web_app
 from ming_sim.paths import user_data_path
@@ -49,8 +48,6 @@ def _stub_full_settlement(monkeypatch, *, narrative: str, payload_spy=None):
         return narrative, payload
 
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _sim)
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
 
 def test_hitl_quota_mechanism_fully_deleted():

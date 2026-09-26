@@ -3938,6 +3938,8 @@ class GameSession:
         调用方已持闸时须显式声明；其余路径始终传递真实 gate，
         不得把“他线程正持有”误判为本线程可无锁访问 SQLite。
         """
+        from ming_sim.mechanical_tail import ensure_mechanical_tails
+        ensure_mechanical_tails(self)
         from ming_sim.audience_translation import (
             catch_up_pending_translations,
             list_pending_translations,
@@ -4001,7 +4003,10 @@ class GameSession:
         尚未归档时 awaiting=False、advanced=False，仍停 settling；归档后才置 issued。
         """
         # #1842：过月前转译 join/catch-up/耗尽判定（闸外契约，见 await_translations_before_month）。
+        # #1845：先按 DB 续接未完机械尾，再进 barrier——与上月尾同闸等待。
         if not write_gate_already_held:
+            from ming_sim.mechanical_tail import ensure_mechanical_tails
+            ensure_mechanical_tails(self)
             self.await_translations_before_month()
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
             self.db.list_directives(self.state, statuses=("pending",))
@@ -4182,7 +4187,14 @@ class GameSession:
             self.state.turn_phase = TurnPhase.AWAITING_DECISION.value
         else:
             self.state.turn_phase = TurnPhase.SETTLING.value
-        self.db.save_state(self.state)
+        # 机械尾已在推进后占用同一条连接。这次落相位走写队列那把闸
+        # （与尾部读写票同一对象）；调用方已持闸时不再重入。
+        if write_gate_already_held:
+            self.db.save_state(self.state)
+        else:
+            from ming_sim.session_write_queue import get_session_write_queue
+            with get_session_write_queue(self).write_gate:
+                self.db.save_state(self.state)
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:

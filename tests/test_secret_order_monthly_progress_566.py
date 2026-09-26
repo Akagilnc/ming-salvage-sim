@@ -47,7 +47,6 @@ def _production_session(db, state, content):
 def _canned_monthly_settlement(monkeypatch, extractor_calls):
     """Keep the production settlement pipeline; replace only external LLM seams."""
     import ming_sim.decree as decree
-    import ming_sim.memories as memories
 
     monkeypatch.setattr(decree, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
@@ -67,8 +66,6 @@ def _canned_monthly_settlement(monkeypatch, extractor_calls):
     # #1745：结算拒收递话同属外层 LLM 缝。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree)
-    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
 
 def _settle(db, state, content, narrative="本月邸报", progress=None):

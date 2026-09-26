@@ -11377,78 +11377,6 @@ class GameDB:
             for row in rows
         ]
 
-    # ── 章节记忆（event_memories 的 chapter_summary 类，每回合一条，importance=5 永久）──
-
-    def save_chapter_memory(
-        self, state: GameState, title: str, body: str, tags: Optional[List[str]] = None,
-        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
-        public_body: Optional[str] = None,
-        *,
-        commit: bool = True,
-    ) -> int:
-        """落本回合章节记忆。subject 固定 court/chapter，event_type=chapter_summary，
-        source_id=turn 保证每回合唯一。body 存整段叙事章节（不受 outcome 80 字限）。
-
-        tags：除固定的 `章节`/`turnN` 外，并入 LLM 抽出的人物/地点/派系/事件召回标签，
-        供 recall_memories 按人名/派系命中本章。"""
-        base_tags = ["章节", f"turn{state.turn}"]
-        for t in tags or []:
-            t = str(t).strip()
-            if t and t not in base_tags:
-                base_tags.append(t)
-        self.persist_knowledge_items_for_turn(
-            state, knowledge_items, default_title=title, commit=commit
-        )
-        items = [item for item in self.knowledge_items_for_turn(state.turn)
-                 if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
-        # #883/#976: same write-seam rule as turn reports — shared exclusions
-        # force source-scoped aggregation; active briefs alone do not blank
-        # pure public prose (F3). No text-filter strip.
-        has_restricted_source = self._has_restricted_source_gate(
-            any(item.get("excluded_names") for item in items)
-        )
-        source_snapshot_supplied = knowledge_items is not None
-        if public_body is None:
-            public_chapter = (
-                "\n".join(str(item.get("body") or item.get("title") or "")
-                          for item in items if not item.get("excluded_names"))
-                if source_snapshot_supplied or has_restricted_source else str(body or "")
-            )
-        else:
-            public_chapter = str(public_body or "")
-        # #976: no text-filter strip — same structural rule as turn reports.
-        memory_id = self.upsert_event_memory(
-            state,
-            subject_type="court",
-            subject_id="chapter",
-            event_type="chapter_summary",
-            title=str(title or reign_period_label(state.year, state.period))[:40],
-            outcome=str(title or "")[:80],
-            sentiment="neutral",
-            importance=5,
-            tags=base_tags,
-            source_kind="turn_report",
-            source_id=str(state.turn),
-            expires_turn=None,
-            commit=commit,
-        )
-        if memory_id:
-            self.conn.execute(
-                "UPDATE event_memories SET body = ? WHERE id = ?",
-                (public_chapter, memory_id),
-            )
-        # The public chapter counterpart is a separate, source-preserving
-        # authorization record.  Never derive it by deleting secret strings
-        # from an LLM aggregate: a paraphrase would evade that redaction.
-        if public_chapter:
-            self.record_public_knowledge_event(
-                state, str(title or "朝局旧闻"), public_chapter,
-                source_id=f"chapter_source:{state.turn}", commit=False,
-            )
-        if commit:
-            self.conn.commit()
-        return memory_id
-
     def persist_knowledge_items_for_turn(
         self,
         state: GameState,
@@ -11576,35 +11504,6 @@ class GameDB:
                 "source_id": row["source_id"], "excluded_names": excluded_names,
             })
         return list(by_source.values())
-
-    def list_chapter_memories(
-        self, upto_turn: Optional[int] = None, recent: Optional[int] = None
-    ) -> List[Dict[str, object]]:
-        """取章节记忆，按 turn 升序。upto_turn 限上界；recent 只取最近 N 回合（喂大臣/推演用）。"""
-        clauses = ["event_type = 'chapter_summary'"]
-        params: list = []
-        if upto_turn is not None:
-            clauses.append("turn <= ?")
-            params.append(int(upto_turn))
-        if recent is not None and upto_turn is not None:
-            clauses.append("turn >= ?")
-            params.append(max(1, int(upto_turn) - int(recent) + 1))
-        where = " AND ".join(clauses)
-        rows = self.conn.execute(
-            f"SELECT turn, year, period, title, body FROM event_memories "
-            f"WHERE {where} ORDER BY turn ASC",
-            params,
-        ).fetchall()
-        return [
-            {
-                "turn": int(r["turn"]),
-                "year": int(r["year"]),
-                "period": int(r["period"]),
-                "title": r["title"] or "",
-                "body": r["body"] or "",
-            }
-            for r in rows
-        ]
 
     # ── 结局总结 ──
 

@@ -37,7 +37,6 @@ _POLICY_FIELDS = {
 import web_app
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
-import ming_sim.memories as memories_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
@@ -127,10 +126,6 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
             "visible_refs": {},
         },
     )
-    # 章节记忆的唯一 LLM 输出边界（memories.run_agent_text 仅被 record_chapter_memory 调用）；
-    # record_chapter_memory 与其确定性装配仍真跑。
-    monkeypatch.setattr(memories_mod, "run_agent_text",
-                        lambda *a, **k: '{"body": "本月边饷已清，暗流暗涌。", "tags": ["边饷"]}')
 
 
 @pytest.fixture
@@ -144,7 +139,7 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
     - GameSession._start/_finish_cli_action_intent → 动作意图分类器（禁 sk-test 真网）
     - web_app.run_highlight_judge → 回话 done 后高亮判官（#544；禁 sk-test 真网）
-    - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
+    - _fake_settlement_llm：decree 判官/推演/抽取/拟诏
     - load_runtime_llm 配置中和
     - registry.get → 大臣回话流（_FakeAgent，按测例挂起）
     不 patch auto-close / 结算核。

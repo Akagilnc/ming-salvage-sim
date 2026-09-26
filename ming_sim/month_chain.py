@@ -5,7 +5,9 @@
 
 #1847：步骤 4 请旨/打回三选统一收口既有 HITL 案头；答复后从问处续推再交步骤 5。
 批红文书页呈现归 #1826。#1862：批红与全部效果落定后，邸报作者一次写出标题和正文，
-入档后交回本链推进。不另造平行机制。不另建无旨快路，也不再走五模块 extractor。
+入档后交回本链推进。推进后的机械尾（#1845：关系／派系酿制与结局总评）由本链
+调度到 SessionWriteQueue 后台票，下次过月前 join。不另造平行机制。不另建无旨
+快路，也不再走五模块 extractor。
 """
 
 from __future__ import annotations
@@ -19,6 +21,22 @@ _CHAIN_KEY = "month_chain"
 _TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate"})
 _WORLD_QUESTION_PREFIX = "world-question:"
 _DECREE_QUESTION_PREFIX = "decree-question:"
+
+
+def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: Any):
+    from ming_sim.decree_forecast import _owner_for
+
+    owner = _owner_for(db)
+    if owner is None or getattr(owner, "db", None) is not db:
+        return SimpleNamespace(
+            db=db, state=state, llm_config=llm_config, agno_db=agno_db, content=content,
+        )
+    owner.state = state
+    if llm_config is not None:
+        owner.llm_config = llm_config
+    if agno_db is not None:
+        owner.agno_db = agno_db
+    return owner
 
 
 def run_world_segment_text(
@@ -455,6 +473,7 @@ def run_player_month_chain(
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
     del on_event, before_turn
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
+    from ming_sim.mechanical_tail import ensure_mechanical_tails
 
     turn = int(state.turn)
     chain = _load_chain(db, turn)
@@ -476,6 +495,8 @@ def run_player_month_chain(
         _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
     except Exception as exc:
         abort_from(exc)
+    # #1845：下次过月前 join／重开续接上月机械尾。尾异常不改写成月链 call_failure。
+    ensure_mechanical_tails(_session_owner(db, state, llm_config, agno_db, content))
     # 请旨续推的原故障原样上浮：问与 world_continued 都未消费，批红入口重试看见同一颗异常。
     _consume_rescript_answers(
         SimpleNamespace(
@@ -552,6 +573,7 @@ def _run_loaded_month_chain(
     advanced = _advance_after_gazette(
         db, state, chain, turn, decree_text, source, content=content,
         declaration_outcome=declaration_outcome,
+        llm_config=llm_config, agno_db=agno_db,
     )
     return ResolveResult(
         awaiting=False, advanced=advanced, stage="advanced" if advanced else "gazette",
@@ -1174,6 +1196,7 @@ def _dossier_for_decree_ref(db: Any, decree_ref: str) -> Optional[Dict[str, Any]
 def _advance_after_gazette(
     db: Any, state: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
     *, content: Any = None, declaration_outcome: Optional[Dict[str, object]] = None,
+    llm_config: Any = None, agno_db: Any = None,
 ) -> bool:
     if chain.get("advanced"):
         return True
@@ -1183,6 +1206,8 @@ def _advance_after_gazette(
     )
     from ming_sim.rescript_actions import clear_return_revise_choice_anchors
 
+    settled_year, settled_period = int(state.year), int(state.period)
+    ending_outcome: Optional[Dict[str, object]] = None
     with atomic_and_reload(db, state, content=content):
         if not state.ended:
             outcome = declaration_outcome or chain.get("declaration_outcome") or victory_status(db, state)
@@ -1198,6 +1223,17 @@ def _advance_after_gazette(
             if isinstance(outcome, dict) and outcome.get("status") != ENDING_ONGOING:
                 state.ended = True
                 state.ending_status = str(outcome.get("status") or "")
+                ending_outcome = dict(outcome)
+        elif isinstance(declaration_outcome, dict):
+            ending_outcome = dict(declaration_outcome)
+        elif isinstance(chain.get("declaration_outcome"), dict):
+            ending_outcome = dict(chain["declaration_outcome"])
+        from ming_sim.mechanical_tail import mark_mechanical_tail_pending
+        mark_mechanical_tail_pending(
+            db, turn, settled_year=settled_year, settled_period=settled_period,
+            ending_outcome=ending_outcome, source=source,
+        )
+        chain = _load_chain(db, turn)
         db.mark_directives_issued(state)
         clear_return_revise_choice_anchors(db, None)
         state.next_period()
@@ -1208,6 +1244,19 @@ def _advance_after_gazette(
         chain["advanced"] = True
         chain["stage"] = "advanced"
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+    # #1845：推进后启动机械尾（后台；不挡新月前台）。结局总评属尾，判定已在上面完成。
+    from ming_sim.mechanical_tail import schedule_mechanical_tail_after_advance
+
+    owner = _session_owner(db, state, llm_config, agno_db, content)
+    schedule_mechanical_tail_after_advance(
+        owner,
+        closed_turn=int(turn),
+        settled_year=settled_year,
+        settled_period=settled_period,
+        ending_outcome=ending_outcome,
+        source=source,
+        pending_already_marked=True,
+    )
     return True
 
 

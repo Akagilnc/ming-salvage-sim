@@ -47,7 +47,7 @@ def _seed_waiting_arrivals(game, names):
     return arrivals, waiting
 
 
-def _stub_settlement_llms(decree_mod, memories, monkeypatch, *, simulate, attendant=None):
+def _stub_settlement_llms(decree_mod, monkeypatch, *, simulate, attendant=None):
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", simulate)
     if attendant is not None:
@@ -55,8 +55,6 @@ def _stub_settlement_llms(decree_mod, memories, monkeypatch, *, simulate, attend
     # #1745：结算拒收递话同属外层 LLM 缝。
     from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
     install_settlement_attendant_agent_stub(monkeypatch, decree_mod)
-    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
-    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
     monkeypatch.setattr(
         decree_mod,
         "llm_promulgation_verdicts",

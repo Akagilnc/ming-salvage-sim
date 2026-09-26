@@ -235,9 +235,9 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
         state, "密查辽饷", hidden, source_id="test:hidden-secret",
         excluded_names=[second.name],
     )
-    db.save_chapter_memory(
-        state, "本月朝局", "章节上游标记-两人可见",
-        public_body="章节上游标记-两人可见",
+    db.save_turn_report(
+        state, "公开邸报标记-两人可见",
+        public_body="公开邸报标记-两人可见",
     )
 
     captured = {}
@@ -268,8 +268,8 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
     )
     assert hidden in first_blob
     assert hidden not in second_blob
-    assert "章节上游标记-两人可见" in first_blob
-    assert "章节上游标记-两人可见" in second_blob
+    assert "公开邸报标记-两人可见" in first_blob
+    assert "公开邸报标记-两人可见" in second_blob
     assert hidden not in second_rendered
     assert f"【{first.name}此刻所知的天下" not in first_rendered
 
@@ -350,9 +350,7 @@ def test_secret_source_boundary_does_not_hide_unrelated_chapter_material(game):
     db.record_public_knowledge_event(
         state, "密令确认", secret_mark, source_id=f"secret_order:{order}",
     )
-    db.save_chapter_memory(
-        state, "本月朝局", chapter_mark, public_body=chapter_mark,
-    )
+    db.save_turn_report(state, chapter_mark, public_body=chapter_mark)
 
     excluded_knowledge = db.get_character_knowledge(state, excluded.name)
     knower_knowledge = db.get_character_knowledge(state, knower.name)
