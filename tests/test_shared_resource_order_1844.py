@@ -313,3 +313,66 @@ def test_world_segment_cross_category_order_survives_reopen(game, tmp_path):
         "SELECT SUM(delta) FROM economy_ledger WHERE reason='清欠'"
     ).fetchone()[0] == -10
     reopened.close()
+
+
+def _invalid_shape_matches(db, section: str, key: str, value: str) -> int:
+    rows = db.conn.execute(
+        "SELECT item_json FROM rejection_reports "
+        "WHERE category='invalid_shape' AND section=?",
+        (section,),
+    ).fetchall()
+    matched = 0
+    for row in rows:
+        item = json.loads(row["item_json"])
+        if isinstance(item, dict) and item.get(key) == value:
+            matched += 1
+    return matched
+
+
+def test_world_segment_stamps_each_shared_item_once(game):
+    """合并 extraction 与逐笔 sequence 共用原条目：坏项只拒一次，合法先后仍按交代落账。"""
+    from ming_sim.month_translate import dispatch_month_segment
+
+    db, state, _ = game
+    state.metrics["国库"] = 100
+    affairs_before = db.conn.execute("SELECT COUNT(*) FROM affairs").fetchone()[0]
+    shared = {
+        "attach": "new", "identity": "同批一印", "name": "同批一印", "origin": "世界段",
+    }
+
+    def _move(label, declaration):
+        return {
+            "account": "国库", "delta": -1, "category": label, "reason": label,
+            "affair_declaration": declaration,
+        }
+
+    dispatch_month_segment(
+        db, state, segment="逐笔只拒一次",
+        translate_fn=lambda _request, _config: {"effects": [
+            {"economy_moves": [_move("先笔", shared)]},
+            {"economy_moves": [_move("冲突笔", {
+                "attach": "new", "identity": "同批一印",
+                "name": "另一事", "origin": "世界段",
+            })]},
+            {
+                "economy_moves": [_move("后笔", dict(shared))],
+                "new_issues": [{
+                    "id": "stamp-once-bad-issue",
+                    "affair_declaration": {"attach": "new"},
+                }],
+            },
+            {"economy_moves": [_move("坏声明", {"attach": "new"})]},
+        ]},
+    )
+
+    ledger = db.conn.execute(
+        "SELECT category, origin_ref FROM economy_ledger "
+        "WHERE category IN ('先笔', '冲突笔', '后笔', '坏声明') ORDER BY id"
+    ).fetchall()
+    assert [row["category"] for row in ledger] == ["先笔", "后笔"]
+    assert ledger[0]["origin_ref"] and ledger[0]["origin_ref"] == ledger[1]["origin_ref"]
+    assert int(state.metrics["国库"]) == 98
+    assert db.conn.execute("SELECT COUNT(*) FROM affairs").fetchone()[0] == affairs_before + 1
+    assert _invalid_shape_matches(db, "economy_moves", "category", "冲突笔") == 1
+    assert _invalid_shape_matches(db, "economy_moves", "category", "坏声明") == 1
+    assert _invalid_shape_matches(db, "new_issues", "id", "stamp-once-bad-issue") == 1

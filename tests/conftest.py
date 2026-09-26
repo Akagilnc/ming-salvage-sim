@@ -104,22 +104,15 @@ def _install_tail_owner_note(mp: pytest.MonkeyPatch) -> None:
 
 
 def _drain_registered_sessions_before_close(db) -> None:
-    """排空已登记队列，再由夹具自己关库。
+    """排空已登记队列上未完成的写票，再由夹具自己关库。
 
-    测试替身执行器不跑已提交的尾，票会一直开着；对它 barrier 会挂死。
-    此时没有活线程占这条连接，直接留给随后的 ``db.close()``。
+    关库顺序只看写票是否完成，不看执行器类型。委托真实线程池的替身
+    仍有在飞任务时，barrier 等到票完成才返回。
     """
-    from concurrent.futures import ThreadPoolExecutor
-
-    import ming_sim.audience_translation as audience_translation
     from ming_sim.session_write_queue import drain_and_close_session
 
     owners = list(getattr(db, "_test_session_owners", ()) or ())
-    live = isinstance(audience_translation._executor, ThreadPoolExecutor)
     for owner in reversed(owners):
-        queue = getattr(owner, "_write_queue", None)
-        if not live and queue is not None and queue.inflight_count() > 0:
-            continue
         drain_and_close_session(owner)
 
 
