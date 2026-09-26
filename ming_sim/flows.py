@@ -124,6 +124,7 @@ def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Op
 def calc_province_fiscal(
     state: GameState,
     db: GameDB,
+    region_rows: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[int, int, List[Dict]]:
     """按省计算月度财政收入。
 
@@ -133,7 +134,7 @@ def calc_province_fiscal(
 
     返回 (国库月收合计, 内库月收合计, 明细列表)。
     """
-    rows = db.conn.execute(
+    rows = region_rows if region_rows is not None else db.conn.execute(
         "SELECT id, name, unrest, gentry_resistance, tax_per_turn, fiscal FROM regions"
     ).fetchall()
     if not rows:
@@ -228,13 +229,19 @@ def _as_settle_param_nonnegative_float(label: str, value: object) -> float:
     return amount
 
 
-def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True) -> Tuple[float, float]:
+def _substrate_hub_salt_commerce_income_split(
+    db: GameDB, *, strict: bool = True,
+    region_rows: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[float, float]:
     """Salt and commerce taxes stay as central side-channel income under cutover."""
     salt_total = 0.0
     commerce_total = 0.0
-    rows = db.conn.execute(
-        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
-    ).fetchall()
+    if region_rows is None:
+        rows = db.conn.execute(
+            "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
+        ).fetchall()
+    else:
+        rows = [row for row in region_rows if str(row["controlled_by"]) == "ming"]
     for row in rows:
         try:
             fiscal = json.loads(str(row["fiscal"] or "{}"))
@@ -255,14 +262,22 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True
     return salt_total, commerce_total
 
 
-def _project_substrate_hub_remittance(db: GameDB) -> float:
+def _project_substrate_hub_remittance(
+    db: GameDB, region_rows: Optional[List[Dict[str, Any]]] = None,
+) -> float:
     """Project next fixed-flow remittance without mutating province fiscal state."""
     from .fiscal_tick import settle_tick
 
     remittance_total = 0.0
-    rows = db.conn.execute(
-        "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
-    ).fetchall()
+    if region_rows is None:
+        rows = db.conn.execute(
+            "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
+        ).fetchall()
+    else:
+        rows = sorted(
+            (row for row in region_rows if str(row["controlled_by"]) == "ming"),
+            key=lambda row: str(row["id"]),
+        )
     for row in rows:
         region_id = str(row["id"])
         try:
@@ -304,8 +319,10 @@ def _fiscal_container_values_when_complete(
     return values
 
 
-def _fiscal_config_rate(db: GameDB, key: str) -> float:
-    cfg = db.get_fiscal_config()
+def _fiscal_config_rate(
+    db: GameDB, key: str, cfg: Optional[Dict[str, Any]] = None,
+) -> float:
+    cfg = db.get_fiscal_config() if cfg is None else cfg
     minimum = db.fiscal_config_minimum_value(key)
     if key not in cfg and (
         minimum is not None or db.fiscal_config_loss_rate_pair(key) is not None
@@ -338,10 +355,13 @@ def _income_amount_after_legacy_modifier(
     return db.apply_legacy_pct(amount, net_pct) if net_pct else int(amount)
 
 
-def _central_loss_split(db: GameDB, gross: float, human_key: str, sink_key: str) -> Tuple[int, int]:
+def _central_loss_split(
+    db: GameDB, gross: float, human_key: str, sink_key: str,
+    cfg: Optional[Dict[str, Any]] = None,
+) -> Tuple[int, int]:
     gross_amount = _round_nonnegative_amount(gross)
-    human_rate = _fiscal_config_rate(db, human_key)
-    sink_rate = _fiscal_config_rate(db, sink_key)
+    human_rate = _fiscal_config_rate(db, human_key, cfg)
+    sink_rate = _fiscal_config_rate(db, sink_key, cfg)
     if human_rate + sink_rate > 1 + 1e-9:
         raise ValueError(f"{human_key}+{sink_key} 不得超过 100%")
     human = min(gross_amount, _round_nonnegative_amount(gross_amount * human_rate))
@@ -349,37 +369,78 @@ def _central_loss_split(db: GameDB, gross: float, human_key: str, sink_key: str)
     return human, sink
 
 
+def _projected_hub_income_amounts(
+    db: GameDB, state: GameState, *,
+    fiscal_cfg: Optional[Dict[str, Any]] = None,
+    region_rows: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    raw_remittance = _round_nonnegative_amount(
+        _project_substrate_hub_remittance(db, region_rows)
+    )
+    raw_salt, raw_commerce = _substrate_hub_salt_commerce_income_split(
+        db, region_rows=region_rows,
+    )
+    remittance = _income_amount_after_legacy_modifier(db, state, "国库", raw_remittance)
+    salt = _income_amount_after_legacy_modifier(
+        db, state, "国库", _round_nonnegative_amount(raw_salt)
+    )
+    commerce = _income_amount_after_legacy_modifier(
+        db, state, "国库", _round_nonnegative_amount(raw_commerce)
+    )
+    taicang_human_loss, taicang_sink_loss = _central_loss_split(
+        db,
+        remittance + salt + commerce,
+        _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
+        _CENTRAL_TAICANG_SINK_LOSS_RATE,
+        fiscal_cfg,
+    )
+    return {
+        "起运": remittance,
+        "盐税": salt,
+        "商税": commerce,
+        "太仓亏空": taicang_human_loss + taicang_sink_loss,
+    }
+
+
 def _substrate_hub_budget_income_lines(
-    db: GameDB, state: GameState, *, project_missing: bool = True
+    db: GameDB, state: GameState, *, project_missing: bool = True,
+    fiscal_cfg: Optional[Dict[str, Any]] = None,
+    region_rows: Optional[List[Dict[str, Any]]] = None,
+    skip_container_names: Tuple[str, ...] = (),
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
     """Read persisted hub income, or project first-tick budget before containers exist."""
     persisted = _fiscal_container_values_when_complete(
         db, ("hub_省级起运到京", "hub_盐税解京", "hub_商税解京", "hub_太仓亏空")
     )
+    skip = set(skip_container_names)
+    need_projection = persisted is None or bool(skip)
+    projected = (
+        _projected_hub_income_amounts(
+            db, state, fiscal_cfg=fiscal_cfg, region_rows=region_rows,
+        )
+        if need_projection and (project_missing or skip)
+        else None
+    )
+    container_amounts = None
     if persisted is not None:
-        remittance = _round_nonnegative_amount(persisted["hub_省级起运到京"])
-        salt = _round_nonnegative_amount(persisted["hub_盐税解京"])
-        commerce = _round_nonnegative_amount(persisted["hub_商税解京"])
-        taicang_loss = _round_nonnegative_amount(persisted["hub_太仓亏空"])
-    elif project_missing:
-        raw_remittance = _round_nonnegative_amount(_project_substrate_hub_remittance(db))
-        raw_salt, raw_commerce = _substrate_hub_salt_commerce_income_split(db)
-        remittance = _income_amount_after_legacy_modifier(db, state, "国库", raw_remittance)
-        salt = _income_amount_after_legacy_modifier(
-            db, state, "国库", _round_nonnegative_amount(raw_salt)
-        )
-        commerce = _income_amount_after_legacy_modifier(
-            db, state, "国库", _round_nonnegative_amount(raw_commerce)
-        )
-        taicang_human_loss, taicang_sink_loss = _central_loss_split(
-            db,
-            remittance + salt + commerce,
-            _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
-            _CENTRAL_TAICANG_SINK_LOSS_RATE,
-        )
-        taicang_loss = taicang_human_loss + taicang_sink_loss
-    else:
-        remittance = salt = commerce = taicang_loss = 0
+        container_amounts = {
+            "起运": _round_nonnegative_amount(persisted["hub_省级起运到京"]),
+            "盐税": _round_nonnegative_amount(persisted["hub_盐税解京"]),
+            "商税": _round_nonnegative_amount(persisted["hub_商税解京"]),
+            "太仓亏空": _round_nonnegative_amount(persisted["hub_太仓亏空"]),
+        }
+
+    def _amount(name: str) -> int:
+        if container_amounts is not None and name not in skip:
+            return container_amounts[name]
+        if projected is not None:
+            return projected[name]
+        return 0
+
+    remittance = _amount("起运")
+    salt = _amount("盐税")
+    commerce = _amount("商税")
+    taicang_loss = _amount("太仓亏空")
     income = [
         {"name": "起运", "amount": remittance, "note": "各省起运到京（hub 持久源）",
          "internal": "substrate_hub"},
@@ -431,7 +492,10 @@ def _add_fiscal_container(db: GameDB, key: str, delta: float, note: str) -> None
 
 
 def compute_budget_lines(
-    db: GameDB, state: GameState, *, project_substrate_hub: bool = True
+    db: GameDB, state: GameState, *, project_substrate_hub: bool = True,
+    fiscal_cfg: Optional[Dict[str, Any]] = None,
+    region_rows: Optional[List[Dict[str, Any]]] = None,
+    skip_container_names: Tuple[str, ...] = (),
 ) -> Dict[str, Dict[str, list]]:
     """唯一定额预算源。返回 {"国库":{"income":[行],"expense":[行]},"内库":{...}}；
     每行至少含 {name,amount,note}，可另带 budget_key 等工程元数据（军饷行固定 budget_key=army_pay，
@@ -440,14 +504,16 @@ def compute_budget_lines(
     substrate_hub 预算分列京运补与中央份额拟拨，不预演分配或损耗；
     建筑＝按 condition 折产/维护；
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
-    cfg = db.get_fiscal_config()
+    cfg = db.get_fiscal_config() if fiscal_cfg is None else fiscal_cfg
     if db.is_substrate_hub_fiscal_engine_enabled():
         hub_income_lines, hub_expense_lines = _substrate_hub_budget_income_lines(
-            db, state, project_missing=project_substrate_hub
+            db, state, project_missing=project_substrate_hub,
+            fiscal_cfg=fiscal_cfg, region_rows=region_rows,
+            skip_container_names=skip_container_names,
         )
         nk_huang = 0
     else:
-        gk_tax, nk_huang, _ = calc_province_fiscal(state, db)
+        gk_tax, nk_huang, _ = calc_province_fiscal(state, db, region_rows)
         hub_income_lines = [
             {"name": "田赋辽饷盐商", "amount": int(gk_tax),
              "note": "各省田赋+辽饷+盐税+商税（按腐败度/士绅阻力/民变动态折算）"}
@@ -538,6 +604,161 @@ def compute_budget_lines(
             budget[acc]["income"].append({"name": "建筑产出", "amount": bld_in[acc], "note": "建筑月产出"})
         if bld_out[acc] > 0:
             budget[acc]["expense"].append({"name": "建筑维护", "amount": bld_out[acc], "note": "建筑月维护"})
+    return budget
+
+
+_LOSS_RATE_KEYS = (
+    _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
+    _CENTRAL_TAICANG_SINK_LOSS_RATE,
+    _CENTRAL_JINGYUN_HUMAN_LOSS_RATE,
+    _CENTRAL_JINGYUN_SINK_LOSS_RATE,
+)
+_STEM_BUDGET_NAMES = {
+    "盐税": ("盐税",),
+    "商税": ("商税",),
+    "辽饷": ("起运", "田赋辽饷盐商"),
+    "田赋": ("起运", "田赋辽饷盐商"),
+}
+
+
+def _unscale_rounded(current: int, old_cfg: int, new_cfg: int) -> Optional[int]:
+    if old_cfg <= 0 or new_cfg <= 0:
+        return None
+    return max(0, int(round(current * old_cfg / new_cfg)))
+
+
+def _public_fiscal_cfg(db: GameDB, changes) -> Dict[str, Any]:
+    deltas: Dict[str, int] = {}
+    for row in changes:
+        key = str(row["key"])
+        deltas[key] = deltas.get(key, 0) + int(row["delta"] or 0)
+    live = db.get_fiscal_config()
+    projected: Dict[str, Any] = {}
+    for key, value in live.items():
+        amount = int(value) - int(deltas.get(key, 0))
+        minimum = db.fiscal_config_minimum_value(key)
+        projected[key] = max(minimum if minimum is not None else 0, amount)
+    return projected
+
+
+def _secret_scale_events(db: GameDB, changes) -> List[Tuple[str, int, int]]:
+    events: List[Tuple[str, int, int]] = []
+    for row in changes:
+        stem = db._stem_of(str(row["key"]))
+        if stem not in db._DYNAMIC_REGION_FIELD and stem != "田赋":
+            continue
+        events.append((stem, int(row["old_value"] or 0), int(row["new_value"] or 0)))
+    return events
+
+
+def _tainted_budget_names(db: GameDB, changes) -> set[str]:
+    names: set[str] = set()
+    income_tainted = False
+    for row in changes:
+        key = str(row["key"])
+        stem = db._stem_of(key)
+        if stem in _STEM_BUDGET_NAMES:
+            names.update(_STEM_BUDGET_NAMES[stem])
+            income_tainted = True
+        if key in _LOSS_RATE_KEYS:
+            names.add("太仓亏空")
+    if income_tainted:
+        names.add("太仓亏空")
+    return names
+
+
+def _project_region_rows(
+    db: GameDB, events: List[Tuple[str, int, int]],
+) -> Tuple[Optional[List[Dict[str, Any]]], set[str]]:
+    if not events:
+        return None, set()
+    unrecoverable: set[str] = set()
+    rows: List[Dict[str, Any]] = []
+    for row in db.conn.execute(
+        "SELECT id, name, unrest, gentry_resistance, tax_per_turn, fiscal, controlled_by "
+        "FROM regions"
+    ).fetchall():
+        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        if not isinstance(fiscal, dict):
+            fiscal = {}
+        tax = int(row["tax_per_turn"] or 0)
+        for stem, old_cfg, new_cfg in events:
+            if stem == "田赋":
+                others = (
+                    int(fiscal.get("liao_xiang", 0) or 0)
+                    + int(fiscal.get("salt_tax", 0) or 0)
+                    + int(fiscal.get("commerce_tax", 0) or 0)
+                )
+                residual = _unscale_rounded(max(0, tax - others), old_cfg, new_cfg)
+                if residual is None:
+                    unrecoverable.add(stem)
+                    residual = 0
+                tax = others + residual
+                continue
+            field = db._DYNAMIC_REGION_FIELD[stem]
+            undone = _unscale_rounded(int(fiscal.get(field, 0) or 0), old_cfg, new_cfg)
+            if undone is None:
+                unrecoverable.add(stem)
+                undone = 0
+            fiscal[field] = undone
+        rows.append({
+            "id": row["id"],
+            "name": row["name"],
+            "unrest": row["unrest"],
+            "gentry_resistance": row["gentry_resistance"],
+            "tax_per_turn": tax,
+            "fiscal": json.dumps(fiscal, ensure_ascii=False),
+            "controlled_by": row["controlled_by"],
+        })
+    return rows, unrecoverable
+
+
+def budget_lines_for_reader(
+    db: GameDB, state: GameState, *,
+    exclude_origin_prefix: str = "",
+    exclude_dossier_ids=None,
+) -> Dict[str, Dict[str, list]]:
+    """Budget lines for one reader. Secret fiscal changes stay on the live books."""
+    changes = db.excluded_fiscal_config_changes(
+        exclude_origin_prefix=exclude_origin_prefix,
+        exclude_dossier_ids=exclude_dossier_ids,
+    )
+    expr, params = db._ledger_exclusion_expr(
+        exclude_origin_prefix, exclude_dossier_ids,
+    )
+    if not changes and not expr:
+        return compute_budget_lines(db, state)
+    region_rows, unrecoverable = _project_region_rows(db, _secret_scale_events(db, changes))
+    tainted = _tainted_budget_names(db, changes)
+    for stem in unrecoverable:
+        tainted.update(_STEM_BUDGET_NAMES.get(stem, ()))
+    budget = compute_budget_lines(
+        db, state,
+        fiscal_cfg=_public_fiscal_cfg(db, changes) if changes else None,
+        region_rows=region_rows,
+        skip_container_names=tuple(sorted(tainted)),
+    )
+    if expr:
+        excluded_origins = {
+            str(row["origin_ref"] or "")
+            for row in db.conn.execute(
+                f"SELECT origin_ref FROM fiscal_config WHERE {expr}",
+                params,
+            ).fetchall()
+        }
+    else:
+        excluded_origins = set()
+    hidden_names = set()
+    for stem in unrecoverable:
+        hidden_names.update(_STEM_BUDGET_NAMES.get(stem, ()))
+    if excluded_origins or hidden_names:
+        for account in budget.values():
+            for direction in ("income", "expense"):
+                account[direction] = [
+                    item for item in account[direction]
+                    if str(item.get("origin_ref") or "") not in excluded_origins
+                    and str(item.get("name") or "") not in hidden_names
+                ]
     return budget
 
 

@@ -6760,33 +6760,67 @@ class GameDB:
         ).fetchall()
         return {str(row["account"]): int(row["hidden"] or 0) for row in rows}
 
+    def excluded_fiscal_config_changes(
+        self,
+        *,
+        exclude_origin_prefix: str = "",
+        exclude_dossier_ids: Optional[Iterable[int]] = None,
+    ) -> List[sqlite3.Row]:
+        """密源财政变更，新的在前。"""
+        expr, params = self._ledger_exclusion_expr(
+            exclude_origin_prefix, exclude_dossier_ids,
+        )
+        if not expr:
+            return []
+        return list(self.conn.execute(
+            f"""
+            SELECT key, old_value, new_value, delta
+            FROM fiscal_config_changes
+            WHERE {expr}
+            ORDER BY id DESC
+            """,
+            params,
+        ).fetchall())
+
+    def public_account_balances(
+        self, state: GameState, *,
+        exclude_origin_prefix: str = "",
+        exclude_dossier_ids: Optional[Iterable[int]] = None,
+    ) -> List[Tuple[str, int]]:
+        """账面余额减去密源流水。无账户行时回退到 metrics。"""
+        expr, _params = self._ledger_exclusion_expr(
+            exclude_origin_prefix, exclude_dossier_ids,
+        )
+        hidden = self.excluded_account_deltas(
+            exclude_origin_prefix=exclude_origin_prefix,
+            exclude_dossier_ids=exclude_dossier_ids,
+        ) if expr else {}
+        rows = self.conn.execute(
+            "SELECT account, balance FROM economy_accounts ORDER BY account DESC"
+        ).fetchall()
+        if not rows:
+            return [
+                ("国库", int(state.metrics["国库"]) - int(hidden.get("国库", 0))),
+                ("内库", int(state.metrics["内库"]) - int(hidden.get("内库", 0))),
+            ]
+        return [
+            (str(row["account"]), int(row["balance"]) - int(hidden.get(str(row["account"]), 0)))
+            for row in rows
+        ]
+
     def treasury_budget_summary(
         self, state: "GameState | None" = None, *,
         exclude_origin_prefix: str = "",
         exclude_dossier_ids: Optional[Iterable[int]] = None,
     ) -> str:
-        # 三套口径统一：直接调 flows.compute_budget_lines（唯一定额源），此处只负责拼文本。
-        from ming_sim.flows import compute_budget_lines  # 局部 import 避免与 flows 顶层循环依赖
+        # 三套口径统一：budget_lines_for_reader 走 compute_budget_lines，密源读者先投影。此处只拼文本。
+        from ming_sim.flows import budget_lines_for_reader  # 局部 import 避免与 flows 顶层循环依赖
         st = state if state is not None else self.load_state("")
-        budget = compute_budget_lines(self, st)
-        expr, params = self._ledger_exclusion_expr(
-            exclude_origin_prefix, exclude_dossier_ids,
+        budget = budget_lines_for_reader(
+            self, st,
+            exclude_origin_prefix=exclude_origin_prefix,
+            exclude_dossier_ids=exclude_dossier_ids,
         )
-        if expr:
-            excluded_origins = {
-                str(row["origin_ref"] or "")
-                for row in self.conn.execute(
-                    f"SELECT origin_ref FROM fiscal_config WHERE {expr}",
-                    params,
-                ).fetchall()
-            }
-            if excluded_origins:
-                for account in budget.values():
-                    for direction in ("income", "expense"):
-                        account[direction] = [
-                            item for item in account[direction]
-                            if str(item.get("origin_ref") or "") not in excluded_origins
-                        ]
 
         def _sum(acc: str, direction: str) -> int:
             return sum(int(it["amount"]) for it in budget[acc][direction])
@@ -6898,28 +6932,14 @@ class GameDB:
         expr, expr_params = self._ledger_exclusion_expr(
             exclude_origin_prefix, exclude_dossier_ids,
         )
-        hidden = self.excluded_account_deltas(
+        balances = self.public_account_balances(
+            state,
             exclude_origin_prefix=exclude_origin_prefix,
             exclude_dossier_ids=exclude_dossier_ids,
-        ) if expr else {}
-
-        def _shown(account: str, raw: int) -> int:
-            return int(raw) - int(hidden.get(account, 0))
-
-        account_rows = self.conn.execute(
-            "SELECT account, balance FROM economy_accounts ORDER BY account DESC"
-        ).fetchall()
-        if not account_rows:
-            account_text = (
-                f"国库{format_money(_shown('国库', int(state.metrics['国库'])))}，"
-                f"内库{format_money(_shown('内库', int(state.metrics['内库'])))}"
-            )
-        else:
-            account_text = "，".join(
-                f"{row['account']}{format_money(_shown(str(row['account']), int(row['balance'])))}"
-                for row in account_rows
-            )
-
+        )
+        account_text = "，".join(
+            f"{account}{format_money(amount)}" for account, amount in balances
+        )
         visible_sql = f" AND NOT {expr}" if expr else ""
         period_rows = self.conn.execute(
             f"""

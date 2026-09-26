@@ -268,11 +268,39 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
         "world_segment": str(chain.get("world_text") or ""),
         "rescript_answers": answers,
         "month_open": snapshot,
+        "treasury": _gazette_treasury(db, state, secret_dossiers),
         "due_commitments": due_commitments,
         "waiting_audience": collect_new_arrival_waiting_audience(
             _persisted_transit_arrivals(db, turn),
             list_waiting_audience_summons(db),
         ),
+    }
+
+
+def _gazette_treasury(db: Any, state: Any, secret_dossiers: set[int]) -> Dict[str, Any]:
+    """作者可见的结构化钱粮。报告正文与这里读同一投影。"""
+    from ming_sim.flows import budget_lines_for_reader
+
+    exclusions = {
+        "exclude_origin_prefix": _GAZETTE_SECRET_LEDGER_PREFIX,
+        "exclude_dossier_ids": secret_dossiers,
+    }
+    budget = budget_lines_for_reader(db, state, **exclusions)
+    lines = [
+        {
+            "account": account,
+            "direction": direction,
+            "name": str(item.get("name") or ""),
+            "amount": int(item.get("amount") or 0),
+        }
+        for account, directions in budget.items()
+        for direction in ("income", "expense")
+        for item in directions.get(direction, [])
+    ]
+    return {
+        "balances": dict(db.public_account_balances(state, **exclusions)),
+        "budget": lines,
+        "hub": db.treasury_hub_result(state, **exclusions),
     }
 
 

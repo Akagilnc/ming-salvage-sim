@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import threading
 
 import pytest
@@ -435,12 +434,17 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert archive["report"] == _REPORT
 
 
-def _amount_token(text: str, amount: int) -> bool:
-    return re.search(rf"(?<!\d){int(amount)}(?!\d)", text) is not None
+def _budget_amount(lines, name: str) -> int:
+    matched = [int(line["amount"]) for line in lines if line["name"] == name]
+    assert len(matched) == 1, (name, lines)
+    return matched[0]
 
 
 def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, monkeypatch):
-    """余额、预算、边饷与月初快照同一密源口径，差额推不出密支。"""
+    """作者入口的结构化钱粮不含密源余额、边饷、固定密项与动态科目真值。"""
+    from ming_sim.flows import compute_budget_lines
+    from ming_sim.issues import apply_score_extraction
+
     db, state, content = game
     minister = next(iter(content.characters.values())).name
     order_id = create_test_secret_order(
@@ -450,9 +454,19 @@ def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, 
     hist_gk, hist_nk = -392173, -618407
     secret_hub, public_hub = -481621, -190007
     secret_budget = 273419
+    public_item = 150113
     public_open_gk, public_open_nk = 51000019, 52000023
     raw_gk, raw_nk = 53000029, 54000031
     turn = int(state.turn)
+    before = compute_budget_lines(db, state)
+    public_huang = _budget_amount(
+        [{"name": item["name"], "amount": item["amount"]} for item in before["内库"]["income"]],
+        "皇庄",
+    )
+    public_salt = _budget_amount(
+        [{"name": item["name"], "amount": item["amount"]} for item in before["国库"]["income"]],
+        "盐税",
+    )
 
     def ledger(at_turn, account, delta, category, origin, reason):
         db.conn.execute(
@@ -493,20 +507,49 @@ def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, 
         origin_ref=f"dossier:{secret_did}", turn=turn,
     )
     db.create_fiscal_item(
-        "公开月拨1862", "国库", "expense", "公开月拨", 150113,
+        "公开月拨1862", "国库", "expense", "公开月拨", public_item,
         origin_ref="player_decree:1862", turn=turn,
     )
+    origin = f"dossier:{secret_did}"
+    applied = apply_score_extraction(
+        db, state,
+        {"fiscal_changes": [
+            {"key": "皇庄_base", "delta": 30, "reason": "密加皇庄", "origin_ref": origin},
+            {"key": "盐税_base", "delta": 23, "reason": "密加盐税", "origin_ref": origin},
+        ]},
+        content=content,
+    )
+    assert applied["fiscal_changes"] and all(
+        not item.get("rejected") for item in applied["fiscal_changes"]
+    ), applied
+    db.conn.commit()
+    live = compute_budget_lines(db, state)
+    true_huang = _budget_amount(
+        [{"name": item["name"], "amount": item["amount"]} for item in live["内库"]["income"]],
+        "皇庄",
+    )
+    true_salt = _budget_amount(
+        [{"name": item["name"], "amount": item["amount"]} for item in live["国库"]["income"]],
+        "盐税",
+    )
+    assert true_huang != public_huang
+    assert true_salt != public_salt
+    for key, value in (
+        ("hub_省级起运到京", 1),
+        ("hub_盐税解京", true_salt),
+        ("hub_商税解京", 2),
+        ("hub_太仓亏空", 3),
+    ):
+        db.conn.execute(
+            """
+            INSERT INTO fiscal_containers (key, value, note)
+            VALUES (?, ?, '')
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """,
+            (key, value),
+        )
     db.conn.commit()
 
-    from ming_sim.flows import compute_budget_lines
-    budget = compute_budget_lines(db, state)
-    raw_out = sum(int(item["amount"]) for item in budget["国库"]["expense"])
-    secret_line = sum(
-        int(item["amount"]) for item in budget["国库"]["expense"]
-        if str(item.get("origin_ref") or "") == f"dossier:{secret_did}"
-    )
-    assert secret_line == secret_budget
-    filtered_out = raw_out - secret_line
     raw_hub = int(db.conn.execute(
         """
         SELECT COALESCE(SUM(-delta), 0) AS amount FROM economy_ledger
@@ -517,29 +560,12 @@ def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, 
     filtered_hub = raw_hub - (-secret_hub)
     expected_gk = raw_gk - hist_gk - secret_hub
     expected_nk = raw_nk - hist_nk
-    exclusions = {
-        "exclude_origin_prefix": "secret_order:",
-        "exclude_dossier_ids": {secret_did},
-    }
-    filtered = db.treasury_report(state, limit=None, **exclusions)
-    raw_report = db.treasury_report(state, limit=None)
-    for present, absent in (
-        (expected_gk, raw_gk), (expected_nk, raw_nk),
-        (filtered_out, raw_out), (filtered_hub, raw_hub),
-    ):
-        assert present != absent
-        assert str(present) not in str(absent) and str(absent) not in str(present)
-        assert _amount_token(filtered, present)
-        assert not _amount_token(filtered, absent)
-        assert _amount_token(raw_report, absent)
-    for secret_amount in (abs(hist_gk), abs(hist_nk), abs(secret_hub), secret_budget):
-        assert not _amount_token(filtered, secret_amount)
+    assert expected_gk != raw_gk and expected_nk != raw_nk and filtered_hub != raw_hub
 
     seen = {}
 
     def run_agent(agent, prompt, tag, **_kwargs):
         seen["prompt"] = prompt
-        seen["instructions"] = "\n".join(getattr(agent, "instructions", None) or [])
         return json.dumps({"title": "题", "report": "正文"}, ensure_ascii=False)
 
     monkeypatch.setattr("ming_sim.agents.run_agent_text", run_agent)
@@ -547,9 +573,21 @@ def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, 
         db, state, _llm(), {"world_segment": "世界段"},
     )
     assert title == "题" and report == "正文"
-    assert filtered in seen["instructions"]
-    assert raw_report not in seen["instructions"]
     payload = json.loads(seen["prompt"])
+    treasury = payload["treasury"]
+    assert treasury["balances"]["国库"] == expected_gk
+    assert treasury["balances"]["内库"] == expected_nk
+    assert treasury["balances"]["国库"] != raw_gk
+    assert treasury["balances"]["内库"] != raw_nk
+    assert treasury["hub"]["treasury_disbursed"] == filtered_hub
+    assert treasury["hub"]["treasury_disbursed"] != raw_hub
+    assert _budget_amount(treasury["budget"], "皇庄") == public_huang
+    assert _budget_amount(treasury["budget"], "盐税") == public_salt
+    assert _budget_amount(treasury["budget"], "皇庄") != true_huang
+    assert _budget_amount(treasury["budget"], "盐税") != true_salt
+    names = {line["name"] for line in treasury["budget"]}
+    assert "密支月拨" not in names
+    assert _budget_amount(treasury["budget"], "公开月拨") == public_item
     assert payload["month_open"]["国库"] == public_open_gk
     assert payload["month_open"]["内库"] == public_open_nk
     stored = db.get_month_open_snapshot(turn)
@@ -557,11 +595,3 @@ def test_gazette_report_cannot_reconstruct_secret_source_amounts(game, content, 
     assert stored["内库"] == public_open_nk + hist_nk
     assert payload["month_open"]["民心"] == stored["民心"]
     assert payload["month_open"]["皇威"] == stored["皇威"]
-
-    world = prepare_world_materials(db, state)
-    try:
-        world_board = (world.root / "盘面" / "全局.txt").read_text(encoding="utf-8")
-    finally:
-        release_material_tree(world.root)
-    assert _amount_token(world_board, raw_gk)
-    assert _amount_token(world_board, abs(secret_hub))
