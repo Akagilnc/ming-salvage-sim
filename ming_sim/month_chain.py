@@ -21,7 +21,6 @@ _CHAIN_KEY = "month_chain"
 _TRANSLATE_ESCAPE_STEPS = frozenset({"world_translate"})
 _WORLD_QUESTION_PREFIX = "world-question:"
 _DECREE_QUESTION_PREFIX = "decree-question:"
-_GAZETTE_SECRET_LEDGER_PREFIX = "secret_order:"
 
 
 def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: Any):
@@ -235,17 +234,6 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     snapshot = None
     if hasattr(db, "get_month_open_snapshot"):
         snapshot = db.get_month_open_snapshot(turn)
-    if snapshot and hasattr(db, "excluded_account_deltas"):
-        hidden_before = db.excluded_account_deltas(
-            exclude_origin_prefix=_GAZETTE_SECRET_LEDGER_PREFIX,
-            exclude_dossier_ids=secret_dossiers,
-            turn_before=turn,
-        )
-        if hidden_before:
-            snapshot = {
-                key: int(value) - int(hidden_before.get(str(key), 0))
-                for key, value in snapshot.items()
-            }
     from ming_sim.audience_night import list_waiting_audience_summons
     from ming_sim.decree import collect_new_arrival_waiting_audience
     from ming_sim.models import reign_period_label
@@ -268,39 +256,11 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
         "world_segment": str(chain.get("world_text") or ""),
         "rescript_answers": answers,
         "month_open": snapshot,
-        "treasury": _gazette_treasury(db, state, secret_dossiers),
         "due_commitments": due_commitments,
         "waiting_audience": collect_new_arrival_waiting_audience(
             _persisted_transit_arrivals(db, turn),
             list_waiting_audience_summons(db),
         ),
-    }
-
-
-def _gazette_treasury(db: Any, state: Any, secret_dossiers: set[int]) -> Dict[str, Any]:
-    """作者可见的结构化钱粮。报告正文与这里读同一投影。"""
-    from ming_sim.flows import budget_lines_for_reader
-
-    exclusions = {
-        "exclude_origin_prefix": _GAZETTE_SECRET_LEDGER_PREFIX,
-        "exclude_dossier_ids": secret_dossiers,
-    }
-    budget = budget_lines_for_reader(db, state, **exclusions)
-    lines = [
-        {
-            "account": account,
-            "direction": direction,
-            "name": str(item.get("name") or ""),
-            "amount": int(item.get("amount") or 0),
-        }
-        for account, directions in budget.items()
-        for direction in ("income", "expense")
-        for item in directions.get(direction, [])
-    ]
-    return {
-        "balances": dict(db.public_account_balances(state, **exclusions)),
-        "budget": lines,
-        "hub": db.treasury_hub_result(state, **exclusions),
     }
 
 
@@ -340,7 +300,7 @@ def run_gazette_text(
         db, state,
         include_fact=include_fact,
         include_event=include_event,
-        ledger_origin_prefix_excluded=_GAZETTE_SECRET_LEDGER_PREFIX,
+        ledger_origin_prefix_excluded="secret_order:",
         exclude_secret_order_audience=True,
         exclude_secret_order_dossiers=True,
     )
