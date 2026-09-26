@@ -19,6 +19,7 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import TurnPhase
 from tests.settlement_seam_helpers import make_light_session
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 _WORLD_WITH_QUESTION = (
@@ -1135,3 +1136,441 @@ def test_drift_sees_effects_landed_after_answers(game, monkeypatch):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='inertia'",
         (issue_id,),
     ).fetchone()[0] == 0
+
+
+def test_step_4a_no_eligible_objects_skips_run_and_completes(game, monkeypatch):
+    """步骤 4a：无合资格长差案卷且无在办密令时，不为凑调用而起 run。"""
+    db, state, content = game
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+
+    def forbidden_supply(*a, **k):
+        raise AssertionError("没有合资格对象时不应调用整月供料 run")
+
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", forbidden_supply)
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    result = session.resolve_turn(allow_empty_decree=True)
+
+    assert result.stage == "gazette"
+    chain = month_chain._load_chain(db, int(state.turn))
+    assert chain.get("secret_orders_supply_done") is True
+
+
+def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch):
+    """问后续推落下的 origin 效果进入步骤 4a 供料，且能驱动密令实际进度。"""
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = db.create_secret_order(
+        state, minister, "辽饷清核", "查清兵部饷银", [],
+        deadline_months=2,
+        covert_task={
+            "kind": "差务", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "万两", "target_units": 5.0, "effect_sign": -1,
+                "purpose": "其它", "category": "密令差务", "account": "内库",
+            },
+        },
+    )
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=? WHERE id=?",
+        (turn - 1, order_id),
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    captured_feed = {}
+
+    def supply_run(db_, state_, llm_config, chain):
+        feed = month_chain.build_secret_orders_supply_feed(db_, state_, chain)
+        captured_feed.update(feed)
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "顺利",
+                "memorial_text": "关外饷银如数盘点，实支有据。",
+            }],
+            "covert_exec_selections": [{
+                "order_id": order_id,
+                "fidelity": "忠实",
+                "note": "实办尽职",
+            }],
+        }
+
+    def translate(*_a, **kwargs):
+        if "问后核银" not in str(kwargs.get("segment") or ""):
+            return {"effects": {}}
+        return {"effects": {
+            "economy_moves": [{
+                "account": "内库", "delta": -5, "category": "密令差务",
+                "purpose": "其它", "reason": "问后实办内库出银",
+                "origin_ref": f"dossier:{dossier_id}",
+            }],
+        }}
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(
+        month_chain, "run_world_segment_text", lambda *a, **k: _WORLD_WITH_QUESTION,
+    )
+    monkeypatch.setattr(
+        month_chain, "_run_world_continuation_text", lambda *a, **k: "问后核银。",
+    )
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    session._write_gate = threading.Lock()
+
+    # Step 1: Pauses at rescript question
+    paused = session.resolve_turn(allow_empty_decree=True)
+    assert paused.awaiting is True
+    assert captured_feed == {}
+
+    # Step 2: Answer question, resumes
+    session.submit_hitl_choices(
+        [_choice(session.pending_decisions()[0])], write_gate=session._write_gate,
+    )
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+
+    # Verify Step 4a saw continuation origin effects
+    assert captured_feed.get("turn") == turn
+    origin_effects = captured_feed.get("origin_effects") or {}
+    eco_moves = origin_effects.get("economy_moves") or []
+    assert any(m.get("origin_ref") == f"dossier:{dossier_id}" for m in eco_moves)
+
+    # Verify 0058 report and actual units
+    reports = db.list_dossier_progress(dossier_id)
+    assert any(r["memorial_text"] == "关外饷银如数盘点，实支有据。" for r in reports)
+    actual_units = db.sum_dossier_actual_progress_units(dossier_id)
+    assert actual_units == 5.0
+
+
+def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch):
+    """步骤 2-4 的密令披露暂缓至 0058 密奏落库后发布，公开事件包含本月最新进展正文。"""
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = create_test_secret_order(
+        db, state, minister, "查抄私仓", "核实私设粮仓", [],
+        deadline_months=2,
+    )
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    # World segment sets disclosed=True for order_id
+    def translate(*_a, **_k):
+        return {"effects": {
+            "secret_order_updates": [{
+                "order_id": order_id,
+                "sim_note": "私仓已被锦衣卫查封",
+                "disclosed": True,
+            }],
+        }}
+
+    def supply_run(*_a, **_k):
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "顺利",
+                "memorial_text": "已查得私仓粮石十万石，罪证确凿。",
+            }],
+            "covert_exec_selections": [{
+                "order_id": order_id,
+                "fidelity": "忠实",
+            }],
+        }
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "世界段推演。")
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+
+    # Disclosure event should exist and contain this month's 0058 progress text
+    rows = db.conn.execute(
+        "SELECT title, body, source_id FROM character_knowledge_events "
+        "WHERE character_name='' AND source_id LIKE ?",
+        (f"secret_order_disclosure:{order_id}:%",),
+    ).fetchall()
+    assert len(rows) == 1
+    body = str(rows[0]["body"])
+    assert "私仓已被锦衣卫查封" in body
+    assert "已查得私仓粮石十万石，罪证确凿。" in body
+
+
+def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monkeypatch):
+    """步骤 4a：0058 完整性校验缺报响亮中止，重试废弃不完整产物重新调用 supply run。"""
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_1 = create_test_secret_order(db, state, minister, "密令一", "差务一", [], deadline_months=2)
+    order_2 = create_test_secret_order(db, state, minister, "密令二", "差务二", [], deadline_months=2)
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id IN (?, ?)", (turn - 1, order_1, order_2))
+    dossier_1 = int(db.get_dossier_for_secret_order(order_1)["id"])
+    dossier_2 = int(db.get_dossier_for_secret_order(order_2)["id"])
+    db.conn.commit()
+
+    call_count = 0
+
+    def supply_run(*_a, **_k):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: incomplete! Only reports dossier_1, missing dossier_2
+            return {
+                "dossier_progress_reports": [{
+                    "dossier_id": dossier_1,
+                    "progress_band": "持平",
+                    "memorial_text": "密奏一",
+                }],
+                "covert_exec_selections": [
+                    {"order_id": order_1, "fidelity": "忠实"},
+                    {"order_id": order_2, "fidelity": "忠实"},
+                ],
+            }
+        # Second call (after retry): complete!
+        return {
+            "dossier_progress_reports": [
+                {"dossier_id": dossier_1, "progress_band": "持平", "memorial_text": "密奏一"},
+                {"dossier_id": dossier_2, "progress_band": "持平", "memorial_text": "密奏二"},
+            ],
+            "covert_exec_selections": [
+                {"order_id": order_1, "fidelity": "忠实"},
+                {"order_id": order_2, "fidelity": "忠实"},
+            ],
+        }
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    # First attempt: incomplete report fails loud
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+    assert caught.value.stage == "secret_orders_supply"
+    chain = month_chain._load_chain(db, turn)
+    assert chain.get("secret_orders_supply_invalid") is True
+    # Neither dossier received a progress report
+    assert db.list_dossier_progress(dossier_1) == []
+    assert db.list_dossier_progress(dossier_2) == []
+
+    # Retry: discards invalid product, re-calls supply run
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+    assert call_count == 2
+    assert len(db.list_dossier_progress(dossier_1)) == 1
+    assert len(db.list_dossier_progress(dossier_2)) == 1
+
+
+def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypatch):
+    """步骤 4a 校验通过的产物在后续崩溃后重开，保留产物并幂等接续未完成相。"""
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = create_test_secret_order(db, state, minister, "密令", "差务", [], deadline_months=2)
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    call_count = 0
+
+    def supply_run(*_a, **_k):
+        nonlocal call_count
+        call_count += 1
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "顺利",
+                "memorial_text": "进度良好",
+            }],
+            "covert_exec_selections": [{
+                "order_id": order_id,
+                "fidelity": "忠实",
+            }],
+        }
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    crash_once = True
+    from ming_sim import covert_progress
+
+    real_apply = covert_progress.apply_monthly_covert_actual_progress
+
+    def buggy_apply(*args, **kwargs):
+        nonlocal crash_once
+        if crash_once:
+            crash_once = False
+            raise RuntimeError("模拟执行态落账中断")
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(covert_progress, "apply_monthly_covert_actual_progress", buggy_apply)
+
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    # First pass: lands Phase 1 (reports), but crashes on Phase 3
+    with pytest.raises(SettlementAbort):
+        session.resolve_turn(allow_empty_decree=True)
+
+    assert call_count == 1
+    # Phase 1 already committed: 0058 report exists
+    assert len(db.list_dossier_progress(dossier_id)) == 1
+    chain = month_chain._load_chain(db, turn)
+    assert chain.get("secret_orders_reports_done") is True
+    assert chain.get("secret_orders_supply_product") is not None
+
+    # Resume turn: supply run must NOT be called again
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+    assert call_count == 1  # Not re-run!
+    # Reports not duplicated
+    assert len(db.list_dossier_progress(dossier_id)) == 1
+    # Phase 3 actual progress landed
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
+        (dossier_id, turn),
+    ).fetchone()[0] == 1
+
+
+def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypatch):
+    """步骤 4a：密令缺少有效执行态时按 0073 记入 inline rejection，不静默吞掉。"""
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = create_test_secret_order(
+        db, state, minister, "密令执行态缺失", "差务", [], deadline_months=2,
+    )
+    db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (turn - 1, order_id))
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    # Supply run provides 0058 report, but omits covert_exec_selections!
+    def supply_run(*_a, **_k):
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "持平",
+                "memorial_text": "按期奏报",
+            }],
+            "covert_exec_selections": [],
+        }
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+
+    # Inline rejection recorded for covert_exec_selections
+    rejections = db.conn.execute(
+        "SELECT section, category, reason FROM rejection_reports "
+        "WHERE turn=? AND section='covert_exec_selections'",
+        (turn,),
+    ).fetchall()
+    assert len(rejections) == 1
+    assert "缺少有效执行态" in str(rejections[0]["reason"])
+
+
+def test_step_4a_settles_due_secret_order(game, monkeypatch):
+    """步骤 4a：到期密令在实况落账后由步骤 4a 办理结案，且早于邸报供料。"""
+    db, state, content = game
+    turn = int(state.turn)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    order_id = db.create_secret_order(
+        state, minister, "到期结案密令", "到期查核", [],
+        deadline_months=1,
+        covert_task={
+            "kind": "差务", "axes": ["实务事功"], "direction": 1,
+            "delivery": {
+                "unit": "万两", "target_units": 2.0, "effect_sign": -1,
+                "purpose": "其它", "category": "密令差务", "account": "内库",
+            },
+        },
+    )
+    # Issued last turn, due this turn
+    db.conn.execute(
+        "UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",
+        (turn - 1, turn, order_id),
+    )
+    dossier_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.conn.commit()
+
+    def translate(*_a, **_k):
+        return {"effects": {
+            "economy_moves": [{
+                "account": "内库", "delta": -2, "category": "密令差务",
+                "purpose": "其它", "reason": "差务结项出银",
+                "origin_ref": f"dossier:{dossier_id}",
+            }],
+        }}
+
+    def supply_run(*_a, **_k):
+        return {
+            "dossier_progress_reports": [{
+                "dossier_id": dossier_id,
+                "progress_band": "顺利",
+                "memorial_text": "核查终结奏报",
+            }],
+            "covert_exec_selections": [{
+                "order_id": order_id,
+                "fidelity": "忠实",
+            }],
+        }
+
+    _forbid_extractor(monkeypatch)
+    # 空世界段文会跳过转译；须有非空段文才能落下问前 origin 效果供 4a 结案。
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
+    monkeypatch.setattr(month_translate, "translate_month_segment", translate)
+    monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
+
+    session = make_light_session(db, state, content)
+    session._write_gate = threading.Lock()
+
+    result = session.resolve_turn(allow_empty_decree=True)
+    assert result.stage == "gazette"
+
+    # Secret order should be settled to 'done' (delivered 2.0 / target 2.0)
+    assert db.get_secret_order(order_id)["status"] == "done"
+    chain = month_chain._load_chain(db, turn)
+    assert chain.get("due_secret_orders_settled") is True
+    assert chain.get("secret_orders_supply_done") is True
+

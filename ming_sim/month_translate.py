@@ -175,4 +175,5 @@ def dispatch_month_segment(
         source=source,
         visible_refs=refs,
         alongside=alongside,
+        defer_disclosure=True,
     )

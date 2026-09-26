@@ -358,6 +358,7 @@ def continue_world_after_answers(
         if candidate is not None:
             chain["declaration_outcome"] = candidate
             outcome = candidate
+        _collect_disclosures_from_result(chain, result)
         chain["world_questions"] = []
         chain["world_continued"] = True
         _save_chain(db, turn, chain, source=source)
@@ -412,6 +413,9 @@ def continue_decree_after_answers(
         candidate = _ending_from_dispatch_result(result)
         if candidate is not None and chain is not None:
             chain["declaration_outcome"] = candidate
+            _save_chain(db, int(state.turn), chain, source=source)
+        _collect_disclosures_from_result(chain, result)
+        if chain is not None:
             _save_chain(db, int(state.turn), chain, source=source)
         db.staged_declarations.clear_questions(decree_ref)
 
@@ -555,8 +559,13 @@ def _run_loaded_month_chain(
         return ResolveResult(
             awaiting=True, decisions=desk, advanced=False, stage="rescript",
         )
-    # 问后续推与强颁问前效果都在案头清空后才齐。惯性、到期密令、派系杠杆与
+    _step_4a_secret_order_supply(
+        db, state, chain,
+        turn=turn, decree_text=decree_text, source=source, llm_config=llm_config,
+    )
+    # 问后续推与强颁问前效果、整月密令义务（4a）都在案头清空后才齐。惯性、派系杠杆与
     # 门控遗产读的是这些写入，须晚于它们；催办/待核只消费上月待办，并入这一次即可。
+    # 到期密令结案已由步骤 4a 办理；drift 内再调为幂等兜底。
     _run_month_drift(db, state, chain, turn, decree_text, source)
     archive = db.get_turn_report_archive(turn)
     if archive is None or not str(archive.get("report") or "").strip():
@@ -623,6 +632,10 @@ def _consume_call_failure_for_retry(
     if failure.get("escape_armed") and step in _TRANSLATE_ESCAPE_STEPS:
         _discard_segment_for_escape(chain, failure)
         chain["translate_exhaust_stops"] = 0
+    if step == "secret_orders_supply":
+        if chain.get("secret_orders_supply_invalid") or not chain.get("secret_orders_reports_done"):
+            chain.pop("secret_orders_supply_product", None)
+            chain.pop("secret_orders_supply_invalid", None)
     chain.pop("call_failure", None)
     _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 
@@ -824,6 +837,7 @@ def _settle_edicts(
                     outcome = candidate
                     if on_outcome is not None:
                         on_outcome(candidate)
+                _collect_disclosures_from_result(chain, result)
 
             settle_staged_declarations_in_decree_order(
                 db, state, [ref], source=Provenance.player_decree,
@@ -840,6 +854,25 @@ def _ending_from_dispatch_result(result: Any) -> Optional[Dict[str, object]]:
         if isinstance(candidate, dict) and candidate.get("status") != "ongoing":
             return candidate
     return None
+
+
+def _collect_disclosures_from_result(chain: Optional[Dict[str, Any]], result: Any) -> None:
+    if chain is None or result is None:
+        return
+    pending = chain.setdefault("pending_disclosures", [])
+    effects = getattr(result, "effects", None)
+    applied = getattr(effects, "applied", []) if effects is not None else []
+    for report in applied:
+        if not isinstance(report, dict):
+            continue
+        for update in report.get("secret_order_updates") or []:
+            if isinstance(update, dict) and update.get("disclosed"):
+                item = {
+                    "order_id": int(update["order_id"]),
+                    "sim_note": str(update.get("sim_note") or ""),
+                }
+                if item not in pending:
+                    pending.append(item)
 
 
 def _run_world_segment(
@@ -873,6 +906,7 @@ def _run_world_segment(
         outcome = _ending_from_dispatch_result(result)
         if outcome is not None:
             persisted["declaration_outcome"] = outcome
+        _collect_disclosures_from_result(persisted, result)
         persisted["world_committed"] = True
         persisted.pop("translate_exhaust_stops", None)
         _save_chain(db, turn, persisted, source=source)
@@ -896,6 +930,206 @@ def _run_world_segment(
         mark(None)
     adopt_committed()
     return None
+
+
+def _apply_deferred_disclosures(
+    db: Any, state: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
+) -> None:
+    pending = chain.get("pending_disclosures") or []
+    from ming_sim.issues import record_secret_order_disclosure
+    with atomic(db):
+        for item in pending:
+            order_id = int(item["order_id"])
+            sim_note = str(item.get("sim_note") or "")
+            record_secret_order_disclosure(db, state, order_id, sim_note, commit=False)
+        chain["secret_orders_disclosures_done"] = True
+        _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+
+
+def _collect_this_turn_origin_effects(db: Any, turn: int) -> Dict[str, Any]:
+    current = int(turn)
+    eco = db.conn.execute(
+        "SELECT purpose, category, account, delta, reason, origin_ref "
+        "FROM economy_ledger WHERE turn=?", (current,)
+    ).fetchall()
+    person = db.conn.execute(
+        "SELECT person_name, action, payload_summary, origin_ref "
+        "FROM person_logs WHERE turn=?", (current,)
+    ).fetchall()
+    region = db.conn.execute(
+        "SELECT region_id, field, old_value, new_value, delta, reason, origin_ref "
+        "FROM region_logs WHERE turn=?", (current,)
+    ).fetchall()
+    return {
+        "economy_moves": [dict(r) for r in eco if str(r["origin_ref"] or "").startswith("dossier:")],
+        "person_logs": [dict(r) for r in person if str(r["origin_ref"] or "").startswith("dossier:")],
+        "region_logs": [dict(r) for r in region if str(r["origin_ref"] or "").startswith("dossier:")],
+    }
+
+
+def build_secret_orders_supply_feed(
+    db: Any, state: Any, chain: Dict[str, Any],
+) -> Dict[str, Any]:
+    from ming_sim.covert_progress import _is_issuance_turn
+    turn = int(state.turn)
+    candidates = db.list_monthly_dossier_progress_nudges(turn)
+    active_orders = [
+        dict(o) for o in db.list_secret_orders(status="active")
+        if not _is_issuance_turn(o, turn)
+    ]
+    origin_effects = _collect_this_turn_origin_effects(db, turn)
+    return {
+        "instruction": "为本月所有在办密令产出密奏和执行态声明。",
+        "turn": turn,
+        "eligible_dossiers": candidates,
+        "active_secret_orders": active_orders,
+        "origin_effects": origin_effects,
+    }
+
+
+def run_secret_orders_supply(
+    db: Any, state: Any, llm_config: Any, chain: Dict[str, Any],
+) -> Dict[str, Any]:
+    """步骤 4a 整月密令供料 run。产出覆盖整月合资格长差案卷与在办密令的密奏与执行态。"""
+    import json
+    from ming_sim.agents import create_secret_order_supply_agent, parse_agent_json, run_agent_text
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_transport import audience_transport_policy
+    from ming_sim.models import LLMConfig
+
+    if not isinstance(llm_config, LLMConfig):
+        raise LLMUnavailable("整月供料缺少模型配置", stage="secret_orders_supply")
+
+    feed = build_secret_orders_supply_feed(db, state, chain)
+    message = json.dumps(feed, ensure_ascii=False)
+    agent = create_secret_order_supply_agent(llm_config)
+    raw = run_agent_text(
+        agent, message, tag="secret_orders_supply",
+        transport_policy=audience_transport_policy(),
+    )
+    data = parse_agent_json(raw, "secret_orders_supply")
+    if not isinstance(data, dict):
+        raise LLMUnavailable("整月供料产物非有效 JSON 对象", stage="secret_orders_supply")
+    return data
+
+
+def _step_4a_secret_order_supply(
+    db: Any,
+    state: Any,
+    chain: Dict[str, Any],
+    *,
+    turn: int,
+    decree_text: str,
+    source: Provenance,
+    llm_config: Any,
+) -> None:
+    if chain.get("secret_orders_supply_done"):
+        return
+
+    from ming_sim.covert_progress import _is_issuance_turn
+
+    candidates = db.list_monthly_dossier_progress_nudges(turn)
+    active_orders = [
+        o for o in db.list_secret_orders(status="active")
+        if not _is_issuance_turn(o, turn)
+    ]
+    if not candidates and not active_orders:
+        if not chain.get("secret_orders_disclosures_done"):
+            _apply_deferred_disclosures(db, state, chain, turn, decree_text, source)
+        chain["secret_orders_supply_done"] = True
+        _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+        return
+
+    product = chain.get("secret_orders_supply_product")
+    if product is None:
+        def _call_supply() -> Dict[str, Any]:
+            return run_secret_orders_supply(db, state, llm_config, chain)
+
+        product = _guard_month_call(
+            db, state, chain,
+            decree_text=decree_text, source=source,
+            step="secret_orders_supply",
+            operation=_call_supply,
+        )
+        if not isinstance(product, dict):
+            product = {}
+        chain["secret_orders_supply_product"] = product
+        _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+
+    # Phase 1: 0058 report completeness validation and persistence
+    if not chain.get("secret_orders_reports_done"):
+        reports = product.get("dossier_progress_reports") or []
+        try:
+            with atomic(db):
+                db.record_monthly_supervision_presence(turn, commit=False)
+                db.record_monthly_dossier_progress(turn, reports)
+                chain["secret_orders_reports_done"] = True
+                _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+        except Exception as exc:
+            # 无效标记须先落盘：_abort_month_call 只叠 call_failure 到已提交链。
+            chain["secret_orders_supply_invalid"] = True
+            _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+            _abort_month_call(
+                db, state, chain,
+                decree_text=decree_text, source=source,
+                step="secret_orders_supply",
+                exc=exc,
+                kind="code_exception",
+            )
+
+    def _abort_4a(exc: BaseException) -> None:
+        _abort_month_call(
+            db, state, chain,
+            decree_text=decree_text, source=source,
+            step="secret_orders_supply",
+            exc=exc,
+            kind="code_exception",
+        )
+
+    # Phase 2: Deferred disclosures
+    if not chain.get("secret_orders_disclosures_done"):
+        try:
+            _apply_deferred_disclosures(db, state, chain, turn, decree_text, source)
+        except Exception as exc:
+            _abort_4a(exc)
+
+    # Phase 3: Covert actual progress (0073)
+    if not chain.get("covert_progress_done"):
+        from ming_sim.applier import RejectionCollector, mirror_rejections_after_commit
+        from ming_sim.covert_progress import apply_monthly_covert_actual_progress
+        from ming_sim.decree import _collect_inline_rejections
+        from ming_sim.error_pack import rejections_jsonl_path
+
+        try:
+            collector = RejectionCollector()
+            selections = product.get("covert_exec_selections") or []
+            with atomic(db):
+                rows = apply_monthly_covert_actual_progress(
+                    db, state, selections=selections, only_supplied=False, commit=False,
+                )
+                rejections = [r for r in rows if r.get("rejected")]
+                if rejections:
+                    _collect_inline_rejections(
+                        collector, {"covert_exec_selections": rows}, turn, source,
+                    )
+                    collector.flush_to_db(db)
+                chain["covert_progress_done"] = True
+                _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+                mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
+        except Exception as exc:
+            _abort_4a(exc)
+
+    # Phase 4: Settle due secret orders
+    if not chain.get("due_secret_orders_settled"):
+        from ming_sim.covert_progress import settle_due_secret_orders
+        try:
+            with atomic(db):
+                settle_due_secret_orders(db, state, commit=False)
+                chain["due_secret_orders_settled"] = True
+                chain["secret_orders_supply_done"] = True
+                _save_chain(db, turn, chain, decree_text=decree_text, source=source)
+        except Exception as exc:
+            _abort_4a(exc)
 
 
 def _run_month_drift(

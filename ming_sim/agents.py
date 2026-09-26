@@ -1108,3 +1108,37 @@ def create_relation_brew_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
         add_history_to_context=False,
         markdown=False,
     )
+
+
+def create_secret_order_supply_agent(llm_config: LLMConfig) -> Agent:
+    """整月密令供料推演者（ADR 0157 步骤 4a）：为合资格长差案卷产出密奏，为在办密令产出执行态。"""
+    cfg = _llm_for_role(llm_config, "simulator")
+    tlog(f"[secret-orders-supply] 使用模型 {describe_effective_model(cfg)}")
+    model = create_chat_model(
+        cfg, temperature=0.3, top_p=0.95, enable_thinking=True, force_json_output=True,
+    )
+    instructions = [
+        _ctx().game_world_prompt,
+        "你是整月密令供料推演者（步骤 4a）。",
+        "根据本月盘面、合资格长差案卷、在办密令及已提交的 origin 效果，产出密奏和执行态声明。",
+        "必须返回 JSON 对象，包含两个字段：",
+        "1. `dossier_progress_reports`: 列表，每个合资格长差案卷一条。每项包含：",
+        "   - dossier_id: 整数，对应 eligible_dossiers 中的 dossier_id",
+        "   - progress_band: 字符串，进展评级（如'顺利'、'持平'、'受阻'等）",
+        "   - memorial_text: 字符串，承办人呈报皇帝的本月密奏正文，不可为空",
+        "2. `covert_exec_selections`: 列表，每个在办密令一条。每项包含：",
+        "   - order_id: 整数，对应 active_secret_orders 中的 id",
+        "   - fidelity: 字符串，执行态，必须为 '忠实'、'打折'、'阳奉阴违'、'反噬' 之一",
+        "   - note: 字符串，执行态备注",
+    ]
+    if is_minimax_base_url(cfg.base_url):
+        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
+    return Agent(
+        name="密令供料推演者",
+        id="secret-orders-supply",
+        model=model,
+        instructions=instructions,
+        add_history_to_context=False,
+        markdown=False,
+    )
+

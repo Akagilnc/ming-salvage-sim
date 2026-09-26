@@ -59,7 +59,7 @@ def _categories(db):
     ]
 
 
-def _prepare_player_month(db, state, content, monkeypatch, *, world=None, translate=None):
+def _prepare_player_month(db, state, content, monkeypatch, *, world=None, translate=None, secret_orders_supply=None):
     """换掉世界段与转译的模型缝，返回尚未过月的 session。不含在飞屏障。"""
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(
@@ -70,6 +70,8 @@ def _prepare_player_month(db, state, content, monkeypatch, *, world=None, transl
         month_translate, "translate_month_segment",
         translate if translate is not None else (lambda *_a, **_k: {"effects": {}}),
     )
+    if secret_orders_supply is not None:
+        monkeypatch.setattr(month_chain, "run_secret_orders_supply", secret_orders_supply)
     session = make_light_session(db, state, content)
     session._write_gate = threading.Lock()
     return session
@@ -667,6 +669,17 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
     db.conn.commit()
     _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr(
+        month_chain, "run_secret_orders_supply",
+        lambda *a, **k: {
+            "dossier_progress_reports": [{
+                "dossier_id": int(db.get_dossier_for_secret_order(order_id)["id"]),
+                "progress_band": "持平",
+                "memorial_text": "核验田亩中",
+            }],
+            "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
+        },
+    )
     session = make_light_session(db, state, content)
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
     assert db.get_secret_order(order_id)["status"] == "failed"
@@ -808,6 +821,10 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
         db, state, content, monkeypatch,
         world=lambda *_a, **_k: "秋高气爽，边事暂宁。",
         translate=translate,
+        secret_orders_supply=lambda *a, **k: {
+            "dossier_progress_reports": reports,
+            "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
+        },
     )
     result = session.resolve_turn(allow_empty_decree=True)
 

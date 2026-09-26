@@ -8558,6 +8558,58 @@ def apply_person_changes_only(
     return {"applied_person_changes": results}
 
 
+def record_secret_order_disclosure(
+    db: Any,
+    state: Any,
+    order_id: int,
+    sim_note: str,
+    *,
+    commit: bool = True,
+) -> bool:
+    """Record public knowledge event for secret order disclosure if not already disclosed (#883, ADR 0157).
+
+    Returns True if a new public knowledge event was recorded, False otherwise.
+    """
+    order = db.get_secret_order(order_id)
+    if order is None:
+        return False
+    # Disclosure is the only promotion from the assignee-only
+    # brief into a public knowledge event (#883).
+    # Cross-turn dedupe: disclosed is a state (prompt) not a monthly
+    # event — re-true each month must not mint another public row.
+    disclosure_prefix = f"secret_order_disclosure:{order_id}:"
+    # LIKE treats `_`/`%` as wildcards; escape the literal prefix
+    # (same ESCAPE idiom as db.py iter_budget_items / get_fiscal_config).
+    like_prefix = (
+        disclosure_prefix
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    already_disclosed = db.conn.execute(
+        "SELECT 1 FROM character_knowledge_events "
+        "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
+        (f"{like_prefix}%",),
+    ).fetchone()
+    if already_disclosed is not None:
+        return False
+    dossier = db.get_dossier_for_secret_order(order_id)
+    progress = (
+        db.list_dossier_progress(int(dossier["id"]))
+        if dossier is not None else []
+    )
+    progress_text = format_public_progress_disclosure(progress)
+    public_body = sim_note
+    if progress_text:
+        public_body = f"{sim_note}\n{progress_text}"
+    db.record_public_knowledge_event(
+        state, str(order["title"]), public_body,
+        source_id=f"{disclosure_prefix}{state.turn}",
+        commit=commit,
+    )
+    return True
+
+
 def apply_score_extraction(
     db: GameDB,
     state: GameState,
@@ -8578,6 +8630,7 @@ def apply_score_extraction(
         Dict[str, list[tuple[str, object]]],
         dict[str, list[str]],
     ]]] = None,
+    defer_disclosure: bool = False,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -8631,6 +8684,7 @@ def apply_score_extraction(
             ordered_deltas=ordered_deltas,
             ordered_effect_event_ids=ordered_effect_event_ids,
             effect_sequence=effect_sequence,
+            defer_disclosure=defer_disclosure,
         )
     finally:
         db._batch_authorized_open_affair_ids = _prev_batch_authorized
@@ -8741,6 +8795,7 @@ def _apply_score_extraction_body(
         Dict[str, list[tuple[str, object]]],
         dict[str, list[str]],
     ]]] = None,
+    defer_disclosure: bool = False,
 ) -> Dict[str, object]:
     """Bound apply body; batch affair authority is armed by caller."""
     from uuid import uuid4
@@ -10215,40 +10270,10 @@ def _apply_score_extraction_body(
                 period=state.period,
                 commit=commit_now,
             )
-            if disclosed:
-                # Disclosure is the only promotion from the assignee-only
-                # brief into a public knowledge event (#883).
-                # Cross-turn dedupe: disclosed is a state (prompt) not a monthly
-                # event — re-true each month must not mint another public row.
-                disclosure_prefix = f"secret_order_disclosure:{real_id}:"
-                # LIKE treats `_`/`%` as wildcards; escape the literal prefix
-                # (same ESCAPE idiom as db.py iter_budget_items / get_fiscal_config).
-                like_prefix = (
-                    disclosure_prefix
-                    .replace("\\", "\\\\")
-                    .replace("%", "\\%")
-                    .replace("_", "\\_")
+            if disclosed and not defer_disclosure:
+                record_secret_order_disclosure(
+                    db, state, real_id, sim_note, commit=commit_now,
                 )
-                already_disclosed = db.conn.execute(
-                    "SELECT 1 FROM character_knowledge_events "
-                    "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
-                    (f"{like_prefix}%",),
-                ).fetchone()
-                if already_disclosed is None:
-                    dossier = db.get_dossier_for_secret_order(real_id)
-                    progress = (
-                        db.list_dossier_progress(int(dossier["id"]))
-                        if dossier is not None else []
-                    )
-                    progress_text = format_public_progress_disclosure(progress)
-                    public_body = sim_note
-                    if progress_text:
-                        public_body = f"{sim_note}\n{progress_text}"
-                    db.record_public_knowledge_event(
-                        state, str(order["title"]), public_body,
-                        source_id=f"{disclosure_prefix}{state.turn}",
-                        commit=commit_now,
-                    )
             print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
             applied_secret_orders.append({
                 "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
