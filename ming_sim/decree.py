@@ -155,8 +155,9 @@ from ming_sim.settlement_payload import (  # noqa: E402
 class ResolveResult:
     """过月入口的返回。advanced 才表示回合已推进。
 
-    awaiting 只留给仍走旧亲裁暂停的路径。ADR 0157 的批红/邸报交接用
-    stage，不把未完成的主链标成已推进。
+    awaiting=True：批红案头待裁（#1847 请旨/打回三选，沿既有 HITL）。
+    awaiting=False 且 stage=gazette：邸报尚未归档，主链未推进。
+    有模型配置时作者会先写再推进；没有配置时仍停在这一相位。
     """
     awaiting: bool
     report: str = ""

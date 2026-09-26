@@ -4022,7 +4022,7 @@ class GameSession:
             # #657：返回合并 desk（急务 backlog ∪ 本月 decision），与 pending_decisions 同缝。
             return ResolveResult(
                 awaiting=True,
-                decisions=self.db.list_rescript_desk(int(self.state.turn)),
+                decisions=self.pending_decisions(),
                 advanced=False,
             )
         # settling 仅证明前半段已提交；旧档 ready extractor delta 不是 ADR 0157 的
@@ -4191,11 +4191,16 @@ class GameSession:
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:
-        """本回合待裁/已裁决策点（awaiting_decision 态下供前端弹窗/刷新恢复）。
+        """玩家案头：急务 ∪ 本月 decision。已应用改票锚不是新待裁。
 
-        #657：批红案头合并读——急务 rescript_draft ∪ 本月 decision（list_rescript_desk）。
+        原始行仍在 list_rescript_desk，供同 body 重交核对。
         """
-        return self.db.list_rescript_desk(int(self.state.turn))
+        from ming_sim.rescript_actions import row_is_applied_return_revise
+
+        return [
+            row for row in self.db.list_rescript_desk(int(self.state.turn))
+            if not row_is_applied_return_revise(row)
+        ]
 
     def _assert_awaiting_decision_submit(self) -> None:
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
@@ -4708,7 +4713,12 @@ class GameSession:
         """
         if write_gate is None:
             raise ValueError("submit_hitl_choices 须注入既有 write_gate")
-        desk = self.db.list_rescript_desk(int(self.state.turn))
+        from ming_sim.rescript_actions import row_is_applied_return_revise
+
+        desk = [
+            row for row in self.db.list_rescript_desk(int(self.state.turn))
+            if not row_is_applied_return_revise(row)
+        ]
         if desk or choices:
             return self.resolve_rescript_decisions(
                 choices,

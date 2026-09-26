@@ -91,6 +91,10 @@ def canned_full_settlement(
 
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _world)
     monkeypatch.setattr(
+        "ming_sim.month_chain.run_gazette_text",
+        lambda *_a, **_k: ("邸报", narrative),
+    )
+    monkeypatch.setattr(
         "ming_sim.month_translate.translate_month_segment",
         lambda *_a, **_k: {"effects": {}},
     )

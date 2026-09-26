@@ -64,6 +64,8 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     def _run_month_chain_text(agent, prompt, tag, **kwargs):
         if tag in {"world-segment", "decree-forecast"}:
             return ""
+        if tag == "gazette":
+            return '{"title":"邸报","report":"本月实况。"}'
         return real_run_agent_text(agent, prompt, tag, **kwargs)
 
     monkeypatch.setattr(
@@ -1152,6 +1154,16 @@ def _657_subprocess_resolve(
             "forecast_text": "",
             "visible_refs": {},
         }
+        # Agent-text boundary only. parse_agent_json, archive, and advance stay real.
+        import ming_sim.agents as agents_mod
+        _real_run_agent_text = agents_mod.run_agent_text
+
+        def _run_agent_text(agent, prompt, tag, **kwargs):
+            if tag == "gazette":
+                return '{"title":"邸报","report":"本月实况。"}'
+            return _real_run_agent_text(agent, prompt, tag, **kwargs)
+
+        agents_mod.run_agent_text = _run_agent_text
         # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
         from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
         install_settlement_attendant_agent_stub(None, dm)
@@ -4394,6 +4406,97 @@ def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
     assert r.status_code == 200
     # durable：空 POST 续跑完成 → 月推进；不解析 SSE 自由文本
     assert int(web_game.state.turn) == turn_before + 1
+
+
+def test_657_applied_revise_refresh_resumes_without_hold(web_game, monkeypatch):
+    """已应用 return_revise 仍 pending：真 GET 不把它当待裁；空 POST 清锚、不留中、不双增。"""
+    from ming_sim import rescript_actions as ra
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    opt = normalize_rescript_layer_a_option({
+        "label": "发帑赈济", "hint": "所安者饥民",
+        "action_type": "assignment", "assignee_name": "",
+        "target_kind": "region", "target_id": "shaanxi",
+        "locality_scope": "single", "region_id": "shaanxi",
+        "transaction_category": "督赈", "deadline_months": 2,
+        "participant_roster": [
+            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
+        ],
+    })
+    desk = _657_plant_awaiting_web(web_game, drafts=[{
+        "title": "改票急务", "context": "c",
+        "options": [opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
+        "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
+    }])
+    key = desk[0]["decision_key"]
+    old_caps = {
+        str(row.get("draft_capability") or "")
+        for row in desk[0]["options"] if isinstance(row, dict)
+    }
+    old_caps.discard("")
+    batch = ra.validate_all(desk, [{
+        "decision_key": key,
+        "action": "return_revise",
+        "label": "发回改票",
+        "draft_capability": opt["draft_capability"],
+    }])
+    ra.apply_rescript_batch(
+        db, state, batch,
+        ra.PrewriteResults(revise_by_key={key: [
+            {"label": "新拟甲", "hint": "h1",
+             "action_type": "assignment", "target_kind": "region",
+             "target_id": "shaanxi", "locality_scope": "single",
+             "region_id": "shaanxi", "assignee_name": "",
+             "transaction_category": "督赈", "deadline_months": 2,
+             "participant_roster": [
+                 {"character_id": "毕自严", "tier": "主办",
+                  "role": "", "delegator_id": None},
+             ]},
+            {"label": "新拟乙", "hint": "h2",
+             "action_type": "assignment", "target_kind": "region",
+             "target_id": "shaanxi", "locality_scope": "single",
+             "region_id": "shaanxi", "assignee_name": "杨嗣昌",
+             "transaction_category": "",
+             "participant_roster": [
+                 {"character_id": "杨嗣昌", "tier": "主办",
+                  "role": "", "delegator_id": None},
+             ]},
+        ]}),
+        content=web_game.content,
+    )
+    planted = next(row for row in db.list_rescript_drafts() if row["title"] == "改票急务")
+    new_caps = {
+        str(row.get("draft_capability") or "")
+        for row in (planted["options"] or []) if isinstance(row, dict)
+    }
+    prior_caps = {
+        str(row.get("draft_capability") or "")
+        for generation in (planted["prior_options_json"] or [])
+        for row in generation if isinstance(row, dict)
+    }
+    assert old_caps
+    assert new_caps
+    assert old_caps <= prior_caps
+    assert old_caps.isdisjoint(new_caps)
+    assert int(planted["revision_round"] or 0) == 1
+    assert planted["status"] == "pending"
+    assert (planted["choice"] or {}).get("action") == "return_revise"
+
+    payload = asyncio.run(_get_state())
+    assert payload.get("resume_phase2") is True
+    assert payload["turn"]["phase"] == TurnPhase.AWAITING_DECISION.value
+    assert [row.get("decision_key") for row in payload.get("pending_decisions") or []] == []
+
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    turn_before = int(state.turn)
+    posted = asyncio.run(_post_resolve([]))
+    assert posted.status_code == 200
+    assert int(web_game.state.turn) == turn_before + 1
+    hit = next(row for row in db.list_rescript_drafts() if row["title"] == "改票急务")
+    assert int(hit["revision_round"] or 0) == 1
+    assert hit["status"] == "pending"
+    assert not (hit["choice"] or {})
 
 
 def _summonable_name(db, content):

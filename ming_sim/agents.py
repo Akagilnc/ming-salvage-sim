@@ -885,7 +885,9 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
         model.materials_dir = str(root or "")
     instructions = [
         _ctx().game_world_prompt,
-        "你只推演本月旨意之外的世界事件。不要重算已经落账的旨，也不要写月末邸报。",
+        "你推演本月旨意之外的世界事件，并承接开场列出的在途办理案卷。"
+        "已经落账的旨不要重算，也不要写月末邸报。",
+        "本段只写推演结果。",
         "若需要皇帝裁决，请在问处给出标准 DECISION 结构并停在问处；问后内容不属于本段。",
         "开场只有最小集。其余材料在当前目录，按需自读。",
         str(getattr(prepared, "opening", "") or ""),
@@ -895,6 +897,38 @@ def create_world_segment_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     return Agent(
         name="世界段推演者",
         id="world-segment",
+        model=model,
+        instructions=instructions,
+        tools=material_tools(root),
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
+    """邸报作者：沿现有邸报写作提示与推演者目录，一次写出标题和正文。"""
+    from ming_sim.materials import material_tools
+
+    cfg = _llm_for_role(llm_config, "simulator")
+    tlog(f"[gazette] 使用模型 {describe_effective_model(cfg)}")
+    model = create_chat_model(
+        cfg, temperature=0.9, top_p=0.95, enable_thinking=True, force_json_output=True,
+    )
+    root = getattr(prepared, "root", "")
+    if hasattr(model, "materials_dir"):
+        model.materials_dir = str(root or "")
+    instructions = [
+        _ctx().game_world_prompt,
+        _ctx().season_simulator_prompt,
+        "你写本期邸报。盘面与历月材料沿当前目录，按需自读。",
+        "用 json 返回两个字段：title 是你为本期写的标题，report 是呈皇帝的全文。",
+        str(getattr(prepared, "opening", "") or ""),
+    ]
+    if is_minimax_base_url(cfg.base_url):
+        instructions.insert(0, _MINIMAX_SHORT_THINKING_PROMPT)
+    return Agent(
+        name="邸报作者",
+        id="gazette-author",
         model=model,
         instructions=instructions,
         tools=material_tools(root),

@@ -212,6 +212,14 @@ def _is_applied_revise_anchor(row: Mapping[str, object], choice: Mapping[str, ob
     return int(row.get("revision_round") or 0) == applied_from_i + 1
 
 
+def row_is_applied_return_revise(row: Mapping[str, object]) -> bool:
+    """已应用改票锚。刷新投影、空 POST、月链待裁共用这一行事实。"""
+    choice = row.get("choice")
+    if not isinstance(choice, dict):
+        return False
+    return _is_applied_revise_anchor(row, choice)
+
+
 def _option_by_capability(row: Mapping[str, object]) -> Dict[str, Dict[str, object]]:
     out: Dict[str, Dict[str, object]] = {}
     for opt in row.get("options") or []:
@@ -368,21 +376,21 @@ def validate_all(
         # pending 行
         kind = str(row.get("kind") or "decision")
 
-        # 已应用 return_revise 锚：先于空 action 默认 hold（§B.3 重试批不重新默认）
+        # 已应用 return_revise 锚：先于空 action 默认 hold（§B.3 重试批不重新默认）。
+        # 请求缺这一行（刷新后的空 POST）沿用行上锚，不留中、不重跑改票。
         if (
-            req is not None
-            and not _choice_empty(stored_choice)
+            not _choice_empty(stored_choice)
             and isinstance(stored_choice, dict)
             and _is_applied_revise_anchor(row, stored_choice)
         ):
-            if _choices_equal(stored_choice, req):
+            if req is None or _choices_equal(stored_choice, req):
                 batch.items.append(ValidatedItem(
                     decision_key=key,
                     kind=kind,
                     source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
                     idx=int(row.get("idx") or 0),
                     row=row,
-                    choice=req,
+                    choice=req if req is not None else canonical_choice(stored_choice),
                     already_applied=True,
                 ))
                 continue
@@ -453,10 +461,34 @@ def validate_all(
             ))
             continue
 
-        # 普通 decision（打回三选等）：按 label 匹配 option
+        # 普通 decision：票拟按 label 命中。请旨另许仅有亲笔 note 的答复，
+        # 不把批语改写成某条票拟。
         if kind == "decision":
-            labels = bind_decision_options(row.get("options") or [])
+            from ming_sim.month_chain import (
+                _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
+            )
+
+            event_id = str(row.get("event_id") or "")
             label = str(req.get("label") or "").strip()
+            note = str(req.get("note") or "").strip()
+            if (
+                not label
+                and note
+                and (
+                    event_id.startswith(_DECREE_QUESTION_PREFIX)
+                    or event_id.startswith(_WORLD_QUESTION_PREFIX)
+                )
+            ):
+                batch.items.append(ValidatedItem(
+                    decision_key=key,
+                    kind=kind,
+                    source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
+                    idx=int(row.get("idx") or 0),
+                    row=row,
+                    choice=req,
+                ))
+                continue
+            labels = bind_decision_options(row.get("options") or [])
             if label not in labels:
                 raise ValueError(f"decision 选项不在当前 options：{key}")
             matched = labels[label]
@@ -1364,7 +1396,17 @@ def apply_rescript_batch(
                 # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
                 _cas_decided(db, item)
                 event_id = str(item.row.get("event_id") or "").strip()
-                if event_id and not event_id.startswith("dossier:"):
+                # 请旨身份前缀真源 = month_chain；此处局部导入以免与月链形成模块环。
+                from ming_sim.month_chain import (
+                    _DECREE_QUESTION_PREFIX, _WORLD_QUESTION_PREFIX,
+                )
+                # 请旨身份不是 events 表事件；与 dossier: 同属案头身份前缀，不得进 event_triggers。
+                if (
+                    event_id
+                    and not event_id.startswith("dossier:")
+                    and not event_id.startswith(_WORLD_QUESTION_PREFIX)
+                    and not event_id.startswith(_DECREE_QUESTION_PREFIX)
+                ):
                     db.record_event_decision_choice(
                         state, event_id, item.choice, commit=False,
                     )

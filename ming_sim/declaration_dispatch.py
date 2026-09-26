@@ -288,6 +288,35 @@ def _dispatch_declaration_sections(
     return result
 
 
+def _effect_extraction_from_clean(
+    clean: Mapping[str, object],
+    event_id: str,
+    *,
+    empty_extraction: Mapping[str, object],
+) -> tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]:
+    """Build one apply_score_extraction payload from a single effect envelope."""
+    extraction = copy.deepcopy(dict(empty_extraction))
+    ordered_deltas = {field: [] for field in (
+        "metric_delta", "faction_delta", "class_delta",
+        "region_delta", "army_delta", "power_updates",
+    )}
+    ordered_effect_event_ids = {field: [] for field in empty_extraction}
+    for field, value in clean.items():
+        if field not in empty_extraction:
+            continue
+        if isinstance(value, list):
+            extraction[field].extend(value)
+            ordered_effect_event_ids[field].extend([event_id] * len(value))
+        elif isinstance(value, dict):
+            extraction[field].update(value)
+            if field in ordered_deltas:
+                ordered_deltas[field].extend(value.items())
+                ordered_effect_event_ids[field].extend([event_id] * len(value))
+        elif value is not None:
+            extraction[field] = value
+    return extraction, ordered_deltas, ordered_effect_event_ids
+
+
 def _dispatch_effects(
     db: Any,
     state: Any,
@@ -303,6 +332,10 @@ def _dispatch_effects(
 
     召对夜里的 effects 表示旨意办理结果，仍只是预推候选；当场实况由各自
     section 承接，不能借 effects 绕过 ADR 0157 的过月落账边界。
+
+    #1844：effects 数组按交代先后逐笔落账——后来的效果读到先前实际落账后的
+    存量；不按实体段固定类别顺序重排跨类因果。一次 apply 内按旨序交错字段，
+    批次性副作用（回流等）仍只核算一次。
     """
     if raw is None or raw == {}:
         return SectionResult(applied=[], rejected=[])
@@ -322,13 +355,7 @@ def _dispatch_effects(
     from ming_sim.decree import _collect_inline_rejections
     from ming_sim.person_delta_adapter import normalize_person_changes
 
-    extraction = copy.deepcopy(EMPTY_EXTRACTION)
     shape_rejections = []
-    ordered_deltas = {field: [] for field in (
-        "metric_delta", "faction_delta", "class_delta",
-        "region_delta", "army_delta", "power_updates",
-    )}
-    ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
     rejected = []
     has_effect = False
     clean_items = []
@@ -350,11 +377,21 @@ def _dispatch_effects(
             for field in ("appointments", "character_status_changes", "character_power_changes", "office_changes"):
                 clean[field] = []
         clean_items.append((item, event_id, clean))
+    if not has_effect:
+        return SectionResult(applied=[], rejected=rejected)
+
     refs = visible_refs or {}
     rejected_events = preflight_declared_event_effects(
         db, state, [(event_id, clean) for _, event_id, clean in clean_items],
         open_affair_ids=set(refs.get("affairs", ())),
     )
+    extraction = copy.deepcopy(EMPTY_EXTRACTION)
+    ordered_deltas = {field: [] for field in (
+        "metric_delta", "faction_delta", "class_delta",
+        "region_delta", "army_delta", "power_updates",
+    )}
+    ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
+    effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
     accepted_effect = False
     for item, event_id, clean in clean_items:
         if event_id in rejected_events:
@@ -364,20 +401,23 @@ def _dispatch_effects(
             ))
             continue
         accepted_effect = True
-        for field, value in clean.items():
-            if field not in EMPTY_EXTRACTION:
-                continue
-            if isinstance(value, list):
-                extraction[field].extend(value)
-                ordered_effect_event_ids[field].extend([event_id] * len(value))
-            elif isinstance(value, dict):
-                extraction[field].update(value)
-                if field in ordered_deltas:
-                    ordered_deltas[field].extend(value.items())
-                    ordered_effect_event_ids[field].extend([event_id] * len(value))
-            elif value is not None:
+        step_extraction, step_ordered, step_event_ids = _effect_extraction_from_clean(
+            clean, event_id, empty_extraction=EMPTY_EXTRACTION,
+        )
+        effect_sequence.append((step_extraction, step_ordered, step_event_ids))
+        for field, value in step_extraction.items():
+            current = extraction[field]
+            if isinstance(value, list) and isinstance(current, list):
+                current.extend(value)
+            elif isinstance(value, dict) and isinstance(current, dict):
+                current.update(value)
+            elif value is not None and not isinstance(value, (list, dict)):
                 extraction[field] = value
-    if not has_effect or not accepted_effect:
+        for field, pairs in step_ordered.items():
+            ordered_deltas[field].extend(pairs)
+        for field, event_ids in step_event_ids.items():
+            ordered_effect_event_ids[field].extend(event_ids)
+    if not accepted_effect:
         return SectionResult(applied=[], rejected=rejected)
     report = apply_score_extraction(
         db, state, extraction, content=db.content,
@@ -387,6 +427,7 @@ def _dispatch_effects(
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=ordered_effect_event_ids,
         prior_shape_rejections=shape_rejections,
+        effect_sequence=effect_sequence if isinstance(raw, list) else None,
     )
     _collect_inline_rejections(collector, report, turn, source)
     return SectionResult(applied=[report], rejected=rejected)

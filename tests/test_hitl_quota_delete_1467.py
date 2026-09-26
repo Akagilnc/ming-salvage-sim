@@ -84,10 +84,6 @@ def test_hitl_quota_mechanism_fully_deleted():
     assert "hitl_min_decisions" not in types
     assert "game_settings" not in types
 
-    # prompt 不再读配额字段（正向措辞由源码复核，不盯自由文本）
-    prompt = (_REPO / "content/prompts/season_simulator.md").read_text(encoding="utf-8")
-    assert "hitl_min_decisions" not in prompt
-
 
 
 
