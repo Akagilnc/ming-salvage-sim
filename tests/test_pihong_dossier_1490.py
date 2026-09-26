@@ -1158,6 +1158,16 @@ def _657_subprocess_resolve(
             "forecast_text": "",
             "visible_refs": {},
         }
+        # Agent-text boundary only. parse_agent_json, archive, and advance stay real.
+        import ming_sim.agents as agents_mod
+        _real_run_agent_text = agents_mod.run_agent_text
+
+        def _run_agent_text(agent, prompt, tag, **kwargs):
+            if tag == "gazette":
+                return '{"title":"邸报","report":"本月实况。"}'
+            return _real_run_agent_text(agent, prompt, tag, **kwargs)
+
+        agents_mod.run_agent_text = _run_agent_text
         # #1745：结算拒收递话同属外层 LLM 缝（复用单一 agent 边界夹具）。
         from tests.section_rejection_helpers import install_settlement_attendant_agent_stub
         install_settlement_attendant_agent_stub(None, dm)
