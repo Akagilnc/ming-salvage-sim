@@ -33,7 +33,9 @@ def make_light_session(db, state, content):
     session._write_gate = None
     session.auto_save = lambda *a, **k: None
     bind_forecast_owner(session)
-    get_session_write_queue(session)
+    from tests.conftest import note_queue_until_game_teardown
+
+    note_queue_until_game_teardown(db, get_session_write_queue(session))
     return session
 
 
