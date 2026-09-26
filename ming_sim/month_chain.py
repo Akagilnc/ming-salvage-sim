@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 from ming_sim.applier import Provenance, atomic
 
@@ -975,92 +975,6 @@ def _enrich_eligible_dossiers_for_supply(
     return out
 
 
-def _collect_this_turn_origin_effects(
-    db: Any, turn: int, dossier_ids: Sequence[int],
-) -> Dict[str, Any]:
-    """本回合已提交的 dossier origin 效果：按案卷权威 durable／日志读口装配，不扩三表白名单。"""
-    current = int(turn)
-    durable_effects: List[Dict[str, Any]] = []
-    economy_moves: List[Dict[str, Any]] = []
-    fiscal_effects: List[Dict[str, Any]] = []
-    skill_grants: List[Dict[str, Any]] = []
-    person_logs: List[Dict[str, Any]] = []
-    region_logs: List[Dict[str, Any]] = []
-    army_logs: List[Dict[str, Any]] = []
-    building_logs: List[Dict[str, Any]] = []
-    power_logs: List[Dict[str, Any]] = []
-
-    for raw_id in dossier_ids:
-        did = int(raw_id)
-        if did <= 0:
-            continue
-        origin = f"dossier:{did}"
-        if hasattr(db, "list_dossier_durable_effects"):
-            for item in db.list_dossier_durable_effects(did):
-                if int(item.get("turn") or 0) != current:
-                    continue
-                row = dict(item)
-                durable_effects.append(row)
-                if row.get("effect_kind"):
-                    fiscal_effects.append(row)
-                else:
-                    economy_moves.append(row)
-        # office_change_records 无 turn 列，不可本回合过滤；不扩 schema、也不塞未过滤全史。
-        if hasattr(db, "list_skill_grants_for_dossier"):
-            for item in db.list_skill_grants_for_dossier(did):
-                if int(item.get("source_turn") or 0) == current:
-                    skill_grants.append(dict(item))
-        if not hasattr(db, "conn"):
-            continue
-        person_logs.extend(
-            dict(r) for r in db.conn.execute(
-                "SELECT person_name, action, payload_summary, origin_ref "
-                "FROM person_logs WHERE origin_ref=? AND turn=?",
-                (origin, current),
-            ).fetchall()
-        )
-        region_logs.extend(
-            dict(r) for r in db.conn.execute(
-                "SELECT region_id, field, old_value, new_value, delta, reason, origin_ref "
-                "FROM region_logs WHERE origin_ref=? AND turn=?",
-                (origin, current),
-            ).fetchall()
-        )
-        army_logs.extend(
-            dict(r) for r in db.conn.execute(
-                "SELECT army_id, field, old_value, new_value, delta, reason, origin_ref "
-                "FROM army_logs WHERE origin_ref=? AND turn=?",
-                (origin, current),
-            ).fetchall()
-        )
-        building_logs.extend(
-            dict(r) for r in db.conn.execute(
-                "SELECT building_id, field, old_value, new_value, delta, reason, origin_ref "
-                "FROM building_logs WHERE origin_ref=? AND turn=?",
-                (origin, current),
-            ).fetchall()
-        )
-        power_logs.extend(
-            dict(r) for r in db.conn.execute(
-                "SELECT power_id, field, old_value, new_value, delta, reason, origin_ref "
-                "FROM power_logs WHERE origin_ref=? AND turn=?",
-                (origin, current),
-            ).fetchall()
-        )
-
-    return {
-        "durable_effects": durable_effects,
-        "economy_moves": economy_moves,
-        "fiscal_effects": fiscal_effects,
-        "skill_grants": skill_grants,
-        "person_logs": person_logs,
-        "region_logs": region_logs,
-        "army_logs": army_logs,
-        "building_logs": building_logs,
-        "power_logs": power_logs,
-    }
-
-
 def build_secret_orders_supply_feed(
     db: Any, state: Any, chain: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -1090,7 +1004,7 @@ def build_secret_orders_supply_feed(
         if did > 0 and did not in seen:
             seen.add(did)
             dossier_ids.append(did)
-    origin_effects = _collect_this_turn_origin_effects(db, turn, dossier_ids)
+    origin_effects = db.list_this_turn_origin_effects(turn, dossier_ids)
     from ming_sim.materials import _world_board_text
     return {
         "instruction": "为本月所有在办密令产出密奏和执行态声明。",

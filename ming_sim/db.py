@@ -990,6 +990,7 @@ class GameDB:
                 source TEXT NOT NULL,
                 dossier_id INTEGER,
                 appointment_tenure TEXT NOT NULL DEFAULT '真除',
+                turn INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id)
             );
@@ -2459,6 +2460,9 @@ class GameDB:
         self.ensure_column(
             "office_change_records", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
         )
+        self.ensure_column(
+            "office_change_records", "turn", "INTEGER NOT NULL DEFAULT 0"
+        )
         self.ensure_column("skill_grants", "dossier_id", "INTEGER")
         self.ensure_column(
             "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
@@ -3795,16 +3799,21 @@ class GameDB:
             getattr(self.conn, "_materializing_dossier_id", 0) or 0
         )
         if dossier_id > 0:
+            turn_row = self.conn.execute(
+                "SELECT turn FROM game_state WHERE id=1"
+            ).fetchone()
+            effect_turn = int(turn_row["turn"] if turn_row is not None else 0)
             self.conn.execute(
                 """
                 INSERT INTO office_change_records
                     (character_name,office_title,office_type,source,dossier_id,
-                     appointment_tenure)
-                VALUES (?,?,?,?,?,?)
+                     appointment_tenure,turn)
+                VALUES (?,?,?,?,?,?,?)
                 """,
                 (
                     name, office, office_type, source, dossier_id,
                     str(getattr(self.conn, "_appointment_tenure", "真除") or "真除"),
+                    effect_turn,
                 ),
             )
 
@@ -20175,6 +20184,99 @@ class GameDB:
                 (int(dossier_id),),
             ).fetchall()
         ]
+
+    def list_this_turn_origin_effects(
+        self, turn: int, dossier_ids: Sequence[int],
+    ) -> Dict[str, Any]:
+        """本回合已提交的 dossier origin 效果：复用案卷权威读口，按 turn／origin_turn／source_turn 过滤。
+
+        不在编排层另列事实表白名单；种类随既有 list_*_for_dossier 与 origin_ref 日志写口。
+        """
+        current = int(turn)
+        durable_effects: List[Dict[str, Any]] = []
+        economy_moves: List[Dict[str, Any]] = []
+        fiscal_effects: List[Dict[str, Any]] = []
+        office_effects: List[Dict[str, Any]] = []
+        skill_grants: List[Dict[str, Any]] = []
+        issues: List[Dict[str, Any]] = []
+        person_logs: List[Dict[str, Any]] = []
+        region_logs: List[Dict[str, Any]] = []
+        army_logs: List[Dict[str, Any]] = []
+        building_logs: List[Dict[str, Any]] = []
+        power_logs: List[Dict[str, Any]] = []
+
+        for raw_id in dossier_ids:
+            did = int(raw_id)
+            if did <= 0:
+                continue
+            origin = f"dossier:{did}"
+            for item in self.list_dossier_durable_effects(did):
+                if int(item.get("turn") or 0) != current:
+                    continue
+                row = dict(item)
+                durable_effects.append(row)
+                if row.get("effect_kind"):
+                    fiscal_effects.append(row)
+                else:
+                    economy_moves.append(row)
+            for item in self.list_office_effects_for_dossier(did):
+                if int(item.get("turn") or 0) == current:
+                    office_effects.append(dict(item))
+            for item in self.list_skill_grants_for_dossier(did):
+                if int(item.get("source_turn") or 0) == current:
+                    skill_grants.append(dict(item))
+            for item in self.list_commitments_for_dossier(did):
+                if int(item.get("origin_turn") or 0) == current:
+                    issues.append(dict(item))
+            person_logs.extend(
+                dict(r) for r in self.conn.execute(
+                    "SELECT person_name, action, payload_summary, origin_ref "
+                    "FROM person_logs WHERE origin_ref=? AND turn=?",
+                    (origin, current),
+                ).fetchall()
+            )
+            region_logs.extend(
+                dict(r) for r in self.conn.execute(
+                    "SELECT region_id, field, old_value, new_value, delta, reason, origin_ref "
+                    "FROM region_logs WHERE origin_ref=? AND turn=?",
+                    (origin, current),
+                ).fetchall()
+            )
+            army_logs.extend(
+                dict(r) for r in self.conn.execute(
+                    "SELECT army_id, field, old_value, new_value, delta, reason, origin_ref "
+                    "FROM army_logs WHERE origin_ref=? AND turn=?",
+                    (origin, current),
+                ).fetchall()
+            )
+            building_logs.extend(
+                dict(r) for r in self.conn.execute(
+                    "SELECT building_id, field, old_value, new_value, delta, reason, origin_ref "
+                    "FROM building_logs WHERE origin_ref=? AND turn=?",
+                    (origin, current),
+                ).fetchall()
+            )
+            power_logs.extend(
+                dict(r) for r in self.conn.execute(
+                    "SELECT power_id, field, old_value, new_value, delta, reason, origin_ref "
+                    "FROM power_logs WHERE origin_ref=? AND turn=?",
+                    (origin, current),
+                ).fetchall()
+            )
+
+        return {
+            "durable_effects": durable_effects,
+            "economy_moves": economy_moves,
+            "fiscal_effects": fiscal_effects,
+            "office_effects": office_effects,
+            "skill_grants": skill_grants,
+            "issues": issues,
+            "person_logs": person_logs,
+            "region_logs": region_logs,
+            "army_logs": army_logs,
+            "building_logs": building_logs,
+            "power_logs": power_logs,
+        }
 
     def add_directive(
         self,
