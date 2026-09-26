@@ -51,6 +51,7 @@ def mark_mechanical_tail_pending(
 
 def _set_tail_status(
     db: Any, closed_turn: int, status: str, *, source: Provenance,
+    error_pack_path: Optional[str] = None,
 ) -> None:
     from ming_sim import month_chain
 
@@ -59,6 +60,10 @@ def _set_tail_status(
     if not tail:
         return
     tail["status"] = status
+    if error_pack_path is not None:
+        tail["error_pack_path"] = error_pack_path
+    else:
+        tail.pop("error_pack_path", None)
     chain["mechanical_tail"] = tail
     month_chain._save_chain(db, int(closed_turn), chain, source=source)
 
@@ -281,6 +286,19 @@ def _submit_tail(
                     "[mechanical-tail] turn=%s 后台执行失败，保留 pending 供续接",
                     closed_turn,
                 )
+                from ming_sim.error_pack import write_error_pack
+
+                def record_failure() -> None:
+                    pack_path = write_error_pack(
+                        session.db, session.state, exc=exc,
+                        extracted=None, resolve_ctx=None,
+                    )
+                    _set_tail_status(
+                        session.db, closed_turn, _TAIL_STATUS_PENDING,
+                        source=source, error_pack_path=pack_path,
+                    )
+
+                queue.run(ticket, record_failure)
                 raise
             status = _TAIL_STATUS_DEGRADED
             logger.info(

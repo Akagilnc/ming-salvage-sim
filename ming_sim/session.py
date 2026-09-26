@@ -3962,9 +3962,19 @@ class GameSession:
                 exc = RuntimeError(
                     f"机械尾未终结，不能过月：{[turn for turn, _ in pending_tails]}"
                 )
-                pack_path = write_error_pack(
-                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                pack_path = next(
+                    (str(tail["error_pack_path"]) for _, tail in pending_tails
+                     if tail.get("error_pack_path")),
+                    None,
                 )
+                if pack_path is None:
+                    try:
+                        raise exc
+                    except RuntimeError as pending_exc:
+                        pack_path = write_error_pack(
+                            self.db, self.state, exc=pending_exc,
+                            extracted=None, resolve_ctx=None,
+                        )
                 raise SettlementAbort(
                     settlement_abort_message(pack_path),
                     turn=int(self.state.turn),
