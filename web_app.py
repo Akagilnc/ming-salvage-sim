@@ -1765,6 +1765,11 @@ class WebGame:
         )
         return budget
 
+    def mechanical_tail_pending(self) -> bool:
+        from ming_sim.mechanical_tail import _pending_mechanical_tails
+
+        return bool(_pending_mechanical_tails(self.db, current_turn=int(self.state.turn)))
+
     def mechanical_tail_failure(self) -> Optional[Dict[str, Any]]:
         from ming_sim.mechanical_tail import failed_mechanical_tail
 
@@ -1892,6 +1897,7 @@ class WebGame:
             "victory_status": self.session.victory(),
             "ending": self.ending_payload(),
             "mechanical_tail_failure": self.mechanical_tail_failure(),
+            "mechanical_tail_pending": self.mechanical_tail_pending(),
             "events": [],
             "regions": self.db.region_payload(),
             "armies": self.db.army_payload(),

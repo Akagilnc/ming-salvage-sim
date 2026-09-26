@@ -252,6 +252,24 @@ describe("#1845 ending summary stays background and becomes visible", () => {
   });
 });
 
+describe("#1845 background tail failure observation", () => {
+  it("refreshes a non-ending month while the tail runs, then stops on persisted failure", async () => {
+    vi.useFakeTimers();
+    const running = { ...preClickState, mechanical_tail_pending: true } as GameState;
+    const failed = {
+      ...running, mechanical_tail_pending: false,
+      mechanical_tail_failure: { error_pack_path: "/tmp/tail-error" },
+    } as GameState;
+    const loadState = vi.fn<() => Promise<GameState | null>>().mockResolvedValue(failed);
+    const { cleanup } = mountHarness({ initial: running, loadState });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(loadState).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(loadState).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+});
+
 describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等", () => {
   it("POST 携 state.turn 为 expected_turn", async () => {
     const fetchMock = vi.fn(async () => ({

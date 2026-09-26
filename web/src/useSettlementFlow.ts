@@ -86,10 +86,9 @@ export function useSettlementFlow({
     if (route.error !== null) setPausedDecisionError(route.error);
   }, [state, loadState]);
 
-  // #1845：结局总评在机械尾后台完成。前台先开页；未终结时沿结算观察刷新重取，
-  // 完成结果写进已开的结局页。不等尾再打开。
+  // 后台机械尾未终结时观察状态：总评落位或代码异常均在原页面呈现。
   React.useEffect(() => {
-    if (!state?.ending?.summary_pending) return;
+    if (!state?.mechanical_tail_pending && !state?.ending?.summary_pending) return;
     let cancelled = false;
     let refreshTimer = 0;
     const refresh = () => {
@@ -108,7 +107,7 @@ export function useSettlementFlow({
       cancelled = true;
       window.clearTimeout(refreshTimer);
     };
-  }, [state?.ending?.summary_pending, loadState]);
+  }, [state?.mechanical_tail_pending, state?.ending?.summary_pending, loadState]);
 
   const applyStage = (update: SettlementStageUpdate) => {
     setSettleStage(update.content);

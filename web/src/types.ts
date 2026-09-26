@@ -440,6 +440,7 @@ export type GameState = {
   victory_status: { status: string; summary: string };
   ending: EndingPayload | null;
   mechanical_tail_failure?: { error_pack_path?: string } | null;
+  mechanical_tail_pending?: boolean;
   events: EventItem[];
   regions: Region[];
   armies: Army[];
